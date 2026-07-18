@@ -687,8 +687,12 @@ async fn tail_session_file(
                 }
                 offset += n as u64;
                 if !line.ends_with('\n') {
+                    // Retain the partial in `leftover`; `offset` already counts
+                    // its bytes, so the next poll seeks *past* it and reads only
+                    // the completing suffix. (Rewinding `offset` here would make
+                    // the next poll re-read the partial and concatenate it onto
+                    // itself — corrupt JSON that fails to parse and is dropped.)
                     leftover = std::mem::take(&mut line);
-                    offset -= leftover.len() as u64;
                     break;
                 }
                 let full = if leftover.is_empty() {
@@ -1100,6 +1104,69 @@ async fn write_msg(stdin: &mut ChildStdin, value: &Value) -> anyhow::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // idx 17 — session-file tailer: a mid-write partial line must not be
+    // duplicated. When the tailer first catches a JSONL entry WITHOUT its
+    // trailing newline (writer paused mid-append), the partial must be retained
+    // and completed on a later poll — not re-read from its own start and
+    // concatenated onto itself (which corrupts the JSON and drops the entry).
+    #[tokio::test]
+    async fn tail_reassembles_midwrite_partial_line() {
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let sid = "pi-tail-midwrite-test";
+        store.register_managed(sid, "/tmp", "pi");
+
+        let full_line = concat!(
+            r#"{"type":"message","message":{"role":"assistant","#,
+            r#""stopReason":"stop","content":[{"type":"text","text":"Hello world"}],"#,
+            r#""usage":{"input":10,"output":5}}}"#,
+            "\n"
+        );
+        // Split before the trailing newline so the first read sees a partial line.
+        let cut = full_line.len() / 2;
+        let (partial, _completion) = full_line.split_at(cut);
+        assert!(!partial.ends_with('\n'));
+
+        let path = std::env::temp_dir().join(format!(
+            "pi_tail_midwrite_{}_{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, partial).unwrap();
+
+        let handle = {
+            let store = store.clone();
+            let conv = conv.clone();
+            let sid = sid.to_string();
+            let path = path.clone();
+            tokio::spawn(async move {
+                let _ = tail_session_file(&store, &conv, &sid, &path).await;
+            })
+        };
+
+        // First poll (t≈0) reads the partial; tailer then sleeps ~300ms.
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        // Now complete the line; later polls must reassemble it correctly.
+        std::fs::write(&path, full_line).unwrap();
+        // Give several 300ms poll cycles to observe the completion.
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        handle.abort();
+
+        let items = conv.snapshot(sid).map(|(_, i)| i).unwrap_or_default();
+        let _ = std::fs::remove_file(&path);
+
+        assert!(
+            items.iter().any(|it| matches!(
+                it,
+                ConversationItem::AssistantText { text, .. } if text == "Hello world"
+            )),
+            "assistant entry lost — mid-write partial was duplicated and failed to parse; items = {items:?}"
+        );
+    }
 
     #[test]
     fn agent_start_is_busy() {

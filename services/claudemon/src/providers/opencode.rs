@@ -28,7 +28,7 @@ use tokio::sync::mpsc;
 use super::{apply_updates, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::protocol::Signal;
 use crate::session::conversation::ConversationItem;
-use crate::session::state::SessionMode;
+use crate::session::state::{Pending, SessionMode};
 use crate::session::{ConversationStore, ModelSwitch, SessionStore};
 use crate::wrapper::pty;
 
@@ -359,6 +359,79 @@ fn reply_permission(
     });
 }
 
+/// A permission request parked awaiting the user's decision. The store's pending
+/// is a single slot, so only the FIFO *head* is surfaced as the displayed card;
+/// later requests (parallel tool calls) wait parked and re-surface via
+/// [`resolve_permission`] when the head is answered — keeping the displayed card
+/// and the answered request in sync (mirrors codex/claude_stream discipline).
+struct ParkedPermission {
+    id: String,
+    tool: Option<String>,
+    summary: Option<String>,
+    raw: Value,
+}
+
+/// Surface a parked permission as the session's pending Approval card.
+fn surface_permission(
+    store: &SessionStore,
+    session_id: &str,
+    cur_mode: &mut SessionMode,
+    parked: &ParkedPermission,
+) {
+    store.set_managed_mode(
+        session_id,
+        SessionMode::Approval,
+        Some(Pending::Approval {
+            tool: parked.tool.clone(),
+            summary: parked.summary.clone(),
+            raw: parked.raw.clone(),
+        }),
+    );
+    *cur_mode = SessionMode::Approval;
+}
+
+/// Park a non-YOLO permission request and, if it becomes the new FIFO head,
+/// surface it. Dedups by id — a `permission.updated` frame can fire repeatedly
+/// as its metadata streams in, and the same permission must not demand multiple
+/// approvals or re-surface over a still-open earlier request.
+fn park_permission(
+    store: &SessionStore,
+    session_id: &str,
+    cur_mode: &mut SessionMode,
+    pending: &mut std::collections::VecDeque<ParkedPermission>,
+    parked: ParkedPermission,
+) {
+    if pending.iter().any(|p| p.id == parked.id) {
+        return;
+    }
+    let was_empty = pending.is_empty();
+    pending.push_back(parked);
+    if was_empty {
+        let head = pending.front().expect("just pushed");
+        surface_permission(store, session_id, cur_mode, head);
+    }
+}
+
+/// Answer the FIFO head with the user's decision: pop it, surface the next parked
+/// permission (or return to Responding when the queue drains), and return the
+/// head's id so the caller forwards the reply to the request the user actually saw.
+fn resolve_permission(
+    store: &SessionStore,
+    session_id: &str,
+    cur_mode: &mut SessionMode,
+    pending: &mut std::collections::VecDeque<ParkedPermission>,
+) -> Option<String> {
+    let head = pending.pop_front()?;
+    match pending.front() {
+        Some(next) => surface_permission(store, session_id, cur_mode, next),
+        None => {
+            store.set_managed_mode(session_id, SessionMode::Responding, None);
+            *cur_mode = SessionMode::Responding;
+        }
+    }
+    Some(head.id)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_session(
     store: &SessionStore,
@@ -494,7 +567,7 @@ async fn run_session(
     // The id of the permission currently awaiting the user's decision (non-YOLO).
     // Permission ids awaiting a decision, FIFO — a queue (not one slot) so
     // concurrent permission requests don't drop each other and stall the agent.
-    let mut pending_perm_ids: std::collections::VecDeque<String> =
+    let mut pending_perms: std::collections::VecDeque<ParkedPermission> =
         std::collections::VecDeque::new();
     // Role instructions to prepend to the first turn only (supervisors).
     let mut pending_instructions: Option<String> = facade.instructions.clone();
@@ -518,22 +591,29 @@ async fn run_session(
                         // keeps working; otherwise we surface it and remember the id
                         // so the user's decision can be forwarded.
                         if let Some(idx) = updates.iter().position(|u| matches!(u, AgentUpdate::PermissionPending { .. })) {
-                            if let AgentUpdate::PermissionPending { id, .. } = &updates[idx] {
-                                let perm_id = id.clone();
-                                if yolo_live.load(Ordering::Relaxed) {
-                                    if let Some(pid) = perm_id {
-                                        reply_permission(&client, &base, &oc_id, &pid, true);
-                                    }
-                                    updates.remove(idx); // don't surface Approval
-                                } else if let Some(pid) = perm_id {
-                                    // Dedup: a `permission.updated` frame can fire
-                                    // more than once for the same id as its metadata
-                                    // streams in; don't queue duplicates or the same
-                                    // permission would demand multiple approvals.
-                                    if !pending_perm_ids.contains(&pid) {
-                                        pending_perm_ids.push_back(pid);
-                                    }
+                            // Take the permission out of the batch so it never
+                            // reaches apply_updates — which would clobber the
+                            // store's single pending slot with whatever arrived
+                            // most recently, desyncing the displayed card from the
+                            // FIFO head a decision answers.
+                            let AgentUpdate::PermissionPending { id, tool, summary, raw } = updates.remove(idx) else {
+                                unreachable!("position() just matched PermissionPending")
+                            };
+                            if yolo_live.load(Ordering::Relaxed) {
+                                if let Some(pid) = id {
+                                    reply_permission(&client, &base, &oc_id, &pid, true);
                                 }
+                            } else if let Some(pid) = id {
+                                // Park (deduped) and surface only the FIFO head so
+                                // the displayed card always matches what a decision
+                                // answers.
+                                park_permission(
+                                    store,
+                                    session_id,
+                                    &mut cur_mode,
+                                    &mut pending_perms,
+                                    ParkedPermission { id: pid, tool, summary, raw },
+                                );
                             }
                         }
                         apply_updates(store, conv, session_id, updates, &mut cur_mode, &mut acc);
@@ -571,11 +651,11 @@ async fn run_session(
             },
             decision = drx.recv() => match decision {
                 Some(approve) => {
-                    if let Some(pid) = pending_perm_ids.pop_front() {
+                    // Answer the FIFO head (the card the user saw); resolve_permission
+                    // re-surfaces the next queued request or returns to Responding
+                    // when the queue drains.
+                    if let Some(pid) = resolve_permission(store, session_id, &mut cur_mode, &mut pending_perms) {
                         reply_permission(&client, &base, &oc_id, &pid, approve);
-                        // The agent resumes (or stops on reject); reflect Responding.
-                        store.set_managed_mode(session_id, SessionMode::Responding, None);
-                        cur_mode = SessionMode::Responding;
                     }
                 }
                 None => break,
@@ -652,6 +732,91 @@ async fn wait_healthy(client: &reqwest::Client, base: &str) -> anyhow::Result<()
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn concurrent_permissions_answer_the_displayed_card_and_resurface_the_next() {
+        // idx 18: two parallel `permission.updated` frames arrive before the
+        // user answers (OpenCode parallel tool calls). The store must display the
+        // FIFO *head* (perm_1), the user's decision must be forwarded to that same
+        // head (never to whatever arrived most recently), and the next queued
+        // permission (perm_2) must re-surface so it is never left unanswered.
+        let store = SessionStore::new();
+        let sid = "sid-oc-perms";
+        store.register_managed(sid, "/w", "opencode");
+
+        let mut cur_mode = SessionMode::Responding;
+        let mut pending: std::collections::VecDeque<ParkedPermission> =
+            std::collections::VecDeque::new();
+
+        // First permission (perm_1) arrives → surfaced as the pending card.
+        park_permission(
+            &store,
+            sid,
+            &mut cur_mode,
+            &mut pending,
+            ParkedPermission {
+                id: "perm_1".into(),
+                tool: Some("Bash".into()),
+                summary: Some("rm -rf a".into()),
+                raw: json!({ "id": "perm_1" }),
+            },
+        );
+        // Second permission (perm_2) arrives while perm_1 is still open → it must
+        // park behind perm_1, NOT overwrite the displayed card.
+        park_permission(
+            &store,
+            sid,
+            &mut cur_mode,
+            &mut pending,
+            ParkedPermission {
+                id: "perm_2".into(),
+                tool: Some("Bash".into()),
+                summary: Some("rm -rf b".into()),
+                raw: json!({ "id": "perm_2" }),
+            },
+        );
+
+        let state = store.get(sid).expect("session state");
+        assert_eq!(state.mode, SessionMode::Approval);
+        match state.pending {
+            Some(Pending::Approval { ref summary, .. }) => assert_eq!(
+                summary.as_deref(),
+                Some("rm -rf a"),
+                "displayed card must be the FIFO head (perm_1), not the newest arrival"
+            ),
+            other => panic!("expected Pending::Approval, got {other:?}"),
+        }
+
+        // The user answers the card they saw. The decision must resolve perm_1
+        // (the head), then re-surface perm_2.
+        let replied = resolve_permission(&store, sid, &mut cur_mode, &mut pending);
+        assert_eq!(
+            replied.as_deref(),
+            Some("perm_1"),
+            "the answer must go to the displayed head, not the newest permission"
+        );
+
+        // perm_2 must now be the surfaced card, still awaiting an answer.
+        assert_eq!(pending.len(), 1);
+        let state = store.get(sid).expect("session state");
+        assert_eq!(
+            state.mode,
+            SessionMode::Approval,
+            "the queued permission must re-surface, not be dropped"
+        );
+        match state.pending {
+            Some(Pending::Approval { ref summary, .. }) => {
+                assert_eq!(summary.as_deref(), Some("rm -rf b"))
+            }
+            other => panic!("expected Pending::Approval for perm_2, got {other:?}"),
+        }
+
+        // Answering perm_2 drains the queue → back to Responding.
+        let replied = resolve_permission(&store, sid, &mut cur_mode, &mut pending);
+        assert_eq!(replied.as_deref(), Some("perm_2"));
+        assert!(pending.is_empty());
+        assert_eq!(store.get(sid).unwrap().mode, SessionMode::Responding);
+    }
 
     #[test]
     fn idle_maps_to_idle() {

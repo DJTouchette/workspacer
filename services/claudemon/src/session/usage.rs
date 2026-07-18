@@ -176,13 +176,30 @@ fn from_transcript_value(tx: &Value) -> Option<Usage> {
 pub fn from_transcript(tx: &Transcript) -> Option<Usage> {
     let mut usage = Usage::default();
     let mut seen: HashSet<String> = HashSet::new();
-    let mut any = false;
     // 1M mode is a session-level property: once any main-thread turn exceeds the
     // 200k window the limit must stay promoted even when a later turn's context
     // is smaller (e.g. after auto-compaction). Track the high-water mark, matching
     // the TS reference's `session.peakContext`.
     let mut peak_context: u64 = 0;
+    let any = fold_transcript(tx, &mut usage, &mut seen, &mut peak_context);
+    any.then_some(usage)
+}
 
+/// Fold one transcript's assistant turns into `usage`, deduping cost by message
+/// id via the caller-owned `seen` set and tracking the caller-owned
+/// `peak_context` high-water mark. Returns whether any assistant usage block was
+/// found. Splitting this out lets [`usage_for_path`] share ONE `seen` set across
+/// the main transcript and every `subagents/*.jsonl` file, so a sub-agent turn
+/// that appears both inline (isSidechain) in the main file and in its own
+/// sidechain file is billed once — parity with desktop
+/// `analyticsBackfill.recomputeSession`, which threads a single Set.
+fn fold_transcript(
+    tx: &Transcript,
+    usage: &mut Usage,
+    seen: &mut HashSet<String>,
+    peak_context: &mut u64,
+) -> bool {
+    let mut any = false;
     for m in &tx.messages {
         if m.role != "assistant" {
             continue;
@@ -214,8 +231,8 @@ pub fn from_transcript(tx: &Transcript) -> Option<Usage> {
             if let Some(model) = row_model {
                 usage.model = Some(model.to_string());
             }
-            peak_context = peak_context.max(usage.context_tokens);
-            usage.context_limit = context_limit_for(usage.model.as_deref(), peak_context);
+            *peak_context = (*peak_context).max(usage.context_tokens);
+            usage.context_limit = context_limit_for(usage.model.as_deref(), *peak_context);
         }
 
         // Cumulative cost — once per distinct message id, at the row's own
@@ -233,8 +250,7 @@ pub fn from_transcript(tx: &Transcript) -> Option<Usage> {
         }
         usage.cost_usd += turn_cost_usd(row_model.or(usage.model.as_deref()), u);
     }
-
-    any.then_some(usage)
+    any
 }
 
 /// Compute usage for a session given its `transcript_path`. Returns a zeroed
@@ -249,10 +265,17 @@ pub fn usage_for_path(transcript_path: Option<&str>) -> Usage {
     let Some(path) = transcript_path else {
         return Usage::default();
     };
-    let mut usage = match super::transcript::read_at(path) {
-        Ok(tx) => from_transcript(&tx).unwrap_or_default(),
-        Err(_) => Usage::default(),
-    };
+    // ONE shared dedup set (and peak-context high-water mark) across the main
+    // transcript and every `subagents/*.jsonl` file: a sub-agent turn that
+    // appears both inline (isSidechain) in the main file and in its own
+    // sidechain file must be billed once, not twice — parity with the desktop
+    // analyticsBackfill.recomputeSession which threads a single Set.
+    let mut usage = Usage::default();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut peak_context: u64 = 0;
+    if let Ok(tx) = super::transcript::read_at(path) {
+        fold_transcript(&tx, &mut usage, &mut seen, &mut peak_context);
+    }
     if let Some(stem) = path.strip_suffix(".jsonl") {
         if let Ok(rd) = std::fs::read_dir(format!("{stem}/subagents")) {
             for ent in rd.flatten() {
@@ -262,9 +285,7 @@ pub fn usage_for_path(transcript_path: Option<&str>) -> Usage {
                 }
                 let Some(p) = p.to_str() else { continue };
                 if let Ok(tx) = super::transcript::read_at(p) {
-                    if let Some(side) = from_transcript(&tx) {
-                        usage.cost_usd += side.cost_usd;
-                    }
+                    fold_transcript(&tx, &mut usage, &mut seen, &mut peak_context);
                 }
             }
         }
@@ -676,6 +697,61 @@ mod tests {
         let u = usage_for_path(Some("/nonexistent/path/session.jsonl"));
         assert_eq!(u.context_tokens, 0);
         assert_eq!(u.cost_usd, 0.0);
+    }
+
+    /// idx 19: a sub-agent assistant turn that appears BOTH inline in the main
+    /// transcript (isSidechain) and in a `subagents/*.jsonl` file must be billed
+    /// once — the main fold and each subagent fold must share ONE dedup set
+    /// (parity with desktop analyticsBackfill.recomputeSession). Regression: the
+    /// daemon used a fresh `seen` per file and double-counted the echoed turn.
+    #[test]
+    fn subagent_turn_echoed_into_main_is_not_double_counted() {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!(
+            "wks-usage-dedup-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // One assistant row: opus, 1M output → $25. isSidechain so it never
+        // touches the context gauge.
+        let row = serde_json::json!({
+            "type": "assistant",
+            "isSidechain": true,
+            "message": {
+                "id": "sub-abc",
+                "model": "claude-opus-4-8",
+                "usage": {
+                    "input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "output_tokens": 1_000_000
+                }
+            }
+        });
+        let line = serde_json::to_string(&row).unwrap();
+
+        // The SAME row id lives inline in the main transcript AND in a subagent
+        // sidechain file next to it (`<stem>/subagents/agent1.jsonl`).
+        let main_path = dir.join("session.jsonl");
+        std::fs::write(&main_path, format!("{line}\n")).unwrap();
+        let sub_dir = dir.join("session").join("subagents");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+        std::fs::write(sub_dir.join("agent1.jsonl"), format!("{line}\n")).unwrap();
+
+        let u = usage_for_path(Some(main_path.to_str().unwrap()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // Shared dedup ⇒ counted ONCE ($25), not twice ($50).
+        assert!(
+            (u.cost_usd - 25.0).abs() < 1e-9,
+            "subagent turn echoed into main double-counted: cost={} (expected $25)",
+            u.cost_usd
+        );
     }
 
     // ── value-based API (same shape as wks-tui) ──────────────────────────────

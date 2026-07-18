@@ -16,7 +16,7 @@
 //!    OpenAI's wire carries no dollars).
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::SystemTime;
 
@@ -127,16 +127,40 @@ fn overrides() -> HashMap<String, ModelRates> {
         None => HashMap::new(), // no file (or unreadable) — built-ins only
         Some(_) => std::fs::read_to_string(&path)
             .ok()
-            .and_then(|s| match serde_json::from_str(&s) {
-                Ok(t) => Some(t),
-                Err(err) => {
-                    tracing::warn!(path = %path.display(), %err, "model-rates.json is invalid JSON; ignoring");
-                    None
-                }
-            })
+            .map(|s| parse_overrides(&path, &s))
             .unwrap_or_default(),
     };
     *guard = Some((mtime, table.clone()));
+    table
+}
+
+/// Parse the overrides file *per entry*, mirroring the desktop reader
+/// (`modelUsage.ts`, which does `typeof ov?.input === 'number' && ...` per
+/// entry): validate each entry on its own and skip the ones that aren't a
+/// well-formed [`ModelRates`] (missing `input`/`output`, or a non-object value
+/// such as a top-level `"_comment": "..."`). A single malformed line must not
+/// discard every valid override — that silently diverged the daemon's costs
+/// from the desktop's for every overridden model, since both consume the same
+/// `~/.workspacer/model-rates.json`.
+fn parse_overrides(path: &Path, s: &str) -> HashMap<String, ModelRates> {
+    let raw: HashMap<String, serde_json::Value> = match serde_json::from_str(s) {
+        Ok(m) => m,
+        Err(err) => {
+            tracing::warn!(path = %path.display(), %err, "model-rates.json is not a JSON object; ignoring");
+            return HashMap::new();
+        }
+    };
+    let mut table = HashMap::with_capacity(raw.len());
+    for (key, value) in raw {
+        match serde_json::from_value::<ModelRates>(value) {
+            Ok(rates) => {
+                table.insert(key, rates);
+            }
+            Err(err) => {
+                tracing::warn!(path = %path.display(), key = %key, %err, "model-rates.json entry is not a valid rate; skipping it");
+            }
+        }
+    }
     table
 }
 
@@ -165,7 +189,15 @@ fn rates_for_in(
     for (prefix, r) in user {
         // `>=` so a user entry beats the built-in of the same prefix.
         if model.starts_with(prefix.as_str()) && prefix.len() >= best_len {
-            best = Some(*r);
+            let mut merged = *r;
+            // An override that omits `context_limit` inherits the matched
+            // built-in's window (mirrors modelUsage.ts's
+            // `best?.contextLimit ?? DEFAULT`) — otherwise 1M-native models
+            // (Fable/Mythos) silently drop to usage.rs's 200k floor.
+            if merged.context_limit.is_none() {
+                merged.context_limit = best.and_then(|b| b.context_limit);
+            }
+            best = Some(merged);
             best_len = prefix.len();
         }
     }
@@ -213,6 +245,60 @@ mod tests {
             0.25
         );
         assert!(rates_for_in("gemini-3", BUILTIN, &HashMap::new()).is_none());
+    }
+
+    #[test]
+    fn user_override_without_context_limit_inherits_builtin_window() {
+        // Regression (idx 6): a Fable/Mythos override that only tweaks
+        // input/output (no `context_limit`) must NOT drop the built-in 1M
+        // window. The wholesale `best = Some(*r)` replace previously returned
+        // `context_limit: None`, which usage.rs::rates_for then floored to 200k.
+        // The TS side (modelUsage.ts ratesFor) inherits the built-in window via
+        // `best?.contextLimit ?? DEFAULT_RATES.contextLimit`; the two costing
+        // paths must agree for the same model-rates.json.
+        let mut user = HashMap::new();
+        user.insert("claude-fable".to_string(), rates(8.0, 40.0, None));
+        let r = rates_for_in("claude-fable-5", BUILTIN, &user).unwrap();
+        // Input/output come from the override.
+        assert_eq!(r.input, 8.0);
+        assert_eq!(r.output, 40.0);
+        // Context window is inherited from the 1M-native built-in, NOT dropped.
+        assert_eq!(r.context_limit, Some(1_000_000));
+    }
+
+    #[test]
+    fn malformed_entry_does_not_discard_valid_overrides() {
+        // Regression (idx 20/25): the shared ~/.workspacer/model-rates.json is
+        // read by BOTH the TS engine (modelUsage.ts) and this Rust engine. TS
+        // validates per-entry (skips only `broken`), so a valid `gpt-5-codex`
+        // override still applies. Rust must not do all-or-nothing whole-file
+        // parsing, or the same file yields different rates across the two
+        // processes. Also covers a top-level non-object value (`_comment`).
+        let json = r#"{"_comment":"my rates","gpt-5-codex":{"input":9,"output":90},"broken":{"output":5}}"#;
+        let table = parse_overrides(std::path::Path::new("model-rates.json"), json);
+
+        // The malformed / non-rate entries are skipped, not the whole file.
+        assert!(
+            !table.contains_key("broken"),
+            "malformed entry must be dropped"
+        );
+        assert!(
+            !table.contains_key("_comment"),
+            "non-object entry must be dropped"
+        );
+
+        // The good entry survives with its override rates.
+        let r = table
+            .get("gpt-5-codex")
+            .expect("valid gpt-5-codex override must be kept");
+        assert_eq!(r.input, 9.0);
+        assert_eq!(r.output, 90.0);
+
+        // End-to-end: the override actually beats the built-in 1.25/10.
+        let priced =
+            rates_for_in("gpt-5-codex", BUILTIN, &table).expect("gpt-5-codex must resolve");
+        assert_eq!(priced.input, 9.0, "override must win over built-in");
+        assert_eq!(priced.output, 90.0);
     }
 
     #[test]
