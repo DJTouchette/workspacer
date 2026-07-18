@@ -85,6 +85,70 @@ func TestAnswerOptionTypesIntoPTY(t *testing.T) {
 	}
 }
 
+// An empty answers array unmarshals to a non-nil, zero-length slice. It carries
+// no keystrokes, so claude.answer must surface the "requires one of { option,
+// text, answers }" error rather than silently returning ok while the agent's
+// question picker is left untouched. Covers idx 13.
+func TestAnswerEmptyAnswersErrors(t *testing.T) {
+	rec := newRecorder()
+	srv := rec.server()
+	defer srv.Close()
+	reg := newRegistry(newClaudemonClient(srv.URL))
+
+	if _, err := reg.handle(context.Background(), "claude.answer", []byte(`{"sessionId":"s1","answers":[]}`)); err == nil {
+		t.Fatal("empty answers array must error, not silently report success")
+	}
+	// Nothing may be typed into the PTY for an empty answer.
+	if in := rec.calls("/sessions/s1/input"); len(in) != 0 {
+		t.Fatalf("expected no input to be sent, got %+v", in)
+	}
+}
+
+// A headless stream-transport session has no PTY, so claude.answer must resolve
+// it structurally through POST /answer — never by typing keystrokes into /input
+// (which go nowhere and leave the agent hung). Mirrors the desktop's
+// transport==='stream' branch. Covers idx 15.
+func TestAnswerStreamSessionRoutesToAnswerEndpoint(t *testing.T) {
+	var mu sync.Mutex
+	var answerBody map[string]any
+	var inputCalls, answerCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/sessions/s1":
+			_ = json.NewEncoder(w).Encode(map[string]any{"session_id": "s1", "transport": "stream"})
+			return
+		case r.URL.Path == "/sessions/s1/answer":
+			mu.Lock()
+			answerCalls++
+			_ = json.NewDecoder(r.Body).Decode(&answerBody)
+			mu.Unlock()
+		case r.URL.Path == "/sessions/s1/input":
+			mu.Lock()
+			inputCalls++
+			mu.Unlock()
+		}
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	reg := newRegistry(newClaudemonClient(srv.URL))
+	if _, err := reg.handle(context.Background(), "claude.answer", []byte(`{"sessionId":"s1","option":1}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if answerCalls != 1 {
+		t.Fatalf("stream session must resolve via POST /answer, got %d /answer calls", answerCalls)
+	}
+	if inputCalls != 0 {
+		t.Fatalf("stream session has no PTY; must not type into /input, got %d input calls", inputCalls)
+	}
+	if opt, _ := answerBody["option"].(float64); opt != 1 {
+		t.Errorf("expected option 1 forwarded to /answer, got %v", answerBody["option"])
+	}
+}
+
 func TestAnswerMultiPart(t *testing.T) {
 	rec := newRecorder()
 	srv := rec.server()

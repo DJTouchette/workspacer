@@ -566,12 +566,13 @@ func (r *registry) approve(ctx context.Context, raw json.RawMessage) (json.RawMe
 	return okResult()
 }
 
-// answer drives an AskUserQuestion picker by typing into the PTY (the option
-// number, free text, or each answer of a multi-part question, followed by
-// Enter) rather than the mode-gated /answer endpoint, which requires
-// mode=Question and races with concurrent hook events. This mirrors the desktop
-// ClaudePane handleAnswer exactly, so it lands whether the picker arrived via
-// PreToolUse or mid-stream.
+// answer drives an AskUserQuestion picker. For PTY sessions it types into the
+// PTY (the option number, free text, or each answer of a multi-part question,
+// followed by Enter) rather than the mode-gated /answer endpoint, which requires
+// mode=Question and races with concurrent hook events — mirroring the desktop
+// ClaudePane handleAnswer so it lands whether the picker arrived via PreToolUse
+// or mid-stream. Headless stream-transport sessions have no PTY, so those are
+// routed through POST /answer instead (mirrors the desktop's transport branch).
 func (r *registry) answer(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p struct {
 		SessionID string   `json:"sessionId"`
@@ -585,6 +586,24 @@ func (r *registry) answer(ctx context.Context, raw json.RawMessage) (json.RawMes
 	if p.SessionID == "" {
 		return nil, fmt.Errorf("claude.answer requires { sessionId }")
 	}
+	// An empty answers array unmarshals to a non-nil, zero-length slice — it
+	// carries no keystrokes, so validate up front (len, not != nil) rather than
+	// letting it match the Answers case below and silently report success while
+	// the agent's question stays open. Mirrors hubCapabilities.ts's validation.
+	if p.Option == nil && p.Text == nil && len(p.Answers) == 0 {
+		return nil, fmt.Errorf("claude.answer requires one of { option, text, answers }")
+	}
+	// Stream-transport (headless) sessions have no PTY: typed keystrokes go
+	// nowhere. Route them structurally through POST /answer (the daemon resolves
+	// the parked AskUserQuestion over the adapter's control protocol), exactly as
+	// the desktop's claude.answer branches on transport === 'stream'. PTY sessions
+	// keep the keystroke path below.
+	if r.cm.sessionTransport(ctx, p.SessionID) == "stream" {
+		if err := r.cm.answer(ctx, p.SessionID, p.Option, p.Text, p.Answers); err != nil {
+			return nil, err
+		}
+		return okResult()
+	}
 	switch {
 	case p.Option != nil:
 		if err := r.cm.input(ctx, p.SessionID, fmt.Sprintf("%d\r", *p.Option)); err != nil {
@@ -594,7 +613,7 @@ func (r *registry) answer(ctx context.Context, raw json.RawMessage) (json.RawMes
 		if err := r.cm.input(ctx, p.SessionID, *p.Text+"\r"); err != nil {
 			return nil, err
 		}
-	case p.Answers != nil:
+	case len(p.Answers) > 0:
 		for _, a := range p.Answers {
 			if err := r.cm.input(ctx, p.SessionID, a+"\r"); err != nil {
 				return nil, err

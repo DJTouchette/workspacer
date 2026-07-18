@@ -138,8 +138,24 @@ func listSavedSessions() []sessionListEntry {
 	return out
 }
 
+// sessionFilePath joins filename onto sessionsDir but only for a plain base name
+// — anything containing a path separator or "." / ".." is rejected so a caller
+// can't escape the sessions directory via traversal (e.g. "../../etc/passwd").
+// filepath.Join runs Clean, which collapses ".." rather than blocking it, so the
+// raw client-supplied filename must be validated here.
+func sessionFilePath(filename string) (string, bool) {
+	if filename == "" || filename == "." || filename == ".." || filename != filepath.Base(filename) {
+		return "", false
+	}
+	return filepath.Join(sessionsDir(), filename), true
+}
+
 func loadSavedSession(filename string) map[string]any {
-	data, err := os.ReadFile(filepath.Join(sessionsDir(), filename))
+	path, ok := sessionFilePath(filename)
+	if !ok {
+		return nil
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
@@ -169,7 +185,11 @@ func saveSavedSession(name string, data map[string]any) (string, error) {
 }
 
 func deleteSavedSession(filename string) {
-	_ = os.Remove(filepath.Join(sessionsDir(), filename))
+	path, ok := sessionFilePath(filename)
+	if !ok {
+		return
+	}
+	_ = os.Remove(path)
 }
 
 // paneCount mirrors sessionService.listSessions: agent-centric panes if present,

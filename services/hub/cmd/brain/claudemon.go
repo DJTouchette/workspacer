@@ -300,6 +300,41 @@ func (c *claudemonClient) postRaw(ctx context.Context, path string, body any, ou
 	return nil
 }
 
+// answer resolves a parked AskUserQuestion structurally through the adapter's
+// control protocol (POST /sessions/:id/answer). This is the ONLY way to answer a
+// headless stream-transport session — it has no PTY to type into — mirroring
+// claudemonSessionClient.answer on the desktop.
+func (c *claudemonClient) answer(ctx context.Context, id string, option *int, text *string, answers []string) error {
+	body := map[string]any{}
+	if option != nil {
+		body["option"] = *option
+	}
+	if text != nil {
+		body["text"] = *text
+	}
+	if answers != nil {
+		body["answers"] = answers
+	}
+	return c.postJSON(ctx, "/sessions/"+id+"/answer", body, nil)
+}
+
+// sessionTransport reports a session's transport ("pty" | "stream") from its
+// claudemon snapshot. Any lookup/parse failure yields "" so the caller stays on
+// the default PTY keystroke path.
+func (c *claudemonClient) sessionTransport(ctx context.Context, id string) string {
+	raw, err := c.getSession(ctx, id)
+	if err != nil {
+		return ""
+	}
+	var s struct {
+		Transport string `json:"transport"`
+	}
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	return s.Transport
+}
+
 func (c *claudemonClient) approve(ctx context.Context, id, decision, reason string) error {
 	body := map[string]any{"decision": decision}
 	if reason != "" {

@@ -182,6 +182,24 @@ func (c *configService) save(partial map[string]any) map[string]any {
 			}
 		}
 	}
+	// claude.budgets is a user-owned map (sessionId -> number): when the caller
+	// sends it, it is the whole truth. Deep-merge would resurrect a cleared budget
+	// (a deleted key), so replace it wholesale instead — exactly like
+	// ui.customThemes above. Mirrors configService.saveConfig.
+	if claudePartial, ok := partial["claude"].(map[string]any); ok {
+		if b, present := claudePartial["budgets"]; present {
+			mergedClaude, _ := merged["claude"].(map[string]any)
+			if mergedClaude == nil {
+				mergedClaude = map[string]any{}
+				merged["claude"] = mergedClaude
+			}
+			if bMap, ok := b.(map[string]any); ok {
+				mergedClaude["budgets"] = bMap
+			} else {
+				mergedClaude["budgets"] = map[string]any{}
+			}
+		}
+	}
 	if c.persistBlocked {
 		// The on-disk config failed to load (unreadable or unparseable): keep
 		// the change in memory only. Writing here would replace the user's file

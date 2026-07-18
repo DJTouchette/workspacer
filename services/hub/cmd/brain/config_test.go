@@ -249,6 +249,55 @@ func TestConfigSaveReplacesCustomThemesWholesale(t *testing.T) {
 	}
 }
 
+// TestConfigSaveReplacesBudgetsWholesale proves the Go brain's save() matches
+// configService.ts: claude.budgets is a user-owned map (Record<sessionId, number>)
+// and is the whole truth when the caller sends it, so clearing a per-session
+// budget (sending the full map minus one entry, or an empty map) must actually
+// remove it. A plain deep-merge would resurrect the omitted key from the
+// cached/on-disk map, silently undoing the clear for every web/mobile/remote
+// client routed through the hub bus. Covers idx 7/16/24.
+func TestConfigSaveReplacesBudgetsWholesale(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	c := newConfigService()
+	// Seed two per-session budgets.
+	c.save(map[string]any{"claude": map[string]any{"budgets": map[string]any{
+		"sessA": float64(5),
+		"sessB": float64(10),
+	}}})
+
+	// A remote client clears sessB by sending the full budgets map minus that entry.
+	merged := c.save(map[string]any{"claude": map[string]any{"budgets": map[string]any{
+		"sessA": float64(5),
+	}}})
+
+	b := merged["claude"].(map[string]any)["budgets"].(map[string]any)
+	if _, ok := b["sessB"]; ok {
+		t.Errorf("cleared budget sessB should be gone from merged result, got %v", b)
+	}
+	if _, ok := b["sessA"]; !ok {
+		t.Errorf("sessA should survive, got %v", b)
+	}
+
+	// And it must be gone from disk too (a fresh service reading it back).
+	fresh := newConfigService().get()
+	fb := fresh["claude"].(map[string]any)["budgets"].(map[string]any)
+	if _, ok := fb["sessB"]; ok {
+		t.Errorf("cleared budget resurrected after reload from disk: %v", fb)
+	}
+	if _, ok := fb["sessA"]; !ok {
+		t.Errorf("sessA should persist to disk, got %v", fb)
+	}
+
+	// Clearing ALL budgets (empty map) must also stick.
+	merged2 := c.save(map[string]any{"claude": map[string]any{"budgets": map[string]any{}}})
+	b2 := merged2["claude"].(map[string]any)["budgets"].(map[string]any)
+	if len(b2) != 0 {
+		t.Errorf("clearing all budgets should leave an empty map, got %v", b2)
+	}
+}
+
 // TestLoadFromDiskMigratesStaleNestedChords proves the Go brain's read-time
 // migration upgrades stale nested-default chords the way the desktop's
 // migrateFlatChords does. A config that postdates the schema rewrite (has a

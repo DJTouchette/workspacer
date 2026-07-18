@@ -143,3 +143,35 @@ func TestPaneCountLegacyAndFlat(t *testing.T) {
 		t.Errorf("flat paneCount = %d, want 2", got)
 	}
 }
+
+// TestSavedSessionPathContainment proves loadSavedSession/deleteSavedSession
+// reject a client-supplied traversal filename instead of reading or removing a
+// file outside the sessions directory (filepath.Join runs Clean, which collapses
+// ".." rather than blocking it). Covers idx 14.
+func TestSavedSessionPathContainment(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	if err := os.MkdirAll(sessionsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// A secret file OUTSIDE the sessions directory (sibling of the config dir).
+	// sessionsDir() == <dir>/workspacer/sessions, so ../../ lands at <dir>.
+	secret := filepath.Join(dir, "secret.yaml")
+	if err := os.WriteFile(secret, []byte("name: secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	traversal := filepath.Join("..", "..", "secret.yaml")
+
+	// load must NOT read a file outside the sessions dir.
+	if got := loadSavedSession(traversal); got != nil {
+		t.Fatalf("loadSavedSession leaked out-of-dir file: %+v", got)
+	}
+
+	// delete must NOT remove a file outside the sessions dir.
+	deleteSavedSession(traversal)
+	if _, err := os.Stat(secret); err != nil {
+		t.Fatalf("deleteSavedSession removed out-of-dir file: %v", err)
+	}
+}
