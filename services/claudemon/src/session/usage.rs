@@ -589,12 +589,7 @@ mod tests {
     /// on every occurrence and diverges from the desktop path.
     #[test]
     fn dedup_falls_back_to_row_uuid_when_message_id_absent() {
-        fn assistant_no_id(
-            uuid: &str,
-            model: &str,
-            input: u64,
-            output: u64,
-        ) -> TranscriptMessage {
+        fn assistant_no_id(uuid: &str, model: &str, input: u64, output: u64) -> TranscriptMessage {
             TranscriptMessage {
                 role: "assistant".into(),
                 content: Value::Null,

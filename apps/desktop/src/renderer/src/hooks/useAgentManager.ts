@@ -1065,12 +1065,7 @@ export function useAgentManager() {
       if (!agent) return;
       // Closing the last pane of the last tab terminates the (non-global) agent.
       const closingTab = agent.tabs.find((t) => t.id === tabId);
-      if (
-        !agent.global &&
-        closingTab &&
-        closingTab.panes.length <= 1 &&
-        agent.tabs.length <= 1
-      ) {
+      if (!agent.global && closingTab && closingTab.panes.length <= 1 && agent.tabs.length <= 1) {
         terminateAgent(agent.id);
         return;
       }

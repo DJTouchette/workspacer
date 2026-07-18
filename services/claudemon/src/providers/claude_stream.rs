@@ -621,9 +621,8 @@ fn usage_model(model: &str) -> AgentUpdate {
 fn context_tokens_from(usage: Option<&Value>) -> Option<u64> {
     let u = usage?;
     let get = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
-    let total = get("input_tokens")
-        + get("cache_read_input_tokens")
-        + get("cache_creation_input_tokens");
+    let total =
+        get("input_tokens") + get("cache_read_input_tokens") + get("cache_creation_input_tokens");
     (total > 0).then_some(total)
 }
 
@@ -1719,11 +1718,13 @@ mod tests {
         // Before init reports capabilities: everything is prose.
         assert!(slash_command_send_item("/context", &acc).is_none());
 
-        let mut caps = Capabilities::default();
-        caps.inventory = Some(ContextInventory {
-            slash_commands: vec!["context".into(), "btw".into()],
+        let caps = Capabilities {
+            inventory: Some(ContextInventory {
+                slash_commands: vec!["context".into(), "btw".into()],
+                ..Default::default()
+            }),
             ..Default::default()
-        });
+        };
         acc.capabilities = Some(caps);
 
         match slash_command_send_item("/btw is this ready?", &acc) {
@@ -1969,11 +1970,24 @@ mod tests {
                     { "question": "Pick a color", "options": [ { "label": "Red" }, { "label": "Blue" } ] }
                 ]}
             }}),
-            &store, &conv, sid, &out_tx, &mut cur_mode, &mut acc, &mut totals,
-            &yolo, &mut pending_approvals, &mut pending_question,
-            &mut pending_controls, &mut bg_tasks_active,
+            &store,
+            &conv,
+            sid,
+            &out_tx,
+            &mut cur_mode,
+            &mut acc,
+            &mut totals,
+            &yolo,
+            &mut pending_approvals,
+            &mut pending_question,
+            &mut pending_controls,
+            &mut bg_tasks_active,
         );
-        assert_eq!(cur_mode, SessionMode::Question, "question should be displayed");
+        assert_eq!(
+            cur_mode,
+            SessionMode::Question,
+            "question should be displayed"
+        );
         assert!(pending_question.is_some(), "question should be parked");
 
         // 2) A parallel Bash approval arrives while the question is still open.
@@ -1982,22 +1996,39 @@ mod tests {
                 "subtype": "can_use_tool", "tool_name": "Bash",
                 "input": { "command": "ls" }, "tool_use_id": "tu-b"
             }}),
-            &store, &conv, sid, &out_tx, &mut cur_mode, &mut acc, &mut totals,
-            &yolo, &mut pending_approvals, &mut pending_question,
-            &mut pending_controls, &mut bg_tasks_active,
+            &store,
+            &conv,
+            sid,
+            &out_tx,
+            &mut cur_mode,
+            &mut acc,
+            &mut totals,
+            &yolo,
+            &mut pending_approvals,
+            &mut pending_question,
+            &mut pending_controls,
+            &mut bg_tasks_active,
         );
 
         // The question must survive: the approval parks silently behind it and
         // re-surfaces only once the question is answered (the arx branch).
         assert!(pending_question.is_some(), "question must stay parked");
-        assert_eq!(pending_approvals.len(), 1, "the Bash approval should be parked, not dropped");
+        assert_eq!(
+            pending_approvals.len(),
+            1,
+            "the Bash approval should be parked, not dropped"
+        );
         assert_eq!(
             cur_mode,
             SessionMode::Question,
             "a parallel approval must not overwrite the live question"
         );
         let state = store.get(sid).expect("session state");
-        assert_eq!(state.mode, SessionMode::Question, "store's displayed mode must stay Question");
+        assert_eq!(
+            state.mode,
+            SessionMode::Question,
+            "store's displayed mode must stay Question"
+        );
         assert!(
             matches!(state.pending, Some(Pending::Question { .. })),
             "store's pending slot must still hold the Question, got {:?}",

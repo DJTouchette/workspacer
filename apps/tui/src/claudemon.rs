@@ -888,17 +888,12 @@ mod tests {
         let (acc_tx, mut acc_rx) = mpsc::unbounded_channel::<Instant>();
         let server = tokio::spawn(async move {
             let mut tmp = [0u8; 1024];
-            loop {
-                match listener.accept().await {
-                    Ok((mut sock, _)) => {
-                        let _ = acc_tx.send(Instant::now());
-                        // Drain the request so the client's write completes, then
-                        // close: n == 0 on the client side => Ok(()) => reconnect.
-                        let _ = sock.read(&mut tmp).await;
-                        drop(sock);
-                    }
-                    Err(_) => break,
-                }
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let _ = acc_tx.send(Instant::now());
+                // Drain the request so the client's write completes, then
+                // close: n == 0 on the client side => Ok(()) => reconnect.
+                let _ = sock.read(&mut tmp).await;
+                drop(sock);
             }
         });
 

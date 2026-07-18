@@ -48,9 +48,8 @@ vi.mock('./systemNotice', () => ({
   notifySystem: (...a: unknown[]) => notifySystem(...a),
 }));
 
-const { startClaudemonStatusLineBridge, stopClaudemonStatusLineBridge } = await import(
-  './claudemonStatusLineBridge'
-);
+const { startClaudemonStatusLineBridge, stopClaudemonStatusLineBridge } =
+  await import('./claudemonStatusLineBridge');
 
 beforeEach(() => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});

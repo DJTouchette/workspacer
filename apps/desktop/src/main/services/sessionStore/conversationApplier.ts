@@ -220,10 +220,7 @@ export function applyConversationItems(
           .reverse()
           .find(
             (t) =>
-              t.role === 'user' &&
-              !t.command &&
-              t.content === text &&
-              t.timestamp === undefined,
+              t.role === 'user' && !t.command && t.content === text && t.timestamp === undefined,
           );
         if (echo) {
           if (ts !== undefined) echo.timestamp = ts;

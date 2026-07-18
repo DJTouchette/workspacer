@@ -105,7 +105,9 @@ describe('useSessionLifecycle — autosave dedup hash', () => {
           model,
           sessionId: 's1',
           activeTabId: 't1',
-          tabs: [{ id: 't1', title: 'Tab', activePaneId: 'p1', panes: [{ id: 'p1', type: 'terminal' }] }],
+          tabs: [
+            { id: 't1', title: 'Tab', activePaneId: 'p1', panes: [{ id: 'p1', type: 'terminal' }] },
+          ],
         },
       ] as any;
     }

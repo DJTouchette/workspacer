@@ -99,9 +99,7 @@ export class SessionUsageAccumulator {
     // stale cache would clobber those external additions (the exact 'settings
     // getting reset' the mtime gate exists to prevent).
     const fresh = configService.getConfig() as any;
-    const onDisk: string[] = Array.isArray(fresh.claude?.seenModels)
-      ? fresh.claude.seenModels
-      : [];
+    const onDisk: string[] = Array.isArray(fresh.claude?.seenModels) ? fresh.claude.seenModels : [];
     for (const m of onDisk) this.knownModels.add(m);
     configService.saveConfig({
       claude: { seenModels: Array.from(this.knownModels).sort() },

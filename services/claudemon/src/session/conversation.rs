@@ -535,7 +535,7 @@ fn strip_ansi(s: &str) -> String {
         if chars.peek() == Some(&'[') {
             chars.next();
             // CSI: parameter/intermediate bytes end at a final byte in @..=~.
-            while let Some(n) = chars.next() {
+            for n in chars.by_ref() {
                 if ('\u{40}'..='\u{7e}').contains(&n) {
                     break;
                 }

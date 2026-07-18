@@ -264,7 +264,14 @@ import { useAttention } from '../../src/contexts/AttentionContext';
 describe('Inbox tab badges match tab contents', () => {
   const now = Date.now();
   const errAgents: AgentWorkspace[] = [
-    { id: 'e1', name: 'Erroring agent', cwd: '/repo/err', sessionId: 'sess-err', tabs: [], activeTabId: '' },
+    {
+      id: 'e1',
+      name: 'Erroring agent',
+      cwd: '/repo/err',
+      sessionId: 'sess-err',
+      tabs: [],
+      activeTabId: '',
+    },
     { id: 'global', name: 'Overview', global: true, cwd: '', tabs: [], activeTabId: '' },
   ];
   const errSnapshots: Record<string, any> = {
@@ -273,7 +280,9 @@ describe('Inbox tab badges match tab contents', () => {
       ambientState: 'idle',
       conversation: [],
       activeToolCalls: [],
-      completedToolCalls: [{ id: 'c1', name: 'Bash', status: 'failed', completedAt: now, response: 'boom' }],
+      completedToolCalls: [
+        { id: 'c1', name: 'Bash', status: 'failed', completedAt: now, response: 'boom' },
+      ],
       fileChanges: [],
       subagents: [],
       workflows: [],
@@ -321,7 +330,14 @@ describe('Inbox tab badges match tab contents', () => {
 // ── idx 14: piloting auto-dismiss must cover ALL active-agent items ──
 describe('Piloting auto-dismiss ignores the inbox filter', () => {
   const bugAgents: AgentWorkspace[] = [
-    { id: 'a1', name: 'Refactor agent', cwd: '/repo/refactor', sessionId: 'sess-1', tabs: [], activeTabId: '' },
+    {
+      id: 'a1',
+      name: 'Refactor agent',
+      cwd: '/repo/refactor',
+      sessionId: 'sess-1',
+      tabs: [],
+      activeTabId: '',
+    },
     { id: 'global', name: 'Overview', global: true, cwd: '', tabs: [], activeTabId: '' },
   ];
   const workingSnap = {
@@ -342,7 +358,10 @@ describe('Piloting auto-dismiss ignores the inbox filter', () => {
     ...workingSnap,
     ambientState: 'idle',
     fileChanges: [
-      { path: 'src/App.tsx', input: { old_string: 'old\n'.repeat(90), new_string: 'new\n'.repeat(90) } },
+      {
+        path: 'src/App.tsx',
+        input: { old_string: 'old\n'.repeat(90), new_string: 'new\n'.repeat(90) },
+      },
     ],
     lastActivity: 1000,
   };
