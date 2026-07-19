@@ -26,10 +26,11 @@ func TestLibrarySeedAndList(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	items := listLibrary("")
-	if len(items) != 3 {
-		t.Fatalf("expected 3 seeded items, got %d", len(items))
+	if len(items) != 4 {
+		t.Fatalf("expected 4 seeded items, got %d", len(items))
 	}
-	// Sorted by title: "Careful refactor…", "Context7 (MCP)", "Summarize & plan".
+	// Sorted by title: "Careful refactor…", "Context7 (MCP)", "Make a workspacer
+	// plugin…", "Summarize & plan".
 	if items[0].Title != "Careful refactor (skill)" {
 		t.Errorf("not sorted by title: %q first", items[0].Title)
 	}

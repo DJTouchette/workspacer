@@ -1,9 +1,0 @@
-# Loader-owned files — the hub writes these into the plugin dir. Never commit.
-.bus-token
-.settings.json
-.install-source
-.disabled
-
-# Misc
-*.log
-.DS_Store
