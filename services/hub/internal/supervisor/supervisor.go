@@ -53,6 +53,11 @@ type Spec struct {
 	RestartWait       time.Duration // initial backoff, default 1s
 	MaxRestartWait    time.Duration // backoff cap, default 30s
 	RestartResetAfter time.Duration // healthy uptime that resets backoff, default 30s
+
+	// LogLines, if set, publishes each stdout/stderr line as a plugin.log bus
+	// event. Off by default so production `serve` never streams sidecar output;
+	// `plugin dev` turns it on so a developer can see their sidecar's logs.
+	LogLines bool
 }
 
 func (s Spec) healthPeriod() time.Duration {
@@ -89,6 +94,13 @@ type statusData struct {
 	State State  `json:"state"`
 	PID   int    `json:"pid,omitempty"`
 	Err   string `json:"err,omitempty"`
+}
+
+// logData is the payload of a plugin.log event: one line of a sidecar's output.
+type logData struct {
+	Name   string `json:"name"`
+	Stream string `json:"stream"` // "stdout" | "stderr"
+	Line   string `json:"line"`
 }
 
 // Supervisor manages one process per Spec.
@@ -183,6 +195,18 @@ func (s *Supervisor) emit(st State, pid int, errMsg string) {
 	}))
 }
 
+// emitLog publishes one line of sidecar output as a plugin.log bus event. Called
+// per newline by the per-spawn logWriter (see newLogWriter), so a developer
+// running `plugin dev` sees the sidecar's own stdout/stderr.
+func (s *Supervisor) emitLog(stream, line string) {
+	if s.pub == nil {
+		return
+	}
+	s.pub.Publish(event.New("plugin.log", "supervisor", logData{
+		Name: s.spec.Name, Stream: stream, Line: line,
+	}))
+}
+
 func (s *Supervisor) run(ctx context.Context) {
 	// Open the parent-death pipe once; reused across restarts. Best-effort — if
 	// it fails we just spawn without it (graceful stop still works via Cancel).
@@ -219,6 +243,16 @@ func (s *Supervisor) run(ctx context.Context) {
 		if s.parentR != nil {
 			cmd.Stdin = s.parentR
 		}
+		// Stream the sidecar's stdout/stderr onto the bus (dev-only). Fresh writers
+		// per spawn so a crashed child's buffered partial line never leaks into the
+		// next run's output. Left nil otherwise — Go then discards the output.
+		var outw, errw *logWriter
+		if s.spec.LogLines && s.pub != nil {
+			outw = newLogWriter(s, "stdout")
+			errw = newLogWriter(s, "stderr")
+			cmd.Stdout = outw
+			cmd.Stderr = errw
+		}
 		// Graceful stop: terminate() on cancel (SIGTERM on Unix; Kill on Windows,
 		// where Signal(SIGTERM) is unsupported and would error — leaving the
 		// sidecar running until WaitDelay), SIGKILL if it lingers.
@@ -250,6 +284,13 @@ func (s *Supervisor) run(ctx context.Context) {
 		err := cmd.Wait()
 		hcancel()
 		s.healthy.Store(false)
+		// exec waits for the stdout/stderr copier goroutines before Wait returns, so
+		// the writers are quiescent here: flush any trailing unterminated line so a
+		// child that died mid-line still gets its last words on the bus.
+		if outw != nil {
+			outw.flush()
+			errw.flush()
+		}
 
 		if ctx.Err() != nil { // we asked it to stop
 			s.setState(Stopped)

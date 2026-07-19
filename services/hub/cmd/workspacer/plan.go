@@ -23,6 +23,7 @@ type serveOptions struct {
 	PluginsDir    string // "" = hub runs without plugins
 	WebappDir     string // "" = hub falls back to $WORKSPACER_WEBAPP_DIR
 	AdvertiseHost string // host to print in client URLs (differs from Host when binding 0.0.0.0)
+	DevStreamLogs bool   // pass --plugins-stream-logs to the hub (plugin dev only)
 }
 
 // servePlan is the fully-wired launch plan: the child specs to supervise and
@@ -94,6 +95,9 @@ func buildServePlan(opts serveOptions) servePlan {
 	}
 	if opts.WebappDir != "" {
 		hubArgs = append(hubArgs, "--webapp-dir", opts.WebappDir)
+	}
+	if opts.DevStreamLogs {
+		hubArgs = append(hubArgs, "--plugins-stream-logs")
 	}
 	hub := childSpec{Name: "hub", Bin: opts.HubBin, Args: hubArgs}
 

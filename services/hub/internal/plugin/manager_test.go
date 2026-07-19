@@ -101,6 +101,67 @@ func TestManagerRemoveReturnsDir(t *testing.T) {
 	}
 }
 
+// SetStreamSidecarLogs(true) makes the manager spawn sidecars with LogLines set,
+// so each sidecar's stdout is published as a plugin.log event (what `plugin dev`
+// prints). Verified end-to-end: a real sidecar writes a known line and we see it.
+func TestManagerStreamSidecarLogs(t *testing.T) {
+	cap := newCapture()
+	m := NewManager(cap, nil)
+	m.SetStreamSidecarLogs(true)
+	m.Add(Manifest{
+		ID: "acme.logger", APIVersion: "1",
+		Server: &ServerSpec{Command: "sh", Args: []string{"-c", `printf "from-sidecar\n"; sleep 30`}},
+	})
+	defer m.Stop()
+
+	cap.waitFor(t, "plugin.loaded")
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case ev := <-cap.ch:
+			if ev.Type != "plugin.log" {
+				continue
+			}
+			var d struct{ Name, Stream, Line string }
+			if err := json.Unmarshal(ev.Data, &d); err != nil {
+				t.Fatalf("unmarshal plugin.log: %v", err)
+			}
+			if d.Name == "acme.logger" && d.Stream == "stdout" && d.Line == "from-sidecar" {
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for the sidecar's plugin.log line")
+		}
+	}
+}
+
+// With streaming off (the default), a sidecar's output is not published as
+// plugin.log — production `serve` stays quiet.
+func TestManagerNoSidecarLogsByDefault(t *testing.T) {
+	cap := newCapture()
+	m := NewManager(cap, nil)
+	m.Add(Manifest{
+		ID: "acme.quiet", APIVersion: "1",
+		Server: &ServerSpec{Command: "sh", Args: []string{"-c", `printf "from-sidecar\n"; sleep 30`}},
+	})
+	defer m.Stop()
+
+	// Wait for the sidecar to be running so its output has been produced, then
+	// assert no plugin.log ever appears within a short window.
+	cap.waitFor(t, "sidecar.running")
+	deadline := time.After(300 * time.Millisecond)
+	for {
+		select {
+		case ev := <-cap.ch:
+			if ev.Type == "plugin.log" {
+				t.Fatalf("plugin.log published with streaming off: %s", string(ev.Data))
+			}
+		case <-deadline:
+			return
+		}
+	}
+}
+
 // A plugin WITH a server gets a real supervised sidecar.
 func TestManagerSpawnsSidecar(t *testing.T) {
 	cap := newCapture()

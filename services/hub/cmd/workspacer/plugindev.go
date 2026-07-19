@@ -18,12 +18,11 @@ package main
 //     developer sees crashes/health, since the sidecar supervisor logs those to
 //     the bus, not to the hub's stderr.
 //
-// LIMITATION: the plugin sidecar's own stdout/stderr is captured by the hub's
-// supervisor and not forwarded here — wiring that through would mean threading a
-// log sink from the supervisor out over the bus, which is invasive. The dev loop
-// instead relies on the plugin.*/sidecar.* lifecycle+health events (subscribed
-// below) plus the [hub]-prefixed hub logs. Full sidecar log streaming is a
-// deliberate stretch goal left for later.
+// The plugin sidecar's own stdout/stderr is also streamed here in dev mode: the
+// stack is booted with --plugins-stream-logs (opts.DevStreamLogs), so the hub's
+// supervisor publishes each output line as a plugin.log bus event, which the
+// bus subscription below prints as "[<plugin>] <line>". Plain `serve` leaves the
+// flag off, so production never pays for the bus log traffic.
 
 import (
 	"context"
@@ -116,6 +115,7 @@ func runPluginDev(args []string) int {
 		return 1
 	}
 	opts.PluginsDir = tmp
+	opts.DevStreamLogs = true // stream the sidecar's stdout/stderr to the dev loop
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -382,6 +382,24 @@ func watchBusEvents(ctx context.Context, hubBase, token string, logw io.Writer) 
 		}
 		ev := f.Event
 		ts := time.Now().Format("15:04:05")
+		// A sidecar log line: print it as the sidecar wrote it (prefixed with the
+		// plugin name), not as a raw bus envelope — this is the sidecar's own
+		// stdout/stderr streamed through by the supervisor (Spec.LogLines).
+		if ev.Type == "plugin.log" {
+			var l struct {
+				Name   string `json:"name"`
+				Stream string `json:"stream"`
+				Line   string `json:"line"`
+			}
+			if err := json.Unmarshal(ev.Data, &l); err == nil {
+				marker := l.Name
+				if l.Stream == "stderr" {
+					marker += " err"
+				}
+				fmt.Fprintf(logw, "[%s] %s\n", marker, l.Line)
+				continue
+			}
+		}
 		if len(ev.Data) > 0 {
 			fmt.Fprintf(logw, "[plugin-dev %s] bus %s (from %s): %s\n", ts, ev.Type, ev.Source, string(ev.Data))
 		} else {

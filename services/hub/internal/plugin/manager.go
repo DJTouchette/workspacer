@@ -133,6 +133,11 @@ type Manager struct {
 	// the hub from WORKSPACER_PLUGIN_SANDBOX.
 	sandboxMode sandbox.Mode
 
+	// Whether each sidecar's stdout/stderr is streamed line-by-line onto the bus
+	// as plugin.log events. Off by default (production `serve`); the hub turns it
+	// on for `workspacer plugin dev` so the developer sees their sidecar's logs.
+	streamSidecarLogs bool
+
 	// Serializes the read-modify-write of a plugin's persisted settings overlay
 	// (settings.go) so concurrent SetSettings calls can't lose an update or read a
 	// torn file. Separate from mu so settings IO never blocks pane-token / lifecycle
@@ -163,6 +168,15 @@ func NewManager(pub Publisher, reg TokenRegistrar) *Manager {
 func (m *Manager) SetSandboxMode(mode sandbox.Mode) {
 	m.mu.Lock()
 	m.sandboxMode = mode
+	m.mu.Unlock()
+}
+
+// SetStreamSidecarLogs toggles publishing each sidecar's stdout/stderr line as a
+// plugin.log bus event. The hub enables it for `workspacer plugin dev`; plain
+// `serve` leaves it off. Call before loading plugins.
+func (m *Manager) SetStreamSidecarLogs(v bool) {
+	m.mu.Lock()
+	m.streamSidecarLogs = v
 	m.mu.Unlock()
 }
 
@@ -364,6 +378,9 @@ func (m *Manager) Add(mf Manifest) {
 		// sidecar is not started.
 		cmd, cmdArgs, run := m.sandboxSidecar(mf)
 		if run {
+			m.mu.Lock()
+			logLines := m.streamSidecarLogs
+			m.mu.Unlock()
 			l.sup = supervisor.New(supervisor.Spec{
 				Name:      mf.ID,
 				Command:   cmd,
@@ -371,6 +388,7 @@ func (m *Manager) Add(mf Manifest) {
 				Dir:       mf.Dir, // run the sidecar in its own plugin directory
 				Env:       env,
 				HealthURL: healthURL(mf.Server),
+				LogLines:  logLines,
 			}, m.pub)
 			l.sup.Start()
 		}

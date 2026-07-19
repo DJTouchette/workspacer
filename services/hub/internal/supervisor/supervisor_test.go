@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -159,6 +160,76 @@ func TestRestartBackoffResetsAfterHealthyUptime(t *testing.T) {
 	// ~2x base beyond the first. Assert they stay within a tight band.
 	if gaps[1] > gaps[0]*2 {
 		t.Fatalf("backoff should have reset after healthy uptime; gaps %v then %v", gaps[0], gaps[1])
+	}
+}
+
+// waitForLog waits for a plugin.log event on the given stream carrying the given
+// line, draining other events. It fails the test on timeout.
+func (c *capture) waitForLog(t *testing.T, stream, line string) {
+	t.Helper()
+	timeout := time.After(3 * time.Second)
+	for {
+		select {
+		case ev := <-c.ch:
+			if ev.Type != "plugin.log" {
+				continue
+			}
+			var d logData
+			if err := json.Unmarshal(ev.Data, &d); err != nil {
+				t.Fatalf("unmarshal plugin.log: %v", err)
+			}
+			if d.Stream == stream && d.Line == line {
+				return
+			}
+		case <-timeout:
+			t.Fatalf("timed out waiting for plugin.log stream=%q line=%q", stream, line)
+		}
+	}
+}
+
+// With LogLines set, a sidecar's stdout/stderr is published line-by-line as
+// plugin.log events (this is what `workspacer plugin dev` prints).
+func TestLogLinesStreamsOutput(t *testing.T) {
+	cap := newCapture()
+	s := New(Spec{
+		Name:     "logger",
+		Command:  "sh",
+		Args:     []string{"-c", `printf "hello\n"; printf "oops\n" 1>&2`},
+		LogLines: true,
+	}, cap)
+	s.Start()
+	defer s.Stop()
+
+	cap.waitForLog(t, "stdout", "hello")
+	cap.waitForLog(t, "stderr", "oops")
+}
+
+// Without LogLines, no plugin.log events are published — production `serve` must
+// not stream sidecar output onto the bus.
+func TestLogLinesOffPublishesNothing(t *testing.T) {
+	cap := newCapture()
+	s := New(Spec{
+		Name:    "quiet",
+		Command: "sh",
+		Args:    []string{"-c", `printf "hello\n"; printf "oops\n" 1>&2`},
+		// LogLines defaults to false.
+	}, cap)
+	s.Start()
+
+	// The child exits immediately; wait for it to run then stop so all its output
+	// has been processed before we assert nothing was logged.
+	cap.waitFor(t, "sidecar.running")
+	s.Stop()
+
+	for {
+		select {
+		case ev := <-cap.ch:
+			if ev.Type == "plugin.log" {
+				t.Fatalf("plugin.log published with LogLines off: %s", string(ev.Data))
+			}
+		default:
+			return // drained the buffer, no plugin.log seen
+		}
 	}
 }
 
