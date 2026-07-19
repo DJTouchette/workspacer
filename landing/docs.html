@@ -123,7 +123,7 @@
 <p>work{spacer} is a local-first control plane and IDE for coding agents: a place to run many long-lived agent sessions side by side, watch every one of them, and review and ship the code they write. You run it on your own machine. Nothing here is a hosted service.</p>
 <h3>the problem</h3>
 <p>One <code>claude</code> session is easy. You sit in the terminal it runs in and watch it. That breaks the moment you have more than one going at once. Tabbing between terminals, you lose track of which agent is working, which one is blocked on an approval, and which one finished ten minutes ago and is sitting idle. You can't babysit a whole fleet at the same time, and most of the switching you do doesn't pay off.</p>
-<p>work{spacer} keeps the ambient state of every agent in front of you so you only switch when it's worth it. The sidebar shows a per-agent state dot, context %, and token/cost, with an "N need you / N working" header. A Triage Inbox drawer collects the approvals and questions waiting on you across all agents, and you can jump straight to the next agent that needs you. OS notifications fire on needs-approval / needs-input (and optionally on done), suppressed for the agent you're already watching. The point is to make switching a decision you make, not a thing you do constantly out of fear of missing something.</p>
+<p>work{spacer} keeps the ambient state of every agent in front of you so you only switch when it's worth it. The sidebar is a live activity feed: each agent is a card showing its state, its latest actions, the message it's working on, and context % and token/cost readouts, with an "N need you / N working" header on top and a RECENT list of resumable past sessions below the fleet. A Triage Inbox drawer collects the approvals and questions waiting on you across all agents, and you can jump straight to the next agent that needs you. OS notifications fire on needs-approval / needs-input (and optionally on done), suppressed for the agent you're already watching. The point is to make switching a decision you make, not a thing you do constantly out of fear of missing something.</p>
 <h3>the mental model</h3>
 <p>The core unit is the agent workspace:</p>
 <ul>
@@ -148,7 +148,7 @@
 <h2>getting started</h2>
 <p>This walks through a first run: get the app, spawn your first agent, and find your way around. Building from source and packaging are covered on the <a href="build.html">build &amp; internals</a> page.</p>
 <h3>install and launch</h3>
-<p>Install the desktop app and open it. On first launch it starts its background daemons for you, wires Claude's hooks into <code>~/.claude/settings.json</code> automatically (that's how the live conversation view, state dots, and approval forwarding light up), and, if there's nothing to restore, shows the <strong>session picker</strong>, your list of saved sessions, with "new session" to start clean.</p>
+<p>Install the desktop app and open it. On first launch it starts its background daemons for you, wires Claude's hooks into <code>~/.claude/settings.json</code> automatically (that's how the live conversation view, state dots, and approval forwarding light up), and restores your most recent workspace automatically — agents, tabs, and panes come back exactly where you left them. A brand-new install just starts clean: spawn your first agent.</p>
 <p>For a machine with no desktop at all, each release also ships a standalone headless server (<code>workspacer-server-&lt;os&gt;-&lt;arch&gt;</code>): extract it and run <code>./workspacer serve</code>, then connect from your phone, another PC, or the terminal app (see <a href="#remote">remote and multi-client</a>). The desktop app bundles the same <code>workspacer</code> CLI — put it on your PATH with "Install workspacer Command" in the command palette, or Settings → Command Line.</p>
 <p>One concept to keep in mind from the start: <strong>your window is disposable</strong>. Agents run in the background session daemon, not in the window. Close work{spacer}, your agents keep working; reopen it (or the terminal app, or your phone) and you reconnect to the same live sessions. The cockpit is detachable from the planes.</p>
 <h3>spawn your first agent</h3>
@@ -359,7 +359,7 @@
 <p>It unifies these categories into one list:</p>
 <ul>
 <li><strong>actions</strong>: New Claude Code, New Terminal, New Browser, Review Changes, Notes, Library.</li>
-<li><strong>commands</strong>: toggles and dialogs (Layouts, Manage Plugins, Install Plugin, Switch session, and more).</li>
+<li><strong>commands</strong>: toggles and dialogs (Layouts, Manage Plugins, Install Plugin, Save session, and more).</li>
 <li><strong>apps</strong>: your custom app launcher entries (see below).</li>
 <li><strong>plugins</strong>: panes contributed by installed plugins.</li>
 <li><strong>library</strong>: your reusable prompts and skills, fired straight into a session.</li>
@@ -409,13 +409,11 @@
 <p>Beyond the built-ins there's a <strong>theme maker</strong> (Settings ▸ Appearance): start from any built-in, edit the tokens, and save it as a custom theme. Custom themes live in config under <code>ui.customThemes</code>, keyed as <code>custom:&lt;slug&gt;</code>, and are selectable like any built-in.</p>
 <h3>layout templates</h3>
 <p>Save and restore named arrangements of directories plus panes. Open via the command palette ("Layouts…") or the Layouts dialog. "Save current" captures your non-global agents (their cwds and panes) under a name. Restoring a layout spawns fresh agents for its directories, so a template is a reusable starting point, not a live snapshot of running sessions. Backed by <code>layoutsSave</code> / <code>layoutsList</code> / <code>layoutsDelete</code>.</p>
-<h3>session save and restore</h3>
-<p>Your whole session (agents and their tabs) is saved and can be brought back on launch.</p>
-<ul>
-<li><strong>auto-resume</strong>: Settings ▸ Session ▸ "Restore my last session on launch" (<code>config.session.autoResume</code>). When on, the most recent session reopens straight away. The shipped default is off, which means startup shows the <strong>session picker</strong> instead.</li>
-<li><strong>session picker</strong>: lists saved sessions with name, age ("5m ago"), and pane/agent counts, with resume / new / delete. The picker is also the crash-recovery and switch path: open it mid-session from the command palette ("Switch session"), where it's dismissable (Esc or Cancel returns you to the running app). Old session files are migrated forward on load.</li>
-</ul>
-<p>Sessions live in the daemons, not the window, so agents keep running across window restarts. On launch, if the hub already had a shared layout, work{spacer} mirrors that and skips the local picker.</p>
+<h3>workspace restore and past sessions</h3>
+<p>There is one workspace, and it takes care of itself. Your arrangement (agents, tabs, panes) is saved continuously — on every layout change and again on quit — and the next launch restores it automatically. There is nothing to name, save, or pick; crash recovery is just the normal boot path. (Old named-session files from previous versions restore under their own name and keep working.)</p>
+<p>Conversations you closed are never lost. The session daemon keeps every agent session — Claude, Codex, OpenCode, and Pi — as a resumable record, and any that aren't part of your current layout show up in the sidebar's <strong>RECENT</strong> list: the agent's name, a provider dot, and how long ago it last ran. Click one and it comes back as a full agent, resuming the prior conversation with its folder, backend, and (for Claude) transport and model. Sessions idle for more than a week leave the daemon's default list but stay resumable.</p>
+<p><a href="shots/sidebar-recent.webp" target="_blank"><img src="shots/sidebar-recent.webp" width="300" height="590" loading="lazy" style="max-width:300px;width:100%;height:auto;border:1px solid #2a3134;border-radius:10px" alt="The sidebar: live agent cards on top, and the RECENT list of resumable past sessions below" /></a></p>
+<p>Sessions live in the daemons, not the window, so agents keep running across window restarts. On launch, if the hub already had a shared layout, work{spacer} mirrors that instead — it's the shared copy of the same workspace.</p>
 <h3>custom app launcher</h3>
 <p>Define your own external app/site shortcuts in Settings ▸ Apps (<code>config.apps</code>). Each entry is a <code>name</code>, a <code>url</code>, and an optional <code>icon</code> (an emoji, or an <code>http(s)</code> URL that renders as a favicon image). They show up as launchable items in the command palette under the apps category, opening in a browser pane (app-mode webview).</p>
 </section>
@@ -617,7 +615,6 @@ workspacer token revoke &lt;token-or-prefix&gt;</code></pre>
 <li><strong>agents</strong>: <code>defaultProvider</code>, <code>defaultCwd</code>, and per-provider <code>binaries</code> overrides for the spawn dialog.</li>
 <li><strong>supervisor</strong>: <code>model: ''</code> (app default), <code>summarizerModel: sonnet</code>, <code>pollSeconds: 45</code>.</li>
 <li><strong>editor</strong>: <code>engine: codemirror</code> (<code>codemirror</code> | <code>terminal</code>), <code>terminalCommand: nvim</code> (the file path is appended as the last arg), optional <code>vim: true</code> for CodeMirror.</li>
-<li><strong>session</strong>: <code>autoResume: false</code> (restore the most recent session on launch, skipping the picker).</li>
 <li><strong>updates</strong>: <code>enabled</code> / <code>channel</code> for the app's update check (Settings ▸ Updates).</li>
 <li><strong>directories</strong>: <code>recent</code> / <code>favourites</code> lists surfaced in the Overview pane.</li>
 <li><strong>scripts</strong>: per-directory script buttons keyed by normalized cwd.</li>
@@ -678,7 +675,7 @@ claudemon init --hook-port 8888 # match a non-default hook port</code></pre>
 <ul>
 <li><strong>Library</strong> items live as Markdown under <code>library/</code> in the config dir. The app also reads project-scoped items: <code>&lt;cwd&gt;/.workspacer/library</code>, and Claude's own <code>&lt;cwd&gt;/.claude/skills</code> and <code>&lt;cwd&gt;/.claude/agents</code>.</li>
 <li><strong>Analytics</strong> history is a SQLite database at <code>workspacer.db</code> in the config dir, one upserted row per session (model, cost, tokens, tools, branch), powering the Analytics and Overview panes.</li>
-<li><strong>Sessions</strong> are saved as <code>.yaml</code> files under <code>sessions/</code>; with <code>session.autoResume: true</code> the most recent one is restored on launch.</li>
+<li><strong>Workspace</strong> layouts are saved as <code>.yaml</code> files under <code>sessions/</code>; the most recent one is restored on launch.</li>
 </ul>
 </section>
     <div class="foot">work{spacer} :: local-first control plane for coding agents :: open source (MIT)</div>
