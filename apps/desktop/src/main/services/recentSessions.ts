@@ -68,14 +68,12 @@ export async function listRecentSessions(): Promise<RecentAgentSession[]> {
     if (!res.ok) return [];
     const rows = (await res.json()) as DaemonSessionRow[];
     if (!Array.isArray(rows)) return [];
-    const names = sessionHistory
-      .recent(500)
-      .map((rec) => ({
-        sessionId: rec.sessionId,
-        agentName: rec.agentName,
-        model: rec.model,
-        costUSD: rec.costUSD,
-      }));
+    const names = sessionHistory.recent(500).map((rec) => ({
+      sessionId: rec.sessionId,
+      agentName: rec.agentName,
+      model: rec.model,
+      costUSD: rec.costUSD,
+    }));
     return mergeRecentSessions(rows, names);
   } catch {
     return [];

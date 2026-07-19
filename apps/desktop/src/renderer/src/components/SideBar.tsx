@@ -1258,7 +1258,8 @@ const SideBar: React.FC<SideBarProps> = ({
             {recentSessions!.map((s) => {
               const provider = (s.provider || 'claude') as AgentProvider;
               const hue = PROVIDER_HUE[provider] ?? 'var(--wks-accent, #4a9eff)';
-              const name = s.name || s.cwd.split('/').filter(Boolean).pop() || s.sessionId.slice(0, 8);
+              const name =
+                s.name || s.cwd.split('/').filter(Boolean).pop() || s.sessionId.slice(0, 8);
               const age = s.updatedAt ? relTime(Date.now() - s.updatedAt) : '';
               return (
                 <div

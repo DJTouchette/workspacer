@@ -33,7 +33,10 @@ describe('mergeRecentSessions', () => {
   });
 
   it("treats a legacy empty provider as 'claude'", () => {
-    const out = mergeRecentSessions([row({ provider: '' }), row({ session_id: 's2', provider: 'codex' })], []);
+    const out = mergeRecentSessions(
+      [row({ provider: '' }), row({ session_id: 's2', provider: 'codex' })],
+      [],
+    );
     expect(out.map((s) => s.provider).sort()).toEqual(['claude', 'codex']);
   });
 
