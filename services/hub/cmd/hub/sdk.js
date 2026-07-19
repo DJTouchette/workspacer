@@ -25,6 +25,7 @@
   var pending = new Map(); // call id (string) -> { resolve, reject }
   var handlers = new Map(); // event type -> Set<fn(data, event)>
   var settingsHandlers = new Set(); // fn(settings)
+  var statusHandlers = new Set(); // fn(connected)
   var backoff = 500; // ms, doubles to a cap on each failed (re)connect
   var readyResolved = false;
   var readyResolve;
@@ -47,6 +48,7 @@
     publish: publish,
     on: on,
     onSettings: onSettings,
+    onStatus: onStatus,
   };
 
   function pluginId() {
@@ -108,6 +110,28 @@
     return function off() {
       settingsHandlers.delete(handler);
     };
+  }
+
+  // onStatus(handler) -> off(). Fires handler(connected) with true on every ws
+  // open and false on every ws close (including reconnect cycles), so a plugin
+  // can reflect live connect/disconnect. Kept separate from on(type, ...) so the
+  // bus event-type space isn't polluted. Returns an idempotent unsubscribe.
+  function onStatus(handler) {
+    if (typeof handler !== "function") return function () {};
+    statusHandlers.add(handler);
+    return function off() {
+      statusHandlers.delete(handler);
+    };
+  }
+
+  function fireStatus(connected) {
+    statusHandlers.forEach(function (h) {
+      try {
+        h(connected);
+      } catch (e) {
+        /* a broken handler must not kill the status fan-out */
+      }
+    });
   }
 
   function fire(type, ev) {
@@ -214,6 +238,7 @@
         readyResolved = true;
         readyResolve();
       }
+      fireStatus(true);
     };
     ws.onmessage = function (e) {
       onMessage(e.data);
@@ -221,6 +246,7 @@
     ws.onclose = function () {
       api.connected = false;
       rejectPending("workspacer: connection closed");
+      fireStatus(false);
       scheduleReconnect();
     };
     ws.onerror = function () {

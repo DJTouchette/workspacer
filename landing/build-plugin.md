@@ -85,7 +85,7 @@ let settings = window.workspacer.settings;
 window.workspacer.onSettings((next) => { settings = next; });
 ```
 
-> **Plugin SDK.** The hub serves `/plugins/sdk.js` and injects `<script src="/plugins/sdk.js"></script>` (plus `window.__WKS_PLUGIN_ID__` and `window.__WKS_SETTINGS__`) into every webview's HTML, so `window.workspacer` is present with no setup. It stays fully inside the manifest sandbox: the SDK subscribes to `*` under the hood, but **delivery is still capability-scoped** — `on(type)` only fires for events you listed in `consumes`, and `call(method)` only works for methods you listed in `capabilities`. It is a convenience wrapper over the bus, not a way around it. `window.workspacer` also exposes `.connected`, `.token`, and `.url` if you need the raw connection.
+> **Plugin SDK.** The hub serves `/plugins/sdk.js` and injects `<script src="/plugins/sdk.js"></script>` (plus `window.__WKS_PLUGIN_ID__` and `window.__WKS_SETTINGS__`) into every webview's HTML, so `window.workspacer` is present with no setup. It stays fully inside the manifest sandbox: the SDK subscribes to `*` under the hood, but **delivery is still capability-scoped** — `on(type)` only fires for events you listed in `consumes`, and `call(method)` only works for methods you listed in `capabilities`. It is a convenience wrapper over the bus, not a way around it. `window.workspacer` also exposes a live `.connected` boolean (true while the socket is up), `onStatus(connected => …)` to react to every connect/disconnect (including reconnect cycles), plus `.token` and `.url` if you need the raw connection.
 
 Style the page with the injected `--wks-*` theme tokens (with fallbacks, e.g. `background: var(--wks-bg-base, #1a1a1a)`) so it matches the app. The host re-injects them on every live theme switch, and also exposes `window.__WKS_THEME__` + a `wks-theme` event for canvas UIs.
 
@@ -164,14 +164,16 @@ function readSettings() {
   }
 }
 
-// connect() -> { ready, call, publish, on, settings } — mirrors window.workspacer.
+// connect() -> { ready, connected, call, publish, on, onStatus, settings } — mirrors window.workspacer.
 function connect(opts = {}) {
   const url = opts.url || 'ws://127.0.0.1:7895/bus';
   const source = opts.source || 'sidecar';
   const listeners = new Map(); // type -> Set(cb)
   const pending = new Map(); // id -> { resolve, reject }
+  const statusListeners = new Set(); // cb(connected)
   let ws = null;
   let seq = 1;
+  let connected = false;
   let settings = readSettings();
   let markReady;
   const ready = new Promise((r) => {
@@ -185,11 +187,17 @@ function connect(opts = {}) {
     }
   };
 
+  const fireStatus = (c) => {
+    for (const cb of statusListeners) try { cb(c); } catch {}
+  };
+
   const open = () => {
     ws = new WebSocket(`${url}?token=${encodeURIComponent(readToken())}`);
     ws.addEventListener('open', () => {
+      connected = true;
       ws.send(JSON.stringify({ op: 'subscribe', topics: ['*'] }));
       markReady();
+      fireStatus(true);
     });
     ws.addEventListener('message', (ev) => {
       let f;
@@ -209,7 +217,11 @@ function connect(opts = {}) {
         pending.delete(f.id);
       }
     });
-    ws.addEventListener('close', () => setTimeout(open, 1000)); // reconnect loop
+    ws.addEventListener('close', () => {
+      connected = false;
+      fireStatus(false);
+      setTimeout(open, 1000); // reconnect loop
+    });
     ws.addEventListener('error', () => {
       try {
         ws.close();
@@ -220,6 +232,9 @@ function connect(opts = {}) {
 
   return {
     ready,
+    get connected() {
+      return connected;
+    },
     get settings() {
       return settings;
     },
@@ -238,13 +253,17 @@ function connect(opts = {}) {
       listeners.get(type).add(cb);
       return () => listeners.get(type)?.delete(cb);
     },
+    onStatus(cb) {
+      statusListeners.add(cb);
+      return () => statusListeners.delete(cb);
+    },
   };
 }
 
 module.exports = { connect };
 ```
 
-Your `server.js` then reads like the webview client — the same `ready` / `on` / `call` / `publish` / `settings` surface (the bus enforces your manifest either way):
+Your `server.js` then reads like the webview client — the same `ready` / `on` / `call` / `publish` / `settings` surface, and it mirrors the live connection status too (`.connected` and `onStatus(connected => …)`, firing on every drop and reconnect), so a sidecar can track the bus the same way a webview does (the bus enforces your manifest either way):
 
 ```js
 // server.js

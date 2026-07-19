@@ -187,7 +187,7 @@ window.workspacer.publish('command.focus_agent', { sessionId: agents[0]?.session
 // typed settings, delivered live
 let settings = window.workspacer.settings;
 window.workspacer.onSettings((next) =&gt; { settings = next; });</code></pre>
-<div class="callout"><strong>Plugin SDK.</strong> The hub serves <code>/plugins/sdk.js</code> and injects <code>&lt;script src="/plugins/sdk.js"&gt;&lt;/script&gt;</code> (plus <code>window.__WKS_PLUGIN_ID__</code> and <code>window.__WKS_SETTINGS__</code>) into every webview's HTML, so <code>window.workspacer</code> is present with no setup. It stays fully inside the manifest sandbox: the SDK subscribes to <code>*</code> under the hood, but <strong>delivery is still capability-scoped</strong> — <code>on(type)</code> only fires for events you listed in <code>consumes</code>, and <code>call(method)</code> only works for methods you listed in <code>capabilities</code>. It is a convenience wrapper over the bus, not a way around it. <code>window.workspacer</code> also exposes <code>.connected</code>, <code>.token</code>, and <code>.url</code> if you need the raw connection.</div>
+<div class="callout"><strong>Plugin SDK.</strong> The hub serves <code>/plugins/sdk.js</code> and injects <code>&lt;script src="/plugins/sdk.js"&gt;&lt;/script&gt;</code> (plus <code>window.__WKS_PLUGIN_ID__</code> and <code>window.__WKS_SETTINGS__</code>) into every webview's HTML, so <code>window.workspacer</code> is present with no setup. It stays fully inside the manifest sandbox: the SDK subscribes to <code>*</code> under the hood, but <strong>delivery is still capability-scoped</strong> — <code>on(type)</code> only fires for events you listed in <code>consumes</code>, and <code>call(method)</code> only works for methods you listed in <code>capabilities</code>. It is a convenience wrapper over the bus, not a way around it. <code>window.workspacer</code> also exposes a live <code>.connected</code> boolean (true while the socket is up), <code>onStatus(connected =&gt; …)</code> to react to every connect/disconnect (including reconnect cycles), plus <code>.token</code> and <code>.url</code> if you need the raw connection.</div>
 <p>Style the page with the injected <code>--wks-*</code> theme tokens (with fallbacks, e.g. <code>background: var(--wks-bg-base, #1a1a1a)</code>) so it matches the app. The host re-injects them on every live theme switch, and also exposes <code>window.__WKS_THEME__</code> + a <code>wks-theme</code> event for canvas UIs.</p>
 <h3>4. load it</h3>
 <p>Drop <code>my-hello/</code> into your plugins dir (in the app: <code>&lt;configDir&gt;/plugins</code>; in dev: whatever you passed to <code>--plugins-dir</code>). The hub scans it, validates the manifest, and emits <code>plugin.loaded</code>; the renderer registers your pane and hotkey. Open it with <code>Ctrl+Shift+H</code> or from the command palette.</p>
@@ -249,14 +249,16 @@ function readSettings() {
   }
 }
 
-// connect() -&gt; { ready, call, publish, on, settings } — mirrors window.workspacer.
+// connect() -&gt; { ready, connected, call, publish, on, onStatus, settings } — mirrors window.workspacer.
 function connect(opts = {}) {
   const url = opts.url || 'ws://127.0.0.1:7895/bus';
   const source = opts.source || 'sidecar';
   const listeners = new Map(); // type -&gt; Set(cb)
   const pending = new Map(); // id -&gt; { resolve, reject }
+  const statusListeners = new Set(); // cb(connected)
   let ws = null;
   let seq = 1;
+  let connected = false;
   let settings = readSettings();
   let markReady;
   const ready = new Promise((r) =&gt; {
@@ -270,11 +272,17 @@ function connect(opts = {}) {
     }
   };
 
+  const fireStatus = (c) =&gt; {
+    for (const cb of statusListeners) try { cb(c); } catch {}
+  };
+
   const open = () =&gt; {
     ws = new WebSocket(`${url}?token=${encodeURIComponent(readToken())}`);
     ws.addEventListener('open', () =&gt; {
+      connected = true;
       ws.send(JSON.stringify({ op: 'subscribe', topics: ['*'] }));
       markReady();
+      fireStatus(true);
     });
     ws.addEventListener('message', (ev) =&gt; {
       let f;
@@ -294,7 +302,11 @@ function connect(opts = {}) {
         pending.delete(f.id);
       }
     });
-    ws.addEventListener('close', () =&gt; setTimeout(open, 1000)); // reconnect loop
+    ws.addEventListener('close', () =&gt; {
+      connected = false;
+      fireStatus(false);
+      setTimeout(open, 1000); // reconnect loop
+    });
     ws.addEventListener('error', () =&gt; {
       try {
         ws.close();
@@ -305,6 +317,9 @@ function connect(opts = {}) {
 
   return {
     ready,
+    get connected() {
+      return connected;
+    },
     get settings() {
       return settings;
     },
@@ -323,11 +338,15 @@ function connect(opts = {}) {
       listeners.get(type).add(cb);
       return () =&gt; listeners.get(type)?.delete(cb);
     },
+    onStatus(cb) {
+      statusListeners.add(cb);
+      return () =&gt; statusListeners.delete(cb);
+    },
   };
 }
 
 module.exports = { connect };</code></pre>
-<p>Your <code>server.js</code> then reads like the webview client — the same <code>ready</code> / <code>on</code> / <code>call</code> / <code>publish</code> / <code>settings</code> surface (the bus enforces your manifest either way):</p>
+<p>Your <code>server.js</code> then reads like the webview client — the same <code>ready</code> / <code>on</code> / <code>call</code> / <code>publish</code> / <code>settings</code> surface, and it mirrors the live connection status too (<code>.connected</code> and <code>onStatus(connected =&gt; …)</code>, firing on every drop and reconnect), so a sidecar can track the bus the same way a webview does (the bus enforces your manifest either way):</p>
 <pre><code>// server.js
 const { connect } = require('./wks.js');
 const wks = connect();
