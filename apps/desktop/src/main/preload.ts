@@ -12,6 +12,7 @@ import type {
   GitLogEntry,
   RemoteTokenRecord,
   RemoteTokenScope,
+  RecentAgentSession,
 } from './shared/ipcTypes';
 
 // ── MessagePort storage (preload isolated world) ──
@@ -323,6 +324,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cwd: string,
   ): Promise<{ sessionId: string; timestamp: string; summary: string }[]> =>
     ipcRenderer.invoke(IPC.CLAUDE_SESSIONS_LIST_FOR_DIR, cwd),
+
+  listRecentAgentSessions: (): Promise<RecentAgentSession[]> =>
+    ipcRenderer.invoke(IPC.CLAUDE_SESSIONS_RECENT),
 
   // Claude profiles
   claudeProfilesList: (): Promise<ProfileUpdate[]> => ipcRenderer.invoke(IPC.CLAUDE_PROFILES_LIST),

@@ -363,6 +363,9 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
       client
         .call<ClaudeSessionSnapshot[]>('sessions.snapshots', {})
         .then((list) => (list || []).map(foldSparse)),
+    // No hub-bus cap for the daemon's full session list yet — the web client
+    // simply shows no RECENT section until one exists.
+    listRecentAgentSessions: () => Promise.resolve([]),
     onClaudeSessionUpdate: (callback) =>
       client.subscribe('agent.snapshot', (ev) => {
         const snap = ev.data as ClaudeSessionSnapshot | undefined;

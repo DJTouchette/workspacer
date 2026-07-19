@@ -15,6 +15,7 @@ import type {
   GitLogEntry,
   RemoteTokenRecord,
   RemoteTokenScope,
+  RecentAgentSession,
 } from '../../../main/shared/ipcTypes';
 
 /** One entry of the external-tool registry (main/services/toolCheck.ts). */
@@ -225,6 +226,9 @@ export interface ElectronAPI {
   claudeProfilesRemove: (id: string) => Promise<void>;
   getClaudeSession: (sessionId: string) => Promise<ClaudeSessionSnapshot | null>;
   getAllClaudeSessions: () => Promise<ClaudeSessionSnapshot[]>;
+  /** All sessions the daemon still holds (all providers, incl. archived),
+   *  enriched with names from the local history DB. Newest first. */
+  listRecentAgentSessions: () => Promise<RecentAgentSession[]>;
   onClaudeSessionUpdate: (
     callback: (sessionId: string, snapshot: ClaudeSessionSnapshot) => void,
   ) => () => void;

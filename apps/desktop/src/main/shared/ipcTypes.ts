@@ -328,6 +328,27 @@ export interface AppConfig {
   };
 }
 
+/** One resumable agent session from the daemon's full list (all providers),
+ *  enriched with the desktop history DB's name/model/cost when known. */
+export interface RecentAgentSession {
+  sessionId: string;
+  /** 'claude' | 'codex' | 'opencode' | 'pi' ('' from legacy rows ⇒ 'claude'). */
+  provider: string;
+  cwd: string;
+  /** Daemon SessionMode on the wire ('stopped', 'input', 'responding', …). */
+  mode: string;
+  transport: 'pty' | 'stream';
+  /** Stopped >7 days — hidden from the daemon's default list but resumable. */
+  archived: boolean;
+  /** Unix ms; 0 when the daemon row carried no parseable timestamp. */
+  updatedAt: number;
+  startedAt: number;
+  /** Agent name from session_history ('' when the session predates it). */
+  name: string;
+  model: string;
+  costUSD: number;
+}
+
 // ── Session persistence (session:save) ──
 
 export interface SessionPaneData {

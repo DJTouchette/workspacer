@@ -131,6 +131,7 @@ const KNOWN_STUBS = [
   'fileOpenExternal', // best-effort window.open(file://) on web only
   'fileShowInFolder', // reveal-in-folder impossible remotely
   'notifyQuitSaved', // no quit handshake in the browser
+  'listRecentAgentSessions', // no hub-bus cap for the daemon session list yet; [] on web
 ] as const;
 
 function webBackendMethodKeys(): Set<string> {

@@ -64,6 +64,9 @@ import { useConfig, DEFAULT_CONFIG } from './hooks/useConfig';
 import { useUiMode } from './hooks/useUiMode';
 import { useTheme } from './hooks/useTheme';
 import { useSessionLifecycle } from './hooks/useSessionLifecycle';
+import { useRecentSessions } from './hooks/useRecentSessions';
+import { filterResumableSessions } from './lib/recentSessionFilter';
+import type { RecentAgentSession } from '../../main/shared/ipcTypes';
 import { usePluginHotkeys } from './hooks/usePluginHotkeys';
 import { buildPaneMenu } from './lib/paneMenu';
 import { PaneMenuProvider, type PaneMenuContextValue } from './contexts/PaneMenuContext';
@@ -412,6 +415,33 @@ function App() {
     reconcileAgents,
     appCwdRef,
   });
+
+  // Sidebar RECENT list — daemon sessions (all providers, incl. archived) with
+  // no card in the current layout. Clicking one respawns it as an agent.
+  const allDaemonSessions = useRecentSessions(sessionPhase === 'active');
+  const recentSessions = useMemo(
+    () => filterResumableSessions(allDaemonSessions, agents, ptyMapping),
+    [allDaemonSessions, agents, ptyMapping],
+  );
+  const handleResumeRecentSession = useCallback(
+    (s: RecentAgentSession) => {
+      const provider: AgentProvider = (
+        ['claude', 'codex', 'opencode', 'pi'] as const
+      ).includes(s.provider as AgentProvider)
+        ? (s.provider as AgentProvider)
+        : 'claude';
+      void spawnAgent({
+        cwd: s.cwd,
+        name: s.name || undefined,
+        provider,
+        // Transport and model only steer Claude spawns; managed providers
+        // resolve their own settings from the resumed thread.
+        ...(provider === 'claude' && { transport: s.transport, model: s.model || undefined }),
+        resumeSessionId: s.sessionId,
+      });
+    },
+    [spawnAgent],
+  );
 
   // First-run welcome. The global Overview workspace always exists, so "brand
   // new user" means no *real* agent workspaces. Wait for the config (the
@@ -1902,6 +1932,8 @@ function App() {
                 onToggleHelp={toggleHelp}
                 noAttentionFlash={noAttentionFlash}
                 collapsed={!sidebarOverlay && railShown}
+                recentSessions={recentSessions}
+                onResumeSession={handleResumeRecentSession}
               />
             </ErrorBoundary>
           )}
@@ -1943,6 +1975,8 @@ function App() {
                   onToggleHelp={toggleHelp}
                   noAttentionFlash={noAttentionFlash}
                   collapsed={false}
+                  recentSessions={recentSessions}
+                  onResumeSession={handleResumeRecentSession}
                 />
               </ErrorBoundary>
             </>
