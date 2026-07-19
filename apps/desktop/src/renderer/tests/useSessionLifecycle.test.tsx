@@ -49,7 +49,6 @@ function render(agents: any) {
     (props: { agents: any }) =>
       useSessionLifecycle({
         configLoaded: false, // skip startup effect
-        autoResume: false,
         agents: props.agents,
         activeAgentId: 'a1',
         loadAgentsFromSession: vi.fn(),
@@ -64,7 +63,7 @@ describe('useSessionLifecycle — autosave dedup hash', () => {
   it("persists a save when only a tab's activePaneId changed", () => {
     const { result, rerender } = render(mkAgents('p1'));
 
-    act(() => result.current.handleNewSession()); // → phase 'active'
+    act(() => result.current.setSessionPhase('active'));
     act(() => {
       void result.current.saveCurrentSession();
     });
@@ -82,7 +81,7 @@ describe('useSessionLifecycle — autosave dedup hash', () => {
 
   it('still dedups an identical save', () => {
     const { result } = render(mkAgents('p1'));
-    act(() => result.current.handleNewSession());
+    act(() => result.current.setSessionPhase('active'));
     act(() => {
       void result.current.saveCurrentSession();
     });
@@ -112,7 +111,7 @@ describe('useSessionLifecycle — autosave dedup hash', () => {
       ] as any;
     }
     const { result, rerender } = render(mkWithModel('sonnet'));
-    act(() => result.current.handleNewSession());
+    act(() => result.current.setSessionPhase('active'));
     act(() => {
       void result.current.saveCurrentSession();
     });
@@ -131,7 +130,7 @@ describe('useSessionLifecycle — hardening', () => {
     vi.useFakeTimers();
     try {
       const { result, rerender } = render(mkAgents('p1'));
-      act(() => result.current.handleNewSession()); // → phase 'active'
+      act(() => result.current.setSessionPhase('active'));
       act(() => {
         vi.advanceTimersByTime(1100);
       });
@@ -160,7 +159,7 @@ describe('useSessionLifecycle — hardening', () => {
       }),
     };
     const { result } = render(mkAgents('p1'));
-    act(() => result.current.handleNewSession());
+    act(() => result.current.setSessionPhase('active'));
     expect(quitCb).toBeDefined();
     await act(async () => {
       quitCb!();
@@ -182,17 +181,23 @@ describe('useSessionLifecycle — hardening', () => {
       }),
     };
     const { result } = render(mkAgents('p1'));
-    act(() => result.current.handleNewSession());
+    act(() => result.current.setSessionPhase('active'));
     await act(async () => {
       quitCb!();
     });
     expect(notifyQuitSaved).toHaveBeenCalled();
   });
+});
 
-  it('reconciles ended sessions as dead — they must not count as live on resume', async () => {
+describe('useSessionLifecycle — implicit-session boot', () => {
+  it('boot restores the most recent session and reconciles ended sessions as dead', async () => {
     const reconcileAgents = vi.fn();
+    const loadAgentsFromSession = vi.fn();
     (window as any).electronAPI = {
       ...(window as any).electronAPI,
+      listSessions: vi
+        .fn()
+        .mockResolvedValue([{ name: 'S', filename: 's.yaml', timestamp: '', paneCount: 0 }]),
       loadSession: vi.fn().mockResolvedValue({ name: 'S', agents: [], activeAgentId: '' }),
       getAllClaudeSessions: vi.fn().mockResolvedValue([
         { sessionId: 'live-1', status: 'active' },
@@ -201,83 +206,47 @@ describe('useSessionLifecycle — hardening', () => {
     };
     const { result } = renderHook(() =>
       useSessionLifecycle({
-        configLoaded: false,
-        autoResume: false,
+        configLoaded: true,
         agents: [],
         activeAgentId: '',
-        loadAgentsFromSession: vi.fn(),
+        loadAgentsFromSession,
         reconcileAgents,
         appCwdRef: { current: '/x' },
       }),
     );
-    await act(async () => {
-      result.current.handleResumeSession('s.yaml');
-    });
+    await act(async () => {});
+    expect((window as any).electronAPI.loadSession).toHaveBeenCalledWith('s.yaml');
+    expect(loadAgentsFromSession).toHaveBeenCalledTimes(1);
+    expect(result.current.sessionPhase).toBe('active');
+
+    // Ended sessions must not count as live on resume.
     expect(reconcileAgents).toHaveBeenCalledTimes(1);
     const liveSet = reconcileAgents.mock.calls[0][0] as Set<string>;
     expect(liveSet.has('live-1')).toBe(true);
     expect(liveSet.has('dead-1')).toBe(false);
   });
-});
 
-describe('useSessionLifecycle — named sessions', () => {
-  it('new sessions get a unique name instead of overwriting an existing file', async () => {
-    (window as any).electronAPI.listSessions = vi
-      .fn()
-      .mockResolvedValue([{ name: 'Focus', filename: 'focus.yaml', timestamp: '', paneCount: 0 }]);
-    const { result } = render(mkAgents('p1'));
-    // switchSession populates sessionList (the uniqueness reference).
-    await act(async () => {
-      result.current.switchSession();
-    });
-    act(() => result.current.handleNewSession('Focus'));
-    expect(result.current.sessionName).toBe('Focus 2');
-    // No typed name → dated default, not the old hardcoded 'Default'.
-    act(() => result.current.handleNewSession());
-    expect(result.current.sessionName).toMatch(/^Session /);
-  });
-
-  it('rename re-saves under the new name, deletes the old file, and follows the current session', async () => {
-    saveSession.mockResolvedValue('research.yaml');
-    const loadSession = vi
-      .fn()
-      .mockResolvedValue({ name: 'Default', agents: [], activeAgentId: '' });
-    const deleteSession = vi.fn().mockResolvedValue(undefined);
-    (window as any).electronAPI.loadSession = loadSession;
-    (window as any).electronAPI.deleteSession = deleteSession;
-    (window as any).electronAPI.listSessions = vi
-      .fn()
-      .mockResolvedValue([
-        { name: 'Default', filename: 'default.yaml', timestamp: '', paneCount: 0 },
-      ]);
-
-    const { result } = render(mkAgents('p1'));
-    // sessionName starts as 'Default', matching the file being renamed.
-    await act(async () => {
-      await result.current.handleRenameSession('default.yaml', 'Research');
-    });
-    expect(saveSession).toHaveBeenCalledWith(expect.objectContaining({ name: 'Research' }));
-    expect(deleteSession).toHaveBeenCalledWith('default.yaml');
-    expect(result.current.sessionName).toBe('Research');
-  });
-
-  it('rename never deletes the file it just wrote (name sanitizes to the same file)', async () => {
-    saveSession.mockResolvedValue('default.yaml');
-    (window as any).electronAPI.loadSession = vi
-      .fn()
-      .mockResolvedValue({ name: 'Default', agents: [], activeAgentId: '' });
-    const deleteSession = vi.fn().mockResolvedValue(undefined);
-    (window as any).electronAPI.deleteSession = deleteSession;
-    (window as any).electronAPI.listSessions = vi
-      .fn()
-      .mockResolvedValue([
-        { name: 'Default', filename: 'default.yaml', timestamp: '', paneCount: 0 },
-      ]);
-
-    const { result } = render(mkAgents('p1'));
-    await act(async () => {
-      await result.current.handleRenameSession('default.yaml', 'DEFAULT');
-    });
-    expect(deleteSession).not.toHaveBeenCalled();
+  it('boot with no saved sessions starts fresh without loading anything', async () => {
+    const loadAgentsFromSession = vi.fn();
+    const loadSession = vi.fn();
+    (window as any).electronAPI = {
+      ...(window as any).electronAPI,
+      listSessions: vi.fn().mockResolvedValue([]),
+      loadSession,
+    };
+    const { result } = renderHook(() =>
+      useSessionLifecycle({
+        configLoaded: true,
+        agents: [],
+        activeAgentId: '',
+        loadAgentsFromSession,
+        reconcileAgents: vi.fn(),
+        appCwdRef: { current: '/x' },
+      }),
+    );
+    await act(async () => {});
+    expect(loadSession).not.toHaveBeenCalled();
+    expect(loadAgentsFromSession).not.toHaveBeenCalled();
+    expect(result.current.sessionPhase).toBe('active');
   });
 });

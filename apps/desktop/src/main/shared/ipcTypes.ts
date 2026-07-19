@@ -316,9 +316,6 @@ export interface AppConfig {
   };
   scripts: Record<string, Array<{ name: string; command: string }>>;
   apps: Array<{ name: string; url: string; icon?: string }>;
-  session: {
-    autoResume: boolean;
-  };
   agents?: {
     defaultProvider?: string;
     defaultCwd?: string;

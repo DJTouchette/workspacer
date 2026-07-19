@@ -429,7 +429,7 @@ func TestEmbeddedDefaultsAreCompleteAndParse(t *testing.T) {
 	for _, section := range []string{
 		"ui", "terminal", "browser", "panes", "keybindings", "notifications",
 		"editor", "claude", "agents", "supervisor", "directories", "scripts",
-		"session", "updates", "apps",
+		"updates", "apps",
 	} {
 		if _, ok := def[section]; !ok {
 			t.Errorf("default config missing top-level section %q", section)

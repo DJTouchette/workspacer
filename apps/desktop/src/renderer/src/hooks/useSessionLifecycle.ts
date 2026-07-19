@@ -1,7 +1,10 @@
 /**
- * useSessionLifecycle — manages session load / save / auto-resume / picker.
+ * useSessionLifecycle — loads and continuously saves THE workspace session.
  *
- * Extracted verbatim from App.tsx; all logic is unchanged.
+ * Single implicit session: boot always restores the most recent saved layout
+ * (no picker, no named-session switching — the sidebar's live feed is the
+ * "what was I doing" surface now). Saving is unchanged: 30s ticks while
+ * visible, a 1s debounce after layout changes, and the quit handshake.
  */
 import {
   useRef,
@@ -18,7 +21,6 @@ import { usePageVisible } from './usePageVisible';
 
 interface UseSessionLifecycleOptions {
   configLoaded: boolean;
-  autoResume: boolean | undefined;
   agents: AgentWorkspace[];
   activeAgentId: string;
   loadAgentsFromSession: (agents: AgentWorkspace[], activeAgentId: string) => void;
@@ -27,51 +29,25 @@ interface UseSessionLifecycleOptions {
 }
 
 export interface SessionLifecycleResult {
-  sessionPhase: 'loading' | 'picker' | 'active';
-  setSessionPhase: Dispatch<SetStateAction<'loading' | 'picker' | 'active'>>;
-  sessionList: any[];
-  pickerCancellable: boolean;
-  setPickerCancellable: Dispatch<SetStateAction<boolean>>;
+  sessionPhase: 'loading' | 'active';
+  setSessionPhase: Dispatch<SetStateAction<'loading' | 'active'>>;
   sessionName: string;
   ptyMapping: Record<string, string>;
   handlePtyReady: (paneId: string, ptySessionId: string) => void;
-  handleNewSession: (name?: string) => void;
-  handleResumeSession: (filename: string) => void;
-  handleDeleteSession: (filename: string) => void;
-  handleRenameSession: (filename: string, newName: string) => Promise<void>;
   saveCurrentSession: (force?: boolean) => void;
-  switchSession: () => void;
-}
-
-/** "Session Jul 16" — the fallback name when the user starts a new session
- *  without typing one. Distinct per day, which is usually enough; collisions
- *  get a numeric suffix via uniqueSessionName. */
-function defaultSessionName(): string {
-  return `Session ${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
-}
-
-/** Sessions are stored one-file-per-name, so a duplicate name would silently
- *  overwrite the other session's file. Suffix until unique. */
-function uniqueSessionName(base: string, taken: string[]): string {
-  let name = base;
-  let i = 2;
-  while (taken.includes(name)) name = `${base} ${i++}`;
-  return name;
 }
 
 export function useSessionLifecycle({
   configLoaded,
-  autoResume,
   agents,
   activeAgentId,
   loadAgentsFromSession,
   reconcileAgents,
   appCwdRef,
 }: UseSessionLifecycleOptions): SessionLifecycleResult {
-  const [sessionPhase, setSessionPhase] = useState<'loading' | 'picker' | 'active'>('loading');
-  const [sessionList, setSessionList] = useState<any[]>([]);
-  // True only when the picker is reopened mid-session (so it can be dismissed).
-  const [pickerCancellable, setPickerCancellable] = useState(false);
+  const [sessionPhase, setSessionPhase] = useState<'loading' | 'active'>('loading');
+  // The implicit session keeps whatever name its file carried (old named
+  // sessions restore under their own name and keep saving to the same file).
   const [sessionName, setSessionName] = useState('Default');
 
   // PTY mapping: paneId -> ptySessionId. For Claude panes, ptySessionId is the
@@ -101,93 +77,6 @@ export function useSessionLifecycle({
       })
       .catch(() => {});
   }, [reconcileAgents]);
-
-  // --- Session lifecycle ---
-  // A new session gets its own name (user-typed or "Session Jul 16"), unique
-  // against the saved list — every save writes <name>.yaml, so reusing a name
-  // (the old hardcoded 'Default') silently overwrote the previous session's
-  // file and made the picker a list of one.
-  const handleNewSession = useCallback(
-    (name?: string) => {
-      const base = name?.trim() || defaultSessionName();
-      loadAgentsFromSession([], '');
-      setSessionName(
-        uniqueSessionName(
-          base,
-          sessionList.map((s) => s.name),
-        ),
-      );
-      setPtyMapping({});
-      setPickerCancellable(false);
-      setSessionPhase('active');
-    },
-    [loadAgentsFromSession, sessionList],
-  );
-
-  const handleResumeSession = useCallback(
-    (filename: string) => {
-      setPickerCancellable(false);
-      window.electronAPI
-        .loadSession(filename)
-        .then((data: any) => {
-          const {
-            agents: migratedAgents,
-            activeAgentId: migratedActiveId,
-            name: migratedName,
-          } = migrateSessionData(data, appCwdRef.current);
-          loadAgentsFromSession(migratedAgents, migratedActiveId);
-          setSessionName(migratedName);
-          setPtyMapping({});
-          setSessionPhase('active');
-          reconcileWithDaemon();
-        })
-        .catch(() => {
-          loadAgentsFromSession([], '');
-          setSessionPhase('active');
-        });
-    },
-    [loadAgentsFromSession, reconcileWithDaemon, appCwdRef],
-  );
-
-  const handleDeleteSession = useCallback((filename: string) => {
-    window.electronAPI.deleteSession(filename).then(() => {
-      setSessionList((prev) => prev.filter((s) => s.filename !== filename));
-    });
-  }, []);
-
-  /** Rename a saved session file: re-save its data under the new name, then
-   *  delete the old file (unless sanitization collapsed both names to the same
-   *  file). If it's the session we're currently in, follow the rename so the
-   *  autosave keeps writing the new file instead of resurrecting the old name. */
-  const handleRenameSession = useCallback(
-    async (filename: string, newName: string): Promise<void> => {
-      const clean = newName.trim();
-      if (!clean) return;
-      try {
-        const data: any = await window.electronAPI.loadSession(filename);
-        if (!data) return;
-        const sessions: any[] = await window.electronAPI.listSessions().catch(() => []);
-        const name = uniqueSessionName(
-          clean,
-          sessions.filter((s) => s.filename !== filename).map((s) => s.name),
-        );
-        if (name === data.name) return;
-        const newFile = await window.electronAPI.saveSession({ ...data, name });
-        if (newFile !== filename) {
-          await window.electronAPI.deleteSession(filename).catch(() => {});
-        }
-        setSessionList((prev) =>
-          prev.map((s) =>
-            s.filename === filename ? { ...s, name, filename: newFile ?? s.filename } : s,
-          ),
-        );
-        if (data.name === sessionName) setSessionName(name);
-      } catch (err) {
-        console.error('[Session] rename failed:', err);
-      }
-    },
-    [sessionName],
-  );
 
   const saveCurrentSession = useCallback(
     (force?: boolean): Promise<void> => {
@@ -254,61 +143,45 @@ export function useSessionLifecycle({
     return unsub;
   }, [saveCurrentSession]);
 
-  // Decide what to show on launch once config is loaded (so a user's saved
-  // autoResume preference is respected, not the in-memory default). With
-  // autoResume on we restore the most recent session straight away; otherwise
-  // we fall back to the picker. Runs exactly once.
+  // Boot: restore the most recent saved layout (list is sorted desc), or start
+  // fresh when none exists. Runs exactly once, after config load so the hub
+  // hydration gate upstream (App wires configLoaded through it) has settled.
   const startupDoneRef = useRef(false);
   useEffect(() => {
     if (!configLoaded || startupDoneRef.current) return;
     startupDoneRef.current = true;
-    const shouldAutoResume = autoResume ?? false;
     window.electronAPI
       .listSessions()
       .then((sessions) => {
-        if (sessions.length === 0) {
+        const latest = sessions[0];
+        if (!latest) {
           setSessionPhase('active');
           return;
         }
-        setSessionList(sessions);
-        if (shouldAutoResume) {
-          handleResumeSession(sessions[0].filename); // most recent (list is sorted desc)
-        } else {
-          setSessionPhase('picker');
-        }
+        return window.electronAPI.loadSession(latest.filename).then((data: any) => {
+          const {
+            agents: migratedAgents,
+            activeAgentId: migratedActiveId,
+            name: migratedName,
+          } = migrateSessionData(data, appCwdRef.current);
+          loadAgentsFromSession(migratedAgents, migratedActiveId);
+          setSessionName(migratedName);
+          setSessionPhase('active');
+          reconcileWithDaemon();
+        });
       })
-      .catch(() => setSessionPhase('active'));
-  }, [configLoaded, autoResume, handleResumeSession]);
-
-  // Re-open the picker mid-session (Command palette → "Switch session"). Saves
-  // the current layout first so nothing is lost when switching, and marks the
-  // picker dismissable so Escape/Cancel returns to the running app.
-  const switchSession = useCallback(() => {
-    saveCurrentSession(true);
-    setPickerCancellable(true);
-    window.electronAPI
-      .listSessions()
-      .then((sessions) => {
-        setSessionList(sessions);
-        setSessionPhase('picker');
-      })
-      .catch(() => setSessionPhase('picker'));
-  }, [saveCurrentSession]);
+      .catch(() => {
+        loadAgentsFromSession([], '');
+        setSessionPhase('active');
+      });
+  }, [configLoaded, loadAgentsFromSession, reconcileWithDaemon, appCwdRef]);
 
   return {
     sessionPhase,
     setSessionPhase,
-    sessionList,
-    pickerCancellable,
-    setPickerCancellable,
     sessionName,
     ptyMapping,
     handlePtyReady,
-    handleNewSession,
-    handleResumeSession,
-    handleDeleteSession,
-    handleRenameSession,
     saveCurrentSession,
-    switchSession,
   };
 }

@@ -41,7 +41,6 @@ import SystemNotices from './components/SystemNotices';
 import ScrollContainer, { ScrollContainerRef } from './components/ScrollContainer';
 import ShortcutOverlay from './components/ShortcutOverlay';
 import ChordHint from './components/ChordHint';
-import SessionPicker from './components/SessionPicker';
 import CommandPalette from './components/CommandPalette';
 import LayoutsDialog from './components/LayoutsDialog';
 import LibraryHost from './components/LibraryHost';
@@ -393,28 +392,20 @@ function App() {
       .catch(() => {});
   }, []);
 
-  // Session lifecycle (load / save / auto-resume / picker).
+  // Session lifecycle — the single implicit session: boot restores the most
+  // recent saved layout, saves continuously, no picker.
   const {
     sessionPhase,
     setSessionPhase,
-    sessionList,
-    pickerCancellable,
-    setPickerCancellable,
     sessionName,
     ptyMapping,
     handlePtyReady,
-    handleNewSession,
-    handleResumeSession,
-    handleDeleteSession,
-    handleRenameSession,
     saveCurrentSession,
-    switchSession,
   } = useSessionLifecycle({
     // Hold session restore until the hub layout has been read. If the hub
     // already has a shared layout we adopt it instead (hubHydration === 'adopted'
     // never unblocks startup); only 'empty' falls through to local restore.
     configLoaded: configLoaded && hubHydration === 'empty',
-    autoResume: config.session?.autoResume,
     agents,
     activeAgentId,
     loadAgentsFromSession,
@@ -446,11 +437,10 @@ function App() {
     sessionPhase,
     setSessionPhase,
     enabled: configLoaded,
-    // The hub persists its layout document across restarts, so adopting it
-    // unconditionally would resurrect the previous run's panes on every boot.
-    // Only auto-adopt when the user opted into auto-resume; otherwise startup
-    // falls through to the session picker and panes come back via "resume".
-    adoptSharedLayout: config.session?.autoResume ?? false,
+    // With the single implicit session the app always resumes on boot, so the
+    // hub's persisted layout is adopted unconditionally — it's just the shared
+    // copy of the same layout the local session file holds.
+    adoptSharedLayout: true,
     onHydration: setHubHydration,
   });
 
@@ -2108,10 +2098,6 @@ function App() {
                   : openPaneIn(GLOBAL_WORKSPACE_ID, 'library', 'Library');
               requestAnimationFrame(() => scrollToTab(tabId));
             }}
-            onSwitchSession={() => {
-              setShowCommandPalette(false);
-              switchSession();
-            }}
             onOpenAnalytics={openAnalytics}
             onOpenAgents={hasAgentMonitorActivity ? openAgentsPane : undefined}
             onOpenInspector={openInspectorForActive}
@@ -2240,25 +2226,6 @@ function App() {
               onSaveCurrent={handleSaveLayout}
               onRestore={handleRestoreLayout}
               onClose={() => setShowLayouts(false)}
-            />
-          )}
-
-          {sessionPhase === 'picker' && (
-            <SessionPicker
-              sessions={sessionList}
-              onNewSession={handleNewSession}
-              onResumeSession={handleResumeSession}
-              onDeleteSession={handleDeleteSession}
-              onRenameSession={handleRenameSession}
-              currentName={pickerCancellable ? sessionName : undefined}
-              onCancel={
-                pickerCancellable
-                  ? () => {
-                      setPickerCancellable(false);
-                      setSessionPhase('active');
-                    }
-                  : undefined
-              }
             />
           )}
 

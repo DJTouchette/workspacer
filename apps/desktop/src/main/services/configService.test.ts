@@ -164,11 +164,11 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
   });
 
   it('preserves unrelated top-level sections when saving a partial', () => {
-    configService.saveConfig({ session: { autoResume: false } });
+    configService.saveConfig({ supervisor: { pollSeconds: 99 } as any });
     const cfg = configService.getConfig();
 
-    // session changed
-    expect(cfg.session.autoResume).toBe(false);
+    // supervisor changed
+    expect(cfg.supervisor.pollSeconds).toBe(99);
     // browser defaults untouched
     expect(cfg.browser.homepage).toBe('https://google.com');
     expect(cfg.browser.hibernateAfter).toBe(300);

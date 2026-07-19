@@ -153,8 +153,6 @@ interface CommandPaletteProps {
   restrictTo?: 'library';
   /** Open the Library pane (in the global Overview workspace). */
   onOpenLibrary?: () => void;
-  /** Re-open the session picker to switch/start a named workspace session. */
-  onSwitchSession?: () => void;
   /** Open the Analytics pane. */
   onOpenAnalytics?: () => void;
   /** Open the Agents pane (all agents as live cards, click to watch one). */
@@ -219,7 +217,6 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   libraryItems = [],
   restrictTo,
   onOpenLibrary,
-  onSwitchSession,
   onOpenAnalytics,
   onOpenAgents,
   onOpenInspector,
@@ -372,13 +369,6 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       onOpenLayouts,
     );
     add(
-      'cmd-switch-session',
-      'Switch Session…',
-      'Open another saved workspace session',
-      <FolderOpen size={16} strokeWidth={1.75} />,
-      onSwitchSession,
-    );
-    add(
       'cmd-save-session',
       'Save Session',
       'Persist the current workspace',
@@ -481,7 +471,6 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     onOpenInspector,
     onOpenContext,
     onOpenLayouts,
-    onSwitchSession,
     onSaveSession,
     onOpenRemote,
     onManagePlugins,

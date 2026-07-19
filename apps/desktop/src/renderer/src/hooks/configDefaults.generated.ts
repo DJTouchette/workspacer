@@ -191,9 +191,6 @@ export const CONFIG_DEFAULTS = {
     favourites: [],
   },
   scripts: {},
-  session: {
-    autoResume: false,
-  },
   updates: {
     enabled: true,
     channel: 'latest',

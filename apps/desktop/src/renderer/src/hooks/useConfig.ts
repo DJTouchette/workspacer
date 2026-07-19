@@ -137,10 +137,6 @@ export interface Config {
     recent: string[];
     favourites: string[];
   };
-  session?: {
-    /** Restore the most recent session automatically on launch (skip the picker). */
-    autoResume: boolean;
-  };
   /** In-app auto-update (electron-updater). Only acts in packaged builds. */
   updates?: {
     /** Master switch for auto-update. Default true. */

@@ -158,10 +158,6 @@ interface Config {
   /** Per-directory script buttons, keyed by workspace root (normalized cwd). */
   scripts: Record<string, ScriptEntry[]>;
   apps: AppEntry[];
-  session: {
-    /** Restore the most recent session automatically on launch (skip the picker). */
-    autoResume: boolean;
-  };
   /** In-app auto-update (electron-updater over the GitHub Release feed). */
   updates: {
     /** Master switch for auto-update. Default true; only acts in packaged builds. */

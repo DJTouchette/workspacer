@@ -151,7 +151,6 @@ const BinaryRow: React.FC<{
 };
 
 const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
-  const autoResume = config.session?.autoResume ?? true;
   const defaultView = config.claude?.defaultView ?? 'terminal';
   const workLog = config.claude?.workLog ?? 'cards';
   const claudeTransport = config.claude?.transport ?? 'pty';
@@ -202,16 +201,6 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
 
   return (
     <Section title="Session">
-      <CheckRow
-        label="Restore my last session on launch"
-        checked={autoResume}
-        onChange={(v) => save({ session: { autoResume: v } })}
-      />
-      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        Reopens your agents and tabs automatically. Off shows the session picker at startup. Switch
-        sessions any time from the command palette (Ctrl+K → Switch session).
-      </div>
-
       <Row label="Default agent">
         <div style={{ display: 'flex', gap: 4 }}>
           {AGENT_PROVIDERS.map((p) => (
