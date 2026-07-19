@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -39,10 +40,20 @@ type uiDirResolver interface {
 // `ui` directory at /plugins/ui/<id>/…. http.Dir confines reads to that
 // directory (no `..` escape), and only that subdir is exposed, so a plugin's
 // manifest / .bus-token (in the dir root) are never served.
-func pluginUIHandler(res uiDirResolver) http.HandlerFunc {
+//
+// HTML documents (a path ending in .html, or a directory request that resolves
+// to index.html) are read through the same http.Dir and get the plugin SDK
+// bootstrap injected before </head> — so a plugin's page just uses
+// window.workspacer with no per-plugin bus boilerplate. Every other asset
+// (js/css/png/…) is served byte-for-byte by the standard file server, unchanged.
+//
+// settingsFor, when non-nil, returns a plugin's merged setting values to seed
+// window.__WKS_SETTINGS__ on first paint; a nil result (or a nil settingsFor)
+// leaves it unset so workspacer.settings stays {} until the first settings event.
+func pluginUIHandler(res uiDirResolver, settingsFor func(id string) map[string]any) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/plugins/ui/")
-		id, _, _ := strings.Cut(rest, "/")
+		id, sub, _ := strings.Cut(rest, "/")
 		if id == "" {
 			http.NotFound(w, r)
 			return
@@ -52,8 +63,102 @@ func pluginUIHandler(res uiDirResolver) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		http.StripPrefix("/plugins/ui/"+id+"/", http.FileServer(http.Dir(dir))).ServeHTTP(w, r)
+		fileServer := http.StripPrefix("/plugins/ui/"+id+"/", http.FileServer(http.Dir(dir)))
+
+		// A directory request (empty sub, or one ending in "/") resolves to its
+		// index.html. Only then, and for explicit .html targets, do we inject.
+		target := sub
+		if target == "" || strings.HasSuffix(target, "/") {
+			target += "index.html"
+		}
+		if !strings.HasSuffix(target, ".html") {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		// Read through http.Dir, which cleans the path and refuses to escape `dir`
+		// (a `..` target yields an error), preserving the confinement the plain
+		// file server gives us. Anything we can't read as a regular HTML file
+		// (missing, a directory, an error) falls back to the static server so
+		// behavior for those cases is exactly as before.
+		doc, ok := readHTMLDoc(dir, target)
+		if !ok {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		var settings map[string]any
+		if settingsFor != nil {
+			settings = settingsFor(id)
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(injectPluginSDK(doc, id, settings))
 	}
+}
+
+// pluginSDKHandler serves the embedded plugin SDK at /plugins/sdk.js with a JS
+// content type and a short cache (so SDK updates ship promptly in plugin dev).
+func pluginSDKHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		_, _ = w.Write(sdkJS)
+	}
+}
+
+// readHTMLDoc reads name (relative to dir) through http.Dir so path confinement
+// matches the file server exactly. It returns ok=false — telling the caller to
+// fall back to static serving — for a missing file, a directory, a traversal
+// attempt, or any read error.
+func readHTMLDoc(dir, name string) ([]byte, bool) {
+	f, err := http.Dir(dir).Open("/" + name)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		return nil, false
+	}
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return nil, false
+	}
+	return b, true
+}
+
+// injectPluginSDK inserts the SDK bootstrap (plugin id, optional merged settings,
+// and the <script src="/plugins/sdk.js">) into an HTML document, right before the
+// first </head> (case-insensitive). With no </head> it prepends at the very start
+// so the SDK still loads. id is JSON-encoded; settings, when non-empty and
+// marshalable, seeds window.__WKS_SETTINGS__.
+func injectPluginSDK(doc []byte, id string, settings map[string]any) []byte {
+	idJSON, err := json.Marshal(id)
+	if err != nil {
+		idJSON = []byte(`"plugin"`)
+	}
+	var b strings.Builder
+	b.WriteString("<script>window.__WKS_PLUGIN_ID__=")
+	b.Write(idJSON)
+	b.WriteByte(';')
+	if len(settings) > 0 {
+		if sj, err := json.Marshal(settings); err == nil {
+			b.WriteString("window.__WKS_SETTINGS__=")
+			b.Write(sj)
+			b.WriteByte(';')
+		}
+	}
+	b.WriteString("</script>\n<script src=\"/plugins/sdk.js\"></script>\n")
+	snippet := b.String()
+
+	idx := strings.Index(strings.ToLower(string(doc)), "</head>")
+	if idx < 0 {
+		return append([]byte(snippet), doc...)
+	}
+	out := make([]byte, 0, len(doc)+len(snippet))
+	out = append(out, doc[:idx]...)
+	out = append(out, snippet...)
+	out = append(out, doc[idx:]...)
+	return out
 }
 
 // pluginAdder registers/reloads a plugin by manifest. *plugin.Manager
@@ -319,7 +424,19 @@ func main() {
 	// own loopback UI servers — the real boundary is /bus, which is token-scoped.
 	// http.Dir confines reads to the ui directory (no `..` escape), and only that
 	// subdir is served, so the plugin's manifest / .bus-token stay private.
-	srv.AddRoute("/plugins/ui/", pluginUIHandler(mgr))
+	srv.AddRoute("/plugins/ui/", pluginUIHandler(mgr, func(id string) map[string]any {
+		values, err := mgr.GetSettings(id)
+		if err != nil {
+			return nil
+		}
+		return values
+	}))
+	// Host-owned plugin SDK: defines window.workspacer (bus call/publish/subscribe
+	// + reconnect + settings), auto-injected into every plugin webview by the
+	// handler above. Public library code — <script> tags can't carry the bus
+	// token, and the real boundary stays /bus. Short-cached so SDK updates ship
+	// promptly during plugin development.
+	srv.AddRoute("/plugins/sdk.js", pluginSDKHandler())
 	// Mobile / remote-control web client. Self-contained single page that talks
 	// the bus protocol over /bus. Token-guarded since it's the remote entrypoint.
 	srv.AddRoute("/remote", guard(func(w http.ResponseWriter, _ *http.Request) {

@@ -29,6 +29,13 @@ var xtermCSS []byte
 //go:embed addon-fit.js
 var addonFitJS []byte
 
+// sdkJS is the host-owned plugin SDK served at /plugins/sdk.js and auto-injected
+// into every plugin webview. It defines window.workspacer (bus call/publish/
+// subscribe + reconnect + settings) so a plugin never hand-rolls the socket.
+//
+//go:embed sdk.js
+var sdkJS []byte
+
 // PWA assets for the /m mobile client: web manifest, service worker (background
 // Web Push + shell cache), and app icons. Served unguarded — the browser
 // fetches manifest/SW/icons without our bus token, and none carry secrets (the

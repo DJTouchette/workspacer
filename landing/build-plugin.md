@@ -63,35 +63,31 @@ my-hello/
 
 ### 3. the page
 
-The host injects your scoped token as `?busToken=…` on the pane URL. Open one WebSocket to the bus with it, then `call` a capability or `subscribe` to events. The whole client is a few lines:
+The host **auto-injects the Plugin SDK** into your served HTML, so `window.workspacer` is just there — no bus WebSocket to hand-roll. Await `ready`, then `call` a capability, subscribe with `on`, `publish`, and read live `settings`. The whole client is a few lines:
 
 ```js
-const token = new URLSearchParams(location.search).get('busToken') || '';
-const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const ws = new WebSocket(`${proto}//${location.host}/bus?token=${encodeURIComponent(token)}`);
+await window.workspacer.ready;                     // resolves when connected
 
-let nextId = 1;
-const pending = new Map();
-function call(method, params = {}) {
-  return new Promise((resolve, reject) => {
-    const id = 'c' + nextId++;
-    pending.set(id, { resolve, reject });
-    ws.send(JSON.stringify({ op: 'call', id, method, params }));
-  });
-}
+// receive events (only the types you declared in "consumes")
+window.workspacer.on('agent.state_changed', (data) => {
+  console.log('state', data.sessionId, data.mode);
+});
 
-ws.onopen = async () => {
-  const agents = await call('agents.list');       // one of your declared caps
-  document.body.textContent = `${agents.length} agent(s) running`;
-};
-ws.onmessage = (ev) => {
-  const f = JSON.parse(ev.data);
-  if (f.op === 'result' && pending.has(f.id)) { pending.get(f.id).resolve(f.result); pending.delete(f.id); }
-  if (f.op === 'error'  && pending.has(f.id)) { pending.get(f.id).reject(new Error(f.error)); pending.delete(f.id); }
-};
+// call a capability (only the methods you declared in "capabilities")
+const agents = await window.workspacer.call('agents.list');
+document.body.textContent = `${agents.length} agent(s) running`;
+
+// publish an event you declared in "emits"
+window.workspacer.publish('command.focus_agent', { sessionId: agents[0]?.sessionId });
+
+// typed settings, delivered live
+let settings = window.workspacer.settings;
+window.workspacer.onSettings((next) => { settings = next; });
 ```
 
-Style it with the injected `--wks-*` theme tokens (with fallbacks, e.g. `background: var(--wks-bg-base, #1a1a1a)`) so it matches the app. The host re-injects them on every live theme switch, and also exposes `window.__WKS_THEME__` + a `wks-theme` event for canvas UIs.
+> **Plugin SDK.** The hub serves `/plugins/sdk.js` and injects `<script src="/plugins/sdk.js"></script>` (plus `window.__WKS_PLUGIN_ID__` and `window.__WKS_SETTINGS__`) into every webview's HTML, so `window.workspacer` is present with no setup. It stays fully inside the manifest sandbox: the SDK subscribes to `*` under the hood, but **delivery is still capability-scoped** — `on(type)` only fires for events you listed in `consumes`, and `call(method)` only works for methods you listed in `capabilities`. It is a convenience wrapper over the bus, not a way around it. `window.workspacer` also exposes `.connected`, `.token`, and `.url` if you need the raw connection.
+
+Style the page with the injected `--wks-*` theme tokens (with fallbacks, e.g. `background: var(--wks-bg-base, #1a1a1a)`) so it matches the app. The host re-injects them on every live theme switch, and also exposes `window.__WKS_THEME__` + a `wks-theme` event for canvas UIs.
 
 ### 4. load it
 
@@ -99,7 +95,7 @@ Drop `my-hello/` into your plugins dir (in the app: `<configDir>/plugins`; in de
 
 ### make it a sidecar instead
 
-To make this a **sidecar**, drop `ui`, add a `server` block pointing at your process (and an `install` build step if it needs compiling), and connect to the bus from that process the same way — same frames, same token model. A sidecar gets its token in the `HUB_TOKEN` environment variable instead of the URL, and the bus address in `HUB_ADDR`. A tiny Node sidecar that watches for agents that need you and posts a notification:
+To make this a **sidecar**, drop `ui`, add a `server` block pointing at your process (and an `install` build step if it needs compiling), and connect to the bus from that process. A sidecar has no injected SDK — it speaks the bus frames directly. It gets its token in the `HUB_TOKEN` environment variable instead of the URL, and the bus address in `HUB_ADDR`. A tiny Node sidecar that watches for agents that need you and posts a notification, raw frames and all:
 
 ```js
 // server.js — a headless sidecar (no pane at all)
@@ -140,6 +136,131 @@ And the matching sidecar manifest:
 
 A sidecar with no `panes` and no `ui` is a pure automation: it never shows a window, it just reacts on the bus. If you give it a `port` + `health`, the supervisor health-checks it and colors it in the Plugins Manager.
 
+### the Node twin (`wks.js`)
+
+Sidecars have no injected SDK, but you can vendor one file that gives you the same surface as `window.workspacer`. Drop this zero-dependency `wks.js` next to your `server.js` (it uses only Node >=22 built-ins — the global `WebSocket`, `fs`, `path`), then `require('./wks.js')`. It reads the token from `HUB_TOKEN` (falling back to `WKS_BUS_TOKEN` then a `.bus-token` file), connects to `ws://127.0.0.1:7895/bus`, and reconnects on drop:
+
+```js
+// wks.js — a zero-dependency hub-bus client for a sidecar (Node >=22, built-in WebSocket).
+// Vendor this file next to server.js and require it: const { connect } = require('./wks.js');
+const fs = require('fs');
+const path = require('path');
+
+function readToken() {
+  if (process.env.HUB_TOKEN) return process.env.HUB_TOKEN;
+  if (process.env.WKS_BUS_TOKEN) return process.env.WKS_BUS_TOKEN;
+  try {
+    return fs.readFileSync(path.join(__dirname, '.bus-token'), 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
+function readSettings() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(__dirname, '.settings.json'), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+// connect() -> { ready, call, publish, on, settings } — mirrors window.workspacer.
+function connect(opts = {}) {
+  const url = opts.url || 'ws://127.0.0.1:7895/bus';
+  const source = opts.source || 'sidecar';
+  const listeners = new Map(); // type -> Set(cb)
+  const pending = new Map(); // id -> { resolve, reject }
+  let ws = null;
+  let seq = 1;
+  let settings = readSettings();
+  let markReady;
+  const ready = new Promise((r) => {
+    markReady = r;
+  });
+
+  const deliver = (type, data, event) => {
+    for (const key of [type, '*']) {
+      const set = listeners.get(key);
+      if (set) for (const cb of set) try { cb(data, event); } catch {}
+    }
+  };
+
+  const open = () => {
+    ws = new WebSocket(`${url}?token=${encodeURIComponent(readToken())}`);
+    ws.addEventListener('open', () => {
+      ws.send(JSON.stringify({ op: 'subscribe', topics: ['*'] }));
+      markReady();
+    });
+    ws.addEventListener('message', (ev) => {
+      let f;
+      try {
+        f = JSON.parse(typeof ev.data === 'string' ? ev.data : ev.data.toString());
+      } catch {
+        return;
+      }
+      if (f.op === 'event' && f.event) {
+        if (f.event.type === 'plugin.settings.changed' && f.event.data) settings = f.event.data;
+        deliver(f.event.type, f.event.data, f.event);
+      } else if (f.op === 'result' && pending.has(f.id)) {
+        pending.get(f.id).resolve(f.result);
+        pending.delete(f.id);
+      } else if (f.op === 'error' && pending.has(f.id)) {
+        pending.get(f.id).reject(new Error(f.error || 'call failed'));
+        pending.delete(f.id);
+      }
+    });
+    ws.addEventListener('close', () => setTimeout(open, 1000)); // reconnect loop
+    ws.addEventListener('error', () => {
+      try {
+        ws.close();
+      } catch {}
+    });
+  };
+  open();
+
+  return {
+    ready,
+    get settings() {
+      return settings;
+    },
+    call(method, params = {}) {
+      return new Promise((resolve, reject) => {
+        const id = 'c' + seq++;
+        pending.set(id, { resolve, reject });
+        ws.send(JSON.stringify({ op: 'call', id, method, params }));
+      });
+    },
+    publish(type, data = {}) {
+      ws.send(JSON.stringify({ op: 'publish', event: { type, source, data } }));
+    },
+    on(type, cb) {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type).add(cb);
+      return () => listeners.get(type)?.delete(cb);
+    },
+  };
+}
+
+module.exports = { connect };
+```
+
+Your `server.js` then reads like the webview client — the same `ready` / `on` / `call` / `publish` / `settings` surface (the bus enforces your manifest either way):
+
+```js
+// server.js
+const { connect } = require('./wks.js');
+const wks = connect();
+
+(async () => {
+  await wks.ready;
+  wks.on('agent.state_changed', async (a) => {
+    if (a.needsApproval) {
+      await wks.call('notifications.post', { title: 'Agent needs you', body: a.name || a.sessionId });
+    }
+  });
+})();
+```
+
 ## The manifest
 
 Schema version is `"apiVersion": "1"` (the loader rejects anything else). The authoritative field list is `internal/plugin/manifest.go`; the real fields:
@@ -158,7 +279,7 @@ Schema version is `"apiVersion": "1"` (the loader rejects anything else). The au
 
 ## The bus protocol
 
-Whether webview or sidecar, a plugin is just another client on the hub bus. It opens one bidirectional WebSocket to `ws://127.0.0.1:7895/bus?token=<busToken>` (webviews get the token in the pane URL as `?busToken=`; sidecars get theirs in the `HUB_TOKEN` environment variable) and exchanges JSON frames. Publish and subscribe share the same pipe. Four ops matter:
+Webviews should reach for the injected `window.workspacer` SDK (see "your first plugin") rather than these raw frames — but this is the protocol it speaks under the hood, and the one a sidecar (or the `wks.js` twin above) talks directly. Whether webview or sidecar, a plugin is just another client on the hub bus. It opens one bidirectional WebSocket to `ws://127.0.0.1:7895/bus?token=<busToken>` (webviews get the token in the pane URL as `?busToken=`; sidecars get theirs in the `HUB_TOKEN` environment variable) and exchanges JSON frames. Publish and subscribe share the same pipe. Four ops matter:
 
 ```js
 // subscribe to events (topics you declared in "consumes")
