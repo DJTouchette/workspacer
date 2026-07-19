@@ -1,11 +1,12 @@
-import React, { useState, useRef, useMemo } from 'react';
-import { Plus, ChevronLeft, ChevronRight, HelpCircle } from 'lucide-react';
-import { IconInbox, IconOverview, IconWorking } from './wksIcons';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
+import { Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 import { BrandMark, Wordmark } from './Brand';
-import { AgentWorkspace } from '../types/pane';
+import { AgentWorkspace, AgentProvider } from '../types/pane';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from '../types/claudeSession';
 import type { AttentionItem, AttentionKind } from '../types/attention';
-import { deriveSessionStats, fmtTokens, fmtUSD, ctxColor } from '../lib/sessionStats';
+import { deriveSessionStats, fmtTokens, fmtUSD, ctxColor, planProgress } from '../lib/sessionStats';
+import { formatToolSummary, ensureKeyframes } from './claude-shared';
+import { shortModelLabel } from '../lib/modelLabel';
 import { agentAttentionScore } from '../lib/attentionRouter';
 import { AgentLogo } from './agentLogos';
 import { requestInspector } from '../lib/watchBus';
@@ -14,7 +15,7 @@ import { useUiMode } from '../hooks/useUiMode';
 import HubStatus from './HubStatus';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
 
-export const SIDEBAR_WIDTH = 268;
+export const SIDEBAR_WIDTH = 296;
 /** Width of the collapsed monogram rail (desktop). */
 export const SIDEBAR_RAIL_WIDTH = 74;
 
@@ -63,6 +64,40 @@ const KIND_VISUAL_LABEL: Record<AttentionKind, string> = {
   bigdiff: 'Review changes',
   done: 'Finished',
 };
+
+// ── Live-feed cards (sidebar spec 2a) ────────────────────────────────────────
+
+/** Attention kinds that put a card in the amber "waiting on you" state. Mirrors
+ *  AttentionContext's NEEDS_KINDS — done/bigdiff are review items, not blocks. */
+const WAITING_KINDS: ReadonlySet<AttentionKind> = new Set<AttentionKind>([
+  'approval',
+  'question',
+  'stuck',
+  'error',
+]);
+
+/** Provider identity hue — tints the card's chip fill and working spinner.
+ *  Brand-ish constants (like ClaudeLogo's clay fill), not theme tokens. */
+const PROVIDER_HUE: Record<AgentProvider, string> = {
+  claude: '#e67e80',
+  codex: '#7fbbb3',
+  opencode: '#d699b6',
+  pi: '#83c092',
+};
+
+/** A finished agent's card collapses into the EARLIER list after this long. */
+const EARLIER_AFTER_MS = 3_600_000;
+
+/** Compact relative age for card headers: 45s → "45s", then 2m / 3h / 2d. */
+function relTime(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.round(h / 24)}d`;
+}
 
 interface SideBarProps {
   agents: AgentWorkspace[];
@@ -118,19 +153,13 @@ const SideBar: React.FC<SideBarProps> = ({
   noAttentionFlash,
   collapsed,
 }) => {
-  // Counts come from the single attention feed (the spine), not a parallel
-  // reduction over statusBySession — so the header can never disagree with the
-  // Inbox / Fleet. needsYou counts approval/question/stuck/error items.
-  const { counts, topByAgent } = useAttention();
+  // Counts come from the single attention feed (the spine) — the rail's
+  // "needs you" badge can never disagree with the cards' waiting states.
+  const { counts, topByAgent, approve } = useAttention();
   const needYouCount = counts.needsYou;
   // Focus mode reduces attention to one compact badge pinned in the rail —
   // "agents need you" must never disappear entirely (UI-mode manifest).
   const { manifest: uiManifest } = useUiMode();
-  // "working" still reflects live ambient state (not an attention kind).
-  const workingCount = agents.reduce((n, a) => {
-    const s = a.sessionId ? statusBySession[a.sessionId] : undefined;
-    return n + (s === 'thinking' || s === 'streaming' || s === 'background' ? 1 : 0);
-  }, 0);
   const [contextMenu, setContextMenu] = useState<{ agentId: string; x: number; y: number } | null>(
     null,
   );
@@ -138,6 +167,20 @@ const SideBar: React.FC<SideBarProps> = ({
   const [renameValue, setRenameValue] = useState('');
   // Type-to-filter the agent list by name or provider (nav rows always shown).
   const [filter, setFilter] = useState('');
+  // The pinned global workspace — reached via the brand header, not a feed row.
+  const overviewAgent = agents.find((a) => a.global);
+
+  // claudeSpinner keyframes for the working card's provider-tinted status ring.
+  useEffect(() => {
+    ensureKeyframes();
+  }, []);
+  // Relative "2m / 41m" ages tick on a coarse timer — working cards re-render on
+  // every snapshot anyway; this keeps quiet done-cards from freezing at "now".
+  const [, setAgeTick] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setAgeTick((n) => n + 1), 30_000);
+    return () => window.clearInterval(t);
+  }, []);
 
   // Inspecting an agent is deliberate, not ambient: no hover popover. The
   // right-click menu's "Inspect" opens the InspectorCard as a pinned pane.
@@ -471,8 +514,9 @@ const SideBar: React.FC<SideBarProps> = ({
         boxSizing: 'border-box',
       }}
     >
-      {/* Brand header — the { ▮ } mark + work{spacer} wordmark, with the
-          sidebar collapse toggle pinned top-right (where users reach for it). */}
+      {/* Brand header — the { ▮ } mark + work{spacer} wordmark IS the way home:
+          clicking it opens the Overview workspace (dashboards & plugin panes),
+          which no longer has its own row in the feed. Collapse toggle top-right. */}
       <div
         style={{
           display: 'flex',
@@ -481,22 +525,46 @@ const SideBar: React.FC<SideBarProps> = ({
           padding: '4px 12px 10px 16px',
         }}
       >
-        <span
+        <button
+          onClick={() => overviewAgent && onSelectAgent(overviewAgent.id)}
+          title="Overview — cross-agent dashboards & plugin panes"
           style={{
-            width: 30,
-            height: 30,
-            flexShrink: 0,
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
-            background: 'var(--wks-bg-base)',
-            border: '1px solid var(--wks-border-subtle)',
-            borderRadius: 9,
+            gap: 10,
+            padding: 0,
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            minWidth: 0,
           }}
         >
-          <BrandMark size={17} blink />
-        </span>
-        <Wordmark size={17} />
+          <span
+            style={{
+              width: 30,
+              height: 30,
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background:
+                overviewAgent && activeAgentId === overviewAgent.id
+                  ? 'var(--wks-accent-bg)'
+                  : 'var(--wks-bg-base)',
+              border: `1px solid ${
+                overviewAgent && activeAgentId === overviewAgent.id
+                  ? 'var(--wks-accent-glow)'
+                  : 'var(--wks-border-subtle)'
+              }`,
+              borderRadius: 9,
+              transition: 'border-color 0.12s, background 0.12s',
+            }}
+          >
+            <BrandMark size={17} blink />
+          </span>
+          <Wordmark size={17} />
+        </button>
         {onToggleCollapse && (
           <button
             onClick={onToggleCollapse}
@@ -531,99 +599,6 @@ const SideBar: React.FC<SideBarProps> = ({
         )}
       </div>
 
-      <div
-        style={{
-          padding: '6px 14px 10px 16px',
-          fontSize: '0.64rem',
-          fontWeight: 700,
-          letterSpacing: '0.08em',
-          textTransform: 'uppercase',
-          color: 'var(--wks-text-faint)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-        }}
-      >
-        <span>Agents</span>
-        {noAttentionFlash && (
-          <span style={pillStyle('var(--wks-success, #3fb950)')}>all clear</span>
-        )}
-        {!noAttentionFlash && needYouCount > 0 && (
-          <span
-            onClick={onOpenInbox ?? onJumpToAttention}
-            title="Open the Triage Inbox"
-            style={{
-              ...pillStyle('var(--wks-warning, #e0a000)'),
-              cursor: (onOpenInbox ?? onJumpToAttention) ? 'pointer' : 'default',
-            }}
-          >
-            <span style={dotStyle('var(--wks-warning, #e0a000)', true)} />
-            {needYouCount} need you
-          </span>
-        )}
-        {!noAttentionFlash && needYouCount === 0 && workingCount > 0 && (
-          <span style={pillStyle('var(--wks-busy, var(--wks-accent-text, #4a9eff))')}>
-            <IconWorking size={12} strokeWidth={2.2} accent="currentColor" />
-            {workingCount} working
-          </span>
-        )}
-      </div>
-
-      {/* Primary attention surface plus the cross-agent Fleet surface. */}
-      <div
-        style={{
-          display: 'flex',
-          gap: 4,
-          margin: '2px 12px 10px',
-          padding: 4,
-          background: 'var(--wks-bg-base)',
-          border: '1px solid var(--wks-border-subtle)',
-          borderRadius: 'var(--wks-radius-lg)',
-        }}
-      >
-        <button
-          onClick={onOpenInbox}
-          title="Triage Inbox (Ctrl+Shift+A)"
-          style={segBtnStyle(false)}
-        >
-          <IconInbox size={15} strokeWidth={2} />
-          <span>Inbox</span>
-          {counts.total > 0 && (
-            // Amber when something genuinely needs you; muted green when the inbox
-            // only holds finished / review items (nothing blocking).
-            <span
-              style={{
-                marginLeft: 'auto',
-                minWidth: 16,
-                height: 16,
-                padding: '0 4px',
-                borderRadius: 'var(--wks-radius-md)',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                background:
-                  needYouCount > 0 ? 'var(--wks-warning, #e0a000)' : 'var(--wks-success, #3fb950)',
-                color: 'var(--wks-bg-base, #1a1a1a)',
-                fontFamily: 'var(--wks-font-mono)',
-                fontSize: '0.64rem',
-                fontWeight: 700,
-                opacity: needYouCount > 0 ? 1 : 0.85,
-              }}
-            >
-              {needYouCount > 0 ? needYouCount : counts.total}
-            </span>
-          )}
-        </button>
-        <button
-          onClick={onToggleFleet}
-          title="Fleet (Ctrl+Shift+F)"
-          style={segBtnStyle(viewLevel === 'fleet')}
-        >
-          <IconOverview size={15} strokeWidth={2} />
-          Fleet
-        </button>
-      </div>
-
       {/* Filter — only worth showing once there's a handful of agents. */}
       {agents.filter((a) => !a.global).length > 4 && (
         <div style={{ padding: '2px 12px 6px' }}>
@@ -653,20 +628,23 @@ const SideBar: React.FC<SideBarProps> = ({
           overflowY: 'auto',
           display: 'flex',
           flexDirection: 'column',
-          gap: '7px',
+          gap: '8px',
           padding: '2px 0',
         }}
       >
-        {agents.length === 0 && (
+        {/* The pinned Overview doesn't count — with no real agents the feed is
+            empty (the app shows the Overview workspace) and this hint explains. */}
+        {agents.every((a) => a.global) && (
           <div
             style={{
-              padding: '8px 12px',
-              fontSize: '0.7rem',
+              padding: '8px 16px',
+              fontFamily: 'var(--wks-font-mono)',
+              fontSize: '0.68rem',
               color: 'var(--wks-text-faint)',
-              lineHeight: 1.5,
+              lineHeight: 1.6,
             }}
           >
-            No agents yet. Spawn one to start a Claude Code session.
+            No agents yet. Spawn one to start a session.
           </div>
         )}
 
@@ -701,289 +679,491 @@ const SideBar: React.FC<SideBarProps> = ({
             }
           }
 
-          const renderAgentRow = (agent: (typeof agents)[0], indent?: boolean) => {
-            const isActive = agent.id === activeAgentId;
-            const isGlobal = !!agent.global;
-            const isSupervisor = agent.kind === 'supervisor';
+          const now = Date.now();
+
+          // Live-feed card state (spec 2a): amber "waiting on you" beats green
+          // "working"; everything else (idle / stopped) reads as done.
+          type CardState = 'waiting' | 'working' | 'done';
+          const cardStateOf = (agent: (typeof agents)[0]): CardState => {
             const state = agent.sessionId ? statusBySession[agent.sessionId] : undefined;
-            const base = statusVisual(state);
-            // The agent's most-urgent open attention item (if any) tints the dot
-            // and adds a tiny kind glyph, so the row collapses to ~5 readable states.
+            const top = topByAgent.get(agent.id);
+            if (
+              state === 'waiting_approval' ||
+              state === 'waiting_input' ||
+              (top && WAITING_KINDS.has(top.kind))
+            )
+              return 'waiting';
+            if (state === 'thinking' || state === 'streaming' || state === 'background')
+              return 'working';
+            return 'done';
+          };
+
+          const renderAgentCard = (agent: (typeof agents)[0], indent?: boolean) => {
+            const isActive = agent.id === activeAgentId;
+            const isSupervisor = agent.kind === 'supervisor';
+            const provider = agent.provider ?? 'claude';
+            const hue = PROVIDER_HUE[provider] ?? 'var(--wks-accent, #4a9eff)';
+            const state = agent.sessionId ? statusBySession[agent.sessionId] : undefined;
+            const cardState = cardStateOf(agent);
             const top: AttentionItem | undefined = topByAgent.get(agent.id);
-            const color = top ? KIND_COLOR[top.kind] : base.color;
-            const label = top ? KIND_VISUAL_LABEL[top.kind] : base.label;
-            const glyph = top ? KIND_GLYPH[top.kind] : '';
-            const isRenaming = renamingId === agent.id;
             const snap = agent.sessionId ? snapshotBySession[agent.sessionId] : undefined;
             const stats =
               (agent.sessionId && statsBySession[agent.sessionId]) || deriveSessionStats(snap);
+            const model = shortModelLabel(stats.model) || shortModelLabel(agent.model);
+            const isRenaming = renamingId === agent.id;
             const hasCtx = stats.ctxPct !== undefined;
             const ctxFrac = hasCtx ? Math.min(1, stats.ctxPct! / 100) : 0;
+
+            // Mini action log — two lines like the mock: a muted history line,
+            // then the tinted live line. Mirrors the Fleet cards: when there's
+            // no live tool or plan step, fall back to the last thing the agent
+            // SAID instead of a vague "Working…".
+            let lastMsg: string | undefined;
+            const turns = snap?.conversation ?? [];
+            for (let i = turns.length - 1; i >= 0; i--) {
+              if (turns[i].role === 'assistant' && turns[i].content?.trim()) {
+                lastMsg = turns[i].content
+                  .trim()
+                  .split('\n')[0]
+                  .replace(/^[#>*\-\s`]+/, '');
+                break;
+              }
+            }
+            const lastDone = snap?.completedToolCalls?.length
+              ? snap.completedToolCalls[snap.completedToolCalls.length - 1]
+              : undefined;
+            let live: { text: string; color: string };
+            let liveUsedMsg = false;
+            if (cardState === 'waiting') {
+              const what =
+                top && WAITING_KINDS.has(top.kind)
+                  ? top.title
+                  : state === 'waiting_approval'
+                    ? 'approve a tool call'
+                    : 'your input';
+              live = { text: `Waiting: ${what}`, color: 'var(--wks-warning, #e0a000)' };
+            } else if (cardState === 'working') {
+              const activeTc = snap?.activeToolCalls?.[snap.activeToolCalls.length - 1];
+              const step = planProgress(snap?.plan)?.active;
+              const stepText = step?.activeForm ?? step?.content;
+              if (activeTc) {
+                live = {
+                  text: formatToolSummary(activeTc).call,
+                  color: 'var(--wks-success, #3fb950)',
+                };
+              } else if (stepText) {
+                live = { text: stepText, color: 'var(--wks-success, #3fb950)' };
+              } else if (lastMsg) {
+                live = { text: lastMsg, color: 'var(--wks-success, #3fb950)' };
+                liveUsedMsg = true;
+              } else {
+                live = { text: 'Working…', color: 'var(--wks-success, #3fb950)' };
+              }
+            } else if (!agent.sessionId) {
+              live = { text: 'Stopped — click to respawn', color: 'var(--wks-text-faint)' };
+            } else {
+              live = {
+                text: lastMsg ? `Done — ${lastMsg}` : 'Idle',
+                color: 'var(--wks-text-faint)',
+              };
+              liveUsedMsg = true;
+            }
+            const log: { text: string; color: string }[] = [];
+            if (lastDone) {
+              log.push({ text: formatToolSummary(lastDone).call, color: 'var(--wks-text-faint)' });
+            } else if (lastMsg && !liveUsedMsg) {
+              // No tool history yet — the last message is still better context
+              // than a single-line card.
+              log.push({ text: lastMsg, color: 'var(--wks-text-faint)' });
+            }
+            log.push(live);
+
+            const age = snap
+              ? now - snap.lastActivity < 60_000
+                ? 'now'
+                : relTime(now - snap.lastActivity)
+              : '';
+            const label =
+              cardState === 'waiting'
+                ? top && WAITING_KINDS.has(top.kind)
+                  ? KIND_VISUAL_LABEL[top.kind]
+                  : 'Waiting on you'
+                : cardState === 'working'
+                  ? 'Working'
+                  : agent.sessionId
+                    ? 'Idle'
+                    : 'Stopped — click to respawn';
             const usageTip = hasCtx
               ? `\n${Math.round(stats.ctxPct!)}% context${stats.tokens !== undefined ? ` · ${fmtTokens(stats.tokens)} tok` : ''}${stats.costUSD !== undefined ? ` · ${fmtUSD(stats.costUSD)}` : ''}${stats.model ? ` · ${stats.model}` : ''}`
               : '';
-            const working = state === 'thinking' || state === 'streaming' || state === 'background';
-            const statusText = isGlobal
-              ? 'Dashboards & plugins'
-              : agent.sessionId
-                ? label
-                : 'Stopped — click to respawn';
+
+            const borderColor = isActive
+              ? 'var(--wks-accent-glow)'
+              : cardState === 'working'
+                ? 'color-mix(in srgb, var(--wks-success, #3fb950) 32%, transparent)'
+                : cardState === 'waiting'
+                  ? 'color-mix(in srgb, var(--wks-warning, #e0a000) 48%, transparent)'
+                  : 'transparent';
+            const dimmed = cardState === 'done' && !isActive;
 
             return (
-              <button
+              <div
                 key={agent.id}
+                role="button"
+                tabIndex={0}
                 onClick={() => onSelectAgent(agent.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !isRenaming) onSelectAgent(agent.id);
+                }}
                 onContextMenu={(e) => {
                   e.preventDefault();
-                  if (isGlobal) return; // Overview can't be renamed/terminated
                   setContextMenu({ agentId: agent.id, x: e.clientX, y: e.clientY });
                 }}
                 onMouseEnter={(e) => {
-                  if (!isActive)
-                    (e.currentTarget as HTMLElement).style.backgroundColor =
-                      'var(--wks-bg-elevated)';
+                  (e.currentTarget as HTMLElement).style.opacity = '1';
                 }}
                 onMouseLeave={(e) => {
-                  if (!isActive)
-                    (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+                  (e.currentTarget as HTMLElement).style.opacity = dimmed ? '0.55' : '1';
                 }}
+                title={`${agent.name} — ${label}\n${agent.cwd}${usageTip}`}
                 style={{
                   position: 'relative',
                   width: indent ? 'calc(100% - 36px)' : 'calc(100% - 24px)',
                   margin: indent ? '0 12px 0 24px' : '0 12px',
-                  padding: '11px 13px',
-                  display: 'block',
+                  padding: '10px 12px',
                   borderRadius: 'var(--wks-radius-lg)',
                   cursor: 'pointer',
-                  fontFamily: 'inherit',
-                  backgroundColor: 'transparent',
-                  color: 'var(--wks-text-secondary)',
-                  border: '1px solid transparent',
-                  textAlign: 'left',
                   boxSizing: 'border-box',
-                  transition: 'background-color 0.12s, box-shadow 0.2s',
-                  // Working agents get a faint "busy" ring (mockup), independent of
-                  // selection — subtle so inactive rows don't read as glowing.
+                  backgroundColor: isActive ? 'var(--wks-accent-bg)' : 'var(--wks-bg-elevated)',
+                  border: `1px solid ${borderColor}`,
                   boxShadow:
-                    working && !isGlobal
-                      ? '0 0 0 1px color-mix(in srgb, var(--wks-busy) 20%, transparent)'
+                    cardState === 'waiting'
+                      ? '0 0 14px color-mix(in srgb, var(--wks-warning, #e0a000) 9%, transparent)'
                       : 'none',
-                  opacity: indent ? 0.9 : 1,
+                  opacity: dimmed ? 0.55 : 1,
+                  transition: 'opacity 0.15s, border-color 0.15s, background-color 0.15s',
                 }}
-                title={
-                  isGlobal
-                    ? 'Overview — cross-agent dashboards & plugin panes'
-                    : `${agent.name} — ${label}\n${agent.cwd}${usageTip}`
-                }
               >
                 {isActive && (
-                  <>
-                    <span
-                      style={{
-                        position: 'absolute',
-                        inset: 0,
-                        borderRadius: 'var(--wks-radius-lg)',
-                        background: 'var(--wks-accent-bg)',
-                        border: '1px solid var(--wks-accent-glow)',
-                        pointerEvents: 'none',
-                      }}
-                    />
-                    <span
-                      style={{
-                        position: 'absolute',
-                        left: 0,
-                        top: 13,
-                        bottom: 13,
-                        width: 3,
-                        borderRadius: 'var(--wks-radius-pill)',
-                        background: 'var(--wks-accent)',
-                      }}
-                    />
-                  </>
+                  <span
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      top: 12,
+                      bottom: 12,
+                      width: 3,
+                      borderRadius: 'var(--wks-radius-pill)',
+                      background: 'var(--wks-accent)',
+                    }}
+                  />
                 )}
-                <span style={{ position: 'relative', display: 'block' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-                    {/* Monogram tile with corner status badge */}
+
+                {/* Header: status glyph + name + relative age */}
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  {cardState === 'working' ? (
                     <span
                       style={{
-                        position: 'relative',
-                        width: 30,
-                        height: 30,
+                        width: 11,
+                        height: 11,
                         flexShrink: 0,
-                        borderRadius: 9,
-                        background: 'var(--wks-bg-base)',
-                        border: '1px solid var(--wks-border-subtle)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
+                        boxSizing: 'border-box',
+                        borderRadius: '50%',
+                        border: `2px solid ${hue}`,
+                        borderTopColor: 'transparent',
+                        animation: 'claudeSpinner 1s linear infinite',
+                      }}
+                    />
+                  ) : cardState === 'waiting' ? (
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        color: 'var(--wks-warning, #e0a000)',
+                        fontSize: '0.6rem',
+                        lineHeight: 1,
+                        animation: 'wks-pulse 1.4s ease-in-out infinite',
                       }}
                     >
-                      {isGlobal ? (
-                        <span
-                          style={{
-                            fontSize: '0.85rem',
-                            color: 'var(--wks-text-tertiary)',
-                            lineHeight: 1,
-                          }}
-                        >
-                          ▦
-                        </span>
-                      ) : isSupervisor ? (
-                        <span style={{ fontSize: '0.78rem', lineHeight: 1 }}>🧭</span>
-                      ) : (
-                        // Provider logo so Claude / Codex / OpenCode / Pi agents are
-                        // distinguishable at a glance (was a generic name initial).
-                        <AgentLogo
-                          provider={agent.provider ?? 'claude'}
-                          size={17}
-                          style={{ color: 'var(--wks-text-primary)', lineHeight: 1 }}
-                        />
-                      )}
-                      {!isGlobal &&
-                        (glyph ? (
-                          <span
-                            title={label}
-                            style={{
-                              position: 'absolute',
-                              right: -3,
-                              bottom: -3,
-                              width: 13,
-                              height: 13,
-                              borderRadius: 'var(--wks-radius-pill)',
-                              background: 'var(--wks-bg-raised)',
-                              border: '2px solid var(--wks-bg-raised)',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              color,
-                              fontSize: '0.55rem',
-                              fontWeight: 700,
-                              lineHeight: 1,
-                              textShadow: `0 0 3px ${color}`,
-                            }}
-                          >
-                            {glyph}
-                          </span>
-                        ) : (
-                          <span
-                            style={{
-                              position: 'absolute',
-                              right: -3,
-                              bottom: -3,
-                              width: 11,
-                              height: 11,
-                              borderRadius: 'var(--wks-radius-pill)',
-                              backgroundColor: color,
-                              border: '2px solid var(--wks-bg-raised)',
-                              boxShadow: working ? `0 0 4px ${color}` : 'none',
-                              animation: working ? 'wks-pulse 1.6s ease-in-out infinite' : 'none',
-                            }}
-                          />
-                        ))}
+                      ■
                     </span>
-                    {/* Name + percentage / status */}
-                    <span style={{ minWidth: 0, flex: 1 }}>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        {isRenaming ? (
-                          <input
-                            autoFocus
-                            value={renameValue}
-                            onChange={(e) => setRenameValue(e.target.value)}
-                            onBlur={commitRename}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') commitRename();
-                              if (e.key === 'Escape') {
-                                setRenamingId(null);
-                                setRenameValue('');
-                              }
-                              e.stopPropagation();
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                            style={{
-                              flex: 1,
-                              minWidth: 0,
-                              fontSize: '0.8rem',
-                              fontFamily: 'inherit',
-                              background: 'var(--wks-bg-base)',
-                              color: 'var(--wks-text-primary)',
-                              border: '1px solid var(--wks-accent)',
-                              borderRadius: 4,
-                              padding: '1px 4px',
-                              boxSizing: 'border-box',
-                            }}
-                          />
-                        ) : (
-                          <span
-                            style={{
-                              flex: 1,
-                              minWidth: 0,
-                              fontSize: indent ? '0.8rem' : '0.85rem',
-                              fontWeight: 600,
-                              color: 'var(--wks-text-primary)',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                              lineHeight: 1.3,
-                            }}
-                          >
-                            {agent.name}
-                          </span>
-                        )}
-                        {hasCtx && (
-                          <span
-                            style={{
-                              flexShrink: 0,
-                              fontFamily: 'var(--wks-font-mono)',
-                              fontSize: '0.75rem',
-                              fontWeight: 700,
-                              color: ctxColor(ctxFrac * 100),
-                              fontVariantNumeric: 'tabular-nums',
-                            }}
-                          >
-                            {Math.round(ctxFrac * 100)}%
-                          </span>
-                        )}
-                      </span>
+                  ) : (
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        color: 'var(--wks-text-faint)',
+                        fontSize: '0.7rem',
+                        lineHeight: 1,
+                      }}
+                    >
+                      {agent.sessionId ? '✓' : '○'}
+                    </span>
+                  )}
+                  {isSupervisor && (
+                    <span style={{ flexShrink: 0, fontSize: '0.72rem', lineHeight: 1 }}>🧭</span>
+                  )}
+                  {isRenaming ? (
+                    <input
+                      autoFocus
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onBlur={commitRename}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitRename();
+                        if (e.key === 'Escape') {
+                          setRenamingId(null);
+                          setRenameValue('');
+                        }
+                        e.stopPropagation();
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        fontSize: '0.8rem',
+                        fontFamily: 'inherit',
+                        background: 'var(--wks-bg-base)',
+                        color: 'var(--wks-text-primary)',
+                        border: '1px solid var(--wks-accent)',
+                        borderRadius: 4,
+                        padding: '1px 4px',
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                  ) : (
+                    <span
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        color: 'var(--wks-text-primary)',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        lineHeight: 1.3,
+                      }}
+                    >
+                      {agent.name}
+                    </span>
+                  )}
+                  {age && (
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        fontFamily: 'var(--wks-font-mono)',
+                        fontSize: '0.62rem',
+                        color:
+                          cardState === 'waiting'
+                            ? 'var(--wks-warning, #e0a000)'
+                            : 'var(--wks-text-faint)',
+                      }}
+                    >
+                      {cardState === 'waiting' ? `${age} · paused` : age}
+                    </span>
+                  )}
+                </span>
+
+                {/* Action log — └-style ticker of what the agent just did / is doing */}
+                {log.length > 0 && (
+                  <span
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 2,
+                      marginTop: 7,
+                      paddingLeft: 9,
+                      borderLeft: `1px solid ${
+                        cardState === 'waiting'
+                          ? 'color-mix(in srgb, var(--wks-warning, #e0a000) 30%, transparent)'
+                          : 'var(--wks-border-subtle)'
+                      }`,
+                    }}
+                  >
+                    {log.map((l, i) => (
                       <span
+                        key={i}
                         style={{
-                          display: 'block',
-                          marginTop: 3,
                           fontFamily: 'var(--wks-font-mono)',
-                          fontSize: '0.7rem',
-                          color: isGlobal ? 'var(--wks-text-faint)' : color,
+                          fontSize: '0.68rem',
+                          lineHeight: 1.5,
+                          color: l.color,
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap',
                         }}
                       >
-                        {statusText}
+                        {l.text}
                       </span>
-                    </span>
+                    ))}
                   </span>
-                  {hasCtx && (
+                )}
+
+                {/* Context-fill bar — working cards only (mock's progress line) */}
+                {cardState === 'working' && hasCtx && (
+                  <span
+                    style={{
+                      display: 'block',
+                      height: 3,
+                      borderRadius: 'var(--wks-radius-pill)',
+                      marginTop: 9,
+                      background: 'var(--wks-bg-base)',
+                      overflow: 'hidden',
+                    }}
+                  >
                     <span
                       style={{
                         display: 'block',
-                        height: 3,
+                        height: '100%',
                         borderRadius: 'var(--wks-radius-pill)',
-                        marginTop: 11,
-                        background: 'var(--wks-bg-base)',
-                        overflow: 'hidden',
+                        width: `${Math.max(2, ctxFrac * 100)}%`,
+                        background: ctxColor(ctxFrac * 100),
+                      }}
+                    />
+                  </span>
+                )}
+
+                {/* Footer: provider chip + tokens/cost meta */}
+                <span
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    marginTop: 8,
+                    minWidth: 0,
+                  }}
+                >
+                  <span
+                    title={provider}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      whiteSpace: 'nowrap',
+                      textOverflow: 'ellipsis',
+                      background: `color-mix(in srgb, ${hue} 12%, transparent)`,
+                      color: hue,
+                      borderRadius: 4,
+                      padding: '2px 7px',
+                      fontFamily: 'var(--wks-font-mono)',
+                      fontSize: '0.62rem',
+                    }}
+                  >
+                    <AgentLogo provider={provider} size={11} style={{ flexShrink: 0 }} />
+                    {model}
+                  </span>
+                  {(stats.tokens !== undefined || stats.costUSD !== undefined) && (
+                    <span
+                      style={{
+                        marginLeft: 'auto',
+                        flexShrink: 0,
+                        fontFamily: 'var(--wks-font-mono)',
+                        fontSize: '0.62rem',
+                        color: 'var(--wks-text-faint)',
+                        whiteSpace: 'nowrap',
                       }}
                     >
-                      <span
-                        style={{
-                          display: 'block',
-                          height: '100%',
-                          borderRadius: 'var(--wks-radius-pill)',
-                          width: `${Math.max(2, ctxFrac * 100)}%`,
-                          background: ctxColor(ctxFrac * 100),
-                        }}
-                      />
+                      {stats.tokens !== undefined ? `${fmtTokens(stats.tokens)} tok` : ''}
+                      {stats.tokens !== undefined && stats.costUSD !== undefined ? ' · ' : ''}
+                      {stats.costUSD !== undefined ? fmtUSD(stats.costUSD) : ''}
                     </span>
                   )}
                 </span>
-              </button>
+
+                {/* Waiting cards act inline — approve here, or jump in to reply */}
+                {cardState === 'waiting' && (
+                  <span style={{ display: 'flex', gap: 7, marginTop: 9 }}>
+                    {top?.payload.type === 'approval' && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          approve(top, 'yes');
+                        }}
+                        title={top.title}
+                        style={cardActionStyle(true)}
+                      >
+                        Approve
+                      </button>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectAgent(agent.id);
+                      }}
+                      style={cardActionStyle(false)}
+                    >
+                      {top?.payload.type === 'question' ? 'Answer' : 'Reply'}
+                    </button>
+                  </span>
+                )}
+              </div>
+            );
+          };
+
+          // Hour-old finished agents collapse to one quiet line each (spec 04).
+          const renderEarlierLine = (agent: (typeof agents)[0]) => {
+            const snap = agent.sessionId ? snapshotBySession[agent.sessionId] : undefined;
+            const age = snap ? relTime(now - snap.lastActivity) : '';
+            // "✓ name · what it finished · 1h" — headline from the last message.
+            let headline: string | undefined;
+            const turns = snap?.conversation ?? [];
+            for (let i = turns.length - 1; i >= 0; i--) {
+              if (turns[i].role === 'assistant' && turns[i].content?.trim()) {
+                headline = turns[i].content
+                  .trim()
+                  .split('\n')[0]
+                  .replace(/^[#>*\-\s`]+/, '');
+                break;
+              }
+            }
+            return (
+              <div
+                key={agent.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => onSelectAgent(agent.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') onSelectAgent(agent.id);
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setContextMenu({ agentId: agent.id, x: e.clientX, y: e.clientY });
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
+                }}
+                title={`${agent.name}${agent.sessionId ? '' : ' — stopped, click to respawn'}\n${agent.cwd}`}
+                style={{
+                  margin: '0 16px',
+                  padding: '3px 2px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 7,
+                  minWidth: 0,
+                  borderRadius: 'var(--wks-radius-md)',
+                  cursor: 'pointer',
+                  fontFamily: 'var(--wks-font-mono)',
+                  fontSize: '0.66rem',
+                  color: 'var(--wks-text-faint)',
+                  transition: 'color 0.12s',
+                }}
+              >
+                <span style={{ flexShrink: 0 }}>{agent.sessionId ? '✓' : '○'}</span>
+                <span
+                  style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {agent.name}
+                  {headline ? ` · ${headline}` : ''}
+                </span>
+                {age && <span style={{ marginLeft: 'auto', flexShrink: 0 }}>{age}</span>}
+              </div>
             );
           };
 
@@ -1007,34 +1187,65 @@ const SideBar: React.FC<SideBarProps> = ({
             return sb - sa;
           });
 
-          const rows: React.ReactNode[] = [];
+          // Live-feed grouping (spec 2a): Overview nav row pinned first, then
+          // waiting → working → done cards (the sort above), then hour-old
+          // finished agents collapsed into a compact EARLIER list.
+          const cards: typeof agents = [];
+          const earlier: typeof agents = [];
           for (const agent of topLevel) {
-            rows.push(renderAgentRow(agent, false));
-            // Render children indented directly after their parent.
+            if (agent.global) continue;
             const children = childrenByParent.get(agent.id) ?? [];
-            for (const child of children) {
-              rows.push(renderAgentRow(child, true));
+            const snap = agent.sessionId ? snapshotBySession[agent.sessionId] : undefined;
+            const oldDone =
+              cardStateOf(agent) === 'done' &&
+              agent.id !== activeAgentId &&
+              children.length === 0 &&
+              (!agent.sessionId || (snap && now - snap.lastActivity > EARLIER_AFTER_MS));
+            (oldDone ? earlier : cards).push(agent);
+          }
+
+          const rows: React.ReactNode[] = [];
+          for (const agent of cards) {
+            rows.push(renderAgentCard(agent, false));
+            // Render children indented directly after their parent.
+            for (const child of childrenByParent.get(agent.id) ?? []) {
+              rows.push(renderAgentCard(child, true));
             }
+          }
+          if (earlier.length > 0) {
+            rows.push(
+              <div
+                key="earlier-heading"
+                style={{
+                  padding: '10px 16px 2px',
+                  fontSize: '0.6rem',
+                  fontWeight: 700,
+                  letterSpacing: '0.12em',
+                  color: 'var(--wks-text-faint)',
+                }}
+              >
+                EARLIER
+              </div>,
+            );
+            for (const agent of earlier) rows.push(renderEarlierLine(agent));
           }
           return rows;
         })()}
       </div>
 
-      {/* Spawn button — solid affordance with an accent icon chip + kbd hint. */}
+      {/* Spawn agent — the mock's bottom pill: green + coin, label, kbd hint. */}
       <button
         onClick={onSpawnAgent}
         style={{
           width: 'calc(100% - 24px)',
           margin: '4px 12px 10px',
-          padding: '8px',
+          padding: '11px 12px',
           display: 'flex',
           alignItems: 'center',
-          gap: '11px',
-          border: '1px solid var(--wks-border-subtle)',
-          borderRadius: 'var(--wks-radius-lg)',
+          gap: 9,
+          border: '1px solid transparent',
+          borderRadius: 9,
           cursor: 'pointer',
-          fontSize: '0.8rem',
-          fontWeight: 600,
           fontFamily: 'inherit',
           backgroundColor: 'var(--wks-bg-elevated)',
           color: 'var(--wks-text-primary)',
@@ -1046,83 +1257,45 @@ const SideBar: React.FC<SideBarProps> = ({
           (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent)';
         }}
         onMouseLeave={(e) => {
-          (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border-subtle)';
+          (e.currentTarget as HTMLElement).style.borderColor = 'transparent';
         }}
         title="Spawn a new agent (Ctrl+Shift+N)"
       >
         <span
           style={{
             flexShrink: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 28,
-            height: 28,
-            borderRadius: 'var(--wks-radius-md)',
-            background: 'var(--wks-accent)',
-            color: 'var(--wks-bg-raised)',
+            display: 'grid',
+            placeItems: 'center',
+            width: 22,
+            height: 22,
+            borderRadius: 'var(--wks-radius-pill)',
+            background: 'var(--wks-success, #3fb950)',
+            color: 'var(--wks-bg-base, #14191c)',
+            fontWeight: 700,
+            fontSize: '0.85rem',
+            lineHeight: 1,
           }}
         >
-          <Plus size={16} strokeWidth={2.5} />
+          +
+        </span>
+        <span style={{ fontSize: '0.78rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
+          Spawn agent
         </span>
         <span
           style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'flex-start',
-            lineHeight: 1.25,
-            minWidth: 0,
+            marginLeft: 'auto',
+            fontFamily: 'var(--wks-font-mono)',
+            fontSize: '0.64rem',
+            color: 'var(--wks-text-faint)',
+            whiteSpace: 'nowrap',
           }}
         >
-          <span style={{ whiteSpace: 'nowrap' }}>Spawn agent</span>
-          <span
-            style={{
-              fontFamily: 'var(--wks-font-mono)',
-              fontSize: '0.66rem',
-              fontWeight: 500,
-              color: 'var(--wks-text-faint)',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            Ctrl+Shift+N
-          </span>
+          ⌃⇧N
         </span>
       </button>
 
-      {/* Footer: persistent help affordance so onboarding guidance is always
-          re-enterable (re-uses the existing keyboard-shortcuts overlay). */}
-      {onToggleHelp && (
-        <button
-          onClick={onToggleHelp}
-          title="Keyboard shortcuts & help"
-          style={{
-            width: 'calc(100% - 8px)',
-            margin: '0 4px 6px',
-            padding: '6px 8px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            border: '1px solid var(--wks-glass-border)',
-            borderRadius: 6,
-            cursor: 'pointer',
-            fontSize: '0.72rem',
-            fontFamily: 'inherit',
-            fontWeight: 600,
-            background: 'transparent',
-            color: 'var(--wks-text-muted)',
-            textAlign: 'left',
-            boxSizing: 'border-box',
-          }}
-        >
-          <span style={{ width: 8, display: 'inline-flex', justifyContent: 'center' }}>
-            <HelpCircle size={13} strokeWidth={2} />
-          </span>
-          <span>Help &amp; shortcuts</span>
-        </button>
-      )}
-
-      {/* Hub bus status — sits in-flow at the bottom of the sidebar */}
-      <HubStatus onOpenRemote={onOpenRemote} />
+      {/* Footer — one row like the mock: ● hub on the left, ? Help right. */}
+      <HubStatus onOpenRemote={onOpenRemote} onToggleHelp={onToggleHelp} />
 
       {/* Context menu */}
       {contextMenu && (
@@ -1164,28 +1337,6 @@ const SideBar: React.FC<SideBarProps> = ({
   );
 };
 
-/** A flush button inside the Inbox/Fleet segmented track. */
-function segBtnStyle(active: boolean): React.CSSProperties {
-  return {
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7,
-    padding: '6px 10px',
-    borderRadius: 'var(--wks-radius-md)',
-    cursor: 'pointer',
-    fontSize: '0.8rem',
-    fontFamily: 'inherit',
-    fontWeight: 600,
-    border: 'none',
-    background: active ? 'var(--wks-bg-elevated)' : 'transparent',
-    color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-tertiary)',
-    boxShadow: active ? '0 1px 2px var(--wks-shadow)' : 'none',
-    boxSizing: 'border-box',
-  };
-}
-
 /** Header status pill (e.g. "1 working") — soft chip tinted to match its own
  *  status color (green/amber), with a live dot. */
 function pillStyle(color: string): React.CSSProperties {
@@ -1203,6 +1354,23 @@ function pillStyle(color: string): React.CSSProperties {
     letterSpacing: 0,
     textTransform: 'none',
     whiteSpace: 'nowrap',
+  };
+}
+
+/** Inline waiting-card actions (spec 2a): solid Approve, quiet Reply/Answer. */
+function cardActionStyle(primary: boolean): React.CSSProperties {
+  return {
+    flex: 1,
+    padding: '4px 0',
+    textAlign: 'center',
+    borderRadius: 'var(--wks-radius-md)',
+    border: 'none',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    fontSize: '0.7rem',
+    fontWeight: 700,
+    background: primary ? 'var(--wks-success, #3fb950)' : 'var(--wks-bg-base)',
+    color: primary ? 'var(--wks-bg-base, #14191c)' : 'var(--wks-text-primary)',
   };
 }
 

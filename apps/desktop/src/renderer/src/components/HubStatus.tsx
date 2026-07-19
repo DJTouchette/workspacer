@@ -6,10 +6,12 @@ import { Smartphone } from 'lucide-react';
  * the IPC-forwarded hub status — no prop threading. Sits at the bottom of the
  * sidebar. Proof that claudemon → hub → main → renderer round-trips.
  */
-const HubStatus: React.FC<{ onOpenRemote?: () => void; compact?: boolean }> = ({
-  onOpenRemote,
-  compact,
-}) => {
+const HubStatus: React.FC<{
+  onOpenRemote?: () => void;
+  compact?: boolean;
+  /** Renders a "? Help" affordance in the footer row (keyboard-shortcuts overlay). */
+  onToggleHelp?: () => void;
+}> = ({ onOpenRemote, compact, onToggleHelp }) => {
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
@@ -90,12 +92,40 @@ const HubStatus: React.FC<{ onOpenRemote?: () => void; compact?: boolean }> = ({
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {connected ? 'hub' : 'hub offline'}
       </span>
+      {onToggleHelp && (
+        <button
+          onClick={onToggleHelp}
+          title="Keyboard shortcuts & help"
+          style={{
+            marginLeft: 'auto',
+            flexShrink: 0,
+            background: 'transparent',
+            border: 'none',
+            padding: 2,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            fontSize: '0.64rem',
+            color: 'var(--wks-text-faint)',
+            whiteSpace: 'nowrap',
+            borderRadius: 4,
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)';
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
+          }}
+        >
+          ? Help
+        </button>
+      )}
       {onOpenRemote && (
         <button
           onClick={onOpenRemote}
           title="Remote control — drive agents from your phone"
           style={{
-            marginLeft: 'auto',
+            // Help (when present) owns the auto margin that pushes right.
+            marginLeft: onToggleHelp ? 6 : 'auto',
             flexShrink: 0,
             display: 'inline-flex',
             alignItems: 'center',

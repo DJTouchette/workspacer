@@ -1498,134 +1498,189 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       <div style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
         <div
           ref={contentAreaRef}
-          style={{ flex: 1, minWidth: 0, overflow: 'hidden', position: 'relative' }}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            overflow: 'hidden',
+            position: 'relative',
+            // A real column: the term/GUI viewport fills the top, the status
+            // bar takes its own row below. As a plain block (with the GUI view
+            // at height:100%) the bar rendered past the clipped edge and was
+            // invisible.
+            display: 'flex',
+            flexDirection: 'column',
+          }}
         >
           {isDragOver && <DropOverlay />}
 
-          {/* Terminal view (always mounted, visibility toggled) */}
-          <div
-            ref={termContainerRef}
-            style={{
-              position: 'absolute',
-              inset: 0,
-              display: viewMode === 'terminal' ? 'block' : 'none',
-            }}
-          />
-
-          {/* GUI view — always mounted; visibility toggled via CSS so scroll
-            position, visibleCount, and optimisticMessages survive GUI↔Term. */}
-          <div
-            style={
-              {
-                height: '100%',
-                display: viewMode === 'gui' ? 'flex' : 'none',
-                flexDirection: 'column',
-                overflow: 'hidden',
-                // Drives the conversation/markdown font scaling (see ConversationMessage
-                // + markdown.tsx). Defaults to 1 elsewhere, so the shared markdown
-                // renderer (Library, etc.) is unaffected.
-                ['--claude-gui-font-scale' as string]: config.ui.guiFontScale ?? 1.15,
-              } as React.CSSProperties
-            }
-          >
-            {/* Conversation scroll area */}
+          {/* Term/GUI viewport — both views fill this box; the status bar is
+              its in-flow sibling below, inside the same content column. */}
+          <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
+            {/* Terminal view (always mounted, visibility toggled) */}
             <div
-              ref={scrollContainerRef}
-              onScroll={handleScroll}
+              ref={termContainerRef}
               style={{
-                flex: 1,
-                overflowY: 'auto',
-                padding: '12px 16px',
-                position: 'relative',
-                // Promote to its own compositor layer so streaming/markdown
-                // repaints don't corrupt the backdrop-filter snapshots of the
-                // surrounding glass (transient garble that cleared on repaint).
-                transform: 'translateZ(0)',
-                contain: 'paint',
+                position: 'absolute',
+                inset: 0,
+                display: viewMode === 'terminal' ? 'block' : 'none',
               }}
+            />
+
+            {/* GUI view — always mounted; visibility toggled via CSS so scroll
+            position, visibleCount, and optimisticMessages survive GUI↔Term. */}
+            <div
+              style={
+                {
+                  height: '100%',
+                  display: viewMode === 'gui' ? 'flex' : 'none',
+                  flexDirection: 'column',
+                  overflow: 'hidden',
+                  // Drives the conversation/markdown font scaling (see ConversationMessage
+                  // + markdown.tsx). Defaults to 1 elsewhere, so the shared markdown
+                  // renderer (Library, etc.) is unaffected.
+                  ['--claude-gui-font-scale' as string]: config.ui.guiFontScale ?? 1.15,
+                } as React.CSSProperties
+              }
             >
-              {/* Centered content container */}
+              {/* Conversation scroll area */}
               <div
+                ref={scrollContainerRef}
+                onScroll={handleScroll}
                 style={{
-                  maxWidth: 1040,
-                  margin: '0 auto',
+                  flex: 1,
+                  overflowY: 'auto',
+                  padding: '12px 16px',
+                  position: 'relative',
+                  // Promote to its own compositor layer so streaming/markdown
+                  // repaints don't corrupt the backdrop-filter snapshots of the
+                  // surrounding glass (transient garble that cleared on repaint).
+                  transform: 'translateZ(0)',
+                  contain: 'paint',
                 }}
               >
-                {/* Empty states */}
-                {conversation.length === 0 && !session && spawnError && (
-                  <div
-                    style={{
-                      position: 'relative',
-                      textAlign: 'center',
-                      marginTop: 48,
-                      color: colors.mutedDim,
-                      animation: 'claudeFadeIn 0.2s ease-out',
-                    }}
-                  >
-                    <AgentHero
-                      provider={provider ?? 'claude'}
-                      dimLogo
-                      title={`Couldn’t start ${agentName}`}
-                      titleColor={colors.error}
-                    />
+                {/* Centered content container */}
+                <div
+                  style={{
+                    maxWidth: 1040,
+                    margin: '0 auto',
+                  }}
+                >
+                  {/* Empty states */}
+                  {conversation.length === 0 && !session && spawnError && (
                     <div
                       style={{
                         position: 'relative',
-                        fontSize: '0.72rem',
-                        margin: '8px auto 0',
-                        maxWidth: 420,
-                        lineHeight: 1.5,
+                        textAlign: 'center',
+                        marginTop: 48,
                         color: colors.mutedDim,
+                        animation: 'claudeFadeIn 0.2s ease-out',
                       }}
                     >
-                      {spawnError.message || `The ${agentName} session failed to start.`}
+                      <AgentHero
+                        provider={provider ?? 'claude'}
+                        dimLogo
+                        title={`Couldn’t start ${agentName}`}
+                        titleColor={colors.error}
+                      />
+                      <div
+                        style={{
+                          position: 'relative',
+                          fontSize: '0.72rem',
+                          margin: '8px auto 0',
+                          maxWidth: 420,
+                          lineHeight: 1.5,
+                          color: colors.mutedDim,
+                        }}
+                      >
+                        {spawnError.message || `The ${agentName} session failed to start.`}
+                      </div>
+                      <button
+                        onClick={retry}
+                        style={{
+                          position: 'relative',
+                          marginTop: 16,
+                          fontSize: '0.7rem',
+                          fontWeight: 600,
+                          padding: '4px 16px',
+                          borderRadius: 6,
+                          border: `1px solid ${colors.accent}`,
+                          backgroundColor: 'transparent',
+                          color: colors.accent,
+                          cursor: 'pointer',
+                          fontFamily: 'inherit',
+                        }}
+                      >
+                        Retry
+                      </button>
                     </div>
-                    <button
-                      onClick={retry}
-                      style={{
-                        position: 'relative',
-                        marginTop: 16,
-                        fontSize: '0.7rem',
-                        fontWeight: 600,
-                        padding: '4px 16px',
-                        borderRadius: 6,
-                        border: `1px solid ${colors.accent}`,
-                        backgroundColor: 'transparent',
-                        color: colors.accent,
-                        cursor: 'pointer',
-                        fontFamily: 'inherit',
-                      }}
-                    >
-                      Retry
-                    </button>
-                  </div>
-                )}
+                  )}
 
-                {conversation.length === 0 && !session && !spawnError && (
-                  <div
-                    style={{
-                      position: 'relative',
-                      textAlign: 'center',
-                      marginTop: 48,
-                      color: colors.mutedDim,
-                      animation: 'claudeFadeIn 0.2s ease-out',
-                    }}
-                  >
-                    <AgentHero
-                      provider={provider ?? 'claude'}
-                      title={<>Connecting to {agentName}…</>}
-                    />
+                  {conversation.length === 0 && !session && !spawnError && (
                     <div
                       style={{
                         position: 'relative',
-                        display: 'flex',
-                        justifyContent: 'center',
-                        marginTop: 18,
+                        textAlign: 'center',
+                        marginTop: 48,
+                        color: colors.mutedDim,
+                        animation: 'claudeFadeIn 0.2s ease-out',
                       }}
                     >
-                      <BrandSpinner size={20} />
+                      <AgentHero
+                        provider={provider ?? 'claude'}
+                        title={<>Connecting to {agentName}…</>}
+                      />
+                      <div
+                        style={{
+                          position: 'relative',
+                          display: 'flex',
+                          justifyContent: 'center',
+                          marginTop: 18,
+                        }}
+                      >
+                        <BrandSpinner size={20} />
+                      </div>
+                      {showHookHint && isClaude && (
+                        <div
+                          style={{
+                            position: 'relative',
+                            fontSize: '0.7rem',
+                            marginTop: 14,
+                            color: colors.mutedDim,
+                          }}
+                        >
+                          Still connecting — make sure hooks are configured in
+                          ~/.claude/settings.json
+                        </div>
+                      )}
                     </div>
-                    {showHookHint && isClaude && (
+                  )}
+
+                  {/* Session restore in flight — the transcript replay is coming.
+                    Same hero treatment as the "Connecting…" state above, so a
+                    restore reads as one continuous sequence (connecting →
+                    fetching → transcript) instead of the new-agent screen
+                    flashing and the history popping into existence. */}
+                  {conversation.length === 0 && session && historyPending && (
+                    <div
+                      style={{
+                        position: 'relative',
+                        textAlign: 'center',
+                        marginTop: 48,
+                        color: colors.mutedDim,
+                        animation: 'claudeFadeIn 0.2s ease-out',
+                      }}
+                    >
+                      <AgentHero provider={provider ?? 'claude'} title={<>Fetching session…</>} />
+                      <div
+                        style={{
+                          position: 'relative',
+                          display: 'flex',
+                          justifyContent: 'center',
+                          marginTop: 18,
+                        }}
+                      >
+                        <BrandSpinner size={20} />
+                      </div>
                       <div
                         style={{
                           position: 'relative',
@@ -1634,181 +1689,142 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                           color: colors.mutedDim,
                         }}
                       >
-                        Still connecting — make sure hooks are configured in ~/.claude/settings.json
+                        Restoring your conversation history
                       </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Session restore in flight — the transcript replay is coming.
-                    Same hero treatment as the "Connecting…" state above, so a
-                    restore reads as one continuous sequence (connecting →
-                    fetching → transcript) instead of the new-agent screen
-                    flashing and the history popping into existence. */}
-                {conversation.length === 0 && session && historyPending && (
-                  <div
-                    style={{
-                      position: 'relative',
-                      textAlign: 'center',
-                      marginTop: 48,
-                      color: colors.mutedDim,
-                      animation: 'claudeFadeIn 0.2s ease-out',
-                    }}
-                  >
-                    <AgentHero provider={provider ?? 'claude'} title={<>Fetching session…</>} />
-                    <div
-                      style={{
-                        position: 'relative',
-                        display: 'flex',
-                        justifyContent: 'center',
-                        marginTop: 18,
-                      }}
-                    >
-                      <BrandSpinner size={20} />
                     </div>
-                    <div
-                      style={{
-                        position: 'relative',
-                        fontSize: '0.7rem',
-                        marginTop: 14,
-                        color: colors.mutedDim,
+                  )}
+
+                  {conversation.length === 0 && session && !historyPending && (
+                    <ConversationEmptyState
+                      agentName={agentName}
+                      provider={provider ?? 'claude'}
+                      model={session.statusLine?.modelDisplay ?? session.settings?.model}
+                      permissionMode={permissionModeLabel(
+                        provider,
+                        session.livePermissionMode ?? session.settings?.permissionMode,
+                      )}
+                      transport={claudeTransport}
+                      cwd={session.liveCwd || session.cwd || cwd}
+                      initialPrompt={initialPrompt}
+                      onPick={(prompt) => {
+                        setInputValue(prompt);
+                        requestAnimationFrame(() => inputRef.current?.focus());
                       }}
-                    >
-                      Restoring your conversation history
+                    />
+                  )}
+
+                  {/* Load older messages */}
+                  {hasOlderMessages && (
+                    <div style={{ textAlign: 'center', padding: '8px 0 12px 0' }}>
+                      <button
+                        onClick={loadOlderMessages}
+                        style={{
+                          fontSize: '0.68rem',
+                          fontWeight: 500,
+                          padding: '4px 16px',
+                          borderRadius: 'var(--wks-radius-lg)',
+                          border: `1px solid ${colors.border}`,
+                          backgroundColor: 'rgba(255,255,255,0.03)',
+                          color: colors.muted,
+                          cursor: 'pointer',
+                          fontFamily: 'inherit',
+                        }}
+                      >
+                        Load {Math.min(CONVERSATION_PAGE_SIZE, conversation.length - visibleCount)}{' '}
+                        earlier messages ({conversation.length - visibleCount} hidden)
+                      </button>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {conversation.length === 0 && session && !historyPending && (
-                  <ConversationEmptyState
-                    agentName={agentName}
-                    provider={provider ?? 'claude'}
-                    model={session.statusLine?.modelDisplay ?? session.settings?.model}
-                    permissionMode={permissionModeLabel(
-                      provider,
-                      session.livePermissionMode ?? session.settings?.permissionMode,
-                    )}
-                    transport={claudeTransport}
-                    cwd={session.liveCwd || session.cwd || cwd}
-                    initialPrompt={initialPrompt}
-                    onPick={(prompt) => {
-                      setInputValue(prompt);
-                      requestAnimationFrame(() => inputRef.current?.focus());
-                    }}
-                  />
-                )}
+                  {/* Rendered conversation messages with dividers */}
+                  <ErrorBoundary label="Conversation" resetKeys={[sessionId]}>
+                    {renderedConversation}
+                  </ErrorBoundary>
 
-                {/* Load older messages */}
-                {hasOlderMessages && (
-                  <div style={{ textAlign: 'center', padding: '8px 0 12px 0' }}>
-                    <button
-                      onClick={loadOlderMessages}
-                      style={{
-                        fontSize: '0.68rem',
-                        fontWeight: 500,
-                        padding: '4px 16px',
-                        borderRadius: 'var(--wks-radius-lg)',
-                        border: `1px solid ${colors.border}`,
-                        backgroundColor: 'rgba(255,255,255,0.03)',
-                        color: colors.muted,
-                        cursor: 'pointer',
-                        fontFamily: 'inherit',
-                      }}
-                    >
-                      Load {Math.min(CONVERSATION_PAGE_SIZE, conversation.length - visibleCount)}{' '}
-                      earlier messages ({conversation.length - visibleCount} hidden)
-                    </button>
-                  </div>
-                )}
-
-                {/* Rendered conversation messages with dividers */}
-                <ErrorBoundary label="Conversation" resetKeys={[sessionId]}>
-                  {renderedConversation}
-                </ErrorBoundary>
-
-                {/* Live work not yet absorbed into the timeline: in-flight tool
+                  {/* Live work not yet absorbed into the timeline: in-flight tool
                     calls plus agents/workflows that hooks reported before the
                     transcript caught up. Anchored agents render in WorkCards. */}
-                {(liveToolCalls.length > 0 ||
-                  liveSubagents.length > 0 ||
-                  liveWorkflows.length > 0) && (
-                  <InlineWorkLog
-                    toolCalls={liveToolCalls}
-                    subagents={liveSubagents}
-                    workflows={liveWorkflows}
-                  />
-                )}
+                  {(liveToolCalls.length > 0 ||
+                    liveSubagents.length > 0 ||
+                    liveWorkflows.length > 0) && (
+                    <InlineWorkLog
+                      toolCalls={liveToolCalls}
+                      subagents={liveSubagents}
+                      workflows={liveWorkflows}
+                    />
+                  )}
 
-                {/* Streaming indicator with cancel */}
-                {isStreaming && (
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 10,
-                      padding: '8px 0 4px 0',
-                    }}
-                  >
-                    <BrandSpinner size={15} />
-                    <button
-                      onClick={cancelTask}
-                      className="wks-stop-btn"
-                      title="Cancel (Esc)"
-                      aria-label="Cancel"
+                  {/* Streaming indicator with cancel */}
+                  {isStreaming && (
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: '8px 0 4px 0',
+                      }}
                     >
-                      <span className="wks-stop-square" />
-                      <span className="wks-stop-hint">esc to stop</span>
-                    </button>
-                  </div>
-                )}
+                      <BrandSpinner size={15} />
+                      <button
+                        onClick={cancelTask}
+                        className="wks-stop-btn"
+                        title="Cancel (Esc)"
+                        aria-label="Cancel"
+                      >
+                        <span className="wks-stop-square" />
+                        <span className="wks-stop-hint">esc to stop</span>
+                      </button>
+                    </div>
+                  )}
 
-                <div ref={conversationEndRef} />
+                  <div ref={conversationEndRef} />
+                </div>
               </div>
-            </div>
 
-            {/* Scroll to bottom button */}
-            {showScrollBtn && <ScrollToBottomButton onClick={scrollToBottom} />}
+              {/* Scroll to bottom button */}
+              {showScrollBtn && <ScrollToBottomButton onClick={scrollToBottom} />}
 
-            {/* Task list — the agent's plan/tasks pinned above the composer,
+              {/* Task list — the agent's plan/tasks pinned above the composer,
                 view-only and dismissible (reappears when the tasks change). */}
-            {showTasksCard && plan && (
-              <TasksCard plan={plan} onDismiss={() => setDismissedPlanSig(planSig)} />
-            )}
+              {showTasksCard && plan && (
+                <TasksCard plan={plan} onDismiss={() => setDismissedPlanSig(planSig)} />
+              )}
 
-            {/* Needs-you dock — approvals and questions pinned above the composer */}
-            <NeedsYouDock
-              approval={dockApproval}
-              questions={dockQuestions}
-              onApprove={handleApprovalRespond}
-              onAnswer={handleAnswer}
-              onDecline={handleDecline}
-            />
+              {/* Needs-you dock — approvals and questions pinned above the composer */}
+              <NeedsYouDock
+                approval={dockApproval}
+                questions={dockQuestions}
+                onApprove={handleApprovalRespond}
+                onAnswer={handleAnswer}
+                onDecline={handleDecline}
+              />
 
-            {/* Composer / Input area — session pills live inside its bottom row */}
-            <Composer
-              value={inputValue}
-              onChange={setInputValue}
-              onSend={handleSend}
-              onPaste={handlePaste}
-              onPickFiles={openFilePicker}
-              attachedFiles={attachedFiles}
-              onRemoveFile={removeAttachedFile}
-              dimmed={!!(dockApproval || dockQuestions)}
-              inputRef={inputRef}
-              showSendButton={config.ui.showComposerSend !== false}
-              agentName={agentName}
-              slashItems={slashItems}
-              onSlashPick={handleSlashPick}
-              controls={
-                <ComposerControls
-                  provider={provider ?? 'claude'}
-                  sessionId={sessionId}
-                  snapshot={session}
-                  cwd={cwd}
-                  onRestartWith={handleRestartWith}
-                />
-              }
-            />
+              {/* Composer / Input area — session pills live inside its bottom row */}
+              <Composer
+                value={inputValue}
+                onChange={setInputValue}
+                onSend={handleSend}
+                onPaste={handlePaste}
+                onPickFiles={openFilePicker}
+                attachedFiles={attachedFiles}
+                onRemoveFile={removeAttachedFile}
+                dimmed={!!(dockApproval || dockQuestions)}
+                inputRef={inputRef}
+                showSendButton={config.ui.showComposerSend !== false}
+                agentName={agentName}
+                slashItems={slashItems}
+                onSlashPick={handleSlashPick}
+                controls={
+                  <ComposerControls
+                    provider={provider ?? 'claude'}
+                    sessionId={sessionId}
+                    snapshot={session}
+                    cwd={cwd}
+                    onRestartWith={handleRestartWith}
+                  />
+                }
+              />
+            </div>
           </div>
           {/* Status / control bar — bottom of the CONTENT column (not the pane),
             so it shares the composer's width and stays centered under it even
