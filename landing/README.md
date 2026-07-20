@@ -8,6 +8,15 @@ straight in a browser with no build step.
 - `build.html` is the build & internals page (architecture, providers, plugins, MCP).
 - `build-plugin.html` is the "build a plugin" page (linked from the nav).
 
+## Analytics
+
+`analytics.js` is the PostHog snippet, loaded from the `<head>` of all four
+pages. It is the one exception to "everything inline" — the project key and
+config live in a single file rather than four copies that drift. A new page
+MUST add `<script src="analytics.js"></script>` before `</head>` or it will be
+invisible in PostHog. The key in there is a PostHog *project* API key, public
+by design.
+
 ## Look
 
 The everforest brand palette: forest ground (`#1e2326`) with the sapling accent
