@@ -9,6 +9,18 @@
 import type { RecentAgentSession } from '../../../main/shared/ipcTypes';
 import type { AgentWorkspace } from '../types/pane';
 
+/**
+ * Display label for a RECENT row: an explicitly-given agent name wins, then
+ * the provider's auto-generated conversation title, then the directory name.
+ * A recorded name that just equals the cwd basename is the spawn-time default
+ * (deriveAgentName), not the user naming it — the title is more telling.
+ */
+export function recentSessionLabel(s: RecentAgentSession): string {
+  const dirName = s.cwd.split('/').filter(Boolean).pop() || '';
+  const explicitName = s.name && s.name !== dirName ? s.name : '';
+  return explicitName || s.title || s.name || dirName || s.sessionId.slice(0, 8);
+}
+
 export function filterResumableSessions(
   sessions: RecentAgentSession[],
   agents: AgentWorkspace[],

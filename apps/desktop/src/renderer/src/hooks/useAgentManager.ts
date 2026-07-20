@@ -331,12 +331,23 @@ export function useAgentManager() {
       // last held doubles as claude's transcript uuid (we pin `--session-id` at
       // spawn), so `--resume <id>` reopens it. `spawnClaude` returns that same id.
       const resumeSessionId = agent.lastSessionId;
+      // Claude respawns follow the config default transport unless the agent
+      // explicitly ran stream — a recorded 'pty' is usually just the legacy
+      // default, and users who flipped their default to stream expect old
+      // chats to come back in it. Managed providers keep their transport
+      // (codex 'pty' is the native TUI, a genuinely different frontend).
+      const transport =
+        agent.provider && agent.provider !== 'claude'
+          ? agent.transport
+          : agent.transport === 'stream'
+            ? ('stream' as const)
+            : undefined;
       let sessionId: string | undefined;
       try {
         sessionId = await window.electronAPI.spawnClaude({
           cwd: agent.cwd,
           provider: agent.provider,
-          transport: agent.transport,
+          transport,
           profileId: agent.profileId,
           model: agent.model,
           effort: agent.effort,

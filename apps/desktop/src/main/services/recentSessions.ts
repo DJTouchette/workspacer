@@ -10,6 +10,7 @@
  */
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { sessionHistory } from './sessionHistory';
+import { titleForSession } from './sessionTitles';
 import type { RecentAgentSession } from '../shared/ipcTypes';
 
 /** Wire shape of one `GET /sessions` row (serialized SessionState + extras). */
@@ -22,7 +23,13 @@ interface DaemonSessionRow {
   updated_at?: string;
   started_at?: string;
   archived?: boolean;
+  transcript_path?: string | null;
 }
+
+/** How many rows get transcript-derived titles per fetch. The sidebar shows
+ *  at most 20 (recentSessionFilter); reading a few extra covers rows the
+ *  filter may drop. Reads are mtime-cached, so this is cheap after tick one. */
+const TITLE_ENRICH_LIMIT = 40;
 
 interface HistoryName {
   sessionId: string;
@@ -35,7 +42,7 @@ interface HistoryName {
 export function mergeRecentSessions(
   rows: DaemonSessionRow[],
   history: HistoryName[],
-): RecentAgentSession[] {
+): Array<RecentAgentSession & { transcriptPath?: string | null }> {
   const byId = new Map(history.map((h) => [h.sessionId, h]));
   return rows
     .filter((r) => r.session_id && !r.session_id.startsWith('agent-'))
@@ -52,8 +59,12 @@ export function mergeRecentSessions(
         updatedAt: Date.parse(r.updated_at ?? '') || 0,
         startedAt: Date.parse(r.started_at ?? '') || 0,
         name: h?.agentName || '',
+        title: '',
         model: h?.model || '',
         costUSD: h?.costUSD ?? 0,
+        // Internal: carried so the title enrichment can find the transcript;
+        // stripped before the list crosses IPC.
+        transcriptPath: r.transcript_path,
       };
     })
     .sort((a, b) => b.updatedAt - a.updatedAt);
@@ -74,7 +85,20 @@ export async function listRecentSessions(): Promise<RecentAgentSession[]> {
       model: rec.model,
       costUSD: rec.costUSD,
     }));
-    return mergeRecentSessions(rows, names);
+    const merged = mergeRecentSessions(rows, names);
+    // Provider auto-titles (claude ai-title / first user message) for the rows
+    // the sidebar can actually show. Best-effort per row — a missing or
+    // unreadable transcript just leaves title ''.
+    await Promise.all(
+      merged.slice(0, TITLE_ENRICH_LIMIT).map(async (row) => {
+        try {
+          row.title = (await titleForSession(row)) ?? '';
+        } catch {
+          /* keep '' */
+        }
+      }),
+    );
+    return merged.map(({ transcriptPath: _tp, ...wire }) => wire);
   } catch {
     return [];
   }

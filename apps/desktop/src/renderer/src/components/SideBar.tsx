@@ -6,7 +6,9 @@ import type { RecentAgentSession } from '../../../main/shared/ipcTypes';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from '../types/claudeSession';
 import type { AttentionItem, AttentionKind } from '../types/attention';
 import { deriveSessionStats, fmtTokens, fmtUSD, ctxColor, planProgress } from '../lib/sessionStats';
-import { formatToolSummary, ensureKeyframes } from './claude-shared';
+import { ensureKeyframes } from './claude-shared';
+import { collectRecentActivity, type ActivityLine } from '../lib/agentActivityLog';
+import { recentSessionLabel } from '../lib/recentSessionFilter';
 import { shortModelLabel } from '../lib/modelLabel';
 import { agentAttentionScore } from '../lib/attentionRouter';
 import { AgentLogo } from './agentLogos';
@@ -721,26 +723,25 @@ const SideBar: React.FC<SideBarProps> = ({
             const hasCtx = stats.ctxPct !== undefined;
             const ctxFrac = hasCtx ? Math.min(1, stats.ctxPct! / 100) : 0;
 
-            // Mini action log — two lines like the mock: a muted history line,
-            // then the tinted live line. Mirrors the Fleet cards: when there's
-            // no live tool or plan step, fall back to the last thing the agent
-            // SAID instead of a vague "Working…".
-            let lastMsg: string | undefined;
-            const turns = snap?.conversation ?? [];
-            for (let i = turns.length - 1; i >= 0; i--) {
-              if (turns[i].role === 'assistant' && turns[i].content?.trim()) {
-                lastMsg = turns[i].content
-                  .trim()
-                  .split('\n')[0]
-                  .replace(/^[#>*\-\s`]+/, '');
-                break;
+            // Mini action log — the last few things the agent actually did:
+            // tool calls and assistant messages, merged in time order (see
+            // collectRecentActivity). A busy card tints its freshest line
+            // green; only waiting/stopped add a state line. Never the vague
+            // "Working…" — the header spinner already says that much.
+            // Depth is state-scaled: busy cards earn 3 lines, resting cards
+            // stay short so a full sidebar doesn't read as a wall of logs.
+            type LogLine = { text: string; color: string; kind?: ActivityLine['kind'] };
+            const pushActivity = (lines: ActivityLine[], color?: string) => {
+              for (const line of lines) {
+                log.push({
+                  text: line.text,
+                  color: color ?? 'var(--wks-text-faint)',
+                  kind: line.kind,
+                });
               }
-            }
-            const lastDone = snap?.completedToolCalls?.length
-              ? snap.completedToolCalls[snap.completedToolCalls.length - 1]
-              : undefined;
-            let live: { text: string; color: string };
-            let liveUsedMsg = false;
+            };
+            const activity = collectRecentActivity(snap, 3);
+            const log: LogLine[] = [];
             if (cardState === 'waiting') {
               const what =
                 top && WAITING_KINDS.has(top.kind)
@@ -748,42 +749,27 @@ const SideBar: React.FC<SideBarProps> = ({
                   : state === 'waiting_approval'
                     ? 'approve a tool call'
                     : 'your input';
-              live = { text: `Waiting: ${what}`, color: 'var(--wks-warning, #e0a000)' };
-            } else if (cardState === 'working') {
-              const activeTc = snap?.activeToolCalls?.[snap.activeToolCalls.length - 1];
-              const step = planProgress(snap?.plan)?.active;
-              const stepText = step?.activeForm ?? step?.content;
-              if (activeTc) {
-                live = {
-                  text: formatToolSummary(activeTc).call,
-                  color: 'var(--wks-success, #3fb950)',
-                };
-              } else if (stepText) {
-                live = { text: stepText, color: 'var(--wks-success, #3fb950)' };
-              } else if (lastMsg) {
-                live = { text: lastMsg, color: 'var(--wks-success, #3fb950)' };
-                liveUsedMsg = true;
-              } else {
-                live = { text: 'Working…', color: 'var(--wks-success, #3fb950)' };
-              }
+              pushActivity(activity.slice(-2));
+              log.push({ text: `Waiting: ${what}`, color: 'var(--wks-warning, #e0a000)' });
             } else if (!agent.sessionId) {
-              live = { text: 'Stopped — click to respawn', color: 'var(--wks-text-faint)' };
+              log.push({ text: 'Stopped — click to respawn', color: 'var(--wks-text-faint)' });
+            } else if (cardState === 'working') {
+              let lines = activity;
+              if (!lines.length) {
+                // Nothing observable yet (turn just started) — the active plan
+                // step is the only real signal available.
+                const step = planProgress(snap?.plan)?.active;
+                const stepText = step?.activeForm ?? step?.content;
+                if (stepText) lines = [{ text: stepText, at: 0, kind: 'message' }];
+              }
+              pushActivity(lines.slice(0, -1));
+              pushActivity(lines.slice(-1), 'var(--wks-success, #3fb950)');
+            } else if (activity.length) {
+              // Resting card — the last two things it did, muted.
+              pushActivity(activity.slice(-2));
             } else {
-              live = {
-                text: lastMsg ? `Done — ${lastMsg}` : 'Idle',
-                color: 'var(--wks-text-faint)',
-              };
-              liveUsedMsg = true;
+              log.push({ text: 'Idle', color: 'var(--wks-text-faint)' });
             }
-            const log: { text: string; color: string }[] = [];
-            if (lastDone) {
-              log.push({ text: formatToolSummary(lastDone).call, color: 'var(--wks-text-faint)' });
-            } else if (lastMsg && !liveUsedMsg) {
-              // No tool history yet — the last message is still better context
-              // than a single-line card.
-              log.push({ text: lastMsg, color: 'var(--wks-text-faint)' });
-            }
-            log.push(live);
 
             const age = snap
               ? now - snap.lastActivity < 60_000
@@ -989,7 +975,11 @@ const SideBar: React.FC<SideBarProps> = ({
                       <span
                         key={i}
                         style={{
-                          fontFamily: 'var(--wks-font-mono)',
+                          // Tool calls read as code (mono); the agent's own
+                          // words read as prose (UI font, italic) so the two
+                          // don't blur into one log dump.
+                          fontFamily: l.kind === 'message' ? 'inherit' : 'var(--wks-font-mono)',
+                          fontStyle: l.kind === 'message' ? 'italic' : 'normal',
                           fontSize: '0.68rem',
                           lineHeight: 1.5,
                           color: l.color,
@@ -1258,8 +1248,7 @@ const SideBar: React.FC<SideBarProps> = ({
             {recentSessions!.map((s) => {
               const provider = (s.provider || 'claude') as AgentProvider;
               const hue = PROVIDER_HUE[provider] ?? 'var(--wks-accent, #4a9eff)';
-              const name =
-                s.name || s.cwd.split('/').filter(Boolean).pop() || s.sessionId.slice(0, 8);
+              const name = recentSessionLabel(s);
               const age = s.updatedAt ? relTime(Date.now() - s.updatedAt) : '';
               return (
                 <div

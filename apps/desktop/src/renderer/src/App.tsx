@@ -65,7 +65,7 @@ import { useUiMode } from './hooks/useUiMode';
 import { useTheme } from './hooks/useTheme';
 import { useSessionLifecycle } from './hooks/useSessionLifecycle';
 import { useRecentSessions } from './hooks/useRecentSessions';
-import { filterResumableSessions } from './lib/recentSessionFilter';
+import { filterResumableSessions, recentSessionLabel } from './lib/recentSessionFilter';
 import type { RecentAgentSession } from '../../main/shared/ipcTypes';
 import { usePluginHotkeys } from './hooks/usePluginHotkeys';
 import { buildPaneMenu } from './lib/paneMenu';
@@ -432,11 +432,19 @@ function App() {
         : 'claude';
       void spawnAgent({
         cwd: s.cwd,
-        name: s.name || undefined,
+        // Same label the RECENT row showed (explicit name, else the provider's
+        // auto title) so the card doesn't rename itself on resume.
+        name: recentSessionLabel(s),
         provider,
         // Transport and model only steer Claude spawns; managed providers
-        // resolve their own settings from the resumed thread.
-        ...(provider === 'claude' && { transport: s.transport, model: s.model || undefined }),
+        // resolve their own settings from the resumed thread. A recorded 'pty'
+        // is how every legacy row reads (the daemon's Transport default), not
+        // a user choice — leave it undefined so the config default decides,
+        // and only pin a session that genuinely ran stream.
+        ...(provider === 'claude' && {
+          transport: s.transport === 'stream' ? ('stream' as const) : undefined,
+          model: s.model || undefined,
+        }),
         resumeSessionId: s.sessionId,
       });
     },

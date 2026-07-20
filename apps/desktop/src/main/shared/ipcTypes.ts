@@ -345,6 +345,9 @@ export interface RecentAgentSession {
   startedAt: number;
   /** Agent name from session_history ('' when the session predates it). */
   name: string;
+  /** Provider auto-generated conversation title — claude's transcript ai-title
+   *  (or first user message), codex's rollout first message. '' when unknown. */
+  title: string;
   model: string;
   costUSD: number;
 }

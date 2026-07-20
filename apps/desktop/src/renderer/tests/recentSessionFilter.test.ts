@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterResumableSessions } from '../src/lib/recentSessionFilter';
+import { filterResumableSessions, recentSessionLabel } from '../src/lib/recentSessionFilter';
 import type { RecentAgentSession } from '../../main/shared/ipcTypes';
 
 const sess = (id: string, over: Partial<RecentAgentSession> = {}): RecentAgentSession => ({
@@ -12,6 +12,7 @@ const sess = (id: string, over: Partial<RecentAgentSession> = {}): RecentAgentSe
   updatedAt: 1,
   startedAt: 1,
   name: '',
+  title: '',
   model: '',
   costUSD: 0,
   ...over,
@@ -74,5 +75,26 @@ describe('filterResumableSessions', () => {
     const many = Array.from({ length: 30 }, (_, i) => sess(`s${i}`));
     expect(filterResumableSessions(many, [], {})).toHaveLength(20);
     expect(filterResumableSessions(many, [], {}, 5)).toHaveLength(5);
+  });
+});
+
+describe('recentSessionLabel', () => {
+  it('prefers an explicitly-given name over the auto title', () => {
+    const s = sess('s1', { cwd: '/work/proj', name: 'my renamed agent', title: 'Fix the bug' });
+    expect(recentSessionLabel(s)).toBe('my renamed agent');
+  });
+
+  it('treats a name equal to the cwd basename as the spawn default, not explicit', () => {
+    const s = sess('s1', { cwd: '/work/proj', name: 'proj', title: 'Fix the sidebar cards' });
+    expect(recentSessionLabel(s)).toBe('Fix the sidebar cards');
+  });
+
+  it('falls back name → dirname when there is no title', () => {
+    expect(recentSessionLabel(sess('s1', { cwd: '/work/proj', name: 'proj' }))).toBe('proj');
+    expect(recentSessionLabel(sess('s1', { cwd: '/work/proj' }))).toBe('proj');
+  });
+
+  it('falls back to the session id when nothing else exists', () => {
+    expect(recentSessionLabel(sess('abcdef1234', { cwd: '' }))).toBe('abcdef12');
   });
 });
