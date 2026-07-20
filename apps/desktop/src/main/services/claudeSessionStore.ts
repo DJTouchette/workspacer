@@ -576,15 +576,20 @@ class ClaudeSessionStore {
     // spawn metadata already recorded.
     if (meta?.provider && !session.provider) session.provider = meta.provider;
     if (meta?.transport === 'stream' && !session.transport) session.transport = 'stream';
-    // Non-claude providers fire no hooks, so the daemon's `pending` slot is
-    // their only source for the approval/question cards (needs-you dock, triage
-    // inbox, fleet-card buttons). Claude sessions (PTY and stream) keep the
-    // hook-driven path — hookEventRouter owns these fields for them, and
-    // driving them from both sources would race. `undefined` means the caller
-    // carried no pending info (leave state alone); `null` means the daemon says
-    // nothing is pending (clear).
-    const provider = session.provider ?? meta?.provider;
-    if (provider && provider !== 'claude' && meta && meta.pending !== undefined) {
+    // The daemon's `pending` slot is the ONLY source for the approval/question
+    // cards (needs-you dock, triage inbox, fleet-card buttons) for two cases:
+    //   1. non-claude providers (codex/opencode/pi) fire no hooks at all;
+    //   2. STREAM-transport Claude routes approvals through the control
+    //      protocol (`can_use_tool`) rather than a PermissionRequest hook, so
+    //      no hook ever populates pendingApproval for it.
+    // Claude PTY keeps the hook-driven path — hookEventRouter owns these fields
+    // for it, and driving them from both sources would race. `undefined` means
+    // the caller carried no pending info (leave state alone); `null` means the
+    // daemon says nothing is pending (clear).
+    const provider = session.provider ?? meta?.provider ?? 'claude';
+    const transport = session.transport ?? meta?.transport;
+    const daemonOwnsPending = provider !== 'claude' || transport === 'stream';
+    if (daemonOwnsPending && meta && meta.pending !== undefined) {
       this.applyManagedPending(session, meta.pending);
     }
     let next: SessionAmbientState;

@@ -224,6 +224,59 @@ describe('managed pending → approval/question cards', () => {
     expect(claudeSessionStore.getSnapshot(sid)?.pendingApproval).toBeNull();
   });
 
+  it('surfaces a STREAM-transport Claude approval into pendingApproval (control protocol, no hook)', () => {
+    // Stream Claude routes approvals through the control protocol
+    // (can_use_tool), not a PermissionRequest hook, so the daemon's `pending`
+    // slot is the only source — the desktop must fold it just like a managed
+    // provider. Regression: the old `provider !== 'claude'` guard dropped it.
+    const sid = uniqueId();
+    claudeSessionStore.applyConversationDelta({
+      session_id: sid,
+      seq: 0,
+      items: [],
+      reset: false,
+    } as never);
+    claudeSessionStore.applyManagedMode(sid, 'responding', {
+      provider: 'claude',
+      transport: 'stream',
+      pending: null,
+    });
+    claudeSessionStore.applyManagedMode(sid, 'approval', {
+      provider: 'claude',
+      transport: 'stream',
+      pending: { kind: 'approval', tool: 'Bash', raw: { tool_input: { command: 'rm -rf build' } } },
+    });
+    const snap = claudeSessionStore.getSnapshot(sid);
+    expect(snap?.pendingApproval?.toolName).toBe('Bash');
+    expect(snap?.pendingApproval?.toolInput).toEqual({ command: 'rm -rf build' });
+    expect(snap?.ambientState).toBe('waiting_approval');
+
+    // Resolving (daemon clears the slot) clears the card.
+    claudeSessionStore.applyManagedMode(sid, 'responding', {
+      provider: 'claude',
+      transport: 'stream',
+      pending: null,
+    });
+    expect(claudeSessionStore.getSnapshot(sid)?.pendingApproval).toBeNull();
+  });
+
+  it('does NOT fold the daemon pending for PTY-transport Claude (the hook path owns it)', () => {
+    // PTY Claude gets a real PermissionRequest hook; hookEventRouter owns
+    // pendingApproval. A Managed frame's pending must not race it.
+    const sid = uniqueId();
+    claudeSessionStore.applyConversationDelta({
+      session_id: sid,
+      seq: 0,
+      items: [],
+      reset: false,
+    } as never);
+    claudeSessionStore.applyManagedMode(sid, 'approval', {
+      provider: 'claude',
+      pending: { kind: 'approval', tool: 'Bash', raw: { tool_input: { command: 'ls' } } },
+    });
+    expect(claudeSessionStore.getSnapshot(sid)?.pendingApproval).toBeNull();
+  });
+
   it('keeps the timestamp of an unchanged approval across re-broadcast frames', () => {
     const sid = managedSession();
     const pending = { kind: 'approval', tool: 'exec_command', raw: { command: 'ls' } } as const;
