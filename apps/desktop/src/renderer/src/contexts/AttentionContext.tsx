@@ -208,6 +208,7 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
         response,
         hasPendingQuestion(item.sessionId),
         snapshotBySession[item.sessionId]?.provider,
+        snapshotBySession[item.sessionId]?.transport,
       );
     },
     [hasPendingQuestion, snapshotBySession],
@@ -218,7 +219,12 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
       item: AttentionItem,
       payload: { option?: number; text?: string; answers?: string[]; answerKinds?: string[] },
     ) => {
-      resolveAnswer(item.sessionId, payload, snapshotBySession[item.sessionId]?.provider);
+      resolveAnswer(
+        item.sessionId,
+        payload,
+        snapshotBySession[item.sessionId]?.provider,
+        snapshotBySession[item.sessionId]?.transport,
+      );
     },
     [snapshotBySession],
   );

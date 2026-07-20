@@ -25,6 +25,7 @@ export function resolveApproval(
   response: 'yes' | 'no' | 'always',
   hasPendingQuestion: boolean,
   provider?: string,
+  transport?: string,
 ): void {
   window.electronAPI.claudeApprove(sessionId, response).catch((err) => {
     console.warn('[resolveAttention] /approve failed:', err);
@@ -34,8 +35,10 @@ export function resolveApproval(
     }
     // The keystrokes encode Claude's 3-row permission menu; a managed
     // provider's PTY (codex/opencode/pi) has a different approval UI, so the
-    // daemon endpoint is their only path.
+    // daemon endpoint is their only path. Stream-transport Claude has no PTY
+    // at all, so there is nothing to type into either.
     if (provider && provider !== 'claude') return;
+    if (transport === 'stream') return;
     // sendApproval-equivalent over the by-id PTY write, matching claude's 3-row
     // permission menu: Enter approves (row 1), one down approves-for-session
     // ("allow all", row 2), two downs deny (row 3).
@@ -56,11 +59,16 @@ export function resolveAnswer(
   sessionId: string,
   payload: { option?: number; text?: string; answers?: string[]; answerKinds?: string[] },
   provider?: string,
+  transport?: string,
 ): void {
   // Non-claude questions are the daemon's parked AskUserQuestion MCP call —
   // only POST /answer resolves them; the provider's own TUI (if any) knows
   // nothing about the picker, so keystrokes would be garbage input.
-  if (provider && provider !== 'claude') {
+  // Stream-transport Claude is the same story: no PTY exists, so the answer
+  // MUST go structurally through /answer (the daemon resolves the parked
+  // can_use_tool over the adapter's control protocol). Mirrors
+  // ClaudePane.handleAnswer's `!hasTerminal || !isClaude` guard.
+  if ((provider && provider !== 'claude') || transport === 'stream') {
     window.electronAPI.claudeAnswer(sessionId, payload).catch((err) => {
       console.warn('[resolveAttention] /answer failed (no PTY fallback exists):', err);
     });

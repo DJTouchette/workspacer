@@ -122,3 +122,48 @@ describe('resolveAnswer — structural-only for managed providers', () => {
     },
   );
 });
+
+/**
+ * Stream-transport Claude has NO PTY: approvals/questions arrive over the
+ * adapter's control protocol and resolve structurally through /approve and
+ * /answer. Keystrokes have nothing to type into. Mirrors ClaudePane's
+ * `!hasTerminal || !isClaude` guards — this module drifted out of sync with
+ * them, so these pin it.
+ */
+describe('stream-transport claude — no PTY to type into', () => {
+  it('resolveAnswer goes structurally via /answer, never keystrokes', async () => {
+    resolveAnswer('s1', { option: 2 }, 'claude', 'stream');
+    expect(api.claudeAnswer).toHaveBeenCalledTimes(1);
+    expect(api.claudeAnswer).toHaveBeenCalledWith('s1', { option: 2 });
+    await flush();
+    expect(api.claudeWrite).not.toHaveBeenCalled();
+  });
+
+  it('resolveAnswer with text/answers also goes via /answer', async () => {
+    resolveAnswer('s1', { text: 'ship it' }, 'claude', 'stream');
+    resolveAnswer('s1', { answers: ['a', 'b'] }, 'claude', 'stream');
+    await flush();
+    expect(api.claudeAnswer).toHaveBeenCalledTimes(2);
+    expect(api.claudeWrite).not.toHaveBeenCalled();
+  });
+
+  it('a failed /approve does NOT fall back to keystrokes', async () => {
+    api.claudeApprove = vi.fn().mockRejectedValue(new Error('409'));
+    resolveApproval('s1', 'yes', false, 'claude', 'stream');
+    resolveApproval('s1', 'no', false, 'claude', 'stream');
+    await flush();
+    expect(api.claudeApprove).toHaveBeenCalledTimes(2);
+    expect(api.claudeWrite).not.toHaveBeenCalled();
+  });
+
+  it('PTY claude is unaffected — still drives the menu and the picker', async () => {
+    api.claudeApprove = vi.fn().mockRejectedValue(new Error('409'));
+    resolveApproval('s1', 'yes', false, 'claude', 'pty');
+    await flush();
+    expect(api.claudeWrite).toHaveBeenLastCalledWith('s1', '\r');
+
+    resolveAnswer('s1', { option: 3 }, 'claude', 'pty');
+    expect(api.claudeWrite).toHaveBeenLastCalledWith('s1', '3\r');
+    expect(api.claudeAnswer).not.toHaveBeenCalled();
+  });
+});
