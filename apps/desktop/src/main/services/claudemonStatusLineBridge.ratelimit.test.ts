@@ -1,18 +1,22 @@
 /**
- * Rate-limit warning dedup — regression test.
+ * Usage warnings must NOT interrupt — regression test.
  *
- * The account-global "approaching a usage limit" alert must fire once per
- * episode. The dedup latch (lastWarnedWindow) must NOT be reset by a
- * warning-less frame that still reports high utilization: interactive (PTY)
- * sessions never carry a rate_limit_warning, and the periodic account-usage
- * re-push is warning-less too, even at 85%. Only a genuine drop back under the
- * daemon's warning threshold should re-arm the alert.
+ * The bridge used to turn `rate_limit_warning` into an OS notification plus an
+ * in-app banner at the daemon's 80% threshold, with a per-provider dedup latch
+ * to stop it re-firing every tick. That whole path is gone: the per-window
+ * gauges (5h / 7d / monthly `% used` + reset times) are a strictly more
+ * accurate, always-visible signal. The warning survives only as passive text on
+ * the session snapshot, which the Inspector renders.
+ *
+ * This test guards the removal — an alert re-added here would be an
+ * interruption the gauges already cover.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const notificationShow = vi.fn();
 const notifySystem = vi.fn();
+const applyStatusLine = vi.fn();
 
 let capturedOpts: any;
 const consumeSseStream = vi.fn(async (_url: string, opts: any) => {
@@ -23,11 +27,13 @@ vi.mock('../lib/sseConsumer', () => ({
 }));
 
 vi.mock('./claudeSessionStore', () => ({
-  claudeSessionStore: { applyStatusLine: () => {} },
+  claudeSessionStore: { applyStatusLine: (...a: unknown[]) => applyStatusLine(...a) },
 }));
 
 vi.mock('./claudemonDaemon', () => ({ CLAUDEMON_API_URL: 'http://daemon' }));
 
+// Both alert channels stay mocked: the point of the test is that the bridge
+// never reaches for either, not that they are unavailable.
 vi.mock('electron', () => ({
   Notification: class {
     static isSupported() {
@@ -57,16 +63,39 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   notificationShow.mockClear();
   notifySystem.mockClear();
+  applyStatusLine.mockClear();
   capturedOpts = undefined;
   stopClaudemonStatusLineBridge();
 });
 
-describe('claudemonStatusLineBridge rate-limit dedup', () => {
-  it('does not re-fire when a warning-less PTY frame arrives at still-high utilization', async () => {
+describe('claudemonStatusLineBridge usage warnings', () => {
+  it('never raises an OS notification or in-app banner, even deep into a window', async () => {
     await startClaudemonStatusLineBridge();
     const warn5h = "You're close to your 5-hour usage limit — 85% used";
 
-    // 1) Stream-transport session emits the account-global warning at 85%.
+    capturedOpts.onFrame(
+      JSON.stringify({
+        session_id: 'stream1',
+        status_line: { rate_limit_warning: warn5h, five_hour_pct: 85 },
+      }),
+    );
+    // A second window warning on a different account would previously have been
+    // a second alert; it must stay just as silent.
+    capturedOpts.onFrame(
+      JSON.stringify({
+        session_id: 'codex1',
+        status_line: { rate_limit_warning: 'Approaching your monthly limit', monthly_pct: 97 },
+      }),
+    );
+
+    expect(notificationShow).not.toHaveBeenCalled();
+    expect(notifySystem).not.toHaveBeenCalled();
+  });
+
+  it('still forwards the warning text onto the snapshot for passive display', async () => {
+    await startClaudemonStatusLineBridge();
+    const warn5h = "You're close to your 5-hour usage limit — 85% used";
+
     capturedOpts.onFrame(
       JSON.stringify({
         session_id: 'stream1',
@@ -74,25 +103,10 @@ describe('claudemonStatusLineBridge rate-limit dedup', () => {
       }),
     );
 
-    // 2) A concurrent PTY session (and the periodic account re-push) reports the
-    //    gauge at 85% but carries NO warning — the account is NOT comfortable.
-    capturedOpts.onFrame(
-      JSON.stringify({
-        session_id: 'pty1',
-        status_line: { five_hour_pct: 85 },
-      }),
-    );
-
-    // 3) The stream session ticks again with the same 5h warning.
-    capturedOpts.onFrame(
-      JSON.stringify({
-        session_id: 'stream1',
-        status_line: { rate_limit_warning: warn5h, five_hour_pct: 85 },
-      }),
-    );
-
-    // The alert must have fired exactly once for this episode, not once per tick.
-    expect(notifySystem).toHaveBeenCalledTimes(1);
-    expect(notificationShow).toHaveBeenCalledTimes(1);
+    expect(applyStatusLine).toHaveBeenCalledTimes(1);
+    const [sessionId, snapshot] = applyStatusLine.mock.calls[0];
+    expect(sessionId).toBe('stream1');
+    expect(snapshot.rateLimitWarning).toBe(warn5h);
+    expect(snapshot.fiveHourPct).toBe(85);
   });
 });
