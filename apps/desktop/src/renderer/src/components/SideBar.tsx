@@ -176,25 +176,12 @@ const SideBar: React.FC<SideBarProps> = ({
   const [renameValue, setRenameValue] = useState('');
   // Type-to-filter the agent list by name or provider (nav rows always shown).
   const [filter, setFilter] = useState('');
-  // Collapsed state for the EARLIER / RECENT sub-sections, persisted so a
-  // preference survives reloads. Both default to expanded.
-  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem('wks:sidebar:collapsedSections') || '{}');
-    } catch {
-      return {};
-    }
-  });
+  // Collapsed state for the EARLIER / RECENT sub-sections. Deliberately NOT
+  // persisted: every boot starts fully expanded, and collapsing only tucks a
+  // section away for the current session.
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
   const toggleSection = useCallback((key: string) => {
-    setCollapsedSections((prev) => {
-      const next = { ...prev, [key]: !prev[key] };
-      try {
-        localStorage.setItem('wks:sidebar:collapsedSections', JSON.stringify(next));
-      } catch {
-        /* private mode / quota — non-fatal, just don't persist */
-      }
-      return next;
-    });
+    setCollapsedSections((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
   // Clickable section heading (EARLIER / RECENT) that collapses its rows. A
