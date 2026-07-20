@@ -199,8 +199,12 @@ const SideBar: React.FC<SideBarProps> = ({
 
   // Clickable section heading (EARLIER / RECENT) that collapses its rows. A
   // chevron rotates and the item count rides on the right so a collapsed
-  // section still tells you how much it's hiding.
-  const renderSectionHeading = (key: string, label: string, count: number) => {
+  // section still tells you how much it's hiding. When collapsed, the heading
+  // sinks to the bottom of the feed (flex `order` sorts it below the expanded
+  // content; `marginTop: auto` pins it to the bottom with the empty space
+  // above) so tucked-away sections get out of the way. `order` keeps a
+  // collapsed EARLIER above a collapsed RECENT.
+  const renderSectionHeading = (key: string, label: string, count: number, order: number) => {
     const collapsed = !!collapsedSections[key];
     return (
       <div
@@ -227,6 +231,7 @@ const SideBar: React.FC<SideBarProps> = ({
           color: 'var(--wks-text-faint)',
           cursor: 'pointer',
           userSelect: 'none',
+          ...(collapsed ? { order, marginTop: 'auto' } : null),
         }}
         onMouseEnter={(e) => {
           (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
@@ -1282,7 +1287,7 @@ const SideBar: React.FC<SideBarProps> = ({
             }
           }
           if (earlier.length > 0) {
-            rows.push(renderSectionHeading('earlier', 'EARLIER', earlier.length));
+            rows.push(renderSectionHeading('earlier', 'EARLIER', earlier.length, 2));
             if (!collapsedSections.earlier) {
               for (const agent of earlier) rows.push(renderEarlierLine(agent));
             }
@@ -1295,7 +1300,7 @@ const SideBar: React.FC<SideBarProps> = ({
             reachable: click one and it comes back as an agent via --resume. */}
         {onResumeSession && (recentSessions?.length ?? 0) > 0 && (
           <>
-            {renderSectionHeading('recent', 'RECENT', recentSessions!.length)}
+            {renderSectionHeading('recent', 'RECENT', recentSessions!.length, 3)}
             {!collapsedSections.recent &&
               recentSessions!.map((s) => {
                 const provider = (s.provider || 'claude') as AgentProvider;
