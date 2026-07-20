@@ -42,6 +42,10 @@ interface SessionStream {
   /** IPC channel used to ship the renderer end of the port (e.g. `claude:port`
    *  for Claude panes, `terminal:port` for plain shells). */
   portChannel: string;
+  /** Set once terminal:exit has been fired for this viewer, so overlapping
+   *  attach verifications (e.g. a React remount racing the first verify's
+   *  fetch) don't announce the same death twice. */
+  exitNotified?: boolean;
 }
 
 class ClaudemonSessionClient {
@@ -217,13 +221,18 @@ class ClaudemonSessionClient {
     return sessionId;
   }
 
-  /** Fire-and-forget: if the attach target is missing or stopped, tear the
-   *  viewer down and tell the renderer the session is dead (keyed by the
-   *  viewer's pane id, which is how attached panes listen). */
+  /** Fire-and-forget: if the attach target is missing or stopped, tell the
+   *  renderer the session is dead (keyed by the viewer's pane id, which is how
+   *  attached panes listen). A `stopped` target keeps its viewer stream open:
+   *  the daemon holds stopped rows as resumable, and a respawn revives the SAME
+   *  id — the still-attached SSE stream (plus its backoff retry) is what brings
+   *  the pane back to life without a remount. Only a 404 (row truly gone) tears
+   *  the viewer down. */
   private verifyAttachTarget(viewerKey: string, sessionId: string): void {
     fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}`)
       .then(async (res) => {
         let dead = res.status === 404;
+        let gone = dead;
         if (res.ok) {
           const body = (await res.json().catch(() => null)) as { mode?: string } | null;
           dead = body?.mode === 'stopped';
@@ -231,14 +240,18 @@ class ClaudemonSessionClient {
         if (!dead) return;
         const stream = this.streams.get(viewerKey);
         if (stream && stream.sessionId === sessionId) {
-          stream.stopped = true;
-          try {
-            stream.abort.abort();
-          } catch {}
-          try {
-            stream.port.close();
-          } catch {}
-          this.streams.delete(viewerKey);
+          if (stream.exitNotified) return; // an earlier verify already announced it
+          stream.exitNotified = true;
+          if (gone) {
+            stream.stopped = true;
+            try {
+              stream.abort.abort();
+            } catch {}
+            try {
+              stream.port.close();
+            } catch {}
+            this.streams.delete(viewerKey);
+          }
         }
         const win = this.mainWindow;
         if (win && !win.isDestroyed()) {

@@ -827,12 +827,21 @@ impl SessionStore {
         handle: WrapperHandle,
     ) -> SessionState {
         let state = {
-            let entry = self
+            let mut entry = self
                 .states
                 .entry(session_id.to_string())
                 .or_insert_with(|| {
                     SessionState::new(session_id.to_string(), Some(cwd.to_string()))
                 });
+            // A resume reuses the Stopped row from the id's previous life, but a
+            // fresh child is now attached — leave Stopped immediately. Clients
+            // treat a stopped attach target as dead and tear their viewers down,
+            // so waiting for SessionStart to flip the mode loses the race.
+            if entry.mode == SessionMode::Stopped {
+                entry.mode = SessionMode::Unknown;
+                entry.pending = None;
+                entry.updated_at = OffsetDateTime::now_utc();
+            }
             entry.clone()
         };
         self.wrappers.insert(session_id.to_string(), handle);
@@ -1887,6 +1896,24 @@ mod tests {
         // Claude's real SessionStart lands → Input → the queued line flushes.
         store.ingest(hook("SessionStart", "s1", "/w"));
         assert_eq!(next_input(&mut rx), pasted("hi"));
+    }
+
+    #[test]
+    fn respawn_revives_stopped_row_immediately() {
+        let store = SessionStore::new();
+        let (h, _rx) = handle_with_rx();
+        store.register_spawn("s1", "/w", h);
+        store.ingest(hook("SessionStart", "s1", "/w"));
+        store.ingest(hook("SessionEnd", "s1", "/w"));
+        assert_eq!(store.get("s1").unwrap().mode, SessionMode::Stopped);
+
+        // Resume reuses the id. The row must leave Stopped at registration —
+        // clients probe the mode right after attaching and treat a stopped
+        // target as dead; SessionStart arrives too late to win that race.
+        let (h2, _rx2) = handle_with_rx();
+        let state = store.register_spawn("s1", "/w", h2);
+        assert_eq!(state.mode, SessionMode::Unknown);
+        assert_eq!(store.get("s1").unwrap().mode, SessionMode::Unknown);
     }
 
     // Outside a tokio runtime the flush degrades to synchronous (the daemon
