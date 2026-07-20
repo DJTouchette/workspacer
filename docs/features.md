@@ -26,9 +26,9 @@ remote/web/phone clients all view and drive the same fleet.
 | Feature | What it does | Maturity |
 |---|---|---|
 | Agent workspaces | Each agent = one long-lived claudemon session (by cwd) with its own tabs/panes; lives in the daemon independent of the UI | 🟢 Solid |
-| Spawn agent | Pick cwd / backend (Claude, Codex, OpenCode, Pi) / model / profile / permission mode / transport; seed an initial prompt | 🔵 Working |
+| Spawn agent | Pick cwd / backend (Claude, Codex, OpenCode, Pi) / model / profile / permission mode / transport, plus resume-in-cwd and git-worktree isolation; initial prompts are seeded by the flows that need them (Ask, library items, handoff) | 🔵 Working |
 | Auto-adopt | Sessions spawned externally (MCP, another agent) appear as cards automatically | 🔵 Working |
-| Supervisor agents | Spawn a Claude with the workspacer MCP facade attached; rendered nested under its parent | 🔵 Working |
+| Supervisor agents | Spawn a supervisor with the workspacer MCP facade attached — any backend (Claude runs the `/supervise` skill; managed providers get a plain-language watch opener); rendered nested under its parent | 🔵 Working |
 | Respawn / terminate | Restart a stopped agent (re-points its Claude panes); kill an agent's session | 🔵 Working |
 | Rename / reorder agents | Per-agent display name, sidebar ordering | 🔵 Working |
 | Deterministic agent identity | Cards keyed by a stable id derived from the session, deduped on layout sync — prevents cross-client duplication | 🟢 Solid |
@@ -62,12 +62,12 @@ remote/web/phone clients all view and drive the same fleet.
 | Analytics | Cost/token totals, by-project/by-model, recent sessions | 🔵 Working |
 | Overview | Cross-agent stats + rate-limit card + recent/favourite dirs to spawn | 🔵 Working |
 | Ask ("Ask the fleet") | Spawn a supervisor from a question, with preset chips | 🔵 Working |
-| Editor | Sandboxed CodeMirror plugin (default) or `$EDITOR` in a PTY (`editor.engine`) | 🔵 Working |
+| Editor | Sandboxed CodeMirror plugin (default) or a configured terminal editor in a PTY (`editor.engine`; `editor.terminalCommand`, default `nvim`) | 🔵 Working |
 | Agents / agent watch | Fleet monitor of a session's subagents; click-through watch panes for live subagents & workflow runs; pinnable inspector pane | 🔵 Working |
 | Markdown preview | Read-only rendered markdown (`mdpreview`), opened from file links in chat | 🔵 Working |
 | Plugins Manager | List/install/remove plugins with sidecar health | 🔵 Working |
 | Plugin pane | Generic webview host for a plugin's own UI (this is how any tracker/devops/dashboard surface appears) | 🔵 Working |
-| Settings | 14 sections (incl. theme maker, updates, Command Line install), all persisted | 🔵 Working |
+| Settings | 16 sections (incl. theme maker, updates, Command Line install), all persisted | 🔵 Working |
 | Bottom terminal panel | Toggleable drawer terminal | 🔵 Working |
 
 ## 4. Navigation & layout
@@ -87,7 +87,7 @@ remote/web/phone clients all view and drive the same fleet.
 
 | Feature | What it does | Maturity |
 |---|---|---|
-| Sidebar status | Per-agent ambient state dot, context %, token/cost; "N need you / N working" header | 🔵 Working |
+| Sidebar status | Expanded sidebar is a live activity feed: per-agent cards with provider-tinted status (waiting/working/done), last tool calls + assistant message, context-fill bar with context %, tokens/cost footer, inline Approve/Reply; finished agents collapse into EARLIER, resumable daemon sessions under RECENT; needs-you count badges the collapsed rail (rail tiles keep the per-agent status dot) | 🔵 Working |
 | Triage Inbox | Top-level drawer of attention items (approve/answer/dismiss/snooze) fed by live session snapshots | 🔵 Working |
 | Jump-to-next-attention | Hotkey to cycle to the next agent waiting on you | 🔵 Working |
 | OS notifications | Fire on needs-approval / needs-input and (optionally) done; suppressed for the watched agent; taskbar flash | 🔵 Working |
@@ -109,7 +109,7 @@ remote/web/phone clients all view and drive the same fleet.
 | Feature | What it does | Maturity |
 |---|---|---|
 | Library (prompts/skills/agents) | Create, edit, scope, and fire reusable items into sessions; variable templating | 🔵 Working |
-| Quick-pick panel | Ctrl+L library picker | 🔵 Working |
+| Quick-pick panel | Ctrl/Cmd+Shift+L library picker (leader l in the Vim preset; remappable per keymap preset) | 🔵 Working |
 | Analytics history | SQLite per-session history (model, cost, tokens, tools, branch); summary + recent | 🔵 Working |
 
 ## 8. Remote & multi-client
@@ -121,7 +121,7 @@ remote/web/phone clients all view and drive the same fleet.
 | Mobile PWA (`/m`) | Phone-first decision client, redesigned 2026-07: Needs You queue, full fleet list (needs-you → working → idle → stopped, same visibility rule as the desktop sidebar), per-agent chat with history (fetched over the bus under headless serve), spawn; installable PWA, the default QR target (push: see §5) | 🔵 Working |
 | Terminal-mirror client (`/remote`) | Lightweight client: agent list, chat, approvals, live xterm terminal mirror | 🔵 Working |
 | Full web app (`/app/`) | Serves the real renderer bundle over the bus (desktop: when sharing is on + web build present; `workspacer serve` auto-serves a sibling `web/` — bundled in the server archive) | 🔵 Working |
-| Headless server (`workspacer serve`) | One command starts + supervises claudemon and the hub with a full-scope brain provider (restart backoff, parentwatch); prints the /m + /remote + /app URLs and pairing token (`--json` for machines); loopback by default, `--host` is the remote opt-in; `workspacer status` probes all three | 🔵 Working |
+| Headless server (`workspacer serve`) | One command starts + supervises claudemon and the hub with a full-scope brain provider (restart backoff, parentwatch); prints the /m + /remote (plus bus + claudemon) URLs and pairing token (`--json` for machines; `/app` is auto-served when the bundled `web/` build is present but gets no banner line); loopback by default, `--host` is the remote opt-in; `workspacer status` probes all three | 🔵 Working |
 | Headless spawn parity | The brain's `agents.spawn` dispatches every backend like the desktop does (managed providers via spawn-managed, codex stream transport, resume), with a drift guard against the desktop's param surface | 🔵 Working |
 | Desktop app as a client | Adopt-don't-kill: the app attaches to a healthy already-running `workspacer serve` on the same machine instead of spawning daemons; "Connect to Server…" (palette / Remote Control dialog) points the whole app at a remote server, disconnect relaunches local | 🔵 Working |
 | Capability-scoped tokens | `workspacer token create --scope view` / `triage` / `operator` (+ `list` / `revoke`), enforced at the hub's single dispatch path; scoped tokens fail closed on unknown methods; hot-reloaded from `tokens.json`; the legacy remote-token stays implicit operator | 🟢 Solid |

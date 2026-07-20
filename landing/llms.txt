@@ -7,7 +7,7 @@
 - [Operational docs](docs.html): overview, getting started, running agents, the agent pane, pane types, layout and navigation, attention and notifications, remote and multi-client, extending, and configuration.
 - [Overview](docs.html#overview): the problem, the mental model (one agent = one session = one workspace), and what runs on your machine.
 - [Running agents](docs.html#agents-and-providers): the four providers, the spawn dialog, terminal-style vs managed agents.
-- [Pane types](docs.html#panes): terminal, browser, editor, review/diff, notes, library, analytics, overview, plugin panes, and more.
+- [Pane types](docs.html#panes): terminal, browser, editor, review/diff, library, analytics, overview, plugin panes (including the Notes plugin's scratchpad), and more.
 - [Extending (plugins, mcp, tui)](docs.html#extending): installing plugins, driving the fleet over MCP, the terminal client.
 
 ## Build & internals

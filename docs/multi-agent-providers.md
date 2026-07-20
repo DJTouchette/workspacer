@@ -8,7 +8,12 @@ workspacer drive coding agents other than Claude Code.
 Workspacer does two things with an agent, and they couple very differently:
 
 1. **Launch** — already provider-agnostic. The spawn path is
-   `renderer → IPC → claudemon → PTY`, and `pty.rs` just runs `argv[0]`. The only
+   `renderer → IPC (or the hub-bus agents.spawn capability) → claudemon`. The PTY
+   path (`pty.rs` just runs `argv[0]`) is now only one transport: Claude's shipped
+   default is the managed `stream` transport (headless `claude --print
+   --input-format stream-json` via `POST /sessions/spawn-managed`), and
+   Codex/OpenCode/Pi are adapter-driven managed spawns; classic PTY spawns remain
+   behind `transport: 'pty'` and the hybrid TUI paths. The only
    Claude-specific bits are binary discovery (`claudeResolver.ts`), the flag
    builder (`buildClaudeArgv`, i.e. Claude's `--session-id/--model/--resume`),
    and the profile→env mapping (`CLAUDE_CONFIG_DIR`).
@@ -22,8 +27,13 @@ Workspacer does two things with an agent, and they couple very differently:
    - **JSONL transcript** — claudemon tails `~/.claude` for conversation + usage.
    - **statusLine** — Claude pipes context %/cost/rate-limits to claudemon.
 
-   There is no provider abstraction anywhere: `AgentWorkspace.kind` only knows
-   `'supervisor'`, every IPC channel is `claude:*`, and the parser is Claude-only.
+   The provider abstraction now exists: `AgentWorkspace.provider`
+   (`'claude' | 'codex' | 'opencode' | 'pi'`, undefined ⇒ `'claude'`; `kind` still
+   only marks supervisors), a launch registry in `agentProviders.ts`, and
+   per-provider adapters in claudemon's `providers/` translating each backend's
+   native events into the shared session model. Session IPC channels are still
+   named `claude:*` (they serve every provider), joined by
+   `provider:listModels` / `provider:checkAll`.
 
 ## The opportunity: drive the agents' own protocols
 
@@ -40,7 +50,9 @@ integration is *cleaner*, not hackier:
 - Health: `GET /global/health`.
 
 ### Codex — `codex app-server`
-- JSON-RPC 2.0 over stdio (also `--listen ws://` / unix socket), newline-delimited.
+- JSON-RPC 2.0 over stdio, newline-delimited; plus `--listen ws://` (the
+  transport workspacer drives sessions over, since a live TUI and our RPC client
+  can share it). `--listen unix://` is gated in current Codex builds.
 - Lifecycle: `thread/start` (model, cwd) → `turn/start` (threadId, input);
   `turn/steer`, `turn/interrupt`, `thread/resume`, `thread/fork`, `model/list`.
 - Notifications: `thread/started`, `turn/started`, `turn/completed`,
@@ -52,10 +64,11 @@ integration is *cleaner*, not hackier:
 - Approvals: `item/commandExecution/requestApproval`,
   `item/fileChange/requestApproval` → client replies accept/decline/cancel;
   `serverRequest/resolved`.
-- Fallback for batch: `codex exec --json` (JSONL: `thread.started`,
-  `turn.started`, `turn.completed` w/ `usage{input_tokens, cached_input_tokens,
-  output_tokens, reasoning_output_tokens}`, `turn.failed`, `item.*`, `error`;
-  resume via `codex exec resume`).
+- Fallback (used whenever the app-server ws path is unavailable, and always on
+  Windows): run the native `codex` TUI in a PTY and tail its rollout JSONL
+  (`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl` — `response_item`
+  messages/function_calls plus `event_msg` `task_started`/`task_complete`/
+  `token_count`) via `providers/codex_rollout.rs`.
 
 ### Pi — hybrid (TUI + session-file tail); `--mode rpc` for supervisors
 - **Hybrid (default since 2026-07):** the native Pi TUI runs in a PTY pinned to
@@ -84,8 +97,11 @@ integration is *cleaner*, not hackier:
   `confirm`/`select` dialog → client replies `extension_ui_response`
   `{confirmed}` / `{value}` / `{cancelled}`). YOLO accepts inline; otherwise the
   request is surfaced and the user's /approve decision is forwarded.
-- MCP: reads the standard `.mcp.json` (`mcpServers`), so the workspacer facade
-  is registered as a remote `{type:"http", url}` entry.
+- MCP: none — Pi has no MCP client at all (its README: "No MCP." — extensions
+  are the extension point), so nothing is registered via `.mcp.json`. Workspacer's
+  AskUserQuestion rides a generated per-session `-e` extension that POSTs to the
+  daemon's `/mcp/ask/:session_id` endpoint; the full supervisor facade toolset is
+  currently unavailable to Pi — a Pi supervisor runs on role instructions alone.
 
 Caveat: these CLIs move fast; pin/verify schemas at build time. Known Codex bug:
 `--json` can be silently dropped when MCP servers are active (openai/codex#15451),
@@ -97,36 +113,49 @@ extension in use.
 ## Target architecture — two seams
 
 ### Seam A — Provider registry (launch side)
-A `Provider` descriptor keyed by `'claude' | 'codex' | 'opencode'`:
+Shipped as `agentProviders.ts`, a registry keyed by
+`'claude' | 'codex' | 'opencode' | 'pi'`:
 ```
-resolveBinary(profile) -> argv0 path     (per-CLI discovery; replaces claudeResolver)
-buildArgv(opts)        -> string[]        (per-CLI flags)
-buildEnv(profile)      -> env             (CLAUDE_CONFIG_DIR vs CODEX_HOME vs OPENCODE_*)
-profileSchema                              (what a "profile" means per provider)
-mode: 'pty' | 'managed'                    (Tier-1 terminal vs Tier-2 adapter)
+resolveAgentBinary(provider) -> argv0 path  (user-configured path → PATH search → bare name)
+buildAgentArgv(opts)         -> string[]    (Claude delegates to the full buildClaudeArgv;
+                                             other CLIs get a minimal launch)
 ```
-`ClaudeProvider` = today's behavior. Add `CodexProvider`, `OpenCodeProvider`.
+Env mapping (`CLAUDE_CONFIG_DIR`) stays in the Claude spawn helper, and
+pty-vs-managed is decided by the spawn dispatchers (`claudeSpawn.ts` /
+`managedSpawn.ts`) rather than a per-provider `mode` field.
 
-### Seam B — AgentAdapter (observe side, in claudemon)
-A trait that maps a provider's native I/O → the existing
-`SessionState` / `ConversationDelta` / `Usage` / `Pending` model, so the hub bus,
-renderer, and Fleet Deck stay unchanged:
+### Seam B — Provider adapters (observe side, in claudemon)
+Shipped in `providers/` — not as a trait: each provider module exposes a pure
+`translate()` mapping its native events to shared `AgentUpdate`s, applied by one
+`apply_updates()` onto the existing
+`SessionState` / conversation-delta / `Usage` / `Pending` model, so the hub bus,
+renderer, and Fleet Deck observe every provider identically:
 ```
-ClaudeAdapter    — hooks + JSONL transcript + statusLine   (current behavior)
+ClaudeAdapter    — shipped default: stream adapter (claude_stream.rs, headless
+                   `claude --print` stream-json w/ bidirectional control
+                   protocol); hooks + JSONL transcript + statusLine remain the
+                   PTY transport's channels.
 OpenCodeAdapter  — spawn `opencode serve`; create/drive session over HTTP;
                    consume `/event` SSE; translate Parts/usage/approvals.
-CodexAdapter     — spawn `codex app-server`; JSON-RPC over stdio;
+CodexAdapter     — run `codex app-server --listen ws://` (a WebSocket daemon the
+                   native TUI can share; stdio JSON-RPC only for model listing);
                    translate item/turn/token notifications + approval requests.
 ```
 
 ### Data-model + plumbing changes
-- `provider: 'claude' | 'codex' | 'opencode'` on `AgentWorkspace`, `PaneConfig`,
-  spawn options, and profiles (default `'claude'`; existing data is Claude).
-- Generic `agent:*` IPC alongside (or replacing) `claude:*`.
-- Per-provider model lists, profiles (`agent-profiles.json` w/ a `provider` tag),
-  and config (`config.agents`).
-- Provider picker in the spawn dialog; provider glyphs (the pack already ships an
-  `agent` hexagon; add Codex/OpenCode marks).
+- `provider: 'claude' | 'codex' | 'opencode' | 'pi'` on `AgentWorkspace`,
+  `PaneConfig`, and spawn options (undefined ⇒ `'claude'`; existing
+  pre-multi-provider data is Claude).
+- IPC kept the `claude:*` names (they now serve every provider), joined by
+  `provider:listModels` / `provider:checkAll`; no generic `agent:*` namespace.
+- Per-provider model lists and config (`config.agents`: `defaultProvider`,
+  per-provider binaries). Profiles were not generalized: they remain Claude-only
+  (`claude-profiles.json`, `CLAUDE_CONFIG_DIR` + extraArgs) — there is no
+  `agent-profiles.json`.
+- Provider picker in the spawn dialog; provider brand marks shipped —
+  `agentLogos.tsx` carries inline SVG logos for Claude, Codex, OpenCode, and Pi
+  (used in the picker's provider cards), alongside the glyph pack's `agent`
+  hexagon.
 
 ## Phasing
 
@@ -141,6 +170,10 @@ CodexAdapter     — spawn `codex app-server`; JSON-RPC over stdio;
   including approval/permission request bridging.
 - **Phase 4 — Polish.** Per-provider models/profiles/config, branding
   generalization (model-prefix stripping, labels), provider glyphs, approvals UI.
-- **Phase 5 — Tier-2 Pi adapter.** `PiAdapter` (`pi --mode rpc` JSONL stdio →
-  same model), with Extension-UI approval forwarding and `.mcp.json` facade
-  wiring. Pi joins as a first-class managed provider (`providers/pi.rs`).
+- **Phase 5 — Tier-2 Pi adapter.** Shipped as `providers/pi.rs` in two shapes:
+  the default is the hybrid (native Pi TUI in a PTY pinned via `--session-id`,
+  GUI from the session-JSONL tail); `pi --mode rpc` JSONL stdio is used for
+  supervisors, with Extension-UI approval forwarding. The planned `.mcp.json`
+  facade wiring was dropped — Pi has no MCP client, so a Pi supervisor gets role
+  instructions and the generated AskUserQuestion extension, but no workspacer
+  facade tools. Pi joins as a first-class managed provider.

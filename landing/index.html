@@ -309,7 +309,7 @@
         </span>
         <div><h3>Codex</h3><div class="tier">managed adapter</div></div>
       </div>
-      <p>Driven over <span style="color:var(--cyan)">codex app-server</span>, JSON-RPC across stdio. Turns, items, token usage, and approval requests translate straight into the same model.</p>
+      <p>Driven over <span style="color:var(--cyan)">codex app-server</span>, JSON-RPC 2.0 over a local WebSocket the GUI shares with the native TUI. Turns, items, token usage, and approval requests translate straight into the same model.</p>
     </div>
     <div class="agent">
       <div class="top">
@@ -331,12 +331,12 @@
   </div>
   <div class="tree">
     <div class="row"><span class="name">terminal</span><span class="desc">a real xterm and PTY shell scoped to the agent cwd</span></div>
-    <div class="row"><span class="name">editor</span><span class="desc">codemirror with find and replace, vim mode, folding, file tree</span></div>
+    <div class="row"><span class="name">editor</span><span class="desc">sandboxed editor plugin: codemirror with search and replace, project search, optional vim mode, file tree — or your own $EDITOR in a terminal pane</span></div>
     <div class="row"><span class="name">review</span><span class="desc">git status, diff, stage, commit, and push in the app</span></div>
     <div class="row"><span class="name">browser</span><span class="desc">embedded webview with nav, bookmarks, app mode, themed to match</span></div>
     <div class="row"><span class="name">agents</span><span class="desc">fleet monitor plus live watch panes for subagents and workflows</span></div>
     <div class="row"><span class="name">plugins</span><span class="desc">install, remove, and health-check sidecars that bring their own panes</span></div>
-    <div class="row"><span class="name">...</span><span class="desc">plus per-agent notes, a prompt and skill library, cost analytics, and a cross-agent overview</span></div>
+    <div class="row"><span class="name">...</span><span class="desc">plus a prompt and skill library, cost analytics, and a cross-agent overview — per-agent notes live in the Notes plugin</span></div>
   </div>
   <p class="agents-note">Arrange it your way: <b>fleet and focus modes</b> flip the whole chrome in one key without remounting a pane, the <b>Fleet Deck</b> radar shows every agent at once, and there's a <b>command palette</b>, remappable keybindings with leader chords, <b>18 built-in themes</b> plus a theme maker, and <b>layout templates</b>. Your workspace restores itself after a restart or crash, and every past session stays one click from resuming in the sidebar's <b>RECENT</b> list.</p>
 </div></section>
@@ -391,7 +391,7 @@
   </div>
   <div class="arch">
     <div class="node"><div class="badge">desktop client</div><h4>Electron + React</h4><p>The primary GUI. Spawns the daemons, renders the panes, forwards events to every client.</p></div>
-    <div class="node"><div class="badge">session daemon</div><h4>claudemon <span>[rust]</span></h4><p>Owns the sessions and PTYs, runs the per-provider adapters, streams conversation, usage, and git.</p></div>
+    <div class="node"><div class="badge">session daemon</div><h4>claudemon <span>[rust]</span></h4><p>Owns the sessions and PTYs, runs the per-provider adapters, streams conversation and usage.</p></div>
     <div class="node"><div class="badge">control plane</div><h4>hub <span>[go]</span></h4><p>The event bus, supervisor, capability router, plugin system, and MCP facade.</p></div>
   </div>
   <div class="codeblock">

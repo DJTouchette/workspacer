@@ -8,9 +8,12 @@ without leaving the window.
 
 It's not a chat box bolted onto an editor. Workspacer treats agents as
 first-class, long-running processes: each one gets its own workspace (tabs,
-terminals, a browser, a git review pane, notes), lives in a background daemon
-so closing the window never kills it, and reports up into a single control
-plane you can also check from your phone.
+terminals, a browser, a git review pane — notes are available via the Notes
+plugin), lives in a background daemon whose sessions persist and resume across
+app restarts — quitting the app pauses agents cleanly and the next launch picks
+the most recent session back up, and under `workspacer serve` the daemon
+outlives the desktop app entirely — and reports up into a single control plane
+you can also check from your phone.
 
 > Website & docs: open `landing/index.html` for the overview and
 > `landing/docs.html` for the full user guide (both are static, no build step).
@@ -52,8 +55,9 @@ rest of the fleet; clear approvals and questions from your phone.
 - **A real GUI for each agent** — approve/deny in one key, answer questions
   inline, read diffs as they land, follow a clean work log, attach files by
   drag/paste/picker. (Plus a raw terminal view for Claude.)
-- **Pane types** — terminal, browser, git review/diff, per-agent markdown
-  notes, a prompt/skill/agent library, analytics, an overview, and plugin panes.
+- **Pane types** — terminal, browser, git review/diff, a prompt/skill/agent
+  library, analytics, an overview, markdown preview/editor, and plugin panes
+  (per-agent notes ship as the Notes plugin).
 - **Layout your way** — flip the chrome between full workspace mode and
   `focus` (distraction-free chat rail) without remounting live panes. An
   advanced Agent Overview is there when you want the whole board.
@@ -78,7 +82,7 @@ For a full, honest feature-by-feature catalog with maturity levels, see
 ## Quick start
 
 ```bash
-make install          # install desktop JS deps (root + renderer workspaces)
+make install          # install desktop JS deps (then `cd apps/desktop/src/renderer && npm install` for the renderer)
 make dev              # run the desktop app (Vite renderer + Electron, hot reload)
 ```
 
@@ -146,7 +150,8 @@ apps/
   tui/         wks-tui — Rust terminal client over the hub bus
 services/
   claudemon/   Rust session daemon: owns sessions/PTYs, runs per-provider
-               adapters, streams conversation, usage, and git
+               adapters, streams conversation and usage (git review is
+               handled by the clients)
   hub/         Go control plane: event bus, process supervisor, capability
                router, plugin system, an MCP facade (cmd/mcp), a headless
                provider (cmd/brain), and the workspacer CLI (cmd/workspacer)
@@ -167,14 +172,14 @@ running on one client can be observed and driven from another.
 | `make dev`             | Desktop app in dev mode (Vite + Electron)             |
 | `./dev`                | Same as `make dev` (wrapper around `npm run dev`)     |
 | `make dev-share`       | Desktop app in dev mode with remote sharing forced on |
-| `make dev-tui`         | Run wks-tui (debug); builds claudemon first           |
-| `make run-tui`         | Run wks-tui (release); builds claudemon + tui first   |
+| `make dev-tui`         | Run wks-tui (debug); builds claudemon + hub/brain first |
+| `make run-tui`         | Run wks-tui (release); builds claudemon + hub/brain + tui first |
 | `make build`           | Build all four components                             |
 | `make build-hub`       | Build the Go `hub` + `mcp` + `brain` + `workspacer` binaries |
 | `make build-cli`       | The `workspacer` CLI + all its sibling daemon binaries |
 | `make build-claudemon` | `cargo build --release` for claudemon                 |
 | `make build-tui`       | `cargo build --release` for wks-tui                   |
-| `make test`            | Desktop + hub + tui test suites                       |
+| `make test`            | Desktop + hub + claudemon + tui test suites           |
 | `make package`         | Build daemons + produce desktop installers            |
 | `make clean`           | Remove build artifacts across all components          |
 

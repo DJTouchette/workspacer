@@ -127,7 +127,7 @@
 <h3>the mental model</h3>
 <p>The core unit is the agent workspace:</p>
 <ul>
-<li><strong>one agent = one long-lived session = one workspace.</strong> Each agent is a single claudemon session, keyed by its working directory. It has its own tabs and panes (the Claude pane, plus terminals, a browser, a git review/diff pane, a per-agent notes scratchpad, and more).</li>
+<li><strong>one agent = one long-lived session = one workspace.</strong> Each agent is a single claudemon session with its own working directory. It has its own tabs and panes (the Claude pane, plus terminals, a browser, a git review/diff pane, and more).</li>
 <li><strong>sessions live in the daemon, not the window.</strong> The session runs in <code>claudemon</code>, independent of any UI. Close the desktop window and the agent keeps running. A session spawned from somewhere else (the MCP facade, another agent) gets auto-adopted and shows up as a card on its own.</li>
 <li><strong>one card per session, everywhere.</strong> The same agent shows up exactly once whether you're looking from the desktop app, the terminal client, or a remote device, never doubled, never out of sync.</li>
 </ul>
@@ -152,7 +152,7 @@
 <p>For a machine with no desktop at all, each release also ships a standalone headless server (<code>workspacer-server-&lt;os&gt;-&lt;arch&gt;</code>): extract it and run <code>./workspacer serve</code>, then connect from your phone, another PC, or the terminal app (see <a href="#remote">remote and multi-client</a>). The desktop app bundles the same <code>workspacer</code> CLI — put it on your PATH with "Install workspacer Command" in the command palette, or Settings → Command Line.</p>
 <p>One concept to keep in mind from the start: <strong>your window is disposable</strong>. Agents run in the background session daemon, not in the window. Close work{spacer}, your agents keep working; reopen it (or the terminal app, or your phone) and you reconnect to the same live sessions. The cockpit is detachable from the planes.</p>
 <h3>spawn your first agent</h3>
-<p>Hit <code>Ctrl+Shift+N</code> (or the <code>+</code> in the sidebar) to open the spawn dialog. Pick a <strong>working directory</strong> (the project you want the agent to work in), optionally name it, choose an agent backend (<strong>Claude Code</strong>, <strong>Codex</strong>, <strong>OpenCode</strong>, or <strong>Pi</strong>, in beta), and spawn. The agent shows up as a card in the sidebar and opens its workspace. Type in the composer at the bottom and you're off.</p>
+<p>Hit <code>Ctrl+Shift+N</code> (or the <code>+</code> in the sidebar) to open the spawn dialog. Pick a <strong>working directory</strong> (the project you want the agent to work in), optionally name it, choose an agent backend (<strong>Claude Code</strong>, <strong>Codex</strong>, or — both in beta — <strong>OpenCode</strong> and <strong>Pi</strong>), and spawn. The agent shows up as a card in the sidebar and opens its workspace. Type in the composer at the bottom and you're off.</p>
 <p>Spawn a few more in other directories. Each one is its own workspace with its own tabs and panes. The sidebar shows every agent's live state at a glance, and the "<a href="#attention">N need you / N working</a>" header tells you who's blocked on a decision. See <a href="#agents-and-providers">running agents</a> for every field in the spawn dialog.</p>
 <h3>find your way around</h3>
 <ul>
@@ -167,14 +167,14 @@
 
 <section id="agents-and-providers" class="doc">
 <h2>running agents</h2>
-<p>work{spacer} drives four coding agents, not one: <strong>Claude Code</strong>, <strong>Codex</strong>, <strong>OpenCode</strong>, and <strong>Pi</strong> (beta). You pick the backend when you spawn an agent, and the rest of the app, the sidebar, the Fleet Deck, the inspector, the conversation view, treats them the same way: same state dots, same live transcript, same token/cost readouts, same approval prompts.</p>
+<p>work{spacer} drives four coding agents, not one: <strong>Claude Code</strong>, <strong>Codex</strong>, <strong>OpenCode</strong> (beta), and <strong>Pi</strong> (beta). You pick the backend when you spawn an agent, and the rest of the app, the sidebar, the Fleet Deck, the inspector, the conversation view, treats them the same way: same state dots, same live transcript, same token/cost readouts, same approval prompts.</p>
 <h3>the spawn dialog</h3>
 <p>Open it with <code>Ctrl+Shift+N</code> or the <code>+</code> in the sidebar. It always asks for:</p>
 <ul>
 <li><strong>Working directory</strong>: type a path or hit <code>Browse…</code>. This is the agent's project folder, and the default folder for every pane it opens (its terminals, its git review, etc.).</li>
 <li><strong>Name (optional)</strong>: defaults to the folder name. You can rename it later.</li>
-<li><strong>Agent</strong>: pick <code>Claude Code</code>, <code>Codex</code>, <code>OpenCode</code>, or <code>Pi</code> (beta).</li>
-<li><strong>Permissions</strong>: a permission-mode picker, shared across providers. The shipped default is <strong>Full access</strong> (bypass permissions), so a fresh agent runs without approval prompts; pick a stricter mode and approvals come to you instead. You can also switch the mode live later, from the composer.</li>
+<li><strong>Agent</strong>: pick <code>Claude Code</code>, <code>Codex</code>, <code>OpenCode</code> (beta), or <code>Pi</code> (beta).</li>
+<li><strong>Permissions</strong>: a permission-mode picker, shared across providers. The shipped default is the provider's own <strong>Ask to approve</strong> mode, so a fresh agent asks before privileged actions; pick <strong>Full access</strong> (bypass / YOLO) to let it run unattended, or set <code>claude.skipPermissionsDefault</code> to make bypass the spawn default. You can also switch the mode live later, from the composer.</li>
 </ul>
 <p>If you pick <strong>Claude Code</strong>, a few more fields appear:</p>
 <ul>
@@ -192,7 +192,7 @@
 <li><strong>Claude on the terminal transport</strong> has both a rich GUI conversation view and a raw terminal view, and you can flip between them (see <a href="#agent-pane">the agent pane</a>). <strong>Codex on the hybrid transport</strong> gets the same pair: its native TUI in the terminal view, the structured GUI on top, one shared thread.</li>
 <li><strong>Everything else is <em>managed</em></strong> — Claude on the default headless transport, headless Codex, OpenCode, and Pi: the session daemon drives the agent's own protocol directly and renders the conversation, so they're GUI-only, there's no terminal to flip to. They still surface the same state, telemetry, and approval prompts.</li>
 </ul>
-<p>Whatever the backend, approvals work the same: when an agent wants to run something it can't on its own, the request comes to you (in the pane, the sidebar card, or the Triage Inbox) unless that agent is in a bypass / YOLO permission mode — which is the shipped default, so tighten the mode at spawn (or live from the composer) if you want to be asked. Questions work the same too: every backend gets the structured <code>AskUserQuestion</code> picker, not just Claude (work{spacer} hands the managed providers the tool over a per-session shim, so a Codex or OpenCode or Pi agent can ask you a multiple-choice question and wait for the answer). And every backend reports live token usage and cost — Codex's wire carries no dollar figures, so its cost is priced from a built-in rate table you can override (see <a href="#configuration">configuration</a>).</p>
+<p>Whatever the backend, approvals work the same: when an agent wants to run something it can't on its own, the request comes to you (in the pane, the sidebar card, or the Triage Inbox) unless that agent is in a bypass / YOLO permission mode — approvals are the shipped default, so loosen the mode at spawn (or live from the composer) if you want it to run unattended. Questions work the same too: every backend gets the structured <code>AskUserQuestion</code> picker, not just Claude (work{spacer} hands the managed providers the tool over a per-session shim, so a Codex or OpenCode or Pi agent can ask you a multiple-choice question and wait for the answer). And every backend reports live token usage and cost — Codex's wire carries no dollar figures, so its cost is priced from a built-in rate table you can override (see <a href="#configuration">configuration</a>).</p>
 <h3>agents started elsewhere show up automatically</h3>
 <p>You don't have to start every agent from the window. A session spawned by a supervisor, by the MCP facade, by the terminal app, or on another machine, gets <strong>auto-adopted</strong>: it appears as its own card as soon as it's running, deduped so you never see the same session twice across clients. If it was spawned as a child of another agent, it nests under that parent in the sidebar.</p>
 <h3>supervisor agents</h3>
@@ -236,7 +236,7 @@
 <li>Sends go through <code>claudemon</code>'s message endpoint, which writes the whole line atomically and <strong>buffers</strong> a message sent while the agent is mid-turn or still starting, flushing it the moment the prompt is ready. So you can fire a follow-up without waiting.</li>
 <li>Your message shows up immediately (optimistic), before the transcript catches up.</li>
 </ul>
-<p><strong>Session pills.</strong> Above the box sit three control pills — the <strong>model</strong>, the <strong>reasoning effort</strong>, and the <strong>permission mode</strong> (e.g. "Opus 4.5 ▾ · High ▾ · Full access ▾"). Each is a live switch: change the model or the permission mode mid-session and it takes effect without a respawn, on every provider that supports it.</p>
+<p><strong>Session pills.</strong> Above the box sit three control pills — the <strong>model</strong>, the <strong>reasoning effort</strong>, and the <strong>permission mode</strong> (e.g. "Opus 4.5 ▾ · High ▾ · Full access ▾"). Model and permission mode are live switches: change them mid-session and they take effect without a respawn, on every provider that supports it. Reasoning effort applies through a restart (Claude resumes the same conversation).</p>
 <p><strong>Attaching files.</strong> Three ways, all land as chips above the box:</p>
 <ul>
 <li><strong>Drag and drop</strong> anywhere onto the active pane.</li>
@@ -300,17 +300,17 @@
 <p>(A leftover <code>codemirror</code> editor pane from an old saved session just shows a note pointing you back to the plugin.)</p>
 <h3>review / diff</h3>
 <p>A git review surface bound to the agent's cwd. It shows porcelain status split into staged / unstaged / untracked sections in a file tree, with per-file numstat (added/removed lines). Selecting a file renders a unified diff (untracked files render as an all-added diff via <code>--no-index</code>). Very large diffs (over ~1.5M chars) need an explicit click to render.</p>
-<p>Mutating git actions run from here against claudemon's git API: <strong>stage</strong> / <strong>unstage</strong> (a path, or everything when no path is given), <strong>commit</strong> (with a message box), and <strong>push</strong>. Failures (nothing staged, no upstream, conflicts) surface git's stderr verbatim. Click a file to open it in the editor.</p>
+<p>Mutating git actions run from here against the app's host-side git service, exposed on the hub bus (<code>git.*</code>) and over IPC — the session daemon doesn't touch git: <strong>stage</strong> / <strong>unstage</strong> (a path, or everything when no path is given), <strong>commit</strong> (with a message box), and <strong>push</strong>. Failures (nothing staged, no upstream, conflicts) surface git's stderr verbatim. Click a file to open it in the editor.</p>
 <h3>notes</h3>
-<p>A per-agent markdown scratchpad. Whatever you type is persisted onto the pane config and saved with the session, like a browser pane's URL. It survives agent switches and restores on reload (debounced 400ms, flushed on unmount so nothing is lost). Three views via the toolbar: <strong>write</strong>, <strong>split</strong>, <strong>preview</strong> (your choice is remembered). <code>Tab</code> inserts two spaces instead of leaving the textarea. It uses the app's own lightweight markdown renderer, no external editor.</p>
+<p>The built-in Notes pane is gone — Notes moved out into a plugin, and the <code>notes</code> pane type was retired (old saved layouts with a notes pane have it stripped on load). Its write / split / preview markdown editor, with <code>Tab</code> inserting two spaces, lives on in the Library item editor.</p>
 <h3>library</h3>
-<p>CRUD for reusable items you fire into sessions. Four kinds: <code>prompt</code>, <code>skill</code>, <code>agent</code>, <code>mcp</code>. Each item has a scope (<code>global</code> or project), tags, a body, and an action: <code>insert</code> (drop the text into the composer), <code>spawn</code> (start a new agent from it), or <code>copy</code>. MCP items carry a server config (<code>stdio</code> / <code>http</code> / <code>sse</code>, with command/args/env or url/headers) and can be attached to an agent at spawn.</p>
+<p>CRUD for reusable items you fire into sessions. Five kinds: <code>prompt</code>, <code>skill</code>, <code>agent</code>, <code>mcp</code>, and <code>command</code> (a slash command). Each item has a scope (<code>global</code>, project, or <code>claude</code> — synced with Claude Code's own directories), tags, a body, and an action: <code>insert</code> (drop the text into the composer), <code>spawn</code> (start a new agent from it), or <code>copy</code>. MCP items carry a server config (<code>stdio</code> / <code>http</code> / <code>sse</code>, with command/args/env or url/headers) and can be attached to an agent at spawn.</p>
 <p>Bodies support <strong>variable templating</strong>, resolved at insert time:</p>
 <ul>
 <li>Auto context vars: <code>{{cwd}}</code>, <code>{{sessionId}}</code>, <code>{{selection}}</code>, <code>{{clipboard}}</code>.</li>
 <li>Prompt-for-input fields: <code>{{?Label}}</code>, with a default (<code>{{?Label:default}}</code>) and a type suffix: <code>|text</code> (single line), <code>|area</code> (paragraph, the default), <code>|select:a,b,c</code> (dropdown, first is default), <code>|toggle:on,off</code> (checkbox). These are collected in a small form before the text is used.</li>
 </ul>
-<p>There's also a quick-pick library panel (<code>Ctrl+L</code>).</p>
+<p>There's also a quick-pick library panel (<code>Ctrl+Shift+L</code>).</p>
 <h3>analytics</h3>
 <p>Cost and token history, read from claudemon's per-session SQLite store. Top tiles show totals: sessions, cost (USD), input/output tokens, tool calls, duration, workflow runs. Below that, breakdown buckets <strong>by project</strong>, <strong>by model</strong>, and by day, each with sessions / cost / tokens. Then a list of recent sessions with model, branch, cost, tokens, duration, and status (active / ended). Model names are shortened (<code>claude-</code> prefix and trailing date dropped).</p>
 <h3>overview</h3>
@@ -358,7 +358,7 @@
 <p>A fuzzy launcher for everything. Open it with the <code>command-palette</code> action, default <code>Ctrl+Shift+P</code>. Type to filter; matching is a case-insensitive substring match against each item's name and description.</p>
 <p>It unifies these categories into one list:</p>
 <ul>
-<li><strong>actions</strong>: New Claude Code, New Terminal, New Browser, Review Changes, Notes, Library.</li>
+<li><strong>actions</strong>: New Claude Code, New Terminal, New Browser, Review Changes, Library.</li>
 <li><strong>commands</strong>: toggles and dialogs (Layouts, Manage Plugins, Install Plugin, Save session, and more).</li>
 <li><strong>apps</strong>: your custom app launcher entries (see below).</li>
 <li><strong>plugins</strong>: panes contributed by installed plugins.</li>
@@ -370,9 +370,9 @@
 <ul>
 <li><strong>direct combos</strong>: reserved for terminal-safe keys so a focused terminal still gets <code>Ctrl+C</code>, <code>Ctrl+L</code>, etc.</li>
 <li><strong>digit-range</strong>: a modifier plus any of <code>1</code>–<code>9</code> (e.g. <code>jump-tab</code> = <code>Ctrl+1-9</code>).</li>
-<li><strong>prefix chords</strong>: press the prefix (default <code>Ctrl+Space</code>), then a key or a short sequence. Chords can nest into submenus (New ▸, Tab ▸, Pane ▸).</li>
+<li><strong>prefix chords</strong>: press the prefix (default <code>Ctrl+Space</code>), then a single key. (The Vim preset nests chords into which-key submenus instead.)</li>
 </ul>
-<p>The default workspace bindings are vim-flavored: pane navigation is <code>h/j/k/l</code>, tab/pane ops live under leader chords. Note there is no separate "vim mode" toggle for the workspace layer anymore. The one Vim toggle in the app is <code>config.editor.vim</code>, which enables Vim keybindings <em>inside the CodeMirror editor only</em> and is independent of these workspace bindings.</p>
+<p>The defaults ship as one of three switchable keymap presets — <strong>VS Code</strong> (the default), <strong>Vim</strong>, and <strong>JetBrains</strong> — picked in Settings ▸ Keybindings. Note there is no separate "vim mode" toggle for the workspace layer anymore. The one Vim toggle in the app is <code>config.editor.vim</code>, which enables Vim keybindings <em>inside the CodeMirror editor only</em> and is independent of these workspace bindings.</p>
 <p><strong>Default bindings (direct):</strong></p>
 <ul>
 <li><code>command-palette</code> <code>Ctrl+Shift+P</code></li>
@@ -398,20 +398,22 @@
 </ul>
 <p><strong>Default chords (press <code>Ctrl+Space</code> then…):</strong></p>
 <ul>
-<li>New ▸ <code>n t</code> terminal, <code>n c</code> Claude, <code>n b</code> browser</li>
-<li>Tab ▸ <code>t [</code> prev, <code>t ]</code> next, <code>t ,</code> move left, <code>t .</code> move right, <code>t r</code> rename, <code>t w</code> close pane</li>
-<li>Pane ▸ <code>p s</code> split, <code>p c</code> quick split, <code>p h/j/k/l</code> focus left/down/up/right</li>
+<li><code>t</code> terminal, <code>c</code> Claude, <code>b</code> browser</li>
+<li><code>s</code> split, <code>q</code> quick split, <code>w</code> close pane, <code>r</code> rename</li>
+<li><code>[</code> / <code>]</code> prev/next tab, <code>,</code> / <code>.</code> move tab left/right</li>
+<li><code>h/j/k/l</code> focus pane left/down/up/right</li>
 </ul>
+<p>The VS Code preset keeps its chords flat like this; the Vim preset swaps them for nested which-key submenus (Window ▸ <code>w</code> …, Agent ▸ <code>a</code> …).</p>
 <p><strong>Remap capture.</strong> Settings ▸ Keybindings lets you rebind any action by clicking its field and pressing the keys. Press a combo for a direct binding, or press the prefix first then a key to record a chord. Digit-range actions capture as "modifier + digit". Each row has a <code>↺</code> reset-to-default. The prefix itself is rebindable (it must be a real combo, not a bare modifier).</p>
 <p><strong>Shortcut overlay.</strong> <code>F1</code> (<code>toggle-help</code>) opens a full cheatsheet grouped by section. There's also a <strong>chord hint</strong>: the moment you press the prefix, a which-key style indicator appears bottom-right and follows you into submenus, listing the keys available at the current level. Turn it down to a minimal indicator with Settings ▸ Keybindings ▸ Chord hints (<code>config.keybindings.chordHints</code>, default on).</p>
 <h3>themes</h3>
-<p>18 built-in themes, each a set of color tokens injected as <code>--wks-*</code> CSS variables on the document root (and into plugin webviews). Set with <code>config.ui.theme</code>, default <code>dark</code>. The shipped set: <code>dark</code>, <code>light</code>, <code>midnight</code>, <code>solarized-dark</code>, <code>dracula</code>, <code>nord</code>, <code>monokai</code>, <code>github-dark</code>, <code>gruvbox</code>, <code>tokyo-night</code>, <code>one-dark</code>, <code>rose-pine</code>, <code>cyberpunk</code>, <code>catppuccin-mocha</code>, <code>everforest</code>, <code>kanagawa</code>, <code>ayu-dark</code>, <code>synthwave</code>. Corner style and radius are derived from the theme too (rounded / soft / square).</p>
+<p>18 built-in themes, each a set of color tokens injected as <code>--wks-*</code> CSS variables on the document root (and into plugin webviews). Set with <code>config.ui.theme</code>, default <code>everforest</code>. The shipped set: <code>dark</code>, <code>light</code>, <code>midnight</code>, <code>solarized-dark</code>, <code>dracula</code>, <code>nord</code>, <code>monokai</code>, <code>github-dark</code>, <code>gruvbox</code>, <code>tokyo-night</code>, <code>one-dark</code>, <code>rose-pine</code>, <code>cyberpunk</code>, <code>catppuccin-mocha</code>, <code>everforest</code>, <code>kanagawa</code>, <code>ayu-dark</code>, <code>synthwave</code>. Corner style and radius are derived from the theme too (rounded / soft / square).</p>
 <p>Beyond the built-ins there's a <strong>theme maker</strong> (Settings ▸ Appearance): start from any built-in, edit the tokens, and save it as a custom theme. Custom themes live in config under <code>ui.customThemes</code>, keyed as <code>custom:&lt;slug&gt;</code>, and are selectable like any built-in.</p>
 <h3>layout templates</h3>
 <p>Save and restore named arrangements of directories plus panes. Open via the command palette ("Layouts…") or the Layouts dialog. "Save current" captures your non-global agents (their cwds and panes) under a name. Restoring a layout spawns fresh agents for its directories, so a template is a reusable starting point, not a live snapshot of running sessions. Backed by <code>layoutsSave</code> / <code>layoutsList</code> / <code>layoutsDelete</code>.</p>
 <h3>workspace restore and past sessions</h3>
 <p>There is one workspace, and it takes care of itself. Your arrangement (agents, tabs, panes) is saved continuously — on every layout change and again on quit — and the next launch restores it automatically. There is nothing to name, save, or pick; crash recovery is just the normal boot path. (Old named-session files from previous versions restore under their own name and keep working.)</p>
-<p>Conversations you closed are never lost. The session daemon keeps every agent session — Claude, Codex, OpenCode, and Pi — as a resumable record, and any that aren't part of your current layout show up in the sidebar's <strong>RECENT</strong> list: the agent's name, a provider dot, and how long ago it last ran. Click one and it comes back as a full agent, resuming the prior conversation with its folder, backend, and (for Claude) transport and model. Sessions idle for more than a week leave the daemon's default list but stay resumable.</p>
+<p>Conversations you closed are never lost. The session daemon keeps every agent session — Claude, Codex, OpenCode, and Pi — as a resumable record, and any that aren't part of your current layout show up in the sidebar's <strong>RECENT</strong> list: the conversation's own title (the name you gave the agent if you named it, else the provider's auto-generated conversation title), a provider dot, and how long ago it last ran. Click one and it comes back as a full agent, resuming the prior conversation with its folder, backend, and (for Claude) model, on the default headless transport (a session that explicitly ran headless stays pinned to it). Sessions idle for more than a week leave the daemon's default list but stay resumable.</p>
 <p><a href="shots/sidebar-recent.webp" target="_blank"><img src="shots/sidebar-recent.webp" width="300" height="590" loading="lazy" style="max-width:300px;width:100%;height:auto;border:1px solid #2a3134;border-radius:10px" alt="The sidebar: live agent cards on top, and the RECENT list of resumable past sessions below" /></a></p>
 <p>Sessions live in the daemons, not the window, so agents keep running across window restarts. On launch, if the hub already had a shared layout, work{spacer} mirrors that instead — it's the shared copy of the same workspace.</p>
 <h3>custom app launcher</h3>

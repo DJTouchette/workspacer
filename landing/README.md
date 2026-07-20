@@ -1,11 +1,12 @@
 # work{spacer} landing page
 
-Three self-contained pages with all styles inline, so you can open any one
+Four self-contained pages with all styles inline, so you can open any one
 straight in a browser with no build step.
 
 - `index.html` is the marketing page.
 - `docs.html` is the detailed user docs (sidebar nav, one section per topic).
 - `build.html` is the build & internals page (architecture, providers, plugins, MCP).
+- `build-plugin.html` is the "build a plugin" page (linked from the nav).
 
 ## Look
 
@@ -22,14 +23,14 @@ brand clay color; the other two tint with `currentColor`.
 
 ## Screenshots
 
-The framed boxes labelled things like `[ hero screenshot ]` and
-`[ review / diff pane ]` are placeholders. Drop a real capture into each slot
-when you have one. The hero shot is the big terminal window near the top, and
-there are smaller slots in the feature cards and the split sections.
+The framed boxes hold real captures from `shots/` (webp, staged from live
+sessions). To refresh one, restage the shot and drop the new capture into the
+matching `shots/` file. The hero shot is the big terminal window near the top,
+and there are smaller slots in the feature cards and the split sections.
 
 ## Copy
 
-Written in a relaxed voice with no em dashes. The feature claims map to things
+Written in a relaxed voice. The feature claims map to things
 that ship today: the agent providers (Claude Code, Codex, OpenCode, and Pi in
 beta) with their two integration tiers, ambient awareness and the Triage Inbox,
 the GUI agent pane, the review pane, the pane types, UI modes (fleet/focus),
@@ -41,7 +42,8 @@ they're reliable.
 ## Docs
 
 `docs.html` is generated from per-section drafts that were each grounded against
-the real source, then swept for voice (no em dashes) and rendered to a single
-static page. Sections: overview, install, architecture, agents and providers,
-the agent pane, pane types, layout and navigation, attention, remote, extending
-(plugins / mcp / tui), and configuration.
+the real source, then swept for voice and rendered to a single static page.
+Sections: overview, getting started, running agents, the agent pane, pane types,
+layout and navigation, attention and notifications, remote and multi-client,
+extending (plugins / mcp / tui), and configuration. Architecture internals moved
+to `build.html`.

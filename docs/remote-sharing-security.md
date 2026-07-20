@@ -71,10 +71,11 @@ WebSocket handshakes can't set headers, so the query form is what clients use).
 | Route | Guarded? | Note |
 |---|---|---|
 | `/bus` (WebSocket) | **Yes** | The real security boundary. Every event sub/pub and capability call flows here; the connection is rejected without a valid token. |
-| `/m`, `/remote` | **Yes** | Token-guarded entry documents. |
+| `/remote` | **Yes** | Token-guarded entry document. |
 | `/app/` entry (`index.html`) | **Yes** | Token-guarded. |
 | `/plugins/install`, `/remove`, `/inspect`, `/setEnabled`, `/examples/install`, `/plugins/tokens`, `/plugins/pane-token[/revoke]` | **Yes** | Mutating / sensitive plugin routes. |
-| `/health` | No | Liveness only (status + counts). |
+| `/m` | No | Served unguarded: an installed PWA launches at its `start_url` (`/m`) with no token in the URL, so the shell must load without one. The HTML carries no secrets; the client gates on its stored token and the real boundary stays `/bus`. |
+| `/health` | No | Liveness only. When a token guards the bus (always the case when the app runs the hub), an unauthenticated probe gets `{"status":"ok"}` alone; subscriber/method counts are returned only to authorized callers (or when no token is configured). |
 | `/plugins`, `/plugins/examples` | No | List manifests that already ship in the app; no secrets. |
 | `/plugins/ui/<id>/…` | No | Static plugin assets; `http.Dir` confines reads to the `ui` dir (no `..` escape, manifest/token never served). The real boundary remains `/bus`. |
 | `/app/` hashed assets, `/xterm.js`, `/xterm.css`, `/addon-fit.js` | No | Public library/bundle code; `<script>`/`<link>` tags can't carry the token. Same rationale: `/bus` is where authorization actually happens. |
@@ -185,12 +186,16 @@ reach a method outside its tier.
   - `operator` — everything (`*`); equivalent to the host token.
   - `agents.spawn`, `terminals.create`, `git.push`, and `config.save` are
     deliberately **absent** from `view`/`triage` and reserved to operator;
-    `cmd/brain/capspec_guard_test.go::TestSpawnStaysDeliberatelyUnscoped` locks
-    that in so a future edit can't quietly leak spawn into a lower tier.
+    `internal/authtoken/authtoken_test.go::TestScopeMethods` locks that in —
+    pinning each of those methods (and any future unknown method) as denied to
+    the scoped tiers — so a future edit can't quietly leak spawn into a lower
+    tier. (`cmd/brain/capspec_guard_test.go::TestSpawnStaysDeliberatelyUnscoped`
+    guards something different: that `agents.spawn` stays un-path-scoped in
+    capspec, the plugin argument-scoping model, not tier membership.)
 - **Minting / revoking.** `workspacer token create --scope view|triage|operator`,
   `workspacer token list`, `workspacer token revoke` (`cmd/workspacer/tokencmd.go`);
-  tokens persist in `tokens.json` under the hub state dir (`0o600`) and are
-  reloaded live on file change.
+  tokens persist in `tokens.json` in the workspacer config dir, next to the host
+  `remote-token` (`0o600`), and are reloaded live on file change.
 - **Known limits (see §5 and the exposure section).** Scoped user tokens are
   tiered **by verb only** — no per-path/per-argument confinement (that finer model
   exists only for *plugin* capabilities), and there is **no TTL/expiry** (a token
@@ -220,7 +225,7 @@ required first — it is future work, not a supported configuration today:
 - **Rate limiting & abuse protection.** Add connection/request rate limiting and
   lockout on the auth path; none exists today.
 - **Route authorization review.** Re-examine every currently-unguarded route
-  (assets, `/plugins`, `/plugins/ui/…`, `/health`) under a hostile-network
+  (assets, `/m`, `/plugins`, `/plugins/ui/…`, `/health`) under a hostile-network
   assumption rather than the current "the boundary is `/bus`" assumption.
 
 Until those exist, keep remote sharing on a trusted tailnet only.

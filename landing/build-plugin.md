@@ -18,7 +18,7 @@ Set `ui` to a subdirectory of static assets and **omit `server`**. There is no p
 
 ### sidecar plugin (`server`)
 
-Set `server.command` to a long-lived process the hub spawns and supervises (spawn → health-poll → restart-on-crash, SIGTERM then SIGKILL on stop). It's a polyglot sidecar: **any language**. It connects to the bus itself, so it can run *always-on with no pane at all* (an automation), `provide` capabilities other clients call, and/or serve its own webview panes from its port (the hub proxies `http://127.0.0.1:<port><path>`).
+Set `server.command` to a long-lived process the hub spawns and supervises (spawn → health-poll → restart-on-crash, SIGTERM then SIGKILL on stop). It's a polyglot sidecar: **any language**. It connects to the bus itself, so it can run *always-on with no pane at all* (an automation), `provide` capabilities other clients call, and/or serve its own webview panes from its port (the host points the pane's webview straight at `http://127.0.0.1:<port><path>` — nothing is proxied through the hub).
 
 - Reach for it when your plugin *does* something in the background: reacts to events, calls out to another service, answers capabilities for the rest of the fleet.
 - Give it a `port` + `health` path so the supervisor can health-check it and surface `sidecar.*` status colors.
@@ -95,7 +95,7 @@ Drop `my-hello/` into your plugins dir (in the app: `<configDir>/plugins`; in de
 
 ### make it a sidecar instead
 
-To make this a **sidecar**, drop `ui`, add a `server` block pointing at your process (and an `install` build step if it needs compiling), and connect to the bus from that process. A sidecar has no injected SDK — it speaks the bus frames directly. It gets its token in the `HUB_TOKEN` environment variable instead of the URL, and the bus address in `HUB_ADDR`. A tiny Node sidecar that watches for agents that need you and posts a notification, raw frames and all:
+To make this a **sidecar**, drop `ui`, add a `server` block pointing at your process (and an `install` build step if it needs compiling), and connect to the bus from that process. A sidecar has no injected SDK — it speaks the bus frames directly. It gets its token in the `HUB_TOKEN` environment variable instead of the URL; the bus address isn't passed in the environment, so connect to the default `127.0.0.1:7895` (or whatever `--addr` your hub listens on). A tiny Node sidecar that watches for agents that need you and posts a notification, raw frames and all:
 
 ```js
 // server.js — a headless sidecar (no pane at all)
@@ -317,7 +317,7 @@ ws.send(JSON.stringify({ op: 'register', methods: ['myplugin.status'] }));
 
 An incoming event is `{"op":"event","event":{ id, type, source, time, data }}` — the hub stamps `id`/`time` if you leave them blank. A reply to your `call` comes back as `{"op":"result","id":"c1","result":{…}}`, or `{"op":"error","id":"c1","error":"…"}`. When you `provide`, a caller's request arrives as an `op:'call'` frame you answer with an `op:'result'` carrying the same id.
 
-Two rules the bus enforces against your declared grants: you can only `call` a method you listed in `capabilities`, and you can only `publish` a type you listed in `emits` — an undeclared call or publish is refused. Topic patterns (in `subscribe`, `consumes`, `emits`) are exact (`agent.spawned`), namespace wildcard (`agent.*`), or all (`*`). The router is **single-owner per method**, so when you `provide`, pick a namespace nobody else claims.
+Two rules the bus enforces against your declared grants: you can only `call` a method you listed in `capabilities`, and you can only `publish` a type you listed in `emits` — an undeclared call or publish is refused. Topic patterns (in `subscribe`, `consumes`, `emits`) are exact (`agent.state_changed`), namespace wildcard (`agent.*`), or all (`*`). The router is **single-owner per method**, so when you `provide`, pick a namespace nobody else claims.
 
 ## Capabilities & permissions
 
@@ -343,7 +343,7 @@ The methods the host registers today (provided by the desktop app, or headlessly
 
 - `agents.list`, running agents with state / usage / pending asks.
 - `agents.sendMessage`, send a prompt to an agent (`{ sessionId, text }`).
-- `agents.spawn` / `agents.kill`, start a new agent (returns its sessionId) / terminate one.
+- `agents.spawn`, start a new agent (returns its sessionId). There is no `agents.kill` — to stop or steer a session, use `claude.signal` (`{ sessionId, signal }`).
 - `notifications.post`, show a desktop notification (`{ title, body }`).
 - `claude.approve` / `claude.answer` / `claude.signal`, resolve an approval, answer an AskUserQuestion, send a signal.
 - `sessions.snapshot` / `sessions.transcript` / `sessions.conversation`, live session state and history.
@@ -359,11 +359,10 @@ Events are fire-and-forget pub/sub (state changes, lifecycle, UI activity). Decl
 
 ### consume — events the fleet publishes to you
 
-- `agent.state_changed`, an agent's live state changed — the workhorse event: the state dot (idle / working / needs-approval / done), context %, token/cost, and pending approvals/questions. Published by claudemon.
-- `agent.spawned` / `agent.done` / `agent.terminated`, session started / finished a turn / ended.
-- `agent.snapshot`, a full per-agent snapshot (state + usage), from the catalog/headless provider.
+- `agent.state_changed`, the workhorse transition ping — published from claudemon's stream by the hub bridge, payload `{ sessionId, hookEvent, mode, cwd }` (the state dot). There are no separate `agent.spawned` / `agent.done` / `agent.terminated` events — subscribe to this for mode transitions, and to `workflow.*` for lifecycle.
+- `agent.snapshot`, a full per-agent snapshot (state + usage). Context %, token/cost, and pending approvals/questions ride here and on the enriched `agents.list` rows.
 - `agent.statusline`, the context % / cost / rate-limit status line for an agent.
-- `workflow.completed` / `workflow.failed`, a workflow run finished or failed.
+- `workflow.started` / `workflow.completed` / `workflow.failed` / `workflow.agent.finished`, a workflow run started, finished, failed, or one of its agents finished.
 - `ui.pane.opened` / `ui.pane.focused` / `ui.tab.focused`, renderer activity — which pane/tab the user is looking at (subscribe to `ui.*` to follow focus).
 - `fs.changed`, a file you're watching changed (paired with the `fs.watch` capability).
 - `sidecar.*` / `plugin.*`, plugin supervisor and lifecycle state (these back the health colors in the Plugins Manager).
