@@ -1,5 +1,5 @@
-import React, { useState, useRef, useMemo, useEffect } from 'react';
-import { Plus, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
+import { Plus, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react';
 import { BrandMark, Wordmark } from './Brand';
 import { AgentWorkspace, AgentProvider } from '../types/pane';
 import type { RecentAgentSession } from '../../../main/shared/ipcTypes';
@@ -176,6 +176,78 @@ const SideBar: React.FC<SideBarProps> = ({
   const [renameValue, setRenameValue] = useState('');
   // Type-to-filter the agent list by name or provider (nav rows always shown).
   const [filter, setFilter] = useState('');
+  // Collapsed state for the EARLIER / RECENT sub-sections, persisted so a
+  // preference survives reloads. Both default to expanded.
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('wks:sidebar:collapsedSections') || '{}');
+    } catch {
+      return {};
+    }
+  });
+  const toggleSection = useCallback((key: string) => {
+    setCollapsedSections((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      try {
+        localStorage.setItem('wks:sidebar:collapsedSections', JSON.stringify(next));
+      } catch {
+        /* private mode / quota — non-fatal, just don't persist */
+      }
+      return next;
+    });
+  }, []);
+
+  // Clickable section heading (EARLIER / RECENT) that collapses its rows. A
+  // chevron rotates and the item count rides on the right so a collapsed
+  // section still tells you how much it's hiding.
+  const renderSectionHeading = (key: string, label: string, count: number) => {
+    const collapsed = !!collapsedSections[key];
+    return (
+      <div
+        key={`${key}-heading`}
+        role="button"
+        tabIndex={0}
+        onClick={() => toggleSection(key)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggleSection(key);
+          }
+        }}
+        aria-expanded={!collapsed}
+        title={collapsed ? `Show ${label.toLowerCase()}` : `Hide ${label.toLowerCase()}`}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+          padding: '10px 16px 2px',
+          fontSize: '0.6rem',
+          fontWeight: 700,
+          letterSpacing: '0.12em',
+          color: 'var(--wks-text-faint)',
+          cursor: 'pointer',
+          userSelect: 'none',
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
+        }}
+      >
+        <ChevronDown
+          size={11}
+          style={{
+            flexShrink: 0,
+            transform: collapsed ? 'rotate(-90deg)' : 'none',
+            transition: 'transform 0.12s',
+          }}
+        />
+        <span>{label}</span>
+        <span style={{ marginLeft: 'auto', opacity: 0.7 }}>{count}</span>
+      </div>
+    );
+  };
   // The pinned global workspace — reached via the brand header, not a feed row.
   const overviewAgent = agents.find((a) => a.global);
 
@@ -1210,21 +1282,10 @@ const SideBar: React.FC<SideBarProps> = ({
             }
           }
           if (earlier.length > 0) {
-            rows.push(
-              <div
-                key="earlier-heading"
-                style={{
-                  padding: '10px 16px 2px',
-                  fontSize: '0.6rem',
-                  fontWeight: 700,
-                  letterSpacing: '0.12em',
-                  color: 'var(--wks-text-faint)',
-                }}
-              >
-                EARLIER
-              </div>,
-            );
-            for (const agent of earlier) rows.push(renderEarlierLine(agent));
+            rows.push(renderSectionHeading('earlier', 'EARLIER', earlier.length));
+            if (!collapsedSections.earlier) {
+              for (const agent of earlier) rows.push(renderEarlierLine(agent));
+            }
           }
           return rows;
         })()}
@@ -1234,80 +1295,71 @@ const SideBar: React.FC<SideBarProps> = ({
             reachable: click one and it comes back as an agent via --resume. */}
         {onResumeSession && (recentSessions?.length ?? 0) > 0 && (
           <>
-            <div
-              style={{
-                padding: '10px 16px 2px',
-                fontSize: '0.6rem',
-                fontWeight: 700,
-                letterSpacing: '0.12em',
-                color: 'var(--wks-text-faint)',
-              }}
-            >
-              RECENT
-            </div>
-            {recentSessions!.map((s) => {
-              const provider = (s.provider || 'claude') as AgentProvider;
-              const hue = PROVIDER_HUE[provider] ?? 'var(--wks-accent, #4a9eff)';
-              const name = recentSessionLabel(s);
-              const age = s.updatedAt ? relTime(Date.now() - s.updatedAt) : '';
-              return (
-                <div
-                  key={s.sessionId}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => onResumeSession(s)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') onResumeSession(s);
-                  }}
-                  onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
-                  }}
-                  title={`${name} — click to resume\n${s.cwd}${s.model ? `\n${s.model}` : ''}`}
-                  style={{
-                    margin: '0 16px',
-                    padding: '3px 2px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 7,
-                    minWidth: 0,
-                    borderRadius: 'var(--wks-radius-md)',
-                    cursor: 'pointer',
-                    fontFamily: 'var(--wks-font-mono)',
-                    fontSize: '0.66rem',
-                    color: 'var(--wks-text-faint)',
-                    transition: 'color 0.12s',
-                  }}
-                >
-                  <span
-                    style={{
-                      flexShrink: 0,
-                      width: 6,
-                      height: 6,
-                      borderRadius: '50%',
-                      background: hue,
-                      opacity: 0.7,
+            {renderSectionHeading('recent', 'RECENT', recentSessions!.length)}
+            {!collapsedSections.recent &&
+              recentSessions!.map((s) => {
+                const provider = (s.provider || 'claude') as AgentProvider;
+                const hue = PROVIDER_HUE[provider] ?? 'var(--wks-accent, #4a9eff)';
+                const name = recentSessionLabel(s);
+                const age = s.updatedAt ? relTime(Date.now() - s.updatedAt) : '';
+                return (
+                  <div
+                    key={s.sessionId}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onResumeSession(s)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') onResumeSession(s);
                     }}
-                  />
-                  <span
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
+                    }}
+                    title={`${name} — click to resume\n${s.cwd}${s.model ? `\n${s.model}` : ''}`}
                     style={{
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
+                      margin: '0 16px',
+                      padding: '3px 2px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 7,
+                      minWidth: 0,
+                      borderRadius: 'var(--wks-radius-md)',
+                      cursor: 'pointer',
+                      fontFamily: 'var(--wks-font-mono)',
+                      fontSize: '0.66rem',
+                      color: 'var(--wks-text-faint)',
+                      transition: 'color 0.12s',
                     }}
                   >
-                    {name}
-                  </span>
-                  {age && (
-                    <span style={{ marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}>
-                      {age}
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        width: 6,
+                        height: 6,
+                        borderRadius: '50%',
+                        background: hue,
+                        opacity: 0.7,
+                      }}
+                    />
+                    <span
+                      style={{
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {name}
                     </span>
-                  )}
-                </div>
-              );
-            })}
+                    {age && (
+                      <span style={{ marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                        {age}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
           </>
         )}
       </div>
