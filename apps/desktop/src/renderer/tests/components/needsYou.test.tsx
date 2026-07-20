@@ -202,4 +202,44 @@ describe('NeedsYouDock', () => {
     );
     expect(screen.getByText('2 questions')).toBeInTheDocument();
   });
+
+  it('minimizes to a one-line bar and restores, leaving the ask pending', () => {
+    const onAnswer = vi.fn();
+    render(
+      <NeedsYouDock
+        approval={null}
+        questions={[question]}
+        onApprove={vi.fn()}
+        onAnswer={onAnswer}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText('Minimize'));
+    // Picker gone, but the ask is still advertised — and nothing was answered.
+    expect(screen.queryByText('npm')).not.toBeInTheDocument();
+    expect(screen.getByText('Claude is asking you')).toBeInTheDocument();
+    expect(screen.getByText('Which package manager?')).toBeInTheDocument(); // preview line
+    expect(onAnswer).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('Answer ⌃'));
+    expect(screen.getByText('npm')).toBeInTheDocument();
+  });
+
+  it('a new question arrives expanded even if the previous one was minimized', () => {
+    const { rerender } = render(
+      <NeedsYouDock
+        approval={null}
+        questions={[question]}
+        onApprove={vi.fn()}
+        onAnswer={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText('Minimize'));
+    expect(screen.queryByText('npm')).not.toBeInTheDocument();
+
+    const next: PendingQuestion = { question: 'Deploy now?', options: [{ label: 'Ship it' }] };
+    rerender(
+      <NeedsYouDock approval={null} questions={[next]} onApprove={vi.fn()} onAnswer={vi.fn()} />,
+    );
+    expect(screen.getByText('Ship it')).toBeInTheDocument();
+  });
 });

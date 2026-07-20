@@ -16,6 +16,10 @@ import { claudeColors as colors } from '../claude-shared';
  *
  * `onDecline`, when provided, declines the whole request — the caller cancels
  * the agent's turn (SIGINT) rather than submitting any answer.
+ *
+ * `dense` is the docked-above-the-composer variant: tighter spacing, clamped
+ * option descriptions, and the option list gets its OWN scroll region so the
+ * custom-answer input and Decline stay visible without scrolling the dock.
  */
 export const QuestionPicker: React.FC<{
   questions: PendingQuestion[];
@@ -26,7 +30,8 @@ export const QuestionPicker: React.FC<{
     answerKinds?: string[];
   }) => void;
   onDecline?: () => void;
-}> = ({ questions, onAnswer, onDecline }) => {
+  dense?: boolean;
+}> = ({ questions, onAnswer, onDecline, dense = false }) => {
   const [idx, setIdx] = useState(0);
   const [drafts, setDrafts] = useState<string[]>(() => questions.map(() => ''));
   const [picked, setPicked] = useState<(string | null)[]>(() => questions.map(() => null));
@@ -100,8 +105,8 @@ export const QuestionPicker: React.FC<{
   return (
     <div
       style={{
-        padding: '13px 15px 14px',
-        margin: '8px 0',
+        padding: dense ? '9px 11px 10px' : '13px 15px 14px',
+        margin: dense ? '6px 0 2px' : '8px 0',
         borderRadius: 'var(--wks-radius-md)',
         backgroundColor: 'var(--wks-accent-bg)',
         border: '1px solid color-mix(in srgb, var(--wks-accent) 32%, transparent)',
@@ -111,7 +116,7 @@ export const QuestionPicker: React.FC<{
       }}
     >
       {/* Header: back + chip + stepper */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: dense ? 7 : 10 }}>
         {total > 1 && idx > 0 && (
           <button
             onClick={() => setIdx(idx - 1)}
@@ -191,18 +196,26 @@ export const QuestionPicker: React.FC<{
       {/* The question itself */}
       <div
         style={{
-          fontSize: `calc(0.92rem * ${scale})`,
+          fontSize: `calc(${dense ? '0.85rem' : '0.92rem'} * ${scale})`,
           color: colors.textBright,
           fontWeight: 600,
-          lineHeight: 1.5,
-          marginBottom: 11,
+          lineHeight: dense ? 1.4 : 1.5,
+          marginBottom: dense ? 8 : 11,
         }}
       >
         {q.question}
       </div>
 
-      {/* Options — number/checkbox badge + label + description */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {/* Options — number/checkbox badge + label + description. Dense (docked)
+          scrolls the option list itself so the answer input below stays put. */}
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: dense ? 4 : 6,
+          ...(dense ? { maxHeight: 'min(34vh, 300px)', overflowY: 'auto', paddingRight: 2 } : null),
+        }}
+      >
         {(q.options ?? []).map((opt, oi) => {
           const selected = multi ? multiPicks.has(oi) : picked[idx] === opt.label;
           return (
@@ -221,9 +234,9 @@ export const QuestionPicker: React.FC<{
               style={{
                 display: 'flex',
                 alignItems: 'flex-start',
-                gap: 10,
+                gap: dense ? 8 : 10,
                 textAlign: 'left',
-                padding: '9px 11px',
+                padding: dense ? '6px 9px' : '9px 11px',
                 borderRadius: 'var(--wks-radius-sm)',
                 border: `1px solid ${selected ? 'var(--wks-accent)' : colors.borderSubtle}`,
                 backgroundColor: selected
@@ -252,8 +265,8 @@ export const QuestionPicker: React.FC<{
                 style={{
                   flexShrink: 0,
                   marginTop: 1,
-                  width: 18,
-                  height: 18,
+                  width: dense ? 16 : 18,
+                  height: dense ? 16 : 18,
                   borderRadius: multi ? 5 : 6,
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -273,7 +286,7 @@ export const QuestionPicker: React.FC<{
                   style={{
                     display: 'block',
                     fontWeight: 600,
-                    fontSize: `calc(0.82rem * ${scale})`,
+                    fontSize: `calc(${dense ? '0.79rem' : '0.82rem'} * ${scale})`,
                     color: colors.textBright,
                     lineHeight: 1.4,
                   }}
@@ -285,9 +298,19 @@ export const QuestionPicker: React.FC<{
                     style={{
                       display: 'block',
                       color: colors.muted,
-                      fontSize: `calc(0.74rem * ${scale})`,
+                      fontSize: `calc(${dense ? '0.71rem' : '0.74rem'} * ${scale})`,
                       lineHeight: 1.45,
                       marginTop: 2,
+                      // Docked: a long description can't be allowed to push the
+                      // answer controls off-screen — clamp to two lines.
+                      ...(dense
+                        ? {
+                            display: '-webkit-box',
+                            WebkitBoxOrient: 'vertical' as const,
+                            WebkitLineClamp: 2,
+                            overflow: 'hidden',
+                          }
+                        : null),
                     }}
                   >
                     {opt.description}
@@ -305,7 +328,7 @@ export const QuestionPicker: React.FC<{
           onClick={commitMulti}
           disabled={multiPicks.size === 0}
           style={{
-            marginTop: 9,
+            marginTop: dense ? 7 : 9,
             fontSize: `calc(0.74rem * ${scale})`,
             fontWeight: 600,
             padding: '6px 15px',
@@ -323,7 +346,7 @@ export const QuestionPicker: React.FC<{
 
       {/* Custom answer */}
       {!multi && (
-        <div style={{ display: 'flex', gap: 6, marginTop: 11 }}>
+        <div style={{ display: 'flex', gap: 6, marginTop: dense ? 8 : 11 }}>
           <input
             placeholder="Or type your own answer…"
             value={customText}
@@ -369,8 +392,8 @@ export const QuestionPicker: React.FC<{
           style={{
             display: 'flex',
             justifyContent: 'flex-end',
-            marginTop: 10,
-            paddingTop: 9,
+            marginTop: dense ? 7 : 10,
+            paddingTop: dense ? 7 : 9,
             borderTop: `1px solid ${colors.borderSubtle}`,
           }}
         >
