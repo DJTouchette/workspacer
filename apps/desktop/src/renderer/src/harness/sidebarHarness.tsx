@@ -20,6 +20,8 @@ import '../App.css';
     getConfig: async () => ({}),
     reloadConfig: async () => ({}),
     saveConfig: async () => ({}),
+    // Show the hub as live so the footer reads "hub" (green), not "hub offline".
+    getHubStatus: async () => ({ connected: true }),
   },
   {
     get(target: any, prop: string) {
@@ -247,43 +249,53 @@ const statusBySession: Record<string, any> = Object.fromEntries(
   Object.values(snapshotBySession).map((s: any) => [s.sessionId, s.ambientState]),
 );
 
+// RECENT rows show the provider's auto-generated conversation title (name is
+// the spawn-default dirname, so recentSessionLabel prefers the title).
+const recent = (
+  sessionId: string,
+  provider: string,
+  cwd: string,
+  title: string,
+  ageMin: number,
+): any => ({
+  sessionId,
+  provider,
+  cwd,
+  mode: 'stopped',
+  transport: provider === 'claude' ? 'stream' : 'pty',
+  archived: false,
+  updatedAt: now - ageMin * min,
+  startedAt: now - (ageMin + 20) * min,
+  name: cwd.split('/').filter(Boolean).pop() || '',
+  title,
+  model: provider === 'claude' ? 'opus' : '',
+  costUSD: 1.2,
+});
+
 const recentSessions: any[] = [
-  {
-    sessionId: 'old-1',
-    provider: 'claude',
-    cwd: '/work/infra-tf',
-    mode: 'stopped',
-    transport: 'stream',
-    archived: false,
-    updatedAt: now - 26 * 60 * min,
-    startedAt: now - 30 * 60 * min,
-    name: 'infra-tf',
-    model: 'opus',
-    costUSD: 1.2,
-  },
-  {
-    sessionId: 'old-2',
-    provider: 'codex',
-    cwd: '/work/cli-tools',
-    mode: 'stopped',
-    transport: 'pty',
-    archived: false,
-    updatedAt: now - 50 * 60 * min,
-    startedAt: now - 52 * 60 * min,
-    name: 'cli-tools',
-    model: '',
-    costUSD: 0,
-  },
+  recent('old-1', 'claude', '/work/infra-tf', 'Split the Terraform state per environment', 3 * 60),
+  recent('old-2', 'codex', '/work/api', 'Add rate limiting to the public endpoints', 26 * 60),
+  recent('old-3', 'claude', '/work/docs-site', 'Rewrite the getting-started guide', 2 * 24 * 60),
+  recent('old-4', 'claude', '/work/release', 'Cut the v0.14 release and tag it', 9 * 24 * 60),
 ];
 
 const noop = () => {};
 
+// Scenarios: default shows every card state (design review); 'recent' trims to
+// one working + one done card so the RECENT list (with conversation titles)
+// stays prominent — that's the marketing shot for landing/shots/sidebar-recent.
+const scenario = new URLSearchParams(window.location.search).get('scenario');
+const shownAgents =
+  scenario === 'recent'
+    ? agents.filter((a) => ['global', 'agent-prep', 'agent-workspacer'].includes(a.id))
+    : agents;
+
 function Harness() {
-  const attention = useAttentionFeed(snapshotBySession, agents);
+  const attention = useAttentionFeed(snapshotBySession, shownAgents);
   return (
     <ConfigProvider>
       <AttentionProvider
-        agents={agents}
+        agents={shownAgents}
         activeAgentId="agent-prep"
         snapshotBySession={snapshotBySession}
         inboxOpen={false}
@@ -296,7 +308,7 @@ function Harness() {
       >
         <div className="app-root" style={{ height: '100vh', display: 'flex' }}>
           <SideBar
-            agents={agents}
+            agents={shownAgents}
             activeAgentId="agent-prep"
             statusBySession={statusBySession}
             snapshotBySession={snapshotBySession}
@@ -304,6 +316,8 @@ function Harness() {
             onSpawnAgent={noop}
             onTerminateAgent={noop}
             onRenameAgent={noop}
+            onToggleCollapse={noop}
+            onToggleHelp={noop}
             viewLevel="piloting"
             collapsed={false}
             recentSessions={recentSessions}
