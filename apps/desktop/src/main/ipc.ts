@@ -272,7 +272,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // list and plugins vanished from the palette until a reinstall.
   ipcMain.handle(IPC.HUB_LIST_PLUGINS, async () => {
     try {
-      const res = await fetch(`${HUB_HTTP_URL}/plugins`);
+      // All hub fetches carry a timeout: a wedged hub (socket open, no reply —
+      // seen mid plugin-install on Windows) must never hang an IPC promise the
+      // renderer is awaiting; the catch paths already degrade gracefully.
+      const res = await fetch(`${HUB_HTTP_URL}/plugins`, { signal: AbortSignal.timeout(5000) });
       if (!res.ok) return null;
       const plugins = (await res.json()) as Array<{ id: string; [k: string]: unknown }>;
       // Merge each plugin's per-plugin bus token (served only on the token-guarded
@@ -280,7 +283,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       // into that plugin's webview URL. Best-effort: no tokens → webviews can't
       // call capabilities, but the list still renders.
       try {
-        const tokRes = await fetch(`${HUB_HTTP_URL}/plugins/tokens`, { headers: hubAuthHeaders() });
+        const tokRes = await fetch(`${HUB_HTTP_URL}/plugins/tokens`, {
+          headers: hubAuthHeaders(),
+          signal: AbortSignal.timeout(5000),
+        });
         if (tokRes.ok) {
           const tokens = (await tokRes.json()) as Record<string, string>;
           for (const p of plugins) {
@@ -411,10 +417,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // scope. Returns null on any failure — the renderer falls back to the static token.
   ipcMain.handle(IPC.HUB_PLUGIN_PANE_TOKEN, async (_event, pluginId: string, agentCwd?: string) => {
     try {
+      // Short timeout: PluginPane holds its webview blank until this resolves,
+      // and the fallback (static-token URL) is fine.
       const res = await fetch(`${HUB_HTTP_URL}/plugins/pane-token`, {
         method: 'POST',
         headers: hubAuthHeaders(),
         body: JSON.stringify({ pluginId, agentCwd: agentCwd ?? '' }),
+        signal: AbortSignal.timeout(3000),
       });
       if (!res.ok) return null;
       const body = (await res.json()) as { token?: string };
@@ -433,6 +442,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         `${HUB_HTTP_URL}/plugins/settings?pluginId=${encodeURIComponent(pluginId)}`,
         {
           headers: hubAuthHeaders(),
+          signal: AbortSignal.timeout(5000),
         },
       );
       if (!res.ok) return {};
@@ -451,6 +461,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         method: 'POST',
         headers: hubAuthHeaders(),
         body: JSON.stringify({ pluginId, values }),
+        // Settings writes restart the sidecar hub-side; allow it a beat.
+        signal: AbortSignal.timeout(15000),
       });
       if (!res.ok) return null;
       const body = (await res.json()) as { values?: Record<string, unknown> };
@@ -488,6 +500,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         method: 'POST',
         headers: hubAuthHeaders(),
         body: JSON.stringify({ token }),
+        signal: AbortSignal.timeout(5000),
       });
     } catch {
       /* best-effort; the hub also sweeps pane tokens on plugin unload */
@@ -499,6 +512,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         method: 'POST',
         headers: hubAuthHeaders(),
         body: JSON.stringify({ url }),
+        // Download (60s hub-side) + optional build step (5 min cap).
+        signal: AbortSignal.timeout(6 * 60 * 1000),
       });
       const body = (await res.json()) as any;
       if (!res.ok) return { ok: false, error: body?.error || `HTTP ${res.status}` };
@@ -515,6 +530,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         method: 'POST',
         headers: hubAuthHeaders(),
         body: JSON.stringify({ url }),
+        signal: AbortSignal.timeout(30000),
       });
       const body = (await res.json()) as any;
       if (!res.ok) return { ok: false, error: body?.error || `HTTP ${res.status}` };
@@ -528,7 +544,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // cross-references the installed list to show an "Added" state.
   ipcMain.handle(IPC.HUB_LIST_EXAMPLES, async () => {
     try {
-      const res = await fetch(`${HUB_HTTP_URL}/plugins/examples`);
+      const res = await fetch(`${HUB_HTTP_URL}/plugins/examples`, {
+        signal: AbortSignal.timeout(5000),
+      });
       if (!res.ok) return [];
       return (await res.json()) as Array<{ id: string; [k: string]: unknown }>;
     } catch {
@@ -543,6 +561,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         method: 'POST',
         headers: hubAuthHeaders(),
         body: JSON.stringify({ id }),
+        signal: AbortSignal.timeout(6 * 60 * 1000),
       });
       const body = (await res.json()) as any;
       if (!res.ok) return { ok: false, error: body?.error || `HTTP ${res.status}` };

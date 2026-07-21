@@ -49,24 +49,43 @@ const PluginPane: React.FC<PluginPaneProps> = ({
       return;
     }
     let cancelled = false;
+    // Deadline on the mint: main's hub fetch now aborts at 3s, but if anything
+    // in the chain still wedges (hub restarting mid plugin-op) the pane must
+    // fall back to the static-token URL, never sit blank forever. A mint that
+    // resolves AFTER the deadline (or after unmount) is revoked immediately —
+    // an unrecorded token would otherwise outlive the pane until the hub
+    // sweeps it on plugin unload.
+    let settled = false;
+    const finish = (token: string | null) => {
+      if (settled || cancelled) {
+        if (token && token !== tokenRef.current) {
+          window.electronAPI.revokePluginPaneToken?.(token);
+        }
+        return;
+      }
+      settled = true;
+      if (token) {
+        tokenRef.current = token;
+        try {
+          const u = new URL(url);
+          u.searchParams.set('busToken', token);
+          setResolvedUrl(u.toString());
+        } catch {
+          setResolvedUrl(url);
+        }
+      } else {
+        setResolvedUrl(url); // mint failed → fall back to the static-token URL
+      }
+    };
+    const deadline = setTimeout(() => finish(null), 4000);
     window.electronAPI.pluginPaneToken!(pluginId!, cwd!)
       .then((token) => {
-        if (cancelled) return;
-        if (token) {
-          tokenRef.current = token;
-          try {
-            const u = new URL(url);
-            u.searchParams.set('busToken', token);
-            setResolvedUrl(u.toString());
-          } catch {
-            setResolvedUrl(url);
-          }
-        } else {
-          setResolvedUrl(url); // mint failed → fall back to the static-token URL
-        }
+        clearTimeout(deadline);
+        finish(token);
       })
       .catch(() => {
-        if (!cancelled) setResolvedUrl(url);
+        clearTimeout(deadline);
+        finish(null);
       });
 
     return () => {

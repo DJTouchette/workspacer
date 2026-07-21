@@ -47,6 +47,13 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
 
   const [url, setUrl] = useState<string>(initialUrl || browserCfg.homepage || 'https://google.com');
   const [loading, setLoading] = useState(false);
+  // Dead-guest state: crashed renderer or unreachable server (plugin sidecar
+  // stopped/updating). Rendered as an overlay with a retry, cleared on any
+  // successful load. See the render-process-gone/did-fail-load handlers.
+  const [guestError, setGuestError] = useState<null | {
+    kind: 'crashed' | 'unreachable';
+    detail: string;
+  }>(null);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -249,6 +256,40 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
       onUrlChangeRef.current?.(e.url);
     };
 
+    // A dead guest must fail VISIBLY and hand focus back to the app. A crashed
+    // or unreachable webview otherwise keeps its dead <webview> mounted and
+    // focused, silently swallowing every keystroke — for plugin panes (kill or
+    // update the sidecar and the guest dies) this read as "workspacer stopped
+    // responding / I can't type".
+    const reclaimFocus = () => {
+      try {
+        if (document.activeElement === wv) (wv as unknown as HTMLElement).blur();
+      } catch {
+        /* focus already elsewhere */
+      }
+    };
+    const handleGone = (e: any) => {
+      setLoading(false);
+      setGuestError({ kind: 'crashed', detail: e?.reason || 'render process gone' });
+      reclaimFocus();
+    };
+    const handleFailLoad = (e: any) => {
+      // Subframes and benign aborts (-3: navigation superseded) don't count.
+      if (e && e.isMainFrame === false) return;
+      if (e && e.errorCode === -3) return;
+      setLoading(false);
+      setGuestError({
+        kind: 'unreachable',
+        detail: (e?.errorDescription || 'load failed') + (e?.errorCode ? ` (${e.errorCode})` : ''),
+      });
+      reclaimFocus();
+    };
+    const handleFinishLoad = () => setGuestError(null);
+    wv.addEventListener('render-process-gone', handleGone);
+    wv.addEventListener('crashed', handleGone); // older <webview> event name
+    wv.addEventListener('did-fail-load', handleFailLoad);
+    wv.addEventListener('did-finish-load', handleFinishLoad);
+
     wv.addEventListener('dom-ready', handleDomReady);
     wv.addEventListener('did-start-loading', handleStartLoading);
     wv.addEventListener('did-stop-loading', handleStopLoading);
@@ -263,6 +304,10 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
       wv.removeEventListener('did-stop-loading', handleStopLoading);
       wv.removeEventListener('did-navigate', handleNavigate);
       wv.removeEventListener('did-navigate-in-page', handleNavigateInPage);
+      wv.removeEventListener('render-process-gone', handleGone);
+      wv.removeEventListener('crashed', handleGone);
+      wv.removeEventListener('did-fail-load', handleFailLoad);
+      wv.removeEventListener('did-finish-load', handleFinishLoad);
     };
   }, []);
 
@@ -571,19 +616,84 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
           </span>
         </div>
       ) : (
-        <webview
-          ref={webviewRef as any}
-          src={startUrl}
-          style={{
-            flex: 1,
-            width: '100%',
-            border: 'none',
-          }}
-          // @ts-ignore
-          partition="persist:browser"
-          // @ts-ignore
-          allowpopups="true"
-        />
+        <div style={{ flex: 1, position: 'relative', display: 'flex', minWidth: 0 }}>
+          <webview
+            ref={webviewRef as any}
+            src={startUrl}
+            style={{
+              flex: 1,
+              width: '100%',
+              border: 'none',
+            }}
+            // @ts-ignore
+            partition="persist:browser"
+            // @ts-ignore
+            allowpopups="true"
+          />
+          {guestError && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                background: 'var(--wks-bg-base)',
+                color: 'var(--wks-text-muted)',
+                textAlign: 'center',
+                padding: 24,
+              }}
+            >
+              <span style={{ fontSize: '1.6rem', opacity: 0.6 }}>
+                {guestError.kind === 'crashed' ? '\u{1F4A5}' : '\u{1F50C}'}
+              </span>
+              <span style={{ fontSize: '0.78rem', color: 'var(--wks-text-secondary)' }}>
+                {appMode
+                  ? guestError.kind === 'crashed'
+                    ? 'This plugin’s UI crashed.'
+                    : 'This plugin’s UI can’t be reached — its sidecar may be stopped or restarting.'
+                  : guestError.kind === 'crashed'
+                    ? 'This page crashed.'
+                    : 'This page can’t be reached.'}
+              </span>
+              <span
+                style={{
+                  fontSize: '0.62rem',
+                  fontFamily: 'var(--wks-font-mono)',
+                  color: 'var(--wks-text-faint)',
+                }}
+              >
+                {guestError.detail}
+              </span>
+              <button
+                onClick={() => {
+                  setGuestError(null);
+                  const wv = webviewRef.current as any;
+                  try {
+                    if (wv?.loadURL) wv.loadURL(normalizeUrl(url) || startUrl);
+                    else wv?.reload?.();
+                  } catch {
+                    /* webview mid-teardown — the overlay returns on next failure */
+                  }
+                }}
+                style={{
+                  marginTop: 4,
+                  padding: '5px 14px',
+                  fontSize: '0.7rem',
+                  border: '1px solid var(--wks-border-subtle)',
+                  borderRadius: 'var(--wks-radius-md)',
+                  background: 'var(--wks-bg-raised)',
+                  color: 'var(--wks-text-primary)',
+                  cursor: 'pointer',
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

@@ -815,9 +815,15 @@ function App() {
       // Default: the editor plugin. PluginPane mints a bus token scoped to `dir`.
       const editorPane = pluginPanesRef.current.find((p) => p.pluginId === 'workspacer.editor');
       if (!editorPane) {
+        // The editor plugin isn't loaded (not installed, or the hub is down /
+        // mid plugin-install). Ctrl+P must never be a silent no-op — fall back
+        // to a native file pick + the OS default editor so the chord always
+        // does something visible, even with plugin land on fire.
         console.warn(
-          '[editor] the workspacer.editor plugin is not installed; cannot open the editor.',
+          '[editor] the workspacer.editor plugin is not loaded; falling back to the system editor.',
         );
+        const file = target ?? (await window.electronAPI.pickFiles())?.[0];
+        if (file) void window.electronAPI.fileOpenExternal?.(file);
         return;
       }
       const params = new URLSearchParams();
