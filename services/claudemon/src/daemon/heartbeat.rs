@@ -86,7 +86,8 @@ pub async fn handle(State(state): State<ApiState>, Json(req): Json<HeartbeatRequ
             other => anyhow::bail!("unsupported heartbeat provider '{other}'"),
         }
     };
-    let outcome = tokio::time::timeout(std::time::Duration::from_secs(PING_TIMEOUT_SECS), run).await;
+    let outcome =
+        tokio::time::timeout(std::time::Duration::from_secs(PING_TIMEOUT_SECS), run).await;
     let (ok, resets_at, error) = match outcome {
         Ok(Ok(resets_at)) => (true, resets_at, None),
         Ok(Err(err)) => (false, None, Some(format!("{err:#}"))),
@@ -278,11 +279,13 @@ async fn run_ping_codex(argv: &[String], model: &str) -> anyhow::Result<Option<i
 
         // The thread id arrives via the thread/start result or notification.
         if thread_id.is_none() {
-            thread_id = crate::providers::codex::thread_id_of(value.get("result"))
-                .or_else(|| match method {
-                    "thread/started" => crate::providers::codex::thread_id_of(Some(params)),
-                    _ => None,
-                });
+            thread_id =
+                crate::providers::codex::thread_id_of(value.get("result")).or_else(
+                    || match method {
+                        "thread/started" => crate::providers::codex::thread_id_of(Some(params)),
+                        _ => None,
+                    },
+                );
             if let Some(tid) = &thread_id {
                 if !turn_sent {
                     turn_sent = true;
