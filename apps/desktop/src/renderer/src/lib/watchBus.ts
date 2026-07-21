@@ -97,3 +97,13 @@ export interface HandoffTarget {
 export function requestHandoff(target: HandoffTarget): void {
   window.dispatchEvent(new CustomEvent(AGENT_HANDOFF_EVENT, { detail: target }));
 }
+
+export const RECENT_SESSIONS_REFRESH_EVENT = 'recent-sessions:refresh';
+
+/** Ask the sidebar's RECENT list to refetch now instead of waiting for its
+ *  60s poll. Fired after a terminate: the daemon flips the dying session to a
+ *  resumable Stopped row a moment later, and without a nudge the row stays
+ *  invisible until the next poll tick. */
+export function requestRecentSessionsRefresh(): void {
+  window.dispatchEvent(new CustomEvent(RECENT_SESSIONS_REFRESH_EVENT));
+}

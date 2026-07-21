@@ -23,6 +23,7 @@ export function providerLabel(provider: AgentProvider | undefined): string {
 }
 import { agentIdForSession, dedupeBySessionId } from '../lib/agentIdentity';
 import { markSessionTerminated, clearSessionTerminated } from '../lib/terminatedSessions';
+import { requestRecentSessionsRefresh } from '../lib/watchBus';
 
 let nextId = 1;
 
@@ -601,6 +602,10 @@ export function useAgentManager() {
         /* already gone */
       }
     }
+    // Nudge the sidebar's RECENT list: the daemon keeps the closed session as
+    // a resumable Stopped row, but the 60s poll wouldn't surface it for up to
+    // a minute after the mode flips.
+    requestRecentSessionsRefresh();
   }, []);
 
   const renameAgent = useCallback(
