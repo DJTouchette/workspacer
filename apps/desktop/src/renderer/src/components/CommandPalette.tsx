@@ -711,6 +711,44 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     [filtered, selectedIndex, dismiss, activateItem],
   );
 
+  // Last-resort keyboard net. If the focus-claim loop above ever LOSES — a
+  // webview guest (especially on Windows) can refuse to release focus — the
+  // React handlers below are unreachable: the open palette then eats every
+  // keystroke with no way out ("Ctrl+Shift+P disables my keyboard"). A
+  // window-level capture listener guarantees Escape always dismisses, and any
+  // stray keystroke is redirected into the palette (printables seed the query,
+  // nav keys act) while re-claiming the input for the next one.
+  const handleKeyDownRef = useRef(handleKeyDown);
+  handleKeyDownRef.current = handleKeyDown;
+  const dismissRef = useRef(dismiss);
+  dismissRef.current = dismiss;
+  useEffect(() => {
+    if (!visible) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        dismissRef.current();
+        return;
+      }
+      const el = inputRef.current;
+      if (!el || document.activeElement === el) return; // input owns it — React handles
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') {
+        // Structurally compatible with the React handler (key/modifiers/preventDefault).
+        handleKeyDownRef.current(e as unknown as React.KeyboardEvent);
+        e.stopPropagation(); // handled here — don't let React double-handle it
+      } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        setQuery((q) => q + e.key);
+        setSelectedIndex(0);
+      }
+      el.focus({ preventScroll: true });
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [visible]);
+
   if (!visible) return null;
 
   // Profile picker sub-view

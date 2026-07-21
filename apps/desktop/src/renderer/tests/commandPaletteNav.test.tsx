@@ -97,3 +97,45 @@ describe('CommandPalette — keyboard nav order matches visual order', () => {
     expect(screen.getByText('Open Agent Monitor')).toBeInTheDocument();
   });
 });
+
+describe('CommandPalette — window-level keyboard net', () => {
+  // If the input's focus claim loses (a webview guest refusing to release
+  // focus — the Windows "Ctrl+Shift+P kills my keyboard" report), the palette
+  // must still be fully drivable from window-level keydowns.
+  it('Escape dismisses even when the input never got focus', () => {
+    const onClose = vi.fn();
+    const { container } = render(
+      <ConfigProvider>
+        <CommandPalette
+          visible
+          apps={[]}
+          onClose={onClose}
+          onLaunchApp={vi.fn()}
+          onAddTab={vi.fn()}
+        />
+      </ConfigProvider>,
+    );
+    (container.querySelector('input') as HTMLInputElement).blur();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('a stray printable keystroke seeds the query and reclaims the input', () => {
+    const { container } = render(
+      <ConfigProvider>
+        <CommandPalette
+          visible
+          apps={[]}
+          onClose={vi.fn()}
+          onLaunchApp={vi.fn()}
+          onAddTab={vi.fn()}
+        />
+      </ConfigProvider>,
+    );
+    const input = container.querySelector('input') as HTMLInputElement;
+    input.blur();
+    fireEvent.keyDown(window, { key: 'x' });
+    expect(input.value).toBe('x');
+    expect(document.activeElement).toBe(input);
+  });
+});
