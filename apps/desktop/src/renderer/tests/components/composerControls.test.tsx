@@ -141,7 +141,12 @@ describe('ComposerControls — pill labels reflect session state', () => {
     renderControls({ provider: 'codex', snapshot: snapshot({ settings: {} }) });
 
     fireEvent.click(screen.getByText('Default'));
-    expect(await screen.findByText('Default ✓')).toBeInTheDocument();
+    // The current value's menu row wraps its label in a span with a trailing
+    // <Check> icon (checkedLabel); the pill itself is a button, so filter on tag.
+    const marked = (await screen.findAllByText('Default')).find(
+      (el) => el.tagName === 'SPAN' && el.querySelector('svg'),
+    );
+    expect(marked).toBeTruthy();
   });
 
   it('disables the pills when there is no session yet', () => {
