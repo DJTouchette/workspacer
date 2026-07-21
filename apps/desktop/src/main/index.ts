@@ -27,6 +27,7 @@ import { startMcpFacade, stopMcpFacade } from './services/mcpFacadeDaemon';
 import { setHubMainWindow, startHubClient, stopHubClient } from './services/hubClient';
 import { setNoticeWindow, notifySystem } from './services/systemNotice';
 import { updateService } from './services/updateService';
+import { keepWarmService } from './services/keepWarmService';
 import { initFileLogging } from './services/logFile';
 import { stopAllTerminals } from './services/terminalShare';
 import { workflowWatcher } from './services/workflowWatcher';
@@ -323,6 +324,8 @@ function createWindow(): void {
   agentNotifier.setMainWindow(mainWindow);
   // Kick off auto-update (no-op in dev / when disabled via config).
   updateService.start(mainWindow);
+  // Keep-warm 5h-window pinger (no-op unless claude.keepWarm.enabled).
+  keepWarmService.start();
   setHubMainWindow(mainWindow);
   setNoticeWindow(mainWindow);
 
@@ -594,6 +597,7 @@ async function gracefulShutdown(): Promise<void> {
     ipcMain.removeAllListeners(IPC.APP_QUIT_SAVED);
   }
   updateService.stop();
+  keepWarmService.stop();
   try {
     claudemonSessionClient.closeAll();
   } catch {

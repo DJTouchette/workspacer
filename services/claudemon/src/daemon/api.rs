@@ -214,6 +214,7 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
         .route("/events", get(event_stream))
         .route("/hooks/stream", get(hook_stream))
         .route("/statusline/stream", get(status_line_stream))
+        .route("/usage", get(get_usage))
         .route("/wrapper/:id", get(crate::daemon::wrapper_ws::upgrade))
         // MCP streamable-HTTP server (POST-only; axum answers GET with 405) —
         // gives MCP-speaking agents (Codex) an AskUserQuestion tool that
@@ -230,6 +231,48 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
         // request is refused before it can reach a handler or the CORS layer.
         .layer(middleware::from_fn_with_state(allowed_hosts, host_guard))
         .with_state(state)
+}
+
+/// GET /usage — account-level rate-limit windows, independent of any session.
+/// Serves the poller's cached reading while fresh; otherwise fetches on demand
+/// (the OAuth usage query has no session dependency — the background poller is
+/// merely *gated* on live sessions to keep an idle daemon quiet). On-demand
+/// readings go through `set_account_usage`, so live gauges refresh too.
+///
+/// 503 when the account can't be queried (no OAuth credentials, expired token,
+/// offline) — callers must be able to tell "unknown" from "no active window".
+async fn get_usage(State(store): State<SessionStore>) -> Response {
+    let now = time::OffsetDateTime::now_utc();
+    let usage = match store.account_usage().filter(|u| u.is_fresh(now)) {
+        Some(u) => u,
+        None => {
+            match crate::session::account_usage::fetch_account_usage(&reqwest::Client::new()).await
+            {
+                Ok(u) => {
+                    store.set_account_usage(u.clone());
+                    u
+                }
+                Err(err) => {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        format!("account usage unavailable: {err:#}"),
+                    )
+                        .into_response()
+                }
+            }
+        }
+    };
+    Json(json!({
+        "five_hour_pct": usage.five_hour_pct,
+        "five_hour_resets_at": usage.five_hour_resets_at,
+        "seven_day_pct": usage.seven_day_pct,
+        "seven_day_resets_at": usage.seven_day_resets_at,
+        "monthly_pct": usage.monthly_pct,
+        "monthly_resets_at": usage.monthly_resets_at,
+        "out_of_credits": usage.out_of_credits,
+        "fetched_at": usage.fetched_at.unix_timestamp(),
+    }))
+    .into_response()
 }
 
 #[derive(Debug, Default, Deserialize)]

@@ -70,6 +70,12 @@ const SECTIONS: SectionDef[] = [
       'diff',
       'font',
       'scale',
+      'keep',
+      'warm',
+      'window',
+      'rate',
+      'limit',
+      'ping',
     ],
   },
   {

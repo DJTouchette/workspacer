@@ -105,7 +105,8 @@
     "workLog": "cards",
     "showTimestamps": false,
     "transport": "stream",
-    "settingsOverlay": false
+    "settingsOverlay": false,
+    "keepWarm": { "enabled": false, "mode": "auto", "intervalHours": 5, "dailyAt": "08:00" }
   },
   "agents": {
     "defaultProvider": "claude",

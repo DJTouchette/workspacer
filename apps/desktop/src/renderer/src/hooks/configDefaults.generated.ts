@@ -170,6 +170,12 @@ export const CONFIG_DEFAULTS = {
     showTimestamps: false,
     transport: 'stream',
     settingsOverlay: false,
+    keepWarm: {
+      enabled: false,
+      mode: 'auto',
+      intervalHours: 5,
+      dailyAt: '08:00',
+    },
   },
   agents: {
     defaultProvider: 'claude',

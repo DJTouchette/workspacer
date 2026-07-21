@@ -733,6 +733,12 @@ impl SessionStore {
         }
     }
 
+    /// Snapshot of the latest account-level usage reading, if any. May be
+    /// stale — callers gate on [`AccountUsage::is_fresh`] themselves.
+    pub fn account_usage(&self) -> Option<AccountUsage> {
+        self.account_usage.read().unwrap().clone()
+    }
+
     /// Whether any non-stopped Claude session exists — the account-usage
     /// poller's gate, so the daemon never polls the endpoint while idle.
     pub fn has_live_claude_session(&self) -> bool {

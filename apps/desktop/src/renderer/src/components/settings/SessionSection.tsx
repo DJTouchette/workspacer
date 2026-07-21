@@ -157,6 +157,14 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
   const defaultProvider = config.agents?.defaultProvider ?? 'claude';
   const guiFontScale = config.ui.guiFontScale ?? 1.15;
   const diffView = config.ui.diffView ?? 'stacked';
+  const keepWarm = {
+    enabled: config.claude?.keepWarm?.enabled ?? false,
+    mode: config.claude?.keepWarm?.mode ?? ('auto' as const),
+    intervalHours: config.claude?.keepWarm?.intervalHours ?? 5,
+    dailyAt: config.claude?.keepWarm?.dailyAt ?? '08:00',
+  };
+  const saveKeepWarm = (patch: Partial<typeof keepWarm>) =>
+    save({ claude: { ...config.claude, defaultView, keepWarm: { ...keepWarm, ...patch } } });
 
   const [detection, setDetection] = useState<ProviderDetection[]>([]);
   const refreshDetection = () => {
@@ -384,6 +392,92 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         Adds a small HH:MM stamp beside each chat turn in the GUI conversation. Also togglable from
         the clock button in a chat pane's top bar.
       </div>
+
+      <CheckRow
+        label="Keep 5-hour window warm"
+        checked={keepWarm.enabled}
+        onChange={(v) => saveKeepWarm({ enabled: v })}
+      />
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        Subscription usage runs in 5-hour windows that only start with your first message. When the
+        current window is expired (0%), this sends one minimal Haiku ping so a fresh window is
+        already running before you sit down. Checks account usage first — never pings mid-window.
+        Runs only while Workspacer is open.
+      </div>
+      {keepWarm.enabled && (
+        <>
+          <Row label="Warm trigger">
+            <div style={{ display: 'flex', gap: 4 }}>
+              <ModeButton
+                label="Always"
+                active={keepWarm.mode === 'auto'}
+                onClick={() => saveKeepWarm({ mode: 'auto' })}
+              />
+              <ModeButton
+                label="Every N hours"
+                active={keepWarm.mode === 'interval'}
+                onClick={() => saveKeepWarm({ mode: 'interval' })}
+              />
+              <ModeButton
+                label="Daily at"
+                active={keepWarm.mode === 'daily'}
+                onClick={() => saveKeepWarm({ mode: 'daily' })}
+              />
+            </div>
+          </Row>
+          {keepWarm.mode === 'interval' && (
+            <Row label="Check every (hours)">
+              <input
+                type="number"
+                min={1}
+                max={24}
+                value={keepWarm.intervalHours}
+                onChange={(e) => {
+                  const n = Math.max(1, Math.min(24, Number(e.target.value) || 5));
+                  void saveKeepWarm({ intervalHours: n });
+                }}
+                style={{
+                  width: 64,
+                  fontSize: '0.78rem',
+                  fontFamily: 'inherit',
+                  color: 'var(--wks-text-primary)',
+                  background: 'var(--wks-bg-input)',
+                  border: '1px solid var(--wks-border-input)',
+                  borderRadius: 'var(--wks-radius-sm)',
+                  padding: '4px 7px',
+                }}
+              />
+            </Row>
+          )}
+          {keepWarm.mode === 'daily' && (
+            <Row label="Check daily at">
+              <input
+                type="time"
+                value={keepWarm.dailyAt}
+                onChange={(e) => {
+                  if (e.target.value) void saveKeepWarm({ dailyAt: e.target.value });
+                }}
+                style={{
+                  fontSize: '0.78rem',
+                  fontFamily: 'inherit',
+                  color: 'var(--wks-text-primary)',
+                  background: 'var(--wks-bg-input)',
+                  border: '1px solid var(--wks-border-input)',
+                  borderRadius: 'var(--wks-radius-sm)',
+                  padding: '4px 7px',
+                }}
+              />
+            </Row>
+          )}
+          <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+            {keepWarm.mode === 'auto'
+              ? 'Re-warms the moment a window lapses, so a 5-hour window is always running.'
+              : keepWarm.mode === 'interval'
+                ? 'Checks on this cadence and warms only if no window is running at check time.'
+                : 'Checks once a day at this local time and warms only if no window is running.'}
+          </div>
+        </>
+      )}
 
       <Row label="Chat text size">
         <div style={{ display: 'flex', gap: 4 }}>

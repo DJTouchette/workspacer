@@ -125,6 +125,21 @@ interface Config {
      *  the inspector; an OS notification fires once when a session's spend
      *  crosses its budget. Absent/0 = no budget. */
     budgets?: Record<string, number>;
+    /** Keep a subscription 5-hour rate-limit window warm: when the current
+     *  window is expired/absent (0%), fire one minimal Haiku ping so a fresh
+     *  window is already running by the time real work starts. Off by default;
+     *  runs only while Workspacer is open. */
+    keepWarm?: {
+      enabled: boolean;
+      /** 'auto' = re-warm whenever the window lapses; 'interval' = check every
+       *  `intervalHours`; 'daily' = check once a day at `dailyAt`. Every mode
+       *  checks account usage first and skips while a window is active. */
+      mode: 'auto' | 'interval' | 'daily';
+      /** Hours between checks in 'interval' mode. */
+      intervalHours: number;
+      /** Local "HH:MM" for the once-a-day check in 'daily' mode. */
+      dailyAt: string;
+    };
   };
   /** Defaults applied when spawning a new agent. */
   agents: {
