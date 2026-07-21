@@ -99,10 +99,18 @@ func inspectTarball(tarballURL string) (Manifest, error) {
 // extracts it into pluginsDir, runs its optional one-time install command, and
 // returns the validated manifest. The caller adds it to the Manager.
 //
+// On a reinstall/update, stopForReplace (if non-nil) is called with the
+// plugin's id BEFORE the existing directory is replaced — the caller should
+// stop the running sidecar there (Manager.Remove). On Windows a live
+// sidecar's directory cannot be moved or deleted (its cwd and open handles
+// hold locks), so replacing under a running plugin either fails outright or —
+// worse, with the old RemoveAll-in-place — deleted half the files before
+// failing, leaving a gutted install.
+//
 // NOTE: this downloads and (via the Manager) RUNS code from the internet — the
 // caller is responsible for getting user consent. It's the trusted-install
 // model (like a VS Code extension), not a sandbox.
-func Install(pluginsDir, input string, progress func(stage string)) (Manifest, error) {
+func Install(pluginsDir, input string, progress func(stage string), stopForReplace func(pluginID string)) (Manifest, error) {
 	if progress == nil {
 		progress = func(string) {}
 	}
@@ -120,7 +128,7 @@ func Install(pluginsDir, input string, progress func(stage string)) (Manifest, e
 
 	var lastErr error
 	for _, url := range urls {
-		m, err := installFromTarball(pluginsDir, url, name, progress)
+		m, err := installFromTarball(pluginsDir, url, name, progress, stopForReplace)
 		if err == nil {
 			// Record the install reference next to the plugin so the UI can offer
 			// one-click update. Best-effort: a missing source just disables update.
@@ -142,7 +150,9 @@ func Install(pluginsDir, input string, progress func(stage string)) (Manifest, e
 //
 // Unlike Install it neither downloads nor writes an .install-source: a bundled
 // example has nothing to "update" from, so the UI shows no Update button.
-func InstallFromDir(pluginsDir, srcDir string) (Manifest, error) {
+//
+// stopForReplace: see Install — same live-sidecar replacement hazard.
+func InstallFromDir(pluginsDir, srcDir string, stopForReplace func(pluginID string)) (Manifest, error) {
 	if pluginsDir == "" {
 		return Manifest{}, fmt.Errorf("no plugins directory configured")
 	}
@@ -158,12 +168,25 @@ func InstallFromDir(pluginsDir, srcDir string) (Manifest, error) {
 	if name == "" {
 		return Manifest{}, fmt.Errorf("could not determine install directory name")
 	}
-	dest := filepath.Join(pluginsDir, name)
-	if err := os.RemoveAll(dest); err != nil { // overwrite on re-add
+	// Copy into a work dir first, then swap — see replaceDir for why the old
+	// install must never be deleted in place under a running sidecar.
+	tmp, err := os.MkdirTemp(pluginsDir, ".install-")
+	if err != nil {
 		return Manifest{}, err
 	}
-	if err := os.CopyFS(dest, os.DirFS(srcDir)); err != nil {
+	defer os.RemoveAll(tmp)
+	staged := filepath.Join(tmp, name)
+	if err := os.CopyFS(staged, os.DirFS(srcDir)); err != nil {
 		return Manifest{}, fmt.Errorf("copy example: %w", err)
+	}
+	dest := filepath.Join(pluginsDir, name)
+	if stopForReplace != nil {
+		if _, statErr := os.Stat(dest); statErr == nil {
+			stopForReplace(m.ID)
+		}
+	}
+	if err := replaceDir(pluginsDir, dest, staged); err != nil { // overwrite on re-add
+		return Manifest{}, err
 	}
 	final, err := Load(filepath.Join(dest, "plugin.json"))
 	if err != nil {
@@ -175,6 +198,43 @@ func InstallFromDir(pluginsDir, srcDir string) (Manifest, error) {
 		}
 	}
 	return final, nil
+}
+
+// replaceDir installs src as dest, replacing any existing directory.
+//
+// The old install is moved aside with a single os.Rename — atomic per
+// directory — never deleted in place. os.RemoveAll on a live plugin dir
+// (Windows: the sidecar's cwd, open file handles, an AV scan) fails HALFWAY
+// through, leaving a gutted install that still runs but is missing files;
+// a failed rename leaves the old install fully intact and the update fails
+// clean. The rename is retried briefly because Windows releases a just-killed
+// process's locks a beat after it exits. The moved-aside dir is deleted
+// best-effort — a still-locked leftover (dot-prefixed, ignored by LoadDir)
+// is swept on the next successful replace.
+func replaceDir(pluginsDir, dest, src string) error {
+	if _, err := os.Stat(dest); err == nil {
+		trash := filepath.Join(pluginsDir,
+			fmt.Sprintf(".trash-%s-%d", filepath.Base(dest), time.Now().UnixNano()))
+		var renameErr error
+		for attempt := 0; attempt < 6; attempt++ {
+			if renameErr = os.Rename(dest, trash); renameErr == nil {
+				break
+			}
+			time.Sleep(time.Duration(attempt+1) * 150 * time.Millisecond)
+		}
+		if renameErr != nil {
+			return fmt.Errorf("existing install is busy — close the plugin's pane and retry: %w", renameErr)
+		}
+		defer os.RemoveAll(trash)
+		if stale, globErr := filepath.Glob(filepath.Join(pluginsDir, ".trash-*")); globErr == nil {
+			for _, s := range stale {
+				if s != trash {
+					_ = os.RemoveAll(s)
+				}
+			}
+		}
+	}
+	return os.Rename(src, dest)
 }
 
 // resolveTarballURLs turns a GitHub reference into candidate codeload tarball
@@ -217,7 +277,7 @@ func resolveTarballURLs(input string) (urls []string, name string, err error) {
 	return urls, name, nil
 }
 
-func installFromTarball(pluginsDir, tarballURL, fallbackName string, progress func(stage string)) (Manifest, error) {
+func installFromTarball(pluginsDir, tarballURL, fallbackName string, progress func(stage string), stopForReplace func(pluginID string)) (Manifest, error) {
 	if progress == nil {
 		progress = func(string) {}
 	}
@@ -272,10 +332,13 @@ func installFromTarball(pluginsDir, tarballURL, fallbackName string, progress fu
 		return Manifest{}, fmt.Errorf("could not determine install directory name")
 	}
 	dest := filepath.Join(pluginsDir, name)
-	if err := os.RemoveAll(dest); err != nil { // reinstall / update
-		return Manifest{}, err
+	// Stop the running install before touching its directory (Windows locks).
+	if stopForReplace != nil {
+		if _, statErr := os.Stat(dest); statErr == nil {
+			stopForReplace(m.ID)
+		}
 	}
-	if err := os.Rename(src, dest); err != nil {
+	if err := replaceDir(pluginsDir, dest, src); err != nil { // reinstall / update
 		return Manifest{}, err
 	}
 

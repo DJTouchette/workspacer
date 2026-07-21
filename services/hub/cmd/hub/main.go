@@ -551,7 +551,10 @@ func main() {
 		progress := func(stage string) {
 			b.Publish(event.New("plugin.install.progress", "hub", map[string]string{"url": body.URL, "stage": stage}))
 		}
-		m, err := plugin.Install(*pluginsDir, body.URL, progress)
+		// On update/reinstall the installer stops the running sidecar before
+		// swapping directories — Windows can't replace a live process's dir.
+		// mgr.Add below re-registers and restarts it from the new files.
+		m, err := plugin.Install(*pluginsDir, body.URL, progress, func(id string) { mgr.Remove(id) })
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -655,7 +658,7 @@ func main() {
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "no such example: " + body.ID})
 			return
 		}
-		m, err := plugin.InstallFromDir(*pluginsDir, srcDir)
+		m, err := plugin.InstallFromDir(*pluginsDir, srcDir, func(id string) { mgr.Remove(id) })
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})

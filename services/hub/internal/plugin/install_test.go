@@ -80,7 +80,7 @@ func TestInstallFromTarballHappy(t *testing.T) {
 	url := serveTarball(t, data)
 	dir := t.TempDir()
 
-	m, err := installFromTarball(dir, url, "fallback", nil)
+	m, err := installFromTarball(dir, url, "fallback", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestInstallFromFlatTarball(t *testing.T) {
 	})
 	dir := t.TempDir()
 
-	m, err := installFromTarball(dir, serveTarball(t, data), "flat", nil)
+	m, err := installFromTarball(dir, serveTarball(t, data), "flat", nil, nil)
 	if err != nil {
 		t.Fatalf("flat tarball rejected: %v", err)
 	}
@@ -132,10 +132,10 @@ func TestInstallReinstallOverwrites(t *testing.T) {
 			"index.html":  html,
 		}))
 	}
-	if _, err := installFromTarball(dir, mk("v1"), "r", nil); err != nil {
+	if _, err := installFromTarball(dir, mk("v1"), "r", nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := installFromTarball(dir, mk("v2"), "r", nil); err != nil {
+	if _, err := installFromTarball(dir, mk("v2"), "r", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(filepath.Join(dir, "x-y", "index.html"))
@@ -149,7 +149,7 @@ func TestInstallRunsBuildCommand(t *testing.T) {
 		"plugin.json": `{"id":"b.uild","apiVersion":"1","install":["sh","-c","echo done > built.marker"]}`,
 	})
 	dir := t.TempDir()
-	if _, err := installFromTarball(dir, serveTarball(t, data), "b", nil); err != nil {
+	if _, err := installFromTarball(dir, serveTarball(t, data), "b", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "b-uild", "built.marker")); err != nil {
@@ -160,7 +160,7 @@ func TestInstallRunsBuildCommand(t *testing.T) {
 func TestInstallNoManifest(t *testing.T) {
 	data := makeTarGz(t, "empty-main", map[string]string{"readme.md": "hi"})
 	dir := t.TempDir()
-	if _, err := installFromTarball(dir, serveTarball(t, data), "empty", nil); err == nil {
+	if _, err := installFromTarball(dir, serveTarball(t, data), "empty", nil, nil); err == nil {
 		t.Error("expected error when archive has no plugin.json")
 	}
 }
@@ -180,7 +180,7 @@ func TestInstallFromDir(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	m, err := InstallFromDir(dir, src)
+	m, err := InstallFromDir(dir, src, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestInstallFromDir(t *testing.T) {
 	}
 
 	// Re-adding overwrites cleanly.
-	if _, err := InstallFromDir(dir, src); err != nil {
+	if _, err := InstallFromDir(dir, src, nil); err != nil {
 		t.Fatalf("re-add failed: %v", err)
 	}
 }
@@ -304,7 +304,7 @@ func TestInstallUnaffectedByBounds(t *testing.T) {
 		"index.html":  "<html>ok</html>",
 	})
 	dir := t.TempDir()
-	m, err := installFromTarball(dir, serveTarball(t, data), "ok", nil)
+	m, err := installFromTarball(dir, serveTarball(t, data), "ok", nil, nil)
 	if err != nil {
 		t.Fatalf("normal install rejected by bounds: %v", err)
 	}
@@ -323,5 +323,80 @@ func TestStripPath(t *testing.T) {
 	// traversal is neutralized by Clean before stripping
 	if got := stripPath("repo/../../etc/passwd", 1); reflect.DeepEqual(got, "../etc/passwd") {
 		t.Errorf("path traversal leaked: %q", got)
+	}
+}
+
+// A reinstall/update must (1) stop the running plugin first — on Windows a
+// live sidecar's directory can't be moved or deleted — and (2) swap the whole
+// directory rather than deleting in place, so a failure can never leave a
+// half-gutted install (the "ui missing" pane).
+func TestReinstallStopsPluginAndSwapsWholeDir(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "plugin.json"),
+		[]byte(`{"id":"example.hello","name":"Hello","apiVersion":"1","ui":"ui","panes":[{"type":"example.hello","title":"Hello"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(src, "ui"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "ui", "index.html"), []byte("<html>hi</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	var stopped []string
+	stop := func(id string) { stopped = append(stopped, id) }
+
+	// Fresh install: nothing to stop.
+	if _, err := InstallFromDir(dir, src, stop); err != nil {
+		t.Fatal(err)
+	}
+	if len(stopped) != 0 {
+		t.Fatalf("stopForReplace called on fresh install: %v", stopped)
+	}
+
+	// A file only the OLD install has — a replace must swap, never merge.
+	stray := filepath.Join(dir, "example-hello", "stale.txt")
+	if err := os.WriteFile(stray, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := InstallFromDir(dir, src, stop); err != nil {
+		t.Fatalf("reinstall failed: %v", err)
+	}
+	if len(stopped) != 1 || stopped[0] != "example.hello" {
+		t.Errorf("stopForReplace calls = %v, want [example.hello]", stopped)
+	}
+	if _, err := os.Stat(stray); err == nil {
+		t.Error("replace merged into the old dir instead of swapping it")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "example-hello", "ui", "index.html")); err != nil {
+		t.Errorf("ui asset missing after replace: %v", err)
+	}
+	if stale, _ := filepath.Glob(filepath.Join(dir, ".trash-*")); len(stale) != 0 {
+		t.Errorf("trash dirs left behind on the happy path: %v", stale)
+	}
+}
+
+// Installer work dirs (.install-* temps from a crashed install, .trash-*
+// moved-aside installs awaiting deletion) contain a plugin.json — LoadDir
+// must never load them as plugins, or a failed update boots a duplicate.
+func TestLoadDirIgnoresInstallerWorkDirs(t *testing.T) {
+	dir := t.TempDir()
+	manifest := `{"id":"example.real","name":"Real","apiVersion":"1","ui":"ui","panes":[{"type":"example.real","title":"Real"}]}`
+	for _, sub := range []string{"real-plugin", ".trash-real-plugin-123", ".install-abc"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, sub, "plugin.json"), []byte(manifest), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ms, errs := LoadDir(dir)
+	if len(errs) != 0 {
+		t.Fatalf("LoadDir errors: %v", errs)
+	}
+	if len(ms) != 1 || ms[0].ID != "example.real" {
+		t.Fatalf("LoadDir = %+v, want exactly the real plugin", ms)
 	}
 }

@@ -270,6 +270,13 @@ func LoadDir(dir string) ([]Manifest, []error) {
 	var manifests []Manifest
 	var errs []error
 	for _, e := range entries {
+		// Dot-prefixed entries are the installer's work dirs (.install-* temps,
+		// .trash-* replaced installs awaiting deletion) — never plugins. Without
+		// this, a crashed or lock-delayed install leaves a dir whose plugin.json
+		// would load as a duplicate of the real plugin on the next boot.
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
 		// Follow a directory symlink as well as a real subdirectory: `workspacer
 		// plugin dev` isolates a single plugin by symlinking the developer's dir
 		// into a throwaway plugins dir, and os.ReadDir reports a symlink's own type
