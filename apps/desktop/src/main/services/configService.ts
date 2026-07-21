@@ -131,6 +131,9 @@ interface Config {
      *  runs only while Workspacer is open. */
     keepWarm?: {
       enabled: boolean;
+      /** Which subscription windows to warm ('claude' and/or 'codex'). Both
+       *  meter usage in 5h windows that start with the first message. */
+      providers?: string[];
       /** 'auto' = re-warm whenever the window lapses; 'interval' = check every
        *  `intervalHours`; 'daily' = check once a day at `dailyAt`. Every mode
        *  checks account usage first and skips while a window is active. */

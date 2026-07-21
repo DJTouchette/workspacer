@@ -160,6 +160,7 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
   const diffView = config.ui.diffView ?? 'stacked';
   const keepWarm = {
     enabled: config.claude?.keepWarm?.enabled ?? false,
+    providers: config.claude?.keepWarm?.providers ?? ['claude'],
     mode: config.claude?.keepWarm?.mode ?? ('auto' as const),
     intervalHours: config.claude?.keepWarm?.intervalHours ?? 5,
     dailyAt: config.claude?.keepWarm?.dailyAt ?? '08:00',
@@ -169,7 +170,14 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
 
   // Recent keep-warm heartbeats from claudemon's log (the "warms" list).
   const [heartbeats, setHeartbeats] = useState<
-    Array<{ id: number; at: number; ok: boolean; resets_at: number | null; error: string | null }>
+    Array<{
+      id: number;
+      at: number;
+      ok: boolean;
+      provider?: string;
+      resets_at: number | null;
+      error: string | null;
+    }>
   >([]);
   useEffect(() => {
     if (!keepWarm.enabled) return;
@@ -425,6 +433,24 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
       </div>
       {keepWarm.enabled && (
         <>
+          <Row label="Warm providers">
+            <div style={{ display: 'flex', gap: 4 }}>
+              {(['claude', 'codex'] as const).map((p) => (
+                <ModeButton
+                  key={p}
+                  label={p === 'claude' ? 'Claude' : 'Codex'}
+                  active={keepWarm.providers.includes(p)}
+                  onClick={() =>
+                    saveKeepWarm({
+                      providers: keepWarm.providers.includes(p)
+                        ? keepWarm.providers.filter((x) => x !== p)
+                        : [...keepWarm.providers, p],
+                    })
+                  }
+                />
+              ))}
+            </div>
+          </Row>
           <Row label="Warm trigger">
             <div style={{ display: 'flex', gap: 4 }}>
               <ModeButton
@@ -537,6 +563,9 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
                     <X size={11} strokeWidth={2.25} style={{ color: 'var(--wks-error)' }} />
                   )}
                   <span>{new Date(h.at * 1000).toLocaleString()}</span>
+                  {h.provider && (
+                    <span style={{ color: 'var(--wks-text-tertiary)' }}>{h.provider}</span>
+                  )}
                   <span style={{ color: 'var(--wks-text-faint)' }}>
                     {h.ok
                       ? h.resets_at != null

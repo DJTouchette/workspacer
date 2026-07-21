@@ -172,6 +172,7 @@ export const CONFIG_DEFAULTS = {
     settingsOverlay: false,
     keepWarm: {
       enabled: false,
+      providers: ['claude'],
       mode: 'auto',
       intervalHours: 5,
       dailyAt: '08:00',

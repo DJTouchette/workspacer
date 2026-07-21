@@ -38,6 +38,8 @@ pub struct HeartbeatRow {
     /// Epoch seconds when the ping ran.
     pub at: i64,
     pub ok: bool,
+    /// Which account's window was warmed: 'claude' | 'codex'.
+    pub provider: String,
     pub model: String,
     /// The new 5h window's reset (epoch seconds), when the CLI reported one.
     pub resets_at: Option<i64>,
@@ -80,11 +82,12 @@ impl Db {
     pub fn insert_heartbeat(&self, row: &HeartbeatRow) -> Result<HeartbeatRow> {
         let guard = self.conn.lock().expect("db mutex poisoned");
         guard.execute(
-            "INSERT INTO heartbeats (at, ok, model, resets_at, duration_ms, error)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO heartbeats (at, ok, provider, model, resets_at, duration_ms, error)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
                 row.at,
                 row.ok as i64,
+                row.provider,
                 row.model,
                 row.resets_at,
                 row.duration_ms,
@@ -101,7 +104,7 @@ impl Db {
     pub fn list_heartbeats(&self, limit: usize) -> Result<Vec<HeartbeatRow>> {
         let guard = self.conn.lock().expect("db mutex poisoned");
         let mut stmt = guard.prepare(
-            "SELECT id, at, ok, model, resets_at, duration_ms, error
+            "SELECT id, at, ok, provider, model, resets_at, duration_ms, error
              FROM heartbeats ORDER BY at DESC, id DESC LIMIT ?1",
         )?;
         let rows = stmt
@@ -110,10 +113,11 @@ impl Db {
                     id: r.get(0)?,
                     at: r.get(1)?,
                     ok: r.get::<_, i64>(2)? != 0,
-                    model: r.get(3)?,
-                    resets_at: r.get(4)?,
-                    duration_ms: r.get(5)?,
-                    error: r.get(6)?,
+                    provider: r.get(3)?,
+                    model: r.get(4)?,
+                    resets_at: r.get(5)?,
+                    duration_ms: r.get(6)?,
+                    error: r.get(7)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -337,6 +341,7 @@ mod tests {
             id: 0,
             at,
             ok,
+            provider: if ok { "claude".into() } else { "codex".into() },
             model: "haiku".into(),
             resets_at: ok.then_some(at + 5 * 3600),
             duration_ms: Some(1200),
@@ -350,6 +355,7 @@ mod tests {
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].at, 2000); // newest first
         assert!(!all[0].ok);
+        assert_eq!(all[0].provider, "codex");
         assert_eq!(all[0].error.as_deref(), Some("spawn failed"));
         assert_eq!(all[1].resets_at, Some(1000 + 5 * 3600));
 

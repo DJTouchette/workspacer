@@ -1426,7 +1426,8 @@ fn handle_message(
 
 /// The thread id wherever a `thread/start` result or `thread/started`
 /// notification carries it: `{threadId}`, `{thread_id}`, or `{thread: {id}}`.
-fn thread_id_of(v: Option<&Value>) -> Option<String> {
+/// `pub(crate)` so daemon::heartbeat's throwaway app-server run shares it.
+pub(crate) fn thread_id_of(v: Option<&Value>) -> Option<String> {
     let v = v?;
     v.get("threadId")
         .or_else(|| v.get("thread_id"))

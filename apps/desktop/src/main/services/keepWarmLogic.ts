@@ -1,29 +1,43 @@
 // Pure decision logic for the keep-warm 5h-window pinger — separated from
 // keepWarmService so tests can exercise it without pulling in the config/
 // daemon singletons. See keepWarmService.ts for the feature overview.
+//
+// Two gates compose:
+//  - the SCHEDULE gate (per config mode: always / every N hours / daily at) —
+//    one shared slot regardless of how many providers are warmed;
+//  - the PROVIDER gate (per provider: failure backoff + a window we already
+//    know/assume is running) — Claude and Codex windows lapse independently.
 
 export interface KeepWarmConfig {
   enabled: boolean;
+  /** Which subscription windows to warm: 'claude' and/or 'codex'. */
+  providers: string[];
   mode: 'auto' | 'interval' | 'daily';
   intervalHours: number;
   dailyAt: string;
 }
 
-export interface KeepWarmState {
+/** Shared scheduling state — when the last interval/daily slot ran. */
+export interface ScheduleState {
+  lastIntervalCheckMs: number | null;
+  lastDailyKey: string | null;
+}
+
+/** Per-provider window state. */
+export interface ProviderWarmState {
   /** Reset time (epoch ms) of the window we know/assume is running. */
   assumedResetsAtMs: number | null;
-  /** Last time the interval-mode check ran (epoch ms). */
-  lastIntervalCheckMs: number | null;
-  /** Local YYYY-MM-DD of the last daily-mode check. */
-  lastDailyKey: string | null;
   /** Failure backoff: no ping attempts before this (epoch ms). */
   notBeforeMs: number | null;
 }
 
-export const emptyKeepWarmState = (): KeepWarmState => ({
-  assumedResetsAtMs: null,
+export const emptySchedule = (): ScheduleState => ({
   lastIntervalCheckMs: null,
   lastDailyKey: null,
+});
+
+export const emptyProviderState = (): ProviderWarmState => ({
+  assumedResetsAtMs: null,
   notBeforeMs: null,
 });
 
@@ -33,13 +47,8 @@ export function dayKey(now: Date): string {
   return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
 }
 
-/** Whether this tick should run the usage check at all, per mode. */
-export function dueForCheck(cfg: KeepWarmConfig, state: KeepWarmState, now: Date): boolean {
-  const nowMs = now.getTime();
-  if (state.notBeforeMs != null && nowMs < state.notBeforeMs) return false;
-  // A window we know/assume is running makes every mode quiet — the whole
-  // feature is "start one when there isn't one".
-  if (state.assumedResetsAtMs != null && nowMs < state.assumedResetsAtMs) return false;
+/** Whether this tick opens a check slot at all, per mode. Pure. */
+export function scheduleDue(cfg: KeepWarmConfig, state: ScheduleState, now: Date): boolean {
   switch (cfg.mode) {
     case 'auto':
       return true;
@@ -47,7 +56,7 @@ export function dueForCheck(cfg: KeepWarmConfig, state: KeepWarmState, now: Date
       const hours = cfg.intervalHours > 0 ? cfg.intervalHours : 5;
       return (
         state.lastIntervalCheckMs == null ||
-        nowMs - state.lastIntervalCheckMs >= hours * 60 * 60 * 1000
+        now.getTime() - state.lastIntervalCheckMs >= hours * 60 * 60 * 1000
       );
     }
     case 'daily': {
@@ -60,6 +69,14 @@ export function dueForCheck(cfg: KeepWarmConfig, state: KeepWarmState, now: Date
     default:
       return false;
   }
+}
+
+/** Whether a provider needs its window checked (not backing off, and no
+ *  window known/assumed to be running). Pure. */
+export function providerNeedsCheck(state: ProviderWarmState, nowMs: number): boolean {
+  if (state.notBeforeMs != null && nowMs < state.notBeforeMs) return false;
+  if (state.assumedResetsAtMs != null && nowMs < state.assumedResetsAtMs) return false;
+  return true;
 }
 
 /** Account usage as served by claudemon's GET /usage (snake_case wire). */

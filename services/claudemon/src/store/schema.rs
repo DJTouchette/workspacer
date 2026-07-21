@@ -3,7 +3,7 @@
 use anyhow::{bail, Result};
 use rusqlite::Connection;
 
-const USER_VERSION: i32 = 3;
+const USER_VERSION: i32 = 4;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     let current: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -41,6 +41,11 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         // (sidebar, recent list, fleet). See daemon::heartbeat.
         conn.execute_batch(SCHEMA_V3)?;
         conn.pragma_update(None, "user_version", 3)?;
+    }
+    if current < 4 {
+        // v4: heartbeats grow a provider — Codex windows warm too.
+        conn.execute_batch(SCHEMA_V4)?;
+        conn.pragma_update(None, "user_version", 4)?;
     }
     Ok(())
 }
@@ -93,6 +98,11 @@ CREATE TABLE IF NOT EXISTS heartbeats (
   error TEXT
 );
 CREATE INDEX IF NOT EXISTS heartbeats_at ON heartbeats(at DESC);
+"#;
+
+/// v4 migration: per-provider heartbeats (claude | codex).
+const SCHEMA_V4: &str = r#"
+ALTER TABLE heartbeats ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude';
 "#;
 
 #[cfg(test)]

@@ -240,6 +240,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       id: number;
       at: number;
       ok: boolean;
+      provider: string;
       model: string;
       resets_at: number | null;
       duration_ms: number | null;

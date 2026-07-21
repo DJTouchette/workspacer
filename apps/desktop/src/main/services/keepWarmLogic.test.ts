@@ -1,14 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import {
   dayKey,
-  dueForCheck,
-  emptyKeepWarmState,
+  emptyProviderState,
+  emptySchedule,
+  providerNeedsCheck,
+  scheduleDue,
   windowActive,
   type KeepWarmConfig,
 } from './keepWarmLogic';
 
 const cfg = (over: Partial<KeepWarmConfig> = {}): KeepWarmConfig => ({
   enabled: true,
+  providers: ['claude'],
   mode: 'auto',
   intervalHours: 5,
   dailyAt: '08:00',
@@ -18,63 +21,63 @@ const cfg = (over: Partial<KeepWarmConfig> = {}): KeepWarmConfig => ({
 // Local-time constructor so daily-mode tests are TZ-independent.
 const at = (hh: number, mm: number) => new Date(2026, 6, 20, hh, mm, 0);
 
-describe('dueForCheck', () => {
-  it('auto: due whenever nothing is known to be running', () => {
-    expect(dueForCheck(cfg(), emptyKeepWarmState(), at(3, 0))).toBe(true);
+describe('scheduleDue', () => {
+  it('auto: every tick opens a slot', () => {
+    expect(scheduleDue(cfg(), emptySchedule(), at(3, 0))).toBe(true);
   });
 
-  it('every mode goes quiet while a window is assumed running', () => {
-    const now = at(9, 0);
-    const state = { ...emptyKeepWarmState(), assumedResetsAtMs: now.getTime() + 60_000 };
-    for (const mode of ['auto', 'interval', 'daily'] as const) {
-      expect(dueForCheck(cfg({ mode }), state, now)).toBe(false);
-    }
-  });
-
-  it('auto: due again once the assumed window has lapsed', () => {
-    const now = at(9, 0);
-    const state = { ...emptyKeepWarmState(), assumedResetsAtMs: now.getTime() - 1 };
-    expect(dueForCheck(cfg(), state, now)).toBe(true);
-  });
-
-  it('failure backoff suppresses checks until it expires', () => {
-    const now = at(9, 0);
-    const state = { ...emptyKeepWarmState(), notBeforeMs: now.getTime() + 1 };
-    expect(dueForCheck(cfg(), state, now)).toBe(false);
-    state.notBeforeMs = now.getTime();
-    expect(dueForCheck(cfg(), state, now)).toBe(true);
-  });
-
-  it('interval: first check is immediate, then respects the cadence', () => {
+  it('interval: first slot is immediate, then respects the cadence', () => {
     const c = cfg({ mode: 'interval', intervalHours: 2 });
-    const state = emptyKeepWarmState();
-    expect(dueForCheck(c, state, at(9, 0))).toBe(true);
+    const state = emptySchedule();
+    expect(scheduleDue(c, state, at(9, 0))).toBe(true);
     state.lastIntervalCheckMs = at(9, 0).getTime();
-    expect(dueForCheck(c, state, at(10, 59))).toBe(false);
-    expect(dueForCheck(c, state, at(11, 0))).toBe(true);
+    expect(scheduleDue(c, state, at(10, 59))).toBe(false);
+    expect(scheduleDue(c, state, at(11, 0))).toBe(true);
   });
 
   it('interval: a non-positive cadence falls back to 5h instead of spinning', () => {
     const c = cfg({ mode: 'interval', intervalHours: 0 });
-    const state = { ...emptyKeepWarmState(), lastIntervalCheckMs: at(9, 0).getTime() };
-    expect(dueForCheck(c, state, at(9, 1))).toBe(false);
-    expect(dueForCheck(c, state, at(14, 0))).toBe(true);
+    const state = { ...emptySchedule(), lastIntervalCheckMs: at(9, 0).getTime() };
+    expect(scheduleDue(c, state, at(9, 1))).toBe(false);
+    expect(scheduleDue(c, state, at(14, 0))).toBe(true);
   });
 
-  it('daily: fires at/after the configured time, once per day', () => {
+  it('daily: opens at/after the configured time, once per day', () => {
     const c = cfg({ mode: 'daily', dailyAt: '08:30' });
-    const state = emptyKeepWarmState();
-    expect(dueForCheck(c, state, at(8, 29))).toBe(false);
-    expect(dueForCheck(c, state, at(8, 30))).toBe(true);
+    const state = emptySchedule();
+    expect(scheduleDue(c, state, at(8, 29))).toBe(false);
+    expect(scheduleDue(c, state, at(8, 30))).toBe(true);
     state.lastDailyKey = dayKey(at(8, 30));
-    expect(dueForCheck(c, state, at(9, 0))).toBe(false);
+    expect(scheduleDue(c, state, at(9, 0))).toBe(false);
     // Next day it's due again.
-    expect(dueForCheck(c, state, new Date(2026, 6, 21, 8, 30))).toBe(true);
+    expect(scheduleDue(c, state, new Date(2026, 6, 21, 8, 30))).toBe(true);
   });
 
   it('daily: an unparseable time does nothing rather than guessing', () => {
     const c = cfg({ mode: 'daily', dailyAt: 'morning' });
-    expect(dueForCheck(c, emptyKeepWarmState(), at(12, 0))).toBe(false);
+    expect(scheduleDue(c, emptySchedule(), at(12, 0))).toBe(false);
+  });
+});
+
+describe('providerNeedsCheck', () => {
+  const nowMs = at(9, 0).getTime();
+
+  it('a fresh provider needs a check', () => {
+    expect(providerNeedsCheck(emptyProviderState(), nowMs)).toBe(true);
+  });
+
+  it('quiet while a window is assumed running, due again after it lapses', () => {
+    const state = { ...emptyProviderState(), assumedResetsAtMs: nowMs + 60_000 };
+    expect(providerNeedsCheck(state, nowMs)).toBe(false);
+    state.assumedResetsAtMs = nowMs - 1;
+    expect(providerNeedsCheck(state, nowMs)).toBe(true);
+  });
+
+  it('failure backoff suppresses checks until it expires', () => {
+    const state = { ...emptyProviderState(), notBeforeMs: nowMs + 1 };
+    expect(providerNeedsCheck(state, nowMs)).toBe(false);
+    state.notBeforeMs = nowMs;
+    expect(providerNeedsCheck(state, nowMs)).toBe(true);
   });
 });
 

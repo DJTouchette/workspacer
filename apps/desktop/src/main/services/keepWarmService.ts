@@ -1,38 +1,49 @@
-// Keep-warm — keeps a subscription 5-hour rate-limit window running.
+// Keep-warm — keeps subscription 5-hour rate-limit windows running.
 //
-// Claude subscription usage is metered in 5-hour windows that only START when
-// the first message of a window is sent. Sitting down at 9:00 and sending your
-// first real prompt at 9:30 "wastes" half an hour of window. When enabled,
-// this service checks the account's current 5h window (via claudemon's
-// ungated GET /usage) and, when it is expired/absent (0%), fires ONE minimal
-// headless Haiku ping (`claude -p … --model haiku`) so a fresh window is
-// already running. It never pings while a window is active.
+// Claude and Codex subscriptions both meter usage in 5-hour windows that only
+// START when the first message of a window is sent. Sitting down at 9:00 and
+// sending your first real prompt at 9:30 "wastes" half an hour of window.
+// When enabled, this service checks each configured provider's current 5h
+// window and, when it is expired/absent (0%), fires ONE minimal turn so a
+// fresh window is already running. It never pings while a window is active.
 //
 // Modes ('claude.keepWarm.mode'):
-//   auto     — re-warm whenever the window lapses (window always running)
+//   auto     — re-warm whenever a window lapses (windows always running)
 //   interval — check every `intervalHours`
 //   daily    — check once a day at `dailyAt` (local "HH:MM")
 //
 // The ping itself is a claudemon "heartbeat" (POST /heartbeat): the daemon
-// runs the turn through the same stream-json contract as managed sessions —
-// one owner of the CLI wire contract, not a parallel `-p` path here — records
-// it in its heartbeats table (never a session, so warms can't surface in the
-// sidebar), and returns the new window's reset time. We remember that reset
-// (or assume now+5h) so `auto` mode stays quiet — no network, no re-ping —
-// until the window actually lapses. Off by default; only runs while
-// Workspacer is open. Failure is always soft and log-only.
+// runs the turn through the same wire contract as managed sessions — the
+// stream adapter for Claude, a throwaway app-server for Codex; one owner per
+// CLI contract — records it in its heartbeats table (never a session, so
+// warms can't surface in the sidebar), and returns the new window's reset
+// time. We remember that reset (or assume now+5h) so `auto` mode stays quiet
+// until the window actually lapses.
 //
-// Decision logic lives in keepWarmLogic.ts (pure, unit-tested).
+// Window checks before pinging:
+//   claude — claudemon's ungated GET /usage (exact, works with no sessions)
+//   codex  — the freshest 5h reset from live Codex sessions' status lines
+//            (no sessionless usage query exists for ChatGPT accounts); when
+//            unknown, ping to be safe — a redundant ping costs a few tokens
+//            and cannot reset an already-running window.
+//
+// Off by default; only runs while Workspacer is open. Failure is always soft
+// and log-only. Decision logic lives in keepWarmLogic.ts (pure, unit-tested).
 import { configService } from './configService';
 import { claudeBaseArgv } from './claudeResolver';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
+import { resolveAgentBinary } from './agentProviders';
+import { claudeSessionStore } from './claudeSessionStore';
 import {
   AccountUsageWire,
   KeepWarmConfig,
-  KeepWarmState,
+  ProviderWarmState,
+  ScheduleState,
   dayKey,
-  dueForCheck,
-  emptyKeepWarmState,
+  emptyProviderState,
+  emptySchedule,
+  providerNeedsCheck,
+  scheduleDue,
   windowActive,
 } from './keepWarmLogic';
 
@@ -45,10 +56,13 @@ const USAGE_TIMEOUT_MS = 15_000;
  *  re-attempt every tick while e.g. offline). */
 const FAILURE_BACKOFF_MS = 10 * 60 * 1000;
 
+const WARMABLE = new Set(['claude', 'codex']);
+
 class KeepWarmService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private inFlight = false;
-  private state: KeepWarmState = emptyKeepWarmState();
+  private schedule: ScheduleState = emptySchedule();
+  private providerState = new Map<string, ProviderWarmState>();
 
   start(): void {
     if (this.timer) return;
@@ -61,11 +75,23 @@ class KeepWarmService {
     this.timer = null;
   }
 
+  private stateFor(provider: string): ProviderWarmState {
+    let s = this.providerState.get(provider);
+    if (!s) {
+      s = emptyProviderState();
+      this.providerState.set(provider, s);
+    }
+    return s;
+  }
+
   private readConfig(): KeepWarmConfig | null {
     const kw = configService.getConfig().claude?.keepWarm;
     if (!kw?.enabled) return null;
+    const providers = (kw.providers ?? ['claude']).filter((p) => WARMABLE.has(p));
+    if (!providers.length) return null;
     return {
       enabled: true,
+      providers,
       mode: kw.mode ?? 'auto',
       intervalHours: kw.intervalHours ?? 5,
       dailyAt: kw.dailyAt ?? '08:00',
@@ -77,33 +103,45 @@ class KeepWarmService {
     const cfg = this.readConfig();
     if (!cfg) return;
     const now = new Date();
-    if (!dueForCheck(cfg, this.state, now)) return;
+    if (!scheduleDue(cfg, this.schedule, now)) return;
+    const due = cfg.providers.filter((p) => providerNeedsCheck(this.stateFor(p), now.getTime()));
+    // Interval/daily slots are consumed once opened — "checked, all warm"
+    // counts as this slot's check. (Auto mode has no slot to consume.)
+    if (cfg.mode === 'interval') this.schedule.lastIntervalCheckMs = now.getTime();
+    if (cfg.mode === 'daily') this.schedule.lastDailyKey = dayKey(now);
+    if (!due.length) return;
     this.inFlight = true;
     try {
-      // Mark the check for interval/daily dedup no matter how it turns out —
-      // "checked and window was warm" counts as this slot's check.
-      if (cfg.mode === 'interval') this.state.lastIntervalCheckMs = now.getTime();
-      if (cfg.mode === 'daily') this.state.lastDailyKey = dayKey(now);
-
-      const usage = await this.fetchUsage();
-      if (usage && windowActive(usage, now.getTime())) {
-        if (usage.five_hour_resets_at != null) {
-          this.state.assumedResetsAtMs = usage.five_hour_resets_at * 1000;
-        }
-        console.log('[keepWarm] 5h window already active — no ping needed');
-        return;
+      for (const provider of due) {
+        await this.evaluate(provider, now);
       }
-      if (!usage) {
-        console.log('[keepWarm] account usage unavailable — pinging to be safe');
-      }
-      await this.ping(now);
     } finally {
       this.inFlight = false;
     }
   }
 
-  /** claudemon's ungated account-usage endpoint; null = unknown. */
-  private async fetchUsage(): Promise<AccountUsageWire | null> {
+  /** Check one provider's window; ping when it's expired/unknown. */
+  private async evaluate(provider: string, now: Date): Promise<void> {
+    const state = this.stateFor(provider);
+    const known =
+      provider === 'claude'
+        ? await this.fetchClaudeUsage()
+        : this.codexWindowFromSessions(now.getTime());
+    if (known && windowActive(known, now.getTime())) {
+      if (known.five_hour_resets_at != null) {
+        state.assumedResetsAtMs = known.five_hour_resets_at * 1000;
+      }
+      console.log(`[keepWarm] ${provider} 5h window already active — no ping needed`);
+      return;
+    }
+    if (!known) {
+      console.log(`[keepWarm] ${provider} window state unknown — pinging to be safe`);
+    }
+    await this.ping(provider, now);
+  }
+
+  /** claudemon's ungated account-usage endpoint (Claude only); null = unknown. */
+  private async fetchClaudeUsage(): Promise<AccountUsageWire | null> {
     try {
       const res = await fetch(`${CLAUDEMON_API_URL}/usage`, {
         signal: AbortSignal.timeout(USAGE_TIMEOUT_MS),
@@ -115,16 +153,33 @@ class KeepWarmService {
     }
   }
 
-  /** One claudemon heartbeat — a minimal Haiku turn run by the daemon. */
-  private async ping(now: Date): Promise<void> {
-    console.log('[keepWarm] requesting heartbeat from claudemon');
+  /** Codex has no sessionless usage query; the best available reading is the
+   *  freshest 5h reset from live Codex sessions' status lines. */
+  private codexWindowFromSessions(nowMs: number): AccountUsageWire | null {
+    let best: number | null = null;
+    for (const snap of claudeSessionStore.getAllSnapshots()) {
+      if (snap.provider !== 'codex') continue;
+      const resets = snap.statusLine?.fiveHourResetsAt;
+      if (resets != null && resets * 1000 > nowMs && (best == null || resets > best)) {
+        best = resets;
+      }
+    }
+    return best != null ? { five_hour_resets_at: best } : null;
+  }
+
+  /** One claudemon heartbeat — a minimal turn run by the daemon. */
+  private async ping(provider: string, now: Date): Promise<void> {
+    const state = this.stateFor(provider);
+    console.log(`[keepWarm] requesting ${provider} heartbeat from claudemon`);
     let ok = false;
     let resetsAtSec: number | null = null;
     try {
+      const body: Record<string, unknown> = { provider, argv: this.argvFor(provider) };
+      if (provider === 'claude') body.model = 'haiku';
       const res = await fetch(`${CLAUDEMON_API_URL}/heartbeat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ argv: claudeBaseArgv(), model: 'haiku' }),
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(PING_TIMEOUT_MS),
       });
       if (res.ok) {
@@ -135,7 +190,9 @@ class KeepWarmService {
         };
         ok = row.ok;
         resetsAtSec = row.resets_at ?? null;
-        if (!row.ok) console.log(`[keepWarm] heartbeat failed: ${row.error ?? 'unknown'}`);
+        if (!row.ok) {
+          console.log(`[keepWarm] ${provider} heartbeat failed: ${row.error ?? 'unknown'}`);
+        }
       } else {
         console.log(`[keepWarm] heartbeat endpoint returned ${res.status}`);
       }
@@ -143,15 +200,21 @@ class KeepWarmService {
       console.log(`[keepWarm] heartbeat request failed: ${(err as Error).message}`);
     }
     if (!ok) {
-      this.state.notBeforeMs = now.getTime() + FAILURE_BACKOFF_MS;
+      state.notBeforeMs = now.getTime() + FAILURE_BACKOFF_MS;
       return;
     }
-    this.state.notBeforeMs = null;
+    state.notBeforeMs = null;
     const resetsAtMs = resetsAtSec != null ? resetsAtSec * 1000 : now.getTime() + FIVE_HOURS_MS;
-    this.state.assumedResetsAtMs = resetsAtMs;
+    state.assumedResetsAtMs = resetsAtMs;
     console.log(
-      `[keepWarm] window started — resets at ${new Date(resetsAtMs).toLocaleTimeString()}`,
+      `[keepWarm] ${provider} window started — resets at ${new Date(resetsAtMs).toLocaleTimeString()}`,
     );
+  }
+
+  private argvFor(provider: string): string[] {
+    if (provider === 'claude') return claudeBaseArgv();
+    const customBin = configService.getConfig().agents?.binaries?.codex;
+    return [resolveAgentBinary('codex', customBin)];
   }
 }
 

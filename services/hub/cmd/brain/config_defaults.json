@@ -106,7 +106,13 @@
     "showTimestamps": false,
     "transport": "stream",
     "settingsOverlay": false,
-    "keepWarm": { "enabled": false, "mode": "auto", "intervalHours": 5, "dailyAt": "08:00" }
+    "keepWarm": {
+      "enabled": false,
+      "providers": ["claude"],
+      "mode": "auto",
+      "intervalHours": 5,
+      "dailyAt": "08:00"
+    }
   },
   "agents": {
     "defaultProvider": "claude",
