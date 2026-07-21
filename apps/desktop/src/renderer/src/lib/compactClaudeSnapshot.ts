@@ -83,11 +83,16 @@ function compactPendingApproval(approval: PendingApproval | null): PendingApprov
 export function compactClaudeSnapshotForBackground(
   snapshot: ClaudeSessionSnapshot,
 ): ClaudeSessionSnapshot {
+  const fullConversation = snapshot.conversation ?? [];
+  const keptConversation = tail(fullConversation, MAX_BACKGROUND_CONVERSATION_TURNS);
   return {
     ...snapshot,
-    conversation: tail(snapshot.conversation ?? [], MAX_BACKGROUND_CONVERSATION_TURNS).map(
-      compactConversationTurn,
-    ),
+    conversation: keptConversation.map(compactConversationTurn),
+    // Accumulates across repeated compaction so global turn indices
+    // (conversationOffset + array index) stay stable for consumers that key
+    // or anchor by index (ClaudePane's conversation keys, turn snapshots).
+    conversationOffset:
+      (snapshot.conversationOffset ?? 0) + (fullConversation.length - keptConversation.length),
     activeToolCalls: tail(snapshot.activeToolCalls ?? [], MAX_BACKGROUND_ACTIVE_TOOLS).map(
       compactToolCall,
     ),

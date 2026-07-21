@@ -219,6 +219,13 @@ export interface ClaudeSessionSnapshot {
 
   status: 'starting' | 'active' | 'ended';
   conversation: ConversationTurn[];
+  /** How many turns a background compaction dropped from the FRONT of
+   *  `conversation` (see compactClaudeSnapshotForBackground). Global turn
+   *  index = conversationOffset + array index — consumers that key or anchor
+   *  by turn index must use the global form, or every key renumbers when a
+   *  pane flips between compact (hidden) and full (active) snapshots.
+   *  Undefined/0 on full snapshots from the main process. */
+  conversationOffset?: number;
   activeToolCalls: ToolCall[];
   completedToolCalls: ToolCall[];
   fileChanges: FileChange[];

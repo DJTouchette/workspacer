@@ -918,37 +918,44 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // Drop optimistic entries FIFO as session.conversation grows past the
   // count we last consumed. This avoids content-matching pitfalls.
   useEffect(() => {
-    // Count only genuine user sends. conversationApplier also pushes a synthetic
-    // "nameless command card" (role:'user', command.name === '') for orphaned
-    // command_output whose invocation scrolled out — that is NOT a user send and
-    // must not dequeue a pending optimistic bubble.
-    const userCount = (session?.conversation ?? []).filter(
-      (t) => t.role === 'user' && t.command?.name !== '',
-    ).length;
-    if (userCount < consumedUserCountRef.current) {
-      // The conversation reset under the same session id (managed-provider
-      // restart starts a fresh provider-side thread). Re-baseline the consumed
-      // count and drop optimistic turns — their real counterparts belong to
-      // the old thread and will never arrive to dequeue them.
-      consumedUserCountRef.current = userCount;
-      setOptimisticMessages([]);
-      // The old thread's answered-question cards anchored to indices that no
-      // longer exist — drop them so they don't render against the new thread.
-      setResolvedQuestions([]);
-    } else if (userCount > consumedUserCountRef.current) {
-      const newlyConsumed = userCount - consumedUserCountRef.current;
-      consumedUserCountRef.current = userCount;
-      setOptimisticMessages((prev) =>
-        newlyConsumed >= prev.length ? [] : prev.slice(newlyConsumed),
-      );
-      // A real user turn landing for THIS send is itself proof the daemon
-      // engaged — even if the turn never drove a visible thinking/streaming
-      // state (an instant no-op command like /model, or a thinking snapshot
-      // coalesced away by store batching). Count it as server activity so the
-      // idle-clear below can retire the optimistic spinner instead of spinning
-      // forever. (The pre-send idle snapshot never grows userCount, so this
-      // still cannot fire before the turn is acknowledged.)
-      sawServerActivitySinceSendRef.current = true;
+    // Compact (hidden-pane) snapshots drop leading turns, so their user-turn
+    // count is not comparable to the full-snapshot count this ref tracks —
+    // treating that drop as a thread reset wiped optimistic state and the
+    // answered-question cards on every agent switch. Only full snapshots
+    // (conversationOffset 0) take part in the count bookkeeping.
+    if ((session?.conversationOffset ?? 0) === 0) {
+      // Count only genuine user sends. conversationApplier also pushes a synthetic
+      // "nameless command card" (role:'user', command.name === '') for orphaned
+      // command_output whose invocation scrolled out — that is NOT a user send and
+      // must not dequeue a pending optimistic bubble.
+      const userCount = (session?.conversation ?? []).filter(
+        (t) => t.role === 'user' && t.command?.name !== '',
+      ).length;
+      if (userCount < consumedUserCountRef.current) {
+        // The conversation reset under the same session id (managed-provider
+        // restart starts a fresh provider-side thread). Re-baseline the consumed
+        // count and drop optimistic turns — their real counterparts belong to
+        // the old thread and will never arrive to dequeue them.
+        consumedUserCountRef.current = userCount;
+        setOptimisticMessages([]);
+        // The old thread's answered-question cards anchored to indices that no
+        // longer exist — drop them so they don't render against the new thread.
+        setResolvedQuestions([]);
+      } else if (userCount > consumedUserCountRef.current) {
+        const newlyConsumed = userCount - consumedUserCountRef.current;
+        consumedUserCountRef.current = userCount;
+        setOptimisticMessages((prev) =>
+          newlyConsumed >= prev.length ? [] : prev.slice(newlyConsumed),
+        );
+        // A real user turn landing for THIS send is itself proof the daemon
+        // engaged — even if the turn never drove a visible thinking/streaming
+        // state (an instant no-op command like /model, or a thinking snapshot
+        // coalesced away by store batching). Count it as server activity so the
+        // idle-clear below can retire the optimistic spinner instead of spinning
+        // forever. (The pre-send idle snapshot never grows userCount, so this
+        // still cannot fire before the turn is acknowledged.)
+        sawServerActivitySinceSendRef.current = true;
+      }
     }
     // Clear optimistic loading once the server has actually engaged. A chat
     // message is normally sent from an *idle* prompt, so the pre-send idle
@@ -975,6 +982,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     if (optimisticMessages.length === 0) return base;
     return [...base, ...optimisticMessages];
   }, [session?.conversation, optimisticMessages]);
+  // Turns dropped from the front by background compaction. Global turn index =
+  // convOffset + array index; every key/anchor below uses the global form so a
+  // pane flipping compact↔full (agent switch) keeps identical keys and React
+  // reconciles in place instead of remounting the whole conversation.
+  const convOffset = session?.conversationOffset ?? 0;
   const hasOlderMessages = conversation.length > visibleCount;
 
   // Restoring a prior session (resume spawn or attach): the daemon replays the
@@ -1029,7 +1041,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     (declined: boolean, answers: string[] | null) => {
       if (!pendingQuestions || pendingQuestions.length === 0) return;
       const sig = questionSig ?? '';
-      const anchorLen = (session?.conversation ?? []).length;
+      // Global index (offset + length): an answer sent while the snapshot is
+      // compact (e.g. via the sidebar's inline Reply) must anchor where the
+      // turn sits in the FULL conversation, or the card renders misplaced
+      // once the pane is active again.
+      const anchorLen =
+        (session?.conversationOffset ?? 0) + (session?.conversation ?? []).length;
       setResolvedQuestions((prev) => {
         if (prev.some((r) => r.sig === sig && r.anchorLen === anchorLen)) return prev;
         return [
@@ -1038,7 +1055,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         ];
       });
     },
-    [pendingQuestions, questionSig, session?.conversation],
+    [pendingQuestions, questionSig, session?.conversation, session?.conversationOffset],
   );
 
   const handleAnswer = useCallback(
@@ -1105,10 +1122,17 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     if (start >= base.length) return;
     const edited = collectEditedFiles(base.slice(start).flatMap((t) => t.toolCalls ?? []));
     if (edited.size === 0) return;
-    void ensureTurnSnapshot(sessionId, start, effectiveCwd, edited)
+    // Keyed by GLOBAL turn index so the lookup in renderedConversation (which
+    // also uses global indices) still finds it if either side ran compact.
+    void ensureTurnSnapshot(
+      sessionId,
+      (session?.conversationOffset ?? 0) + start,
+      effectiveCwd,
+      edited,
+    )
       .then(() => setChangesVersion((v) => v + 1))
       .catch(() => {});
-  }, [session?.ambientState, session?.conversation, sessionId, effectiveCwd]);
+  }, [session?.ambientState, session?.conversation, session?.conversationOffset, sessionId, effectiveCwd]);
 
   // Needs-you dock visibility. Dismissal timestamps give an optimistic hide:
   // the dock vanishes on click while the response round-trips through the
@@ -1353,7 +1377,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     // that index — or at the very end for ones answered at the current tail.
     const cardsByAnchor = new Map<number, ResolvedQuestionRecord[]>();
     for (const r of resolvedQuestions) {
-      const a = Math.max(startIdx, Math.min(r.anchorLen, conversation.length));
+      // anchorLen is a GLOBAL index; clamp into the visible window's global range.
+      const a = Math.max(
+        convOffset + startIdx,
+        Math.min(r.anchorLen, convOffset + conversation.length),
+      );
       const arr = cardsByAnchor.get(a);
       if (arr) arr.push(r);
       else cardsByAnchor.set(a, [r]);
@@ -1371,7 +1399,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
           toolCalls={calls}
           subagentByToolId={toolIdToSubagent}
           workflowByToolId={toolIdToWorkflow}
-          live={isStreaming && endIdx === conversation.length - 1}
+          live={isStreaming && endIdx === convOffset + conversation.length - 1}
           cwd={effectiveCwd}
         />,
       );
@@ -1413,7 +1441,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     };
 
     visibleTurns.forEach((turn, vi) => {
-      const gi = startIdx + vi; // global index for stable keys
+      const li = startIdx + vi; // index into the (possibly compacted) array
+      const gi = convOffset + li; // global index for stable keys
       emitCards(gi);
       const calls = turn.toolCalls ?? [];
 
@@ -1436,9 +1465,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       if (!group) {
         // Walk back past the window edge so a partially-visible group still
         // keys on its true first assistant turn (where the snapshot lives).
-        let gs = gi;
+        // Walk in LOCAL indices (the array may be compacted), store global.
+        let gs = li;
         while (gs > 0 && conversation[gs - 1].role === 'assistant') gs--;
-        group = { start: gs, calls: [] };
+        group = { start: convOffset + gs, calls: [] };
       }
       group.calls.push(...calls);
 
@@ -1470,7 +1500,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     // idle, not merely "not streaming" (waiting_approval is mid-turn).
     closeGroup(ambientIdle);
     // Questions answered at the current tail (no turns have arrived after).
-    emitCards(conversation.length);
+    emitCards(convOffset + conversation.length);
 
     // Keep the most recent work card expanded after work ends, so the latest
     // step stays open without a click. Older cards collapse as usual.
@@ -1484,6 +1514,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     conversation,
+    convOffset,
     resolvedQuestions,
     visibleCount,
     toolIdToSubagent,
