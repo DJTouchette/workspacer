@@ -929,6 +929,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(IPC.GIT_STATUS, (_event, cwd: string) => git.status(cwd));
   ipcMain.handle(IPC.GIT_LOG, (_event, cwd: string, limit?: number) => git.log(cwd, limit));
+  ipcMain.handle(IPC.GIT_COMMIT_DIFF, (_event, cwd: string, hash: string, path?: string) =>
+    git.commitDiff(cwd, hash, path),
+  );
+  ipcMain.handle(IPC.GIT_COMMIT_NUMSTAT, (_event, cwd: string, hash: string) =>
+    git.commitNumstat(cwd, hash),
+  );
   ipcMain.handle(
     IPC.GIT_DIFF,
     (_event, cwd: string, path?: string, staged?: boolean, untracked?: boolean) =>

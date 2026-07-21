@@ -2,7 +2,13 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { RefreshCw, ArrowUp, ArrowLeft, CheckCircle2, Copy, Check, FileX2, X } from 'lucide-react';
 import { IconBranch, IconCommit } from '../components/wksIcons';
 import { claudeColors as colors } from '../components/claude-shared';
-import { GitClient, isUnmergedStatus, type GitStatus, type NumstatEntry } from '../lib/gitQueries';
+import {
+  GitClient,
+  isUnmergedStatus,
+  type GitStatus,
+  type NumstatEntry,
+  type LogEntry,
+} from '../lib/gitQueries';
 import FileTree, { StatusChip, type TreeEntry } from '../components/review/FileTree';
 import DiffViewer from '../components/review/DiffViewer';
 import { ensureReviewStyles } from '../components/review/reviewStyles';
@@ -35,6 +41,9 @@ interface Selection {
   untracked: boolean;
   /** Unmerged/conflicted files get their own Review section and status chip. */
   conflict?: boolean;
+  /** History view: show this commit's version of the file's diff instead of
+   *  the working tree's. */
+  commit?: string;
 }
 
 interface ReviewNotice {
@@ -44,8 +53,20 @@ interface ReviewNotice {
 }
 
 function selKey(s: Selection): string {
+  if (s.commit) return `h:${s.commit}:${s.path}`;
   if (s.conflict) return `c:${s.path}`;
   return `${s.untracked ? 'u' : s.staged ? 's' : 'w'}:${s.path}`;
+}
+
+/** "2m ago"-style age for commit rows (absolute time goes in the tooltip). */
+function relAge(unixSeconds: number): string {
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - unixSeconds));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }
 
 function reviewableFileCount(status: GitStatus | null): number {
@@ -240,6 +261,19 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
   /** Selection keys the user explicitly asked to render despite their size. */
   const [forcedLarge, setForcedLarge] = useState<ReadonlySet<string>>(new Set());
 
+  // History view: recent commits, clickable to browse each one's diff. An
+  // agent that commits mid-review moves its work OUT of the working-tree view
+  // — this is where it lands, so the diff is never "lost".
+  const [view, setView] = useState<'changes' | 'history'>('changes');
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const [commits, setCommits] = useState<LogEntry[]>([]);
+  const [loadingCommits, setLoadingCommits] = useState(false);
+  const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
+  const selectedCommitRef = useRef(selectedCommit);
+  selectedCommitRef.current = selectedCommit;
+  const [commitStats, setCommitStats] = useState<Map<string, NumstatEntry>>(new Map());
+
   // Diff cache, invalidated wholesale on every refresh (any git action can
   // shift line numbers in unrelated hunks).
   const diffCache = useRef<Map<string, string>>(new Map());
@@ -346,7 +380,9 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
       setDiffText('');
       setLoadingDiff(true);
       try {
-        const text = await git.diff(cwd, sel.path, sel.staged, sel.untracked);
+        const text = sel.commit
+          ? await git.commitDiff(cwd, sel.commit, sel.path || undefined)
+          : await git.diff(cwd, sel.path, sel.staged, sel.untracked);
         diffCache.current.set(key, text);
         setDiffText(text);
       } catch (err) {
@@ -357,6 +393,51 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
     },
     [cwd],
   );
+
+  // Pick a commit in history view: load its per-file counts and open its
+  // first file's diff.
+  const selectCommit = useCallback(
+    async (hash: string) => {
+      if (!cwd) return;
+      setSelectedCommit(hash);
+      try {
+        const files = await git.commitNumstat(cwd, hash);
+        setCommitStats(new Map(files.map((e) => [e.path, e])));
+        const first = files[0];
+        if (first) {
+          void select({ path: first.path, staged: false, untracked: false, commit: hash });
+        } else {
+          setSelection(null);
+          setDiffText('');
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [cwd, select],
+  );
+
+  // (Re)load the commit list. Runs on every switch into history view — a
+  // fresh agent commit should appear the moment the user goes looking for it.
+  const loadHistory = useCallback(async () => {
+    if (!cwd) return;
+    setLoadingCommits(true);
+    try {
+      const list = await git.log(cwd, 20);
+      setCommits(list);
+      if (list.length && !list.some((c) => c.hash === selectedCommitRef.current)) {
+        void selectCommit(list[0].hash);
+      }
+    } catch {
+      /* log is lenient host-side; a failure just reads as empty history */
+    } finally {
+      setLoadingCommits(false);
+    }
+  }, [cwd, selectCommit]);
+
+  useEffect(() => {
+    if (view === 'history') void loadHistory();
+  }, [view, loadHistory]);
 
   // ── Open a specific file from elsewhere (e.g. the Claude pane's inspector
   // rail). The target path is resolved against git status, so callers don't
@@ -405,6 +486,9 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
   // and default to the first changed file so the pane never opens empty.
   useEffect(() => {
     if (!status) return;
+    // History view owns its own selection (a commit's file) — don't let a
+    // background status refresh yank it back to the working tree.
+    if (viewRef.current === 'history') return;
     // Don't steal the selection from a pending open-file request.
     if (pendingPathRef.current) return;
     const all = [...conflicts, ...unstaged, ...staged, ...untracked];
@@ -505,11 +589,13 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
     ? (notice?.message ?? 'Working tree clean and branch is up to date.')
     : notice?.message;
   const selectionStats = selection
-    ? selection.untracked
-      ? parsed
-        ? { path: selection.path, added: parsed.additions, deleted: parsed.deletions }
-        : undefined
-      : (selection.staged ? stats.staged : stats.unstaged).get(selection.path)
+    ? selection.commit
+      ? commitStats.get(selection.path)
+      : selection.untracked
+        ? parsed
+          ? { path: selection.path, added: parsed.additions, deleted: parsed.deletions }
+          : undefined
+        : (selection.staged ? stats.staged : stats.unstaged).get(selection.path)
     : undefined;
   const isLargeGated =
     diffText.length > LARGE_DIFF_CHARS && selection != null && !forcedLarge.has(selKey(selection));
@@ -634,7 +720,10 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
         </div>
         <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
           <button
-            onClick={() => void refresh()}
+            onClick={() => {
+              void refresh();
+              if (view === 'history') void loadHistory();
+            }}
             disabled={loadingStatus}
             title="Refresh"
             style={{
@@ -781,23 +870,57 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
             overflow: 'hidden',
           }}
         >
-          {/* Changed files header */}
+          {/* Left-panel header: Changes | History segmented toggle. */}
           <div
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: 7,
-              padding: '9px 12px',
+              gap: 4,
+              padding: '7px 8px',
               borderBottom: `1px solid ${colors.borderSubtle}`,
               fontFamily: 'var(--wks-font-mono)',
               fontSize: '0.62rem',
               textTransform: 'uppercase',
               letterSpacing: '0.08em',
-              color: colors.muted,
             }}
           >
-            <span>Changed files</span>
-            <span style={{ color: colors.textBright }}>{totalChanges}</span>
+            {(
+              [
+                ['changes', `Changes${totalChanges ? ` · ${totalChanges}` : ''}`],
+                ['history', 'History'],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => {
+                  if (view === key) return;
+                  setView(key);
+                  // Leaving history: drop the commit selection and let the
+                  // status effect restore the default working-tree file.
+                  if (key === 'changes') {
+                    setSelectedCommit(null);
+                    setSelection(null);
+                    setDiffText('');
+                    void refresh();
+                  }
+                }}
+                style={{
+                  flex: 1,
+                  padding: '4px 8px',
+                  border: 'none',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  font: 'inherit',
+                  letterSpacing: 'inherit',
+                  textTransform: 'inherit',
+                  background: view === key ? 'var(--wks-bg-selected)' : 'transparent',
+                  color: view === key ? colors.textBright : colors.muted,
+                  fontWeight: view === key ? 700 : 500,
+                }}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
           {error && (
@@ -836,152 +959,287 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
               </button>
             </div>
           )}
-          <div className="wks-review-scroll" style={{ overflowY: 'auto', flex: 1 }}>
-            {!error && totalChanges === 0 && !loadingStatus && (
-              <Centered>
-                <CheckCircle2 size={22} style={{ color: colors.success, opacity: 0.85 }} />
-                <span style={{ color: colors.muted }}>Working tree clean</span>
-              </Centered>
-            )}
+          {view === 'history' && (
+            <div className="wks-review-scroll" style={{ overflowY: 'auto', flex: 1 }}>
+              {commits.length === 0 && (
+                <Centered>
+                  <span style={{ color: colors.muted }}>
+                    {loadingCommits ? 'Loading history…' : 'No commits yet.'}
+                  </span>
+                </Centered>
+              )}
+              {commits.map((c) => {
+                const isSel = c.hash === selectedCommit;
+                return (
+                  <div key={c.hash}>
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => void selectCommit(c.hash)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void selectCommit(c.hash);
+                      }}
+                      title={`${c.subject}\n${c.hash} — ${new Date(c.authoredAt * 1000).toLocaleString()}`}
+                      style={{
+                        padding: '7px 12px',
+                        cursor: 'pointer',
+                        background: isSel ? 'var(--wks-bg-selected)' : 'transparent',
+                        borderBottom: `1px solid ${colors.borderSubtle}`,
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: '0.74rem',
+                          fontWeight: isSel ? 700 : 500,
+                          color: isSel ? colors.textBright : colors.text,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {c.subject}
+                      </div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'baseline',
+                          gap: 7,
+                          marginTop: 2,
+                          fontFamily: 'var(--wks-font-mono)',
+                          fontSize: '0.62rem',
+                          color: colors.muted,
+                        }}
+                      >
+                        <span>{c.hash}</span>
+                        <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>
+                          {relAge(c.authoredAt)}
+                        </span>
+                      </div>
+                      {isSel && commitStats.size > 0 && (
+                        <div style={{ marginTop: 5 }}>
+                          {Array.from(commitStats.values()).map((f) => {
+                            const fileSel =
+                              selection?.commit === c.hash && selection.path === f.path;
+                            return (
+                              <div
+                                key={f.path}
+                                role="button"
+                                tabIndex={0}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void select({
+                                    path: f.path,
+                                    staged: false,
+                                    untracked: false,
+                                    commit: c.hash,
+                                  });
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key !== 'Enter') return;
+                                  e.stopPropagation();
+                                  void select({
+                                    path: f.path,
+                                    staged: false,
+                                    untracked: false,
+                                    commit: c.hash,
+                                  });
+                                }}
+                                title={f.path}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'baseline',
+                                  gap: 7,
+                                  padding: '3px 2px 3px 10px',
+                                  borderRadius: 6,
+                                  cursor: 'pointer',
+                                  fontFamily: 'var(--wks-font-mono)',
+                                  fontSize: '0.66rem',
+                                  color: fileSel ? colors.textBright : colors.muted,
+                                  background: fileSel ? 'var(--wks-bg-hover)' : 'transparent',
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    minWidth: 0,
+                                  }}
+                                >
+                                  {f.path.split('/').pop()}
+                                </span>
+                                <span
+                                  style={{
+                                    marginLeft: 'auto',
+                                    flexShrink: 0,
+                                    fontVariantNumeric: 'tabular-nums',
+                                  }}
+                                >
+                                  <span style={{ color: colors.success }}>+{f.added ?? 0}</span>{' '}
+                                  <span style={{ color: colors.error }}>−{f.deleted ?? 0}</span>
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
-            {conflicts.length > 0 && (
-              <>
-                <div
-                  style={{
-                    margin: '8px 10px 2px',
-                    padding: '8px 9px',
-                    border: `1px solid color-mix(in srgb, ${colors.error} 45%, transparent)`,
-                    borderRadius: 7,
-                    background: `color-mix(in srgb, ${colors.error} 9%, transparent)`,
-                    color: colors.error,
-                    fontSize: '0.69rem',
-                    lineHeight: 1.45,
-                  }}
-                >
-                  Resolve merge conflicts in the files below, then stage each resolved file.
-                </div>
-                <SectionHeader label="Conflicts" count={conflicts.length} />
-                <FileTree entries={conflicts} {...treeProps('conflicts')} />
-              </>
-            )}
+          {view === 'changes' && (
+            <div className="wks-review-scroll" style={{ overflowY: 'auto', flex: 1 }}>
+              {!error && totalChanges === 0 && !loadingStatus && (
+                <Centered>
+                  <CheckCircle2 size={22} style={{ color: colors.success, opacity: 0.85 }} />
+                  <span style={{ color: colors.muted }}>Working tree clean</span>
+                </Centered>
+              )}
 
-            {staged.length > 0 && (
-              <>
-                <SectionHeader
-                  label="Staged"
-                  count={staged.length}
-                  action={{
-                    label: 'Unstage all',
-                    busy,
-                    onClick: () => void runAction((dir) => git.unstage(dir)),
-                  }}
-                />
-                <FileTree entries={staged} {...treeProps('staged')} />
-              </>
-            )}
+              {conflicts.length > 0 && (
+                <>
+                  <div
+                    style={{
+                      margin: '8px 10px 2px',
+                      padding: '8px 9px',
+                      border: `1px solid color-mix(in srgb, ${colors.error} 45%, transparent)`,
+                      borderRadius: 7,
+                      background: `color-mix(in srgb, ${colors.error} 9%, transparent)`,
+                      color: colors.error,
+                      fontSize: '0.69rem',
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    Resolve merge conflicts in the files below, then stage each resolved file.
+                  </div>
+                  <SectionHeader label="Conflicts" count={conflicts.length} />
+                  <FileTree entries={conflicts} {...treeProps('conflicts')} />
+                </>
+              )}
 
-            {unstaged.length > 0 && (
-              <>
-                <SectionHeader
-                  label="Changes"
-                  count={unstaged.length}
-                  action={{
-                    label: 'Stage all',
-                    busy,
-                    onClick: () => void runAction((dir) => git.stage(dir)),
-                  }}
-                />
-                <FileTree entries={unstaged} {...treeProps('unstaged')} />
-              </>
-            )}
+              {staged.length > 0 && (
+                <>
+                  <SectionHeader
+                    label="Staged"
+                    count={staged.length}
+                    action={{
+                      label: 'Unstage all',
+                      busy,
+                      onClick: () => void runAction((dir) => git.unstage(dir)),
+                    }}
+                  />
+                  <FileTree entries={staged} {...treeProps('staged')} />
+                </>
+              )}
 
-            {untracked.length > 0 && (
-              <>
-                <SectionHeader
-                  label="Untracked"
-                  count={untracked.length}
-                  // "Stage all" is `git add -A` (everything), so only offer it
-                  // here when there are no tracked changes — otherwise the
-                  // Changes header already covers it.
-                  action={
-                    unstaged.length === 0
-                      ? {
-                          label: 'Stage all',
-                          busy,
-                          onClick: () => void runAction((dir) => git.stage(dir)),
-                        }
-                      : undefined
-                  }
-                />
-                <FileTree entries={untracked} {...treeProps('untracked')} />
-              </>
-            )}
-          </div>
+              {unstaged.length > 0 && (
+                <>
+                  <SectionHeader
+                    label="Changes"
+                    count={unstaged.length}
+                    action={{
+                      label: 'Stage all',
+                      busy,
+                      onClick: () => void runAction((dir) => git.stage(dir)),
+                    }}
+                  />
+                  <FileTree entries={unstaged} {...treeProps('unstaged')} />
+                </>
+              )}
+
+              {untracked.length > 0 && (
+                <>
+                  <SectionHeader
+                    label="Untracked"
+                    count={untracked.length}
+                    // "Stage all" is `git add -A` (everything), so only offer it
+                    // here when there are no tracked changes — otherwise the
+                    // Changes header already covers it.
+                    action={
+                      unstaged.length === 0
+                        ? {
+                            label: 'Stage all',
+                            busy,
+                            onClick: () => void runAction((dir) => git.stage(dir)),
+                          }
+                        : undefined
+                    }
+                  />
+                  <FileTree entries={untracked} {...treeProps('untracked')} />
+                </>
+              )}
+            </div>
+          )}
 
           {/* Commit bar — enabled only when something is staged. */}
-          <div
-            style={{
-              borderTop: `1px solid ${colors.borderSubtle}`,
-              padding: 10,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 7,
-            }}
-          >
-            <textarea
-              className="wks-review-commit-input"
-              value={commitMsg}
-              onChange={(e) => setCommitMsg(e.target.value)}
-              onKeyDown={(e) => {
-                // Cmd/Ctrl+Enter commits, matching the usual editor convention.
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canCommit) {
-                  e.preventDefault();
-                  commit();
-                }
-              }}
-              placeholder={
-                staged.length > 0 ? 'Commit message… (⌘/Ctrl+Enter)' : 'Stage files to commit'
-              }
-              disabled={busy || staged.length === 0}
-              rows={2}
+          {view === 'changes' && (
+            <div
               style={{
-                resize: 'none',
-                padding: '7px 9px',
-                borderRadius: 7,
-                border: `1px solid ${colors.borderSubtle}`,
-                background: 'var(--wks-bg-input)',
-                color: colors.text,
-                fontSize: '0.72rem',
-                fontFamily: 'inherit',
-                boxSizing: 'border-box',
-              }}
-            />
-            <button
-              className="wks-review-commit-btn"
-              onClick={commit}
-              disabled={!canCommit}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                padding: '6px 10px',
-                borderRadius: 7,
-                border: 'none',
-                background: canCommit
-                  ? colors.accent
-                  : 'color-mix(in srgb, var(--wks-text-faint) 12%, transparent)',
-                color: canCommit ? 'var(--wks-claude-bg)' : colors.muted,
-                cursor: canCommit ? 'pointer' : 'default',
-                fontSize: '0.72rem',
-                fontFamily: 'inherit',
-                fontWeight: 600,
+                borderTop: `1px solid ${colors.borderSubtle}`,
+                padding: 10,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 7,
               }}
             >
-              <IconCommit size={14} strokeWidth={2.2} accent="currentColor" />
-              {`Commit${staged.length > 0 ? ` ${staged.length} file${staged.length > 1 ? 's' : ''}` : ''}`}
-            </button>
-          </div>
+              <textarea
+                className="wks-review-commit-input"
+                value={commitMsg}
+                onChange={(e) => setCommitMsg(e.target.value)}
+                onKeyDown={(e) => {
+                  // Cmd/Ctrl+Enter commits, matching the usual editor convention.
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canCommit) {
+                    e.preventDefault();
+                    commit();
+                  }
+                }}
+                placeholder={
+                  staged.length > 0 ? 'Commit message… (⌘/Ctrl+Enter)' : 'Stage files to commit'
+                }
+                disabled={busy || staged.length === 0}
+                rows={2}
+                style={{
+                  resize: 'none',
+                  padding: '7px 9px',
+                  borderRadius: 7,
+                  border: `1px solid ${colors.borderSubtle}`,
+                  background: 'var(--wks-bg-input)',
+                  color: colors.text,
+                  fontSize: '0.72rem',
+                  fontFamily: 'inherit',
+                  boxSizing: 'border-box',
+                }}
+              />
+              <button
+                className="wks-review-commit-btn"
+                onClick={commit}
+                disabled={!canCommit}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  padding: '6px 10px',
+                  borderRadius: 7,
+                  border: 'none',
+                  background: canCommit
+                    ? colors.accent
+                    : 'color-mix(in srgb, var(--wks-text-faint) 12%, transparent)',
+                  color: canCommit ? 'var(--wks-claude-bg)' : colors.muted,
+                  cursor: canCommit ? 'pointer' : 'default',
+                  fontSize: '0.72rem',
+                  fontFamily: 'inherit',
+                  fontWeight: 600,
+                }}
+              >
+                <IconCommit size={14} strokeWidth={2.2} accent="currentColor" />
+                {`Commit${staged.length > 0 ? ` ${staged.length} file${staged.length > 1 ? 's' : ''}` : ''}`}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Right: diff */}
@@ -998,17 +1256,35 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-                <StatusChip
-                  code={
-                    selection.untracked
-                      ? 'A'
-                      : selection.conflict
-                        ? 'U'
-                        : ((selection.staged ? staged : unstaged).find(
-                            (e) => e.file.path === selection.path,
-                          )?.code ?? 'M')
-                  }
-                />
+                {selection.commit ? (
+                  <span
+                    title={commits.find((c) => c.hash === selection.commit)?.subject}
+                    style={{
+                      flexShrink: 0,
+                      fontFamily: 'var(--wks-font-mono)',
+                      fontSize: '0.64rem',
+                      color: colors.accent,
+                      border: `1px solid color-mix(in srgb, ${colors.accent} 35%, transparent)`,
+                      borderRadius: 'var(--wks-radius-sm)',
+                      padding: '0 5px',
+                      lineHeight: '16px',
+                    }}
+                  >
+                    {selection.commit}
+                  </span>
+                ) : (
+                  <StatusChip
+                    code={
+                      selection.untracked
+                        ? 'A'
+                        : selection.conflict
+                          ? 'U'
+                          : ((selection.staged ? staged : unstaged).find(
+                              (e) => e.file.path === selection.path,
+                            )?.code ?? 'M')
+                    }
+                  />
+                )}
                 <PathBreadcrumb path={selection.path} />
               </div>
               {selectionStats && selectionStats.added != null && selectionStats.deleted != null && (

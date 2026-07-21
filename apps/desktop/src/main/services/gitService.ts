@@ -290,10 +290,41 @@ export async function status(cwd: string): Promise<GitStatus> {
  *  `git log` exits non-zero because HEAD has no commits — yields []. */
 export async function log(cwd: string, limit = 5): Promise<LogEntry[]> {
   const root = await rootOrThrow(cwd);
-  const n = Math.max(1, Math.min(20, Math.floor(limit)));
+  const n = Math.max(1, Math.min(50, Math.floor(limit)));
   const res = await runGit(root, ['log', '-n', String(n), '--pretty=format:%h%x00%s%x00%at']);
   if (!res.ok) return [];
   return parseLog(res.stdout);
+}
+
+/** A commit ref we accept from callers: an abbreviated or full hex hash.
+ *  Anything else is rejected up front — these reach `git` argv (and the hub
+ *  capabilities expose them to remote/token clients), so no refnames, ranges,
+ *  or option-shaped strings. */
+function assertCommitHash(hash: string): string {
+  const h = String(hash || '').trim();
+  if (!/^[0-9a-f]{4,40}$/i.test(h)) throw new Error(`not a commit hash: ${hash}`);
+  return h;
+}
+
+/** Unified diff of one commit against its parent (root commits diff against
+ *  the empty tree — `git show` handles both). `path` narrows to one file. */
+export async function commitDiff(cwd: string, hash: string, path?: string): Promise<string> {
+  const root = await rootOrThrow(cwd);
+  const h = assertCommitHash(hash);
+  const args = ['show', '--format=', '--patch', h];
+  if (path) args.push('--', path);
+  const res = await runGit(root, args);
+  if (!res.ok) throw new Error(res.stderr.trim() || 'git show failed');
+  return res.stdout;
+}
+
+/** Per-file +/- counts for one commit (same parent baseline as commitDiff). */
+export async function commitNumstat(cwd: string, hash: string): Promise<NumstatEntry[]> {
+  const root = await rootOrThrow(cwd);
+  const h = assertCommitHash(hash);
+  const res = await runGit(root, ['show', '--format=', '--numstat', h]);
+  if (!res.ok) throw new Error(res.stderr.trim() || 'git show failed');
+  return parseNumstat(res.stdout);
 }
 
 /** Unified diff text for a single file (or the whole work tree if `path` is

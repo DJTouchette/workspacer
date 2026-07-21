@@ -44,6 +44,14 @@ export interface NumstatEntry {
   deleted: number | null;
 }
 
+/** One `git log` row (abbreviated hash + subject + author time). */
+export interface LogEntry {
+  hash: string;
+  subject: string;
+  /** Author time, unix seconds. */
+  authoredAt: number;
+}
+
 export class GitClient {
   async status(cwd: string): Promise<GitStatus> {
     return window.electronAPI.gitStatus(cwd);
@@ -61,6 +69,21 @@ export class GitClient {
   /** Added/deleted line counts per changed file (`git diff --numstat`). */
   async numstat(cwd: string, staged = false): Promise<NumstatEntry[]> {
     return window.electronAPI.gitNumstat(cwd, staged);
+  }
+
+  /** Recent commits, newest first. */
+  async log(cwd: string, limit = 20): Promise<LogEntry[]> {
+    return window.electronAPI.gitLog(cwd, limit);
+  }
+
+  /** Unified diff of one commit vs its parent; `path` narrows to one file. */
+  async commitDiff(cwd: string, hash: string, path?: string): Promise<string> {
+    return window.electronAPI.gitCommitDiff(cwd, hash, path);
+  }
+
+  /** Per-file +/- counts for one commit. */
+  async commitNumstat(cwd: string, hash: string): Promise<NumstatEntry[]> {
+    return window.electronAPI.gitCommitNumstat(cwd, hash);
   }
 
   // ── Mutating actions ──

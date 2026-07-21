@@ -323,6 +323,14 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
           staged,
         })
         .then((r) => r.files),
+    gitCommitDiff: (cwd, hash, path) =>
+      client.call<{ diff: string }>('git.commitDiff', { cwd, hash, path }).then((r) => r.diff),
+    gitCommitNumstat: (cwd, hash) =>
+      client
+        .call<{
+          files: import('../../../main/shared/ipcTypes').GitNumstatEntry[];
+        }>('git.commitNumstat', { cwd, hash })
+        .then((r) => r.files),
     gitStage: (cwd, path) =>
       client.call<{ output: string }>('git.stage', { cwd, path }).then((r) => r.output),
     gitUnstage: (cwd, path) =>

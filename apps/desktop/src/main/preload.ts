@@ -616,6 +616,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   gitStatus: (cwd: string): Promise<GitStatus> => ipcRenderer.invoke(IPC.GIT_STATUS, cwd),
   gitLog: (cwd: string, limit?: number): Promise<GitLogEntry[]> =>
     ipcRenderer.invoke(IPC.GIT_LOG, cwd, limit),
+  gitCommitDiff: (cwd: string, hash: string, path?: string): Promise<string> =>
+    ipcRenderer.invoke(IPC.GIT_COMMIT_DIFF, cwd, hash, path),
+  gitCommitNumstat: (cwd: string, hash: string): Promise<GitNumstatEntry[]> =>
+    ipcRenderer.invoke(IPC.GIT_COMMIT_NUMSTAT, cwd, hash),
   gitDiff: (cwd: string, path?: string, staged?: boolean, untracked?: boolean): Promise<string> =>
     ipcRenderer.invoke(IPC.GIT_DIFF, cwd, path, staged, untracked),
   gitNumstat: (cwd: string, staged?: boolean): Promise<GitNumstatEntry[]> =>

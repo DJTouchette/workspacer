@@ -73,6 +73,8 @@ const BUS_BACKED = [
   // Git (review pane)
   'gitStatus',
   'gitLog',
+  'gitCommitDiff',
+  'gitCommitNumstat',
   'gitDiff',
   'gitNumstat',
   'gitStage',

@@ -411,6 +411,8 @@ export interface ElectronAPI {
   gitStatus: (cwd: string) => Promise<GitStatus>;
   /** Recent commits, newest first (default 5, capped at 20). Empty repo → []. */
   gitLog: (cwd: string, limit?: number) => Promise<GitLogEntry[]>;
+  gitCommitDiff: (cwd: string, hash: string, path?: string) => Promise<string>;
+  gitCommitNumstat: (cwd: string, hash: string) => Promise<GitNumstatEntry[]>;
   gitDiff: (cwd: string, path?: string, staged?: boolean, untracked?: boolean) => Promise<string>;
   gitNumstat: (cwd: string, staged?: boolean) => Promise<GitNumstatEntry[]>;
   gitStage: (cwd: string, path?: string) => Promise<string>;

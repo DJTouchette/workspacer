@@ -915,6 +915,18 @@ export function registerHubCapabilities(): void {
     guardGitCwd('git.numstat', cwd);
     return git.numstat(cwd, staged).then((files) => ({ files }));
   });
+  registerCapability('git.commitDiff', (params: unknown) => {
+    const { cwd, hash, path } = (params ?? {}) as { cwd?: string; hash?: string; path?: string };
+    if (!cwd || !hash) throw new Error('git.commitDiff requires { cwd, hash }');
+    guardGitCwd('git.commitDiff', cwd);
+    return git.commitDiff(cwd, hash, path).then((diff) => ({ diff }));
+  });
+  registerCapability('git.commitNumstat', (params: unknown) => {
+    const { cwd, hash } = (params ?? {}) as { cwd?: string; hash?: string };
+    if (!cwd || !hash) throw new Error('git.commitNumstat requires { cwd, hash }');
+    guardGitCwd('git.commitNumstat', cwd);
+    return git.commitNumstat(cwd, hash).then((files) => ({ files }));
+  });
   registerCapability('git.stage', (params: unknown) => {
     const { cwd, path } = (params ?? {}) as { cwd?: string; path?: string };
     if (!cwd) throw new Error('git.stage requires { cwd }');
