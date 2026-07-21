@@ -603,6 +603,22 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
 
     useImperativeHandle(ref, () => ({ scrollToTab }), [scrollToTab]);
 
+    // Re-center the active tab when this workspace becomes the visible one or
+    // its measured width settles. Scroll math that ran while the container was
+    // display:none used zero-width geometry — opening a global pane (palette →
+    // Plugins) from inside an agent workspace added the tab and "scrolled to"
+    // it before the Overview container was visible, leaving the strip
+    // highlighting the new tab while the viewport still showed the old one.
+    // Keyed off agentActive + tabWidth (not activeTabId) so normal tab
+    // navigation and manual peek-scrolling keep their existing feel.
+    const activeTabIdRef = useRef(activeTabId);
+    activeTabIdRef.current = activeTabId;
+    useEffect(() => {
+      if (!agentActive) return;
+      const id = activeTabIdRef.current;
+      if (id) requestAnimationFrame(() => scrollToTab(id));
+    }, [agentActive, tabWidth, scrollToTab]);
+
     // Detect which tab is most visible after scroll ends.
     useEffect(() => {
       const container = containerRef.current;
