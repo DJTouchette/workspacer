@@ -1277,87 +1277,118 @@ const SideBar: React.FC<SideBarProps> = ({
               rows.push(renderAgentCard(child, true));
             }
           }
+          const historyRows: React.ReactNode[] = [];
           if (earlier.length > 0) {
-            rows.push(renderSectionHeading('earlier', 'EARLIER', earlier.length, 2));
+            historyRows.push(renderSectionHeading('earlier', 'EARLIER', earlier.length, 2));
             if (!collapsedSections.earlier) {
-              for (const agent of earlier) rows.push(renderEarlierLine(agent));
+              for (const agent of earlier) historyRows.push(renderEarlierLine(agent));
             }
           }
-          return rows;
-        })()}
-
-        {/* RECENT — daemon sessions with no card in the layout. Since named
+          const hasRecent = !!onResumeSession && (recentSessions?.length ?? 0) > 0;
+          return (
+            <>
+              {rows}
+              {/* History dock: EARLIER + RECENT pinned to the feed's bottom
+                  (marginTop:auto — collapses to 0 when the feed overflows), so
+                  past work clusters above Spawn agent and the active cards
+                  keep the top. The collapse behavior (flex `order` +
+                  marginTop:auto on collapsed headings) applies within the
+                  dock, unchanged. */}
+              {(historyRows.length > 0 || hasRecent) && (
+                <div
+                  style={{
+                    marginTop: 'auto',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                  }}
+                >
+                  {historyRows}
+                  {/* RECENT — daemon sessions with no card in the layout. Since named
             workspace sessions are gone, this is how past conversations stay
             reachable: click one and it comes back as an agent via --resume. */}
-        {onResumeSession && (recentSessions?.length ?? 0) > 0 && (
-          <>
-            {renderSectionHeading('recent', 'RECENT', recentSessions!.length, 3)}
-            {!collapsedSections.recent &&
-              recentSessions!.map((s) => {
-                const provider = (s.provider || 'claude') as AgentProvider;
-                const hue = PROVIDER_HUE[provider] ?? 'var(--wks-accent)';
-                const name = recentSessionLabel(s);
-                const age = s.updatedAt ? relTime(Date.now() - s.updatedAt) : '';
-                return (
-                  <div
-                    key={s.sessionId}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onResumeSession(s)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') onResumeSession(s);
-                    }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
-                    }}
-                    title={`${name} — click to resume\n${s.cwd}${s.model ? `\n${s.model}` : ''}`}
-                    style={{
-                      margin: '0 16px',
-                      padding: '3px 2px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 7,
-                      minWidth: 0,
-                      borderRadius: 'var(--wks-radius-md)',
-                      cursor: 'pointer',
-                      fontFamily: 'var(--wks-font-mono)',
-                      fontSize: '0.66rem',
-                      color: 'var(--wks-text-faint)',
-                      transition: 'color 0.12s',
-                    }}
-                  >
-                    <span
-                      style={{
-                        flexShrink: 0,
-                        width: 6,
-                        height: 6,
-                        borderRadius: '50%',
-                        background: hue,
-                        opacity: 0.7,
-                      }}
-                    />
-                    <span
-                      style={{
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {name}
-                    </span>
-                    {age && (
-                      <span style={{ marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}>
-                        {age}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-          </>
-        )}
+                  {onResumeSession && (recentSessions?.length ?? 0) > 0 && (
+                    <>
+                      {renderSectionHeading('recent', 'RECENT', recentSessions!.length, 3)}
+                      {!collapsedSections.recent &&
+                        recentSessions!.map((s) => {
+                          const provider = (s.provider || 'claude') as AgentProvider;
+                          const hue = PROVIDER_HUE[provider] ?? 'var(--wks-accent)';
+                          const name = recentSessionLabel(s);
+                          const age = s.updatedAt ? relTime(Date.now() - s.updatedAt) : '';
+                          return (
+                            <div
+                              key={s.sessionId}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => onResumeSession(s)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') onResumeSession(s);
+                              }}
+                              onMouseEnter={(e) => {
+                                (e.currentTarget as HTMLElement).style.color =
+                                  'var(--wks-text-secondary)';
+                              }}
+                              onMouseLeave={(e) => {
+                                (e.currentTarget as HTMLElement).style.color =
+                                  'var(--wks-text-faint)';
+                              }}
+                              title={`${name} — click to resume\n${s.cwd}${s.model ? `\n${s.model}` : ''}`}
+                              style={{
+                                margin: '0 16px',
+                                padding: '3px 2px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 7,
+                                minWidth: 0,
+                                borderRadius: 'var(--wks-radius-md)',
+                                cursor: 'pointer',
+                                fontFamily: 'var(--wks-font-mono)',
+                                fontSize: '0.66rem',
+                                color: 'var(--wks-text-faint)',
+                                transition: 'color 0.12s',
+                              }}
+                            >
+                              <span
+                                style={{
+                                  flexShrink: 0,
+                                  width: 6,
+                                  height: 6,
+                                  borderRadius: '50%',
+                                  background: hue,
+                                  opacity: 0.7,
+                                }}
+                              />
+                              <span
+                                style={{
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {name}
+                              </span>
+                              {age && (
+                                <span
+                                  style={{
+                                    marginLeft: 'auto',
+                                    flexShrink: 0,
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {age}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </>
+                  )}
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       {/* Spawn agent — the mock's bottom pill: green + coin, label, kbd hint. */}
