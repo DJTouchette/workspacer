@@ -233,6 +233,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   providerCheckAll: (): Promise<
     Array<{ provider: string; found: boolean; resolvedPath: string | null; customBin: string }>
   > => ipcRenderer.invoke(IPC.PROVIDER_CHECK_ALL),
+  keepWarmHeartbeats: (
+    limit?: number,
+  ): Promise<
+    Array<{
+      id: number;
+      at: number;
+      ok: boolean;
+      model: string;
+      resets_at: number | null;
+      duration_ms: number | null;
+      error: string | null;
+    }>
+  > => ipcRenderer.invoke(IPC.KEEPWARM_HEARTBEATS, limit),
   claudeMessage: (sessionId: string, text: string): Promise<{ ok: boolean; mode?: string }> =>
     ipcRenderer.invoke(IPC.CLAUDE_MESSAGE, sessionId, text),
   claudeSetPermissionMode: (

@@ -75,24 +75,3 @@ export function windowActive(usage: AccountUsageWire, nowMs: number): boolean {
   if (usage.five_hour_resets_at != null && usage.five_hour_resets_at * 1000 > nowMs) return true;
   return false;
 }
-
-/** Pull the new 5h window's reset (epoch ms) out of a headless ping's
- *  stream-json stdout, if the CLI reported one. */
-export function parsePingResetsAtMs(stdout: string): number | null {
-  for (const line of stdout.split('\n')) {
-    const t = line.trim();
-    if (!t.startsWith('{')) continue;
-    try {
-      const v = JSON.parse(t);
-      if (v?.type !== 'rate_limit_event') continue;
-      const info = v.rate_limit_info;
-      const kind: string | undefined = info?.rateLimitType;
-      // The event buckets to five-hour unless explicitly a 7d/overage window.
-      if (kind && (kind.startsWith('seven_day') || kind === 'overage')) continue;
-      if (typeof info?.resetsAt === 'number') return info.resetsAt * 1000;
-    } catch {
-      // non-JSON noise on stdout — ignore
-    }
-  }
-  return null;
-}

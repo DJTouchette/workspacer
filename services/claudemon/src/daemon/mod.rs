@@ -1,4 +1,5 @@
 pub mod api;
+pub mod heartbeat;
 pub mod hook;
 pub mod init;
 pub mod mcp_ask;

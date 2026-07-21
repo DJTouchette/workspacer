@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Config } from '../../hooks/useConfig';
+import { Check, X } from 'lucide-react';
 import { Section, CheckRow, Row, ModeButton } from './primitives';
 
 interface SessionSectionProps {
@@ -165,6 +166,24 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
   };
   const saveKeepWarm = (patch: Partial<typeof keepWarm>) =>
     save({ claude: { ...config.claude, defaultView, keepWarm: { ...keepWarm, ...patch } } });
+
+  // Recent keep-warm heartbeats from claudemon's log (the "warms" list).
+  const [heartbeats, setHeartbeats] = useState<
+    Array<{ id: number; at: number; ok: boolean; resets_at: number | null; error: string | null }>
+  >([]);
+  useEffect(() => {
+    if (!keepWarm.enabled) return;
+    let cancelled = false;
+    window.electronAPI
+      .keepWarmHeartbeats?.(8)
+      .then((rows) => {
+        if (!cancelled) setHeartbeats(rows ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [keepWarm.enabled]);
 
   const [detection, setDetection] = useState<ProviderDetection[]>([]);
   const refreshDetection = () => {
@@ -476,6 +495,59 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
                 ? 'Checks on this cadence and warms only if no window is running at check time.'
                 : 'Checks once a day at this local time and warms only if no window is running.'}
           </div>
+          {heartbeats.length > 0 && (
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 3,
+                padding: '8px 10px',
+                background: 'var(--wks-bg-raised)',
+                border: '1px solid var(--wks-border-subtle)',
+                borderRadius: 'var(--wks-radius-md)',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: '0.62rem',
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  color: 'var(--wks-text-faint)',
+                  marginBottom: 2,
+                }}
+              >
+                Recent warms
+              </div>
+              {heartbeats.map((h) => (
+                <div
+                  key={h.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontSize: '0.7rem',
+                    fontFamily: 'var(--wks-font-mono)',
+                    color: 'var(--wks-text-muted)',
+                  }}
+                >
+                  {h.ok ? (
+                    <Check size={11} strokeWidth={2.25} style={{ color: 'var(--wks-success)' }} />
+                  ) : (
+                    <X size={11} strokeWidth={2.25} style={{ color: 'var(--wks-error)' }} />
+                  )}
+                  <span>{new Date(h.at * 1000).toLocaleString()}</span>
+                  <span style={{ color: 'var(--wks-text-faint)' }}>
+                    {h.ok
+                      ? h.resets_at != null
+                        ? `window until ${new Date(h.resets_at * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+                        : 'window started'
+                      : (h.error ?? 'failed')}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </>
       )}
 

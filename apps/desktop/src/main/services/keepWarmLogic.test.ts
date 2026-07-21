@@ -3,7 +3,6 @@ import {
   dayKey,
   dueForCheck,
   emptyKeepWarmState,
-  parsePingResetsAtMs,
   windowActive,
   type KeepWarmConfig,
 } from './keepWarmLogic';
@@ -98,31 +97,5 @@ describe('windowActive', () => {
       windowActive({ five_hour_pct: null, five_hour_resets_at: nowMs / 1000 - 10 }, nowMs),
     ).toBe(false);
     expect(windowActive({}, nowMs)).toBe(false);
-  });
-});
-
-describe('parsePingResetsAtMs', () => {
-  it('reads the five-hour rate_limit_event (camelCase wire shape)', () => {
-    const stdout = [
-      '{"type":"system","subtype":"init"}',
-      '{"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"five_hour","utilization":1.0,"resetsAt":1789000000,"status":"allowed"}}',
-      '{"type":"result","subtype":"success"}',
-    ].join('\n');
-    expect(parsePingResetsAtMs(stdout)).toBe(1789000000 * 1000);
-  });
-
-  it('buckets an untyped event as five-hour but skips 7d/overage windows', () => {
-    const sevenDay =
-      '{"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"seven_day","resetsAt":111}}';
-    const overage =
-      '{"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"overage","resetsAt":222}}';
-    const untyped = '{"type":"rate_limit_event","rate_limit_info":{"resetsAt":333}}';
-    expect(parsePingResetsAtMs([sevenDay, overage, untyped].join('\n'))).toBe(333 * 1000);
-    expect(parsePingResetsAtMs([sevenDay, overage].join('\n'))).toBeNull();
-  });
-
-  it('survives non-JSON noise and reports null when absent', () => {
-    expect(parsePingResetsAtMs('warning: something\nok\n')).toBeNull();
-    expect(parsePingResetsAtMs('')).toBeNull();
   });
 });

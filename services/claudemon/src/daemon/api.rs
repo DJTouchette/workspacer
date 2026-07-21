@@ -215,6 +215,8 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
         .route("/hooks/stream", get(hook_stream))
         .route("/statusline/stream", get(status_line_stream))
         .route("/usage", get(get_usage))
+        .route("/heartbeat", post(crate::daemon::heartbeat::handle))
+        .route("/heartbeats", get(crate::daemon::heartbeat::list))
         .route("/wrapper/:id", get(crate::daemon::wrapper_ws::upgrade))
         // MCP streamable-HTTP server (POST-only; axum answers GET with 405) —
         // gives MCP-speaking agents (Codex) an AskUserQuestion tool that

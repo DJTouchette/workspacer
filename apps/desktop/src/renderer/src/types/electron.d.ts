@@ -150,6 +150,17 @@ export interface ElectronAPI {
   providerCheckAll: () => Promise<
     Array<{ provider: string; found: boolean; resolvedPath: string | null; customBin: string }>
   >;
+  keepWarmHeartbeats: (limit?: number) => Promise<
+    Array<{
+      id: number;
+      at: number;
+      ok: boolean;
+      model: string;
+      resets_at: number | null;
+      duration_ms: number | null;
+      error: string | null;
+    }>
+  >;
   claudeMessage: (sessionId: string, text: string) => Promise<{ ok: boolean; mode?: string }>;
   claudeSetPermissionMode: (
     sessionId: string,

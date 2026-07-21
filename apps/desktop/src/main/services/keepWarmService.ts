@@ -13,15 +13,16 @@
 //   interval — check every `intervalHours`
 //   daily    — check once a day at `dailyAt` (local "HH:MM")
 //
-// The ping self-reports the new window: headless stream-json output includes a
-// `rate_limit_event` whose `rate_limit_info.resetsAt` is the new 5h reset. We
-// remember it (or assume now+5h) so `auto` mode stays quiet — no network, no
-// re-ping — until the window actually lapses. Off by default; only runs while
+// The ping itself is a claudemon "heartbeat" (POST /heartbeat): the daemon
+// runs the turn through the same stream-json contract as managed sessions —
+// one owner of the CLI wire contract, not a parallel `-p` path here — records
+// it in its heartbeats table (never a session, so warms can't surface in the
+// sidebar), and returns the new window's reset time. We remember that reset
+// (or assume now+5h) so `auto` mode stays quiet — no network, no re-ping —
+// until the window actually lapses. Off by default; only runs while
 // Workspacer is open. Failure is always soft and log-only.
 //
 // Decision logic lives in keepWarmLogic.ts (pure, unit-tested).
-import { spawn } from 'child_process';
-import os from 'os';
 import { configService } from './configService';
 import { claudeBaseArgv } from './claudeResolver';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
@@ -32,13 +33,13 @@ import {
   dayKey,
   dueForCheck,
   emptyKeepWarmState,
-  parsePingResetsAtMs,
   windowActive,
 } from './keepWarmLogic';
 
 const CHECK_INTERVAL_MS = 60_000;
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
-const PING_TIMEOUT_MS = 120_000;
+/** The daemon caps a heartbeat run at 120s; allow a little slack on top. */
+const PING_TIMEOUT_MS = 130_000;
 const USAGE_TIMEOUT_MS = 15_000;
 /** After a failed ping, don't retry for this long (auto mode would otherwise
  *  re-attempt every tick while e.g. offline). */
@@ -114,48 +115,39 @@ class KeepWarmService {
     }
   }
 
-  /** One minimal Haiku turn — the cheapest thing that starts a window. */
+  /** One claudemon heartbeat — a minimal Haiku turn run by the daemon. */
   private async ping(now: Date): Promise<void> {
-    const [bin, ...base] = claudeBaseArgv();
-    const argv = [
-      ...base,
-      '-p',
-      'Reply with exactly: ok',
-      '--model',
-      'haiku',
-      '--output-format',
-      'stream-json',
-      '--verbose',
-    ];
-    console.log(`[keepWarm] pinging (${bin} ${argv.join(' ')})`);
-    const result = await new Promise<{ ok: boolean; stdout: string }>((resolve) => {
-      const child = spawn(bin, argv, {
-        cwd: os.homedir(),
-        env: process.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: PING_TIMEOUT_MS,
+    console.log('[keepWarm] requesting heartbeat from claudemon');
+    let ok = false;
+    let resetsAtSec: number | null = null;
+    try {
+      const res = await fetch(`${CLAUDEMON_API_URL}/heartbeat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ argv: claudeBaseArgv(), model: 'haiku' }),
+        signal: AbortSignal.timeout(PING_TIMEOUT_MS),
       });
-      let stdout = '';
-      let stderr = '';
-      child.stdout.on('data', (d) => (stdout += String(d)));
-      child.stderr.on('data', (d) => (stderr += String(d)));
-      child.on('error', (err) => {
-        console.log(`[keepWarm] ping failed to spawn: ${err.message}`);
-        resolve({ ok: false, stdout });
-      });
-      child.on('close', (code) => {
-        if (code !== 0) {
-          console.log(`[keepWarm] ping exited ${code}: ${stderr.trim().slice(0, 400)}`);
-        }
-        resolve({ ok: code === 0, stdout });
-      });
-    });
-    if (!result.ok) {
+      if (res.ok) {
+        const row = (await res.json()) as {
+          ok: boolean;
+          resets_at?: number | null;
+          error?: string | null;
+        };
+        ok = row.ok;
+        resetsAtSec = row.resets_at ?? null;
+        if (!row.ok) console.log(`[keepWarm] heartbeat failed: ${row.error ?? 'unknown'}`);
+      } else {
+        console.log(`[keepWarm] heartbeat endpoint returned ${res.status}`);
+      }
+    } catch (err) {
+      console.log(`[keepWarm] heartbeat request failed: ${(err as Error).message}`);
+    }
+    if (!ok) {
       this.state.notBeforeMs = now.getTime() + FAILURE_BACKOFF_MS;
       return;
     }
     this.state.notBeforeMs = null;
-    const resetsAtMs = parsePingResetsAtMs(result.stdout) ?? now.getTime() + FIVE_HOURS_MS;
+    const resetsAtMs = resetsAtSec != null ? resetsAtSec * 1000 : now.getTime() + FIVE_HOURS_MS;
     this.state.assumedResetsAtMs = resetsAtMs;
     console.log(
       `[keepWarm] window started — resets at ${new Date(resetsAtMs).toLocaleTimeString()}`,

@@ -3,7 +3,7 @@
 use anyhow::{bail, Result};
 use rusqlite::Connection;
 
-const USER_VERSION: i32 = 2;
+const USER_VERSION: i32 = 3;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     let current: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -34,6 +34,13 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         // migration adds its own `if current < 3 { … }` block right here.
         conn.execute_batch(SCHEMA_V2)?;
         conn.pragma_update(None, "user_version", 2)?;
+    }
+    if current < 3 {
+        // v3: keep-warm heartbeats — deliberately their own table, NOT rows in
+        // `sessions`, so a warm ping can never surface anywhere sessions do
+        // (sidebar, recent list, fleet). See daemon::heartbeat.
+        conn.execute_batch(SCHEMA_V3)?;
+        conn.pragma_update(None, "user_version", 3)?;
     }
     Ok(())
 }
@@ -72,6 +79,20 @@ CREATE INDEX IF NOT EXISTS events_session_time ON events(session_id, timestamp D
 /// upgrades to come (`ALTER TABLE … ADD COLUMN …` goes in a block like this).
 const SCHEMA_V2: &str = r#"
 CREATE INDEX IF NOT EXISTS sessions_last_event ON sessions(last_event_at DESC);
+"#;
+
+/// v3 migration: the keep-warm heartbeat log (one row per warm ping).
+const SCHEMA_V3: &str = r#"
+CREATE TABLE IF NOT EXISTS heartbeats (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at INTEGER NOT NULL,
+  ok INTEGER NOT NULL,
+  model TEXT NOT NULL,
+  resets_at INTEGER,
+  duration_ms INTEGER,
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS heartbeats_at ON heartbeats(at DESC);
 "#;
 
 #[cfg(test)]

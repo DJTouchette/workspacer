@@ -132,6 +132,7 @@ const KNOWN_STUBS = [
   'fileShowInFolder', // reveal-in-folder impossible remotely
   'notifyQuitSaved', // no quit handshake in the browser
   'listRecentAgentSessions', // no hub-bus cap for the daemon session list yet; [] on web
+  'keepWarmHeartbeats', // keep-warm log lives in the desktop's claudemon; [] on web
 ] as const;
 
 function webBackendMethodKeys(): Set<string> {

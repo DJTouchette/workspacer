@@ -50,6 +50,7 @@ export const IPC = {
   WORKFLOW_AGENT_CONVERSATION: 'workflow:agentConversation',
   PROVIDER_LIST_MODELS: 'provider:listModels',
   PROVIDER_CHECK_ALL: 'provider:checkAll',
+  KEEPWARM_HEARTBEATS: 'keepwarm:heartbeats',
   CLAUDE_MESSAGE: 'claude:message',
   CLAUDE_SET_PERMISSION_MODE: 'claude:setPermissionMode',
   CLAUDE_SET_MODEL: 'claude:setModel',

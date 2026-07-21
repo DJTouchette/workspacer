@@ -30,6 +30,21 @@ pub struct Db {
     path: PathBuf,
 }
 
+/// One keep-warm heartbeat (a warm ping run by `daemon::heartbeat`). Lives in
+/// its own table so warms never mix with sessions.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HeartbeatRow {
+    pub id: i64,
+    /// Epoch seconds when the ping ran.
+    pub at: i64,
+    pub ok: bool,
+    pub model: String,
+    /// The new 5h window's reset (epoch seconds), when the CLI reported one.
+    pub resets_at: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub error: Option<String>,
+}
+
 impl Db {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
@@ -58,6 +73,51 @@ impl Db {
         let row_id = insert_event_tx(&tx, event)?;
         tx.commit()?;
         Ok(row_id)
+    }
+
+    /// Record one keep-warm heartbeat (see `daemon::heartbeat`). Returns the
+    /// stored row with its assigned id.
+    pub fn insert_heartbeat(&self, row: &HeartbeatRow) -> Result<HeartbeatRow> {
+        let guard = self.conn.lock().expect("db mutex poisoned");
+        guard.execute(
+            "INSERT INTO heartbeats (at, ok, model, resets_at, duration_ms, error)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                row.at,
+                row.ok as i64,
+                row.model,
+                row.resets_at,
+                row.duration_ms,
+                row.error,
+            ],
+        )?;
+        Ok(HeartbeatRow {
+            id: guard.last_insert_rowid(),
+            ..row.clone()
+        })
+    }
+
+    /// The most recent heartbeats, newest first.
+    pub fn list_heartbeats(&self, limit: usize) -> Result<Vec<HeartbeatRow>> {
+        let guard = self.conn.lock().expect("db mutex poisoned");
+        let mut stmt = guard.prepare(
+            "SELECT id, at, ok, model, resets_at, duration_ms, error
+             FROM heartbeats ORDER BY at DESC, id DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map([limit as i64], |r| {
+                Ok(HeartbeatRow {
+                    id: r.get(0)?,
+                    at: r.get(1)?,
+                    ok: r.get::<_, i64>(2)? != 0,
+                    model: r.get(3)?,
+                    resets_at: r.get(4)?,
+                    duration_ms: r.get(5)?,
+                    error: r.get(6)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     /// Load the most recently active persisted sessions so the daemon can
@@ -267,6 +327,34 @@ mod tests {
         let mut p = std::env::temp_dir();
         p.push(format!("claudemon-test-{}.db", uuid::Uuid::new_v4()));
         p
+    }
+
+    #[test]
+    fn heartbeats_round_trip_newest_first() {
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+        let row = |at: i64, ok: bool| HeartbeatRow {
+            id: 0,
+            at,
+            ok,
+            model: "haiku".into(),
+            resets_at: ok.then_some(at + 5 * 3600),
+            duration_ms: Some(1200),
+            error: (!ok).then(|| "spawn failed".into()),
+        };
+        let first = db.insert_heartbeat(&row(1000, true)).unwrap();
+        assert!(first.id > 0);
+        db.insert_heartbeat(&row(2000, false)).unwrap();
+
+        let all = db.list_heartbeats(10).unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].at, 2000); // newest first
+        assert!(!all[0].ok);
+        assert_eq!(all[0].error.as_deref(), Some("spawn failed"));
+        assert_eq!(all[1].resets_at, Some(1000 + 5 * 3600));
+
+        assert_eq!(db.list_heartbeats(1).unwrap().len(), 1);
+        std::fs::remove_file(&tmp).ok();
     }
 
     #[test]

@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as fs from 'fs';
 import { pathToFileURL } from 'url';
 import { configService } from './services/configService';
+import { CLAUDEMON_API_URL } from './services/claudemonDaemon';
 import { libraryService } from './services/libraryService';
 import { sessionService } from './services/sessionService';
 import {
@@ -623,6 +624,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.PROVIDER_CHECK_ALL, () => {
     const binaries = configService.getConfig().agents?.binaries ?? {};
     return checkAllProviders(binaries);
+  });
+
+  // Recent keep-warm heartbeats from claudemon's log (Settings shows them).
+  ipcMain.handle(IPC.KEEPWARM_HEARTBEATS, async (_event, limit?: number) => {
+    try {
+      const res = await fetch(`${CLAUDEMON_API_URL}/heartbeats?limit=${limit ?? 20}`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
   });
 
   ipcMain.handle(IPC.CLAUDE_MESSAGE, (_event, sessionId: string, text: string) =>

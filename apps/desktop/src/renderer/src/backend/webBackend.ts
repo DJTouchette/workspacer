@@ -205,6 +205,9 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // Spawn dialog matches the desktop instead of falling back to free-text.
     providerListModels: (provider, cwd) => client.call('providers.listModels', { provider, cwd }),
     providerCheckAll: () => client.call('providers.checkAll', {}),
+    // Keep-warm heartbeats live in the desktop's claudemon; not exposed over
+    // the hub bus (settings-only surface), so the web client shows none.
+    keepWarmHeartbeats: async () => [],
     claudeMessage: (sessionId, text) =>
       client.call<{ ok: boolean; mode?: string }>('agents.sendMessage', { sessionId, text }),
     claudeSetPermissionMode: (sessionId, mode) =>
