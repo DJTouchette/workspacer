@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { useConfig } from '../hooks/useConfig';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useConfig, DEFAULT_CONFIG } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
 import { webviewThemeCSS, webviewThemeJS } from '../lib/webviewTheme';
 import { webviewSettingsJS } from '../lib/webviewSettings';
@@ -131,6 +131,57 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
     return () => off?.();
   }, [pluginId]);
 
+  // App chords a focused guest must never swallow, DERIVED from the live
+  // keybinding config (defaults + user overrides) so presets and rebinds are
+  // always covered. The old hardcoded list silently drifted: mod+p (open-file)
+  // wasn't in it, so with focus in a webview Ctrl+P fell through to Chromium's
+  // print flow — "my keyboard is dead". Only bare mod+<key> combos need
+  // enumerating: mod+shift+<anything> and alt-arrows are forwarded wholesale
+  // in the matcher, leader chords start with a bare prefix press the guest may
+  // keep, and presets never bind guest-essential editing chords (mod+c/v/x/…).
+  const { appModKeys, appFKeys } = useMemo(() => {
+    const merged = {
+      ...DEFAULT_CONFIG.keybindings?.shortcuts,
+      ...config.keybindings?.shortcuts,
+    } as Record<string, string>;
+    const mod = new Set<string>();
+    const fkeys = new Set<string>();
+    for (const combo of Object.values(merged)) {
+      if (!combo || combo.includes(' ')) continue; // leader chords
+      const parts = String(combo).toLowerCase().split('+');
+      const key = parts[parts.length - 1];
+      if (!key) continue;
+      if (parts.length === 1 && /^f\d{1,2}$/.test(key)) {
+        fkeys.add(key);
+        continue;
+      }
+      const hasMod = ['mod', 'ctrl', 'cmd', 'meta'].some((m) => parts.includes(m));
+      if (!hasMod || parts.includes('shift') || parts.includes('alt')) continue;
+      mod.add(key);
+    }
+    fkeys.add('f2'); // pane rename — bound per-pane, not in the shortcuts map
+    return { appModKeys: mod, appFKeys: fkeys };
+  }, [config.keybindings?.shortcuts]);
+  const appModKeysRef = useRef(appModKeys);
+  appModKeysRef.current = appModKeys;
+  const appFKeysRef = useRef(appFKeys);
+  appFKeysRef.current = appFKeys;
+
+  // Keep the injected fallback's key sets current across rebinds (the injected
+  // listener itself registers once per document; only its data needs refresh).
+  useEffect(() => {
+    const wv = webviewRef.current as any;
+    if (!wv || !readyRef.current) return;
+    try {
+      wv.executeJavaScript(
+        `window.__wksModKeys = ${JSON.stringify([...appModKeys])}; ` +
+          `window.__wksFKeys = ${JSON.stringify([...appFKeys])};`,
+      );
+    } catch {
+      /* webview mid-navigation — dom-ready re-injects with current sets */
+    }
+  }, [appModKeys, appFKeys]);
+
   // Attach webview event listeners once the element is ready
   useEffect(() => {
     const wv = webviewRef.current as any;
@@ -153,14 +204,15 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
       const inp = e;
       if (!inp || inp.type !== 'keyDown') return;
 
+      const key = String(inp.key ?? '').toLowerCase();
       const isAppShortcut =
-        (inp.control && !inp.alt && /^[1-9tbwdsk,/?]$/i.test(inp.key)) ||
+        ((inp.control || inp.meta) && !inp.alt && !inp.shift && appModKeysRef.current.has(key)) ||
         (inp.control && inp.alt && (inp.key === 'ArrowLeft' || inp.key === 'ArrowRight')) ||
-        (inp.control && inp.shift) ||
+        ((inp.control || inp.meta) && inp.shift) ||
         (inp.alt &&
           !inp.control &&
           ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(inp.key)) ||
-        inp.key === 'F2';
+        appFKeysRef.current.has(key);
 
       if (isAppShortcut) {
         if (e?.preventDefault) e.preventDefault();
@@ -187,15 +239,18 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
     const injectKeyForwarder = () => {
       try {
         wv.executeJavaScript(`
+          window.__wksModKeys = ${JSON.stringify([...appModKeysRef.current])};
+          window.__wksFKeys = ${JSON.stringify([...appFKeysRef.current])};
           if (!window.__wksKeyForwarder) {
             window.__wksKeyForwarder = true;
             document.addEventListener('keydown', (e) => {
+              const key = String(e.key || '').toLowerCase();
               const isApp = (
-                (e.ctrlKey && !e.altKey && /^[1-9tbwdsk,/?]$/i.test(e.key)) ||
+                ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (window.__wksModKeys || []).includes(key)) ||
                 (e.ctrlKey && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) ||
-                (e.ctrlKey && e.shiftKey) ||
+                ((e.ctrlKey || e.metaKey) && e.shiftKey) ||
                 (e.altKey && !e.ctrlKey && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) ||
-                e.key === 'F2'
+                (window.__wksFKeys || []).includes(key)
               );
               if (isApp) {
                 e.preventDefault();
