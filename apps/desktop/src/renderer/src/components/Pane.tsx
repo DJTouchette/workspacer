@@ -1,6 +1,7 @@
 import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { Columns2 } from 'lucide-react';
 import { PaneType } from '../types/pane';
+import type { PluginPane as PluginPaneDef } from '../types/plugin';
 import { useConfig } from '../hooks/useConfig';
 import { usePaneMenu } from '../contexts/PaneMenuContext';
 import { PluginPaneIcon } from '../lib/pluginPaneIcon';
@@ -29,6 +30,10 @@ interface PaneProps {
   /** Split the tab by adding a pane of the chosen type. When wired, a small
    *  split button appears on the pane (in the header, or floating when flush). */
   onSplit?: (type: PaneType) => void;
+  /** Split the tab with a plugin's webview pane, in place and scoped to the
+   *  active agent. Without it, plugin entries fall back to onOpenPlugin (own
+   *  tab, routed by the pane's declared scope). */
+  onSplitPlugin?: (pane: PluginPaneDef) => void;
   children: React.ReactNode;
 }
 
@@ -46,6 +51,7 @@ const Pane: React.FC<PaneProps> = ({
   hideActiveBorder,
   flush,
   onSplit,
+  onSplitPlugin,
   children,
 }) => {
   const { config } = useConfig();
@@ -145,6 +151,7 @@ const Pane: React.FC<PaneProps> = ({
                   e.stopPropagation();
                   setSplitMenuOpen(false);
                   if (entry.kind === 'builtin') onSplit(entry.type);
+                  else if (onSplitPlugin) onSplitPlugin(entry.pane);
                   else onOpenPlugin(entry.pane);
                 }}
                 style={{

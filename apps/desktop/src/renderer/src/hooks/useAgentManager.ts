@@ -1062,10 +1062,20 @@ export function useAgentManager() {
       url?: string,
       appMode?: boolean,
       cwd?: string,
+      pluginId?: string,
     ) => {
       const paneId = generateId(type);
       const paneTitle = title ?? defaultTitles[type];
-      const pane: PaneConfig = { id: paneId, type, title: paneTitle, shell, url, appMode, cwd };
+      const pane: PaneConfig = {
+        id: paneId,
+        type,
+        title: paneTitle,
+        shell,
+        url,
+        appMode,
+        cwd,
+        pluginId,
+      };
 
       mutateActiveAgent((a) => ({
         ...a,

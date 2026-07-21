@@ -150,6 +150,7 @@ interface AgentViewHandlers {
     attachSessionId?: string,
   ) => void;
   onSplit: (tabId: string, type: PaneType) => void;
+  onSplitPlugin: (tabId: string, pane: PluginPane) => void;
   spawnSupervisor: (opts: {
     question?: string;
     parentId?: string;
@@ -214,6 +215,7 @@ const AgentWorkspaceView = memo(function AgentWorkspaceView({
           onNavigateToTab={handlers.onNavigateToTab}
           onAddTab={handlers.onAddTab}
           onSplit={handlers.onSplit}
+          onSplitPlugin={handlers.onSplitPlugin}
           ptyMapping={ptyMapping}
           renameSignal={renameSignal}
           workspaceAgents={workspaceAgents}
@@ -1662,6 +1664,18 @@ function App() {
   pluginPanesRef.current = pluginPanes; // let openFileInEditor resolve the editor plugin
   const [showInstallPlugin, setShowInstallPlugin] = useState(false);
 
+  // Webview URL for a plugin pane: the plugin's static bus token baked in (so
+  // its page can connect to the hub bus scoped to its capabilities), plus the
+  // target agent's session/cwd for scoped panes.
+  const buildPluginPaneUrl = useCallback((pane: PluginPane, target?: AgentWorkspace) => {
+    const params = new URLSearchParams();
+    if (pane.busToken) params.set('busToken', pane.busToken);
+    if (target?.sessionId) params.set('sessionId', target.sessionId);
+    if (target?.cwd) params.set('cwd', target.cwd);
+    const sep = pane.url.includes('?') ? '&' : '?';
+    return params.toString() ? `${pane.url}${sep}${params.toString()}` : pane.url;
+  }, []);
+
   const handleOpenPlugin = useCallback(
     (pane: PluginPane) => {
       // Place the pane by its declared scope:
@@ -1679,15 +1693,7 @@ function App() {
         target = activeIsAgent ? activeAgent : undefined; // 'both'
       }
 
-      // Build the webview URL: always inject the plugin's bus token (so its page
-      // can connect to the hub bus scoped to its capabilities), plus the agent's
-      // session/cwd for agent-scope panes.
-      const params = new URLSearchParams();
-      if (pane.busToken) params.set('busToken', pane.busToken);
-      if (target?.sessionId) params.set('sessionId', target.sessionId);
-      if (target?.cwd) params.set('cwd', target.cwd);
-      const sep = pane.url.includes('?') ? '&' : '?';
-      const url = params.toString() ? `${pane.url}${sep}${params.toString()}` : pane.url;
+      const url = buildPluginPaneUrl(pane, target);
       // Pass the plugin id + the agent's cwd so an agent-scoped pane can mint an
       // ephemeral token confined to that cwd on mount (see PluginPane). The static
       // busToken stays baked into the URL as the fallback when minting is
@@ -1831,6 +1837,20 @@ function App() {
     },
     [splitTab],
   );
+  // Plugin entry in the same split menu: land the pane as a SPLIT in place —
+  // "Shiplight beside my agent" — scoped to the active agent (its session/cwd
+  // ride the webview URL and PaneConfig, so scope-aware plugins show just that
+  // project). handleOpenPlugin's tab-opening path stays for palette/menu opens,
+  // where a global-scope pane should still route to the Overview workspace.
+  const handlePaneSplitPlugin = useCallback(
+    (tabId: string, pane: PluginPane) => {
+      const active = activeAgentRef.current;
+      const target = active && !active.global ? active : undefined;
+      const url = buildPluginPaneUrl(pane, target);
+      splitTab(tabId, 'plugin', pane.title, undefined, url, true, target?.cwd, pane.pluginId);
+    },
+    [splitTab, buildPluginPaneUrl],
+  );
 
   // Stable inputs for the per-agent workspace views. `workspaceAgents` was being
   // rebuilt inline in every render of every agent's ScrollContainer, giving each
@@ -1872,6 +1892,7 @@ function App() {
       onNavigateToTab: handleTabClick,
       onAddTab: handleAddTab,
       onSplit: handlePaneSplit,
+      onSplitPlugin: handlePaneSplitPlugin,
       spawnSupervisor,
       onJumpToAgent: handleJumpToAgent,
     }),
@@ -1886,6 +1907,7 @@ function App() {
       handleTabClick,
       handleAddTab,
       handlePaneSplit,
+      handlePaneSplitPlugin,
       spawnSupervisor,
       handleJumpToAgent,
     ],

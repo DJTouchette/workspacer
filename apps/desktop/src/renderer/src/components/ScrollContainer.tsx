@@ -11,6 +11,7 @@ import Pane from './Pane';
 import { EmptyState } from './PaneMessage';
 import ErrorBoundary from './ErrorBoundary';
 import { PaneConfig, PaneType, TabConfig, AgentWorkspace, AgentProvider } from '../types/pane';
+import type { PluginPane as PluginPaneDef } from '../types/plugin';
 import { useConfig } from '../hooks/useConfig';
 import { tilingColumns } from '../lib/layoutUtils';
 import { useIsSmallScreen } from '../hooks/useMediaQuery';
@@ -78,6 +79,9 @@ interface ScrollContainerProps {
   ) => void;
   /** Split the given tab by appending a new pane of `type` (in-pane split button). */
   onSplit?: (tabId: string, type: PaneType) => void;
+  /** Same split button, plugin entry: append the plugin's webview pane in place
+   *  (scoped to the active agent) instead of opening it as its own tab. */
+  onSplitPlugin?: (tabId: string, pane: PluginPaneDef) => void;
   /** paneId → ptySessionId. For Claude panes, ptySessionId === Claude session id. */
   ptyMapping?: Record<string, string>;
   renameSignal?: number;
@@ -402,6 +406,7 @@ function TilingLayout({
   onTabRename,
   renameSignal,
   onSplit,
+  onSplitPlugin,
 }: {
   panes: PaneConfig[];
   activePaneId: string;
@@ -421,6 +426,8 @@ function TilingLayout({
   renameSignal?: number;
   /** Split this tab by appending a pane of the chosen type (pane split button). */
   onSplit?: (type: PaneType) => void;
+  /** Split this tab with a plugin's webview pane (scoped to the active agent). */
+  onSplitPlugin?: (pane: PluginPaneDef) => void;
 }) {
   const single = panes.length === 1;
   const count = panes.length;
@@ -503,6 +510,7 @@ function TilingLayout({
               hideActiveBorder={single}
               flush={single}
               onSplit={onSplit}
+              onSplitPlugin={onSplitPlugin}
             >
               <ErrorBoundary label={pane.title || pane.type} resetKeys={[pane.id]}>
                 {renderPaneContent(pane, liveActive, callbacks)}
@@ -531,6 +539,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       onNavigateToTab,
       onAddTab,
       onSplit,
+      onSplitPlugin,
       ptyMapping,
       renameSignal,
       agentActive = true,
@@ -750,6 +759,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                   onTabRename={onTabRename ? (title) => onTabRename(tab.id, title) : undefined}
                   renameSignal={isActiveTab ? renameSignal : undefined}
                   onSplit={onSplit ? (type) => onSplit(tab.id, type) : undefined}
+                  onSplitPlugin={onSplitPlugin ? (pane) => onSplitPlugin(tab.id, pane) : undefined}
                 />
               </div>
             </div>
