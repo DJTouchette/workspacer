@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Section, SmallButton, inputStyle } from './primitives';
 
 // Shapes mirror electron.d.ts pricingGetRates.
@@ -148,8 +149,14 @@ const ModelPricingSection: React.FC = () => {
           fontWeight: 600,
         }}
       >
-        <span style={{ fontSize: '0.7rem', color: 'var(--wks-text-faint)' }}>
-          {open ? '▾' : '▸'}
+        <span
+          style={{ color: 'var(--wks-text-faint)', display: 'inline-flex', alignItems: 'center' }}
+        >
+          {open ? (
+            <ChevronDown size={11} strokeWidth={2} />
+          ) : (
+            <ChevronRight size={11} strokeWidth={2} />
+          )}
         </span>
         Edit rate table
         {overrideCount > 0 && (
@@ -158,9 +165,9 @@ const ModelPricingSection: React.FC = () => {
               fontSize: '0.66rem',
               fontWeight: 700,
               padding: '1px 7px',
-              borderRadius: 'var(--wks-radius-pill, 999px)',
-              background: 'var(--wks-accent-bg, rgba(99,102,241,0.14))',
-              color: 'var(--wks-accent-text, var(--wks-accent))',
+              borderRadius: 'var(--wks-radius-pill)',
+              background: 'var(--wks-accent-bg)',
+              color: 'var(--wks-accent-text)',
             }}
           >
             {overrideCount} override{overrideCount === 1 ? '' : 's'}
@@ -233,9 +240,7 @@ const ModelPricingSection: React.FC = () => {
             />
             <SmallButton label="Reset all to defaults" onClick={resetAll} />
             {status === 'saved' && (
-              <span style={{ fontSize: '0.72rem', color: 'var(--wks-success, #3fb950)' }}>
-                Saved
-              </span>
+              <span style={{ fontSize: '0.72rem', color: 'var(--wks-success)' }}>Saved</span>
             )}
           </div>
         </div>

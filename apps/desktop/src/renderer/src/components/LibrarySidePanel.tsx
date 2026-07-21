@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { ArrowRight, Check, X } from 'lucide-react';
 import { useLibrary } from '../hooks/useLibrary';
 import { runLibraryItem } from '../lib/libraryBus';
 import { Zap } from './icons';
@@ -106,7 +107,7 @@ const LibrarySidePanel: React.FC<Props> = ({ visible, onClose, cwd }) => {
         </span>
         <div style={{ flex: 1 }} />
         <button onClick={onClose} title="Close (Esc)" style={closeBtn}>
-          ✕
+          <X size={12} strokeWidth={2} />
         </button>
       </div>
 
@@ -201,7 +202,7 @@ const LibrarySidePanel: React.FC<Props> = ({ visible, onClose, cwd }) => {
                 marginTop: 4,
                 maxHeight: 30,
                 overflow: 'hidden',
-                fontFamily: 'var(--wks-mono, ui-monospace, monospace)',
+                fontFamily: 'var(--wks-font-mono)',
                 lineHeight: 1.4,
               }}
             >
@@ -210,10 +211,24 @@ const LibrarySidePanel: React.FC<Props> = ({ visible, onClose, cwd }) => {
             <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
               <button
                 onClick={() => sendToAgent(it)}
-                style={primaryBtn}
+                style={{
+                  ...primaryBtn,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 4,
+                }}
                 title="Insert into the active agent's input"
               >
-                {flashId === it.id ? '✓ Added' : '→ Agent'}
+                {flashId === it.id ? (
+                  <>
+                    <Check size={11} strokeWidth={2} /> Added
+                  </>
+                ) : (
+                  <>
+                    <ArrowRight size={11} strokeWidth={2} /> Agent
+                  </>
+                )}
               </button>
               <button
                 onClick={() => runLibraryItem(it, 'copy')}

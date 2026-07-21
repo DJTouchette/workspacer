@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { RotateCcw } from 'lucide-react';
 import { Config, DEFAULT_CONFIG } from '../../hooks/useConfig';
 import {
   formatBinding,
@@ -190,7 +191,8 @@ const ShortcutEditor: React.FC<{
                   <button
                     onClick={() => handleReset(action)}
                     style={{
-                      fontSize: '0.64rem',
+                      display: 'inline-flex',
+                      alignItems: 'center',
                       padding: '2px 6px',
                       borderRadius: '3px',
                       border: '1px solid var(--wks-border)',
@@ -200,7 +202,7 @@ const ShortcutEditor: React.FC<{
                     }}
                     title="Reset to default"
                   >
-                    ↺
+                    <RotateCcw size={11} strokeWidth={2} />
                   </button>
                 </div>
               </div>

@@ -74,7 +74,7 @@ const WebFolderPicker: React.FC = () => {
         position: 'fixed',
         inset: 0,
         zIndex: 21000,
-        background: 'var(--wks-overlay, rgba(0,0,0,0.5))',
+        background: 'var(--wks-overlay)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -122,7 +122,7 @@ const WebFolderPicker: React.FC = () => {
               flex: 1,
               minWidth: 0,
               fontSize: '0.72rem',
-              fontFamily: 'var(--wks-font-mono, monospace)',
+              fontFamily: 'var(--wks-font-mono)',
               color: 'var(--wks-text-tertiary)',
               background: 'var(--wks-bg-base)',
               border: '1px solid var(--wks-border-input)',
@@ -152,7 +152,7 @@ const WebFolderPicker: React.FC = () => {
           }}
         >
           {error && (
-            <div style={{ padding: 10, fontSize: '0.72rem', color: 'var(--wks-danger, #e05555)' }}>
+            <div style={{ padding: 10, fontSize: '0.72rem', color: 'var(--wks-error)' }}>
               {error}
             </div>
           )}
@@ -184,7 +184,7 @@ const WebFolderPicker: React.FC = () => {
                 onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--wks-bg-input)')}
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
               >
-                <Folder size={13} color="var(--wks-accent, #4a9eff)" /> {name}
+                <Folder size={13} color="var(--wks-accent)" /> {name}
               </button>
             ))}
         </div>
@@ -246,7 +246,7 @@ const primaryBtn = (disabled: boolean): React.CSSProperties => ({
   fontFamily: 'inherit',
   cursor: disabled ? 'default' : 'pointer',
   background: disabled ? 'var(--wks-bg-input)' : 'var(--wks-accent)',
-  color: disabled ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
+  color: disabled ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent)',
   border: '1px solid var(--wks-border-input)',
   borderRadius: 4,
   padding: '6px 12px',

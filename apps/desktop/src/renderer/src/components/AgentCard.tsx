@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Maximize2 } from 'lucide-react';
+import { AlertTriangle, Compass, Diamond, Maximize2, Settings } from 'lucide-react';
 import type { AgentWorkspace } from '../types/pane';
 import type { ClaudeSessionSnapshot, SessionAmbientState } from '../types/claudeSession';
 import { QuestionPicker } from './claude/QuestionPicker';
@@ -43,31 +43,31 @@ interface StateVisual {
 function stateVisual(s: SessionAmbientState | undefined): StateVisual {
   switch (s) {
     case 'waiting_approval':
-      return { color: 'var(--wks-warning, #e0a000)', label: 'Needs approval', pulse: true };
+      return { color: 'var(--wks-warning)', label: 'Needs approval', pulse: true };
     case 'waiting_input':
-      return { color: 'var(--wks-warning, #e0a000)', label: 'Waiting for input', pulse: true };
+      return { color: 'var(--wks-warning)', label: 'Waiting for input', pulse: true };
     case 'thinking':
       return {
-        color: 'var(--wks-busy, var(--wks-accent, #4a9eff))',
+        color: 'var(--wks-busy)',
         label: 'Thinking',
         pulse: false,
       };
     case 'streaming':
       return {
-        color: 'var(--wks-busy, var(--wks-accent, #4a9eff))',
+        color: 'var(--wks-busy)',
         label: 'Working',
         pulse: false,
       };
     case 'background':
       return {
-        color: 'var(--wks-busy, var(--wks-accent, #4a9eff))',
+        color: 'var(--wks-busy)',
         label: 'Background work',
         pulse: false,
       };
     case 'idle':
-      return { color: 'var(--wks-success, #3fb950)', label: 'Idle', pulse: false };
+      return { color: 'var(--wks-success)', label: 'Idle', pulse: false };
     default:
-      return { color: 'var(--wks-text-faint, #666)', label: 'Stopped', pulse: false };
+      return { color: 'var(--wks-text-faint)', label: 'Stopped', pulse: false };
   }
 }
 
@@ -219,7 +219,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
           }}
         >
           {agent.kind === 'supervisor' ? (
-            <span>🧭</span>
+            <Compass size={11} strokeWidth={2} style={{ flexShrink: 0 }} />
           ) : (
             <AgentLogo
               provider={agent.provider ?? 'claude'}
@@ -311,9 +311,15 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
         {stale && (
           <span
             title={`Says "${v.label}" but nothing has arrived since ${relTime(snapshot?.lastActivity)} — the stream may have stalled.`}
-            style={{ color: 'var(--wks-warning, #e0a000)', fontWeight: 700 }}
+            style={{
+              color: 'var(--wks-warning)',
+              fontWeight: 700,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 3,
+            }}
           >
-            ⚠ stale
+            <AlertTriangle size={11} strokeWidth={2} /> stale
           </span>
         )}
         <span
@@ -370,10 +376,16 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
             fontWeight: 600,
           }}
         >
-          {runningWf.length > 0 && <span>⚙ {runningWf[0].name || 'workflow'}</span>}
+          {runningWf.length > 0 && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <Settings size={11} strokeWidth={2} style={{ flexShrink: 0 }} />
+              {runningWf[0].name || 'workflow'}
+            </span>
+          )}
           {runningSubs > 0 && (
-            <span>
-              ◇ {runningSubs} subagent{runningSubs > 1 ? 's' : ''}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <Diamond size={10} strokeWidth={2.25} style={{ flexShrink: 0 }} />
+              {runningSubs} subagent{runningSubs > 1 ? 's' : ''}
             </span>
           )}
         </div>
@@ -388,7 +400,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
                 flex: 1,
                 height: 5,
                 borderRadius: 3,
-                background: 'var(--wks-border-subtle, #2a2a2a)',
+                background: 'var(--wks-border-subtle)',
                 overflow: 'hidden',
               }}
             >
@@ -446,7 +458,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
                 style={{
                   fontSize: '0.69rem',
                   fontWeight: 600,
-                  color: 'var(--wks-warning, #e0a000)',
+                  color: 'var(--wks-warning)',
                   marginBottom: 6,
                 }}
               >
@@ -456,20 +468,17 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <button
                   onClick={() => approve(approvalItem, 'yes')}
-                  style={qa('var(--wks-success, #3fb950)')}
+                  style={qa('var(--wks-success)')}
                 >
                   Allow
                 </button>
                 <button
                   onClick={() => approve(approvalItem, 'always')}
-                  style={qa('var(--wks-accent, #4a9eff)')}
+                  style={qa('var(--wks-accent)')}
                 >
                   Allow all
                 </button>
-                <button
-                  onClick={() => approve(approvalItem, 'no')}
-                  style={qa('var(--wks-error, #f87171)')}
-                >
+                <button onClick={() => approve(approvalItem, 'no')} style={qa('var(--wks-error)')}>
                   Deny
                 </button>
                 <button
@@ -514,7 +523,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
                   borderRadius: 'var(--wks-radius-md)',
                   lineHeight: 1.4,
                   border: '1px solid var(--wks-glass-border)',
-                  background: 'var(--wks-bg-input, rgba(255,255,255,0.03))',
+                  background: 'var(--wks-bg-input)',
                   color: 'var(--wks-text-primary)',
                   outline: 'none',
                   fontFamily: 'inherit',
@@ -531,9 +540,9 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
                   borderRadius: 'var(--wks-radius-md)',
                   cursor: draft.trim() ? 'pointer' : 'default',
                   flexShrink: 0,
-                  border: `1px solid ${draft.trim() ? 'var(--wks-accent, #4a9eff)' : 'var(--wks-glass-border)'}`,
-                  background: draft.trim() ? 'var(--wks-accent, #4a9eff)' : 'transparent',
-                  color: draft.trim() ? 'var(--wks-text-on-accent, #fff)' : 'var(--wks-text-faint)',
+                  border: `1px solid ${draft.trim() ? 'var(--wks-accent)' : 'var(--wks-glass-border)'}`,
+                  background: draft.trim() ? 'var(--wks-accent)' : 'transparent',
+                  color: draft.trim() ? 'var(--wks-text-on-accent)' : 'var(--wks-text-faint)',
                 }}
               >
                 Send

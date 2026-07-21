@@ -116,7 +116,7 @@ export const StatusChip: React.FC<{ code: string }> = ({ code }) => {
         flexShrink: 0,
         fontSize: '0.62rem',
         fontWeight: 700,
-        fontFamily: 'var(--wks-font-mono, monospace)',
+        fontFamily: 'var(--wks-font-mono)',
         color,
         background: `color-mix(in srgb, ${color} 14%, transparent)`,
       }}
@@ -137,7 +137,7 @@ const Counts: React.FC<{ stat?: NumstatEntry }> = ({ stat }) => {
         display: 'flex',
         gap: 5,
         fontSize: '0.66rem',
-        fontFamily: 'var(--wks-font-mono, monospace)',
+        fontFamily: 'var(--wks-font-mono)',
         fontVariantNumeric: 'tabular-nums',
         flexShrink: 0,
       }}

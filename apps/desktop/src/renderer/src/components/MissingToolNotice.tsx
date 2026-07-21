@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Wrench } from 'lucide-react';
 
 import type { ExternalToolStatus } from '../types/electron';
 
@@ -56,12 +57,12 @@ export const MissingToolNotice: React.FC<{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          fontSize: '1.2rem',
+          color: 'var(--wks-warning)',
           border: '1px solid color-mix(in srgb, var(--wks-warning) 45%, transparent)',
           background: 'color-mix(in srgb, var(--wks-warning) 10%, transparent)',
         }}
       >
-        🔧
+        <Wrench size={19} strokeWidth={2} />
       </div>
       <div style={{ fontSize: '0.9rem', fontWeight: 650, color: 'var(--wks-text-primary)' }}>
         {feature} needs {tool.label}
@@ -69,7 +70,7 @@ export const MissingToolNotice: React.FC<{
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-muted)', maxWidth: 420 }}>
         <code
           style={{
-            fontFamily: 'var(--wks-font-mono, monospace)',
+            fontFamily: 'var(--wks-font-mono)',
             color: 'var(--wks-text-secondary)',
           }}
         >
@@ -80,10 +81,10 @@ export const MissingToolNotice: React.FC<{
       <div
         style={{
           fontSize: '0.72rem',
-          fontFamily: 'var(--wks-font-mono, monospace)',
+          fontFamily: 'var(--wks-font-mono)',
           color: 'var(--wks-text-secondary)',
           padding: '7px 12px',
-          borderRadius: 'var(--wks-radius-sm, 6px)',
+          borderRadius: 'var(--wks-radius-sm)',
           border: '1px solid var(--wks-border-subtle)',
           background: 'var(--wks-bg-raised)',
           maxWidth: 460,
@@ -101,7 +102,7 @@ export const MissingToolNotice: React.FC<{
           fontWeight: 600,
           cursor: checking ? 'default' : 'pointer',
           background: 'var(--wks-accent)',
-          color: 'var(--wks-text-on-accent, #fff)',
+          color: 'var(--wks-text-on-accent)',
           border: 'none',
           borderRadius: 7,
           padding: '7px 16px',

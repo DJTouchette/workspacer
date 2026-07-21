@@ -1,4 +1,5 @@
 import React from 'react';
+import { Check, ChevronDown } from 'lucide-react';
 import { fuzzyScoreAny } from '../../lib/fuzzy';
 
 export const inputStyle: React.CSSProperties = {
@@ -20,7 +21,7 @@ export function SmallButton({
   primary,
   danger,
 }: {
-  label: string;
+  label: React.ReactNode;
   onClick: () => void;
   primary?: boolean;
   danger?: boolean;
@@ -40,10 +41,10 @@ export function SmallButton({
         color: danger
           ? 'var(--wks-error)'
           : primary
-            ? 'var(--wks-text-on-accent, #fff)'
+            ? 'var(--wks-text-on-accent)'
             : 'var(--wks-text-muted)',
         border: primary ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border-subtle)',
-        borderRadius: 'var(--wks-radius-pill, 999px)',
+        borderRadius: 'var(--wks-radius-pill)',
         cursor: 'pointer',
         height: 'auto',
         lineHeight: 1.4,
@@ -159,7 +160,7 @@ export function CheckRow({
           style={{
             width: 32,
             height: 18,
-            borderRadius: 'var(--wks-radius-pill, 999px)',
+            borderRadius: 'var(--wks-radius-pill)',
             background: checked
               ? 'var(--wks-accent)'
               : 'color-mix(in srgb, var(--wks-text-faint) 25%, transparent)',
@@ -180,7 +181,7 @@ export function CheckRow({
               width: 12,
               height: 12,
               borderRadius: '50%',
-              background: checked ? 'var(--wks-text-on-accent, #fff)' : 'var(--wks-text-muted)',
+              background: checked ? 'var(--wks-text-on-accent)' : 'var(--wks-text-muted)',
               transition: 'left 0.15s ease, background 0.15s',
             }}
           />
@@ -207,13 +208,13 @@ export function ModeButton({
         fontSize: '0.75rem',
         fontFamily: 'inherit',
         fontWeight: 600,
-        backgroundColor: active ? 'var(--wks-accent-bg, rgba(99,102,241,0.14))' : 'transparent',
-        color: active ? 'var(--wks-accent-text, var(--wks-accent))' : 'var(--wks-text-muted)',
+        backgroundColor: active ? 'var(--wks-accent-bg)' : 'transparent',
+        color: active ? 'var(--wks-accent-text)' : 'var(--wks-text-muted)',
         border: '1px solid',
         borderColor: active
           ? 'color-mix(in srgb, var(--wks-accent) 45%, transparent)'
           : 'var(--wks-border-subtle)',
-        borderRadius: 'var(--wks-radius-pill, 999px)',
+        borderRadius: 'var(--wks-radius-pill)',
         cursor: 'pointer',
         height: '28px',
         lineHeight: 1,
@@ -365,8 +366,15 @@ export function SearchableSelect({
         >
           {selected ? selected.label : placeholder || 'Select…'}
         </span>
-        <span style={{ color: 'var(--wks-text-faint)', fontSize: '0.68rem', flexShrink: 0 }}>
-          ▾
+        <span
+          style={{
+            color: 'var(--wks-text-faint)',
+            flexShrink: 0,
+            display: 'inline-flex',
+            alignItems: 'center',
+          }}
+        >
+          <ChevronDown size={11} strokeWidth={2} />
         </span>
       </button>
 
@@ -380,15 +388,15 @@ export function SearchableSelect({
             zIndex: 100,
             background: 'var(--wks-bg-elevated)',
             border: '1px solid var(--wks-border)',
-            borderRadius: 'var(--wks-radius-sm, 5px)',
-            boxShadow: '0 8px 24px var(--wks-shadow, rgba(0,0,0,0.4))',
+            borderRadius: 'var(--wks-radius-sm)',
+            boxShadow: '0 8px 24px var(--wks-shadow)',
             overflow: 'hidden',
           }}
         >
           <div
             style={{
               padding: 7,
-              borderBottom: '1px solid var(--wks-border-subtle, var(--wks-border))',
+              borderBottom: '1px solid var(--wks-border-subtle)',
             }}
           >
             <input
@@ -449,9 +457,7 @@ export function SearchableSelect({
                         borderRadius: 4,
                         cursor: 'pointer',
                         background: isHi ? 'var(--wks-bg-hover)' : 'transparent',
-                        color: isSel
-                          ? 'var(--wks-accent-text, var(--wks-accent))'
-                          : 'var(--wks-text-secondary)',
+                        color: isSel ? 'var(--wks-accent-text)' : 'var(--wks-text-secondary)',
                         fontWeight: isSel ? 600 : 400,
                       }}
                     >
@@ -466,7 +472,13 @@ export function SearchableSelect({
                       >
                         {o.label}
                       </span>
-                      {isSel && <span style={{ flexShrink: 0, fontSize: '0.75rem' }}>✓</span>}
+                      {isSel && (
+                        <span
+                          style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center' }}
+                        >
+                          <Check size={12} strokeWidth={2} />
+                        </span>
+                      )}
                     </button>
                   </React.Fragment>
                 );

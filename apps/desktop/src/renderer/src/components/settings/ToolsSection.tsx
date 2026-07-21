@@ -58,7 +58,7 @@ const ToolsSection: React.FC = () => {
             style={{
               width: 9,
               height: 9,
-              borderRadius: 'var(--wks-radius-pill, 999px)',
+              borderRadius: 'var(--wks-radius-pill)',
               marginTop: 4,
               flexShrink: 0,
               background: t.available ? 'var(--wks-success)' : 'var(--wks-error)',
@@ -79,7 +79,7 @@ const ToolsSection: React.FC = () => {
               <span
                 style={{
                   fontSize: '0.7rem',
-                  fontFamily: 'var(--wks-font-mono, monospace)',
+                  fontFamily: 'var(--wks-font-mono)',
                   color: 'var(--wks-text-faint)',
                 }}
               >
@@ -92,7 +92,7 @@ const ToolsSection: React.FC = () => {
             <div
               style={{
                 fontSize: '0.7rem',
-                fontFamily: 'var(--wks-font-mono, monospace)',
+                fontFamily: 'var(--wks-font-mono)',
                 color: t.available ? 'var(--wks-text-faint)' : 'var(--wks-warning)',
                 marginTop: 3,
                 overflow: 'hidden',

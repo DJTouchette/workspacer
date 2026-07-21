@@ -81,7 +81,7 @@ const BinaryRow: React.FC<{
       ? 'var(--wks-text-disabled)'
       : detection.found
         ? '#3db86a'
-        : 'var(--wks-danger, #e05555)';
+        : 'var(--wks-error)';
   const hint =
     detection === undefined
       ? 'Checking…'

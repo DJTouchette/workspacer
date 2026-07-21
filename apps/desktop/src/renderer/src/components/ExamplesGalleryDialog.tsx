@@ -92,7 +92,7 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
         position: 'fixed',
         inset: 0,
         zIndex: 20000,
-        backgroundColor: 'var(--wks-overlay, rgba(0,0,0,0.5))',
+        backgroundColor: 'var(--wks-overlay)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -137,7 +137,7 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
             style={{
               marginBottom: 10,
               fontSize: '0.7rem',
-              color: 'var(--wks-danger, #e05555)',
+              color: 'var(--wks-error)',
               wordBreak: 'break-word',
             }}
           >
@@ -225,7 +225,7 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
                       <span
                         style={{
                           fontSize: '0.66rem',
-                          color: req.warn ? 'var(--wks-warning, #e0a000)' : 'var(--wks-text-muted)',
+                          color: req.warn ? 'var(--wks-warning)' : 'var(--wks-text-muted)',
                           display: 'inline-flex',
                           alignItems: 'center',
                           gap: 4,
@@ -253,7 +253,7 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
                           <AlertTriangle
                             size={10}
                             strokeWidth={2}
-                            style={{ color: 'var(--wks-warning, #e0a000)' }}
+                            style={{ color: 'var(--wks-warning)' }}
                           />
                         )}
                         {permsOpen.has(m.id) ? 'Hide permissions' : 'Permissions'}
@@ -270,7 +270,7 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
                       alignSelf: 'center',
                       cursor: isAdded || busy ? 'default' : 'pointer',
                       background: isAdded ? 'transparent' : 'var(--wks-accent)',
-                      color: isAdded ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
+                      color: isAdded ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent)',
                       border: isAdded ? '1px solid var(--wks-border-input)' : 'none',
                       borderRadius: 'var(--wks-radius-sm)',
                       padding: '5px 14px',

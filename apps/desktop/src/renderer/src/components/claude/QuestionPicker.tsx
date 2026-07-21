@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Check, ChevronLeft } from 'lucide-react';
 import type { PendingQuestion } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 
@@ -127,12 +128,12 @@ export const QuestionPicker: React.FC<{
               color: colors.muted,
               cursor: 'pointer',
               padding: '0 2px',
-              fontSize: '0.95rem',
-              lineHeight: 1,
+              display: 'flex',
+              alignItems: 'center',
               fontFamily: 'inherit',
             }}
           >
-            {'‹'}
+            <ChevronLeft size={14} strokeWidth={2} />
           </button>
         )}
         <span
@@ -279,7 +280,7 @@ export const QuestionPicker: React.FC<{
                   color: selected ? '#fff' : colors.muted,
                 }}
               >
-                {multi ? (selected ? '✓' : '') : `${oi + 1}`}
+                {multi ? selected ? <Check size={11} strokeWidth={2.25} /> : '' : `${oi + 1}`}
               </span>
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span

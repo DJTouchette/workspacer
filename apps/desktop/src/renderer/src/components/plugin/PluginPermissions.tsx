@@ -57,9 +57,7 @@ export const PluginPermissions: React.FC<{ manifest: PluginManifest; compact?: b
                     display: 'inline-flex',
                     justifyContent: 'center',
                     color:
-                      l.severity === 'sensitive'
-                        ? 'var(--wks-warning, #e0a000)'
-                        : 'var(--wks-text-faint)',
+                      l.severity === 'sensitive' ? 'var(--wks-warning)' : 'var(--wks-text-faint)',
                   }}
                 >
                   {l.severity === 'sensitive' ? (

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, X } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useAttention } from '../contexts/AttentionContext';
 import { AttentionCard } from './attention/AttentionCard';
@@ -236,15 +236,11 @@ const InboxDrawer: React.FC = () => {
             Inbox
           </div>
           {counts.needsYou > 0 ? (
-            <span
-              style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--wks-warning, #e0a000)' }}
-            >
+            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--wks-warning)' }}>
               {counts.needsYou} need you
             </span>
           ) : counts.total > 0 ? (
-            <span
-              style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--wks-success, #3fb950)' }}
-            >
+            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--wks-success)' }}>
               {counts.total} to review
             </span>
           ) : (
@@ -252,7 +248,7 @@ const InboxDrawer: React.FC = () => {
           )}
           <div style={{ flex: 1 }} />
           <button onClick={closeInbox} title="Close (Esc)" style={closeBtn}>
-            ✕
+            <X size={12} strokeWidth={2} />
           </button>
         </div>
 
@@ -281,9 +277,7 @@ const InboxDrawer: React.FC = () => {
                     ? '1px solid var(--wks-accent)'
                     : '1px solid var(--wks-border-input)',
                   background: active ? 'var(--wks-accent-bg)' : 'transparent',
-                  color: active
-                    ? 'var(--wks-accent-text, var(--wks-text-primary))'
-                    : 'var(--wks-text-tertiary)',
+                  color: active ? 'var(--wks-accent-text)' : 'var(--wks-text-tertiary)',
                 }}
               >
                 {t.label}
@@ -353,7 +347,7 @@ const InboxDrawer: React.FC = () => {
                   display: 'flex',
                   justifyContent: 'center',
                   marginBottom: 8,
-                  color: 'var(--wks-success, #3fb950)',
+                  color: 'var(--wks-success)',
                 }}
               >
                 <CheckCircle2 size={30} strokeWidth={1.75} />
@@ -419,8 +413,6 @@ const closeBtn: React.CSSProperties = {
   cursor: 'pointer',
   background: 'var(--wks-bg-surface)',
   color: 'var(--wks-text-secondary)',
-  fontSize: '0.8rem',
-  lineHeight: 1,
 };
 
 const Hint: React.FC<{ k: string; t: string }> = ({ k, t }) => (

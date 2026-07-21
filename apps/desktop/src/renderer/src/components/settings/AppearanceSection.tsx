@@ -1,4 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
+import { Check } from 'lucide-react';
 import { Config } from '../../hooks/useConfig';
 import {
   themes,
@@ -103,7 +104,7 @@ const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) =
             animation: 'wks-fade-in 0.15s ease',
           }}
         >
-          Saved ✓
+          Saved <Check size={11} strokeWidth={2} />
         </div>
       )}
       <Row label="Theme">

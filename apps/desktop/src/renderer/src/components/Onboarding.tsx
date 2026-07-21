@@ -39,7 +39,7 @@ const Keys: React.FC<{ combo: string; onAccent?: boolean }> = ({ combo, onAccent
             whiteSpace: 'nowrap',
             ...(onAccent
               ? {
-                  color: 'var(--wks-text-on-accent, #fff)',
+                  color: 'var(--wks-text-on-accent)',
                   background: 'rgba(255, 255, 255, 0.16)',
                   border: '1px solid rgba(255, 255, 255, 0.28)',
                 }
@@ -193,9 +193,9 @@ const Onboarding: React.FC<{
             fontWeight: 700,
             cursor: 'pointer',
             background: 'var(--wks-accent)',
-            color: 'var(--wks-text-on-accent, #fff)',
+            color: 'var(--wks-text-on-accent)',
             border: 'none',
-            borderRadius: 'var(--wks-radius-md, 8px)',
+            borderRadius: 'var(--wks-radius-md)',
             padding: '11px 22px',
           }}
         >
@@ -243,7 +243,7 @@ const Onboarding: React.FC<{
                     textAlign: 'left',
                     cursor: 'pointer',
                     padding: '9px 11px',
-                    borderRadius: 'var(--wks-radius-md, 8px)',
+                    borderRadius: 'var(--wks-radius-md)',
                     fontFamily: 'inherit',
                     background: active ? 'var(--wks-accent-bg)' : 'var(--wks-bg-elevated)',
                     border: `1px solid ${active ? 'var(--wks-accent-glow)' : 'var(--wks-border-subtle)'}`,
@@ -340,7 +340,7 @@ const Onboarding: React.FC<{
               style={{
                 font: 'inherit',
                 fontWeight: 600,
-                color: 'var(--wks-accent-text, var(--wks-accent))',
+                color: 'var(--wks-accent-text)',
                 background: 'none',
                 border: 'none',
                 padding: 0,

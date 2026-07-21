@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { RefreshCw, ArrowUp, ArrowLeft, CheckCircle2, Copy, Check, FileX2 } from 'lucide-react';
+import { RefreshCw, ArrowUp, ArrowLeft, CheckCircle2, Copy, Check, FileX2, X } from 'lucide-react';
 import { IconBranch, IconCommit } from '../components/wksIcons';
 import { claudeColors as colors } from '../components/claude-shared';
 import { GitClient, isUnmergedStatus, type GitStatus, type NumstatEntry } from '../lib/gitQueries';
@@ -189,7 +189,7 @@ const PathBreadcrumb: React.FC<{ path: string }> = ({ path }) => {
         display: 'flex',
         alignItems: 'baseline',
         minWidth: 0,
-        fontFamily: 'var(--wks-font-mono, monospace)',
+        fontFamily: 'var(--wks-font-mono)',
         fontSize: '0.74rem',
       }}
     >
@@ -594,7 +594,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
           </div>
           <div
             style={{
-              fontFamily: 'var(--wks-font-mono, monospace)',
+              fontFamily: 'var(--wks-font-mono)',
               fontSize: '0.7rem',
               color: colors.muted,
               marginTop: 3,
@@ -766,7 +766,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
           border: `1px solid ${colors.borderSubtle}`,
           borderRadius: 13,
           overflow: 'hidden',
-          background: 'var(--wks-bg-surface, transparent)',
+          background: 'var(--wks-bg-surface)',
         }}
       >
         {/* Left: file tree */}
@@ -789,7 +789,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
               gap: 7,
               padding: '9px 12px',
               borderBottom: `1px solid ${colors.borderSubtle}`,
-              fontFamily: 'var(--wks-font-mono, monospace)',
+              fontFamily: 'var(--wks-font-mono)',
               fontSize: '0.62rem',
               textTransform: 'uppercase',
               letterSpacing: '0.08em',
@@ -827,12 +827,12 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
                   color: colors.error,
                   padding: 0,
                   lineHeight: 1,
-                  fontSize: '0.85rem',
+                  display: 'flex',
                   flexShrink: 0,
                   opacity: 0.8,
                 }}
               >
-                ×
+                <X size={12} strokeWidth={2} />
               </button>
             </div>
           )}
@@ -949,7 +949,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
                 padding: '7px 9px',
                 borderRadius: 7,
                 border: `1px solid ${colors.borderSubtle}`,
-                background: 'var(--wks-bg-input, transparent)',
+                background: 'var(--wks-bg-input)',
                 color: colors.text,
                 fontSize: '0.72rem',
                 fontFamily: 'inherit',
@@ -1018,7 +1018,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
                       display: 'flex',
                       gap: 6,
                       fontSize: '0.7rem',
-                      fontFamily: 'var(--wks-font-mono, monospace)',
+                      fontFamily: 'var(--wks-font-mono)',
                       fontVariantNumeric: 'tabular-nums',
                       flexShrink: 0,
                     }}

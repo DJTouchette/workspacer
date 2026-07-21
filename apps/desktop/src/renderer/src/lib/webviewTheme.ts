@@ -15,7 +15,7 @@
  *     for CSS hooks like `[data-wks-theme="light"]`.
  *
  * Plugin contract (documented in hub/docs/plugin-theming.md):
- *   color: var(--wks-text-primary, #e4e4e7);
+ *   color: var(--wks-text-primary);
  *   window.addEventListener('wks-theme', (e) => render(e.detail.vars));
  */
 import type { Theme } from '../themes';

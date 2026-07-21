@@ -48,7 +48,7 @@ const Sep: React.FC = () => (
       width: 1,
       height: 14,
       flexShrink: 0,
-      background: 'var(--wks-border, #555)',
+      background: 'var(--wks-border)',
       opacity: 0.5,
     }}
   />
@@ -71,7 +71,7 @@ const Track: React.FC<{ pct: number; color: string; width?: number }> = ({
         height: 4,
         borderRadius: 999,
         flexShrink: 0,
-        background: 'var(--wks-border-subtle, #2a2a2a)',
+        background: 'var(--wks-border-subtle)',
         overflow: 'hidden',
         display: 'inline-block',
       }}
@@ -221,7 +221,7 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
             fontSize: '0.64rem',
             fontWeight: 700,
             padding: '1px 6px',
-            borderRadius: 'var(--wks-radius-pill, 999px)',
+            borderRadius: 'var(--wks-radius-pill)',
             letterSpacing: '0.04em',
             color: 'var(--wks-accent-text)',
             border: '1px solid color-mix(in srgb, var(--wks-accent) 45%, transparent)',
@@ -257,17 +257,14 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
               display: 'inline-flex',
               alignItems: 'center',
               gap: 5,
-              color:
-                plan.done >= plan.total ? 'var(--wks-success, #3fb950)' : 'var(--wks-accent-text)',
+              color: plan.done >= plan.total ? 'var(--wks-success)' : 'var(--wks-accent-text)',
               fontVariantNumeric: 'tabular-nums',
             }}
           >
             <span style={{ color: 'var(--wks-text-muted)' }}>plan</span>
             <Track
               pct={(plan.done / plan.total) * 100}
-              color={
-                plan.done >= plan.total ? 'var(--wks-success, #3fb950)' : 'var(--wks-accent-text)'
-              }
+              color={plan.done >= plan.total ? 'var(--wks-success)' : 'var(--wks-accent-text)'}
               width={32}
             />
             {plan.done}/{plan.total}
@@ -279,7 +276,7 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
           <Sep />
           <span
             title="Claude is compacting its context window"
-            style={{ color: 'var(--wks-warn, #d29922)', fontVariantNumeric: 'tabular-nums' }}
+            style={{ color: 'var(--wks-warning)', fontVariantNumeric: 'tabular-nums' }}
           >
             compacting…
           </span>

@@ -1,4 +1,5 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react';
+import { Check, ChevronDown, ChevronRight, Maximize2, X } from 'lucide-react';
 import type { WorkflowRunInfo } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 import { AGENT_PURPLE, fmtTokens, fmtDuration } from './agentUtils';
@@ -44,8 +45,20 @@ const PhaseGroup: React.FC<{
           padding: '1px 0',
         }}
       >
-        <span style={{ color: colors.mutedDim, fontSize: '0.64rem', flexShrink: 0, width: 8 }}>
-          {expanded ? '▾' : '▸'}
+        <span
+          style={{
+            color: colors.mutedDim,
+            flexShrink: 0,
+            width: 12,
+            display: 'flex',
+            alignItems: 'center',
+          }}
+        >
+          {expanded ? (
+            <ChevronDown size={12} strokeWidth={2} />
+          ) : (
+            <ChevronRight size={12} strokeWidth={2} />
+          )}
         </span>
         <span
           style={{
@@ -169,13 +182,18 @@ export const WorkflowRunCard: React.FC<{
           <span
             style={{
               color: run.status === 'failed' ? colors.error : colors.success,
-              fontSize: '0.7rem',
               width: 12,
-              textAlign: 'center',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
               flexShrink: 0,
             }}
           >
-            {run.status === 'failed' ? '✗' : '✓'}
+            {run.status === 'failed' ? (
+              <X size={12} strokeWidth={2} />
+            ) : (
+              <Check size={12} strokeWidth={2} />
+            )}
           </span>
         )}
         <span style={{ color: AGENT_PURPLE, fontWeight: 600, flexShrink: 0 }}>Workflow</span>
@@ -236,16 +254,22 @@ export const WorkflowRunCard: React.FC<{
             border: 'none',
             color: colors.mutedDim,
             cursor: 'pointer',
-            fontSize: '0.72rem',
             padding: '0 2px',
             flexShrink: 0,
-            lineHeight: 1,
+            display: 'flex',
+            alignItems: 'center',
           }}
         >
-          ⤢
+          <Maximize2 size={12} strokeWidth={2} />
         </button>
-        <span style={{ color: colors.mutedDim, fontSize: '0.64rem', flexShrink: 0 }}>
-          {expanded ? '▾' : '▸'}
+        <span
+          style={{ color: colors.mutedDim, display: 'flex', alignItems: 'center', flexShrink: 0 }}
+        >
+          {expanded ? (
+            <ChevronDown size={12} strokeWidth={2} />
+          ) : (
+            <ChevronRight size={12} strokeWidth={2} />
+          )}
         </span>
       </div>
 

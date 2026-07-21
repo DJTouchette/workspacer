@@ -1,4 +1,5 @@
 import React from 'react';
+import { Paperclip } from 'lucide-react';
 import { claudeColors as colors } from '../claude-shared';
 
 export const DropOverlay: React.FC = () => (
@@ -18,7 +19,9 @@ export const DropOverlay: React.FC = () => (
     }}
   >
     <div style={{ textAlign: 'center' }}>
-      <div style={{ fontSize: '1.5rem', marginBottom: 8, opacity: 0.7 }}>{'📎'}</div>
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8, opacity: 0.7 }}>
+        <Paperclip size={24} strokeWidth={2} />
+      </div>
       <div style={{ fontSize: '0.8rem', color: colors.accent, fontWeight: 600 }}>
         Drop files here
       </div>

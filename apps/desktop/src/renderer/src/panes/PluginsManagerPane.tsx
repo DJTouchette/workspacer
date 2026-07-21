@@ -36,16 +36,16 @@ function stateColor(s: string | undefined): string {
   switch (s) {
     case 'healthy':
     case 'running':
-      return 'var(--wks-success, #3fb950)';
+      return 'var(--wks-success)';
     case 'unhealthy':
-      return 'var(--wks-warning, #e0a000)';
+      return 'var(--wks-warning)';
     case 'crashed':
-      return 'var(--wks-danger, #e05555)';
+      return 'var(--wks-error)';
     case 'stopped':
     case 'disabled':
-      return 'var(--wks-text-faint, #666)';
+      return 'var(--wks-text-faint)';
     default:
-      return 'var(--wks-text-faint, #666)';
+      return 'var(--wks-text-faint)';
   }
 }
 
@@ -56,9 +56,7 @@ function actionBtn(busy: boolean, danger?: boolean): React.CSSProperties {
     fontFamily: 'inherit',
     cursor: busy ? 'default' : 'pointer',
     background: 'transparent',
-    color: danger
-      ? 'var(--wks-danger, #e05555)'
-      : 'var(--wks-text-secondary, var(--wks-text-primary))',
+    color: danger ? 'var(--wks-error)' : 'var(--wks-text-secondary)',
     border: '1px solid var(--wks-border-input)',
     borderRadius: 4,
     padding: '3px 10px',
@@ -158,7 +156,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
             fontFamily: 'inherit',
             cursor: 'pointer',
             background: 'transparent',
-            color: 'var(--wks-text-secondary, var(--wks-text-primary))',
+            color: 'var(--wks-text-secondary)',
             border: '1px solid var(--wks-border-input)',
             borderRadius: 'var(--wks-radius-sm)',
             padding: '5px 12px',
@@ -174,7 +172,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
             fontFamily: 'inherit',
             cursor: 'pointer',
             background: 'transparent',
-            color: 'var(--wks-text-secondary, var(--wks-text-primary))',
+            color: 'var(--wks-text-secondary)',
             border: '1px solid var(--wks-border-input)',
             borderRadius: 'var(--wks-radius-sm)',
             padding: '5px 12px',
@@ -190,7 +188,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
             fontFamily: 'inherit',
             cursor: 'pointer',
             background: 'var(--wks-accent)',
-            color: 'var(--wks-text-on-accent, #fff)',
+            color: 'var(--wks-text-on-accent)',
             border: 'none',
             borderRadius: 'var(--wks-radius-sm)',
             padding: '5px 12px',
@@ -303,7 +301,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
                 )}
                 {!!p.server?.port && <span>:{p.server.port}</span>}
                 {hasServer && req.warn && (
-                  <span style={{ color: 'var(--wks-warning, #e0a000)' }}>{req.label}</span>
+                  <span style={{ color: 'var(--wks-warning)' }}>{req.label}</span>
                 )}
                 <button
                   onClick={() => togglePerms(p.id)}
@@ -324,7 +322,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
                     <AlertTriangle
                       size={10}
                       strokeWidth={2}
-                      style={{ color: 'var(--wks-warning, #e0a000)' }}
+                      style={{ color: 'var(--wks-warning)' }}
                     />
                   )}
                   {permsOpen.has(p.id) ? 'Hide permissions' : 'Permissions'}
@@ -353,7 +351,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
                     border: '1px solid var(--wks-border-subtle)',
                     fontSize: '0.64rem',
                     lineHeight: 1.5,
-                    color: 'var(--wks-danger, #e05555)',
+                    color: 'var(--wks-error)',
                     display: 'flex',
                     gap: 5,
                     alignItems: 'flex-start',

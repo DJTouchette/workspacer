@@ -179,13 +179,12 @@ export function ContextMenu({
         minWidth,
         zIndex,
         padding: '5px',
-        borderRadius: 'var(--wks-radius-lg, 12px)',
-        background: 'var(--wks-glass-strong, var(--wks-bg-elevated))',
-        backdropFilter: 'blur(var(--wks-glass-blur, 12px)) saturate(160%)',
-        WebkitBackdropFilter: 'blur(var(--wks-glass-blur, 12px)) saturate(160%)',
-        border: '1px solid var(--wks-glass-border, var(--wks-border-input))',
-        boxShadow:
-          '0 12px 34px var(--wks-glass-shadow, var(--wks-shadow)), inset 0 1px 0 var(--wks-glass-highlight)',
+        borderRadius: 'var(--wks-radius-lg)',
+        background: 'var(--wks-glass-strong)',
+        backdropFilter: 'blur(var(--wks-glass-blur)) saturate(160%)',
+        WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(160%)',
+        border: '1px solid var(--wks-glass-border)',
+        boxShadow: '0 12px 34px var(--wks-glass-shadow), inset 0 1px 0 var(--wks-glass-highlight)',
         fontSize: '0.76rem',
         // Hide until clamped so the off-screen first paint is never visible.
         visibility: measured ? 'visible' : 'hidden',
@@ -222,7 +221,7 @@ export function ContextMenuItem({
         width: '100%',
         textAlign: 'left',
         padding: '6px 11px',
-        borderRadius: 'var(--wks-radius-md, 7px)',
+        borderRadius: 'var(--wks-radius-md)',
         border: 'none',
         background: 'transparent',
         color: disabled
@@ -246,7 +245,7 @@ export function ContextMenuSeparator() {
     <div
       style={{
         height: 1,
-        background: 'var(--wks-glass-border, var(--wks-border))',
+        background: 'var(--wks-glass-border)',
         margin: '5px 7px',
       }}
     />
@@ -258,7 +257,7 @@ export function ContextMenuLabel({ children }: { children: React.ReactNode }) {
     <div
       style={{
         padding: '3px 11px 4px',
-        fontFamily: 'var(--wks-font-mono, monospace)',
+        fontFamily: 'var(--wks-font-mono)',
         fontSize: '0.6rem',
         color: 'var(--wks-text-faint)',
         textTransform: 'uppercase',

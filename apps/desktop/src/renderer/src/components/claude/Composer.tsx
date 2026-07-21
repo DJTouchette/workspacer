@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ArrowUp } from 'lucide-react';
 import { claudeColors as colors } from '../claude-shared';
 import { FileChips } from './FileChips';
 import type { AttachedFile } from './fileAttachment';
@@ -156,9 +157,9 @@ export const Composer: React.FC<ComposerProps> = ({
                 maxHeight: 260,
                 overflowY: 'auto',
                 padding: 5,
-                borderRadius: 'var(--wks-radius-lg, 12px)',
-                border: '1px solid var(--wks-glass-border, var(--wks-border-input))',
-                background: 'var(--wks-glass-strong, var(--wks-bg-elevated))',
+                borderRadius: 'var(--wks-radius-lg)',
+                border: '1px solid var(--wks-glass-border)',
+                background: 'var(--wks-glass-strong)',
                 backdropFilter: 'blur(12px) saturate(160%)',
                 WebkitBackdropFilter: 'blur(12px) saturate(160%)',
                 boxShadow: '0 12px 34px rgba(0, 0, 0, 0.3)',
@@ -186,7 +187,7 @@ export const Composer: React.FC<ComposerProps> = ({
                     width: '100%',
                     textAlign: 'left',
                     border: 'none',
-                    borderRadius: 'var(--wks-radius-md, 7px)',
+                    borderRadius: 'var(--wks-radius-md)',
                     padding: '6px 10px',
                     cursor: 'pointer',
                     font: 'inherit',
@@ -219,7 +220,7 @@ export const Composer: React.FC<ComposerProps> = ({
                           letterSpacing: '0.04em',
                           textTransform: 'uppercase',
                           padding: '1px 5px',
-                          borderRadius: 'var(--wks-radius-pill, 999px)',
+                          borderRadius: 'var(--wks-radius-pill)',
                           color: 'var(--wks-text-faint)',
                           border: '1px solid var(--wks-border-subtle)',
                           flexShrink: 0,
@@ -250,7 +251,7 @@ export const Composer: React.FC<ComposerProps> = ({
                   padding: '4px 10px 2px',
                   fontSize: '0.62rem',
                   color: 'var(--wks-text-faint)',
-                  fontFamily: 'var(--wks-font-mono, monospace)',
+                  fontFamily: 'var(--wks-font-mono)',
                 }}
               >
                 ↑↓ navigate · enter insert · esc dismiss
@@ -388,22 +389,18 @@ export const Composer: React.FC<ComposerProps> = ({
                   height: 30,
                   borderRadius: '50%',
                   border: 'none',
-                  backgroundColor: canSend
-                    ? 'var(--wks-accent)'
-                    : 'var(--wks-bg-elevated, rgba(255,255,255,0.06))',
+                  backgroundColor: canSend ? 'var(--wks-accent)' : 'var(--wks-bg-elevated)',
                   color: canSend ? '#fff' : colors.mutedDim,
                   cursor: canSend ? 'pointer' : 'default',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  fontSize: '0.9rem',
-                  fontWeight: 700,
                   flexShrink: 0,
                   transition: 'background-color 0.15s, color 0.15s',
                 }}
                 aria-label="Send message"
               >
-                {'↑'}
+                <ArrowUp size={15} strokeWidth={2.25} />
               </button>
             )}
           </div>

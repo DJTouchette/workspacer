@@ -86,7 +86,7 @@ const MarkdownPreviewPane: React.FC<{
             title={previewPath}
             style={{
               fontSize: '0.68rem',
-              fontFamily: 'var(--wks-font-mono, monospace)',
+              fontFamily: 'var(--wks-font-mono)',
               color: 'var(--wks-text-faint)',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -129,7 +129,7 @@ const MarkdownPreviewPane: React.FC<{
             <div
               style={{
                 color: 'var(--wks-text-muted)',
-                fontFamily: 'var(--wks-font-mono, monospace)',
+                fontFamily: 'var(--wks-font-mono)',
                 fontSize: '0.7rem',
                 wordBreak: 'break-word',
               }}

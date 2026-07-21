@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { Check, ChevronDown, X as XIcon } from 'lucide-react';
 import { PaneType, TabConfig } from '../types/pane';
 import { useConfig, ScriptEntry, Config } from '../hooks/useConfig';
 import { themes, resolveTheme, themeDisplayName, DEFAULT_THEME } from '../themes';
@@ -316,7 +317,9 @@ const NavBar: React.FC<NavBarProps> = ({
               title="New terminal (Ctrl+T) | Right-click for more"
             >
               <Plus size={15} strokeWidth={2} />
-              <span style={{ fontSize: '0.55rem', lineHeight: 1, opacity: 0.6 }}>▾</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', opacity: 0.6 }}>
+                <ChevronDown size={10} strokeWidth={2.25} />
+              </span>
             </button>
 
             {showMenu && (
@@ -788,7 +791,15 @@ const ThemeSwitcher: React.FC<{
                     {themeDisplayName(id, customThemes)}
                   </span>
                   {isCur && (
-                    <span style={{ color: 'var(--wks-accent)', fontSize: '0.7rem' }}>✓</span>
+                    <span
+                      style={{
+                        color: 'var(--wks-accent)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <Check size={11} strokeWidth={2} />
+                    </span>
                   )}
                 </button>
               </React.Fragment>
@@ -888,15 +899,17 @@ const ScriptManager: React.FC<{
               width: '22px',
               height: '24px',
               flexShrink: 0,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
               border: '1px solid var(--wks-border)',
               borderRadius: '3px',
               backgroundColor: 'transparent',
-              color: 'var(--wks-error, #e05555)',
+              color: 'var(--wks-error)',
               cursor: 'pointer',
-              fontSize: '0.7rem',
             }}
           >
-            {'✕'}
+            <XIcon size={11} strokeWidth={2} />
           </button>
         </div>
       ))}

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Check, CheckCircle2, ChevronDown, ChevronRight, Circle, ListTodo, X } from 'lucide-react';
 import type { SessionPlan } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 import { AgentSpinner } from './WorkflowAgentRow';
@@ -49,8 +50,20 @@ export const TasksCard: React.FC<{
               fontSize: '0.72rem',
             }}
           >
-            <span style={{ color: colors.mutedDim, fontSize: '0.64rem', flexShrink: 0, width: 8 }}>
-              {expanded ? '▾' : '▸'}
+            <span
+              style={{
+                color: colors.mutedDim,
+                flexShrink: 0,
+                width: 12,
+                display: 'flex',
+                alignItems: 'center',
+              }}
+            >
+              {expanded ? (
+                <ChevronDown size={12} strokeWidth={2} />
+              ) : (
+                <ChevronRight size={12} strokeWidth={2} />
+              )}
             </span>
             {active ? (
               <AgentSpinner color="var(--wks-accent)" />
@@ -58,13 +71,18 @@ export const TasksCard: React.FC<{
               <span
                 style={{
                   color: allDone ? colors.success : colors.muted,
-                  fontSize: '0.7rem',
                   width: 12,
-                  textAlign: 'center',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                   flexShrink: 0,
                 }}
               >
-                {allDone ? '✓' : '☰'}
+                {allDone ? (
+                  <Check size={12} strokeWidth={2} />
+                ) : (
+                  <ListTodo size={12} strokeWidth={2} />
+                )}
               </span>
             )}
             <span style={{ color: colors.textBright, fontWeight: 600, flexShrink: 0 }}>Tasks</span>
@@ -127,12 +145,12 @@ export const TasksCard: React.FC<{
                 padding: '0 2px',
                 cursor: 'pointer',
                 color: colors.mutedDim,
-                fontSize: '0.85rem',
-                lineHeight: 1,
+                display: 'flex',
+                alignItems: 'center',
                 flexShrink: 0,
               }}
             >
-              ×
+              <X size={13} strokeWidth={2} />
             </button>
           </div>
           {expanded && (
@@ -167,10 +185,15 @@ export const TasksCard: React.FC<{
                         <span
                           style={{
                             color: completed ? colors.success : colors.mutedDim,
-                            fontSize: '0.69rem',
+                            display: 'inline-flex',
+                            alignItems: 'center',
                           }}
                         >
-                          {completed ? '✓' : '○'}
+                          {completed ? (
+                            <CheckCircle2 size={11} strokeWidth={2.25} />
+                          ) : (
+                            <Circle size={11} strokeWidth={2.25} />
+                          )}
                         </span>
                       )}
                     </span>

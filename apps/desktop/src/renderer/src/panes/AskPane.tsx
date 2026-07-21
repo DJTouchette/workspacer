@@ -2,6 +2,7 @@ import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { AgentWorkspace, AgentProvider } from '../types/pane';
 import { useConfig } from '../hooks/useConfig';
 import { AgentLogo } from '../components/agentLogos';
+import { ArrowRight } from '../components/icons';
 import { ASK_PRESETS } from './askPresets';
 import { findSessionRefs } from './askLinks';
 
@@ -51,8 +52,7 @@ const SupervisorRow: React.FC<{
       transition: 'background 0.1s ease',
     }}
     onMouseEnter={(e) => {
-      (e.currentTarget as HTMLElement).style.background =
-        'var(--wks-bg-selected, rgba(74,158,255,0.08))';
+      (e.currentTarget as HTMLElement).style.background = 'var(--wks-bg-selected)';
     }}
     onMouseLeave={(e) => {
       (e.currentTarget as HTMLElement).style.background = 'transparent';
@@ -64,7 +64,7 @@ const SupervisorRow: React.FC<{
         width: 8,
         height: 8,
         borderRadius: '50%',
-        background: 'var(--wks-accent, #4a9eff)',
+        background: 'var(--wks-accent)',
         flexShrink: 0,
         opacity: agent.sessionId ? 1 : 0.35,
       }}
@@ -84,12 +84,15 @@ const SupervisorRow: React.FC<{
     <span
       style={{
         fontSize: '0.66rem',
-        color: 'var(--wks-accent, #4a9eff)',
+        color: 'var(--wks-accent)',
         fontWeight: 600,
         flexShrink: 0,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 3,
       }}
     >
-      open →
+      open <ArrowRight size={11} strokeWidth={2.25} />
     </span>
   </div>
 );
@@ -204,7 +207,7 @@ const AskPane: React.FC<AskPaneProps> = ({
       <div
         style={{
           padding: '18px 20px 14px',
-          borderBottom: '1px solid var(--wks-border-subtle, rgba(255,255,255,0.07))',
+          borderBottom: '1px solid var(--wks-border-subtle)',
           flexShrink: 0,
         }}
       >
@@ -221,7 +224,7 @@ const AskPane: React.FC<AskPaneProps> = ({
         <div
           style={{
             fontSize: '0.72rem',
-            color: 'var(--wks-text-faint, #666)',
+            color: 'var(--wks-text-faint)',
             lineHeight: 1.5,
           }}
         >
@@ -256,9 +259,9 @@ const AskPane: React.FC<AskPaneProps> = ({
               style={{
                 padding: '4px 11px',
                 borderRadius: 20,
-                border: '1px solid var(--wks-accent, #4a9eff)',
+                border: '1px solid var(--wks-accent)',
                 background: 'transparent',
-                color: 'var(--wks-accent, #4a9eff)',
+                color: 'var(--wks-accent)',
                 fontSize: '0.7rem',
                 fontWeight: 600,
                 fontFamily: 'inherit',
@@ -270,13 +273,13 @@ const AskPane: React.FC<AskPaneProps> = ({
               onMouseEnter={(e) => {
                 if (spawning) return;
                 const el = e.currentTarget as HTMLButtonElement;
-                el.style.background = 'var(--wks-accent, #4a9eff)';
-                el.style.color = 'var(--wks-text-on-accent, #0d0d10)';
+                el.style.background = 'var(--wks-accent)';
+                el.style.color = 'var(--wks-text-on-accent)';
               }}
               onMouseLeave={(e) => {
                 const el = e.currentTarget as HTMLButtonElement;
                 el.style.background = 'transparent';
-                el.style.color = 'var(--wks-accent, #4a9eff)';
+                el.style.color = 'var(--wks-accent)';
               }}
             >
               {preset.label}
@@ -301,8 +304,8 @@ const AskPane: React.FC<AskPaneProps> = ({
             resize: 'vertical',
             padding: '10px 12px',
             borderRadius: 'var(--wks-radius-md)',
-            border: '1px solid var(--wks-border-subtle, rgba(255,255,255,0.1))',
-            background: 'var(--wks-bg-input, rgba(255,255,255,0.03))',
+            border: '1px solid var(--wks-border-subtle)',
+            background: 'var(--wks-bg-input)',
             color: 'var(--wks-text-primary)',
             fontSize: '0.82rem',
             fontFamily: 'inherit',
@@ -314,12 +317,10 @@ const AskPane: React.FC<AskPaneProps> = ({
             transition: 'border-color 0.15s ease',
           }}
           onFocus={(e) => {
-            (e.currentTarget as HTMLTextAreaElement).style.borderColor =
-              'var(--wks-accent, #4a9eff)';
+            (e.currentTarget as HTMLTextAreaElement).style.borderColor = 'var(--wks-accent)';
           }}
           onBlur={(e) => {
-            (e.currentTarget as HTMLTextAreaElement).style.borderColor =
-              'var(--wks-border-subtle, rgba(255,255,255,0.1))';
+            (e.currentTarget as HTMLTextAreaElement).style.borderColor = 'var(--wks-border-subtle)';
           }}
         />
 
@@ -348,9 +349,7 @@ const AskPane: React.FC<AskPaneProps> = ({
                       ? '1px solid var(--wks-accent)'
                       : '1px solid var(--wks-border-input)',
                     background: active ? 'var(--wks-accent-bg)' : 'transparent',
-                    color: active
-                      ? 'var(--wks-accent-text, var(--wks-text-primary))'
-                      : 'var(--wks-text-tertiary)',
+                    color: active ? 'var(--wks-accent-text)' : 'var(--wks-text-tertiary)',
                   }}
                 >
                   <AgentLogo
@@ -375,11 +374,11 @@ const AskPane: React.FC<AskPaneProps> = ({
           <div
             style={{
               fontSize: '0.72rem',
-              color: 'var(--wks-danger, #e05555)',
+              color: 'var(--wks-error)',
               padding: '6px 10px',
               borderRadius: 6,
-              border: '1px solid var(--wks-danger, #e05555)',
-              background: 'rgba(224,85,85,0.07)',
+              border: '1px solid var(--wks-error)',
+              background: 'color-mix(in srgb, var(--wks-error) 7%, transparent)',
             }}
           >
             {error}
@@ -391,7 +390,7 @@ const AskPane: React.FC<AskPaneProps> = ({
           <details
             style={{
               position: 'relative',
-              color: 'var(--wks-text-faint, #666)',
+              color: 'var(--wks-text-faint)',
               fontSize: '0.7rem',
               fontFamily: 'inherit',
             }}
@@ -411,9 +410,9 @@ const AskPane: React.FC<AskPaneProps> = ({
                 whiteSpace: 'nowrap',
                 padding: '7px 12px',
                 borderRadius: 'var(--wks-radius-md)',
-                border: '1px solid var(--wks-border-subtle, rgba(255,255,255,0.12))',
-                background: 'var(--wks-bg-elevated, var(--wks-bg-base))',
-                color: spawning ? 'var(--wks-text-faint, #666)' : 'var(--wks-text-secondary, #aaa)',
+                border: '1px solid var(--wks-border-subtle)',
+                background: 'var(--wks-bg-elevated)',
+                color: spawning ? 'var(--wks-text-faint)' : 'var(--wks-text-secondary)',
                 fontSize: '0.7rem',
                 fontWeight: 600,
                 fontFamily: 'inherit',
@@ -430,12 +429,8 @@ const AskPane: React.FC<AskPaneProps> = ({
               padding: '8px 20px',
               borderRadius: 'var(--wks-radius-md)',
               border: 'none',
-              background: canSubmit
-                ? 'var(--wks-accent, #4a9eff)'
-                : 'var(--wks-border-subtle, rgba(255,255,255,0.08))',
-              color: canSubmit
-                ? 'var(--wks-text-on-accent, #0d0d10)'
-                : 'var(--wks-text-faint, #666)',
+              background: canSubmit ? 'var(--wks-accent)' : 'var(--wks-border-subtle)',
+              color: canSubmit ? 'var(--wks-text-on-accent)' : 'var(--wks-text-faint)',
               fontSize: '0.78rem',
               fontWeight: 700,
               fontFamily: 'inherit',
@@ -462,7 +457,7 @@ const AskPane: React.FC<AskPaneProps> = ({
         <div
           style={{
             fontSize: '0.62rem',
-            color: 'var(--wks-text-disabled, #555)',
+            color: 'var(--wks-text-disabled)',
             fontWeight: 600,
             textTransform: 'uppercase',
             letterSpacing: '0.05em',
@@ -478,7 +473,7 @@ const AskPane: React.FC<AskPaneProps> = ({
             style={{
               padding: '12px 10px',
               fontSize: '0.74rem',
-              color: 'var(--wks-text-faint, #555)',
+              color: 'var(--wks-text-faint)',
               lineHeight: 1.5,
             }}
           >

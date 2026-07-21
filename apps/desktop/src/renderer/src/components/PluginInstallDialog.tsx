@@ -111,7 +111,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({
         position: 'fixed',
         inset: 0,
         zIndex: 20000,
-        backgroundColor: 'var(--wks-overlay, rgba(0,0,0,0.5))',
+        backgroundColor: 'var(--wks-overlay)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -254,7 +254,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({
                     marginTop: 8,
                     fontSize: '0.67rem',
                     fontWeight: 600,
-                    color: req.warn ? 'var(--wks-warning, #e0a000)' : 'var(--wks-success, #3fb950)',
+                    color: req.warn ? 'var(--wks-warning)' : 'var(--wks-success)',
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: 5,
@@ -292,7 +292,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({
               alignItems: 'center',
               gap: 4,
               verticalAlign: 'text-bottom',
-              color: 'var(--wks-danger, #e05555)',
+              color: 'var(--wks-error)',
               fontWeight: 600,
             }}
           >
@@ -307,7 +307,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({
             style={{
               marginTop: 10,
               fontSize: '0.7rem',
-              color: 'var(--wks-danger, #e05555)',
+              color: 'var(--wks-error)',
               wordBreak: 'break-word',
             }}
           >
@@ -347,8 +347,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({
               fontFamily: 'inherit',
               cursor: !url.trim() || busy ? 'default' : 'pointer',
               background: !url.trim() || busy ? 'var(--wks-bg-input)' : 'var(--wks-accent)',
-              color:
-                !url.trim() || busy ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
+              color: !url.trim() || busy ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent)',
               border: 'none',
               borderRadius: 4,
               padding: '6px 14px',

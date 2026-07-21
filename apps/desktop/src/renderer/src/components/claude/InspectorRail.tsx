@@ -1,4 +1,5 @@
 import React from 'react';
+import { X } from 'lucide-react';
 import type { ClaudeSessionSnapshot } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 import { InspectorCard } from './InspectorCard';
@@ -34,15 +35,16 @@ export const InspectorRail: React.FC<{
             onClick={onClose}
             title="Hide inspector"
             style={{
-              fontSize: '0.8rem',
               border: 'none',
               background: 'transparent',
               color: colors.mutedDim,
               cursor: 'pointer',
               padding: '2px 6px',
+              display: 'flex',
+              alignItems: 'center',
             }}
           >
-            ×
+            <X size={13} strokeWidth={2} />
           </button>
         }
       />

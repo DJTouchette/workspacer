@@ -164,7 +164,7 @@ const LIGHT_THEME = 'github-light-default';
 function appIsLight(): boolean {
   if (typeof document === 'undefined') return false;
   const probe = document.createElement('span');
-  probe.style.color = 'var(--wks-claude-bg, #111)';
+  probe.style.color = 'var(--wks-claude-bg)';
   document.body.appendChild(probe);
   const rgb = getComputedStyle(probe).color.match(/\d+/g)?.map(Number) ?? [17, 17, 17];
   probe.remove();

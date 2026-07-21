@@ -1,5 +1,6 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   CheckCircle2,
   Circle,
   Loader2,
@@ -9,6 +10,7 @@ import {
   Bot,
   Gauge,
   ArrowUpRight,
+  Zap,
 } from 'lucide-react';
 import type { ClaudeSessionSnapshot, FileChange, PlanStep } from '../../types/claudeSession';
 import {
@@ -138,7 +140,7 @@ const BudgetRow: React.FC<{ sessionId: string; cost?: number }> = ({ sessionId, 
             outline: 'none',
           }}
           onFocus={(e) => {
-            e.currentTarget.style.borderColor = 'var(--wks-border-active, var(--wks-accent))';
+            e.currentTarget.style.borderColor = 'var(--wks-border-active)';
           }}
           onBlurCapture={(e) => {
             e.currentTarget.style.borderColor = colors.borderSubtle;
@@ -609,7 +611,7 @@ export const InspectorCard: React.FC<{
                 fontSize: compact ? '0.66rem' : '0.7rem',
                 fontWeight: 600,
                 padding: compact ? '3px 7px' : '4px 9px',
-                borderRadius: 'var(--wks-radius-pill, 99px)',
+                borderRadius: 'var(--wks-radius-pill)',
                 border: `1px solid ${selected ? 'color-mix(in srgb, var(--wks-accent) 30%, transparent)' : 'transparent'}`,
                 cursor: 'pointer',
                 backgroundColor: selected ? 'var(--wks-accent-bg)' : 'transparent',
@@ -637,7 +639,7 @@ export const InspectorCard: React.FC<{
                   style={{
                     fontSize: '0.66rem',
                     padding: '0 5px',
-                    borderRadius: 'var(--wks-radius-pill, 99px)',
+                    borderRadius: 'var(--wks-radius-pill)',
                     backgroundColor: 'rgba(255,255,255,0.08)',
                     color: t.live ? colors.purple : selected ? colors.accent : colors.muted,
                     fontVariantNumeric: 'tabular-nums',
@@ -773,7 +775,7 @@ export const InspectorCard: React.FC<{
                         fontSize: '0.66rem',
                         flexShrink: 0,
                         background: 'rgba(255,255,255,0.06)',
-                        borderRadius: 'var(--wks-radius-pill, 99px)',
+                        borderRadius: 'var(--wks-radius-pill)',
                         padding: '0 5px',
                         fontVariantNumeric: 'tabular-nums',
                         lineHeight: 1.6,
@@ -886,7 +888,7 @@ export const InspectorCard: React.FC<{
                     fontSize: '0.67rem',
                     fontWeight: 600,
                     padding: '2px 9px',
-                    borderRadius: 'var(--wks-radius-pill, 99px)',
+                    borderRadius: 'var(--wks-radius-pill)',
                     border: `1px solid ${colors.borderSubtle}`,
                     cursor: 'pointer',
                     backgroundColor: 'transparent',
@@ -896,8 +898,7 @@ export const InspectorCard: React.FC<{
                     transition: 'color 0.15s, border-color 0.15s',
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor =
-                      'var(--wks-border-active, var(--wks-accent))';
+                    e.currentTarget.style.borderColor = 'var(--wks-border-active)';
                     e.currentTarget.style.color = colors.text;
                   }}
                   onMouseLeave={(e) => {
@@ -937,8 +938,9 @@ export const InspectorCard: React.FC<{
                   const c = sl.capabilities;
                   // A chip with a `focus` deep-links into the Context pane's
                   // matching section — what's actually taking up context space.
-                  const chips: { label: string; focus?: string }[] = [];
-                  if (c.fastMode) chips.push({ label: '⚡ Fast' });
+                  const chips: { label: string; icon?: React.ReactNode; focus?: string }[] = [];
+                  if (c.fastMode)
+                    chips.push({ label: 'Fast', icon: <Zap size={10} strokeWidth={2.25} /> });
                   if (c.apiKeySource && c.apiKeySource !== 'none')
                     chips.push({ label: `key: ${c.apiKeySource}` });
                   if (c.outputStyle && c.outputStyle !== 'default')
@@ -962,10 +964,13 @@ export const InspectorCard: React.FC<{
                     color: colors.muted,
                     background: 'rgba(255,255,255,0.04)',
                     border: `1px solid ${colors.borderSubtle}`,
-                    borderRadius: 'var(--wks-radius-pill, 99px)',
+                    borderRadius: 'var(--wks-radius-pill)',
                     padding: '1px 8px',
                     whiteSpace: 'nowrap',
                     fontFamily: 'inherit',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 3,
                   };
                   return (
                     <div
@@ -984,8 +989,7 @@ export const InspectorCard: React.FC<{
                             title="See what's taking up context space"
                             style={{ ...chipStyle, cursor: 'pointer' }}
                             onMouseEnter={(e) => {
-                              e.currentTarget.style.borderColor =
-                                'var(--wks-border-active, var(--wks-accent))';
+                              e.currentTarget.style.borderColor = 'var(--wks-border-active)';
                               e.currentTarget.style.color = colors.text;
                             }}
                             onMouseLeave={(e) => {
@@ -993,10 +997,12 @@ export const InspectorCard: React.FC<{
                               e.currentTarget.style.color = colors.muted;
                             }}
                           >
+                            {chip.icon}
                             {chip.label}
                           </button>
                         ) : (
                           <span key={chip.label} style={chipStyle}>
+                            {chip.icon}
                             {chip.label}
                           </span>
                         ),
@@ -1038,8 +1044,18 @@ export const InspectorCard: React.FC<{
                 />
               )}
               {sl?.rateLimitWarning && (
-                <div style={{ fontSize: '0.72rem', color: colors.warning, marginBottom: 8 }}>
-                  ⚠ {sl.rateLimitWarning}
+                <div
+                  style={{
+                    fontSize: '0.72rem',
+                    color: colors.warning,
+                    marginBottom: 8,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 5,
+                  }}
+                >
+                  <AlertTriangle size={12} strokeWidth={2} style={{ flexShrink: 0 }} />
+                  {sl.rateLimitWarning}
                 </div>
               )}
               {sl?.overageOutOfCredits && (

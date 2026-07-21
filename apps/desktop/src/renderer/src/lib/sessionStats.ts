@@ -69,9 +69,9 @@ export function fmtResetAt(epochSecs?: number): string | undefined {
 
 /** Context-window fill color by PERCENT (0–100): green → amber (≥70) → red (≥90). */
 export function ctxColor(pct: number): string {
-  if (pct >= 90) return 'var(--wks-danger, #e05555)';
-  if (pct >= 70) return 'var(--wks-warning, #e0a000)';
-  return 'var(--wks-success, #3fb950)';
+  if (pct >= 90) return 'var(--wks-error)';
+  if (pct >= 70) return 'var(--wks-warning)';
+  return 'var(--wks-success)';
 }
 
 /** How long a "working" agent may go without a snapshot update before we flag it. */

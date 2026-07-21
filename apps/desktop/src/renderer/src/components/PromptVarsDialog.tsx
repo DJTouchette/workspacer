@@ -197,7 +197,7 @@ function btn(primary: boolean): React.CSSProperties {
     borderRadius: 'var(--wks-radius-sm)',
     border: primary ? 'none' : '1px solid var(--wks-border-input)',
     background: primary ? 'var(--wks-accent)' : 'transparent',
-    color: primary ? 'var(--wks-text-on-accent, #fff)' : 'var(--wks-text-secondary)',
+    color: primary ? 'var(--wks-text-on-accent)' : 'var(--wks-text-secondary)',
   };
 }
 

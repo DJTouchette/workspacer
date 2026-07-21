@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import { Circle, Star, X } from 'lucide-react';
 import { Section, SmallButton, inputStyle } from './primitives';
 import type { LibraryItem } from '../../types/library';
 
@@ -249,13 +250,18 @@ const ClaudeProfilesSection: React.FC = () => {
               >
                 <span
                   style={{
-                    fontSize: '0.75rem',
                     width: '16px',
-                    textAlign: 'center',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                     color: p.isDefault ? 'var(--wks-accent)' : 'var(--wks-text-disabled)',
                   }}
                 >
-                  {p.isDefault ? '♦' : '○'}
+                  {p.isDefault ? (
+                    <Star size={10} strokeWidth={2.25} />
+                  ) : (
+                    <Circle size={10} strokeWidth={2.25} />
+                  )}
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div
@@ -303,7 +309,11 @@ const ClaudeProfilesSection: React.FC = () => {
                 {!p.isDefault && <SmallButton label="Default" onClick={() => setDefault(p.id)} />}
                 <SmallButton label="Edit" onClick={() => startEdit(p)} />
                 {p.id !== 'default' && (
-                  <SmallButton label="✕" onClick={() => remove(p.id)} danger />
+                  <SmallButton
+                    label={<X size={11} strokeWidth={2.25} />}
+                    onClick={() => remove(p.id)}
+                    danger
+                  />
                 )}
               </div>
             )}

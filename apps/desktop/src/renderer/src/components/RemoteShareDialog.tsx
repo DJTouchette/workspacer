@@ -139,7 +139,7 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         position: 'fixed',
         inset: 0,
         zIndex: 20000,
-        backgroundColor: 'var(--wks-overlay, rgba(0,0,0,0.5))',
+        backgroundColor: 'var(--wks-overlay)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -186,7 +186,7 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         )}
 
         {!loading && !info && (
-          <div style={{ fontSize: '0.75rem', color: 'var(--wks-danger, #e05555)' }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--wks-error)' }}>
             Couldn't reach the hub for remote info.
           </div>
         )}
@@ -235,8 +235,8 @@ function UnreachableNote() {
         margin: '0 0 14px',
         padding: '10px 12px',
         borderRadius: 'var(--wks-radius-md)',
-        background: 'color-mix(in srgb, var(--wks-warning, #d97706) 8%, transparent)',
-        border: '1px solid color-mix(in srgb, var(--wks-warning, #d97706) 30%, transparent)',
+        background: 'color-mix(in srgb, var(--wks-warning) 8%, transparent)',
+        border: '1px solid color-mix(in srgb, var(--wks-warning) 30%, transparent)',
         fontSize: '0.7rem',
         color: 'var(--wks-text-secondary)',
         lineHeight: 1.6,
@@ -261,7 +261,7 @@ function AdoptedNote({ claudemon }: { claudemon: boolean }) {
         padding: '8px 12px',
         borderRadius: 'var(--wks-radius-md)',
         background: 'var(--wks-bg-input)',
-        border: '1px solid var(--wks-border-subtle, var(--wks-border-input))',
+        border: '1px solid var(--wks-border-subtle)',
         fontSize: '0.69rem',
         color: 'var(--wks-text-tertiary)',
         lineHeight: 1.5,
@@ -322,7 +322,7 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
           cursor: 'pointer',
           fontSize: '0.7rem',
           fontWeight: 700,
-          color: connected ? 'var(--wks-accent, #4a9eff)' : 'var(--wks-text-muted)',
+          color: connected ? 'var(--wks-accent)' : 'var(--wks-text-muted)',
           listStylePosition: 'inside',
         }}
       >
@@ -385,7 +385,7 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
             style={{ ...textInputStyle, marginTop: 6 }}
           />
           {error && (
-            <div style={{ fontSize: '0.67rem', color: 'var(--wks-danger, #e05555)', marginTop: 6 }}>
+            <div style={{ fontSize: '0.67rem', color: 'var(--wks-error)', marginTop: 6 }}>
               {error}
             </div>
           )}
@@ -426,7 +426,7 @@ function DisabledState({ busy, onStart }: { busy: boolean; onStart: () => void }
 
 /** Status chip used by both states. */
 function StatusPill({ on }: { on: boolean }) {
-  const color = on ? 'var(--wks-success, #3fb950)' : 'var(--wks-text-faint, #666)';
+  const color = on ? 'var(--wks-success)' : 'var(--wks-text-faint)';
   return (
     <div
       style={{
@@ -438,7 +438,7 @@ function StatusPill({ on }: { on: boolean }) {
         borderRadius: 'var(--wks-radius-pill)',
         background: 'var(--wks-bg-input)',
         border: '1px solid var(--wks-border-input)',
-        color: on ? 'var(--wks-success, #3fb950)' : 'var(--wks-text-muted)',
+        color: on ? 'var(--wks-success)' : 'var(--wks-text-muted)',
         fontSize: '0.68rem',
         fontWeight: 600,
       }}
@@ -466,7 +466,7 @@ function TailscaleNote() {
         padding: '10px 12px',
         borderRadius: 'var(--wks-radius-md)',
         background: 'var(--wks-bg-input)',
-        border: '1px solid var(--wks-border-subtle, var(--wks-border-input))',
+        border: '1px solid var(--wks-border-subtle)',
         fontSize: '0.7rem',
         color: 'var(--wks-text-tertiary)',
         lineHeight: 1.6,
@@ -481,7 +481,7 @@ function TailscaleNote() {
         href="https://tailscale.com/"
         target="_blank"
         rel="noreferrer"
-        style={{ color: 'var(--wks-accent, #4a9eff)' }}
+        style={{ color: 'var(--wks-accent)' }}
       >
         Tailscale
       </a>{' '}
@@ -511,7 +511,7 @@ function LinkifiedHint({ text }: { text: string }) {
               window.electronAPI.openExternalUrl?.(part);
             }}
             style={{
-              color: 'var(--wks-accent, #4a9eff)',
+              color: 'var(--wks-accent)',
               textDecoration: 'underline',
               cursor: 'pointer',
               wordBreak: 'break-all',
@@ -578,7 +578,7 @@ function TailscaleHttps({
             }}
           >
             HTTPS via Tailscale
-            {on && <span style={{ color: 'var(--wks-success, #3fb950)' }}> · on</span>}
+            {on && <span style={{ color: 'var(--wks-success)' }}> · on</span>}
             {recommend && (
               <span
                 style={{
@@ -586,7 +586,7 @@ function TailscaleHttps({
                   fontWeight: 700,
                   textTransform: 'uppercase',
                   letterSpacing: '0.04em',
-                  color: 'var(--wks-accent-text, var(--wks-accent))',
+                  color: 'var(--wks-accent-text)',
                   background: 'color-mix(in srgb, var(--wks-accent) 16%, transparent)',
                   padding: '1px 6px',
                   borderRadius: 5,
@@ -629,7 +629,7 @@ function TailscaleHttps({
         <div
           style={{
             fontSize: '0.66rem',
-            color: 'var(--wks-warning, #e0a000)',
+            color: 'var(--wks-warning)',
             marginTop: 8,
             lineHeight: 1.5,
             fontFamily: 'var(--wks-font-mono)',
@@ -642,7 +642,7 @@ function TailscaleHttps({
         <div
           style={{
             fontSize: '0.66rem',
-            color: 'var(--wks-danger, #e05555)',
+            color: 'var(--wks-error)',
             marginTop: 8,
             lineHeight: 1.5,
           }}
@@ -978,7 +978,7 @@ function EnabledState({
       </div>
 
       {tokenError && (
-        <div style={{ fontSize: '0.67rem', color: 'var(--wks-danger, #e05555)', marginBottom: 12 }}>
+        <div style={{ fontSize: '0.67rem', color: 'var(--wks-error)', marginBottom: 12 }}>
           {tokenError}
         </div>
       )}
@@ -1026,7 +1026,7 @@ function CopyRow({
             flex: 1,
             minWidth: 0,
             fontSize: '0.72rem',
-            fontFamily: 'var(--wks-font-mono, monospace)',
+            fontFamily: 'var(--wks-font-mono)',
             color: 'var(--wks-text-tertiary)',
             background: 'var(--wks-bg-base)',
             border: '1px solid var(--wks-border-input)',
@@ -1043,7 +1043,7 @@ function CopyRow({
         </div>
         {extra}
         <button onClick={onCopy} title={`Copy ${label.toLowerCase()}`} style={iconBtnStyle}>
-          {copied ? <Check size={13} color="var(--wks-success, #3fb950)" /> : <Copy size={13} />}
+          {copied ? <Check size={13} color="var(--wks-success)" /> : <Copy size={13} />}
         </button>
       </div>
     </div>
@@ -1067,7 +1067,7 @@ function ScopeButton({
         textAlign: 'left',
         cursor: 'pointer',
         borderRadius: 'var(--wks-radius-md)',
-        border: `1px solid ${active ? 'var(--wks-accent, #4a9eff)' : 'var(--wks-border-input)'}`,
+        border: `1px solid ${active ? 'var(--wks-accent)' : 'var(--wks-border-input)'}`,
         background: active ? 'var(--wks-accent-bg)' : 'var(--wks-bg-base)',
         color: 'var(--wks-text-primary)',
         padding: '8px 10px',
@@ -1083,7 +1083,7 @@ function ScopeButton({
               fontWeight: 800,
               textTransform: 'uppercase',
               letterSpacing: '0.04em',
-              color: 'var(--wks-accent-text, var(--wks-accent))',
+              color: 'var(--wks-accent-text)',
               background: 'color-mix(in srgb, var(--wks-accent) 14%, transparent)',
               borderRadius: 5,
               padding: '1px 5px',
@@ -1152,18 +1152,16 @@ function PairingTokenList({
                     fontWeight: 700,
                     color:
                       t.scope === 'operator'
-                        ? 'var(--wks-danger, #e05555)'
+                        ? 'var(--wks-error)'
                         : t.scope === 'triage'
-                          ? 'var(--wks-accent, #4a9eff)'
+                          ? 'var(--wks-accent)'
                           : 'var(--wks-text-muted)',
                   }}
                 >
                   {t.scope}
                 </span>
                 {t.token === activeToken && (
-                  <span style={{ color: 'var(--wks-success, #3fb950)', fontWeight: 700 }}>
-                    active
-                  </span>
+                  <span style={{ color: 'var(--wks-success)', fontWeight: 700 }}>active</span>
                 )}
                 <span
                   style={{
@@ -1195,7 +1193,7 @@ function PairingTokenList({
                 fontWeight: 700,
                 fontFamily: 'inherit',
                 cursor: busy ? 'default' : 'pointer',
-                color: busy ? 'var(--wks-text-faint)' : 'var(--wks-danger, #e05555)',
+                color: busy ? 'var(--wks-text-faint)' : 'var(--wks-error)',
                 background: 'transparent',
                 border: '1px solid var(--wks-border-input)',
                 borderRadius: 4,
@@ -1252,9 +1250,9 @@ function ModeTab({
         fontFamily: 'inherit',
         padding: '6px 10px',
         borderRadius: 6,
-        background: active ? 'var(--wks-accent-soft, var(--wks-bg-input))' : 'transparent',
+        background: active ? 'var(--wks-bg-selected)' : 'transparent',
         color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-muted)',
-        border: `1px solid ${active ? 'var(--wks-accent, #4a9eff)' : 'var(--wks-border-input)'}`,
+        border: `1px solid ${active ? 'var(--wks-accent)' : 'var(--wks-border-input)'}`,
       }}
     >
       {children}
@@ -1269,8 +1267,8 @@ const primaryBtnStyle = (disabled: boolean): React.CSSProperties => ({
   fontWeight: 600,
   fontFamily: 'inherit',
   cursor: disabled ? 'default' : 'pointer',
-  background: disabled ? 'var(--wks-bg-input)' : 'var(--wks-accent, #4a9eff)',
-  color: disabled ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
+  background: disabled ? 'var(--wks-bg-input)' : 'var(--wks-accent)',
+  color: disabled ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent)',
   border: 'none',
   borderRadius: 6,
   padding: '9px 14px',
@@ -1285,8 +1283,8 @@ const compactAccentBtnStyle = (disabled: boolean): React.CSSProperties => ({
   fontWeight: 600,
   fontFamily: 'inherit',
   cursor: disabled ? 'default' : 'pointer',
-  background: disabled ? 'var(--wks-bg-input)' : 'var(--wks-accent, #4a9eff)',
-  color: disabled ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
+  background: disabled ? 'var(--wks-bg-input)' : 'var(--wks-accent)',
+  color: disabled ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent)',
   border: 'none',
   borderRadius: 4,
   padding: '6px 14px',
@@ -1300,8 +1298,8 @@ const dangerBtnStyle = (disabled: boolean): React.CSSProperties => ({
   fontFamily: 'inherit',
   cursor: disabled ? 'default' : 'pointer',
   background: 'transparent',
-  color: disabled ? 'var(--wks-text-faint)' : 'var(--wks-danger, #e05555)',
-  border: `1px solid ${disabled ? 'var(--wks-border-input)' : 'var(--wks-danger, #e05555)'}`,
+  color: disabled ? 'var(--wks-text-faint)' : 'var(--wks-error)',
+  border: `1px solid ${disabled ? 'var(--wks-border-input)' : 'var(--wks-error)'}`,
   borderRadius: 6,
   padding: '9px 14px',
 });
@@ -1310,7 +1308,7 @@ const textInputStyle: React.CSSProperties = {
   width: '100%',
   boxSizing: 'border-box',
   fontSize: '0.72rem',
-  fontFamily: 'var(--wks-font-mono, monospace)',
+  fontFamily: 'var(--wks-font-mono)',
   color: 'var(--wks-text-primary)',
   background: 'var(--wks-bg-base)',
   border: '1px solid var(--wks-border-input)',
@@ -1320,7 +1318,7 @@ const textInputStyle: React.CSSProperties = {
 };
 
 const inlineCode: React.CSSProperties = {
-  fontFamily: 'var(--wks-font-mono, monospace)',
+  fontFamily: 'var(--wks-font-mono)',
   background: 'var(--wks-bg-base)',
   padding: '1px 4px',
   borderRadius: 3,

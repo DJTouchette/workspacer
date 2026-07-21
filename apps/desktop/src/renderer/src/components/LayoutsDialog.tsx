@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { X } from 'lucide-react';
 import type { Layout } from '../types/layout';
 
 interface Props {
@@ -171,10 +172,15 @@ const LayoutsDialog: React.FC<Props> = ({ agentCount, onSaveCurrent, onRestore, 
                 </button>
                 <button
                   onClick={() => del(l.id)}
-                  style={{ ...miniBtn, color: 'var(--wks-danger, #ff8a8a)' }}
+                  style={{
+                    ...miniBtn,
+                    color: 'var(--wks-error)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                  }}
                   title="Delete layout"
                 >
-                  ✕
+                  <X size={12} strokeWidth={2} />
                 </button>
               </div>
             ))
@@ -214,7 +220,7 @@ const input: React.CSSProperties = {
   padding: '0 10px',
   fontSize: '0.75rem',
   fontFamily: 'inherit',
-  background: 'var(--wks-bg-input, var(--wks-bg-base))',
+  background: 'var(--wks-bg-input)',
   color: 'var(--wks-text-primary)',
   border: '1px solid var(--wks-border-input)',
   borderRadius: 'var(--wks-radius-sm)',

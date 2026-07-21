@@ -47,13 +47,13 @@ function pluginStateColor(s: string | undefined): string {
   switch (s) {
     case 'healthy':
     case 'running':
-      return 'var(--wks-success, #3fb950)';
+      return 'var(--wks-success)';
     case 'unhealthy':
-      return 'var(--wks-warning, #e0a000)';
+      return 'var(--wks-warning)';
     case 'crashed':
-      return 'var(--wks-danger, #e05555)';
+      return 'var(--wks-error)';
     default:
-      return 'var(--wks-text-faint, #666)';
+      return 'var(--wks-text-faint)';
   }
 }
 
@@ -86,9 +86,9 @@ function fmtUSD(n: number): string {
   return n >= 0.01 ? `$${n.toFixed(2)}` : n > 0 ? '<$0.01' : '$0.00';
 }
 function limitColor(pct: number): string {
-  if (pct >= 80) return 'var(--wks-danger, #e05555)';
-  if (pct >= 50) return 'var(--wks-warning, #e0a000)';
-  return 'var(--wks-success, #3fb950)';
+  if (pct >= 80) return 'var(--wks-error)';
+  if (pct >= 50) return 'var(--wks-warning)';
+  return 'var(--wks-success)';
 }
 function fmtReset(epochSecs: number | undefined): string {
   if (!epochSecs) return '';
@@ -172,7 +172,7 @@ const RateLimitCard: React.FC<{ snaps: Snap[]; provider: string; title: string }
             flex: 1,
             height: 5,
             borderRadius: 3,
-            background: 'var(--wks-border-subtle, #2a2a2a)',
+            background: 'var(--wks-border-subtle)',
             overflow: 'hidden',
           }}
         >
@@ -212,7 +212,7 @@ const RateLimitCard: React.FC<{ snaps: Snap[]; provider: string; title: string }
         flex: 1,
         minWidth: 220,
         padding: '15px 16px',
-        borderRadius: 'var(--wks-radius-md, 13px)',
+        borderRadius: 'var(--wks-radius-md)',
         background: 'var(--wks-bg-raised)',
         border: '1px solid var(--wks-border-subtle)',
         display: 'flex',
@@ -264,15 +264,14 @@ const Stat: React.FC<{
       flex: 1,
       minWidth: 130,
       padding: '15px 16px',
-      borderRadius: 'var(--wks-radius-md, 13px)',
+      borderRadius: 'var(--wks-radius-md)',
       background: 'var(--wks-bg-raised)',
       border: '1px solid var(--wks-border-subtle)',
       cursor: onClick ? 'pointer' : undefined,
       transition: 'border-color 0.12s',
     }}
     onMouseEnter={(e) => {
-      if (onClick)
-        (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent, #4a9eff)';
+      if (onClick) (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent)';
     }}
     onMouseLeave={(e) => {
       if (onClick) (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border-subtle)';
@@ -353,7 +352,7 @@ const DirRow: React.FC<{
         alignItems: 'center',
         flexShrink: 0,
         cursor: 'pointer',
-        color: fav ? 'var(--wks-warning, #e0a000)' : 'var(--wks-text-faint)',
+        color: fav ? 'var(--wks-warning)' : 'var(--wks-text-faint)',
       }}
     >
       <Star size={14} strokeWidth={1.75} fill={fav ? 'currentColor' : 'none'} />
@@ -540,7 +539,7 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
                   gap: 12,
                   marginBottom: 22,
                   padding: '11px 16px',
-                  borderRadius: 'var(--wks-radius-md, 8px)',
+                  borderRadius: 'var(--wks-radius-md)',
                   border: '1px solid color-mix(in srgb, var(--wks-accent) 35%, transparent)',
                   background: 'color-mix(in srgb, var(--wks-accent) 9%, transparent)',
                   animation: 'wks-fade-in 0.25s ease-out',
@@ -550,7 +549,7 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
                   size={16}
                   strokeWidth={1.75}
                   style={{
-                    color: 'var(--wks-accent-text, var(--wks-accent))',
+                    color: 'var(--wks-accent-text)',
                     flexShrink: 0,
                     animation:
                       updateStatus.state === 'downloading'
@@ -582,7 +581,7 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
                       fontWeight: 700,
                       cursor: 'pointer',
                       background: 'var(--wks-accent)',
-                      color: 'var(--wks-text-on-accent, #fff)',
+                      color: 'var(--wks-text-on-accent)',
                       border: 'none',
                       borderRadius: 6,
                       padding: '7px 14px',
@@ -607,7 +606,7 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
                 justifyContent: 'center',
                 border: '1px solid var(--wks-border-input)',
                 background: 'color-mix(in srgb, var(--wks-accent) 5%, transparent)',
-                color: 'var(--wks-accent-text, var(--wks-text-primary))',
+                color: 'var(--wks-accent-text)',
               }}
             >
               <Home size={26} strokeWidth={1.7} />
@@ -654,7 +653,7 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
                 fontFamily: 'inherit',
                 cursor: 'pointer',
                 background: 'var(--wks-accent)',
-                color: 'var(--wks-text-on-accent, #fff)',
+                color: 'var(--wks-text-on-accent)',
                 border: 'none',
                 borderRadius: 8,
                 padding: '7px 20px',
@@ -676,14 +675,14 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
             <Stat
               label="Working"
               value={String(working)}
-              color={working ? 'var(--wks-busy, var(--wks-accent, #4a9eff))' : undefined}
+              color={working ? 'var(--wks-busy)' : undefined}
               onClick={() => setViewLevel('fleet')}
               clickTitle="Open the Fleet"
             />
             <Stat
               label="Need you"
               value={String(needsYou)}
-              color={needsYou ? 'var(--wks-warning, #e0a000)' : undefined}
+              color={needsYou ? 'var(--wks-warning)' : undefined}
               onClick={openInbox}
               clickTitle="Open the Inbox"
             />
@@ -722,7 +721,7 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
                         padding: '13px 14px',
                         background: 'var(--wks-bg-raised)',
                         border: '1px solid var(--wks-border-subtle)',
-                        borderRadius: 'var(--wks-radius-md, 13px)',
+                        borderRadius: 'var(--wks-radius-md)',
                       }}
                     >
                       <span

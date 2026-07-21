@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
-import { Plus, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, ChevronDown, LayoutGrid, Compass } from 'lucide-react';
 import { BrandMark, Wordmark } from './Brand';
 import { AgentWorkspace, AgentProvider } from '../types/pane';
 import type { RecentAgentSession } from '../../../main/shared/ipcTypes';
@@ -26,19 +26,19 @@ export const SIDEBAR_RAIL_WIDTH = 74;
 function statusVisual(state: SessionAmbientState | undefined): { color: string; label: string } {
   switch (state) {
     case 'waiting_approval':
-      return { color: 'var(--wks-warning, #e0a000)', label: 'Needs approval' };
+      return { color: 'var(--wks-warning)', label: 'Needs approval' };
     case 'waiting_input':
-      return { color: 'var(--wks-warning, #e0a000)', label: 'Waiting for input' };
+      return { color: 'var(--wks-warning)', label: 'Waiting for input' };
     case 'thinking':
-      return { color: 'var(--wks-busy, var(--wks-accent, #4a9eff))', label: 'Thinking' };
+      return { color: 'var(--wks-busy)', label: 'Thinking' };
     case 'streaming':
-      return { color: 'var(--wks-busy, var(--wks-accent, #4a9eff))', label: 'Working' };
+      return { color: 'var(--wks-busy)', label: 'Working' };
     case 'background':
-      return { color: 'var(--wks-busy, var(--wks-accent, #4a9eff))', label: 'Background work' };
+      return { color: 'var(--wks-busy)', label: 'Background work' };
     case 'idle':
-      return { color: 'var(--wks-success, #3fb950)', label: 'Idle' };
+      return { color: 'var(--wks-success)', label: 'Idle' };
     default:
-      return { color: 'var(--wks-text-faint, #666)', label: 'Stopped' };
+      return { color: 'var(--wks-text-faint)', label: 'Stopped' };
   }
 }
 
@@ -52,12 +52,12 @@ const KIND_GLYPH: Record<AttentionKind, string> = {
   done: '✓',
 };
 const KIND_COLOR: Record<AttentionKind, string> = {
-  approval: 'var(--wks-warning, #e0a000)',
-  question: 'var(--wks-accent, #4a9eff)',
-  error: 'var(--wks-danger, #e05555)',
-  stuck: 'var(--wks-warning, #e0a000)',
-  bigdiff: 'var(--wks-warning, #e0a000)',
-  done: 'var(--wks-success, #3fb950)',
+  approval: 'var(--wks-warning)',
+  question: 'var(--wks-accent)',
+  error: 'var(--wks-error)',
+  stuck: 'var(--wks-warning)',
+  bigdiff: 'var(--wks-warning)',
+  done: 'var(--wks-success)',
 };
 const KIND_VISUAL_LABEL: Record<AttentionKind, string> = {
   approval: 'Needs approval',
@@ -357,11 +357,13 @@ const SideBar: React.FC<SideBarProps> = ({
           }}
         >
           {isGlobal ? (
-            <span style={{ fontSize: '0.95rem', color: 'var(--wks-text-tertiary)', lineHeight: 1 }}>
-              ▦
-            </span>
+            <LayoutGrid
+              size={16}
+              strokeWidth={1.75}
+              style={{ color: 'var(--wks-text-tertiary)' }}
+            />
           ) : isSupervisor ? (
-            <span style={{ fontSize: '0.9rem', lineHeight: 1 }}>🧭</span>
+            <Compass size={16} strokeWidth={1.75} style={{ color: 'var(--wks-text-primary)' }} />
           ) : (
             // Provider logo — same vocabulary as the expanded panel, so an agent
             // reads as the same Claude / Codex / OpenCode mark in either state.
@@ -507,14 +509,14 @@ const SideBar: React.FC<SideBarProps> = ({
             onClick={onJumpToAttention}
             title={`${needYouCount} agent${needYouCount === 1 ? '' : 's'} need you — click to jump`}
             style={{
-              ...pillStyle('var(--wks-warning, #e0a000)'),
+              ...pillStyle('var(--wks-warning)'),
               border: 'none',
               cursor: 'pointer',
               flexShrink: 0,
               margin: '0 0 6px',
             }}
           >
-            <span style={dotStyle('var(--wks-warning, #e0a000)', true)} />
+            <span style={dotStyle('var(--wks-warning)', true)} />
             {needYouCount}
           </button>
         )}
@@ -686,8 +688,8 @@ const SideBar: React.FC<SideBarProps> = ({
               fontSize: '0.72rem',
               fontFamily: 'inherit',
               padding: '5px 9px',
-              borderRadius: 'var(--wks-radius-md, 6px)',
-              border: '1px solid var(--wks-border-input, var(--wks-border-subtle))',
+              borderRadius: 'var(--wks-radius-md)',
+              border: '1px solid var(--wks-border-input)',
               background: 'var(--wks-bg-base)',
               color: 'var(--wks-text-primary)',
             }}
@@ -775,7 +777,7 @@ const SideBar: React.FC<SideBarProps> = ({
             const isActive = agent.id === activeAgentId;
             const isSupervisor = agent.kind === 'supervisor';
             const provider = agent.provider ?? 'claude';
-            const hue = PROVIDER_HUE[provider] ?? 'var(--wks-accent, #4a9eff)';
+            const hue = PROVIDER_HUE[provider] ?? 'var(--wks-accent)';
             const state = agent.sessionId ? statusBySession[agent.sessionId] : undefined;
             const cardState = cardStateOf(agent);
             const top: AttentionItem | undefined = topByAgent.get(agent.id);
@@ -814,7 +816,7 @@ const SideBar: React.FC<SideBarProps> = ({
                     ? 'approve a tool call'
                     : 'your input';
               pushActivity(activity.slice(-2));
-              log.push({ text: `Waiting: ${what}`, color: 'var(--wks-warning, #e0a000)' });
+              log.push({ text: `Waiting: ${what}`, color: 'var(--wks-warning)' });
             } else if (!agent.sessionId) {
               log.push({ text: 'Stopped — click to respawn', color: 'var(--wks-text-faint)' });
             } else if (cardState === 'working') {
@@ -827,7 +829,7 @@ const SideBar: React.FC<SideBarProps> = ({
                 if (stepText) lines = [{ text: stepText, at: 0, kind: 'message' }];
               }
               pushActivity(lines.slice(0, -1));
-              pushActivity(lines.slice(-1), 'var(--wks-success, #3fb950)');
+              pushActivity(lines.slice(-1), 'var(--wks-success)');
             } else if (activity.length) {
               // Resting card — the last two things it did, muted.
               pushActivity(activity.slice(-2));
@@ -857,9 +859,9 @@ const SideBar: React.FC<SideBarProps> = ({
             const borderColor = isActive
               ? 'var(--wks-accent-glow)'
               : cardState === 'working'
-                ? 'color-mix(in srgb, var(--wks-success, #3fb950) 32%, transparent)'
+                ? 'color-mix(in srgb, var(--wks-success) 32%, transparent)'
                 : cardState === 'waiting'
-                  ? 'color-mix(in srgb, var(--wks-warning, #e0a000) 48%, transparent)'
+                  ? 'color-mix(in srgb, var(--wks-warning) 48%, transparent)'
                   : 'transparent';
             const dimmed = cardState === 'done' && !isActive;
 
@@ -895,7 +897,7 @@ const SideBar: React.FC<SideBarProps> = ({
                   border: `1px solid ${borderColor}`,
                   boxShadow:
                     cardState === 'waiting'
-                      ? '0 0 14px color-mix(in srgb, var(--wks-warning, #e0a000) 9%, transparent)'
+                      ? '0 0 14px color-mix(in srgb, var(--wks-warning) 9%, transparent)'
                       : 'none',
                   opacity: dimmed ? 0.55 : 1,
                   transition: 'opacity 0.15s, border-color 0.15s, background-color 0.15s',
@@ -934,7 +936,7 @@ const SideBar: React.FC<SideBarProps> = ({
                     <span
                       style={{
                         flexShrink: 0,
-                        color: 'var(--wks-warning, #e0a000)',
+                        color: 'var(--wks-warning)',
                         fontSize: '0.6rem',
                         lineHeight: 1,
                         animation: 'wks-pulse 1.4s ease-in-out infinite',
@@ -955,7 +957,11 @@ const SideBar: React.FC<SideBarProps> = ({
                     </span>
                   )}
                   {isSupervisor && (
-                    <span style={{ flexShrink: 0, fontSize: '0.72rem', lineHeight: 1 }}>🧭</span>
+                    <Compass
+                      size={12}
+                      strokeWidth={2}
+                      style={{ flexShrink: 0, color: 'var(--wks-text-secondary)' }}
+                    />
                   )}
                   {isRenaming ? (
                     <input
@@ -1009,9 +1015,7 @@ const SideBar: React.FC<SideBarProps> = ({
                         fontFamily: 'var(--wks-font-mono)',
                         fontSize: '0.62rem',
                         color:
-                          cardState === 'waiting'
-                            ? 'var(--wks-warning, #e0a000)'
-                            : 'var(--wks-text-faint)',
+                          cardState === 'waiting' ? 'var(--wks-warning)' : 'var(--wks-text-faint)',
                       }}
                     >
                       {cardState === 'waiting' ? `${age} · paused` : age}
@@ -1030,7 +1034,7 @@ const SideBar: React.FC<SideBarProps> = ({
                       paddingLeft: 9,
                       borderLeft: `1px solid ${
                         cardState === 'waiting'
-                          ? 'color-mix(in srgb, var(--wks-warning, #e0a000) 30%, transparent)'
+                          ? 'color-mix(in srgb, var(--wks-warning) 30%, transparent)'
                           : 'var(--wks-border-subtle)'
                       }`,
                     }}
@@ -1291,7 +1295,7 @@ const SideBar: React.FC<SideBarProps> = ({
             {!collapsedSections.recent &&
               recentSessions!.map((s) => {
                 const provider = (s.provider || 'claude') as AgentProvider;
-                const hue = PROVIDER_HUE[provider] ?? 'var(--wks-accent, #4a9eff)';
+                const hue = PROVIDER_HUE[provider] ?? 'var(--wks-accent)';
                 const name = recentSessionLabel(s);
                 const age = s.updatedAt ? relTime(Date.now() - s.updatedAt) : '';
                 return (
@@ -1392,8 +1396,8 @@ const SideBar: React.FC<SideBarProps> = ({
             width: 22,
             height: 22,
             borderRadius: 'var(--wks-radius-pill)',
-            background: 'var(--wks-success, #3fb950)',
-            color: 'var(--wks-bg-base, #14191c)',
+            background: 'var(--wks-success)',
+            color: 'var(--wks-bg-base)',
             fontWeight: 700,
             fontSize: '0.85rem',
             lineHeight: 1,
@@ -1492,8 +1496,8 @@ function cardActionStyle(primary: boolean): React.CSSProperties {
     fontFamily: 'inherit',
     fontSize: '0.7rem',
     fontWeight: 700,
-    background: primary ? 'var(--wks-success, #3fb950)' : 'var(--wks-bg-base)',
-    color: primary ? 'var(--wks-bg-base, #14191c)' : 'var(--wks-text-primary)',
+    background: primary ? 'var(--wks-success)' : 'var(--wks-bg-base)',
+    color: primary ? 'var(--wks-bg-base)' : 'var(--wks-text-primary)',
   };
 }
 

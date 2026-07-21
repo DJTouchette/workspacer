@@ -1,4 +1,5 @@
 import React from 'react';
+import { Ban, Check, CornerDownRight } from 'lucide-react';
 import type { PendingQuestion } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 
@@ -51,7 +52,7 @@ export const AnsweredQuestionCard: React.FC<{ record: ResolvedQuestionRecord }> 
           marginBottom: 7,
         }}
       >
-        <span style={{ fontSize: '0.72rem', lineHeight: 1 }}>{declined ? '⊘' : '✓'}</span>
+        {declined ? <Ban size={12} strokeWidth={2} /> : <Check size={12} strokeWidth={2} />}
         {declined ? 'Declined' : questions.length > 1 ? 'You answered' : 'You answered'}
       </div>
 
@@ -83,9 +84,15 @@ export const AnsweredQuestionCard: React.FC<{ record: ResolvedQuestionRecord }> 
               </div>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
                 <span
-                  style={{ color: accent, fontSize: '0.72rem', flexShrink: 0, lineHeight: 1.5 }}
+                  style={{
+                    color: accent,
+                    flexShrink: 0,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    alignSelf: 'center',
+                  }}
                 >
-                  ↳
+                  <CornerDownRight size={12} strokeWidth={2} />
                 </span>
                 <span
                   style={{

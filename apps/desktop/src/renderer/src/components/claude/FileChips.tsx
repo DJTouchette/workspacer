@@ -1,4 +1,5 @@
 import React from 'react';
+import { X } from 'lucide-react';
 import { claudeColors as colors } from '../claude-shared';
 import type { AttachedFile } from './fileAttachment';
 
@@ -49,12 +50,12 @@ export const FileChips: React.FC<{ files: AttachedFile[]; onRemove: (idx: number
             style={{
               cursor: 'pointer',
               color: colors.muted,
-              fontWeight: 700,
-              fontSize: '0.7rem',
+              display: 'inline-flex',
+              alignItems: 'center',
               marginLeft: 2,
             }}
           >
-            {'×'}
+            <X size={12} strokeWidth={2} />
           </span>
         </span>
       ))}

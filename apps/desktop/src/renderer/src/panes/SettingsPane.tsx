@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react'
 import { useConfig } from '../hooks/useConfig';
 import { fuzzyScoreAny } from '../lib/fuzzy';
 import { SETTINGS_SECTION_EVENT, consumePendingSettingsSection } from '../lib/settingsBus';
-import { Settings as SettingsIcon } from '../components/icons';
+import { Settings as SettingsIcon, X } from '../components/icons';
 import { useIsSmallScreen } from '../hooks/useMediaQuery';
 import AppearanceSection from '../components/settings/AppearanceSection';
 import LayoutSection from '../components/settings/LayoutSection';
@@ -325,12 +325,8 @@ function Sidebar({ sections, active, onSelect }: NavProps) {
                   onClick={() => onSelect(s.key)}
                   style={{
                     ...NAV_ITEM_BASE,
-                    color: isActive
-                      ? 'var(--wks-accent-text, var(--wks-accent))'
-                      : 'var(--wks-text-secondary)',
-                    background: isActive
-                      ? 'var(--wks-accent-bg, rgba(99,102,241,0.12))'
-                      : 'transparent',
+                    color: isActive ? 'var(--wks-accent-text)' : 'var(--wks-text-secondary)',
+                    background: isActive ? 'var(--wks-accent-bg)' : 'transparent',
                     fontWeight: isActive ? 600 : 400,
                   }}
                 >
@@ -516,7 +512,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
             justifyContent: 'center',
             border: '1px solid var(--wks-border-input)',
             background: 'color-mix(in srgb, var(--wks-accent) 5%, transparent)',
-            color: 'var(--wks-accent-text, var(--wks-text-primary))',
+            color: 'var(--wks-accent-text)',
           }}
         >
           <SettingsIcon size={22} strokeWidth={1.7} />
@@ -544,7 +540,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
             padding: '0 14px',
             background: 'var(--wks-bg-raised)',
             border: '1px solid var(--wks-border-subtle)',
-            borderRadius: 'var(--wks-radius-pill, 999px)',
+            borderRadius: 'var(--wks-radius-pill)',
             transition: 'border-color 0.15s',
           }}
           onFocusCapture={(e) => {
@@ -598,12 +594,12 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
                 cursor: 'pointer',
                 padding: '0 2px',
                 color: 'var(--wks-text-faint)',
-                fontSize: '1rem',
                 lineHeight: 1,
+                display: 'flex',
                 flexShrink: 0,
               }}
             >
-              ×
+              <X size={13} strokeWidth={2} />
             </button>
           )}
           {!search && (
@@ -650,17 +646,13 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
                   fontFamily: 'inherit',
                   fontWeight: 600,
                   cursor: 'pointer',
-                  borderRadius: 'var(--wks-radius-pill, 999px)',
+                  borderRadius: 'var(--wks-radius-pill)',
                   border: '1px solid',
                   borderColor: active
                     ? 'color-mix(in srgb, var(--wks-accent) 45%, transparent)'
                     : 'var(--wks-border-subtle)',
-                  background: active
-                    ? 'var(--wks-accent-bg, rgba(99,102,241,0.14))'
-                    : 'transparent',
-                  color: active
-                    ? 'var(--wks-accent-text, var(--wks-accent))'
-                    : 'var(--wks-text-secondary)',
+                  background: active ? 'var(--wks-accent-bg)' : 'transparent',
+                  color: active ? 'var(--wks-accent-text)' : 'var(--wks-text-secondary)',
                 }}
               >
                 {s.label}

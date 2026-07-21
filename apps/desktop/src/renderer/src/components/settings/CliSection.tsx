@@ -41,10 +41,10 @@ const CliSection: React.FC = () => {
         <div
           style={{
             fontSize: '0.72rem',
-            fontFamily: 'var(--wks-font-mono, monospace)',
+            fontFamily: 'var(--wks-font-mono)',
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',
-            color: result.ok ? 'var(--wks-text-muted)' : 'var(--wks-error, #e05555)',
+            color: result.ok ? 'var(--wks-text-muted)' : 'var(--wks-error)',
           }}
         >
           {result.message}

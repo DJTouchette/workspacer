@@ -1,4 +1,5 @@
 import React from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { WorkflowAgentInfo } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 import { AGENT_PURPLE, fmtTokens, fmtDuration, shortModel } from './agentUtils';
@@ -144,8 +145,14 @@ const WorkflowAgentRowInner: React.FC<{ agent: WorkflowAgentInfo; now: number }>
         {agent.toolCalls > 0 && <span style={agentMetaStyle}>{agent.toolCalls} tools</span>}
         {duration !== undefined && <span style={agentMetaStyle}>{fmtDuration(duration)}</span>}
         {canExpand && (
-          <span style={{ color: colors.mutedDim, fontSize: '0.64rem', flexShrink: 0 }}>
-            {expanded ? '▾' : '▸'}
+          <span
+            style={{ color: colors.mutedDim, display: 'flex', alignItems: 'center', flexShrink: 0 }}
+          >
+            {expanded ? (
+              <ChevronDown size={12} strokeWidth={2} />
+            ) : (
+              <ChevronRight size={12} strokeWidth={2} />
+            )}
           </span>
         )}
       </div>

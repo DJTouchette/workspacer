@@ -20,7 +20,7 @@ export const claudeColors = {
   success: 'var(--wks-success)',
   error: 'var(--wks-error)',
   warning: 'var(--wks-warning)',
-  purple: 'var(--wks-purple, #c084fc)',
+  purple: 'var(--wks-purple)',
   text: 'var(--wks-text-secondary)',
   textBright: 'var(--wks-text-primary)',
   border: 'var(--wks-claude-border)',
@@ -34,7 +34,7 @@ export const badgeColors: Record<string, string> = {
   idle: claudeColors.success,
   thinking: claudeColors.warning,
   streaming: claudeColors.accent,
-  waiting_input: 'var(--wks-purple, #c084fc)',
+  waiting_input: 'var(--wks-purple)',
   waiting_approval: claudeColors.error,
   background: claudeColors.accent,
 };

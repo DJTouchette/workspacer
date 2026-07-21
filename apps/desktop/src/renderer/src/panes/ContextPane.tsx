@@ -116,7 +116,7 @@ const ItemRow: React.FC<{ item: ContextItemInfo; cwd?: string; maxTokens: number
           color: colors.mutedDim,
           flexShrink: 0,
           border: `1px solid ${colors.borderSubtle}`,
-          borderRadius: 'var(--wks-radius-pill, 99px)',
+          borderRadius: 'var(--wks-radius-pill)',
           padding: '0 6px',
           lineHeight: 1.6,
         }}
@@ -165,9 +165,9 @@ const Section: React.FC<{
       style={{
         marginBottom: 14,
         padding: '12px 16px 10px',
-        borderRadius: 'var(--wks-radius-lg, 12px)',
+        borderRadius: 'var(--wks-radius-lg)',
         border: `1px solid ${colors.borderSubtle}`,
-        background: 'var(--wks-bg-surface, rgba(255,255,255,0.02))',
+        background: 'var(--wks-bg-surface)',
         scrollMarginTop: 12,
       }}
     >
@@ -196,7 +196,7 @@ const Section: React.FC<{
             fontSize: '0.66rem',
             color: colors.muted,
             background: 'rgba(255,255,255,0.06)',
-            borderRadius: 'var(--wks-radius-pill, 99px)',
+            borderRadius: 'var(--wks-radius-pill)',
             padding: '1px 7px',
             fontVariantNumeric: 'tabular-nums',
           }}
@@ -364,7 +364,7 @@ const ContextPane: React.FC<ContextPaneProps> = ({
                 fontSize: '0.7rem',
                 color: colors.muted,
                 border: `1px solid ${colors.borderSubtle}`,
-                borderRadius: 'var(--wks-radius-pill, 99px)',
+                borderRadius: 'var(--wks-radius-pill)',
                 padding: '2px 9px',
               }}
             >
@@ -536,7 +536,7 @@ const NameCloud: React.FC<{ names: string[] }> = ({ names }) => (
           color: colors.muted,
           background: 'rgba(255,255,255,0.04)',
           border: `1px solid ${colors.borderSubtle}`,
-          borderRadius: 'var(--wks-radius-pill, 99px)',
+          borderRadius: 'var(--wks-radius-pill)',
           padding: '2px 8px',
           whiteSpace: 'nowrap',
         }}

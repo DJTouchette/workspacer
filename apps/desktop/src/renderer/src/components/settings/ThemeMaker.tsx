@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Config } from '../../hooks/useConfig';
 import type { CustomTheme, TerminalTheme, Theme, ThemeColors } from '../../themes';
 import { newCustomThemeId, themes, toHex, DEFAULT_THEME } from '../../themes';
@@ -182,7 +183,13 @@ const TokenGroup: React.FC<{
           textAlign: 'left',
         }}
       >
-        <span style={{ fontSize: '0.64rem', width: 10 }}>{open ? '▾' : '▸'}</span>
+        <span style={{ width: 10, display: 'inline-flex', alignItems: 'center' }}>
+          {open ? (
+            <ChevronDown size={10} strokeWidth={2.25} />
+          ) : (
+            <ChevronRight size={10} strokeWidth={2.25} />
+          )}
+        </span>
         {title}
       </button>
       {open && <div style={{ paddingBottom: 8 }}>{children}</div>}

@@ -1,4 +1,5 @@
 import React from 'react';
+import { ChevronDown } from 'lucide-react';
 import { claudeColors as colors } from '../claude-shared';
 
 export const ScrollToBottomButton: React.FC<{ onClick: () => void }> = ({ onClick }) => (
@@ -20,7 +21,7 @@ export const ScrollToBottomButton: React.FC<{ onClick: () => void }> = ({ onClic
         padding: '4px 14px',
         borderRadius: 'var(--wks-radius-pill)',
         border: `1px solid ${colors.border}`,
-        backgroundColor: 'var(--wks-glass-bg, rgba(13, 13, 16, 0.9))',
+        backgroundColor: 'var(--wks-glass-bg)',
         color: colors.muted,
         cursor: 'pointer',
         backdropFilter: 'blur(8px)',
@@ -29,7 +30,7 @@ export const ScrollToBottomButton: React.FC<{ onClick: () => void }> = ({ onClic
         gap: 4,
       }}
     >
-      <span style={{ fontSize: '0.7rem' }}>{'↓'}</span>
+      <ChevronDown size={12} strokeWidth={2} />
       Scroll to bottom
     </button>
   </div>

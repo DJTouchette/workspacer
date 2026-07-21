@@ -126,7 +126,7 @@ export const FileLink: React.FC<{
           cursor: 'pointer',
           fontFamily: 'var(--claude-mono-font, monospace)',
           textDecoration: hover ? 'underline' : 'none',
-          textDecorationColor: 'var(--wks-text-muted, currentColor)',
+          textDecorationColor: 'var(--wks-text-muted)',
           textUnderlineOffset: 2,
           ...style,
         }}

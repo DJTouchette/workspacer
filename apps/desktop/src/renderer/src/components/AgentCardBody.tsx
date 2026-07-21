@@ -9,6 +9,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
+import { Check, X } from 'lucide-react';
 import type { ToolCall } from '../types/claudeSession';
 import type { PlanProgress } from '../lib/sessionStats';
 import { formatToolSummary, ensureKeyframes, claudeColors } from './claude-shared';
@@ -74,9 +75,9 @@ const ToolChipRow: React.FC<{ active?: ToolCall; recent: ToolCall[] }> = ({ acti
           style={{
             ...chipBase,
             maxWidth: '48%',
-            color: 'var(--wks-accent, #4a9eff)',
-            border: '1px solid color-mix(in srgb, var(--wks-accent, #4a9eff) 45%, transparent)',
-            background: 'color-mix(in srgb, var(--wks-accent, #4a9eff) 10%, transparent)',
+            color: 'var(--wks-accent)',
+            border: '1px solid color-mix(in srgb, var(--wks-accent) 45%, transparent)',
+            background: 'color-mix(in srgb, var(--wks-accent) 10%, transparent)',
           }}
         >
           <span
@@ -103,7 +104,7 @@ const ToolChipRow: React.FC<{ active?: ToolCall; recent: ToolCall[] }> = ({ acti
           style={{
             ...chipBase,
             color: 'var(--wks-text-faint)',
-            border: '1px solid var(--wks-border-subtle, #2a2a2a)',
+            border: '1px solid var(--wks-border-subtle)',
             background: 'transparent',
           }}
         >
@@ -111,9 +112,15 @@ const ToolChipRow: React.FC<{ active?: ToolCall; recent: ToolCall[] }> = ({ acti
             style={{
               color: tc.status === 'failed' ? claudeColors.error : claudeColors.success,
               flexShrink: 0,
+              display: 'inline-flex',
+              alignItems: 'center',
             }}
           >
-            {tc.status === 'failed' ? '✗' : '✓'}
+            {tc.status === 'failed' ? (
+              <X size={10} strokeWidth={2.25} />
+            ) : (
+              <Check size={10} strokeWidth={2.25} />
+            )}
           </span>
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {formatToolSummary(tc).call}
@@ -202,10 +209,7 @@ const AgentCardBodyInner: React.FC<AgentCardBodyProps> = ({
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 4,
-                color:
-                  plan.done >= plan.total
-                    ? 'var(--wks-success, #3fb950)'
-                    : 'var(--wks-accent, #4a9eff)',
+                color: plan.done >= plan.total ? 'var(--wks-success)' : 'var(--wks-accent)',
               }}
             >
               <span style={{ color: 'var(--wks-text-faint)' }}>plan</span>
@@ -218,10 +222,10 @@ const AgentCardBodyInner: React.FC<AgentCardBodyProps> = ({
                 ~ {fileStats.files} file{fileStats.files !== 1 ? 's' : ''}
               </span>
               {fileStats.added > 0 && (
-                <span style={{ color: 'var(--wks-success, #3fb950)' }}>+{fileStats.added}</span>
+                <span style={{ color: 'var(--wks-success)' }}>+{fileStats.added}</span>
               )}
               {fileStats.removed > 0 && (
-                <span style={{ color: 'var(--wks-error, #f87171)' }}>−{fileStats.removed}</span>
+                <span style={{ color: 'var(--wks-error)' }}>−{fileStats.removed}</span>
               )}
             </span>
           )}

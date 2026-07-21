@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useLibrary } from '../hooks/useLibrary';
 import { runLibraryItem } from '../lib/libraryBus';
 import MarkdownEditor from '../components/MarkdownEditor';
-import { Zap } from '../components/icons';
+import { Zap, ArrowLeft } from '../components/icons';
 import type {
   LibraryItem,
   LibraryKind,
@@ -167,8 +167,11 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
     return (
       <Shell>
         <div style={headerStyle}>
-          <button onClick={() => setDraft(null)} style={btn()}>
-            ← Back
+          <button
+            onClick={() => setDraft(null)}
+            style={{ ...btn(), display: 'inline-flex', alignItems: 'center', gap: 5 }}
+          >
+            <ArrowLeft size={12} strokeWidth={2} /> Back
           </button>
           <div style={{ flex: 1 }} />
           <button onClick={saveDraft} disabled={!draft.title.trim()} style={btn(true)}>
@@ -409,7 +412,7 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
                       : `Delete “${it.title}”?`;
                   if (confirm(warning)) remove(it.scope, it.id, it.kind);
                 }}
-                style={{ ...miniBtn, color: 'var(--wks-danger, #ff8a8a)' }}
+                style={{ ...miniBtn, color: 'var(--wks-error)' }}
               >
                 Delete
               </button>
@@ -427,7 +430,7 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
-                fontFamily: 'var(--wks-mono, ui-monospace, monospace)',
+                fontFamily: 'var(--wks-font-mono)',
               }}
             >
               {it.kind === 'mcp'
@@ -597,7 +600,7 @@ const FormFieldLegend: React.FC = () => {
 };
 
 const codeStyle: React.CSSProperties = {
-  fontFamily: 'var(--wks-mono, ui-monospace, monospace)',
+  fontFamily: 'var(--wks-font-mono)',
   fontSize: '0.62rem',
   color: 'var(--wks-text-secondary)',
   background: 'var(--wks-bg-selected)',
@@ -628,7 +631,7 @@ const inputStyle: React.CSSProperties = {
 };
 const textareaStyle: React.CSSProperties = {
   width: '100%',
-  fontFamily: 'var(--wks-mono, ui-monospace, monospace)',
+  fontFamily: 'var(--wks-font-mono)',
   fontSize: '0.72rem',
   padding: '6px 8px',
   borderRadius: 'var(--wks-radius-sm)',
@@ -673,7 +676,7 @@ function btn(primary = false): React.CSSProperties {
     borderRadius: 'var(--wks-radius-sm)',
     border: primary ? 'none' : '1px solid var(--wks-border-input)',
     background: primary ? 'var(--wks-accent)' : 'transparent',
-    color: primary ? 'var(--wks-text-on-accent, #fff)' : 'var(--wks-text-secondary)',
+    color: primary ? 'var(--wks-text-on-accent)' : 'var(--wks-text-secondary)',
   };
 }
 function chip(active: boolean): React.CSSProperties {
@@ -685,16 +688,16 @@ function chip(active: boolean): React.CSSProperties {
     borderRadius: 4,
     border: '1px solid ' + (active ? 'var(--wks-accent)' : 'var(--wks-border-input)'),
     background: active ? 'var(--wks-accent)' : 'transparent',
-    color: active ? 'var(--wks-text-on-accent, #fff)' : 'var(--wks-text-secondary)',
+    color: active ? 'var(--wks-text-on-accent)' : 'var(--wks-text-secondary)',
   };
 }
 function kindBadge(kind: LibraryKind): React.CSSProperties {
   const palette: Record<LibraryKind, { bg: string; fg: string }> = {
     prompt: { bg: 'rgba(96,165,250,0.18)', fg: 'var(--wks-accent-text)' },
-    skill: { bg: 'rgba(192,132,252,0.18)', fg: 'var(--wks-purple, #c084fc)' },
+    skill: { bg: 'rgba(192,132,252,0.18)', fg: 'var(--wks-purple)' },
     agent: { bg: 'rgba(74,222,128,0.18)', fg: 'var(--wks-success)' },
     mcp: { bg: 'rgba(251,146,60,0.18)', fg: 'var(--wks-warning)' },
-    command: { bg: 'rgba(56,189,248,0.18)', fg: 'var(--wks-info, #38bdf8)' },
+    command: { bg: 'rgba(56,189,248,0.18)', fg: 'var(--wks-accent-text)' },
   };
   const { bg, fg } = palette[kind] ?? palette.prompt;
   return {
@@ -715,8 +718,8 @@ function scopeBadge(scope: LibraryScope): React.CSSProperties {
       padding: '1px 6px',
       borderRadius: 'var(--wks-radius-pill)',
       fontWeight: 600,
-      background: 'rgba(251,146,60,0.16)',
-      color: '#fb923c',
+      background: 'color-mix(in srgb, var(--wks-warning) 16%, transparent)',
+      color: 'var(--wks-warning)',
     };
   }
   return {

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, ChevronDown, ChevronRight, X } from 'lucide-react';
 import type { ToolCall, SubagentInfo, WorkflowRunInfo } from '../../types/claudeSession';
 import { claudeColors as colors, WorkLogEntry } from '../claude-shared';
 import { DiffView, PatchDiffView, hasDiff, ReadView, hasRead } from './DiffView';
@@ -204,13 +205,18 @@ const WorkCardInner: React.FC<{
           <span
             style={{
               color: summary.failed > 0 ? colors.error : colors.success,
-              fontSize: '0.7rem',
               width: 12,
-              textAlign: 'center',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
               flexShrink: 0,
             }}
           >
-            {summary.failed > 0 ? '✗' : '✓'}
+            {summary.failed > 0 ? (
+              <X size={12} strokeWidth={2} />
+            ) : (
+              <Check size={12} strokeWidth={2} />
+            )}
           </span>
         )}
         <span style={{ color: colors.text, fontWeight: 600, flexShrink: 0 }}>
@@ -267,8 +273,14 @@ const WorkCardInner: React.FC<{
             {summary.removed > 0 && <span style={{ color: colors.error }}>−{summary.removed}</span>}
           </span>
         )}
-        <span style={{ color: colors.mutedDim, fontSize: '0.64rem', flexShrink: 0 }}>
-          {expanded ? '▾' : '▸'}
+        <span
+          style={{ color: colors.mutedDim, display: 'flex', alignItems: 'center', flexShrink: 0 }}
+        >
+          {expanded ? (
+            <ChevronDown size={12} strokeWidth={2} />
+          ) : (
+            <ChevronRight size={12} strokeWidth={2} />
+          )}
         </span>
       </div>
 

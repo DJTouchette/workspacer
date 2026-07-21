@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { Check, ChevronDown } from 'lucide-react';
 import { deriveAgentName } from '../hooks/useAgentManager';
 import { AgentLogo } from './agentLogos';
 import type { LibraryItem } from '../types/library';
@@ -476,7 +476,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   // Shared by the advanced header button and its attached panel so the two
   // read as one card even when the bypass tint is on.
   const advBorderColor = bypassSelected
-    ? 'color-mix(in srgb, var(--wks-danger, #e05555) 55%, var(--wks-border-input))'
+    ? 'color-mix(in srgb, var(--wks-error) 55%, var(--wks-border-input))'
     : 'var(--wks-border-input)';
   const permissionSummary = bypassSelected ? 'full access' : 'approval prompts';
   const modelSummary = isClaude
@@ -683,7 +683,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
         onChange={(e) => setPermissionMode(e.target.value)}
         style={{
           ...rowSelect,
-          color: bypassSelected ? 'var(--wks-danger, #e05555)' : rowSelect.color,
+          color: bypassSelected ? 'var(--wks-error)' : rowSelect.color,
         }}
       >
         {capsFor(provider).permissionModes.map((m, i) => (
@@ -791,16 +791,14 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                     fontWeight: 500,
                     fontFamily: 'inherit',
                     padding: '4px 11px',
-                    borderRadius: 'var(--wks-radius-pill, 999px)',
+                    borderRadius: 'var(--wks-radius-pill)',
                     cursor: 'pointer',
                     maxWidth: 220,
                     border: on
                       ? '1px solid var(--wks-accent)'
                       : '1px solid var(--wks-border-input)',
                     background: on ? 'var(--wks-accent-bg)' : 'transparent',
-                    color: on
-                      ? 'var(--wks-accent-text, var(--wks-text-primary))'
-                      : 'var(--wks-text-tertiary)',
+                    color: on ? 'var(--wks-accent-text)' : 'var(--wks-text-tertiary)',
                     transition: 'border-color 0.15s, color 0.15s',
                   }}
                 >
@@ -994,7 +992,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   ? 'var(--wks-text-disabled)'
                   : det.found
                     ? 'var(--wks-success)'
-                    : 'var(--wks-danger, #e05555)';
+                    : 'var(--wks-error)';
               return (
                 <button
                   key={p.value}
@@ -1015,7 +1013,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                     alignItems: 'center',
                     gap: 7,
                     padding: '14px 8px 11px',
-                    borderRadius: 'var(--wks-radius-md, 8px)',
+                    borderRadius: 'var(--wks-radius-md)',
                     cursor: 'pointer',
                     fontFamily: 'inherit',
                     border: active
@@ -1053,9 +1051,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                       gap: 5,
                       fontSize: '0.7rem',
                       fontWeight: 600,
-                      color: active
-                        ? 'var(--wks-accent-text, var(--wks-text-primary))'
-                        : 'var(--wks-text-tertiary)',
+                      color: active ? 'var(--wks-accent-text)' : 'var(--wks-text-tertiary)',
                     }}
                   >
                     {p.label}
@@ -1069,8 +1065,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                           lineHeight: 1,
                           padding: '2px 3px',
                           borderRadius: 3,
-                          color: 'var(--wks-warning, #e0a000)',
-                          border: '1px solid var(--wks-warning, #e0a000)',
+                          color: 'var(--wks-warning)',
+                          border: '1px solid var(--wks-warning)',
                           opacity: active ? 1 : 0.7,
                         }}
                       >
@@ -1095,7 +1091,16 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                       fontFamily: 'var(--wks-font-mono)',
                     }}
                   >
-                    <span style={{ color: 'var(--wks-success)' }}>✓</span>{' '}
+                    <span
+                      style={{
+                        color: 'var(--wks-success)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        verticalAlign: '-2px',
+                      }}
+                    >
+                      <Check size={11} strokeWidth={2} />
+                    </span>{' '}
                     {currentDetection.resolvedPath}
                   </div>
                   <details style={{ marginTop: 4 }}>
@@ -1144,7 +1149,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 <div>
                   <div
                     style={{
-                      color: 'var(--wks-danger, #e05555)',
+                      color: 'var(--wks-error)',
                       fontSize: '0.66rem',
                       marginBottom: 6,
                     }}
@@ -1213,11 +1218,11 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 gap: 10,
                 padding: '9px 12px',
                 borderRadius: advancedOpen
-                  ? 'var(--wks-radius-md, 8px) var(--wks-radius-md, 8px) 0 0'
-                  : 'var(--wks-radius-md, 8px)',
+                  ? 'var(--wks-radius-md) var(--wks-radius-md) 0 0'
+                  : 'var(--wks-radius-md)',
                 border: `1px solid ${advBorderColor}`,
                 background: bypassSelected
-                  ? 'color-mix(in srgb, var(--wks-danger, #e05555) 6%, transparent)'
+                  ? 'color-mix(in srgb, var(--wks-error) 6%, transparent)'
                   : 'transparent',
                 color: 'var(--wks-text-primary)',
                 cursor: 'pointer',
@@ -1234,7 +1239,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
                   fontSize: '0.7rem',
-                  color: bypassSelected ? 'var(--wks-danger, #e05555)' : 'var(--wks-text-faint)',
+                  color: bypassSelected ? 'var(--wks-error)' : 'var(--wks-text-faint)',
                 }}
               >
                 {advancedSummary}
@@ -1256,7 +1261,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 style={{
                   border: `1px solid ${advBorderColor}`,
                   borderTop: 'none',
-                  borderRadius: '0 0 var(--wks-radius-md, 8px) var(--wks-radius-md, 8px)',
+                  borderRadius: '0 0 var(--wks-radius-md) var(--wks-radius-md)',
                   padding: '2px 14px 4px',
                 }}
               >
@@ -1290,7 +1295,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               style={{
                 marginTop: 12,
                 fontSize: '0.7rem',
-                color: 'var(--wks-danger, #e05555)',
+                color: 'var(--wks-error)',
                 textAlign: 'center',
               }}
             >
@@ -1313,7 +1318,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 background: 'transparent',
                 color: 'var(--wks-text-muted)',
                 border: 'none',
-                borderRadius: 'var(--wks-radius-md, 6px)',
+                borderRadius: 'var(--wks-radius-md)',
                 padding: '9px 16px',
               }}
             >
@@ -1328,9 +1333,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 fontWeight: 600,
                 cursor: !cwd.trim() ? 'default' : 'pointer',
                 background: !cwd.trim() ? 'var(--wks-bg-input)' : 'var(--wks-accent)',
-                color: !cwd.trim() ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
+                color: !cwd.trim() ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent)',
                 border: 'none',
-                borderRadius: 'var(--wks-radius-md, 6px)',
+                borderRadius: 'var(--wks-radius-md)',
                 padding: '9px 26px',
               }}
             >
@@ -1373,7 +1378,7 @@ const quietLabel: React.CSSProperties = {
 const rowSelect: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
-  borderRadius: 'var(--wks-radius-sm, 4px)',
+  borderRadius: 'var(--wks-radius-sm)',
   padding: '3px 2px',
   fontSize: '0.72rem',
   fontWeight: 600,
@@ -1403,7 +1408,7 @@ const segBtn = (active: boolean): React.CSSProperties => ({
   borderRadius: 999,
   border: 'none',
   background: active ? 'var(--wks-accent-bg)' : 'transparent',
-  color: active ? 'var(--wks-accent-text, var(--wks-text-primary))' : 'var(--wks-text-muted)',
+  color: active ? 'var(--wks-accent-text)' : 'var(--wks-text-muted)',
   transition: 'background-color 0.15s, color 0.15s',
 });
 
@@ -1429,7 +1434,7 @@ const ghostBtnSmall: React.CSSProperties = {
   background: 'transparent',
   color: 'var(--wks-text-muted)',
   border: 'none',
-  borderRadius: 'var(--wks-radius-sm, 4px)',
+  borderRadius: 'var(--wks-radius-sm)',
   padding: '4px 9px',
   whiteSpace: 'nowrap',
   flexShrink: 0,

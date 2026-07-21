@@ -46,6 +46,50 @@
   --wks-radius-md: 8px;
   --wks-radius-lg: 12px;
   --wks-radius-pill: 999px;
+  /* Color tokens — first-paint defaults mirroring themes.ts darkTheme so bare
+   * var(--wks-*) never resolves invalid before applyTheme runs. Keep in sync
+   * with darkTheme; components must NOT re-declare per-site fallback hexes. */
+  --wks-bg-base: rgb(24, 24, 27);
+  --wks-bg-raised: rgb(28, 28, 32);
+  --wks-bg-surface: rgb(30, 30, 33);
+  --wks-bg-elevated: rgb(32, 32, 36);
+  --wks-bg-header: rgb(40, 42, 54);
+  --wks-bg-input: rgb(20, 20, 24);
+  --wks-bg-hover: rgb(38, 38, 44);
+  --wks-bg-selected: rgb(45, 48, 60);
+  --wks-bg-terminal: #1e1e22;
+  --wks-border: rgb(50, 50, 55);
+  --wks-border-subtle: rgb(45, 45, 50);
+  --wks-border-input: rgb(55, 55, 60);
+  --wks-border-active: rgb(80, 120, 200);
+  --wks-text-primary: rgb(220, 220, 235);
+  --wks-text-secondary: rgb(200, 200, 210);
+  --wks-text-tertiary: rgb(180, 180, 195);
+  --wks-text-muted: rgb(140, 140, 155);
+  --wks-text-faint: rgb(123, 123, 137);
+  --wks-text-disabled: rgb(90, 90, 100);
+  --wks-accent: rgb(80, 120, 200);
+  --wks-accent-text: rgb(96, 165, 250);
+  /* Foreground on accent-filled surfaces. Not per-theme: accents are saturated
+   * enough for white in every built-in theme. */
+  --wks-text-on-accent: #fff;
+  --wks-accent-glow: rgba(80, 120, 200, 0.15);
+  --wks-accent-bg: rgba(96, 165, 250, 0.15);
+  --wks-success: rgb(74, 222, 128);
+  --wks-error: rgb(248, 113, 113);
+  --wks-warning: #facc15;
+  --wks-purple: #c084fc;
+  --wks-busy: rgb(80, 120, 200);
+  --wks-overlay: rgba(0, 0, 0, 0.5);
+  --wks-shadow: rgba(0, 0, 0, 0.4);
+  --wks-scrollbar-thumb: rgba(255, 255, 255, 0.08);
+  --wks-scrollbar-hover: rgba(255, 255, 255, 0.15);
+  --wks-claude-bg: #0d0d10;
+  --wks-claude-user-bubble: rgba(60, 90, 160, 0.15);
+  --wks-claude-user-border: rgba(60, 90, 160, 0.25);
+  --wks-claude-divider: rgba(255, 255, 255, 0.05);
+  --wks-claude-border: rgba(255, 255, 255, 0.06);
+  --wks-claude-border-subtle: rgba(255, 255, 255, 0.04);
   --wks-glass-bg: rgba(30, 30, 33, 0.6);
   --wks-glass-strong: rgba(32, 32, 36, 0.78);
   --wks-glass-border: rgba(255, 255, 255, 0.16);

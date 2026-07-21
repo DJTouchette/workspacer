@@ -1,4 +1,5 @@
 import React from 'react';
+import { ChevronRight } from 'lucide-react';
 import { formatBinding, buildChordTree, chordMenu, chordBreadcrumb } from '../lib/shortcuts';
 
 interface ChordHintProps {
@@ -62,14 +63,22 @@ const ChordHint: React.FC<ChordHintProps> = ({ path, prefix, shortcuts, showOpti
             padding: '1px 6px',
             borderRadius: '3px',
             backgroundColor: 'var(--wks-accent)',
-            color: 'var(--wks-text-on-accent, #fff)',
+            color: 'var(--wks-text-on-accent)',
           }}
         >
           {formatBinding(prefix)}
         </span>
         {crumbs.map((c, i) => (
           <React.Fragment key={i}>
-            <span style={{ color: 'var(--wks-text-faint)', fontWeight: 400 }}>›</span>
+            <span
+              style={{
+                color: 'var(--wks-text-faint)',
+                display: 'inline-flex',
+                alignItems: 'center',
+              }}
+            >
+              <ChevronRight size={10} strokeWidth={2.25} />
+            </span>
             <span>{c}</span>
           </React.Fragment>
         ))}
@@ -117,8 +126,18 @@ const ChordHint: React.FC<ChordHintProps> = ({ path, prefix, shortcuts, showOpti
                 }}
               >
                 {it.label}
-                {it.isGroup ? ' ▸' : ''}
               </span>
+              {it.isGroup && (
+                <ChevronRight
+                  size={10}
+                  strokeWidth={2.25}
+                  style={{
+                    flexShrink: 0,
+                    alignSelf: 'center',
+                    color: 'var(--wks-text-secondary)',
+                  }}
+                />
+              )}
             </div>
           ))}
         </div>

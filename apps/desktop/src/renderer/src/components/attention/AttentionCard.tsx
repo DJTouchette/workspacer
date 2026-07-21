@@ -5,12 +5,12 @@ import { QuestionPicker } from '../claude/QuestionPicker';
 import { useAttention, SNOOZE_MINUTES } from '../../contexts/AttentionContext';
 
 const KIND_VISUAL: Record<AttentionKind, { label: string; color: string; glyph: string }> = {
-  approval: { label: 'Needs approval', color: 'var(--wks-error, #f87171)', glyph: '!' },
-  question: { label: 'Question', color: 'var(--wks-accent, #4a9eff)', glyph: '?' },
-  error: { label: 'Error', color: 'var(--wks-error, #f87171)', glyph: '×' },
-  stuck: { label: 'Stuck', color: 'var(--wks-warning, #e0a000)', glyph: '…' },
-  bigdiff: { label: 'Review', color: 'var(--wks-warning, #e0a000)', glyph: '±' },
-  done: { label: 'Finished', color: 'var(--wks-success, #3fb950)', glyph: '✓' },
+  approval: { label: 'Needs approval', color: 'var(--wks-error)', glyph: '!' },
+  question: { label: 'Question', color: 'var(--wks-accent)', glyph: '?' },
+  error: { label: 'Error', color: 'var(--wks-error)', glyph: '×' },
+  stuck: { label: 'Stuck', color: 'var(--wks-warning)', glyph: '…' },
+  bigdiff: { label: 'Review', color: 'var(--wks-warning)', glyph: '±' },
+  done: { label: 'Finished', color: 'var(--wks-success)', glyph: '✓' },
 };
 
 /** Last path segment, for the compact cwd footer (full path stays in the title). */

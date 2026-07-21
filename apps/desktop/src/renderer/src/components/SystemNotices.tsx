@@ -9,9 +9,9 @@ interface Notice {
 }
 
 const ACCENT: Record<Notice['level'], string> = {
-  error: 'var(--wks-danger, #e05555)',
-  warn: 'var(--wks-warning, #d6a01b)',
-  info: 'var(--wks-accent, #4a9eff)',
+  error: 'var(--wks-error)',
+  warn: 'var(--wks-warning)',
+  info: 'var(--wks-accent)',
 };
 
 function Icon({ level }: { level: Notice['level'] }) {
@@ -73,12 +73,12 @@ export const SystemNotices: React.FC = () => {
             alignItems: 'flex-start',
             padding: '10px 12px',
             borderRadius: 'var(--wks-radius-md)',
-            background: 'var(--wks-glass-strong, #26242b)',
-            backdropFilter: 'blur(var(--wks-glass-blur, 12px)) saturate(160%)',
-            WebkitBackdropFilter: 'blur(var(--wks-glass-blur, 12px)) saturate(160%)',
+            background: 'var(--wks-glass-strong)',
+            backdropFilter: 'blur(var(--wks-glass-blur)) saturate(160%)',
+            WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(160%)',
             border: `1px solid ${ACCENT[n.level]}`,
-            boxShadow: '0 8px 28px var(--wks-glass-shadow, rgba(0,0,0,0.4))',
-            color: 'var(--wks-text-primary, #e8e8ee)',
+            boxShadow: '0 8px 28px var(--wks-glass-shadow)',
+            color: 'var(--wks-text-primary)',
           }}
         >
           <div style={{ marginTop: 1, flexShrink: 0 }}>
@@ -90,7 +90,7 @@ export const SystemNotices: React.FC = () => {
               <div
                 style={{
                   fontSize: '0.7rem',
-                  color: 'var(--wks-text-muted, #a8a8b3)',
+                  color: 'var(--wks-text-muted)',
                   marginTop: 3,
                   lineHeight: 1.45,
                   wordBreak: 'break-word',
@@ -127,7 +127,7 @@ export const SystemNotices: React.FC = () => {
               cursor: 'pointer',
               background: 'transparent',
               border: 'none',
-              color: 'var(--wks-text-muted, #a8a8b3)',
+              color: 'var(--wks-text-muted)',
               padding: 2,
               display: 'flex',
               alignItems: 'center',

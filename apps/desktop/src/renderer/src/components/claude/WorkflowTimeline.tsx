@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { X } from 'lucide-react';
 import type { WorkflowRunInfo, WorkflowAgentInfo } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 import { AGENT_PURPLE, fmtTokens, fmtDuration, shortModel } from './agentUtils';
@@ -191,7 +192,7 @@ export const WorkflowTimeline: React.FC<{
         {elapsed !== undefined && <span style={metaStyle}>{fmtDuration(elapsed)}</span>}
         {!embedded && onClose && (
           <button onClick={onClose} title="Close (Esc)" style={closeBtn}>
-            ✕
+            <X size={13} strokeWidth={2} />
           </button>
         )}
       </div>
@@ -448,8 +449,9 @@ const closeBtn: React.CSSProperties = {
   border: 'none',
   color: colors.muted,
   cursor: 'pointer',
-  fontSize: '0.9rem',
   padding: '2px 6px',
+  display: 'flex',
+  alignItems: 'center',
   flexShrink: 0,
 };
 const detailLabel: React.CSSProperties = {

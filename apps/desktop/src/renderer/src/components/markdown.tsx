@@ -41,7 +41,7 @@ const CodeBlock: React.FC<{ code: string; info?: string }> = ({ code, info }) =>
           borderRadius: info ? '0 0 6px 6px' : '6px',
           fontSize: 'calc(0.75rem * var(--claude-gui-font-scale, 1))',
           lineHeight: 1.5,
-          color: 'rgb(190, 200, 220)',
+          color: colors.text,
           fontFamily: 'var(--claude-mono-font, monospace)',
           overflowX: 'auto',
           whiteSpace: 'pre',
@@ -90,7 +90,7 @@ export function renderInlineMarkdown(text: string, depth = 0): React.ReactNode[]
       );
     } else if (match[3]) {
       nodes.push(
-        <em key={key++} style={{ color: 'rgb(210, 210, 230)', fontStyle: 'italic' }}>
+        <em key={key++} style={{ color: colors.textBright, fontStyle: 'italic' }}>
           {nested(match[3])}
         </em>,
       );
@@ -110,7 +110,7 @@ export function renderInlineMarkdown(text: string, depth = 0): React.ReactNode[]
             borderRadius: 3,
             fontSize: '0.9em',
             fontFamily: 'var(--claude-mono-font, monospace)',
-            color: 'rgb(180, 210, 255)',
+            color: colors.accent,
           }}
         >
           {code}
@@ -530,7 +530,7 @@ export function parseMarkdownBlocks(text: string): React.ReactNode[] {
             borderLeft: `2px solid ${colors.muted}`,
             paddingLeft: 10,
             margin: '4px 0',
-            color: 'rgb(160, 165, 185)',
+            color: colors.muted,
             fontStyle: 'italic',
             lineHeight: 1.6,
           }}

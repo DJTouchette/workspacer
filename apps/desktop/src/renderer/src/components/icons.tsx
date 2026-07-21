@@ -31,6 +31,8 @@ import {
   Radar,
   BookOpen,
   PieChart,
+  ArrowLeft,
+  ArrowRight,
   type LucideIcon,
 } from 'lucide-react';
 import { PaneType } from '../types/pane';
@@ -125,6 +127,8 @@ export {
   Rows3,
   Eye,
   Radar,
+  ArrowLeft,
+  ArrowRight,
 };
 
 // Workspacer Icon Pack — the custom two-tone agent glyph set (panes, status,

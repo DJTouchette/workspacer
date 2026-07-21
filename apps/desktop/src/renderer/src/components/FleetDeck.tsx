@@ -1,5 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Minimize2, ExternalLink, Search, Radar, CornerDownLeft } from 'lucide-react';
+import {
+  X,
+  Minimize2,
+  ExternalLink,
+  Search,
+  Radar,
+  CornerDownLeft,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  Compass,
+} from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { AgentWorkspace } from '../types/pane';
 import type { ClaudeSessionSnapshot } from '../types/claudeSession';
@@ -109,7 +120,7 @@ const ExpandedAgentCard: React.FC<{
       }}
     >
       {agent.kind === 'supervisor' ? (
-        <span>🧭</span>
+        <Compass size={13} strokeWidth={2} style={{ flexShrink: 0 }} />
       ) : (
         <AgentLogo
           provider={agent.provider ?? 'claude'}
@@ -323,10 +334,18 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
           cursor: 'pointer',
           color: active ? 'var(--wks-text-secondary)' : 'inherit',
           fontWeight: active ? 700 : 'inherit',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 3,
         }}
       >
         {label}
-        {active ? (listSort.dir === 1 ? ' ▲' : ' ▼') : ''}
+        {active &&
+          (listSort.dir === 1 ? (
+            <ChevronUp size={10} strokeWidth={2.25} />
+          ) : (
+            <ChevronDown size={10} strokeWidth={2.25} />
+          ))}
       </button>
     );
   };
@@ -598,7 +617,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
             <StatChip color="var(--wks-text-tertiary)" glow={false}>
               {realAgents.length} agent{realAgents.length === 1 ? '' : 's'}
             </StatChip>
-            <StatChip color="var(--wks-busy, var(--wks-accent))" glow={working > 0}>
+            <StatChip color="var(--wks-busy)" glow={working > 0}>
               {working} working
             </StatChip>
             <StatChip color="var(--wks-warning)" glow={counts.needsYou > 0}>
@@ -669,7 +688,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
             borderRadius: 'var(--wks-radius-md)',
             padding: '6px 13px',
             background: 'var(--wks-accent)',
-            color: 'var(--wks-text-on-accent, #fff)',
+            color: 'var(--wks-text-on-accent)',
             boxShadow: '0 1px 3px var(--wks-shadow)',
             transition: 'filter 0.12s',
           }}
@@ -759,7 +778,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                 fontWeight: 700,
                 cursor: 'pointer',
                 background: 'var(--wks-accent)',
-                color: 'var(--wks-text-on-accent, #fff)',
+                color: 'var(--wks-text-on-accent)',
                 border: 'none',
                 borderRadius: 'var(--wks-radius-md)',
                 padding: '8px 16px',
@@ -849,7 +868,13 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                             whiteSpace: 'nowrap',
                           }}
                         >
-                          {agent.kind === 'supervisor' ? '🧭 ' : ''}
+                          {agent.kind === 'supervisor' && (
+                            <Compass
+                              size={11}
+                              strokeWidth={2}
+                              style={{ flexShrink: 0, marginRight: 4, verticalAlign: '-1px' }}
+                            />
+                          )}
                           {agent.name}
                         </span>
                       </span>
@@ -900,7 +925,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                           style={{
                             color:
                               plan.done >= plan.total
-                                ? 'var(--wks-success, #3fb950)'
+                                ? 'var(--wks-success)'
                                 : 'var(--wks-text-secondary)',
                             fontWeight: 600,
                           }}
@@ -913,10 +938,13 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                     </td>
                     {isSnapshotStale(snap?.ambientState, snap?.lastActivity, now) ? (
                       <td
-                        style={{ ...ltdNum, color: 'var(--wks-warning, #e0a000)', fontWeight: 700 }}
+                        style={{ ...ltdNum, color: 'var(--wks-warning)', fontWeight: 700 }}
                         title="Says it's working but nothing has arrived — the stream may have stalled."
                       >
-                        ⚠ {relTime(snap?.lastActivity)}
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                          <AlertTriangle size={10} strokeWidth={2.25} />
+                          {relTime(snap?.lastActivity)}
+                        </span>
                       </td>
                     ) : (
                       <td style={ltdNum}>{relTime(snap?.lastActivity)}</td>
@@ -958,10 +986,10 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                       key={agent.id}
                       onMouseDown={() => setSelectedId(agent.id)}
                       style={{
-                        borderRadius: 'var(--wks-radius-lg, 12px)',
+                        borderRadius: 'var(--wks-radius-lg)',
                         outline:
                           selectedId === agent.id
-                            ? '2px solid var(--wks-accent, #4a9eff)'
+                            ? '2px solid var(--wks-accent)'
                             : '2px solid transparent',
                         outlineOffset: 2,
                         transition: 'outline-color 0.12s',
@@ -1155,27 +1183,27 @@ const SegBtn: React.FC<{ active: boolean; onClick: () => void; children: React.R
 function listStateVisual(s: string | undefined): { color: string; label: string; glow: boolean } {
   switch (s) {
     case 'waiting_approval':
-      return { color: 'var(--wks-warning, #e0a000)', label: 'Needs approval', glow: true };
+      return { color: 'var(--wks-warning)', label: 'Needs approval', glow: true };
     case 'waiting_input':
-      return { color: 'var(--wks-warning, #e0a000)', label: 'Waiting', glow: true };
+      return { color: 'var(--wks-warning)', label: 'Waiting', glow: true };
     case 'thinking':
       return {
-        color: 'var(--wks-busy, var(--wks-accent, #4a9eff))',
+        color: 'var(--wks-busy)',
         label: 'Thinking',
         glow: true,
       };
     case 'streaming':
-      return { color: 'var(--wks-busy, var(--wks-accent, #4a9eff))', label: 'Working', glow: true };
+      return { color: 'var(--wks-busy)', label: 'Working', glow: true };
     case 'background':
       return {
-        color: 'var(--wks-busy, var(--wks-accent, #4a9eff))',
+        color: 'var(--wks-busy)',
         label: 'Background work',
         glow: false,
       };
     case 'idle':
-      return { color: 'var(--wks-success, #3fb950)', label: 'Idle', glow: false };
+      return { color: 'var(--wks-success)', label: 'Idle', glow: false };
     default:
-      return { color: 'var(--wks-text-faint, #666)', label: 'Stopped', glow: false };
+      return { color: 'var(--wks-text-faint)', label: 'Stopped', glow: false };
   }
 }
 

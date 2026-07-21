@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, ChevronDown, ChevronRight, X } from 'lucide-react';
 import type { ToolCall, SubagentInfo, WorkflowRunInfo } from '../../types/claudeSession';
 import { claudeColors as colors, WorkLogEntry } from '../claude-shared';
 import { DiffView, hasDiff, ReadView, hasRead } from './DiffView';
@@ -24,13 +25,13 @@ import { FileLink } from './FileLink';
 /** Category → chip/bar color. Literal fallbacks keep the trace legible if a
  *  theme doesn't define the var. */
 const CATEGORY_COLOR: Record<string, string> = {
-  read: 'var(--wks-accent-text, #60a5fa)',
-  edit: 'var(--wks-success, #4ade80)',
-  cmd: 'var(--wks-warning, #fbbf24)',
-  search: 'var(--wks-purple, #c084fc)',
-  agent: 'var(--wks-purple, #c084fc)',
+  read: 'var(--wks-accent-text)',
+  edit: 'var(--wks-success)',
+  cmd: 'var(--wks-warning)',
+  search: 'var(--wks-purple)',
+  agent: 'var(--wks-purple)',
   web: '#38bdf8',
-  other: 'var(--wks-text-muted, #8c8c9b)',
+  other: 'var(--wks-text-muted)',
 };
 
 function categoryOf(tc: ToolCall): keyof typeof CATEGORY_COLOR {
@@ -266,12 +267,26 @@ const TraceRow: React.FC<{
           {fmtDuration(dur)}
         </span>
         {/* Status */}
-        <span style={{ flexShrink: 0, width: 14, textAlign: 'center', fontSize: '0.7rem' }}>
+        <span
+          style={{
+            flexShrink: 0,
+            width: 14,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
           {running ? (
             <AgentSpinner />
           ) : (
-            <span style={{ color: failed ? colors.error : colors.success }}>
-              {failed ? '✗' : '✓'}
+            <span
+              style={{
+                color: failed ? colors.error : colors.success,
+                display: 'inline-flex',
+                alignItems: 'center',
+              }}
+            >
+              {failed ? <X size={12} strokeWidth={2} /> : <Check size={12} strokeWidth={2} />}
             </span>
           )}
         </span>
@@ -408,13 +423,18 @@ const ToolTraceCardInner: React.FC<{
           <span
             style={{
               color: summary.failed > 0 ? colors.error : colors.success,
-              fontSize: '0.7rem',
               width: 12,
-              textAlign: 'center',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
               flexShrink: 0,
             }}
           >
-            {summary.failed > 0 ? '✗' : '✓'}
+            {summary.failed > 0 ? (
+              <X size={12} strokeWidth={2} />
+            ) : (
+              <Check size={12} strokeWidth={2} />
+            )}
           </span>
         )}
         <span style={{ color: colors.text, fontWeight: 600, flexShrink: 0 }}>
@@ -449,8 +469,14 @@ const ToolTraceCardInner: React.FC<{
             {summary.removed > 0 && <span style={{ color: colors.error }}>−{summary.removed}</span>}
           </span>
         )}
-        <span style={{ color: colors.mutedDim, fontSize: '0.64rem', flexShrink: 0 }}>
-          {expanded ? '▾' : '▸'}
+        <span
+          style={{ color: colors.mutedDim, display: 'flex', alignItems: 'center', flexShrink: 0 }}
+        >
+          {expanded ? (
+            <ChevronDown size={12} strokeWidth={2} />
+          ) : (
+            <ChevronRight size={12} strokeWidth={2} />
+          )}
         </span>
       </div>
 

@@ -128,7 +128,7 @@ const MarkdownEditor: React.FC<{
               boxSizing: 'border-box',
               background: 'var(--wks-bg-input)',
               color: 'var(--wks-text-primary)',
-              fontFamily: 'var(--wks-mono, ui-monospace, monospace)',
+              fontFamily: 'var(--wks-font-mono)',
               fontSize: '0.74rem',
               lineHeight: 1.6,
             }}

@@ -23,6 +23,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Check, ChevronDown } from 'lucide-react';
 import type { ClaudeSessionSnapshot } from '../../types/claudeSession';
 import type { AgentProvider } from '../../types/pane';
 import {
@@ -72,7 +73,7 @@ const CtxBadge: React.FC<{ ctx: string }> = ({ ctx }) => {
         padding: '1px 5px',
         borderRadius: 'var(--wks-radius-pill)',
         letterSpacing: '0.04em',
-        fontFamily: 'var(--wks-font-mono, monospace)',
+        fontFamily: 'var(--wks-font-mono)',
         flexShrink: 0,
         color: big ? 'var(--wks-accent-text)' : 'var(--wks-text-faint)',
         border: `1px solid ${
@@ -96,10 +97,30 @@ const modelItemLabel = (m: ModelOption, current: boolean): React.ReactNode => (
     <span style={{ fontWeight: 600 }}>{m.label}</span>
     {m.context && <CtxBadge ctx={m.context} />}
     {current && (
-      <span style={{ color: 'var(--wks-success)', fontSize: '0.68rem', flexShrink: 0 }}>✓</span>
+      <span
+        style={{
+          color: 'var(--wks-success)',
+          display: 'inline-flex',
+          alignItems: 'center',
+          flexShrink: 0,
+        }}
+      >
+        <Check size={11} strokeWidth={2.25} />
+      </span>
     )}
   </span>
 );
+
+/** Plain menu row label with a trailing ✓ mark when it's the current value. */
+const checkedLabel = (label: string, current: boolean): React.ReactNode =>
+  current ? (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+      {label}
+      <Check size={11} strokeWidth={2.25} style={{ flexShrink: 0 }} />
+    </span>
+  ) : (
+    label
+  );
 
 type MenuKind = 'model' | 'effort' | 'permission';
 
@@ -362,7 +383,7 @@ export const ComposerControls: React.FC<{
       >
         <IconModel size={13} strokeWidth={2} accent="currentColor" />
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{modelLabel}</span>
-        <span style={{ opacity: 0.7 }}>▾</span>
+        <ChevronDown size={11} strokeWidth={2.25} style={{ opacity: 0.7, flexShrink: 0 }} />
       </button>
       {caps.effort && (
         <>
@@ -375,7 +396,7 @@ export const ComposerControls: React.FC<{
             title={disabled ? 'No session yet' : 'Reasoning effort (restarts the session)'}
           >
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{effortLabel}</span>
-            <span style={{ opacity: 0.7 }}>▾</span>
+            <ChevronDown size={11} strokeWidth={2.25} style={{ opacity: 0.7, flexShrink: 0 }} />
           </button>
         </>
       )}
@@ -394,7 +415,7 @@ export const ComposerControls: React.FC<{
         }
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{permLabel}</span>
-        <span style={{ opacity: 0.7 }}>▾</span>
+        <ChevronDown size={11} strokeWidth={2.25} style={{ opacity: 0.7, flexShrink: 0 }} />
       </button>
 
       {menu && !menu.confirm && (
@@ -459,14 +480,14 @@ export const ComposerControls: React.FC<{
             <>
               <ContextMenuLabel>Reasoning effort · restarts session</ContextMenuLabel>
               <ContextMenuItem
-                label={!currentEffort ? 'Default ✓' : 'Default'}
+                label={checkedLabel('Default', !currentEffort)}
                 onClick={() => pickRestart({ effort: '' }, 'Default effort')}
               />
               <ContextMenuSeparator />
               {effortLevels.map((l) => (
                 <ContextMenuItem
                   key={l.id}
-                  label={l.id === currentEffort ? `${l.label} ✓` : l.label}
+                  label={checkedLabel(l.label, l.id === currentEffort)}
                   onClick={() => pickRestart({ effort: l.id }, `${l.label} effort`)}
                 />
               ))}
@@ -480,11 +501,10 @@ export const ComposerControls: React.FC<{
               {caps.permissionModes.map((m) => (
                 <ContextMenuItem
                   key={m.id}
-                  label={
-                    m.id === (currentPermMode ?? caps.permissionModes[0]?.id)
-                      ? `${m.label} ✓`
-                      : m.label
-                  }
+                  label={checkedLabel(
+                    m.label,
+                    m.id === (currentPermMode ?? caps.permissionModes[0]?.id),
+                  )}
                   onClick={() => {
                     if (caps.permissionSwitch === 'live') {
                       const at = { x: menu.x, y: menu.y };

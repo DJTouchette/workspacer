@@ -1893,14 +1893,13 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                     style={{
                       fontSize: '0.66rem',
                       fontWeight: 700,
-                      fontFamily: 'var(--wks-font-mono, monospace)',
+                      fontFamily: 'var(--wks-font-mono)',
                       padding: '1px 7px',
-                      borderRadius: 'var(--wks-radius-pill, 999px)',
+                      borderRadius: 'var(--wks-radius-pill)',
                       letterSpacing: '0.03em',
-                      color: 'var(--wks-purple, #c084fc)',
-                      border:
-                        '1px solid color-mix(in srgb, var(--wks-purple, #c084fc) 40%, transparent)',
-                      background: 'color-mix(in srgb, var(--wks-purple, #c084fc) 10%, transparent)',
+                      color: 'var(--wks-purple)',
+                      border: '1px solid color-mix(in srgb, var(--wks-purple) 40%, transparent)',
+                      background: 'color-mix(in srgb, var(--wks-purple) 10%, transparent)',
                       whiteSpace: 'nowrap',
                       flexShrink: 0,
                     }}
@@ -1916,7 +1915,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                 <span
                   style={{
                     fontSize: '0.7rem',
-                    fontFamily: 'var(--wks-font-mono, monospace)',
+                    fontFamily: 'var(--wks-font-mono)',
                     color: colors.accent,
                     whiteSpace: 'nowrap',
                   }}

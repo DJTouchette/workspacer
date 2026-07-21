@@ -247,7 +247,7 @@ const DiffViewer: React.FC<DiffViewerProps> = ({ diff, path }) => {
       style={{
         height: '100%',
         overflow: 'auto',
-        fontFamily: 'var(--wks-font-mono, monospace)',
+        fontFamily: 'var(--wks-font-mono)',
         fontSize: FONT_SIZE,
         lineHeight: `${ROW_H}px`,
         contain: 'strict',

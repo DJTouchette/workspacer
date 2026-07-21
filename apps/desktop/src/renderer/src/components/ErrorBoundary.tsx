@@ -77,7 +77,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
           fontSize: '0.8rem',
         }}
       >
-        <AlertTriangle size={22} style={{ color: 'var(--wks-warning, #e0a000)' }} />
+        <AlertTriangle size={22} style={{ color: 'var(--wks-warning)' }} />
         <div style={{ fontWeight: 600, color: 'var(--wks-text-primary)' }}>
           {this.props.label ? `${this.props.label} hit an error` : 'Something went wrong'}
         </div>
@@ -107,7 +107,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
             background: 'var(--wks-bg-surface)',
             color: 'var(--wks-text-primary)',
             border: '1px solid var(--wks-border-input)',
-            borderRadius: 'var(--wks-radius-md, 6px)',
+            borderRadius: 'var(--wks-radius-md)',
             padding: '6px 12px',
           }}
         >

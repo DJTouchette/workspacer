@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import { X } from 'lucide-react';
 import { Config, AppEntry } from '../../hooks/useConfig';
 import { Section, SmallButton, inputStyle } from './primitives';
 
@@ -156,7 +157,11 @@ const AppsSection: React.FC<AppsSectionProps> = ({ config, save }) => {
                   </div>
                 </div>
                 <SmallButton label="Edit" onClick={() => handleEditApp(i)} />
-                <SmallButton label="✕" onClick={() => handleDeleteApp(i)} danger />
+                <SmallButton
+                  label={<X size={11} strokeWidth={2.25} />}
+                  onClick={() => handleDeleteApp(i)}
+                  danger
+                />
               </div>
             )}
           </div>

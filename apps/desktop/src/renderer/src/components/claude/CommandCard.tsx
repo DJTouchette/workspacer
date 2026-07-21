@@ -40,7 +40,7 @@ const CommandCardInner: React.FC<{ turn: ConversationTurn; showTimestamp?: boole
               gap: 7,
               maxWidth: '80%',
               padding: '5px 12px',
-              borderRadius: 'var(--wks-radius-pill, 999px)',
+              borderRadius: 'var(--wks-radius-pill)',
               border: `1px solid ${colors.userBubbleBorder}`,
               backgroundColor: colors.userBubble,
               fontFamily: 'var(--claude-mono-font, monospace)',

@@ -27,7 +27,7 @@ const HubStatus: React.FC<{
     };
   }, []);
 
-  const color = connected ? 'var(--wks-success, #3fb950)' : 'var(--wks-text-faint, #666)';
+  const color = connected ? 'var(--wks-success)' : 'var(--wks-text-faint)';
   const title = connected ? 'hub connected' : 'hub disconnected';
 
   // Rail mode: just the status dot, centered — the full readout has no room.
