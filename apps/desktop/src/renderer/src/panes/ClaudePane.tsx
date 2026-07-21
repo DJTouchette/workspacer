@@ -220,10 +220,19 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     }
   }, [termCfg.fontFamily]);
 
+  // The session behind this pane is dead: terminal:exit fires both for live
+  // exits and for a restored pane whose attach target is a stopped daemon row
+  // (verifyAttachTarget). Surfaced in the GUI view as a "Session stopped"
+  // state — writing into the xterm alone is invisible there, which used to
+  // leave restored panes on the "Connecting…" spinner forever. Cleared when a
+  // live snapshot arrives again (a respawn resumes the same pinned id, so the
+  // attached stream revives without a remount).
+  const [sessionExited, setSessionExited] = useState(false);
   const handleExit = useCallback(() => {
     if (terminalRef.current) {
       terminalRef.current.write(`\r\n\x1b[90m[${agentName} session exited]\x1b[0m\r\n`);
     }
+    setSessionExited(true);
   }, [agentName]);
 
   const {
@@ -297,6 +306,13 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   }, [sessionId, spawnError]);
 
   const { session } = useClaudeSession({ ptySessionId: sessionId, active: isActive });
+
+  // A live snapshot means the session is back (respawn/resume revived the same
+  // id) — drop the exited state so the pane returns to the normal views.
+  const sessionStatus = session?.status;
+  useEffect(() => {
+    if (sessionStatus && sessionStatus !== 'ended') setSessionExited(false);
+  }, [sessionStatus]);
 
   // Tasks/plan card (view-only, pinned above the composer). Dismissal is keyed
   // by the plan's signature so a stale/stuck list can be put away for good,
@@ -1615,7 +1631,61 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                     </div>
                   )}
 
-                  {conversation.length === 0 && !session && !spawnError && (
+                  {/* The attach target is a dead session (stopped daemon row —
+                    typically after a machine reboot) and no snapshot will ever
+                    arrive. Boot reconciliation usually auto-resumes it within
+                    moments; this state covers the gap, and the button covers
+                    the cases auto-resume can't (respawn failed, row gone). */}
+                  {conversation.length === 0 && !session && !spawnError && sessionExited && (
+                    <div
+                      style={{
+                        position: 'relative',
+                        textAlign: 'center',
+                        marginTop: 48,
+                        color: colors.mutedDim,
+                        animation: 'claudeFadeIn 0.2s ease-out',
+                      }}
+                    >
+                      <AgentHero
+                        provider={provider ?? 'claude'}
+                        title={<>Session stopped</>}
+                        dimLogo
+                      />
+                      <div
+                        style={{
+                          position: 'relative',
+                          fontSize: '0.72rem',
+                          margin: '14px auto 0',
+                          maxWidth: 420,
+                          lineHeight: 1.5,
+                          color: colors.mutedDim,
+                        }}
+                      >
+                        This {agentName} session isn’t running — it was likely stopped by a reboot
+                        or shutdown. Resuming brings the conversation back where it left off.
+                      </div>
+                      <button
+                        onClick={() => handleRestartWith({})}
+                        style={{
+                          position: 'relative',
+                          marginTop: 16,
+                          fontSize: '0.7rem',
+                          fontWeight: 600,
+                          padding: '4px 16px',
+                          borderRadius: 6,
+                          border: `1px solid ${colors.accent}`,
+                          backgroundColor: 'transparent',
+                          color: colors.accent,
+                          cursor: 'pointer',
+                          fontFamily: 'inherit',
+                        }}
+                      >
+                        Resume session
+                      </button>
+                    </div>
+                  )}
+
+                  {conversation.length === 0 && !session && !spawnError && !sessionExited && (
                     <div
                       style={{
                         position: 'relative',

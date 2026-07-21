@@ -240,6 +240,9 @@ export interface ElectronAPI {
   /** All sessions the daemon still holds (all providers, incl. archived),
    *  enriched with names from the local history DB. Newest first. */
   listRecentAgentSessions: () => Promise<RecentAgentSession[]>;
+  /** Session ids the daemon considers alive (mode != 'stopped'). Null when the
+   *  daemon is unreachable — callers should retry, not treat it as "none". */
+  listLiveClaudeSessionIds: () => Promise<string[] | null>;
   onClaudeSessionUpdate: (
     callback: (sessionId: string, snapshot: ClaudeSessionSnapshot) => void,
   ) => () => void;

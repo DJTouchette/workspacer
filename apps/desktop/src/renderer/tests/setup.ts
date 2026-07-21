@@ -90,6 +90,7 @@ const mockElectronAPI = {
   onClaudeOutput: vi.fn().mockReturnValue(() => {}),
   getClaudeSession: vi.fn().mockResolvedValue(null),
   getAllClaudeSessions: vi.fn().mockResolvedValue([]),
+  listLiveClaudeSessionIds: vi.fn().mockResolvedValue(null),
   onClaudeSessionUpdate: vi.fn().mockReturnValue(() => {}),
   onBeforeQuit: vi.fn().mockReturnValue(() => {}),
 };

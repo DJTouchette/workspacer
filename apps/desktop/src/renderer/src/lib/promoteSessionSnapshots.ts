@@ -19,7 +19,8 @@ export interface PromotedSessionMaps {
  * promoted one here, the live-update cleanup (which only evicts on a tick with
  * status === 'ended') could never remove it, and it would leak in memory for
  * the app's lifetime, re-accumulating on every reconnect. This mirrors the
- * exclusion already applied by the live-update path and reconcileWithDaemon.
+ * exclusion already applied by the live-update path and boot reconciliation
+ * (useSessionLifecycle's live-session-ids check).
  */
 export function promoteSessionSnapshots(sessions: ClaudeSessionSnapshot[]): PromotedSessionMaps {
   const statusBySession: Record<string, SessionAmbientState> = {};

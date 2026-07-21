@@ -74,6 +74,7 @@ export const IPC = {
   // ── Claude session discovery ──
   CLAUDE_SESSIONS_LIST_FOR_DIR: 'claude-sessions:listForDir',
   CLAUDE_SESSIONS_RECENT: 'claude-sessions:recent',
+  CLAUDE_SESSIONS_LIVE_IDS: 'claude-sessions:liveIds',
 
   // ── Claude profiles ──
   CLAUDE_PROFILES_LIST: 'claude-profiles:list',

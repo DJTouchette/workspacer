@@ -341,6 +341,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listRecentAgentSessions: (): Promise<RecentAgentSession[]> =>
     ipcRenderer.invoke(IPC.CLAUDE_SESSIONS_RECENT),
 
+  listLiveClaudeSessionIds: (): Promise<string[] | null> =>
+    ipcRenderer.invoke(IPC.CLAUDE_SESSIONS_LIVE_IDS),
+
   // Claude profiles
   claudeProfilesList: (): Promise<ProfileUpdate[]> => ipcRenderer.invoke(IPC.CLAUDE_PROFILES_LIST),
   claudeProfilesAdd: (

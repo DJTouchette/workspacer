@@ -321,16 +321,13 @@ export function useAgentManager() {
     [],
   );
 
-  /** Re-spawn a stopped agent (kept across restarts) and re-point its Claude
-   *  panes at the new session. */
-  const respawnAgent = useCallback(
-    async (agentId: string) => {
-      const agent = agentsRef.current.find((a) => a.id === agentId);
-      if (!agent) return;
-      // Resume the prior conversation rather than starting blank: the id the agent
-      // last held doubles as claude's transcript uuid (we pin `--session-id` at
-      // spawn), so `--resume <id>` reopens it. `spawnClaude` returns that same id.
-      const resumeSessionId = agent.lastSessionId;
+  /** Respawn core shared by the sidebar's click-to-respawn and boot
+   *  reconciliation: spawn a session resuming `resumeSessionId` with the
+   *  record's saved launch settings, then re-point the agent's panes at it.
+   *  Takes the agent RECORD (not an id) so callers that just captured the
+   *  pre-mutation state (reconcile) aren't racing agentsRef. */
+  const respawnFromRecord = useCallback(
+    async (agent: AgentWorkspace, resumeSessionId: string | undefined) => {
       // Claude respawns follow the config default transport unless the agent
       // explicitly ran stream — a recorded 'pty' is usually just the legacy
       // default, and users who flipped their default to stream expect old
@@ -362,8 +359,8 @@ export function useAgentManager() {
         console.error('[Agent] respawn failed:', err);
       }
       if (!sessionId) return;
-      const oldSession = agent.sessionId ?? agent.lastSessionId;
-      mutateAgent(agentId, (a) => ({
+      const oldSession = resumeSessionId ?? agent.sessionId ?? agent.lastSessionId;
+      mutateAgent(agent.id, (a) => ({
         ...a,
         sessionId,
         lastSessionId: undefined,
@@ -391,6 +388,20 @@ export function useAgentManager() {
       }));
     },
     [mutateAgent],
+  );
+
+  /** Re-spawn a stopped agent (kept across restarts) and re-point its Claude
+   *  panes at the new session. */
+  const respawnAgent = useCallback(
+    async (agentId: string) => {
+      const agent = agentsRef.current.find((a) => a.id === agentId);
+      if (!agent) return;
+      // Resume the prior conversation rather than starting blank: the id the agent
+      // last held doubles as claude's transcript uuid (we pin `--session-id` at
+      // spawn), so `--resume <id>` reopens it. `spawnClaude` returns that same id.
+      await respawnFromRecord(agent, agent.lastSessionId);
+    },
+    [respawnFromRecord],
   );
 
   /**
@@ -603,16 +614,40 @@ export function useAgentManager() {
    * Reconcile saved agents against the daemon's live sessions: any agent whose
    * session no longer exists is marked stopped (sessionId cleared) so the
    * sidebar can offer a respawn.
+   *
+   * With `respawnStopped` (the boot path), each newly-stopped agent is also
+   * respawned right away, resuming its old session id — this is what brings a
+   * restored layout back to life after a machine reboot, where every session
+   * only survives as a stopped-but-resumable daemon row. Agents that were
+   * already stopped before the layout was saved stay stopped.
    */
-  const reconcileAgents = useCallback((liveSessionIds: Set<string>) => {
-    setAgents((prev) =>
-      prev.map((a) =>
-        a.sessionId && !liveSessionIds.has(a.sessionId)
-          ? { ...a, sessionId: undefined, lastSessionId: a.sessionId }
-          : a,
-      ),
-    );
-  }, []);
+  const reconcileAgents = useCallback(
+    (liveSessionIds: Set<string>, opts?: { respawnStopped?: boolean }) => {
+      // Capture the newly-dead agents BEFORE clearing their sessionId — the
+      // respawn needs the old id as the resume target. agentsRef is updated
+      // during render, so it is current here (reconcile runs post-commit,
+      // after an IPC round-trip).
+      const stale = agentsRef.current.filter(
+        (a) => a.sessionId && !liveSessionIds.has(a.sessionId),
+      );
+      setAgents((prev) =>
+        prev.map((a) =>
+          a.sessionId && !liveSessionIds.has(a.sessionId)
+            ? { ...a, sessionId: undefined, lastSessionId: a.sessionId }
+            : a,
+        ),
+      );
+      if (opts?.respawnStopped) {
+        for (const a of stale) {
+          void respawnFromRecord(
+            { ...a, sessionId: undefined, lastSessionId: a.sessionId },
+            a.sessionId,
+          );
+        }
+      }
+    },
+    [respawnFromRecord],
+  );
 
   /** Mark the agent owning this session as stopped — its session died mid-run
    *  (SessionEnd arrived). Same shape as reconcileAgents so the sidebar flips

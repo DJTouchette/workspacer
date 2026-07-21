@@ -24,7 +24,7 @@ interface UseSessionLifecycleOptions {
   agents: AgentWorkspace[];
   activeAgentId: string;
   loadAgentsFromSession: (agents: AgentWorkspace[], activeAgentId: string) => void;
-  reconcileAgents: (liveSessionIds: Set<string>) => void;
+  reconcileAgents: (liveSessionIds: Set<string>, opts?: { respawnStopped?: boolean }) => void;
   appCwdRef: MutableRefObject<string>;
 }
 
@@ -62,21 +62,47 @@ export function useSessionLifecycle({
     );
   }, []);
 
-  // Reconcile saved agents against the daemon's live sessions — mark any whose
-  // session no longer exists as stopped (so the sidebar offers a respawn).
-  // Ended sessions must not count as live: the store keeps a snapshot around
-  // for a ~30s grace window after SessionEnd, and treating those ids as alive
-  // left restored agents looking live while attached to a dead session.
-  const reconcileWithDaemon = useCallback(() => {
-    window.electronAPI
-      .getAllClaudeSessions()
-      .then((sessions: any[]) => {
-        reconcileAgents(
-          new Set(sessions.filter((s) => s.status !== 'ended').map((s) => s.sessionId)),
-        );
-      })
-      .catch(() => {});
-  }, [reconcileAgents]);
+  // Reconcile saved agents against the daemon once the layout is up — on BOTH
+  // hydration paths. The hub-adopted path used to skip this entirely (it was
+  // buried in the local-restore branch), so after a machine reboot every agent
+  // card kept a dead sessionId, looked live, and its pane sat on the
+  // "Connecting…" spinner forever. Runs when sessionPhase flips to 'active'
+  // (local restore and hub adoption both end there), asks claudemon itself for
+  // the live ids (the renderer-side snapshot store is always empty at boot),
+  // retries while the daemon is still coming up, then marks dead agents
+  // stopped and auto-respawns them — resuming their old sessions — so the
+  // restored layout reconnects instead of waiting for a manual respawn click.
+  const reconcileDoneRef = useRef(false);
+  useEffect(() => {
+    if (sessionPhase !== 'active' || reconcileDoneRef.current) return;
+    reconcileDoneRef.current = true;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const attempt = (retriesLeft: number, delayMs: number) => {
+      // Optional: absent on older preloads / test mocks; the web polyfill
+      // returns null (the desktop owns reconciliation).
+      const call = window.electronAPI.listLiveClaudeSessionIds?.();
+      if (!call) return;
+      call
+        .then((ids) => {
+          if (cancelled) return;
+          if (ids) {
+            reconcileAgents(new Set(ids), { respawnStopped: true });
+          } else if (retriesLeft > 0) {
+            timer = setTimeout(
+              () => attempt(retriesLeft - 1, Math.min(delayMs * 2, 5000)),
+              delayMs,
+            );
+          }
+        })
+        .catch(() => {});
+    };
+    attempt(10, 500);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [sessionPhase, reconcileAgents]);
 
   const saveCurrentSession = useCallback(
     (force?: boolean): Promise<void> => {
@@ -166,15 +192,16 @@ export function useSessionLifecycle({
           } = migrateSessionData(data, appCwdRef.current);
           loadAgentsFromSession(migratedAgents, migratedActiveId);
           setSessionName(migratedName);
+          // Daemon reconciliation is NOT called here — the phase-triggered
+          // effect above covers this path and the hub-adopted one alike.
           setSessionPhase('active');
-          reconcileWithDaemon();
         });
       })
       .catch(() => {
         loadAgentsFromSession([], '');
         setSessionPhase('active');
       });
-  }, [configLoaded, loadAgentsFromSession, reconcileWithDaemon, appCwdRef]);
+  }, [configLoaded, loadAgentsFromSession, appCwdRef]);
 
   return {
     sessionPhase,

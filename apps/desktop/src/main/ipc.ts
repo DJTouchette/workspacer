@@ -36,7 +36,7 @@ import { ensureSupervisorHome } from './services/supervisorSkill';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
-import { listRecentSessions } from './services/recentSessions';
+import { listRecentSessions, listLiveSessionIds } from './services/recentSessions';
 import { readTextFile, writeTextFile, listDir } from './services/fileService';
 import { startWatch, stopWatch, setEmitSink } from './services/fileWatchService';
 import { searchProject } from './services/searchService';
@@ -955,6 +955,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   );
 
   ipcMain.handle(IPC.CLAUDE_SESSIONS_RECENT, () => listRecentSessions());
+  ipcMain.handle(IPC.CLAUDE_SESSIONS_LIVE_IDS, () => listLiveSessionIds());
 
   ipcMain.handle(IPC.CLAUDE_PROFILES_LIST, () => claudeProfiles.getProfiles());
   ipcMain.handle(

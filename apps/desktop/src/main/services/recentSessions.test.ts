@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { mergeRecentSessions } from './recentSessions';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { mergeRecentSessions, listLiveSessionIds } from './recentSessions';
 
 const row = (over: Record<string, unknown> = {}) => ({
   session_id: 's1',
@@ -66,5 +66,36 @@ describe('mergeRecentSessions', () => {
     expect(out[0].mode).toBe('input');
     expect(out[0].transport).toBe('stream');
     expect(out[0].archived).toBe(true);
+  });
+});
+
+describe('listLiveSessionIds', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('returns the ids of every non-stopped session (unknown counts as live)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => [
+          row({ session_id: 'live1', mode: 'input' }),
+          row({ session_id: 'dead', mode: 'stopped' }),
+          row({ session_id: 'live2', mode: 'unknown' }),
+        ],
+      }),
+    );
+    await expect(listLiveSessionIds()).resolves.toEqual(['live1', 'live2']);
+  });
+
+  it('returns null — not [] — when the daemon is unreachable, so boot reconciliation retries instead of stopping every agent', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+    await expect(listLiveSessionIds()).resolves.toBeNull();
+  });
+
+  it('returns null on a non-OK response or a non-array body', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }));
+    await expect(listLiveSessionIds()).resolves.toBeNull();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+    await expect(listLiveSessionIds()).resolves.toBeNull();
   });
 });

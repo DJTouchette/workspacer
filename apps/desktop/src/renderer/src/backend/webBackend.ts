@@ -369,6 +369,9 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // No hub-bus cap for the daemon's full session list yet — the web client
     // simply shows no RECENT section until one exists.
     listRecentAgentSessions: () => Promise.resolve([]),
+    // Null = "can't tell" — the web client never reconciles/auto-respawns
+    // agents against the daemon; the desktop owns that.
+    listLiveClaudeSessionIds: () => Promise.resolve(null),
     onClaudeSessionUpdate: (callback) =>
       client.subscribe('agent.snapshot', (ev) => {
         const snap = ev.data as ClaudeSessionSnapshot | undefined;

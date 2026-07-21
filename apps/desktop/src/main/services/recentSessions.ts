@@ -70,6 +70,22 @@ export function mergeRecentSessions(
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+/** Session ids the daemon considers alive (any mode but 'stopped'; archived
+ *  rows are excluded by the default listing). Returns null — not [] — when the
+ *  daemon is unreachable, so boot reconciliation can retry instead of marking
+ *  every restored agent dead while claudemon is still coming up. */
+export async function listLiveSessionIds(): Promise<string[] | null> {
+  try {
+    const res = await fetch(`${CLAUDEMON_API_URL}/sessions`);
+    if (!res.ok) return null;
+    const rows = (await res.json()) as DaemonSessionRow[];
+    if (!Array.isArray(rows)) return null;
+    return rows.filter((r) => r.session_id && r.mode !== 'stopped').map((r) => r.session_id);
+  } catch {
+    return null;
+  }
+}
+
 /** Fetch the full session list from the daemon and enrich it. Errors (daemon
  *  down, mid-restart) resolve to an empty list — the sidebar just shows
  *  nothing rather than breaking the renderer. */

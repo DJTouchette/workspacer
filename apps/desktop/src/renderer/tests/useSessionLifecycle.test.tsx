@@ -5,7 +5,7 @@
  * the active-pane change never persisted.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { useSessionLifecycle } from '../src/hooks/useSessionLifecycle';
 
 let saveSession: ReturnType<typeof vi.fn>;
@@ -190,7 +190,7 @@ describe('useSessionLifecycle — hardening', () => {
 });
 
 describe('useSessionLifecycle — implicit-session boot', () => {
-  it('boot restores the most recent session and reconciles ended sessions as dead', async () => {
+  it('boot restores the most recent session and reconciles dead sessions against the daemon', async () => {
     const reconcileAgents = vi.fn();
     const loadAgentsFromSession = vi.fn();
     (window as any).electronAPI = {
@@ -199,10 +199,9 @@ describe('useSessionLifecycle — implicit-session boot', () => {
         .fn()
         .mockResolvedValue([{ name: 'S', filename: 's.yaml', timestamp: '', paneCount: 0 }]),
       loadSession: vi.fn().mockResolvedValue({ name: 'S', agents: [], activeAgentId: '' }),
-      getAllClaudeSessions: vi.fn().mockResolvedValue([
-        { sessionId: 'live-1', status: 'active' },
-        { sessionId: 'dead-1', status: 'ended' },
-      ]),
+      // Reconciliation asks claudemon itself for the live ids (the renderer
+      // snapshot store is empty at boot) and auto-respawns the dead agents.
+      listLiveClaudeSessionIds: vi.fn().mockResolvedValue(['live-1']),
     };
     const { result } = renderHook(() =>
       useSessionLifecycle({
@@ -219,11 +218,10 @@ describe('useSessionLifecycle — implicit-session boot', () => {
     expect(loadAgentsFromSession).toHaveBeenCalledTimes(1);
     expect(result.current.sessionPhase).toBe('active');
 
-    // Ended sessions must not count as live on resume.
+    await waitFor(() => {
+      expect(reconcileAgents).toHaveBeenCalledWith(new Set(['live-1']), { respawnStopped: true });
+    });
     expect(reconcileAgents).toHaveBeenCalledTimes(1);
-    const liveSet = reconcileAgents.mock.calls[0][0] as Set<string>;
-    expect(liveSet.has('live-1')).toBe(true);
-    expect(liveSet.has('dead-1')).toBe(false);
   });
 
   it('boot with no saved sessions starts fresh without loading anything', async () => {
