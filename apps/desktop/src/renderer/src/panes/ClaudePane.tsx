@@ -1045,8 +1045,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       // compact (e.g. via the sidebar's inline Reply) must anchor where the
       // turn sits in the FULL conversation, or the card renders misplaced
       // once the pane is active again.
-      const anchorLen =
-        (session?.conversationOffset ?? 0) + (session?.conversation ?? []).length;
+      const anchorLen = (session?.conversationOffset ?? 0) + (session?.conversation ?? []).length;
       setResolvedQuestions((prev) => {
         if (prev.some((r) => r.sig === sig && r.anchorLen === anchorLen)) return prev;
         return [
@@ -1132,7 +1131,13 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     )
       .then(() => setChangesVersion((v) => v + 1))
       .catch(() => {});
-  }, [session?.ambientState, session?.conversation, session?.conversationOffset, sessionId, effectiveCwd]);
+  }, [
+    session?.ambientState,
+    session?.conversation,
+    session?.conversationOffset,
+    sessionId,
+    effectiveCwd,
+  ]);
 
   // Needs-you dock visibility. Dismissal timestamps give an optimistic hide:
   // the dock vanishes on click while the response round-trips through the
