@@ -2,6 +2,7 @@
   "id": "workspacer.transcript-timeline",
   "name": "Timeline",
   "apiVersion": "1",
+  "version": "1.0.0",
   "ui": "ui",
   "panes": [
     { "type": "workspacer.transcript-timeline", "title": "Timeline", "icon": "⏱", "scope": "both" }

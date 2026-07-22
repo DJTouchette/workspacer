@@ -11,6 +11,8 @@ const CATALOG_INDEX_URL =
 interface CatalogEntry {
   id: string;
   name: string;
+  /** Published release version from the plugin's manifest (e.g. "1.0.0"). */
+  version?: string;
   dir: string;
   category: string;
   kind: 'webview' | 'sidecar' | string;
@@ -381,6 +383,7 @@ const PluginCatalogDialog: React.FC<PluginCatalogDialogProps> = ({
                         }}
                       >
                         {CATEGORY_LABELS[e.category] ?? e.category} · {kind.label}
+                        {e.version ? ` · v${e.version}` : ''}
                       </div>
                     </div>
                   </div>

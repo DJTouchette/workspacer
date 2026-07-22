@@ -2,6 +2,7 @@
   "id": "workspacer.editor",
   "name": "Editor (sandboxed)",
   "apiVersion": "1",
+  "version": "1.0.0",
   "ui": "ui",
   "panes": [
     { "type": "workspacer.editor", "title": "Editor", "icon": "📝", "scope": "agent" }

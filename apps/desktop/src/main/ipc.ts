@@ -539,6 +539,25 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       return { ok: false, error: String((err as Error)?.message ?? err) };
     }
   });
+  // Check installed plugins for available updates: the hub re-fetches each
+  // plugin's manifest from its recorded install source and compares the
+  // published version to the installed one. Network-bound (one tarball fetch
+  // per sourced plugin), so a generous timeout. Returns a per-plugin status
+  // array; on failure the renderer just keeps showing "Reinstall".
+  ipcMain.handle(IPC.HUB_CHECK_PLUGIN_UPDATES, async () => {
+    try {
+      const res = await fetch(`${HUB_HTTP_URL}/plugins/updates`, {
+        method: 'POST',
+        headers: hubAuthHeaders(),
+        signal: AbortSignal.timeout(90000),
+      });
+      const body = (await res.json()) as any;
+      if (!res.ok) return { ok: false, error: body?.error || `HTTP ${res.status}` };
+      return { ok: true, updates: body };
+    } catch (err) {
+      return { ok: false, error: String((err as Error)?.message ?? err) };
+    }
+  });
   // Read-only catalog of bundled example plugins the user can add. Returns the
   // manifests as-is; the renderer derives each one's runtime requirement and
   // cross-references the installed list to show an "Added" state.

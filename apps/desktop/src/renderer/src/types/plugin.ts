@@ -55,6 +55,9 @@ export interface PluginManifest {
   id: string;
   name: string;
   apiVersion: string;
+  /** Author-declared release version (semver-ish, e.g. "1.4.0"). Optional; when
+   *  absent the plugin can be reinstalled but never reports an update available. */
+  version?: string;
   server?: PluginServerSpec;
   panes?: PluginPaneContribution[];
   hotkeys?: PluginHotkeyContribution[];
@@ -83,6 +86,20 @@ export interface PluginManifest {
   /** Origin of the hub serving this plugin's `ui` assets, attached by main
    *  (it knows the hub address). The renderer builds the pane URL against it. */
   uiBase?: string;
+}
+
+/** Result of checking one installed plugin against its install source, from the
+ *  hub's /plugins/updates route. Mirrors the Go plugin.UpdateStatus. */
+export interface PluginUpdateStatus {
+  id: string;
+  /** Version currently installed on disk (empty if the manifest declares none). */
+  installed?: string;
+  /** Version published at the install source (empty if that manifest declares none). */
+  latest?: string;
+  /** True when `latest` is a strict upgrade over `installed`. */
+  hasUpdate: boolean;
+  /** Set when the source could not be reached or read. */
+  error?: string;
 }
 
 /** What a plugin needs on the machine, derived from its manifest. */

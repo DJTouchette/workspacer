@@ -96,6 +96,7 @@ export const IPC = {
   TAILSCALE_SET_SERVE: 'tailscale:setServe',
   HUB_INSTALL_PLUGIN: 'hub:installPlugin',
   HUB_INSPECT_PLUGIN: 'hub:inspectPlugin',
+  HUB_CHECK_PLUGIN_UPDATES: 'hub:checkPluginUpdates',
   HUB_LIST_EXAMPLES: 'hub:listExamples',
   HUB_INSTALL_EXAMPLE: 'hub:installExample',
   HUB_REMOVE_PLUGIN: 'hub:removePlugin',

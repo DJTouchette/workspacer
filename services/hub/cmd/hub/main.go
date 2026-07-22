@@ -537,6 +537,15 @@ func main() {
 		}
 		_ = json.NewEncoder(w).Encode(m)
 	}))
+	// Check installed plugins for available updates: for each plugin with a
+	// recorded install source, re-fetch its manifest and compare the published
+	// `version` to the installed one. Returns a per-plugin status array. Like
+	// inspect it makes the hub fetch arbitrary URLs, so it's token-guarded; and
+	// like inspect it runs no plugin code and installs nothing.
+	srv.AddRoute("/plugins/updates", guard(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(plugin.CheckUpdates(mgr.List()))
+	}))
 	// Install a plugin from a GitHub URL: download → extract → load → supervise.
 	srv.AddRoute("/plugins/install", guard(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

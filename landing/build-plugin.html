@@ -160,6 +160,7 @@
   "id": "example.hello",
   "name": "Hello",
   "apiVersion": "1",
+  "version": "1.0.0",
   "ui": "ui",
   "panes": [
     { "type": "example.hello", "title": "Hello", "icon": "👋", "scope": "both" }
@@ -368,6 +369,7 @@ const wks = connect();
 <ul>
 <li><code>id</code> (required), <code>name</code>. <code>id</code> is the install dir name and the token key; namespace it (<code>owner.thing</code>).</li>
 <li><code>apiVersion</code> — MUST be the string <code>"1"</code>.</li>
+<li><code>version</code> — your plugin's release version (semver-ish, e.g. <code>"1.4.0"</code>; an optional leading <code>v</code> is fine). Optional, but it's what powers update detection: the Plugins Manager re-fetches your repo's manifest and offers <strong>Update</strong> only when the published <code>version</code> is higher than the installed one. Omit it and the plugin can still be reinstalled, but never reports an update. Bump it on every release.</li>
 <li><code>server</code>, the sidecar process: <code>command</code> (required when <code>server</code> is set), <code>args</code>, <code>port</code>, <code>health</code> (a path, e.g. <code>/health</code>). The pane's webview loads the plugin's panes from <code>http://127.0.0.1:&lt;port&gt;&lt;path&gt;</code> directly.</li>
 <li><code>ui</code>, instead of <code>server</code>, a subdir of static assets the hub serves itself at <code>/plugins/ui/&lt;id&gt;/</code>. This is a webview plugin with no sidecar process. Only the named subdir is exposed (not <code>plugin.json</code> or <code>.bus-token</code>).</li>
 <li><code>panes</code>, pane types injected into the UI. Each: <code>type</code> (unique id), <code>title</code>, <code>icon</code>, <code>path</code> (the URL path served for the pane), and <code>scope</code> (<code>global</code> = Overview only, <code>agent</code> = inside an agent workspace and gets its sessionId/cwd, <code>both</code> = wherever you are, the default).</li>
@@ -478,6 +480,7 @@ window.addEventListener('wks-settings', (e) =&gt; { settings = e.detail; render(
 <ul>
 <li><strong>Install</strong> from the Plugins Manager by pasting an <code>owner/repo</code> reference (or a full URL, a <code>/tree/&lt;ref&gt;</code> URL, or a direct <code>.tar.gz</code> URL). work{spacer} downloads it, runs the manifest's <code>install</code> build step, and loads it.</li>
 <li>Installation is the <strong>trusted-install</strong> model, like a VS Code extension: it downloads and runs code from the internet, so it asks for consent and shows the manifest and permissions first. Extraction is zip-slip-guarded and atomic.</li>
+<li><strong>Updates</strong> are version-driven. The Plugins Manager's <em>Check for updates</em> re-fetches each installed plugin's manifest from the repo it was installed from and compares the published <code>version</code> to the one on disk — it surfaces an <strong>Update</strong> button only when the source is genuinely newer (otherwise the button reads <strong>Reinstall</strong>, which pulls a fresh copy on demand). So cut a release by bumping <code>version</code> in <code>plugin.json</code> and pushing; users installed from your repo will see the update on their next check.</li>
 <li>Give your repo a clear README with the manifest's declared <code>capabilities</code> so installers know what it can reach.</li>
 </ul>
 <p>There's a public catalog of install-ready plugins at <a href="https://github.com/DJTouchette/workspacer-plugins">github.com/DJTouchette/workspacer-plugins</a>: dashboards (Fleet Radar, Cost HUD, Focus Tracker), fleet automations (Policy Approver, Fleet Guardian, Test on Save, CI Watcher), and remote reach (Slack Bridge, Phone Push, Standup Digest). Each is a zero-dependency repo you can install straight from the Plugins Manager (paste <code>DJTouchette/workspacer-plugin-&lt;name&gt;</code>), and together they double as reference implementations for every plugin shape on this page. To list yours there, open a PR against the catalog repo's index.</p>

@@ -25,7 +25,7 @@ Full-text plugin reference for LLMs: [build-plugin.md](build-plugin.md) is the c
 - [Build a plugin (HTML)](build-plugin.html): the rendered how-to page.
 - [The two kinds](build-plugin.html#intro): webview (`ui`) vs sidecar (`server`).
 - [Your first plugin](build-plugin.html#first): folder, minimal manifest, the webview page, and a sidecar sketch.
-- [The manifest](build-plugin.html#manifest): `plugin.json` fields — `id`, `apiVersion` (must be `"1"`), `server`, `ui`, `panes`, `hotkeys`, `settings`, `capabilities`, `provides`, `emits`/`consumes`, `install`.
+- [The manifest](build-plugin.html#manifest): `plugin.json` fields — `id`, `apiVersion` (must be `"1"`), `version` (release version; drives update detection), `server`, `ui`, `panes`, `hotkeys`, `settings`, `capabilities`, `provides`, `emits`/`consumes`, `install`.
 - [The bus protocol](build-plugin.html#bus): `ws://127.0.0.1:7895/bus?token=`, the `subscribe` / `call` / `publish` / `register` ops.
 - [Capabilities & permissions](build-plugin.html#capabilities): fail-closed grants, path-scoped `fs.*` / `search.project`, common host capabilities.
 - [Events you can consume](build-plugin.html#events): `agent.state_changed`, `agent.snapshot`, `workflow.completed`/`failed`, `ui.*`, `fs.changed`, and what you can emit.

@@ -1,4 +1,4 @@
-import type { PluginManifest } from './plugin';
+import type { PluginManifest, PluginUpdateStatus } from './plugin';
 import type { LibraryItem, LibrarySaveInput, LibraryKind } from './library';
 import type { AnalyticsSummary, SessionHistoryRecord } from './analytics';
 import type { Layout, LayoutAgent } from './layout';
@@ -319,6 +319,13 @@ export interface ElectronAPI {
   installPlugin: (url: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
   /** Download + read a plugin's manifest without installing (pre-install preview). */
   inspectPlugin: (url: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
+  /** Re-fetch each installed plugin's manifest from its source and report which
+   *  have a newer published version. Network-bound; ok=false if the hub is down. */
+  checkPluginUpdates: () => Promise<{
+    ok: boolean;
+    updates?: PluginUpdateStatus[];
+    error?: string;
+  }>;
   /** Read-only catalog of bundled example plugins the user can add. */
   listExamplePlugins: () => Promise<PluginManifest[]>;
   /** Add one bundled example by manifest id (copied from the app's examples dir). */

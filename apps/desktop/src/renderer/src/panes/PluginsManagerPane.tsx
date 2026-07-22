@@ -1,12 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { usePlugins } from '../hooks/usePlugins';
 import PluginInstallDialog from '../components/PluginInstallDialog';
 import ExamplesGalleryDialog from '../components/ExamplesGalleryDialog';
 import PluginCatalogDialog from '../components/PluginCatalogDialog';
 import { pluginRequirement } from '../types/plugin';
+import type { PluginUpdateStatus } from '../types/plugin';
 import { hasSensitivePermission } from '../lib/pluginPermissions';
 import { PluginPermissions } from '../components/plugin/PluginPermissions';
-import { Blocks, AlertTriangle } from '../components/icons';
+import { Blocks, AlertTriangle, RefreshCw } from '../components/icons';
 
 interface SidecarStatus {
   state: string;
@@ -49,7 +50,7 @@ function stateColor(s: string | undefined): string {
   }
 }
 
-/** Shared style for the small per-plugin action buttons (Update / Enable / Remove). */
+/** Shared style for the small per-plugin action buttons (Reinstall / Enable / Remove). */
 function actionBtn(busy: boolean, danger?: boolean): React.CSSProperties {
   return {
     fontSize: '0.7rem',
@@ -64,6 +65,23 @@ function actionBtn(busy: boolean, danger?: boolean): React.CSSProperties {
   };
 }
 
+/** Filled accent style for the "Update available" button — the one action we
+ *  want to stand out, shown only when a newer version actually exists. */
+function updateBtn(busy: boolean): React.CSSProperties {
+  return {
+    fontSize: '0.7rem',
+    fontFamily: 'inherit',
+    fontWeight: 600,
+    cursor: busy ? 'default' : 'pointer',
+    background: 'var(--wks-accent)',
+    color: 'var(--wks-text-on-accent)',
+    border: '1px solid var(--wks-accent)',
+    borderRadius: 4,
+    padding: '3px 10px',
+    opacity: busy ? 0.5 : 1,
+  };
+}
+
 const PluginsManagerPane: React.FC<{ title?: string }> = () => {
   const { plugins } = usePlugins();
   const sidecar = useSidecarStates();
@@ -72,6 +90,38 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
   const [showCatalog, setShowCatalog] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [permsOpen, setPermsOpen] = useState<Set<string>>(new Set());
+  // Per-plugin update status (id → status), populated by an on-demand check
+  // against each plugin's install source. Empty until the first check returns.
+  const [updates, setUpdates] = useState<Record<string, PluginUpdateStatus>>({});
+  const [checking, setChecking] = useState(false);
+
+  // Ask the hub to re-fetch every sourced plugin's manifest and report which
+  // have a newer published version. Network-bound, so it's explicit rather than
+  // on every render; we also fire it once on mount and after an update lands.
+  const checkUpdates = useCallback(async () => {
+    setChecking(true);
+    try {
+      const res = await window.electronAPI.checkPluginUpdates?.();
+      if (res?.ok && Array.isArray(res.updates)) {
+        const byId: Record<string, PluginUpdateStatus> = {};
+        for (const u of res.updates as PluginUpdateStatus[]) byId[u.id] = u;
+        setUpdates(byId);
+      }
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
+  // Check once as soon as there's at least one plugin to check. Keyed on the set
+  // of plugin ids so a freshly installed plugin triggers a re-check, but routine
+  // status churn (sidecar state) doesn't.
+  const pluginIdsKey = plugins.map((p) => p.id).join(',');
+  useEffect(() => {
+    if (plugins.length > 0) void checkUpdates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pluginIdsKey, checkUpdates]);
+
+  const updateCount = Object.values(updates).filter((u) => u.hasUpdate).length;
   const togglePerms = (id: string) =>
     setPermsOpen((prev) => {
       const next = new Set(prev);
@@ -90,7 +140,9 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
     // usePlugins refetches on the plugin.unloaded event.
   };
 
-  // Reinstall from the recorded install source (download → build → reload).
+  // Reinstall from the recorded install source (download → build → reload). This
+  // is the same operation whether the user is taking an offered update or just
+  // forcing a fresh pull — installing the source always lands the latest.
   const update = async (id: string, source: string) => {
     setBusyId(id);
     try {
@@ -99,7 +151,9 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
     } finally {
       setBusyId(null);
     }
-    // usePlugins refetches on the plugin.loaded event.
+    // usePlugins refetches on the plugin.loaded event; re-check so a consumed
+    // update clears its badge (installed version now matches latest).
+    void checkUpdates();
   };
 
   // Toggle the plugin's disabled marker; the hub starts/stops the sidecar.
@@ -148,6 +202,46 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
         <div style={{ fontSize: '0.68rem', color: 'var(--wks-text-faint)' }}>
           {plugins.length} installed
         </div>
+        {updateCount > 0 && (
+          <div
+            style={{
+              fontSize: '0.66rem',
+              fontWeight: 600,
+              color: 'var(--wks-accent)',
+              padding: '2px 8px',
+              borderRadius: 'var(--wks-radius-sm)',
+              border: '1px solid var(--wks-accent)',
+            }}
+          >
+            {updateCount} update{updateCount === 1 ? '' : 's'} available
+          </div>
+        )}
+        <button
+          onClick={() => void checkUpdates()}
+          disabled={checking}
+          title="Re-check every plugin's install source for a newer version"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 5,
+            fontSize: '0.72rem',
+            fontFamily: 'inherit',
+            cursor: checking ? 'default' : 'pointer',
+            background: 'transparent',
+            color: 'var(--wks-text-secondary)',
+            border: '1px solid var(--wks-border-input)',
+            borderRadius: 'var(--wks-radius-sm)',
+            padding: '5px 10px',
+            opacity: checking ? 0.6 : 1,
+          }}
+        >
+          <RefreshCw
+            size={12}
+            strokeWidth={2}
+            style={checking ? { animation: 'wks-spin 1s linear infinite' } : undefined}
+          />
+          {checking ? 'Checking…' : 'Check for updates'}
+        </button>
         <button
           onClick={() => setShowExamples(true)}
           style={{
@@ -225,6 +319,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
           const busy = busyId === p.id;
           const req = pluginRequirement(p);
           const crashErr = state === 'crashed' ? sc?.err : undefined;
+          const up = updates[p.id];
           return (
             <div
               key={p.id}
@@ -250,22 +345,48 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
                 )}
                 <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{p.name || p.id}</span>
                 <span style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>{p.id}</span>
+                {p.version && (
+                  <span
+                    style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)' }}
+                    title="Installed version"
+                  >
+                    v{p.version}
+                  </span>
+                )}
                 <span
                   style={{ fontSize: '0.66rem', color: 'var(--wks-text-muted)', marginLeft: 6 }}
                 >
                   {state}
                 </span>
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-                  {p.source && (
-                    <button
-                      onClick={() => update(p.id, p.source!)}
-                      disabled={busy}
-                      title={`Reinstall from ${p.source}`}
-                      style={actionBtn(busy)}
-                    >
-                      Update
-                    </button>
-                  )}
+                  {/* One button, two meanings: a genuine update (newer version at
+                      the source) gets the accent treatment; otherwise it's an
+                      honest "Reinstall" — the same reinstall-from-source action,
+                      no longer masquerading as a permanent "update available". */}
+                  {p.source &&
+                    (up?.hasUpdate ? (
+                      <button
+                        onClick={() => update(p.id, p.source!)}
+                        disabled={busy}
+                        title={
+                          up.latest
+                            ? `Update ${p.version ? `v${p.version} → ` : ''}v${up.latest}`
+                            : `Update from ${p.source}`
+                        }
+                        style={updateBtn(busy)}
+                      >
+                        {busy ? 'Updating…' : up.latest ? `Update → v${up.latest}` : 'Update'}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => update(p.id, p.source!)}
+                        disabled={busy}
+                        title={`Reinstall from ${p.source}`}
+                        style={actionBtn(busy)}
+                      >
+                        {busy ? 'Reinstalling…' : 'Reinstall'}
+                      </button>
+                    ))}
                   <button
                     onClick={() => toggle(p.id, !!p.disabled)}
                     disabled={busy}

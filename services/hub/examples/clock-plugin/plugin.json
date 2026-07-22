@@ -2,6 +2,7 @@
   "id": "example.clock",
   "name": "Clock",
   "apiVersion": "1",
+  "version": "1.0.0",
   "server": {
     "command": "python3",
     "args": ["-m", "http.server", "9111", "--bind", "127.0.0.1"],

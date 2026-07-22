@@ -37,6 +37,14 @@ type Manifest struct {
 	Name       string `json:"name"`
 	APIVersion string `json:"apiVersion"`
 
+	// Version is the author-declared release version of the plugin (semver-ish,
+	// e.g. "1.4.0", optional leading "v"). It is what the update check compares:
+	// the installed manifest's Version against the same field in the manifest
+	// fetched fresh from the install Source. Optional — a plugin with no Version
+	// can be reinstalled but never reports an update available (there is nothing
+	// to compare), which is deliberately how we avoid a permanent false "update".
+	Version string `json:"version,omitempty"`
+
 	Server   *ServerSpec          `json:"server,omitempty"`
 	Panes    []PaneContribution   `json:"panes,omitempty"`
 	Hotkeys  []HotkeyContribution `json:"hotkeys,omitempty"`

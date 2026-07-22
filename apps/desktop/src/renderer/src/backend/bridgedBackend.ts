@@ -72,6 +72,7 @@ export const HOST_ONLY = [
   'listHubPlugins', // plugin registry lives in main
   'installPlugin',
   'inspectPlugin', // pre-install manifest preview via the hub's guarded route
+  'checkPluginUpdates', // re-fetches sources via the hub's guarded route
   'listExamplePlugins', // bundled-example catalog lives in main
   'installExamplePlugin',
   'removePlugin',

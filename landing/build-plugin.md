@@ -48,6 +48,7 @@ my-hello/
   "id": "example.hello",
   "name": "Hello",
   "apiVersion": "1",
+  "version": "1.0.0",
   "ui": "ui",
   "panes": [
     { "type": "example.hello", "title": "Hello", "icon": "👋", "scope": "both" }
@@ -286,6 +287,7 @@ Schema version is `"apiVersion": "1"` (the loader rejects anything else). The au
 
 - `id` (required), `name`. `id` is the install dir name and the token key; namespace it (`owner.thing`).
 - `apiVersion` — MUST be the string `"1"`.
+- `version` — your plugin's release version (semver-ish, e.g. `"1.4.0"`; an optional leading `v` is fine). Optional, but it's what powers update detection: the Plugins Manager re-fetches your repo's manifest and offers **Update** only when the published `version` is higher than the installed one. Omit it and the plugin can still be reinstalled, but never reports an update. Bump it on every release.
 - `server`, the sidecar process: `command` (required when `server` is set), `args`, `port`, `health` (a path, e.g. `/health`). The hub serves the plugin's panes from `http://127.0.0.1:<port><path>`.
 - `ui`, instead of `server`, a subdir of static assets the hub serves itself at `/plugins/ui/<id>/`. This is a webview plugin with no sidecar process. Only the named subdir is exposed (not `plugin.json` or `.bus-token`).
 - `panes`, pane types injected into the UI. Each: `type` (unique id), `title`, `icon`, `path` (the URL path served for the pane), and `scope` (`global` = Overview only, `agent` = inside an agent workspace and gets its sessionId/cwd, `both` = wherever you are, the default).
@@ -421,6 +423,7 @@ A plugin is just a folder in a git repo. To share one, push it to **its own GitH
 
 - **Install** from the Plugins Manager by pasting an `owner/repo` reference (or a full URL, a `/tree/<ref>` URL, or a direct `.tar.gz` URL). work{spacer} downloads it, runs the manifest's `install` build step, and loads it.
 - Installation is the **trusted-install** model, like a VS Code extension: it downloads and runs code from the internet, so it asks for consent and shows the manifest and permissions first. Extraction is zip-slip-guarded and atomic.
+- **Updates** are version-driven. The Plugins Manager's *Check for updates* re-fetches each installed plugin's manifest from the repo it was installed from and compares the published `version` to the one on disk — it surfaces an **Update** button only when the source is genuinely newer (otherwise the button reads **Reinstall**, which pulls a fresh copy on demand). So cut a release by bumping `version` in `plugin.json` and pushing; users installed from your repo will see the update on their next check.
 - Give your repo a clear README with the manifest's declared `capabilities` so installers know what it can reach.
 
 There's a public catalog of install-ready plugins at [github.com/DJTouchette/workspacer-plugins](https://github.com/DJTouchette/workspacer-plugins): dashboards (Fleet Radar, Cost HUD, Focus Tracker), fleet automations (Policy Approver, Fleet Guardian, Test on Save, CI Watcher), and remote reach (Slack Bridge, Phone Push, Standup Digest). Each is a zero-dependency repo you can install straight from the Plugins Manager (paste `DJTouchette/workspacer-plugin-<name>`), and together they double as reference implementations for every plugin shape on this page. To list yours there, open a PR against the catalog repo's index.
