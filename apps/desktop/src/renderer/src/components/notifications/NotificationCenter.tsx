@@ -1,6 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Bell, X } from 'lucide-react';
-import { useNotifications } from '../../contexts/NotificationsContext';
+import { useNotifications, useNotificationsIfAvailable } from '../../contexts/NotificationsContext';
 import { timeAgo, type StoredNotification } from '../../lib/notificationStore';
 import { LevelIcon } from './NotificationToasts';
 
@@ -127,31 +127,64 @@ const headerButtonStyle: React.CSSProperties = {
   padding: '2px 4px',
 };
 
+/** Panel width; the anchor clamp keeps this fully on-screen. */
+const PANEL_WIDTH = 360;
+
 /**
- * The NavBar bell: unread badge + dropdown panel over the notification-center
- * history. Everything renders from NotificationsContext; clicking a row
- * navigates to its target (agent / pane / URL) and marks it read.
+ * The notification bell: unread badge + dropdown panel over the
+ * notification-center history. Lives in the sidebar (brand header when
+ * expanded, rail footer when collapsed) but is host-agnostic: the panel is
+ * position:fixed and anchored to the bell's rect, so it escapes any clipping
+ * ancestor (the sidebar clips children for its rounded corners). Clicking a
+ * row navigates to its target (agent / pane / URL) and marks it read.
  */
 export const NotificationCenter: React.FC = () => {
-  const { items, unread, panelOpen, setPanelOpen, markAllRead, clearAll } = useNotifications();
+  // Nullable so standalone mounts (the sidebar screenshot harness) render
+  // nothing instead of throwing. Hooks run unconditionally before the bail.
+  const api = useNotificationsIfAvailable();
   const rootRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [anchor, setAnchor] = useState<{ top: number; left: number } | null>(null);
+  const panelOpen = api?.panelOpen ?? false;
+  const setPanelOpen = api?.setPanelOpen;
 
-  // Close on outside click / Escape, matching the NavBar menu pattern.
+  const togglePanel = () => {
+    if (!panelOpen) {
+      const r = buttonRef.current?.getBoundingClientRect();
+      if (r) {
+        setAnchor({
+          top: r.bottom + 8,
+          left: Math.max(8, Math.min(r.left, window.innerWidth - PANEL_WIDTH - 12)),
+        });
+      }
+    }
+    setPanelOpen?.(!panelOpen);
+  };
+
+  // Close on outside click / Escape (the fixed panel is still a DOM descendant
+  // of rootRef, so contains() covers clicks inside it), matching the NavBar
+  // menu pattern. Also close on resize — the fixed anchor goes stale.
   useEffect(() => {
-    if (!panelOpen) return;
+    if (!panelOpen || !setPanelOpen) return;
     const onMouseDown = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setPanelOpen(false);
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setPanelOpen(false);
     };
+    const onResize = () => setPanelOpen(false);
     document.addEventListener('mousedown', onMouseDown);
     document.addEventListener('keydown', onKeyDown);
+    window.addEventListener('resize', onResize);
     return () => {
       document.removeEventListener('mousedown', onMouseDown);
       document.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('resize', onResize);
     };
   }, [panelOpen, setPanelOpen]);
+
+  if (!api) return null;
+  const { items, unread, markAllRead, clearAll } = api;
 
   return (
     <div
@@ -167,7 +200,8 @@ export const NotificationCenter: React.FC = () => {
       }}
     >
       <button
-        onClick={() => setPanelOpen(!panelOpen)}
+        ref={buttonRef}
+        onClick={togglePanel}
         title={unread > 0 ? `Notifications — ${unread} unread` : 'Notifications'}
         aria-label="Notifications"
         style={{
@@ -217,15 +251,14 @@ export const NotificationCenter: React.FC = () => {
         )}
       </button>
 
-      {panelOpen && (
+      {panelOpen && anchor && (
         <div
           style={{
-            position: 'absolute',
-            top: '100%',
-            right: 0,
-            marginTop: 8,
-            width: 'min(360px, calc(100vw - 24px))',
-            maxHeight: 440,
+            position: 'fixed',
+            top: anchor.top,
+            left: anchor.left,
+            width: `min(${PANEL_WIDTH}px, calc(100vw - 24px))`,
+            maxHeight: Math.min(440, window.innerHeight - anchor.top - 16),
             display: 'flex',
             flexDirection: 'column',
             borderRadius: 'var(--wks-radius-lg)',
@@ -235,7 +268,7 @@ export const NotificationCenter: React.FC = () => {
             border: '1px solid var(--wks-border)',
             boxShadow: '0 8px 28px var(--wks-glass-shadow)',
             overflow: 'hidden',
-            zIndex: 10000,
+            zIndex: 30000,
           }}
         >
           <div

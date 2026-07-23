@@ -76,6 +76,12 @@ export function useNotifications(): NotificationsApi {
   return ctx;
 }
 
+/** Nullable variant for chrome that may mount outside the provider (e.g. the
+ *  sidebar screenshot harness) — callers render nothing when null. */
+export function useNotificationsIfAvailable(): NotificationsApi | null {
+  return useContext(NotificationsContext);
+}
+
 interface NotificationsProviderProps {
   /** Select the agent owning this session (sidebar click equivalent). */
   onFocusSession?: (sessionId: string) => void;

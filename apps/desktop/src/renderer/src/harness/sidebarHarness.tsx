@@ -37,6 +37,7 @@ import '../App.css';
 // Deferred imports so the stub is installed first.
 const { default: SideBar } = await import('../components/SideBar');
 const { AttentionProvider } = await import('../contexts/AttentionContext');
+const { NotificationsProvider } = await import('../contexts/NotificationsContext');
 const { ConfigProvider } = await import('../contexts/ConfigContext');
 const { useAttentionFeed } = await import('../hooks/useAttentionFeed');
 const { resolveTheme, applyTheme } = await import('../themes');
@@ -294,37 +295,39 @@ function Harness() {
   const attention = useAttentionFeed(snapshotBySession, shownAgents);
   return (
     <ConfigProvider>
-      <AttentionProvider
-        agents={shownAgents}
-        activeAgentId="agent-prep"
-        snapshotBySession={snapshotBySession}
-        inboxOpen={false}
-        openInbox={noop}
-        closeInbox={noop}
-        viewLevel="piloting"
-        setViewLevel={noop}
-        onOpenAgent={noop}
-        attention={attention}
-      >
-        <div className="app-root" style={{ height: '100vh', display: 'flex' }}>
-          <SideBar
-            agents={shownAgents}
-            activeAgentId="agent-prep"
-            statusBySession={statusBySession}
-            snapshotBySession={snapshotBySession}
-            onSelectAgent={noop}
-            onSpawnAgent={noop}
-            onTerminateAgent={noop}
-            onRenameAgent={noop}
-            onToggleCollapse={noop}
-            onToggleHelp={noop}
-            viewLevel="piloting"
-            collapsed={false}
-            recentSessions={recentSessions}
-            onResumeSession={noop}
-          />
-        </div>
-      </AttentionProvider>
+      <NotificationsProvider>
+        <AttentionProvider
+          agents={shownAgents}
+          activeAgentId="agent-prep"
+          snapshotBySession={snapshotBySession}
+          inboxOpen={false}
+          openInbox={noop}
+          closeInbox={noop}
+          viewLevel="piloting"
+          setViewLevel={noop}
+          onOpenAgent={noop}
+          attention={attention}
+        >
+          <div className="app-root" style={{ height: '100vh', display: 'flex' }}>
+            <SideBar
+              agents={shownAgents}
+              activeAgentId="agent-prep"
+              statusBySession={statusBySession}
+              snapshotBySession={snapshotBySession}
+              onSelectAgent={noop}
+              onSpawnAgent={noop}
+              onTerminateAgent={noop}
+              onRenameAgent={noop}
+              onToggleCollapse={noop}
+              onToggleHelp={noop}
+              viewLevel="piloting"
+              collapsed={false}
+              recentSessions={recentSessions}
+              onResumeSession={noop}
+            />
+          </div>
+        </AttentionProvider>
+      </NotificationsProvider>
     </ConfigProvider>
   );
 }

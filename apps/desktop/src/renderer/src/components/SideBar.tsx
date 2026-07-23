@@ -16,6 +16,7 @@ import { requestInspector } from '../lib/watchBus';
 import { useAttention } from '../contexts/AttentionContext';
 import { useUiMode } from '../hooks/useUiMode';
 import HubStatus from './HubStatus';
+import NotificationCenter from './notifications/NotificationCenter';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
 
 export const SIDEBAR_WIDTH = 296;
@@ -521,6 +522,13 @@ const SideBar: React.FC<SideBarProps> = ({
           </button>
         )}
 
+        {/* Notification bell — kept reachable in the rail so the center never
+            disappears in focus mode; the panel is fixed-positioned and opens
+            over the content area. */}
+        <div style={{ flexShrink: 0, margin: '0 0 6px' }}>
+          <NotificationCenter />
+        </div>
+
         <HubStatus onOpenRemote={onOpenRemote} compact />
 
         {contextMenu && (
@@ -640,12 +648,16 @@ const SideBar: React.FC<SideBarProps> = ({
           </span>
           <Wordmark size={17} />
         </button>
+        {/* Notification bell — the center's history lives with the agents,
+            where the action it records happened. */}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 2 }}>
+          <NotificationCenter />
+        </div>
         {onToggleCollapse && (
           <button
             onClick={onToggleCollapse}
             title="Collapse sidebar (Ctrl+B)"
             style={{
-              marginLeft: 'auto',
               width: 26,
               height: 26,
               padding: 0,
