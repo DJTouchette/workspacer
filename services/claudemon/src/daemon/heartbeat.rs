@@ -23,6 +23,13 @@
 //! `heartbeats` table (see store schema v3/v4), so a warm ping can never
 //! surface in the sidebar, the recent list, the fleet, or anything else that
 //! renders sessions. `POST /heartbeat` runs one; `GET /heartbeats` lists them.
+//!
+//! The Claude ping is a real headless `claude`, so Claude Code still fires the
+//! user's hooks against `/hook` — which would otherwise register a stray
+//! session. We pin the run to `claude --session-id <uuid>` and mark that uuid
+//! via [`SessionStore::mark_heartbeat`] so [`SessionStore::ingest`] drops those
+//! hooks wholesale. (Codex warms use a throwaway `app-server` that fires no
+//! Claude Code hooks, so they need no such id.)
 
 use std::process::Stdio;
 
@@ -79,15 +86,30 @@ pub async fn handle(State(state): State<ApiState>, Json(req): Json<HeartbeatRequ
     let started = std::time::Instant::now();
     let at = time::OffsetDateTime::now_utc().unix_timestamp();
 
+    // The Claude ping runs a real headless `claude`, which fires the user's
+    // Claude Code hooks against our `/hook` endpoint. Pin its session id and
+    // register it so `SessionStore::ingest` drops those hooks — a warm must
+    // never surface as a session in the sidebar. Codex warms go through a
+    // throwaway `app-server` that fires no such hooks, so they need no id.
+    let heartbeat_sid = (provider == "claude").then(|| uuid::Uuid::new_v4().to_string());
+    if let Some(sid) = &heartbeat_sid {
+        state.store.mark_heartbeat(sid);
+    }
+
     let run = async {
         match provider.as_str() {
-            "claude" => run_ping_claude(&req.argv, &model).await,
+            "claude" => run_ping_claude(&req.argv, &model, heartbeat_sid.as_deref()).await,
             "codex" => run_ping_codex(&req.argv, &model).await,
             other => anyhow::bail!("unsupported heartbeat provider '{other}'"),
         }
     };
     let outcome =
         tokio::time::timeout(std::time::Duration::from_secs(PING_TIMEOUT_SECS), run).await;
+    // The child has exited (or been killed on timeout via kill_on_drop), so all
+    // its hooks have already fired; stop suppressing the id.
+    if let Some(sid) = &heartbeat_sid {
+        state.store.unmark_heartbeat(sid);
+    }
     let (ok, resets_at, error) = match outcome {
         Ok(Ok(resets_at)) => (true, resets_at, None),
         Ok(Err(err)) => (false, None, Some(format!("{err:#}"))),
@@ -148,22 +170,32 @@ pub async fn list(State(db): State<Db>, Query(q): Query<ListQuery>) -> Response 
 ///
 /// stdin gets a single user message then EOF — in stream-json input mode the
 /// CLI runs the queued turn and exits, which is exactly the lifecycle we want.
-async fn run_ping_claude(argv: &[String], model: &str) -> anyhow::Result<Option<i64>> {
+async fn run_ping_claude(
+    argv: &[String],
+    model: &str,
+    session_id: Option<&str>,
+) -> anyhow::Result<Option<i64>> {
     use anyhow::Context;
 
     let (bin, base) = argv.split_first().expect("argv checked non-empty");
-    let mut child = Command::new(bin)
-        .args(base)
-        .args([
-            "--print",
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--model",
-            model,
-        ])
+    let mut cmd = Command::new(bin);
+    cmd.args(base).args([
+        "--print",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--model",
+        model,
+    ]);
+    // Pin the session id so the hooks Claude Code fires arrive under the id the
+    // daemon marked as a heartbeat — `ingest` drops them, keeping the warm out
+    // of the sidebar.
+    if let Some(sid) = session_id {
+        cmd.args(["--session-id", sid]);
+    }
+    let mut child = cmd
         .current_dir(home_dir())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

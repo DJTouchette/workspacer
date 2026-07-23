@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use serde_json::Value;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
@@ -265,6 +265,13 @@ pub struct SessionStore {
     /// stream transport's `rate_limit_event` rarely carries `utilization`, so
     /// without this a stream session never shows a usage percentage.
     account_usage: Arc<std::sync::RwLock<Option<AccountUsage>>>,
+    /// Session ids for daemon-owned keep-warm pings (see `daemon::heartbeat`).
+    /// A warm ping runs a real headless `claude`, whose Claude Code hooks would
+    /// otherwise register a stray session and surface it in the sidebar / recent
+    /// / fleet. The ping is pinned to `claude --session-id <uuid>` and that uuid
+    /// is marked here, so `ingest` drops its hooks entirely: a warm is recorded
+    /// in the `heartbeats` table, never as a session.
+    heartbeat_ids: Arc<DashSet<String>>,
 }
 
 /// A live model/effort switch request for a managed adapter's driver loop.
@@ -373,7 +380,23 @@ impl SessionStore {
             managed_permission_modes: Arc::new(DashMap::new()),
             managed_interrupts: Arc::new(DashMap::new()),
             account_usage: Arc::new(std::sync::RwLock::new(None)),
+            heartbeat_ids: Arc::new(DashSet::new()),
         }
+    }
+
+    // --- keep-warm heartbeats -----------------------------------------------
+
+    /// Mark a session id as a keep-warm ping so its Claude Code hooks are
+    /// dropped by `ingest` (never registered or broadcast as a session). Called
+    /// by `daemon::heartbeat` before it spawns the pinned `claude --session-id`.
+    pub fn mark_heartbeat(&self, session_id: &str) {
+        self.heartbeat_ids.insert(session_id.to_string());
+    }
+
+    /// Stop suppressing a session id's hooks. Called once the warm ping's child
+    /// has exited (all its hooks have fired) so the set can't grow unbounded.
+    pub fn unmark_heartbeat(&self, session_id: &str) {
+        self.heartbeat_ids.remove(session_id);
     }
 
     // --- in-daemon PTY child lifecycle --------------------------------------
@@ -548,6 +571,17 @@ impl SessionStore {
     }
 
     pub fn ingest(&self, mut event: HookEvent) -> SessionState {
+        // Keep-warm pings run a real headless `claude`, so Claude Code fires the
+        // user's hooks (SessionStart/Stop/…) against our `/hook` endpoint just
+        // like any session. Drop them wholesale — no state row, no `hook_tx` /
+        // `update_tx` broadcast — so a warm can never surface in the sidebar,
+        // recent list, or fleet. The ping is recorded in the `heartbeats` table
+        // instead (see `daemon::heartbeat`). The id is pinned via
+        // `claude --session-id`, so it arrives verbatim with no alias to resolve.
+        if self.heartbeat_ids.contains(&event.session_id) {
+            return SessionState::new(event.session_id.clone(), event.cwd.clone());
+        }
+
         // Alias resolution: if claude's session_id has already been mapped to
         // our canonical (spawn-side) id, rewrite. For the first SessionStart of
         // a spawn, register the alias by looking up the pending spawn by cwd.
@@ -1829,6 +1863,39 @@ mod tests {
         );
         assert!(!store.term_sizes.contains_key("s1"), "term_sizes leaked");
         assert!(!store.paste_modes.contains_key("s1"), "paste_modes leaked");
+    }
+
+    #[test]
+    fn heartbeat_hooks_never_register_a_session() {
+        let store = SessionStore::new();
+        let mut hook_rx = store.subscribe_hooks();
+        let mut update_rx = store.subscribe();
+
+        // A warm ping's headless claude fires its lifecycle hooks. Marked as a
+        // heartbeat, they must leave no trace: no state row, and nothing on the
+        // hook / update broadcast channels a sidebar would render.
+        store.mark_heartbeat("warm-1");
+        store.ingest(hook("SessionStart", "warm-1", "/home/u"));
+        store.ingest(hook("Stop", "warm-1", "/home/u"));
+
+        assert!(store.get("warm-1").is_none(), "heartbeat leaked a session");
+        assert!(store.list().is_empty(), "heartbeat surfaced in the list");
+        assert!(
+            hook_rx.try_recv().is_err(),
+            "heartbeat hook was rebroadcast"
+        );
+        assert!(
+            update_rx.try_recv().is_err(),
+            "heartbeat produced a session update"
+        );
+
+        // Once unmarked, hooks for the same id behave normally again.
+        store.unmark_heartbeat("warm-1");
+        store.ingest(hook("SessionStart", "warm-1", "/home/u"));
+        assert!(
+            store.get("warm-1").is_some(),
+            "post-unmark hook should register a session"
+        );
     }
 
     #[test]
