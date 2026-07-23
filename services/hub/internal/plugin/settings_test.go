@@ -250,3 +250,118 @@ func TestSettingsUnloadedAndNoDir(t *testing.T) {
 		t.Error("SetSettings on a plugin with no dir should error")
 	}
 }
+
+// secretManifest: one secret PAT-style setting beside a plain string.
+func secretManifest(dir string) Manifest {
+	return Manifest{
+		ID: "acme.ci", APIVersion: APIVersion, Dir: dir,
+		Settings: []SettingDef{
+			{Key: "token", Label: "API token", Type: SettingString, Secret: true},
+			{Key: "repo", Label: "Repository", Type: SettingString},
+		},
+	}
+}
+
+// Secret settings must be strings and must not ship a manifest default (the
+// unguarded /plugins listing would leak it).
+func TestSecretValidation(t *testing.T) {
+	base := func(s ...SettingDef) Manifest {
+		return Manifest{ID: "x", APIVersion: APIVersion, Settings: s}
+	}
+	valid := base(SettingDef{Key: "token", Type: SettingString, Secret: true})
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid secret setting rejected: %v", err)
+	}
+	secretBool := base(SettingDef{Key: "token", Type: SettingBoolean, Secret: true})
+	if err := secretBool.Validate(); err == nil {
+		t.Error("secret boolean should be rejected")
+	}
+	secretDefault := base(SettingDef{Key: "token", Type: SettingString, Secret: true, Default: "hunter2"})
+	if err := secretDefault.Validate(); err == nil {
+		t.Error("secret with a default should be rejected")
+	}
+}
+
+// The core secret contract: plaintext at rest and in the sidecar env, the
+// placeholder on every read (Get, Set echo — the same map feeds the
+// plugin.settings.changed broadcast).
+func TestSecretRedactedOnReadsPlaintextInEnv(t *testing.T) {
+	dir := t.TempDir()
+	mf := secretManifest(dir)
+	m := loadedManager(t, newFakeRegistrar(), mf)
+
+	echoed, err := m.SetSettings("acme.ci", map[string]any{"token": "ghp_abc123", "repo": "o/r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if echoed["token"] != SecretPlaceholder {
+		t.Errorf("Set echo leaks the secret: %v", echoed["token"])
+	}
+	if echoed["repo"] != "o/r" {
+		t.Errorf("non-secret redacted: %v", echoed["repo"])
+	}
+
+	got, err := m.GetSettings("acme.ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["token"] != SecretPlaceholder {
+		t.Errorf("GetSettings leaks the secret: %v", got["token"])
+	}
+
+	// At rest: plaintext (0600 overlay is the storage of record).
+	raw, err := os.ReadFile(filepath.Join(dir, settingsValuesFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var overlay map[string]any
+	if err := json.Unmarshal(raw, &overlay); err != nil {
+		t.Fatal(err)
+	}
+	if overlay["token"] != "ghp_abc123" {
+		t.Errorf("overlay should store plaintext, got %v", overlay["token"])
+	}
+
+	// Sidecar env: plaintext — that delivery is the point of the secret.
+	var env map[string]any
+	if err := json.Unmarshal([]byte(m.settingsEnvJSON(mf)), &env); err != nil {
+		t.Fatal(err)
+	}
+	if env["token"] != "ghp_abc123" {
+		t.Errorf("WKS_SETTINGS env should carry plaintext, got %v", env["token"])
+	}
+}
+
+// A client that reads settings and saves them all back must not clobber the
+// stored secret with the placeholder; an empty string still clears it.
+func TestSecretSentinelEchoIgnored(t *testing.T) {
+	dir := t.TempDir()
+	m := loadedManager(t, newFakeRegistrar(), secretManifest(dir))
+
+	if _, err := m.SetSettings("acme.ci", map[string]any{"token": "ghp_abc123"}); err != nil {
+		t.Fatal(err)
+	}
+	// Echo the redacted read back, alongside a real change.
+	if _, err := m.SetSettings("acme.ci", map[string]any{"token": SecretPlaceholder, "repo": "o/r"}); err != nil {
+		t.Fatal(err)
+	}
+	overlay := readSettingsOverlay(dir)
+	if overlay["token"] != "ghp_abc123" {
+		t.Errorf("sentinel echo overwrote the secret: %v", overlay["token"])
+	}
+	if overlay["repo"] != "o/r" {
+		t.Errorf("real change alongside sentinel was dropped: %v", overlay["repo"])
+	}
+
+	// Explicit empty string clears; reads then report it unmasked-empty.
+	if _, err := m.SetSettings("acme.ci", map[string]any{"token": ""}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.GetSettings("acme.ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["token"] != "" {
+		t.Errorf("cleared secret should read as empty, got %v", got["token"])
+	}
+}

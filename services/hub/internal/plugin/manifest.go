@@ -131,6 +131,15 @@ type SettingDef struct {
 	Default any      `json:"default,omitempty"` // default value
 	Options []string `json:"options,omitempty"` // allowed values when type == "select"
 	Help    string   `json:"help,omitempty"`    // optional one-line description
+	// Secret marks a string setting as sensitive (a PAT, an API key). The value
+	// is stored and delivered to the SIDECAR (WKS_SETTINGS env) normally, but
+	// every read surface — settings API reads, the plugin.settings.changed
+	// broadcast, and the webview's window.__WKS_SETTINGS__ injection — replaces
+	// it with SecretPlaceholder, and the desktop renders a masked write-only
+	// input. A flag rather than a setting *type* so older hosts (which ignore
+	// unknown manifest fields) degrade to a plain string input instead of
+	// rejecting the manifest.
+	Secret bool `json:"secret,omitempty"`
 }
 
 // SettingType values.
@@ -214,6 +223,16 @@ func (m *Manifest) Validate() error {
 			}
 		default:
 			return fmt.Errorf("setting %q has unknown type %q", s.Key, s.Type)
+		}
+		if s.Secret {
+			// Secrets are string-shaped, and a manifest default would leak the
+			// value through the unguarded /plugins manifest listing.
+			if s.Type != SettingString {
+				return fmt.Errorf("setting %q is secret but has type %q (secrets must be strings)", s.Key, s.Type)
+			}
+			if d, _ := s.Default.(string); s.Default != nil && d != "" {
+				return fmt.Errorf("setting %q is secret and must not declare a default value", s.Key)
+			}
 		}
 	}
 	for _, c := range m.Capabilities {

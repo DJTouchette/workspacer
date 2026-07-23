@@ -1,7 +1,46 @@
 import React, { useEffect, useState } from 'react';
 import { usePlugins } from '../../hooks/usePlugins';
+import { SECRET_PLACEHOLDER } from '../../types/plugin';
 import type { PluginManifest, PluginSettingDef } from '../../types/plugin';
-import { Section, Row, CheckRow, ModeButton, inputStyle } from './primitives';
+import { Section, Row, CheckRow, ModeButton, SmallButton, inputStyle } from './primitives';
+
+/**
+ * Write-only input for a secret setting (PAT/API key). The hub never returns
+ * the stored value — reads report SECRET_PLACEHOLDER — so this renders a
+ * masked field that is empty until the user types a replacement. Commits on
+ * blur/Enter rather than per keystroke: every save restarts the plugin's
+ * sidecar, and a half-typed token must never be persisted.
+ */
+const SecretInput: React.FC<{ stored: boolean; onCommit: (value: string) => void }> = ({
+  stored,
+  onCommit,
+}) => {
+  const [draft, setDraft] = useState('');
+  const commit = () => {
+    if (draft.trim()) {
+      onCommit(draft.trim());
+      setDraft('');
+    }
+  };
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+      <input
+        type="password"
+        autoComplete="off"
+        spellCheck={false}
+        style={{ ...inputStyle, width: 160 }}
+        value={draft}
+        placeholder={stored ? '•••••••• (set — type to replace)' : 'not set'}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+        }}
+      />
+      {stored && <SmallButton label="Clear" onClick={() => onCommit('')} />}
+    </div>
+  );
+};
 
 /** Renders + persists one plugin's declared settings. The host (hub) returns
  *  values already merged over the plugin's manifest defaults, so every declared
@@ -70,6 +109,16 @@ const PluginSettings: React.FC<{ plugin: PluginManifest }> = ({ plugin }) => {
           </Row>
         );
       default: // string
+        if (s.secret) {
+          // Set when the hub reports the redaction sentinel (or, against an
+          // older hub that predates redaction, any non-empty value).
+          const stored = v === SECRET_PLACEHOLDER || (typeof v === 'string' && v !== '');
+          return (
+            <Row key={s.key} label={s.label}>
+              <SecretInput stored={stored} onCommit={(nv) => update(s.key, nv)} />
+            </Row>
+          );
+        }
         return (
           <Row key={s.key} label={s.label}>
             <input

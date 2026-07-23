@@ -18,13 +18,47 @@ import (
 // this a small overlay rather than a full mirror of the schema.
 const settingsValuesFile = ".settings.json"
 
+// SecretPlaceholder is what every read surface reports for a set secret
+// setting instead of its value. Distinctive on purpose: a client echoing a
+// read back into SetSettings (save-everything UIs) must never overwrite the
+// stored secret with the mask, so SetSettings drops secret keys whose incoming
+// value equals this sentinel. Real plaintext delivery happens only via the
+// sidecar's WKS_SETTINGS environment (settingsEnvJSON).
+const SecretPlaceholder = "__WKS_SECRET__"
+
 func settingsFilePath(dir string) string { return filepath.Join(dir, settingsValuesFile) }
+
+// redactSecrets copies vals with every set secret setting's value replaced by
+// SecretPlaceholder. Empty strings pass through unchanged so clients can still
+// distinguish "unset" from "set". Non-secret keys are untouched.
+func redactSecrets(mf Manifest, vals map[string]any) map[string]any {
+	out := make(map[string]any, len(vals))
+	secret := map[string]bool{}
+	for _, s := range mf.Settings {
+		if s.Secret {
+			secret[s.Key] = true
+		}
+	}
+	for k, v := range vals {
+		if secret[k] {
+			if s, _ := v.(string); s != "" {
+				out[k] = SecretPlaceholder
+				continue
+			}
+		}
+		out[k] = v
+	}
+	return out
+}
 
 // GetSettings returns a plugin's current setting values: the manifest-declared
 // defaults with the user's persisted overlay applied on top. Every declared
 // setting that has a default appears; persisted values override. Keys on disk
 // that the manifest no longer declares are dropped — the manifest is the schema
-// of record. Errors if the plugin isn't loaded.
+// of record. Secret settings are redacted to SecretPlaceholder — this feeds
+// the settings API, the webview injection, and everything else client-facing;
+// only the sidecar env (settingsEnvJSON) carries plaintext. Errors if the
+// plugin isn't loaded.
 func (m *Manager) GetSettings(pluginID string) (map[string]any, error) {
 	m.mu.Lock()
 	l, ok := m.plugins[pluginID]
@@ -33,8 +67,9 @@ func (m *Manager) GetSettings(pluginID string) (map[string]any, error) {
 		return nil, fmt.Errorf("plugin %q is not loaded", pluginID)
 	}
 	m.settingsMu.Lock()
-	defer m.settingsMu.Unlock()
-	return mergedSettings(l.manifest), nil
+	merged := mergedSettings(l.manifest)
+	m.settingsMu.Unlock()
+	return redactSecrets(l.manifest, merged), nil
 }
 
 // SetSettings validates a partial map of setting values against the plugin's
@@ -58,6 +93,14 @@ func (m *Manager) SetSettings(pluginID string, partial map[string]any) (map[stri
 	defs := make(map[string]SettingDef, len(mf.Settings))
 	for _, s := range mf.Settings {
 		defs[s.Key] = s
+	}
+	// A secret key whose incoming value is the redaction sentinel is a client
+	// echoing a read back at us (save-everything UI); treat it as "unchanged"
+	// rather than storing the mask over the real secret.
+	for k, v := range partial {
+		if def, ok := defs[k]; ok && def.Secret && v == SecretPlaceholder {
+			delete(partial, k)
+		}
 	}
 	// Validate the entire partial before touching disk. Unknown keys are rejected
 	// rather than passed through: the manifest declares the plugin's whole settings
@@ -92,9 +135,13 @@ func (m *Manager) SetSettings(pluginID string, partial map[string]any) (map[stri
 	merged := mergedSettings(mf)
 	m.settingsMu.Unlock()
 
+	// Broadcast and return the REDACTED view — this event reaches every bus
+	// subscriber (plugins, web/remote clients), and the return value is echoed
+	// over HTTP; neither may carry a secret's plaintext.
+	redacted := redactSecrets(mf, merged)
 	m.pub.Publish(event.New("plugin.settings.changed", "hub", map[string]any{
 		"id":     pluginID,
-		"values": merged,
+		"values": redacted,
 	}))
 	// A webview picks the change up live (window.__WKS_SETTINGS__ / the bus
 	// event), but a sidecar reads WKS_SETTINGS from its environment at spawn —
@@ -103,12 +150,14 @@ func (m *Manager) SetSettings(pluginID string, partial map[string]any) (map[stri
 	if mf.Server != nil && !mf.Disabled {
 		m.Add(mf)
 	}
-	return merged, nil
+	return redacted, nil
 }
 
 // settingsEnvJSON marshals a plugin's merged setting values for the sidecar's
 // WKS_SETTINGS environment variable. Empty string when there is nothing to
 // deliver or marshalling fails (the sidecar then falls back to its defaults).
+// Deliberately UNREDACTED: this is the one delivery path where a secret's
+// plaintext is the point — the sidecar needs the token to do its job.
 func (m *Manager) settingsEnvJSON(mf Manifest) string {
 	m.settingsMu.Lock()
 	merged := mergedSettings(mf)

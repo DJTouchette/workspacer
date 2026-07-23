@@ -26,6 +26,11 @@ export interface PluginHotkeyContribution {
 
 export type PluginSettingType = 'boolean' | 'number' | 'string' | 'select';
 
+/** What the hub reports for a SET secret setting instead of its value; writing
+ *  this exact string back is ignored (means "unchanged"). Mirrors Go
+ *  plugin.SecretPlaceholder — keep in sync. */
+export const SECRET_PLACEHOLDER = '__WKS_SECRET__';
+
 /** One configurable setting a plugin declares; the host renders a control for it. */
 export interface PluginSettingDef {
   key: string;
@@ -34,6 +39,9 @@ export interface PluginSettingDef {
   default?: unknown;
   options?: string[]; // for type 'select'
   help?: string;
+  /** Sensitive string (PAT/API key): masked write-only input, value never
+   *  echoed to clients — reads report SECRET_PLACEHOLDER when set. */
+  secret?: boolean;
 }
 
 /** One capability entry in a manifest: a bus method the plugin may call, with

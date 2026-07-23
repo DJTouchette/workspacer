@@ -391,7 +391,9 @@ Declare typed `settings` in the manifest and the host renders them in Settings f
 ]
 ```
 
-Values are delivered to a **webview** as `window.__WKS_SETTINGS__` and re-delivered live on every change via a `wks-settings` event, so a webview updates without reloading:
+**Secrets.** Add `"secret": true` to a string setting that holds a PAT/API key. The host renders a masked, write-only input (set/replace/clear — never displayed), and the stored value never leaves the hub on any read surface: settings reads, the `plugin.settings.changed` broadcast, and the webview `window.__WKS_SETTINGS__` injection all report the sentinel `"__WKS_SECRET__"` instead. The plaintext is delivered ONLY in the sidecar's `WKS_SETTINGS` env — so a secret is for sidecar code, never webview code. Storage is a `0600` file in the plugin's directory. A secret must not declare a non-empty `default` (the manifest listing is public). Writing the sentinel back is ignored ("unchanged"), writing `""` clears. Older hosts ignore the flag and fall back to a plain string input, so adding it is backward-compatible.
+
+Values are delivered to a **webview** as `window.__WKS_SETTINGS__` (secrets redacted) and re-delivered live on every change via a `wks-settings` event, so a webview updates without reloading:
 
 ```js
 let settings = window.__WKS_SETTINGS__ || {};
