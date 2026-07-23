@@ -194,11 +194,17 @@ const LEADING_PUNCT = /^[(\['"`{]+/;
  * character (leading/trailing punctuation stays as text around the link).
  */
 export function linkifyText(text: string): Array<string | DetectedPath> {
+  // Perf guards for the streaming hot path (the in-flight turn re-parses per
+  // content tick): no separator anywhere means no candidates — bail in O(n) —
+  // and pathological single-run inputs skip scanning entirely.
+  if (text.length > 50_000 || !/[\\/]/.test(text)) return [text];
   const out: Array<string | DetectedPath> = [];
   let last = 0;
   // Candidate tokens: any non-whitespace run containing a path separator or an
-  // absolute/dot-relative prefix. detectFilePath does the real vetting.
-  const candidate = /\S*[\\/]\S+/g;
+  // absolute/dot-relative prefix. detectFilePath does the real vetting. The
+  // prefix deliberately excludes separators ([^\s\\/]* rather than \S*) so a
+  // failed attempt can't backtrack through them.
+  const candidate = /[^\s\\/]*[\\/]\S+/g;
   let m: RegExpExecArray | null;
   while ((m = candidate.exec(text)) !== null) {
     let token = m[0];
