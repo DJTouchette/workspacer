@@ -137,6 +137,10 @@ type Manager struct {
 	// as plugin.log events. Off by default (production `serve`); the hub turns it
 	// on for `workspacer plugin dev` so the developer sees their sidecar's logs.
 	streamSidecarLogs bool
+	// sidecarNode, when set, replaces a bare `node` sidecar command with this
+	// runtime path (typically the host app's own Electron binary, run with
+	// ELECTRON_RUN_AS_NODE=1) so plugins don't depend on a system Node version.
+	sidecarNode string
 
 	// Serializes the read-modify-write of a plugin's persisted settings overlay
 	// (settings.go) so concurrent SetSettings calls can't lose an update or read a
@@ -171,6 +175,38 @@ func (m *Manager) SetSandboxMode(mode sandbox.Mode) {
 	m.mu.Unlock()
 }
 
+// SetSidecarNode points `node` sidecars at an explicit runtime binary. The
+// desktop app passes its own executable (Electron with ELECTRON_RUN_AS_NODE),
+// which pins every JS sidecar to the app's bundled Node — the system Node
+// version stops mattering. Empty (headless `workspacer serve`, tests) keeps
+// resolving `node` from PATH. Non-node commands (per-platform prebuilt
+// binaries) are never rewritten.
+func (m *Manager) SetSidecarNode(path string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sidecarNode = path
+}
+
+// sidecarNodeOverride returns the runtime path to substitute for mf's sidecar
+// command, or "" when no substitution applies (no override configured, or the
+// command isn't a bare `node`).
+func (m *Manager) sidecarNodeOverride(mf Manifest) string {
+	if mf.Server == nil {
+		return ""
+	}
+	m.mu.Lock()
+	override := m.sidecarNode
+	m.mu.Unlock()
+	if override == "" {
+		return ""
+	}
+	cmd := expandPlatformTokens(mf.Server.Command)
+	if cmd == "node" || cmd == "node.exe" {
+		return override
+	}
+	return ""
+}
+
 // SetStreamSidecarLogs toggles publishing each sidecar's stdout/stderr line as a
 // plugin.log bus event. The hub enables it for `workspacer plugin dev`; plain
 // `serve` leaves it off. Call before loading plugins.
@@ -192,6 +228,11 @@ func (m *Manager) sandboxSidecar(mf Manifest) (command string, args []string, ru
 	// that only runs on the OS it was committed from.
 	cmd := expandPlatformTokens(mf.Server.Command)
 	cmdArgs := expandPlatformTokensAll(mf.Server.Args)
+	// Pin `node` sidecars to the configured runtime (the desktop app's bundled
+	// Node via ELECTRON_RUN_AS_NODE — the matching env is added by Add).
+	if override := m.sidecarNodeOverride(mf); override != "" {
+		cmd = override
+	}
 	// A sidecar may write only its own plugin directory (a private temp is added
 	// by the mechanism). Reads stay open so it can load its interpreter/libraries.
 	res := sandbox.Wrap(cmd, cmdArgs, sandbox.Policy{WriteRoots: []string{mf.Dir}})
@@ -372,6 +413,12 @@ func (m *Manager) Add(mf Manifest) {
 			if sj := m.settingsEnvJSON(mf); sj != "" {
 				env = append(env, "WKS_SETTINGS="+sj)
 			}
+		}
+		// When the sidecar runs on the app's bundled runtime, that binary is
+		// Electron — ELECTRON_RUN_AS_NODE makes it behave as plain Node. Plain
+		// node binaries ignore the variable, so setting it is always safe.
+		if m.sidecarNodeOverride(mf) != "" {
+			env = append(env, "ELECTRON_RUN_AS_NODE=1")
 		}
 		// Launch under OS filesystem confinement (bwrap / sandbox-exec). In
 		// enforce mode on a platform without a mechanism, run is false and the

@@ -172,7 +172,11 @@ app.commandLine.appendSwitch('js-flags', `--max-old-space-size=${rendererOldSpac
 // event loop, not in Chromium renderer timers). The renderer self-throttles via
 // usePageVisible; disabling Chromium's throttling kept hidden windows fully awake
 // and wasted CPU on an otherwise mostly-idle app.
-// Disable renderer code integrity checks for faster startup on Windows
+// Disable renderer code integrity checks for faster startup on Windows.
+// Electron 36+ lowercases appendSwitch NAMES; the VALUE must stay cased or
+// Chromium won't match the feature — verify on a Windows build that
+// `app.commandLine.getSwitchValue('disable-features')` still round-trips
+// 'RendererCodeIntegrity' exactly (drop the flag if Chromium 150 made it moot).
 if (process.platform === 'win32') {
   app.commandLine.appendSwitch('disable-features', 'RendererCodeIntegrity');
 }
@@ -209,7 +213,7 @@ if (process.env.WORKSPACER_DISABLE_GPU === '1') {
 // CHROME_UA_MAJOR needs an occasional bump (or set WORKSPACER_CHROME_UA
 // to override the whole string). The real fix for staying current is
 // upgrading Electron itself.
-const CHROME_UA_MAJOR = process.env.WORKSPACER_CHROME_UA_MAJOR || '143';
+const CHROME_UA_MAJOR = process.env.WORKSPACER_CHROME_UA_MAJOR || '150';
 const FIREFOX_UA_MAJOR = '140'; // current ESR — safe to leave for a long time
 
 function uaPlatformToken(): string {
@@ -277,6 +281,11 @@ function createWindow(): void {
     backgroundColor: transparentShell ? '#00000000' : '#1b2636',
     transparent: transparentShell,
     frame: false,
+    // Electron 43 supports (and defaults to) native rounded corners for
+    // frameless windows on Linux. The renderer already paints its own radius
+    // on the transparent shell — native rounding on top double-clips the
+    // corners, so keep it off where we run transparent.
+    ...(transparentShell ? { roundedCorners: false } : {}),
     titleBarStyle: 'hidden',
     // Initial colors approximate the default dark theme's title bar; the
     // renderer repaints this to the active theme on mount (window:setOverlay).

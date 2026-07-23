@@ -413,6 +413,11 @@ export function registerHubCapabilities(): void {
       else if (p.url) void shell.openExternal(p.url);
       else agentNotifier.focusWindow();
     });
+    notification.on('failed', (_e, err) =>
+      console.warn(
+        `[notifications.post] OS notification failed (in-app center still has it): ${err}`,
+      ),
+    );
     notification.show();
     return { ok: true, os: true };
   });

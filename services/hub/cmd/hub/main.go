@@ -228,6 +228,7 @@ func main() {
 	layoutFile := flag.String("layout-file", defaultLayoutFile(), "path to persist the shared workspace layout document (empty = memory only)")
 	pushDir := flag.String("push-dir", defaultPushDir(), "directory holding the VAPID keypair + Web Push subscriptions (for the /m PWA's background notifications)")
 	pluginsStreamLogs := flag.Bool("plugins-stream-logs", false, "stream each plugin sidecar's stdout/stderr onto the bus as plugin.log events (used by `workspacer plugin dev`; off for plain serve)")
+	sidecarNode := flag.String("sidecar-node", os.Getenv("WORKSPACER_SIDECAR_NODE"), "runtime binary to run `node` plugin sidecars with (the desktop app passes its own Electron binary; ELECTRON_RUN_AS_NODE is set automatically); empty = system node from PATH")
 	brainScope := flag.String("brain-scope", "off", "supervise the brain capability provider: off | full (whole surface, headless) | catalog (file-backed subset, when the desktop app owns the live caps)")
 	brainBin := flag.String("brain-bin", "", "path to the brain binary to supervise; empty = auto-detect (sibling of the hub binary, then PATH)")
 	claudemonURL := flag.String("claudemon", "http://127.0.0.1:7891", "claudemon API base URL the supervised brain talks to")
@@ -321,6 +322,9 @@ func main() {
 	// = off | best-effort (default) | enforce. Enforce refuses to start a sidecar
 	// on a platform with no confinement mechanism (fail closed).
 	mgr.SetSandboxMode(sandbox.ParseMode(os.Getenv("WORKSPACER_PLUGIN_SANDBOX")))
+	if *sidecarNode != "" {
+		mgr.SetSidecarNode(*sidecarNode)
+	}
 	// `workspacer plugin dev` passes --plugins-stream-logs so a developer sees the
 	// sidecar's own stdout/stderr; plain serve leaves it off (no bus log spam).
 	if *pluginsStreamLogs {

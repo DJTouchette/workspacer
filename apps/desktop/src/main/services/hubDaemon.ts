@@ -380,6 +380,12 @@ function launch(bin: string): Promise<void> {
     DELEGATE_CATALOG_TO_BRAIN ? 'catalog' : 'off',
     '--claudemon',
     CLAUDEMON_API_URL,
+    // Run `node` plugin sidecars on our own bundled Node (the hub sets
+    // ELECTRON_RUN_AS_NODE when spawning) — plugins get the app's Node version
+    // regardless of what, if anything, is installed on the system. execPath is
+    // the electron binary in dev and Workspacer(.exe) when packaged.
+    '--sidecar-node',
+    process.execPath,
   ];
   if (HUB_TOKEN) hubArgs.push('--token', HUB_TOKEN);
   // Serve the full web app (real renderer) at /app/ when remote sharing is on

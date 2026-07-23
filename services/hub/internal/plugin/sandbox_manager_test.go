@@ -112,3 +112,34 @@ func TestSandboxSidecar_Enforce(t *testing.T) {
 		}
 	}
 }
+
+// SetSidecarNode pins `node` sidecars to an explicit runtime (the desktop
+// app's bundled Electron-as-Node); non-node commands are never rewritten.
+func TestSidecarNodeOverride(t *testing.T) {
+	m := NewManager(&recorder{}, nil)
+	m.SetSandboxMode(sandbox.ModeOff)
+	nodeMf := Manifest{ID: "x", APIVersion: APIVersion, Dir: t.TempDir(),
+		Server: &ServerSpec{Command: "node", Args: []string{"server.js"}}}
+	binMf := Manifest{ID: "y", APIVersion: APIVersion, Dir: t.TempDir(),
+		Server: &ServerSpec{Command: "./bin/server${exe}"}}
+
+	// No override configured: node resolves from PATH as before.
+	if got, _, run := m.sandboxSidecar(nodeMf); !run || got != "node" {
+		t.Fatalf("without override: cmd=%q run=%v", got, run)
+	}
+	if m.sidecarNodeOverride(nodeMf) != "" {
+		t.Fatal("override reported without being configured")
+	}
+
+	m.SetSidecarNode("/opt/workspacer/Workspacer")
+	if got, args, run := m.sandboxSidecar(nodeMf); !run || got != "/opt/workspacer/Workspacer" || len(args) != 1 || args[0] != "server.js" {
+		t.Fatalf("with override: cmd=%q args=%v run=%v", got, args, run)
+	}
+	if m.sidecarNodeOverride(nodeMf) == "" {
+		t.Fatal("override not reported for node sidecar (Add would skip ELECTRON_RUN_AS_NODE)")
+	}
+	// A prebuilt-binary sidecar keeps its own command.
+	if m.sidecarNodeOverride(binMf) != "" {
+		t.Fatal("non-node command must not be rewritten")
+	}
+}

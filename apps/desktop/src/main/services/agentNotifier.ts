@@ -186,6 +186,12 @@ class AgentNotifier {
       const icon = appIconPath() ?? undefined;
       const notification = new Notification({ title, body, silent: !cfg.sound, icon });
       notification.on('click', () => this.focusAgent(session.sessionId));
+      // macOS (Electron 42+, UNUserNotificationCenter): unsigned dev builds get
+      // no OS notification and emit 'failed' instead. The in-app center already
+      // recorded this above, so just make the drop visible in logs.
+      notification.on('failed', (_e, err) =>
+        console.warn(`[notify] OS notification failed (in-app center still has it): ${err}`),
+      );
       notification.show();
     }
 
@@ -246,6 +252,9 @@ class AgentNotifier {
       const win = this.focusWindow();
       win?.webContents.send(IPC.NOTIFY_ACTIVATE, n);
     });
+    notification.on('failed', (_e, err) =>
+      console.warn(`[notify] OS escalation failed (in-app center still has it): ${err}`),
+    );
     notification.show();
   }
 

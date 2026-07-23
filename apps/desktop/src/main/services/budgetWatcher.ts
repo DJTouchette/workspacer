@@ -64,6 +64,9 @@ export function checkBudget(session: ClaudeSessionState): void {
   if (cfg.enabled === false || !Notification.isSupported()) return;
   const notification = new Notification({ title, body, silent: cfg.sound !== true });
   notification.on('click', () => agentNotifier.focusAgent(session.sessionId));
+  notification.on('failed', (_e, err) =>
+    console.warn(`[budget] OS notification failed (in-app center still has it): ${err}`),
+  );
   notification.show();
 }
 
