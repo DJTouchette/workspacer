@@ -119,8 +119,10 @@ export const NotificationsProvider: React.FC<NotificationsProviderProps> = ({
     setItems((prev) => ingest(prev, n));
     if (!n.silent && toastsEnabledRef.current) {
       setToasts((prev) =>
-        [...prev.filter((t) => t.id !== n.id && (!n.key || t.key !== n.key)), { ...n, read: false }]
-          .slice(-MAX_TOASTS),
+        [
+          ...prev.filter((t) => t.id !== n.id && (!n.key || t.key !== n.key)),
+          { ...n, read: false },
+        ].slice(-MAX_TOASTS),
       );
     }
     // A toast in an unfocused window is invisible — hand renderer-only

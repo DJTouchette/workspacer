@@ -77,9 +77,7 @@ function session(over: Partial<ClaudeSessionState>): ClaudeSessionState {
 }
 
 function inAppPayloads(sent: Array<[string, unknown]>) {
-  return sent
-    .filter(([ch]) => ch === 'notify:in-app')
-    .map(([, p]) => p as Record<string, unknown>);
+  return sent.filter(([ch]) => ch === 'notify:in-app').map(([, p]) => p as Record<string, unknown>);
 }
 
 describe('notifyOnTransition', () => {

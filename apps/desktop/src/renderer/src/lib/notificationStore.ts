@@ -88,10 +88,7 @@ export function normalizeNotification(
 
 /** Prepend a notification: same-id re-delivery is dropped, same-`key` entries
  *  are replaced (latest wins, moves to the top), history is capped. */
-export function ingest(
-  items: StoredNotification[],
-  n: InAppNotification,
-): StoredNotification[] {
+export function ingest(items: StoredNotification[], n: InAppNotification): StoredNotification[] {
   if (items.some((it) => it.id === n.id)) return items;
   const rest = n.key ? items.filter((it) => it.key !== n.key) : items;
   return [{ ...n, read: false }, ...rest].slice(0, MAX_ITEMS);

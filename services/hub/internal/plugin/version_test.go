@@ -8,7 +8,7 @@ func TestCompareVersions(t *testing.T) {
 		want int
 	}{
 		{"1.0.0", "1.0.0", 0},
-		{"1.2", "1.2.0", 0},   // missing trailing segment == 0
+		{"1.2", "1.2.0", 0},    // missing trailing segment == 0
 		{"v1.2.0", "1.2.0", 0}, // leading v ignored
 		{"1.2.0", "1.3.0", -1},
 		{"1.3.0", "1.2.0", 1},
@@ -49,8 +49,8 @@ func TestIsUpgrade(t *testing.T) {
 // and must preserve input order in its results.
 func TestCheckUpdatesNoSource(t *testing.T) {
 	in := []Manifest{
-		{ID: "a", Version: "1.0.0"},              // no source
-		{ID: "b", Version: "2.0.0", Source: ""},  // explicit empty source
+		{ID: "a", Version: "1.0.0"},             // no source
+		{ID: "b", Version: "2.0.0", Source: ""}, // explicit empty source
 	}
 	got := CheckUpdates(in)
 	if len(got) != 2 {

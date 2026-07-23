@@ -10,7 +10,13 @@ const ACCENT: Record<StoredNotification['level'], string> = {
   info: 'var(--wks-accent)',
 };
 
-export function LevelIcon({ level, size = 13 }: { level: StoredNotification['level']; size?: number }) {
+export function LevelIcon({
+  level,
+  size = 13,
+}: {
+  level: StoredNotification['level'];
+  size?: number;
+}) {
   const c = ACCENT[level];
   if (level === 'error') return <AlertCircle size={size} color={c} />;
   if (level === 'warn') return <AlertTriangle size={size} color={c} />;
