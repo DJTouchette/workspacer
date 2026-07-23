@@ -23,6 +23,7 @@ import type {
   AppConfig,
   AppConfigPartial,
   ClaudeProfile,
+  InAppNotification,
 } from '../../../main/shared/ipcTypes';
 import { HubBusClient, type HubEventEnvelope } from './hubBusClient';
 
@@ -122,6 +123,10 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
   client.onReconnect(() => {
     for (const reprime of reprimers.values()) reprime();
   });
+
+  // Click-through target for browser-API notification escalations (see
+  // notifyEscalate below) — the notification center registers here.
+  let notificationActivateCb: ((n: InAppNotification) => void) | null = null;
 
   // Fan hub events out to the renderer's onHubEvent subscribers. Full session
   // snapshots arrive as `agent.snapshot` events and are routed directly in
@@ -536,6 +541,39 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     },
     onFocusAgent: () => () => {},
     onSystemNotice: () => () => {}, // host-process notices; not relevant to the web client
+    // Main-process notification mirror; web builds still get plugin/bus
+    // notifications via onHubEvent's `notify.post` path.
+    onInAppNotification: () => () => {},
+    // Escalation parity via the browser Notification API: a hidden tab still
+    // taps the user on the shoulder. Permission is requested lazily on the
+    // first escalation attempt; clicks focus the tab and re-enter the
+    // notification center's activate path via the registered callback.
+    notifyEscalate: (n) => {
+      if (typeof Notification === 'undefined') return;
+      const show = () => {
+        const note = new Notification(n.title, {
+          body: n.body,
+          tag: n.key ?? n.id, // same-key escalations collapse like the center
+        });
+        note.onclick = () => {
+          window.focus();
+          notificationActivateCb?.(n);
+          note.close();
+        };
+      };
+      if (Notification.permission === 'granted') show();
+      else if (Notification.permission === 'default') {
+        void Notification.requestPermission().then((p) => {
+          if (p === 'granted') show();
+        });
+      }
+    },
+    onNotificationActivate: (callback) => {
+      notificationActivateCb = callback;
+      return () => {
+        if (notificationActivateCb === callback) notificationActivateCb = null;
+      };
+    },
     openLogsFolder: () => {
       warnOnce('openLogsFolder');
       return Promise.resolve({ ok: false, error: 'not available on web' });

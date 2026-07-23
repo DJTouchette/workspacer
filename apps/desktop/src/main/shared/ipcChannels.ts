@@ -26,6 +26,9 @@ export const IPC = {
   // ── Notifications / ambient awareness ──
   NOTIFY_SET_ACTIVE_SESSION: 'notify:set-active-session', // send (renderer → main)
   NOTIFY_FOCUS_AGENT: 'notify:focus-agent', // push (main → renderer)
+  NOTIFY_IN_APP: 'notify:in-app', // push (main → renderer): notification-center entry
+  NOTIFY_ESCALATE: 'notify:escalate', // send (renderer → main): raise OS notification for an unfocused window
+  NOTIFY_ACTIVATE: 'notify:activate', // push (main → renderer): escalated notification was clicked
   SYSTEM_NOTICE: 'system:notice', // push (main → renderer): daemon/startup failures etc.
   LOGS_OPEN_FOLDER: 'logs:openFolder', // invoke (renderer → main): reveal the logs dir
 

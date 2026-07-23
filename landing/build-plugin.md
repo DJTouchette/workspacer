@@ -346,7 +346,7 @@ The methods the host registers today (provided by the desktop app, or headlessly
 - `agents.list`, running agents with state / usage / pending asks.
 - `agents.sendMessage`, send a prompt to an agent (`{ sessionId, text }`).
 - `agents.spawn`, start a new agent (returns its sessionId). There is no `agents.kill` — to stop or steer a session, use `claude.signal` (`{ sessionId, signal }`).
-- `notifications.post`, show a desktop notification (`{ title, body }`).
+- `notifications.post`, notify the user (`{ title, body }` at minimum). Every call lands in the in-app notification center (the bell in the top bar) and, unless the user disabled OS notifications or you pass `inAppOnly: true`, also shows a clickable desktop notification. Optional fields: `level` (`info`|`success`|`warn`|`error`), `source` (shown in the center, e.g. `"plugin:ci"`), a click target (`sessionId` to focus that agent, `paneType` to open your pane, or `url`), `key` (same-key notifications replace instead of stack), `silent` (no toast, history only).
 - `claude.approve` / `claude.answer` / `claude.signal`, resolve an approval, answer an AskUserQuestion, send a signal.
 - `sessions.snapshot` / `sessions.transcript` / `sessions.conversation`, live session state and history.
 - `fs.read` / `fs.write` / `fs.watch` / `search.project`, path-scoped file I/O and ripgrep search (object form, `paths` required).
@@ -375,6 +375,7 @@ Subscribing to a namespace (`agent.*`, `ui.*`, `sidecar.*`) is the easy way to c
 
 - **Your own namespaced events**, anything under your plugin's namespace, e.g. `example.hello.tick`. Declare each type (or a `myplugin.*` wildcard) in `emits`. Other plugins can `consume` them.
 - `command.focus_agent` (`data: { sessionId }`) / `command.spawn_agent`, ask the desktop to focus or spawn an agent. The `command.*` namespace is the "ask the host to do something" channel: you publish, the renderer acts. A hotkey can fire one directly with `"command": "emit:<eventType>"`.
+- `notify.post`, fire-and-forget path into the in-app notification center (same `data` fields as the `notifications.post` capability). Every connected client that renders the UI (desktop, web remote) ingests it. If the window isn't focused when it arrives, it auto-escalates to a clickable OS notification (browser notification on web), so it is never invisible — the difference from the capability is delivery semantics (broadcast, no ack, OS only when unwatched) rather than reach.
 
 ## Settings
 

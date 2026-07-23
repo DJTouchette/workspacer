@@ -4,7 +4,7 @@
  * can *ask workspacer to do*. Kept small and explicit; each is a future MCP tool.
  */
 
-import { Notification } from 'electron';
+import { Notification, shell } from 'electron';
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -16,6 +16,7 @@ import { spawnClaudeAgent } from './claudeSpawn';
 import { resolveAgentBinary, checkAllProviders, type AgentProvider } from './agentProviders';
 import { claudeProfiles } from './claudeProfiles';
 import { registerCapability, callHub } from './hubClient';
+import { agentNotifier } from './agentNotifier';
 import { appIconPath } from '../lib/appIcon';
 import { DELEGATE_CATALOG_TO_BRAIN } from './brainDelegation';
 import { configService, getConfigDir } from './configService';
@@ -354,15 +355,66 @@ export function registerHubCapabilities(): void {
     return { sessionId: id };
   });
 
-  // Surface an OS notification.
+  // Surface a notification: recorded in the in-app notification center, and —
+  // unless `inAppOnly` or the user disabled notifications — also shown as a
+  // clickable OS notification. Clicking focuses the target agent when
+  // `sessionId` is given, opens `url` externally when given, else just brings
+  // the window forward. `source` labels the sender in the center ("plugin:ci").
   registerCapability('notifications.post', (params: unknown) => {
-    const { title, body } = (params ?? {}) as { title?: string; body?: string };
-    new Notification({
-      title: title || 'workspacer',
-      body: body || '',
+    const p = (params ?? {}) as {
+      title?: string;
+      body?: string;
+      level?: string;
+      source?: string;
+      sessionId?: string;
+      paneType?: string;
+      url?: string;
+      key?: string;
+      silent?: boolean;
+      inAppOnly?: boolean;
+    };
+    const title = p.title || 'workspacer';
+    const body = p.body || '';
+    const level = (['info', 'success', 'warn', 'error'] as const).find((l) => l === p.level);
+
+    agentNotifier.postInApp({
+      level: level ?? 'info',
+      title,
+      body: body || undefined,
+      source: typeof p.source === 'string' && p.source ? p.source : 'plugin',
+      sessionId: p.sessionId,
+      paneType: p.paneType,
+      url: p.url,
+      key: p.key,
+      silent: p.silent === true,
+    });
+
+    const notifCfg =
+      (configService.getConfig() as { notifications?: { enabled?: boolean; sound?: boolean } })
+        .notifications ?? {};
+    // `silent` means silent on every surface (history-only), matching the
+    // renderer store and escalation path — not just "no toast".
+    if (
+      p.inAppOnly === true ||
+      p.silent === true ||
+      notifCfg.enabled === false ||
+      !Notification.isSupported()
+    ) {
+      return { ok: true, os: false };
+    }
+    const notification = new Notification({
+      title,
+      body,
       icon: appIconPath() ?? undefined,
-    }).show();
-    return { ok: true };
+      silent: notifCfg.sound !== true,
+    });
+    notification.on('click', () => {
+      if (p.sessionId) agentNotifier.focusAgent(p.sessionId);
+      else if (p.url) void shell.openExternal(p.url);
+      else agentNotifier.focusWindow();
+    });
+    notification.show();
+    return { ok: true, os: true };
   });
 
   // Control: resolve a parked permission prompt. The remote counterpart of the

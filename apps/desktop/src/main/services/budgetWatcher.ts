@@ -9,6 +9,7 @@
  */
 import { Notification } from 'electron';
 import { configService } from './configService';
+import { agentNotifier } from './agentNotifier';
 import type { ClaudeSessionState } from './claudeSessionStore';
 
 /** Sessions we've already alerted for, so a growing cost doesn't re-notify. */
@@ -40,21 +41,30 @@ export function checkBudget(session: ClaudeSessionState): void {
   const cfg =
     (configService.getConfig() as { notifications?: { enabled?: boolean; sound?: boolean } })
       .notifications ?? {};
-  if (cfg.enabled === false || !Notification.isSupported()) return;
 
-  // Latch only once a notification will actually be delivered. Latching before
-  // the enabled/support check would permanently suppress the alert: a crossing
-  // while notifications are off would mark the session alerted with nothing
-  // shown, and since cumulative cost never drops back under budget the latch
-  // (cleared only at `cost < budget`) would never re-arm.
+  // Latch once the alert is actually delivered somewhere (the in-app center
+  // always records it). Latching before any delivery would permanently
+  // suppress the alert: cumulative cost never drops back under budget, so the
+  // latch (cleared only at `cost < budget`) would never re-arm.
   alerted.add(session.sessionId);
 
   const label = session.label || 'Agent';
-  new Notification({
-    title: 'Session over budget',
-    body: `${label} has spent $${cost.toFixed(2)} (budget $${budget.toFixed(2)}).`,
-    silent: cfg.sound !== true,
-  }).show();
+  const title = 'Session over budget';
+  const body = `${label} has spent $${cost.toFixed(2)} (budget $${budget.toFixed(2)}).`;
+
+  agentNotifier.postInApp({
+    level: 'warn',
+    title,
+    body,
+    source: 'budget',
+    sessionId: session.sessionId,
+    key: `budget:${session.sessionId}`,
+  });
+
+  if (cfg.enabled === false || !Notification.isSupported()) return;
+  const notification = new Notification({ title, body, silent: cfg.sound !== true });
+  notification.on('click', () => agentNotifier.focusAgent(session.sessionId));
+  notification.show();
 }
 
 /** Drop a session's alert latch (call on session end so a resumed id re-arms). */

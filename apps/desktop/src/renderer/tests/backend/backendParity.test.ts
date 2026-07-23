@@ -136,6 +136,9 @@ const KNOWN_STUBS = [
   'listRecentAgentSessions', // no hub-bus cap for the daemon session list yet; [] on web
   'listLiveClaudeSessionIds', // boot reconcile/auto-respawn is desktop-owned; null on web
   'keepWarmHeartbeats', // keep-warm log lives in the desktop's claudemon; [] on web
+  'onInAppNotification', // main-process notification mirror; web ingests notify.post bus events instead
+  'notifyEscalate', // browser Notification API on web (no Electron main to escalate to)
+  'onNotificationActivate', // click-through for browser-API escalations (web-local, no bus RPC)
 ] as const;
 
 function webBackendMethodKeys(): Set<string> {

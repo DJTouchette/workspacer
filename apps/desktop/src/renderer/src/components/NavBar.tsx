@@ -12,6 +12,7 @@ import { resolveNavHeight } from '../lib/layoutUtils';
 import { usePaneMenu } from '../contexts/PaneMenuContext';
 import type { PaneMenuEntry } from '../lib/paneMenu';
 import { PluginPaneIcon } from '../lib/pluginPaneIcon';
+import NotificationCenter from './notifications/NotificationCenter';
 
 // Shared styling for the "+" new-tab dropdown's section labels and dividers.
 const MENU_SECTION_LABEL: React.CSSProperties = {
@@ -425,6 +426,9 @@ const NavBar: React.FC<NavBarProps> = ({
           NIGHTLY
         </span>
       )}
+
+      {/* Notification bell — unread badge + notification-center dropdown. */}
+      <NotificationCenter />
 
       {/* Theme switcher — current theme's accent/purple/blue swatch + name,
           with a dropdown to pick any theme. Mirrors the mockup's right cluster. */}

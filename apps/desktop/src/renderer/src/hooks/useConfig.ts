@@ -104,6 +104,8 @@ export interface NotificationsConfig {
   notifyDone: boolean;
   onlyWhenUnwatched: boolean;
   sound: boolean;
+  /** Show transient in-app toast popups for new notifications. */
+  inAppToasts?: boolean;
 }
 
 export interface EditorConfig {

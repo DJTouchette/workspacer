@@ -16,6 +16,7 @@ import type {
   RemoteTokenRecord,
   RemoteTokenScope,
   RecentAgentSession,
+  InAppNotification,
 } from '../../../main/shared/ipcTypes';
 
 /** One entry of the external-tool registry (main/services/toolCheck.ts). */
@@ -456,6 +457,13 @@ export interface ElectronAPI {
       key?: string;
     }) => void,
   ) => () => void;
+  /** Main-process notifications for the in-app notification center. */
+  onInAppNotification?: (callback: (notification: InAppNotification) => void) => () => void;
+  /** Escalate a renderer-ingested notification to an OS notification (called
+   *  only while the window is unfocused; main re-checks config gating). */
+  notifyEscalate?: (notification: InAppNotification) => void;
+  /** Fired when the user clicks an escalated OS notification. */
+  onNotificationActivate?: (callback: (notification: InAppNotification) => void) => () => void;
   /** Reveal the logs folder in the OS file manager (for bug reports). */
   openLogsFolder?: () => Promise<{ ok: boolean; error?: string }>;
   /** Install the bundled `workspacer` CLI onto PATH (headless-server launcher). */

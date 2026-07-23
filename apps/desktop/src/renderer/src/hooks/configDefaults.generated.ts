@@ -154,6 +154,7 @@ export const CONFIG_DEFAULTS = {
     notifyDone: true,
     onlyWhenUnwatched: true,
     sound: false,
+    inAppToasts: true,
   },
   editor: {
     engine: 'codemirror',

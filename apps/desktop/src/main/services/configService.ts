@@ -93,6 +93,8 @@ interface Config {
     onlyWhenUnwatched: boolean;
     /** Play the OS notification sound. */
     sound: boolean;
+    /** Show transient in-app toast popups for new notifications. */
+    inAppToasts: boolean;
   };
   claude: {
     /** Default `--model` for new agents ('' = Claude Code's own default). */

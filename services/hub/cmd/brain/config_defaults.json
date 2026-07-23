@@ -94,7 +94,13 @@
       "nav-right": "prefix l"
     }
   },
-  "notifications": { "enabled": true, "notifyDone": true, "onlyWhenUnwatched": true, "sound": false },
+  "notifications": {
+    "enabled": true,
+    "notifyDone": true,
+    "onlyWhenUnwatched": true,
+    "sound": false,
+    "inAppToasts": true
+  },
   "editor": { "engine": "codemirror", "terminalCommand": "nvim", "vim": true },
   "claude": {
     "defaultModel": "opus[1m]",

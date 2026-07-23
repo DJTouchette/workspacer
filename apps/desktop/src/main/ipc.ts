@@ -65,6 +65,7 @@ import type {
   LayoutInput,
   ProfileUpdate,
   RemoteTokenScope,
+  InAppNotification,
 } from './shared/ipcTypes';
 
 function detectDefaultShell(): string {
@@ -123,6 +124,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // notifier can suppress alerts for the agent you're actively watching.
   ipcMain.on(IPC.NOTIFY_SET_ACTIVE_SESSION, (_event, sessionId: string | null) => {
     agentNotifier.setActiveSession(sessionId);
+  });
+
+  // Renderer-ingested notification (hub notify.post event / in-renderer post)
+  // arriving while the window is unfocused — escalate it to an OS notification.
+  ipcMain.on(IPC.NOTIFY_ESCALATE, (_event, notification: InAppNotification) => {
+    agentNotifier.escalateFromRenderer(notification);
   });
 
   // The Windows native caption buttons (min/max/close) live in a titleBarOverlay

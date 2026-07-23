@@ -2,7 +2,13 @@ import React from 'react';
 import { Config } from '../../hooks/useConfig';
 import { Section, CheckRow } from './primitives';
 
-const NOTIF_DEFAULTS = { enabled: true, notifyDone: true, onlyWhenUnwatched: true, sound: false };
+const NOTIF_DEFAULTS = {
+  enabled: true,
+  notifyDone: true,
+  onlyWhenUnwatched: true,
+  sound: false,
+  inAppToasts: true,
+};
 
 interface NotificationsSectionProps {
   config: Config;
@@ -38,9 +44,15 @@ const NotificationsSection: React.FC<NotificationsSectionProps> = ({ config, sav
         disabled={!notif.enabled}
         onChange={(v) => set({ sound: v })}
       />
+      <CheckRow
+        label="In-app toast popups"
+        checked={notif.inAppToasts !== false}
+        onChange={(v) => set({ inAppToasts: v })}
+      />
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        Alerts when an agent needs approval/input or finishes. Ctrl+Alt+→ jumps to the next agent
-        that needs you.
+        Alerts when an agent needs approval/input or finishes. Everything also lands in the
+        notification bell in the top bar; toasts are the transient bottom-right popups. Ctrl+Alt+→
+        jumps to the next agent that needs you.
       </div>
     </Section>
   );

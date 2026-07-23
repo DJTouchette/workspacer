@@ -1,20 +1,30 @@
 /**
- * OS notifications + taskbar attention for agent state changes.
+ * OS notifications + taskbar attention + in-app notification mirroring for
+ * agent state changes.
  *
  * Driven from `claudeSessionStore` on every ambient-state transition. We fire
  * an OS notification when an agent transitions *into* a needs-you state
  * (approval / input) or *finishes* (working → idle), so you can babysit agents
  * you're not actively watching. Clicking a notification focuses the window and
- * tells the renderer to jump to that agent.
+ * tells the renderer to jump to that agent. The body carries the actual
+ * context — the tool awaiting approval, the question text, the session cost —
+ * so the notification is decidable without switching to the app.
  *
- * Behaviour is config-driven (`notifications` block in config.yaml); the
- * defaults match the product choice: needs-you + done, only when unwatched,
- * silent.
+ * Every fired notification is also mirrored into the renderer's notification
+ * center (NOTIFY_IN_APP push); other main-process producers (budget watcher,
+ * hub `notifications.post` capability) reuse `postInApp`/`focusAgent` here so
+ * there is exactly one owner of the main→renderer notification seam.
+ *
+ * Behaviour is config-driven (`notifications` block); the defaults match the
+ * product choice: needs-you + done, only when unwatched, silent.
  */
 
+import { randomUUID } from 'crypto';
 import { BrowserWindow, Notification } from 'electron';
 import { configService } from './configService';
 import { appIconPath } from '../lib/appIcon';
+import { IPC } from '../shared/ipcChannels';
+import type { InAppNotification } from '../shared/ipcTypes';
 import type { ClaudeSessionState, SessionAmbientState } from './claudeSessionStore';
 
 const NEEDS_YOU: SessionAmbientState[] = ['waiting_approval', 'waiting_input'];
@@ -32,20 +42,49 @@ interface NotificationsConfig {
   sound: boolean;
 }
 
-/** Human label for a session — the basename of its working directory. */
-function agentLabel(cwd: string): string {
+/** Human label for a session — its explicit label, else the cwd basename. */
+function agentLabel(session: ClaudeSessionState): string {
+  if (session.label) return session.label;
+  const cwd = session.cwd;
   if (!cwd) return 'Agent';
   const parts = cwd.replace(/[/\\]+$/, '').split(/[/\\]/);
   return parts[parts.length - 1] || cwd;
+}
+
+function truncate(s: string, max: number): string {
+  const line = s.replace(/\s+/g, ' ').trim();
+  return line.length <= max ? line : line.slice(0, max - 1) + '…';
+}
+
+/** The one-line gist of a tool call, for approval notification bodies. Picks
+ *  the field a human actually decides on (command, path, url, description). */
+function summarizeToolInput(input: unknown): string | null {
+  if (!input || typeof input !== 'object') return null;
+  const d = input as Record<string, unknown>;
+  if (typeof d.command === 'string' && d.command) return `$ ${d.command}`;
+  if (typeof d.file_path === 'string' && d.file_path) return d.file_path;
+  if (typeof d.url === 'string' && d.url) return d.url;
+  if (typeof d.description === 'string' && d.description) return d.description;
+  if (typeof d.pattern === 'string' && d.pattern) return d.pattern;
+  return null;
+}
+
+/** Best-known cumulative session cost (statusLine is authoritative when live). */
+function sessionCost(session: ClaudeSessionState): number {
+  return session.statusLine?.costUSD ?? session.usage?.costUSD ?? 0;
 }
 
 class AgentNotifier {
   private mainWindow: BrowserWindow | null = null;
   /** sessionId the renderer currently has on screen (null if none/stopped). */
   private activeSessionId: string | null = null;
+  /** In-app notifications raised before the renderer loaded, flushed on load. */
+  private pendingInApp: InAppNotification[] = [];
+  private rendererReady = false;
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
+    this.rendererReady = false;
     // Remove any prior focus listener from a previous window to prevent
     // duplicate handlers accumulating across setMainWindow calls.
     win.removeAllListeners('focus');
@@ -56,6 +95,10 @@ class AgentNotifier {
       } catch {
         /* noop */
       }
+    });
+    win.webContents.on('did-finish-load', () => {
+      this.rendererReady = true;
+      this.flushInApp();
     });
   }
 
@@ -76,7 +119,7 @@ class AgentNotifier {
   }
 
   /** True when the user is actively looking at this exact session right now. */
-  private isWatching(sessionId: string): boolean {
+  isWatching(sessionId: string): boolean {
     const win = this.mainWindow;
     const focused = !!win && !win.isDestroyed() && win.isFocused();
     return focused && this.activeSessionId === sessionId;
@@ -84,12 +127,12 @@ class AgentNotifier {
 
   /**
    * Called after a hook event updates `ambientState`. Fires at most one
-   * notification per meaningful transition.
+   * OS notification per meaningful transition and mirrors it into the in-app
+   * notification center (silently — no toast — when the user is already
+   * watching that agent).
    */
   notifyOnTransition(session: ClaudeSessionState, prevState: SessionAmbientState): void {
     const cfg = this.cfg();
-    if (!cfg.enabled) return;
-
     const next = session.ambientState;
     if (next === prevState) return;
 
@@ -97,17 +140,47 @@ class AgentNotifier {
     const done = cfg.notifyDone && next === 'idle' && WORKING.includes(prevState);
     if (!needsYou && !done) return;
 
-    if (cfg.onlyWhenUnwatched && this.isWatching(session.sessionId)) return;
+    const label = agentLabel(session);
+    let title: string;
+    let body: string;
+    if (needsYou && next === 'waiting_approval') {
+      title = `${label} needs approval`;
+      const tool = session.pendingApproval?.toolName;
+      const gist = summarizeToolInput(session.pendingApproval?.toolInput);
+      body = tool
+        ? truncate(`Allow ${tool}${gist ? ` — ${gist}` : ''}?`, 180)
+        : 'A tool call is waiting for your approval.';
+    } else if (needsYou) {
+      title = `${label} is waiting for input`;
+      const questions = session.pendingQuestions ?? [];
+      const first = questions[0]?.question;
+      const more = questions.length > 1 ? ` (+${questions.length - 1} more)` : '';
+      body = first ? truncate(first, 180) + more : 'The agent asked you a question.';
+    } else {
+      title = `${label} finished`;
+      const cost = sessionCost(session);
+      body =
+        'Ready for your next step.' + (cost > 0 ? ` Spent $${cost.toFixed(2)} this session.` : '');
+    }
 
-    const label = agentLabel(session.cwd);
-    const title = needsYou
-      ? next === 'waiting_approval'
-        ? `${label} needs approval`
-        : `${label} is waiting for input`
-      : `${label} finished`;
-    const body = needsYou
-      ? 'Click to jump to the agent.'
-      : 'The agent is idle and ready for your next step.';
+    const watching = this.isWatching(session.sessionId);
+
+    // In-app mirror: always recorded so the center is a complete history, but
+    // toast-silent when the event is already on screen in front of the user.
+    this.postInApp({
+      level: needsYou ? 'warn' : 'success',
+      title,
+      body,
+      source: 'agent',
+      sessionId: session.sessionId,
+      // One live slot per session+kind: a newer approval replaces the older
+      // center entry rather than stacking a backlog of stale prompts.
+      key: `agent:${session.sessionId}:${needsYou ? 'needs-you' : 'done'}`,
+      silent: watching,
+    });
+
+    if (!cfg.enabled) return;
+    if (cfg.onlyWhenUnwatched && watching) return;
 
     if (Notification.isSupported()) {
       const icon = appIconPath() ?? undefined;
@@ -129,9 +202,15 @@ class AgentNotifier {
   }
 
   /** Bring the window forward and ask the renderer to select this agent. */
-  private focusAgent(sessionId: string): void {
+  focusAgent(sessionId: string): void {
+    const win = this.focusWindow();
+    win?.webContents.send(IPC.NOTIFY_FOCUS_AGENT, sessionId);
+  }
+
+  /** Bring the window forward (notification clicks with no agent target). */
+  focusWindow(): BrowserWindow | null {
     const win = this.mainWindow;
-    if (!win || win.isDestroyed()) return;
+    if (!win || win.isDestroyed()) return null;
     try {
       if (win.isMinimized()) win.restore();
       win.show();
@@ -140,7 +219,54 @@ class AgentNotifier {
     } catch {
       /* noop */
     }
-    win.webContents.send('notify:focus-agent', sessionId);
+    return win;
+  }
+
+  /**
+   * Escalate a renderer-ingested notification (hub `notify.post` event or a
+   * renderer-internal post) to an OS notification. The renderer calls this only
+   * when the window is unfocused — main-originated notifications never route
+   * here (they make their own OS decision at the source), so nothing fires
+   * twice. Clicking hands the notification back to the renderer's activate path
+   * (NOTIFY_ACTIVATE) so the center marks it read and navigates to its target.
+   */
+  escalateFromRenderer(n: InAppNotification): void {
+    if (!n || typeof n.title !== 'string' || !n.title) return;
+    if (n.silent) return; // silent means silent on every surface
+    const cfg = this.cfg();
+    if (!cfg.enabled || !Notification.isSupported()) return;
+
+    const notification = new Notification({
+      title: n.title,
+      body: n.body ?? '',
+      silent: !cfg.sound,
+      icon: appIconPath() ?? undefined,
+    });
+    notification.on('click', () => {
+      const win = this.focusWindow();
+      win?.webContents.send(IPC.NOTIFY_ACTIVATE, n);
+    });
+    notification.show();
+  }
+
+  /** Deliver a notification to the renderer's notification center. Buffered
+   *  until the renderer finishes loading so early raises aren't lost. */
+  postInApp(n: Omit<InAppNotification, 'id' | 'createdAt'> & { id?: string }): void {
+    const full: InAppNotification = {
+      ...n,
+      id: n.id ?? randomUUID(),
+      createdAt: Date.now(),
+    };
+    this.pendingInApp.push(full);
+    this.flushInApp();
+  }
+
+  private flushInApp(): void {
+    const win = this.mainWindow;
+    if (!this.rendererReady || !win || win.isDestroyed()) return;
+    for (const n of this.pendingInApp.splice(0)) {
+      win.webContents.send(IPC.NOTIFY_IN_APP, n);
+    }
   }
 }
 

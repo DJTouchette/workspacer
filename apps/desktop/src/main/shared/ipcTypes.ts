@@ -238,6 +238,34 @@ export type AppConfigPartial = Record<string, unknown>;
  * Mirrors the private Config interface in configService.ts — kept in sync
  * manually; the runtime shape is the authority.
  */
+// ── In-app notifications (notification center + toasts) ──
+
+/** A notification delivered to the in-app notification center. Produced by the
+ *  main-process notifiers (agent state, budget, capability calls), hub-bus
+ *  `notify.post` events (plugins/remote), and renderer-internal posts via
+ *  lib/notificationBus. */
+export interface InAppNotification {
+  id: string;
+  level: 'info' | 'success' | 'warn' | 'error';
+  title: string;
+  body?: string;
+  /** Origin label shown in the center: 'agent' | 'budget' | 'system' |
+   *  'plugin:<id>' | whatever a bus caller reports about itself. */
+  source: string;
+  /** Click target: select this agent session… */
+  sessionId?: string;
+  /** …or open this pane type (plugins use their plugin pane type)… */
+  paneType?: string;
+  /** …or open an external URL. First present wins: sessionId → paneType → url. */
+  url?: string;
+  /** Stable key: a later notification with the same key replaces the earlier
+   *  one instead of stacking (e.g. repeated alerts for the same condition). */
+  key?: string;
+  createdAt: number;
+  /** Skip the transient toast — record in the center only. */
+  silent?: boolean;
+}
+
 export interface AppConfig {
   ui: {
     animations: boolean;
@@ -289,6 +317,8 @@ export interface AppConfig {
     notifyDone: boolean;
     onlyWhenUnwatched: boolean;
     sound: boolean;
+    /** Show transient in-app toast popups for new notifications. */
+    inAppToasts: boolean;
   };
   editor: {
     engine: 'codemirror' | 'terminal';

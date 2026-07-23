@@ -682,4 +682,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener(IPC.SYSTEM_NOTICE, handler);
     };
   },
+  /** Main-process notifications for the in-app notification center. */
+  onInAppNotification: (callback: (notification: unknown) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, notification: unknown) =>
+      callback(notification);
+    ipcRenderer.on(IPC.NOTIFY_IN_APP, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.NOTIFY_IN_APP, handler);
+    };
+  },
+  /** Escalate a renderer-ingested notification to an OS notification (the
+   *  renderer calls this only while the window is unfocused). */
+  notifyEscalate: (notification: unknown): void =>
+    ipcRenderer.send(IPC.NOTIFY_ESCALATE, notification),
+  /** Fired when the user clicks an escalated OS notification — the renderer
+   *  marks it read and navigates to its target. */
+  onNotificationActivate: (callback: (notification: unknown) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, notification: unknown) =>
+      callback(notification);
+    ipcRenderer.on(IPC.NOTIFY_ACTIVATE, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.NOTIFY_ACTIVATE, handler);
+    };
+  },
 });

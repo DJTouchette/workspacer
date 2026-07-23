@@ -38,6 +38,8 @@ import SpawnAgentDialog from './components/SpawnAgentDialog';
 const RemoteShareDialog = lazy(() => import('./components/RemoteShareDialog'));
 import WebFolderPicker from './components/WebFolderPicker';
 import SystemNotices from './components/SystemNotices';
+import NotificationToasts from './components/notifications/NotificationToasts';
+import { NotificationsProvider } from './contexts/NotificationsContext';
 import ScrollContainer, { ScrollContainerRef } from './components/ScrollContainer';
 import ShortcutOverlay from './components/ShortcutOverlay';
 import ChordHint from './components/ChordHint';
@@ -1914,6 +1916,17 @@ function App() {
   );
 
   return (
+    <NotificationsProvider
+      onFocusSession={(sessionId) => {
+        const agent = agents.find((a) => a.sessionId === sessionId);
+        if (agent) handleSelectAgent(agent.id);
+      }}
+      onOpenPane={(paneType) => {
+        const pane = pluginPanes.find((p) => p.type === paneType);
+        if (pane) handleOpenPlugin(pane);
+        else handleAddTab(paneType as PaneType);
+      }}
+    >
     <PaneMenuProvider value={paneMenuValue}>
       <AttentionProvider
         agents={agents}
@@ -2263,6 +2276,9 @@ function App() {
           {/* Main-process system notices (daemon/startup failures) as in-app banners. */}
           <SystemNotices />
 
+          {/* Notification-center transient toasts (bottom-right). */}
+          <NotificationToasts />
+
           <LibrarySidePanel
             visible={showLibraryPanel}
             onClose={() => setShowLibraryPanel(false)}
@@ -2321,6 +2337,7 @@ function App() {
         </div>
       </AttentionProvider>
     </PaneMenuProvider>
+    </NotificationsProvider>
   );
 }
 

@@ -418,7 +418,7 @@ ws.send(JSON.stringify({ op: 'register', methods: ['myplugin.status'] }));</code
 <li><code>agents.list</code>, running agents with state / usage / pending asks.</li>
 <li><code>agents.sendMessage</code>, send a prompt to an agent (<code>{ sessionId, text }</code>).</li>
 <li><code>agents.spawn</code>, start a new agent (returns its sessionId). There is no <code>agents.kill</code> — terminate one with <code>claude.signal</code> (<code>{ sessionId, signal: 'SIGKILL' }</code>).</li>
-<li><code>notifications.post</code>, show a desktop notification (<code>{ title, body }</code>).</li>
+<li><code>notifications.post</code>, notify the user (<code>{ title, body }</code> at minimum). Every call lands in the in-app notification center (the bell in the top bar) and, unless the user disabled OS notifications or you pass <code>inAppOnly: true</code>, also shows a clickable desktop notification. Optional: <code>level</code> (<code>info</code>|<code>success</code>|<code>warn</code>|<code>error</code>), <code>source</code> (shown in the center, e.g. <code>"plugin:ci"</code>), a click target (<code>sessionId</code> to focus that agent, <code>paneType</code> to open your pane, or <code>url</code>), <code>key</code> (same-key replaces instead of stacking), <code>silent</code> (no toast, history only).</li>
 <li><code>claude.approve</code> / <code>claude.answer</code> / <code>claude.signal</code>, resolve an approval, answer an AskUserQuestion, send a signal.</li>
 <li><code>sessions.snapshot</code> / <code>sessions.transcript</code> / <code>sessions.conversation</code>, live session state and history.</li>
 <li><code>fs.read</code> / <code>fs.write</code> / <code>fs.watch</code> / <code>search.project</code>, path-scoped file I/O and ripgrep search (object form, <code>paths</code> required).</li>
@@ -445,6 +445,7 @@ ws.send(JSON.stringify({ op: 'register', methods: ['myplugin.status'] }));</code
 <ul>
 <li><strong>Your own namespaced events</strong>, anything under your plugin's namespace, e.g. <code>example.hello.tick</code>. Declare each type (or a <code>myplugin.*</code> wildcard) in <code>emits</code>. Other plugins can <code>consume</code> them.</li>
 <li><code>command.focus_agent</code> (<code>data: { sessionId }</code>) / <code>command.spawn_agent</code>, ask the desktop to focus or spawn an agent. The <code>command.*</code> namespace is the "ask the host to do something" channel: you publish, the renderer acts. A hotkey can fire one directly with <code>"command": "emit:&lt;eventType&gt;"</code>.</li>
+<li><code>notify.post</code>, fire-and-forget path into the in-app notification center (same <code>data</code> fields as the <code>notifications.post</code> capability). Every connected client that renders the UI (desktop, web remote) ingests it. If the window isn't focused when it arrives, it auto-escalates to a clickable OS notification (browser notification on web), so it is never invisible — the difference from the capability is delivery semantics (broadcast, no ack, OS only when unwatched) rather than reach.</li>
 </ul>
     </section>
 
