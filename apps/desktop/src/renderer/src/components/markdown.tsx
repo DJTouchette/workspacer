@@ -5,10 +5,35 @@
  *
  * Extracted from ClaudePane; also powers the Library editor's preview.
  */
-import React from 'react';
+import React, { createContext, useContext } from 'react';
 import { claudeColors as colors } from './claude-shared';
 import { langForInfo } from '../lib/diff/highlight';
 import { useHighlight, renderLine } from './claude/highlight';
+import { FileLink, isAbsolutePath } from './claude/FileLink';
+import { detectFilePath, linkifyText, type DetectedPath } from '../lib/filePathDetect';
+
+/**
+ * Working directory for resolving relative file paths mentioned in rendered
+ * markdown (assistant prose, command output). Provided by chat surfaces
+ * (ClaudePane, AgentWatchPane) around their conversation; read lazily inside
+ * MdPathLink at render time, so the module-level parse cache stays valid — the
+ * cached elements resolve against whichever pane renders them.
+ */
+const MarkdownFileCwd = createContext<string | undefined>(undefined);
+export const MarkdownFileCwdProvider = MarkdownFileCwd.Provider;
+
+/** A detected file mention: FileLink when it can resolve (absolute path, or a
+ *  surface provided cwd), plain text otherwise — a preview pane or sidebar
+ *  card without a cwd must not render dead links for relative paths. */
+const MdPathLink: React.FC<{ hit: DetectedPath }> = ({ hit }) => {
+  const cwd = useContext(MarkdownFileCwd);
+  if (!cwd && !isAbsolutePath(hit.path)) return <>{hit.display}</>;
+  return (
+    <FileLink path={hit.path} cwd={cwd} glyph={false}>
+      {hit.display}
+    </FileLink>
+  );
+};
 
 /** Fenced code block with lazy syntax highlighting (plain text until the
  *  grammar loads / when the language is unknown). */
@@ -76,10 +101,18 @@ export function renderInlineMarkdown(text: string, depth = 0): React.ReactNode[]
   let key = 0;
   const nested = (inner: string): React.ReactNode =>
     depth < MAX_INLINE_DEPTH ? renderInlineMarkdown(inner, depth + 1) : inner;
+  // Plain-text runs get file mentions linkified (conservative prose rules —
+  // see lib/filePathDetect); everything else passes through verbatim.
+  const pushProse = (segment: string): void => {
+    for (const part of linkifyText(segment)) {
+      if (typeof part === 'string') nodes.push(part);
+      else nodes.push(<MdPathLink key={key++} hit={part} />);
+    }
+  };
 
   while ((match = regex.exec(text)) !== null) {
     if (match.index > lastIndex) {
-      nodes.push(text.slice(lastIndex, match.index));
+      pushProse(text.slice(lastIndex, match.index));
     }
 
     if (match[2]) {
@@ -101,6 +134,10 @@ export function renderInlineMarkdown(text: string, depth = 0): React.ReactNode[]
       if (match[4] && code.startsWith(' ') && code.endsWith(' ') && code.trim() !== '') {
         code = code.slice(1, -1);
       }
+      // A code span that IS a file path (`src/foo.ts`, `package.json`) becomes
+      // clickable — same affordance as tool-call file lists. Styling stays the
+      // code span's; FileLink only adds cursor/hover/context-menu.
+      const pathHit = detectFilePath(code, 'code');
       nodes.push(
         <code
           key={key++}
@@ -113,7 +150,7 @@ export function renderInlineMarkdown(text: string, depth = 0): React.ReactNode[]
             color: colors.accent,
           }}
         >
-          {code}
+          {pathHit ? <MdPathLink hit={pathHit} /> : code}
         </code>,
       );
     } else if (match[6] && match[7]) {
@@ -132,7 +169,7 @@ export function renderInlineMarkdown(text: string, depth = 0): React.ReactNode[]
   }
 
   if (lastIndex < text.length) {
-    nodes.push(text.slice(lastIndex));
+    pushProse(text.slice(lastIndex));
   }
 
   return nodes.length > 0 ? nodes : [text];

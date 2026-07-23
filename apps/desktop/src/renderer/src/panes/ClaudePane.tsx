@@ -25,7 +25,7 @@ import { ContextMenu, ContextMenuItem, ContextMenuLabel } from '../components/Co
 import { requestHandoff } from '../lib/watchBus';
 import { quoteFontFamily, isTermVisible, refitAndRepaint } from '../lib/terminalUtils';
 import ErrorBoundary from '../components/ErrorBoundary';
-import { clearMdCache } from '../components/markdown';
+import { clearMdCache, MarkdownFileCwdProvider } from '../components/markdown';
 
 // ── Sub-components ──
 import { InlineWorkLog } from '../components/claude/InlineWorkLog';
@@ -1842,9 +1842,13 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                     </div>
                   )}
 
-                  {/* Rendered conversation messages with dividers */}
+                  {/* Rendered conversation messages with dividers. The cwd
+                      provider lets file paths mentioned in assistant prose /
+                      command output resolve + open like tool-call FileLinks. */}
                   <ErrorBoundary label="Conversation" resetKeys={[sessionId]}>
-                    {renderedConversation}
+                    <MarkdownFileCwdProvider value={effectiveCwd}>
+                      {renderedConversation}
+                    </MarkdownFileCwdProvider>
                   </ErrorBoundary>
 
                   {/* Live work not yet absorbed into the timeline: in-flight tool

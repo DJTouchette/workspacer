@@ -15,6 +15,7 @@ import { fmtUSD } from '../lib/sessionStats';
 import { AgentSpinner } from '../components/claude/WorkflowAgentRow';
 import { useNowTicker } from '../components/claude/useNowTicker';
 import { IconDone } from '../components/wksIcons';
+import { MarkdownFileCwdProvider } from '../components/markdown';
 
 interface AgentWatchPaneProps {
   title: string;
@@ -394,7 +395,11 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({
           </div>
         )}
         {view === 'gui' && guiItems && (
-          <div style={{ maxWidth: 900, marginLeft: 'auto', marginRight: 'auto' }}>{guiItems}</div>
+          <div style={{ maxWidth: 900, marginLeft: 'auto', marginRight: 'auto' }}>
+            {/* cwd provider: file mentions in watched-agent prose open like
+                tool-call FileLinks, resolved against the watched session. */}
+            <MarkdownFileCwdProvider value={cwd}>{guiItems}</MarkdownFileCwdProvider>
+          </div>
         )}
         {view === 'raw' &&
           transcript?.map((t, i) => (
