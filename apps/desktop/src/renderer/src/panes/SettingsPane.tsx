@@ -501,7 +501,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
         overflow: 'hidden',
         backgroundColor: 'var(--wks-bg-base)',
         color: 'var(--wks-text-secondary)',
-        fontFamily: '"Hanken Grotesk", Inter, system-ui, sans-serif',
+        fontFamily: 'var(--wks-font-sans)',
         fontSize: '0.85rem',
       }}
     >

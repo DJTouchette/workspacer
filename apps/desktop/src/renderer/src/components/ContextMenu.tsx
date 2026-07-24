@@ -17,7 +17,7 @@ function ensureContextMenuStyles(): void {
   style.textContent = `
 @keyframes wks-ctx-pop { from { opacity: 0; transform: translateY(-6px) scale(0.97); } to { opacity: 1; transform: none; } }
 .wks-ctx-menu {
-  font-family: "Hanken Grotesk", "Inter", system-ui, -apple-system, sans-serif;
+  font-family: var(--wks-font-sans);
   animation: wks-ctx-pop 0.14s cubic-bezier(0.16, 1, 0.3, 1);
   transform-origin: top left;
 }

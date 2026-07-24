@@ -12,7 +12,7 @@ export const CONFIG_DEFAULTS = {
     theme: 'everforest',
     cornerStyle: '',
     borderColor: '',
-    fontFamily: 'Inter, system-ui, sans-serif',
+    fontFamily: 'hanken',
     fontSize: 14,
     borderRadius: 8,
     navBarHeight: 34,

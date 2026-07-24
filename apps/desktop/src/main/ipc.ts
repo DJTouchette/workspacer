@@ -15,6 +15,7 @@ import { layoutService } from './services/layoutService';
 import { updateService } from './services/updateService';
 import { worktreeInfo, createWorktree } from './services/worktreeService';
 import { toolsStatus } from './services/toolCheck';
+import { installCustomFont, listCustomFonts } from './lib/customFonts';
 import { claudeSessionStore } from './services/claudeSessionStore';
 import { listClaudeModels } from './services/claudeModels';
 import {
@@ -952,6 +953,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // depend on (git, provider CLIs, tailscale). `force` re-scans PATH after
   // the user installs something ("Check again").
   ipcMain.handle(IPC.TOOLS_STATUS, (_event, force?: boolean) => toolsStatus(!!force));
+
+  // Custom UI fonts: pick + install a font file into ~/.workspacer/fonts, and
+  // list what's installed (for the Appearance font picker).
+  ipcMain.handle(IPC.FONTS_INSTALL_CUSTOM, () => installCustomFont(mainWindow));
+  ipcMain.handle(IPC.FONTS_LIST_CUSTOM, () => listCustomFonts());
 
   ipcMain.handle(IPC.GIT_STATUS, (_event, cwd: string) => git.status(cwd));
   ipcMain.handle(IPC.GIT_LOG, (_event, cwd: string, limit?: number) => git.log(cwd, limit));

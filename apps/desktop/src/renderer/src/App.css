@@ -12,6 +12,36 @@
   font-display: swap;
   src: url('./assets/fonts/HankenGrotesk-Variable.woff2') format('woff2');
 }
+/* Bundled UI-font choices (Settings → Appearance → Font). All variable, all
+ * SIL OFL. Hanken Grotesk above stays the default. */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('./assets/fonts/Inter-Variable.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url('./assets/fonts/SpaceGrotesk-Variable.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('./assets/fonts/Manrope-Variable.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('./assets/fonts/Outfit-Variable.woff2') format('woff2');
+}
 @font-face {
   font-family: 'JetBrains Mono';
   font-style: normal;
@@ -157,20 +187,10 @@ body {
     radial-gradient(120% 100% at 100% 100%, var(--wks-glass-tint), transparent 55%);
   background-attachment: fixed;
   color: var(--wks-text-primary);
-  font-family:
-    'Hanken Grotesk',
-    'Inter',
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    'Roboto',
-    'Oxygen',
-    'Ubuntu',
-    'Cantarell',
-    'Fira Sans',
-    'Droid Sans',
-    'Helvetica Neue',
-    sans-serif;
+  /* The app font is the token, not a literal — applyUiFont (lib/uiFont.ts)
+   * rewrites --wks-font-sans from config.ui.fontFamily, and every surface
+   * (including this one) follows. */
+  font-family: var(--wks-font-sans);
 }
 
 /* Soft attention pulse for live status dots (sidebar / HUD). */

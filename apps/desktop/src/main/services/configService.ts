@@ -38,6 +38,8 @@ interface Config {
     cornerStyle: string;
     /** User override for the focused-pane border color ('' = theme default). */
     borderColor: string;
+    /** UI typeface: a bundled id ('hanken' | 'inter' | …) or 'custom:<Family>'
+     *  for an uploaded font. Unknown values render as the default. */
     fontFamily: string;
     fontSize: number;
     borderRadius: number;

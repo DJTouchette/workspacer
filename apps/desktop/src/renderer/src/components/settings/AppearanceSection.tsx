@@ -1,6 +1,7 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Check } from 'lucide-react';
 import { Config } from '../../hooks/useConfig';
+import { UI_FONTS, DEFAULT_UI_FONT_ID, CUSTOM_FONT_PREFIX } from '../../lib/uiFont';
 import {
   themes,
   toHex,
@@ -55,6 +56,39 @@ const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) =
   // claude may be absent on a fresh config; defaultView is required in the
   // block, so partial saves must always carry it.
   const claudeCfg = { defaultView: 'terminal' as const, ...config.claude };
+
+  // UI font: five bundled choices + user-uploaded files (host only — the web
+  // mirror can't open the native dialog, so it offers bundled fonts only).
+  const [customFonts, setCustomFonts] = useState<Array<{ file: string; family: string }>>([]);
+  useEffect(() => {
+    window.electronAPI
+      .listUiFonts?.()
+      .then((list) => setCustomFonts(list ?? []))
+      .catch(() => {});
+  }, []);
+  const fontValue = (() => {
+    const v = config.ui.fontFamily ?? '';
+    if (v.startsWith(CUSTOM_FONT_PREFIX)) return v;
+    // Unknown values (incl. the pre-feature default stack older configs
+    // persisted) render as the default choice — matches lib/uiFont resolution.
+    return UI_FONTS.some((f) => f.id === v) ? v : DEFAULT_UI_FONT_ID;
+  })();
+  const fontOptions = [
+    ...UI_FONTS.map((f) => ({ value: f.id, label: f.label, group: 'Bundled' })),
+    ...customFonts.map((f) => ({
+      value: CUSTOM_FONT_PREFIX + f.family,
+      label: f.family,
+      group: 'Uploaded',
+    })),
+  ];
+  const uploadFont = async () => {
+    const installed = await window.electronAPI.installUiFont?.();
+    if (!installed) return; // canceled
+    setCustomFonts((prev) =>
+      prev.some((f) => f.file === installed.file) ? prev : [...prev, installed],
+    );
+    saveWithFeedback({ ui: { ...config.ui, fontFamily: CUSTOM_FONT_PREFIX + installed.family } });
+  };
   const activeTheme = resolveTheme(config.ui.theme, customThemes);
   const borderHex = toHex(config.ui.borderColor || activeTheme.borderActive || activeTheme.accent);
   const [saved, setSaved] = useState(false);
@@ -181,6 +215,22 @@ const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) =
       {isCustomThemeId(config.ui.theme) && customThemes[config.ui.theme] && (
         <ThemeMaker config={config} save={save} themeId={config.ui.theme} />
       )}
+      <Row label="Font">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <SearchableSelect
+            value={fontValue}
+            options={fontOptions}
+            onChange={(v) => saveWithFeedback({ ui: { ...config.ui, fontFamily: v } })}
+            width={170}
+          />
+          {window.electronAPI.installUiFont && <SmallButton label="Upload…" onClick={uploadFont} />}
+        </div>
+      </Row>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        The app-wide typeface. Five bundled choices, or upload your own .ttf / .otf / .woff2 — it's
+        copied into ~/.workspacer/fonts and applies everywhere instantly. Code, terminals and status
+        bars keep their mono font.
+      </div>
       <Row label="Text size">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <input

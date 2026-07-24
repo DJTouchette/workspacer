@@ -5,7 +5,6 @@ import {
   planProgress,
   fmtTokens,
   fmtUSD,
-  fmtResetIn,
   fmtResetAt,
   ctxColor,
 } from '../../lib/sessionStats';
@@ -26,6 +25,12 @@ import { IconModel } from '../wksIcons';
  * 5h/7d rate-limit windows). Where the statusLine hasn't arrived yet we fall
  * back to the transcript-derived `usage` so it isn't blank.
  *
+ * Deliberately sparse: identity (dir/branch), plan N/M, the ctx meter (the
+ * bar's ONE gauge) and cost. Tokens live in the cost tooltip; the account
+ * rate-limit windows are warning-only — account-scoped data that's identical
+ * in every pane, fully charted on the Overview pane, so here a window appears
+ * only once it's genuinely close to the limit.
+ *
  * Git branch comes from a lightweight `gitStatus` poll against the agent's
  * effective cwd (`snapshot.liveCwd` — the worktree the agent entered — falling
  * back to the spawn cwd). When the agent works in a worktree, a chip marks it.
@@ -40,6 +45,10 @@ function baseName(p: string | undefined): string {
       .pop() || p
   );
 }
+
+/** An account window only earns a spot in the bar above this utilization —
+ *  below it the Overview pane is the place to look. */
+const WINDOW_WARN_PCT = 70;
 
 /** A thin vertical rule between HUD groups, replacing the ASCII pipe. */
 const Sep: React.FC = () => (
@@ -149,22 +158,8 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
     monthlyPct: monthly,
     monthlyResetsAt,
   } = deriveSessionStats(snapshot);
-  // The reset countdowns are computed at render time; between statusLine ticks
-  // (e.g. an idle session) they'd freeze, so tick a re-render once a minute
-  // while any reset timestamp is on display.
-  const [, bumpClock] = React.useReducer((n: number) => n + 1, 0);
-  const hasResets =
-    fiveHourResetsAt !== undefined ||
-    sevenDayResetsAt !== undefined ||
-    monthlyResetsAt !== undefined;
-  React.useEffect(() => {
-    if (!hasResets) return;
-    const timer = setInterval(bumpClock, 60_000);
-    return () => clearInterval(timer);
-  }, [hasResets]);
-  const fiveReset = fmtResetIn(fiveHourResetsAt);
-  const sevenReset = fmtResetIn(sevenDayResetsAt);
-  const monthlyReset = fmtResetIn(monthlyResetsAt);
+  // (No re-render clock needed: the only time-based text left is the absolute
+  // reset time inside a warning window's tooltip, computed on hover-render.)
 
   // (Permission mode is deliberately NOT shown here — the ComposerControls
   // pills beside/above this bar own model + effort + permission mode, and
@@ -207,29 +202,17 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
         </span>
       )}
       {branch && (
+        // Worktree signal rides on the branch itself (accent tint) instead of
+        // a separate chip — same information, one fewer pill.
         <span
-          title={inWorktree ? `On ${branch} — worktree at ${activeCwd}` : `On ${branch}`}
-          style={{ color: 'var(--wks-text-secondary)' }}
-        >
-          {'⎇'} {branch}
-        </span>
-      )}
-      {inWorktree && (
-        <span
-          title={`Agent is working in a git worktree: ${activeCwd}`}
+          title={
+            inWorktree ? `On ${branch} — isolated git worktree at ${activeCwd}` : `On ${branch}`
+          }
           style={{
-            fontSize: '0.64rem',
-            fontWeight: 700,
-            padding: '1px 6px',
-            borderRadius: 'var(--wks-radius-pill)',
-            letterSpacing: '0.04em',
-            color: 'var(--wks-accent-text)',
-            border: '1px solid color-mix(in srgb, var(--wks-accent) 45%, transparent)',
-            background: 'color-mix(in srgb, var(--wks-accent) 12%, transparent)',
-            flexShrink: 0,
+            color: inWorktree ? 'var(--wks-accent-text)' : 'var(--wks-text-secondary)',
           }}
         >
-          worktree
+          {'⎇'} {branch}
         </span>
       )}
       {showModel && model && (
@@ -262,11 +245,6 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
             }}
           >
             <span style={{ color: 'var(--wks-text-muted)' }}>plan</span>
-            <Track
-              pct={(plan.done / plan.total) * 100}
-              color={plan.done >= plan.total ? 'var(--wks-success)' : 'var(--wks-accent-text)'}
-              width={32}
-            />
             {plan.done}/{plan.total}
           </span>
         </>
@@ -303,46 +281,33 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
       {(tokens !== undefined || cost !== undefined) && (
         <>
           <Sep />
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 5,
-              fontVariantNumeric: 'tabular-nums',
-            }}
-          >
-            {/* Value-first, unit muted — the same "142k tok · $0.42" phrasing
-                the sidebar tooltip and agent cards use. */}
-            {tokens !== undefined && (
-              <span>
-                <span style={{ color: 'var(--wks-text-secondary)' }}>{fmtTokens(tokens)}</span>
-                <span style={{ color: 'var(--wks-text-muted)' }}> tok</span>
-              </span>
-            )}
-            {tokens !== undefined && cost !== undefined && (
-              <span style={{ color: 'var(--wks-text-faint)' }}>·</span>
-            )}
-            {cost !== undefined && (
-              <span style={{ color: 'var(--wks-text-secondary)' }}>{fmtUSD(cost)}</span>
-            )}
-          </span>
+          {/* Cost is the glanceable number; tokens ride in its tooltip. When
+              only tokens are known (no pricing yet) they stand in directly. */}
+          {cost !== undefined ? (
+            <span
+              title={tokens !== undefined ? `${fmtTokens(tokens)} tokens this session` : undefined}
+              style={{ color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}
+            >
+              {fmtUSD(cost)}
+            </span>
+          ) : (
+            <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ color: 'var(--wks-text-secondary)' }}>{fmtTokens(tokens!)}</span>
+              <span style={{ color: 'var(--wks-text-muted)' }}> tok</span>
+            </span>
+          )}
         </>
       )}
       {(() => {
-        // Render each account window when Claude gives us EITHER a utilization %
-        // OR just a reset time (many accounts only report the reset while
-        // comfortably within a window — see the rate-limit plumbing notes).
+        // Account windows are warning-only here: account-scoped data that's
+        // identical in every pane and fully charted on the Overview pane, so a
+        // window earns a spot only when it's genuinely close to the limit.
+        // Threshold color + the reset time in the tooltip say the rest.
         const windows = [
-          { label: '5h', name: '5h window', pct: five, reset: fiveReset, at: fiveHourResetsAt },
-          { label: '7d', name: '7d window', pct: seven, reset: sevenReset, at: sevenDayResetsAt },
-          {
-            label: 'Mo',
-            name: 'Monthly window',
-            pct: monthly,
-            reset: monthlyReset,
-            at: monthlyResetsAt,
-          },
-        ].filter((w) => w.pct !== undefined || w.at !== undefined);
+          { label: '5h', name: '5h window', pct: five, at: fiveHourResetsAt },
+          { label: '7d', name: '7d window', pct: seven, at: sevenDayResetsAt },
+          { label: 'Mo', name: 'Monthly window', pct: monthly, at: monthlyResetsAt },
+        ].filter((w) => w.pct !== undefined && w.pct >= WINDOW_WARN_PCT);
         if (!windows.length) return null;
         return (
           <>
@@ -352,36 +317,27 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 9,
-                color: 'var(--wks-text-secondary)',
                 fontVariantNumeric: 'tabular-nums',
               }}
             >
               {windows.map((w) => {
                 const at = fmtResetAt(w.at);
-                const tip = [
-                  w.name,
-                  w.pct !== undefined ? `${Math.round(w.pct)}% used` : undefined,
-                  at ? `resets ${at}` : undefined,
-                ]
+                const tip = [w.name, `${Math.round(w.pct!)}% used`, at ? `resets ${at}` : undefined]
                   .filter(Boolean)
                   .join(' · ');
                 return (
                   <span
                     key={w.label}
                     title={tip}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      color: ctxColor(w.pct!),
+                    }}
                   >
                     <span style={{ color: 'var(--wks-text-muted)' }}>{w.label}</span>
-                    {w.pct !== undefined ? (
-                      <>
-                        <Track pct={w.pct} color={ctxColor(w.pct)} width={26} />
-                        {Math.round(w.pct)}%
-                      </>
-                    ) : (
-                      <span style={{ color: 'var(--wks-text-muted)' }}>
-                        {w.reset ? `resets ${w.reset}` : 'ok'}
-                      </span>
-                    )}
+                    {Math.round(w.pct!)}%
                   </span>
                 );
               })}

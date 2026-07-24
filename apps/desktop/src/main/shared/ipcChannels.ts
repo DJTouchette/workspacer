@@ -143,6 +143,8 @@ export const IPC = {
   APP_SUPERVISOR_HOME: 'app:supervisorHome',
   DIALOG_PICK_FOLDER: 'dialog:pickFolder',
   DIALOG_PICK_FILES: 'dialog:pickFiles',
+  FONTS_INSTALL_CUSTOM: 'fonts:installCustom', // invoke: pick + install a UI font file
+  FONTS_LIST_CUSTOM: 'fonts:listCustom', // invoke: installed custom UI fonts
 
   // ── Files (editor pane) ──
   FILE_READ: 'file:read',

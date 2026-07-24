@@ -416,6 +416,10 @@ export interface ElectronAPI {
   /** Availability of external tools features shell out to (git, provider
    *  CLIs, tailscale). `force` re-scans PATH — the "Check again" button. */
   toolsStatus?: (force?: boolean) => Promise<ExternalToolStatus[]>;
+  /** Pick + install a custom UI font file (host dialog); null on cancel. */
+  installUiFont?: () => Promise<{ file: string; family: string } | null>;
+  /** Custom UI fonts installed under ~/.workspacer/fonts. */
+  listUiFonts?: () => Promise<Array<{ file: string; family: string }>>;
   gitStatus: (cwd: string) => Promise<GitStatus>;
   /** Recent commits, newest first (default 5, capped at 20). Empty repo → []. */
   gitLog: (cwd: string, limit?: number) => Promise<GitLogEntry[]>;

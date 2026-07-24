@@ -41,9 +41,13 @@ import {
   type MutableWebPreferences,
 } from './lib/webviewGuard';
 import { IPC } from './shared/ipcChannels';
+import { initCustomFonts, customFontsCss } from './lib/customFonts';
 
-// Font file registry: filename → absolute path (populated during discovery)
+// Font file registry: filename → absolute path (populated during discovery).
+// Carries both discovered Nerd Fonts and user-installed custom UI fonts
+// (~/.workspacer/fonts) — the workspacer-font:// protocol serves either.
 const fontFileMap = new Map<string, string>();
+initCustomFonts(fontFileMap);
 
 function discoverFontDirs(): string[] {
   return process.platform === 'win32'
@@ -441,11 +445,18 @@ function createWindow(): void {
     }
   });
 
-  // Inject Nerd Font @font-face rules once the page DOM is ready.
-  // Invoked non-blocking — async font-dir scanning must not stall the main thread.
+  // Inject Nerd Font + installed custom-font @font-face rules once the page
+  // DOM is ready. Invoked non-blocking — async font-dir scanning must not
+  // stall the main thread.
   mainWindow.webContents.on('dom-ready', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       injectNerdFonts(mainWindow).catch((err) => console.error('[Fonts] discovery failed:', err));
+      const customCss = customFontsCss();
+      if (customCss) {
+        mainWindow.webContents
+          .insertCSS(customCss)
+          .catch((err) => console.error('[Fonts] custom-font inject failed:', err));
+      }
     }
   });
 
@@ -485,7 +496,13 @@ app.whenReady().then(() => {
     const filePath = fontFileMap.get(filename);
     if (filePath && fs.existsSync(filePath)) {
       const data = fs.readFileSync(filePath);
-      const mime = filename.endsWith('.otf') ? 'font/otf' : 'font/ttf';
+      const mime = filename.endsWith('.woff2')
+        ? 'font/woff2'
+        : filename.endsWith('.woff')
+          ? 'font/woff'
+          : filename.endsWith('.otf')
+            ? 'font/otf'
+            : 'font/ttf';
       return new Response(data, {
         headers: { 'Content-Type': mime, 'Access-Control-Allow-Origin': '*' },
       });

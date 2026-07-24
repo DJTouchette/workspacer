@@ -71,7 +71,7 @@ const SessionsPane: React.FC<SessionsPaneProps> = ({ sessions, onResume }) => {
         overflowY: 'auto',
         backgroundColor: 'var(--wks-bg-base)',
         color: 'var(--wks-text-secondary)',
-        fontFamily: '"Hanken Grotesk", Inter, system-ui, sans-serif',
+        fontFamily: 'var(--wks-font-sans)',
       }}
     >
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '28px 24px 40px' }}>

@@ -19,6 +19,8 @@ export interface UIConfig {
   cornerStyle: string;
   /** User override for the focused-pane border color ('' = theme default). */
   borderColor: string;
+  /** UI typeface: a bundled id ('hanken' | 'inter' | …, see lib/uiFont) or
+   *  'custom:<Family>' for an uploaded font. Unknown values → default. */
   fontFamily: string;
   fontSize: number;
   borderRadius: number;

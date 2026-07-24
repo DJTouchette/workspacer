@@ -9,10 +9,12 @@ import {
   DEFAULT_THEME,
 } from '../themes';
 import type { Theme, TerminalTheme } from '../themes';
+import { applyUiFont } from '../lib/uiFont';
 
 export function useTheme(): { theme: Theme; terminalTheme: TerminalTheme } {
   const { config } = useConfig();
   const themeName = config.ui.theme || DEFAULT_THEME;
+  const fontChoice = config.ui.fontFamily;
   const cornerOverride = config.ui.cornerStyle || '';
   const customThemes = config.ui.customThemes;
 
@@ -33,6 +35,10 @@ export function useTheme(): { theme: Theme; terminalTheme: TerminalTheme } {
   useEffect(() => {
     applyCorners(corners);
   }, [corners]);
+
+  useEffect(() => {
+    applyUiFont(fontChoice);
+  }, [fontChoice]);
 
   useEffect(() => {
     document.documentElement.style.setProperty('--wks-border-active', borderColor);

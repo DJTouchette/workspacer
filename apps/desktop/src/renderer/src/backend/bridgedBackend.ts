@@ -69,6 +69,8 @@ export const HOST_ONLY = [
   'pickFiles', // native OS file dialog
   'importChromeCookies', // reads the host browser profile
   'toolsStatus', // external-tool PATH scan runs on the host
+  'installUiFont', // native font-file dialog + host ~/.workspacer/fonts install
+  'listUiFonts', // installed custom fonts live on the host filesystem
   'listHubPlugins', // plugin registry lives in main
   'installPlugin',
   'inspectPlugin', // pre-install manifest preview via the hub's guarded route

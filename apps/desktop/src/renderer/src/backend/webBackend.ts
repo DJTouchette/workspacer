@@ -437,6 +437,10 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // No host PATH to scan from a browser — report nothing so tool gates
     // never show a false "missing" notice on the web mirror.
     toolsStatus: () => Promise.resolve([]),
+    // Custom UI fonts live on the host filesystem; the web mirror can neither
+    // open the native dialog nor serve workspacer-font:// — bundled fonts only.
+    installUiFont: () => Promise.resolve(null),
+    listUiFonts: () => Promise.resolve([]),
     listHubPlugins: () => {
       warnOnce('listHubPlugins');
       return Promise.resolve([]);

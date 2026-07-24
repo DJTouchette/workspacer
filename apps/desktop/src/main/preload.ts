@@ -614,6 +614,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** Availability of external tools features shell out to (git, provider CLIs,
    *  tailscale). `force` re-scans PATH — the "Check again" button. */
   toolsStatus: (force?: boolean): Promise<unknown[]> => ipcRenderer.invoke(IPC.TOOLS_STATUS, force),
+  installUiFont: (): Promise<{ file: string; family: string } | null> =>
+    ipcRenderer.invoke(IPC.FONTS_INSTALL_CUSTOM),
+  listUiFonts: (): Promise<Array<{ file: string; family: string }>> =>
+    ipcRenderer.invoke(IPC.FONTS_LIST_CUSTOM),
 
   gitStatus: (cwd: string): Promise<GitStatus> => ipcRenderer.invoke(IPC.GIT_STATUS, cwd),
   gitLog: (cwd: string, limit?: number): Promise<GitLogEntry[]> =>
