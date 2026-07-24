@@ -159,6 +159,7 @@ interface AgentViewHandlers {
     provider?: AgentProvider;
   }) => Promise<string>;
   onJumpToAgent: (agentId: string) => void;
+  onResumeRecentSession: (session: RecentAgentSession) => void;
 }
 
 interface AgentWorkspaceViewProps {
@@ -172,6 +173,9 @@ interface AgentWorkspaceViewProps {
   workspaceAgents: { sessionId?: string }[];
   appCwd: string;
   allAgents: AgentWorkspace[];
+  /** Resumable daemon sessions — for the Sessions pane. Changes only on the
+   *  recent-sessions poll/burst, so the memo still holds between ticks. */
+  recentSessions: RecentAgentSession[];
   handlers: AgentViewHandlers;
 }
 
@@ -196,6 +200,7 @@ const AgentWorkspaceView = memo(function AgentWorkspaceView({
   workspaceAgents,
   appCwd,
   allAgents,
+  recentSessions,
   handlers,
 }: AgentWorkspaceViewProps) {
   return (
@@ -226,6 +231,8 @@ const AgentWorkspaceView = memo(function AgentWorkspaceView({
           allAgents={allAgents}
           spawnSupervisor={handlers.spawnSupervisor}
           onJumpToAgent={handlers.onJumpToAgent}
+          recentSessions={recentSessions}
+          onResumeRecentSession={handlers.onResumeRecentSession}
         />
       </ErrorBoundary>
     </div>
@@ -420,11 +427,12 @@ function App() {
     appCwdRef,
   });
 
-  // Sidebar RECENT list — daemon sessions (all providers, incl. archived) with
-  // no card in the current layout. Clicking one respawns it as an agent.
+  // Resumable daemon sessions (all providers, incl. archived) with no card in
+  // the current layout. Uncapped: the Sessions pane browses the full list and
+  // the sidebar's History footer row shows the true count.
   const allDaemonSessions = useRecentSessions(sessionPhase === 'active');
   const recentSessions = useMemo(
-    () => filterResumableSessions(allDaemonSessions, agents, ptyMapping),
+    () => filterResumableSessions(allDaemonSessions, agents, ptyMapping, Infinity),
     [allDaemonSessions, agents, ptyMapping],
   );
   const handleResumeRecentSession = useCallback(
@@ -1117,6 +1125,14 @@ function App() {
   const openAgentsPane = useCallback(() => {
     setShowCommandPalette(false);
     const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'agents', 'Agent Monitor');
+    requestAnimationFrame(() => scrollToTab(tabId));
+  }, [openPaneIn, scrollToTab]);
+
+  /** Open the Sessions pane — the session-history browser that replaced the
+   *  sidebar's EARLIER/RECENT dock (sidebar History row + command palette). */
+  const openSessionsPane = useCallback(() => {
+    setShowCommandPalette(false);
+    const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'sessions', 'Sessions');
     requestAnimationFrame(() => scrollToTab(tabId));
   }, [openPaneIn, scrollToTab]);
 
@@ -1897,6 +1913,7 @@ function App() {
       onSplitPlugin: handlePaneSplitPlugin,
       spawnSupervisor,
       onJumpToAgent: handleJumpToAgent,
+      onResumeRecentSession: handleResumeRecentSession,
     }),
     [
       handleTabFocus,
@@ -1912,6 +1929,7 @@ function App() {
       handlePaneSplitPlugin,
       spawnSupervisor,
       handleJumpToAgent,
+      handleResumeRecentSession,
     ],
   );
 
@@ -1982,7 +2000,7 @@ function App() {
                   noAttentionFlash={noAttentionFlash}
                   collapsed={!sidebarOverlay && railShown}
                   recentSessions={recentSessions}
-                  onResumeSession={handleResumeRecentSession}
+                  onOpenHistory={openSessionsPane}
                 />
               </ErrorBoundary>
             )}
@@ -2025,7 +2043,7 @@ function App() {
                     noAttentionFlash={noAttentionFlash}
                     collapsed={false}
                     recentSessions={recentSessions}
-                    onResumeSession={handleResumeRecentSession}
+                    onOpenHistory={openSessionsPane}
                   />
                 </ErrorBoundary>
               </>
@@ -2106,6 +2124,7 @@ function App() {
                     workspaceAgents={workspaceAgents}
                     appCwd={appCwd}
                     allAgents={agents}
+                    recentSessions={recentSessions}
                     handlers={agentViewHandlers}
                   />
                 ))
@@ -2183,6 +2202,7 @@ function App() {
               }}
               onOpenAnalytics={openAnalytics}
               onOpenAgents={hasAgentMonitorActivity ? openAgentsPane : undefined}
+              onOpenSessions={openSessionsPane}
               onOpenInspector={openInspectorForActive}
               onOpenContext={openContextForActive}
               onOpenLayouts={() => {

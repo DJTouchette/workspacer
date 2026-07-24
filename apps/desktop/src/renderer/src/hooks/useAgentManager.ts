@@ -50,6 +50,7 @@ const defaultTitles: Record<PaneType, string> = {
   inspector: 'Inspector',
   mdpreview: 'Preview',
   context: 'Context',
+  sessions: 'Sessions',
 };
 
 /** Derive a human label from a working directory (its basename). */

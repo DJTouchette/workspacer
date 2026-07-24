@@ -33,6 +33,7 @@ import {
   PieChart,
   ArrowLeft,
   ArrowRight,
+  History,
   type LucideIcon,
 } from 'lucide-react';
 import { PaneType } from '../types/pane';
@@ -78,6 +79,7 @@ const PANE_ICONS: Record<PaneType, IconComponent> = {
   inspector: Columns3,
   mdpreview: BookOpen,
   context: PieChart,
+  sessions: History,
 };
 
 export interface IconProps {
@@ -129,6 +131,7 @@ export {
   Radar,
   ArrowLeft,
   ArrowRight,
+  History,
 };
 
 // Workspacer Icon Pack — the custom two-tone agent glyph set (panes, status,

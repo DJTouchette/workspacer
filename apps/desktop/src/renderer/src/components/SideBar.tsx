@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
-import { Plus, ChevronLeft, ChevronRight, ChevronDown, LayoutGrid, Compass } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, LayoutGrid, Compass, History } from 'lucide-react';
 import { BrandMark, Wordmark } from './Brand';
 import { AgentWorkspace, AgentProvider } from '../types/pane';
 import type { RecentAgentSession } from '../../../main/shared/ipcTypes';
@@ -8,7 +8,6 @@ import type { AttentionItem, AttentionKind } from '../types/attention';
 import { deriveSessionStats, fmtTokens, fmtUSD, ctxColor, planProgress } from '../lib/sessionStats';
 import { ensureKeyframes } from './claude-shared';
 import { collectRecentActivity, type ActivityLine } from '../lib/agentActivityLog';
-import { recentSessionLabel } from '../lib/recentSessionFilter';
 import { shortModelLabel } from '../lib/modelLabel';
 import { agentAttentionScore } from '../lib/attentionRouter';
 import { AgentLogo } from './agentLogos';
@@ -89,9 +88,6 @@ const PROVIDER_HUE: Record<AgentProvider, string> = {
   pi: '#83c092',
 };
 
-/** A finished agent's card collapses into the EARLIER list after this long. */
-const EARLIER_AFTER_MS = 3_600_000;
-
 /** Compact relative age for card headers: 45s → "45s", then 2m / 3h / 2d. */
 function relTime(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -136,10 +132,11 @@ interface SideBarProps {
   onToggleHelp?: () => void;
   /** Brief flash on the header when "next attention" found nothing to jump to. */
   noAttentionFlash?: boolean;
-  /** Daemon sessions not in the layout — the RECENT list (already filtered). */
+  /** Resumable daemon sessions not in the layout — drives the History footer
+   *  row's count (the list itself lives in the Sessions pane). */
   recentSessions?: RecentAgentSession[];
-  /** Bring a recent session back as an agent (spawn with --resume). */
-  onResumeSession?: (session: RecentAgentSession) => void;
+  /** Open the Sessions pane (session history browser). */
+  onOpenHistory?: () => void;
 }
 
 const SideBar: React.FC<SideBarProps> = ({
@@ -161,7 +158,7 @@ const SideBar: React.FC<SideBarProps> = ({
   noAttentionFlash,
   collapsed,
   recentSessions,
-  onResumeSession,
+  onOpenHistory,
 }) => {
   // Counts come from the single attention feed (the spine) — the rail's
   // "needs you" badge can never disagree with the cards' waiting states.
@@ -177,70 +174,6 @@ const SideBar: React.FC<SideBarProps> = ({
   const [renameValue, setRenameValue] = useState('');
   // Type-to-filter the agent list by name or provider (nav rows always shown).
   const [filter, setFilter] = useState('');
-  // Collapsed state for the EARLIER / RECENT sub-sections. Deliberately NOT
-  // persisted: every boot starts fully expanded, and collapsing only tucks a
-  // section away for the current session.
-  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
-  const toggleSection = useCallback((key: string) => {
-    setCollapsedSections((prev) => ({ ...prev, [key]: !prev[key] }));
-  }, []);
-
-  // Clickable section heading (EARLIER / RECENT) that collapses its rows. A
-  // chevron rotates and the item count rides on the right so a collapsed
-  // section still tells you how much it's hiding. When collapsed, the heading
-  // sinks to the bottom of the feed (flex `order` sorts it below the expanded
-  // content; `marginTop: auto` pins it to the bottom with the empty space
-  // above) so tucked-away sections get out of the way. `order` keeps a
-  // collapsed EARLIER above a collapsed RECENT.
-  const renderSectionHeading = (key: string, label: string, count: number, order: number) => {
-    const collapsed = !!collapsedSections[key];
-    return (
-      <div
-        key={`${key}-heading`}
-        role="button"
-        tabIndex={0}
-        onClick={() => toggleSection(key)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            toggleSection(key);
-          }
-        }}
-        aria-expanded={!collapsed}
-        title={collapsed ? `Show ${label.toLowerCase()}` : `Hide ${label.toLowerCase()}`}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 4,
-          padding: '10px 16px 2px',
-          fontSize: '0.6rem',
-          fontWeight: 700,
-          letterSpacing: '0.12em',
-          color: 'var(--wks-text-faint)',
-          cursor: 'pointer',
-          userSelect: 'none',
-          ...(collapsed ? { order, marginTop: 'auto' } : null),
-        }}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
-        }}
-      >
-        <ChevronDown
-          size={11}
-          style={{
-            flexShrink: 0,
-            transform: collapsed ? 'rotate(-90deg)' : 'none',
-            transition: 'transform 0.12s',
-          }}
-        />
-        <span>{label}</span>
-        <span style={{ marginLeft: 'auto', opacity: 0.7 }}>{count}</span>
-      </div>
-    );
-  };
   // The pinned global workspace — reached via the brand header, not a feed row.
   const overviewAgent = agents.find((a) => a.global);
 
@@ -806,7 +739,8 @@ const SideBar: React.FC<SideBarProps> = ({
             // collectRecentActivity). A busy card tints its freshest line
             // green; only waiting/stopped add a state line. Never the vague
             // "Working…" — the header spinner already says that much.
-            // Depth is state-scaled: busy cards earn 3 lines, resting cards
+            // Depth is state-scaled: busy/waiting cards earn up to 5 lines
+            // (the room the old EARLIER/RECENT dock gave back), resting cards
             // stay short so a full sidebar doesn't read as a wall of logs.
             type LogLine = { text: string; color: string; kind?: ActivityLine['kind'] };
             const pushActivity = (lines: ActivityLine[], color?: string) => {
@@ -818,7 +752,7 @@ const SideBar: React.FC<SideBarProps> = ({
                 });
               }
             };
-            const activity = collectRecentActivity(snap, 3);
+            const activity = collectRecentActivity(snap, 5);
             const log: LogLine[] = [];
             if (cardState === 'waiting') {
               const what =
@@ -827,7 +761,7 @@ const SideBar: React.FC<SideBarProps> = ({
                   : state === 'waiting_approval'
                     ? 'approve a tool call'
                     : 'your input';
-              pushActivity(activity.slice(-2));
+              pushActivity(activity.slice(-4));
               log.push({ text: `Waiting: ${what}`, color: 'var(--wks-warning)' });
             } else if (!agent.sessionId) {
               log.push({ text: 'Stopped — click to respawn', color: 'var(--wks-text-faint)' });
@@ -1177,73 +1111,6 @@ const SideBar: React.FC<SideBarProps> = ({
             );
           };
 
-          // Hour-old finished agents collapse to one quiet line each (spec 04).
-          const renderEarlierLine = (agent: (typeof agents)[0]) => {
-            const snap = agent.sessionId ? snapshotBySession[agent.sessionId] : undefined;
-            const age = snap ? relTime(now - snap.lastActivity) : '';
-            // "✓ name · what it finished · 1h" — headline from the last message.
-            let headline: string | undefined;
-            const turns = snap?.conversation ?? [];
-            for (let i = turns.length - 1; i >= 0; i--) {
-              if (turns[i].role === 'assistant' && turns[i].content?.trim()) {
-                headline = turns[i].content
-                  .trim()
-                  .split('\n')[0]
-                  .replace(/^[#>*\-\s`]+/, '');
-                break;
-              }
-            }
-            return (
-              <div
-                key={agent.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => onSelectAgent(agent.id)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') onSelectAgent(agent.id);
-                }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setContextMenu({ agentId: agent.id, x: e.clientX, y: e.clientY });
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
-                }}
-                title={`${agent.name}${agent.sessionId ? '' : ' — stopped, click to respawn'}\n${agent.cwd}`}
-                style={{
-                  margin: '0 16px',
-                  padding: '3px 2px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 7,
-                  minWidth: 0,
-                  borderRadius: 'var(--wks-radius-md)',
-                  cursor: 'pointer',
-                  fontFamily: 'var(--wks-font-mono)',
-                  fontSize: '0.66rem',
-                  color: 'var(--wks-text-faint)',
-                  transition: 'color 0.12s',
-                }}
-              >
-                <span style={{ flexShrink: 0 }}>{agent.sessionId ? '✓' : '○'}</span>
-                <span
-                  style={{
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {agent.name}
-                  {headline ? ` · ${headline}` : ''}
-                </span>
-                {age && <span style={{ marginLeft: 'auto', flexShrink: 0 }}>{age}</span>}
-              </div>
-            );
-          };
-
           // Needy-first ordering — same rule as the Fleet Deck (via
           // `agentAttentionScore` + the shared attention feed) so the agent
           // blocked on you rises to the top instead of scrolling off. Global/nav
@@ -1264,22 +1131,12 @@ const SideBar: React.FC<SideBarProps> = ({
             return sb - sa;
           });
 
-          // Live-feed grouping (spec 2a): Overview nav row pinned first, then
-          // waiting → working → done cards (the sort above), then hour-old
-          // finished agents collapsed into a compact EARLIER list.
-          const cards: typeof agents = [];
-          const earlier: typeof agents = [];
-          for (const agent of topLevel) {
-            if (agent.global) continue;
-            const children = childrenByParent.get(agent.id) ?? [];
-            const snap = agent.sessionId ? snapshotBySession[agent.sessionId] : undefined;
-            const oldDone =
-              cardStateOf(agent) === 'done' &&
-              agent.id !== activeAgentId &&
-              children.length === 0 &&
-              (!agent.sessionId || (snap && now - snap.lastActivity > EARLIER_AFTER_MS));
-            (oldDone ? earlier : cards).push(agent);
-          }
+          // Live-feed order (spec 2a): Overview nav row pinned first, then
+          // waiting → working → done cards (the sort above). Old finished
+          // agents keep their (compact, dimmed) done cards — the EARLIER
+          // demotion left with the history dock; retired sessions live in the
+          // Sessions pane instead.
+          const cards = topLevel.filter((agent) => !agent.global);
 
           const rows: React.ReactNode[] = [];
           for (const agent of cards) {
@@ -1289,113 +1146,48 @@ const SideBar: React.FC<SideBarProps> = ({
               rows.push(renderAgentCard(child, true));
             }
           }
-          const historyRows: React.ReactNode[] = [];
-          if (earlier.length > 0) {
-            historyRows.push(renderSectionHeading('earlier', 'EARLIER', earlier.length, 2));
-            if (!collapsedSections.earlier) {
-              for (const agent of earlier) historyRows.push(renderEarlierLine(agent));
-            }
-          }
-          const hasRecent = !!onResumeSession && (recentSessions?.length ?? 0) > 0;
+          const historyCount = recentSessions?.length ?? 0;
           return (
             <>
               {rows}
-              {/* History dock: EARLIER + RECENT pinned to the feed's bottom
-                  (marginTop:auto — collapses to 0 when the feed overflows), so
-                  past work clusters above Spawn agent and the active cards
-                  keep the top. The collapse behavior (flex `order` +
-                  marginTop:auto on collapsed headings) applies within the
-                  dock, unchanged. */}
-              {(historyRows.length > 0 || hasRecent) && (
+              {/* History footer row — the one quiet pointer to past work. The
+                  EARLIER/RECENT dock moved into the Sessions pane; this row
+                  pins to the feed bottom (margin-top:auto collapses to 0 when
+                  the feed overflows) so live cards keep the top. */}
+              {onOpenHistory && historyCount > 0 && (
                 <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={onOpenHistory}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') onOpenHistory();
+                  }}
+                  title="Browse and resume past sessions"
                   style={{
-                    marginTop: 'auto',
+                    margin: 'auto 12px 0',
+                    padding: '7px 6px 5px',
                     display: 'flex',
-                    flexDirection: 'column',
-                    gap: '8px',
+                    alignItems: 'center',
+                    gap: 6,
+                    borderTop: '1px solid var(--wks-border-subtle)',
+                    fontSize: '0.66rem',
+                    fontFamily: 'var(--wks-font-mono)',
+                    color: 'var(--wks-text-faint)',
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                    transition: 'color 0.12s',
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
                   }}
                 >
-                  {historyRows}
-                  {/* RECENT — daemon sessions with no card in the layout. Since named
-            workspace sessions are gone, this is how past conversations stay
-            reachable: click one and it comes back as an agent via --resume. */}
-                  {onResumeSession && (recentSessions?.length ?? 0) > 0 && (
-                    <>
-                      {renderSectionHeading('recent', 'RECENT', recentSessions!.length, 3)}
-                      {!collapsedSections.recent &&
-                        recentSessions!.map((s) => {
-                          const provider = (s.provider || 'claude') as AgentProvider;
-                          const hue = PROVIDER_HUE[provider] ?? 'var(--wks-accent)';
-                          const name = recentSessionLabel(s);
-                          const age = s.updatedAt ? relTime(Date.now() - s.updatedAt) : '';
-                          return (
-                            <div
-                              key={s.sessionId}
-                              role="button"
-                              tabIndex={0}
-                              onClick={() => onResumeSession(s)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') onResumeSession(s);
-                              }}
-                              onMouseEnter={(e) => {
-                                (e.currentTarget as HTMLElement).style.color =
-                                  'var(--wks-text-secondary)';
-                              }}
-                              onMouseLeave={(e) => {
-                                (e.currentTarget as HTMLElement).style.color =
-                                  'var(--wks-text-faint)';
-                              }}
-                              title={`${name} — click to resume\n${s.cwd}${s.model ? `\n${s.model}` : ''}`}
-                              style={{
-                                margin: '0 16px',
-                                padding: '3px 2px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 7,
-                                minWidth: 0,
-                                borderRadius: 'var(--wks-radius-md)',
-                                cursor: 'pointer',
-                                fontFamily: 'var(--wks-font-mono)',
-                                fontSize: '0.66rem',
-                                color: 'var(--wks-text-faint)',
-                                transition: 'color 0.12s',
-                              }}
-                            >
-                              <span
-                                style={{
-                                  flexShrink: 0,
-                                  width: 6,
-                                  height: 6,
-                                  borderRadius: '50%',
-                                  background: hue,
-                                  opacity: 0.7,
-                                }}
-                              />
-                              <span
-                                style={{
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                {name}
-                              </span>
-                              {age && (
-                                <span
-                                  style={{
-                                    marginLeft: 'auto',
-                                    flexShrink: 0,
-                                    whiteSpace: 'nowrap',
-                                  }}
-                                >
-                                  {age}
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })}
-                    </>
-                  )}
+                  <History size={12} strokeWidth={1.75} style={{ flexShrink: 0 }} />
+                  <span>History</span>
+                  <span style={{ marginLeft: 'auto' }}>{historyCount}</span>
+                  <ChevronRight size={11} strokeWidth={2} style={{ flexShrink: 0 }} />
                 </div>
               )}
             </>

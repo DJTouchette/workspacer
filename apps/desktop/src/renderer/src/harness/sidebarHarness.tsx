@@ -323,7 +323,7 @@ function Harness() {
               viewLevel="piloting"
               collapsed={false}
               recentSessions={recentSessions}
-              onResumeSession={noop}
+              onOpenHistory={noop}
             />
           </div>
         </AttentionProvider>

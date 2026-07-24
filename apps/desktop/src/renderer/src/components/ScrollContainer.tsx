@@ -12,6 +12,7 @@ import { EmptyState } from './PaneMessage';
 import ErrorBoundary from './ErrorBoundary';
 import { PaneConfig, PaneType, TabConfig, AgentWorkspace, AgentProvider } from '../types/pane';
 import type { PluginPane as PluginPaneDef } from '../types/plugin';
+import type { RecentAgentSession } from '../../../main/shared/ipcTypes';
 import { useConfig } from '../hooks/useConfig';
 import { tilingColumns } from '../lib/layoutUtils';
 import { useIsSmallScreen } from '../hooks/useMediaQuery';
@@ -32,6 +33,7 @@ const AgentsPane = React.lazy(() => import('../panes/AgentsPane'));
 const InspectorPane = React.lazy(() => import('../panes/InspectorPane'));
 const MarkdownPreviewPane = React.lazy(() => import('../panes/MarkdownPreviewPane'));
 const ContextPane = React.lazy(() => import('../panes/ContextPane'));
+const SessionsPane = React.lazy(() => import('../panes/SessionsPane'));
 
 /** POSIX single-quote a path so it's safe as a terminal-editor argument. */
 function shellQuote(p: string): string {
@@ -109,6 +111,9 @@ interface ScrollContainerProps {
   }) => Promise<string>;
   /** Jump to a specific agent by id — forwarded to AskPane. */
   onJumpToAgent?: (agentId: string) => void;
+  /** Resumable daemon sessions + resume — forwarded to the Sessions pane. */
+  recentSessions?: RecentAgentSession[];
+  onResumeRecentSession?: (session: RecentAgentSession) => void;
 }
 
 export interface ScrollContainerRef {
@@ -151,6 +156,9 @@ interface PaneCallbacks {
   onJumpToAgent?: (agentId: string) => void;
   /** Agent workspace that owns this pane tree. */
   ownerAgentId?: string;
+  /** Resumable daemon sessions + resume — for the Sessions pane. */
+  recentSessions?: RecentAgentSession[];
+  onResumeRecentSession?: (session: RecentAgentSession) => void;
 }
 
 function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneCallbacks) {
@@ -347,6 +355,15 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       return (
         <Suspense fallback={<PaneFallback />}>
           <AgentsPane isActive={isActive} />
+        </Suspense>
+      );
+    case 'sessions':
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <SessionsPane
+            sessions={callbacks.recentSessions ?? []}
+            onResume={callbacks.onResumeRecentSession}
+          />
         </Suspense>
       );
     case 'inspector':
@@ -549,6 +566,8 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       allAgents,
       spawnSupervisor,
       onJumpToAgent,
+      recentSessions,
+      onResumeRecentSession,
     },
     ref,
   ) => {
@@ -715,6 +734,8 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
             spawnSupervisor,
             onJumpToAgent,
             ownerAgentId,
+            recentSessions,
+            onResumeRecentSession,
           };
 
           const cardStyle: React.CSSProperties = {

@@ -22,6 +22,7 @@ import {
   Settings,
   Sparkles,
   Star,
+  History,
   IconSearch,
   type LucideIcon,
 } from './icons';
@@ -157,6 +158,8 @@ interface CommandPaletteProps {
   onOpenAnalytics?: () => void;
   /** Open the Agents pane (all agents as live cards, click to watch one). */
   onOpenAgents?: () => void;
+  /** Open the Sessions pane (browse + resume past daemon sessions). */
+  onOpenSessions?: () => void;
   /** Open an Inspector pane for the currently-piloted agent (plan/flows/agents/files/usage). */
   onOpenInspector?: () => void;
   /** Open a Context pane itemizing the current agent's context window. */
@@ -219,6 +222,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   onOpenLibrary,
   onOpenAnalytics,
   onOpenAgents,
+  onOpenSessions,
   onOpenInspector,
   onOpenContext,
   onOpenLayouts,
@@ -348,6 +352,13 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       onOpenAgents,
     );
     add(
+      'cmd-sessions',
+      'Session History',
+      'Browse and resume past sessions in a pane',
+      <History size={16} strokeWidth={1.75} />,
+      onOpenSessions,
+    );
+    add(
       'cmd-inspector',
       'Open Inspector Pane',
       'Plan · flows · agents · files · usage for the current agent, as a live pane',
@@ -468,6 +479,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     uiMode,
     onOpenAnalytics,
     onOpenAgents,
+    onOpenSessions,
     onOpenInspector,
     onOpenContext,
     onOpenLayouts,
