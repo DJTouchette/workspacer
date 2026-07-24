@@ -434,6 +434,14 @@ pub struct SessionState {
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
     pub tool_calls: u64,
+    /// How many user prompts this session has seen (`UserPromptSubmit` hooks).
+    /// The "did the user actually talk to this agent" signal: a session spawned
+    /// but never prompted stays at 0. Restored from the persisted event log on
+    /// boot (see `SessionStore::hydrate`) and incremented live in `apply`.
+    /// Additive/back-compatible like the fields below — old persisted JSON and
+    /// pre-field rows deserialize to 0.
+    #[serde(default)]
+    pub user_prompts: u64,
     pub last_event: Option<String>,
     /// Absolute path to Claude's transcript JSONL, captured from the hook
     /// payload. Lets `/transcript` read the exact file even when the session id
@@ -503,6 +511,7 @@ impl SessionState {
             started_at: now,
             updated_at: now,
             tool_calls: 0,
+            user_prompts: 0,
             last_event: None,
             transcript_path: None,
             status_line: None,
@@ -525,6 +534,28 @@ impl SessionState {
     pub fn is_archived(&self, now_unix: i64) -> bool {
         self.mode == SessionMode::Stopped
             && now_unix.saturating_sub(self.updated_at.unix_timestamp()) > ARCHIVE_AFTER_SECONDS
+    }
+
+    /// Whether this is a stopped session the user never actually used — spawned
+    /// (a `SessionStart` fired, so it's on disk and rehydrates on boot) but with
+    /// no prompt ever submitted and no tool ever run. There is no conversation to
+    /// resume, so these are hidden from the default session list the same way
+    /// archived rows are; they'd otherwise pile up as "stale sessions" on login.
+    ///
+    /// Scoped to `provider == "claude"`: both the PTY and stream transports run
+    /// Claude Code's hooks, so `user_prompts`/`tool_calls` are trustworthy there.
+    /// Codex/opencode/pi drive their state from native events (no hooks), so we
+    /// have no such signal for them and must never gate them on it — and they're
+    /// never persisted/rehydrated anyway, so this costs nothing.
+    ///
+    /// Both counters must be zero: `tool_calls` is persisted directly on the
+    /// session row, so it still guards a genuinely-used session whose prompt
+    /// events were dropped by a lagging persistence broadcast.
+    pub fn is_empty_stopped(&self) -> bool {
+        self.mode == SessionMode::Stopped
+            && self.provider == "claude"
+            && self.user_prompts == 0
+            && self.tool_calls == 0
     }
 
     pub fn apply(&mut self, event: &HookEvent) {
@@ -562,6 +593,7 @@ impl SessionState {
 
             HookEventKind::UserPromptSubmit => {
                 self.mode = SessionMode::Responding;
+                self.user_prompts = self.user_prompts.saturating_add(1);
                 self.pending = None;
                 // A fresh user turn supersedes any prior turn's background work.
                 self.live_subagents = 0;
@@ -770,6 +802,45 @@ mod tests {
         assert_eq!(
             state.transcript_path.as_deref(),
             Some("/home/u/.claude/projects/p/real-id.jsonl")
+        );
+    }
+
+    #[test]
+    fn empty_stopped_gates_only_unused_claude_sessions() {
+        // Spawned but never prompted → empty once stopped.
+        let mut s = SessionState::new("s".into(), Some("/w".into()));
+        s.apply(&make_event("SessionStart"));
+        assert!(!s.is_empty_stopped(), "not stopped yet");
+        s.apply(&make_event("SessionEnd"));
+        assert!(
+            s.is_empty_stopped(),
+            "stopped claude session with no prompt and no tool call is empty"
+        );
+
+        // One real prompt → no longer empty, even after it stops.
+        let mut used = SessionState::new("u".into(), Some("/w".into()));
+        used.apply(&make_event("UserPromptSubmit"));
+        used.apply(&make_event("SessionEnd"));
+        assert_eq!(used.user_prompts, 1);
+        assert!(
+            !used.is_empty_stopped(),
+            "a prompted session is never empty"
+        );
+
+        // A tool call alone also counts as real use (guards against a prompt
+        // event lost to a lagging persistence broadcast).
+        let mut tooled = SessionState::new("t".into(), Some("/w".into()));
+        tooled.tool_calls = 1;
+        tooled.mode = SessionMode::Stopped;
+        assert!(!tooled.is_empty_stopped());
+
+        // Non-claude managed providers have no hook signal — never gate them.
+        let mut codex = SessionState::new("c".into(), Some("/w".into()));
+        codex.provider = "codex".into();
+        codex.mode = SessionMode::Stopped;
+        assert!(
+            !codex.is_empty_stopped(),
+            "codex/opencode/pi lack the prompt signal and must not be gated"
         );
     }
 

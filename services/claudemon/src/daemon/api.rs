@@ -284,6 +284,14 @@ struct ListSessionsQuery {
     /// opts in (`?include_archived=true`) to browse older ones.
     #[serde(default)]
     include_archived: bool,
+    /// Include empty sessions — stopped rows that were spawned but never
+    /// actually used (no prompt, no tool call), so there's nothing to resume.
+    /// Gated SEPARATELY from `include_archived`: the history browser fetches
+    /// `?include_archived=true` to show old conversations, and these junk rows
+    /// must stay hidden even then (they're what pile up as "stale sessions" on
+    /// login). Off by default; nothing currently opts in.
+    #[serde(default)]
+    include_empty: bool,
 }
 
 async fn list_sessions(
@@ -293,6 +301,7 @@ async fn list_sessions(
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let states = store.list();
     let include_archived = q.include_archived;
+    let include_empty = q.include_empty;
     // `usage_for_path` reads each session's transcript from disk — doing it inline
     // would block a runtime worker (and its SSE streams) across N file reads, so
     // run the whole fold on the blocking pool.
@@ -301,9 +310,19 @@ async fn list_sessions(
             .into_iter()
             .filter_map(|state| {
                 let archived = state.is_archived(now);
-                // Default list hides archived sessions; they're still reachable
-                // via `?include_archived=true` and the per-session endpoint.
+                // Default list hides two kinds of dead row, each gated by its own
+                // flag (both still reachable via the per-session endpoint):
+                //   - archived: stopped and idle past the 7-day window — the
+                //     history browser opts in with `?include_archived=true`;
+                //   - empty: stopped but never actually used (spawned, no prompt
+                //     ever submitted) — nothing to resume. Gated separately so
+                //     these stay hidden even in the archived-inclusive browse,
+                //     where they'd otherwise pile up as "stale sessions" on login
+                //     (see SessionState::is_empty_stopped).
                 if archived && !include_archived {
+                    return None;
+                }
+                if state.is_empty_stopped() && !include_empty {
                     return None;
                 }
                 let u = usage::usage_for_path(state.transcript_path.as_deref());

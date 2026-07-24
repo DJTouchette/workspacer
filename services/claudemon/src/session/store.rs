@@ -452,6 +452,7 @@ impl SessionStore {
                 let mut st = SessionState::new(s.id.clone(), s.cwd.clone());
                 st.mode = SessionMode::Stopped;
                 st.tool_calls = s.tool_calls;
+                st.user_prompts = s.user_prompt_count;
                 if let Ok(t) = OffsetDateTime::from_unix_timestamp(s.created_at) {
                     st.started_at = t;
                 }
@@ -2375,6 +2376,7 @@ mod tests {
                 tool_calls: 0,
                 created_at: 1000,
                 last_event_at: 1000,
+                user_prompt_count: 0,
             },
             crate::store::RestoredSession {
                 id: "old2".into(),
@@ -2382,6 +2384,7 @@ mod tests {
                 tool_calls: 0,
                 created_at: 1000,
                 last_event_at: 1000,
+                user_prompt_count: 0,
             },
             crate::store::RestoredSession {
                 id: "old3".into(),
@@ -2389,6 +2392,7 @@ mod tests {
                 tool_calls: 0,
                 created_at: 1000,
                 last_event_at: 1000,
+                user_prompt_count: 0,
             },
             crate::store::RestoredSession {
                 id: "fresh".into(),
@@ -2396,6 +2400,7 @@ mod tests {
                 tool_calls: 0,
                 created_at: 1000,
                 last_event_at: 1000,
+                user_prompt_count: 0,
             },
         ]);
         // A live session must always survive, however old the clock says it is.
@@ -2438,6 +2443,7 @@ mod tests {
                 tool_calls: 7,
                 created_at: 1000,
                 last_event_at: 2000,
+                user_prompt_count: 3,
             },
             // Same id as the live one — must NOT overwrite it back to stopped.
             crate::store::RestoredSession {
@@ -2446,6 +2452,7 @@ mod tests {
                 tool_calls: 0,
                 created_at: 1,
                 last_event_at: 2,
+                user_prompt_count: 0,
             },
         ]);
 
@@ -2453,6 +2460,14 @@ mod tests {
         assert_eq!(restored.mode, SessionMode::Stopped);
         assert_eq!(restored.cwd.as_deref(), Some("/work/restored"));
         assert_eq!(restored.tool_calls, 7);
+        assert_eq!(
+            restored.user_prompts, 3,
+            "prompt count restored from the persisted event log"
+        );
+        assert!(
+            !restored.is_empty_stopped(),
+            "a restored session with prompts is not an empty row"
+        );
 
         let live = store.get("live").expect("live session present");
         assert_ne!(

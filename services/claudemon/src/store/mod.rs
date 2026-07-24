@@ -131,9 +131,16 @@ impl Db {
     /// resumable — see `SessionState::is_archived`.
     pub fn load_recent_sessions(&self, limit: usize) -> Result<Vec<RestoredSession>> {
         let guard = self.conn.lock().expect("db mutex poisoned");
+        // `user_prompt_count` is derived from the event log — the "did the user
+        // actually talk to this agent" signal that lets the daemon hide
+        // spawned-but-never-used sessions from the default list. A surviving
+        // session row always keeps its events (prune deletes both together), so
+        // the count is accurate for every row this returns.
         let mut stmt = guard.prepare(
-            "SELECT id, cwd, tool_call_count, created_at, last_event_at
-             FROM sessions ORDER BY last_event_at DESC LIMIT ?1",
+            "SELECT s.id, s.cwd, s.tool_call_count, s.created_at, s.last_event_at,
+                    (SELECT COUNT(*) FROM events e
+                       WHERE e.session_id = s.id AND e.event_type = 'UserPromptSubmit')
+             FROM sessions s ORDER BY s.last_event_at DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit as i64], |r| {
             let cwd: String = r.get(1)?;
@@ -143,6 +150,7 @@ impl Db {
                 tool_calls: r.get::<_, i64>(2)?.max(0) as u64,
                 created_at: r.get(3)?,
                 last_event_at: r.get(4)?,
+                user_prompt_count: r.get::<_, i64>(5)?.max(0) as u64,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -212,6 +220,9 @@ pub struct RestoredSession {
     pub tool_calls: u64,
     pub created_at: i64,
     pub last_event_at: i64,
+    /// Number of `UserPromptSubmit` events on record for this session — 0 means
+    /// it was spawned but never actually prompted (see `is_empty_stopped`).
+    pub user_prompt_count: u64,
 }
 
 fn upsert_session_tx(tx: &rusqlite::Transaction<'_>, event: &HookEvent) -> Result<()> {
@@ -428,6 +439,32 @@ mod tests {
         let capped = db.load_recent_sessions(2).unwrap();
         assert_eq!(capped.len(), 2);
         assert_eq!(capped[0].id, "new");
+    }
+
+    #[test]
+    fn load_recent_sessions_counts_user_prompts() {
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+        // "used" gets two prompts; "empty" is spawned but never prompted.
+        db.record_event(&ev("SessionStart", "used")).unwrap();
+        db.record_event(&ev("UserPromptSubmit", "used")).unwrap();
+        db.record_event(&ev("UserPromptSubmit", "used")).unwrap();
+        db.record_event(&ev("SessionStart", "empty")).unwrap();
+
+        let rows = db.load_recent_sessions(10).unwrap();
+        let count = |id: &str| {
+            rows.iter()
+                .find(|s| s.id == id)
+                .unwrap_or_else(|| panic!("{id} missing"))
+                .user_prompt_count
+        };
+        assert_eq!(count("used"), 2, "both prompts counted");
+        assert_eq!(
+            count("empty"),
+            0,
+            "spawned-but-unused session has no prompts"
+        );
+        std::fs::remove_file(&tmp).ok();
     }
 
     #[test]

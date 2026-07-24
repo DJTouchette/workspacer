@@ -595,6 +595,7 @@ mod tests {
             started_at: time::OffsetDateTime::now_utc(),
             updated_at: time::OffsetDateTime::now_utc(),
             tool_calls: 0,
+            user_prompts: 0,
             last_event: Some("SessionStart".into()),
             transcript_path: None,
             status_line: None,
