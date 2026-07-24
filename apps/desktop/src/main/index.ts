@@ -464,7 +464,14 @@ app.whenReady().then(() => {
   // AppUserModelId so the taskbar shows our icon instead of grouping under the
   // generic electron.exe one.
   if (process.platform === 'win32') {
-    app.setAppUserModelId('com.workspacer.app');
+    // Windows silently drops toast notifications fired under an AppUserModelId
+    // that no Start-Menu shortcut registers. The NSIS install registers this
+    // appId on its shortcut; dev runs and the portable exe have no shortcut,
+    // so fall back to the exe-path AUMID Windows accepts for any running
+    // process (electron-builder's portable target sets
+    // PORTABLE_EXECUTABLE_FILE).
+    const shortcutInstalled = app.isPackaged && !process.env.PORTABLE_EXECUTABLE_FILE;
+    app.setAppUserModelId(shortcutInstalled ? 'com.workspacer.app' : process.execPath);
   } else if (process.platform === 'darwin') {
     const dockIcon = appIcon();
     if (dockIcon && app.dock) {

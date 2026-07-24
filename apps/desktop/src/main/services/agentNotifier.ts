@@ -81,6 +81,13 @@ class AgentNotifier {
   /** In-app notifications raised before the renderer loaded, flushed on load. */
   private pendingInApp: InAppNotification[] = [];
   private rendererReady = false;
+  /**
+   * OS toasts currently shown. A Notification instance that gets garbage
+   * collected stops emitting events — on Windows that manifests as toasts
+   * whose clicks silently do nothing — so hold a reference until the OS
+   * reports the toast closed.
+   */
+  private liveToasts = new Set<Notification>();
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
@@ -183,16 +190,7 @@ class AgentNotifier {
     if (cfg.onlyWhenUnwatched && watching) return;
 
     if (Notification.isSupported()) {
-      const icon = appIconPath() ?? undefined;
-      const notification = new Notification({ title, body, silent: !cfg.sound, icon });
-      notification.on('click', () => this.focusAgent(session.sessionId));
-      // macOS (Electron 42+, UNUserNotificationCenter): unsigned dev builds get
-      // no OS notification and emit 'failed' instead. The in-app center already
-      // recorded this above, so just make the drop visible in logs.
-      notification.on('failed', (_e, err) =>
-        console.warn(`[notify] OS notification failed (in-app center still has it): ${err}`),
-      );
-      notification.show();
+      this.showOsNotification(title, body, () => this.focusAgent(session.sessionId));
     }
 
     // Flash the taskbar for needs-you events (the Windows "attention" signal),
@@ -220,7 +218,16 @@ class AgentNotifier {
     try {
       if (win.isMinimized()) win.restore();
       win.show();
-      win.focus();
+      if (process.platform === 'win32' && !win.isFocused()) {
+        // Windows won't let a background process steal foreground — plain
+        // show()+focus() from a notification click often just flashes the
+        // taskbar. Briefly pinning the window on top actually raises it.
+        win.setAlwaysOnTop(true);
+        win.focus();
+        win.setAlwaysOnTop(false);
+      } else {
+        win.focus();
+      }
       win.flashFrame(false);
     } catch {
       /* noop */
@@ -242,19 +249,39 @@ class AgentNotifier {
     const cfg = this.cfg();
     if (!cfg.enabled || !Notification.isSupported()) return;
 
-    const notification = new Notification({
-      title: n.title,
-      body: n.body ?? '',
-      silent: !cfg.sound,
-      icon: appIconPath() ?? undefined,
-    });
-    notification.on('click', () => {
+    this.showOsNotification(n.title, n.body ?? '', () => {
       const win = this.focusWindow();
       win?.webContents.send(IPC.NOTIFY_ACTIVATE, n);
     });
-    notification.on('failed', (_e, err) =>
-      console.warn(`[notify] OS escalation failed (in-app center still has it): ${err}`),
-    );
+  }
+
+  /** Create + show an OS notification, guarded against GC until it closes. */
+  private showOsNotification(title: string, body: string, onClick: () => void): void {
+    // 'close' isn't guaranteed on every platform (Windows toasts that slide
+    // into the Action Center may never report it), so bound the held set —
+    // a stale reference is harmless, an unbounded set is a leak.
+    if (this.liveToasts.size > 50) this.liveToasts.clear();
+    const notification = new Notification({
+      title,
+      body,
+      silent: !this.cfg().sound,
+      icon: appIconPath() ?? undefined,
+    });
+    this.liveToasts.add(notification);
+    const release = () => this.liveToasts.delete(notification);
+    notification.on('click', () => {
+      release();
+      onClick();
+    });
+    notification.on('close', release);
+    // macOS (Electron 42+, UNUserNotificationCenter): unsigned dev builds get
+    // no OS notification and emit 'failed' instead ('failed' is macOS-only;
+    // Windows drops are invisible to us). The in-app center already recorded
+    // the event, so just make the drop visible in logs.
+    notification.on('failed', (_e, err) => {
+      release();
+      console.warn(`[notify] OS notification failed (in-app center still has it): ${err}`);
+    });
     notification.show();
   }
 
