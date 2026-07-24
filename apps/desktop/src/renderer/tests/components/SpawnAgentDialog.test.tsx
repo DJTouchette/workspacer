@@ -92,7 +92,9 @@ describe('SpawnAgentDialog permissions', () => {
     const { onSpawn } = renderDialog();
 
     expect(advancedButton()).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryAllByRole('combobox')).toHaveLength(0);
+    // The two per-spawn decisions (model + permissions) are always visible;
+    // everything else stays behind the collapsed advanced fold.
+    expect(screen.queryAllByRole('combobox')).toHaveLength(2);
 
     fireEvent.click(screen.getByRole('button', { name: /spawn agent/i }));
 

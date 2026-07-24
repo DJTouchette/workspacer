@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Check, ChevronDown } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { deriveAgentName } from '../hooks/useAgentManager';
 import { AgentLogo } from './agentLogos';
 import type { LibraryItem } from '../types/library';
@@ -478,30 +478,34 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   const advBorderColor = bypassSelected
     ? 'color-mix(in srgb, var(--wks-error) 55%, var(--wks-border-input))'
     : 'var(--wks-border-input)';
-  const permissionSummary = bypassSelected ? 'full access' : 'approval prompts';
-  const modelSummary = isClaude
-    ? resolvedModel || 'default model'
-    : resolvedProviderModel || 'default model';
-  const transportSummary =
-    isClaude || provider === 'codex'
-      ? transport === 'pty'
-        ? isClaude
-          ? 'terminal'
-          : 'hybrid'
-        : 'headless'
-      : null;
-  const advancedSummary = [
-    modelSummary,
-    transportSummary,
-    permissionSummary,
-    useWorktree && worktreeEligible ? 'isolated worktree' : null,
-    resumeSessionId ? 'resume' : null,
-    profileId ? 'profile' : null,
-    mcpSel.length ? `${mcpSel.length} MCP` : null,
-    effort ? `${effort} effort` : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  // Collapsed-advanced pills: one per knob that DEVIATES from its default. A
+  // stock spawn shows a quiet "defaults" header; anything non-default gets its
+  // own scannable pill (bypass in red) instead of one ellipsized sentence.
+  const pillModel = isClaude ? resolvedModel : resolvedProviderModel;
+  const permissionPillLabel = capsFor(provider).permissionModes.find(
+    (m) => m.id === permissionMode,
+  )?.label;
+  const defaultTransportHere = isClaude ? (defaultTransport ?? 'pty') : 'pty';
+  const deviations: { key: string; label: string; danger?: boolean }[] = [];
+  if (pillModel) deviations.push({ key: 'model', label: pillModel });
+  if (effort) deviations.push({ key: 'effort', label: `${effort} effort` });
+  if ((isClaude || provider === 'codex') && transport !== defaultTransportHere) {
+    deviations.push({
+      key: 'transport',
+      label: transport === 'pty' ? (isClaude ? 'terminal' : 'hybrid') : 'headless',
+    });
+  }
+  if (permissionMode) {
+    deviations.push({
+      key: 'permissions',
+      label: bypassSelected ? 'full access' : (permissionPillLabel ?? permissionMode),
+      danger: bypassSelected,
+    });
+  }
+  if (useWorktree && worktreeEligible) deviations.push({ key: 'worktree', label: 'worktree' });
+  if (resumeSessionId) deviations.push({ key: 'resume', label: 'resume' });
+  if (mcpSel.length) deviations.push({ key: 'mcp', label: `${mcpSel.length} MCP` });
+  if (customBinPath.trim()) deviations.push({ key: 'binary', label: 'custom binary' });
 
   const toggleAdvanced = () => {
     setAdvancedOpen((open) => {
@@ -752,23 +756,6 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     });
   }
 
-  if (isClaude && profiles.length > 0) {
-    rows.push({
-      key: 'profile',
-      label: 'profile',
-      control: (
-        <select value={profileId} onChange={(e) => setProfileId(e.target.value)} style={rowSelect}>
-          <option value="">Default</option>
-          {profiles.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-      ),
-    });
-  }
-
   if (isClaude && mcpItems.length > 0) {
     rows.push({
       key: 'mcp',
@@ -825,6 +812,40 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       ),
     });
   }
+
+  // Custom binary override lives here now — the below-the-cards diagnostics
+  // strip only appears when detection FAILS, so the healthy-path override
+  // needs a home. The detected path doubles as the placeholder.
+  rows.push({
+    key: 'binary',
+    label: 'binary',
+    title: currentDetection?.found ? `Detected: ${currentDetection.resolvedPath}` : undefined,
+    control: (
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <input
+          value={customBinPath}
+          onChange={(e) => setCustomBinPath(e.target.value)}
+          onBlur={(e) => saveCustomBin(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') saveCustomBin(customBinPath);
+            if (e.key === 'Escape') onCancel();
+          }}
+          placeholder={currentDetection?.resolvedPath ?? `/usr/local/bin/${provider}`}
+          spellCheck={false}
+          style={{ ...inlineInput, flex: 1, maxWidth: 300 }}
+        />
+        <button onClick={browseCustomBin} className="wks-composer-ctl" style={ghostBtnSmall}>
+          Browse…
+        </button>
+      </div>
+    ),
+  });
+
+  // The two real per-spawn decisions render always-visible above the advanced
+  // card; everything else stays behind the fold.
+  const PRIMARY_KEYS = ['model', 'permissions'];
+  const primaryRows = rows.filter((r) => PRIMARY_KEYS.includes(r.key));
+  const advRows = rows.filter((r) => !PRIMARY_KEYS.includes(r.key));
 
   return (
     <div
@@ -998,11 +1019,14 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   key={p.value}
                   onClick={() => setProvider(p.value)}
                   title={
-                    det
+                    (det
                       ? det.found
                         ? `Found: ${det.resolvedPath}`
                         : 'Not found on PATH'
-                      : 'Checking…'
+                      : 'Checking…') +
+                    (p.value !== 'claude'
+                      ? ` — runs via claudemon's ${p.label} adapter; conversation and usage stream into the agent view.`
+                      : '')
                   }
                   style={{
                     flex: 1,
@@ -1079,134 +1103,128 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             })}
           </div>
 
-          {/* Detection status + custom binary for the selected provider */}
-          {currentDetection && (
+          {/* Diagnostics are failure-only: a healthy provider says nothing here
+              (the card's green dot + tooltip carry the resolved path, and the
+              advanced "binary" row holds the healthy-path override). */}
+          {currentDetection && !currentDetection.found && (
             <div style={{ width: '100%', maxWidth: 560, marginTop: 10, textAlign: 'center' }}>
-              {currentDetection.found ? (
-                <>
-                  <div
-                    style={{
-                      color: 'var(--wks-text-faint)',
-                      fontSize: '0.66rem',
-                      fontFamily: 'var(--wks-font-mono)',
-                    }}
-                  >
-                    <span
-                      style={{
-                        color: 'var(--wks-success)',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        verticalAlign: '-2px',
-                      }}
-                    >
-                      <Check size={11} strokeWidth={2} />
-                    </span>{' '}
-                    {currentDetection.resolvedPath}
-                  </div>
-                  <details style={{ marginTop: 4 }}>
-                    <summary
-                      style={{
-                        fontSize: '0.64rem',
-                        color: 'var(--wks-text-faint)',
-                        cursor: 'pointer',
-                        listStylePosition: 'inside',
-                      }}
-                    >
-                      custom binary…
-                    </summary>
-                    <div
-                      style={{
-                        display: 'flex',
-                        gap: 8,
-                        marginTop: 6,
-                        justifyContent: 'center',
-                        alignItems: 'center',
-                      }}
-                    >
-                      <input
-                        value={customBinPath}
-                        onChange={(e) => setCustomBinPath(e.target.value)}
-                        onBlur={(e) => saveCustomBin(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') saveCustomBin(customBinPath);
-                          if (e.key === 'Escape') onCancel();
-                        }}
-                        placeholder={currentDetection.resolvedPath ?? ''}
-                        spellCheck={false}
-                        style={{ ...inlineInput, flex: 1, maxWidth: 380 }}
-                      />
-                      <button
-                        onClick={browseCustomBin}
-                        className="wks-composer-ctl"
-                        style={ghostBtnSmall}
-                      >
-                        Browse…
-                      </button>
-                    </div>
-                  </details>
-                </>
-              ) : (
-                <div>
-                  <div
-                    style={{
-                      color: 'var(--wks-error)',
-                      fontSize: '0.66rem',
-                      marginBottom: 6,
-                    }}
-                  >
-                    Not found on PATH — set a custom path or install the CLI
-                  </div>
-                  <div
-                    style={{
-                      display: 'flex',
-                      gap: 8,
-                      justifyContent: 'center',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <input
-                      value={customBinPath}
-                      onChange={(e) => setCustomBinPath(e.target.value)}
-                      onBlur={(e) => saveCustomBin(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') saveCustomBin(customBinPath);
-                        if (e.key === 'Escape') onCancel();
-                      }}
-                      placeholder={`/usr/local/bin/${provider}`}
-                      spellCheck={false}
-                      style={{ ...inlineInput, flex: 1, maxWidth: 380 }}
-                    />
-                    <button
-                      onClick={browseCustomBin}
-                      className="wks-composer-ctl"
-                      style={ghostBtnSmall}
-                    >
-                      Browse…
-                    </button>
-                  </div>
-                </div>
-              )}
+              <div
+                style={{
+                  color: 'var(--wks-error)',
+                  fontSize: '0.66rem',
+                  marginBottom: 6,
+                }}
+              >
+                Not found on PATH — set a custom path or install the CLI
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+              >
+                <input
+                  value={customBinPath}
+                  onChange={(e) => setCustomBinPath(e.target.value)}
+                  onBlur={(e) => saveCustomBin(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') saveCustomBin(customBinPath);
+                    if (e.key === 'Escape') onCancel();
+                  }}
+                  placeholder={`/usr/local/bin/${provider}`}
+                  spellCheck={false}
+                  style={{ ...inlineInput, flex: 1, maxWidth: 380 }}
+                />
+                <button
+                  onClick={browseCustomBin}
+                  className="wks-composer-ctl"
+                  style={ghostBtnSmall}
+                >
+                  Browse…
+                </button>
+              </div>
             </div>
           )}
 
-          {!isClaude && (
-            <div
-              style={{
-                marginTop: 10,
-                maxWidth: 460,
-                textAlign: 'center',
-                color: 'var(--wks-text-faint)',
-                fontSize: '0.66rem',
-                lineHeight: 1.5,
-              }}
-            >
-              Runs via claudemon's {providerLabel} adapter — conversation and usage stream into the
-              agent view. Approvals are auto-accepted for now.
+          {/* ── Profiles: pick a preconfiguration, knobs become overrides ── */}
+          {isClaude && profiles.length > 0 && (
+            <div style={{ marginTop: 20, width: '100%', maxWidth: 560, textAlign: 'center' }}>
+              <div style={quietLabel}>profile</div>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 6,
+                  justifyContent: 'center',
+                  marginTop: 8,
+                }}
+              >
+                {[{ id: '', name: 'Default' }, ...profiles].map((p) => {
+                  const on = profileId === p.id;
+                  return (
+                    <button
+                      key={p.id || 'default'}
+                      onClick={() => setProfileId(p.id)}
+                      title={
+                        p.id
+                          ? 'Spawn with this Claude profile — pre-fills its MCP loadout and settings.'
+                          : 'Plain spawn, no profile.'
+                      }
+                      style={{
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        fontFamily: 'inherit',
+                        padding: '4px 11px',
+                        borderRadius: 'var(--wks-radius-pill)',
+                        cursor: 'pointer',
+                        maxWidth: 200,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        border: on
+                          ? '1px solid var(--wks-accent)'
+                          : '1px solid var(--wks-border-input)',
+                        background: on ? 'var(--wks-accent-bg)' : 'transparent',
+                        color: on ? 'var(--wks-accent-text)' : 'var(--wks-text-tertiary)',
+                        transition: 'border-color 0.15s, color 0.15s',
+                      }}
+                    >
+                      {p.name}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
+
+          {/* ── The per-spawn decisions: model + permissions, no fold ────── */}
+          <div style={{ width: '100%', maxWidth: 620, marginTop: 24 }}>
+            {primaryRows.map((row, i) => (
+              <div
+                key={row.key}
+                title={row.title}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '96px minmax(0, 1fr)',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '10px 14px',
+                  borderTop:
+                    i > 0
+                      ? '1px solid color-mix(in srgb, var(--wks-border-input) 55%, transparent)'
+                      : 'none',
+                }}
+              >
+                <span style={quietLabel}>{row.label}</span>
+                <div style={{ minWidth: 0 }}>{row.control}</div>
+              </div>
+            ))}
+          </div>
 
           {/* ── Advanced options — header button + attached row card ────── */}
-          <div style={{ width: '100%', maxWidth: 620, marginTop: 28 }}>
+          <div style={{ width: '100%', maxWidth: 620, marginTop: 12 }}>
             <button
               type="button"
               aria-expanded={advancedOpen}
@@ -1235,14 +1253,23 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 style={{
                   flex: 1,
                   minWidth: 0,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  fontSize: '0.7rem',
-                  color: bypassSelected ? 'var(--wks-error)' : 'var(--wks-text-faint)',
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  gap: 5,
                 }}
               >
-                {advancedSummary}
+                {deviations.length === 0 ? (
+                  <span style={{ fontSize: '0.7rem', color: 'var(--wks-text-faint)' }}>
+                    defaults
+                  </span>
+                ) : (
+                  deviations.map((d) => (
+                    <span key={d.key} style={devPill(d.danger)}>
+                      {d.label}
+                    </span>
+                  ))
+                )}
               </span>
               <ChevronDown
                 size={14}
@@ -1265,7 +1292,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   padding: '2px 14px 4px',
                 }}
               >
-                {rows.map((row, i) => (
+                {advRows.map((row, i) => (
                   <div
                     key={row.key}
                     title={row.title}
@@ -1388,6 +1415,23 @@ const rowSelect: React.CSSProperties = {
   maxWidth: '100%',
   textOverflow: 'ellipsis',
 };
+
+/** Collapsed-advanced deviation pill — one non-default value, red for bypass. */
+const devPill = (danger?: boolean): React.CSSProperties => ({
+  fontSize: '0.64rem',
+  fontWeight: 600,
+  padding: '2px 8px',
+  borderRadius: 'var(--wks-radius-pill)',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  maxWidth: 180,
+  border: `1px solid ${
+    danger ? 'color-mix(in srgb, var(--wks-error) 55%, transparent)' : 'var(--wks-border-input)'
+  }`,
+  color: danger ? 'var(--wks-error)' : 'var(--wks-text-muted)',
+  background: danger ? 'color-mix(in srgb, var(--wks-error) 8%, transparent)' : 'transparent',
+});
 
 /** Container for a two-option segmented toggle (transport, worktree). */
 const segGroup: React.CSSProperties = {
