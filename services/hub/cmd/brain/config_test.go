@@ -203,9 +203,13 @@ func TestMigrateKeybindingsLegacyVim(t *testing.T) {
 	if _, hasMode := kb["mode"]; hasMode {
 		t.Error("migrated keybindings should drop legacy mode")
 	}
-	ed := migrated["editor"].(map[string]any)
-	if ed["vim"] != true {
-		t.Error("vim mode should be preserved as editor.vim")
+	// editor.vim is no longer written: the field died with the in-app
+	// CodeMirror editor — nothing reads it, so the migration stopped
+	// preserving legacy vim mode there.
+	if ed, ok := migrated["editor"].(map[string]any); ok {
+		if _, hasVim := ed["vim"]; hasVim {
+			t.Error("migration must not write the dead editor.vim field")
+		}
 	}
 }
 

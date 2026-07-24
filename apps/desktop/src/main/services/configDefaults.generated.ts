@@ -159,7 +159,6 @@ export const CONFIG_DEFAULTS = {
   editor: {
     engine: 'codemirror',
     terminalCommand: 'nvim',
-    vim: true,
   },
   claude: {
     defaultModel: 'opus[1m]',
@@ -190,6 +189,7 @@ export const CONFIG_DEFAULTS = {
     },
   },
   supervisor: {
+    provider: 'claude',
     model: '',
     summarizerModel: 'sonnet',
     pollSeconds: 45,

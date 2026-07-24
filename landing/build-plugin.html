@@ -451,7 +451,7 @@ ws.send(JSON.stringify({ op: 'register', methods: ['myplugin.status'] }));</code
 
     <section id="settings" class="doc">
 <h2>settings</h2>
-<p>Declare typed <code>settings</code> in the manifest and the host renders them in Settings for you. Each entry is a <code>key</code>, a <code>label</code>, a <code>type</code> (<code>boolean</code> / <code>number</code> / <code>string</code> / <code>select</code>), a <code>default</code>, an <code>options</code> list (for <code>select</code>), and optional <code>help</code> text:</p>
+<p>Declare typed <code>settings</code> in the manifest and the host renders them for you: Settings lists every installed plugin under <strong>Plugins</strong>, and each plugin gets its own settings page. Each entry is a <code>key</code>, a <code>label</code>, a <code>type</code> (<code>boolean</code> / <code>number</code> / <code>string</code> / <code>select</code>), a <code>default</code>, an <code>options</code> list (for <code>select</code>), and optional <code>help</code> text:</p>
 <pre><code>"settings": [
   { "key": "interval", "label": "Poll interval (s)", "type": "number", "default": 30,
     "help": "How often to re-check the fleet." },

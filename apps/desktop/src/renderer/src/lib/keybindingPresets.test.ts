@@ -83,8 +83,8 @@ describe('applyPresetKeybindings', () => {
 });
 
 describe('presetConfigPatch', () => {
-  it('flips editor Vim on for the vim preset only', () => {
-    expect(presetConfigPatch('vim', DEFAULT_CONFIG).editor?.vim).toBe(true);
+  it('never touches editor config (editor.vim died with the in-app editor)', () => {
+    expect(presetConfigPatch('vim', DEFAULT_CONFIG).editor).toBeUndefined();
     expect(presetConfigPatch('vscode', DEFAULT_CONFIG).editor).toBeUndefined();
     expect(presetConfigPatch('jetbrains', DEFAULT_CONFIG).editor).toBeUndefined();
   });

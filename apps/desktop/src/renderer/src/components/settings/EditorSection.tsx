@@ -10,15 +10,17 @@ interface EditorSectionProps {
 const EditorSection: React.FC<EditorSectionProps> = ({ config, save }) => {
   const editorCfg = config.editor ?? { engine: 'codemirror' as const, terminalCommand: 'nvim' };
   const engine = editorCfg.engine;
-  const vim = editorCfg.vim ?? false;
 
   return (
     <Section title="Editor">
-      <Row label="Editor engine">
+      <Row label="Open files with">
         <div style={{ display: 'flex', gap: 4 }}>
+          {/* The stored value stays 'codemirror' for config compatibility, but
+              that path now opens the sandboxed editor *plugin* (the in-app
+              CodeMirror editor was removed) — label it for what it does. */}
           <ModeButton
-            label="CodeMirror"
-            active={engine === 'codemirror'}
+            label="Editor plugin"
+            active={engine !== 'terminal'}
             onClick={() => save({ editor: { ...editorCfg, engine: 'codemirror' } })}
           />
           <ModeButton
@@ -29,31 +31,10 @@ const EditorSection: React.FC<EditorSectionProps> = ({ config, save }) => {
         </div>
       </Row>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        How the Editor pane opens files. <strong>CodeMirror</strong> is an in-app code editor
-        (syntax, Ctrl+S to save). <strong>Terminal</strong> runs your own editor in a PTY pane.
+        <strong>Editor plugin</strong> opens files in the sandboxed editor plugin (or the OS default
+        editor when the plugin isn't installed). <strong>Terminal</strong> runs your own editor in a
+        PTY pane.
       </div>
-
-      {engine === 'codemirror' && (
-        <>
-          <Row label="Vim mode">
-            <div style={{ display: 'flex', gap: 4 }}>
-              <ModeButton
-                label="On"
-                active={vim}
-                onClick={() => save({ editor: { ...editorCfg, vim: true } })}
-              />
-              <ModeButton
-                label="Off"
-                active={!vim}
-                onClick={() => save({ editor: { ...editorCfg, vim: false } })}
-              />
-            </div>
-          </Row>
-          <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-            Vim keybindings inside the CodeMirror editor. Independent of the workspace keybindings.
-          </div>
-        </>
-      )}
 
       {engine === 'terminal' && (
         <>

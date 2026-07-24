@@ -101,7 +101,7 @@
     "sound": false,
     "inAppToasts": true
   },
-  "editor": { "engine": "codemirror", "terminalCommand": "nvim", "vim": true },
+  "editor": { "engine": "codemirror", "terminalCommand": "nvim" },
   "claude": {
     "defaultModel": "opus[1m]",
     "seenModels": [],
@@ -125,7 +125,7 @@
     "defaultCwd": "",
     "binaries": { "claude": "", "codex": "", "opencode": "", "pi": "" }
   },
-  "supervisor": { "model": "", "summarizerModel": "sonnet", "pollSeconds": 45 },
+  "supervisor": { "provider": "claude", "model": "", "summarizerModel": "sonnet", "pollSeconds": 45 },
   "directories": { "recent": [], "favourites": [] },
   "scripts": {},
   "updates": { "enabled": true, "channel": "latest" },

@@ -36,8 +36,6 @@ export interface KeybindingPreset {
   /** Chord leader for this preset. */
   prefix: string;
   chordHints: boolean;
-  /** When true, applying the preset also switches the code editor into Vim mode. */
-  editorVim?: boolean;
   /** Persisted action id → combo. Direct combos use `mod`; chords use `prefix …`. */
   shortcuts: Record<string, string>;
 }
@@ -103,10 +101,9 @@ const VSCODE: KeybindingPreset = {
 const VIM: KeybindingPreset = {
   id: 'vim',
   label: 'Vim',
-  description: 'Which-key leader chords + editor Vim mode.',
+  description: 'Which-key leader chords, vim-flavored bindings.',
   prefix: 'ctrl+space',
   chordHints: true,
-  editorVim: true,
   shortcuts: {
     'command-palette': 'prefix p',
     'open-file': 'prefix f',
@@ -251,17 +248,12 @@ export function applyPresetKeybindings(
 }
 
 /**
- * A full config patch for applying a preset: the keybindings above, plus the
- * editor Vim toggle when the preset asks for it (only ever turned ON — switching
- * away leaves the editor mode alone, since a user may want Vim editing
- * independently of their workspace keymap).
+ * A full config patch for applying a preset. (This used to also flip the
+ * editor's Vim toggle for the Vim preset; editor.vim died with the in-app
+ * CodeMirror editor — nothing reads it.)
  */
 export function presetConfigPatch(id: PresetId, config: Config, force = false): Partial<Config> {
-  const patch: Partial<Config> = {
+  return {
     keybindings: applyPresetKeybindings(id, config.keybindings, force),
   };
-  if (KEYBINDING_PRESETS[id].editorVim) {
-    patch.editor = { ...config.editor!, vim: true };
-  }
-  return patch;
 }

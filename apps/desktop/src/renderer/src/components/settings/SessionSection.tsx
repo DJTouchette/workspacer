@@ -8,19 +8,6 @@ interface SessionSectionProps {
   save: (partial: Partial<Config>) => Promise<Config>;
 }
 
-const FONT_SCALES: { label: string; value: number }[] = [
-  { label: 'Small', value: 1.0 },
-  { label: 'Default', value: 1.15 },
-  { label: 'Large', value: 1.3 },
-  { label: 'XL', value: 1.5 },
-];
-
-const DIFF_VIEWS: { label: string; value: 'stacked' | 'inline' | 'split' }[] = [
-  { label: 'Stacked', value: 'stacked' },
-  { label: 'Inline', value: 'inline' },
-  { label: 'Split', value: 'split' },
-];
-
 const AGENT_PROVIDERS: {
   label: string;
   value: 'claude' | 'codex' | 'opencode' | 'pi';
@@ -153,11 +140,10 @@ const BinaryRow: React.FC<{
 
 const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
   const defaultView = config.claude?.defaultView ?? 'terminal';
-  const workLog = config.claude?.workLog ?? 'cards';
-  const claudeTransport = config.claude?.transport ?? 'pty';
+  // Fallback mirrors config_defaults.json — the shipped default transport is
+  // 'stream', so an absent key must not render as PTY.
+  const claudeTransport = config.claude?.transport ?? 'stream';
   const defaultProvider = config.agents?.defaultProvider ?? 'claude';
-  const guiFontScale = config.ui.guiFontScale ?? 1.15;
-  const diffView = config.ui.diffView ?? 'stacked';
   const keepWarm = {
     enabled: config.claude?.keepWarm?.enabled ?? false,
     providers: config.claude?.keepWarm?.providers ?? ['claude'],
@@ -390,36 +376,6 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         inspector; Terminal is the raw Claude Code TUI. Toggle any time from the pane's top bar.
       </div>
 
-      <Row label="Work log style">
-        <div style={{ display: 'flex', gap: 4 }}>
-          <ModeButton
-            label="Cards"
-            active={workLog === 'cards'}
-            onClick={() => save({ claude: { ...config.claude, defaultView, workLog: 'cards' } })}
-          />
-          <ModeButton
-            label="Trace"
-            active={workLog === 'trace'}
-            onClick={() => save({ claude: { ...config.claude, defaultView, workLog: 'trace' } })}
-          />
-        </div>
-      </Row>
-      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        How Claude's tool calls render in the GUI conversation. Cards summarize each run in prose;
-        Trace is a waterfall monitor — one row per call with duration bars on a shared time axis,
-        color-coded by kind, click a row to dig into its full input and output.
-      </div>
-
-      <CheckRow
-        label="Show message timestamps"
-        checked={config.claude?.showTimestamps === true}
-        onChange={(v) => save({ claude: { ...config.claude, defaultView, showTimestamps: v } })}
-      />
-      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        Adds a small HH:MM stamp beside each chat turn in the GUI conversation. Also togglable from
-        the clock button in a chat pane's top bar.
-      </div>
-
       <CheckRow
         label="Keep 5-hour window warm"
         checked={keepWarm.enabled}
@@ -579,50 +535,6 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
           )}
         </>
       )}
-
-      <Row label="Chat text size">
-        <div style={{ display: 'flex', gap: 4 }}>
-          {FONT_SCALES.map((s) => (
-            <ModeButton
-              key={s.value}
-              label={s.label}
-              active={guiFontScale === s.value}
-              onClick={() => save({ ui: { ...config.ui, guiFontScale: s.value } })}
-            />
-          ))}
-        </div>
-      </Row>
-      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        Size of the conversation text in the GUI view (messages, markdown, code blocks), on top of
-        the app-wide text size (Appearance). Doesn't affect the terminal view.
-      </div>
-
-      <Row label="Diff layout">
-        <div style={{ display: 'flex', gap: 4 }}>
-          {DIFF_VIEWS.map((d) => (
-            <ModeButton
-              key={d.value}
-              label={d.label}
-              active={diffView === d.value}
-              onClick={() => save({ ui: { ...config.ui, diffView: d.value } })}
-            />
-          ))}
-        </div>
-      </Row>
-      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        How file edits render in the GUI. Stacked shows all removed lines then all added; Inline
-        interleaves them as a unified diff; Split shows old and new side by side.
-      </div>
-
-      <CheckRow
-        label="Show the composer send button"
-        checked={config.ui.showComposerSend !== false}
-        onChange={(v) => save({ ui: { ...config.ui, showComposerSend: v } })}
-      />
-      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        The ↑ button next to the message box. Off keeps the box clean — Enter still sends
-        (Shift+Enter for a newline).
-      </div>
 
       <div
         style={{

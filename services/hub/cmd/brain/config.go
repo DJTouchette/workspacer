@@ -281,8 +281,9 @@ func pruneRemovedShortcuts(cfg map[string]any) map[string]any {
 
 // migrateKeybindings ports configService.migrateKeybindings: the old
 // mode/leader scheme (or a missing prefix) is reset to the prefix-forward
-// defaults, preserving Vim mode as editor.vim. Idempotent — runs once because
-// the rewrite leaves a valid prefix and no mode/leader.
+// defaults. Idempotent — runs once because the rewrite leaves a valid prefix
+// and no mode/leader. (It used to preserve Vim mode as editor.vim; that field
+// died with the in-app CodeMirror editor — nothing reads it.)
 func migrateKeybindings(cfg map[string]any) map[string]any {
 	kb, _ := cfg["keybindings"].(map[string]any)
 	if kb == nil {
@@ -295,20 +296,8 @@ func migrateKeybindings(cfg map[string]any) map[string]any {
 	if !legacy {
 		return cfg
 	}
-	hadVim := false
-	if m, ok := kb["mode"].(string); ok && m == "vim" {
-		hadVim = true
-	}
 	def := defaultConfig()
 	cfg["keybindings"] = def["keybindings"]
-	if hadVim {
-		ed, _ := cfg["editor"].(map[string]any)
-		if ed == nil {
-			ed = map[string]any{}
-		}
-		ed["vim"] = true
-		cfg["editor"] = ed
-	}
 	writeConfigYAML(cfg)
 	return cfg
 }

@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useConfig } from '../hooks/useConfig';
+import { usePlugins } from '../hooks/usePlugins';
 import { fuzzyScoreAny } from '../lib/fuzzy';
 import { SETTINGS_SECTION_EVENT, consumePendingSettingsSection } from '../lib/settingsBus';
 import { Settings as SettingsIcon, X } from '../components/icons';
@@ -18,7 +19,7 @@ import AppsSection from '../components/settings/AppsSection';
 import ClaudeProfilesSection from '../components/settings/ClaudeProfilesSection';
 import SupervisorSection from '../components/settings/SupervisorSection';
 import ModelPricingSection from '../components/settings/ModelPricingSection';
-import PluginsSection from '../components/settings/PluginsSection';
+import { PluginsListSection, PluginDetailSection } from '../components/settings/PluginsSection';
 import ToolsSection from '../components/settings/ToolsSection';
 
 interface SettingsPaneProps {
@@ -36,7 +37,7 @@ interface SectionDef {
 
 // Groups determine the sidebar hierarchy. Sections within each group appear
 // together under a group label.
-const GROUPS = ['Agents & AI', 'Workspace', 'Tools', 'System'] as const;
+const GROUPS = ['Agents & AI', 'Workspace', 'Tools', 'Plugins', 'System'] as const;
 
 const SECTIONS: SectionDef[] = [
   // Agents & AI
@@ -59,17 +60,12 @@ const SECTIONS: SectionDef[] = [
       'restore',
       'auto',
       'composer',
-      'send',
-      'button',
       'view',
       'gui',
       'terminal',
       'default',
       'spawn',
       'model',
-      'diff',
-      'font',
-      'scale',
       'keep',
       'warm',
       'window',
@@ -145,6 +141,15 @@ const SECTIONS: SectionDef[] = [
       'accent',
       'style',
       'palette',
+      'chat',
+      'diff',
+      'composer',
+      'send',
+      'timestamps',
+      'work',
+      'log',
+      'trace',
+      'cards',
     ],
   },
   {
@@ -211,7 +216,7 @@ const SECTIONS: SectionDef[] = [
     key: 'editor',
     label: 'Editor',
     group: 'Tools',
-    keywords: ['editor', 'file', 'open', 'codemirror', 'vim', 'nvim', 'code', 'command'],
+    keywords: ['editor', 'file', 'open', 'plugin', 'terminal', 'nvim', 'code', 'command'],
   },
   {
     key: 'browser',
@@ -261,11 +266,13 @@ const SECTIONS: SectionDef[] = [
     group: 'System',
     keywords: ['cli', 'command', 'terminal', 'path', 'install', 'serve', 'headless', 'server'],
   },
+  // Plugins — the list page; each installed plugin becomes a dynamic
+  // 'plugin:<id>' section built in SettingsPane from the live plugin registry.
   {
     key: 'plugins',
-    label: 'Plugins',
-    group: 'System',
-    keywords: ['plugin', 'extension', 'vim', 'editor', 'language', 'addon', 'install'],
+    label: 'Installed plugins',
+    group: 'Plugins',
+    keywords: ['plugin', 'extension', 'addon', 'sidecar', 'configure', 'install'],
   },
 ];
 
@@ -351,6 +358,7 @@ function Sidebar({ sections, active, onSelect }: NavProps) {
 
 const SettingsPane: React.FC<SettingsPaneProps> = () => {
   const { config, save } = useConfig();
+  const { plugins } = usePlugins();
   const isSmallScreen = useIsSmallScreen();
   const [search, setSearch] = useState('');
   const [activeKey, setActiveKey] = useState('session');
@@ -359,15 +367,30 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
 
   const q = search.trim();
 
+  // Each installed plugin is a dynamic section so search finds it by name,
+  // id, or any of its setting labels. Not shown in the sidebar (the
+  // 'plugins' list page is the entry point) unless a search matches it.
+  const pluginSections = useMemo<SectionDef[]>(
+    () =>
+      plugins.map((p) => ({
+        key: 'plugin:' + p.id,
+        label: p.name,
+        group: 'Plugins',
+        keywords: ['plugin', p.id, ...(p.settings ?? []).map((s) => s.label)],
+      })),
+    [plugins],
+  );
+
   // Fuzzy-filter and rank: best match first while searching; registry order
   // otherwise (stable sort keeps ties in registry order).
   const visibleSections = useMemo(() => {
     if (!q) return SECTIONS;
-    return SECTIONS.map((s) => ({ s, score: sectionScore(s, q) }))
+    return [...SECTIONS, ...pluginSections]
+      .map((s) => ({ s, score: sectionScore(s, q) }))
       .filter((x) => x.score > -Infinity)
       .sort((a, b) => b.score - a.score)
       .map((x) => x.s);
-  }, [q]);
+  }, [q, pluginSections]);
 
   // When search filters sections, keep activeKey valid.
   useEffect(() => {
@@ -377,17 +400,15 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
   }, [q, visibleSections, activeKey]);
 
   // Deep-link into a section (settingsBus): consume a request that fired while
-  // this pane was mounting, then follow live requests while it's open. Defer
-  // the scroll a frame so the section anchors exist on the mount path.
+  // this pane was mounting, then follow live requests while it's open.
+  // 'plugin:<id>' keys are accepted unchecked — the detail section falls back
+  // to the list page itself when the plugin isn't installed.
   useEffect(() => {
     const jump = (key: string | null) => {
-      if (!key || !SECTIONS.some((s) => s.key === key)) return;
+      if (!key || (!key.startsWith('plugin:') && !SECTIONS.some((s) => s.key === key))) return;
       setSearch('');
       setActiveKey(key);
-      requestAnimationFrame(() => {
-        const el = contentRef.current?.querySelector(`#settings-${key}`);
-        if (el) el.scrollIntoView({ block: 'start' });
-      });
+      contentRef.current?.scrollTo({ top: 0 });
     };
     jump(consumePendingSettingsSection());
     const onSection = (e: Event) => jump((e as CustomEvent<{ key?: string }>).detail?.key ?? null);
@@ -416,17 +437,22 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
   }, []);
 
   const handleNavSelect = useCallback((key: string) => {
+    // Nav is a page switch, not a scroll: show that one section from the top.
+    // Selecting from search results exits the search.
+    setSearch('');
     setActiveKey(key);
-    // Scroll the content area to the matching section anchor.
-    const el = contentRef.current?.querySelector(`#settings-${key}`);
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    contentRef.current?.scrollTo({ top: 0 });
   }, []);
 
-  // Which section to show (when not searching: show all; nav just scrolls).
-  // When searching: show only matching sections.
-  const showAll = !q;
-
   const renderSection = (key: string) => {
+    if (key.startsWith('plugin:')) {
+      return (
+        <PluginDetailSection
+          pluginId={key.slice('plugin:'.length)}
+          onBack={() => handleNavSelect('plugins')}
+        />
+      );
+    }
     switch (key) {
       case 'session':
         return <SessionSection config={config} save={save} />;
@@ -459,7 +485,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
       case 'cli':
         return <CliSection />;
       case 'plugins':
-        return <PluginsSection />;
+        return <PluginsListSection onOpen={(id) => handleNavSelect('plugin:' + id)} />;
       default:
         return null;
     }
@@ -640,7 +666,8 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
           }}
         >
           {visibleSections.map((s) => {
-            const active = s.key === activeKey;
+            const active =
+              s.key === (activeKey.startsWith('plugin:') && !q ? 'plugins' : activeKey);
             return (
               <button
                 key={s.key}
@@ -681,7 +708,11 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
               padding: '4px 8px 24px',
             }}
           >
-            <Sidebar sections={visibleSections} active={activeKey} onSelect={handleNavSelect} />
+            <Sidebar
+              sections={visibleSections}
+              active={activeKey.startsWith('plugin:') && !q ? 'plugins' : activeKey}
+              onSelect={handleNavSelect}
+            />
           </div>
         )}
 
@@ -706,20 +737,16 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
               >
                 No settings match &ldquo;{q}&rdquo;
               </div>
-            ) : showAll ? (
-              // No search — show all in logical order, nav scrolls to anchors.
-              SECTIONS.map((s) => (
-                <div key={s.key} id={`settings-${s.key}`} style={{ scrollMarginTop: 8 }}>
-                  {renderSection(s.key)}
-                </div>
-              ))
-            ) : (
-              // Search active — show only matching sections.
+            ) : q ? (
+              // Search active — show the matching sections stacked, best first.
               visibleSections.map((s) => (
                 <div key={s.key} id={`settings-${s.key}`} style={{ scrollMarginTop: 8 }}>
                   {renderSection(s.key)}
                 </div>
               ))
+            ) : (
+              // One section at a time; the sidebar switches pages.
+              renderSection(activeKey)
             )}
           </div>
         </div>

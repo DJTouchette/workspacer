@@ -109,13 +109,11 @@ export interface NotificationsConfig {
 }
 
 export interface EditorConfig {
-  /** Editor-pane engine: in-app 'codemirror', or your $EDITOR in a 'terminal'. */
+  /** How files open: 'codemirror' (legacy value — now the sandboxed editor
+   *  plugin, falling back to the OS editor), or your $EDITOR in a 'terminal'. */
   engine: 'codemirror' | 'terminal';
   /** Command for the 'terminal' engine; the file path is appended as its last arg. */
   terminalCommand: string;
-  /** Enable Vim keybindings inside the CodeMirror editor. Independent of the
-   *  workspace keybindings (which no longer have a "vim mode"). */
-  vim?: boolean;
 }
 
 export interface ScriptEntry {

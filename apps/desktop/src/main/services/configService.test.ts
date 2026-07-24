@@ -321,7 +321,13 @@ describe('default-config single source — generated TS matches the canonical br
     expect(brainDefaults).toHaveProperty('updates.channel');
     expect(brainDefaults).toHaveProperty('claude.transport', 'stream');
     expect(brainDefaults).toHaveProperty('ui.diffView');
-    expect(brainDefaults).toHaveProperty('editor.vim', true);
+    // editor.vim was removed outright (dead since the in-app CodeMirror editor
+    // left); the editor block itself must still be present on the brain side.
+    expect(brainDefaults).toHaveProperty('editor.terminalCommand');
+    expect(brainDefaults).not.toHaveProperty('editor.vim');
+    // supervisor.provider joined the canonical defaults (it was UI-written but
+    // schema-absent before).
+    expect(brainDefaults).toHaveProperty('supervisor.provider', 'claude');
   });
 });
 

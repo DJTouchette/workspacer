@@ -163,6 +163,8 @@ interface Config {
   /** Optional fleet-supervisor settings. The supervisor is opt-in (spawned via
    *  "Ask the Fleet"); nothing here is assumed present by the rest of the app. */
   supervisor: {
+    /** Coding-agent backend the supervisor runs on (default 'claude'). */
+    provider: string;
     /** Coordinator model for supervisor sessions ('' = the app/Claude default). */
     model: string;
     /** Cheap model the supervisor spawns for transcript digests (e.g. 'sonnet'). */
@@ -186,12 +188,11 @@ interface Config {
     channel: string;
   };
   editor: {
-    /** Editor-pane engine: in-app 'codemirror', or your $EDITOR in a 'terminal'. */
+    /** How files open: 'codemirror' (legacy value — now the sandboxed editor
+     *  plugin, falling back to the OS editor), or your $EDITOR in a 'terminal'. */
     engine: 'codemirror' | 'terminal';
     /** Command for the 'terminal' engine; the file path is appended as its last arg. */
     terminalCommand: string;
-    /** Vim keybindings inside the CodeMirror editor. */
-    vim?: boolean;
   };
 }
 
@@ -307,15 +308,15 @@ export function deepMerge(target: any, source: any): any {
  * One-time migration from the old keybindings schema (mode/leader + Ctrl-letter
  * map) to the prefix-forward scheme. The old defaults were written to disk on
  * first run, so without this every existing user would keep the legacy bindings
- * (and their terminal-stealing Ctrl+L/D/S). Resets keybindings wholesale and,
- * if the user had Vim keybinding mode on, preserves it as editor Vim.
+ * (and their terminal-stealing Ctrl+L/D/S). Resets keybindings wholesale.
+ * (It used to preserve Vim keybinding mode as editor.vim; that field died with
+ * the in-app CodeMirror editor — nothing reads it.)
  */
 function migrateKeybindings(cfg: Config): Config {
   const kb = cfg.keybindings as { mode?: string; leader?: string; prefix?: string } | undefined;
   const isLegacy = !!kb && (kb.mode !== undefined || kb.leader !== undefined || !kb.prefix);
   if (!isLegacy) return cfg;
 
-  const hadVim = kb?.mode === 'vim';
   // Reset to the shared default keybindings (prefix + preset), not a hardcoded
   // literal, so this stays in lockstep with the Go brain's migrateKeybindings
   // (which resets to defaultConfig()) and the current default preset.
@@ -325,7 +326,6 @@ function migrateKeybindings(cfg: Config): Config {
     presetId: CONFIG_DEFAULTS.keybindings.presetId,
     shortcuts: { ...DEFAULT_SHORTCUTS },
   };
-  if (hadVim) cfg.editor = { ...cfg.editor, vim: true };
 
   try {
     atomicWriteFileSync(getConfigFilePath(), yaml.dump(cfg, { lineWidth: -1 }));

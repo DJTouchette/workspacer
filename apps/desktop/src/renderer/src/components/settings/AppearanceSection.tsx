@@ -12,7 +12,15 @@ import {
   DEFAULT_THEME,
 } from '../../themes';
 import type { CustomTheme } from '../../themes';
-import { Section, Row, ModeButton, SmallButton, SearchableSelect, inputStyle } from './primitives';
+import {
+  Section,
+  Row,
+  CheckRow,
+  ModeButton,
+  SmallButton,
+  SearchableSelect,
+  inputStyle,
+} from './primitives';
 import ThemeMaker from './ThemeMaker';
 
 interface AppearanceSectionProps {
@@ -29,8 +37,24 @@ const TEXT_SCALE_PRESETS: { label: string; value: number }[] = [
   { label: 'XL', value: 1.5 },
 ];
 
+const CHAT_FONT_SCALES: { label: string; value: number }[] = [
+  { label: 'Small', value: 1.0 },
+  { label: 'Default', value: 1.15 },
+  { label: 'Large', value: 1.3 },
+  { label: 'XL', value: 1.5 },
+];
+
+const DIFF_VIEWS: { label: string; value: 'stacked' | 'inline' | 'split' }[] = [
+  { label: 'Stacked', value: 'stacked' },
+  { label: 'Inline', value: 'inline' },
+  { label: 'Split', value: 'split' },
+];
+
 const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) => {
   const customThemes = config.ui.customThemes ?? {};
+  // claude may be absent on a fresh config; defaultView is required in the
+  // block, so partial saves must always carry it.
+  const claudeCfg = { defaultView: 'terminal' as const, ...config.claude };
   const activeTheme = resolveTheme(config.ui.theme, customThemes);
   const borderHex = toHex(config.ui.borderColor || activeTheme.borderActive || activeTheme.accent);
   const [saved, setSaved] = useState(false);
@@ -262,6 +286,82 @@ const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) =
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Border around the focused pane when a tab is split. Defaults to the theme's accent;
         switching themes resets it.
+      </div>
+
+      {/* Chat rendering (ui.* keys, moved here from Session — they style the
+          GUI conversation, not agent behavior). */}
+      <Row label="Chat text size">
+        <div style={{ display: 'flex', gap: 4 }}>
+          {CHAT_FONT_SCALES.map((s) => (
+            <ModeButton
+              key={s.value}
+              label={s.label}
+              active={(config.ui.guiFontScale ?? 1.15) === s.value}
+              onClick={() => saveWithFeedback({ ui: { ...config.ui, guiFontScale: s.value } })}
+            />
+          ))}
+        </div>
+      </Row>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        Size of the conversation text in the GUI view (messages, markdown, code blocks), on top of
+        the app-wide text size above. Doesn't affect the terminal view.
+      </div>
+
+      <Row label="Work log style">
+        <div style={{ display: 'flex', gap: 4 }}>
+          <ModeButton
+            label="Cards"
+            active={(config.claude?.workLog ?? 'cards') === 'cards'}
+            onClick={() => saveWithFeedback({ claude: { ...claudeCfg, workLog: 'cards' } })}
+          />
+          <ModeButton
+            label="Trace"
+            active={config.claude?.workLog === 'trace'}
+            onClick={() => saveWithFeedback({ claude: { ...claudeCfg, workLog: 'trace' } })}
+          />
+        </div>
+      </Row>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        How Claude's tool calls render in the GUI conversation. Cards summarize each run in prose;
+        Trace is a waterfall monitor — one row per call with duration bars on a shared time axis,
+        color-coded by kind, click a row to dig into its full input and output.
+      </div>
+
+      <CheckRow
+        label="Show message timestamps"
+        checked={config.claude?.showTimestamps === true}
+        onChange={(v) => saveWithFeedback({ claude: { ...claudeCfg, showTimestamps: v } })}
+      />
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        Adds a small HH:MM stamp beside each chat turn in the GUI conversation. Also togglable from
+        the clock button in a chat pane's top bar.
+      </div>
+
+      <Row label="Diff layout">
+        <div style={{ display: 'flex', gap: 4 }}>
+          {DIFF_VIEWS.map((d) => (
+            <ModeButton
+              key={d.value}
+              label={d.label}
+              active={(config.ui.diffView ?? 'stacked') === d.value}
+              onClick={() => saveWithFeedback({ ui: { ...config.ui, diffView: d.value } })}
+            />
+          ))}
+        </div>
+      </Row>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        How file edits render in the GUI. Stacked shows all removed lines then all added; Inline
+        interleaves them as a unified diff; Split shows old and new side by side.
+      </div>
+
+      <CheckRow
+        label="Show the composer send button"
+        checked={config.ui.showComposerSend !== false}
+        onChange={(v) => saveWithFeedback({ ui: { ...config.ui, showComposerSend: v } })}
+      />
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        The ↑ button next to the message box. Off keeps the box clean — Enter still sends
+        (Shift+Enter for a newline).
       </div>
     </Section>
   );
