@@ -17,6 +17,9 @@ import (
 type client struct {
 	t  *testing.T
 	ws *websocket.Conn
+	// hello is the greeting frame consumed during dial, kept so tests can assert
+	// on the scope it advertises.
+	hello Frame
 }
 
 func dialClient(t *testing.T, httpURL string) *client {
@@ -39,7 +42,7 @@ func dialClientToken(t *testing.T, httpURL, token string) *client {
 	}
 	t.Cleanup(func() { c.CloseNow() })
 	cl := &client{t: t, ws: c}
-	cl.readUntil("hello")
+	cl.hello = cl.readUntil("hello")
 	return cl
 }
 

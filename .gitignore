@@ -33,3 +33,6 @@ services/hub/*.exe~
 
 # Workspacer runtime state in a project dir (saved workflows, etc.) — never commit.
 .workspacer/
+
+# Playwright run artefacts (traces, failure screenshots) from the e2e suites.
+apps/desktop/test-results/

@@ -3,10 +3,12 @@ package bus
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
+	"github.com/djtouchette/workspacer-hub/internal/capspec"
 	"github.com/djtouchette/workspacer-hub/internal/event"
 )
 
@@ -237,5 +239,50 @@ func TestAuthorizedHTTPWithScopedTokens(t *testing.T) {
 		if got := srv.Authorized(req(c.token)); got != c.want {
 			t.Errorf("Authorized(%s) = %v, want %v", c.token, got, c.want)
 		}
+	}
+}
+
+// TestHelloAdvertisesScope pins the handshake greeting: a scoped client learns
+// its tier and method allowlist up front, so a UI can gate itself instead of
+// discovering the ceiling by calling something and reading the deny error. The
+// host token and an operator token both report the full "operator" ceiling —
+// an operator record is promoted to trusted at the handshake, so the two are
+// indistinguishable by design.
+func TestHelloAdvertisesScope(t *testing.T) {
+	url, _ := scopedServer(t)
+	cases := []struct {
+		token       string
+		wantScope   string
+		wantMethod  string // one method the tier must advertise
+		wantMissing string // one method it must not
+	}{
+		{"host-secret", "operator", "*", ""},
+		{"tok-operator", "operator", "*", ""},
+		{"tok-triage", "triage", "claude.approve", "agents.spawn"},
+		{"tok-view", "view", "sessions.snapshots", "claude.approve"},
+	}
+	for _, c := range cases {
+		hello := dialClientToken(t, url, c.token).hello
+		if hello.Scope != c.wantScope {
+			t.Errorf("hello scope for %s = %q, want %q", c.token, hello.Scope, c.wantScope)
+		}
+		if !slices.Contains(hello.Methods, c.wantMethod) {
+			t.Errorf("hello methods for %s = %v, want to contain %q", c.token, hello.Methods, c.wantMethod)
+		}
+		if c.wantMissing != "" && slices.Contains(hello.Methods, c.wantMissing) {
+			t.Errorf("hello methods for %s contain %q, want it withheld", c.token, c.wantMissing)
+		}
+	}
+}
+
+// TestHelloScopeEmptyForPlugins: a plugin's authority is per-capability, not a
+// tier, so it gets no scope claim it could mistake for one.
+func TestHelloScopeEmptyForPlugins(t *testing.T) {
+	url, srv := rpcServerWith(t)
+	srv.SetToken("host-secret")
+	srv.RegisterPluginToken("plug-tok", "test.plugin", []capspec.Grant{{Method: "agents.list"}}, capspec.EventGrants{})
+	hello := dialClientToken(t, url, "plug-tok").hello
+	if hello.Scope != "" || len(hello.Methods) != 0 {
+		t.Errorf("plugin hello = scope %q methods %v, want both empty", hello.Scope, hello.Methods)
 	}
 }

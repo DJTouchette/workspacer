@@ -43,10 +43,18 @@ type Frame struct {
 	// RPC fields.
 	ID      string          `json:"id,omitempty"`      // correlation id
 	Method  string          `json:"method,omitempty"`  // call
-	Methods []string        `json:"methods,omitempty"` // register
+	Methods []string        `json:"methods,omitempty"` // register | hello
 	Params  json.RawMessage `json:"params,omitempty"`  // call
 	Result  json.RawMessage `json:"result,omitempty"`  // result
 	Error   string          `json:"error,omitempty"`   // error
+
+	// Scope, on `hello`, names the tier this connection authenticated as
+	// ("view" / "triage" / "operator"), with Methods carrying the patterns it may
+	// call. Without it a client can only discover its own ceiling by calling
+	// something and reading the deny error — so /m would have to offer buttons
+	// (spawn, model switch) that fail on tap. Empty for plugin connections, whose
+	// grants are per-capability rather than a tier.
+	Scope string `json:"scope,omitempty"`
 }
 
 // pluginIdent is the identity a per-plugin bus token resolves to: which plugin,
@@ -424,7 +432,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	_ = cn.send(Frame{Op: "hello"})
+	_ = cn.send(cn.helloFrame())
 
 	for {
 		_, data, err := ws.Read(ctx)
@@ -507,6 +515,23 @@ type conn struct {
 	emits    []string
 	consumes []string
 	provides []string
+}
+
+// helloFrame is the greeting a client gets the moment its token resolved. It
+// tells a scoped client what tier it holds so the UI can gate itself up front —
+// /m greys out spawning on a triage token instead of offering a button that
+// dies on tap. Operator and host tokens report the same "operator" ceiling:
+// they are the same authority, and an operator record is promoted to trusted at
+// the handshake, so the tier name is not otherwise recoverable here.
+func (cn *conn) helloFrame() Frame {
+	f := Frame{Op: "hello"}
+	switch {
+	case cn.trusted:
+		f.Scope, f.Methods = "operator", []string{"*"}
+	case cn.scopeMethods != nil:
+		f.Scope, f.Methods = cn.scope, cn.scopeMethods
+	}
+	return f
 }
 
 // mayPublish reports whether this connection may publish an event of the given
