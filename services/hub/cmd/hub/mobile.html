@@ -678,7 +678,7 @@
   // they survive the snapshot rebuilds that replace s.conversation wholesale.
   function recordResolved(id, declined, answers, questions, anchorLen) {
     if (!questions || !questions.length) return;
-    const sig = questions.map(q => q.question).join(' ');
+    const sig = questions.map(q => q.question).join('\u0000');
     const list = resolvedQs.get(id) || [];
     if (list.some(r => r.sig === sig && r.anchorLen === anchorLen)) return;
     list.push({ sig, anchorLen, questions, answers, declined });

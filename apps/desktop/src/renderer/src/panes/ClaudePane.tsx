@@ -1026,7 +1026,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       setDismissedQuestionSig(null);
     }
   }, [session?.pendingQuestions]);
-  const questionSig = pendingQuestions?.map((q) => q.question).join(' ') ?? null;
+  const questionSig = pendingQuestions?.map((q) => q.question).join('\u0000') ?? null;
 
   // Durable record of resolved questions, injected into the transcript so you
   // can always see what you were asked and picked. Kept in renderer state (not
