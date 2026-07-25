@@ -370,3 +370,47 @@ describe('ClaudePane restore loader vs fresh spawn', () => {
     expect(screen.getByText('restored turn')).toBeTruthy();
   });
 });
+
+/**
+ * Cancel routing — which interrupt a Stop/Escape actually delivers.
+ *
+ * Escape is Claude's interrupt key, so only claude PTY panes may cancel by
+ * writing '\x1b' at the terminal. Every other provider must go out as SIGINT so
+ * the daemon can route it to that provider's own structural abort (codex
+ * `turn/interrupt`, opencode `POST /session/:id/abort`, pi `abort`) — all of
+ * which are registered on the hybrid PTY path, not just the headless one.
+ * Typing Escape into a hybrid codex/opencode/pi TUI is not its interrupt.
+ */
+describe('ClaudePane cancel routing', () => {
+  beforeEach(() => {
+    mockWrite.mockClear();
+    (window.electronAPI.claudeSignal as any) = vi.fn().mockResolvedValue(undefined);
+    // A live turn — cancel is a no-op unless the pane thinks it is streaming.
+    mockSession = makeSnapshot({ ambientState: 'streaming', lastActivity: Date.now() });
+  });
+
+  it('a claude PTY session cancels with the Escape keystroke, not a signal', () => {
+    render(<ClaudePane paneId="c1" title="Claude" isActive cwd="/repo" />);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(mockWrite).toHaveBeenCalledWith('\x1b');
+    expect(window.electronAPI.claudeSignal).not.toHaveBeenCalled();
+  });
+
+  it.each(['codex', 'opencode', 'pi'] as const)(
+    'a hybrid %s session cancels with SIGINT so the daemon uses that provider’s abort',
+    (provider) => {
+      render(
+        <ClaudePane
+          paneId={`c-${provider}`}
+          title={provider}
+          isActive
+          cwd="/repo"
+          provider={provider}
+        />,
+      );
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(window.electronAPI.claudeSignal).toHaveBeenCalledWith('sess-1', 'SIGINT');
+      expect(mockWrite).not.toHaveBeenCalledWith('\x1b');
+    },
+  );
+});

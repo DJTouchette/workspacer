@@ -1149,11 +1149,19 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       ? pendingQuestions
       : null;
 
-  // Cancel the current task — send Escape and suppress streaming UI. No-PTY
-  // (stream) sessions have no keystroke path; the daemon interrupts the
-  // managed adapter on SIGINT instead.
+  // Cancel the current task, and suppress streaming UI either way.
+  //
+  // Escape is CLAUDE'S interrupt key, so the keystroke path is scoped to claude
+  // PTY sessions. Every other provider goes through SIGINT, which the daemon
+  // routes to that provider's OWN structural abort (codex `turn/interrupt`,
+  // opencode `POST /session/:id/abort`, pi `abort`) — all three register the
+  // channel on the hybrid PTY path too, not just headless. Writing '\x1b' into
+  // a hybrid codex/opencode/pi pane would type Escape at their native TUI
+  // instead, which is not their interrupt. `post_signal` still falls back to a
+  // Ctrl-C byte into the PTY if a session has no structural interrupt, so this
+  // is strictly better-targeted, never worse.
   const cancelTask = useCallback(() => {
-    if (hasTerminal) {
+    if (hasTerminal && isClaude) {
       write('\x1b');
     } else if (sessionId) {
       window.electronAPI
@@ -1161,7 +1169,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         .catch((err) => console.warn('[ClaudePane] cancel (SIGINT) failed:', err));
     }
     setCancelledAt(Date.now());
-  }, [write, hasTerminal, sessionId]);
+  }, [write, hasTerminal, isClaude, sessionId]);
 
   // Decline the pending question(s): leave a "declined" trace in the transcript,
   // hide the picker, and cancel the agent's current turn (the chosen semantics —
