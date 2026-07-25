@@ -63,6 +63,7 @@ var viewMethods = []string{
 	"agents.list",           // fleet list (/remote, MCP list_agents)
 	"sessions.snapshots",    // full fleet snapshot seed (/m, webBackend)
 	"sessions.snapshot",     // one session's snapshot (webBackend, MCP)
+	"sessions.recent",       // resumable-session list for the Sessions pane (webBackend)
 	"sessions.transcript",   // transcript reads (/remote, MCP get_transcript)
 	"sessions.conversation", // normalized conversation reads (MCP, webBackend)
 	"layout.get",            // shared workspace layout document (read side)

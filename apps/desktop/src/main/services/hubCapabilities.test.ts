@@ -101,6 +101,8 @@ vi.mock('./sessionService', () => ({ sessionService: {} }));
 vi.mock('./sessionHistory', () => ({ sessionHistory: {} }));
 vi.mock('./layoutService', () => ({ layoutService: {} }));
 vi.mock('./claudeSessionList', () => ({ listClaudeSessionsForDir: vi.fn() }));
+const listRecentSessions = vi.fn(async () => [{ sessionId: 's1', provider: 'claude' }]);
+vi.mock('./recentSessions', () => ({ listRecentSessions: () => listRecentSessions() }));
 vi.mock('./fileService', () => ({
   readTextFile: vi.fn(),
   writeTextFile: vi.fn(),
@@ -154,6 +156,19 @@ describe('registerHubCapabilities — registration', () => {
     ]) {
       expect(registered.has(method), `missing ${method}`).toBe(true);
     }
+  });
+
+  // sessions.recent is what makes the web client's Sessions pane non-empty:
+  // sessions.snapshots only covers LIVE sessions, so the resumable list has to
+  // come from the daemon-backed enrichment in recentSessions.ts. It must be a
+  // real bus method (not a `cat`-delegated one) because that enrichment reads
+  // main's own history DB and local transcripts.
+  it('serves the daemon session list over the bus, delegating to listRecentSessions', async () => {
+    expect(registered.has('sessions.recent')).toBe(true);
+    await expect(call('sessions.recent')).resolves.toEqual([
+      { sessionId: 's1', provider: 'claude' },
+    ]);
+    expect(listRecentSessions).toHaveBeenCalledTimes(1);
   });
 });
 

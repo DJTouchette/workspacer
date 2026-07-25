@@ -24,6 +24,7 @@ import type {
   AppConfigPartial,
   ClaudeProfile,
   InAppNotification,
+  RecentAgentSession,
 } from '../../../main/shared/ipcTypes';
 import { HubBusClient, type HubEventEnvelope } from './hubBusClient';
 
@@ -379,9 +380,11 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
       client
         .call<ClaudeSessionSnapshot[]>('sessions.snapshots', {})
         .then((list) => (list || []).map(foldSparse)),
-    // No hub-bus cap for the daemon's full session list yet — the web client
-    // simply shows no RECENT section until one exists.
-    listRecentAgentSessions: () => Promise.resolve([]),
+    // The daemon's full resumable-session list, enriched host-side (history DB
+    // names/cost + provider auto-titles). Errors resolve to [] to match the
+    // desktop handler: the Sessions pane shows nothing rather than breaking.
+    listRecentAgentSessions: () =>
+      client.call<RecentAgentSession[]>('sessions.recent', {}).catch(() => []),
     // Null = "can't tell" — the web client never reconciles/auto-respawns
     // agents against the daemon; the desktop owns that.
     listLiveClaudeSessionIds: () => Promise.resolve(null),

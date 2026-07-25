@@ -104,6 +104,7 @@ const BUS_BACKED = [
   'claudeProfilesRemove',
   'getClaudeSession',
   'getAllClaudeSessions',
+  'listRecentAgentSessions',
   'onClaudeSessionUpdate',
   // Library
   'libraryList',
@@ -133,7 +134,6 @@ const KNOWN_STUBS = [
   'fileOpenExternal', // best-effort window.open(file://) on web only
   'fileShowInFolder', // reveal-in-folder impossible remotely
   'notifyQuitSaved', // no quit handshake in the browser
-  'listRecentAgentSessions', // no hub-bus cap for the daemon session list yet; [] on web
   'listLiveClaudeSessionIds', // boot reconcile/auto-respawn is desktop-owned; null on web
   'keepWarmHeartbeats', // keep-warm log lives in the desktop's claudemon; [] on web
   'onInAppNotification', // main-process notification mirror; web ingests notify.post bus events instead

@@ -26,6 +26,7 @@ import { sessionService } from './sessionService';
 import { sessionHistory } from './sessionHistory';
 import { layoutService } from './layoutService';
 import { listClaudeSessionsForDir } from './claudeSessionList';
+import { listRecentSessions } from './recentSessions';
 import { timelineReplay, type ReplayOp } from './timelineReplayService';
 import { readTextFile, writeTextFile, listDir } from './fileService';
 import { startWatch, stopWatch } from './fileWatchService';
@@ -684,6 +685,17 @@ export function registerHubCapabilities(): void {
     if (!sessionId) throw new Error('sessions.snapshot requires { sessionId }');
     return claudeSessionStore.getSnapshot(sessionId);
   });
+
+  // The daemon's full session list — every resumable row (all providers,
+  // including stopped and archived), enriched with the desktop's own history DB
+  // (agent name, model, cost) and provider auto-titles. `sessions.snapshots`
+  // above only covers LIVE sessions, so without this the web client's Sessions
+  // pane and History row render empty.
+  //
+  // registerCapability, not `cat`: the enrichment joins main's session_history
+  // SQLite and reads local transcripts for titles, so a headless brain can't
+  // serve an equivalent — main must own this method on both delegation paths.
+  registerCapability('sessions.recent', () => listRecentSessions());
 
   // ── Config (web parity) ────────────────────────────────────────────────
   // Mirror the CONFIG_* IPC handlers so the web renderer loads the real config
