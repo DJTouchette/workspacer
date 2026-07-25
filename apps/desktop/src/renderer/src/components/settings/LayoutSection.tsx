@@ -15,7 +15,11 @@ const LayoutSection: React.FC<LayoutSectionProps> = ({ config, save }) => {
     <Section title="Layout">
       <Row label="UI mode">
         <div style={{ display: 'flex', gap: '6px' }}>
-          <ModeButton label="Full" active={uiMode === 'fleet'} onClick={() => setUiMode('fleet')} />
+          <ModeButton
+            label="Fleet"
+            active={uiMode === 'fleet'}
+            onClick={() => setUiMode('fleet')}
+          />
           <ModeButton
             label="Focus"
             active={uiMode === 'focus'}
@@ -23,6 +27,12 @@ const LayoutSection: React.FC<LayoutSectionProps> = ({ config, save }) => {
           />
         </div>
       </Row>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        How many agents you're attending to. <strong>Fleet</strong> shows every agent in the sidebar
+        plus the Fleet Deck. <strong>Focus</strong> keeps cards for the agent you're in and anything
+        blocked on you, and folds the rest into one row you can expand. Sidebar width is separate —
+        that's the collapse toggle.
+      </div>
       <Row label="Peek">
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <input

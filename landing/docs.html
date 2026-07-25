@@ -344,9 +344,10 @@
 <h3>ui modes</h3>
 <p>One agent's tabs render as a horizontal strip of tab cards, the classic editor layout. On top of that sit two <strong>UI modes</strong>, lenses that decide how much chrome you see. Set with <code>config.ui.mode</code> (default <code>fleet</code>), toggled with the <code>toggle-ui-mode</code> action (default <code>Ctrl+Shift+M</code>):</p>
 <ul>
-<li><strong>fleet</strong> (default): the full cockpit — full sidebar, inspector rail, Fleet Deck, the full attention chrome.</li>
-<li><strong>focus</strong>: chat-first — the sidebar collapses to a thin rail, the inspector rail and Fleet Deck hide, and attention shrinks to a compact "N need you" badge you can still click to triage.</li>
+<li><strong>fleet</strong> (default): attending to the whole fleet — every agent gets a live card in the sidebar, and the Fleet Deck radar is available.</li>
+<li><strong>focus</strong>: attending to one agent — the sidebar keeps full cards for the agent you're in <em>and</em> anything blocked on you (so a pending approval is never hidden, and its inline Approve/Reply stays one click away), while agents that are merely working or already finished fold into a single "N others" row you can expand in place. The Fleet Deck is off.</li>
 </ul>
+<p>What focus is <em>not</em>: a width control. The sidebar collapse toggle (<code>toggle-sidebar</code>, default <code>Ctrl+B</code>) owns that, in either mode, and the two compose — you can be focused with the sidebar expanded, or watching the whole fleet from a 74px rail.</p>
 <p>The important guarantee: switching UI mode never remounts a pane. A mode only changes which chrome is visible around the same mounted tab cards, so a running terminal, a streaming conversation, or a loaded browser keeps going untouched. Inactive agents stay mounted too (hidden with <code>display:none</code>), so switching agents doesn't remount either.</p>
 <h3>the fleet deck</h3>
 <p>The Fleet Deck is a cross-agent radar, a separate altitude that sits <em>orthogonal</em> to UI mode. Inside an agent you arrange that agent's panes; the deck shows all your agents at once.</p>

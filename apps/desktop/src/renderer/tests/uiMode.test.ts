@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MODE_MANIFEST, resolveUiMode } from '../src/lib/uiMode';
+import { MODE_MANIFEST, resolveUiMode, type ModeManifest } from '../src/lib/uiMode';
 
 describe('uiMode manifest', () => {
   it('defaults to fleet (unset / unknown config values)', () => {
@@ -10,23 +10,32 @@ describe('uiMode manifest', () => {
     expect(resolveUiMode('focus')).toBe('focus');
   });
 
-  it("fleet mode is today's full chrome (zero behavior change)", () => {
+  it('fleet mode attends to the whole fleet', () => {
     expect(MODE_MANIFEST.fleet).toEqual({
-      sidebar: 'full',
-      inspectorRail: true,
+      feed: 'all',
       fleetDeck: true,
-      attention: 'full',
-      hubFooter: 'full',
     });
   });
 
-  it('focus mode strips the chrome down to the piloted agent', () => {
+  it('focus mode narrows the feed and drops the deck', () => {
     expect(MODE_MANIFEST.focus).toEqual({
-      sidebar: 'rail',
-      inspectorRail: false,
+      feed: 'active-and-blocked',
       fleetDeck: false,
-      attention: 'badge',
-      hubFooter: 'compact',
     });
+  });
+
+  // The manifest earns its existence by declaring DIFFERENCES. A field with the
+  // same value in both entries is not a mode difference — it should be
+  // unconditional behavior instead of a flag no consumer can meaningfully read.
+  // (`inspectorRail` and `hubFooter` were both removed for exactly this reason:
+  // one became true in both modes, the other was never read at all.)
+  it('every manifest field actually differs between the modes', () => {
+    const identical = (Object.keys(MODE_MANIFEST.fleet) as Array<keyof ModeManifest>).filter(
+      (k) => MODE_MANIFEST.fleet[k] === MODE_MANIFEST.focus[k],
+    );
+    expect(
+      identical,
+      `manifest field(s) identical in both modes — make them unconditional instead: ${identical.join(', ')}`,
+    ).toEqual([]);
   });
 });

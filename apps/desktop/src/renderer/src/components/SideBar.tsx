@@ -114,8 +114,6 @@ interface SideBarProps {
   onSpawnAgent: () => void;
   onTerminateAgent: (id: string) => void;
   onRenameAgent: (id: string, name: string) => void;
-  /** Jump to the next agent blocked on the user (approval / input). */
-  onJumpToAttention?: () => void;
   /** Open the Triage Inbox drawer. */
   onOpenInbox?: () => void;
   /** Toggle the cross-agent fleet surface. */
@@ -148,7 +146,6 @@ const SideBar: React.FC<SideBarProps> = ({
   onSpawnAgent,
   onTerminateAgent,
   onRenameAgent,
-  onJumpToAttention,
   onOpenInbox,
   onToggleFleet,
   viewLevel,
@@ -160,13 +157,18 @@ const SideBar: React.FC<SideBarProps> = ({
   recentSessions,
   onOpenHistory,
 }) => {
-  // Counts come from the single attention feed (the spine) — the rail's
-  // "needs you" badge can never disagree with the cards' waiting states.
-  const { counts, topByAgent, approve } = useAttention();
-  const needYouCount = counts.needsYou;
-  // Focus mode reduces attention to one compact badge pinned in the rail —
-  // "agents need you" must never disappear entirely (UI-mode manifest).
+  // Attention comes from the single feed (the spine), so a card's waiting state
+  // and the rail tile's amber dot can never disagree.
+  const { topByAgent, approve } = useAttention();
+  // Focus mode narrows WHICH agents get a full card; it never hides the feed.
   const { manifest: uiManifest } = useUiMode();
+  // Focus mode's collapsed "N others" row — a transient reveal, not persisted.
+  // Reset on every mode flip so re-entering focus always starts quiet; leaving
+  // it expanded would make the next focus session silently behave like fleet.
+  const [othersExpanded, setOthersExpanded] = useState(false);
+  useEffect(() => {
+    setOthersExpanded(false);
+  }, [uiManifest.feed]);
   const [contextMenu, setContextMenu] = useState<{ agentId: string; x: number; y: number } | null>(
     null,
   );
@@ -436,28 +438,14 @@ const SideBar: React.FC<SideBarProps> = ({
           <Plus size={18} strokeWidth={2.5} />
         </button>
 
-        {/* Compact needs-you badge (focus mode's attention surface) — pinned
-            above the hub dot. Click jumps to the next agent blocked on you. */}
-        {uiManifest.attention === 'badge' && needYouCount > 0 && (
-          <button
-            onClick={onJumpToAttention}
-            title={`${needYouCount} agent${needYouCount === 1 ? '' : 's'} need you — click to jump`}
-            style={{
-              ...pillStyle('var(--wks-warning)'),
-              border: 'none',
-              cursor: 'pointer',
-              flexShrink: 0,
-              margin: '0 0 6px',
-            }}
-          >
-            <span style={dotStyle('var(--wks-warning)', true)} />
-            {needYouCount}
-          </button>
-        )}
+        {/* No aggregate needs-you badge here: each rail tile already carries its
+            agent's attention (amber dot + kind glyph, see railTile), and
+            `next-attention` (Ctrl+Shift+Space) jumps to the next blocked agent
+            from anywhere. A count pill on top of that was pure duplication. */}
 
         {/* Notification bell — kept reachable in the rail so the center never
-            disappears in focus mode; the panel is fixed-positioned and opens
-            over the content area. */}
+            disappears when the sidebar is collapsed; the panel is
+            fixed-positioned and opens over the content area. */}
         <div style={{ flexShrink: 0, margin: '0 0 6px' }}>
           <NotificationCenter />
         </div>
@@ -1138,8 +1126,29 @@ const SideBar: React.FC<SideBarProps> = ({
           // Sessions pane instead.
           const cards = topLevel.filter((agent) => !agent.global);
 
+          // Focus mode narrows the feed to what you're actually attending to:
+          // the piloted agent, plus anything BLOCKED on you (never hide a block
+          // — its inline Approve/Reply is the whole point of the card). Agents
+          // that are merely working or already finished fold into one quiet
+          // "N others" row below, expandable in place.
+          //
+          // Subagents follow their parent: quieting a parent quiets its children
+          // with it, and they count toward the total.
+          const quietOthers = uiManifest.feed === 'active-and-blocked' && !othersExpanded;
+          const isLoud = (agent: (typeof agents)[0]) =>
+            agent.id === activeAgentId || cardStateOf(agent) === 'waiting';
+          const loudCards = quietOthers ? cards.filter(isLoud) : cards;
+          const quieted = quietOthers ? cards.filter((a) => !isLoud(a)) : [];
+          // Count the folded subtree, not just its roots, so the row's number
+          // matches what expanding it actually reveals.
+          const quietedCount = quieted.reduce(
+            (n, a) => n + 1 + (childrenByParent.get(a.id)?.length ?? 0),
+            0,
+          );
+          const quietedWorking = quieted.filter((a) => cardStateOf(a) === 'working').length;
+
           const rows: React.ReactNode[] = [];
-          for (const agent of cards) {
+          for (const agent of loudCards) {
             rows.push(renderAgentCard(agent, false));
             // Render children indented directly after their parent.
             for (const child of childrenByParent.get(agent.id) ?? []) {
@@ -1150,6 +1159,78 @@ const SideBar: React.FC<SideBarProps> = ({
           return (
             <>
               {rows}
+              {/* Focus mode's quieted remainder — the periphery goes quiet, not
+                  invisible. Same mono/faint vocabulary as the History row below
+                  so the two read as one family of "there's more over here"
+                  pointers, but this one expands in place instead of navigating. */}
+              {quietedCount > 0 && (
+                <div
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={false}
+                  onClick={() => setOthersExpanded(true)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') setOthersExpanded(true);
+                  }}
+                  title="Show the agents that aren't waiting on you"
+                  style={{
+                    margin: '2px 12px 0',
+                    padding: '6px 6px 5px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontSize: '0.66rem',
+                    fontFamily: 'var(--wks-font-mono)',
+                    color: 'var(--wks-text-faint)',
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                    transition: 'color 0.12s',
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
+                  }}
+                >
+                  <ChevronRight size={11} strokeWidth={2} style={{ flexShrink: 0 }} />
+                  <span>
+                    {quietedCount} other{quietedCount === 1 ? '' : 's'}
+                  </span>
+                  {quietedWorking > 0 && (
+                    <span style={{ marginLeft: 'auto' }}>{quietedWorking} working</span>
+                  )}
+                </div>
+              )}
+              {/* Collapse the reveal again — only offered once expanded, so the
+                  quiet state stays a single row. */}
+              {uiManifest.feed === 'active-and-blocked' && othersExpanded && (
+                <div
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={true}
+                  onClick={() => setOthersExpanded(false)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') setOthersExpanded(false);
+                  }}
+                  title="Quiet the agents that aren't waiting on you"
+                  style={{
+                    margin: '2px 12px 0',
+                    padding: '6px 6px 5px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontSize: '0.66rem',
+                    fontFamily: 'var(--wks-font-mono)',
+                    color: 'var(--wks-text-faint)',
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                  }}
+                >
+                  <ChevronLeft size={11} strokeWidth={2} style={{ flexShrink: 0 }} />
+                  <span>Show less</span>
+                </div>
+              )}
               {/* History footer row — the one quiet pointer to past work. The
                   EARLIER/RECENT dock moved into the Sessions pane; this row
                   pins to the feed bottom (margin-top:auto collapses to 0 when
@@ -1299,26 +1380,6 @@ const SideBar: React.FC<SideBarProps> = ({
   );
 };
 
-/** Header status pill (e.g. "1 working") — soft chip tinted to match its own
- *  status color (green/amber), with a live dot. */
-function pillStyle(color: string): React.CSSProperties {
-  return {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 6,
-    padding: '2px 8px',
-    borderRadius: 'var(--wks-radius-pill)',
-    background: `color-mix(in srgb, ${color} 16%, transparent)`,
-    color,
-    fontFamily: 'var(--wks-font-mono)',
-    fontSize: '0.66rem',
-    fontWeight: 600,
-    letterSpacing: 0,
-    textTransform: 'none',
-    whiteSpace: 'nowrap',
-  };
-}
-
 /** Inline waiting-card actions (spec 2a): solid Approve, quiet Reply/Answer. */
 function cardActionStyle(primary: boolean): React.CSSProperties {
   return {
@@ -1333,17 +1394,6 @@ function cardActionStyle(primary: boolean): React.CSSProperties {
     fontWeight: 700,
     background: primary ? 'var(--wks-success)' : 'var(--wks-bg-base)',
     color: primary ? 'var(--wks-bg-base)' : 'var(--wks-text-primary)',
-  };
-}
-
-function dotStyle(color: string, pulse: boolean): React.CSSProperties {
-  return {
-    width: 6,
-    height: 6,
-    borderRadius: '50%',
-    flexShrink: 0,
-    background: color,
-    animation: pulse ? 'wks-pulse 1.8s ease-in-out infinite' : 'none',
   };
 }
 

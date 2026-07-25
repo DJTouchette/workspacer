@@ -329,10 +329,10 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     );
     add(
       'cmd-toggle-ui-mode',
-      uiMode === 'focus' ? 'Switch to full mode' : 'Switch to focus mode',
+      uiMode === 'focus' ? 'Switch to fleet mode' : 'Switch to focus mode',
       uiMode === 'focus'
-        ? 'Bring back the full mission-control chrome'
-        : 'Minimal chrome — rail sidebar, no inspector rail or Fleet',
+        ? 'Show every agent in the sidebar again, and the Fleet Deck'
+        : 'Quiet the sidebar to this agent plus anything blocked on you',
       <Columns3 size={16} strokeWidth={1.75} />,
       onToggleUiMode,
       'toggle-ui-mode',

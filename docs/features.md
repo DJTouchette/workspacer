@@ -76,7 +76,7 @@ remote/web/phone clients all view and drive the same fleet.
 |---|---|---|
 | Command palette | Fuzzy launcher for actions, apps, plugins, library | 🔵 Working |
 | Keybindings | Direct combos + prefix chords (leader), remap capture, shortcut overlay, which-key hints | 🔵 Working |
-| UI modes | `fleet` (full cockpit) / `focus` (chat-first rail) lenses via `config.ui.mode` — without remounting live panes | 🔵 Working |
+| UI modes | `fleet` (every agent carded) / `focus` (this agent + anything blocked on you; the rest fold into one row) lenses via `config.ui.mode` — without remounting live panes | 🔵 Working |
 | Fleet Deck | Cross-agent "radar" of live agent cards, a global altitude orthogonal to UI mode | 🔵 Working |
 | Layout templates | Save/restore named agent+pane arrangements | 🔵 Working |
 | Session save / restore | Auto-resume, crash-recovery picker, legacy migration | 🔵 Working |

@@ -342,34 +342,20 @@ function App() {
       setSidebarCollapsed(isSmallScreen);
     }
   }, [isSmallScreen]);
-  // Focus mode (manifest.sidebar === 'rail') forces the icons-only rail on
-  // desktop; the rail's expand affordance then shows the FULL sidebar as a
-  // temporary overlay (scrim + floating panel) instead of re-reserving the
-  // column. Small screens keep their existing overlay behavior in both modes.
-  const sidebarRailForced = !isSmallScreen && uiManifest.sidebar === 'rail';
-  const [focusSidebarOverlay, setFocusSidebarOverlay] = useState(false);
-  // Leaving focus mode dismisses the overlay and reverts sidebarCollapsed to
-  // the breakpoint default; entering it just dismisses any stale overlay.
-  const prevRailForced = useRef(sidebarRailForced);
-  useEffect(() => {
-    if (sidebarRailForced === prevRailForced.current) return;
-    prevRailForced.current = sidebarRailForced;
-    setFocusSidebarOverlay(false);
-    if (!sidebarRailForced) setSidebarCollapsed(isSmallScreen);
-  }, [sidebarRailForced, isSmallScreen]);
-  // The sidebar toggle (rail chevron, Ctrl+Shift+B, palette): in forced-rail
-  // mode it opens/closes the temporary full-sidebar overlay; otherwise it
-  // collapses/expands the panel as before.
+  // The sidebar toggle (rail chevron, Ctrl+B, palette) is purely a WIDTH
+  // control and belongs to the user, not to the UI mode. Focus mode used to
+  // force the rail here (plus a temporary overlay to get the panel back), which
+  // both duplicated this toggle and hid the live triage cards; focus now narrows
+  // WHICH agents get a card (manifest.feed) and leaves the width alone.
   const toggleSidebar = useCallback(() => {
-    if (prevRailForced.current) setFocusSidebarOverlay((v) => !v);
-    else setSidebarCollapsed((v) => !v);
+    setSidebarCollapsed((v) => !v);
   }, []);
   // Layout offsets. On small screens the sidebar overlays the content, so we
   // never reserve space (navbar keeps a small inset for the floating toggle).
   // On desktop, collapsing shrinks the panel to a 74px monogram rail that still
   // reserves its column, rather than fully hiding.
   const sidebarOverlay = isSmallScreen;
-  const railShown = sidebarCollapsed || sidebarRailForced;
+  const railShown = sidebarCollapsed;
   const contentLeft = sidebarOverlay ? 0 : railShown ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH;
   const navLeft = sidebarOverlay ? 36 : railShown ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH;
 
@@ -1990,7 +1976,6 @@ function App() {
                   onSpawnAgent={() => setShowSpawnDialog(true)}
                   onTerminateAgent={handleTerminateAgent}
                   onRenameAgent={renameAgent}
-                  onJumpToAttention={goToNextAttention}
                   onOpenInbox={openInbox}
                   onToggleFleet={toggleFleet}
                   viewLevel={effectiveViewLevel}
@@ -2003,50 +1988,6 @@ function App() {
                   onOpenHistory={openSessionsPane}
                 />
               </ErrorBoundary>
-            )}
-            {/* Focus mode: the rail's expand affordance shows the FULL sidebar as a
-          temporary overlay (scrim + floating panel) — the content column stays
-          at rail width. Dismissed by scrim click or agent selection. */}
-            {sidebarRailForced && focusSidebarOverlay && (
-              <>
-                <div
-                  onClick={() => setFocusSidebarOverlay(false)}
-                  style={{
-                    position: 'fixed',
-                    inset: 0,
-                    zIndex: 90,
-                    background: 'rgba(0,0,0,0.45)',
-                    // @ts-ignore — stay clickable over the draggable navbar region
-                    WebkitAppRegion: 'no-drag',
-                  }}
-                />
-                <ErrorBoundary label="Sidebar" variant="region">
-                  <SideBar
-                    agents={agents}
-                    activeAgentId={activeAgentId}
-                    statusBySession={statusBySession}
-                    snapshotBySession={snapshotBySession}
-                    onSelectAgent={(id) => {
-                      handleSelectAgent(id);
-                      setFocusSidebarOverlay(false);
-                    }}
-                    onSpawnAgent={() => setShowSpawnDialog(true)}
-                    onTerminateAgent={handleTerminateAgent}
-                    onRenameAgent={renameAgent}
-                    onJumpToAttention={goToNextAttention}
-                    onOpenInbox={openInbox}
-                    onToggleFleet={toggleFleet}
-                    viewLevel={effectiveViewLevel}
-                    onOpenRemote={() => setShowRemote(true)}
-                    onToggleCollapse={() => setFocusSidebarOverlay(false)}
-                    onToggleHelp={toggleHelp}
-                    noAttentionFlash={noAttentionFlash}
-                    collapsed={false}
-                    recentSessions={recentSessions}
-                    onOpenHistory={openSessionsPane}
-                  />
-                </ErrorBoundary>
-              </>
             )}
             {sidebarOverlay && sidebarCollapsed && (
               <button

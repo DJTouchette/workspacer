@@ -48,7 +48,7 @@ describe('useUiMode', () => {
     await waitFor(() => expect(result.current.mode).toBe('focus'));
     expect(result.current.manifest).toBe(MODE_MANIFEST.focus);
     expect(result.current.manifest.fleetDeck).toBe(false);
-    expect(result.current.manifest.inspectorRail).toBe(false);
+    expect(result.current.manifest.feed).toBe('active-and-blocked');
 
     await act(async () => {
       result.current.toggle();

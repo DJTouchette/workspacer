@@ -11,13 +11,19 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import '../App.css';
 
+// `?mode=focus` renders the focus lens (active agent + anything blocked on you
+// as full cards, the rest folded into the "N others" row); anything else is
+// fleet. Fed through the stubbed getConfig so the real useUiMode →
+// ConfigProvider path runs, rather than mocking the hook.
+const uiMode = new URLSearchParams(window.location.search).get('mode') === 'focus' ? 'focus' : '';
+
 // Minimal electronAPI stub BEFORE importing anything that touches it at
 // module scope. Proxy: any method returns a quiet promise; on* subscriptions
 // return an unsubscribe.
 (window as any).electronAPI = new Proxy(
   {
     platform: 'linux',
-    getConfig: async () => ({}),
+    getConfig: async () => (uiMode ? { ui: { mode: uiMode } } : {}),
     reloadConfig: async () => ({}),
     saveConfig: async () => ({}),
     // Show the hub as live so the footer reads "hub" (green), not "hub offline".
