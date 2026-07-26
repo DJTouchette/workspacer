@@ -6,10 +6,18 @@
  * Served by the normal Vite dev server: /deck-harness.html
  * Not part of the app build — nothing imports this except the harness page.
  *
- * Sibling of `sidebarHarness.tsx`. The two deliberately keep their own fixtures:
- * the sidebar one is the source for the marketing shots in `landing/shots/`, and
- * coupling them means a tweak made for a design review silently restages
+ * Sibling of `sidebarHarness.tsx`. The two deliberately keep their own fixtures
+ * so a tweak made while reviewing one never silently restages the other's
  * published screenshots.
+ *
+ * THIS HARNESS IS THE SOURCE OF TWO PUBLISHED SHOTS — edit the fixture with that
+ * in mind, and restage both if you change it:
+ *   landing/shots/fleet-deck.webp    ← 1600x862, no query string
+ *   landing/shots/triage-inbox.webp  ← 1600x862, ?inbox=1
+ * Both are captured straight from `/usr/bin/chromium --headless --screenshot`
+ * against `npx vite --port 5199 --strictPort` run from `src/renderer` (a spare
+ * port, so it never collides with a live `dev:renderer` on 5173), then
+ * `magick <png> -quality 86 -define webp:method=6 <webp>`.
  *
  * The fixture exists to exercise the cases that make the deck LOOK busy, which
  * is what this harness is for:
@@ -31,13 +39,24 @@ import '../App.css';
 
 const params = new URLSearchParams(window.location.search);
 
+// The real default config, not a hand-written stub. ConfigProvider passes the
+// bridge's object straight through without merging defaults, and the chrome
+// reads nested fields directly (`config.ui.navBarHeight`, `config.terminal
+// .shells`, ...), so anything less than the real defaults fails one field at a
+// time. This is a static import on purpose — it touches no electronAPI.
+import { DEFAULT_CONFIG } from '../hooks/configDefaults';
+
 // Minimal electronAPI stub BEFORE importing anything that touches it at module
 // scope. Proxy: any method returns a quiet promise; on* subscriptions return an
 // unsubscribe.
 (window as any).electronAPI = new Proxy(
   {
     platform: 'linux',
-    getConfig: async () => ({}),
+    getConfig: async () => ({
+      ...DEFAULT_CONFIG,
+      ui: { ...DEFAULT_CONFIG.ui, mode: 'fleet', theme: params.get('theme') || 'everforest' },
+      panes: { ...DEFAULT_CONFIG.panes, viewLevel: 'fleet' },
+    }),
     reloadConfig: async () => ({}),
     saveConfig: async () => ({}),
     getHubStatus: async () => ({ connected: true }),
@@ -55,10 +74,14 @@ const params = new URLSearchParams(window.location.search);
 
 // Deferred imports so the stub is installed first.
 const { default: FleetDeck } = await import('../components/FleetDeck');
+const { default: InboxDrawer } = await import('../components/InboxDrawer');
+const { default: NavBar } = await import('../components/NavBar');
+const { default: SideBar, SIDEBAR_RAIL_WIDTH } = await import('../components/SideBar');
 const { AttentionProvider } = await import('../contexts/AttentionContext');
 const { NotificationsProvider } = await import('../contexts/NotificationsContext');
 const { ConfigProvider } = await import('../contexts/ConfigContext');
 const { useAttentionFeed } = await import('../hooks/useAttentionFeed');
+const { resolveNavHeight } = await import('../lib/layoutUtils');
 const { resolveTheme, applyTheme } = await import('../themes');
 
 applyTheme(resolveTheme(params.get('theme') || 'everforest'));
@@ -269,7 +292,74 @@ const snapshotBySession: Record<string, any> = {
 
 const noop = () => {};
 
+const statusBySession: Record<string, any> = Object.fromEntries(
+  Object.values(snapshotBySession).map((s: any) => [s.sessionId, s.ambientState]),
+);
+
+const navTabs = [
+  {
+    id: 'tab-overview',
+    title: 'Overview',
+    panes: [{ id: 'pane-overview', type: 'overview' as const, title: 'Overview' }],
+    activePaneId: 'pane-overview',
+  },
+  {
+    id: 'tab-ask',
+    title: 'Ask',
+    panes: [{ id: 'pane-ask', type: 'ask' as const, title: 'Ask' }],
+    activePaneId: 'pane-ask',
+  },
+];
+
+/**
+ * The real fleet chrome, composed the way `App.tsx` does it: NavBar across the
+ * top with `leftOffset`, the sidebar as its collapsed rail, and the deck inset
+ * by both. Reproducing the composition (rather than screenshotting the deck on
+ * its own) is what makes this usable for `landing/shots/` — the rail is also
+ * the point, since at fleet altitude the sidebar collapses.
+ */
 function Harness() {
+  const navHeight = resolveNavHeight(undefined, false);
+  return (
+    <div className="app-root" style={{ height: '100vh' }}>
+      <SideBar
+        agents={agents}
+        activeAgentId="agent-workspacer"
+        statusBySession={statusBySession}
+        snapshotBySession={snapshotBySession}
+        onSelectAgent={noop}
+        onSpawnAgent={noop}
+        onTerminateAgent={noop}
+        onRenameAgent={noop}
+        onToggleCollapse={noop}
+        onToggleHelp={noop}
+        viewLevel="fleet"
+        collapsed
+        recentSessions={[]}
+        onOpenHistory={noop}
+      />
+      <NavBar
+        tabs={navTabs as any}
+        activeTabId="tab-overview"
+        onTabClick={noop}
+        onAddTab={noop}
+        onCloseTab={noop}
+        onRenameTab={noop}
+        onSplitTab={noop}
+        onMoveTab={noop}
+        leftOffset={SIDEBAR_RAIL_WIDTH}
+        cwd="/home/djtouchette/Work/worky/workspacer"
+      />
+      <FleetDeck top={navHeight} left={SIDEBAR_RAIL_WIDTH} />
+      {/* `?inbox=1` docks the Triage Inbox over the deck. It is propless — it
+          reads inboxOpen and the feed off AttentionContext — so the only thing
+          that opens it is the provider below. */}
+      <InboxDrawer />
+    </div>
+  );
+}
+
+function Root() {
   const attention = useAttentionFeed(snapshotBySession, agents);
   return (
     <ConfigProvider>
@@ -278,7 +368,7 @@ function Harness() {
           agents={agents}
           activeAgentId="agent-workspacer"
           snapshotBySession={snapshotBySession}
-          inboxOpen={false}
+          inboxOpen={params.get('inbox') === '1'}
           openInbox={noop}
           closeInbox={noop}
           viewLevel="fleet"
@@ -286,16 +376,11 @@ function Harness() {
           onOpenAgent={noop}
           attention={attention}
         >
-          {/* top/left mimic the navbar + collapsed rail the deck sits inside.
-              74 is SIDEBAR_RAIL_WIDTH — at fleet altitude the sidebar collapses,
-              which is the layout this harness is here to show. */}
-          <div className="app-root" style={{ height: '100vh' }}>
-            <FleetDeck top={0} left={74} />
-          </div>
+          <Harness />
         </AttentionProvider>
       </NotificationsProvider>
     </ConfigProvider>
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(<Harness />);
+ReactDOM.createRoot(document.getElementById('root')!).render(<Root />);

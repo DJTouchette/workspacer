@@ -16,6 +16,33 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- A harness that throws renders a black rectangle, which looks exactly
+         like a styling bug. Surface the error instead — headless screenshot
+         runs have no console to read. -->
+    <script>
+      window.addEventListener('error', function (e) {
+        var r = document.getElementById('root');
+        if (r && !r.childElementCount) {
+          r.innerHTML =
+            '<pre style="color:#ff8080;font:12px/1.5 monospace;padding:20px;white-space:pre-wrap">' +
+            'HARNESS ERROR\n\n' +
+            (e.message || '') +
+            '\n\n' +
+            ((e.error && e.error.stack) || '') +
+            '</pre>';
+        }
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = document.getElementById('root');
+        if (r && !r.childElementCount) {
+          r.innerHTML =
+            '<pre style="color:#ff8080;font:12px/1.5 monospace;padding:20px;white-space:pre-wrap">' +
+            'HARNESS PROMISE REJECTION\n\n' +
+            ((e.reason && (e.reason.stack || e.reason.message)) || String(e.reason)) +
+            '</pre>';
+        }
+      });
+    </script>
     <script type="module" src="/src/harness/deckHarness.tsx"></script>
   </body>
 </html>
