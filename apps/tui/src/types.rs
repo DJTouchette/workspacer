@@ -365,6 +365,9 @@ pub enum Part {
         summary: String,
         result: Option<String>,
         edits: Vec<(String, String)>,
+        /// The file this call changed, when it changed one — what feeds the
+        /// per-turn changed-files view.
+        changed: Option<ChangedFile>,
     },
 }
 
@@ -548,6 +551,16 @@ pub struct ConvFold {
     plan: Option<Plan>,
 }
 
+impl Turn {
+    /// Files this turn changed, one entry per file with the edits summed.
+    pub fn changes(&self) -> Vec<ChangedFile> {
+        merge_changes(self.parts.iter().filter_map(|p| match p {
+            Part::Tool { changed, .. } => changed.clone(),
+            _ => None,
+        }))
+    }
+}
+
 impl ConvFold {
     pub fn new(stream: bool) -> Self {
         Self {
@@ -588,6 +601,29 @@ impl ConvFold {
                     }
                 )
             })
+    }
+
+    /// Every file the session has changed, most recently touched first, with
+    /// each file's edits summed across turns.
+    ///
+    /// This is the agent's account of its own work, not the work tree's: it
+    /// includes a file the agent edited and later reverted, and excludes one you
+    /// changed by hand. The review pane answers the other question.
+    pub fn session_changes(&self) -> Vec<ChangedFile> {
+        merge_changes(self.turns.iter().rev().flat_map(|t| t.changes()))
+    }
+
+    /// The turns that changed something, newest first, paired with their changes.
+    pub fn changed_turns(&self) -> Vec<(usize, Vec<ChangedFile>)> {
+        self.turns
+            .iter()
+            .enumerate()
+            .rev()
+            .filter_map(|(i, t)| {
+                let changes = t.changes();
+                (!changes.is_empty()).then_some((i, changes))
+            })
+            .collect()
     }
 
     pub fn plan(&self) -> Option<&Plan> {
@@ -730,6 +766,7 @@ impl ConvFold {
                         .to_string();
                     let summary = tool_summary(item.get("input"));
                     let edits = edit_pairs(item.get("input"));
+                    let changed = changed_file(item.get("input"));
                     let loc = self.push(
                         Role::Assistant,
                         Part::Tool {
@@ -737,6 +774,7 @@ impl ConvFold {
                             summary,
                             result: None,
                             edits,
+                            changed,
                         },
                     );
                     if let Some(id) = id {
@@ -842,6 +880,7 @@ impl ConvFold {
                                 snippet
                             }),
                             edits: Vec::new(),
+                            changed: None,
                         },
                     );
                 }
@@ -860,6 +899,93 @@ impl ConvFold {
 /// of an `edits` array (MultiEdit); or, for managed providers whose edits
 /// arrive as a unified patch (Codex `apply_patch` carries `diff`), the
 /// removed/added line groups of that patch. Empty for every other tool shape.
+/// A file a tool call changed, with the size of the change.
+///
+/// Derived from the call's input rather than from git: this is what the *agent*
+/// did in this turn, which is a different question from what the work tree looks
+/// like now (the review pane's job). A file the agent edited and then reverted
+/// shows up here and not there, and that is the point.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangedFile {
+    pub path: String,
+    pub added: usize,
+    pub removed: usize,
+}
+
+impl ChangedFile {
+    /// Last two path segments — enough to tell files apart without eating the row.
+    pub fn short_path(&self) -> String {
+        let parts: Vec<&str> = self.path.rsplit('/').take(2).collect();
+        parts.into_iter().rev().collect::<Vec<_>>().join("/")
+    }
+}
+
+/// Sum a set of changes per file, newest-wins on order of appearance. Used for
+/// both a turn's changes and a whole session's.
+pub fn merge_changes(changes: impl IntoIterator<Item = ChangedFile>) -> Vec<ChangedFile> {
+    let mut out: Vec<ChangedFile> = Vec::new();
+    for c in changes {
+        match out.iter_mut().find(|e| e.path == c.path) {
+            // The same file touched twice in a turn is one entry, both edits counted.
+            Some(existing) => {
+                existing.added += c.added;
+                existing.removed += c.removed;
+            }
+            None => out.push(c),
+        }
+    }
+    out
+}
+
+/// The file an edit-shaped tool call changed, and by how much.
+///
+/// `None` for a call that changes nothing (a read, a search) or whose target we
+/// can't name — a count with no path to attach it to is worse than nothing.
+fn changed_file(input: Option<&Value>) -> Option<ChangedFile> {
+    let obj = input?.as_object()?;
+    let path = ["file_path", "notebook_path", "path"]
+        .iter()
+        .find_map(|k| obj.get(*k).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|p| !p.is_empty())?;
+
+    // Write replaces a whole file: every line is added, and there is no old text
+    // to diff against, so the edit-pair path below would report nothing.
+    if let Some(content) = obj.get("content").and_then(Value::as_str) {
+        if !obj.contains_key("old_string") {
+            return Some(ChangedFile {
+                path: path.to_string(),
+                added: line_count(content),
+                removed: 0,
+            });
+        }
+    }
+
+    let pairs = edit_pairs(input);
+    if pairs.is_empty() {
+        return None;
+    }
+    let (mut added, mut removed) = (0, 0);
+    for (old, new) in &pairs {
+        removed += line_count(old);
+        added += line_count(new);
+    }
+    Some(ChangedFile {
+        path: path.to_string(),
+        added,
+        removed,
+    })
+}
+
+/// Lines in a chunk of text. Empty text is zero lines, not one — an empty
+/// `old_string` means "inserted here", with nothing removed.
+fn line_count(s: &str) -> usize {
+    if s.is_empty() {
+        return 0;
+    }
+    s.lines().count()
+}
+
 fn edit_pairs(input: Option<&Value>) -> Vec<(String, String)> {
     let Some(obj) = input.and_then(|v| v.as_object()) else {
         return Vec::new();
@@ -992,6 +1118,127 @@ pub fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn edit_item(path: &str, old: &str, new: &str) -> Value {
+        serde_json::json!({
+            "kind": "tool_use", "id": format!("t-{path}-{old}"), "name": "Edit",
+            "input": { "file_path": path, "old_string": old, "new_string": new }
+        })
+    }
+
+    /// The counts come from the edit's own text, so they describe what the agent
+    /// did — not what the work tree looks like now.
+    #[test]
+    fn an_edit_reports_its_file_and_line_counts() {
+        let mut f = ConvFold::new(true);
+        f.apply_delta(
+            1,
+            false,
+            &[edit_item("/repo/src/a.rs", "one\ntwo", "ONE\nTWO\nTHREE")],
+        );
+
+        let changes = f.session_changes();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].path, "/repo/src/a.rs");
+        assert_eq!((changes[0].added, changes[0].removed), (3, 2));
+        assert_eq!(
+            changes[0].short_path(),
+            "src/a.rs",
+            "enough to tell files apart"
+        );
+    }
+
+    /// A Write has no old text to diff against, so the edit-pair path would
+    /// report nothing at all for the commonest way a file gets created.
+    #[test]
+    fn a_write_counts_the_whole_file_as_added() {
+        let mut f = ConvFold::new(true);
+        f.apply_delta(
+            1,
+            false,
+            &[serde_json::json!({
+                "kind": "tool_use", "id": "w1", "name": "Write",
+                "input": { "file_path": "/repo/new.rs", "content": "a\nb\nc" }
+            })],
+        );
+        let changes = f.session_changes();
+        assert_eq!((changes[0].added, changes[0].removed), (3, 0));
+    }
+
+    #[test]
+    fn a_read_only_call_changes_nothing() {
+        let mut f = ConvFold::new(true);
+        f.apply_delta(
+            1,
+            false,
+            &[serde_json::json!({
+                "kind": "tool_use", "id": "r1", "name": "Read",
+                "input": { "file_path": "/repo/a.rs" }
+            })],
+        );
+        assert!(f.session_changes().is_empty(), "a read is not a change");
+    }
+
+    #[test]
+    fn a_codex_patch_counts_through_the_unified_diff() {
+        let mut f = ConvFold::new(true);
+        f.apply_delta(
+            1,
+            false,
+            &[serde_json::json!({
+                "kind": "tool_use", "id": "p1", "name": "apply_patch",
+                "input": {
+                    "path": "src/a.rs",
+                    "diff": "--- a/src/a.rs\n+++ b/src/a.rs\n@@\n context\n-let x = 1;\n+let x = 2;\n+let y = 3;\n"
+                }
+            })],
+        );
+        let changes = f.session_changes();
+        assert_eq!(changes[0].path, "src/a.rs");
+        assert_eq!((changes[0].added, changes[0].removed), (2, 1));
+    }
+
+    /// One file edited twice in a turn is one row with both edits counted —
+    /// listing it twice would misreport the size of the change.
+    #[test]
+    fn repeat_edits_to_one_file_collapse_into_one_row() {
+        let mut f = ConvFold::new(true);
+        f.apply_delta(
+            2,
+            false,
+            &[
+                edit_item("/repo/a.rs", "x", "X"),
+                edit_item("/repo/a.rs", "y", "Y\nZ"),
+            ],
+        );
+        let turn_changes = f.turns()[0].changes();
+        assert_eq!(turn_changes.len(), 1);
+        assert_eq!((turn_changes[0].added, turn_changes[0].removed), (3, 2));
+    }
+
+    /// Turns are reported newest first: what just changed is the interesting part.
+    #[test]
+    fn changed_turns_are_newest_first_and_skip_turns_that_changed_nothing() {
+        let mut f = ConvFold::new(true);
+        f.apply_delta(1, false, &[edit_item("/repo/first.rs", "a", "A")]);
+        // A turn with only prose changes nothing.
+        f.apply_delta(
+            2,
+            false,
+            &[serde_json::json!({ "kind": "user_message", "text": "go on" })],
+        );
+        f.apply_delta(3, false, &[edit_item("/repo/second.rs", "b", "B")]);
+
+        let turns = f.changed_turns();
+        assert_eq!(turns.len(), 2, "the prose turn is not listed");
+        assert_eq!(turns[0].1[0].path, "/repo/second.rs", "newest first");
+        assert_eq!(turns[1].1[0].path, "/repo/first.rs");
+
+        // The session view merges them, most recently touched first.
+        let session = f.session_changes();
+        assert_eq!(session.len(), 2);
+        assert_eq!(session[0].path, "/repo/second.rs");
+    }
 
     #[test]
     fn edit_pairs_reads_codex_unified_patch() {
@@ -1432,6 +1679,7 @@ mod tests {
                 summary,
                 result,
                 edits,
+                ..
             } => {
                 assert_eq!(name, "apply_patch");
                 assert_eq!(summary, "src/a.rs");
@@ -1450,6 +1698,7 @@ mod tests {
                 summary,
                 result,
                 edits,
+                ..
             } => {
                 assert_eq!(name, "shell");
                 assert_eq!(summary, "bash -c ls", "argv arrays join into a summary");

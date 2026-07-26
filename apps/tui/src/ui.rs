@@ -36,18 +36,30 @@ pub fn render(f: &mut Frame, app: &mut App) {
         .split(root[1]);
 
     render_sidebar(f, body[0], app);
+    // A docked pane splits the content column: the agent keeps the larger share,
+    // because the conversation is still the thing you are reading.
+    let (content, side) = match app.side.as_ref() {
+        Some(_) if app.runs_open.is_none() => {
+            let cells = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+                .split(body[1]);
+            (cells[0], Some(cells[1]))
+        }
+        _ => (body[1], None),
+    };
     if app.runs_open.is_some() {
-        // Like the review pane, the runs overlay takes the whole content column.
-        render_runs(f, body[1], app);
-    } else if app.review.is_some() {
-        // The review pane takes the whole content column (it wants the width).
-        render_review(f, body[1], app);
+        // The runs overlay takes the whole content column.
+        render_runs(f, content, app);
     } else {
         match &app.view {
-            View::List if app.dashboard_selected() => render_dashboard(f, body[1], app),
-            View::List => render_detail(f, body[1], app),
-            View::Agent { .. } => render_panes(f, body[1], app),
+            View::List if app.dashboard_selected() => render_dashboard(f, content, app),
+            View::List => render_detail(f, content, app),
+            View::Agent { .. } => render_panes(f, content, app),
         }
+    }
+    if let Some(area) = side {
+        render_side_pane(f, area, app);
     }
 
     render_footer(f, root[2], app);
@@ -831,6 +843,7 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                     summary,
                     result,
                     edits,
+                    ..
                 } = p
                 {
                     run.push(ToolRow {
@@ -856,6 +869,7 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                     summary,
                     result,
                     edits,
+                    ..
                 } => {
                     push_tool_row(&mut out, t, w, name, summary);
                     push_edit_diff(&mut out, t, w, edits);
@@ -1934,6 +1948,131 @@ fn render_notes(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(body.block(block), rect);
 }
 
+// ── docked side pane ──────────────────────────────────────────────────────────
+
+/// The pane docked beside the agent: the git review, or the agent's own changes.
+/// The border says which one has the keys, so `Ctrl-w` is never a guess.
+fn render_side_pane(f: &mut Frame, area: Rect, app: &App) {
+    match app.side.as_ref().map(|p| p.kind) {
+        Some(crate::app::SideKind::Review) => render_review(f, area, app),
+        Some(crate::app::SideKind::Changes) => render_changes(f, area, app),
+        None => {}
+    }
+}
+
+/// Files the agent changed, newest turn first.
+///
+/// This is the agent's account of its own work, taken from the transcript — a
+/// different question from what the work tree looks like now, which is the review
+/// pane beside it. A file the agent edited and then reverted appears here and not
+/// there; a file you changed by hand appears there and not here. Both are true.
+fn render_changes(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
+    let focused = app.side_focused();
+    let Some(pane) = app.side_of(crate::app::SideKind::Changes) else {
+        return;
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" changes ")
+        .title_bottom(Line::from(Span::styled(
+            if focused {
+                " j/k scroll · ctrl-w back · esc close "
+            } else {
+                " ctrl-w to focus "
+            },
+            Style::default().fg(t.dim),
+        )))
+        .border_style(Style::default().fg(if focused { t.accent } else { t.dim }));
+
+    let Some(fold) = app.folds.get(&pane.session_id) else {
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "open the agent's chat to load its transcript",
+                Style::default().fg(t.dim),
+            )))
+            .block(block),
+            area,
+        );
+        return;
+    };
+
+    let w = area.width.saturating_sub(2);
+    let mut lines: Vec<Line> = Vec::new();
+
+    let session = fold.session_changes();
+    if session.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "this agent hasn't changed any files yet",
+            Style::default().fg(t.dim),
+        )));
+    } else {
+        let (added, removed): (usize, usize) = session
+            .iter()
+            .fold((0, 0), |(a, r), c| (a + c.added, r + c.removed));
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{} files", session.len()),
+                Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!("  +{added}"), Style::default().fg(t.ok)),
+            Span::styled(format!(" −{removed}"), Style::default().fg(t.bad)),
+            Span::styled("  this session", Style::default().fg(t.dim)),
+        ]));
+        lines.push(Line::raw(""));
+
+        // Grouped by turn, newest first: "what did that last turn touch" is the
+        // question, and a flat file list can't answer it.
+        for (i, (_, changes)) in fold.changed_turns().iter().enumerate() {
+            let (a, r): (usize, usize) = changes
+                .iter()
+                .fold((0, 0), |(a, r), c| (a + c.added, r + c.removed));
+            lines.push(Line::from(vec![
+                Span::styled(
+                    if i == 0 {
+                        "latest turn".to_string()
+                    } else {
+                        format!("{i} turns back")
+                    },
+                    Style::default()
+                        .fg(if i == 0 { t.accent } else { t.dim })
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("  +{a}"), Style::default().fg(t.ok)),
+                Span::styled(format!(" −{r}"), Style::default().fg(t.bad)),
+            ]));
+            for c in changes {
+                lines.push(change_row(t, c, w));
+            }
+            lines.push(Line::raw(""));
+        }
+    }
+
+    f.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .scroll((pane.scroll, 0))
+            .wrap(ratatui::widgets::Wrap { trim: false }),
+        area,
+    );
+}
+
+/// One changed-file row: path on the left, its +/− on the right.
+fn change_row(t: &Theme, c: &crate::types::ChangedFile, width: u16) -> Line<'static> {
+    let counts = format!("+{} −{}", c.added, c.removed);
+    let room = (width as usize).saturating_sub(counts.len() + 5).max(8);
+    Line::from(vec![
+        Span::raw("  "),
+        Span::styled(
+            crate::render::truncate_width(&c.short_path(), room),
+            Style::default().fg(t.fg),
+        ),
+        Span::raw(" "),
+        Span::styled(format!("+{}", c.added), Style::default().fg(t.ok)),
+        Span::styled(format!(" −{}", c.removed), Style::default().fg(t.bad)),
+    ])
+}
+
 // ── runs overlay: workflows + subagents ───────────────────────────────────────
 
 /// The work an agent spawned: workflow runs (grouped by phase, when known) and
@@ -2261,7 +2400,17 @@ fn render_review(f: &mut Frame, area: Rect, app: &App) {
             " review · {branch} · {view} ({} files) ",
             r.files.len()
         ))
-        .border_style(Style::default().fg(t.accent));
+        .title_bottom(Line::from(Span::styled(
+            if app.side_focused() {
+                " ctrl-w back to chat "
+            } else {
+                " ctrl-w to focus "
+            },
+            Style::default().fg(t.dim),
+        )))
+        // Dim when the chat has the keys, so which pane a keystroke lands in is
+        // never a guess.
+        .border_style(Style::default().fg(if app.side_focused() { t.accent } else { t.dim }));
     let inner = block.inner(area);
     f.render_widget(block, area);
 

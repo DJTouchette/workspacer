@@ -444,6 +444,27 @@ impl QuestionFlow {
     }
 }
 
+/// What a docked side pane is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SideKind {
+    /// The git work tree: what the repo looks like now. Interactive — its keys
+    /// apply while it holds focus.
+    Review,
+    /// The files the agent changed, from the transcript. Read-only.
+    Changes,
+}
+
+/// A pane docked to the right of (or below) the agent tiles.
+#[derive(Debug, Clone)]
+pub struct SidePane {
+    pub kind: SideKind,
+    /// The session it belongs to — a docked pane follows one agent, not the view.
+    pub session_id: String,
+    /// True while keys route here instead of to the chat.
+    pub focused: bool,
+    pub scroll: u16,
+}
+
 /// State of the git review pane (mirrors the desktop Review pane): the work
 /// tree's branch + changed files on the left, the selected file's unified diff
 /// on the right. Opened over an agent and keyed by that agent's cwd.
@@ -520,6 +541,15 @@ pub struct App {
     pub perm_modes: HashMap<String, String>,
     /// The git review pane, when open (a modal over the agent view).
     pub review: Option<ReviewState>,
+    /// A pane docked beside the agent tiles: the git review, or the agent's own
+    /// changed files. `None` when the content column is all agent.
+    ///
+    /// Deliberately its own slot rather than another entry in `tiles`: every tile
+    /// is an agent, and the split/focus/close logic is written around that
+    /// (`focus_agent` on every move, "no other agent to split"). Threading a kind
+    /// through all of it to express "one docked pane" would put those invariants
+    /// at risk for no user-visible gain — nobody wants three reviews side by side.
+    pub side: Option<SidePane>,
     /// The runs overlay: which session's subagents + workflows are on screen.
     /// `None` when closed.
     pub runs_open: Option<String>,
@@ -718,6 +748,7 @@ impl App {
             selected: 0,
             view: View::List,
             folds: std::collections::HashMap::new(),
+            side: None,
             runs_open: None,
             runs: std::collections::HashMap::new(),
             transcript_cache: None,
@@ -1547,11 +1578,71 @@ impl App {
             return;
         };
         self.review = Some(ReviewState::new(cwd.clone()));
+        // The review is a docked pane, not a takeover: the conversation it is a
+        // review *of* stays on screen beside it.
+        let sid = self.target_session().unwrap_or_default();
+        self.side = Some(SidePane {
+            kind: SideKind::Review,
+            session_id: sid,
+            focused: true,
+            scroll: 0,
+        });
         self.load_git_status(cwd);
     }
 
     pub(super) fn close_review(&mut self) {
         self.review = None;
+        if self
+            .side
+            .as_ref()
+            .is_some_and(|p| p.kind == SideKind::Review)
+        {
+            self.side = None;
+        }
+    }
+
+    /// Dock (or un-dock) a side pane for the agent in focus. Opening one takes
+    /// focus, so its keys work immediately — the same feel the modal had, without
+    /// hiding the conversation behind it.
+    pub(super) fn toggle_side(&mut self, kind: SideKind) {
+        if self.side.as_ref().is_some_and(|p| p.kind == kind) {
+            self.side = None;
+            if kind == SideKind::Review {
+                self.review = None;
+            }
+            return;
+        }
+        let Some(sid) = self.target_session() else {
+            self.set_toast("no agent selected");
+            return;
+        };
+        self.side = Some(SidePane {
+            kind,
+            session_id: sid,
+            focused: true,
+            scroll: 0,
+        });
+    }
+
+    /// Move focus between the agent tiles and the docked pane.
+    pub(super) fn focus_side(&mut self, to_side: bool) -> bool {
+        match self.side.as_mut() {
+            Some(pane) if pane.focused != to_side => {
+                pane.focused = to_side;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// True when keys belong to the docked pane rather than the chat.
+    pub fn side_focused(&self) -> bool {
+        self.side.as_ref().is_some_and(|p| p.focused)
+    }
+
+    /// The docked pane, when it is showing `kind`.
+    pub fn side_of(&self, kind: SideKind) -> Option<&SidePane> {
+        self.side.as_ref().filter(|p| p.kind == kind)
     }
 
     /// Re-pull status for the open review pane (after a stage/commit/etc.).
@@ -1849,6 +1940,73 @@ mod tests {
             let _ = std::fs::create_dir_all(&dir);
             std::env::set_var("XDG_CONFIG_HOME", &dir);
         });
+    }
+
+    /// A docked pane takes the keys when it opens and hands them back on Ctrl-w,
+    /// so the conversation stays readable beside it either way.
+    #[tokio::test]
+    async fn a_docked_pane_takes_focus_and_gives_it_back() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_cwd("s1", "/repo", "input")]);
+        app.selected = 1;
+        app.open_agent();
+
+        app.toggle_side(SideKind::Changes);
+        assert!(app.side_focused(), "opening it focuses it");
+        assert!(app.side_of(SideKind::Changes).is_some());
+
+        assert!(app.focus_side(false));
+        assert!(!app.side_focused(), "keys go back to the chat");
+        assert!(
+            app.side_of(SideKind::Changes).is_some(),
+            "…but the pane stays docked"
+        );
+
+        // From the chat, stepping through the panes lands on it again.
+        app.focus_pane(1);
+        assert!(app.side_focused());
+    }
+
+    #[tokio::test]
+    async fn toggling_the_same_pane_closes_it() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_cwd("s1", "/repo", "input")]);
+        app.selected = 1;
+        app.open_agent();
+
+        app.toggle_side(SideKind::Changes);
+        app.toggle_side(SideKind::Changes);
+        assert!(app.side.is_none());
+    }
+
+    /// Two kinds, one dock: asking for the other swaps it rather than stacking.
+    #[tokio::test]
+    async fn asking_for_the_other_kind_swaps_the_dock() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_cwd("s1", "/repo", "input")]);
+        app.selected = 1;
+        app.open_agent();
+
+        app.toggle_side(SideKind::Changes);
+        app.toggle_side(SideKind::Review);
+        assert_eq!(app.side.as_ref().map(|p| p.kind), Some(SideKind::Review));
+        assert!(app.side_of(SideKind::Changes).is_none());
+    }
+
+    /// Closing the review has to take its dock with it — a docked pane with no
+    /// review behind it would render an empty box you can't close.
+    #[tokio::test]
+    async fn closing_the_review_undocks_it() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_cwd("s1", "/repo", "input")]);
+        app.selected = 1;
+        app.open_agent();
+
+        app.open_review();
+        assert_eq!(app.side.as_ref().map(|p| p.kind), Some(SideKind::Review));
+        app.close_review();
+        assert!(app.side.is_none());
+        assert!(app.review.is_none());
     }
 
     /// Resuming keeps the row's own transport; only a fresh spawn takes the

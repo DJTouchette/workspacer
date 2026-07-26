@@ -115,6 +115,17 @@ analytics and rich browser/editor workflows. See
   consecutive tool calls (e.g. during a workflow) collapse into one compact
   `N tool calls · …` line. An open agent's tab bar shows a git inspector
   (`⎇ branch ±changed`).
+- **Changes pane** — `C` docks a pane listing the files the agent changed,
+  grouped by turn with `+`/`−` counts and a session total. This is the agent's
+  account of its own work, taken from the transcript, which is a *different*
+  question from what the work tree looks like now: a file the agent edited and
+  then reverted shows up here and not in the review, and one you changed by hand
+  shows up there and not here.
+- **Docked panes** — the review (`R`) and changes (`C`) panes dock beside the
+  conversation instead of covering it. The focused pane has the bright border and
+  owns the keys; `Ctrl-w` moves focus between it and the chat, and `esc` closes
+  it. From the chat, `Ctrl-w l` steps into the dock as the last stop in the pane
+  cycle.
 - **Runs overlay** — `W` shows the work an agent spawned: workflow runs with
   their phases and per-agent progress, plain Agent-tool subagents, and the
   agent's own plan. Read from Claude Code's on-disk artifacts and refreshed on a
@@ -160,6 +171,7 @@ analytics and rich browser/editor workflows. See
 | `S` | respawn a stopped agent (fresh Claude in its cwd) |
 | `R` | open the git review pane |
 | `W` | open the runs overlay — workflow runs, subagents + plan |
+| `C` | dock the changes pane — files the agent changed |
 | `N` | open the notes scratchpad |
 | `r` | refresh |
 | `q` | quit |
@@ -207,7 +219,7 @@ only `Ctrl-]` is intercepted.
 | `enter` | spawn |
 | `esc` | cancel |
 
-**Review pane** (`R` — from the sidebar or an open agent)
+**Review pane** (`R` — docks beside the conversation; `Ctrl-w` to focus it)
 
 | Key | Action |
 |-----|--------|

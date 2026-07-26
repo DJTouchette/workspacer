@@ -26,6 +26,7 @@ const COMMAND_PALETTE: &[(&str, &str)] = &[
     ("notes", "open the notes scratchpad"),
     ("review", "open the git review"),
     ("runs", "workflow runs, subagents + plan"),
+    ("changes", "files the agent changed (docked pane)"),
     ("pin", "pin / unpin the agent (harpoon)"),
     ("search", "search transcripts across all agents"),
     ("model", "switch the model (live)"),
@@ -81,10 +82,26 @@ impl App {
             self.handle_notes_key(key);
             return;
         }
-        // The review pane is a modal over the agent view with its own keys.
-        if self.review.is_some() {
-            self.handle_review_key(key);
-            return;
+        // A docked pane owns the keys while it holds focus. Ctrl-w h/l moves focus
+        // back to the chat, so the binding that got you here also gets you out.
+        if self.side_focused() {
+            // Ctrl-w alone hands focus back — a docked pane is one window, so
+            // there is no direction to pick, and the pane's own keys stay free.
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('w') {
+                self.focus_side(false);
+                return;
+            }
+            match self.side.as_ref().map(|p| p.kind) {
+                Some(super::SideKind::Review) if self.review.is_some() => {
+                    self.handle_review_key(key);
+                    return;
+                }
+                Some(super::SideKind::Changes) => {
+                    self.handle_changes_key(key);
+                    return;
+                }
+                _ => {}
+            }
         }
         // The runs overlay is read-only — it only needs a way out.
         if self.runs_open.is_some() {
@@ -283,6 +300,7 @@ impl App {
             }
             OpenReview => self.open_review(),
             OpenRuns => self.open_runs(),
+            OpenChanges => self.toggle_side(super::SideKind::Changes),
             OpenNotes => self.open_notes(),
             RenameAgent => self.open_rename(),
             Respawn => self.respawn(),
@@ -465,6 +483,7 @@ impl App {
             "notes" => self.open_notes(),
             "review" => self.open_review(),
             "runs" => self.open_runs(),
+            "changes" => self.toggle_side(super::SideKind::Changes),
             "pin" => self.harpoon_toggle(),
             "search" | "grep" => self.open_search(),
             "model" => self.open_model_picker(),
@@ -1433,6 +1452,12 @@ impl App {
 
     /// Move focus to another tiled pane (wrapping). `delta` is +1 / -1.
     pub(super) fn focus_pane(&mut self, delta: i32) {
+        // A docked pane is the last stop in the cycle: from the agent tiles,
+        // `Ctrl-w l` steps into it rather than reporting nothing to do.
+        if self.side.is_some() && !self.side_focused() {
+            self.focus_side(true);
+            return;
+        }
         let n = self.tiles.len();
         if n <= 1 {
             return;
@@ -1750,6 +1775,34 @@ impl App {
         self.invalidate_transcript_cache();
         self.tiles.clear();
         self.tile_focus = 0;
+    }
+
+    /// Keys for the docked changes pane — read-only, so it only scrolls and closes.
+    fn handle_changes_key(&mut self, key: KeyEvent) {
+        let scroll = |p: &mut super::SidePane, delta: i32| {
+            p.scroll = (p.scroll as i32 + delta).max(0) as u16;
+        };
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('C') => {
+                self.side = None;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let Some(p) = self.side.as_mut() {
+                    scroll(p, 1)
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let Some(p) = self.side.as_mut() {
+                    scroll(p, -1)
+                }
+            }
+            KeyCode::Char('g') => {
+                if let Some(p) = self.side.as_mut() {
+                    p.scroll = 0
+                }
+            }
+            _ => {}
+        }
     }
 
     /// The agent a key action targets: the chat's agent when in chat, else the
