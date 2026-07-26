@@ -19,6 +19,7 @@ mod notes;
 mod pins;
 mod profiles;
 mod render;
+mod runs;
 mod terminal;
 mod theme;
 mod types;
@@ -210,7 +211,9 @@ async fn run(
                     None => std::future::pending().await,
                 }
             } => if let Some(ev) = bev { app.apply_bus_event(ev) },
-            _ = tick.tick() => {}
+            // The steady tick also re-reads the runs overlay's artifacts, so a
+            // live workflow's progress advances without the renderer touching disk.
+            _ = tick.tick() => app.refresh_runs(),
         }
     }
     Ok(())

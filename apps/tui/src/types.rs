@@ -164,6 +164,11 @@ pub struct Agent {
     pub tool_calls: u64,
     #[serde(default)]
     pub last_event: Option<String>,
+    /// Claude's transcript file for this session. Minus its `.jsonl` suffix this
+    /// is the session's artifact directory, where its subagent and workflow
+    /// progress is written (see [`crate::runs`]).
+    #[serde(default)]
+    pub transcript_path: Option<String>,
     /// Token/cost/context/model as returned by claudemon's `/sessions` response.
     /// Absent when the daemon hasn't computed it yet (no assistant turns).
     #[serde(default)]
@@ -564,6 +569,25 @@ impl ConvFold {
     pub fn pending_text(&self) -> Option<&str> {
         let t = self.pending.trim();
         (!t.is_empty()).then_some(t)
+    }
+
+    /// Whether a tool call has produced its result yet.
+    ///
+    /// `false` for an id we've never seen at all, which is the honest answer for
+    /// a caller asking "is this finished?" — an unseen call is not a finished one.
+    pub fn tool_settled(&self, tool_use_id: &str) -> bool {
+        self.tool_loc
+            .get(tool_use_id)
+            .and_then(|&(ti, pi)| self.turns.get(ti).and_then(|t| t.parts.get(pi)))
+            .is_some_and(|p| {
+                matches!(
+                    p,
+                    Part::Tool {
+                        result: Some(_),
+                        ..
+                    }
+                )
+            })
     }
 
     pub fn plan(&self) -> Option<&Plan> {

@@ -115,6 +115,16 @@ analytics and rich browser/editor workflows. See
   consecutive tool calls (e.g. during a workflow) collapse into one compact
   `N tool calls · …` line. An open agent's tab bar shows a git inspector
   (`⎇ branch ±changed`).
+- **Runs overlay** — `W` shows the work an agent spawned: workflow runs with
+  their phases and per-agent progress, plain Agent-tool subagents, and the
+  agent's own plan. Read from Claude Code's on-disk artifacts and refreshed on a
+  tick, so a live run advances while you watch. `r` re-reads now, `esc` closes.
+  A live run shows its name and agents; phase groupings appear once the run
+  writes its final state file.
+- **Plan** — the agent's checklist (`TodoWrite` / `update_plan`) rides the
+  conversation feed, so it needs no fetch. The details pane shows the whole
+  checklist with the in-flight step highlighted in its present tense, and the
+  composer's bottom border always shows that one step plus a done/total count.
 - **Review pane** — `R` opens a git review of the agent's work tree (backed by
   claudemon's git API, like the desktop Review pane): branch + changed files on
   the left, the selected file's colourised unified diff on the right. Stage /
@@ -149,6 +159,7 @@ analytics and rich browser/editor workflows. See
 | `e` | rename (a custom per-project name, persisted) |
 | `S` | respawn a stopped agent (fresh Claude in its cwd) |
 | `R` | open the git review pane |
+| `W` | open the runs overlay — workflow runs, subagents + plan |
 | `N` | open the notes scratchpad |
 | `r` | refresh |
 | `q` | quit |

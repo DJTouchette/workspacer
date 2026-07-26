@@ -36,6 +36,11 @@ pub enum AppMsg {
         session_id: String,
         snapshot: Box<serde_json::Value>,
     },
+    /// Subagent + workflow progress read off disk for a session.
+    Runs {
+        session_id: String,
+        runs: Box<crate::runs::SessionRuns>,
+    },
     /// One `conversation.delta` frame from claudemon's SSE feed.
     ConvDelta(Box<crate::claudemon::ConvDelta>),
     Toast(String),
@@ -515,6 +520,13 @@ pub struct App {
     pub perm_modes: HashMap<String, String>,
     /// The git review pane, when open (a modal over the agent view).
     pub review: Option<ReviewState>,
+    /// The runs overlay: which session's subagents + workflows are on screen.
+    /// `None` when closed.
+    pub runs_open: Option<String>,
+    /// Last-read runs per session. Read off disk on a refresh tick while the
+    /// overlay is open (see [`crate::runs`]) — nothing is read for a session
+    /// nobody is looking at.
+    pub runs: std::collections::HashMap<String, crate::runs::SessionRuns>,
     /// The rename overlay, when open.
     pub rename: Option<RenameForm>,
     /// Custom per-cwd display names (persisted); empty when none set.
@@ -706,6 +718,8 @@ impl App {
             selected: 0,
             view: View::List,
             folds: std::collections::HashMap::new(),
+            runs_open: None,
+            runs: std::collections::HashMap::new(),
             transcript_cache: None,
             chat_scroll: 0,
             chat_follow: false,
@@ -768,6 +782,9 @@ impl App {
                 }
             }
             AppMsg::ConvDelta(delta) => self.apply_conv_delta(*delta),
+            AppMsg::Runs { session_id, runs } => {
+                self.runs.insert(session_id, *runs);
+            }
             AppMsg::Toast(t) => self.set_toast(t),
             AppMsg::SendFailed { text, error } => {
                 self.pending_echo = None;
@@ -1456,6 +1473,70 @@ impl App {
 
     /// Open the review pane over the targeted agent's work tree. No-op (with a
     /// toast) when the agent has no cwd.
+    /// Open the runs overlay on the agent in focus, and kick off the first read.
+    pub(super) fn open_runs(&mut self) {
+        let Some(sid) = self.target_session() else {
+            self.set_toast("no agent selected");
+            return;
+        };
+        self.runs_open = Some(sid);
+        self.refresh_runs();
+    }
+
+    pub(super) fn close_runs(&mut self) {
+        self.runs_open = None;
+    }
+
+    /// Re-read the open session's artifacts. Called on the refresh tick, so the
+    /// overlay tracks a live workflow without the renderer ever touching disk.
+    pub(super) fn refresh_runs(&self) {
+        let Some(sid) = self.runs_open.clone() else {
+            return;
+        };
+        // A session with no transcript yet (cold start, or a provider that
+        // doesn't write one) simply has no artifacts to read.
+        let Some(path) = self
+            .all_agents
+            .iter()
+            .find(|a| a.session_id == sid)
+            .and_then(|a| a.transcript_path.clone())
+        else {
+            return;
+        };
+        let tx = self.tx.clone();
+        // Blocking file IO off the UI thread: the run dir of a big workflow holds
+        // dozens of transcripts, and a frame must never wait on a stat.
+        tokio::task::spawn_blocking(move || {
+            let runs = crate::runs::read(&path);
+            let _ = tx.send(AppMsg::Runs {
+                session_id: sid,
+                runs: Box::new(runs),
+            });
+        });
+    }
+
+    /// The runs for the open overlay, with each plain subagent's state resolved
+    /// against the conversation.
+    ///
+    /// A subagent's meta file records the `tool_use` id of the `Task` call that
+    /// spawned it, and that call is finished exactly when its result has landed —
+    /// which the fold already knows. Resolving it here rather than storing a
+    /// status keeps one source of truth: the transcript.
+    pub fn open_runs_view(&self) -> Option<(&str, crate::runs::SessionRuns)> {
+        let sid = self.runs_open.as_deref()?;
+        let mut runs = self.runs.get(sid)?.clone();
+        let fold = self.folds.get(sid);
+        for sub in &mut runs.subagents {
+            sub.state = match (&sub.tool_use_id, fold) {
+                (Some(id), Some(f)) if f.tool_settled(id) => crate::runs::RunState::Done,
+                // No id, or a fold we haven't loaded: don't claim it finished.
+                _ => crate::runs::RunState::Running,
+            };
+        }
+        runs.subagents.sort_by(|a, b| a.state.cmp(&b.state));
+        Some((sid, runs))
+    }
+
     pub(super) fn open_review(&mut self) {
         let Some(cwd) = self
             .target_agent()

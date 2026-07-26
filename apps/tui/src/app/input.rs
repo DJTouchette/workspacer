@@ -25,6 +25,7 @@ const COMMAND_PALETTE: &[(&str, &str)] = &[
     ("term", "new terminal tab"),
     ("notes", "open the notes scratchpad"),
     ("review", "open the git review"),
+    ("runs", "workflow runs, subagents + plan"),
     ("pin", "pin / unpin the agent (harpoon)"),
     ("search", "search transcripts across all agents"),
     ("model", "switch the model (live)"),
@@ -83,6 +84,18 @@ impl App {
         // The review pane is a modal over the agent view with its own keys.
         if self.review.is_some() {
             self.handle_review_key(key);
+            return;
+        }
+        // The runs overlay is read-only — it only needs a way out.
+        if self.runs_open.is_some() {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('h') | KeyCode::Char('W') => {
+                    self.close_runs();
+                }
+                // A manual nudge, for when you don't want to wait for the tick.
+                KeyCode::Char('r') => self.refresh_runs(),
+                _ => {}
+            }
             return;
         }
         // The sidebar filter captures keys literally while it's being typed.
@@ -269,6 +282,7 @@ impl App {
                 }
             }
             OpenReview => self.open_review(),
+            OpenRuns => self.open_runs(),
             OpenNotes => self.open_notes(),
             RenameAgent => self.open_rename(),
             Respawn => self.respawn(),
@@ -450,6 +464,7 @@ impl App {
             "term" | "terminal" => self.new_terminal_tab(),
             "notes" => self.open_notes(),
             "review" => self.open_review(),
+            "runs" => self.open_runs(),
             "pin" => self.harpoon_toggle(),
             "search" | "grep" => self.open_search(),
             "model" => self.open_model_picker(),
