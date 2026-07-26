@@ -5,31 +5,41 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>work{spacer} :: docs</title>
 <meta name="description" content="Documentation for work{spacer}, a local-first control plane and IDE for running many coding agents side by side." />
+<!-- The pages named JetBrains Mono without ever loading it. Prose is sans now;
+     mono is reserved for code, the wordmark, and terminal bodies. -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <style>
   :root {
-    --bg: #1e2326; --bg-2: #232a2e; --panel: #272e33;
-    --line: #3d484d; --line-soft: #343f44;
+    /* Shared with index.html: everforest ground, a text ramp that runs to
+       near-white, and green demoted to the single accent. The old variable
+       NAMES are kept so every page-specific rule below still resolves. */
+    --bg: #1b2023; --bg-2: #20262a; --panel: #232a2e;
+    --line: rgba(255,255,255,0.08); --line-soft: rgba(255,255,255,0.05);
     --green: #a7c080; --green-dim: #7f9460;
     --amber: #dbbc7f; --cyan: #7fbbb3; --aqua: #83c092; --orange: #e69875;
-    --ink: #d3c6aa; --ink-dim: #9da9a0; --ink-faint: #5c6a6b;
+    --ink: #f1f4f0; --ink-dim: #a7b1ab; --ink-faint: #7d8884;
+    --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
     --sidew: 232px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { scroll-behavior: smooth; }
   body {
     background: var(--bg); color: var(--ink);
-    font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
-    line-height: 1.65; font-size: 14.5px; -webkit-font-smoothing: antialiased;
+    font-family: var(--font-sans);
+    line-height: 1.65; font-size: 15.5px; letter-spacing: -0.005em;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
   }
-  body::before {
-    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 100; opacity: 0.3;
-    background: repeating-linear-gradient(0deg, rgba(0,0,0,0), rgba(0,0,0,0) 2px, rgba(0,0,0,0.16) 3px, rgba(0,0,0,0) 4px);
-  }
+  /* Everything used to inherit mono from body, so these need it stated now. */
+  code, pre, kbd, samp, .mono { font-family: var(--font-mono); }
+  .wordmark, .mark { font-family: var(--font-mono); }
   a { color: var(--green); }
   ::selection { background: var(--green); color: #1e2326; }
 
   /* brand */
-  .wordmark { font-weight: 700; letter-spacing: -0.045em; color: var(--ink); white-space: nowrap; }
+  .wordmark { font-weight: 500; letter-spacing: -0.045em; color: var(--ink); white-space: nowrap; }
   .wordmark .sp { color: var(--green); }
   .mark { display: inline-flex; align-items: center; justify-content: center; font-weight: 700; color: var(--green); line-height: 1; user-select: none; }
   .mark .bar { display: inline-block; width: 0.22em; height: 0.72em; margin: 0 0.06em; border-radius: 1px; background: var(--green); }
@@ -58,12 +68,12 @@
   main { padding: 38px 46px 120px; min-width: 0; }
   .doc { padding: 30px 0 38px; border-bottom: 1px solid var(--line-soft); scroll-margin-top: 70px; }
   .doc:last-child { border-bottom: none; }
-  .doc h2 { color: var(--ink); font-size: 27px; letter-spacing: -0.02em; font-weight: 700; margin-bottom: 6px; }
+  .doc h2 { color: var(--ink); font-size: 31px; letter-spacing: -0.03em; font-weight: 600; margin-bottom: 6px; }
   .doc h2::before { content: "# "; color: var(--green); }
   .doc h3 { color: var(--cyan); font-size: 16.5px; letter-spacing: -0.01em; margin: 28px 0 4px; }
   .doc h4 { color: var(--ink); font-size: 14.5px; margin: 20px 0 2px; }
   .doc p { color: var(--ink-dim); margin: 12px 0; max-width: 78ch; }
-  .doc p strong, .doc li strong { color: var(--ink); font-weight: 700; }
+  .doc p strong, .doc li strong { color: var(--ink); font-weight: 600; }
   .doc em { color: var(--ink); font-style: italic; }
   .doc ul { list-style: none; margin: 12px 0; display: grid; gap: 8px; max-width: 80ch; }
   .doc li { color: var(--ink-dim); padding-left: 20px; position: relative; }
