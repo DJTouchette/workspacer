@@ -350,6 +350,11 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
     if let Some(ev) = a.last_event.as_deref().filter(|e| !e.is_empty()) {
         lines.push(kv(t, "event", ev));
     }
+    // The agent's own checklist, when it has published one.
+    if let Some(plan) = app.plan_for(&a.session_id) {
+        lines.push(Line::raw(""));
+        lines.extend(plan_lines(t, plan, area.width.saturating_sub(2), false));
+    }
     lines.push(Line::raw(""));
     lines.extend(ask_lines(
         t,
@@ -362,6 +367,119 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
         .block(block)
         .wrap(ratatui::widgets::Wrap { trim: false });
     f.render_widget(p, area);
+}
+
+/// The agent's plan as a checklist.
+///
+/// The step in flight is what a glance should land on, so it carries the accent
+/// and its present-tense `activeForm` ("Wiring the delta feed") rather than the
+/// imperative title — that phrasing exists precisely to be read while it's
+/// happening. Done steps stay visible but recede; a long plan is truncated
+/// around the current step rather than from the top, so the interesting part
+/// never scrolls out of a short pane.
+///
+/// `compact` drops the header and the done/pending steps, leaving the one line
+/// that answers "what is it doing" — for the composer, where vertical space is
+/// the scarce thing.
+fn plan_lines(
+    t: &Theme,
+    plan: &crate::types::Plan,
+    width: u16,
+    compact: bool,
+) -> Vec<Line<'static>> {
+    use crate::types::PlanStatus;
+    let w = (width.max(10) as usize).saturating_sub(4);
+    let mut out = Vec::new();
+    let done = plan.done();
+    let total = plan.steps.len();
+
+    if compact {
+        let Some(step) = plan.current() else {
+            return out;
+        };
+        let text = step.active_form.as_deref().unwrap_or(&step.content);
+        out.push(Line::from(vec![
+            Span::styled("◐ ", Style::default().fg(t.accent)),
+            Span::styled(
+                crate::render::truncate_width(text, w.saturating_sub(10)),
+                Style::default().fg(t.fg),
+            ),
+            Span::styled(
+                format!("  {done}/{total}"),
+                Style::default().fg(t.dim).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        return out;
+    }
+
+    out.push(Line::from(vec![
+        Span::styled("plan   ", Style::default().fg(t.dim)),
+        Span::styled(
+            format!("{done}/{total}"),
+            Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  {}", progress_bar(done, total)),
+            Style::default().fg(if done == total { t.ok } else { t.accent }),
+        ),
+    ]));
+
+    // Keep the window around the step in flight (or the end, once everything is
+    // done) — the top of a long plan is the least interesting part of it.
+    const MAX_STEPS: usize = 8;
+    let anchor = plan
+        .steps
+        .iter()
+        .position(|s| s.status == PlanStatus::InProgress)
+        .unwrap_or(total.saturating_sub(1));
+    let start = if total <= MAX_STEPS {
+        0
+    } else {
+        anchor.saturating_sub(MAX_STEPS / 2).min(total - MAX_STEPS)
+    };
+    if start > 0 {
+        out.push(Line::from(Span::styled(
+            format!("  … {start} earlier"),
+            Style::default().fg(t.dim),
+        )));
+    }
+    for step in plan.steps.iter().skip(start).take(MAX_STEPS) {
+        let (glyph, color, modifier) = match step.status {
+            PlanStatus::Completed => ("✓", t.ok, Modifier::DIM),
+            PlanStatus::InProgress => ("◐", t.accent, Modifier::BOLD),
+            PlanStatus::Pending => ("○", t.dim, Modifier::empty()),
+        };
+        // The in-flight step speaks in the present tense; the others don't.
+        let text = match step.status {
+            PlanStatus::InProgress => step.active_form.as_deref().unwrap_or(&step.content),
+            _ => step.content.as_str(),
+        };
+        out.push(Line::from(vec![
+            Span::styled(format!("  {glyph} "), Style::default().fg(color)),
+            Span::styled(
+                crate::render::truncate_width(text, w),
+                Style::default().fg(color).add_modifier(modifier),
+            ),
+        ]));
+    }
+    let shown = start + MAX_STEPS.min(total - start);
+    if shown < total {
+        out.push(Line::from(Span::styled(
+            format!("  … {} more", total - shown),
+            Style::default().fg(t.dim),
+        )));
+    }
+    out
+}
+
+/// A tiny unicode meter — `▰▰▰▱▱`, eight cells wide.
+fn progress_bar(done: usize, total: usize) -> String {
+    const CELLS: usize = 8;
+    if total == 0 {
+        return String::new();
+    }
+    let filled = (done * CELLS).div_ceil(total).min(CELLS);
+    format!("{}{}", "▰".repeat(filled), "▱".repeat(CELLS - filled))
 }
 
 fn kv<'a>(t: &Theme, k: &'a str, v: &str) -> Line<'a> {
@@ -630,6 +748,21 @@ fn render_composer(f: &mut Frame, area: Rect, app: &App, agent: &Option<Agent>) 
             Span::styled(format!("{hint} "), Style::default().fg(t.dim)),
         ]))
         .border_style(Style::default().fg(if app.insert_mode { t.accent } else { t.dim }));
+    // The plan's in-flight step rides the composer's bottom border: it is the one
+    // line always on screen in a chat, and "what is it doing right now" is the
+    // question you ask while waiting for a reply.
+    let block = match agent
+        .as_ref()
+        .and_then(|a| app.plan_for(&a.session_id))
+        .and_then(|p| {
+            plan_lines(t, p, area.width, true)
+                .into_iter()
+                .next()
+                .map(|l| l.spans)
+        }) {
+        Some(spans) => block.title_bottom(Line::from(spans)),
+        None => block,
+    };
     let text = if app.insert_mode {
         format!("{}▏", app.input)
     } else if app.input.is_empty() {
@@ -671,7 +804,7 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     let t = &app.theme;
     let w = width.max(10);
     let mut out: Vec<Line> = Vec::new();
-    if app.turns.is_empty() && app.pending_echo.is_none() {
+    if app.turns().is_empty() && app.pending_text().is_none() && app.pending_echo.is_none() {
         out.push(Line::from(Span::styled(
             "no messages yet",
             Style::default().fg(t.dim),
@@ -684,7 +817,7 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         .map(|sid| app.provider_for(&sid))
         .unwrap_or_else(|| "claude".to_string());
     let mut run: Vec<ToolRow> = Vec::new();
-    for turn in &app.turns {
+    for turn in app.turns() {
         let tool_only = turn.role == Role::Assistant
             && !turn.parts.is_empty()
             && turn.parts.iter().all(|p| matches!(p, Part::Tool { .. }));
@@ -732,6 +865,18 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         out.push(Line::raw(""));
     }
     flush_tool_run(&mut out, &mut run, t, w);
+
+    // The live tail: assistant text still arriving, not yet a committed turn.
+    // Rendered through the same markdown pass as a finished message, so a
+    // half-written list or code fence looks like itself while it streams rather
+    // than snapping into shape at the end.
+    if let Some(partial) = app.pending_text() {
+        if !matches!(app.turns().last().map(|t| t.role), Some(Role::Assistant)) {
+            push_role_label(&mut out, t, Role::Assistant, &agent_label);
+        }
+        out.extend(crate::render::markdown_lines(partial, t, w));
+        out.push(Line::raw(""));
+    }
 
     // Optimistic echo: the just-sent message, until a refold carries it.
     if let Some(echo) = app.pending_echo.as_deref() {
@@ -2356,8 +2501,97 @@ mod tests {
         assert_eq!(out[1].spans[0].style.fg, Some(t.accent), "user in accent");
     }
 
+    fn plan(steps: &[(&str, &str, Option<&str>)]) -> crate::types::Plan {
+        crate::types::Plan {
+            steps: steps
+                .iter()
+                .map(|(content, status, active)| crate::types::PlanStep {
+                    content: (*content).into(),
+                    status: match *status {
+                        "done" => crate::types::PlanStatus::Completed,
+                        "now" => crate::types::PlanStatus::InProgress,
+                        _ => crate::types::PlanStatus::Pending,
+                    },
+                    active_form: active.map(|a| a.to_string()),
+                })
+                .collect(),
+            updated_at: None,
+        }
+    }
+
+    /// The step in flight is what the eye should land on, and it speaks in the
+    /// present tense — that is what `activeForm` is for.
     #[test]
-    fn transcript_agent_label_defaults_to_claude_without_a_session() {
+    fn plan_shows_progress_and_the_active_step_in_present_tense() {
+        let t = Theme::default();
+        let p = plan(&[
+            ("Write the fold", "done", None),
+            ("Wire the feed", "now", Some("Wiring the feed")),
+            ("Render it", "pending", None),
+        ]);
+        let texts = line_texts(&plan_lines(&t, &p, 60, false));
+
+        assert!(texts.iter().any(|l| l.contains("1/3")), "{texts:?}");
+        assert!(texts.iter().any(|l| l.contains('▰')), "a meter: {texts:?}");
+        assert!(
+            texts.iter().any(|l| l.contains("Wiring the feed")),
+            "present tense for the live step: {texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|l| l.contains("Wire the feed")),
+            "not the imperative title too: {texts:?}"
+        );
+        assert!(texts.iter().any(|l| l.contains("✓")), "{texts:?}");
+    }
+
+    /// Compact form is for the composer border: the one line that answers "what
+    /// is it doing", and nothing when nothing is in flight.
+    #[test]
+    fn compact_plan_is_one_line_and_empty_when_idle() {
+        let t = Theme::default();
+        let busy = plan(&[("a", "done", None), ("b", "now", Some("Doing b"))]);
+        let lines = plan_lines(&t, &busy, 60, true);
+        assert_eq!(lines.len(), 1);
+        assert!(line_texts(&lines)[0].contains("Doing b"));
+        assert!(line_texts(&lines)[0].contains("1/2"));
+
+        let finished = plan(&[("a", "done", None)]);
+        assert!(
+            plan_lines(&t, &finished, 60, true).is_empty(),
+            "no step in flight → nothing to say"
+        );
+    }
+
+    /// A long plan keeps the window around the live step — truncating from the
+    /// top would scroll the interesting part out of a short pane.
+    #[test]
+    fn a_long_plan_windows_around_the_live_step() {
+        let t = Theme::default();
+        let mut steps: Vec<(&str, &str, Option<&str>)> =
+            (0..20).map(|_| ("filler", "done", None)).collect();
+        steps[15] = ("the live one", "now", None);
+        let texts = line_texts(&plan_lines(&t, &plan(&steps), 60, false));
+
+        assert!(
+            texts.iter().any(|l| l.contains("the live one")),
+            "{texts:?}"
+        );
+        assert!(
+            texts.iter().any(|l| l.contains("earlier")),
+            "says what it hid above: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn progress_bar_fills_and_completes() {
+        assert_eq!(progress_bar(0, 4), "▱▱▱▱▱▱▱▱");
+        assert_eq!(progress_bar(4, 4), "▰▰▰▰▰▰▰▰");
+        assert_eq!(progress_bar(1, 8).chars().filter(|c| *c == '▰').count(), 1);
+        assert_eq!(progress_bar(0, 0), "", "no plan, no meter");
+    }
+
+    #[test]
+    fn transcript_agent_label_names_the_session_provider() {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let (ptx, _prx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
@@ -2368,14 +2602,12 @@ mod tests {
             tx,
             ptx,
         );
-        app.turns = vec![crate::types::Turn {
-            role: Role::Assistant,
-            parts: vec![Part::Text("hi".into())],
-        }];
-
-        // No open chat session → the header falls back to "claude".
+        // With no chat session there is no fold to read a transcript from, so the
+        // label fallback shows on the one thing that renders regardless: the
+        // optimistic echo of a message the user just sent.
+        app.pending_echo = Some("hi".into());
         let texts = line_texts(&transcript_lines(&app, 40));
-        assert!(texts.iter().any(|l| l == "▍ claude"), "{texts:?}");
+        assert!(texts.iter().any(|l| l == "▍ you"), "{texts:?}");
 
         // A codex session open (wire provider + workspace tab) → "▍ codex".
         let codex: Agent = serde_json::from_value(serde_json::json!({
@@ -2394,6 +2626,13 @@ mod tests {
                 }],
                 active: 0,
             },
+        );
+        app.pending_echo = None;
+        app.seed_fold(
+            "s1",
+            &serde_json::json!({
+                "items": [{ "kind": "assistant_text", "text": "hi" }]
+            }),
         );
         let texts = line_texts(&transcript_lines(&app, 40));
         assert!(texts.iter().any(|l| l == "▍ codex"), "{texts:?}");

@@ -25,18 +25,22 @@ pub(super) async fn fetch_agents(cm: &Claudemon, tx: &UnboundedSender<AppMsg>) {
     let _ = tx.send(AppMsg::Agents(list));
 }
 
-/// Fetch and refold a session's conversation. `transport` is the session's
-/// wire transport (`"pty"`/`"stream"`) — it drives how the fold coalesces
-/// assistant text (see [`turns_from_conversation`]).
+/// Fetch a session's conversation snapshot, for the fold to adopt.
+///
+/// Only needed when a chat is opened or when a delta couldn't be sequenced —
+/// the steady state is the delta feed, not this. The fold does the folding, so
+/// the raw payload travels and the transport-specific coalescing is decided
+/// there (the fold knows its session's transport).
 pub(super) async fn fetch_transcript(
     cm: &Claudemon,
     tx: &UnboundedSender<AppMsg>,
     session_id: String,
-    transport: String,
 ) {
     if let Ok(v) = cm.conversation(&session_id).await {
-        let turns = turns_from_conversation(&v, &transport);
-        let _ = tx.send(AppMsg::Transcript { session_id, turns });
+        let _ = tx.send(AppMsg::Transcript {
+            session_id,
+            snapshot: Box::new(v),
+        });
     }
 }
 

@@ -159,7 +159,10 @@ async fn run(
     config: config::Config,
 ) -> Result<()> {
     let mut daemon_rx = claudemon::spawn_events(events_url.clone());
-    let mut status_rx = claudemon::spawn_status_lines(events_url);
+    let mut status_rx = claudemon::spawn_status_lines(events_url.clone());
+    // Conversation deltas: the steady-state feed for open chats, so a streamed
+    // reply arrives item by item instead of provoking a full refetch per nudge.
+    let mut conv_rx = claudemon::spawn_conversation_deltas(events_url);
     let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<AppMsg>();
     let (pty_tx, mut pty_rx) = mpsc::unbounded_channel::<claudemon::PtyChunk>();
     let mut app = App::new(claudemon, profiles, library, config, msg_tx, pty_tx);
@@ -198,6 +201,7 @@ async fn run(
             am = msg_rx.recv() => if let Some(msg) = am { app.apply_msg(msg) },
             chunk = pty_rx.recv() => if let Some(c) = chunk { app.feed_pty(c) },
             sl = status_rx.recv() => if let Some(msg) = sl { app.apply_status_line(msg.session_id, msg.status_line) },
+            cd = conv_rx.recv() => if let Some(delta) = cd { app.apply_msg(AppMsg::ConvDelta(Box::new(delta))) },
             // Live agent view over the bus (snapshots + statusline). The pending()
             // arm never fires when there's no bus, so this is inert off-bus.
             bev = async {

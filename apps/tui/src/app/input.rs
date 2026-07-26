@@ -1455,7 +1455,6 @@ impl App {
     /// Set up rendering for whatever the active tab points at: warm its terminal
     /// (or fall back to transcript for no-PTY sessions).
     pub(super) fn enter_active_tab(&mut self) {
-        self.turns.clear();
         self.chat_scroll = 0;
         self.chat_follow = true;
         self.insert_mode = false;
@@ -1733,7 +1732,6 @@ impl App {
         self.insert_mode = false;
         self.input.clear();
         self.pending_echo = None;
-        self.turns.clear();
         self.invalidate_transcript_cache();
         self.tiles.clear();
         self.tile_focus = 0;
@@ -2008,13 +2006,14 @@ impl App {
         let drv = self.driver();
         let cm = self.claudemon.clone();
         let tx = self.tx.clone();
-        let transport = self.transport_for(&sid);
         tokio::spawn(async move {
             match drv.message(&sid, &text).await {
                 Ok(_) => {
                     let _ = tx.send(AppMsg::Toast("Sent".into()));
                     fetch_agents(&cm, &tx).await;
-                    super::tasks::fetch_transcript(&cm, &tx, sid, transport).await;
+                    // The delta feed carries the echo and the reply; this just
+                    // closes the gap if the send landed before we subscribed.
+                    super::tasks::fetch_transcript(&cm, &tx, sid).await;
                 }
                 Err(e) => {
                     let _ = tx.send(AppMsg::SendFailed {

@@ -664,13 +664,23 @@ pub fn spawn_status_lines(base: String) -> mpsc::UnboundedReceiver<StatusLineMsg
     rx
 }
 
-async fn status_line_connect(base: &str, tx: &mpsc::UnboundedSender<StatusLineMsg>) -> Result<()> {
+/// Hold one SSE connection to `path`, handing each `data:` payload to
+/// `on_data`. Returns `Ok(())` on a clean EOF; errors on a non-2xx status or a
+/// transport failure, so the caller's reconnect loop can back off.
+///
+/// Shared by the statusline and conversation feeds — they differ only in the
+/// path and what they do with a payload, and a third hand-rolled copy of the
+/// header/buffer/frame dance was one too many.
+async fn sse_read<F>(base: &str, path: &str, mut on_data: F) -> Result<()>
+where
+    F: FnMut(&str),
+{
     const MAX_BUF: usize = 4 * 1024 * 1024;
 
     let (host, port) = split_host_port(base);
     let mut stream = TcpStream::connect((host.as_str(), port)).await?;
     let req = format!(
-        "GET /statusline/stream HTTP/1.1\r\nHost: {host}:{port}\r\nAccept: text/event-stream\r\n\
+        "GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nAccept: text/event-stream\r\n\
          Connection: keep-alive\r\n\r\n"
     );
     stream.write_all(req.as_bytes()).await?;
@@ -713,16 +723,64 @@ async fn status_line_connect(base: &str, tx: &mpsc::UnboundedSender<StatusLineMs
             let text = String::from_utf8_lossy(&frame);
             for line in text.lines() {
                 if let Some(data) = line.strip_prefix("data:") {
-                    if let Ok(f) = serde_json::from_str::<StatusLineFrame>(data.trim()) {
-                        let _ = tx.send(StatusLineMsg {
-                            session_id: f.session_id,
-                            status_line: f.status_line,
-                        });
-                    }
+                    on_data(data.trim());
                 }
             }
         }
     }
+}
+
+async fn status_line_connect(base: &str, tx: &mpsc::UnboundedSender<StatusLineMsg>) -> Result<()> {
+    sse_read(base, "/statusline/stream", |data| {
+        if let Ok(f) = serde_json::from_str::<StatusLineFrame>(data) {
+            let _ = tx.send(StatusLineMsg {
+                session_id: f.session_id,
+                status_line: f.status_line,
+            });
+        }
+    })
+    .await
+}
+
+/// One `conversation.delta` frame: the items claudemon appended to a session's
+/// log, with the sequence of the last one. See [`crate::types::ConvFold`] for
+/// how a client sequences them and when it must resync.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConvDelta {
+    pub session_id: String,
+    #[serde(default)]
+    pub seq: u64,
+    #[serde(default)]
+    pub reset: bool,
+    #[serde(default)]
+    pub items: Vec<serde_json::Value>,
+}
+
+/// Subscribe to `/conversation/stream` — the delta feed that replaces
+/// refetching a whole conversation whenever anything changes. Owns its own
+/// reconnect loop with backoff, like [`spawn_events`].
+pub fn spawn_conversation_deltas(base: String) -> mpsc::UnboundedReceiver<ConvDelta> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let mut backoff = std::time::Duration::from_millis(500);
+        loop {
+            if conversation_connect(&base, &tx).await.is_ok() {
+                backoff = std::time::Duration::from_millis(500);
+            }
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(std::time::Duration::from_secs(8));
+        }
+    });
+    rx
+}
+
+async fn conversation_connect(base: &str, tx: &mpsc::UnboundedSender<ConvDelta>) -> Result<()> {
+    sse_read(base, "/conversation/stream", |data| {
+        if let Ok(delta) = serde_json::from_str::<ConvDelta>(data) {
+            let _ = tx.send(delta);
+        }
+    })
+    .await
 }
 
 /// Hold one SSE connection, forwarding a `Changed` per data frame. Returns when

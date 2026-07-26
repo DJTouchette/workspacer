@@ -30,10 +30,14 @@ use tasks::{fetch_agents, fetch_git_diff, fetch_git_status, fetch_transcript};
 #[derive(Debug)]
 pub enum AppMsg {
     Agents(Vec<Agent>),
+    /// A full conversation snapshot, adopted into the session's fold. Only sent
+    /// on open and on a delta gap — the steady state is `ConvDelta`.
     Transcript {
         session_id: String,
-        turns: Vec<Turn>,
+        snapshot: Box<serde_json::Value>,
     },
+    /// One `conversation.delta` frame from claudemon's SSE feed.
+    ConvDelta(Box<crate::claudemon::ConvDelta>),
     Toast(String),
     /// A chat send failed after its optimistic echo was drawn: drop the echo,
     /// restore the composer text, and toast the error.
@@ -600,7 +604,13 @@ pub struct App {
     pub selected: usize,
 
     pub view: View,
-    pub turns: Vec<Turn>,
+    /// Per-session incremental conversation folds, keyed by session id. Holding
+    /// the fold (rather than a flat turns vec) is what lets the delta feed apply
+    /// one item without re-deriving the whole transcript: joining a tool result
+    /// to its call, deduping replays, and gluing token fragments all need the
+    /// state that came before. Populated when a chat is opened; sessions we've
+    /// never looked at cost nothing.
+    pub folds: std::collections::HashMap<String, crate::types::ConvFold>,
     /// Memoized transcript render: the fully folded + wrapped lines for the
     /// current `turns`/`pending_echo` at a given width. The main loop draws on
     /// every event (PTY chunks, SSE nudges, keystrokes, the tick), so without
@@ -695,7 +705,7 @@ impl App {
             status_lines: HashMap::new(),
             selected: 0,
             view: View::List,
-            turns: Vec::new(),
+            folds: std::collections::HashMap::new(),
             transcript_cache: None,
             chat_scroll: 0,
             chat_follow: false,
@@ -747,31 +757,17 @@ impl App {
     pub fn apply_msg(&mut self, msg: AppMsg) {
         match msg {
             AppMsg::Agents(list) => self.set_agents(list),
-            AppMsg::Transcript { session_id, turns } => {
-                // Ignore late transcripts for a session we've navigated away from.
-                // While following, the renderer keeps us pinned to the bottom.
+            AppMsg::Transcript {
+                session_id,
+                snapshot,
+            } => {
+                self.adopt_snapshot(&session_id, &snapshot);
                 if self.chat_session_id().as_deref() == Some(session_id.as_str()) {
-                    self.turns = turns;
-                    // The optimistic echo retires once the refold carries the
-                    // sent message as its trailing user turn.
-                    if let Some(echo) = self.pending_echo.as_deref() {
-                        let landed = self
-                            .turns
-                            .iter()
-                            .rev()
-                            .find(|t| t.role == crate::types::Role::User)
-                            .is_some_and(|t| {
-                                t.parts
-                                    .iter()
-                                    .any(|p| matches!(p, crate::types::Part::Text(s) if s == echo))
-                            });
-                        if landed {
-                            self.pending_echo = None;
-                        }
-                    }
+                    self.retire_echo();
                     self.invalidate_transcript_cache();
                 }
             }
+            AppMsg::ConvDelta(delta) => self.apply_conv_delta(*delta),
             AppMsg::Toast(t) => self.set_toast(t),
             AppMsg::SendFailed { text, error } => {
                 self.pending_echo = None;
@@ -1110,8 +1106,10 @@ impl App {
     /// A session changed — re-pull the list and, if we're reading a transcript,
     /// refresh it. (Terminal mode updates live over its own PTY stream.)
     pub fn on_changed(&mut self) {
+        // Session-list state only. The conversation used to be refetched here on
+        // every daemon nudge — that was the polling model the delta feed
+        // replaces, and doing both would mean a full refetch per streamed token.
         self.refresh();
-        self.maybe_load_transcript();
     }
 
     fn maybe_load_transcript(&self) {
@@ -1292,6 +1290,90 @@ impl App {
         }
     }
 
+    /// Apply one delta frame to its session's fold.
+    ///
+    /// Only sessions we have a fold for are tracked — the feed is global, so
+    /// most frames belong to some other agent and are dropped here rather than
+    /// growing state for a chat nobody opened. A frame that can't be sequenced
+    /// onto what we have (`false` from `apply_delta`) means we missed one, so we
+    /// resync from the snapshot endpoint instead of rendering a hole.
+    fn apply_conv_delta(&mut self, delta: crate::claudemon::ConvDelta) {
+        let sid = delta.session_id;
+        let Some(fold) = self.folds.get_mut(&sid) else {
+            return;
+        };
+        let sequenced = fold.apply_delta(delta.seq, delta.reset, &delta.items);
+        if !sequenced {
+            self.load_transcript(sid.clone());
+            return;
+        }
+        if self.chat_session_id().as_deref() == Some(sid.as_str()) {
+            self.retire_echo();
+            self.invalidate_transcript_cache();
+        }
+    }
+
+    /// Drop the optimistic send echo once the real conversation carries it, so
+    /// the message isn't shown twice for a beat.
+    fn retire_echo(&mut self) {
+        let Some(echo) = self.pending_echo.as_deref() else {
+            return;
+        };
+        let landed = self
+            .turns()
+            .iter()
+            .rev()
+            .find(|t| t.role == crate::types::Role::User)
+            .is_some_and(|t| {
+                t.parts
+                    .iter()
+                    .any(|p| matches!(p, crate::types::Part::Text(s) if s == echo))
+            });
+        if landed {
+            self.pending_echo = None;
+        }
+    }
+
+    /// The folded turns of the open chat, or empty when there is no chat.
+    pub fn turns(&self) -> &[Turn] {
+        self.chat_session_id()
+            .and_then(|sid| self.folds.get(&sid))
+            .map(|f| f.turns())
+            .unwrap_or(&[])
+    }
+
+    /// The open chat's uncommitted assistant text — the live tail of a message
+    /// still streaming in. Rendered after the committed turns.
+    pub fn pending_text(&self) -> Option<&str> {
+        self.chat_session_id()
+            .and_then(|sid| self.folds.get(&sid))
+            .and_then(|f| f.pending_text())
+    }
+
+    /// A session's current plan, if it has published one. Rides the conversation
+    /// stream as last-write-wins session state, so it's whatever the fold last
+    /// saw — no separate fetch.
+    pub fn plan_for(&self, sid: &str) -> Option<&crate::types::Plan> {
+        self.folds.get(sid).and_then(|f| f.plan())
+    }
+
+    /// Adopt a full snapshot into a session's fold (open, or a delta gap).
+    fn adopt_snapshot(&mut self, sid: &str, snapshot: &serde_json::Value) {
+        let stream = self.transport_for(sid) == "stream";
+        self.folds
+            .entry(sid.to_string())
+            .or_insert_with(|| crate::types::ConvFold::new(stream))
+            .adopt_snapshot(snapshot);
+    }
+
+    /// Seed a session's fold from a wire snapshot. Test-only: the app itself
+    /// only ever gets one from the daemon, but a renderer test needs a transcript
+    /// without standing up an HTTP server for it.
+    #[cfg(test)]
+    pub fn seed_fold(&mut self, sid: &str, snapshot: &serde_json::Value) {
+        self.adopt_snapshot(sid, snapshot);
+    }
+
     /// A session's wire transport (`"pty"`/`"stream"`), defaulting to PTY for
     /// sessions not (yet) in the live list.
     pub(super) fn transport_for(&self, sid: &str) -> String {
@@ -1335,11 +1417,12 @@ impl App {
             .is_some_and(|a| a.is_stream())
     }
 
+    /// Pull a full snapshot for a session's fold. Needed on open and after a
+    /// delta gap; the delta feed covers everything in between.
     pub(super) fn load_transcript(&self, session_id: String) {
         let cm = self.claudemon.clone();
         let tx = self.tx.clone();
-        let transport = self.transport_for(&session_id);
-        tokio::spawn(async move { fetch_transcript(&cm, &tx, session_id, transport).await });
+        tokio::spawn(async move { fetch_transcript(&cm, &tx, session_id).await });
     }
 
     /// Run a control future, toast the outcome, then refresh the list (and the
@@ -1352,16 +1435,14 @@ impl App {
         let cm = self.claudemon.clone();
         let tx = self.tx.clone();
         let ok_msg = ok_msg.to_string();
-        let reopen = self
-            .chat_session_id()
-            .map(|sid| (sid.clone(), self.transport_for(&sid)));
+        let reopen = self.chat_session_id();
         tokio::spawn(async move {
             match fut.await {
                 Ok(_) => {
                     let _ = tx.send(AppMsg::Toast(ok_msg));
                     fetch_agents(&cm, &tx).await;
-                    if let Some((sid, transport)) = reopen {
-                        fetch_transcript(&cm, &tx, sid, transport).await;
+                    if let Some(sid) = reopen {
+                        fetch_transcript(&cm, &tx, sid).await;
                     }
                 }
                 Err(e) => {
@@ -1738,6 +1819,15 @@ mod tests {
         // retry harmlessly, which is fine for exercising app state.
         let cm = Claudemon::new("http://127.0.0.1:59999".into());
         App::new(cm, Vec::new(), Vec::new(), Config::default(), tx, ptx)
+    }
+
+    /// A conversation snapshot in claudemon's wire shape, for the fold to adopt.
+    fn snapshot(user_texts: &[&str]) -> Box<serde_json::Value> {
+        let items: Vec<serde_json::Value> = user_texts
+            .iter()
+            .map(|t| serde_json::json!({ "kind": "user_message", "text": t }))
+            .collect();
+        Box::new(serde_json::json!({ "items": items }))
     }
 
     fn agent(id: &str) -> Agent {
@@ -2442,13 +2532,6 @@ mod tests {
         .unwrap()
     }
 
-    fn user_turn(text: &str) -> Turn {
-        Turn {
-            role: crate::types::Role::User,
-            parts: vec![crate::types::Part::Text(text.into())],
-        }
-    }
-
     #[tokio::test]
     async fn stream_sessions_open_transcript_only_without_warming_a_pty() {
         let mut app = test_app();
@@ -2498,14 +2581,14 @@ mod tests {
         // A refold that doesn't yet carry the message keeps the echo…
         app.apply_msg(AppMsg::Transcript {
             session_id: "s1".into(),
-            turns: vec![user_turn("an older message")],
+            snapshot: snapshot(&["an older message"]),
         });
         assert_eq!(app.pending_echo.as_deref(), Some("hello there"));
 
         // …and the refold whose trailing user message matches retires it.
         app.apply_msg(AppMsg::Transcript {
             session_id: "s1".into(),
-            turns: vec![user_turn("an older message"), user_turn("hello there")],
+            snapshot: snapshot(&["an older message", "hello there"]),
         });
         assert!(app.pending_echo.is_none());
     }
@@ -2541,7 +2624,7 @@ mod tests {
         });
         app.apply_msg(AppMsg::Transcript {
             session_id: "s1".into(),
-            turns: vec![user_turn("fresh")],
+            snapshot: snapshot(&["fresh"]),
         });
         assert!(
             app.transcript_cache.is_none(),

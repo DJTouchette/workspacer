@@ -3,6 +3,8 @@
 //! truth for a standalone TUI — the hub-bus capabilities the `/remote` client
 //! uses are registered by the Electron app and absent when it isn't running.
 
+use std::collections::{HashMap, HashSet};
+
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -346,7 +348,7 @@ pub enum Role {
     Assistant,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Part {
     Text(String),
     /// A tool call. `result` is the (truncated) tool output once it lands,
@@ -359,6 +361,96 @@ pub enum Part {
         result: Option<String>,
         edits: Vec<(String, String)>,
     },
+}
+
+/// One step of the agent's plan (Claude's `TodoWrite`, Codex's `update_plan`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanStep {
+    pub content: String,
+    pub status: PlanStatus,
+    /// Present-tense phrasing for the step being worked on right now.
+    pub active_form: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+impl PlanStatus {
+    fn parse(s: &str) -> Self {
+        match s {
+            "in_progress" => Self::InProgress,
+            "completed" => Self::Completed,
+            _ => Self::Pending,
+        }
+    }
+}
+
+/// The agent's current plan — a last-write-wins snapshot, replaced whole
+/// whenever the agent rewrites it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Plan {
+    pub steps: Vec<PlanStep>,
+    pub updated_at: Option<String>,
+}
+
+impl Plan {
+    pub fn done(&self) -> usize {
+        self.steps
+            .iter()
+            .filter(|s| s.status == PlanStatus::Completed)
+            .count()
+    }
+
+    /// The step in flight, if any — what the agent says it's doing right now.
+    pub fn current(&self) -> Option<&PlanStep> {
+        self.steps
+            .iter()
+            .find(|s| s.status == PlanStatus::InProgress)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.steps.is_empty()
+    }
+}
+
+fn plan_from_item(item: &Value) -> Plan {
+    let steps = item
+        .get("steps")
+        .and_then(|s| s.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|st| {
+                    let content = st.get("content").and_then(|c| c.as_str())?.trim();
+                    if content.is_empty() {
+                        return None;
+                    }
+                    Some(PlanStep {
+                        content: content.to_string(),
+                        status: PlanStatus::parse(
+                            st.get("status").and_then(|s| s.as_str()).unwrap_or(""),
+                        ),
+                        active_form: st
+                            .get("activeForm")
+                            .and_then(|a| a.as_str())
+                            .map(str::trim)
+                            .filter(|a| !a.is_empty())
+                            .map(str::to_string),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Plan {
+        steps,
+        updated_at: item
+            .get("updatedAt")
+            .and_then(|u| u.as_str())
+            .map(str::to_string),
+    }
 }
 
 /// Flatten a conversation's turns into searchable lines for content search:
@@ -413,237 +505,330 @@ pub fn search_lines(turns: &[Turn]) -> Vec<String> {
 /// parsed view shows tool *output*, not just the call (richer than the old
 /// transcript path).
 ///
-/// `transport` is the session's wire transport (see [`Agent::transport`]). It
-/// decides how consecutive `assistant_text` items coalesce into one text part:
-/// stream sessions store per-token fragments, so they concatenate verbatim
-/// (never trimming a fragment — the joined text is trimmed once at the end);
-/// PTY sessions store whole blocks, joined with a blank line.
-///
-/// A re-delivered `tool_use` id (transcript compaction repeats a call, resume
-/// replays history) folds into nothing — ids are globally unique, so a second
-/// occurrence is always a duplicate (mirror of the desktop conversationApplier
-/// dedup).
+/// `transport` is the session's wire transport (see [`Agent::transport`]) — see
+/// [`ConvFold`], which this is a one-shot wrapper around.
 pub fn turns_from_conversation(v: &Value, transport: &str) -> Vec<Turn> {
-    use std::collections::{HashMap, HashSet};
-    let stream = transport == "stream";
-    let items = v
-        .get("items")
-        .and_then(|i| i.as_array())
-        .cloned()
-        .unwrap_or_default();
+    let mut fold = ConvFold::new(transport == "stream");
+    fold.adopt_snapshot(v);
+    fold.into_turns()
+}
 
-    let mut turns: Vec<Turn> = Vec::new();
-    // tool_use id → (turn index, part index), so a later result can attach.
-    let mut tool_loc: HashMap<String, (usize, usize)> = HashMap::new();
-    // Every tool_use id seen, for dropping re-delivered duplicates.
-    let mut seen_tool_ids: HashSet<String> = HashSet::new();
-    // Consecutive assistant_text fragments, coalesced into one part at flush.
-    let mut text_buf: Vec<String> = Vec::new();
+/// A conversation folded *incrementally* — the state a delta feed needs.
+///
+/// The daemon's `/conversation/stream` sends `{session_id, seq, reset, items}`
+/// as they happen, so the client can't re-derive the fold from scratch each
+/// time: joining a tool result to its call, deduping replayed ids, and gluing
+/// per-token text fragments all need what came before. This holds exactly that
+/// and nothing more.
+///
+/// The open assistant text run stays *pending* rather than being committed on
+/// every fragment: `pending_text` is what the renderer draws as the live tail,
+/// and it lands in a real `Part::Text` when something else closes the run. That
+/// is also what preserves the one-trim-at-the-end rule — a fragment is never
+/// trimmed individually, because whitespace-only tokens are the glue between
+/// words.
+pub struct ConvFold {
+    /// Stream sessions store per-token fragments (concatenated verbatim); PTY
+    /// sessions store whole blocks (joined with a blank line).
+    stream: bool,
+    turns: Vec<Turn>,
+    /// The open assistant text run, untrimmed and uncommitted.
+    pending: String,
+    /// tool_use id → (turn index, part index), so a later result can attach.
+    tool_loc: HashMap<String, (usize, usize)>,
+    /// Every tool_use id seen — a second occurrence is always a replay.
+    seen_tool_ids: HashSet<String>,
+    /// Sequence of the last item applied (claudemon's per-session counter).
+    seq: u64,
+    plan: Option<Plan>,
+}
 
-    // Append a part to the open turn, starting a new turn on a role change.
-    fn push(turns: &mut Vec<Turn>, role: Role, part: Part) -> (usize, usize) {
-        if turns.last().map(|t| t.role) != Some(role) {
-            turns.push(Turn {
+impl ConvFold {
+    pub fn new(stream: bool) -> Self {
+        Self {
+            stream,
+            turns: Vec::new(),
+            pending: String::new(),
+            tool_loc: HashMap::new(),
+            seen_tool_ids: HashSet::new(),
+            seq: 0,
+            plan: None,
+        }
+    }
+
+    pub fn turns(&self) -> &[Turn] {
+        &self.turns
+    }
+
+    /// The live, uncommitted assistant text — trimmed for display only.
+    pub fn pending_text(&self) -> Option<&str> {
+        let t = self.pending.trim();
+        (!t.is_empty()).then_some(t)
+    }
+
+    pub fn plan(&self) -> Option<&Plan> {
+        self.plan.as_ref().filter(|p| !p.is_empty())
+    }
+
+    /// Consume the fold for the one-shot case: commit the open run and hand
+    /// back the turns.
+    pub fn into_turns(mut self) -> Vec<Turn> {
+        self.flush_text();
+        self.turns
+    }
+
+    /// Adopt a full snapshot (`GET /sessions/:id/conversation`), discarding
+    /// whatever was folded before. `seq` follows the snapshot's own count so a
+    /// later delta can be sequenced against it.
+    pub fn adopt_snapshot(&mut self, v: &Value) {
+        let items = v.get("items").and_then(|i| i.as_array());
+        let count = items.map(|a| a.len()).unwrap_or(0) as u64;
+        self.clear();
+        if let Some(items) = items {
+            self.apply_items(items);
+        }
+        // A snapshot carries no seq of its own; the item count IS the sequence
+        // of its last item, on the same 1-based counter the deltas use.
+        self.seq = count;
+    }
+
+    /// Apply one `conversation.delta` frame.
+    ///
+    /// Returns `false` when the frame can't be sequenced onto what we have —
+    /// `seq` must equal `last_seq + items.len()`, per the daemon's contract —
+    /// meaning a frame was missed and the caller must resync from the snapshot
+    /// endpoint. A `reset` frame is always applicable: it means the log was
+    /// rebuilt, so prior state is void by definition.
+    pub fn apply_delta(&mut self, seq: u64, reset: bool, items: &[Value]) -> bool {
+        if reset {
+            self.clear();
+            self.apply_items(items);
+            self.seq = seq;
+            return true;
+        }
+        // Already seen (a reconnect replays the tail) — not a gap, just old.
+        if seq <= self.seq {
+            return true;
+        }
+        if seq != self.seq + items.len() as u64 {
+            return false;
+        }
+        self.apply_items(items);
+        self.seq = seq;
+        true
+    }
+
+    fn clear(&mut self) {
+        self.turns.clear();
+        self.pending.clear();
+        self.tool_loc.clear();
+        self.seen_tool_ids.clear();
+        self.seq = 0;
+        // The plan deliberately survives a reset: it is last-write-wins session
+        // state that happens to ride the conversation, not a transcript row, and
+        // a rebuilt log replays it anyway.
+    }
+
+    /// Append a part to the open turn, starting a new turn on a role change.
+    fn push(&mut self, role: Role, part: Part) -> (usize, usize) {
+        if self.turns.last().map(|t| t.role) != Some(role) {
+            self.turns.push(Turn {
                 role,
                 parts: Vec::new(),
             });
         }
-        let ti = turns.len() - 1;
-        turns[ti].parts.push(part);
-        (ti, turns[ti].parts.len() - 1)
+        let ti = self.turns.len() - 1;
+        self.turns[ti].parts.push(part);
+        (ti, self.turns[ti].parts.len() - 1)
     }
 
-    // Join the buffered fragments into ONE text part. Stream fragments concat
-    // verbatim (they're per-token slices of one message); PTY blocks join with
-    // a blank line. The combined text is trimmed exactly once, at the end.
-    fn flush_text(turns: &mut Vec<Turn>, text_buf: &mut Vec<String>, stream: bool) {
-        if text_buf.is_empty() {
+    /// Commit the open text run as one part, trimmed exactly once.
+    fn flush_text(&mut self) {
+        if self.pending.is_empty() {
             return;
         }
-        let joined = if stream {
-            text_buf.concat()
-        } else {
-            text_buf.join("\n\n")
-        };
-        text_buf.clear();
-        let text = joined.trim();
+        let text = std::mem::take(&mut self.pending);
+        let text = text.trim();
         if !text.is_empty() {
-            push(turns, Role::Assistant, Part::Text(text.to_string()));
+            self.push(Role::Assistant, Part::Text(text.to_string()));
         }
     }
 
-    for item in &items {
-        match item.get("kind").and_then(|k| k.as_str()).unwrap_or("") {
-            "user_message" => {
-                flush_text(&mut turns, &mut text_buf, stream);
-                let text = item
-                    .get("text")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("")
-                    .trim();
-                if text.is_empty() || is_meta_noise(text) {
-                    continue;
-                }
-                push(&mut turns, Role::User, Part::Text(text.to_string()));
-            }
-            "assistant_text" => {
-                let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                if stream {
-                    // Never trim or drop a fragment — whitespace-only tokens
-                    // are the joining glue between words.
-                    if !text.is_empty() {
-                        text_buf.push(text.to_string());
-                    }
-                } else {
-                    let block = text.trim();
-                    if !block.is_empty() {
-                        text_buf.push(block.to_string());
-                    }
-                }
-            }
-            "tool_use" => {
-                // Dedup by id first, so a replayed call vanishes without even
-                // breaking the coalescing of the text around it.
-                if let Some(id) = item
-                    .get("id")
-                    .and_then(|i| i.as_str())
-                    .filter(|s| !s.is_empty())
-                {
-                    if !seen_tool_ids.insert(id.to_string()) {
+    fn apply_items(&mut self, items: &[Value]) {
+        for item in items {
+            match item.get("kind").and_then(|k| k.as_str()).unwrap_or("") {
+                "user_message" => {
+                    self.flush_text();
+                    let text = item
+                        .get("text")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    if text.is_empty() || is_meta_noise(text) {
                         continue;
                     }
+                    self.push(Role::User, Part::Text(text.to_string()));
                 }
-                flush_text(&mut turns, &mut text_buf, stream);
-                let name = item
-                    .get("name")
-                    .and_then(|n| n.as_str())
-                    .unwrap_or("tool")
-                    .to_string();
-                let summary = tool_summary(item.get("input"));
-                let edits = edit_pairs(item.get("input"));
-                let loc = push(
-                    &mut turns,
-                    Role::Assistant,
-                    Part::Tool {
-                        name,
-                        summary,
-                        result: None,
-                        edits,
-                    },
-                );
-                if let Some(id) = item
-                    .get("id")
-                    .and_then(|i| i.as_str())
-                    .filter(|s| !s.is_empty())
-                {
-                    tool_loc.insert(id.to_string(), loc);
-                }
-            }
-            "tool_result" => {
-                flush_text(&mut turns, &mut text_buf, stream);
-                let tid = item
-                    .get("tool_use_id")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("");
-                let content = item
-                    .get("content")
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("")
-                    .trim();
-                let is_error = item
-                    .get("is_error")
-                    .and_then(|e| e.as_bool())
-                    .unwrap_or(false);
-                if content.is_empty() {
-                    continue;
-                }
-                if let Some(&(ti, pi)) = tool_loc.get(tid) {
-                    if let Some(Part::Tool { result, .. }) =
-                        turns.get_mut(ti).and_then(|t| t.parts.get_mut(pi))
-                    {
-                        let snippet = truncate(content, 200);
-                        *result = Some(if is_error {
-                            format!("error: {snippet}")
-                        } else {
-                            snippet
-                        });
+                "assistant_text" => {
+                    let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                    if self.stream {
+                        // Never trim or drop a fragment — whitespace-only tokens
+                        // are the joining glue between words.
+                        self.pending.push_str(text);
+                    } else {
+                        let block = text.trim();
+                        if !block.is_empty() {
+                            if !self.pending.is_empty() {
+                                self.pending.push_str("\n\n");
+                            }
+                            self.pending.push_str(block);
+                        }
                     }
                 }
-            }
-            "usage" => {
-                // Ignored entirely — claudemon interleaves a usage item before
-                // every PTY assistant row's text, so treating it as a boundary
-                // would defeat the blank-line block coalescing above.
-            }
-            "slash_command" => {
-                // A slash-command run. On stream sessions it arrives twice
-                // (driver send echo + transcript tailer parse of the CLI's
-                // echo row) — the daemon doesn't dedup, so drop an identical
-                // repeat here, mirroring the desktop applier.
-                flush_text(&mut turns, &mut text_buf, stream);
-                let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                if name.is_empty() {
-                    continue;
+                "tool_use" => {
+                    // Dedup by id first, so a replayed call vanishes without even
+                    // breaking the coalescing of the text around it.
+                    let id = item
+                        .get("id")
+                        .and_then(|i| i.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string);
+                    if let Some(id) = &id {
+                        if !self.seen_tool_ids.insert(id.clone()) {
+                            continue;
+                        }
+                    }
+                    self.flush_text();
+                    let name = item
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("tool")
+                        .to_string();
+                    let summary = tool_summary(item.get("input"));
+                    let edits = edit_pairs(item.get("input"));
+                    let loc = self.push(
+                        Role::Assistant,
+                        Part::Tool {
+                            name,
+                            summary,
+                            result: None,
+                            edits,
+                        },
+                    );
+                    if let Some(id) = id {
+                        self.tool_loc.insert(id, loc);
+                    }
                 }
-                let args = item.get("args").and_then(|a| a.as_str()).unwrap_or("");
-                let line = if args.is_empty() {
-                    format!("/{name}")
-                } else {
-                    format!("/{name} {args}")
-                };
-                let dup = turns
-                    .last()
-                    .filter(|t| t.role == Role::User)
-                    .is_some_and(|t| {
-                        t.parts
-                            .iter()
-                            .any(|p| matches!(p, Part::Text(s) if *s == line))
-                    });
-                if !dup {
-                    push(&mut turns, Role::User, Part::Text(line));
+                "tool_result" => {
+                    self.flush_text();
+                    let tid = item
+                        .get("tool_use_id")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+                    let content = item
+                        .get("content")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    let is_error = item
+                        .get("is_error")
+                        .and_then(|e| e.as_bool())
+                        .unwrap_or(false);
+                    if content.is_empty() {
+                        continue;
+                    }
+                    if let Some(&(ti, pi)) = self.tool_loc.get(tid) {
+                        if let Some(Part::Tool { result, .. }) =
+                            self.turns.get_mut(ti).and_then(|t| t.parts.get_mut(pi))
+                        {
+                            let snippet = truncate(content, 200);
+                            *result = Some(if is_error {
+                                format!("error: {snippet}")
+                            } else {
+                                snippet
+                            });
+                        }
+                    }
                 }
-            }
-            "command_output" => {
-                // The command's local output — render like a tool row so the
-                // snippet/expansion affordances come for free.
-                flush_text(&mut turns, &mut text_buf, stream);
-                let output = item
-                    .get("output")
-                    .and_then(|o| o.as_str())
-                    .unwrap_or("")
-                    .trim();
-                if output.is_empty() {
-                    continue;
+                "usage" => {
+                    // Ignored entirely — claudemon interleaves a usage item before
+                    // every PTY assistant row's text, so treating it as a boundary
+                    // would defeat the blank-line block coalescing above.
                 }
-                let is_error = item
-                    .get("is_error")
-                    .and_then(|e| e.as_bool())
-                    .unwrap_or(false);
-                let snippet = truncate(output, 200);
-                push(
-                    &mut turns,
-                    Role::Assistant,
-                    Part::Tool {
-                        name: "command output".to_string(),
-                        summary: String::new(),
-                        result: Some(if is_error {
-                            format!("error: {snippet}")
-                        } else {
-                            snippet
-                        }),
-                        edits: Vec::new(),
-                    },
-                );
-            }
-            _ => {
-                // Any future kinds — still a boundary between assistant
-                // messages, so close any open text run.
-                flush_text(&mut turns, &mut text_buf, stream);
+                "plan" => {
+                    // Session state, not a transcript row: last-write-wins, and
+                    // it must NOT close the open text run (the agent rewrites its
+                    // plan mid-message all the time).
+                    self.plan = Some(plan_from_item(item));
+                }
+                "slash_command" => {
+                    // A slash-command run. On stream sessions it arrives twice
+                    // (driver send echo + transcript tailer parse of the CLI's
+                    // echo row) — the daemon doesn't dedup, so drop an identical
+                    // repeat here, mirroring the desktop applier.
+                    self.flush_text();
+                    let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let args = item.get("args").and_then(|a| a.as_str()).unwrap_or("");
+                    let line = if args.is_empty() {
+                        format!("/{name}")
+                    } else {
+                        format!("/{name} {args}")
+                    };
+                    let dup = self
+                        .turns
+                        .last()
+                        .filter(|t| t.role == Role::User)
+                        .is_some_and(|t| {
+                            t.parts
+                                .iter()
+                                .any(|p| matches!(p, Part::Text(s) if *s == line))
+                        });
+                    if !dup {
+                        self.push(Role::User, Part::Text(line));
+                    }
+                }
+                "command_output" => {
+                    // The command's local output — render like a tool row so the
+                    // snippet/expansion affordances come for free.
+                    self.flush_text();
+                    let output = item
+                        .get("output")
+                        .and_then(|o| o.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    if output.is_empty() {
+                        continue;
+                    }
+                    let is_error = item
+                        .get("is_error")
+                        .and_then(|e| e.as_bool())
+                        .unwrap_or(false);
+                    let snippet = truncate(output, 200);
+                    self.push(
+                        Role::Assistant,
+                        Part::Tool {
+                            name: "command output".to_string(),
+                            summary: String::new(),
+                            result: Some(if is_error {
+                                format!("error: {snippet}")
+                            } else {
+                                snippet
+                            }),
+                            edits: Vec::new(),
+                        },
+                    );
+                }
+                _ => {
+                    // Any future kinds — still a boundary between assistant
+                    // messages, so close any open text run.
+                    self.flush_text();
+                }
             }
         }
     }
-    flush_text(&mut turns, &mut text_buf, stream);
-    turns
 }
 
 /// The `(old_string, new_string)` pairs of an edit-tool input, if any:
@@ -821,6 +1006,175 @@ mod tests {
         // Codex `shell` sends the command as argv, not a string.
         let input = serde_json::json!({ "command": ["bash", "-c", "ls -la"] });
         assert_eq!(tool_summary(Some(&input)), "bash -c ls -la");
+    }
+
+    fn frag(text: &str) -> Value {
+        serde_json::json!({ "kind": "assistant_text", "text": text })
+    }
+
+    /// The point of the fold being stateful: a token arrives, the open message
+    /// grows, and nothing is re-derived. Fragments are glued verbatim — a
+    /// whitespace-only token is the space between two words — and the whole run
+    /// is trimmed exactly once, when something closes it.
+    #[test]
+    fn streamed_fragments_grow_the_open_message_without_committing_it() {
+        let mut f = ConvFold::new(true);
+        assert!(f.apply_delta(1, false, &[frag("Hel")]));
+        assert_eq!(f.pending_text(), Some("Hel"));
+        assert!(f.turns().is_empty(), "nothing committed mid-message");
+
+        assert!(f.apply_delta(3, false, &[frag("lo,"), frag(" wor")]));
+        assert!(f.apply_delta(4, false, &[frag("ld")]));
+        assert_eq!(f.pending_text(), Some("Hello, world"));
+        assert!(f.turns().is_empty());
+
+        // A user message closes the run, committing it as one turn.
+        assert!(f.apply_delta(
+            5,
+            false,
+            &[serde_json::json!({ "kind": "user_message", "text": "next" })]
+        ));
+        assert_eq!(f.pending_text(), None);
+        assert_eq!(f.turns().len(), 2);
+        assert_eq!(
+            f.turns()[0].parts,
+            vec![Part::Text("Hello, world".into())],
+            "glued verbatim, trimmed once"
+        );
+    }
+
+    /// claudemon's contract: `seq` is the sequence of the LAST item in the
+    /// frame, so a frame is applicable only when it continues from what we have.
+    /// A hole means a frame was dropped and the client must resync — rendering a
+    /// transcript with a gap in it would be worse than refetching.
+    #[test]
+    fn a_gap_in_the_sequence_is_reported_rather_than_papered_over() {
+        let mut f = ConvFold::new(true);
+        assert!(f.apply_delta(2, false, &[frag("a"), frag("b")]));
+
+        // seq 5 after 2 means items 3 and 4 never arrived.
+        assert!(
+            !f.apply_delta(5, false, &[frag("e")]),
+            "a gap must be reported"
+        );
+        // …and the fold is left untouched, so the resync has a clean base.
+        assert_eq!(f.pending_text(), Some("ab"));
+
+        // The very next contiguous frame still applies.
+        assert!(f.apply_delta(3, false, &[frag("c")]));
+        assert_eq!(f.pending_text(), Some("abc"));
+    }
+
+    /// A reconnect replays the tail, so already-seen frames must be idempotent
+    /// rather than counted as gaps or duplicated into the transcript.
+    #[test]
+    fn a_replayed_frame_is_dropped_not_duplicated() {
+        let mut f = ConvFold::new(true);
+        assert!(f.apply_delta(1, false, &[frag("x")]));
+        assert!(f.apply_delta(1, false, &[frag("x")]), "not a gap");
+        assert_eq!(f.pending_text(), Some("x"), "and not applied twice");
+    }
+
+    /// `reset` means the log was rebuilt (transcript replaced or truncated), so
+    /// prior state is void by definition and the frame always applies.
+    #[test]
+    fn a_reset_frame_replaces_everything_and_always_applies() {
+        let mut f = ConvFold::new(true);
+        f.apply_delta(2, false, &[frag("stale"), frag(" text")]);
+        assert!(f.apply_delta(1, true, &[frag("fresh")]));
+        assert_eq!(f.pending_text(), Some("fresh"));
+        assert!(f.turns().is_empty());
+    }
+
+    /// A tool result can land in a later frame than its call, which is exactly
+    /// what the retained id→location map is for.
+    #[test]
+    fn a_tool_result_attaches_to_a_call_from_an_earlier_frame() {
+        let mut f = ConvFold::new(true);
+        f.apply_delta(
+            1,
+            false,
+            &[serde_json::json!({
+                "kind": "tool_use", "id": "t1", "name": "Bash",
+                "input": { "command": "ls" }
+            })],
+        );
+        f.apply_delta(2, false, &[frag("thinking…")]);
+        f.apply_delta(
+            3,
+            false,
+            &[serde_json::json!({
+                "kind": "tool_result", "tool_use_id": "t1", "content": "a.txt"
+            })],
+        );
+
+        let tool = f
+            .turns()
+            .iter()
+            .flat_map(|t| &t.parts)
+            .find_map(|p| match p {
+                Part::Tool { name, result, .. } if name == "Bash" => Some(result.clone()),
+                _ => None,
+            })
+            .expect("the Bash call is in the transcript");
+        assert_eq!(tool.as_deref(), Some("a.txt"));
+    }
+
+    /// The plan is session state that happens to ride the conversation: it must
+    /// replace wholesale, and it must NOT close the open assistant message (the
+    /// agent rewrites its plan mid-sentence all the time).
+    #[test]
+    fn a_plan_item_updates_the_plan_without_breaking_the_open_message() {
+        let mut f = ConvFold::new(true);
+        f.apply_delta(1, false, &[frag("working")]);
+        f.apply_delta(
+            2,
+            false,
+            &[serde_json::json!({
+                "kind": "plan",
+                "updatedAt": "2026-07-25T00:00:00Z",
+                "steps": [
+                    { "content": "one", "status": "completed" },
+                    { "content": "two", "status": "in_progress", "activeForm": "doing two" },
+                    { "content": "three", "status": "pending" }
+                ]
+            })],
+        );
+        f.apply_delta(3, false, &[frag(" on it")]);
+
+        assert_eq!(f.pending_text(), Some("working on it"), "message intact");
+        let plan = f.plan().expect("plan published");
+        assert_eq!(plan.steps.len(), 3);
+        assert_eq!(plan.done(), 1);
+        assert_eq!(plan.current().map(|s| s.content.as_str()), Some("two"));
+        assert_eq!(
+            plan.current().and_then(|s| s.active_form.as_deref()),
+            Some("doing two")
+        );
+
+        // Last-write-wins: a rewrite replaces the whole plan.
+        f.apply_delta(
+            4,
+            false,
+            &[serde_json::json!({
+                "kind": "plan",
+                "steps": [{ "content": "only", "status": "completed" }]
+            })],
+        );
+        assert_eq!(f.plan().unwrap().steps.len(), 1);
+        assert_eq!(f.plan().unwrap().done(), 1);
+    }
+
+    /// An empty plan reads as "no plan" rather than an empty panel.
+    #[test]
+    fn an_empty_plan_is_treated_as_absent() {
+        let mut f = ConvFold::new(true);
+        f.apply_delta(
+            1,
+            false,
+            &[serde_json::json!({ "kind": "plan", "steps": [] })],
+        );
+        assert!(f.plan().is_none());
     }
 
     #[test]
