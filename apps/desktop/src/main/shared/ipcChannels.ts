@@ -56,6 +56,7 @@ export const IPC = {
   KEEPWARM_HEARTBEATS: 'keepwarm:heartbeats',
   CLAUDE_MESSAGE: 'claude:message',
   CLAUDE_SET_PERMISSION_MODE: 'claude:setPermissionMode',
+  CLAUDE_SET_EFFORT: 'claude:setEffort',
   CLAUDE_SET_MODEL: 'claude:setModel',
   CLAUDE_HANDOFF_BRIEF: 'claude:handoffBrief',
   CLAUDE_HANDOFF_AGENT_BRIEF: 'claude:handoffAgentBrief',

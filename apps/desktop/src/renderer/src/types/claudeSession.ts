@@ -148,6 +148,10 @@ export interface SessionUsage {
  */
 export interface SessionStatusLine {
   modelDisplay?: string;
+  /** Provider-confirmed reasoning-effort level (Codex). Absent for Claude,
+   *  which reports its effective effort in no channel — the composer falls back
+   *  to the level it asked for (`liveEffort`) there. */
+  effort?: string;
   contextUsedPct?: number;
   contextWindowSize?: number;
   totalInputTokens?: number;
@@ -261,11 +265,26 @@ export interface ClaudeSessionSnapshot {
     model?: string;
     effort?: string;
     permissionMode?: string;
+    /** Claude only: whether the process carries `--dangerously-skip-permissions`.
+     *  Claude gates switching *to* `bypassPermissions` on that launch flag, so
+     *  this decides whether the composer's "Full access" pick can go live or has
+     *  to restart. Absent = we don't know how this row was launched. */
+    bypassAvailable?: boolean;
+    /** Claude only: what an absent `--effort` resolves to (settings chain, read
+     *  at spawn). Lets the effort pill show the level rather than "Default".
+     *  Codex's equivalent comes from its live model catalog instead. */
+    defaultEffort?: string;
   };
   /** Current permission mode from hook payloads — tracks live changes (e.g.
    *  shift+tab in the TUI), unlike `settings.permissionMode` which is frozen
    *  at spawn. Claude sessions only; managed providers fire no hooks. */
   livePermissionMode?: string;
+  /** Reasoning-effort level this session was last *asked* to run at, set when a
+   *  live switch is accepted. Optimistic by necessity for Claude, which confirms
+   *  an effort change nowhere; Codex's own confirmation arrives separately on the
+   *  status line and wins over this. Unlike `settings.effort` it is not frozen at
+   *  spawn. */
+  liveEffort?: string;
   /** Context compaction from the PreCompact/PostCompact hooks: `compacting` is
    *  true mid-compaction; `lastCompactAt` (ms) + `compactionCount` badge a
    *  recently-compacted / churning session. */

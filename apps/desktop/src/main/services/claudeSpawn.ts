@@ -24,6 +24,7 @@ import { randomUUID } from 'crypto';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { claudeProfiles } from './claudeProfiles';
+import { resolveClaudeDefaultEffort } from './claudeEffortDefault';
 import { buildClaudeArgv } from './claudeResolver';
 import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
 import { facadeSpawnArgs, buildSessionMcpConfig } from './mcpConfig';
@@ -83,6 +84,14 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   // snapshot so the composer pill shows truth.
   const permissionMode =
     opts.permissionMode ?? (opts.skipPermissions ? 'bypassPermissions' : 'default');
+  // Whether this process will carry `--dangerously-skip-permissions` — the same
+  // three inputs buildClaudeArgv resolves it from below. Recorded because Claude
+  // gates *switching to* bypassPermissions on the flag, so it's what tells the
+  // composer whether "Full access" is a live switch or a restart.
+  const bypassAvailable =
+    !!opts.skipPermissions ||
+    permissionMode === 'bypassPermissions' ||
+    (profile?.extraArgs ?? []).includes('--dangerously-skip-permissions');
   // Record name/parent before the session registers so adopted cards are
   // enriched from the very first hook event.
   claudeSessionStore.setSpawnMeta(sessionId, {
@@ -90,7 +99,17 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     parentSessionId: opts.parentSessionId,
     isSupervisor: opts.supervisor,
     provider: 'claude',
-    settings: { model: opts.model, effort: opts.effort, permissionMode },
+    settings: {
+      model: opts.model,
+      effort: opts.effort,
+      permissionMode,
+      bypassAvailable,
+      // What an absent `--effort` resolves to, so the pill can name the level
+      // instead of the word "Default". The CLI reports it nowhere.
+      ...(!opts.effort?.trim() && {
+        defaultEffort: resolveClaudeDefaultEffort(opts.cwd, profile?.configDir),
+      }),
+    },
   });
 
   // Per-spawn MCP servers selected from the Library (kind 'mcp'). Resolve the

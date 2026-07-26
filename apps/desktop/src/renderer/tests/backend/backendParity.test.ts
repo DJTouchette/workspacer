@@ -57,6 +57,7 @@ const BUS_BACKED = [
   // Agent control
   'claudeMessage',
   'claudeSetPermissionMode',
+  'claudeSetEffort',
   'claudeSetModel',
   'claudeHandoffBrief',
   'claudeHandoffAgentBrief',

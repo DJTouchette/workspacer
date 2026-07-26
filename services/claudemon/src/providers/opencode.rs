@@ -61,6 +61,8 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
             label: id.to_string(),
             default: false,
             effort_levels: vec![],
+            // `opencode models` lists ids only — no effort metadata at all.
+            default_effort: None,
         })
         .collect();
     Ok(models)

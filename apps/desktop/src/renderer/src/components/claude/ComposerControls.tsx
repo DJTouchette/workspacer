@@ -9,12 +9,23 @@
  *    `thread/settings/update` to the running thread — falls back to the
  *    restart confirm when the daemon says it can't, e.g. rollout fallback);
  *    opencode/pi restart with the new model.
- *  - Effort: codex (`-c model_reasoning_effort=<level>`) and claude
- *    (`--effort <level>`), both restart-to-apply (no live control).
+ *  - Effort: live for both — claude via the `/effort <level>` slash command
+ *    through the message path (verified: the CLI answers "Set effort level to …
+ *    (this session only)"), codex via the daemon's thread/settings/update. Only
+ *    claude's is unconfirmable, so the pill shows what it asked for there while
+ *    codex's own thread/settings/updated wins. The "Default" row still restarts:
+ *    a live switch can only *set* a level, and un-pinning back to the harness
+ *    default needs a relaunch with no flag. The level Default resolves to is
+ *    named rather than left blank — codex's per-model `defaultReasoningEffort`,
+ *    and for claude its settings chain read at spawn (settings.defaultEffort).
  *  - Permission mode: live where the daemon can drive it (claude via the
  *    verified shift+tab cycle, codex via the adapter's approval flag); when
  *    the daemon reports the switch can't be done live, the pick falls back to
  *    the restart confirm with the daemon's reason. opencode/pi restart.
+ *    'Full access' is the one mode Claude gates at launch — reachable live only
+ *    if the process carries --dangerously-skip-permissions (settings.
+ *    bypassAvailable), and otherwise a restart, which the row says up front
+ *    rather than after a request that cannot succeed.
  *
  * Restart selections go through a confirm step whose copy says whether the
  * conversation survives (claude resumes; codex/opencode start fresh).
@@ -39,6 +50,7 @@ import {
   ContextMenu,
   ContextMenuItem,
   ContextMenuLabel,
+  ContextMenuNote,
   ContextMenuSeparator,
 } from '../ContextMenu';
 import { IconModel } from '../wksIcons';
@@ -60,6 +72,8 @@ interface ModelOption {
   default?: boolean;
   /** Exact effort ids supported by this model, when the provider reports them. */
   effortLevels?: string[];
+  /** Level this model runs at with no effort override (Codex reports it). */
+  defaultEffort?: string;
 }
 
 /** Context-window chip; the 1M window gets the accent treatment. */
@@ -120,6 +134,31 @@ const checkedLabel = (label: string, current: boolean): React.ReactNode =>
     </span>
   ) : (
     label
+  );
+
+/** Permission row: `checkedLabel` plus a "restarts" hint on the one mode this
+ *  session can't be switched into live, so the cost is visible before the
+ *  click rather than in a confirm step that appears to come out of nowhere. */
+const modeItemLabel = (label: string, current: boolean, restarts: boolean): React.ReactNode =>
+  restarts ? (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+      {checkedLabel(label, current)}
+      <span
+        style={{
+          fontSize: '0.6rem',
+          fontWeight: 700,
+          letterSpacing: '0.04em',
+          textTransform: 'uppercase',
+          fontFamily: 'var(--wks-font-mono)',
+          color: 'var(--wks-text-faint)',
+          flexShrink: 0,
+        }}
+      >
+        restarts
+      </span>
+    </span>
+  ) : (
+    checkedLabel(label, current)
   );
 
 type MenuKind = 'model' | 'effort' | 'permission';
@@ -237,6 +276,7 @@ export const ComposerControls: React.FC<{
             label: m.label || m.id,
             default: m.default,
             effortLevels: m.effortLevels,
+            defaultEffort: m.defaultEffort,
           })),
         );
       }
@@ -303,14 +343,100 @@ export const ComposerControls: React.FC<{
     [sessionId, stats.model, caps.modelSource, transport],
   );
 
-  const pickRestart = (overrides: RestartOverrides, label: string) => {
-    setMenu((m) => (m ? { ...m, confirm: { overrides, label } } : m));
+  const pickRestart = (overrides: RestartOverrides, label: string, reason?: string) => {
+    setMenu((m) => (m ? { ...m, confirm: { overrides, label, reason } } : m));
+  };
+
+  /**
+   * Whether a permission mode can only be reached by restarting, even on a
+   * provider whose switch is otherwise 'live'.
+   *
+   * Claude gates `bypassPermissions` on the launch flag, both transports: the
+   * stream control protocol answers *"Cannot set permission mode to
+   * bypassPermissions because the session was not launched with
+   * --dangerously-skip-permissions"* (verified on the wire), and the PTY TUI
+   * leaves the mode out of its shift+tab cycle for the same reason — where the
+   * daemon discovers it only by cycling the session through every *other* mode
+   * first. Neither is worth asking for when we already know the answer, so a
+   * session we launched without the flag goes straight to the restart confirm.
+   *
+   * `bypassAvailable` undefined means we didn't record this row's launch (a
+   * pre-existing or restored session): try live and let the daemon answer.
+   */
+  const needsRestartForMode = (id: string): boolean =>
+    id === 'bypassPermissions' &&
+    (provider ?? 'claude') === 'claude' &&
+    settings?.bypassAvailable === false;
+
+  const BYPASS_RESTART_REASON =
+    'Full access can only be granted at launch — this session was started with approvals on.';
+
+  /**
+   * Carry the session's current permission mode and effort through a restart
+   * that isn't about them. The spawn resolver reads an absent mode as 'default'
+   * and an absent effort as "no override", so a model restart would otherwise
+   * drop the session out of Full access — or out of a level it was live-switched
+   * to — with nothing in the UI saying it had.
+   *
+   * Only values the provider can be *launched* with are carried: live telemetry
+   * reports permission ids outside the restart vocabulary ('auto', 'dontAsk'),
+   * and `/effort` accepts levels the `--effort` flag rejects ('ultracode',
+   * 'auto'). Either would reach the CLI as invalid argv.
+   */
+  const withCurrentSettings = (o: RestartOverrides): RestartOverrides => {
+    const next = { ...o };
+    if (
+      next.permissionMode === undefined &&
+      currentPermMode &&
+      caps.permissionModes.some((m) => m.id === currentPermMode)
+    ) {
+      next.permissionMode = currentPermMode;
+    }
+    if (
+      next.effort === undefined &&
+      currentEffort &&
+      (caps.effort?.levels ?? []).some((l) => l.id === currentEffort)
+    ) {
+      next.effort = currentEffort;
+    }
+    return next;
   };
 
   /** Target mode id of an in-flight live permission switch. Cleared when the
    *  daemon answers — on success the snapshot already carries the new mode
    *  (main updates livePermissionMode before resolving), so no timer needed. */
   const [permSwitching, setPermSwitching] = useState<string | null>(null);
+  /** Target level of an in-flight live effort switch, same contract. */
+  const [effortSwitching, setEffortSwitching] = useState<string | null>(null);
+
+  // Live effort switch. Claude submits `/effort <level>` through the message
+  // path (a real command — the CLI answers "Set effort level to … (this session
+  // only)"); codex goes structural via the daemon. A refusal — a busy claude, a
+  // codex rollout fallback — reopens the menu as the restart confirm with the
+  // reason, the same degradation as the model and permission pills.
+  const liveEffortSwitch = useCallback(
+    (id: string, label: string, at: { x: number; y: number }) => {
+      if (!sessionId) return;
+      setEffortSwitching(id);
+      window.electronAPI
+        .claudeSetEffort(sessionId, id)
+        .then((res) => {
+          if (!res.ok) {
+            setMenu({
+              kind: 'effort',
+              x: at.x,
+              y: at.y,
+              confirm: { overrides: { effort: id }, label: `${label} effort`, reason: res.error },
+            });
+          }
+        })
+        .catch((err) => {
+          console.warn('[ComposerControls] live effort switch failed:', err);
+        })
+        .finally(() => setEffortSwitching(null));
+    },
+    [sessionId],
+  );
 
   // Live permission switch: claudemon drives and verifies it (claude:
   // shift+tab cycle against the screen; codex: adapter approval flag). When
@@ -346,7 +472,14 @@ export const ComposerControls: React.FC<{
   // An omitted/empty effort means "use this harness's configured default".
   // Make that a visible selected state instead of leaving the pill as the bare
   // placeholder "Effort" with no checked menu row.
-  const currentEffort = settings?.effort?.trim() || undefined;
+  // Precedence, strongest first: the provider's own confirmation (codex's
+  // thread/settings/updated, which also catches a change made in its TUI), then
+  // the level a live switch asked for (all claude has), then the spawn request.
+  const currentEffort =
+    snapshot?.statusLine?.effort?.trim() ||
+    snapshot?.liveEffort?.trim() ||
+    settings?.effort?.trim() ||
+    undefined;
   const reportedModel = stats.model ?? settings?.model;
   const currentModel = models?.find((model) =>
     reportedModel ? model.id === reportedModel : model.default,
@@ -356,7 +489,20 @@ export const ComposerControls: React.FC<{
       ? currentModel.effortLevels.map((id) => ({ id, label: effortLevelLabel(id) }))
       : (caps.effort?.levels ?? []);
   const effortLevel = effortLevels.find((l) => l.id === currentEffort);
-  const effortLabel = effortLevel?.label ?? currentEffort ?? 'Default';
+  // What "Default" actually resolves to, so the pill can name a level instead of
+  // the word. Two different sources because the two harnesses expose it
+  // differently: Claude's comes from its settings chain, read at spawn
+  // (claudeEffortDefault.ts — the CLI reports the effective effort in no
+  // telemetry channel at all); Codex reports it per model on the live catalog
+  // row, so it's only known once that list has loaded.
+  const resolvedDefaultEffort =
+    (provider ?? 'claude') === 'codex' ? currentModel?.defaultEffort : settings?.defaultEffort;
+  const defaultEffortLabel = resolvedDefaultEffort
+    ? effortLevelLabel(resolvedDefaultEffort)
+    : undefined;
+  const effortLabel = effortSwitching
+    ? `${effortLevelLabel(effortSwitching)}…`
+    : (effortLevel?.label ?? currentEffort ?? defaultEffortLabel ?? 'Default');
   // Live mode (hook telemetry — follows shift+tab in the TUI) wins over the
   // requested-at-spawn setting, same precedence as the model pill.
   const currentPermMode = snapshot?.livePermissionMode ?? settings?.permissionMode;
@@ -390,10 +536,16 @@ export const ComposerControls: React.FC<{
           <Sep />
           <button
             className="wks-composer-ctl"
-            style={pillStyle}
+            style={{ ...pillStyle, color: effortSwitching ? colors.accent : pillStyle.color }}
             onClick={openMenu('effort')}
             disabled={disabled}
-            title={disabled ? 'No session yet' : 'Reasoning effort (restarts the session)'}
+            title={
+              disabled
+                ? 'No session yet'
+                : caps.effort.switch === 'live'
+                  ? 'Reasoning effort (applies to the next turn)'
+                  : 'Reasoning effort (restarts the session)'
+            }
           >
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{effortLabel}</span>
             <ChevronDown size={11} strokeWidth={2.25} style={{ opacity: 0.7, flexShrink: 0 }} />
@@ -478,17 +630,42 @@ export const ComposerControls: React.FC<{
           )}
           {menu.kind === 'effort' && caps.effort && (
             <>
-              <ContextMenuLabel>Reasoning effort · restarts session</ContextMenuLabel>
+              <ContextMenuLabel>
+                Reasoning effort{caps.effort.switch === 'restart' ? ' · restarts session' : ''}
+              </ContextMenuLabel>
+              {/* Name the level Default resolves to. This row always restarts, even
+                  where the concrete levels switch live: `/effort` and
+                  thread/settings/update can only *set* a level, and un-pinning so
+                  the session inherits from settings again needs a relaunch with
+                  no flag. The chip says so. */}
               <ContextMenuItem
-                label={checkedLabel('Default', !currentEffort)}
-                onClick={() => pickRestart({ effort: '' }, 'Default effort')}
+                label={modeItemLabel(
+                  defaultEffortLabel ? `Default · ${defaultEffortLabel}` : 'Default',
+                  !currentEffort,
+                  caps.effort.switch === 'live',
+                )}
+                onClick={() =>
+                  pickRestart(
+                    { effort: '' },
+                    'Default effort',
+                    'Clearing the override needs a relaunch — a live switch can only set a level.',
+                  )
+                }
               />
               <ContextMenuSeparator />
               {effortLevels.map((l) => (
                 <ContextMenuItem
                   key={l.id}
                   label={checkedLabel(l.label, l.id === currentEffort)}
-                  onClick={() => pickRestart({ effort: l.id }, `${l.label} effort`)}
+                  onClick={() => {
+                    if (caps.effort?.switch === 'live') {
+                      const at = { x: menu.x, y: menu.y };
+                      setMenu(null);
+                      liveEffortSwitch(l.id, l.label, at);
+                    } else {
+                      pickRestart({ effort: l.id }, `${l.label} effort`);
+                    }
+                  }}
                 />
               ))}
             </>
@@ -498,24 +675,33 @@ export const ComposerControls: React.FC<{
               <ContextMenuLabel>
                 Permissions{caps.permissionSwitch === 'restart' ? ' · restarts session' : ''}
               </ContextMenuLabel>
-              {caps.permissionModes.map((m) => (
-                <ContextMenuItem
-                  key={m.id}
-                  label={checkedLabel(
-                    m.label,
-                    m.id === (currentPermMode ?? caps.permissionModes[0]?.id),
-                  )}
-                  onClick={() => {
-                    if (caps.permissionSwitch === 'live') {
-                      const at = { x: menu.x, y: menu.y };
-                      setMenu(null);
-                      livePermissionSwitch(m.id, m.label, at);
-                    } else {
-                      pickRestart({ permissionMode: m.id }, m.label);
-                    }
-                  }}
-                />
-              ))}
+              {caps.permissionModes.map((m) => {
+                // Per-row, not per-provider: the menu is 'live' but this one
+                // mode isn't. When the whole provider restarts, the header
+                // already says so — don't repeat it on every row.
+                const restarts = caps.permissionSwitch === 'live' && needsRestartForMode(m.id);
+                return (
+                  <ContextMenuItem
+                    key={m.id}
+                    label={modeItemLabel(
+                      m.label,
+                      m.id === (currentPermMode ?? caps.permissionModes[0]?.id),
+                      restarts,
+                    )}
+                    onClick={() => {
+                      if (restarts) {
+                        pickRestart({ permissionMode: m.id }, m.label, BYPASS_RESTART_REASON);
+                      } else if (caps.permissionSwitch === 'live') {
+                        const at = { x: menu.x, y: menu.y };
+                        setMenu(null);
+                        livePermissionSwitch(m.id, m.label, at);
+                      } else {
+                        pickRestart({ permissionMode: m.id }, m.label);
+                      }
+                    }}
+                  />
+                );
+              })}
             </>
           )}
         </ContextMenu>
@@ -523,7 +709,11 @@ export const ComposerControls: React.FC<{
 
       {menu?.confirm && (
         <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} minWidth={230}>
-          {menu.confirm.reason && <ContextMenuLabel>{menu.confirm.reason}</ContextMenuLabel>}
+          {/* A sentence, and sometimes the provider's own error text — prose,
+              not a header. As a ContextMenuLabel it rendered unwrapped and
+              stretched the menu to ~815px, which the viewport clamp then flipped
+              left over the sidebar. */}
+          {menu.confirm.reason && <ContextMenuNote>{menu.confirm.reason}</ContextMenuNote>}
           <ContextMenuLabel>
             {caps.restartPreservesConversation
               ? 'Restarts and resumes this conversation'
@@ -532,7 +722,11 @@ export const ComposerControls: React.FC<{
           <ContextMenuItem
             label={`Restart with ${menu.confirm.label}`}
             onClick={() => {
-              onRestartWith(menu.confirm!.overrides);
+              // Every restart path funnels through here — the model/effort
+              // picks, and the fallbacks from a live switch the daemon refused
+              // — so this is the one place that has to keep the permission mode
+              // from being reset by omission.
+              onRestartWith(withCurrentSettings(menu.confirm!.overrides));
               setMenu(null);
             }}
           />

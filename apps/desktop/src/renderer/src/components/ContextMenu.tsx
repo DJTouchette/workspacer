@@ -252,6 +252,31 @@ export function ContextMenuSeparator() {
   );
 }
 
+/**
+ * Wrapped prose inside a menu — a daemon's explanation for why a live switch
+ * fell back to a restart, and the like. `ContextMenuLabel` is a section *header*
+ * (uppercase mono, a couple of words); a sentence belongs here instead, and the
+ * width cap is the whole point. The menu surface has no max-width, so a
+ * 120-character reason rendered as a header sizes it to ~815px — and the
+ * viewport clamp then flips that panel left, onto the sidebar.
+ */
+export function ContextMenuNote({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        padding: '4px 11px 6px',
+        maxWidth: 260,
+        fontSize: '0.68rem',
+        lineHeight: 1.45,
+        whiteSpace: 'normal',
+        color: 'var(--wks-text-secondary)',
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function ContextMenuLabel({ children }: { children: React.ReactNode }) {
   return (
     <div

@@ -31,6 +31,7 @@ import { agentHandoffBrief } from './services/agentHandoff';
 import { resolveAgentBinary, checkAllProviders } from './services/agentProviders';
 import { spawnManagedAgent } from './services/managedSpawn';
 import { spawnClaudeAgent } from './services/claudeSpawn';
+import { applyLiveEffort } from './services/liveEffort';
 import { logsDir } from './services/logFile';
 import { installWorkspacerCli } from './services/cliInstall';
 import { ensureSupervisorHome } from './services/supervisorSkill';
@@ -698,6 +699,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       if (result.ok && result.mode) claudeSessionStore.notePermissionMode(sessionId, result.mode);
       return result;
     },
+  );
+  // Live reasoning-effort switch (no restart). Shared with the
+  // `claude.setEffort` hub capability via applyLiveEffort so the two transports
+  // can't drift — the dispatch branches on provider (see liveEffort.ts).
+  ipcMain.handle(IPC.CLAUDE_SET_EFFORT, (_event, sessionId: string, effort: string) =>
+    applyLiveEffort(sessionId, effort),
   );
   // Live model switch for managed providers (no restart). Confirmation flows
   // back through the status line (codex broadcasts thread/settings/updated),

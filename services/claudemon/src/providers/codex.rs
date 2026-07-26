@@ -153,6 +153,15 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
         // model switch) or by the user in the TUI (`/model`). Either way the
         // model on the status line follows the thread's truth.
         "thread/settings/updated" => {
+            // Codex echoes the whole `threadSettings` block, so this confirms an
+            // effort switch we requested AND one the user made in the TUI.
+            if let Some(effort) = params
+                .get("threadSettings")
+                .and_then(|s| s.get("effort"))
+                .and_then(Value::as_str)
+            {
+                out.push(AgentUpdate::Effort(effort.to_string()));
+            }
             let model = params
                 .get("threadSettings")
                 .and_then(|s| s.get("model"))
@@ -626,11 +635,20 @@ fn model_info_from_value(model: &Value) -> Option<ModelInfo> {
                 .map(str::to_string)
         })
         .collect();
+    // The level a turn runs at when no `-c model_reasoning_effort=` is passed.
+    // Per model, and it genuinely varies (verified against the installed CLI:
+    // 'medium' for gpt-5.6-sol, 'xhigh' for gpt-5.5), so it can't be a constant.
+    let default_effort = model
+        .get("defaultReasoningEffort")
+        .or_else(|| model.get("default_reasoning_effort"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
     Some(ModelInfo {
         id,
         label,
         default,
         effort_levels,
+        default_effort,
     })
 }
 
@@ -1510,6 +1528,7 @@ mod tests {
             "model": "gpt-5.5",
             "displayName": "GPT-5.5",
             "isDefault": true,
+            "defaultReasoningEffort": "xhigh",
             "supportedReasoningEfforts": [
                 { "reasoningEffort": "low", "description": "Fast" },
                 { "reasoningEffort": "medium", "description": "Balanced" },
@@ -1525,8 +1544,19 @@ mod tests {
                 label: "GPT-5.5".into(),
                 default: true,
                 effort_levels: vec!["low".into(), "medium".into(), "high".into(), "xhigh".into()],
+                default_effort: Some("xhigh".into()),
             })
         );
+    }
+
+    /// The default level is per model, not per CLI — verified against the
+    /// installed binary, which reports 'medium' for gpt-5.6-sol and 'xhigh' for
+    /// gpt-5.5. A row that omits it leaves the composer's "Default" row unnamed
+    /// rather than guessing a level.
+    #[test]
+    fn model_info_default_effort_is_absent_when_the_row_omits_it() {
+        let row = json!({ "model": "m", "displayName": "M" });
+        assert_eq!(model_info_from_value(&row).unwrap().default_effort, None);
     }
 
     #[test]
@@ -1736,20 +1766,35 @@ mod tests {
         );
     }
 
+    /// The notification echoes the whole settings block, so it confirms both
+    /// fields — including an effort change made in Codex's own TUI, which is the
+    /// only way we'd ever hear about that one.
     #[test]
-    fn thread_settings_updated_yields_model() {
+    fn thread_settings_updated_yields_effort_and_model() {
         let p = json!({ "threadId": "t1", "threadSettings": { "model": "gpt-5.5-codex", "effort": "high" } });
         assert_eq!(
             translate("thread/settings/updated", &p),
-            vec![AgentUpdate::Usage {
-                model: Some("gpt-5.5-codex".into()),
-                input_tokens: None,
-                output_tokens: None,
-                cached_input_tokens: None,
-                cost_usd: None,
-                context_tokens: None,
-                context_window: None,
-            }]
+            vec![
+                AgentUpdate::Effort("high".into()),
+                AgentUpdate::Usage {
+                    model: Some("gpt-5.5-codex".into()),
+                    input_tokens: None,
+                    output_tokens: None,
+                    cached_input_tokens: None,
+                    cost_usd: None,
+                    context_tokens: None,
+                    context_window: None,
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn thread_settings_updated_with_only_effort_yields_only_effort() {
+        let p = json!({ "threadId": "t1", "threadSettings": { "effort": "xhigh" } });
+        assert_eq!(
+            translate("thread/settings/updated", &p),
+            vec![AgentUpdate::Effort("xhigh".into())]
         );
     }
 

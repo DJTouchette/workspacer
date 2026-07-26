@@ -171,7 +171,15 @@ class ClaudemonSessionClient {
     provider: 'opencode' | 'codex' | 'pi',
     cwd?: string,
     bin?: string,
-  ): Promise<Array<{ id: string; label: string; default: boolean; effortLevels?: string[] }>> {
+  ): Promise<
+    Array<{
+      id: string;
+      label: string;
+      default: boolean;
+      effortLevels?: string[];
+      defaultEffort?: string;
+    }>
+  > {
     const params = new URLSearchParams();
     if (cwd) params.set('cwd', cwd);
     if (bin) params.set('bin', bin);
@@ -187,6 +195,7 @@ class ClaudemonSessionClient {
           label: string;
           default?: boolean;
           effortLevels?: unknown;
+          defaultEffort?: unknown;
         }>;
       };
       return (body.models ?? []).map((m) => ({
@@ -198,6 +207,9 @@ class ClaudemonSessionClient {
             (level): level is string => typeof level === 'string',
           ),
         }),
+        // The level a turn runs at with no effort override — Codex reports it
+        // per model, so the composer's "Default" row can name it.
+        ...(typeof m.defaultEffort === 'string' && { defaultEffort: m.defaultEffort }),
       }));
     } catch {
       return [];

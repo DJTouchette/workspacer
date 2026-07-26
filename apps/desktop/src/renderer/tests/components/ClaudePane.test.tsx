@@ -300,13 +300,14 @@ describe('ClaudePane headless codex — surface gating + restart transport', () 
   it("restarting a headless codex session preserves transport:'stream'", async () => {
     mockSession = makeSnapshot({ transport: 'stream', settings: { effort: 'low' } });
     render(<ClaudePane paneId="h3" title="Codex" isActive cwd="/repo" provider="codex" />);
-    // Drive a restart through the effort pill (restart-only knob for codex).
+    // Drive a restart through the effort pill's "Default" row — concrete levels
+    // now switch live, but clearing the override still needs a relaunch.
     fireEvent.click(screen.getByText('Low'));
-    fireEvent.click(await screen.findByText('High'));
-    fireEvent.click(await screen.findByText(/Restart with High effort/));
+    fireEvent.click(await screen.findByText('Default'));
+    fireEvent.click(await screen.findByText(/Restart with Default effort/));
     await waitFor(() =>
       expect(mockRestartSession).toHaveBeenCalledWith(
-        expect.objectContaining({ effort: 'high', provider: 'codex', transport: 'stream' }),
+        expect.objectContaining({ effort: '', provider: 'codex', transport: 'stream' }),
       ),
     );
   });
@@ -315,11 +316,11 @@ describe('ClaudePane headless codex — surface gating + restart transport', () 
     mockSession = makeSnapshot({ settings: { effort: 'low' } });
     render(<ClaudePane paneId="h4" title="Codex" isActive cwd="/repo" provider="codex" />);
     fireEvent.click(screen.getByText('Low'));
-    fireEvent.click(await screen.findByText('High'));
-    fireEvent.click(await screen.findByText(/Restart with High effort/));
+    fireEvent.click(await screen.findByText('Default'));
+    fireEvent.click(await screen.findByText(/Restart with Default effort/));
     await waitFor(() =>
       expect(mockRestartSession).toHaveBeenCalledWith(
-        expect.objectContaining({ effort: 'high', provider: 'codex', transport: 'pty' }),
+        expect.objectContaining({ effort: '', provider: 'codex', transport: 'pty' }),
       ),
     );
   });

@@ -287,6 +287,13 @@ pub struct ContextInventory {
 pub struct StatusLine {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_display: Option<String>,
+    /// Reasoning-effort level in force, when the provider confirms one (Codex's
+    /// `thread/settings/updated`). Claude publishes its effective effort nowhere,
+    /// so this stays absent there and the composer falls back to what it asked
+    /// for. Rides the status line for the same reason `model_display` does: it's
+    /// live provider truth, and it follows a change made in the provider's TUI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     /// `context_window.used_percentage` (0–100).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_used_pct: Option<f64>,
@@ -358,6 +365,10 @@ impl StatusLine {
                 .and_then(|m| m.get("display_name"))
                 .and_then(Value::as_str)
                 .map(str::to_owned),
+            // Claude's statusLine carries no effort field (verified: its stream
+            // `init` frame doesn't either). Read it best-effort so we pick it up
+            // automatically if that ever changes, without depending on it.
+            effort: v.get("effort").and_then(Value::as_str).map(str::to_owned),
             context_used_pct: cw
                 .and_then(|c| c.get("used_percentage"))
                 .and_then(Value::as_f64),

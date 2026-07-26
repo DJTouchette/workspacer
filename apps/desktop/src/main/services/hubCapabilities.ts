@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
+import { applyLiveEffort } from './liveEffort';
 import { agentHandoffBrief } from './agentHandoff';
 import { spawnManagedAgent } from './managedSpawn';
 import { spawnClaudeAgent } from './claudeSpawn';
@@ -450,6 +451,17 @@ export function registerHubCapabilities(): void {
     const result = await claudemonSessionClient.setPermissionMode(sessionId, mode);
     if (result.ok && result.mode) claudeSessionStore.notePermissionMode(sessionId, result.mode);
     return result;
+  });
+
+  // Control: live reasoning-effort switch (no restart). Remote counterpart of
+  // the `claude:setEffort` IPC handler — same shared body, so a remote pill and
+  // the desktop pill drive the identical per-provider mechanism.
+  registerCapability('claude.setEffort', async (params: unknown) => {
+    const { sessionId, effort } = (params ?? {}) as { sessionId?: string; effort?: string };
+    if (!sessionId || typeof effort !== 'string' || !effort) {
+      throw new Error('claude.setEffort requires { sessionId, effort }');
+    }
+    return applyLiveEffort(sessionId, effort);
   });
 
   // Control: live model/effort switch for managed providers (no restart).

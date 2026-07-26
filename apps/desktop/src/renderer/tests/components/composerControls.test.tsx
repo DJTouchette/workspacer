@@ -77,6 +77,7 @@ beforeEach(() => {
   ]);
   api.claudeSetModel = vi.fn().mockResolvedValue({ ok: true });
   api.claudeSetPermissionMode = vi.fn().mockResolvedValue({ ok: true });
+  api.claudeSetEffort = vi.fn().mockResolvedValue({ ok: true, effort: 'high' });
   api.claudeMessage = vi.fn().mockResolvedValue({ ok: true });
 });
 
@@ -182,6 +183,238 @@ describe('ComposerControls — claude live switches', () => {
   });
 });
 
+/**
+ * Claude refuses to enter bypassPermissions mid-session unless the process was
+ * launched with --dangerously-skip-permissions — verified against the stream
+ * transport's control protocol, which answers "Cannot set permission mode to
+ * bypassPermissions because the session was not launched with
+ * --dangerously-skip-permissions". `settings.bypassAvailable` records that flag
+ * at spawn so the pill can route the pick correctly instead of firing a request
+ * that cannot succeed and rendering the CLI's error at the user.
+ */
+describe('ComposerControls — Full access is gated at launch', () => {
+  it('routes Full access straight to the restart confirm when the session lacks the launch flag', async () => {
+    const { onRestartWith } = renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ settings: { permissionMode: 'default', bypassAvailable: false } }),
+    });
+    fireEvent.click(screen.getByText('Ask to approve'));
+    fireEvent.click(await screen.findByText('Full access'));
+    // No doomed round trip to the daemon…
+    expect(api.claudeSetPermissionMode).not.toHaveBeenCalled();
+    // …and the confirm says why, in prose.
+    expect(await screen.findByText(/only be granted at launch/)).toBeInTheDocument();
+    fireEvent.click(await screen.findByText(/Restart with Full access/));
+    expect(onRestartWith).toHaveBeenCalledWith({ permissionMode: 'bypassPermissions' });
+  });
+
+  it('marks the row as restarting so the cost is visible before the click', async () => {
+    renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ settings: { permissionMode: 'default', bypassAvailable: false } }),
+    });
+    fireEvent.click(screen.getByText('Ask to approve'));
+    expect(await screen.findByText('restarts')).toBeInTheDocument();
+  });
+
+  it('switches live when the session was launched with the flag', async () => {
+    renderControls({
+      provider: 'claude',
+      snapshot: snapshot({
+        settings: { permissionMode: 'acceptEdits', bypassAvailable: true },
+      }),
+    });
+    fireEvent.click(screen.getByText('Accept edits'));
+    fireEvent.click(await screen.findByText('Full access'));
+    expect(api.claudeSetPermissionMode).toHaveBeenCalledWith('sess-1', 'bypassPermissions');
+    expect(screen.queryByText('restarts')).not.toBeInTheDocument();
+  });
+
+  it('still asks the daemon when the launch is unrecorded (restored session)', async () => {
+    renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ settings: { permissionMode: 'default' } }),
+    });
+    fireEvent.click(screen.getByText('Ask to approve'));
+    fireEvent.click(await screen.findByText('Full access'));
+    expect(api.claudeSetPermissionMode).toHaveBeenCalledWith('sess-1', 'bypassPermissions');
+  });
+});
+
+/**
+ * "Default" effort means "pass no --effort", but the level it lands on is
+ * knowable and used to be hidden behind the word. Claude's comes from its
+ * settings chain (resolved at spawn into settings.defaultEffort, because the CLI
+ * reports the effective level in no telemetry channel); Codex reports it per
+ * model on the live catalog row (`defaultReasoningEffort`).
+ */
+describe('ComposerControls — Default effort names the level it resolves to', () => {
+  it('claude: the pill shows the resolved level instead of the word', () => {
+    renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ settings: { defaultEffort: 'high' } }),
+    });
+    expect(screen.getByText('High')).toBeInTheDocument();
+    expect(screen.queryByText('Default')).not.toBeInTheDocument();
+  });
+
+  it('claude: the Default row names the level and stays the checked row', async () => {
+    renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ settings: { defaultEffort: 'high' } }),
+    });
+    fireEvent.click(screen.getByText('High'));
+    // Both exist: the inherited row and the explicit pin. The ✓ is on Default.
+    const marked = (await screen.findAllByText('Default · High')).find(
+      (el) => el.tagName === 'SPAN' && el.querySelector('svg'),
+    );
+    expect(marked).toBeTruthy();
+  });
+
+  it('an explicitly pinned effort still shows the pinned level, not the default', () => {
+    renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ settings: { effort: 'low', defaultEffort: 'high' } }),
+    });
+    expect(screen.getByText('Low')).toBeInTheDocument();
+  });
+
+  it('falls back to the bare word when nothing pins a level', () => {
+    renderControls({ provider: 'claude', snapshot: snapshot({ settings: {} }) });
+    expect(screen.getByText('Default')).toBeInTheDocument();
+  });
+
+  it("codex: uses the current model's reported defaultReasoningEffort", async () => {
+    api.providerListModels = vi.fn().mockResolvedValue([
+      {
+        id: 'gpt-5.6-sol',
+        label: 'GPT-5.6-Sol',
+        default: true,
+        effortLevels: ['low', 'medium', 'high', 'xhigh'],
+        defaultEffort: 'medium',
+      },
+    ]);
+    renderControls({
+      provider: 'codex',
+      snapshot: snapshot({ settings: { model: 'gpt-5.6-sol' } }),
+    });
+    // The catalog is fetched when the menu opens; before that the pill can only
+    // say "Default" — codex reports the level per model, not at spawn.
+    fireEvent.click(screen.getByText('Default'));
+    await waitFor(() => expect(api.providerListModels).toHaveBeenCalled());
+    expect(await screen.findByText('Default · Medium')).toBeInTheDocument();
+  });
+});
+
+describe('ComposerControls — a restart keeps the settings it was not about', () => {
+  it('carries the current permission mode through an effort-clearing restart', async () => {
+    const { onRestartWith } = renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ settings: { effort: 'low', permissionMode: 'bypassPermissions' } }),
+    });
+    fireEvent.click(screen.getByText('Low'));
+    fireEvent.click(await screen.findByText('Default'));
+    fireEvent.click(await screen.findByText(/Restart with Default effort/));
+    // Without this the spawn resolver reads the absent mode as 'default' and the
+    // session comes back out of Full access with nothing saying so. The effort
+    // stays cleared — that IS what this restart was about.
+    expect(onRestartWith).toHaveBeenCalledWith({
+      effort: '',
+      permissionMode: 'bypassPermissions',
+    });
+  });
+
+  it('carries a live-switched effort through a permission restart', async () => {
+    const { onRestartWith } = renderControls({
+      provider: 'claude',
+      snapshot: snapshot({
+        settings: { permissionMode: 'default', bypassAvailable: false },
+        // Set by a live `/effort` switch, not by spawn.
+        liveEffort: 'xhigh',
+      }),
+    });
+    fireEvent.click(screen.getByText('Ask to approve'));
+    fireEvent.click(await screen.findByText('Full access'));
+    fireEvent.click(await screen.findByText(/Restart with Full access/));
+    expect(onRestartWith).toHaveBeenCalledWith({
+      permissionMode: 'bypassPermissions',
+      effort: 'xhigh',
+    });
+  });
+
+  it('never carries values that are not valid launch argv', async () => {
+    const { onRestartWith } = renderControls({
+      provider: 'claude',
+      snapshot: snapshot({
+        settings: { bypassAvailable: false },
+        // Both appear in live telemetry but neither is accepted by the launch
+        // flags: 'dontAsk' isn't a --permission-mode, 'ultracode' isn't --effort.
+        livePermissionMode: 'dontAsk',
+        liveEffort: 'ultracode',
+      }),
+    });
+    fireEvent.click(screen.getByText("Don't ask"));
+    fireEvent.click(await screen.findByText('Full access'));
+    fireEvent.click(await screen.findByText(/Restart with Full access/));
+    expect(onRestartWith).toHaveBeenCalledWith({ permissionMode: 'bypassPermissions' });
+  });
+});
+
+/**
+ * Live effort, both providers. Claude takes `/effort <level>` through the message
+ * path; codex goes structural. Neither restarts, and a refusal degrades to the
+ * restart confirm exactly like the model and permission pills.
+ */
+describe('ComposerControls — live effort switching', () => {
+  it('claude: switching a level calls the live endpoint, not a restart', async () => {
+    const { onRestartWith } = renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ settings: { effort: 'low' } }),
+    });
+    fireEvent.click(screen.getByText('Low'));
+    fireEvent.click(await screen.findByText('Max'));
+    expect(api.claudeSetEffort).toHaveBeenCalledWith('sess-1', 'max');
+    expect(onRestartWith).not.toHaveBeenCalled();
+  });
+
+  it('a refused live switch falls back to the restart confirm with the reason', async () => {
+    api.claudeSetEffort = vi
+      .fn()
+      .mockResolvedValue({ ok: false, error: "this session can't take input right now (stopped)" });
+    const { onRestartWith } = renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ settings: { effort: 'low' } }),
+    });
+    fireEvent.click(screen.getByText('Low'));
+    fireEvent.click(await screen.findByText('High'));
+    expect(await screen.findByText(/can't take input right now/)).toBeInTheDocument();
+    fireEvent.click(await screen.findByText(/Restart with High effort/));
+    await waitFor(() => expect(onRestartWith).toHaveBeenCalledWith({ effort: 'high' }));
+  });
+
+  it("the pill prefers the provider's confirmation over what we asked for", () => {
+    renderControls({
+      provider: 'codex',
+      snapshot: snapshot({
+        settings: { effort: 'low' },
+        liveEffort: 'high',
+        // Codex confirmed something else — e.g. the user changed it in its TUI.
+        statusLine: { effort: 'xhigh' } as any,
+      }),
+    });
+    expect(screen.getByText('Extra high')).toBeInTheDocument();
+  });
+
+  it('the pill prefers a live switch over the spawn-frozen setting', () => {
+    renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ settings: { effort: 'low' }, liveEffort: 'max' }),
+    });
+    expect(screen.getByText('Max')).toBeInTheDocument();
+    expect(screen.queryByText('Low')).not.toBeInTheDocument();
+  });
+});
+
 describe('ComposerControls — managed provider (codex)', () => {
   it('switching a codex model goes through the managed setModel endpoint', async () => {
     renderControls({
@@ -195,7 +428,7 @@ describe('ComposerControls — managed provider (codex)', () => {
     expect(api.claudeMessage).not.toHaveBeenCalled();
   });
 
-  it('picking a restart-only effort level opens a confirm and calls onRestartWith', async () => {
+  it('picking an effort level switches live, no restart', async () => {
     const { onRestartWith } = renderControls({
       provider: 'codex',
       snapshot: snapshot({ settings: { effort: 'low' } }),
@@ -203,21 +436,22 @@ describe('ComposerControls — managed provider (codex)', () => {
     // The effort pill shows the current level.
     fireEvent.click(screen.getByText('Low'));
     fireEvent.click(await screen.findByText('High'));
-    // Restart-required selection surfaces a confirm step first.
-    const confirm = await screen.findByText(/Restart with High effort/);
-    fireEvent.click(confirm);
-    expect(onRestartWith).toHaveBeenCalledWith({ effort: 'high' });
+    expect(api.claudeSetEffort).toHaveBeenCalledWith('sess-1', 'high');
+    expect(onRestartWith).not.toHaveBeenCalled();
   });
 
-  it('can restart back onto the harness default effort', async () => {
+  it('clearing the override back to the harness default still restarts', async () => {
     const { onRestartWith } = renderControls({
       provider: 'codex',
       snapshot: snapshot({ settings: { effort: 'low' } }),
     });
     fireEvent.click(screen.getByText('Low'));
     fireEvent.click(await screen.findByText('Default'));
+    // A live switch can only *set* a level; un-pinning needs a relaunch.
+    expect(await screen.findByText(/needs a relaunch/)).toBeInTheDocument();
     fireEvent.click(await screen.findByText(/Restart with Default effort/));
     expect(onRestartWith).toHaveBeenCalledWith({ effort: '' });
+    expect(api.claudeSetEffort).not.toHaveBeenCalled();
   });
 
   it("uses the current Codex model's reported effort names", async () => {

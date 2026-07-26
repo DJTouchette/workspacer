@@ -147,7 +147,16 @@ export interface ElectronAPI {
   providerListModels: (
     provider: 'codex' | 'opencode' | 'pi',
     cwd?: string,
-  ) => Promise<Array<{ id: string; label: string; default: boolean; effortLevels?: string[] }>>;
+  ) => Promise<
+    Array<{
+      id: string;
+      label: string;
+      default: boolean;
+      effortLevels?: string[];
+      /** Level a turn runs at with no override (Codex reports it per model). */
+      defaultEffort?: string;
+    }>
+  >;
   providerCheckAll: () => Promise<
     Array<{ provider: string; found: boolean; resolvedPath: string | null; customBin: string }>
   >;
@@ -168,6 +177,13 @@ export interface ElectronAPI {
     sessionId: string,
     mode: string,
   ) => Promise<{ ok: boolean; mode?: string; error?: string }>;
+  /** Live reasoning-effort switch — no restart. Claude takes the `/effort`
+   *  slash command through the message path; managed providers take the
+   *  daemon's structural endpoint. */
+  claudeSetEffort: (
+    sessionId: string,
+    effort: string,
+  ) => Promise<{ ok: boolean; effort?: string; error?: string }>;
   claudeSetModel: (
     sessionId: string,
     model?: string,

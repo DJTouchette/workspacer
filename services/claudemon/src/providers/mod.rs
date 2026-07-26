@@ -52,8 +52,11 @@ use crate::wrapper::pty;
 /// marks the provider's out-of-the-box choice. `effort_levels` carries the
 /// model-specific reasoning-effort ids when the provider reports them (Codex's
 /// `model/list` does); an empty list means the provider supplied no metadata.
-/// Populated by each provider's `list_models` (live-queried from the CLI/server
-/// at pick time).
+/// `default_effort` is the level that applies when the session passes no effort
+/// override — Codex reports it per model (`defaultReasoningEffort`), which is
+/// what lets the composer's "Default" row name the level it resolves to instead
+/// of leaving it a blank. Populated by each provider's `list_models`
+/// (live-queried from the CLI/server at pick time).
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
@@ -63,6 +66,8 @@ pub struct ModelInfo {
     pub default: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effort_levels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
 }
 
 // ── Model-list cache ─────────────────────────────────────────────────────────
@@ -219,6 +224,12 @@ pub enum AgentUpdate {
     /// Session capabilities parsed from the stream `init` frame (fast mode,
     /// output style, MCP/skill/plugin/agent/memory counts). Set once per session.
     Capabilities(Capabilities),
+    /// The reasoning-effort level now in force, as *confirmed by the provider*
+    /// (Codex's `thread/settings/updated`). Latest-wins, and the only trustworthy
+    /// effort signal there is: it also catches a change made in the provider's
+    /// own TUI, which no request of ours would tell us about. Claude reports no
+    /// equivalent — see the composer's optimistic path.
+    Effort(String),
     /// A session-level error message.
     Error(String),
     /// The agent's current plan / checklist (Codex's `update_plan` / todo list).
@@ -447,6 +458,8 @@ pub struct UsageAcc {
     rate_limit_warning: Option<String>,
     overage_out_of_credits: Option<bool>,
     capabilities: Option<Capabilities>,
+    /// Provider-confirmed reasoning effort (see `AgentUpdate::Effort`).
+    effort: Option<String>,
     /// Estimate cost from the pricing table when no native cost arrives.
     /// Opt-in per adapter: only sound where the wire's input/output totals are
     /// session-cumulative AND never carry dollars (Codex). Claude's stream
@@ -638,6 +651,7 @@ impl UsageAcc {
             rate_limit_warning: warning,
             overage_out_of_credits: self.overage_out_of_credits,
             capabilities: self.capabilities.clone(),
+            effort: self.effort.clone(),
             received_at: Some(OffsetDateTime::now_utc()),
         }
     }
@@ -745,6 +759,10 @@ pub fn apply_updates(
             }
             AgentUpdate::Capabilities(caps) => {
                 acc.capabilities = Some(caps.clone());
+                usage_changed = true;
+            }
+            AgentUpdate::Effort(level) => {
+                acc.effort = Some(level.clone());
                 usage_changed = true;
             }
             AgentUpdate::Error(msg) => {
@@ -875,6 +893,7 @@ mod tests {
             label: "M1".into(),
             default: true,
             effort_levels: vec![],
+            default_effort: None,
         }];
 
         // Fresh entry is served both as a fresh hit and as last-known-good.

@@ -160,6 +160,33 @@ describe('spawnManagedAgent — codex headless (stream) wire shape', () => {
     expect(lastMeta().transport).toBe('stream');
   });
 
+  // The stream adapter's `yolo` IS `--dangerously-skip-permissions` on the
+  // headless argv, and Claude refuses a live switch to bypassPermissions without
+  // it. Recording it lets the composer route "Full access" to a restart instead
+  // of a request the CLI will reject.
+  it.each([
+    ['bypass mode', { permissionMode: 'bypassPermissions' }, true],
+    ['the legacy boolean', { skipPermissions: true }, true],
+    ['a plain spawn', {}, false],
+    ['plan mode', { permissionMode: 'plan' }, false],
+  ])('claude stream records bypassAvailable=%s for %s', async (_n, opts, expected) => {
+    await spawnManagedAgent({ provider: 'claude', transport: 'stream', cwd: '/proj', ...opts });
+
+    expect(lastMeta().settings.bypassAvailable).toBe(expected);
+    expect(lastManaged().yolo).toBe(expected);
+  });
+
+  it('managed providers with no bypass mode of their own leave bypassAvailable unset', async () => {
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/proj',
+      skipPermissions: true,
+    });
+
+    expect(lastMeta().settings).not.toHaveProperty('bypassAvailable');
+  });
+
   it('registers the managed session immediately so the pane never shows "no session"', async () => {
     await spawnManagedAgent({ provider: 'codex', transport: 'stream', cwd: '/proj' });
     expect(ensureManagedSession).toHaveBeenCalledWith('managed-session-id', '/proj');

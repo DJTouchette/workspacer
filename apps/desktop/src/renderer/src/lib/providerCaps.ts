@@ -33,6 +33,9 @@ const EFFORT_LABELS: Record<string, string> = {
   high: 'High',
   xhigh: 'Extra high',
   max: 'Max',
+  // Codex's live ladder carries these beyond the shared set; without a label the
+  // menu would show the raw id.
+  ultra: 'Ultra',
 };
 
 /** Display label for an effort id reported by a harness/model catalog. */
@@ -51,8 +54,11 @@ export interface ProviderCaps {
   /** Which model list feeds the picker: claude aliases+seen vs the daemon's
    *  live `/providers/:p/models` query. */
   modelSource: 'claude' | 'managed';
-  /** Reasoning-effort levels, or null when the provider has no such knob. */
-  effort: { levels: EffortLevel[]; switch: 'restart' } | null;
+  /** Reasoning-effort levels, or null when the provider has no such knob.
+   *  'live' providers still fall back to the restart confirm when the switch
+   *  can't be applied to the running session (a busy claude, a codex rollout
+   *  fallback). */
+  effort: { levels: EffortLevel[]; switch: 'live' | 'restart' } | null;
   permissionModes: PermissionModeOption[];
   /** How a permission-mode change is applied mid-session. 'live' providers
    *  still fall back to the restart confirm when the daemon reports the
@@ -71,8 +77,14 @@ const MANAGED_PERMISSION_MODES: PermissionModeOption[] = [
 // Claude Code reasoning-effort ladder (`claude --effort <level>`). Claude owns
 // this harness-wide vocabulary, including `max`. Codex is different: its exact
 // ladder comes from each `model/list` row at runtime (the list below is only a
-// fallback while that catalog loads). Restart-only: there's an `--effort` flag
-// but no `/effort` slash command to change it live.
+// fallback while that catalog loads).
+//
+// Deliberately NOT the `/effort` command's full vocabulary, which also takes
+// `ultracode` and `auto`: those are accepted by the slash command but not by the
+// `--effort` launch flag (verified — `claude --help` lists low..max only), so a
+// session left on one of them could not be reproduced by the next restart. The
+// ladder stays the intersection, which is what makes it safe to carry a live
+// level through a later respawn.
 const CLAUDE_EFFORT_LEVELS: EffortLevel[] = [
   { id: 'low', label: 'Low' },
   { id: 'medium', label: 'Medium' },
@@ -85,10 +97,11 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
   claude: {
     modelSwitch: 'live',
     modelSource: 'claude',
-    // Reasoning effort via `claude --effort <level>`, applied at spawn. There's
-    // no `/effort` slash command, so a change respawns (--resume keeps the
-    // conversation) — same restart flow as codex.
-    effort: { levels: CLAUDE_EFFORT_LEVELS, switch: 'restart' },
+    // Live via the `/effort <level>` slash command through the message path —
+    // the same mechanism as `/model`, verified against the CLI ("Set effort
+    // level to high (this session only)"). Nothing reports the *effective*
+    // effort back, so the pill shows what it asked for.
+    effort: { levels: CLAUDE_EFFORT_LEVELS, switch: 'live' },
     permissionModes: [
       { id: 'default', label: 'Ask to approve' },
       { id: 'acceptEdits', label: 'Accept edits' },
@@ -105,6 +118,8 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
     // it — the daemon answers 409 and the pill falls back to the restart flow.
     modelSwitch: 'live',
     modelSource: 'managed',
+    // Live via the daemon's `/sessions/:id/model` → `thread/settings/update` on
+    // the running thread, confirmed back by `thread/settings/updated`.
     effort: {
       levels: [
         { id: 'low', label: 'Low' },
@@ -112,7 +127,7 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
         { id: 'high', label: 'High' },
         { id: 'xhigh', label: 'Extra high' },
       ],
-      switch: 'restart',
+      switch: 'live',
     },
     permissionModes: MANAGED_PERMISSION_MODES,
     // Live via the adapter's approval flag (ask→yolo always; yolo→ask only
@@ -165,8 +180,9 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
 const CLAUDE_STREAM_CAPS: ProviderCaps = {
   modelSwitch: 'live',
   modelSource: 'claude',
-  // Same `--effort` flag on the headless argv; restart-to-apply as on PTY.
-  effort: { levels: CLAUDE_EFFORT_LEVELS, switch: 'restart' },
+  // `/effort` is a CLI command, not a TUI one — it works on this transport too
+  // (verified: the stream answers it as a command, not as a literal prompt).
+  effort: { levels: CLAUDE_EFFORT_LEVELS, switch: 'live' },
   permissionModes: PROVIDER_CAPS.claude.permissionModes,
   permissionSwitch: 'live',
   // Restart resumes the same pinned session id (`--resume`), like PTY Claude.

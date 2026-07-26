@@ -228,8 +228,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   providerListModels: (
     provider: 'codex' | 'opencode' | 'pi',
     cwd?: string,
-  ): Promise<Array<{ id: string; label: string; default: boolean; effortLevels?: string[] }>> =>
-    ipcRenderer.invoke(IPC.PROVIDER_LIST_MODELS, provider, cwd),
+  ): Promise<
+    Array<{
+      id: string;
+      label: string;
+      default: boolean;
+      effortLevels?: string[];
+      defaultEffort?: string;
+    }>
+  > => ipcRenderer.invoke(IPC.PROVIDER_LIST_MODELS, provider, cwd),
   providerCheckAll: (): Promise<
     Array<{ provider: string; found: boolean; resolvedPath: string | null; customBin: string }>
   > => ipcRenderer.invoke(IPC.PROVIDER_CHECK_ALL),
@@ -254,6 +261,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     mode: string,
   ): Promise<{ ok: boolean; mode?: string; error?: string }> =>
     ipcRenderer.invoke(IPC.CLAUDE_SET_PERMISSION_MODE, sessionId, mode),
+  claudeSetEffort: (
+    sessionId: string,
+    effort: string,
+  ): Promise<{ ok: boolean; effort?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.CLAUDE_SET_EFFORT, sessionId, effort),
   claudeSetModel: (
     sessionId: string,
     model?: string,

@@ -429,3 +429,48 @@ describe('liveCwd follows the agent into and out of a worktree', () => {
     );
   });
 });
+
+/**
+ * A restart-with-settings respawns onto the same pinned id, so the row survives
+ * into the new life carrying the *previous* life's hook telemetry. The composer
+ * pill prefers livePermissionMode over settings.permissionMode, so a stale value
+ * left behind makes "Restart with Full access" look like it did nothing until
+ * some later hook happens to correct it.
+ */
+describe('setSpawnMeta on a restart clears the previous life’s live permission mode', () => {
+  it('drops a stale livePermissionMode when the respawn requests a mode', () => {
+    const sid = uniqueId();
+    hook(sid, 'UserPromptSubmit');
+    claudeSessionStore.handleHookEvent({
+      hook_event_name: 'PostToolUse',
+      session_id: sid,
+      cwd: '/proj',
+      permission_mode: 'default',
+    });
+    expect(claudeSessionStore.getSnapshot(sid)?.livePermissionMode).toBe('default');
+
+    claudeSessionStore.setSpawnMeta(sid, {
+      settings: { permissionMode: 'bypassPermissions', bypassAvailable: true },
+    });
+
+    const snap = claudeSessionStore.getSnapshot(sid);
+    expect(snap?.livePermissionMode).toBeUndefined();
+    expect(snap?.settings?.permissionMode).toBe('bypassPermissions');
+    expect(snap?.settings?.bypassAvailable).toBe(true);
+  });
+
+  it('leaves live telemetry alone when the respawn only changes the model', () => {
+    const sid = uniqueId();
+    hook(sid, 'UserPromptSubmit');
+    claudeSessionStore.handleHookEvent({
+      hook_event_name: 'PostToolUse',
+      session_id: sid,
+      cwd: '/proj',
+      permission_mode: 'acceptEdits',
+    });
+
+    claudeSessionStore.setSpawnMeta(sid, { settings: { model: 'opus' } });
+
+    expect(claudeSessionStore.getSnapshot(sid)?.livePermissionMode).toBe('acceptEdits');
+  });
+});

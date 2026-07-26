@@ -214,6 +214,31 @@ describe('spawnClaudeAgent — permission mode + metadata', () => {
     expect(meta.provider).toBe('claude');
     expect(meta.settings.permissionMode).toBe('default');
   });
+
+  // Claude only lets a running session enter bypassPermissions if the process
+  // was launched with --dangerously-skip-permissions, so the composer needs to
+  // know whether this argv carried it — recorded from the same three inputs
+  // buildClaudeArgv resolves the flag from.
+  it.each([
+    ['skipPermissions', { skipPermissions: true }, true],
+    ['permissionMode bypassPermissions', { permissionMode: 'bypassPermissions' }, true],
+    ['a plain spawn', {}, false],
+    ['a non-bypass mode', { permissionMode: 'plan' }, false],
+  ])('records bypassAvailable=%s for %s', async (_name, opts, expected) => {
+    await spawnClaudeAgent({ cwd: '/proj', ...opts });
+    const meta = setSpawnMeta.mock.calls[0][1] as { settings: { bypassAvailable?: boolean } };
+    expect(meta.settings.bypassAvailable).toBe(expected);
+    expect(lastArgv().includes('--dangerously-skip-permissions')).toBe(expected);
+  });
+
+  it('counts a profile that already pins --dangerously-skip-permissions', async () => {
+    getProfile.mockReturnValue({ extraArgs: ['--dangerously-skip-permissions'] });
+
+    await spawnClaudeAgent({ cwd: '/proj', profileId: 'p1' });
+
+    const meta = setSpawnMeta.mock.calls[0][1] as { settings: { bypassAvailable?: boolean } };
+    expect(meta.settings.bypassAvailable).toBe(true);
+  });
 });
 
 describe('spawnClaudeAgent — profile + return value', () => {

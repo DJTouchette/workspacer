@@ -21,6 +21,7 @@ import { randomUUID } from 'crypto';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { claudeProfiles } from './claudeProfiles';
+import { resolveClaudeDefaultEffort } from './claudeEffortDefault';
 import { libraryService } from './libraryService';
 import { resolveAgentBinary, isAgentBinaryInstalled, type AgentProvider } from './agentProviders';
 import { configService } from './configService';
@@ -191,6 +192,20 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
       model: opts.model,
       effort: opts.effort,
       permissionMode,
+      // Claude only: `yolo` is exactly the `--dangerously-skip-permissions` the
+      // adapter puts on the argv, and Claude gates live switches *to*
+      // bypassPermissions on it (the control protocol refuses otherwise). The
+      // managed providers have no such mode, so the field stays absent for them.
+      ...(isClaudeStream && {
+        bypassAvailable: yolo || extraArgs.includes('--dangerously-skip-permissions'),
+        // Claude reports its effective effort nowhere, so what an absent
+        // `--effort` resolves to is read from the settings chain at spawn (the
+        // stream argv takes the same flag as the PTY one). Codex's default comes
+        // from its live model catalog instead — the composer reads it there.
+        ...(!opts.effort?.trim() && {
+          defaultEffort: resolveClaudeDefaultEffort(cwd, profile?.configDir),
+        }),
+      }),
     },
   });
   const sessionId = await claudemonSessionClient.spawnManaged({

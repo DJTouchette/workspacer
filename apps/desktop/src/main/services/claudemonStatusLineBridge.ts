@@ -71,6 +71,10 @@ export async function startClaudemonStatusLineBridge(): Promise<void> {
         // Map the wire (snake_case) shape to the renderer's camelCase type.
         claudeSessionStore.applyStatusLine(update.session_id, {
           modelDisplay: sl.model_display,
+          // Provider-confirmed reasoning effort (Codex's thread/settings/updated,
+          // which also fires when it's changed in Codex's own TUI). Absent for
+          // Claude, which publishes its effective effort nowhere.
+          effort: sl.effort,
           contextUsedPct: sl.context_used_pct,
           contextWindowSize: sl.context_window_size,
           totalInputTokens: sl.total_input_tokens,

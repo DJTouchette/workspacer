@@ -71,6 +71,18 @@ export interface SessionSpawnSettings {
   model?: string;
   effort?: string;
   permissionMode?: string;
+  /** Claude only: whether the process was launched with
+   *  `--dangerously-skip-permissions`. Claude gates *switching to*
+   *  `bypassPermissions` on that flag — the stream transport's control protocol
+   *  refuses it outright and the PTY TUI leaves the mode out of its shift+tab
+   *  cycle — so this is what says whether "Full access" can be applied live or
+   *  only by restarting. Absent on rows whose launch we didn't record. */
+  bypassAvailable?: boolean;
+  /** Claude only: the level an *absent* `--effort` resolves to, read from the
+   *  settings chain at spawn (see claudeEffortDefault.ts). Claude reports its
+   *  effective effort in no telemetry channel, so this is the only way the pill
+   *  can name it. Undefined when nothing pins a level. */
+  defaultEffort?: string;
 }
 
 /** Normalize a path for consistent map-key matching on Windows (backslash vs forward slash, case) */
@@ -184,6 +196,8 @@ export interface SubagentInfo {
  */
 export interface SessionStatusLine {
   modelDisplay?: string;
+  /** Provider-confirmed reasoning-effort level; absent for Claude. */
+  effort?: string;
   contextUsedPct?: number;
   contextWindowSize?: number;
   totalInputTokens?: number;
@@ -296,6 +310,12 @@ export interface ClaudeSessionState {
    *  tracks live changes — e.g. shift+tab cycling in the TUI. Claude sessions
    *  only; managed providers fire no hooks so it stays unset for them. */
   livePermissionMode?: string;
+  /** Reasoning-effort level this session was last *asked* to run at, set when a
+   *  live switch is accepted. Optimistic by necessity for Claude, which confirms
+   *  an effort change nowhere; Codex's own confirmation arrives separately on the
+   *  status line and wins over this. Unlike `settings.effort` it is not frozen at
+   *  spawn. */
+  liveEffort?: string;
   /** Guards against double history writes (Stop 1500ms timeout vs SessionEnd). */
   historyWritten?: boolean;
   /** True once the parent's own turn ended (Stop fired) while a background
@@ -372,6 +392,11 @@ class ClaudeSessionStore {
     const existing = this.sessions.get(sessionId);
     if (existing && meta.settings) {
       existing.settings = { ...existing.settings, ...meta.settings };
+      // The new life's telemetry starts empty. `livePermissionMode` holds the
+      // *previous* life's hook value and the composer pill prefers it over
+      // `settings`, so leaving it behind makes a restart-to-change-the-mode look
+      // like it did nothing until the next hook happens to land.
+      if (meta.settings.permissionMode) existing.livePermissionMode = undefined;
       this.pushUpdate(existing);
     }
   }
@@ -905,6 +930,22 @@ class ClaudeSessionStore {
     }
     this.sessions.set(sessionId, session);
     return session;
+  }
+
+  /**
+   * Record the reasoning-effort level a live switch just asked for.
+   *
+   * Unlike the permission mode, nothing will ever come along and confirm this
+   * for a Claude session — its effective effort appears in no hook, no status
+   * line and no init frame — so this note IS the pill's truth there. Codex does
+   * confirm, on `thread/settings/updated`, and that lands on the status line and
+   * takes precedence.
+   */
+  noteEffort(sessionId: string, effort: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    session.liveEffort = effort;
+    this.pushUpdate(session);
   }
 
   /**
