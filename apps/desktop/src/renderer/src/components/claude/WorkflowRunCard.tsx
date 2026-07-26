@@ -1,7 +1,8 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react';
-import { Check, ChevronDown, ChevronRight, Maximize2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Eye, Maximize2, X } from 'lucide-react';
 import type { WorkflowRunInfo } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
+import { Surface } from '../Surface';
 import { AGENT_PURPLE, fmtTokens, fmtDuration } from './agentUtils';
 import { fmtUSD } from '../../lib/sessionStats';
 import { AgentSpinner, agentMetaStyle, WorkflowAgentRow } from './WorkflowAgentRow';
@@ -154,15 +155,10 @@ export const WorkflowRunCard: React.FC<{
   }, [run.agents]);
 
   return (
-    <div
-      style={{
-        margin: '4px 0',
-        border: `1px solid ${colors.borderSubtle}`,
-        borderRadius: 'var(--wks-radius-sm)',
-        backgroundColor: 'rgba(255,255,255,0.02)',
-        overflow: 'hidden',
-      }}
-    >
+    // A run card is almost always nested inside a work card / inspector, so it
+    // is `flat`: it separates with its one border and never adds a fill on top
+    // of the parent's.
+    <Surface radius="sm" style={{ margin: '4px 0', overflow: 'hidden' }}>
       {/* Header */}
       <div
         onClick={() => setExpanded((e) => !e)}
@@ -229,18 +225,19 @@ export const WorkflowRunCard: React.FC<{
               onWatch();
             }}
             title="Watch this workflow in a pane"
+            aria-label="Watch this workflow in a pane"
             style={{
               background: 'none',
               border: 'none',
               color: colors.mutedDim,
               cursor: 'pointer',
-              fontSize: '0.72rem',
               padding: '0 2px',
               flexShrink: 0,
-              lineHeight: 1,
+              display: 'flex',
+              alignItems: 'center',
             }}
           >
-            ⧉
+            <Eye size={12} strokeWidth={2} />
           </button>
         )}
         <button
@@ -301,6 +298,6 @@ export const WorkflowRunCard: React.FC<{
           )}
         </div>
       )}
-    </div>
+    </Surface>
   );
 };

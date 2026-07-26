@@ -3,6 +3,7 @@ import type { AttentionItem, AttentionKind } from '../../types/attention';
 import { ApprovalPrompt } from '../claude/ApprovalPrompt';
 import { QuestionPicker } from '../claude/QuestionPicker';
 import { useAttention, SNOOZE_MINUTES } from '../../contexts/AttentionContext';
+import { Surface } from '../Surface';
 
 const KIND_VISUAL: Record<AttentionKind, { label: string; color: string; glyph: string }> = {
   approval: { label: 'Needs approval', color: 'var(--wks-error)', glyph: '!' },
@@ -51,19 +52,16 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
   const canRespawn = item.kind === 'done';
 
   return (
-    <div
+    // `raised`: the fill carries selection, the `tone` rail carries the kind —
+    // no outline, and the header/footer separate with divider rules rather than
+    // becoming nested surfaces of their own.
+    <Surface
+      elevation="raised"
+      radius="lg"
+      tone={v.color}
+      selected={selected}
       data-attention-sig={item.signature}
       onMouseDown={() => setSelectedSig(item.signature)}
-      style={{
-        borderRadius: 'var(--wks-radius-lg)',
-        border: `1px solid ${selected ? v.color : 'var(--wks-glass-border)'}`,
-        boxShadow: selected
-          ? `0 0 0 1px ${v.color}, 0 8px 24px var(--wks-shadow)`
-          : '0 2px 10px var(--wks-shadow)',
-        background: 'var(--wks-bg-surface)',
-        overflow: 'hidden',
-        transition: 'border-color 0.12s, box-shadow 0.12s',
-      }}
     >
       {/* Header: kind badge + label + agent + relative time */}
       <div
@@ -71,8 +69,8 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
           display: 'flex',
           alignItems: 'center',
           gap: 8,
-          padding: '9px 12px',
-          borderBottom: '1px solid var(--wks-glass-border)',
+          padding: '8px 12px',
+          borderBottom: '1px solid var(--wks-border-subtle)',
         }}
       >
         <span
@@ -84,8 +82,8 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: `color-mix(in srgb, ${v.color} 18%, transparent)`,
-            border: `1px solid color-mix(in srgb, ${v.color} 45%, transparent)`,
+            // Tint only — the outline would be a second channel on a 17px mark.
+            background: `color-mix(in srgb, ${v.color} 22%, transparent)`,
             color: v.color,
             fontSize: '0.66rem',
             fontWeight: 700,
@@ -107,7 +105,7 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
         </span>
         <span
           style={{
-            fontSize: '0.78rem',
+            fontSize: '0.8rem',
             fontWeight: 600,
             color: 'var(--wks-text-primary)',
             overflow: 'hidden',
@@ -120,7 +118,7 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
         <span
           style={{
             marginLeft: 'auto',
-            fontSize: '0.69rem',
+            fontSize: '0.66rem',
             color: 'var(--wks-text-faint)',
             fontVariantNumeric: 'tabular-nums',
             flexShrink: 0,
@@ -141,7 +139,7 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
         {item.payload.type === 'summary' && (
           <div
             style={{
-              fontSize: '0.78rem',
+              fontSize: '0.8rem',
               color: 'var(--wks-text-secondary)',
               lineHeight: 1.5,
               padding: '6px 2px',
@@ -152,15 +150,15 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
         )}
       </div>
 
-      {/* Footer: triage actions */}
+      {/* Footer: triage actions. A divider rule, not a tinted sub-surface —
+          its fill would stack on the card's own. */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 6,
           padding: '8px 12px',
-          borderTop: '1px solid var(--wks-glass-border)',
-          background: 'var(--wks-glass-strong)',
+          borderTop: '1px solid var(--wks-border-subtle)',
         }}
       >
         <CardBtn label="Open" hint="o" onClick={() => openAgent(item.agentId)} />
@@ -199,7 +197,7 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
           {basename(item.cwd)}
         </span>
       </div>
-    </div>
+    </Surface>
   );
 };
 
@@ -213,18 +211,20 @@ const CardBtn: React.FC<{ label: string; hint?: string; onClick: () => void }> =
       e.stopPropagation();
       onClick();
     }}
+    // Border-only: a fill here would sit on the card's own fill and read as a
+    // third level. Matches SmallButton's non-primary treatment.
     style={{
       display: 'inline-flex',
       alignItems: 'center',
-      gap: 5,
-      fontSize: '0.7rem',
+      gap: 6,
+      fontSize: '0.72rem',
       fontFamily: 'inherit',
       fontWeight: 600,
-      padding: '3px 9px',
+      padding: '4px 10px',
       borderRadius: 'var(--wks-radius-sm)',
       cursor: 'pointer',
-      border: '1px solid var(--wks-glass-border)',
-      background: 'var(--wks-bg-surface)',
+      border: '1px solid var(--wks-border-subtle)',
+      background: 'transparent',
       color: 'var(--wks-text-secondary)',
     }}
   >
@@ -232,11 +232,11 @@ const CardBtn: React.FC<{ label: string; hint?: string; onClick: () => void }> =
     {hint && (
       <kbd
         style={{
-          fontSize: '0.62rem',
+          fontSize: '0.6rem',
           color: 'var(--wks-text-faint)',
-          border: '1px solid var(--wks-glass-border)',
-          borderRadius: 3,
-          padding: '0 3px',
+          border: '1px solid var(--wks-border-subtle)',
+          borderRadius: 'var(--wks-radius-sm)',
+          padding: '0 4px',
           fontFamily: 'var(--wks-font-mono)',
         }}
       >

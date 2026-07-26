@@ -121,6 +121,39 @@ Rules:
 
 ## 5. Components
 
+### `Surface` — the container primitive
+
+`components/Surface.tsx` is the one way to draw a card/panel/tile container.
+Reach for it before hand-rolling a `<div>` with a border and a background.
+
+**The rule it enforces: a surface separates itself with a border OR a fill, never
+both — and surfaces do not nest more than two deep.**
+
+That rule exists because density, not palette, was what made the app feel busy: a
+blocked agent card stacked card → footer band → question picker → option row, each
+drawing border *and* fill, so a single card contributed eight edges and the fleet
+view showed ~20 bordered rectangles at rest. Depth is the budget. If you need a
+third level, you almost always want a fill step or a single left accent rule
+instead of another box.
+
+- `elevation="raised"` is **lit, not outlined**: an inset top lip + ambient halo +
+  hairline drop. A plain fill step cannot carry it — several themes put
+  `--wks-bg-surface` within 2–3 RGB units of `--wks-bg-base` (everforest, kanagawa)
+  and one-dark puts surface *below* base. See the module comment for the full
+  reasoning before changing the treatment.
+- Hover/edge declarations live in an injected stylesheet, not inline, so `:hover`
+  wins on specificity without `!important` and a caller's own `onMouseEnter` still
+  works.
+- A **docked chrome bar** (the Fleet Deck footer, a pane header) may keep
+  `borderTop` + fill. It is an edge, not a nested object — the rule is about
+  surfaces inside surfaces.
+
+Converted so far: `AgentCard`, `AgentCardBody`, `AttentionCard`, `ApprovalPrompt`,
+`QuestionPicker`, `TasksCard`, `ToolTraceCard`, `WorkflowRunCard`,
+`ChangedFilesCard`, and the Fleet Deck's own chrome.
+
+### Other primitives
+
 - Shared primitives live in `components/settings/primitives.tsx`: `SmallButton`,
   `ModeButton`, `Section`, `Row`, `CheckRow` (toggle), `SearchableSelect`, `inputStyle`.
   They are theme-correct — reach for them before hand-rolling a button/input, including
@@ -136,8 +169,14 @@ Rules:
   `var()` when touching a file (the `:root` defaults make them redundant).
 - Font sizes: the 0.6–0.72rem drift cluster should collapse to the scale above.
 - Inline `borderRadius: 3/4/6` numbers should migrate to radius tokens.
-- Shared `Card`/`Dialog` primitives don't exist yet; the ~15 `*Card.tsx` components each
-  hand-roll their container. Candidate for extraction.
+- ~~Shared `Card`/`Dialog` primitives don't exist yet~~ — `Surface` (§5) now covers the
+  card/panel container and ten call sites are converted. Still outstanding:
+  `InspectorCard.tsx` (6 borders / 14 backgrounds / 19 radii — the largest holdout),
+  `CommandCard.tsx`, `AnsweredQuestionCard.tsx`, `WorkCard.tsx`, and a `Dialog`
+  equivalent for the modal family.
+- `SideBar.tsx` still has 5 border+fill blocks and 7 hardcoded `borderRadius` numbers.
+  It was deliberately left alone during the Surface pass to keep that diff reviewable;
+  it is the next file to convert.
 - `deriveSupervisorName` bakes a 🧭 emoji into the supervisor *name string* (crosses
   process boundaries); display sites now use the `Compass` icon — unifying the name
   format needs a coordinated change.

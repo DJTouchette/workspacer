@@ -3,17 +3,21 @@ import type { PendingApproval } from '../../types/claudeSession';
 import { claudeColors as colors, approvalBtnStyle } from '../claude-shared';
 import { IconApprove, IconReject } from '../wksIcons';
 
+/**
+ * Approval resolver. It is always rendered *inside* a card that already frames
+ * it (AttentionCard's raised `Surface`, NeedsYouDock's panel), so this
+ * component is deliberately NOT a surface of its own — no fill, no border, just
+ * layout. The only nested surface it draws is the tool-input `<pre>`, which
+ * takes the flat channel (border, no fill) per the border-or-fill rule in
+ * `Surface.tsx`. That keeps the whole card two surfaces deep instead of three.
+ */
 export const ApprovalPrompt: React.FC<{
   approval: PendingApproval;
   onRespond: (response: 'yes' | 'no') => void;
 }> = ({ approval, onRespond }) => (
   <div
     style={{
-      padding: '12px 14px',
-      margin: '8px 0',
-      borderRadius: 'var(--wks-radius-md)',
-      backgroundColor: 'color-mix(in srgb, var(--wks-error) 6%, transparent)',
-      border: '1px solid color-mix(in srgb, var(--wks-error) 20%, transparent)',
+      margin: '4px 0 0',
       animation: 'claudeFadeIn 0.2s ease-out',
     }}
   >
@@ -33,13 +37,15 @@ export const ApprovalPrompt: React.FC<{
         color: colors.text,
         margin: '4px 0 8px 0',
         padding: 8,
-        backgroundColor: 'rgba(0, 0, 0, 0.25)',
+        // Flat nesting: the outline is this block's only separation channel —
+        // a fill here would stack on the enclosing card's own.
+        backgroundColor: 'transparent',
+        border: `1px solid ${colors.borderSubtle}`,
         borderRadius: 'var(--wks-radius-sm)',
         maxHeight: 120,
         overflow: 'auto',
         whiteSpace: 'pre-wrap',
         fontFamily: 'var(--claude-mono-font, monospace)',
-        border: `1px solid ${colors.border}`,
       }}
     >
       {JSON.stringify(approval.toolInput, null, 2)}

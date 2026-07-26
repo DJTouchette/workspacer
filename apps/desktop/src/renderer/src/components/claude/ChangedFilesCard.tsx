@@ -12,6 +12,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { claudeColors as colors } from '../claude-shared';
+import { Surface } from '../Surface';
 import FileTree, { collectDirPaths, type TreeEntry } from '../review/FileTree';
 import type { NumstatEntry } from '../../lib/gitQueries';
 import type { TurnChangeSnapshot } from '../../lib/turnChanges';
@@ -130,12 +131,12 @@ export const ChangedFilesCard: React.FC<{
   const tooMany = count > MAX_TREE_FILES;
 
   return (
-    <div
+    // Outermost box of a transcript card → `raised`: fill, no border. The tree
+    // below is separated by a divider rule, not a second surface.
+    <Surface
+      elevation="raised"
       style={{
         margin: '4px 0 10px 0',
-        borderRadius: 'var(--wks-radius-md)',
-        border: `1px solid ${colors.borderSubtle}`,
-        backgroundColor: 'rgba(255,255,255,0.015)',
         overflow: 'hidden',
         animation: 'claudeFadeIn 0.2s ease-out',
       }}
@@ -225,7 +226,7 @@ export const ChangedFilesCard: React.FC<{
           />
         )}
       </div>
-    </div>
+    </Surface>
   );
 };
 

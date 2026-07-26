@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Check, CheckCircle2, ChevronDown, ChevronRight, Circle, ListTodo, X } from 'lucide-react';
 import type { SessionPlan } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
+import { Surface } from '../Surface';
 import { AgentSpinner } from './WorkflowAgentRow';
 
 /**
@@ -29,14 +30,13 @@ export const TasksCard: React.FC<{
   return (
     <div style={{ padding: '0 16px 6px', flexShrink: 0 }}>
       <div style={{ maxWidth: 1040, margin: '0 auto' }}>
-        <div
-          style={{
-            border: `1px solid ${colors.borderSubtle}`,
-            borderRadius: 'var(--wks-radius-lg)',
-            background: 'var(--wks-bg-raised)',
-            boxShadow: '0 2px 12px rgba(0, 0, 0, 0.12)',
-            overflow: 'hidden',
-          }}
+        {/* `raised`: fill + shadow, no border. The shadow is deepened past the
+            primitive's hairline because this is floating chrome pinned over the
+            transcript alongside the composer, not an inline transcript card. */}
+        <Surface
+          elevation="raised"
+          radius="lg"
+          style={{ boxShadow: '0 2px 12px var(--wks-shadow)', overflow: 'hidden' }}
         >
           <div
             onClick={() => setExpanded((e) => !e)}
@@ -100,7 +100,7 @@ export const TasksCard: React.FC<{
               style={{
                 flex: '0 1 140px',
                 height: 3,
-                borderRadius: 2,
+                borderRadius: 'var(--wks-radius-pill)',
                 background: 'var(--wks-bg-hover)',
                 overflow: 'hidden',
                 minWidth: 40,
@@ -110,7 +110,7 @@ export const TasksCard: React.FC<{
                 style={{
                   width: `${total ? Math.round((done / total) * 100) : 0}%`,
                   height: '100%',
-                  borderRadius: 2,
+                  borderRadius: 'var(--wks-radius-pill)',
                   background: allDone ? colors.success : 'var(--wks-accent)',
                   transition: 'width 300ms ease',
                 }}
@@ -219,7 +219,7 @@ export const TasksCard: React.FC<{
               })}
             </div>
           )}
-        </div>
+        </Surface>
       </div>
     </div>
   );

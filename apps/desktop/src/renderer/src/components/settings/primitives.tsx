@@ -2,6 +2,18 @@ import React from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { fuzzyScoreAny } from '../../lib/fuzzy';
 
+/* The shared card container. It lives at `components/Surface.tsx` so the ~15
+   *Card.tsx components can reach it as `../Surface` without importing the
+   Settings module; re-exported here because this file is the documented home
+   of shared primitives. Import it from either path. */
+export {
+  Surface,
+  type SurfaceProps,
+  type SurfaceElevation,
+  type SurfacePad,
+  type SurfaceRadius,
+} from '../Surface';
+
 export const inputStyle: React.CSSProperties = {
   height: '30px',
   padding: '0 10px',

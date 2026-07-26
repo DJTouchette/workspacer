@@ -16,6 +16,7 @@ import type { AgentWorkspace } from '../types/pane';
 import type { ClaudeSessionSnapshot } from '../types/claudeSession';
 import { useAttention } from '../contexts/AttentionContext';
 import { AgentCard } from './AgentCard';
+import { Surface } from './Surface';
 import { InspectorCard } from './claude/InspectorCard';
 import { AgentLogo } from './agentLogos';
 import { requestInspector } from '../lib/watchBus';
@@ -36,6 +37,20 @@ import { eventMatchesCombo, digitFromRangeEvent, formatBinding } from '../lib/sh
 const CARD_MIN = 360; // matches the old minmax(360px) grid
 const GRID_GAP = 18;
 const GRID_PAD_X = 22; // horizontal padding each side of the scroll area
+// Every collapsed card occupies exactly one CARD_H cell, so a row is never taller
+// than its shortest sibling needs — the deck used to let one card with a long
+// question stretch its whole row to ~700px and strand the quadrant beside it.
+// A card that genuinely wants more scrolls inside its own cell.
+const CARD_H = 300;
+// An expanded (inspector) card takes a full-width row of its own.
+const EXPANDED_H = 440;
+// A card paints outside its own box: the hover lift is `0 6px 20px` and a
+// blocked card's `fleetPulse` ring is a 3px spread plus an 18px glow. So the
+// cell contains a runaway card with `overflow: clip` + this clip margin rather
+// than `overflow: auto` — a scroll box clips at its *padding* box, which sliced
+// both effects into a hard rectangle. Clip margin costs no layout, so cells sit
+// exactly on their grid area and two cards are still GRID_GAP apart.
+const CELL_CLIP_MARGIN = 20;
 
 const STYLE_ID = 'fleet-deck-keyframes';
 function ensureFleetKeyframes() {
@@ -86,9 +101,13 @@ interface Props {
 /**
  * An agent card flipped in place into its live Inspector — the shared
  * {@link InspectorCard} fed the same `snapshotBySession` entry the collapsed card
- * uses, so it stays live for any agent (not just the piloted one). Sits in the
- * same grid cell as the collapsed AgentCard; collapse or "open as pane" from the
- * header. Height is fixed so the card's inner tab body scrolls.
+ * uses, so it stays live for any agent (not just the piloted one). Sits in its
+ * own full-width row (see the row plan); collapse or "open as pane" from the
+ * header. The row is EXPANDED_H tall and the card stretches into it, so the
+ * card's inner tab body scrolls rather than the deck.
+ *
+ * Surface `raised` = fill only: the old 1.5px accent border is now the accent
+ * `tone` rail, so the card separates itself on one channel, not three.
  */
 const ExpandedAgentCard: React.FC<{
   agent: AgentWorkspace;
@@ -96,17 +115,16 @@ const ExpandedAgentCard: React.FC<{
   onCollapse: () => void;
   onOpenAsPane: () => void;
 }> = ({ agent, snapshot, onCollapse, onOpenAsPane }) => (
-  <div
+  <Surface
+    elevation="raised"
+    radius="lg"
+    tone="var(--wks-accent)"
     onClick={(e) => e.stopPropagation()}
     style={{
       display: 'flex',
       flexDirection: 'column',
-      height: 440,
-      borderRadius: 'var(--wks-radius-lg)',
+      minHeight: 0,
       overflow: 'hidden',
-      background: 'var(--wks-bg-surface)',
-      border: '1.5px solid var(--wks-accent)',
-      boxShadow: '0 4px 16px var(--wks-shadow)',
     }}
   >
     <div
@@ -114,7 +132,7 @@ const ExpandedAgentCard: React.FC<{
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        padding: '9px 12px',
+        padding: '10px 12px',
         borderBottom: '1px solid var(--wks-glass-border)',
         flexShrink: 0,
       }}
@@ -176,7 +194,7 @@ const ExpandedAgentCard: React.FC<{
     <div style={{ flex: 1, minHeight: 0 }}>
       <InspectorCard snapshot={snapshot} />
     </div>
-  </div>
+  </Surface>
 );
 
 const expandBtn: React.CSSProperties = {
@@ -390,6 +408,36 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
     if (expandedId && !displayOrder.some((a) => a.id === expandedId)) setExpandedId(null);
   }, [displayOrder, expandedId]);
 
+  // The row plan — the single source of truth for how cards are packed, read by
+  // BOTH the renderer and the keyboard handler so they can never disagree.
+  // `rows` holds indices into `displayOrder`; `posOf[i]` is where card `i` sits.
+  // Ordinary cards pack `cols` to a row; the expanded card gets a full-width row
+  // of its own so it never drags a neighbour's height with it. Linear order is
+  // preserved, so left/right nav and every index-keyed shortcut are untouched.
+  const { rows, posOf } = useMemo(() => {
+    const rows: number[][] = [];
+    const posOf: { row: number; col: number }[] = [];
+    let i = 0;
+    while (i < displayOrder.length) {
+      if (displayOrder[i].id === expandedId) {
+        posOf[i] = { row: rows.length, col: 0 };
+        rows.push([i]);
+        i++;
+        continue;
+      }
+      const chunk: number[] = [];
+      while (i < displayOrder.length && chunk.length < cols && displayOrder[i].id !== expandedId) {
+        posOf[i] = { row: rows.length, col: chunk.length };
+        chunk.push(i);
+        i++;
+      }
+      rows.push(chunk);
+    }
+    return { rows, posOf };
+  }, [displayOrder, cols, expandedId]);
+  const isExpandedRow = (row: number[] | undefined) =>
+    !!row && row.length === 1 && displayOrder[row[0]]?.id === expandedId;
+
   // Open the selected/expanded agent's inspector as its own pane, leaving the
   // deck (the pane lands in the currently-piloted workspace, like a watch pane).
   const openInspectorPane = (agent: (typeof realAgents)[number]) => {
@@ -428,8 +476,8 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
       }
 
       // Movement adapts to the active fleet view: the Cards grid navigates
-      // spatially (down = the card BELOW, one row of `cols` later), the List
-      // linearly. Each view has its own bindings; arrows are fixed fallbacks.
+      // spatially (down = the card BELOW, per the row plan), the List linearly.
+      // Each view has its own bindings; arrows are fixed fallbacks.
       const select = (n: number) =>
         setSelectedId(displayOrder[Math.max(0, Math.min(displayOrder.length - 1, n))].id);
       if (fleetView === 'cards') {
@@ -447,18 +495,26 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
             return;
           }
         } else {
-          // Row moves are true vertical moves: below the grid they clamp into
-          // the (possibly partial) last row; at the edge rows they no-op rather
-          // than sliding sideways.
-          const lastRowStart = Math.floor((displayOrder.length - 1) / cols) * cols;
+          // Row moves are true vertical moves, resolved through the row plan
+          // rather than `idx ± cols` arithmetic (rows are no longer uniformly
+          // packed once a card is expanded). They clamp into the (possibly
+          // shorter) neighbouring row; at the edge rows they no-op rather than
+          // sliding sideways.
+          const pos = posOf[idx];
+          const stepRow = (delta: -1 | 1) => {
+            if (!pos) return;
+            const next = rows[pos.row + delta];
+            if (!next || next.length === 0) return;
+            select(next[Math.min(pos.col, next.length - 1)]);
+          };
           if (eventMatchesCombo(e, sc['fleet-cards-down']) || e.key === 'ArrowDown') {
             stop();
-            if (idx < lastRowStart) select(idx + cols);
+            stepRow(1);
             return;
           }
           if (eventMatchesCombo(e, sc['fleet-cards-up']) || e.key === 'ArrowUp') {
             stop();
-            if (idx >= cols) select(idx - cols);
+            stepRow(-1);
             return;
           }
           if (eventMatchesCombo(e, sc['fleet-cards-left']) || e.key === 'ArrowLeft') {
@@ -532,7 +588,8 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
     openAgent,
     sc,
     fleetView,
-    cols,
+    rows,
+    posOf,
   ]);
 
   // In list mode, keep the j/k-selected row visible as it moves.
@@ -545,20 +602,37 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
 
   // Windowed grid: virtualize the packed rows — only on-screen cards (plus
   // overscan) are in the DOM, so a 50+-agent fleet stays smooth.
+  // Row heights are now DECIDED, not measured: every row is CARD_H (or
+  // EXPANDED_H for the expanded card's own row) plus the gap. Self-measurement
+  // (`measureElement`) is what let a single card stretch its row, so it's gone.
   const rowVirtualizer = useVirtualizer({
-    count: Math.ceil(displayOrder.length / cols),
+    count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 290, // ~260 card min-height (chips + files line) + row gap; rows self-measure
+    estimateSize: (i) => (isExpandedRow(rows[i]) ? EXPANDED_H : CARD_H) + GRID_GAP,
+    // Keyed by the row's leading card rather than its index, so a re-pack moves
+    // rows instead of silently reusing an index's cached offset. Keying on the
+    // lead (not the whole membership) means gaining/losing a trailing sibling
+    // doesn't remount the row — a card's compose draft survives a re-sort.
+    getItemKey: (i) => {
+      const lead = rows[i]?.[0];
+      return lead === undefined ? i : displayOrder[lead].id;
+    },
     overscan: 2,
   });
+
+  // …and drop the cached offsets whenever the plan itself changes.
+  useEffect(() => {
+    rowVirtualizer.measure();
+  }, [cols, expandedId, rows.length, rowVirtualizer]);
 
   // In card mode, keep the j/k-selected card visible by scrolling its row into
   // view (the list mode has its own scroll effect above).
   useEffect(() => {
     if (fleetView !== 'cards' || !selectedId) return;
     const i = displayOrder.findIndex((a) => a.id === selectedId);
-    if (i >= 0) rowVirtualizer.scrollToIndex(Math.floor(i / cols), { align: 'auto' });
-  }, [selectedId, fleetView, displayOrder, cols, rowVirtualizer]);
+    const pos = i >= 0 ? posOf[i] : undefined;
+    if (pos) rowVirtualizer.scrollToIndex(pos.row, { align: 'auto' });
+  }, [selectedId, fleetView, displayOrder, posOf, rowVirtualizer]);
 
   const selectedAgent = displayOrder.find((a) => a.id === selectedId);
 
@@ -647,10 +721,12 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
               width: 168,
               fontSize: '0.72rem',
               fontFamily: 'inherit',
-              padding: '5px 9px 5px 28px',
+              padding: '6px 10px 6px 28px',
               borderRadius: 'var(--wks-radius-md)',
+              // Border OR fill, never both — the field reads on --wks-bg-base
+              // from its edge alone.
               border: '1px solid var(--wks-border-subtle)',
-              background: 'var(--wks-bg-surface)',
+              background: 'transparent',
               color: 'var(--wks-text-primary)',
               transition: 'border-color 0.12s, box-shadow 0.12s',
             }}
@@ -660,10 +736,11 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
         <div
           style={{
             display: 'flex',
+            // Fill only: the active thumb already draws the second level, so the
+            // shell's border was a third rectangle for one control.
             background: 'var(--wks-bg-surface)',
-            border: '1px solid var(--wks-border-subtle)',
             borderRadius: 'var(--wks-radius-md)',
-            padding: 3,
+            padding: 4,
           }}
         >
           <SegBtn active={fleetView === 'cards'} onClick={() => pickView('cards')}>
@@ -712,10 +789,12 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
             fontFamily: 'inherit',
             fontWeight: 600,
             cursor: 'pointer',
+            // Border only — it sits on --wks-bg-base beside the filled Spawn
+            // button, and the contrast between them is the hierarchy.
             border: '1px solid var(--wks-glass-border)',
             borderRadius: 'var(--wks-radius-md)',
-            padding: '5px 12px',
-            background: 'var(--wks-bg-surface)',
+            padding: '6px 12px',
+            background: 'transparent',
             color: 'var(--wks-text-secondary)',
             transition: 'border-color 0.12s, color 0.12s',
           }}
@@ -753,8 +832,8 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                 width: 56,
                 height: 56,
                 borderRadius: '50%',
-                marginBottom: 18,
-                background: 'var(--wks-bg-surface)',
+                marginBottom: 20,
+                // Border only (see the Surface rule) — a ring around the glyph.
                 border: '1px solid var(--wks-border-subtle)',
                 color: 'var(--wks-text-tertiary)',
               }}
@@ -766,13 +845,13 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
             >
               No agents in the fleet
             </div>
-            <div style={{ fontSize: '0.78rem', marginTop: 6, maxWidth: 300 }}>
+            <div style={{ fontSize: '0.8rem', marginTop: 6, maxWidth: 300 }}>
               Spawn an agent and it'll appear here as a live card.
             </div>
             <button
               onClick={spawnAgent}
               style={{
-                marginTop: 18,
+                marginTop: 20,
                 fontSize: '0.8rem',
                 fontFamily: 'inherit',
                 fontWeight: 700,
@@ -791,7 +870,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
         </div>
       ) : fleetView === 'list' ? (
         <div ref={listScrollRef} style={CONTENT_SCROLL}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.74rem' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
             <thead>
               <tr style={{ color: 'var(--wks-text-faint)', textAlign: 'left' }}>
                 <th style={lth}>
@@ -961,60 +1040,80 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
             style={{ position: 'relative', width: '100%', height: rowVirtualizer.getTotalSize() }}
           >
             {rowVirtualizer.getVirtualItems().map((vr) => {
-              const start = vr.index * cols;
-              const rowAgents = displayOrder.slice(start, start + cols);
+              const row = rows[vr.index] ?? [];
+              const expandedRow = isExpandedRow(row);
               return (
                 <div
                   key={vr.key}
-                  data-index={vr.index}
-                  ref={rowVirtualizer.measureElement}
                   style={{
                     position: 'absolute',
                     top: 0,
                     left: 0,
                     width: '100%',
                     transform: `translateY(${vr.start}px)`,
+                    // A row's height is its own, not the tallest card's. The gap
+                    // lives in the virtual row size, below this box.
+                    height: expandedRow ? EXPANDED_H : CARD_H,
                     display: 'grid',
-                    gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+                    gridTemplateColumns: expandedRow ? '1fr' : `repeat(${cols}, minmax(0, 1fr))`,
                     gap: GRID_GAP,
-                    paddingBottom: GRID_GAP,
-                    alignItems: 'start',
+                    // `stretch` (was `start`) is what closes the dead quadrant:
+                    // every cell fills its share of the row.
+                    alignItems: 'stretch',
                   }}
                 >
-                  {rowAgents.map((agent) => (
-                    <div
-                      key={agent.id}
-                      onMouseDown={() => setSelectedId(agent.id)}
-                      style={{
-                        borderRadius: 'var(--wks-radius-lg)',
-                        outline:
-                          selectedId === agent.id
-                            ? '2px solid var(--wks-accent)'
-                            : '2px solid transparent',
-                        outlineOffset: 2,
-                        transition: 'outline-color 0.12s',
-                      }}
-                    >
-                      {expandedId === agent.id ? (
-                        <ExpandedAgentCard
-                          agent={agent}
-                          snapshot={
-                            agent.sessionId ? snapshotBySession[agent.sessionId] : undefined
-                          }
-                          onCollapse={() => setExpandedId(null)}
-                          onOpenAsPane={() => openInspectorPane(agent)}
-                        />
-                      ) : (
-                        <AgentCard
-                          agent={agent}
-                          snapshot={
-                            agent.sessionId ? snapshotBySession[agent.sessionId] : undefined
-                          }
-                          onInspect={() => setExpandedId(agent.id)}
-                        />
-                      )}
-                    </div>
-                  ))}
+                  {row.map((i) => {
+                    const agent = displayOrder[i];
+                    return (
+                      <div
+                        key={agent.id}
+                        onMouseDown={() => setSelectedId(agent.id)}
+                        style={{
+                          // Grid cell → grid container, so the card stretches to
+                          // the full cell in both axes with no `height: 100%`
+                          // needed on AgentCard itself.
+                          display: 'grid',
+                          minHeight: 0,
+                          // Safety valve: a card that still wants more than
+                          // CARD_H is cut off here instead of stretching the row
+                          // (and its siblings) with it. `clip` rather than
+                          // `auto` — the clip margin keeps the card's hover
+                          // shadow and pulse ring whole, and no cell of the deck
+                          // becomes its own scroll box.
+                          overflow: 'clip',
+                          overflowClipMargin: CELL_CLIP_MARGIN,
+                          borderRadius: 'var(--wks-radius-lg)',
+                          outline:
+                            selectedId === agent.id
+                              ? '2px solid var(--wks-accent)'
+                              : '2px solid transparent',
+                          // The cell now sits exactly on the card, so the ring
+                          // lands 2px outside the card itself.
+                          outlineOffset: 2,
+                          transition: 'outline-color 0.12s',
+                        }}
+                      >
+                        {expandedId === agent.id ? (
+                          <ExpandedAgentCard
+                            agent={agent}
+                            snapshot={
+                              agent.sessionId ? snapshotBySession[agent.sessionId] : undefined
+                            }
+                            onCollapse={() => setExpandedId(null)}
+                            onOpenAsPane={() => openInspectorPane(agent)}
+                          />
+                        ) : (
+                          <AgentCard
+                            agent={agent}
+                            snapshot={
+                              agent.sessionId ? snapshotBySession[agent.sessionId] : undefined
+                            }
+                            onInspect={() => setExpandedId(agent.id)}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
@@ -1129,19 +1228,24 @@ const StatChip: React.FC<{ color: string; glow: boolean; children: React.ReactNo
   </span>
 );
 
+/** Keycap: a tint, no outline. Ten of these sit in the footer at once and the
+ *  "Exit fleet" one sits *inside* a bordered button, so the old border + fill +
+ *  2px faux-3px bottom edge was three separation channels each — fill alone is
+ *  the whole treatment now. The tint (not `--wks-bg-elevated`, which is within a
+ *  couple of RGB steps of the footer's fill in the dark themes) keeps the cap
+ *  legible on every surface it lands on. */
 const kbdStyle: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  minWidth: 15,
-  height: 15,
-  fontSize: '0.64rem',
+  minWidth: 16,
+  height: 16,
+  fontSize: '0.6rem',
   lineHeight: 1,
   color: 'var(--wks-text-secondary)',
-  border: '1px solid var(--wks-glass-border)',
-  borderBottomWidth: 2,
+  border: 'none',
   borderRadius: 'var(--wks-radius-sm)',
-  background: 'var(--wks-bg-elevated)',
+  background: 'color-mix(in srgb, var(--wks-text-primary) 7%, transparent)',
   padding: '0 4px',
   fontFamily: 'var(--wks-font-mono)',
 };
@@ -1217,7 +1321,7 @@ const lth: React.CSSProperties = {
   fontWeight: 700,
   textTransform: 'uppercase',
   letterSpacing: '0.06em',
-  fontSize: '0.64rem',
+  fontSize: '0.6rem',
 };
 const lthNum: React.CSSProperties = { ...lth, textAlign: 'right' };
 const ltd: React.CSSProperties = {

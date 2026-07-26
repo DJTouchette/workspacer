@@ -646,6 +646,44 @@ function App() {
   // see the altitude the user actually experiences: always 'piloting' when the
   // deck can't mount.
   const effectiveViewLevel: ViewLevel = uiManifest.fleetDeck ? viewLevel : 'piloting';
+  // Auto-collapse the sidebar to its rail when the deck comes up, and restore
+  // the width the user had when it goes back down. The deck already renders
+  // every agent as a card; the sidebar's cards are the same agents at the same
+  // visual weight, so at fleet altitude that column is redundant state.
+  //
+  // TRANSITION-BASED ON PURPOSE — do NOT "simplify" this into derived state
+  // (`railShown = sidebarCollapsed || fleet`). Focus mode used to force the rail
+  // from UI state and that regression is documented above `toggleSidebar`: the
+  // width toggle belongs to the user, and deriving it means a manual rail
+  // chevron / Ctrl+B / palette toggle is instantly overridden by the mode — the
+  // user fighting the app for their own control. By reacting only to the
+  // altitude *change* we get the clean default while manual toggles taken with
+  // the deck up still win and stick.
+  //
+  // Seeded null, NOT with the first render's altitude: viewLevel is persisted,
+  // so booting straight into the deck is itself an entry into fleet altitude and
+  // has to collapse the column. Seeding from the first render made that boot
+  // path a no-op and left the sidebar's cards beside the deck's.
+  const prevViewLevel = useRef<ViewLevel | null>(null);
+  const preDeckSidebarCollapsed = useRef(sidebarCollapsed);
+  useEffect(() => {
+    // On phone widths the sidebar overlays the content instead of reserving a
+    // column, so nothing is duplicated side by side — leave the width alone and
+    // stay armed (prev unrecorded) so a viewport that grows while the deck is up
+    // still gets the collapse.
+    if (sidebarOverlay) return;
+    if (effectiveViewLevel === prevViewLevel.current) return;
+    const cameFromFleet = prevViewLevel.current === 'fleet';
+    prevViewLevel.current = effectiveViewLevel;
+    if (effectiveViewLevel === 'fleet') {
+      preDeckSidebarCollapsed.current = sidebarCollapsed;
+      setSidebarCollapsed(true);
+    } else if (cameFromFleet && sidebarCollapsed) {
+      // Undo our own collapse only. If the user widened the rail back out while
+      // the deck was up, that toggle is theirs — descending must not stomp it.
+      setSidebarCollapsed(preDeckSidebarCollapsed.current);
+    }
+  }, [effectiveViewLevel, sidebarOverlay, sidebarCollapsed]);
   const setViewLevel = useCallback(
     (next: ViewLevel) => {
       saveConfig({ panes: { ...config.panes, viewLevel: next } });

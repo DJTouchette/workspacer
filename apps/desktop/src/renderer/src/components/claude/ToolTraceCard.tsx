@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown, ChevronRight, X } from 'lucide-react';
 import type { ToolCall, SubagentInfo, WorkflowRunInfo } from '../../types/claudeSession';
 import { claudeColors as colors, WorkLogEntry } from '../claude-shared';
+import { Surface } from '../Surface';
 import { DiffView, hasDiff, ReadView, hasRead } from './DiffView';
 import { SubagentRow } from './SubagentRow';
 import { WorkflowRunCard } from './WorkflowRunCard';
@@ -115,11 +116,13 @@ function excerptJson(v: unknown, max = 4000): string {
   }
 }
 
+// Border-or-fill: the excerpt block sits inside the trace card's fill, so it
+// separates with its outline alone (flat-surface semantics for a <pre>).
 const detailPre: React.CSSProperties = {
   margin: '4px 0 0 0',
   padding: '6px 8px',
   borderRadius: 'var(--wks-radius-sm)',
-  background: 'rgba(0,0,0,0.25)',
+  background: 'transparent',
   border: `1px solid ${colors.borderSubtle}`,
   fontFamily: 'var(--claude-mono-font, monospace)',
   fontSize: '0.69rem',
@@ -164,11 +167,10 @@ const TraceRow: React.FC<{
           cursor: 'pointer',
           userSelect: 'none',
           borderRadius: 'var(--wks-radius-sm)',
-          background: open ? 'rgba(255,255,255,0.04)' : 'transparent',
+          background: open ? 'var(--wks-bg-hover)' : 'transparent',
         }}
         onMouseEnter={(e) => {
-          if (!open)
-            (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.03)';
+          if (!open) (e.currentTarget as HTMLDivElement).style.background = 'var(--wks-bg-hover)';
         }}
         onMouseLeave={(e) => {
           if (!open) (e.currentTarget as HTMLDivElement).style.background = 'transparent';
@@ -234,7 +236,7 @@ const TraceRow: React.FC<{
             height: 8,
             position: 'relative',
             borderRadius: 'var(--wks-radius-pill)',
-            background: 'rgba(255,255,255,0.045)',
+            background: 'color-mix(in srgb, var(--wks-text-muted) 22%, transparent)',
             overflow: 'hidden',
           }}
         >
@@ -293,13 +295,13 @@ const TraceRow: React.FC<{
       </div>
 
       {open && (
+        // Not a nested surface — a category-colored rule plus padding, drawn on
+        // the trace card's own fill. (See Surface: a rule is not a level.)
         <div
           style={{
             margin: '0 8px 6px 8px',
             padding: '4px 8px 8px 8px',
             borderLeft: `2px solid ${color}`,
-            background: 'rgba(255,255,255,0.02)',
-            borderRadius: '0 var(--wks-radius-sm) var(--wks-radius-sm) 0',
           }}
         >
           <WorkLogEntry tc={tc} />
@@ -394,12 +396,13 @@ const ToolTraceCardInner: React.FC<{
   }, [expanded, toolCalls, subagentByToolId, workflowByToolId]);
 
   return (
-    <div
+    // Outermost box of a transcript card → `raised`: it separates from the
+    // transcript with its fill, so the nested run/subagent cards below can own
+    // the border channel without stacking outlines.
+    <Surface
+      elevation="raised"
       style={{
         margin: '4px 0 10px 0',
-        borderRadius: 'var(--wks-radius-md)',
-        border: `1px solid ${colors.borderSubtle}`,
-        backgroundColor: 'rgba(255,255,255,0.015)',
         overflow: 'hidden',
         animation: 'claudeFadeIn 0.2s ease-out',
       }}
@@ -516,7 +519,7 @@ const ToolTraceCardInner: React.FC<{
           })}
         </div>
       )}
-    </div>
+    </Surface>
   );
 };
 

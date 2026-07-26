@@ -1,7 +1,7 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { Plus, ChevronLeft, ChevronRight, LayoutGrid, Compass, History } from 'lucide-react';
 import { BrandMark, Wordmark } from './Brand';
-import { AgentWorkspace, AgentProvider } from '../types/pane';
+import { AgentWorkspace } from '../types/pane';
 import type { RecentAgentSession } from '../../../main/shared/ipcTypes';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from '../types/claudeSession';
 import type { AttentionItem, AttentionKind } from '../types/attention';
@@ -78,15 +78,6 @@ const WAITING_KINDS: ReadonlySet<AttentionKind> = new Set<AttentionKind>([
   'stuck',
   'error',
 ]);
-
-/** Provider identity hue — tints the card's chip fill and working spinner.
- *  Brand-ish constants (like ClaudeLogo's clay fill), not theme tokens. */
-const PROVIDER_HUE: Record<AgentProvider, string> = {
-  claude: '#e67e80',
-  codex: '#7fbbb3',
-  opencode: '#d699b6',
-  pi: '#83c092',
-};
 
 /** Compact relative age for card headers: 45s → "45s", then 2m / 3h / 2d. */
 function relTime(ms: number): string {
@@ -710,7 +701,6 @@ const SideBar: React.FC<SideBarProps> = ({
             const isActive = agent.id === activeAgentId;
             const isSupervisor = agent.kind === 'supervisor';
             const provider = agent.provider ?? 'claude';
-            const hue = PROVIDER_HUE[provider] ?? 'var(--wks-accent)';
             const state = agent.sessionId ? statusBySession[agent.sessionId] : undefined;
             const cardState = cardStateOf(agent);
             const top: AttentionItem | undefined = topByAgent.get(agent.id);
@@ -861,7 +851,7 @@ const SideBar: React.FC<SideBarProps> = ({
                         flexShrink: 0,
                         boxSizing: 'border-box',
                         borderRadius: '50%',
-                        border: `2px solid ${hue}`,
+                        border: '2px solid var(--wks-busy)',
                         borderTopColor: 'transparent',
                         animation: 'claudeSpinner 1s linear infinite',
                       }}
@@ -1040,15 +1030,15 @@ const SideBar: React.FC<SideBarProps> = ({
                       overflow: 'hidden',
                       whiteSpace: 'nowrap',
                       textOverflow: 'ellipsis',
-                      background: `color-mix(in srgb, ${hue} 12%, transparent)`,
-                      color: hue,
-                      borderRadius: 4,
-                      padding: '2px 7px',
+                      // No fill, no border, no brand tint. This chip repeats on every
+                      // card, so it stops being a surface and joins the tokens/cost
+                      // text as one quiet monochrome meta line.
+                      color: 'var(--wks-text-tertiary)',
                       fontFamily: 'var(--wks-font-mono)',
-                      fontSize: '0.62rem',
+                      fontSize: '0.66rem',
                     }}
                   >
-                    <AgentLogo provider={provider} size={11} style={{ flexShrink: 0 }} />
+                    <AgentLogo provider={provider} size={11} neutral style={{ flexShrink: 0 }} />
                     {model}
                   </span>
                   {(stats.tokens !== undefined || stats.costUSD !== undefined) && (
@@ -1057,7 +1047,7 @@ const SideBar: React.FC<SideBarProps> = ({
                         marginLeft: 'auto',
                         flexShrink: 0,
                         fontFamily: 'var(--wks-font-mono)',
-                        fontSize: '0.62rem',
+                        fontSize: '0.66rem',
                         color: 'var(--wks-text-faint)',
                         whiteSpace: 'nowrap',
                       }}

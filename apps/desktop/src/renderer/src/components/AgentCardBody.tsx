@@ -47,7 +47,7 @@ const chipBase: React.CSSProperties = {
   alignItems: 'center',
   gap: 5,
   padding: '1px 8px',
-  borderRadius: 9,
+  borderRadius: 'var(--wks-radius-pill)',
   fontSize: '0.66rem',
   fontFamily: 'var(--claude-mono-font, monospace)',
   whiteSpace: 'nowrap',
@@ -76,8 +76,11 @@ const ToolChipRow: React.FC<{ active?: ToolCall; recent: ToolCall[] }> = ({ acti
             ...chipBase,
             maxWidth: '48%',
             color: 'var(--wks-accent)',
+            // Border OR fill, never both (see Surface.tsx). These chips sit
+            // inside a raised card, so they take the flat channel — an outline
+            // on the card's own fill — and the accent lives in the text/spinner.
             border: '1px solid color-mix(in srgb, var(--wks-accent) 45%, transparent)',
-            background: 'color-mix(in srgb, var(--wks-accent) 10%, transparent)',
+            background: 'transparent',
           }}
         >
           <span
@@ -169,7 +172,7 @@ const AgentCardBodyInner: React.FC<AgentCardBodyProps> = ({
         ref={bodyRef}
         style={{
           padding: '0 14px',
-          fontSize: '0.78rem',
+          fontSize: '0.8rem',
           color: 'var(--wks-text-secondary)',
           lineHeight: 1.5,
           maxHeight,
@@ -193,7 +196,7 @@ const AgentCardBodyInner: React.FC<AgentCardBodyProps> = ({
         <div
           style={{
             padding: '6px 14px 0',
-            fontSize: '0.67rem',
+            fontSize: '0.66rem',
             fontFamily: 'var(--claude-mono-font, monospace)',
             fontVariantNumeric: 'tabular-nums',
             color: 'var(--wks-text-faint)',

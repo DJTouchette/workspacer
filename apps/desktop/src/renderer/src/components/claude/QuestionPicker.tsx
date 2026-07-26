@@ -104,20 +104,20 @@ export const QuestionPicker: React.FC<{
   const scale = 'var(--claude-gui-font-scale, 1)';
 
   return (
+    // Not a surface: the picker separates itself with a single accent rule, no
+    // fill and no box border, so it never adds a nesting level to whatever card
+    // or dock hosts it (see DESIGN_LANGUAGE — border OR fill, never both).
     <div
       style={{
-        padding: dense ? '9px 11px 10px' : '13px 15px 14px',
-        margin: dense ? '6px 0 2px' : '8px 0',
-        borderRadius: 'var(--wks-radius-md)',
-        backgroundColor: 'var(--wks-accent-bg)',
-        border: '1px solid color-mix(in srgb, var(--wks-accent) 32%, transparent)',
+        padding: dense ? '4px 0 4px 10px' : '6px 0 6px 12px',
+        margin: dense ? '6px 0 4px' : '8px 0',
         borderLeft: '2px solid var(--wks-accent)',
         animation: 'claudeFadeIn 0.2s ease-out',
         textAlign: 'left',
       }}
     >
       {/* Header: back + chip + stepper */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: dense ? 7 : 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: dense ? 6 : 10 }}>
         {total > 1 && idx > 0 && (
           <button
             onClick={() => setIdx(idx - 1)}
@@ -140,7 +140,7 @@ export const QuestionPicker: React.FC<{
           style={{
             display: 'inline-flex',
             alignItems: 'center',
-            gap: 5,
+            gap: 6,
             fontSize: `calc(0.6rem * ${scale})`,
             color: colors.accent,
             fontWeight: 700,
@@ -159,11 +159,28 @@ export const QuestionPicker: React.FC<{
           />
           {q.header || 'Question'}
         </span>
+        {/* Option count. In the Fleet Deck a card is capped at CARD_H and its
+            body scrolls, so a long question renders two options and clips the
+            rest with nothing on screen saying so — the even-rows fix traded
+            raggedness for a silent truncation. The count costs nothing, is
+            correct without measuring the overflow, and tells you the deck
+            footer's 1-9 answer keys have more targets than you can see. */}
+        {q.options.length > 2 && (
+          <span
+            style={{
+              fontSize: `calc(0.6rem * ${scale})`,
+              color: colors.muted,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {q.options.length} options
+          </span>
+        )}
         {total > 1 && (
           <span
             style={{
               marginLeft: 'auto',
-              fontSize: `calc(0.64rem * ${scale})`,
+              fontSize: `calc(0.66rem * ${scale})`,
               color: colors.muted,
               fontVariantNumeric: 'tabular-nums',
               display: 'flex',
@@ -197,11 +214,11 @@ export const QuestionPicker: React.FC<{
       {/* The question itself */}
       <div
         style={{
-          fontSize: `calc(${dense ? '0.85rem' : '0.92rem'} * ${scale})`,
+          fontSize: `calc(${dense ? '0.8rem' : '0.9rem'} * ${scale})`,
           color: colors.textBright,
           fontWeight: 600,
           lineHeight: dense ? 1.4 : 1.5,
-          marginBottom: dense ? 8 : 11,
+          marginBottom: dense ? 8 : 12,
         }}
       >
         {q.question}
@@ -232,33 +249,30 @@ export const QuestionPicker: React.FC<{
                   commit(String(oi + 1), opt.label, true);
                 }
               }}
+              // Fill-only row: the option separates itself with a background,
+              // never a background AND a border. Selection deepens the fill to
+              // an accent tint instead of adding an outline.
               style={{
                 display: 'flex',
                 alignItems: 'flex-start',
                 gap: dense ? 8 : 10,
                 textAlign: 'left',
-                padding: dense ? '6px 9px' : '9px 11px',
+                padding: dense ? '6px 10px' : '8px 12px',
                 borderRadius: 'var(--wks-radius-sm)',
-                border: `1px solid ${selected ? 'var(--wks-accent)' : colors.borderSubtle}`,
+                border: 'none',
                 backgroundColor: selected
-                  ? 'color-mix(in srgb, var(--wks-accent) 12%, transparent)'
-                  : 'rgba(255,255,255,0.02)',
+                  ? 'color-mix(in srgb, var(--wks-accent) 18%, transparent)'
+                  : 'var(--wks-bg-hover)',
                 color: colors.text,
                 cursor: 'pointer',
                 fontFamily: 'inherit',
-                transition: 'border-color 0.12s, background-color 0.12s',
+                transition: 'background-color 0.12s',
               }}
               onMouseEnter={(e) => {
-                if (!selected) {
-                  e.currentTarget.style.borderColor = 'var(--wks-border-active)';
-                  e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.045)';
-                }
+                if (!selected) e.currentTarget.style.backgroundColor = 'var(--wks-bg-selected)';
               }}
               onMouseLeave={(e) => {
-                if (!selected) {
-                  e.currentTarget.style.borderColor = colors.borderSubtle;
-                  e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.02)';
-                }
+                if (!selected) e.currentTarget.style.backgroundColor = 'var(--wks-bg-hover)';
               }}
             >
               {/* Badge */}
@@ -268,14 +282,16 @@ export const QuestionPicker: React.FC<{
                   marginTop: 1,
                   width: dense ? 16 : 18,
                   height: dense ? 16 : 18,
-                  borderRadius: multi ? 5 : 6,
+                  boxSizing: 'border-box',
+                  borderRadius: 'var(--wks-radius-sm)',
                   display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  fontSize: `calc(0.68rem * ${scale})`,
+                  fontSize: `calc(0.66rem * ${scale})`,
                   fontWeight: 700,
                   fontVariantNumeric: 'tabular-nums',
-                  border: `1px solid ${selected ? 'var(--wks-accent)' : colors.borderSubtle}`,
+                  // Single channel each way: outlined when unpicked, solid when picked.
+                  border: selected ? 'none' : `1px solid ${colors.borderSubtle}`,
                   backgroundColor: selected ? 'var(--wks-accent)' : 'transparent',
                   color: selected ? '#fff' : colors.muted,
                 }}
@@ -287,7 +303,7 @@ export const QuestionPicker: React.FC<{
                   style={{
                     display: 'block',
                     fontWeight: 600,
-                    fontSize: `calc(${dense ? '0.79rem' : '0.82rem'} * ${scale})`,
+                    fontSize: `calc(0.8rem * ${scale})`,
                     color: colors.textBright,
                     lineHeight: 1.4,
                   }}
@@ -299,7 +315,7 @@ export const QuestionPicker: React.FC<{
                     style={{
                       display: 'block',
                       color: colors.muted,
-                      fontSize: `calc(${dense ? '0.71rem' : '0.74rem'} * ${scale})`,
+                      fontSize: `calc(0.72rem * ${scale})`,
                       lineHeight: 1.45,
                       marginTop: 2,
                       // Docked: a long description can't be allowed to push the
@@ -329,10 +345,10 @@ export const QuestionPicker: React.FC<{
           onClick={commitMulti}
           disabled={multiPicks.size === 0}
           style={{
-            marginTop: dense ? 7 : 9,
-            fontSize: `calc(0.74rem * ${scale})`,
+            marginTop: dense ? 8 : 10,
+            fontSize: `calc(0.72rem * ${scale})`,
             fontWeight: 600,
-            padding: '6px 15px',
+            padding: '6px 16px',
             borderRadius: 'var(--wks-radius-sm)',
             border: 'none',
             backgroundColor: multiPicks.size > 0 ? 'var(--wks-accent)' : 'var(--wks-bg-hover)',
@@ -347,7 +363,7 @@ export const QuestionPicker: React.FC<{
 
       {/* Custom answer */}
       {!multi && (
-        <div style={{ display: 'flex', gap: 6, marginTop: dense ? 8 : 11 }}>
+        <div style={{ display: 'flex', gap: 6, marginTop: dense ? 8 : 12 }}>
           <input
             placeholder="Or type your own answer…"
             value={customText}
@@ -357,11 +373,12 @@ export const QuestionPicker: React.FC<{
             }}
             style={{
               flex: 1,
-              fontSize: `calc(0.78rem * ${scale})`,
+              fontSize: `calc(0.8rem * ${scale})`,
               padding: '6px 10px',
               borderRadius: 'var(--wks-radius-sm)',
-              border: `1px solid ${colors.borderSubtle}`,
-              backgroundColor: 'rgba(255,255,255,0.03)',
+              // Fill-only, matching the option rows above it.
+              border: 'none',
+              backgroundColor: 'var(--wks-bg-input)',
               color: colors.text,
               outline: 'none',
               fontFamily: 'inherit',
@@ -371,9 +388,9 @@ export const QuestionPicker: React.FC<{
             onClick={submitCustom}
             disabled={!customText.trim()}
             style={{
-              fontSize: `calc(0.74rem * ${scale})`,
+              fontSize: `calc(0.72rem * ${scale})`,
               fontWeight: 600,
-              padding: '6px 15px',
+              padding: '6px 16px',
               borderRadius: 'var(--wks-radius-sm)',
               border: 'none',
               backgroundColor: customText.trim() ? 'var(--wks-accent)' : 'var(--wks-bg-hover)',
@@ -393,8 +410,8 @@ export const QuestionPicker: React.FC<{
           style={{
             display: 'flex',
             justifyContent: 'flex-end',
-            marginTop: dense ? 7 : 10,
-            paddingTop: dense ? 7 : 9,
+            marginTop: dense ? 8 : 10,
+            paddingTop: dense ? 6 : 8,
             borderTop: `1px solid ${colors.borderSubtle}`,
           }}
         >
@@ -404,7 +421,7 @@ export const QuestionPicker: React.FC<{
             style={{
               fontSize: `calc(0.72rem * ${scale})`,
               fontWeight: 600,
-              padding: '5px 12px',
+              padding: '6px 12px',
               borderRadius: 'var(--wks-radius-sm)',
               border: `1px solid ${colors.borderSubtle}`,
               background: 'transparent',

@@ -4,6 +4,7 @@ import type { AgentWorkspace } from '../types/pane';
 import type { ClaudeSessionSnapshot, SessionAmbientState } from '../types/claudeSession';
 import { QuestionPicker } from './claude/QuestionPicker';
 import { AgentCardBody } from './AgentCardBody';
+import { Surface } from './Surface';
 import { useAttention } from '../contexts/AttentionContext';
 import { usePageVisible } from '../hooks/usePageVisible';
 import { StatusGlyph } from './statusGlyph';
@@ -94,10 +95,17 @@ interface Props {
 
 /**
  * A live Fleet Deck tile — the "telemetry face" of one agent, rendered purely
- * from its snapshot. Border tints by ambient state and pulses when the agent is
- * blocked on you. Clicking the card body pilots into the agent; the action zone
- * lets you resolve the common cases (approve / answer a question / drop a quick
- * message) without ever leaving the deck.
+ * from its snapshot. A leading rail tints by ambient state and the card pulses
+ * when the agent is blocked on you. Clicking the card body pilots into the
+ * agent; the action zone lets you resolve the common cases (approve / answer a
+ * question / drop a quick message) without ever leaving the deck.
+ *
+ * DRAWING RULE (see `Surface`): the card is ONE surface — `raised`, so it
+ * separates itself with a fill and owns no border. Everything inside it is a
+ * band or a control, never a second bordered box: the action zone is a
+ * fill-only footer, its buttons are fill-only chips, the compose field is a
+ * fill-only input. Depth stops at two. Don't re-add a border to anything here
+ * that already has a fill.
  */
 export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect }) => {
   const { openAgent, approve, answer, sendMessage, feed } = useAttention();
@@ -165,52 +173,47 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
   const showCompose = !!agent.sessionId && !questionItem;
 
   return (
-    <div
+    <Surface
+      elevation="raised"
+      radius="lg"
+      tone={v.color}
+      interactive
       onClick={onOpen ?? (() => openAgent(agent.id))}
       title={`${agent.name} — ${v.label}\n${agent.cwd}`}
       style={{
         display: 'flex',
         flexDirection: 'column',
         minHeight: 260,
-        cursor: 'pointer',
-        borderRadius: 'var(--wks-radius-lg)',
-        overflow: 'hidden',
-        background: 'var(--wks-bg-surface)',
-        border: `1.5px solid ${v.color}`,
-        boxShadow: v.pulse ? `0 0 0 1px ${v.color}` : '0 4px 16px var(--wks-shadow)',
+        // Only the blocked-on-you ring is drawn here; at rest the surface's own
+        // hairline shadow is the whole treatment (leaving this undefined lets
+        // the class rule through instead of out-specifying it).
+        boxShadow: v.pulse ? `0 0 0 1px ${v.color}` : undefined,
         animation: v.pulse && pageVisible ? 'fleetPulse 1.8s ease-in-out infinite' : undefined,
-        transition: 'transform 0.12s ease, box-shadow 0.14s ease',
+        transition: 'transform 0.12s ease, box-shadow 0.14s ease, background-color 0.12s',
       }}
       onMouseEnter={(e) => {
         const el = e.currentTarget as HTMLElement;
         el.style.transform = 'translateY(-2px)';
         // Don't fight the pulse animation's box-shadow on blocked cards.
-        if (!v.pulse) el.style.boxShadow = '0 10px 28px var(--wks-shadow)';
+        if (!v.pulse) el.style.boxShadow = '0 6px 20px var(--wks-shadow)';
       }}
       onMouseLeave={(e) => {
         const el = e.currentTarget as HTMLElement;
         el.style.transform = '';
-        if (!v.pulse) el.style.boxShadow = '0 4px 16px var(--wks-shadow)';
+        // Clearing (rather than restoring a literal) hands the shadow back to
+        // the Surface class.
+        if (!v.pulse) el.style.boxShadow = '';
       }}
     >
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '12px 14px 8px' }}>
-        <span
-          style={{
-            width: 10,
-            height: 10,
-            borderRadius: '50%',
-            background: v.color,
-            flexShrink: 0,
-            boxShadow: state && state !== 'idle' ? `0 0 8px ${v.color}` : 'none',
-          }}
-        />
+      {/* Header — the state rail on the card's edge is the ambient colour, so
+          the label + glyph are the only status marks needed here. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px 8px' }}>
         <span
           style={{
             display: 'inline-flex',
             alignItems: 'center',
             gap: 5,
-            fontSize: '0.95rem',
+            fontSize: '0.9rem',
             fontWeight: 700,
             color: 'var(--wks-text-primary)',
             overflow: 'hidden',
@@ -237,7 +240,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
             display: 'inline-flex',
             alignItems: 'center',
             gap: 4,
-            fontSize: '0.7rem',
+            fontSize: '0.72rem',
             fontWeight: 600,
             color: v.color,
             flexShrink: 0,
@@ -267,19 +270,21 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
               height: 22,
               padding: 0,
               borderRadius: 'var(--wks-radius-md)',
-              border: '1px solid var(--wks-glass-border)',
+              // Ghost control: no resting outline, the hover fill is the whole
+              // affordance — one fewer rectangle per card at rest.
+              border: 'none',
               background: 'transparent',
               color: 'var(--wks-text-faint)',
               cursor: 'pointer',
-              transition: 'color 0.12s, border-color 0.12s',
+              transition: 'color 0.12s, background-color 0.12s',
             }}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)';
-              (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent)';
+              (e.currentTarget as HTMLElement).style.background = 'var(--wks-bg-hover)';
             }}
             onMouseLeave={(e) => {
               (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
-              (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-glass-border)';
+              (e.currentTarget as HTMLElement).style.background = 'transparent';
             }}
           >
             <Maximize2 size={13} strokeWidth={2} />
@@ -295,7 +300,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
           gap: 8,
           flexWrap: 'wrap',
           padding: '0 14px 8px',
-          fontSize: '0.69rem',
+          fontSize: '0.66rem',
           color: 'var(--wks-text-faint)',
         }}
       >
@@ -371,7 +376,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
             padding: '0 14px 8px',
             display: 'flex',
             gap: 10,
-            fontSize: '0.7rem',
+            fontSize: '0.72rem',
             color: 'var(--wks-accent)',
             fontWeight: 600,
           }}
@@ -399,7 +404,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
               style={{
                 flex: 1,
                 height: 5,
-                borderRadius: 3,
+                borderRadius: 'var(--wks-radius-pill)',
                 background: 'var(--wks-border-subtle)',
                 overflow: 'hidden',
               }}
@@ -415,7 +420,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
             </span>
             <span
               style={{
-                fontSize: '0.67rem',
+                fontSize: '0.66rem',
                 color: ctxColor(ctxPct),
                 fontVariantNumeric: 'tabular-nums',
                 flexShrink: 0,
@@ -426,13 +431,13 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
             </span>
             {/* Cost only when known — codex has no pricing, so no fake $0.00. */}
             {stats.costUSD !== undefined && (
-              <span style={{ fontSize: '0.67rem', color: 'var(--wks-text-faint)', flexShrink: 0 }}>
+              <span style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', flexShrink: 0 }}>
                 {fmtUSD(stats.costUSD)}
               </span>
             )}
           </>
         ) : (
-          <span style={{ fontSize: '0.67rem', color: 'var(--wks-text-faint)' }}>
+          <span style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>
             {agent.sessionId ? 'No usage yet' : ''}
           </span>
         )}
@@ -443,9 +448,21 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
         <div
           onClick={(e) => e.stopPropagation()}
           style={{
+            // Depth 2 and last: a flush footer band separated by its fill
+            // alone. Not a `Surface` — it has no corners of its own, it just
+            // shades the bottom of the one the card already is. No borderTop:
+            // the fill step is the separation — but it has to be a step you
+            // can actually see. `--wks-bg-elevated` is not: against the card's
+            // own `--wks-bg-surface` it is rgb(32,32,36) vs rgb(30,30,33) in
+            // the default dark theme, and the two are equal-ish in several
+            // others. A translucent foreground wash instead: it is a fixed
+            // fraction of the theme's own text/background contrast, so it
+            // reads in all 18 themes (light included), and because it composites
+            // over whatever fill the card currently has it keeps its step on
+            // hover too — `--wks-bg-hover` would have matched the card's own
+            // hover fill exactly and vanished under the pointer.
             padding: '10px 14px 12px',
-            borderTop: '1px solid var(--wks-glass-border)',
-            background: 'var(--wks-glass-strong)',
+            background: 'color-mix(in srgb, var(--wks-text-primary) 7%, transparent)',
             display: 'flex',
             flexDirection: 'column',
             gap: 8,
@@ -456,7 +473,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
             <div>
               <div
                 style={{
-                  fontSize: '0.69rem',
+                  fontSize: '0.66rem',
                   fontWeight: 600,
                   color: 'var(--wks-warning)',
                   marginBottom: 6,
@@ -518,14 +535,16 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
                   resize: 'none',
                   minHeight: 30,
                   maxHeight: 90,
-                  fontSize: '0.74rem',
-                  padding: '6px 9px',
+                  fontSize: '0.72rem',
+                  padding: '6px 8px',
                   borderRadius: 'var(--wks-radius-md)',
                   lineHeight: 1.4,
-                  border: '1px solid var(--wks-glass-border)',
+                  // Fill-only inset field. Focus is still visible: the deck's
+                  // `textarea:focus-visible` rule paints an accent glow ring,
+                  // and elsewhere the browser's own ring shows through.
+                  border: 'none',
                   background: 'var(--wks-bg-input)',
                   color: 'var(--wks-text-primary)',
-                  outline: 'none',
                   fontFamily: 'inherit',
                 }}
               />
@@ -533,16 +552,16 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
                 onClick={submitDraft}
                 disabled={!draft.trim()}
                 style={{
-                  fontSize: '0.7rem',
-                  fontWeight: 700,
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
                   fontFamily: 'inherit',
                   padding: '6px 12px',
                   borderRadius: 'var(--wks-radius-md)',
                   cursor: draft.trim() ? 'pointer' : 'default',
                   flexShrink: 0,
-                  border: `1px solid ${draft.trim() ? 'var(--wks-accent)' : 'var(--wks-glass-border)'}`,
-                  background: draft.trim() ? 'var(--wks-accent)' : 'transparent',
-                  color: draft.trim() ? 'var(--wks-text-on-accent)' : 'var(--wks-text-faint)',
+                  border: 'none',
+                  background: draft.trim() ? 'var(--wks-accent)' : 'var(--wks-bg-hover)',
+                  color: draft.trim() ? 'var(--wks-text-on-accent)' : 'var(--wks-text-disabled)',
                 }}
               >
                 Send
@@ -551,19 +570,24 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
           )}
         </div>
       )}
-    </div>
+    </Surface>
   );
 };
 
+/**
+ * Quick-action chip. Fill-only (a colour-mix tint of its own semantic colour),
+ * never outlined — four outlined pills inside an already-shaded footer was a
+ * third ring of rectangles.
+ */
 function qa(color: string): React.CSSProperties {
   return {
-    fontSize: '0.7rem',
-    fontWeight: 700,
+    fontSize: '0.72rem',
+    fontWeight: 600,
     fontFamily: 'inherit',
-    padding: '4px 14px',
+    padding: '4px 12px',
     borderRadius: 'var(--wks-radius-md)',
-    border: `1px solid ${color}`,
-    background: 'transparent',
+    border: 'none',
+    background: `color-mix(in srgb, ${color} 16%, transparent)`,
     color,
     cursor: 'pointer',
   };
