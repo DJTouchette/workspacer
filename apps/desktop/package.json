@@ -35,6 +35,7 @@
     "test:main": "vitest run",
     "test:renderer": "cd src/renderer && npx vitest run",
     "test:e2e": "npm run build && npx playwright test",
+    "shoot": "unshare -Urn --map-root-user bash -c 'ip link set lo up; WKS_SHOOT_NETNS=1 node scripts/shoot.mjs'",
     "test:watch": "vitest",
     "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\" \"*.ts\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\" \"*.ts\""
