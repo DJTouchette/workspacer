@@ -2,6 +2,18 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { AgentWorkspace } from '../types/pane';
 import type { AttentionItem, AttentionKind } from '../types/attention';
 import type { ClaudeSessionSnapshot } from '../types/claudeSession';
+import {
+  STALL_MS,
+  WORKFLOW_STALL_MS,
+  isWorkingState,
+  progressFingerprint,
+  runningWorkflows,
+  stallOf,
+  stalledFor,
+  trackProgress,
+  workflowFingerprint,
+  type ProgressMarks,
+} from '../lib/stallDetector';
 import { KIND_PRIORITY, sortItems } from '../lib/attentionRouter';
 import { usePageVisible } from './usePageVisible';
 
@@ -192,15 +204,50 @@ export function useAttentionFeed(
   // fire when nothing happens to be snoozed. Gated off when there's no such
   // pending work (and while hidden) so the app idles toward ~0% CPU.
   const stuckEnabled = opts.enabledKinds?.stuck !== false;
+
+  // Progress memory. Held in refs and updated in an effect rather than during
+  // render: the marks are a record of *when* a fingerprint last changed, which
+  // is state about the past, and computing it while rendering would make it
+  // depend on how often React chooses to render. One frame of staleness against
+  // a multi-minute threshold costs nothing.
+  const marksRef = useRef<ProgressMarks>(new Map());
+  const wfMarksRef = useRef<ProgressMarks>(new Map());
+  const sessionFingerprints = useMemo(
+    () =>
+      Object.entries(snapshotBySession)
+        .map(([sid, snap]) => `${sid}=${progressFingerprint(snap)}`)
+        .join('\n'),
+    [snapshotBySession],
+  );
+  useEffect(() => {
+    const at = Date.now();
+    marksRef.current = trackProgress(marksRef.current, snapshotBySession, at);
+    wfMarksRef.current = trackProgress(
+      wfMarksRef.current,
+      snapshotBySession,
+      at,
+      workflowFingerprint,
+    );
+    // A fingerprint change is progress, so it must also refresh the clock the
+    // feed reads — otherwise an agent that resumes work keeps its stale card
+    // until some other ticker happens to fire.
+    setNow(at);
+  }, [sessionFingerprints]); // eslint-disable-line react-hooks/exhaustive-deps
   const tickNeeded = useMemo(() => {
     for (const t of snoozedUntil.values()) if (t > now) return true;
     if (stuckEnabled) {
       for (const agent of agents) {
         if (agent.global || !agent.sessionId) continue;
         const snap = snapshotBySession[agent.sessionId];
-        if (!snap?.pendingQuestions?.length) continue;
-        const since = snap.lastActivity ?? 0;
-        if (since && now - since <= STUCK_MS) return true; // could still cross the threshold
+        if (!snap) continue;
+        if (snap.pendingQuestions?.length) {
+          const since = snap.lastActivity ?? 0;
+          if (since && now - since <= STUCK_MS) return true; // could still cross
+        }
+        // A working agent is always a candidate: with nothing arriving, only the
+        // clock can turn silence into a stall, so the ticker has to keep running
+        // for exactly as long as the agent claims to be busy.
+        if (isWorkingState(snap.ambientState)) return true;
       }
     }
     return false;
@@ -330,6 +377,67 @@ export function useAttentionFeed(
             detail:
               snap.pendingQuestions[0]?.question || 'An unanswered question is holding this agent.',
             payload: { type: 'summary', summary: 'Agent has been waiting for a while' },
+          });
+        }
+      }
+
+      // stuck — the agent says it's working but nothing observable has moved.
+      // Distinct from the question case above: that one is waiting on YOU, this
+      // one is waiting on nothing anyone can see. See lib/stallDetector.ts for
+      // why "no progress" is a fingerprint rather than a timestamp.
+      if (enabled('stuck')) {
+        const stall = stallOf(snap, marksRef.current.get(sid), now, STALL_MS);
+        if (stall) {
+          // Signature excludes the elapsed time so the card updates in place as
+          // the stall lengthens instead of stacking a new one every tick.
+          const sig = `${sid}:stalled`;
+          const silent = !stall.alive;
+          out.push({
+            ...base,
+            id: sig,
+            signature: sig,
+            kind: 'stuck',
+            priority: KIND_PRIORITY.stuck,
+            createdAt: now - stall.stalledForMs,
+            status: 'open',
+            title: silent ? 'No signal' : 'Not moving',
+            detail: silent
+              ? `Nothing for ${stalledFor(stall.stalledForMs)} — the agent has stopped reporting at all.`
+              : `Working, but nothing has changed for ${stalledFor(stall.stalledForMs)}.`,
+            payload: {
+              type: 'summary',
+              summary: silent
+                ? 'The process is still there but has gone silent — it may need an interrupt.'
+                : 'Still alive (its status line is ticking) — a long think, or a wedged tool call.',
+            },
+          });
+        }
+
+        // A run whose agents have all gone quiet looks exactly as busy as one
+        // that's flying, so it's judged on its own agents' progress.
+        for (const run of runningWorkflows(snap)) {
+          const wfStall = stallOf(snap, wfMarksRef.current.get(sid), now, WORKFLOW_STALL_MS);
+          if (!wfStall) continue;
+          const sig = `${sid}:wfstalled:${run.runId}`;
+          const running = (run.agents ?? []).filter((a) => a.status === 'running').length;
+          out.push({
+            ...base,
+            id: sig,
+            signature: sig,
+            kind: 'stuck',
+            priority: KIND_PRIORITY.stuck,
+            createdAt: now - wfStall.stalledForMs,
+            status: 'open',
+            title: `Workflow not moving${run.name ? ` · ${run.name}` : ''}`,
+            detail: `No agent has advanced for ${stalledFor(wfStall.stalledForMs)}${
+              running ? ` (${running} still marked running)` : ''
+            }.`,
+            payload: {
+              type: 'summary',
+              summary: `${(run.agents ?? []).length} agents, ${
+                (run.agents ?? []).filter((a) => a.status === 'done').length
+              } done`,
+            },
           });
         }
       }

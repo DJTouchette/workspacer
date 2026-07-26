@@ -26,6 +26,130 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/**
+ * A working agent that stops producing anything is the case nobody notices: the
+ * card says "thinking", the spinner spins, and nothing is wrong-looking. These
+ * pin that it surfaces, and — just as important — that a genuinely busy agent
+ * never does.
+ */
+describe('useAttentionFeed — a working agent that stops making progress', () => {
+  const working = (over: any = {}) => ({
+    s1: {
+      ambientState: 'thinking',
+      lastActivity: T0,
+      conversation: [],
+      activeToolCalls: [],
+      completedToolCalls: [],
+      totalToolCalls: 0,
+      ...over,
+    } as any,
+  });
+
+  it('surfaces a stalled agent once nothing has moved for long enough', async () => {
+    const { result } = renderHook(() => useAttentionFeed(working(), [agent('a1', 's1')]));
+    expect(result.current.items.some((it) => it.kind === 'stuck')).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6 * 60_000);
+    });
+
+    const stalled = result.current.items.find((it) => it.kind === 'stuck');
+    expect(stalled, 'a stalled card should have surfaced').toBeTruthy();
+    expect(stalled!.title).toBe('Not moving');
+    expect(stalled!.detail).toMatch(/nothing has changed for \d+m/);
+  });
+
+  it('keeps quiet while the agent is actually working', async () => {
+    let snapshots = working({ totalToolCalls: 1 });
+    const { result, rerender } = renderHook(({ s }) => useAttentionFeed(s, [agent('a1', 's1')]), {
+      initialProps: { s: snapshots },
+    });
+
+    // Work advances every couple of minutes — well inside any threshold.
+    for (let i = 2; i <= 12; i += 2) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2 * 60_000);
+      });
+      snapshots = working({ totalToolCalls: i });
+      rerender({ s: snapshots });
+    }
+
+    expect(
+      result.current.items.some((it) => it.kind === 'stuck'),
+      'progress must reset the clock, or every long task cries wolf',
+    ).toBe(false);
+  });
+
+  it('an idle agent is finished, not stalled', async () => {
+    const { result } = renderHook(() =>
+      useAttentionFeed(working({ ambientState: 'idle' }), [agent('a1', 's1')]),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20 * 60_000);
+    });
+    expect(result.current.items.some((it) => it.title === 'Not moving')).toBe(false);
+  });
+
+  it('says so plainly when the agent has stopped reporting at all', async () => {
+    const { result } = renderHook(() =>
+      useAttentionFeed(working({ statusLine: { receivedAt: new Date(T0).toISOString() } }), [
+        agent('a1', 's1'),
+      ]),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6 * 60_000);
+    });
+    const item = result.current.items.find((it) => it.kind === 'stuck');
+    expect(item?.title).toBe('No signal');
+  });
+
+  it('flags a workflow whose agents have all gone quiet', async () => {
+    const { result } = renderHook(() =>
+      useAttentionFeed(
+        working({
+          ambientState: 'background',
+          workflows: [
+            {
+              runId: 'wf_1',
+              name: 'bug-hunt',
+              status: 'running',
+              agents: [
+                { id: 'a', status: 'running', toolCalls: 3, tokens: 10 },
+                { id: 'b', status: 'done', toolCalls: 5, tokens: 20 },
+              ],
+            },
+          ],
+        }),
+        [agent('a1', 's1')],
+      ),
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9 * 60_000);
+    });
+
+    const wf = result.current.items.find((it) => it.title?.startsWith('Workflow not moving'));
+    expect(wf, 'a stalled run should surface').toBeTruthy();
+    expect(wf!.title).toContain('bug-hunt');
+    expect(wf!.detail).toMatch(/1 still marked running/);
+  });
+
+  it('one card per stall, updated in place as it lengthens', async () => {
+    const { result } = renderHook(() => useAttentionFeed(working(), [agent('a1', 's1')]));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6 * 60_000);
+    });
+    const first = result.current.items.filter((it) => it.kind === 'stuck').length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6 * 60_000);
+    });
+    const later = result.current.items.filter((it) => it.kind === 'stuck');
+    expect(first).toBe(1);
+    expect(later).toHaveLength(1);
+    expect(later[0].detail).toMatch(/1[12]m/, 'the same card, with a longer elapsed time');
+  });
+});
+
 describe('useAttentionFeed — stuck detection (#7)', () => {
   it('surfaces a stuck item once an unanswered question ages past STUCK_MS', async () => {
     const snapshots = {
