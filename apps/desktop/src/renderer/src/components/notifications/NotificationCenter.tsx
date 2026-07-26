@@ -239,7 +239,14 @@ export const NotificationCenter: React.FC = () => {
               padding: '0 3px',
               borderRadius: 'var(--wks-radius-pill)',
               background: 'var(--wks-accent)',
-              color: 'var(--wks-accent-text)',
+              // NOT --wks-accent-text: that token is accent-coloured text for a
+              // normal background, and painting it on the accent fill itself is
+              // the accent on the accent — under 3:1 in every shipped theme and
+              // byte-identical in 12 of them, which renders the count as a bare
+              // dot. A raised-surface colour is the codebase's on-accent idiom
+              // (the sibling new-agent button does the same) and is the most
+              // legible theme-agnostic choice: 3.5:1 at worst across all themes.
+              color: 'var(--wks-bg-raised)',
               fontSize: '0.6rem',
               fontWeight: 600,
               lineHeight: '13px',

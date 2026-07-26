@@ -40,6 +40,9 @@ interface NotificationsConfig {
   /** Suppress notifications for the agent you're currently looking at. */
   onlyWhenUnwatched: boolean;
   sound: boolean;
+  /** Whether the renderer shows in-app toasts. Read here so the OS notification
+   *  can stand down when a toast is already covering the same event. */
+  inAppToasts: boolean;
 }
 
 /** Human label for a session — its explicit label, else the cwd basename. */
@@ -122,13 +125,20 @@ class AgentNotifier {
       notifyDone: c.notifyDone !== false,
       onlyWhenUnwatched: c.onlyWhenUnwatched !== false,
       sound: c.sound === true,
+      inAppToasts: c.inAppToasts !== false,
     };
+  }
+
+  /** True when our window has OS focus — the user is in the app right now,
+   *  whichever agent they happen to be looking at. */
+  private isFocused(): boolean {
+    const win = this.mainWindow;
+    return !!win && !win.isDestroyed() && win.isFocused();
   }
 
   /** True when the user is actively looking at this exact session right now. */
   isWatching(sessionId: string): boolean {
-    const win = this.mainWindow;
-    const focused = !!win && !win.isDestroyed() && win.isFocused();
+    const focused = this.isFocused();
     return focused && this.activeSessionId === sessionId;
   }
 
@@ -188,6 +198,20 @@ class AgentNotifier {
 
     if (!cfg.enabled) return;
     if (cfg.onlyWhenUnwatched && watching) return;
+
+    // One event, one surface. `onlyWhenUnwatched` above only covers the agent
+    // you're looking *at*: with the window focused on some *other* agent it
+    // leaves `watching` false, so an OS toast fired next to the in-app toast and
+    // the same notification arrived twice at once. The renderer's escalation path
+    // has always obeyed this rule (see escalateFromRenderer: it only escalates
+    // while unfocused) — main-originated events now obey it too, which is what
+    // that method's "nothing fires twice" contract assumed all along.
+    //
+    // The toast has to actually be coming for this to stand down: when the
+    // in-app mirror is toast-silent (you're watching that agent) or toasts are
+    // switched off entirely, the OS notification is the only surface left.
+    const inAppToastIncoming = cfg.inAppToasts && !watching;
+    if (this.isFocused() && inAppToastIncoming) return;
 
     if (Notification.isSupported()) {
       this.showOsNotification(title, body, () => this.focusAgent(session.sessionId));

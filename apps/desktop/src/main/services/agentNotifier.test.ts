@@ -232,6 +232,70 @@ describe('notifyOnTransition', () => {
     expect(h.created).toHaveLength(0);
   });
 
+  /**
+   * One event, one surface. `onlyWhenUnwatched` only ever covered the agent you
+   * are looking *at*; with the window focused on a different agent it left the
+   * OS notification firing right beside the in-app toast, so the same event
+   * arrived twice at once. The OS notification now stands down whenever a toast
+   * is actually coming — and only then.
+   */
+  describe('an OS notification never doubles up with an in-app toast', () => {
+    it('stands down when the window is focused on a DIFFERENT agent', () => {
+      const { win, sent, finishLoad } = makeWindow(true);
+      agentNotifier.setMainWindow(win as never);
+      finishLoad();
+      agentNotifier.setActiveSession('other-agent');
+
+      agentNotifier.notifyOnTransition(session({ ambientState: 'waiting_approval' }), 'streaming');
+
+      expect(h.created).toHaveLength(0);
+      // The toast is the surface here, so it must not be silenced too.
+      const inApp = inAppPayloads(sent);
+      expect(inApp).toHaveLength(1);
+      expect(inApp[0].silent).toBe(false);
+    });
+
+    it('still fires when the window is unfocused', () => {
+      const { win, sent, finishLoad } = makeWindow(false);
+      agentNotifier.setMainWindow(win as never);
+      finishLoad();
+      agentNotifier.setActiveSession('other-agent');
+
+      agentNotifier.notifyOnTransition(session({ ambientState: 'waiting_approval' }), 'streaming');
+
+      expect(h.created).toHaveLength(1);
+      expect(inAppPayloads(sent)).toHaveLength(1);
+    });
+
+    it('still fires when focused but in-app toasts are switched off', () => {
+      const { win, finishLoad } = makeWindow(true);
+      agentNotifier.setMainWindow(win as never);
+      finishLoad();
+      agentNotifier.setActiveSession('other-agent');
+      h.config.notifications = { inAppToasts: false };
+
+      agentNotifier.notifyOnTransition(session({ ambientState: 'waiting_approval' }), 'streaming');
+
+      // Nothing else would have surfaced it, so standing down would lose it.
+      expect(h.created).toHaveLength(1);
+    });
+
+    it('still fires for the watched agent when the user opted into that', () => {
+      const { win, sent, finishLoad } = makeWindow(true);
+      agentNotifier.setMainWindow(win as never);
+      finishLoad();
+      agentNotifier.setActiveSession('s1');
+      h.config.notifications = { onlyWhenUnwatched: false };
+
+      agentNotifier.notifyOnTransition(session({ ambientState: 'waiting_approval' }), 'streaming');
+
+      // The in-app mirror is toast-silent while watching, so the OS one is the
+      // only surface left and the focus guard must not eat it.
+      expect(inAppPayloads(sent)[0].silent).toBe(true);
+      expect(h.created).toHaveLength(1);
+    });
+  });
+
   it('buffers in-app notifications raised before the renderer loads', () => {
     const { win, sent, finishLoad } = makeWindow(false);
     agentNotifier.setMainWindow(win as never);
