@@ -41,6 +41,7 @@
 import { _electron as electron } from 'playwright';
 import * as fs from 'fs';
 import * as path from 'path';
+import { seedFleet, waitForHook } from './shootFixture.mjs';
 
 const APP = path.resolve(import.meta.dirname, '..');
 const STAGE = process.env.STAGE_HOME || '/tmp/wks-shoot/home';
@@ -90,7 +91,13 @@ if (!userData.startsWith(STAGE)) {
 }
 console.log(`isolated userData = ${userData}`);
 
-await page.waitForTimeout(2500);
+// Seed the fleet by observing sessions into existence (transcript + hooks),
+// since a credential-less stage cannot spawn real agents.
+await waitForHook();
+const ids = await seedFleet(STAGE);
+console.log(`seeded ${ids.length} sessions`);
+await page.waitForTimeout(4000);
+
 await page.screenshot({ path: `${OUT}/boot.png` });
 console.log(`captured ${OUT}/boot.png`);
 
