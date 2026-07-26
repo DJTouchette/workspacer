@@ -8,7 +8,8 @@
 //! ```json
 //! {
 //!   "theme": "nord",
-//!   "colors": { "accent": "#88c0d0", "warn": "yellow" }
+//!   "colors": { "accent": "#88c0d0", "warn": "yellow" },
+//!   "transport": "stream"
 //! }
 //! ```
 
@@ -18,11 +19,48 @@ use std::collections::HashMap;
 use crate::keys::{Chord, Context, Keymap};
 use crate::theme::{self, Theme};
 
+/// Which transport a Claude session the TUI *spawns* runs on. Only ever applies
+/// to new sessions: an existing one reports its own transport on the wire
+/// (`Agent::transport`) and every surface follows that, because a running
+/// process's transport can't be reinterpreted after the fact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Transport {
+    /// Headless stream-json through claudemon's adapter — structured events, no
+    /// PTY, so the chat view is transcript-only. The default: it is what the
+    /// desktop defaults to, and it makes the TUI's own spawns match what the
+    /// rest of the product does rather than depending on which way the TUI
+    /// happens to be talking to the daemon.
+    #[default]
+    Stream,
+    /// The classic PTY TUI. Choose this if you want the terminal view for
+    /// sessions you start from here — a stream session has no PTY to show.
+    Pty,
+}
+
+impl Transport {
+    /// The wire spelling claudemon and the hub both use.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stream => "stream",
+            Self::Pty => "pty",
+        }
+    }
+
+    fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "stream" => Some(Self::Stream),
+            "pty" => Some(Self::Pty),
+            _ => None,
+        }
+    }
+}
+
 /// Resolved, ready-to-use config.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     pub theme: Theme,
     pub keymap: Keymap,
+    pub transport: Transport,
 }
 
 /// The on-disk shape. All fields optional and defaulted so partial files (and
@@ -44,6 +82,10 @@ struct RawConfig {
     /// leader chord — e.g. `{"list": {"x": "quit"}, "global": {"<leader> x": "quit"}}`.
     #[serde(default)]
     keys: HashMap<String, HashMap<String, String>>,
+    /// Transport for Claude sessions this TUI spawns: `"stream"` (default) or
+    /// `"pty"`. Existing sessions always keep their own.
+    #[serde(default)]
+    transport: Option<String>,
 }
 
 impl RawConfig {
@@ -87,7 +129,21 @@ impl RawConfig {
             }
         }
 
-        Config { theme, keymap }
+        // An unknown value falls back to the default rather than refusing to
+        // start, like every other field here.
+        let transport = match self.transport.as_deref() {
+            Some(s) => Transport::parse(s).unwrap_or_else(|| {
+                eprintln!("wks-tui: unknown transport {s:?} in tui.json — using stream");
+                Transport::default()
+            }),
+            None => Transport::default(),
+        };
+
+        Config {
+            theme,
+            keymap,
+            transport,
+        }
     }
 }
 
@@ -132,6 +188,39 @@ mod tests {
     fn resolve(json: &str) -> Config {
         let raw: RawConfig = serde_json::from_str(json).unwrap();
         raw.resolve()
+    }
+
+    /// Spawning on stream is the default so the TUI's own sessions match the
+    /// rest of the product instead of depending on which way it reached the
+    /// daemon. `pty` is there for anyone who wants the terminal view for
+    /// sessions they start here — a stream session has no PTY to show.
+    #[test]
+    fn transport_defaults_to_stream_and_accepts_pty() {
+        assert_eq!(resolve("{}").transport, Transport::Stream);
+        assert_eq!(
+            resolve(r#"{"transport":"stream"}"#).transport,
+            Transport::Stream
+        );
+        assert_eq!(resolve(r#"{"transport":"pty"}"#).transport, Transport::Pty);
+        assert_eq!(
+            resolve(r#"{"transport":" pty "}"#).transport,
+            Transport::Pty
+        );
+    }
+
+    #[test]
+    fn a_bad_transport_falls_back_rather_than_failing_startup() {
+        assert_eq!(
+            resolve(r#"{"transport":"headless"}"#).transport,
+            Transport::Stream
+        );
+        assert_eq!(resolve(r#"{"transport":""}"#).transport, Transport::Stream);
+    }
+
+    #[test]
+    fn transport_wire_spelling_matches_the_daemon() {
+        assert_eq!(Transport::Stream.as_str(), "stream");
+        assert_eq!(Transport::Pty.as_str(), "pty");
     }
 
     #[test]

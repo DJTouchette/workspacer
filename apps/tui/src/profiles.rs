@@ -26,7 +26,7 @@ struct ProfilesFile {
 }
 
 impl Profile {
-    fn default_profile() -> Self {
+    pub(crate) fn default_profile() -> Self {
         Profile {
             id: "default".into(),
             name: "Default".into(),
@@ -124,6 +124,53 @@ pub fn build_argv(
     argv
 }
 
+/// A profile's extra argv, minus the flags the stream transport's own builder
+/// owns.
+///
+/// `build_argv` above composes the whole PTY command line, so a profile's flags
+/// go in verbatim. The stream path is the other way round: claudemon builds the
+/// headless argv itself from typed payload fields (`model`, `yolo`,
+/// `session_id`/`resume`) and appends `extra_args` after them. Passing those
+/// same flags through as extra argv would hand the CLI each one twice — and
+/// `--session-id` twice with different values is not a cosmetic problem.
+///
+/// Everything else passes through: that's the escape hatch profiles exist for.
+pub fn stream_extra_args(profile: &Profile) -> Vec<String> {
+    /// Flags claudemon's stream builder emits, with the value-taking ones
+    /// needing their following token dropped too.
+    const OWNED_WITH_VALUE: [&str; 3] = ["--model", "--session-id", "--resume"];
+    const OWNED_BARE: [&str; 1] = ["--dangerously-skip-permissions"];
+
+    let mut out = Vec::with_capacity(profile.extra_args.len());
+    let mut skip_value = false;
+    for arg in &profile.extra_args {
+        if skip_value {
+            skip_value = false;
+            continue;
+        }
+        // `--flag=value` carries its value inline, so nothing follows to drop.
+        let name = arg.split('=').next().unwrap_or(arg.as_str());
+        if OWNED_WITH_VALUE.contains(&name) {
+            skip_value = !arg.contains('=');
+            continue;
+        }
+        if OWNED_BARE.contains(&arg.as_str()) {
+            continue;
+        }
+        out.push(arg.clone());
+    }
+    out
+}
+
+/// Whether a profile already pins bypass mode in its own argv — the stream path
+/// expresses that as the payload's `yolo` flag instead of a raw arg.
+pub fn profile_skips_permissions(profile: &Profile) -> bool {
+    profile
+        .extra_args
+        .iter()
+        .any(|a| a == "--dangerously-skip-permissions")
+}
+
 /// The env overrides a profile implies — currently just `CLAUDE_CONFIG_DIR`,
 /// with a leading `~` expanded.
 pub fn build_env(profile: &Profile) -> serde_json::Map<String, serde_json::Value> {
@@ -177,6 +224,70 @@ mod tests {
         let argv = build_argv(&p, None, false, "abc-123", false);
         assert!(argv.windows(2).any(|w| w == ["--session-id", "abc-123"]));
         assert!(!argv.iter().any(|a| a == "--resume"));
+    }
+
+    fn profile_with(extra: &[&str]) -> Profile {
+        Profile {
+            extra_args: extra.iter().map(|s| s.to_string()).collect(),
+            ..Profile::default_profile()
+        }
+    }
+
+    /// On the stream transport claudemon builds the headless argv itself and
+    /// appends `extra_args` after it, so anything it already emits has to come
+    /// out of the profile's own flags or the CLI gets it twice — and two
+    /// different `--session-id`s is not a cosmetic problem.
+    #[test]
+    fn stream_extra_args_drops_the_flags_the_daemon_emits() {
+        let p = profile_with(&[
+            "--model",
+            "opus",
+            "--session-id",
+            "pinned-elsewhere",
+            "--dangerously-skip-permissions",
+            "--add-dir",
+            "/srv",
+        ]);
+        // Only the flag the payload can't express survives, with its value.
+        assert_eq!(stream_extra_args(&p), vec!["--add-dir", "/srv"]);
+    }
+
+    #[test]
+    fn stream_extra_args_handles_the_inline_value_form() {
+        // `--model=opus` carries its value, so no following token to drop —
+        // dropping one would eat the next real flag.
+        let p = profile_with(&["--model=opus", "--verbose"]);
+        assert_eq!(stream_extra_args(&p), vec!["--verbose"]);
+    }
+
+    #[test]
+    fn stream_extra_args_passes_everything_else_through() {
+        let p = profile_with(&[
+            "--append-system-prompt",
+            "be terse",
+            "--settings",
+            "/s.json",
+        ]);
+        assert_eq!(
+            stream_extra_args(&p),
+            vec![
+                "--append-system-prompt",
+                "be terse",
+                "--settings",
+                "/s.json"
+            ]
+        );
+    }
+
+    #[test]
+    fn bypass_in_a_profile_becomes_the_yolo_flag_not_an_arg() {
+        let bypass = profile_with(&["--dangerously-skip-permissions"]);
+        assert!(profile_skips_permissions(&bypass));
+        assert!(!stream_extra_args(&bypass)
+            .iter()
+            .any(|a| a == "--dangerously-skip-permissions"));
+
+        assert!(!profile_skips_permissions(&profile_with(&["--verbose"])));
     }
 
     #[test]

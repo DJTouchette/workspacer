@@ -222,6 +222,7 @@ the in-app help overlay with `?` to see the active bindings and theme list.
 {
   "theme": "nord",
   "colors": { "accent": "#88c0d0", "warn": "yellow" },
+  "transport": "stream",
   "keys": {
     "list":             { "x": "quit", "q": "none" },
     "agent_transcript": { "ctrl+r": "refresh" },
@@ -235,6 +236,17 @@ the in-app help overlay with `?` to see the active bindings and theme list.
 individual roles (`accent`, `ok`, `warn`, `bad`, `dim`, `fg`, `selection_bg`) on
 top of the preset. A color is `#rrggbb`, a bare `rrggbb`, an ANSI name (`cyan`,
 `darkgray`…), or a 256-color index.
+
+**Transport** — `transport` picks how Claude sessions *you spawn from here* run:
+`stream` (default) is claudemon's headless stream-json adapter, the same thing
+the desktop defaults to; `pty` runs the classic terminal TUI. It only ever
+applies to new sessions — an existing one keeps whatever transport it already
+has, including when you resume a stopped one, since a running process's
+transport can't be reinterpreted after the fact.
+
+A stream session has no PTY, so its chat view is transcript-only and the
+terminal toggle reports "headless session — no terminal". Set `"pty"` if you
+want the terminal view for sessions you start from the TUI.
 
 **Keys** — `keys` remaps bindings per context. Contexts: `global` (checked
 everywhere), `list` (sidebar/dashboard), `agent_terminal` (raw PTY / shell

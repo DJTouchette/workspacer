@@ -1665,7 +1665,12 @@ impl App {
         // The driver builds the argv (claudemon-direct) or hands the profile id to
         // the brain (bus mode); either way it pins/returns the session id.
         let resume = resume_session_id.is_some();
-        let drv = self.driver();
+        // A resume respawns a session that already exists, so it keeps that
+        // row's transport; the configured transport is for fresh spawns.
+        let drv = match &resume_session_id {
+            Some(sid) => self.driver_on(self.respawn_transport(sid)),
+            None => self.driver(),
+        };
         let tx = self.tx.clone();
         tokio::spawn(async move {
             let sid = match drv.spawn(cwd, &profile, resume_session_id).await {

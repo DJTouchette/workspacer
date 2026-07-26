@@ -488,6 +488,9 @@ pub struct App {
     pub profiles: Vec<Profile>,
     pub library: Vec<LibraryItem>,
     /// Resolved color theme; every renderer references it instead of literals.
+    /// Transport for Claude sessions we spawn. Never consulted for a session
+    /// that already exists — `transport_for` reads that off the wire.
+    pub transport: crate::config::Transport,
     pub theme: Theme,
     /// Resolved keybindings; `input.rs` dispatches every key through this.
     pub keymap: Keymap,
@@ -649,6 +652,7 @@ impl App {
             library,
             theme: config.theme,
             keymap: config.keymap,
+            transport: config.transport,
             help: false,
             spawn_form: None,
             palette: None,
@@ -715,6 +719,7 @@ impl App {
         crate::bus::Driver {
             claudemon: self.claudemon.clone(),
             bus: self.bus.clone(),
+            transport: self.transport,
         }
     }
 
@@ -1297,6 +1302,31 @@ impl App {
             .unwrap_or_else(|| "pty".to_string())
     }
 
+    /// Which transport to respawn an EXISTING session on.
+    ///
+    /// Its own, whenever we know it. A conversation resumes fine on either
+    /// transport, but flipping one under the user is a behaviour change, not a
+    /// detail: a PTY session would lose the terminal view it had, and a stream
+    /// session would be handed a terminal that doesn't exist. The configured
+    /// transport decides *fresh* spawns only — for a row we've never seen (not in
+    /// the live list) that's also the best guess available.
+    pub(super) fn respawn_transport(&self, sid: &str) -> crate::config::Transport {
+        match self.all_agents.iter().find(|a| a.session_id == sid) {
+            Some(a) if a.is_stream() => crate::config::Transport::Stream,
+            Some(_) => crate::config::Transport::Pty,
+            None => self.transport,
+        }
+    }
+
+    /// A driver pinned to a specific spawn transport (see `respawn_transport`).
+    pub(super) fn driver_on(&self, transport: crate::config::Transport) -> crate::bus::Driver {
+        crate::bus::Driver {
+            claudemon: self.claudemon.clone(),
+            bus: self.bus.clone(),
+            transport,
+        }
+    }
+
     /// True for headless stream-transport sessions — no PTY to warm or attach.
     pub fn is_stream_session(&self, sid: &str) -> bool {
         self.all_agents
@@ -1657,6 +1687,47 @@ mod tests {
             let _ = std::fs::create_dir_all(&dir);
             std::env::set_var("XDG_CONFIG_HOME", &dir);
         });
+    }
+
+    /// Resuming keeps the row's own transport; only a fresh spawn takes the
+    /// configured one. Flipping a live session's transport would take away the
+    /// terminal a PTY session has (or promise one a stream session never had).
+    #[test]
+    fn respawn_inherits_the_existing_rows_transport() {
+        let mut app = test_app();
+        app.transport = crate::config::Transport::Stream;
+        // Built through serde like the rest of these tests, so the wire shape
+        // (and `transport`'s pty default) is what's under test.
+        app.all_agents = vec![
+            serde_json::from_value(serde_json::json!({
+                "session_id": "pty-row", "mode": "input", "transport": "pty"
+            }))
+            .unwrap(),
+            serde_json::from_value(serde_json::json!({
+                "session_id": "stream-row", "mode": "input", "transport": "stream"
+            }))
+            .unwrap(),
+        ];
+
+        assert_eq!(
+            app.respawn_transport("pty-row"),
+            crate::config::Transport::Pty
+        );
+        assert_eq!(
+            app.respawn_transport("stream-row"),
+            crate::config::Transport::Stream
+        );
+        // A row we've never seen has no transport to inherit — the config's
+        // choice is the best guess there is.
+        assert_eq!(
+            app.respawn_transport("unknown"),
+            crate::config::Transport::Stream
+        );
+        app.transport = crate::config::Transport::Pty;
+        assert_eq!(
+            app.respawn_transport("unknown"),
+            crate::config::Transport::Pty
+        );
     }
 
     fn test_app() -> App {

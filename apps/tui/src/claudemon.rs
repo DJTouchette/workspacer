@@ -253,6 +253,58 @@ impl Claudemon {
             .ok_or_else(|| anyhow!("spawn-managed response missing session_id"))
     }
 
+    /// Spawn a Claude session on the **stream** transport — claudemon's headless
+    /// stream-json adapter (`POST /sessions/spawn-managed` with
+    /// `provider: "claude"`). Returns the assigned session id.
+    ///
+    /// The PTY counterpart is `spawn`, which hands over a full argv. Here the
+    /// daemon builds the headless argv from these typed fields instead, so a
+    /// profile is decomposed rather than concatenated: its config dir becomes
+    /// `env`, and its remaining flags ride `extra_args` with the daemon-owned
+    /// ones stripped (see `profiles::stream_extra_args`).
+    ///
+    /// `resume` reopens a prior conversation. Note claudemon keeps the CLI's
+    /// *prior* id as the row id on a resume, so the caller must not also pin a
+    /// fresh `session_id` — passing both is what makes hooks land on a ghost row.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn spawn_claude_stream(
+        &self,
+        cwd: &str,
+        model: Option<&str>,
+        yolo: bool,
+        session_id: &str,
+        resume: Option<&str>,
+        extra_args: &[String],
+        env: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<String> {
+        let mut body = json!({ "provider": "claude", "cwd": cwd, "yolo": yolo });
+        if let Some(m) = model {
+            let m = m.trim();
+            if !m.is_empty() {
+                body["model"] = json!(m);
+            }
+        }
+        match resume {
+            Some(prior) if !prior.is_empty() => body["resume"] = json!(prior),
+            _ => {
+                if !session_id.is_empty() {
+                    body["session_id"] = json!(session_id);
+                }
+            }
+        }
+        if !extra_args.is_empty() {
+            body["extra_args"] = json!(extra_args);
+        }
+        if !env.is_empty() {
+            body["env"] = json!(env);
+        }
+        let resp = self.post_json("/sessions/spawn-managed", &body).await?;
+        resp.get("session_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow!("spawn-managed response missing session_id"))
+    }
+
     /// List the models a managed provider can launch with, live-queried from its
     /// CLI (`GET /providers/:provider/models`). An empty list is valid.
     pub async fn provider_models(&self, provider: &str, cwd: &str) -> Result<Vec<ProviderModel>> {
@@ -1092,6 +1144,73 @@ mod tests {
         assert_eq!(path, "/sessions/s1/model");
         assert_eq!(body["model"], json!("gpt-5"));
         assert_eq!(body["effort"], json!("high"));
+    }
+
+    /// The stream spawn decomposes a profile into typed payload fields rather
+    /// than a command line: the config dir becomes `env`, the leftover flags
+    /// ride `extra_args`, and bypass is the `yolo` flag.
+    #[tokio::test]
+    async fn spawn_claude_stream_posts_typed_fields_not_argv() {
+        let (base, srv) = mock_server(200, "OK", r#"{"session_id":"s-77"}"#).await;
+        let mut env = serde_json::Map::new();
+        env.insert("CLAUDE_CONFIG_DIR".into(), json!("/home/me/.claude-work"));
+
+        let sid = Claudemon::new(base)
+            .spawn_claude_stream(
+                "/w",
+                Some("opus"),
+                true,
+                "pin-9",
+                None,
+                &["--add-dir".to_string(), "/srv".to_string()],
+                &env,
+            )
+            .await
+            .expect("spawn ok");
+
+        assert_eq!(sid, "s-77");
+        let (_, path, body) = srv.await.unwrap();
+        assert_eq!(path, "/sessions/spawn-managed");
+        assert_eq!(body["provider"], json!("claude"));
+        assert_eq!(body["cwd"], json!("/w"));
+        assert_eq!(body["model"], json!("opus"));
+        assert_eq!(body["yolo"], json!(true));
+        assert_eq!(body["session_id"], json!("pin-9"));
+        assert_eq!(body["extra_args"], json!(["--add-dir", "/srv"]));
+        assert_eq!(
+            body["env"]["CLAUDE_CONFIG_DIR"],
+            json!("/home/me/.claude-work")
+        );
+        // No argv on this transport — the daemon composes it.
+        assert!(body.get("argv").is_none());
+    }
+
+    /// claudemon keeps the CLI's prior id as the row id on a resume, so sending
+    /// a fresh pinned id alongside `resume` is what makes hooks land on a ghost
+    /// row. Only one of the two may go on the wire.
+    #[tokio::test]
+    async fn spawn_claude_stream_resume_never_also_pins_a_fresh_id() {
+        let (base, srv) = mock_server(200, "OK", r#"{"session_id":"prior-1"}"#).await;
+        Claudemon::new(base)
+            .spawn_claude_stream(
+                "/w",
+                None,
+                false,
+                "ignored-when-resuming",
+                Some("prior-1"),
+                &[],
+                &serde_json::Map::new(),
+            )
+            .await
+            .expect("resume ok");
+
+        let (_, _, body) = srv.await.unwrap();
+        assert_eq!(body["resume"], json!("prior-1"));
+        assert!(body.get("session_id").is_none());
+        // Empty collections stay off the wire rather than shipping [] / {}.
+        assert!(body.get("extra_args").is_none());
+        assert!(body.get("env").is_none());
+        assert!(body.get("model").is_none());
     }
 
     #[tokio::test]

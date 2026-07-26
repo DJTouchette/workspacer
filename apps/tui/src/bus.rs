@@ -217,6 +217,13 @@ fn handle_frame(
 pub struct Driver {
     pub claudemon: crate::claudemon::Claudemon,
     pub bus: Option<BusClient>,
+    /// Transport for Claude sessions this TUI spawns (config `transport`,
+    /// default stream). Stated on BOTH paths on purpose: the bus path used to
+    /// send no transport at all, so the hub filled it in from the desktop's
+    /// `claude.transport` — meaning the same TUI spawned a stream session when
+    /// the desktop happened to own the hub and a PTY one when it didn't. Nobody
+    /// chose that; it was a config default leaking across a seam.
+    pub transport: crate::config::Transport,
 }
 
 impl Driver {
@@ -295,18 +302,27 @@ impl Driver {
         }
     }
 
-    /// Spawn a fresh (or resumed) agent and return its session id. On the bus the
-    /// brain builds the argv from the profile id (so the TUI doesn't); claudemon-
-    /// direct builds it here, the way the TUI always has.
+    /// Spawn a fresh (or resumed) Claude agent and return its session id.
+    ///
+    /// Both paths now *state* the transport rather than letting anything infer
+    /// it (see the field's note). On stream, claudemon builds the headless argv
+    /// from typed fields, so the profile is decomposed into model/yolo/env/
+    /// extra_args; on PTY the TUI hands over a full argv as it always has. Over
+    /// the bus, the brain does whichever of those the transport implies.
     pub async fn spawn(
         &self,
         cwd: String,
         profile: &crate::profiles::Profile,
         resume_session_id: Option<String>,
     ) -> Result<String> {
+        let stream = self.transport == crate::config::Transport::Stream;
         match &self.bus {
             Some(b) => {
-                let mut params = json!({ "cwd": cwd, "profileId": profile.id });
+                let mut params = json!({
+                    "cwd": cwd,
+                    "profileId": profile.id,
+                    "transport": self.transport.as_str(),
+                });
                 if let Some(rid) = &resume_session_id {
                     params["resumeSessionId"] = json!(rid);
                 }
@@ -315,6 +331,22 @@ impl Driver {
                     .and_then(|s| s.as_str())
                     .map(String::from)
                     .ok_or_else(|| anyhow!("agents.spawn returned no sessionId"))
+            }
+            None if stream => {
+                let session_id = resume_session_id
+                    .clone()
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                self.claudemon
+                    .spawn_claude_stream(
+                        &cwd,
+                        None,
+                        crate::profiles::profile_skips_permissions(profile),
+                        &session_id,
+                        resume_session_id.as_deref(),
+                        &crate::profiles::stream_extra_args(profile),
+                        &crate::profiles::build_env(profile),
+                    )
+                    .await
             }
             None => {
                 let resume = resume_session_id.is_some();
@@ -571,6 +603,7 @@ mod tests {
     fn bus_driver(addr: std::net::SocketAddr) -> Driver {
         let (client, _events) = BusClient::connect(format!("ws://{addr}/bus"), None);
         Driver {
+            transport: crate::config::Transport::default(),
             claudemon: crate::claudemon::Claudemon::new("http://unused".into()),
             bus: Some(client),
         }
@@ -719,6 +752,50 @@ mod tests {
         assert_eq!(method, "claude.setPermissionMode");
         assert_eq!(params["sessionId"], json!("s1"));
         assert_eq!(params["mode"], json!("plan"));
+    }
+
+    /// The bus spawn used to send no transport, so the hub filled it in from the
+    /// desktop's `claude.transport`: the same TUI got a stream session when the
+    /// desktop owned the hub and a PTY one when it didn't. Stating it makes the
+    /// TUI's spawns independent of who else is running.
+    #[tokio::test]
+    async fn driver_bus_spawn_states_its_transport() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut rx = recording_hub(listener, json!({ "sessionId": "s-1" }));
+
+        let profile = crate::profiles::Profile::default_profile();
+        let sid = bus_driver(addr)
+            .spawn("/w".into(), &profile, None)
+            .await
+            .expect("spawn ok");
+        assert_eq!(sid, "s-1");
+
+        let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("call within 3s")
+            .expect("recorder open");
+        assert_eq!(method, "agents.spawn");
+        assert_eq!(params["transport"], json!("stream"));
+        assert_eq!(params["cwd"], json!("/w"));
+    }
+
+    #[tokio::test]
+    async fn driver_bus_spawn_honours_a_pty_config() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut rx = recording_hub(listener, json!({ "sessionId": "s-2" }));
+
+        let mut driver = bus_driver(addr);
+        driver.transport = crate::config::Transport::Pty;
+        let profile = crate::profiles::Profile::default_profile();
+        driver.spawn("/w".into(), &profile, None).await.expect("ok");
+
+        let (_, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("call within 3s")
+            .expect("recorder open");
+        assert_eq!(params["transport"], json!("pty"));
     }
 
     #[tokio::test]
