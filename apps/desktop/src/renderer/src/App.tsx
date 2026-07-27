@@ -1679,6 +1679,12 @@ function App() {
         cwd: t.cwd,
         provider: t.targetProvider,
         name: `handoff → ${t.targetProvider}`,
+        // Launch settings chosen in the handoff dialog (defaulted there to the
+        // source session's own model/effort/permission mode).
+        model: t.model,
+        effort: t.effort,
+        permissionMode: t.permissionMode,
+        skipPermissions: t.skipPermissions,
         initialPrompt:
           `You are taking over an in-progress session from another AI coding agent. ` +
           `First read the handoff brief at ${t.briefPath}, then continue the work from where it left off — ` +

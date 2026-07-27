@@ -91,6 +91,13 @@ export interface HandoffTarget {
   briefPath: string;
   /** Session being handed off, for the successor pane's title. */
   sourceSessionId: string;
+  /** Launch settings picked in the handoff dialog, defaulted to the source
+   *  session's own values. Omitted fields fall back to the provider default. */
+  model?: string;
+  effort?: string;
+  permissionMode?: string;
+  /** Legacy bypass boolean, kept in step with `permissionMode`. */
+  skipPermissions?: boolean;
 }
 
 /** Ask App to spawn the successor agent for a handoff. */

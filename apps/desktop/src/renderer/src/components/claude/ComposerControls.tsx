@@ -44,6 +44,7 @@ import {
   type EffortLevel,
 } from '../../lib/providerCaps';
 import { deriveSessionStats } from '../../lib/sessionStats';
+import { loadModelOptions, type ModelOption } from '../../lib/modelOptions';
 import { shortModelLabel } from '../../lib/modelLabel';
 import { claudeColors as colors } from '../claude-shared';
 import {
@@ -59,21 +60,6 @@ export interface RestartOverrides {
   model?: string;
   effort?: string;
   permissionMode?: string;
-}
-
-interface ModelOption {
-  id: string;
-  label: string;
-  /** Context-window badge ('200K' | '1M'). */
-  context?: string;
-  /** True for concrete ids observed in sessions (grouped after the aliases). */
-  seen?: boolean;
-  /** Provider-reported default model. */
-  default?: boolean;
-  /** Exact effort ids supported by this model, when the provider reports them. */
-  effortLevels?: string[];
-  /** Level this model runs at with no effort override (Codex reports it). */
-  defaultEffort?: string;
 }
 
 /** Context-window chip; the 1M window gets the accent treatment. */
@@ -246,43 +232,7 @@ export const ComposerControls: React.FC<{
   );
 
   const loadModels = useCallback(async () => {
-    try {
-      if (caps.modelSource === 'claude') {
-        const res = await window.electronAPI.claudeListModels();
-        // Date-stamped variants of one model shorten to the same label — keep
-        // the first so the menu never shows two identical rows.
-        const seen: ModelOption[] = [];
-        for (const id of res.seen ?? []) {
-          if (res.aliases.some((a) => a.value === id)) continue;
-          const label = shortModelLabel(id) || id;
-          if (seen.some((s) => s.label === label)) continue;
-          // Fable / Mythos are 1M-native (the max is also the default), so they
-          // read 1M without the `[1m]` marker that gates 1M on Opus/Sonnet.
-          const is1m = id.includes('[1m]') || /fable|mythos/i.test(id);
-          seen.push({ id, label, context: is1m ? '1M' : '200K', seen: true });
-        }
-        setModels([
-          ...res.aliases.map((a) => ({ id: a.value, label: a.label, context: a.context })),
-          ...seen,
-        ]);
-      } else {
-        const res = await window.electronAPI.providerListModels(
-          provider as 'codex' | 'opencode' | 'pi',
-          cwd,
-        );
-        setModels(
-          res.map((m) => ({
-            id: m.id,
-            label: m.label || m.id,
-            default: m.default,
-            effortLevels: m.effortLevels,
-            defaultEffort: m.defaultEffort,
-          })),
-        );
-      }
-    } catch {
-      setModels([]);
-    }
+    setModels(await loadModelOptions(provider, caps.modelSource, cwd));
   }, [caps.modelSource, provider, cwd]);
 
   const openMenu = (kind: MenuKind) => (e: React.MouseEvent<HTMLButtonElement>) => {

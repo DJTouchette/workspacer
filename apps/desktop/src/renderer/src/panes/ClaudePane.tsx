@@ -20,7 +20,7 @@ import {
 import { BrandSpinner } from '../components/Brand';
 import { RefreshCw } from '../components/icons';
 import { PanelRight, ArrowRightLeft, Clock } from 'lucide-react';
-import { ContextMenu, ContextMenuItem, ContextMenuLabel } from '../components/ContextMenu';
+import { HandoffDialog, type HandoffSettings } from '../components/claude/HandoffDialog';
 import { requestHandoff } from '../lib/watchBus';
 import { quoteFontFamily, isTermVisible, refitAndRepaint } from '../lib/terminalUtils';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -1231,26 +1231,24 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
 
   // ── Cross-provider handoff ──
   //
-  // Two-step: pick the successor's provider, then how the brief gets written —
-  // by the source agent itself (best quality: it holds the session in context;
+  // The dialog picks the successor's launch settings (provider, model, effort,
+  // permission mode — all defaulted to this session's) and who writes the brief:
+  // the source agent itself (best quality: it holds the session in context;
   // takes a turn, mechanical fallback on timeout) or mechanically (instant
   // digest from the conversation). Either way the brief lands under
-  // ~/.workspacer/handoffs/ and App spawns the successor with its composer
-  // pre-filled to read it. Any harness → any harness.
-  const [handoffMenu, setHandoffMenu] = useState<{
-    x: number;
-    y: number;
-    target?: AgentProvider;
-  } | null>(null);
+  // ~/.workspacer/handoffs/ and App spawns the successor — through the normal
+  // workspacer spawn path — with its composer pre-filled to read it. Any
+  // harness → any harness.
+  const [handoffOpen, setHandoffOpen] = useState(false);
   const [handoffBusy, setHandoffBusy] = useState<'agent' | 'mechanical' | null>(null);
   const handleHandoff = useCallback(
-    async (target: AgentProvider, kind: 'agent' | 'mechanical') => {
+    async (settings: HandoffSettings) => {
       const sid = sessionId ?? attachSessionId;
       if (!sid || handoffBusy) return;
-      setHandoffBusy(kind);
+      setHandoffBusy(settings.brief);
       try {
         const res =
-          kind === 'agent'
+          settings.brief === 'agent'
             ? await window.electronAPI.claudeHandoffAgentBrief(sid)
             : await window.electronAPI.claudeHandoffBrief(sid);
         if (!res.ok || !res.path) {
@@ -1260,7 +1258,17 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         if ((res as { fallback?: boolean }).fallback) {
           console.warn('[ClaudePane] agent brief fell back to mechanical:', res.error);
         }
-        requestHandoff({ targetProvider: target, cwd, briefPath: res.path, sourceSessionId: sid });
+        requestHandoff({
+          targetProvider: settings.provider,
+          cwd,
+          briefPath: res.path,
+          sourceSessionId: sid,
+          model: settings.model,
+          effort: settings.effort,
+          permissionMode: settings.permissionMode,
+          skipPermissions: settings.skipPermissions,
+        });
+        setHandoffOpen(false);
       } catch (err) {
         console.warn('[ClaudePane] handoff failed:', err);
       } finally {
@@ -2074,14 +2082,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
               {/* Hand off to any provider (including the same one — fresh context,
             same harness) — brief goes to ~/.workspacer/handoffs */}
               <button
-                onClick={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  setHandoffMenu({ x: rect.left, y: rect.top - 4 });
-                }}
+                onClick={() => setHandoffOpen(true)}
                 title={
                   handoffBusy === 'agent'
                     ? 'Waiting for the agent to write its handoff brief…'
-                    : 'Hand off this session to a new agent — any provider, including this one (summarized brief, new session)'
+                    : 'Hand off this session to a new agent — pick provider, model, effort and permissions (summarized brief, new session)'
                 }
                 className="wks-composer-icon-btn"
                 disabled={!!handoffBusy || !(sessionId ?? attachSessionId)}
@@ -2095,55 +2100,15 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
               >
                 <ArrowRightLeft size={13} strokeWidth={1.9} />
               </button>
-              {handoffMenu && !handoffMenu.target && (
-                <ContextMenu
-                  x={handoffMenu.x}
-                  y={handoffMenu.y}
-                  onClose={() => setHandoffMenu(null)}
-                  minWidth={170}
-                >
-                  <ContextMenuLabel>Hand off to…</ContextMenuLabel>
-                  {(
-                    [
-                      ['claude', 'Claude'],
-                      ['codex', 'Codex'],
-                      ['opencode', 'OpenCode'],
-                      ['pi', 'Pi'],
-                    ] as Array<[AgentProvider, string]>
-                  ).map(([id, label]) => (
-                    <ContextMenuItem
-                      key={id}
-                      label={label}
-                      onClick={() => setHandoffMenu((m) => (m ? { ...m, target: id } : m))}
-                    />
-                  ))}
-                </ContextMenu>
-              )}
-              {handoffMenu?.target && (
-                <ContextMenu
-                  x={handoffMenu.x}
-                  y={handoffMenu.y}
-                  onClose={() => setHandoffMenu(null)}
-                  minWidth={230}
-                >
-                  <ContextMenuLabel>Brief for {handoffMenu.target} — written by…</ContextMenuLabel>
-                  <ContextMenuItem
-                    label="This agent (best, takes a turn)"
-                    onClick={() => {
-                      const target = handoffMenu.target!;
-                      setHandoffMenu(null);
-                      void handleHandoff(target, 'agent');
-                    }}
-                  />
-                  <ContextMenuItem
-                    label="Mechanical digest (instant)"
-                    onClick={() => {
-                      const target = handoffMenu.target!;
-                      setHandoffMenu(null);
-                      void handleHandoff(target, 'mechanical');
-                    }}
-                  />
-                </ContextMenu>
+              {handoffOpen && (
+                <HandoffDialog
+                  provider={provider ?? 'claude'}
+                  snapshot={session}
+                  cwd={cwd}
+                  busy={handoffBusy}
+                  onCancel={() => setHandoffOpen(false)}
+                  onConfirm={(settings) => void handleHandoff(settings)}
+                />
               )}
 
               {/* Timestamps toggle — GUI conversation only. Saved to config so it
