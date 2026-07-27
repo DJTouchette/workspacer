@@ -139,6 +139,25 @@ If you later open the desktop app on the same machine, it **adopts** the
 running server instead of spawning its own daemons; "Connect to Server…" in
 the command palette points it at a remote one.
 
+#### Docker
+
+The same headless server, containerised — multi-arch (amd64/arm64), with Claude
+Code already installed:
+
+```bash
+docker run -d --name workspacer \
+  -p 127.0.0.1:7895:7895 \
+  -v "$PWD":/workspace \
+  -v workspacer-home:/home/wks \
+  ghcr.io/djtouchette/workspacer:latest
+
+docker logs workspacer   # URLs + pairing token
+```
+
+Then open `http://localhost:7895/app/?token=<token>`. There's a `docker-compose.yml` in the
+repo root, and `make docker-build` builds the image from source. Agent
+credentials, volume layout, and how to expose it safely: **[docs/docker.md](docs/docker.md)**.
+
 ## Architecture at a glance
 
 You launch one thing — the desktop app — but it supervises a small set of

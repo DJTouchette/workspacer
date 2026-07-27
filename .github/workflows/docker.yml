@@ -1,0 +1,172 @@
+name: docker
+
+# Publishes the headless-server container image to GHCR (and Docker Hub, if
+# configured) so people can `docker pull` workspacer instead of building the
+# three toolchains themselves.
+#
+#   v* tag        → :X.Y.Z, :X.Y, :X, :latest
+#   push to master → :edge
+#   pull request  → build only, never pushed (catches Dockerfile breakage)
+#
+# Multi-arch is built on NATIVE runners (amd64 + arm64) rather than under QEMU:
+# emulating a release Rust + Vite build costs the better part of an hour. Each
+# leg pushes an untagged image by digest; the merge job assembles the manifest
+# list and applies the human tags.
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'docker/**'
+      - '.github/workflows/docker.yml'
+  workflow_dispatch:
+
+env:
+  # Hardcoded lowercase on purpose: GHCR rejects uppercase in an image path and
+  # ${{ github.repository }} is "DJTouchette/workspacer". Forks: change this.
+  GHCR_IMAGE: ghcr.io/djtouchette/workspacer
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # A '/' in the platform breaks artifact names; keep a flat form around.
+      - name: Prepare
+        id: prep
+        run: echo "arch=${{ matrix.platform }}" | tr '/' '-' >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # PRs build and throw away (no push, no cache write to a shared scope).
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          cache-from: type=gha,scope=${{ steps.prep.outputs.arch }}
+          cache-to: ${{ github.event_name == 'pull_request' && '' || format('type=gha,mode=max,scope={0}', steps.prep.outputs.arch) }}
+          outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.GHCR_IMAGE) }}
+
+      # Hand the digest to the merge job as a marker file, so N legs can be
+      # collected without racing on a shared output.
+      - name: Export digest
+        if: github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          # Filename is the bare hex — the merge job re-adds the sha256: prefix.
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ steps.prep.outputs.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Assembles the per-arch digests into one multi-arch manifest and tags it.
+  # Split from the build legs so a tag points at both architectures atomically —
+  # never at whichever leg finished first.
+  merge:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Docker Hub is opt-in: set the repo variable DOCKERHUB_USERNAME and the
+      # secret DOCKERHUB_TOKEN to mirror there too. Without them, GHCR only —
+      # same pattern as the Azure signing gate in release.yml.
+      - name: Log in to Docker Hub
+        if: vars.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Compute tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.GHCR_IMAGE }}
+            ${{ vars.DOCKERHUB_USERNAME != '' && format('docker.io/{0}/workspacer', vars.DOCKERHUB_USERNAME) || '' }}
+          # `latest` only on a real version tag — master must not move it.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/master' }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+          labels: |
+            org.opencontainers.image.title=workspacer
+            org.opencontainers.image.description=A control plane and IDE for coding agents — headless server
+            org.opencontainers.image.licenses=MIT
+
+      # `imagetools create` takes every -t tag AND every per-arch source digest
+      # in one call, so all tags (GHCR + Docker Hub) resolve to the same
+      # manifest list. The sources are always GHCR digests — that is where the
+      # build legs pushed; the Docker Hub tags are cross-registry copies of them.
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${GHCR_IMAGE}@sha256:%s " *)
+
+      - name: Inspect
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect \
+            "$(jq -r '.tags[0]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"

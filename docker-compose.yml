@@ -1,0 +1,48 @@
+# Self-host workspacer: one container running the whole headless stack
+# (claudemon + hub + brain) with the full web app at /app.
+#
+#   docker compose up -d          start
+#   docker compose logs -f        the ready banner has your URLs + pairing token
+#   docker compose run --rm workspacer status
+#
+# Then open http://localhost:7895/app/?token=<token from the banner>.
+# Read docs/docker.md before exposing this beyond localhost.
+
+services:
+  workspacer:
+    # Published image. To build from this checkout instead, comment `image` and
+    # uncomment `build` (or run `docker compose build`).
+    image: ghcr.io/djtouchette/workspacer:latest
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    container_name: workspacer
+    restart: unless-stopped
+
+    ports:
+      # Loopback-only publish. Change to "7895:7895" ONLY behind a private
+      # network (Tailscale, WireGuard, a VPN) — never on a public host.
+      - "127.0.0.1:7895:7895"
+
+    environment:
+      # Set a token to pin the pairing credential; leave unset and the server
+      # mints one into the config volume and prints it in the startup banner.
+      # HUB_TOKEN: "change-me"
+      TZ: ${TZ:-UTC}
+
+    volumes:
+      # Your code. Point this at whatever the agents should work on.
+      - ${WORKSPACER_WORKSPACE:-./workspace}:/workspace
+      # All server state in one volume: pairing token, config.yaml, plugins,
+      # the hub's layout + push keypair, claudemon's session store, and the
+      # agent CLI's credentials + transcripts.
+      - workspacer-home:/home/wks
+      # Uncomment to reuse your host Claude Code login instead of logging in
+      # inside the container (nests over the home volume, which is fine):
+      #   - ${HOME}/.claude:/home/wks/.claude
+
+    # PTY-heavy workload; give agents room to compile/test.
+    shm_size: 1gb
+
+volumes:
+  workspacer-home:

@@ -1,0 +1,17 @@
+# Build context for the root Dockerfile. Keep it lean: the image builds every
+# component from source, so only sources matter — never host build output.
+**/node_modules
+**/target
+**/dist
+**/release
+**/build
+.git
+.github
+apps/tui
+landing
+docs
+shots
+contracts
+scripts
+*.md
+!apps/desktop/src/**

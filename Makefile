@@ -14,7 +14,8 @@ CLAUDEMON := services/claudemon
 HUB       := services/hub
 
 .PHONY: dev dev-share dev-tui run-tui install build build-desktop build-hub build-claudemon build-tui \
-        build-cli test test-desktop test-hub test-tui test-claudemon docs-drift package clean
+        build-cli test test-desktop test-hub test-tui test-claudemon docs-drift package clean \
+        docker-build docker-run docker-stop
 
 ## dev: run the desktop app in dev mode (Vite + Electron). Remote sharing is now
 ##      a runtime toggle (Remote control → Start sharing); use `make dev-share`
@@ -86,6 +87,28 @@ docs-drift:
 ## package: build daemons + produce desktop installers (electron-builder)
 package:
 	cd $(DESKTOP) && npm run package
+
+## docker-build: build the headless-server container image (see docs/docker.md).
+##               Builds every component from source inside the image — nothing
+##               from your working tree's build output is used.
+DOCKER_IMAGE ?= workspacer:local
+docker-build:
+	docker build -t $(DOCKER_IMAGE) .
+
+## docker-run: run the image locally, publishing the hub on loopback only, with
+##             this repo mounted as the workspace. Token is in the logs.
+docker-run:
+	docker rm -f workspacer >/dev/null 2>&1 || true
+	docker run -d --name workspacer \
+	  -p 127.0.0.1:7895:7895 \
+	  -v "$(CURDIR)":/workspace \
+	  -v workspacer-home:/home/wks \
+	  $(DOCKER_IMAGE)
+	@echo "web app: http://localhost:7895/app/?token=<token>  —  token: docker logs workspacer"
+
+## docker-stop: stop + remove the local container (volumes are kept)
+docker-stop:
+	docker rm -f workspacer >/dev/null 2>&1 || true
 
 ## clean: remove build artifacts across components
 clean:
