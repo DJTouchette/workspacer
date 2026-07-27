@@ -112,6 +112,7 @@
     <a href="index.html">home</a>
     <a href="docs.html">docs</a>
     <a href="build-plugin.html">build a plugin</a>
+    <a href="build-client.html">build a client</a>
     <a href="https://github.com/DJTouchette/workspacer">github</a>
   </div>
 </div></nav>
@@ -198,7 +199,7 @@ make run-tui             # wks-tui release build; builds release claudemon + hub
 <h3>the three processes</h3>
 <ul>
 <li><strong>desktop</strong> (<code>apps/desktop</code>), the Electron + React app. This is the primary GUI client. Electron main spawns and supervises the two daemons below as child processes, connects to the hub as a bus client, and forwards events into the renderer. It owns nothing about sessions itself, it just drives them.</li>
-<li><strong>claudemon</strong> (<code>services/claudemon</code>, Rust), owns the sessions. It ingests Claude Code hook events on <code>127.0.0.1:7890</code>, holds per-session state and PTYs, and serves session state + bidirectional control on <code>127.0.0.1:7891</code> over REST + SSE. It parses the <code>~/.claude/projects/*/*.jsonl</code> transcripts so any client gets a structured conversation, not raw scrollback.</li>
+<li><strong>claudemon</strong> (<code>services/claudemon</code>, Rust), owns the sessions. It ingests Claude Code hook events on <code>127.0.0.1:7890</code>, holds per-session state and PTYs, and serves session state + bidirectional control on <code>127.0.0.1:7891</code> over REST + SSE. It parses the <code>~/.claude/projects/*/*.jsonl</code> transcripts so any client gets a structured conversation, not raw scrollback. That REST + SSE surface is documented in full on <a href="build-client.html">build a client</a> — it's the seam to write your own UI against.</li>
 <li><strong>hub</strong> (<code>services/hub</code>, Go), the control-plane. A WebSocket event bus, a process supervisor, a capability (RPC) router, the plugin system, and an MCP facade. It runs independently of the UI so plugins and remote clients can broker events with or without a window open. Default bind is <code>127.0.0.1:7895</code>.</li>
 </ul>
 <p>A Rust TUI (<code>apps/tui</code>, <code>wks-tui</code>) is a second client. Remote and web clients connect to the same hub bus. A session running on one client can be observed and driven from another.</p>
