@@ -3,19 +3,19 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>work{spacer} :: control plane & IDE for coding agents</title>
-<meta name="description" content="A local-first control plane and IDE for coding agents. Run a fleet of Claude Code, Codex, and OpenCode sessions side by side, watch every one, and review and ship what they write." />
+<title>work{spacer} :: an agent IDE for Claude Code, Codex & OpenCode</title>
+<meta name="description" content="A local-first IDE for coding agents: panes, inline diffs, one-key approvals, and git review wrapped around Claude Code, Codex, OpenCode, and Pi. Run many long-lived sessions at once and ship what they write." />
 <link rel="canonical" href="https://www.workspacer.app/" />
 
 <!-- Social cards. og:image must be an absolute URL or nothing unfurls it. -->
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://www.workspacer.app/" />
-<meta property="og:title" content="work{spacer} — your control plane for a fleet of coding agents" />
-<meta property="og:description" content="Run as many long-lived agents as you want across Claude Code, Codex, and OpenCode. Watch them all from one place. Step in only when one needs you." />
+<meta property="og:title" content="work{spacer} — an IDE where the agents do the typing" />
+<meta property="og:description" content="Panes, inline diffs, one-key approvals, and git review — wrapped around Claude Code, Codex, OpenCode, and Pi instead of a text buffer. Local-first, MIT, and yours to fork." />
 <meta property="og:image" content="https://www.workspacer.app/shots/fleet-deck.webp" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="work{spacer} — your control plane for a fleet of coding agents" />
-<meta name="twitter:description" content="Run as many long-lived agents as you want across Claude Code, Codex, and OpenCode. Watch them all from one place." />
+<meta name="twitter:title" content="work{spacer} — an IDE where the agents do the typing" />
+<meta name="twitter:description" content="Panes, inline diffs, one-key approvals, and git review — wrapped around Claude Code, Codex, OpenCode, and Pi instead of a text buffer." />
 <meta name="twitter:image" content="https://www.workspacer.app/shots/fleet-deck.webp" />
 
 <!-- The page used to *name* JetBrains Mono without ever loading it, so almost
@@ -150,40 +150,71 @@
     background-size: 48px 48px;
     -webkit-mask-image: radial-gradient(80% 58% at 50% 34%, #000 40%, transparent 100%);
             mask-image: radial-gradient(80% 58% at 50% 34%, #000 40%, transparent 100%); }
-  .hero-inner { position: relative; text-align: center; }
-  .hero-tag { display: inline-flex; align-items: center; gap: 10px; padding: 6px 14px;
-              border: 1px solid var(--line); border-radius: 999px; background: rgba(255,255,255,0.03);
-              font-family: var(--font-mono); font-size: 12px; color: var(--fg-dim); }
-  .hero-tag .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
-                   box-shadow: 0 0 0 3px var(--accent-dim); flex-shrink: 0; }
-  .hero-tag b { color: var(--fg-muted); font-weight: 400; }
-  h1 { font-size: clamp(38px, 5.6vw, 72px); max-width: 20ch; margin: 26px auto 0;
+  /* Two columns, left-aligned. The copy makes the claim and the panel beside it
+     *is* the claim: real pane chrome built in CSS, so the first thing on the
+     page is the working surface rather than a picture of one. */
+  .hero-inner { position: relative; z-index: 2; display: grid; align-items: center;
+                grid-template-columns: minmax(0, 1.02fr) minmax(0, 0.98fr);
+                gap: 60px; padding-bottom: 88px; }
+  .hero-eyebrow { display: inline-flex; align-items: center; gap: 10px;
+                  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em;
+                  text-transform: uppercase; color: var(--fg-dim); }
+  .hero-eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+                       box-shadow: 0 0 0 3px var(--accent-dim); flex-shrink: 0; }
+  h1 { font-size: clamp(38px, 4.4vw, 58px); max-width: 15ch; margin: 22px 0 0;
        text-wrap: balance; }
   /* The wordmark's cursor is a flourish, not a word — keep it from competing
      with the headline it trails. */
   h1 .mark { font-size: 0.44em; opacity: 0.5; vertical-align: 0.28em; margin-left: 0.18em; }
-  .hero-sub { max-width: 620px; margin: 22px auto 0; font-size: clamp(16px, 1.4vw, 19px);
+  .hero-sub { max-width: 510px; margin: 22px 0 0; font-size: clamp(16px, 1.3vw, 18px);
               line-height: 1.55; color: var(--fg-muted); }
-  .hero-cta { margin-top: 32px; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .hero-cta { margin-top: 30px; display: flex; gap: 12px; flex-wrap: wrap; }
   .hero-alts { margin-top: 16px; font-size: 13px; color: var(--fg-faint); }
   .hero-alts a { color: var(--fg-dim); text-decoration: none; }
   .hero-alts a:hover { color: var(--accent); }
 
-  /* Floating provider marks — the same SVGs used in the harness grid. */
-  .hero-float { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
-  .hf { position: absolute; display: grid; place-items: center; width: 84px; height: 84px;
-        border: 1px solid var(--line); border-radius: 20px; background: rgba(35,42,46,0.9);
-        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-        box-shadow: 0 18px 40px -24px rgba(0,0,0,0.9);
-        animation: floatDrift 9s ease-in-out infinite; }
-  .hf svg { width: 30px; height: 30px; }
-  .hf-claude   { top: 7%;  left: 6%;  transform: rotate(-8deg); animation-delay: 0s;
-                 background: radial-gradient(circle at 30% 25%, rgba(217,119,87,0.22), rgba(35,42,46,0.92) 65%); }
-  .hf-codex    { top: 5%;  right: 6%; transform: rotate(6deg);  animation-delay: -2.5s; }
-  .hf-opencode { top: 32%; left: 4%;  transform: rotate(4deg);  animation-delay: -5s; }
-  .hf-pi       { top: 30%; right: 4%; transform: rotate(-5deg); animation-delay: -7s;
-                 font-family: var(--font-mono); font-size: 26px; color: var(--fg-muted); }
-  @keyframes floatDrift { 0%,100% { translate: 0 0; } 50% { translate: 0 -14px; } }
+  /* ---- hero pane -------------------------------------------------------- */
+  /* Every part of this is chrome the app actually has: the pane tab strip, a
+     turn's work log, an approval waiting on a keypress, the session bar. */
+  .pane-demo { border: 1px solid var(--line); border-radius: var(--r-lg);
+               background: var(--bg-card); overflow: hidden;
+               box-shadow: 0 40px 90px -40px rgba(0,0,0,0.95); }
+  .pd-tabs { display: flex; align-items: center; gap: 2px; padding: 0 12px;
+             border-bottom: 1px solid var(--line); background: rgba(255,255,255,0.025); }
+  .pd-tab { padding: 12px 11px 11px; font-family: var(--font-mono); font-size: 11.5px;
+            color: var(--fg-faint); border-bottom: 1px solid transparent; margin-bottom: -1px; }
+  .pd-tab.on { color: var(--fg); border-bottom-color: var(--accent); }
+  .pd-who { margin-left: auto; display: inline-flex; align-items: center; gap: 7px;
+            font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
+  .pd-who .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+                 box-shadow: 0 0 0 3px var(--accent-dim); flex-shrink: 0; }
+  .pd-body { display: grid; gap: 14px; padding: 18px; }
+  .pd-act { display: flex; align-items: baseline; gap: 9px;
+            font-family: var(--font-mono); font-size: 12px; color: var(--fg-dim); }
+  .pd-act b { color: var(--accent); font-weight: 500; }
+  .pd-act span { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pd-diff { border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden;
+             font-family: var(--font-mono); font-size: 11.5px; line-height: 1.9; }
+  .pd-diff div { padding: 0 12px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+  /* Green is the page's one loud colour, so a removal reads as *dimmed* rather
+     than red — no second accent, and no token the other three pages lack. */
+  .pd-diff .add { color: var(--accent); background: rgba(167,192,128,0.10); }
+  .pd-diff .del { color: var(--fg-faint); background: rgba(0,0,0,0.22); }
+  .pd-ask { border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: 14px;
+            background: linear-gradient(rgba(255,255,255,0.035), transparent); }
+  .pd-ask .lbl { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.12em;
+                 text-transform: uppercase; color: var(--fg-dim); }
+  .pd-ask .q { margin-top: 8px; font-size: 13.5px; color: var(--fg); }
+  .pd-keys { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 14px; }
+  .pd-keys span { display: inline-flex; align-items: center; gap: 8px;
+                  font-size: 12.5px; color: var(--fg-muted); }
+  .pd-keys kbd { font-family: var(--font-mono); font-size: 11px; color: var(--fg);
+                 border: 1px solid var(--line-strong); border-bottom-width: 2px;
+                 border-radius: 5px; padding: 2px 7px; background: rgba(255,255,255,0.05); }
+  .pd-bar { display: flex; align-items: center; gap: 12px; padding: 11px 14px;
+            border-top: 1px solid var(--line); background: rgba(255,255,255,0.02);
+            font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
+  .pd-bar .need { margin-left: auto; color: var(--accent); }
 
   /* ---- framed screenshots ----------------------------------------------- */
   /* The old fake terminal chrome (traffic lights) around captures of an
@@ -196,14 +227,18 @@
   .frame-cap { font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-dim);
                padding: 10px 14px; border-top: 1px solid var(--line);
                background: rgba(255,255,255,0.02); line-height: 1.5; }
-  .hero-preview { position: relative; z-index: 2; max-width: 1120px; margin: 56px auto 0;
-                  transition: transform 0.6s ease; transform: perspective(2000px) rotateX(2.5deg); }
-  .hero-preview:hover { transform: perspective(2000px) rotateX(0deg); }
-  .hero-preview .frame { border-radius: var(--r-lg); box-shadow: 0 40px 90px -36px rgba(0,0,0,0.95); }
+  /* The big shot gets its own plinth under the hero instead of being the thing
+     the hero builds to. It shares a ground with the proof band, so the two read
+     as one block: the app, and the numbers about it. */
+  .shot-band { border-top: 1px solid var(--line); background: var(--bg-elev); padding: 60px 0 0; }
+  .shot-band .frame { border-radius: var(--r-lg); box-shadow: 0 40px 90px -36px rgba(0,0,0,0.95); }
+  /* The one other place a screenshot runs this wide (the spawn dialog). */
+  .showcase { max-width: 900px; margin: 44px auto 0; }
+  .showcase .frame { border-radius: var(--r-lg); }
 
   /* ---- proof band ------------------------------------------------------- */
   .proof { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
-           margin-top: 76px; background: var(--bg-elev); }
+           margin-top: 56px; background: var(--bg-elev); }
   .proof .wrap { display: flex; flex-wrap: wrap; gap: 0; }
   .proof-item { flex: 1 1 auto; min-width: 150px; padding: 22px 0; }
   .proof-n { font-family: var(--font-mono); font-size: 21px; font-weight: 500; color: var(--fg);
@@ -367,6 +402,12 @@
     .harness:nth-child(n+3) { border-bottom: 0; }
     .open-grid, .duo-grid { grid-template-columns: 1fr; }
     .trio, .arch, .gallery { grid-template-columns: 1fr 1fr; }
+    /* Below this the two hero columns starve each other: the headline wraps to
+       five lines and the pane loses its diff. Stack, copy first. */
+    .hero-inner { grid-template-columns: 1fr; gap: 44px; padding-bottom: 64px; }
+    h1, .hero-sub { max-width: 22ch; }
+    .hero-sub { max-width: 62ch; }
+    .pane-demo { max-width: 560px; }
   }
   @media (max-width: 860px) {
     .navlinks { display: none; }
@@ -377,25 +418,24 @@
     .cta { padding: 88px 0; }
     .trio, .arch, .gallery { grid-template-columns: 1fr; }
     .tree .row { grid-template-columns: 1fr; gap: 4px; }
-    .hero-preview { transform: none; }
-    .hero-preview:hover { transform: none; }
-    /* At this width the hero copy runs edge to edge, so the floating marks
-       land on top of the subhead. There is nowhere to put them — hide them. */
-    .hero-float { display: none; }
+    .shot-band { padding-top: 44px; }
     .duo { flex-direction: column; }
     .duo .m { flex-basis: auto; width: 52%; }
     .proof-item { flex-basis: 50%; min-width: 0; }
   }
   @media (max-width: 560px) {
-    /* The pill wraps to three lines if it keeps the command. The status half
-       is the part that teaches what the product does — keep that. */
-    .hero-tag .cmd { display: none; }
-    .hero-tag { font-size: 11.5px; }
+    /* The eyebrow is three facts joined by dots — at this width it wraps to two
+       lines and stops reading as one line of metadata. Drop to the two that
+       aren't already a badge in the nav. */
+    .hero-eyebrow .third { display: none; }
+    /* A phone can't hold a code line and a filename side by side. The approval
+       is the part that teaches the product — keep that, drop the diff. */
+    .pd-diff { display: none; }
+    .pd-tab.spill { display: none; }
   }
   @media (prefers-reduced-motion: reduce) {
     * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
-    .hero-preview { transform: none; }
   }
   /* Nothing here should widen the viewport — one overflowing element is what
      lets phones zoom out past the layout. */
@@ -440,36 +480,62 @@
 
 <header>
   <div class="hero-grid" aria-hidden="true"></div>
-  <div class="hero-float" aria-hidden="true">
-    <div class="hf hf-claude">
-      <svg viewBox="0 0 24 24" fill="#D97757" xmlns="http://www.w3.org/2000/svg"><path d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/></svg>
-    </div>
-    <div class="hf hf-codex">
-      <svg viewBox="0 0 24 24" fill="#e8ece6" xmlns="http://www.w3.org/2000/svg"><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>
-    </div>
-    <div class="hf hf-opencode">
-      <svg viewBox="0 0 512 512" fill="#e8ece6" xmlns="http://www.w3.org/2000/svg"><path d="M320 224V352H192V224H320Z" opacity="0.55"/><path fill-rule="evenodd" clip-rule="evenodd" d="M384 416H128V96H384V416ZM320 160H192V352H320V160Z"/></svg>
-    </div>
-    <div class="hf hf-pi">π</div>
-  </div>
-
   <div class="wrap hero-inner">
-    <div class="hero-tag mono"><span class="dot"></span><span class="cmd">workspacer --status</span> <b>3 working · 1 needs you</b></div>
-    <h1 class="display">Your <span class="g">control&nbsp;plane</span> for a fleet of coding agents.<span class="mark">{<span class="bar blink"></span>}</span></h1>
-    <p class="hero-sub">Run as many long-lived agents as you want, across Claude Code, Codex, and OpenCode. Watch them all from one place. Step in only when one needs you.</p>
-    <div class="hero-cta">
-      <a class="btn btn-fill btn-lg" id="dl-btn-hero" href="https://github.com/DJTouchette/workspacer/releases/latest">Download</a>
-      <a class="btn btn-line btn-lg" href="docs.html">Read the docs</a>
+    <div class="hero-copy">
+      <div class="hero-eyebrow"><span class="dot"></span>local-first · open source<span class="third"> · alpha</span></div>
+      <h1 class="display">An IDE where the agents <span class="g">do&nbsp;the&nbsp;typing</span>.<span class="mark">{<span class="bar blink"></span>}</span></h1>
+      <p class="hero-sub">Panes, inline diffs, one-key approvals, and git review — wrapped around Claude Code, Codex, OpenCode, and Pi instead of a text buffer. Sessions live in a local daemon, so closing the window never stops the work.</p>
+      <div class="hero-cta">
+        <a class="btn btn-fill btn-lg" id="dl-btn-hero" href="https://github.com/DJTouchette/workspacer/releases/latest">Download</a>
+        <a class="btn btn-line btn-lg" href="docs.html">Read the docs</a>
+      </div>
+      <div class="hero-alts">Linux · macOS · Windows · <a href="#open">or build it from source</a></div>
     </div>
-    <div class="hero-alts">Linux · macOS · Windows · <a href="#open">or build it from source</a></div>
 
-    <div class="hero-preview">
-      <div class="frame">
-        <img width="1600" height="862" src="shots/fleet-deck.webp" fetchpriority="high"
-          alt="The Fleet Deck: four agents as live cards — status, model, context %, cost, and a message box on each, one mid-task" />
+    <!-- Not a screenshot: the same tab strip, work log, approval card and status
+         bar the app renders, in markup, so the hero costs no image and stays
+         legible at any width. The screenshots start below. -->
+    <div class="pane-demo" aria-hidden="true">
+      <div class="pd-tabs">
+        <div class="pd-tab on">chat</div>
+        <div class="pd-tab">review</div>
+        <div class="pd-tab spill">terminal</div>
+        <div class="pd-who"><span class="dot"></span>claude code</div>
+      </div>
+      <div class="pd-body">
+        <div class="pd-act"><b>Edit</b><span>services/hub/internal/bus/bus.go</span></div>
+        <div class="pd-diff">
+          <div class="del">- func (b *Bus) Publish(ev Event) {</div>
+          <div class="add">+ func (b *Bus) Publish(ev Event) error {</div>
+          <div class="add">+ 	return b.fanout(ev)</div>
+        </div>
+        <div class="pd-ask">
+          <div class="lbl">approval</div>
+          <div class="q">Run <code>go test ./services/hub/...</code></div>
+          <!-- Real default bindings, not invented ones: y/n are
+               fleet-approve-yes / fleet-approve-no in configDefaults.ts, and
+               Escape is the interrupt. They are remappable — see the docs. -->
+          <div class="pd-keys">
+            <span><kbd>y</kbd> approve</span>
+            <span><kbd>n</kbd> deny</span>
+            <span><kbd>esc</kbd> interrupt</span>
+          </div>
+        </div>
+      </div>
+      <div class="pd-bar">
+        <span>context 41%</span><span>·</span><span>$0.83</span>
+        <span class="need">needs you</span>
       </div>
     </div>
   </div>
+
+  <div class="shot-band"><div class="wrap">
+    <div class="frame">
+      <img width="1600" height="862" src="shots/fleet-deck.webp" fetchpriority="high"
+        alt="The Fleet Deck: four agents as live cards — status, model, context %, cost, and a message box on each, one mid-task" />
+      <div class="frame-cap">the fleet deck — status, model, context, and cost for every running agent</div>
+    </div>
+  </div></div>
 
   <div class="proof"><div class="wrap">
     <div class="proof-item"><div class="proof-n">4</div><div class="proof-l">agent harnesses</div></div>
@@ -544,7 +610,7 @@
     <span><svg class="tick" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8.5 6.5 12 13 4"/></svg> One-key interrupt that stops the turn without killing the session</span>
     <span><svg class="tick" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8.5 6.5 12 13 4"/></svg> Your CLIs, your subscriptions, your machine</span>
   </div>
-  <div class="hero-preview" style="margin-top:44px;transform:none;max-width:900px;">
+  <div class="showcase">
     <a class="frame" href="shots/spawn-dialog.webp" target="_blank">
       <img width="1600" height="862" src="shots/spawn-dialog.webp" loading="lazy"
         alt="The spawn dialog: pick Claude Code, Codex, OpenCode, or Pi, a model, terminal or headless transport, and a permission mode" />

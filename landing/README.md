@@ -39,21 +39,48 @@ Three rules carry the design, and each one was a deliberate fix:
 There are no scanlines any more — a fixed 0.3-opacity overlay dimmed every
 screenshot on the page. The hero has a masked grid instead, confined to itself.
 
+## Hero
+
+Two columns, left-aligned: copy on the left, `.pane-demo` on the right. Keep it
+that way. The previous hero had converged on the standard shape for this
+category — centered pill, centered headline, two CTAs, a ring of floating
+provider logos, one big screenshot below — which read as a straight copy of a
+much better-known page with the same headline noun. Every one of those elements
+was individually fine and collectively a clone.
+
+- `.pane-demo` is **markup, not a screenshot**: the app's tab strip, a turn's
+  work log, an approval card waiting on a keypress, and the session status bar.
+  It costs no image, stays sharp at any width, and re-states the headline claim
+  instead of illustrating it. If you change pane chrome in the app, change it
+  here too — a stale mock is worse than no mock.
+- The big screenshot lives in `.shot-band` below the fold instead, sharing a
+  `--bg-elev` plinth with the proof band so the two read as one block.
+- Headline is the IDE claim ("An IDE where the agents do the typing"), not
+  "control plane" — that phrase is in the hub's own vocabulary (`build.html`,
+  where it's accurate) and shouldn't double as the product's tagline.
+- The diff in the mock uses green for the addition and *dimmed* for the
+  removal. No red: the page has one loud colour, and a `--red` token would have
+  to be added to all four `:root` blocks to stay in sync.
+
 ## Logos
 
 The marketing page inlines the real Claude, Codex (OpenAI), and OpenCode marks
-as SVG, in the harness grid and again as the floating glass tiles in the hero.
-The Claude mark keeps its brand clay color; the other two tint with
-`currentColor`. Pi has no mark and uses a mono `π`.
+as SVG in the harness grid. The Claude mark keeps its brand clay color; the
+other two tint with `currentColor`. Pi has no mark and uses a mono `π`.
+
+They used to appear a second time as floating glass tiles in the hero. That
+went away with the hero rework below — a ring of provider logos around a
+centered headline is the single most copied shape in this category, and we had
+it verbatim.
 
 ## Screenshots
 
 `.frame` holds real captures from `shots/` (webp, staged from live sessions).
 To refresh one, restage the shot and drop the new capture into the matching
 `shots/` file. The old fake terminal chrome (mac traffic lights) is gone — it
-was a category error around captures of an Electron GUI. The hero shot gets a
-shadow and a 2.5° `rotateX` that eases flat on hover; everything else is a flat
-frame with an optional `.frame-cap` caption.
+was a category error around captures of an Electron GUI. Every frame is flat
+now, with an optional `.frame-cap` caption; the tilted hero shot went away with
+the hero rework.
 
 Cards pin their shot to the bottom with `margin-top: auto`, so a row of cards
 with uneven copy still lines its screenshots up. Keep that if you add a card.
