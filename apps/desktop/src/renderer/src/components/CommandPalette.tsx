@@ -17,6 +17,7 @@ import {
   FolderOpen,
   Plus,
   Smartphone,
+  Server,
   Columns3,
   RefreshCw,
   Settings,
@@ -168,6 +169,9 @@ interface CommandPaletteProps {
   onOpenLayouts?: () => void;
   /** Open the remote-control (phone sharing) panel. */
   onOpenRemote?: () => void;
+  /** Open the same dialog scrolled/expanded to the "connect this desktop to
+   *  another server" (remote-client mode) form. */
+  onConnectServer?: () => void;
   /** Open the Ask pane (fleet supervisor question interface). */
   onOpenAskPane?: () => void;
   /** Open a file in an Editor pane (prompts for a file first). */
@@ -227,6 +231,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   onOpenContext,
   onOpenLayouts,
   onOpenRemote,
+  onConnectServer,
   onOpenAskPane,
   onOpenFile,
   shortcuts = {},
@@ -394,15 +399,16 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       <Smartphone size={16} strokeWidth={1.75} />,
       onOpenRemote,
     );
-    // Alias into the same dialog: the "run this app as a client of a remote
-    // `workspacer serve`" flow lives in Remote Control, but users hunting for
-    // it will type "connect"/"server", not "remote control".
+    // Same dialog, different intent: this one opens straight into the client
+    // form (expanded + focused) instead of the phone-sharing view, because a
+    // user typing "connect"/"server" wants to paste a URL, not read about QR
+    // codes. Falls back to the plain open if the host didn't wire the intent.
     add(
       'cmd-connect-server',
       'Connect to Server…',
       'Use this app as a client of a remote workspacer server',
-      <Smartphone size={16} strokeWidth={1.75} />,
-      onOpenRemote,
+      <Server size={16} strokeWidth={1.75} />,
+      onConnectServer ?? onOpenRemote,
     );
     add(
       'cmd-manage-plugins',
@@ -485,6 +491,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     onOpenLayouts,
     onSaveSession,
     onOpenRemote,
+    onConnectServer,
     onManagePlugins,
     onInstallPlugin,
     onOpenSettings,

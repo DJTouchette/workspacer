@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Smartphone, Copy, Check, Eye, EyeOff } from 'lucide-react';
 import type { RemoteTokenRecord, RemoteTokenScope } from '../../../main/shared/ipcTypes';
@@ -85,7 +85,13 @@ function withToken(url: string, token: string): string {
  * URL and token. When it's off it explains how to turn it on. The data comes
  * straight from `getRemoteShareInfo()` over IPC; nothing is sent anywhere.
  */
-const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+const RemoteShareDialog: React.FC<{
+  onClose: () => void;
+  /** Which concern the dialog was opened for. 'connect' (the "Connect to
+   *  Server…" command) expands + focuses the remote-client form instead of
+   *  making the user find it behind the "Advanced:" disclosure. */
+  initialSection?: 'share' | 'connect';
+}> = ({ onClose, initialSection = 'share' }) => {
   const [info, setInfo] = useState<RemoteInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState<string | null>(null);
@@ -212,7 +218,9 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           </>
         )}
 
-        {!loading && info && <RemoteClientSection info={info} />}
+        {!loading && info && (
+          <RemoteClientSection info={info} autoOpen={initialSection === 'connect'} />
+        )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20 }}>
           <button onClick={onClose} style={secondaryBtnStyle}>
@@ -282,11 +290,24 @@ function AdoptedNote({ claudemon }: { claudemon: boolean }) {
  * clears the setting and relaunches back into local mode. Rendered only where
  * the setting can be persisted (the desktop preload exposes setRemoteServer).
  */
-function RemoteClientSection({ info }: { info: RemoteInfo }) {
+function RemoteClientSection({ info, autoOpen }: { info: RemoteInfo; autoOpen?: boolean }) {
   const [url, setUrl] = useState('');
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const urlRef = useRef<HTMLInputElement | null>(null);
+  const detailsRef = useRef<HTMLDetailsElement | null>(null);
+
+  // Opened via "Connect to Server…": put the caret in the URL field and bring
+  // the section into view — it sits below the phone-sharing block, so on a
+  // short window an expanded-but-offscreen form still reads as "not there".
+  // Hooks must run before the early return below, so this is not conditional.
+  useEffect(() => {
+    if (!autoOpen || info.remoteClient) return;
+    urlRef.current?.focus();
+    detailsRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [autoOpen, info.remoteClient]);
+
   if (!window.electronAPI.setRemoteServer) return null;
 
   const apply = async (setting: { url: string; token: string } | null) => {
@@ -310,23 +331,26 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
   const connected = info.remoteClient;
   return (
     <details
+      ref={detailsRef}
       style={{
         marginTop: 18,
         paddingTop: 14,
         borderTop: '1px solid var(--wks-border-subtle)',
       }}
-      open={!!connected}
+      // Open when already connected (it's the only relevant control then), or
+      // when the user asked for this specific flow by name.
+      open={!!connected || !!autoOpen}
     >
       <summary
         style={{
           cursor: 'pointer',
           fontSize: '0.7rem',
           fontWeight: 700,
-          color: connected ? 'var(--wks-accent)' : 'var(--wks-text-muted)',
+          color: connected || autoOpen ? 'var(--wks-accent)' : 'var(--wks-text-muted)',
           listStylePosition: 'inside',
         }}
       >
-        Advanced: connect this desktop to another Workspacer server
+        Connect this desktop to another Workspacer server
       </summary>
       <div
         style={{
@@ -372,6 +396,7 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
             a client and agents run on the server you enter here.
           </div>
           <input
+            ref={urlRef}
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="server address, e.g. 100.64.1.2:7895"

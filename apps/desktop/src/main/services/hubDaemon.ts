@@ -218,19 +218,35 @@ export async function getRemoteShareInfo(): Promise<RemoteShareInfo> {
   const enabled = isRemoteEnabled();
   const host = advertiseHost();
   const q = HUB_TOKEN ? `?token=${encodeURIComponent(HUB_TOKEN)}` : '';
-  // Whether /app (the full web renderer) is actually served. An owned hub
-  // serves whatever dist/web we passed it, so the on-disk check is the truth;
-  // an ADOPTED hub serves only what ITS --webapp-dir pointed at (often
-  // nothing) — the local build's existence says nothing about it, so ask the
-  // hub itself rather than advertise a 404.
-  const hasWebApp =
-    enabled &&
-    (adopted ? await probeHealth(`http://127.0.0.1:${PORT}/app/${q}`) : fs.existsSync(webappDir()));
-  // An owned hub is (re)spawned with the right binding when sharing flips on,
-  // so only the adopted case can advertise an address nothing listens on —
-  // probe it rather than hand out a QR that scans to a dead endpoint.
-  const advertisedUnreachable =
-    enabled && adopted && !(await probeHealth(`http://${host}:${PORT}/health`));
+  // `remoteClient` decides which transport the renderer boots on (install.ts),
+  // and in remote-client mode there is no local fallback — so it must never be
+  // lost to a failure in the *advisory* fields below. Read it first, and keep
+  // the probe/fs work that follows from being able to reject the whole call.
+  const remoteClient = getRemoteServer();
+  let hasWebApp = false;
+  let advertisedUnreachable = false;
+  try {
+    // Whether /app (the full web renderer) is actually served. An owned hub
+    // serves whatever dist/web we passed it, so the on-disk check is the truth;
+    // an ADOPTED hub serves only what ITS --webapp-dir pointed at (often
+    // nothing) — the local build's existence says nothing about it, so ask the
+    // hub itself rather than advertise a 404.
+    hasWebApp =
+      enabled &&
+      (adopted
+        ? await probeHealth(`http://127.0.0.1:${PORT}/app/${q}`)
+        : fs.existsSync(webappDir()));
+    // An owned hub is (re)spawned with the right binding when sharing flips on,
+    // so only the adopted case can advertise an address nothing listens on —
+    // probe it rather than hand out a QR that scans to a dead endpoint.
+    advertisedUnreachable =
+      enabled && adopted && !(await probeHealth(`http://${host}:${PORT}/health`));
+  } catch (err) {
+    // Degrade to "no web app / assume reachable" rather than rejecting: the
+    // worst case here is a slightly stale QR hint, versus a renderer that can't
+    // learn its transport at all.
+    console.warn('[hub] remote-share probes failed; reporting advisory fields as unknown:', err);
+  }
   return {
     enabled,
     token: HUB_TOKEN,
@@ -241,7 +257,7 @@ export async function getRemoteShareInfo(): Promise<RemoteShareInfo> {
     hubAdopted: adopted,
     claudemonAdopted: isClaudemonAdopted(),
     advertisedUnreachable,
-    remoteClient: getRemoteServer(),
+    remoteClient,
   };
 }
 

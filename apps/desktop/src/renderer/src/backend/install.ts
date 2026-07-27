@@ -62,6 +62,45 @@ export interface BackendModeInfo {
 export type BackendMode = 'ipc' | 'bridged' | 'remote';
 
 /**
+ * Backoff for re-asking main which transport to boot. `getRemoteInfo()` can
+ * reject transiently — the renderer's first paint can beat IPC handler
+ * registration ("No handler registered for…"), and main does async probe work
+ * behind that call. One failed ask used to leave the app on plain IPC forever.
+ *
+ * That default is only harmless in LOCAL mode. In remote-client mode main
+ * deliberately spawned no claudemon/hub/brain, so plain IPC has nothing behind
+ * it: the user gets a window that looks fine and does nothing. Since the
+ * renderer cannot tell those two cases apart without this very answer, retry
+ * rather than guess. ~2s total, all of it before first paint.
+ */
+const REMOTE_INFO_BACKOFF_MS = [50, 150, 300, 600, 1000];
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * `ipc.getRemoteInfo()` with bounded retries. Rejects with the LAST error once
+ * the backoff is exhausted, so the caller can report why rather than silently
+ * degrade. Generic in the payload so the caller keeps the full RemoteInfo type
+ * (BackendModeInfo is only the slice `selectBackendMode` reads). Exported for
+ * tests.
+ */
+export async function getRemoteInfoWithRetry<T>(
+  getRemoteInfo: () => Promise<T>,
+  backoff: number[] = REMOTE_INFO_BACKOFF_MS,
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= backoff.length; attempt++) {
+    try {
+      return await getRemoteInfo();
+    } catch (err) {
+      lastErr = err;
+      if (attempt < backoff.length) await sleep(backoff[attempt]);
+    }
+  }
+  throw lastErr;
+}
+
+/**
  * Pick the desktop transport from main's remote info. Pure — exported for
  * tests. Remote-client mode wins outright: when a remote server is configured,
  * main spawned no local daemons, so neither the local bus (bridged) nor local
@@ -87,7 +126,7 @@ export async function installBackend(): Promise<void> {
   // or we can't learn the local bus URL/token.
   const ipc = window.electronAPI;
   try {
-    const info = await ipc.getRemoteInfo();
+    const info = await getRemoteInfoWithRetry(() => ipc.getRemoteInfo());
     switch (selectBackendMode(info)) {
       case 'remote': {
         const rc = info.remoteClient!;
@@ -109,8 +148,17 @@ export async function installBackend(): Promise<void> {
         return;
     }
   } catch (err) {
-    // getRemoteInfo failed (hub not up yet, etc.) — keep the IPC backend as-is.
+    // Every retry failed. Staying on the preload IPC backend is correct for a
+    // local install and BROKEN for a remote-client one (no local daemons were
+    // spawned) — and we still can't tell which this is. Say so loudly: a silent
+    // warning here is what made the stranded case look like the app "just not
+    // working" instead of a transport that never resolved.
     // eslint-disable-next-line no-console
-    console.warn('[backend] could not switch desktop to the hub bus; staying on IPC.', err);
+    console.error(
+      '[backend] could not read the transport setting from main after retries; staying on IPC. ' +
+        'If this desktop is configured to connect to a remote workspacer server, this window will ' +
+        'NOT work — reopen "Connect to Server…" and reconnect, or restart the app.',
+      err,
+    );
   }
 }

@@ -325,7 +325,9 @@ function App() {
   // pre-filled there instead of at the configured default. Cleared on close.
   const [spawnDialogCwd, setSpawnDialogCwd] = useState<string | null>(null);
   const [showLayouts, setShowLayouts] = useState(false);
-  const [showRemote, setShowRemote] = useState(false);
+  // false = closed; 'share' opens on phone-sharing, 'connect' opens straight
+  // into the "use another machine as the host" (remote-client) form.
+  const [showRemote, setShowRemote] = useState<false | 'share' | 'connect'>(false);
   const [showLibraryPanel, setShowLibraryPanel] = useState(false);
   const [showBottomTerminal, setShowBottomTerminal] = useState(false);
   // On phone-sized viewports the sidebar starts collapsed and floats as an
@@ -2023,7 +2025,7 @@ function App() {
                   onOpenInbox={openInbox}
                   onToggleFleet={toggleFleet}
                   viewLevel={effectiveViewLevel}
-                  onOpenRemote={() => setShowRemote(true)}
+                  onOpenRemote={() => setShowRemote('share')}
                   onToggleCollapse={toggleSidebar}
                   onToggleHelp={toggleHelp}
                   noAttentionFlash={noAttentionFlash}
@@ -2196,7 +2198,11 @@ function App() {
               }}
               onOpenRemote={() => {
                 setShowCommandPalette(false);
-                setShowRemote(true);
+                setShowRemote('share');
+              }}
+              onConnectServer={() => {
+                setShowCommandPalette(false);
+                setShowRemote('connect');
               }}
               onOpenAskPane={openAskPane}
               onOpenFile={() => {
@@ -2273,7 +2279,10 @@ function App() {
 
             {showRemote && (
               <Suspense fallback={null}>
-                <RemoteShareDialog onClose={() => setShowRemote(false)} />
+                <RemoteShareDialog
+                  initialSection={showRemote === 'connect' ? 'connect' : 'share'}
+                  onClose={() => setShowRemote(false)}
+                />
               </Suspense>
             )}
 
