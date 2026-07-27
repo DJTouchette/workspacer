@@ -32,16 +32,18 @@
  *
  * ## Status
  *
- * Boot capture works. Populating the fleet with fabricated agents is NOT done
- * yet — a fresh profile has no Claude credentials, so sessions cannot simply be
- * spawned; they have to be fed to claudemon's hook ingestion on :7890 the way
- * the original rig did. Until that lands this captures the onboarding/empty
- * state, and the deck/inbox shots come from `deck-harness.html` instead.
+ * Full run: boots, seeds a fabricated 4-agent fleet (see shootFixture.mjs for
+ * how sessions are observed into existence without credentials), then captures
+ *   - boot.png        — Overview + populated sidebar
+ *   - agent-gui.png   — the hero agent's GUI pane: work log + inspector rail
+ *   - ask-question.png — the same pane with a pending 4-option AskUserQuestion
+ * All at 1600x862. The webp conversion into landing/shots/ happens outside
+ * this script (see the handoff doc).
  */
 import { _electron as electron } from 'playwright';
 import * as fs from 'fs';
 import * as path from 'path';
-import { seedFleet, waitForHook } from './shootFixture.mjs';
+import { seedFleet, fireQuestion, waitForHook } from './shootFixture.mjs';
 
 const APP = path.resolve(import.meta.dirname, '..');
 const STAGE = process.env.STAGE_HOME || '/tmp/wks-shoot/home';
@@ -100,5 +102,29 @@ await page.waitForTimeout(4000);
 
 await page.screenshot({ path: `${OUT}/boot.png` });
 console.log(`captured ${OUT}/boot.png`);
+
+// ── agent-gui: the hero pane in GUI mode with the inspector rail open ──
+// Sidebar agent cards are div[role=button] titled "<name> — <state>…".
+await page.locator('[role="button"][title^="workspacer —"]').first().click();
+// A fresh profile's claude.defaultView is 'terminal' (config_defaults.json),
+// and the pane mounts at adoption time — so flip to GUI and open the rail
+// via their status-bar toggles rather than pre-seeding localStorage.
+await page.getByRole('button', { name: 'GUI', exact: true }).click();
+await page.locator('[title^="Show inspector"]').first().click();
+// The GUI conversation is fed from the transcript; wait for the final
+// assistant line so the whole work log is in.
+await page.getByText('ready to flip public', { exact: false }).first().waitFor({ timeout: 15000 });
+await page.waitForTimeout(2500); // inspector meters + changed-files card settle
+await page.screenshot({ path: `${OUT}/agent-gui.png` });
+console.log(`captured ${OUT}/agent-gui.png`);
+
+// ── ask-question: same pane, now blocked on a 4-option question ──
+// Close the rail first so the picker + changed-files cards get the width.
+await page.locator('[title="Hide inspector"]').first().click();
+await fireQuestion();
+await page.getByText('Claude is asking you', { exact: false }).first().waitFor({ timeout: 15000 });
+await page.waitForTimeout(1500);
+await page.screenshot({ path: `${OUT}/ask-question.png` });
+console.log(`captured ${OUT}/ask-question.png`);
 
 await app.close();

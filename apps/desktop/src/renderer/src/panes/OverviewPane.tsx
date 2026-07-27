@@ -64,6 +64,7 @@ interface Snap {
   cwd?: string;
   usage?: { costUSD?: number; contextTokens?: number } | null;
   statusLine?: {
+    costUSD?: number;
     fiveHourPct?: number;
     fiveHourResetsAt?: number;
     sevenDayPct?: number;
@@ -462,7 +463,11 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
       s.ambientState === 'background',
   ).length;
   const needsYou = counts.needsYou;
-  const totalCost = own.reduce((n, s) => n + (s.usage?.costUSD ?? 0), 0);
+  // Same source-of-truth order as the per-card path (deriveSessionStats):
+  // Claude's own statusLine cost is authoritative, transcript-derived usage
+  // is the fallback — summing usage alone reads $0.00 while every card
+  // shows a statusLine cost.
+  const totalCost = own.reduce((n, s) => n + (s.statusLine?.costUSD ?? s.usage?.costUSD ?? 0), 0);
 
   // Directory rows open the new-agent view pre-filled with this cwd (and the
   // last harness/provider used, restored from config in the dialog) rather than
