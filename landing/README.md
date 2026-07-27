@@ -53,6 +53,20 @@ was individually fine and collectively a clone.
   It costs no image, stays sharp at any width, and re-states the headline claim
   instead of illustrating it. If you change pane chrome in the app, change it
   here too — a stale mock is worse than no mock.
+- **The tabs work.** `chat` / `review` / `terminal` is a real ARIA tablist with
+  roving tabindex and arrow keys, driven by the last IIFE in the page script.
+  All three panels stay mounted in one grid cell and inactive ones take
+  `.off` (`visibility: hidden`), so the pane never changes height when you
+  click — except under 560px, where `.off` becomes `display: none` because a
+  fixed height would leave a hole under the two short tabs. The panels tell one
+  story on purpose: the agent edits `bus.go`, asks to run that package's tests,
+  and leaves the diff staged.
+- The background is **not a square grid** — that's the other shape every tool
+  page has. It's an editor's ground: horizontal line rhythm plus one accent
+  column ruler standing in the gutter at 48%, dropped below 980px where there
+  is no gutter. `.shot-band` and `.proof` need `position: relative` or the
+  absolutely-positioned `.hero-grid` paints its rules over them, screenshot
+  included.
 - The big screenshot lives in `.shot-band` below the fold instead, sharing a
   `--bg-elev` plinth with the proof band so the two read as one block.
 - Headline is the IDE claim ("An IDE where the agents do the typing"), not
@@ -61,6 +75,14 @@ was individually fine and collectively a clone.
 - The diff in the mock uses green for the addition and *dimmed* for the
   removal. No red: the page has one loud colour, and a `--red` token would have
   to be added to all four `:root` blocks to stay in sync.
+- Every `kbd` in the hero is a **real default** — `y`/`n` are
+  `fleet-approve-yes`/`fleet-approve-no` in
+  `apps/desktop/src/renderer/src/hooks/configDefaults.ts`, and Escape is the
+  interrupt. The review panel has no key chips because the review pane has no
+  bindings; only the Fleet Deck and the Inbox do. Don't invent one to fill a
+  gap. Same rule for the paths and commands in there: `internal/bus/*.go` are
+  real files and the hub is its own Go module, so the test command is the one
+  you'd actually run from `services/hub`, not from the repo root.
 
 ## Logos
 

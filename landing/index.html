@@ -142,14 +142,19 @@
 
   /* ---- hero ------------------------------------------------------------- */
   header { position: relative; overflow: hidden; padding: 76px 0 0; }
-  /* Replaces the old full-page scanline overlay: a grid that fades out instead
-     of a texture that dimmed every screenshot on the page by a third. */
+  /* Not a square grid — that shape is on every developer-tool page there is.
+     This is an editor's ground instead: the line rhythm of a text buffer, plus
+     a column ruler standing in the gutter between the copy and the pane. Same
+     job as the old grid (texture that fades, confined to the hero) with a
+     shape that means something on a page about an IDE. */
   .hero-grid { position: absolute; inset: 0; pointer-events: none;
-    background-image: linear-gradient(90deg, rgba(255,255,255,0.045) 1px, transparent 1px),
-                      linear-gradient(rgba(255,255,255,0.045) 1px, transparent 1px);
-    background-size: 48px 48px;
-    -webkit-mask-image: radial-gradient(80% 58% at 50% 34%, #000 40%, transparent 100%);
-            mask-image: radial-gradient(80% 58% at 50% 34%, #000 40%, transparent 100%); }
+    background-image: linear-gradient(90deg, rgba(167,192,128,0.15), rgba(167,192,128,0.15)),
+                      linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px);
+    background-size: 1px 100%, 100% 30px;
+    background-position: 48% 0, 0 0;
+    background-repeat: no-repeat, repeat;
+    -webkit-mask-image: radial-gradient(78% 68% at 34% 42%, #000 38%, transparent 100%);
+            mask-image: radial-gradient(78% 68% at 34% 42%, #000 38%, transparent 100%); }
   /* Two columns, left-aligned. The copy makes the claim and the panel beside it
      *is* the claim: real pane chrome built in CSS, so the first thing on the
      page is the working surface rather than a picture of one. */
@@ -182,13 +187,24 @@
   .pd-tabs { display: flex; align-items: center; gap: 2px; padding: 0 12px;
              border-bottom: 1px solid var(--line); background: rgba(255,255,255,0.025); }
   .pd-tab { padding: 12px 11px 11px; font-family: var(--font-mono); font-size: 11.5px;
-            color: var(--fg-faint); border-bottom: 1px solid transparent; margin-bottom: -1px; }
+            color: var(--fg-faint); background: none; border: 0;
+            border-bottom: 1px solid transparent; margin-bottom: -1px;
+            cursor: pointer; transition: color 0.18s, border-color 0.18s; }
+  .pd-tab:hover { color: var(--fg-muted); }
   .pd-tab.on { color: var(--fg); border-bottom-color: var(--accent); }
+  .pd-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; border-radius: 5px; }
   .pd-who { margin-left: auto; display: inline-flex; align-items: center; gap: 7px;
             font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
   .pd-who .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
                  box-shadow: 0 0 0 3px var(--accent-dim); flex-shrink: 0; }
-  .pd-body { display: grid; gap: 14px; padding: 18px; }
+  /* All three panels stack in one grid cell, so the pane is always as tall as
+     its tallest tab and switching never resizes the hero. Inactive panels use
+     visibility rather than display: they keep their space, and they still drop
+     out of the tab order and the a11y tree. */
+  .pd-panels { display: grid; }
+  .pd-panels > .pd-body { grid-area: 1 / 1; }
+  .pd-body.off { visibility: hidden; }
+  .pd-body { display: grid; gap: 14px; padding: 18px; align-content: start; }
   .pd-act { display: flex; align-items: baseline; gap: 9px;
             font-family: var(--font-mono); font-size: 12px; color: var(--fg-dim); }
   .pd-act b { color: var(--accent); font-weight: 500; }
@@ -211,6 +227,32 @@
   .pd-keys kbd { font-family: var(--font-mono); font-size: 11px; color: var(--fg);
                  border: 1px solid var(--line-strong); border-bottom-width: 2px;
                  border-radius: 5px; padding: 2px 7px; background: rgba(255,255,255,0.05); }
+  /* review tab */
+  .pd-files { border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden;
+              font-family: var(--font-mono); font-size: 11.5px; }
+  .pd-files div { display: flex; align-items: center; gap: 9px; padding: 7px 12px;
+                  border-bottom: 1px solid var(--line); color: var(--fg-muted);
+                  white-space: nowrap; overflow: hidden; }
+  .pd-files div:last-child { border-bottom: 0; }
+  .pd-files .st { color: var(--accent); flex: none; }
+  .pd-files .n { margin-left: auto; padding-left: 10px; color: var(--fg-faint); flex: none; }
+  .pd-files .n b { color: var(--accent); font-weight: 400; }
+  .pd-commit { display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+               border: 1px solid var(--line); border-radius: var(--r-sm); }
+  .pd-commit .msg { font-size: 12.5px; color: var(--fg);
+                    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pd-commit .go { flex: none; margin-left: auto; padding: 4px 11px; border-radius: 6px;
+                   background: var(--accent); color: #1b2023; font-size: 11px; font-weight: 600; }
+
+  /* terminal tab */
+  .pd-term { font-family: var(--font-mono); font-size: 11.5px; line-height: 1.95; gap: 0; }
+  .pd-term div { white-space: nowrap; overflow: hidden; }
+  .pd-term .pr { color: var(--fg-faint); }
+  .pd-term .in { color: var(--fg); }
+  .pd-term .ok { color: var(--accent); }
+  .pd-term .cur { display: inline-block; width: 7px; height: 13px; background: var(--accent);
+                  vertical-align: -2px; animation: blink 1.1s steps(1) infinite; }
+
   .pd-bar { display: flex; align-items: center; gap: 12px; padding: 11px 14px;
             border-top: 1px solid var(--line); background: rgba(255,255,255,0.02);
             font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
@@ -230,14 +272,19 @@
   /* The big shot gets its own plinth under the hero instead of being the thing
      the hero builds to. It shares a ground with the proof band, so the two read
      as one block: the app, and the numbers about it. */
-  .shot-band { border-top: 1px solid var(--line); background: var(--bg-elev); padding: 60px 0 0; }
+  /* position:relative is load-bearing: .hero-grid is absolutely positioned over
+     the whole <header>, and without a positioned box here it paints its rules
+     straight across this band — including over the screenshot. */
+  .shot-band { position: relative; border-top: 1px solid var(--line);
+               background: var(--bg-elev); padding: 60px 0 0; }
   .shot-band .frame { border-radius: var(--r-lg); box-shadow: 0 40px 90px -36px rgba(0,0,0,0.95); }
   /* The one other place a screenshot runs this wide (the spawn dialog). */
   .showcase { max-width: 900px; margin: 44px auto 0; }
   .showcase .frame { border-radius: var(--r-lg); }
 
   /* ---- proof band ------------------------------------------------------- */
-  .proof { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  .proof { position: relative; border-top: 1px solid var(--line);
+           border-bottom: 1px solid var(--line);
            margin-top: 56px; background: var(--bg-elev); }
   .proof .wrap { display: flex; flex-wrap: wrap; gap: 0; }
   .proof-item { flex: 1 1 auto; min-width: 150px; padding: 22px 0; }
@@ -405,6 +452,10 @@
     /* Below this the two hero columns starve each other: the headline wraps to
        five lines and the pane loses its diff. Stack, copy first. */
     .hero-inner { grid-template-columns: 1fr; gap: 44px; padding-bottom: 64px; }
+    /* Stacked, there is no gutter for the column ruler to stand in — it would
+       just be a line through the middle of the headline. Rhythm only. */
+    .hero-grid { background-image: linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px);
+                 background-size: 100% 30px; background-position: 0 0; background-repeat: repeat; }
     h1, .hero-sub { max-width: 22ch; }
     .hero-sub { max-width: 62ch; }
     .pane-demo { max-width: 560px; }
@@ -428,10 +479,14 @@
        lines and stops reading as one line of metadata. Drop to the two that
        aren't already a badge in the nav. */
     .hero-eyebrow .third { display: none; }
-    /* A phone can't hold a code line and a filename side by side. The approval
-       is the part that teaches the product — keep that, drop the diff. */
-    .pd-diff { display: none; }
-    .pd-tab.spill { display: none; }
+    /* Three tabs beat the provider label here: the tabs are the demo, and the
+       provider is already named twice in the copy below. */
+    .pd-who { display: none; }
+    /* And let the pane size to the tab you're on. Keeping every panel mounted
+       buys a fixed height that's worth it on desktop; on a phone it just leaves
+       a hole under the two short tabs. A jump on tap is the better trade. */
+    .pd-body.off { display: none; }
+    .pd-diff { font-size: 10.5px; }
   }
   @media (prefers-reduced-motion: reduce) {
     * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
@@ -494,34 +549,67 @@
 
     <!-- Not a screenshot: the same tab strip, work log, approval card and status
          bar the app renders, in markup, so the hero costs no image and stays
-         legible at any width. The screenshots start below. -->
-    <div class="pane-demo" aria-hidden="true">
-      <div class="pd-tabs">
-        <div class="pd-tab on">chat</div>
-        <div class="pd-tab">review</div>
-        <div class="pd-tab spill">terminal</div>
+         legible at any width. The tabs really switch — one agent, three panes,
+         which is the whole point of the pane system. The screenshots start
+         below. All three panels tell one story: the agent edited bus.go, wants
+         to run that package's tests, and left the diff staged for review. -->
+    <div class="pane-demo">
+      <div class="pd-tabs" role="tablist" aria-label="Example agent panes">
+        <button type="button" class="pd-tab on" id="pdt-chat" role="tab"
+                aria-controls="pdp-chat" aria-selected="true">chat</button>
+        <button type="button" class="pd-tab" id="pdt-review" role="tab"
+                aria-controls="pdp-review" aria-selected="false" tabindex="-1">review</button>
+        <button type="button" class="pd-tab" id="pdt-terminal" role="tab"
+                aria-controls="pdp-terminal" aria-selected="false" tabindex="-1">terminal</button>
         <div class="pd-who"><span class="dot"></span>claude code</div>
       </div>
-      <div class="pd-body">
-        <div class="pd-act"><b>Edit</b><span>services/hub/internal/bus/bus.go</span></div>
-        <div class="pd-diff">
-          <div class="del">- func (b *Bus) Publish(ev Event) {</div>
-          <div class="add">+ func (b *Bus) Publish(ev Event) error {</div>
-          <div class="add">+ 	return b.fanout(ev)</div>
-        </div>
-        <div class="pd-ask">
-          <div class="lbl">approval</div>
-          <div class="q">Run <code>go test ./services/hub/...</code></div>
-          <!-- Real default bindings, not invented ones: y/n are
-               fleet-approve-yes / fleet-approve-no in configDefaults.ts, and
-               Escape is the interrupt. They are remappable — see the docs. -->
-          <div class="pd-keys">
-            <span><kbd>y</kbd> approve</span>
-            <span><kbd>n</kbd> deny</span>
-            <span><kbd>esc</kbd> interrupt</span>
+
+      <div class="pd-panels">
+        <div class="pd-body" id="pdp-chat" role="tabpanel" aria-labelledby="pdt-chat">
+          <div class="pd-act"><b>Edit</b><span>services/hub/internal/bus/bus.go</span></div>
+          <div class="pd-diff">
+            <div class="del">- func (b *Bus) Publish(ev Event) {</div>
+            <div class="add">+ func (b *Bus) Publish(ev Event) error {</div>
+            <div class="add">+ 	return b.fanout(ev)</div>
+          </div>
+          <div class="pd-ask">
+            <div class="lbl">approval · bash</div>
+            <div class="q"><code>go test -race ./internal/bus/...</code></div>
+            <!-- Real default bindings, not invented ones: y/n are
+                 fleet-approve-yes / fleet-approve-no in configDefaults.ts, and
+                 Escape is the interrupt. They are remappable — see the docs. -->
+            <div class="pd-keys">
+              <span><kbd>y</kbd> approve</span>
+              <span><kbd>n</kbd> deny</span>
+              <span><kbd>esc</kbd> interrupt</span>
+            </div>
           </div>
         </div>
+
+        <!-- No kbd chips here on purpose: the Fleet Deck and the Inbox have
+             default bindings, the review pane does not. -->
+        <div class="pd-body off" id="pdp-review" role="tabpanel" aria-labelledby="pdt-review">
+          <div class="pd-act"><b>4 files</b><span>staged on master</span></div>
+          <div class="pd-files">
+            <div><span class="st">M</span> internal/bus/bus.go<span class="n"><b>+42</b> −12</span></div>
+            <div><span class="st">M</span> internal/bus/policy.go<span class="n"><b>+7</b> −2</span></div>
+            <div><span class="st">M</span> internal/bus/rpc.go<span class="n"><b>+11</b> −4</span></div>
+            <div><span class="st">M</span> internal/bus/bus_test.go<span class="n"><b>+64</b> −3</span></div>
+          </div>
+          <div class="pd-commit">
+            <div class="msg">Fan out bus publishes instead of dropping them</div>
+            <div class="go">Commit</div>
+          </div>
+        </div>
+
+        <div class="pd-body pd-term off" id="pdp-terminal" role="tabpanel" aria-labelledby="pdt-terminal">
+          <div><span class="pr">services/hub $</span> <span class="in">go test -race ./internal/bus/...</span></div>
+          <div class="ok">ok  	.../workspacer-hub/internal/bus	0.412s</div>
+          <div class="ok">ok  	.../workspacer-hub/internal/plugin	1.204s</div>
+          <div><span class="pr">services/hub $</span> <span class="cur"></span></div>
+        </div>
       </div>
+
       <div class="pd-bar">
         <span>context 41%</span><span>·</span><span>$0.83</span>
         <span class="need">needs you</span>
@@ -789,6 +877,37 @@
   });
   document.querySelectorAll('.mobile-menu a').forEach(function (a) {
     a.addEventListener('click', function () { set(false); });
+  });
+})();
+
+// The hero pane's tabs really switch — it's a demo of the pane system, not a
+// picture of one. The markup already ships with chat selected and the other
+// two carrying .off, so with JS blocked the pane degrades to a static chat
+// pane instead of three panels stacked on top of each other.
+(function () {
+  var tabs = [].slice.call(document.querySelectorAll('.pd-tab'));
+  if (!tabs.length) return;
+  var select = function (want, moveFocus) {
+    tabs.forEach(function (tab, i) {
+      var on = i === want;
+      tab.classList.toggle('on', on);
+      tab.setAttribute('aria-selected', String(on));
+      tab.tabIndex = on ? 0 : -1;
+      var panel = document.getElementById(tab.getAttribute('aria-controls'));
+      if (panel) panel.classList.toggle('off', !on);
+    });
+    if (moveFocus) tabs[want].focus();
+  };
+  tabs.forEach(function (tab, i) {
+    tab.addEventListener('click', function () { select(i); });
+    // Roving tabindex plus arrow keys — a tablist you can only reach with a
+    // mouse is just three buttons wearing a costume.
+    tab.addEventListener('keydown', function (e) {
+      var step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (!step) return;
+      e.preventDefault();
+      select((i + step + tabs.length) % tabs.length, true);
+    });
   });
 })();
 
