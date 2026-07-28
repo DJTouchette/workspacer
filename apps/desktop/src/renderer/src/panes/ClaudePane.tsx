@@ -142,6 +142,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // HH:MM stamps on chat turns — a global display preference (config-backed),
   // toggled from the pane header's clock button or Settings.
   const showTimestamps = config.claude?.showTimestamps ?? false;
+  // Inline file contents under a Read tool call in the work log. On by default;
+  // off keeps the work log to what was read, not the whole file.
+  const showFileReads = config.claude?.showFileReads ?? true;
   // Which surfaces this provider has:
   //   claude            — GUI (hooks/transcript telemetry) + terminal (its PTY)
   //   codex (hybrid)    — GUI (app-server JSON-RPC adapter) + terminal (the codex
@@ -1416,6 +1419,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
           workflowByToolId={toolIdToWorkflow}
           live={isStreaming && endIdx === convOffset + conversation.length - 1}
           cwd={effectiveCwd}
+          showReads={showFileReads}
         />,
       );
       pendingWork = null;
@@ -1541,6 +1545,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     changesVersion,
     WorkView,
     showTimestamps,
+    showFileReads,
   ]);
 
   return (

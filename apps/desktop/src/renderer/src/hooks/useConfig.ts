@@ -156,6 +156,9 @@ export interface Config {
     workLog?: 'cards' | 'trace';
     /** Show a small HH:MM stamp on chat turns in the GUI conversation. */
     showTimestamps?: boolean;
+    /** Render the file contents a Read tool call returned, inline in the
+     *  expanded work log. Off = just the "Read <file>" line. Default true. */
+    showFileReads?: boolean;
     /** Concrete model ids seen across sessions, surfaced in the spawn dropdown. */
     seenModels?: string[];
     /** Permission mode pre-selected in the spawn dialog, remembered from the

@@ -378,6 +378,17 @@ const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) =
       </div>
 
       <CheckRow
+        label="Show file contents when a file is read"
+        checked={(config.claude?.showFileReads ?? true) === true}
+        onChange={(v) => saveWithFeedback({ claude: { ...claudeCfg, showFileReads: v } })}
+      />
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        Renders the lines a Read tool call returned, inline in the expanded work log. Turn off to
+        keep the log to just "Read &lt;file&gt;" — shorter transcripts, less scrolling past code you
+        already have open.
+      </div>
+
+      <CheckRow
         label="Show message timestamps"
         checked={config.claude?.showTimestamps === true}
         onChange={(v) => saveWithFeedback({ claude: { ...claudeCfg, showTimestamps: v } })}

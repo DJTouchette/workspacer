@@ -142,7 +142,8 @@ const TraceRow: React.FC<{
   open: boolean;
   onToggle: () => void;
   cwd?: string;
-}> = ({ tc, t0, span, now, open, onToggle, cwd }) => {
+  showReads?: boolean;
+}> = ({ tc, t0, span, now, open, onToggle, cwd, showReads = true }) => {
   const cat = categoryOf(tc);
   const running = tc.status === 'running';
   const failed = tc.status === 'failed';
@@ -313,7 +314,7 @@ const TraceRow: React.FC<{
               cwd={cwd}
             />
           )}
-          {hasRead(tc) && (
+          {hasRead(tc) && showReads && (
             <ReadView response={String(tc.response)} filePath={tc.input?.file_path} cwd={cwd} />
           )}
           {!hasDiff(tc) && !hasRead(tc) && (
@@ -323,6 +324,12 @@ const TraceRow: React.FC<{
               )}
               {tc.response != null && <pre style={detailPre}>{excerptJson(tc.response)}</pre>}
             </>
+          )}
+          {/* Reads with contents hidden: show what was read, never the body —
+              the generic fallback above would dump the file into the response
+              pre, which is exactly what the setting turns off. */}
+          {hasRead(tc) && !showReads && tc.input != null && Object.keys(tc.input).length > 0 && (
+            <pre style={detailPre}>{excerptJson(tc.input)}</pre>
           )}
         </div>
       )}
@@ -337,7 +344,9 @@ const ToolTraceCardInner: React.FC<{
   live?: boolean;
   isLast?: boolean;
   cwd?: string;
-}> = ({ toolCalls, subagentByToolId, workflowByToolId, live, isLast, cwd }) => {
+  /** Render the contents a Read returned inline (`claude.showFileReads`). */
+  showReads?: boolean;
+}> = ({ toolCalls, subagentByToolId, workflowByToolId, live, isLast, cwd, showReads = true }) => {
   const hasOrchestration = useMemo(
     () => toolCalls.some((tc) => workflowByToolId?.has(tc.id) || subagentByToolId?.has(tc.id)),
     [toolCalls, workflowByToolId, subagentByToolId],
@@ -514,6 +523,7 @@ const ToolTraceCardInner: React.FC<{
                 open={openRows.has(tc.id)}
                 onToggle={() => toggleRow(tc.id)}
                 cwd={cwd}
+                showReads={showReads}
               />
             );
           })}

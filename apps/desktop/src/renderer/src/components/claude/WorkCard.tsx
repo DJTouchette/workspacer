@@ -111,7 +111,9 @@ const WorkCardInner: React.FC<{
   /** The most recent work card in the timeline — kept open after work ends. */
   isLast?: boolean;
   cwd?: string;
-}> = ({ toolCalls, subagentByToolId, workflowByToolId, live, isLast, cwd }) => {
+  /** Render the contents a Read returned inline (`claude.showFileReads`). */
+  showReads?: boolean;
+}> = ({ toolCalls, subagentByToolId, workflowByToolId, live, isLast, cwd, showReads = true }) => {
   // A card that spawned a workflow/subagent run shows that run via its rich
   // card (surfaced even when collapsed); don't auto-expand into the raw tool
   // list, which is the "bunch of tool calls" flood during a workflow.
@@ -365,7 +367,7 @@ const WorkCardInner: React.FC<{
                       cwd={cwd}
                     />
                   ))}
-                {hasRead(tc) && (
+                {showReads && hasRead(tc) && (
                   <ReadView
                     response={String(tc.response)}
                     filePath={tc.input?.file_path}

@@ -168,6 +168,7 @@ export const CONFIG_DEFAULTS = {
     defaultView: 'terminal',
     workLog: 'cards',
     showTimestamps: false,
+    showFileReads: true,
     transport: 'stream',
     settingsOverlay: false,
     keepWarm: {

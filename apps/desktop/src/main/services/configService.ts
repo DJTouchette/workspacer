@@ -116,6 +116,9 @@ interface Config {
     workLog: 'cards' | 'trace';
     /** Show a small HH:MM stamp on chat turns in the GUI conversation. */
     showTimestamps: boolean;
+    /** Render the file contents a Read tool call returned, inline in the
+     *  expanded work log. Off = just the "Read <file>" line, no body. */
+    showFileReads: boolean;
     /** How new Claude sessions run: 'pty' (the classic Claude Code TUI in a
      *  PTY — Term + GUI) or 'stream' (headless `--print --output-format
      *  stream-json` via claudemon's managed adapter — GUI only). Per-spawn
