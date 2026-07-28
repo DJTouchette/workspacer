@@ -578,6 +578,27 @@ export function registerHubCapabilities(): void {
     if (!sessionId) throw new Error('replay.close requires { sessionId }');
     return timelineReplay.close(sessionId);
   });
+  // Reading back what a seek materialized. Without these, `replay.open`/`seek`
+  // build a past nothing can look at: the worktree lives under the OS temp dir,
+  // which is in neither a plugin token's fsRoots nor `workspaceRoots()`, so
+  // fs.read / git.diff are (correctly) denied there.
+  //
+  // SECURITY: deliberately NOT in capspec's PathParam and deliberately not
+  // guarded by assertPathAllowed. The `path` these take is interpreted inside a
+  // worktree the replay service itself created and keyed by sessionId — it is a
+  // repo-relative coordinate, not a host path, and the service refuses anything
+  // that escapes (see resolveInside). Adding fsRoots scoping here would be
+  // scoping the wrong namespace; the containment is structural.
+  registerCapability('replay.read', async (params: unknown) => {
+    const { sessionId, path: p } = (params ?? {}) as { sessionId?: string; path?: string };
+    if (!sessionId || !p) throw new Error('replay.read requires { sessionId, path }');
+    return timelineReplay.read(sessionId, p);
+  });
+  registerCapability('replay.diff', async (params: unknown) => {
+    const { sessionId, path: p } = (params ?? {}) as { sessionId?: string; path?: string };
+    if (!sessionId) throw new Error('replay.diff requires { sessionId }');
+    return timelineReplay.diff(sessionId, p);
+  });
 
   // Read-only: parsed conversation items + latest sequence number. With
   // sinceSeq, returns only items after that sequence — cheap incremental polling

@@ -116,6 +116,126 @@ describe('timelineReplay', () => {
     ]);
   });
 
+  it('read returns a file as it stands at the current scrub position', async () => {
+    await timelineReplay.open(repo, 'sess-replay-1', '2026-03-01T00:00:00Z');
+    await timelineReplay.seek('sess-replay-1', [
+      { name: 'Write', input: { file_path: path.join(repo, 'health.js'), content: 'ok()\n' } },
+      {
+        name: 'Edit',
+        input: {
+          file_path: path.join(repo, 'login.js'),
+          old_string: 'return false;',
+          new_string: 'return checkCredentials();',
+        },
+      },
+    ]);
+
+    const edited = await timelineReplay.read('sess-replay-1', 'login.js');
+    expect(edited.content).toContain('checkCredentials');
+    expect(edited.binary).toBe(false);
+    expect(edited.truncated).toBe(false);
+
+    // An absolute transcript path (pointing at the agent's real checkout) is
+    // remapped into the worktree rather than read from the real repo.
+    const viaAbsolute = await timelineReplay.read('sess-replay-1', path.join(repo, 'login.js'));
+    expect(viaAbsolute.path).toBe('login.js');
+    expect(viaAbsolute.content).toContain('checkCredentials');
+
+    const written = await timelineReplay.read('sess-replay-1', 'health.js');
+    expect(written.content).toBe('ok()\n');
+  });
+
+  it('read refuses paths that escape the worktree', async () => {
+    await expect(timelineReplay.read('sess-replay-1', '../../etc/passwd')).rejects.toThrow(
+      /outside the replay worktree/,
+    );
+    // Normalizes to an escape only after resolution — the string test alone
+    // would let this through.
+    await expect(timelineReplay.read('sess-replay-1', 'a/../../../etc/passwd')).rejects.toThrow(
+      /outside the replay worktree/,
+    );
+    // Absolute, and not under the repo root at all.
+    await expect(timelineReplay.read('sess-replay-1', '/etc/passwd')).rejects.toThrow(
+      /outside the replay worktree/,
+    );
+    await expect(timelineReplay.read('sess-replay-1', '')).rejects.toThrow(/path is required/);
+  });
+
+  it('read reports a file that does not exist yet at this position', async () => {
+    await expect(timelineReplay.read('sess-replay-1', 'later.txt')).rejects.toThrow(
+      /does not exist at this point in the timeline/,
+    );
+  });
+
+  it('read flags binary content instead of returning it', async () => {
+    await timelineReplay.seek('sess-replay-1', [
+      {
+        name: 'Write',
+        input: {
+          file_path: path.join(repo, 'blob.bin'),
+          content: 'a' + String.fromCharCode(0) + 'b',
+        },
+      },
+    ]);
+    const res = await timelineReplay.read('sess-replay-1', 'blob.bin');
+    expect(res.binary).toBe(true);
+    expect(res.content).toBe('');
+    expect(res.bytes).toBeGreaterThan(0);
+  });
+
+  it('diff reports written + edited files against the base commit', async () => {
+    await timelineReplay.seek('sess-replay-1', [
+      { name: 'Write', input: { file_path: path.join(repo, 'health.js'), content: 'ok()\n' } },
+      {
+        name: 'Edit',
+        input: {
+          file_path: path.join(repo, 'login.js'),
+          old_string: 'return false;',
+          new_string: 'return checkCredentials();',
+        },
+      },
+    ]);
+
+    const res = await timelineReplay.diff('sess-replay-1');
+    expect(res.baseCommit).toHaveLength(40);
+    expect(res.truncated).toBe(false);
+    const byPath = new Map(res.files.map((f) => [f.path, f]));
+    // A Write of a new file is untracked in the worktree — it only appears
+    // here because diff stages it intent-to-add first.
+    expect(byPath.get('health.js')?.status).toBe('added');
+    expect(byPath.get('login.js')?.status).toBe('modified');
+    expect(byPath.get('login.js')?.additions).toBe(1);
+    expect(byPath.get('login.js')?.deletions).toBe(1);
+    expect(res.patch).toContain('checkCredentials');
+    expect(res.patch).toContain('health.js');
+  });
+
+  it('diff scopes to one file when asked', async () => {
+    const res = await timelineReplay.diff('sess-replay-1', 'login.js');
+    expect(res.files.map((f) => f.path)).toEqual(['login.js']);
+    expect(res.patch).toContain('checkCredentials');
+    expect(res.patch).not.toContain('health.js');
+  });
+
+  it('a seek after a diff still clears intent-to-add files', async () => {
+    // Regression: `git clean` will not remove a file the index knows about, so
+    // without seek's index reset the previous diff's `add -N` would leave
+    // health.js behind and the timeline would show a future edit.
+    const { dir } = await timelineReplay.open(repo, 'sess-replay-1', '2026-03-01T00:00:00Z');
+    const res = await timelineReplay.seek('sess-replay-1', []);
+    expect(res.changedFiles).toBe(0);
+    expect(fs.existsSync(path.join(dir, 'health.js'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'blob.bin'))).toBe(false);
+    expect((await timelineReplay.diff('sess-replay-1')).files).toEqual([]);
+  });
+
+  it('read and diff require an open replay', async () => {
+    await expect(timelineReplay.read('sess-never-opened', 'x.js')).rejects.toThrow(
+      /replay not open/,
+    );
+    await expect(timelineReplay.diff('sess-never-opened')).rejects.toThrow(/replay not open/);
+  });
+
   it('close removes the worktree; seek then requires reopening', async () => {
     const { dir } = await timelineReplay.open(repo, 'sess-replay-1', '2026-03-01T00:00:00Z');
     await timelineReplay.close('sess-replay-1');
