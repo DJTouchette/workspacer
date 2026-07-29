@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -133,5 +134,75 @@ func TestSearchProject(t *testing.T) {
 	m := res.Results[0].Matches[0]
 	if m.Line != 2 || m.Column != 1 {
 		t.Errorf("match position = line %d col %d, want line 2 col 1", m.Line, m.Column)
+	}
+}
+
+// The result cap is enforced while streaming rg's output, and rg is killed as
+// soon as it's hit — the previous code buffered rg's entire --json output (60MB
+// on a repo this size, GBs on a large monorepo), copied it again to parse, and
+// only then applied the cap.
+func TestSearchProjectStopsAtTheResultCap(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("ripgrep not available")
+	}
+	dir := t.TempDir()
+	var body strings.Builder
+	for i := 0; i < 500; i++ {
+		body.WriteString("needle\n")
+	}
+	writeFile(t, filepath.Join(dir, "many.txt"), body.String())
+
+	res, err := searchProject(context.Background(), searchOpts{
+		Query: "needle", Cwd: dir, MaxResults: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := 0
+	for _, f := range res.Results {
+		total += len(f.Matches)
+	}
+	if total != 10 {
+		t.Fatalf("got %d matches, want exactly the cap (10)", total)
+	}
+	if !res.Truncated {
+		t.Error("Truncated = false, want true when matches were dropped")
+	}
+}
+
+// Stopping rg early must not be reported as a ripgrep failure, and neither must
+// rg's exit-1-on-no-matches.
+func TestSearchProjectNoMatchesIsNotAnError(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("ripgrep not available")
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.txt"), "alpha\n")
+
+	res, err := searchProject(context.Background(), searchOpts{Query: "zzz-absent", Cwd: dir})
+	if err != nil {
+		t.Fatalf("no matches should not be an error: %v", err)
+	}
+	if len(res.Results) != 0 || res.Truncated {
+		t.Fatalf("got %+v, want an empty untruncated result", res)
+	}
+}
+
+// A line far past bufio.Scanner's 64KB default must still parse — a match in a
+// minified bundle is exactly that, which is why the reader isn't a Scanner.
+func TestSearchProjectHandlesVeryLongLines(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("ripgrep not available")
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "bundle.js"),
+		strings.Repeat("x", 200_000)+"needle"+strings.Repeat("y", 200_000)+"\n")
+
+	res, err := searchProject(context.Background(), searchOpts{Query: "needle", Cwd: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Results) != 1 || len(res.Results[0].Matches) != 1 {
+		t.Fatalf("expected one match in the long line, got %+v", res.Results)
 	}
 }

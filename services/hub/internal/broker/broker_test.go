@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -103,5 +104,75 @@ func TestSlowConsumerDropsRatherThanBlocks(t *testing.T) {
 	}
 	if sub.Dropped() == 0 {
 		t.Fatal("expected drops on an undrained subscriber")
+	}
+}
+
+// A dropped discrete event costs the consumer one fact. A dropped chunk of a
+// PTY byte stream silently corrupts everything the consumer reconstructs from
+// it — xterm renders garbled escapes and neither side knows — so those drops
+// must be reported, not just counted.
+func TestStreamDropsAreReportedAsDesyncs(t *testing.T) {
+	b := NewWithBuffer(1)
+	sub := b.Subscribe([]string{"*"})
+
+	// Fill the buffer, then overflow it with more stream chunks.
+	b.Publish(event.Envelope{Type: "pty.bytes.s1"})
+	b.Publish(event.Envelope{Type: "pty.bytes.s1"})
+	b.Publish(event.Envelope{Type: "pty.bytes.s2"})
+
+	if got := sub.Dropped(); got != 2 {
+		t.Fatalf("dropped = %d, want 2", got)
+	}
+	desyncs := sub.TakeDesyncs()
+	if len(desyncs) != 2 {
+		t.Fatalf("desyncs = %v, want both sessions", desyncs)
+	}
+	seen := map[string]bool{}
+	for _, d := range desyncs {
+		seen[d] = true
+	}
+	if !seen["pty.bytes.s1"] || !seen["pty.bytes.s2"] {
+		t.Fatalf("desyncs = %v, want pty.bytes.s1 and pty.bytes.s2", desyncs)
+	}
+	if again := sub.TakeDesyncs(); again != nil {
+		t.Fatalf("TakeDesyncs is a take: second call = %v, want nil", again)
+	}
+}
+
+func TestDiscreteDropsAreNotDesyncs(t *testing.T) {
+	b := NewWithBuffer(1)
+	sub := b.Subscribe([]string{"*"})
+	b.Publish(event.Envelope{Type: "agent.spawned"})
+	b.Publish(event.Envelope{Type: "agent.spawned"})
+
+	if got := sub.Dropped(); got != 1 {
+		t.Fatalf("dropped = %d, want 1", got)
+	}
+	if d := sub.TakeDesyncs(); d != nil {
+		t.Fatalf("desyncs = %v, want nil — a missed discrete event is not a desync", d)
+	}
+}
+
+func TestDeliveredStreamEventsAreNotDesyncs(t *testing.T) {
+	b := NewWithBuffer(4)
+	sub := b.Subscribe([]string{"pty.bytes.*"})
+	b.Publish(event.Envelope{Type: "pty.bytes.s1"})
+	b.Publish(event.Envelope{Type: "pty.bytes.s1"})
+	if d := sub.TakeDesyncs(); d != nil {
+		t.Fatalf("desyncs = %v, want nil when nothing was dropped", d)
+	}
+}
+
+// A client that is gone for a long time must not accumulate one remembered
+// topic per session it ever watched.
+func TestDesyncTopicsAreBounded(t *testing.T) {
+	b := NewWithBuffer(1)
+	sub := b.Subscribe([]string{"*"})
+	b.Publish(event.Envelope{Type: "pty.bytes.filler"}) // fills the buffer
+	for i := 0; i < maxDesyncTopics*3; i++ {
+		b.Publish(event.Envelope{Type: "pty.bytes.s" + strconv.Itoa(i)})
+	}
+	if got := len(sub.TakeDesyncs()); got > maxDesyncTopics {
+		t.Fatalf("remembered %d desync topics, want <= %d", got, maxDesyncTopics)
 	}
 }

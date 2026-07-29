@@ -20,9 +20,11 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/djtouchette/workspacer-hub/internal/broker"
@@ -287,8 +289,24 @@ func (m *Manager) sendAll(title, body, sessionID string) {
 	}
 }
 
+// pushTimeout bounds a single push attempt. Without it these ran with no
+// deadline at all: a push service reachable through a captive portal or a
+// stalling VPN completes the TCP handshake and then never answers, so the
+// goroutine blocks forever holding its socket — one more per stored
+// subscription on every "needs you" transition, and shutdown can't reclaim them.
+// A notification nobody could deliver in 10s has no value anyway; the next
+// transition sends a fresh one.
+const pushTimeout = 10 * time.Second
+
+// pushClient is shared so attempts reuse connections and the idle ones are
+// reaped, instead of each send building its own transport.
+var pushClient = &http.Client{Timeout: pushTimeout}
+
 func (m *Manager) sendOne(s webpush.Subscription, payload []byte) {
-	resp, err := webpush.SendNotification(payload, &s, &webpush.Options{
+	ctx, cancel := context.WithTimeout(context.Background(), pushTimeout)
+	defer cancel()
+	resp, err := webpush.SendNotificationWithContext(ctx, payload, &s, &webpush.Options{
+		HTTPClient:      pushClient,
 		Subscriber:      vapidSubject,
 		VAPIDPublicKey:  m.vapidPub,
 		VAPIDPrivateKey: m.vapidKey,

@@ -429,6 +429,27 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 			if err := cn.send(Frame{Op: "event", Event: &ev}); err != nil {
 				return
 			}
+			// The broker drops past this subscriber's capacity. For a discrete
+			// event that is the design; for a PTY byte stream the dropped chunk
+			// silently corrupts the client's terminal — xterm renders garbage
+			// and neither side knows. Tell it, so it re-attaches and takes a
+			// fresh screen replay.
+			for _, topic := range sub.TakeDesyncs() {
+				sid := strings.TrimPrefix(topic, broker.StreamTopicPrefix)
+				data, _ := json.Marshal(map[string]string{"sessionId": sid})
+				desync := event.Envelope{
+					Type:   "pty.desync",
+					Source: "hub",
+					Time:   time.Now(),
+					Data:   data,
+				}
+				if !cn.mayConsume(desync.Type) {
+					continue
+				}
+				if err := cn.send(Frame{Op: "event", Event: &desync}); err != nil {
+					return
+				}
+			}
 		}
 	}()
 

@@ -1,10 +1,18 @@
 package push
 
 import (
+	"crypto/elliptic"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	webpush "github.com/SherClockHolmes/webpush-go"
 )
 
 // newTestManager builds a Manager against a temp dir with the network send
@@ -177,5 +185,80 @@ func TestMissingAmbientStateNeverFires(t *testing.T) {
 	m.onSnapshot(json.RawMessage(`{"session_id":"s3","cwd":"/a/b"}`))
 	if len(*fired) != 0 {
 		t.Fatalf("snapshot without ambientState should not notify, got %v", *fired)
+	}
+}
+
+// A push send must never be able to block forever. A push service reachable
+// through a captive portal or a stalling VPN completes the TCP handshake and
+// then never answers; with no deadline the goroutine holds its socket for the
+// life of the process, one more per stored subscription on every transition.
+func TestPushClientHasATimeout(t *testing.T) {
+	if pushClient.Timeout <= 0 {
+		t.Fatal("pushClient.Timeout must be set — an unbounded send leaks a goroutine and a socket")
+	}
+	if pushClient.Timeout != pushTimeout {
+		t.Errorf("pushClient.Timeout = %s, want %s", pushClient.Timeout, pushTimeout)
+	}
+}
+
+func TestSendOneGivesUpOnAServerThatNeverResponds(t *testing.T) {
+	// Accepts the connection, then never writes a byte — the exact shape of the
+	// hang this bounds.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close()
+		}
+	}()
+
+	vapidPriv, vapidPub, err := webpush.GenerateVAPIDKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &Manager{vapidPub: vapidPub, vapidKey: vapidPriv}
+
+	// A real P-256 point and a 16-byte auth secret, so encryption succeeds and
+	// the call actually reaches the network — otherwise it would fail early and
+	// the test would prove nothing about the deadline.
+	priv, x, y, err := elliptic.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = priv
+	auth := make([]byte, 16)
+	if _, err := rand.Read(auth); err != nil {
+		t.Fatal(err)
+	}
+	sub := webpush.Subscription{
+		Endpoint: "http://" + ln.Addr().String() + "/push",
+		Keys: webpush.Keys{
+			Auth:   base64.RawURLEncoding.EncodeToString(auth),
+			P256dh: base64.RawURLEncoding.EncodeToString(elliptic.Marshal(elliptic.P256(), x, y)),
+		},
+	}
+
+	// Shorten the deadline rather than sitting out the real one; the value
+	// itself is pinned by TestPushClientHasATimeout.
+	restore := pushClient
+	pushClient = &http.Client{Timeout: 300 * time.Millisecond}
+	defer func() { pushClient = restore }()
+
+	done := make(chan struct{})
+	go func() {
+		m.sendOne(sub, []byte(`{"title":"x"}`))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("sendOne did not return — the send is unbounded")
 	}
 }
