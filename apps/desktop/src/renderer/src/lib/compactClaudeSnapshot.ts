@@ -41,12 +41,49 @@ function compactPayload(value: unknown, maxChars = MAX_PAYLOAD_CHARS): unknown {
   }
 }
 
+/**
+ * Memo for entries whose compacted form can never change again.
+ *
+ * This runs on every `claude-session:update`, which is up to ~60/s per
+ * streaming session, over a tail of up to 80 file changes and 20 completed
+ * tool calls — and `compactPayload` JSON.stringifies each one just to measure
+ * it. The overwhelming majority of that work re-derives an identical result for
+ * an entry that was already final several hundred ticks ago.
+ *
+ * Object identity can't be the key: snapshots arrive over IPC, so every tick
+ * delivers structurally-cloned objects with fresh identities and a WeakMap
+ * would never hit. These entries carry their own immutable identity instead.
+ */
+const MAX_MEMO_ENTRIES = 1024;
+const compactMemo = new Map<string, unknown>();
+
+function memoized<T>(key: string, compute: () => T): T {
+  const hit = compactMemo.get(key);
+  if (hit !== undefined) return hit as T;
+  const value = compute();
+  compactMemo.set(key, value);
+  if (compactMemo.size > MAX_MEMO_ENTRIES) {
+    // Evict a chunk at a time; Map iterates in insertion order, so this drops
+    // the oldest quarter rather than paying an eviction on every insert.
+    let toDrop = MAX_MEMO_ENTRIES / 4;
+    for (const k of compactMemo.keys()) {
+      compactMemo.delete(k);
+      if (--toDrop <= 0) break;
+    }
+  }
+  return value;
+}
+
 function compactToolCall(tool: ToolCall): ToolCall {
-  return {
+  const compute = (): ToolCall => ({
     ...tool,
     input: compactPayload(tool.input),
     response: compactPayload(tool.response),
-  };
+  });
+  // A running tool's response is still filling in, so only settled calls are
+  // safe to memo — and those are the ones that pile up.
+  if (tool.status === 'running') return compute();
+  return memoized(`t|${tool.id}|${tool.status}|${tool.completedAt ?? 0}`, compute);
 }
 
 function compactConversationTurn(turn: ConversationTurn): ConversationTurn {
@@ -58,10 +95,11 @@ function compactConversationTurn(turn: ConversationTurn): ConversationTurn {
 }
 
 function compactFileChange(change: FileChange): FileChange {
-  return {
+  // A recorded file change is immutable — it's a hook event that already fired.
+  return memoized(`f|${change.timestamp}|${change.toolName}|${change.path}`, () => ({
     ...change,
     input: compactPayload(change.input, 1000),
-  };
+  }));
 }
 
 function compactPendingApproval(approval: PendingApproval | null): PendingApproval | null {

@@ -4,6 +4,7 @@
 // So we install first, then dynamically import the app graph (which defers its
 // evaluation until after the swap), then mount. See backend/install.
 import { installBackend } from './backend/install';
+import { startLongTaskMonitor } from './lib/longTaskMonitor';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 
@@ -25,6 +26,9 @@ async function mount(): Promise<void> {
     </React.StrictMode>,
   );
 }
+
+// Started before mount so the very first render is covered too.
+startLongTaskMonitor();
 
 // Install the backend, then mount. `finally` so a failed install still renders
 // (installBackend already falls back to IPC internally on any error).

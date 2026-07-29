@@ -27,6 +27,8 @@ interface PendingCall {
 }
 
 const CALL_TIMEOUT_MS = 15000;
+/** Ceiling on calls held while disconnected. Well above a mount-time burst. */
+const MAX_QUEUED_CALLS = 200;
 // A socket that has seen no inbound frame for this long when the page returns to
 // the foreground is treated as a zombie (browsers suspend background sockets
 // without always firing onclose) and replaced with a fresh connection.
@@ -40,8 +42,12 @@ export class HubBusClient {
   /** topic-prefix → set of handlers. Matched against each event's type. */
   private readonly subscriptions = new Map<string, Set<EventHandler>>();
   private readonly statusHandlers = new Set<StatusHandler>();
-  /** Call frames produced before the socket opened, flushed on connect. */
-  private readonly sendQueue: string[] = [];
+  /** Call frames produced before the socket opened, flushed on connect. Keyed
+   *  by call id so a call that times out while queued can be pulled back out —
+   *  its caller has already given up and, for anything with a side effect
+   *  (sending a message to an agent), replaying it on reconnect is worse than
+   *  dropping it. */
+  private sendQueue: Array<{ id: string; frame: string }> = [];
   private backoff = 500;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private closedByUser = false;
@@ -160,7 +166,7 @@ export class HubBusClient {
       // Flush calls that were queued before the socket finished connecting
       // (e.g. the renderer's initial getAllClaudeSessions / getConfig at mount).
       const queued = this.sendQueue.splice(0);
-      for (const frame of queued) this.ws?.send(frame);
+      for (const { frame } of queued) this.ws?.send(frame);
       // Let callers re-sync after a reconnect (skipped on the very first connect,
       // where the mount-time fetches already loaded current state).
       if (this.hasConnectedOnce) {
@@ -279,6 +285,12 @@ export class HubBusClient {
       const timer = setTimeout(() => {
         if (this.calls.has(id)) {
           this.calls.delete(id);
+          // A call whose promise is already dead must never be sent: the caller
+          // has surfaced the failure (ClaudePane retracts the optimistic bubble
+          // and restores the text), so flushing it later would deliver a
+          // message the user believes didn't go through — and again when they
+          // retype it.
+          this.sendQueue = this.sendQueue.filter((q) => q.id !== id);
           reject(new Error(`hub call timeout: ${method}`));
         }
       }, CALL_TIMEOUT_MS);
@@ -289,7 +301,19 @@ export class HubBusClient {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(frame);
       } else {
-        this.sendQueue.push(frame);
+        this.sendQueue.push({ id, frame });
+        // Backstop for a long outage: fail the oldest instead of growing without
+        // bound. Rejecting now beats a silent drop that only surfaces as a
+        // timeout 15s later.
+        while (this.sendQueue.length > MAX_QUEUED_CALLS) {
+          const dropped = this.sendQueue.shift();
+          if (!dropped) break;
+          const pending = this.calls.get(dropped.id);
+          if (!pending) continue;
+          this.calls.delete(dropped.id);
+          clearTimeout(pending.timer);
+          pending.reject(new Error('hub send queue overflow — disconnected too long'));
+        }
       }
     });
   }

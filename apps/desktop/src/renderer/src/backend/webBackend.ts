@@ -49,48 +49,115 @@ function warnOnce(method: string): void {
   );
 }
 
+/** One session's shared PTY stream, however many panes are watching it. */
+type PtyStream = {
+  viewers: number;
+  /** One debounced re-attach hook per viewer — a Set, because they coexist. */
+  reprimers: Set<() => void>;
+  keepalive: ReturnType<typeof setInterval>;
+  attach: () => void;
+};
+
 /**
- * Bracket a live PTY stream for one viewer: attach → subscribe → keepalive,
- * and return a teardown that detaches and unsubscribes. Used by both the Claude
- * and shell terminal output subscriptions, which are the byte sinks that bound
- * a stream's lifetime in the web build.
+ * Refcounted PTY streams for the web build.
+ *
+ * The hub's attach/detach is per *session*, but a session can have several
+ * viewers: a pane that spawned it, plus any watch pane opened on it from the
+ * Agents or Fleet views (possibly in another workspace, where pane-level
+ * dedupe can't see it). Tearing down one viewer therefore must not detach the
+ * session out from under the others — that is a shared resource with a
+ * refcount, not a per-viewer one.
  */
-function streamPty(
-  client: HubBusClient,
-  reprimers: Map<string, () => void>,
-  sessionId: string,
-  callback: (data: string) => void,
-): () => void {
-  const unsub = client.subscribe(`pty.bytes.${sessionId}`, (ev: HubEventEnvelope) => {
-    callback(decodePtyChunk(ev.data));
-  });
-  // attachTerminal makes claudemon replay its ring buffer (the current screen).
-  const attach = () => client.call('sessions.attachTerminal', { sessionId }).catch(() => {});
-  attach();
+export function createPtyStreams(client: HubBusClient) {
+  const streams = new Map<string, PtyStream>();
 
-  // Re-prime hook: the app keeps every agent pane mounted and only toggles
-  // visibility, so a terminal can initialize while its pane is hidden / zero
-  // size — which eats the initial replay (it's written into a 0-col grid). When
-  // the pane is shown it resizes; we treat that as the cue to re-attach and
-  // replay the current screen onto the now-correctly-sized terminal. Debounced
-  // so a burst of fit/resize events triggers a single replay once it settles.
-  let reprimeTimer: ReturnType<typeof setTimeout> | null = null;
-  reprimers.set(sessionId, () => {
-    if (reprimeTimer) clearTimeout(reprimeTimer);
-    reprimeTimer = setTimeout(attach, 120);
-  });
-
-  // The hub lease expires after ~20s; refresh well inside that window.
-  const keepalive = setInterval(() => {
-    client.call('sessions.terminalKeepalive', { sessionId }).catch(() => {});
-  }, 10000);
-  return () => {
-    if (reprimeTimer) clearTimeout(reprimeTimer);
-    reprimers.delete(sessionId);
-    clearInterval(keepalive);
-    unsub();
-    client.call('sessions.detachTerminal', { sessionId }).catch(() => {});
+  const ensure = (sessionId: string): PtyStream => {
+    const existing = streams.get(sessionId);
+    if (existing) return existing;
+    // attachTerminal makes claudemon replay its ring buffer (the current screen).
+    const attach = () => client.call('sessions.attachTerminal', { sessionId }).catch(() => {});
+    const entry: PtyStream = {
+      viewers: 0,
+      reprimers: new Set(),
+      attach,
+      // The hub lease expires after ~20s; refresh well inside that window.
+      keepalive: setInterval(() => {
+        client
+          .call<{ ok?: boolean }>('sessions.terminalKeepalive', { sessionId })
+          // ok:false means the hub already swept our lease — the forwarder is
+          // gone and no bytes are coming, even though the socket is healthy and
+          // nothing will fire onReconnect. Re-attach; the ring-buffer replay
+          // repaints whatever was missed. Dropping this reply left a stream
+          // permanently dead after a backgrounded tab throttled us past the TTL.
+          .then((r) => {
+            if (r && r.ok === false) attach();
+          })
+          .catch(() => {});
+      }, 10000),
+    };
+    streams.set(sessionId, entry);
+    return entry;
   };
+
+  /**
+   * Bracket a live PTY stream for one viewer: attach → subscribe → keepalive,
+   * and return a teardown that unsubscribes and, for the last viewer only,
+   * detaches. Used by both the Claude and shell terminal output subscriptions,
+   * which are the byte sinks that bound a stream's lifetime in the web build.
+   */
+  const stream = (sessionId: string, callback: (data: string) => void): (() => void) => {
+    const entry = ensure(sessionId);
+    entry.viewers += 1;
+    const unsub = client.subscribe(`pty.bytes.${sessionId}`, (ev: HubEventEnvelope) => {
+      callback(decodePtyChunk(ev.data));
+    });
+    // The hub drops events past this client's buffer capacity. For PTY bytes
+    // that means the terminal is now rendering a corrupted stream, so the hub
+    // tells us; re-attaching replays the current screen, which repairs it.
+    const unsubDesync = client.subscribe('pty.desync', (ev: HubEventEnvelope) => {
+      const sid = (ev.data as { sessionId?: string } | undefined)?.sessionId;
+      if (sid === sessionId) entry.attach();
+    });
+
+    // Re-prime hook: the app keeps every agent pane mounted and only toggles
+    // visibility, so a terminal can initialize while its pane is hidden / zero
+    // size — which eats the initial replay (it's written into a 0-col grid). When
+    // the pane is shown it resizes; we treat that as the cue to re-attach and
+    // replay the current screen onto the now-correctly-sized terminal. Debounced
+    // so a burst of fit/resize events triggers a single replay once it settles.
+    let reprimeTimer: ReturnType<typeof setTimeout> | null = null;
+    const reprimer = (): void => {
+      if (reprimeTimer) clearTimeout(reprimeTimer);
+      reprimeTimer = setTimeout(entry.attach, 120);
+    };
+    entry.reprimers.add(reprimer);
+    entry.attach();
+
+    let torn = false;
+    return () => {
+      if (torn) return; // a double teardown must not drop the refcount twice
+      torn = true;
+      if (reprimeTimer) clearTimeout(reprimeTimer);
+      entry.reprimers.delete(reprimer);
+      unsub();
+      unsubDesync();
+      entry.viewers -= 1;
+      if (entry.viewers > 0) return;
+      clearInterval(entry.keepalive);
+      streams.delete(sessionId);
+      client.call('sessions.detachTerminal', { sessionId }).catch(() => {});
+    };
+  };
+
+  const reprime = (sessionId: string): void => {
+    const entry = streams.get(sessionId);
+    if (entry) for (const r of entry.reprimers) r();
+  };
+  const reprimeAll = (): void => {
+    for (const entry of streams.values()) for (const r of entry.reprimers) r();
+  };
+
+  return { stream, reprime, reprimeAll };
 }
 
 export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
@@ -112,17 +179,17 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
   const viewerSessions = new Map<string, string>();
   const sessionFor = (viewerKey: string): string => viewerSessions.get(viewerKey) ?? viewerKey;
 
-  // sessionId → debounced "re-attach + replay" trigger, registered by each live
-  // PTY stream (see streamPty). Fired on resize so a freshly-shown pane repaints.
-  const reprimers = new Map<string, () => void>();
-  const reprime = (sessionId: string): void => reprimers.get(sessionId)?.();
+  // Refcounted live PTY streams (see createPtyStreams). `reprime` fires the
+  // debounced "re-attach + replay" hooks for a session so a freshly-shown pane
+  // repaints; `reprimeAll` does it for every live stream.
+  const { stream: streamPty, reprime, reprimeAll } = createPtyStreams(client);
 
   // After a reconnect the bus re-asserts topic subscriptions, but the per-stream
   // attachTerminal call (which makes claudemon replay the current screen) is not
   // re-issued — so every mirrored terminal would sit frozen until a manual
   // refresh. Re-prime each live PTY stream to re-attach and repaint.
   client.onReconnect(() => {
-    for (const reprime of reprimers.values()) reprime();
+    reprimeAll();
   });
 
   // Click-through target for browser-API notification escalations (see
@@ -189,7 +256,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     },
     closeTerminal: (id) =>
       client.call<void>('sessions.detachTerminal', { sessionId: id }).then(() => {}),
-    onTerminalOutput: (id, callback) => streamPty(client, reprimers, id, callback),
+    onTerminalOutput: (id, callback) => streamPty(id, callback),
     // Terminal exit arrives as a flat `pty.exit` bus event carrying { sessionId };
     // the desktop fires one global callback that each pane filters by its own id,
     // so we mirror that — one subscription per listener, dispatched by sessionId.
@@ -265,8 +332,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         .call('sessions.terminalInput', { sessionId: sessionFor(viewerKey), data })
         .catch(() => {});
     },
-    onClaudeOutput: (viewerKey, callback) =>
-      streamPty(client, reprimers, sessionFor(viewerKey), callback),
+    onClaudeOutput: (viewerKey, callback) => streamPty(sessionFor(viewerKey), callback),
 
     // ── Files (editor pane) ──────────────────────────────────────────────
     readFile: (filePath) =>

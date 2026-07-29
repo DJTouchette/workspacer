@@ -133,7 +133,11 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
     if (!window.confirm(`Remove plugin "${id}"? This stops its server and deletes it.`)) return;
     setBusyId(id);
     try {
-      await window.electronAPI.removePlugin?.(id);
+      // Say so when the hub refuses. Otherwise the spinner just clears and the
+      // plugin reappears on the next refetch, which reads as the button being
+      // broken rather than as the removal having failed. Matches `update`.
+      const res = await window.electronAPI.removePlugin?.(id);
+      if (res && !res.ok) window.alert(`Remove failed: ${res.error ?? 'unknown error'}`);
     } finally {
       setBusyId(null);
     }

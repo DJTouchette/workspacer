@@ -225,6 +225,10 @@ export function useKeyboardNav({
   // For a lone-modifier leader: true once the modifier is pressed alone and still
   // a candidate for a "tap" (no other key has joined it). Fires on its key-up.
   const tapArmedRef = useRef(false);
+  // Latest cancelChord, so the chord can be reset from outside the big effect
+  // below without that effect's cleanup owning the reset. See the teardown
+  // comment where it's assigned.
+  const cancelChordRef = useRef<() => void>(() => {});
 
   // Tab navigation
   const goToTab = useCallback(
@@ -287,6 +291,7 @@ export function useKeyboardNav({
       chordRef.current = { path: null, timeoutId: null };
       onChordPathChange?.(null);
     };
+    cancelChordRef.current = cancelChord;
 
     // Enter/move to a chord path (root = []), (re)arming the idle timeout so a
     // half-typed chord doesn't linger forever.
@@ -549,7 +554,10 @@ export function useKeyboardNav({
     return () => {
       window.removeEventListener('keydown', handler, true);
       window.removeEventListener('keyup', upHandler, true);
-      cancelChord();
+      // Deliberately NOT cancelChord() — see the effects below. This effect
+      // re-runs whenever any of its ~30 callback deps changes identity, which
+      // in practice is constantly; cancelling here disarmed a chord the instant
+      // anything else in the app updated.
     };
   }, [
     goToTab,
@@ -588,4 +596,18 @@ export function useKeyboardNav({
     onTextSizeReset,
     onOpenReview,
   ]);
+
+  // A half-typed chord survives the key-handler effect re-subscribing, and is
+  // only reset for the two reasons a user would expect: the hook going away,
+  // and the leader itself being rebound. Anything else — a session snapshot
+  // landing, a tab list changing — has nothing to do with what the user is
+  // mid-way through typing.
+  //
+  // Safe because the state involved outlives the effect: chordRef is a ref, and
+  // onChordPathChange is a setState, so the pending CHORD_TIMEOUT still
+  // resolves against live state after a re-subscribe.
+  useEffect(() => () => cancelChordRef.current(), []);
+  useEffect(() => {
+    cancelChordRef.current();
+  }, [prefix]);
 }

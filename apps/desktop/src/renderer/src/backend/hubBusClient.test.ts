@@ -145,3 +145,63 @@ describe('HubBusClient reconnect handling', () => {
     client.stop();
   });
 });
+
+describe('HubBusClient send queue', () => {
+  beforeEach(() => {
+    FakeWS.instances = [];
+    vi.stubGlobal('WebSocket', FakeWS as unknown as typeof WebSocket);
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const methodsSent = (ws: FakeWS): string[] =>
+    ws.sent.map((f) => JSON.parse(f)).filter((f) => f.op === 'call').map((f) => f.method);
+
+  it('flushes calls queued before the socket opened', async () => {
+    const client = new HubBusClient('tok');
+    client.start();
+    const pending = client.call('sessions.list');
+    FakeWS.instances[0].open();
+    expect(methodsSent(FakeWS.instances[0])).toEqual(['sessions.list']);
+
+    // Keep the rejection handled; the test ends before any reply arrives.
+    pending.catch(() => {});
+    client.stop();
+  });
+
+  it('does not replay a queued call whose caller already timed out', async () => {
+    // The caller has surfaced the failure by now — ClaudePane retracts the
+    // optimistic bubble and hands the text back — so sending it later delivers
+    // a message the user believes never went, and again when they retype it.
+    const client = new HubBusClient('tok');
+    client.start();
+    const abandoned = client.call('claude.send');
+    const rejected = expect(abandoned).rejects.toThrow(/timeout/);
+    await vi.advanceTimersByTimeAsync(15_001);
+    await rejected;
+
+    FakeWS.instances[0].open();
+    expect(methodsSent(FakeWS.instances[0])).toEqual([]);
+
+    client.stop();
+  });
+
+  it('rejects the oldest queued calls instead of growing without bound', async () => {
+    const client = new HubBusClient('tok');
+    client.start();
+    const first = client.call('first');
+    const overflowed = expect(first).rejects.toThrow(/overflow/);
+    // 200 is the cap; one more call must push `first` out.
+    for (let i = 0; i < 200; i++) client.call(`filler${i}`).catch(() => {});
+    await overflowed;
+
+    FakeWS.instances[0].open();
+    expect(methodsSent(FakeWS.instances[0])).not.toContain('first');
+    expect(methodsSent(FakeWS.instances[0]).length).toBe(200);
+
+    client.stop();
+  });
+});

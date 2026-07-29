@@ -9,6 +9,7 @@ import Onboarding from './components/Onboarding';
 import { presetConfigPatch } from './lib/keybindingPresets';
 import { resolveLeader } from './lib/shortcuts';
 import { resolveNavHeight } from './lib/layoutUtils';
+import { markUiEvent } from './lib/longTaskMonitor';
 import PluginInstallDialog from './components/PluginInstallDialog';
 import { usePlugins } from './hooks/usePlugins';
 import { useUiEventBus } from './hooks/useUiEventBus';
@@ -1210,7 +1211,13 @@ function App() {
 
   const handlePrevAgent = useCallback(() => goToAgent(-1), [goToAgent]);
   const handleNextAgent = useCallback(() => goToAgent(1), [goToAgent]);
-  const handleSpawnAgentShortcut = useCallback(() => setShowSpawnDialog(true), []);
+  // Every entry point to the spawn dialog goes through here so a renderer stall
+  // reported around the dialog's mount can name what triggered it.
+  const openSpawnDialog = useCallback(() => {
+    markUiEvent('open-spawn-dialog');
+    setShowSpawnDialog(true);
+  }, []);
+  const handleSpawnAgentShortcut = openSpawnDialog;
 
   // The single cross-agent attention feed — lifted here so the SAME instance
   // (its dismiss/snooze state included) drives goToNextAttention below and the
@@ -1228,8 +1235,13 @@ function App() {
   // Jump to the next item in the SORTED attention feed (priority order), wrapping
   // around starting just after the active agent so all kinds — question / stuck /
   // error / done as well as approvals — are reachable. Flashes if nothing needs you.
+  // Reads the feed through attentionRef rather than closing over attention.items.
+  // That array is rebuilt on every session snapshot (~60/s while an agent
+  // streams); depending on it here churned this callback's identity at the same
+  // rate, and useKeyboardNav takes it as an effect dep — so the global key
+  // listener was being torn down and rebound continuously.
   const goToNextAttention = useCallback(() => {
-    const feed = attention.items;
+    const feed = attentionRef.current?.items ?? [];
     if (feed.length === 0) {
       setNoAttentionFlash(true);
       if (noAttentionTimer.current) clearTimeout(noAttentionTimer.current);
@@ -1243,7 +1255,7 @@ function App() {
     const ordered = [...feed.slice(rotateBy), ...feed.slice(0, rotateBy)];
     const next = ordered.find((it) => it.agentId !== activeAgentId) ?? feed[0];
     handleSelectAgent(next.agentId);
-  }, [attention.items, activeAgentId, handleSelectAgent]);
+  }, [activeAgentId, handleSelectAgent]);
 
   // Tell main which agent session is on screen so notifications can skip the
   // one you're watching.
@@ -1794,6 +1806,7 @@ function App() {
     },
     openSpawnDialog: (opts) => {
       setSpawnDialogCwd(opts.cwd?.trim() || null);
+      markUiEvent('open-spawn-dialog');
       setShowSpawnDialog(true);
     },
     openPane: (paneType, opts) =>
@@ -1987,7 +2000,7 @@ function App() {
           setViewLevel={setViewLevel}
           onOpenAgent={handleSelectAgent}
           onRespawnAgent={respawnAgent}
-          onSpawnAgent={() => setShowSpawnDialog(true)}
+          onSpawnAgent={openSpawnDialog}
           attention={attention}
         >
           <div className="app-root">
@@ -2017,7 +2030,7 @@ function App() {
                     handleSelectAgent(id);
                     if (sidebarOverlay) setSidebarCollapsed(true);
                   }}
-                  onSpawnAgent={() => setShowSpawnDialog(true)}
+                  onSpawnAgent={openSpawnDialog}
                   onTerminateAgent={handleTerminateAgent}
                   onRenameAgent={renameAgent}
                   onOpenInbox={openInbox}
@@ -2115,7 +2128,7 @@ function App() {
                 ))
               ) : (
                 <HomeSpace
-                  onSpawn={() => setShowSpawnDialog(true)}
+                  onSpawn={openSpawnDialog}
                   spawnShortcut={config.keybindings?.shortcuts?.['spawn-agent'] ?? 'ctrl+shift+n'}
                 />
               )}
@@ -2134,7 +2147,7 @@ function App() {
                 firstRun={firstRunWelcome}
                 onSpawn={() => {
                   dismissWelcome();
-                  setShowSpawnDialog(true);
+                  openSpawnDialog();
                 }}
                 onDismiss={dismissWelcome}
                 onOpenKeybindings={() => {
@@ -2207,7 +2220,7 @@ function App() {
               prefix={kbPrefix}
               onSpawnAgent={() => {
                 setShowCommandPalette(false);
-                setShowSpawnDialog(true);
+                openSpawnDialog();
               }}
               onShowWelcome={() => {
                 setShowCommandPalette(false);
