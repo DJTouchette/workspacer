@@ -974,7 +974,7 @@ class ClaudeSessionStore {
   private pushUpdate(session: ClaudeSessionState): void {
     if (!COALESCE_SNAPSHOT_UPDATES) {
       // Original immediate-send path (byte-for-byte identical behaviour).
-      publishSnapshot({ ...session });
+      publishSnapshot(() => ({ ...session }));
       if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
       this.mainWindow.webContents.send('claude-session:update', session.sessionId, { ...session });
       return;
@@ -995,9 +995,9 @@ class ClaudeSessionStore {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     // Mirror onto the hub bus for the web build (no-op when remote sharing is
-    // off). Guard the object spread so the allocation is skipped when the hub
-    // won't use it (publishSnapshot is a no-op when sharing is disabled).
-    publishSnapshot({ ...session });
+    // off). Passed as a factory so the object spread is skipped entirely when
+    // the hub won't use it.
+    publishSnapshot(() => ({ ...session }));
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
     this.mainWindow.webContents.send('claude-session:update', session.sessionId, { ...session });
   }

@@ -110,6 +110,9 @@ const TICK_MS = 2500;
 const IDLE_AFTER_MS = 60_000;
 /** Most-recent runs kept in the snapshot. */
 const MAX_RUNS = 3;
+/** Subagent transcripts held parsed in memory. A watch pane looks at one agent
+ *  at a time, so this only needs to cover a few panes plus their history. */
+const MAX_AGENT_FILE_CACHE = 8;
 
 interface TailState {
   offset: number;
@@ -326,6 +329,13 @@ function applyTranscriptEntry(
 
 class WorkflowWatcher {
   private watches = new Map<string, SessionWatch>();
+  /** Parsed subagent transcripts, keyed by file and invalidated by (mtime, size).
+   *  Both views of one file share an entry so a watch pane's two requests per
+   *  tick cost a single read. See parseAgentFile. */
+  private agentFileCache = new Map<
+    string,
+    { mtimeMs: number; size: number; views: Map<string, unknown> }
+  >();
 
   /** Begin watching a session. Idempotent; safe to call once transcriptPath is known. */
   attach(
@@ -377,22 +387,81 @@ class WorkflowWatcher {
    * one-line summaries) — enough to read what the agent did without shipping
    * the raw JSONL. `null` if the session/run/file is gone.
    */
-  readAgentTranscript(
-    sessionId: string,
-    runId: string | null,
-    agentId: string,
-  ): { role: string; text: string }[] | null {
+  /** Resolve a subagent's JSONL path, or null if the session/run is gone. */
+  private agentFilePath(sessionId: string, runId: string | null, agentId: string): string | null {
     const watch = this.watches.get(sessionId);
     if (!watch) return null;
     const dir = runId ? watch.runs.get(runId)?.dir : path.join(watch.sessionDir, 'subagents');
     if (!dir) return null;
-    const file = path.join(dir, `agent-${stripAgentPrefix(agentId)}.jsonl`);
-    let raw: string;
+    return path.join(dir, `agent-${stripAgentPrefix(agentId)}.jsonl`);
+  }
+
+  /**
+   * Read + parse a subagent transcript, off the event loop and memoized on the
+   * file's (mtime, size).
+   *
+   * A watch pane re-requests both views of the same file every 2.5s for as long
+   * as it is open. Doing that with `readFileSync` + a full `JSON.parse` per line
+   * blocked the main process — the one thread that also forwards PTY bytes and
+   * services every other pane's IPC — for as long as the parse took, twice per
+   * tick, indefinitely. A transcript only grows every few seconds, so almost
+   * every tick can be answered by a single `stat`.
+   */
+  private async parseAgentFile<T>(
+    sessionId: string,
+    runId: string | null,
+    agentId: string,
+    view: 'transcript' | 'conversation',
+    parse: (raw: string) => T,
+  ): Promise<T | null> {
+    const file = this.agentFilePath(sessionId, runId, agentId);
+    if (!file) return null;
+
+    let stat: fs.Stats;
     try {
-      raw = fs.readFileSync(file, 'utf8');
+      stat = await fs.promises.stat(file);
     } catch {
       return null;
     }
+
+    let entry = this.agentFileCache.get(file);
+    if (!entry || entry.mtimeMs !== stat.mtimeMs || entry.size !== stat.size) {
+      entry = { mtimeMs: stat.mtimeMs, size: stat.size, views: new Map() };
+      this.agentFileCache.set(file, entry);
+    } else if (entry.views.has(view)) {
+      return entry.views.get(view) as T;
+    }
+
+    let raw: string;
+    try {
+      raw = await fs.promises.readFile(file, 'utf8');
+    } catch {
+      this.agentFileCache.delete(file);
+      return null;
+    }
+    const parsed = parse(raw);
+    entry.views.set(view, parsed);
+
+    // Map iterates in insertion order, so this drops the least recently added.
+    while (this.agentFileCache.size > MAX_AGENT_FILE_CACHE) {
+      const oldest = this.agentFileCache.keys().next().value;
+      if (oldest === undefined) break;
+      this.agentFileCache.delete(oldest);
+    }
+    return parsed;
+  }
+
+  readAgentTranscript(
+    sessionId: string,
+    runId: string | null,
+    agentId: string,
+  ): Promise<{ role: string; text: string }[] | null> {
+    return this.parseAgentFile(sessionId, runId, agentId, 'transcript', (raw) =>
+      this.parseTranscript(raw),
+    );
+  }
+
+  private parseTranscript(raw: string): { role: string; text: string }[] {
     const turns: { role: string; text: string }[] = [];
     for (const line of raw.split('\n')) {
       if (!line.trim()) continue;
@@ -442,18 +511,13 @@ class WorkflowWatcher {
     sessionId: string,
     runId: string | null,
     agentId: string,
-  ): AgentConversationTurn[] | null {
-    const watch = this.watches.get(sessionId);
-    if (!watch) return null;
-    const dir = runId ? watch.runs.get(runId)?.dir : path.join(watch.sessionDir, 'subagents');
-    if (!dir) return null;
-    const file = path.join(dir, `agent-${stripAgentPrefix(agentId)}.jsonl`);
-    let raw: string;
-    try {
-      raw = fs.readFileSync(file, 'utf8');
-    } catch {
-      return null;
-    }
+  ): Promise<AgentConversationTurn[] | null> {
+    return this.parseAgentFile(sessionId, runId, agentId, 'conversation', (raw) =>
+      this.parseConversation(raw),
+    );
+  }
+
+  private parseConversation(raw: string): AgentConversationTurn[] {
     const turns: AgentConversationTurn[] = [];
     const toolCallById = new Map<string, AgentToolCall>();
     for (const line of raw.split('\n')) {

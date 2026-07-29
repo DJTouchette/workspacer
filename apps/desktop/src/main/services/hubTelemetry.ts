@@ -28,9 +28,13 @@ import type { ClaudeSessionSnapshot } from './claudeSessionStore';
  * no web consumer, so we skip the extra serialization entirely and the
  * desktop-only path is unchanged.
  */
-export function publishSnapshot(snapshot: ClaudeSessionSnapshot): void {
+export function publishSnapshot(makeSnapshot: () => ClaudeSessionSnapshot): void {
+  // Takes a factory, not a snapshot: the caller's `{ ...session }` copy is
+  // itself part of the cost this gate exists to avoid, and building it before
+  // the gate meant every flush of every session paid for it whether or not
+  // anything was listening.
   if (!isRemoteShareEnabled()) return;
-  publishToHub({ type: 'agent.snapshot', data: snapshot });
+  publishToHub({ type: 'agent.snapshot', data: makeSnapshot() });
 }
 
 interface SessionMeta {

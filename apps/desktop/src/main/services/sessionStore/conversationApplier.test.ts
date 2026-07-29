@@ -681,3 +681,54 @@ describe('applyConversationItems — slash commands', () => {
     expect(outputs).toEqual(['OUT-A', 'OUT-B']);
   });
 });
+
+describe('applyConversationItems — payload bounds', () => {
+  it('truncates a huge tool result on the way in', () => {
+    // Stored verbatim, this response is re-cloned to the renderer on every
+    // flush — up to ~60/s — for the rest of the session. A single Read of a
+    // large file is what took measured sessions to 6.3MB and 3.1ms per clone.
+    const s = mkSession();
+    const huge = 'x'.repeat(2 * 1024 * 1024);
+    applyConversationItems(
+      s,
+      [
+        { kind: 'tool_use', id: 'tu_big', name: 'Read', input: { file_path: '/big.txt' } },
+        { kind: 'tool_result', tool_use_id: 'tu_big', content: huge },
+      ],
+      noUsage,
+    );
+    const tc = s.conversation.flatMap((t) => t.toolCalls ?? []).find((t) => t.id === 'tu_big');
+    expect(tc).toBeDefined();
+    expect(String(tc!.response).length).toBeLessThan(40_000);
+    expect(String(tc!.response)).toContain('[truncated');
+  });
+
+  it('leaves an ordinary tool result exactly as it arrived', () => {
+    const s = mkSession();
+    applyConversationItems(
+      s,
+      [
+        { kind: 'tool_use', id: 'tu_small', name: 'Bash', input: {} },
+        { kind: 'tool_result', tool_use_id: 'tu_small', content: 'done\n' },
+      ],
+      noUsage,
+    );
+    const tc = s.conversation.flatMap((t) => t.toolCalls ?? []).find((t) => t.id === 'tu_small');
+    expect(tc!.response).toBe('done\n');
+  });
+
+  it('caps recorded file changes instead of growing for the whole session', () => {
+    const s = mkSession();
+    (s as { provider?: string }).provider = 'codex';
+    for (let i = 0; i < 400; i++) {
+      applyConversationItems(
+        s,
+        [{ kind: 'tool_use', id: `edit_${i}`, name: 'edit', input: { path: `f${i}.ts` } }],
+        noUsage,
+      );
+    }
+    expect(s.fileChanges.length).toBeLessThanOrEqual(300);
+    // The cap keeps the RECENT end — the changed-files card shows latest first.
+    expect(s.fileChanges.at(-1)?.path).toBe('f399.ts');
+  });
+});

@@ -1,4 +1,10 @@
 import type { ClaudeSessionState, ToolCall } from '../claudeSessionStore';
+import {
+  capInPlace,
+  MAX_ACTIVE_TOOL_CALLS,
+  MAX_COMPLETED_TOOL_CALLS,
+  MAX_FILE_CHANGES,
+} from './bounds';
 
 // ── HookEventRouter ───────────────────────────────────────────────────────────
 //
@@ -6,17 +12,10 @@ import type { ClaudeSessionState, ToolCall } from '../claudeSessionStore';
 // session in-place (same as the original inline switch). The caller owns the
 // session object and handles side-effects (pushUpdate, watcher, notifier, etc.).
 
-// Safety caps so the live work log can't grow without bound if Stop (which
-// clears these) is never delivered — e.g. a session that dies mid-turn, or a
-// tool whose id never matches the transcript so housekeeping can't reap it.
-// Normal turns sit far below these; they only bound pathological cases.
-const MAX_ACTIVE_TOOL_CALLS = 50;
-const MAX_COMPLETED_TOOL_CALLS = 50;
-
-/** Keep only the most recent `max` entries, mutating in place. */
-function capInPlace<T>(arr: T[], max: number): void {
-  if (arr.length > max) arr.splice(0, arr.length - max);
-}
+// Safety caps live in ./bounds so this file and conversationApplier — the two
+// ingest paths into a session — can't drift. Normal turns sit far below them;
+// they bound pathological cases, and (since every flush clones the whole
+// session to the renderer) the per-frame IPC cost with them.
 
 /** Whether a PostToolUse `tool_response` payload signals a tool failure.
  *  Claude wraps errors as `{is_error:true}`; some tools return a plain string. */
@@ -75,6 +74,7 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
             input: event.tool_input ?? {},
             timestamp: Date.now(),
           });
+          capInPlace(session.fileChanges, MAX_FILE_CHANGES);
         }
         break;
       }
@@ -131,6 +131,7 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
           input: tc.input,
           timestamp: Date.now(),
         });
+        capInPlace(session.fileChanges, MAX_FILE_CHANGES);
       }
       break;
     }

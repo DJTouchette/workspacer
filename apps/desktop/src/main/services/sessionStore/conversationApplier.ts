@@ -1,5 +1,6 @@
 import type { ClaudeSessionState, PlanStep, ToolCall } from '../claudeSessionStore';
 import { applyStopEvent } from './hookEventRouter';
+import { capInPlace, MAX_FILE_CHANGES, truncateToolResponse } from './bounds';
 
 // ── Conversation delta application ───────────────────────────────────────────
 //
@@ -175,6 +176,7 @@ function recordManagedFileChange(session: ClaudeSessionState, tc: ToolCall, ts: 
   for (const path of paths) {
     session.fileChanges.push({ path, toolName: tc.name, input: tc.input, timestamp: ts });
   }
+  capInPlace(session.fileChanges, MAX_FILE_CHANGES);
 }
 
 /**
@@ -388,7 +390,12 @@ export function applyConversationItems(
           if (!tcs) continue;
           const tc = tcs.find((t) => t.id === item.tool_use_id);
           if (tc) {
-            tc.response = item.content ?? '';
+            // Truncated on the way in, not on the way out: this response is
+            // re-cloned to the renderer on every flush for the rest of the
+            // session, so a single multi-megabyte Read would otherwise be paid
+            // for ~60 times a second forever. Nothing renders more than a
+            // 4000-char excerpt of it.
+            tc.response = truncateToolResponse(item.content ?? '');
             if (item.is_error) tc.status = 'failed';
             // The call was created with completedAt == startedAt (the tool_use
             // row's own timestamp). The result's timestamp is when the tool

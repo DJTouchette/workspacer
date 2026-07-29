@@ -38,6 +38,7 @@ import { ensureSupervisorHome } from './services/supervisorSkill';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
+import { instrumentIpcHandlers, startEventLoopLagMonitor } from './lib/stallDiagnostics';
 import { listRecentSessions, listLiveSessionIds } from './services/recentSessions';
 import { readTextFile, writeTextFile, listDir } from './services/fileService';
 import { startWatch, stopWatch, setEmitSink } from './services/fileWatchService';
@@ -107,6 +108,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Guard so a second createWindow() call (macOS dock 'activate') is safe.
   if (ipcHandlersRegistered) return;
   ipcHandlersRegistered = true;
+
+  // Must precede the handler registrations below — the wrapper only covers
+  // channels registered after it's installed.
+  instrumentIpcHandlers();
+  startEventLoopLagMonitor();
 
   // ── Library (reusable prompts + skills) ──
   ipcMain.handle(IPC.LIBRARY_LIST, (_event, cwd?: string) => libraryService.list(cwd));
@@ -600,11 +606,22 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
   ipcMain.handle(IPC.HUB_REMOVE_PLUGIN, async (_event, id: string) => {
     try {
-      await fetch(`${HUB_HTTP_URL}/plugins/remove`, {
+      // Report the hub's answer instead of assuming success: a removal the hub
+      // refused (a sidecar that won't stop) used to resolve { ok: true }, so the
+      // pane cleared its spinner and the plugin silently reappeared on the next
+      // refetch with nothing logged anywhere. The timeout matches the sibling
+      // handlers — a wedged hub with the socket still open never settles fetch,
+      // and the renderer would await forever.
+      const res = await fetch(`${HUB_HTTP_URL}/plugins/remove`, {
         method: 'POST',
         headers: hubAuthHeaders(),
         body: JSON.stringify({ id }),
+        signal: AbortSignal.timeout(30_000),
       });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as any;
+        return { ok: false, error: body?.error || `HTTP ${res.status}` };
+      }
       return { ok: true };
     } catch (err) {
       return { ok: false, error: String((err as Error)?.message ?? err) };
@@ -618,6 +635,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           method: 'POST',
           headers: hubAuthHeaders(),
           body: JSON.stringify(args),
+          signal: AbortSignal.timeout(30_000),
         });
         const body = (await res.json()) as any;
         if (!res.ok) return { ok: false, error: body?.error || `HTTP ${res.status}` };
