@@ -402,8 +402,18 @@ const TOAST_TTL: Duration = Duration::from_millis(2500);
 pub struct TranscriptCache {
     /// The wrap width the lines were built for.
     pub width: usize,
-    /// Every folded + wrapped transcript line; the renderer slices out the
-    /// visible viewport.
+    /// The session these lines belong to — switching chats must not show the
+    /// previous one's transcript while the commit counters happen to agree.
+    pub session_id: Option<String>,
+    /// `ConvFold::commits` when these lines were built.
+    pub commits: u64,
+    /// The COMMITTED turns, folded + wrapped. The live tail (streaming
+    /// assistant text, the optimistic send echo) is deliberately not here: it
+    /// changes on every token, and including it meant every token threw away
+    /// the wrapped render of the entire conversation and re-parsed it — at ~700
+    /// KB of transcript that is ~35-40 ms per frame, which the delta rate
+    /// outruns. The renderer appends the tail per frame and slices the viewport
+    /// out of the two together.
     pub lines: Vec<ratatui::text::Line<'static>>,
 }
 
@@ -657,6 +667,15 @@ pub struct App {
     /// current `turns`/`pending_echo` at a given width. The main loop draws on
     /// every event (PTY chunks, SSE nudges, keystrokes, the tick), so without
     /// this every draw would re-parse the whole conversation's markdown.
+    /// Sessions with a full-conversation resync in flight, and when it started.
+    ///
+    /// A delta that can't be sequenced triggers a resync; without a guard every
+    /// further delta arriving during that round trip triggered another, each
+    /// response re-folding the whole conversation, and an older response
+    /// landing after a newer one would adopt a stale snapshot. The timestamp
+    /// self-heals: a failed fetch sends nothing back, so the guard must not
+    /// latch forever.
+    pub resyncing: std::collections::HashMap<String, Instant>,
     /// Cleared by [`App::invalidate_transcript_cache`] whenever the inputs
     /// change; the renderer refills it when the width differs.
     pub transcript_cache: Option<TranscriptCache>,
@@ -751,6 +770,7 @@ impl App {
             side: None,
             runs_open: None,
             runs: std::collections::HashMap::new(),
+            resyncing: std::collections::HashMap::new(),
             transcript_cache: None,
             chat_scroll: 0,
             chat_follow: false,
@@ -791,6 +811,22 @@ impl App {
         self.toast = Some((msg.into(), Instant::now()));
     }
 
+    /// Claim the resync slot for a session. Returns false when one is already
+    /// in flight (and hasn't gone stale), so the caller skips the fetch.
+    pub(super) fn begin_resync(&mut self, session_id: &str) -> bool {
+        /// Long enough to cover a slow round trip, short enough that a failed
+        /// fetch doesn't wedge resync for the session.
+        const RESYNC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+        let now = Instant::now();
+        if let Some(started) = self.resyncing.get(session_id) {
+            if now.duration_since(*started) < RESYNC_TIMEOUT {
+                return false;
+            }
+        }
+        self.resyncing.insert(session_id.to_string(), now);
+        true
+    }
+
     /// Drop the memoized transcript render. Must be called whenever `turns`
     /// or `pending_echo` change; the renderer rebuilds it on the next draw.
     pub(super) fn invalidate_transcript_cache(&mut self) {
@@ -806,6 +842,7 @@ impl App {
                 session_id,
                 snapshot,
             } => {
+                self.resyncing.remove(&session_id);
                 self.adopt_snapshot(&session_id, &snapshot);
                 if self.chat_session_id().as_deref() == Some(session_id.as_str()) {
                     self.retire_echo();
@@ -1352,12 +1389,17 @@ impl App {
         };
         let sequenced = fold.apply_delta(delta.seq, delta.reset, &delta.items);
         if !sequenced {
-            self.load_transcript(sid.clone());
+            // At most one resync in flight per session — see `resyncing`.
+            if self.begin_resync(&sid) {
+                self.load_transcript(sid.clone());
+            }
             return;
         }
         if self.chat_session_id().as_deref() == Some(sid.as_str()) {
             self.retire_echo();
-            self.invalidate_transcript_cache();
+            // Deliberately no invalidate: the render memo keys on the fold's
+            // commit counter, so a committed change rebuilds and a streamed
+            // token does not.
         }
     }
 
@@ -1388,6 +1430,18 @@ impl App {
             .and_then(|sid| self.folds.get(&sid))
             .map(|f| f.turns())
             .unwrap_or(&[])
+    }
+
+    /// Structural-change counter for the open chat's committed turns. The
+    /// transcript render memo keys off this, so a streamed token (which only
+    /// moves `pending_text`) doesn't invalidate the wrapped render of the whole
+    /// conversation. Distinct from a session switch, which changes which fold
+    /// answers here — hence the session id in the cache key too.
+    pub fn commits(&self) -> u64 {
+        self.chat_session_id()
+            .and_then(|sid| self.folds.get(&sid))
+            .map(|f| f.commits())
+            .unwrap_or(0)
     }
 
     /// The open chat's uncommitted assistant text — the live tail of a message
@@ -1844,8 +1898,14 @@ impl App {
         let sid = session_id.clone();
         let handle = tokio::spawn(async move {
             use crate::claudemon::StreamEnd;
-            let mut backoff = std::time::Duration::from_millis(300);
+            const MIN_BACKOFF: std::time::Duration = std::time::Duration::from_millis(300);
+            const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(5);
+            /// A stream that stayed up this long was a working connection, not
+            /// a failed retry — the next drop starts over from the bottom.
+            const HEALTHY_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
+            let mut backoff = MIN_BACKOFF;
             loop {
+                let started = std::time::Instant::now();
                 match cm.read_pty_stream(&sid, &pty_tx).await {
                     // No PTY for this session — tell the app to use the
                     // transcript and stop trying.
@@ -1855,8 +1915,16 @@ impl App {
                     }
                     Ok(StreamEnd::Disconnected) | Err(_) => {}
                 }
+                // Reset after a healthy run. Without this the backoff only ever
+                // grew: a handful of drops over a long session pinned it at the
+                // 5s ceiling forever, so every later blip froze the terminal
+                // pane for a full five seconds before the replay arrived, even
+                // though the daemon was answering in milliseconds.
+                if started.elapsed() >= HEALTHY_AFTER {
+                    backoff = MIN_BACKOFF;
+                }
                 tokio::time::sleep(backoff).await;
-                backoff = (backoff * 2).min(std::time::Duration::from_secs(5));
+                backoff = (backoff * 2).min(MAX_BACKOFF);
             }
         });
         self.term_tasks.insert(session_id, handle.abort_handle());
@@ -2859,6 +2927,8 @@ mod tests {
         app.open_agent();
         app.transcript_cache = Some(TranscriptCache {
             width: 80,
+            session_id: app.chat_session_id(),
+            commits: app.commits(),
             lines: Vec::new(),
         });
         app.apply_msg(AppMsg::Transcript {
@@ -2869,6 +2939,109 @@ mod tests {
             app.transcript_cache.is_none(),
             "new turns drop the cached lines so the next draw re-renders"
         );
+    }
+
+    /// The memo is keyed on the fold's commit counter, so the render cost of a
+    /// long conversation is paid when a turn commits — not on every streamed
+    /// token. Before this split a several-hundred-KB transcript was re-parsed
+    /// and re-wrapped per token, which the delta rate outruns.
+    #[tokio::test]
+    async fn a_streamed_token_does_not_invalidate_the_committed_render() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_cwd("s1", "/repo", "input")]);
+        app.selected = 1;
+        app.open_agent();
+        app.seed_fold(
+            "s1",
+            &serde_json::json!({
+                "seq": 1,
+                "items": [{ "kind": "user_message", "text": "go" }]
+            }),
+        );
+        let before = app.commits();
+
+        // One assistant_text delta: the live tail moves, nothing commits.
+        app.apply_msg(AppMsg::ConvDelta(Box::new(crate::claudemon::ConvDelta {
+            session_id: "s1".into(),
+            seq: 2,
+            reset: false,
+            items: vec![serde_json::json!({ "kind": "assistant_text", "text": "wor" })],
+        })));
+        assert_eq!(
+            app.commits(),
+            before,
+            "streamed text is pending, not a committed turn"
+        );
+        assert_eq!(app.pending_text(), Some("wor"));
+
+        // A tool call in the same stream DOES commit, so the memo must rebuild.
+        app.apply_msg(AppMsg::ConvDelta(Box::new(crate::claudemon::ConvDelta {
+            session_id: "s1".into(),
+            seq: 3,
+            reset: false,
+            items: vec![serde_json::json!({
+                "kind": "tool_use", "id": "t1", "name": "Bash", "input": {}
+            })],
+        })));
+        assert!(
+            app.commits() > before,
+            "a committed turn bumps the render key"
+        );
+    }
+
+    /// A sequencing gap must fire ONE resync, not one per delta that lands
+    /// during the round trip — each of those re-folded the whole conversation,
+    /// and an older response arriving after a newer one adopted a stale
+    /// snapshot.
+    #[tokio::test]
+    async fn a_sequencing_gap_resyncs_once_while_the_fetch_is_in_flight() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_cwd("s1", "/repo", "input")]);
+        app.selected = 1;
+        app.open_agent();
+        app.seed_fold(
+            "s1",
+            &serde_json::json!({
+                "seq": 1,
+                "items": [{ "kind": "user_message", "text": "go" }]
+            }),
+        );
+
+        let gap = |seq: u64| {
+            AppMsg::ConvDelta(Box::new(crate::claudemon::ConvDelta {
+                session_id: "s1".into(),
+                seq,
+                reset: false,
+                items: vec![serde_json::json!({ "kind": "assistant_text", "text": "x" })],
+            }))
+        };
+        // seq 9 can't follow seq 1 with one item — that's the gap.
+        app.apply_msg(gap(9));
+        assert!(app.resyncing.contains_key("s1"), "first gap claims the slot");
+        assert!(
+            !app.begin_resync("s1"),
+            "further gaps during the fetch are dropped"
+        );
+
+        // The snapshot landing releases the slot for the next real gap.
+        app.apply_msg(AppMsg::Transcript {
+            session_id: "s1".into(),
+            snapshot: snapshot(&["fresh"]),
+        });
+        assert!(!app.resyncing.contains_key("s1"));
+        assert!(app.begin_resync("s1"), "a later gap can resync again");
+    }
+
+    /// A fetch that fails sends nothing back, so the guard must self-heal
+    /// rather than wedging resync for the session forever.
+    #[tokio::test]
+    async fn a_stale_resync_claim_expires() {
+        let mut app = test_app();
+        app.resyncing.insert(
+            "s1".into(),
+            Instant::now() - std::time::Duration::from_secs(30),
+        );
+        assert!(app.begin_resync("s1"), "a stale claim is reclaimable");
     }
 
     fn questions(v: serde_json::Value) -> Vec<crate::types::Question> {

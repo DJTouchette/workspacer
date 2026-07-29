@@ -203,14 +203,24 @@ fn meta_id(file_name: &str) -> Option<&str> {
 /// megabytes, and all we want is the most recent `tool_use` name. A partial
 /// first line from cutting mid-file simply fails to parse and is skipped.
 fn last_tool_from_transcript(path: &Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
     const TAIL: u64 = 16 * 1024;
     let len = fs::metadata(path).ok()?.len();
     if len == 0 {
         return None;
     }
-    let bytes = fs::read(path).ok()?;
-    let start = bytes.len().saturating_sub(TAIL as usize);
-    let text = String::from_utf8_lossy(&bytes[start..]);
+    // Seek to the tail rather than reading the file and slicing: the runs
+    // overlay re-reads every subagent transcript in the directory once a
+    // second, so reading whole multi-hundred-KB files to look at their last
+    // 16 KiB churned megabytes per second on a background thread — and the cost
+    // grew with transcript size instead of staying constant, which is exactly
+    // what the bound was supposed to prevent.
+    let mut file = fs::File::open(path).ok()?;
+    let start = len.saturating_sub(TAIL);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut bytes = Vec::with_capacity(TAIL.min(len) as usize);
+    file.read_to_end(&mut bytes).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
     let mut last = None;
     for line in text.lines() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
@@ -651,4 +661,74 @@ mod tests {
         assert_eq!(runs.workflows.len(), 2);
         assert_eq!(runs.workflows[0].run_id, "wf_live", "live work first");
     }
+
+    /// The tail bound is the point: the runs overlay re-reads every subagent
+    /// transcript in the directory once a second, so this must cost the same
+    /// whether the file is 20 KB or 20 MB.
+    #[test]
+    fn last_tool_reads_only_the_tail_of_a_large_transcript() {
+        let fx = Fixture::new("tail");
+        let row = |tool: &str| {
+            serde_json::json!({
+                "type": "assistant",
+                "message": { "content": [{ "type": "tool_use", "name": tool }] }
+            })
+            .to_string()
+        };
+        // An early tool call, then >16 KiB of filler, then the recent one. The
+        // early name is only reachable by a caller that read the whole file.
+        let filler = serde_json::json!({ "type": "user", "message": {
+            "content": "x".repeat(1024)
+        }})
+        .to_string();
+        let mut body = String::new();
+        body.push_str(&row("AncientTool"));
+        body.push('\n');
+        for _ in 0..40 {
+            body.push_str(&filler);
+            body.push('\n');
+        }
+        body.push_str(&row("RecentTool"));
+        body.push('\n');
+        fx.write("subagents/agent-a.jsonl", &body);
+
+        let path = fx.dir().join("subagents/agent-a.jsonl");
+        assert!(
+            fs::metadata(&path).unwrap().len() > 16 * 1024,
+            "fixture must exceed the tail window to be meaningful"
+        );
+        assert_eq!(
+            last_tool_from_transcript(&path),
+            Some("RecentTool".to_string()),
+            "the most recent tool_use in the tail wins"
+        );
+    }
+
+    #[test]
+    fn last_tool_handles_a_short_transcript_and_a_partial_first_line() {
+        let fx = Fixture::new("short");
+        // Deliberately leading with a truncated row: cutting mid-file leaves one,
+        // and it must be skipped rather than aborting the scan.
+        fx.write(
+            "subagents/agent-b.jsonl",
+            "{\"type\":\"assist\n{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\"}]}}\n",
+        );
+        let path = fx.dir().join("subagents/agent-b.jsonl");
+        assert_eq!(last_tool_from_transcript(&path), Some("Bash".to_string()));
+    }
+
+    #[test]
+    fn last_tool_is_none_for_an_empty_or_missing_transcript() {
+        let fx = Fixture::new("empty");
+        fx.write("subagents/agent-c.jsonl", "");
+        assert_eq!(
+            last_tool_from_transcript(&fx.dir().join("subagents/agent-c.jsonl")),
+            None
+        );
+        assert_eq!(
+            last_tool_from_transcript(&fx.dir().join("subagents/nope.jsonl")),
+            None
+        );
+    }
+
 }

@@ -691,19 +691,27 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
     // the cache is invalidated whenever turns/echo change, and rebuilt here
     // when the width differs.
     let inner_w = rows[0].width.saturating_sub(2) as usize;
-    let stale = app
-        .transcript_cache
-        .as_ref()
-        .is_none_or(|c| c.width != inner_w);
+    let commits = app.commits();
+    let session_id = app.chat_session_id();
+    let stale = app.transcript_cache.as_ref().is_none_or(|c| {
+        c.width != inner_w || c.commits != commits || c.session_id != session_id
+    });
     if stale {
-        let lines = transcript_lines(app, inner_w);
+        let lines = transcript_committed_lines(app, inner_w);
         app.transcript_cache = Some(crate::app::TranscriptCache {
             width: inner_w,
+            session_id,
+            commits,
             lines,
         });
     }
     let cache = app.transcript_cache.as_ref().expect("cache just ensured");
-    let total = cache.lines.len();
+    // The live tail is rebuilt every frame by design — it's the part that
+    // actually changes per token, and it is a handful of lines, not the whole
+    // conversation.
+    let tail = transcript_tail_lines(app, inner_w);
+    let head_len = cache.lines.len();
+    let total = head_len + tail.len();
     let viewport = rows[0].height.saturating_sub(2) as usize;
     let max_scroll = total.saturating_sub(viewport);
     let scroll = if app.chat_follow {
@@ -714,7 +722,23 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
     // Only the visible window feeds the widget: scrolling by slice keeps the
     // offset in usize (no u16 ceiling on very long transcripts) and clones a
     // viewport's worth of lines instead of the whole conversation.
-    let visible: Vec<Line> = cache.lines[scroll..(scroll + viewport).min(total)].to_vec();
+    let mut visible: Vec<Line> = Vec::with_capacity(viewport);
+    if scroll < head_len {
+        visible.extend_from_slice(&cache.lines[scroll..(scroll + viewport).min(head_len)]);
+    }
+    if visible.len() < viewport {
+        let start = scroll.saturating_sub(head_len);
+        if start < tail.len() {
+            let end = (start + viewport - visible.len()).min(tail.len());
+            visible.extend_from_slice(&tail[start..end]);
+        }
+    }
+    if total == 0 {
+        visible.push(Line::from(Span::styled(
+            "no messages yet",
+            Style::default().fg(app.theme.dim),
+        )));
+    }
     app.chat_scroll = scroll;
     let working = agent.as_ref().is_some_and(|a| a.is_busy());
     let block = Block::default()
@@ -815,22 +839,12 @@ struct ToolRow {
 /// grouped WorkCard) — except Edit/MultiEdit rows, whose diffs stay visible
 /// beneath the summary. A pending optimistic send echo renders as a trailing
 /// user turn.
-fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
+fn transcript_committed_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     let t = &app.theme;
     let w = width.max(10);
     let mut out: Vec<Line> = Vec::new();
-    if app.turns().is_empty() && app.pending_text().is_none() && app.pending_echo.is_none() {
-        out.push(Line::from(Span::styled(
-            "no messages yet",
-            Style::default().fg(t.dim),
-        )));
-        return out;
-    }
     // Assistant turn headers name the actual backend (claude / codex / …).
-    let agent_label = app
-        .chat_session_id()
-        .map(|sid| app.provider_for(&sid))
-        .unwrap_or_else(|| "claude".to_string());
+    let agent_label = agent_label(app);
     let mut run: Vec<ToolRow> = Vec::new();
     for turn in app.turns() {
         let tool_only = turn.role == Role::Assistant
@@ -882,11 +896,33 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         out.push(Line::raw(""));
     }
     flush_tool_run(&mut out, &mut run, t, w);
+    out
+}
 
-    // The live tail: assistant text still arriving, not yet a committed turn.
-    // Rendered through the same markdown pass as a finished message, so a
-    // half-written list or code fence looks like itself while it streams rather
-    // than snapping into shape at the end.
+/// Assistant turn headers name the actual backend (claude / codex / …).
+fn agent_label(app: &App) -> String {
+    app.chat_session_id()
+        .map(|sid| app.provider_for(&sid))
+        .unwrap_or_else(|| "claude".to_string())
+}
+
+/// The uncommitted tail of the transcript, rebuilt on every draw.
+///
+/// Split out from the committed turns because this is the only part that moves
+/// per streamed token. Folding it into the memo meant each token invalidated
+/// the wrapped render of the entire conversation, so the redraw cost scaled
+/// with transcript length at the delta rate — at a few hundred KB the loop
+/// spends all its time rebuilding and the backlog grows.
+fn transcript_tail_lines(app: &App, width: usize) -> Vec<Line<'static>> {
+    let t = &app.theme;
+    let w = width.max(10);
+    let mut out: Vec<Line> = Vec::new();
+    let agent_label = agent_label(app);
+
+    // Assistant text still arriving, not yet a committed turn. Rendered through
+    // the same markdown pass as a finished message, so a half-written list or
+    // code fence looks like itself while it streams rather than snapping into
+    // shape at the end.
     if let Some(partial) = app.pending_text() {
         if !matches!(app.turns().last().map(|t| t.role), Some(Role::Assistant)) {
             push_role_label(&mut out, t, Role::Assistant, &agent_label);
@@ -3053,6 +3089,15 @@ mod tests {
         assert_eq!(progress_bar(4, 4), "▰▰▰▰▰▰▰▰");
         assert_eq!(progress_bar(1, 8).chars().filter(|c| *c == '▰').count(), 1);
         assert_eq!(progress_bar(0, 0), "", "no plan, no meter");
+    }
+
+    /// The full transcript render (committed + live tail), as the draw path
+    /// composes it. Test-only: production slices the viewport out of the two
+    /// halves separately so the committed one stays memoized across tokens.
+    fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
+        let mut out = transcript_committed_lines(app, width);
+        out.extend(transcript_tail_lines(app, width));
+        out
     }
 
     #[test]

@@ -548,6 +548,12 @@ pub struct ConvFold {
     seen_tool_ids: HashSet<String>,
     /// Sequence of the last item applied (claudemon's per-session counter).
     seq: u64,
+    /// Bumped whenever `turns` structurally changes (a turn or part appended, a
+    /// tool result attached, a reset). The render memo keys off this so a
+    /// streamed token — which only touches `pending` — no longer invalidates the
+    /// wrapped render of the entire committed conversation. See
+    /// `App::transcript_cache`.
+    commits: u64,
     plan: Option<Plan>,
 }
 
@@ -570,12 +576,19 @@ impl ConvFold {
             tool_loc: HashMap::new(),
             seen_tool_ids: HashSet::new(),
             seq: 0,
+            commits: 0,
             plan: None,
         }
     }
 
     pub fn turns(&self) -> &[Turn] {
         &self.turns
+    }
+
+    /// Monotonic counter of structural changes to `turns` — the cache key for
+    /// anything that renders the committed conversation.
+    pub fn commits(&self) -> u64 {
+        self.commits
     }
 
     /// The live, uncommitted assistant text — trimmed for display only.
@@ -679,6 +692,7 @@ impl ConvFold {
     }
 
     fn clear(&mut self) {
+        self.commits += 1;
         self.turns.clear();
         self.pending.clear();
         self.tool_loc.clear();
@@ -699,6 +713,7 @@ impl ConvFold {
         }
         let ti = self.turns.len() - 1;
         self.turns[ti].parts.push(part);
+        self.commits += 1;
         (ti, self.turns[ti].parts.len() - 1)
     }
 
@@ -809,6 +824,7 @@ impl ConvFold {
                             } else {
                                 snippet
                             });
+                            self.commits += 1;
                         }
                     }
                 }
