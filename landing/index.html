@@ -373,7 +373,8 @@
   .duo { display: flex; align-items: center; gap: 16px; padding: 20px; background: rgba(0,0,0,0.18); }
   .duo .d { flex: 1; min-width: 0; line-height: 0; }
   .duo .d img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 6px; }
-  .duo .m { flex: 0 0 26%; line-height: 0; }
+  .duo .phones { flex: 0 0 46%; display: flex; align-items: flex-start; gap: 12px; }
+  .duo .m { flex: 1; min-width: 0; line-height: 0; }
   .duo .m img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 14px; }
 
   /* ---- architecture ----------------------------------------------------- */
@@ -471,7 +472,10 @@
     .tree .row { grid-template-columns: 1fr; gap: 4px; }
     .shot-band { padding-top: 44px; }
     .duo { flex-direction: column; }
-    .duo .m { flex-basis: auto; width: 52%; }
+    /* column direction resolves `flex:1` against height — pin the basis back to auto
+       or the desktop shot collapses to nothing */
+    .duo .d { flex: none; width: 100%; }
+    .duo .phones { flex-basis: auto; width: 76%; }
     .proof-item { flex-basis: 50%; min-width: 0; }
   }
   @media (max-width: 560px) {
@@ -769,8 +773,12 @@
         <div class="duo">
           <a class="d" href="shots/web-remote.webp" target="_blank"><img width="1600" height="859" src="shots/web-remote.webp" loading="lazy"
             alt="The full workspacer renderer running in Chrome over Tailscale — same fleet, same panes, served by the hub" /></a>
-          <a class="m" href="shots/mobile-fleet.webp" target="_blank"><img width="640" height="1385" src="shots/mobile-fleet.webp" loading="lazy"
-            alt="The phone PWA fleet list: every agent with status, model, context % and cost" /></a>
+          <div class="phones">
+            <a class="m" href="shots/mobile-fleet.webp" target="_blank"><img width="640" height="859" src="shots/mobile-fleet.webp" loading="lazy"
+              alt="The phone PWA fleet list: needs-you / working / idle filters, and a card per agent with its status, model, context meter and cost" /></a>
+            <a class="m" href="shots/mobile-chat.webp" target="_blank"><img width="640" height="1098" src="shots/mobile-chat.webp" loading="lazy"
+              alt="The phone PWA chat tab: an agent transcript with collapsible work cards, diff counts, model and permission pills, and a composer" /></a>
+          </div>
         </div>
       </div>
     </div>

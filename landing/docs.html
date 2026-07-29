@@ -536,6 +536,10 @@ workspacer token revoke &lt;token-or-prefix&gt;</code></pre>
 <li><strong>Terminal mirror</strong> (<code>/remote</code>): a lightweight client with the agent list, chat, approvals, and a live mirror of the agent's real terminal. Works offline over Tailscale.</li>
 <li><strong>Full app</strong> (<code>/app</code>): the complete work{spacer} interface running in the browser, with full desktop parity. The desktop app serves it when sharing is on and a web build is present; the standalone server ships its own web build and serves it out of the box.</li>
 </ul>
+<p style="display:flex;gap:12px;align-items:flex-start;max-width:520px">
+<a href="shots/mobile-fleet.webp" target="_blank" style="flex:1;line-height:0"><img src="shots/mobile-fleet.webp" width="640" height="859" loading="lazy" style="width:100%;height:auto;border:1px solid #2a3134;border-radius:12px" alt="The mobile Fleet tab: filters for needs-you / working / idle, and a card per agent with status, model, context meter and cost" /></a>
+<a href="shots/mobile-chat.webp" target="_blank" style="flex:1;line-height:0"><img src="shots/mobile-chat.webp" width="640" height="1098" loading="lazy" style="width:100%;height:auto;border:1px solid #2a3134;border-radius:12px" alt="The mobile Chat tab: an agent transcript with collapsible work cards, diff counts, model and permission pills, and the composer" /></a>
+</p>
 <h3>what mirrors, and what stays put</h3>
 <ul>
 <li><strong>Layout mirrors.</strong> Your agent cards, tabs, and active tab are shared, so every client shows the same arrangement. With one person driving at a time, that just works; the last change wins.</li>
