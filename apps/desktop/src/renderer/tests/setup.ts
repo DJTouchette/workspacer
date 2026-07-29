@@ -94,6 +94,12 @@ const mockElectronAPI = {
   listRecentAgentSessions: vi.fn().mockResolvedValue([]),
   onClaudeSessionUpdate: vi.fn().mockReturnValue(() => {}),
   onBeforeQuit: vi.fn().mockReturnValue(() => {}),
+  // Composer attachments: host path of a dropped File, pasted-screenshot
+  // spilling, and attachment thumbnails. Default to "nothing there" so a test
+  // that doesn't care about attachments isn't perturbed by them.
+  getPathForFile: vi.fn().mockReturnValue(''),
+  saveClipboardImage: vi.fn().mockResolvedValue(null),
+  readImagePreview: vi.fn().mockRejectedValue(new Error('no preview in tests')),
 };
 
 Object.defineProperty(window, 'electronAPI', {

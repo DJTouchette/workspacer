@@ -67,6 +67,7 @@ const BUS_BACKED = [
   'claudeGate',
   // Files (editor)
   'readFile',
+  'readImagePreview',
   'writeFile',
   'readDir',
   'watchFile',
@@ -140,6 +141,8 @@ const KNOWN_STUBS = [
   'onInAppNotification', // main-process notification mirror; web ingests notify.post bus events instead
   'notifyEscalate', // browser Notification API on web (no Electron main to escalate to)
   'onNotificationActivate', // click-through for browser-API escalations (web-local, no bus RPC)
+  'getPathForFile', // Electron webUtils; a browser file has no host path → ''
+  'saveClipboardImage', // the host clipboard isn't the browser user's clipboard → null
 ] as const;
 
 function webBackendMethodKeys(): Set<string> {

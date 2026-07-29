@@ -30,6 +30,7 @@ import { listClaudeSessionsForDir } from './claudeSessionList';
 import { listRecentSessions } from './recentSessions';
 import { timelineReplay, type ReplayOp } from './timelineReplayService';
 import { readTextFile, writeTextFile, listDir } from './fileService';
+import { readImagePreview } from './imagePreview';
 import { startWatch, stopWatch } from './fileWatchService';
 import { searchProject } from './searchService';
 import * as git from './gitService';
@@ -926,6 +927,14 @@ export function registerHubCapabilities(): void {
     if (!p) throw new Error('fs.read requires a path');
     assertPathAllowed('fs.read', p, workspaceRoots());
     return readTextFile(p);
+  });
+  // Thumbnail for an image attachment — the web client's composer renders the
+  // same previews as the desktop one, over host paths it can't read directly.
+  cat('fs.readImage', (params: unknown) => {
+    const { path: p } = (params ?? {}) as { path?: string };
+    if (!p) throw new Error('fs.readImage requires a path');
+    assertPathAllowed('fs.readImage', p, workspaceRoots());
+    return readImagePreview(p);
   });
   cat('fs.write', (params: unknown) => {
     const { path: p, contents } = (params ?? {}) as { path?: string; contents?: string };

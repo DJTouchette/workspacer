@@ -390,7 +390,21 @@ export interface ElectronAPI {
   // Dialog
   pickFolder: (defaultPath?: string) => Promise<string | null>;
   pickFiles: (defaultPath?: string) => Promise<string[]>;
+  /** Host path of a dropped/pasted File (Electron's webUtils, bridged through
+   *  preload since `File.path` was removed in Electron 32). Returns '' when the
+   *  File isn't backed by a file on disk — and always on web, where the file
+   *  lives on the client, not the host. */
+  getPathForFile: (file: File) => string;
   readFile: (filePath: string) => Promise<{ path: string; contents: string; size: number }>;
+  /** Write a pasted screenshot to a temp PNG so it can be attached by path.
+   *  Resolves null when the clipboard holds no image (and always on web, where
+   *  the host clipboard isn't the one the user pasted from). */
+  saveClipboardImage: () => Promise<{ path: string; width: number; height: number } | null>;
+  /** Downscaled `data:` URL for an image path (composer attachment thumbnails).
+   *  Rejects when the path isn't a readable image. */
+  readImagePreview: (
+    filePath: string,
+  ) => Promise<{ path: string; dataUrl: string; width: number; height: number; size: number }>;
   writeFile: (filePath: string, contents: string) => Promise<{ ok: boolean }>;
   readDir: (
     dirPath: string,

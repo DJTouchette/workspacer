@@ -318,6 +318,20 @@ function App() {
       off?.();
     };
   }, []);
+  // Window-wide drop guard. Panes handle their own drops (ClaudePane attaches
+  // files, for instance); this only stops a file dropped on any *unhandled*
+  // area from being treated as a navigation, which replaces the whole app with
+  // the file. Passive: it never consumes a drop a pane wants.
+  useEffect(() => {
+    const swallow = (e: DragEvent) => e.preventDefault();
+    window.addEventListener('dragover', swallow);
+    window.addEventListener('drop', swallow);
+    return () => {
+      window.removeEventListener('dragover', swallow);
+      window.removeEventListener('drop', swallow);
+    };
+  }, []);
+
   const [paletteMode, setPaletteMode] = useState<'tab' | 'split'>('tab');
   const [paletteRestrict, setPaletteRestrict] = useState<'library' | undefined>(undefined);
   const [showSpawnDialog, setShowSpawnDialog] = useState(false);

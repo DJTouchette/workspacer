@@ -415,3 +415,134 @@ describe('ClaudePane cancel routing', () => {
     },
   );
 });
+
+/**
+ * Composer paste routing. A paste is one of four things and the pane has to
+ * tell them apart: files with a host path (attach), an image with none (spill
+ * to a temp PNG, then attach), a large text dump (collapse to a marker so it
+ * can't bury the draft), or ordinary text (leave alone). The collapse is only
+ * safe if the marker expands back to the exact bytes on send — that round trip
+ * is what these pin.
+ */
+function clipboard(opts: {
+  text?: string;
+  files?: File[];
+  items?: { kind: string; type: string }[];
+}): any {
+  return {
+    files: opts.files ?? [],
+    items: opts.items ?? [],
+    getData: (type: string) => (type === 'text/plain' ? (opts.text ?? '') : ''),
+  };
+}
+
+const bigPaste = Array.from({ length: 40 }, (_, i) => `log line ${i}`).join('\n');
+
+describe('ClaudePane composer paste', () => {
+  beforeEach(() => {
+    mockSession = makeSnapshot();
+    mockWrite.mockClear();
+    (window.electronAPI.claudeMessage as any) = vi.fn().mockResolvedValue({ ok: true });
+    (window.electronAPI.saveClipboardImage as any) = vi.fn().mockResolvedValue(null);
+    (window.electronAPI.getPathForFile as any) = vi.fn().mockReturnValue('');
+  });
+
+  it('collapses a large paste to a marker instead of filling the composer', () => {
+    render(<ClaudePane paneId="pp1" title="Claude" isActive cwd="/repo" />);
+    fireEvent.paste(composer(), { clipboardData: clipboard({ text: bigPaste }) });
+    expect(composer().value).toBe('[Pasted text #1 +40 lines]');
+    expect(composer().value).not.toContain('log line 0');
+  });
+
+  it('sends the full pasted text, not the marker', async () => {
+    render(<ClaudePane paneId="pp2" title="Claude" isActive cwd="/repo" />);
+    fireEvent.paste(composer(), { clipboardData: clipboard({ text: bigPaste }) });
+    fireEvent.change(composer(), {
+      target: { value: `what broke here?\n${composer().value}` },
+    });
+    fireEvent.keyDown(composer(), { key: 'Enter' });
+
+    await waitFor(() =>
+      expect(window.electronAPI.claudeMessage).toHaveBeenCalledWith(
+        'sess-1',
+        `what broke here?\n${bigPaste}`,
+      ),
+    );
+  });
+
+  it('a rejected send restores the marker, and the retry still expands it', async () => {
+    (window.electronAPI.claudeMessage as any) = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, mode: 'stopped' })
+      .mockResolvedValue({ ok: true });
+    render(<ClaudePane paneId="pp3" title="Claude" isActive cwd="/repo" />);
+    fireEvent.paste(composer(), { clipboardData: clipboard({ text: bigPaste }) });
+    fireEvent.keyDown(composer(), { key: 'Enter' });
+
+    // The draft comes back readable (the marker), not the 40-line expansion.
+    await waitFor(() => expect(composer().value).toBe('[Pasted text #1 +40 lines]'));
+
+    fireEvent.keyDown(composer(), { key: 'Enter' });
+    await waitFor(() =>
+      expect(window.electronAPI.claudeMessage).toHaveBeenLastCalledWith('sess-1', bigPaste),
+    );
+  });
+
+  it('leaves a short paste to the browser (no marker, no interception)', () => {
+    render(<ClaudePane paneId="pp4" title="Claude" isActive cwd="/repo" />);
+    const ev = fireEvent.paste(composer(), { clipboardData: clipboard({ text: 'one liner' }) });
+    expect(ev).toBe(true); // not preventDefault-ed
+    expect(composer().value).toBe('');
+  });
+
+  it('spills a pasted screenshot to a file and attaches it', async () => {
+    (window.electronAPI.saveClipboardImage as any) = vi
+      .fn()
+      .mockResolvedValue({ path: '/tmp/workspacer-pasted/pasted-1.png', width: 10, height: 10 });
+    render(<ClaudePane paneId="pp5" title="Claude" isActive cwd="/repo" />);
+
+    fireEvent.paste(composer(), {
+      clipboardData: clipboard({ items: [{ kind: 'file', type: 'image/png' }] }),
+    });
+
+    await waitFor(() => expect(window.electronAPI.saveClipboardImage).toHaveBeenCalled());
+    expect(await screen.findByText('pasted-1.png')).toBeInTheDocument();
+  });
+
+  it('does not spill anything for a plain-text paste', () => {
+    render(<ClaudePane paneId="pp6" title="Claude" isActive cwd="/repo" />);
+    fireEvent.paste(composer(), { clipboardData: clipboard({ text: 'hi' }) });
+    expect(window.electronAPI.saveClipboardImage).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * File drop. Handled on the pane's own element, not the document: a file
+ * dropped on a browser pane or the editor belongs to them, and used to be
+ * hijacked by whichever chat pane was active.
+ */
+describe('ClaudePane file drop', () => {
+  beforeEach(() => {
+    mockSession = makeSnapshot();
+    (window.electronAPI.getPathForFile as any) = vi.fn().mockReturnValue('/repo/shot.png');
+  });
+
+  const dropData = () => ({
+    files: [new File(['x'], 'shot.png')],
+    items: [],
+    types: ['Files'],
+    getData: () => '',
+  });
+
+  it('attaches a file dropped on the pane', async () => {
+    const { container } = render(<ClaudePane paneId="d1" title="Claude" isActive cwd="/repo" />);
+    fireEvent.drop(container.firstChild as Element, { dataTransfer: dropData() });
+    expect(await screen.findByText('shot.png')).toBeInTheDocument();
+  });
+
+  it('ignores a drop outside the pane (another pane owns it)', () => {
+    render(<ClaudePane paneId="d2" title="Claude" isActive cwd="/repo" />);
+    fireEvent.drop(document.body, { dataTransfer: dropData() });
+    expect(screen.queryByText('shot.png')).not.toBeInTheDocument();
+  });
+});

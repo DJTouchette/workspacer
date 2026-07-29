@@ -4,6 +4,9 @@
  *    shared cached port (that port is also used by claudeWrite and other
  *    subscribers — closing it kills the session's I/O).
  *  - A getPort() timeout rejection must be handled (no unhandled rejection).
+ *
+ * Plus the webUtils bridge, which has to live here (webUtils is renderer-side)
+ * and is the renderer's only way to turn a dropped File into a host path.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { IPC } from './shared/ipcChannels';
@@ -12,6 +15,7 @@ import { IPC } from './shared/ipcChannels';
 const captured = vi.hoisted(() => ({
   api: undefined as any,
   ipcHandlers: {} as Record<string, (...args: any[]) => void>,
+  getPathForFile: vi.fn((_file: unknown) => ''),
 }));
 
 vi.mock('electron', () => ({
@@ -26,6 +30,9 @@ vi.mock('electron', () => ({
     },
     send: vi.fn(),
     invoke: vi.fn(() => Promise.resolve()),
+  },
+  webUtils: {
+    getPathForFile: (file: unknown) => captured.getPathForFile(file),
   },
 }));
 
@@ -63,6 +70,24 @@ async function loadPreload() {
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
+
+describe('preload webUtils bridge', () => {
+  it('resolves a dropped File to its host path', async () => {
+    captured.getPathForFile.mockReturnValue('/repo/shot.png');
+    const api = await loadPreload();
+    const file = { name: 'shot.png' };
+    expect(api.getPathForFile(file)).toBe('/repo/shot.png');
+    expect(captured.getPathForFile).toHaveBeenCalledWith(file);
+  });
+
+  it('returns an empty path instead of throwing when handed a non-File', async () => {
+    captured.getPathForFile.mockImplementation(() => {
+      throw new Error('not a File object'); // what webUtils does for a Blob/plain object
+    });
+    const api = await loadPreload();
+    expect(api.getPathForFile({})).toBe('');
+  });
+});
 
 describe('preload MessagePort plumbing', () => {
   beforeEach(() => {

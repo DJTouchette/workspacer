@@ -250,13 +250,15 @@
 <li>Your message shows up immediately (optimistic), before the transcript catches up.</li>
 </ul>
 <p><strong>Session pills.</strong> Above the box sit three control pills — the <strong>model</strong>, the <strong>reasoning effort</strong>, and the <strong>permission mode</strong> (e.g. "Opus 4.5 ▾ · High ▾ · Full access ▾"). Model and permission mode are live switches: change them mid-session and they take effect without a respawn, on every provider that supports it. Reasoning effort applies through a restart (Claude resumes the same conversation).</p>
-<p><strong>Attaching files.</strong> Three ways, all land as chips above the box:</p>
+<p><strong>Attaching files.</strong> Four ways, all land as chips above the box:</p>
 <ul>
-<li><strong>Drag and drop</strong> anywhere onto the active pane.</li>
-<li><strong>Paste</strong> file paths into the composer.</li>
+<li><strong>Drag and drop</strong> onto the pane you want them in. Panes own their own drops, so a file dropped on a browser or editor pane goes to that pane, not to the chat.</li>
+<li><strong>Paste</strong> a file copied from your file manager.</li>
+<li><strong>Paste a screenshot.</strong> An image on the clipboard has no file behind it, so it's written to a temp PNG and attached by path.</li>
 <li>The <strong><code>+</code> button</strong> (in the composer or the status bar) opens a file picker rooted at the agent's cwd.</li>
 </ul>
-<p>Attaching a file auto-switches you to GUI mode. Files are prepended to your message as a path prefix when you send.</p>
+<p>Images show as thumbnails; everything else as a labelled chip. Attaching a file auto-switches you to GUI mode. Files are prepended to your message as a path prefix when you send.</p>
+<p><strong>Pasting a lot of text.</strong> A paste of six or more lines (or 800+ characters) collapses to a marker — <code>[Pasted text #1 +412 lines]</code> — so a long log can't bury the sentence you're writing around it. The marker is ordinary text: move it, duplicate it, or delete it to drop the paste. On send, every marker expands back to the full text, so the agent receives the whole thing.</p>
 <p><strong>Cancel.</strong> While the agent is working, a streaming indicator shows with a <strong>Cancel</strong> button. <code>Esc</code> cancels too. On a terminal-transport Claude that sends Escape to the PTY; on a managed session it's a <em>structural</em> interrupt — the daemon tells the provider to stop the turn (Codex <code>turn/interrupt</code>, OpenCode abort, Pi abort), so the turn dies but the session doesn't. Cancelling suppresses the streaming UI until the next activity cycle.</p>
 <h3>the inspector rail</h3>
 <p>A 320px rail on the right edge of the pane. Toggle it with the <code>PanelRight</code> button in the status bar or with <code>Ctrl+Shift+E</code> (configurable as the <code>toggle-inspector</code> shortcut). Its open/closed state persists across sessions. The rail is a sibling of the content area, so it stays put whether you're in GUI or terminal mode.</p>

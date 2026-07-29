@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from './shared/ipcChannels';
 import type {
   ClaudeSessionSnapshot,
@@ -569,9 +569,33 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pickFiles: (defaultPath?: string): Promise<string[]> =>
     ipcRenderer.invoke(IPC.DIALOG_PICK_FILES, defaultPath),
 
+  // Host path of a dropped/pasted File. Electron 32 removed the `File.path`
+  // augmentation the renderer used to read directly (its type declaration
+  // survives in electron.d.ts, so the loss was silent), and webUtils is a
+  // renderer-side API — so the lookup has to happen here, in preload, with the
+  // File passed across the bridge. Returns '' for a File not backed by a file
+  // on disk (a pasted screenshot, a JS-constructed Blob).
+  getPathForFile: (file: File): string => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return ''; // not a File object
+    }
+  },
+
   // Files (editor pane)
   readFile: (filePath: string): Promise<{ path: string; contents: string; size: number }> =>
     ipcRenderer.invoke(IPC.FILE_READ, filePath),
+  // Write a pasted screenshot to a temp PNG so it can be attached by path.
+  // Resolves null when the clipboard holds no image.
+  saveClipboardImage: (): Promise<{ path: string; width: number; height: number } | null> =>
+    ipcRenderer.invoke(IPC.CLIPBOARD_SAVE_IMAGE),
+  // Thumbnail for an image attachment (composer chips). Rejects when the path
+  // isn't a readable image — callers fall back to the icon chip.
+  readImagePreview: (
+    filePath: string,
+  ): Promise<{ path: string; dataUrl: string; width: number; height: number; size: number }> =>
+    ipcRenderer.invoke(IPC.FILE_READ_IMAGE, filePath),
   writeFile: (filePath: string, contents: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.FILE_WRITE, filePath, contents),
   readDir: (

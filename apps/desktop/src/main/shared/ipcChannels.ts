@@ -149,6 +149,8 @@ export const IPC = {
 
   // ── Files (editor pane) ──
   FILE_READ: 'file:read',
+  FILE_READ_IMAGE: 'file:read-image', // invoke: thumbnail data URL for an image path
+  CLIPBOARD_SAVE_IMAGE: 'clipboard:save-image', // invoke: spill a pasted image to a temp PNG
   FILE_WRITE: 'file:write',
   FILE_LIST_DIR: 'file:listDir',
   FILE_WATCH: 'file:watch',

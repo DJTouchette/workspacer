@@ -337,6 +337,11 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // ── Files (editor pane) ──────────────────────────────────────────────
     readFile: (filePath) =>
       client.call<{ path: string; contents: string; size: number }>('fs.read', { path: filePath }),
+    readImagePreview: (filePath) =>
+      client.call<{ path: string; dataUrl: string; width: number; height: number; size: number }>(
+        'fs.readImage',
+        { path: filePath },
+      ),
     writeFile: (filePath, contents) =>
       client.call<{ ok: boolean }>('fs.write', { path: filePath, contents }),
     readDir: (dirPath) =>
@@ -608,6 +613,14 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
           .filter(Boolean),
       );
     },
+    // A browser has no host path for a dropped file — the file is on the
+    // client machine, the agent runs on the host. Drops degrade to nothing
+    // attached rather than to a path that doesn't exist over there.
+    getPathForFile: () => '',
+    // The host's clipboard is not the one the browser user pasted from, so
+    // there is nothing to spill. (Attaching a browser-side paste would mean
+    // uploading the bytes to the host — a different feature.)
+    saveClipboardImage: () => Promise.resolve(null),
     importChromeCookies: () =>
       Promise.resolve({ imported: 0, skipped: 0, errors: ['not available on web'] }),
 

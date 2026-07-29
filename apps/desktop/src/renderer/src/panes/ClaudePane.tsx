@@ -60,6 +60,13 @@ import {
   extractFilePaths,
 } from '../components/claude/fileAttachment';
 import type { AttachedFile } from '../components/claude/fileAttachment';
+import {
+  shouldCollapsePaste,
+  pastePlaceholder,
+  expandPastedText,
+  pruneBlocks,
+  spliceAtSelection,
+} from '../components/claude/pastedText';
 import { useLibrary } from '../hooks/useLibrary';
 import { runLibraryItem } from '../lib/libraryBus';
 import type { SlashItem } from '../lib/slashItems';
@@ -194,6 +201,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   const conversationEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const contentAreaRef = useRef<HTMLDivElement>(null);
+  // The pane's outermost element — the drop target (see the drag & drop effect).
+  const paneRootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const { terminalTheme } = useTheme();
@@ -710,28 +719,36 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
 
   // ── File drag & drop ──
 
-  // Global drag & drop — document + window level with dropEffect to tell
-  // Electron/Chromium this is a valid drop target (prevents 🚫 cursor).
-  // Only the active pane registers listeners so panes don't compete and
-  // isDragOver / dragCounterRef can't get stuck on an inactive pane.
+  // Scoped to this pane's own element: a file dropped on a browser pane or the
+  // editor belongs to *them*, not to whichever chat happens to be active. (The
+  // window-wide guard that stops Chromium from navigating to a dropped file
+  // lives in App.tsx and stays on regardless.) A hidden pane can't receive
+  // pointer events, so an inactive one is inert without an isActive check.
   useEffect(() => {
-    if (!isActive) return;
+    const root = paneRootRef.current;
+    if (!root) return;
     const onDragOver = (e: DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      // Tell Chromium this is a valid drop target (otherwise: 🚫 cursor).
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
     };
     const onDragEnter = (e: DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+      // Count enter/leave pairs: moving across child elements fires both, and
+      // only the outermost leave means the drag has actually left the pane.
       dragCounterRef.current++;
       if (e.dataTransfer?.types.includes('Files')) setIsDragOver(true);
     };
     const onDragLeave = (e: DragEvent) => {
       e.preventDefault();
       dragCounterRef.current--;
-      if (dragCounterRef.current === 0) setIsDragOver(false);
+      if (dragCounterRef.current <= 0) {
+        dragCounterRef.current = 0;
+        setIsDragOver(false);
+      }
     };
     const onDrop = (e: DragEvent) => {
       e.preventDefault();
@@ -747,30 +764,79 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       }
     };
 
-    // Register on both document and window for maximum coverage
-    document.addEventListener('dragover', onDragOver, true);
-    document.addEventListener('dragenter', onDragEnter, true);
-    document.addEventListener('dragleave', onDragLeave, true);
-    document.addEventListener('drop', onDrop, true);
-    window.addEventListener('dragover', onDragOver);
-    window.addEventListener('drop', onDrop);
-
+    root.addEventListener('dragover', onDragOver);
+    root.addEventListener('dragenter', onDragEnter);
+    root.addEventListener('dragleave', onDragLeave);
+    root.addEventListener('drop', onDrop);
     return () => {
-      document.removeEventListener('dragover', onDragOver, true);
-      document.removeEventListener('dragenter', onDragEnter, true);
-      document.removeEventListener('dragleave', onDragLeave, true);
-      document.removeEventListener('drop', onDrop, true);
-      window.removeEventListener('dragover', onDragOver);
-      window.removeEventListener('drop', onDrop);
+      root.removeEventListener('dragover', onDragOver);
+      root.removeEventListener('dragenter', onDragEnter);
+      root.removeEventListener('dragleave', onDragLeave);
+      root.removeEventListener('drop', onDrop);
+      dragCounterRef.current = 0;
     };
-  }, [isActive]);
+  }, []);
+
+  // Text held aside for the composer's `[Pasted text #N]` markers, and the
+  // counter that numbers them. A ref, not state: nothing renders from it, and
+  // handleSend must read the blocks pasted moments earlier, not a stale copy.
+  const pastedBlocksRef = useRef(new Map<number, string>());
+  const pasteCounterRef = useRef(0);
+
+  // Setting the composer text always prunes: a marker deleted from the draft
+  // takes its held text with it.
+  const handleInputChange = useCallback((next: string) => {
+    setInputValue(next);
+    pruneBlocks(next, pastedBlocksRef.current);
+  }, []);
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    // 1. Files with a real path on disk (from a file manager) → attachments.
     const paths = extractFilePaths(e.clipboardData);
     if (paths.length > 0) {
       e.preventDefault();
       setAttachedFiles((prev) => [...prev, ...paths.map(classifyFile)]);
+      return;
     }
+
+    // 2. An image with no path — a screenshot. Main spills it to a temp PNG so
+    //    there's a path to attach. preventDefault must happen synchronously,
+    //    before the await, or the paste's default handling has already run.
+    const hasImage = Array.from(e.clipboardData.items ?? []).some(
+      (it) => it.kind === 'file' && it.type.startsWith('image/'),
+    );
+    if (hasImage) {
+      e.preventDefault();
+      void window.electronAPI
+        .saveClipboardImage()
+        .then((saved) => {
+          if (!saved) return;
+          setAttachedFiles((prev) => [...prev, classifyFile(saved.path)]);
+          setViewMode('gui');
+        })
+        .catch((err) => console.warn('[ClaudePane] saving pasted image failed:', err));
+      return;
+    }
+
+    // 3. A large text paste collapses to a marker so it can't bury the draft.
+    const text = e.clipboardData.getData('text/plain');
+    if (!text || !shouldCollapsePaste(text)) return; // small paste: default behaviour
+    e.preventDefault();
+    const ta = e.currentTarget as HTMLTextAreaElement;
+    // Drop anything the box no longer refers to (a sent draft clears it, and a
+    // send doesn't go through handleInputChange) before holding onto more.
+    pruneBlocks(ta.value, pastedBlocksRef.current);
+    const id = ++pasteCounterRef.current;
+    pastedBlocksRef.current.set(id, text);
+    const { value, caret } = spliceAtSelection(
+      ta.value,
+      ta.selectionStart ?? ta.value.length,
+      ta.selectionEnd ?? ta.value.length,
+      pastePlaceholder(id, text),
+    );
+    setInputValue(value);
+    // The caret would otherwise jump to the end of the box on the re-render.
+    requestAnimationFrame(() => ta.setSelectionRange(caret, caret));
   }, []);
 
   const removeAttachedFile = useCallback((idx: number) => {
@@ -832,7 +898,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     const hasText = inputValue.trim().length > 0;
     if (!hasFiles && !hasText) return;
 
-    const userText = inputValue.trim();
+    // What's in the box (markers and all) — this is what goes back if the send
+    // is rejected, so the draft is restored exactly as the user left it.
+    const draftText = inputValue.trim();
+    // What the agent receives: every `[Pasted text #N]` marker swapped back for
+    // the text it stands for.
+    const userText = expandPastedText(draftText, pastedBlocksRef.current);
     setInputValue('');
     setAttachedFiles([]);
 
@@ -861,7 +932,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     // guards avoid clobbering anything the user re-entered during the await;
     // the prefix is regenerated from the restored chips on the next send.
     const restoreComposer = () => {
-      setInputValue((prev) => (prev.trim().length > 0 ? prev : userText));
+      // The draft, not the expansion — the blocks are still held (they're only
+      // pruned once their marker leaves the box), so the next send expands again.
+      setInputValue((prev) => (prev.trim().length > 0 ? prev : draftText));
       if (hasFiles) setAttachedFiles((prev) => (prev.length > 0 ? prev : attachedFiles));
     };
 
@@ -1550,6 +1623,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
 
   return (
     <div
+      ref={paneRootRef}
       style={{
         width: '100%',
         height: '100%',
@@ -1927,7 +2001,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
               {/* Composer / Input area — session pills live inside its bottom row */}
               <Composer
                 value={inputValue}
-                onChange={setInputValue}
+                onChange={handleInputChange}
                 onSend={handleSend}
                 onPaste={handlePaste}
                 onPickFiles={openFilePicker}

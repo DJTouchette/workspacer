@@ -129,15 +129,17 @@ beforeEach(() => {
 
 describe('ClaudePane rejected-send attachment restore', () => {
   it('keeps the attached file after the daemon rejects the send', async () => {
-    render(pane());
+    const { container } = render(pane());
 
-    // Attach a file via the document-level drop handler.
+    // Attach a file by dropping it on the pane (drops are pane-scoped — see the
+    // drag & drop effect). This file carries the legacy `path` property, so it
+    // also covers the fallback for when the webUtils bridge yields nothing.
     const dropEvent = new Event('drop', { bubbles: true, cancelable: true }) as any;
     dropEvent.dataTransfer = {
       files: { length: 1, 0: { path: '/tmp/foo.txt', name: 'foo.txt' } },
     };
     act(() => {
-      document.dispatchEvent(dropEvent);
+      (container.firstChild as Element).dispatchEvent(dropEvent);
     });
 
     // The file chip is shown.

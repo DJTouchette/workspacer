@@ -41,6 +41,8 @@ import { listClaudeSessionsForDir } from './services/claudeSessionList';
 import { instrumentIpcHandlers, startEventLoopLagMonitor } from './lib/stallDiagnostics';
 import { listRecentSessions, listLiveSessionIds } from './services/recentSessions';
 import { readTextFile, writeTextFile, listDir } from './services/fileService';
+import { readImagePreview } from './services/imagePreview';
+import { savePastedImage } from './services/clipboardImage';
 import { startWatch, stopWatch, setEmitSink } from './services/fileWatchService';
 import { searchProject } from './services/searchService';
 import * as git from './services/gitService';
@@ -906,6 +908,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Files (editor pane). Errors (missing / too big / binary) reject the invoke,
   // which the EditorPane surfaces to the user.
   ipcMain.handle(IPC.FILE_READ, (_event, filePath: string) => readTextFile(filePath));
+  // Composer attachment thumbnails. Rejects for anything unreadable or not an
+  // image; the chip falls back to its icon.
+  ipcMain.handle(IPC.FILE_READ_IMAGE, (_event, filePath: string) => readImagePreview(filePath));
+  // A pasted screenshot has no path to attach — write it out and return one.
+  ipcMain.handle(IPC.CLIPBOARD_SAVE_IMAGE, () => savePastedImage());
   ipcMain.handle(IPC.FILE_WRITE, (_event, filePath: string, contents: string) =>
     writeTextFile(filePath, contents),
   );
