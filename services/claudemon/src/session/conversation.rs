@@ -157,6 +157,35 @@ impl TailLog {
             self.items.drain(0..overflow);
         }
     }
+
+    /// Fold a streamed assistant-text delta into the trailing item when the log
+    /// already ends in assistant text. Returns whether it was absorbed.
+    ///
+    /// Stream-transport providers emit one item per *token chunk*, so without
+    /// this a single ordinary reply becomes hundreds of `AssistantText`
+    /// entries. [`MAX_CONVERSATION_ITEMS`] is sized in messages — "a heavy day
+    /// rarely exceeds a few hundred tool calls + messages" — so counting
+    /// fragments instead makes it start evicting the front of the conversation
+    /// partway through a single long turn. A client resyncing from
+    /// `/conversation` would then adopt a history whose beginning (the user's
+    /// original prompt, the early tool calls) is already gone, starting
+    /// mid-sentence inside a recent reply.
+    ///
+    /// Only contiguous assistant text merges: a tool use or a user message
+    /// landing between two chunks ends the run, which is the turn boundary.
+    /// Timestamps keep the first chunk's — when the message started.
+    fn try_coalesce_assistant_text(&mut self, item: &ConversationItem) -> bool {
+        let ConversationItem::AssistantText { text, .. } = item else {
+            return false;
+        };
+        match self.items.last_mut() {
+            Some(ConversationItem::AssistantText { text: prev, .. }) => {
+                prev.push_str(text);
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 #[derive(Default, Clone)]
@@ -205,7 +234,12 @@ impl ConversationStore {
             let mut log = self.logs.entry(session_id.to_string()).or_default();
             let reset = log.seq == 0;
             log.seq += items.len() as u64;
-            log.extend_bounded(items.iter().cloned());
+            // The delta broadcast below is unchanged either way — live clients
+            // still stream token by token. Only the retained log folds, so an
+            // item means a message again for anything adopting the snapshot.
+            if !(items.len() == 1 && log.try_coalesce_assistant_text(&items[0])) {
+                log.extend_bounded(items.iter().cloned());
+            }
             ConversationDelta {
                 session_id: session_id.to_string(),
                 seq: log.seq,
@@ -1710,4 +1744,136 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    /// Stream-transport providers push one item per token chunk. Left
+    /// un-coalesced, MAX_CONVERSATION_ITEMS — which is sized in *messages* —
+    /// starts evicting the front of the conversation partway through a single
+    /// long reply, so a client resyncing from `/conversation` adopts a history
+    /// whose beginning is already gone.
+    #[test]
+    fn streamed_assistant_text_folds_into_one_item() {
+        let conv = ConversationStore::new();
+        for chunk in ["Hel", "lo, ", "world"] {
+            conv.push(
+                "s1",
+                vec![ConversationItem::AssistantText {
+                    text: chunk.into(),
+                    timestamp: None,
+                }],
+            );
+        }
+        let (seq, items) = conv.snapshot("s1").expect("log present");
+        assert_eq!(items.len(), 1, "three deltas fold into one message");
+        match &items[0] {
+            ConversationItem::AssistantText { text, .. } => assert_eq!(text, "Hello, world"),
+            other => panic!("expected assistant text, got {other:?}"),
+        }
+        // seq still counts every delta, so gap detection and resync are intact.
+        assert_eq!(seq, 3);
+    }
+
+    #[test]
+    fn a_tool_use_between_chunks_ends_the_run() {
+        let conv = ConversationStore::new();
+        conv.push(
+            "s1",
+            vec![ConversationItem::AssistantText {
+                text: "before".into(),
+                timestamp: None,
+            }],
+        );
+        conv.push(
+            "s1",
+            vec![ConversationItem::ToolUse {
+                id: "t1".into(),
+                name: "Bash".into(),
+                input: json!({}),
+                timestamp: None,
+            }],
+        );
+        conv.push(
+            "s1",
+            vec![ConversationItem::AssistantText {
+                text: "after".into(),
+                timestamp: None,
+            }],
+        );
+        let (_, items) = conv.snapshot("s1").expect("log present");
+        assert_eq!(items.len(), 3, "the tool call is a turn boundary");
+    }
+
+    #[test]
+    fn a_user_message_is_never_folded_into_assistant_text() {
+        let conv = ConversationStore::new();
+        conv.push(
+            "s1",
+            vec![ConversationItem::AssistantText {
+                text: "reply".into(),
+                timestamp: None,
+            }],
+        );
+        conv.push(
+            "s1",
+            vec![ConversationItem::UserMessage {
+                text: "next question".into(),
+                timestamp: None,
+            }],
+        );
+        let (_, items) = conv.snapshot("s1").expect("log present");
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[1], ConversationItem::UserMessage { .. }));
+    }
+
+    /// A batch is a real multi-item message, not a token chunk — folding it
+    /// would merge distinct entries.
+    #[test]
+    fn a_multi_item_batch_is_appended_whole() {
+        let conv = ConversationStore::new();
+        conv.push(
+            "s1",
+            vec![ConversationItem::AssistantText {
+                text: "one".into(),
+                timestamp: None,
+            }],
+        );
+        conv.push(
+            "s1",
+            vec![
+                ConversationItem::AssistantText {
+                    text: "two".into(),
+                    timestamp: None,
+                },
+                ConversationItem::AssistantText {
+                    text: "three".into(),
+                    timestamp: None,
+                },
+            ],
+        );
+        let (_, items) = conv.snapshot("s1").expect("log present");
+        assert_eq!(items.len(), 3);
+    }
+
+    /// Folding must not cost live clients their token-by-token stream.
+    #[test]
+    fn each_chunk_is_still_broadcast_as_its_own_delta() {
+        let conv = ConversationStore::new();
+        let mut rx = conv.subscribe();
+        for chunk in ["a", "b"] {
+            conv.push(
+                "s1",
+                vec![ConversationItem::AssistantText {
+                    text: chunk.into(),
+                    timestamp: None,
+                }],
+            );
+        }
+        let first = rx.try_recv().expect("first delta");
+        assert_eq!(first.items.len(), 1);
+        assert!(first.reset, "the first push resets late joiners");
+        let second = rx.try_recv().expect("second delta");
+        assert_eq!(second.items.len(), 1);
+        assert!(!second.reset);
+        assert_eq!(second.seq, 2);
+    }
+
 }

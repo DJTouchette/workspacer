@@ -1252,7 +1252,48 @@ impl SessionStore {
     /// hook session. Used when /sessions/spawn fails after partial setup or
     /// the child exits before SessionStart fires.
     pub fn drop_pending_spawn(&self, session_id: &str, cwd: &str) {
-        self.pending_spawns_by_cwd.remove(cwd);
+        self.release_spawn_plumbing(session_id, cwd);
+        self.states.remove(session_id);
+        // Drop any hook-id → canonical-id aliases pointing at this session, so the
+        // alias map doesn't accrue a permanent entry per spawn across churn.
+        self.aliases.retain(|_, canonical| canonical != session_id);
+    }
+
+    /// Tear down everything a live spawn owns *except* the session's state row.
+    ///
+    /// This is what a PTY reader hitting EOF should do for a session that was
+    /// actually used: the process is gone, so all the live plumbing must go,
+    /// but the row is what makes the session resumable and what the desktop's
+    /// Recent/History lists read. Removing it (as `drop_pending_spawn` does)
+    /// made an agent the user quit vanish from the UI entirely instead of
+    /// appearing as a stopped, resumable session.
+    ///
+    /// Leaves the row marked [`SessionMode::Stopped`], since by definition
+    /// nothing is driving it any more — `SessionEnd` usually got there first,
+    /// but the two are racing and this must hold either way.
+    pub fn release_spawn(&self, session_id: &str, cwd: &str) {
+        self.release_spawn_plumbing(session_id, cwd);
+        if let Some(mut st) = self.states.get_mut(session_id) {
+            if st.mode != SessionMode::Stopped {
+                st.mode = SessionMode::Stopped;
+                st.updated_at = OffsetDateTime::now_utc();
+            }
+        }
+    }
+
+    /// The live-process plumbing shared by both teardown paths. Deliberately
+    /// does not touch `states`/`aliases` — that's what distinguishes them.
+    fn release_spawn_plumbing(&self, session_id: &str, cwd: &str) {
+        // Only clear the cwd's pending slot if it still points at THIS session:
+        // a fresh spawn in the same directory may already have claimed it while
+        // the old child was still winding down.
+        if self
+            .pending_spawns_by_cwd
+            .get(cwd)
+            .is_some_and(|canonical| canonical.value() == session_id)
+        {
+            self.pending_spawns_by_cwd.remove(cwd);
+        }
         self.wrappers.remove(session_id);
         self.buffers.remove(session_id);
         self.bytes_tx.remove(session_id);
@@ -1262,10 +1303,25 @@ impl SessionStore {
         self.client_input_at.remove(session_id);
         self.paste_modes.remove(session_id);
         self.term_sizes.remove(session_id);
-        self.states.remove(session_id);
-        // Drop any hook-id → canonical-id aliases pointing at this session, so the
-        // alias map doesn't accrue a permanent entry per spawn across churn.
-        self.aliases.retain(|_, canonical| canonical != session_id);
+    }
+
+    /// Whether a session has enough history to be worth keeping as a resumable
+    /// row once its process exits.
+    ///
+    /// Mirrors [`SessionState::is_empty_stopped`] but without requiring the row
+    /// to already be `Stopped` — at PTY EOF, `SessionEnd` may not have landed
+    /// yet. A transcript path counts on its own: the conversation exists on
+    /// disk regardless of what the hook counters say.
+    pub fn is_resumable(&self, session_id: &str) -> bool {
+        self.states.get(session_id).is_some_and(|st| {
+            // Non-claude providers drive state from native events, not hooks,
+            // so the prompt/tool counters mean nothing for them — never gate on
+            // them there.
+            st.provider != "claude"
+                || st.user_prompts > 0
+                || st.tool_calls > 0
+                || st.transcript_path.is_some()
+        })
     }
 
     pub fn wrapper(&self, session_id: &str) -> Option<WrapperHandle> {
@@ -2937,4 +2993,74 @@ mod tests {
             Err(PermissionSwitchError::Managed)
         );
     }
+
+    // ── PTY EOF teardown ────────────────────────────────────────────────────
+    //
+    // A PTY reader hitting EOF used to call `drop_pending_spawn`, which removes
+    // the session's state row. For a session the user had actually used that
+    // meant the agent vanished from the desktop's Recent/History lists the
+    // moment it exited, instead of appearing as a stopped, resumable row — the
+    // post-terminate refetch burst simply got a list without it.
+
+    #[test]
+    fn a_used_session_stays_resumable_after_its_pty_exits() {
+        let store = SessionStore::new();
+        store.ingest(hook("SessionStart", "s1", "/work"));
+        store.ingest(hook("UserPromptSubmit", "s1", "/work"));
+        store.register_spawn("s1", "/work", handle());
+
+        assert!(store.is_resumable("s1"), "a prompted session is resumable");
+        store.release_spawn("s1", "/work");
+
+        let state = store.get("s1").expect("row survives PTY EOF");
+        assert_eq!(state.mode, SessionMode::Stopped, "nothing drives it now");
+        assert!(store.wrapper("s1").is_none(), "live plumbing is gone");
+    }
+
+    #[test]
+    fn a_session_that_never_bound_is_dropped_whole() {
+        let store = SessionStore::new();
+        store.register_spawn("ghost", "/work", handle());
+        // No SessionStart, no prompt: claude died before it ever came up.
+        assert!(!store.is_resumable("ghost"));
+        store.drop_pending_spawn("ghost", "/work");
+        assert!(store.get("ghost").is_none(), "nothing to resume, so no row");
+    }
+
+    #[test]
+    fn a_tool_using_session_is_resumable_even_without_a_prompt() {
+        let store = SessionStore::new();
+        store.ingest(hook("SessionStart", "s1", "/work"));
+        store.ingest(hook("PreToolUse", "s1", "/work"));
+        assert!(
+            store.is_resumable("s1"),
+            "tool_calls guards a used session whose prompt events were dropped"
+        );
+    }
+
+    #[test]
+    fn a_managed_provider_session_is_always_resumable() {
+        let store = SessionStore::new();
+        store.register_managed("s1", "/work", "codex");
+        // Codex/opencode/pi drive state from native events, so the hook-derived
+        // prompt/tool counters mean nothing for them and must not gate this.
+        assert!(store.is_resumable("s1"));
+    }
+
+    #[test]
+    fn releasing_a_spawn_leaves_a_newer_spawn_in_the_same_cwd_alone() {
+        let store = SessionStore::new();
+        store.ingest(hook("SessionStart", "old", "/work"));
+        store.ingest(hook("UserPromptSubmit", "old", "/work"));
+        store.register_spawn("old", "/work", handle());
+        // A replacement claims the cwd while the old child is still winding down.
+        store.register_spawn("new", "/work", handle());
+
+        store.release_spawn("old", "/work");
+        assert!(
+            store.wrapper("new").is_some(),
+            "the newer spawn keeps its plumbing"
+        );
+    }
+
 }

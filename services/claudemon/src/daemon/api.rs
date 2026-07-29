@@ -351,7 +351,14 @@ async fn get_session(
         Some(state) => {
             let now = time::OffsetDateTime::now_utc().unix_timestamp();
             let archived = state.is_archived(now);
-            let u = usage::usage_for_path(state.transcript_path.as_deref());
+            // Same reason `list_sessions` does this: `usage_for_path` reads (and
+            // on a cache miss re-parses) the transcript from disk, which must
+            // not happen on a runtime worker — it would stall that worker's SSE
+            // streams for the duration.
+            let path = state.transcript_path.clone();
+            let u = tokio::task::spawn_blocking(move || usage::usage_for_path(path.as_deref()))
+                .await
+                .unwrap_or_default();
             let mut v = serde_json::to_value(&state).unwrap_or(Value::Null);
             if let Some(obj) = v.as_object_mut() {
                 obj.insert(

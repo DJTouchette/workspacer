@@ -161,7 +161,16 @@ pub async fn handle(
         // and make sure we don't leak a pending spawn entry if SessionStart never
         // fired (e.g. claude crashed at startup).
         store_for_reader.reap_pty(&session_for_reader);
-        store_for_reader.drop_pending_spawn(&session_for_reader, &cwd_for_reader);
+        if store_for_reader.is_resumable(&session_for_reader) {
+            // The session was actually used. Drop the live plumbing but KEEP the
+            // row: `SessionEnd` already marked it Stopped and the desktop lists
+            // it as resumable. Deleting it here raced the post-terminate refetch
+            // burst and made a quit agent disappear from Recent/History.
+            store_for_reader.release_spawn(&session_for_reader, &cwd_for_reader);
+        } else {
+            // Never bound to a real agent — nothing to resume, so drop it whole.
+            store_for_reader.drop_pending_spawn(&session_for_reader, &cwd_for_reader);
+        }
         tracing::info!(session = %session_for_reader, "in-daemon PTY reader ended");
     });
 

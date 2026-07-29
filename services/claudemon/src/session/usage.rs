@@ -6,8 +6,10 @@
 //! block and a `model` id. We fold each assistant turn to produce cumulative
 //! cost and a point-in-time view of context fullness.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -261,34 +263,98 @@ fn fold_transcript(
 /// current Claude Code writes Task/teammate agents) fold in as cost/spend
 /// only: their rows are `isSidechain`, so [`from_transcript`] keeps them off
 /// the context gauge automatically.
+/// Identity of one file folded into a usage figure: (path, len, mtime as ns).
+/// Comparing these is a `stat` apiece, versus re-reading and re-parsing the
+/// file — and a transcript that hasn't changed can't have changed its usage.
+type FileStamp = (String, u64, i128);
+
+/// Memo for [`usage_for_path`], keyed on the main transcript path.
+///
+/// Every `GET /sessions` re-derives usage for every session, and the desktop
+/// polls that list on a 60s timer plus a four-fetch burst after each terminate.
+/// Without this, a daemon with ~10 hook-bound sessions re-read and fully
+/// re-parsed tens of megabytes of transcript per poll — allocating hundreds of
+/// MB of `serde_json::Value` for data that had not changed.
+///
+/// Bounded because the key space is sessions, not requests; the cap is a
+/// backstop against a long-lived daemon accumulating dead sessions' entries.
+type UsageCache = HashMap<String, (Vec<FileStamp>, Usage)>;
+static USAGE_CACHE: Lazy<Mutex<UsageCache>> = Lazy::new(|| Mutex::new(HashMap::new()));
+const MAX_USAGE_CACHE: usize = 256;
+
+/// The main transcript plus each `subagents/*.jsonl`, with their current
+/// (len, mtime). Any change to any of them invalidates the memo — including a
+/// file shrinking, which a length-only check would miss on a rewritten
+/// transcript.
+fn usage_inputs(path: &str) -> Vec<FileStamp> {
+    let mut stamps: Vec<FileStamp> = Vec::new();
+    let mut stamp = |p: String| {
+        if let Ok(md) = std::fs::metadata(&p) {
+            let mtime = md
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos() as i128)
+                .unwrap_or(0);
+            stamps.push((p, md.len(), mtime));
+        }
+    };
+    stamp(path.to_string());
+    if let Some(stem) = path.strip_suffix(".jsonl") {
+        if let Ok(rd) = std::fs::read_dir(format!("{stem}/subagents")) {
+            let mut subs: Vec<String> = rd
+                .flatten()
+                .map(|ent| ent.path())
+                .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("jsonl"))
+                .filter_map(|p| p.to_str().map(str::to_string))
+                .collect();
+            // read_dir order is unspecified; sort so the fingerprint is stable.
+            subs.sort();
+            for p in subs {
+                stamp(p);
+            }
+        }
+    }
+    stamps
+}
+
 pub fn usage_for_path(transcript_path: Option<&str>) -> Usage {
     let Some(path) = transcript_path else {
         return Usage::default();
     };
+
+    let inputs = usage_inputs(path);
+    if let Ok(cache) = USAGE_CACHE.lock() {
+        if let Some((stamps, usage)) = cache.get(path) {
+            if *stamps == inputs {
+                return usage.clone();
+            }
+        }
+    }
+
     // ONE shared dedup set (and peak-context high-water mark) across the main
     // transcript and every `subagents/*.jsonl` file: a sub-agent turn that
     // appears both inline (isSidechain) in the main file and in its own
     // sidechain file must be billed once, not twice — parity with the desktop
-    // analyticsBackfill.recomputeSession which threads a single Set.
+    // analyticsBackfill.recomputeSession which threads a single Set. That
+    // shared state is why this memoizes the whole fold rather than per file.
     let mut usage = Usage::default();
     let mut seen: HashSet<String> = HashSet::new();
     let mut peak_context: u64 = 0;
     if let Ok(tx) = super::transcript::read_at(path) {
         fold_transcript(&tx, &mut usage, &mut seen, &mut peak_context);
     }
-    if let Some(stem) = path.strip_suffix(".jsonl") {
-        if let Ok(rd) = std::fs::read_dir(format!("{stem}/subagents")) {
-            for ent in rd.flatten() {
-                let p = ent.path();
-                if p.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                    continue;
-                }
-                let Some(p) = p.to_str() else { continue };
-                if let Ok(tx) = super::transcript::read_at(p) {
-                    fold_transcript(&tx, &mut usage, &mut seen, &mut peak_context);
-                }
-            }
+    for (p, _, _) in inputs.iter().skip(1) {
+        if let Ok(tx) = super::transcript::read_at(p) {
+            fold_transcript(&tx, &mut usage, &mut seen, &mut peak_context);
         }
+    }
+
+    if let Ok(mut cache) = USAGE_CACHE.lock() {
+        if cache.len() >= MAX_USAGE_CACHE && !cache.contains_key(path) {
+            cache.clear();
+        }
+        cache.insert(path.to_string(), (inputs, usage.clone()));
     }
     usage
 }
@@ -799,4 +865,119 @@ mod tests {
         let tx = serde_json::json!({"messages": [{"role": "user", "content": "hi"}]});
         assert!(from_transcript_value(&tx).is_none());
     }
+
+    // ── memoization ─────────────────────────────────────────────────────────
+    //
+    // `GET /sessions` re-derives usage for EVERY session, and the desktop polls
+    // that list every 60s plus a four-fetch burst after each terminate. Without
+    // a memo a daemon with ~10 hook-bound sessions re-read and fully re-parsed
+    // tens of megabytes per poll, for data that had not changed.
+
+    /// One assistant row, as it appears in a real transcript JSONL. Cost is
+    /// deduped by message id, so distinct turns need distinct ids.
+    fn jsonl_row(id: &str, output_tokens: u64) -> String {
+        serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "id": id,
+                "model": "claude-opus-4-8",
+                "usage": {
+                    "input_tokens": 1000,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "output_tokens": output_tokens
+                }
+            }
+        })
+        .to_string()
+    }
+
+    /// A temp path unique to this test binary + line, so tests don't collide.
+    fn temp_transcript(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("claudemon-usage-test-{tag}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir.join("session.jsonl")
+    }
+
+    #[test]
+    fn an_unchanged_transcript_is_not_re_parsed() {
+        let path = temp_transcript("unchanged");
+        // Both rows are the same length, so only the *content* differs — which
+        // means a re-parse would be visible in the result while an unchanged
+        // (len, mtime) stamp would not.
+        std::fs::write(&path, format!("{}\n", jsonl_row("m1", 500))).expect("write");
+        let p = path.to_str().unwrap();
+
+        let first = usage_for_path(Some(p));
+        assert!(first.cost_usd > 0.0, "baseline usage was computed");
+
+        let stamp = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::fs::write(&path, format!("{}\n", jsonl_row("m1", 999))).expect("rewrite");
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(stamp)
+            .expect("restore mtime");
+
+        let second = usage_for_path(Some(p));
+        assert_eq!(
+            second.cost_usd, first.cost_usd,
+            "same (len, mtime) => memo hit, no re-read"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_changed_transcript_is_re_parsed() {
+        let path = temp_transcript("changed");
+        std::fs::write(&path, format!("{}\n", jsonl_row("m1", 500))).expect("write");
+        let p = path.to_str().unwrap();
+        let first = usage_for_path(Some(p));
+
+        // Appending changes the length, so the stamp differs regardless of the
+        // filesystem's mtime granularity.
+        std::fs::write(
+            &path,
+            format!("{}\n{}\n", jsonl_row("m1", 500), jsonl_row("m2", 500)),
+        )
+        .expect("append");
+        let second = usage_for_path(Some(p));
+        assert!(
+            second.cost_usd > first.cost_usd,
+            "a grown transcript re-folds: {} then {}",
+            first.cost_usd,
+            second.cost_usd
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_truncated_transcript_is_re_parsed() {
+        // A length-only check would miss a rewrite that shrinks the file.
+        let path = temp_transcript("truncated");
+        std::fs::write(
+            &path,
+            format!("{}\n{}\n", jsonl_row("m1", 500), jsonl_row("m2", 500)),
+        )
+        .expect("write");
+        let p = path.to_str().unwrap();
+        let first = usage_for_path(Some(p));
+
+        std::fs::write(&path, format!("{}\n", jsonl_row("m1", 500))).expect("truncate");
+        let second = usage_for_path(Some(p));
+        assert!(second.cost_usd < first.cost_usd, "shrink invalidates the memo");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_missing_transcript_stays_empty() {
+        let usage = usage_for_path(Some("/nonexistent/does-not-exist.jsonl"));
+        assert_eq!(usage.cost_usd, 0.0);
+        assert_eq!(usage_for_path(None).cost_usd, 0.0);
+    }
+
 }
