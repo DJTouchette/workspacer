@@ -6,6 +6,7 @@ import {
   LayoutGrid,
   Compass,
   History,
+  Settings,
   Smartphone,
 } from 'lucide-react';
 import { BrandMark, Wordmark } from './Brand';
@@ -185,6 +186,55 @@ const ActionCluster: React.FC<{
   </div>
 );
 
+/**
+ * A row in the sidebar's bottom strip (History, Settings). Deliberately the
+ * quietest thing in the panel — mono, faint, no fill — so a pointer out of the
+ * live feed never competes with the agent cards above it.
+ */
+const FooterRow: React.FC<{
+  icon: React.ReactNode;
+  label: string;
+  title: string;
+  onClick: () => void;
+  /** Optional right-aligned detail (e.g. History's count). */
+  trailing?: React.ReactNode;
+}> = ({ icon, label, title, onClick, trailing }) => (
+  <div
+    role="button"
+    tabIndex={0}
+    onClick={onClick}
+    onKeyDown={(e) => {
+      if (e.key === 'Enter') onClick();
+    }}
+    title={title}
+    style={{
+      padding: '5px 6px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6,
+      fontSize: '0.66rem',
+      fontFamily: 'var(--wks-font-mono)',
+      color: 'var(--wks-text-faint)',
+      cursor: 'pointer',
+      userSelect: 'none',
+      transition: 'color 0.12s',
+    }}
+    onMouseEnter={(e) => {
+      (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
+    }}
+    onMouseLeave={(e) => {
+      (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
+    }}
+  >
+    {icon}
+    <span>{label}</span>
+    <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
+      {trailing}
+      <ChevronRight size={11} strokeWidth={2} style={{ flexShrink: 0 }} />
+    </span>
+  </div>
+);
+
 interface SideBarProps {
   agents: AgentWorkspace[];
   activeAgentId: string;
@@ -223,6 +273,8 @@ interface SideBarProps {
   recentSessions?: RecentAgentSession[];
   /** Open the Sessions pane (session history browser). */
   onOpenHistory?: () => void;
+  /** Open the Settings pane — the quiet footer row beside History. */
+  onOpenSettings?: () => void;
 }
 
 const SideBar: React.FC<SideBarProps> = ({
@@ -244,6 +296,7 @@ const SideBar: React.FC<SideBarProps> = ({
   width,
   recentSessions,
   onOpenHistory,
+  onOpenSettings,
 }) => {
   // Attention comes from the single feed (the spine), so a card's waiting state
   // and the rail tile's amber dot can never disagree.
@@ -1308,44 +1361,37 @@ const SideBar: React.FC<SideBarProps> = ({
                   <span>Show less</span>
                 </div>
               )}
-              {/* History footer row — the one quiet pointer to past work. The
-                  EARLIER/RECENT dock moved into the Sessions pane; this row
-                  pins to the feed bottom (margin-top:auto collapses to 0 when
-                  the feed overflows) so live cards keep the top. */}
-              {onOpenHistory && historyCount > 0 && (
+              {/* Footer strip — the quiet pointers out of the live feed: past
+                  work, and the app's own settings. Pinned to the feed bottom
+                  (margin-top:auto collapses to 0 when the feed overflows) so
+                  live cards always keep the top. The border belongs to the
+                  strip, not the rows, so one rule separates it from the feed
+                  however many rows are showing. */}
+              {(onOpenSettings || (onOpenHistory && historyCount > 0)) && (
                 <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={onOpenHistory}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') onOpenHistory();
-                  }}
-                  title="Browse and resume past sessions"
                   style={{
                     margin: 'auto 12px 0',
-                    padding: '7px 6px 5px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
+                    paddingTop: 2,
                     borderTop: '1px solid var(--wks-border-subtle)',
-                    fontSize: '0.66rem',
-                    fontFamily: 'var(--wks-font-mono)',
-                    color: 'var(--wks-text-faint)',
-                    cursor: 'pointer',
-                    userSelect: 'none',
-                    transition: 'color 0.12s',
-                  }}
-                  onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
                   }}
                 >
-                  <History size={12} strokeWidth={1.75} style={{ flexShrink: 0 }} />
-                  <span>History</span>
-                  <span style={{ marginLeft: 'auto' }}>{historyCount}</span>
-                  <ChevronRight size={11} strokeWidth={2} style={{ flexShrink: 0 }} />
+                  {onOpenHistory && historyCount > 0 && (
+                    <FooterRow
+                      icon={<History size={12} strokeWidth={1.75} style={{ flexShrink: 0 }} />}
+                      label="History"
+                      title="Browse and resume past sessions"
+                      trailing={<span>{historyCount}</span>}
+                      onClick={onOpenHistory}
+                    />
+                  )}
+                  {onOpenSettings && (
+                    <FooterRow
+                      icon={<Settings size={12} strokeWidth={1.75} style={{ flexShrink: 0 }} />}
+                      label="Settings"
+                      title="App settings"
+                      onClick={onOpenSettings}
+                    />
+                  )}
                 </div>
               )}
             </>

@@ -2103,6 +2103,7 @@ function App() {
                   width={sidebarOverlay ? undefined : sidebarWidth}
                   recentSessions={recentSessions}
                   onOpenHistory={openSessionsPane}
+                  onOpenSettings={openSettings}
                 />
               </ErrorBoundary>
             )}

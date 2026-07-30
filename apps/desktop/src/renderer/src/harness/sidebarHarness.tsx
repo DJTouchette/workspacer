@@ -336,6 +336,7 @@ function Harness() {
               width={width}
               recentSessions={recentSessions}
               onOpenHistory={noop}
+              onOpenSettings={noop}
             />
             <SidebarResizeHandle width={width} onResize={setWidth} onCommit={setWidth} />
           </div>
