@@ -2,7 +2,9 @@ import { useRef, useCallback, useState, useEffect, useMemo, lazy, Suspense, memo
 import { ChevronRight } from 'lucide-react';
 import './App.css';
 import NavBar from './components/NavBar';
-import SideBar, { SIDEBAR_WIDTH, SIDEBAR_RAIL_WIDTH } from './components/SideBar';
+import SideBar from './components/SideBar';
+import { SidebarResizeHandle } from './components/SidebarResizeHandle';
+import { SIDEBAR_RAIL_WIDTH, resolveSidebarWidth } from './lib/sidebarWidth';
 import ErrorBoundary from './components/ErrorBoundary';
 import { HomeSpace } from './components/HomeSpace';
 import Onboarding from './components/Onboarding';
@@ -375,14 +377,37 @@ function App() {
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((v) => !v);
   }, []);
+  // Sidebar width — dragged by the user (SidebarResizeHandle) and persisted in
+  // config.ui.sidebarWidth. Held in state so a drag can move it every frame
+  // without a config write per frame; the commit lands once the gesture ends.
+  const storedSidebarWidth = config.ui?.sidebarWidth;
+  const [sidebarWidth, setSidebarWidth] = useState(() => resolveSidebarWidth(storedSidebarWidth));
+  // Re-resolve when the stored value changes AND when the window resizes: the
+  // clamp is viewport-relative, so a width dragged out on a big monitor has to
+  // give way on a small one. Deliberately NOT committed — the user's stored
+  // preference stands and comes back when the window grows again.
+  useEffect(() => {
+    const apply = () => setSidebarWidth(resolveSidebarWidth(storedSidebarWidth, window.innerWidth));
+    apply();
+    window.addEventListener('resize', apply);
+    return () => window.removeEventListener('resize', apply);
+  }, [storedSidebarWidth]);
+  const commitSidebarWidth = useCallback(
+    (px: number) => {
+      if (px === storedSidebarWidth) return;
+      saveConfig({ ui: { ...config.ui, sidebarWidth: px } });
+    },
+    [config.ui, storedSidebarWidth, saveConfig],
+  );
+
   // Layout offsets. On small screens the sidebar overlays the content, so we
   // never reserve space (navbar keeps a small inset for the floating toggle).
   // On desktop, collapsing shrinks the panel to a 74px monogram rail that still
   // reserves its column, rather than fully hiding.
   const sidebarOverlay = isSmallScreen;
   const railShown = sidebarCollapsed;
-  const contentLeft = sidebarOverlay ? 0 : railShown ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH;
-  const navLeft = sidebarOverlay ? 36 : railShown ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH;
+  const contentLeft = sidebarOverlay ? 0 : railShown ? SIDEBAR_RAIL_WIDTH : sidebarWidth;
+  const navLeft = sidebarOverlay ? 36 : railShown ? SIDEBAR_RAIL_WIDTH : sidebarWidth;
 
   // App working directory (used as the default cwd for the spawn dialog + the
   // Library's fallback project root).
@@ -2065,10 +2090,21 @@ function App() {
                   onToggleHelp={toggleHelp}
                   noAttentionFlash={noAttentionFlash}
                   collapsed={!sidebarOverlay && railShown}
+                  width={sidebarOverlay ? undefined : sidebarWidth}
                   recentSessions={recentSessions}
                   onOpenHistory={openSessionsPane}
                 />
               </ErrorBoundary>
+            )}
+            {/* Drag the panel's right edge. Only when it actually reserves a
+                column — the rail is a fixed width and the mobile overlay is
+                sized by the viewport, so neither is resizable. */}
+            {!sidebarOverlay && !railShown && (
+              <SidebarResizeHandle
+                width={sidebarWidth}
+                onResize={setSidebarWidth}
+                onCommit={commitSidebarWidth}
+              />
             )}
             {sidebarOverlay && sidebarCollapsed && (
               <button

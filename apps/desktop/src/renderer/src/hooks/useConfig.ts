@@ -25,6 +25,9 @@ export interface UIConfig {
   fontSize: number;
   borderRadius: number;
   navBarHeight: number;
+  /** Expanded sidebar width in px. Set by dragging the sidebar's right edge;
+   *  clamped on read (see lib/sidebarWidth). Absent = the shipped default. */
+  sidebarWidth?: number;
   paneHeaderHeight: number;
   /** Show the composer's send (↑) button. When off, Enter still sends — useful
    *  if the button gets in the way of input. Optional; absent = on. */

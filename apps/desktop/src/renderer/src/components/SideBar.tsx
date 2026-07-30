@@ -17,10 +17,11 @@ import { useUiMode } from '../hooks/useUiMode';
 import HubStatus from './HubStatus';
 import NotificationCenter from './notifications/NotificationCenter';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
+import { SIDEBAR_DEFAULT_WIDTH, SIDEBAR_RAIL_WIDTH } from '../lib/sidebarWidth';
 
-export const SIDEBAR_WIDTH = 296;
-/** Width of the collapsed monogram rail (desktop). */
-export const SIDEBAR_RAIL_WIDTH = 74;
+// The expanded width is user-resizable and persisted, so it is NOT a constant
+// here — it arrives as the `width` prop (see lib/sidebarWidth.ts for the
+// default, the clamp band, and the constants the app shell offsets by).
 
 /** Ambient state (or `undefined` = stopped) → status dot color + label. */
 function statusVisual(state: SessionAmbientState | undefined): { color: string; label: string } {
@@ -117,6 +118,10 @@ interface SideBarProps {
   onToggleCollapse?: () => void;
   /** Render the compact monogram rail instead of the full panel. */
   collapsed?: boolean;
+  /** Expanded width in px — user-resizable and persisted by the app shell
+   *  (`config.ui.sidebarWidth`). Absent = the shipped default. The rail width is
+   *  fixed and ignores this. */
+  width?: number;
   /** Toggle the keyboard-shortcuts help overlay (footer "?" button). */
   onToggleHelp?: () => void;
   /** Brief flash on the header when "next attention" found nothing to jump to. */
@@ -145,6 +150,7 @@ const SideBar: React.FC<SideBarProps> = ({
   onToggleHelp,
   noAttentionFlash,
   collapsed,
+  width,
   recentSessions,
   onOpenHistory,
 }) => {
@@ -489,7 +495,7 @@ const SideBar: React.FC<SideBarProps> = ({
         top: 0,
         left: 0,
         bottom: 0,
-        width: `${SIDEBAR_WIDTH}px`,
+        width: `${width ?? SIDEBAR_DEFAULT_WIDTH}px`,
         display: 'flex',
         flexDirection: 'column',
         paddingTop: '6px',

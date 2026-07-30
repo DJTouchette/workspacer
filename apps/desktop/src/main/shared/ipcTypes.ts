@@ -278,6 +278,8 @@ export interface AppConfig {
     fontSize: number;
     borderRadius: number;
     navBarHeight: number;
+    /** Expanded sidebar width in px (user-dragged, clamped on read). */
+    sidebarWidth?: number;
     paneHeaderHeight: number;
     showComposerSend?: boolean;
     guiFontScale?: number;

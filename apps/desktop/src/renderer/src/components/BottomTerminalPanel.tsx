@@ -1,5 +1,5 @@
 import React, { useState, useEffect, Suspense, lazy } from 'react';
-import { SIDEBAR_WIDTH } from './SideBar';
+import { SIDEBAR_DEFAULT_WIDTH } from '../lib/sidebarWidth';
 
 // Lazy so the heavy xterm chunk only loads when the bottom terminal is first
 // opened — not at app startup. (ScrollContainer lazy-loads TerminalPane too.)
@@ -22,7 +22,12 @@ const PANEL_H = '40vh';
  * only slides it off-screen — so the PTY keeps running and scrollback survives.
  * Toggled with Ctrl+` (and Esc closes).
  */
-const BottomTerminalPanel: React.FC<Props> = ({ visible, onClose, cwd, left = SIDEBAR_WIDTH }) => {
+const BottomTerminalPanel: React.FC<Props> = ({
+  visible,
+  onClose,
+  cwd,
+  left = SIDEBAR_DEFAULT_WIDTH,
+}) => {
   // Lazily mount the terminal the first time it's opened, then never unmount it
   // (unmounting would dispose xterm + drop the PTY).
   const [mounted, setMounted] = useState(false);

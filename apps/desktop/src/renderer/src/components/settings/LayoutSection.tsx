@@ -31,7 +31,7 @@ const LayoutSection: React.FC<LayoutSectionProps> = ({ config, save }) => {
         How many agents you're attending to. <strong>Fleet</strong> shows every agent in the sidebar
         plus the Fleet Deck. <strong>Focus</strong> keeps cards for the agent you're in and anything
         blocked on you, and folds the rest into one row you can expand. Sidebar width is separate —
-        that's the collapse toggle.
+        that's the collapse toggle, or drag the sidebar's right edge (double-click it to reset).
       </div>
       <Row label="Peek">
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

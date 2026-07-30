@@ -42,6 +42,8 @@ const uiMode = new URLSearchParams(window.location.search).get('mode') === 'focu
 
 // Deferred imports so the stub is installed first.
 const { default: SideBar } = await import('../components/SideBar');
+const { SidebarResizeHandle } = await import('../components/SidebarResizeHandle');
+const { resolveSidebarWidth } = await import('../lib/sidebarWidth');
 const { AttentionProvider } = await import('../contexts/AttentionContext');
 const { NotificationsProvider } = await import('../contexts/NotificationsContext');
 const { ConfigProvider } = await import('../contexts/ConfigContext');
@@ -299,6 +301,9 @@ const shownAgents =
 
 function Harness() {
   const attention = useAttentionFeed(snapshotBySession, shownAgents);
+  // The width is user-resizable in the app (persisted to config); here it's
+  // local state so the drag handle can be developed/screenshotted too.
+  const [width, setWidth] = React.useState(() => resolveSidebarWidth(undefined));
   return (
     <ConfigProvider>
       <NotificationsProvider>
@@ -328,9 +333,11 @@ function Harness() {
               onToggleHelp={noop}
               viewLevel="piloting"
               collapsed={false}
+              width={width}
               recentSessions={recentSessions}
               onOpenHistory={noop}
             />
+            <SidebarResizeHandle width={width} onResize={setWidth} onCommit={setWidth} />
           </div>
         </AttentionProvider>
       </NotificationsProvider>

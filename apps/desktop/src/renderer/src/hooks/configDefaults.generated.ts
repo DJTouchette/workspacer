@@ -16,6 +16,7 @@ export const CONFIG_DEFAULTS = {
     fontSize: 14,
     borderRadius: 8,
     navBarHeight: 34,
+    sidebarWidth: 296,
     paneHeaderHeight: 22,
     showComposerSend: true,
     guiFontScale: 1.15,

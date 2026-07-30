@@ -301,6 +301,40 @@ body {
     color 0.12s;
 }
 
+/* Sidebar resize handle — a 7px grab strip straddling the sidebar's right
+ * border. Invisible at rest (the border is the sidebar's own), it paints a
+ * 1px accent line on hover / focus / drag so the affordance is discoverable
+ * without adding permanent chrome. */
+.wks-sidebar-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  z-index: 150;
+  cursor: col-resize;
+  /* Keep it clickable over the draggable navbar region on macOS/Windows. */
+  -webkit-app-region: no-drag;
+  display: flex;
+  justify-content: center;
+  outline: none;
+  touch-action: none;
+}
+.wks-sidebar-resize-line {
+  width: 1px;
+  height: 100%;
+  background-color: var(--wks-accent);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.wks-sidebar-resize:hover .wks-sidebar-resize-line,
+.wks-sidebar-resize:focus-visible .wks-sidebar-resize-line,
+.wks-sidebar-resize:active .wks-sidebar-resize-line {
+  opacity: 1;
+}
+.wks-sidebar-resize:focus-visible .wks-sidebar-resize-line {
+  width: 2px;
+}
+
 /* Streaming cancel — a quiet stop glyph beside the spinner; the label only
  * fades in on hover so the resting state stays featherweight. */
 .wks-stop-btn {
