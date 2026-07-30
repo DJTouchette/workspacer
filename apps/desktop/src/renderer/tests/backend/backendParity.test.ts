@@ -143,6 +143,7 @@ const KNOWN_STUBS = [
   'onNotificationActivate', // click-through for browser-API escalations (web-local, no bus RPC)
   'getPathForFile', // Electron webUtils; a browser file has no host path → ''
   'saveClipboardImage', // the host clipboard isn't the browser user's clipboard → null
+  'agentSuggestTitle', // runs a local headless `claude --print`; null on web (the desktop titles the agent and the layout syncs)
 ] as const;
 
 function webBackendMethodKeys(): Set<string> {

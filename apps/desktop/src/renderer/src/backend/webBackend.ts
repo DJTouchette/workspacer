@@ -270,6 +270,10 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     spawnClaude: (opts) =>
       client.call<{ sessionId: string }>('agents.spawn', opts).then((r) => r.sessionId),
     claudeListModels: () => client.call('claude.listModels', {}),
+    // Auto-titling runs a local headless `claude --print` in the desktop main
+    // process; over the bus there is no such capability. Null = leave the name
+    // alone — the desktop client titles the agent and the layout syncs it here.
+    agentSuggestTitle: async () => null,
     // Reads a local transcript file; not available over the hub bus (web mirror).
     workflowAgentTranscript: async () => null,
     workflowAgentConversation: async () => null,

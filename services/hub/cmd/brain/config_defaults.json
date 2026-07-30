@@ -125,7 +125,8 @@
   "agents": {
     "defaultProvider": "claude",
     "defaultCwd": "",
-    "binaries": { "claude": "", "codex": "", "opencode": "", "pi": "" }
+    "binaries": { "claude": "", "codex": "", "opencode": "", "pi": "" },
+    "autoTitle": { "enabled": true, "model": "haiku" }
   },
   "supervisor": { "provider": "claude", "model": "", "summarizerModel": "sonnet", "pollSeconds": 45 },
   "directories": { "recent": [], "favourites": [] },

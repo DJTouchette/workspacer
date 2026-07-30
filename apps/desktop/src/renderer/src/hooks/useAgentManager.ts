@@ -292,6 +292,8 @@ export function useAgentManager() {
         // card for it; fall back to a random id only if the spawn failed.
         id: sessionId ? agentIdForSession(sessionId) : generateId('agent'),
         name: opts.name?.trim() || deriveAgentName(opts.cwd),
+        // A name typed in the spawn dialog is the user's — auto-titling stays off it.
+        nameSetByUser: !!opts.name?.trim(),
         cwd,
         provider: opts.provider,
         transport: opts.transport,
@@ -562,6 +564,8 @@ export function useAgentManager() {
           // concurrent adoptions converge on one card instead of racing ids.
           id: agentIdForSession(opts.sessionId),
           name: opts.name?.trim() || deriveAgentName(opts.cwd),
+          // A name typed in the spawn dialog is the user's — auto-titling stays off it.
+          nameSetByUser: !!opts.name?.trim(),
           cwd: opts.cwd,
           provider: opts.provider,
           transport: opts.transport,
@@ -611,7 +615,22 @@ export function useAgentManager() {
 
   const renameAgent = useCallback(
     (agentId: string, name: string) => {
-      mutateAgent(agentId, (a) => ({ ...a, name }));
+      // A typed name is final: flag it so auto-titling never overwrites it.
+      mutateAgent(agentId, (a) => ({ ...a, name, nameSetByUser: true }));
+    },
+    [mutateAgent],
+  );
+
+  /** Apply a generated title (see useAgentAutoTitle). Marks the agent titled
+   *  either way — a null title still means "we tried", so we don't retry every
+   *  snapshot — and never touches a name the user typed. */
+  const applyAutoTitle = useCallback(
+    (agentId: string, title: string | null) => {
+      mutateAgent(agentId, (a) =>
+        a.nameSetByUser
+          ? { ...a, autoTitled: true }
+          : { ...a, autoTitled: true, name: title || a.name },
+      );
     },
     [mutateAgent],
   );
@@ -1264,6 +1283,7 @@ export function useAgentManager() {
     respawnAgentWithSettings,
     terminateAgent,
     renameAgent,
+    applyAutoTitle,
     reconcileAgents,
     stopAgentForSession,
     loadAgentsFromSession,

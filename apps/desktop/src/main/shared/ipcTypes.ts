@@ -357,6 +357,14 @@ export interface AppConfig {
       opencode?: string;
       pi?: string;
     };
+    /** Name new agents after their first exchange, like a chat service names a
+     *  conversation. A rename you type always wins and is never overwritten. */
+    autoTitle?: {
+      /** Absent/true = on. */
+      enabled?: boolean;
+      /** Model for the one-shot title call (a cheap one; '' = claude default). */
+      model?: string;
+    };
   };
 }
 

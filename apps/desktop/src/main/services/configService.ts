@@ -164,6 +164,12 @@ interface Config {
       opencode: string;
       pi: string;
     };
+    /** Name new agents after their first exchange (see services/agentTitler). */
+    autoTitle?: {
+      enabled?: boolean;
+      /** Model for the one-shot title call ('' = claude's default). */
+      model?: string;
+    };
   };
   /** Optional fleet-supervisor settings. The supervisor is opt-in (spawned via
    *  "Ask the Fleet"); nothing here is assumed present by the rest of the app. */

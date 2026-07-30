@@ -18,6 +18,7 @@ import { toolsStatus } from './services/toolCheck';
 import { installCustomFont, listCustomFonts } from './lib/customFonts';
 import { claudeSessionStore } from './services/claudeSessionStore';
 import { listClaudeModels } from './services/claudeModels';
+import { generateAgentTitle } from './services/agentTitler';
 import {
   MODEL_RATES,
   readModelRateOverrides,
@@ -653,6 +654,18 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // updates with zero maintenance), and `seen` carries concrete ids observed
   // in real transcripts — past sessions plus anything persisted in config.
   ipcMain.handle(IPC.CLAUDE_LIST_MODELS, () => listClaudeModels());
+  ipcMain.handle(
+    IPC.AGENT_SUGGEST_TITLE,
+    async (_e, req: { userMessage: string; assistantReply?: string }) => {
+      try {
+        return await generateAgentTitle(req ?? { userMessage: '' });
+      } catch (err) {
+        // A title is cosmetic: never let it surface as a failed IPC.
+        console.warn('[ipc] agent title failed:', (err as Error).message);
+        return null;
+      }
+    },
+  );
 
   // Full transcript of one subagent, for the timeline / watch-pane drill-in.
   // runId names a workflow run; null means a plain Agent-tool subagent.

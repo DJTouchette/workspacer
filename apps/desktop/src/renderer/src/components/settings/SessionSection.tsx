@@ -1,7 +1,33 @@
 import React, { useEffect, useState } from 'react';
 import { Config } from '../../hooks/useConfig';
 import { Check, X } from 'lucide-react';
-import { Section, CheckRow, Row, ModeButton } from './primitives';
+import {
+  Section,
+  CheckRow,
+  Row,
+  ModeButton,
+  SearchableSelect,
+  type SelectOption,
+} from './primitives';
+
+/** Models offered for the auto-title call. Same source as the spawn dialog and
+ *  the supervisor's summarizer picker, so the three pickers can't disagree
+ *  about what exists. */
+function useTitleModelOptions(): SelectOption[] {
+  const [opts, setOpts] = useState<SelectOption[]>([{ value: '', label: 'Claude default' }]);
+  useEffect(() => {
+    window.electronAPI
+      .claudeListModels?.()
+      .then((res) => {
+        if (!res) return;
+        const aliases = (res.aliases ?? []).map((a) => ({ value: a.value, label: a.label }));
+        const seen = (res.seen ?? []).map((m) => ({ value: m, label: m }));
+        setOpts([{ value: '', label: 'Claude default' }, ...aliases, ...seen]);
+      })
+      .catch(() => {});
+  }, []);
+  return opts;
+}
 
 interface SessionSectionProps {
   config: Config;
@@ -203,6 +229,7 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
   };
   // Worktree root: local state for smooth typing, persisted on blur/Enter.
   const [worktreeRoot, setWorktreeRoot] = React.useState(config.agents?.worktreeRoot ?? '');
+  const titleModelOptions = useTitleModelOptions();
   React.useEffect(() => {
     setWorktreeRoot(config.agents?.worktreeRoot ?? '');
   }, [config.agents?.worktreeRoot]);
@@ -323,6 +350,38 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Parent directory for agent worktrees (created as &lt;repo&gt;/&lt;agent&gt; inside it).
         Leave blank for the default.
+      </div>
+
+      <CheckRow
+        label="Name agents after their first exchange"
+        checked={config.agents?.autoTitle?.enabled !== false}
+        onChange={(v) =>
+          save({
+            agents: { ...config.agents, autoTitle: { ...config.agents?.autoTitle, enabled: v } },
+          })
+        }
+      />
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        Once an agent has answered its first message, a short title replaces the folder name on its
+        card and tab — the way a chat service names a conversation. One cheap model call per agent,
+        never repeated. A name you type yourself is never overwritten, and if the call can't run,
+        the agent falls back to the first line of what you asked.
+      </div>
+
+      <Row label="Title model">
+        <SearchableSelect
+          value={config.agents?.autoTitle?.model ?? 'haiku'}
+          options={titleModelOptions}
+          onChange={(v) =>
+            save({
+              agents: { ...config.agents, autoTitle: { ...config.agents?.autoTitle, model: v } },
+            })
+          }
+        />
+      </Row>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        Writing a title is a trivial task — keep this cheap. It runs as a headless{' '}
+        <code>claude --print</code> call whichever backend the agent itself uses.
       </div>
 
       <Row label="Claude transport">

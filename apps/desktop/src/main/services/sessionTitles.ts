@@ -31,8 +31,9 @@ export function claudeProjectDir(cwd: string): string {
   return cwd.replace(/[/.]/g, '-');
 }
 
-/** First line of a message, cleaned up for display as a title. */
-function cleanTitle(text: string): string | undefined {
+/** First line of a message, cleaned up for display as a title. Exported: it is
+ *  also the fallback title when the model call in agentTitler can't run. */
+export function cleanTitle(text: string): string | undefined {
   const line = text
     .trim()
     .split('\n')[0]

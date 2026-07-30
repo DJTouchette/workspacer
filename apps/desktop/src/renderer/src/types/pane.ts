@@ -125,8 +125,16 @@ export type ViewLevel = 'fleet' | 'piloting';
  */
 export interface AgentWorkspace {
   id: string;
-  /** Display name — defaults to the basename of `cwd`, renameable. */
+  /** Display name — defaults to the basename of `cwd`, renameable. Auto-titling
+   *  may replace it (see useAgentAutoTitle) only while both flags below are
+   *  unset: a name you typed is yours, and a title is generated once. */
   name: string;
+  /** The name came from a human (spawn dialog field or a rename), so nothing
+   *  may overwrite it. */
+  nameSetByUser?: boolean;
+  /** A generated title has already landed for this agent. Persisted with the
+   *  layout, so a restart doesn't spend another model call re-titling. */
+  autoTitled?: boolean;
   /** The agent-less "Overview" workspace: holds cross-agent / global plugin
    *  panes (e.g. the Agent Dashboard) that don't belong to any single agent.
    *  Always present, pinned first, not spawnable/terminable. */

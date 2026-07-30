@@ -378,7 +378,9 @@ async fn run_ping_codex(argv: &[String], model: &str) -> anyhow::Result<Option<i
     Ok(resets_at)
 }
 
-fn home_dir() -> std::path::PathBuf {
+/// Shared with `daemon::oneshot` — both run a headless child that must not
+/// inherit a project directory.
+pub(crate) fn home_dir() -> std::path::PathBuf {
     directories::BaseDirs::new()
         .map(|d| d.home_dir().to_path_buf())
         .unwrap_or_else(|| std::path::PathBuf::from("."))

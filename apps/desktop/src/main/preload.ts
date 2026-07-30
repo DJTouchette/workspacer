@@ -213,6 +213,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     aliases: Array<{ value: string; label: string; context?: string }>;
     seen: string[];
   }> => ipcRenderer.invoke(IPC.CLAUDE_LIST_MODELS),
+  /** One-shot conversation title for an agent's first exchange (see
+   *  services/agentTitler). null = leave the agent's name alone. */
+  agentSuggestTitle: (req: {
+    userMessage: string;
+    assistantReply?: string;
+  }): Promise<string | null> => ipcRenderer.invoke(IPC.AGENT_SUGGEST_TITLE, req),
   workflowAgentTranscript: (
     sessionId: string,
     runId: string | null,

@@ -127,6 +127,12 @@ export interface ElectronAPI {
     parentSessionId?: string;
     mcpItemIds?: string[];
   }) => Promise<string>;
+  /** One-shot conversation title from an agent's first exchange; null = keep
+   *  the current name (feature off, or nothing worth titling). */
+  agentSuggestTitle: (req: {
+    userMessage: string;
+    assistantReply?: string;
+  }) => Promise<string | null>;
   claudeListModels: () => Promise<{
     defaultModel: string;
     skipPermissionsDefault: boolean;

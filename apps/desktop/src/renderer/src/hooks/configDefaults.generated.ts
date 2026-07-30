@@ -189,6 +189,10 @@ export const CONFIG_DEFAULTS = {
       opencode: '',
       pi: '',
     },
+    autoTitle: {
+      enabled: true,
+      model: 'haiku',
+    },
   },
   supervisor: {
     provider: 'claude',

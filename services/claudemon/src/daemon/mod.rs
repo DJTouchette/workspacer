@@ -3,6 +3,7 @@ pub mod heartbeat;
 pub mod hook;
 pub mod init;
 pub mod mcp_ask;
+pub mod oneshot;
 pub mod spawn;
 pub mod wrapper_ws;
 

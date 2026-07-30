@@ -56,6 +56,7 @@ import FleetDeck from './components/FleetDeck';
 import { WorkflowOverlay } from './components/WorkflowOverlay';
 import { AttentionProvider } from './contexts/AttentionContext';
 import { useAttentionFeed, type AttentionFeed } from './hooks/useAttentionFeed';
+import { useAgentAutoTitle } from './hooks/useAgentAutoTitle';
 import type { Layout, LayoutAgent } from './types/layout';
 import { useLibrary } from './hooks/useLibrary';
 import { useLayoutSync, type HydrationResult } from './hooks/useLayoutSync';
@@ -271,6 +272,7 @@ function App() {
     respawnAgentWithSettings,
     terminateAgent,
     renameAgent,
+    applyAutoTitle,
     reconcileAgents,
     stopAgentForSession,
     loadAgentsFromSession,
@@ -1272,6 +1274,15 @@ function App() {
   // (its dismiss/snooze state included) drives goToNextAttention below and the
   // SideBar / Inbox / Fleet via AttentionProvider. This is the spine.
   const attention = useAttentionFeed(snapshotBySession, agents);
+
+  // Name each agent after its first exchange (chat-service style). Off by
+  // config; a name typed by the user is never overwritten.
+  useAgentAutoTitle({
+    agents,
+    snapshotBySession,
+    enabled: config.agents?.autoTitle?.enabled !== false,
+    onTitle: applyAutoTitle,
+  });
   // Expose the live feed to handleSelectAgent (declared above) so selecting an
   // agent clears its notifications. Assigning a ref during render is safe here.
   attentionRef.current = attention;
