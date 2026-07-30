@@ -1618,7 +1618,7 @@ impl App {
                 _ => crate::runs::RunState::Running,
             };
         }
-        runs.subagents.sort_by(|a, b| a.state.cmp(&b.state));
+        runs.subagents.sort_by_key(|a| a.state);
         Some((sid, runs))
     }
 
