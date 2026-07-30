@@ -3,6 +3,7 @@ import {
   extractFilePaths,
   classifyFile,
   buildPromptPrefix,
+  mergeAttachments,
 } from '../../src/components/claude/fileAttachment';
 
 /**
@@ -77,6 +78,19 @@ describe('extractFilePaths', () => {
     expect(extractFilePaths(dt)).toEqual(['/repo/a.png']);
   });
 
+  it('strips the leading slash from a Windows drive path', () => {
+    getPathForFile.mockReturnValue('');
+    const dt = transfer({ data: { 'text/uri-list': 'file:///C:/Users/me/shot.png' } });
+    // new URL().pathname would give "/C:/Users/me/shot.png", which is not a path.
+    expect(extractFilePaths(dt)).toEqual(['C:/Users/me/shot.png']);
+  });
+
+  it('rebuilds a UNC path from a file:// URI with a host', () => {
+    getPathForFile.mockReturnValue('');
+    const dt = transfer({ data: { 'text/uri-list': 'file://nas/share/report.pdf' } });
+    expect(extractFilePaths(dt)).toEqual(['\\\\nas\\share\\report.pdf']);
+  });
+
   it('returns nothing for a plain-text drag', () => {
     expect(extractFilePaths(transfer({ data: { 'text/plain': 'hello' } }))).toEqual([]);
   });
@@ -93,5 +107,24 @@ describe('classifyFile / buildPromptPrefix', () => {
     const f = classifyFile('/repo/deep/dir/shot.png');
     expect(f.name).toBe('shot.png');
     expect(buildPromptPrefix([f])).toBe('[Image: /repo/deep/dir/shot.png] ');
+  });
+});
+
+describe('mergeAttachments', () => {
+  const f = (path: string) => classifyFile(path);
+
+  it('drops a path that is already attached', () => {
+    const existing = [f('/repo/a.png')];
+    expect(mergeAttachments(existing, [f('/repo/a.png')])).toBe(existing); // same array: no churn
+  });
+
+  it('appends only the new paths', () => {
+    const merged = mergeAttachments([f('/repo/a.png')], [f('/repo/a.png'), f('/repo/b.pdf')]);
+    expect(merged.map((x) => x.path)).toEqual(['/repo/a.png', '/repo/b.pdf']);
+  });
+
+  it('dedupes within a single batch', () => {
+    const merged = mergeAttachments([], [f('/repo/a.png'), f('/repo/a.png')]);
+    expect(merged).toHaveLength(1);
   });
 });

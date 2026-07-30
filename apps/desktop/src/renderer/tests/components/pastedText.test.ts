@@ -3,11 +3,13 @@ import {
   shouldCollapsePaste,
   pastePlaceholder,
   expandPastedText,
-  pruneBlocks,
+  holdBlock,
+  releaseBlocks,
   referencedBlockIds,
   spliceAtSelection,
   PASTE_COLLAPSE_LINES,
   PASTE_COLLAPSE_CHARS,
+  MAX_HELD_BLOCKS,
 } from '../../src/components/claude/pastedText';
 
 /**
@@ -71,20 +73,39 @@ describe('expandPastedText', () => {
   });
 });
 
-describe('pruneBlocks', () => {
-  it('forgets blocks whose marker left the composer, keeps the rest', () => {
-    const held = new Map([
-      [1, 'one'],
-      [2, 'two'],
-    ]);
-    pruneBlocks('still here: [Pasted text #2 +3 lines]', held);
+describe('holding and releasing blocks', () => {
+  it('keeps a block whose marker is not currently in the text', () => {
+    // The critical property: mid-edit the composer passes through states where
+    // the marker does not parse (delete the ']', cut it to move it). Dropping
+    // the block at that instant would destroy the paste — the map is the only
+    // copy — and the repaired marker would then send as a literal string.
+    const held = new Map<number, string>();
+    holdBlock(held, 1, 'the payload');
+    expect(expandPastedText('[Pasted text #1 +9 lines', held)).toBe('[Pasted text #1 +9 lines');
+    // ...and once the marker is whole again it still expands.
+    expect(expandPastedText('[Pasted text #1 +9 lines]', held)).toBe('the payload');
+  });
+
+  it('releases only the ids a delivered message carried', () => {
+    const held = new Map<number, string>();
+    holdBlock(held, 1, 'sent');
+    holdBlock(held, 2, 'still drafting');
+    releaseBlocks(held, referencedBlockIds('[Pasted text #1 +2 lines]'));
     expect([...held.keys()]).toEqual([2]);
   });
 
-  it('clears everything when the composer is emptied (a send)', () => {
-    const held = new Map([[1, 'one']]);
-    pruneBlocks('', held);
-    expect(held.size).toBe(0);
+  it('evicts oldest-first past the block cap, never the newest', () => {
+    const held = new Map<number, string>();
+    for (let i = 1; i <= MAX_HELD_BLOCKS + 3; i++) holdBlock(held, i, `block ${i}`);
+    expect(held.size).toBeLessThanOrEqual(MAX_HELD_BLOCKS);
+    expect(held.has(MAX_HELD_BLOCKS + 3)).toBe(true); // the one in use
+    expect(held.has(1)).toBe(false); // the oldest went first
+  });
+
+  it('holds a single oversized paste rather than evicting it to satisfy the budget', () => {
+    const held = new Map<number, string>();
+    holdBlock(held, 1, 'x'.repeat(9_000_000)); // over MAX_HELD_CHARS on its own
+    expect(held.get(1)).toHaveLength(9_000_000);
   });
 
   it('referencedBlockIds finds every marker', () => {

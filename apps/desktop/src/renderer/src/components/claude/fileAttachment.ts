@@ -26,8 +26,34 @@ export function classifyFile(filePath: string): AttachedFile {
   return { path: filePath, label, name };
 }
 
+/**
+ * Add attachments, skipping paths already attached. Attaching the same file
+ * twice is never meaningful — it would list the path twice in the prompt prefix
+ * and give two chips the same React key — and it's easy to do by accident
+ * (drop, then drop again because the first drop looked like it missed).
+ */
+export function mergeAttachments(
+  existing: AttachedFile[],
+  incoming: AttachedFile[],
+): AttachedFile[] {
+  const seen = new Set(existing.map((f) => f.path));
+  const added = incoming.filter((f) => !seen.has(f.path) && (seen.add(f.path), true));
+  return added.length > 0 ? [...existing, ...added] : existing;
+}
+
 export function buildPromptPrefix(files: AttachedFile[]): string {
   return files.map((f) => `[${f.label}: ${f.path}]`).join(' ') + ' ';
+}
+
+/**
+ * A file:// URL as a filesystem path. `pathname` alone is wrong on Windows: a
+ * drive path arrives as `/C:/dir/x.png` (leading slash), and a network share as
+ * a hostname the path drops entirely.
+ */
+function fileUriToPath(url: URL): string {
+  const decoded = decodeURIComponent(url.pathname);
+  if (url.hostname) return `\\\\${url.hostname}${decoded.replace(/\//g, '\\')}`;
+  return /^\/[A-Za-z]:/.test(decoded) ? decoded.slice(1) : decoded;
 }
 
 /**
@@ -67,7 +93,7 @@ export function extractFilePaths(dataTransfer: DataTransfer): string[] {
     if (!uri || uri.startsWith('#')) continue; // '#' lines are uri-list comments
     if (!uri.startsWith('file://')) continue;
     try {
-      paths.push(decodeURIComponent(new URL(uri).pathname));
+      paths.push(fileUriToPath(new URL(uri)));
     } catch {
       /* malformed URI — skip */
     }

@@ -13,6 +13,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { nativeImage } from 'electron';
+import { readImageDimensions, HEADER_PROBE_BYTES } from './imageHeader';
 
 /** Longest edge of the generated thumbnail. ~2× the largest on-screen tile so
  *  it stays crisp on HiDPI without shipping the full image to the renderer. */
@@ -21,6 +22,14 @@ const THUMB_MAX_EDGE = 256;
 const MAX_SOURCE_BYTES = 32 * 1024 * 1024;
 /** Cap for the verbatim fallback below — those bytes reach the renderer as-is. */
 const MAX_INLINE_BYTES = 2 * 1024 * 1024;
+/**
+ * Largest image we will hand to the decoder, in pixels. File size does not
+ * bound decode cost — a 20000×20000 PNG of flat colour is ~91 KB on disk and
+ * 1.6 GB decoded, and nativeImage decodes at full resolution, synchronously, on
+ * the main process before any resize can help. 40 MP clears a 50-megapixel-era
+ * camera photo while refusing the pathological cases.
+ */
+const MAX_SOURCE_PIXELS = 40_000_000;
 
 /** Extensions we'll serve, with the MIME the fallback path embeds them under.
  *  Doubles as the allow-list: anything else is refused, so neither the IPC nor
@@ -51,6 +60,36 @@ export interface ImagePreview {
   size: number;
 }
 
+/** Of the allowed extensions, the ones an <img> can display if we hand over the
+ *  original bytes. Excludes TIFF, which no browser renders. */
+const BROWSER_RENDERABLE = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'svg',
+  'bmp',
+  'ico',
+  'avif',
+]);
+
+/** First bytes of a file, for header sniffing. Returns null if unreadable — the
+ *  caller then proceeds without a dimension check rather than failing. */
+function readHeader(filePath: string): Buffer | null {
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(HEADER_PROBE_BYTES);
+    const read = fs.readSync(fd, buf, 0, HEADER_PROBE_BYTES, 0);
+    return buf.subarray(0, read);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
+  }
+}
+
 export function isPreviewableImage(filePath: string): boolean {
   const ext = path.extname(filePath).slice(1).toLowerCase();
   return ext in MIME_BY_EXT;
@@ -70,6 +109,17 @@ export function readImagePreview(filePath: string): ImagePreview {
   if (!stat.isFile()) throw new Error(`not a regular file: ${filePath}`);
   if (stat.size > MAX_SOURCE_BYTES) {
     throw new Error(`image is ${stat.size} bytes (max ${MAX_SOURCE_BYTES})`);
+  }
+
+  // Refuse decode bombs before the decoder ever sees them. Formats whose header
+  // we don't parse return null — those fall through, bounded only by
+  // MAX_SOURCE_BYTES, which is the pre-existing behaviour.
+  const probe = readHeader(filePath);
+  const dims = probe && readImageDimensions(probe);
+  if (dims && dims.width * dims.height > MAX_SOURCE_PIXELS) {
+    throw new Error(
+      `image is ${dims.width}×${dims.height} (max ${MAX_SOURCE_PIXELS} pixels to decode)`,
+    );
   }
 
   // Chromium's decoder handles PNG/JPEG everywhere and a few more formats
@@ -100,6 +150,13 @@ export function readImagePreview(filePath: string): ImagePreview {
   // Undecodable here but very possibly decodable by the renderer's own <img>
   // (SVG, and WebP/AVIF on platforms where nativeImage declines): embed the
   // original bytes, but only while they're small enough to be worth it.
+  //
+  // Only for formats a browser can actually render. TIFF is the reason: no
+  // browser displays it, so inlining it produced a broken-image tile where the
+  // plain chip (what a rejection gives you) is the honest result.
+  if (!BROWSER_RENDERABLE.has(ext)) {
+    throw new Error(`cannot decode ${ext}, and no browser renders it either`);
+  }
   if (stat.size > MAX_INLINE_BYTES) {
     throw new Error(`cannot decode ${ext} and it is too large to inline (${stat.size} bytes)`);
   }

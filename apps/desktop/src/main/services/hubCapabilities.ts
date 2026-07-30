@@ -930,7 +930,13 @@ export function registerHubCapabilities(): void {
   });
   // Thumbnail for an image attachment — the web client's composer renders the
   // same previews as the desktop one, over host paths it can't read directly.
-  cat('fs.readImage', (params: unknown) => {
+  //
+  // registerCapability, NOT cat: the catalog fs.* methods (read/write/listEntries)
+  // are delegated to the Go brain by default, and the brain has no fs.readImage
+  // counterpart — registering this one through `cat` made it a no-op in the
+  // default configuration, so every remote thumbnail failed with "no provider".
+  // Main keeps it, the same way it keeps fs.watch/fs.unwatch.
+  registerCapability('fs.readImage', (params: unknown) => {
     const { path: p } = (params ?? {}) as { path?: string };
     if (!p) throw new Error('fs.readImage requires a path');
     assertPathAllowed('fs.readImage', p, workspaceRoots());

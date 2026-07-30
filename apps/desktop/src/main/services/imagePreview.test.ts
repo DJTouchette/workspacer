@@ -98,6 +98,38 @@ describe('readImagePreview', () => {
     expect(preview.width).toBe(0);
   });
 
+  it('refuses a decode bomb on its header, before the decoder is handed the file', () => {
+    // 20000x20000 of flat colour: tiny on disk, gigabytes decoded. The size cap
+    // waves it through, so the pixel cap is the only thing that stops it.
+    const header = Buffer.alloc(24);
+    header.writeUInt32BE(0x89504e47, 0);
+    header.writeUInt32BE(0x0d0a1a0a, 4);
+    header.write('IHDR', 12, 'ascii');
+    header.writeUInt32BE(20000, 16);
+    header.writeUInt32BE(20000, 20);
+    const p = write('bomb.png', header);
+
+    expect(() => readImagePreview(p)).toThrow(/max .* pixels/);
+    expect(createFromPath).not.toHaveBeenCalled();
+  });
+
+  it('allows a large but sane photo through', () => {
+    const header = Buffer.alloc(24);
+    header.writeUInt32BE(0x89504e47, 0);
+    header.writeUInt32BE(0x0d0a1a0a, 4);
+    header.write('IHDR', 12, 'ascii');
+    header.writeUInt32BE(8000, 16); // 8000x5000 = 40MP, right at the cap
+    header.writeUInt32BE(5000, 20);
+    createFromPath.mockReturnValue(fakeImage({ width: 8000, height: 5000 }));
+
+    expect(() => readImagePreview(write('photo-large.png', header))).not.toThrow();
+  });
+
+  it('refuses TIFF rather than inlining bytes no browser can render', () => {
+    createFromPath.mockReturnValue(emptyImage);
+    expect(() => readImagePreview(write('scan.tiff', 'II*\0'))).toThrow(/no browser renders it/);
+  });
+
   it('refuses to inline an undecodable file that is too big', () => {
     createFromPath.mockReturnValue(emptyImage);
     const p = write('huge.webp', Buffer.alloc(3 * 1024 * 1024));

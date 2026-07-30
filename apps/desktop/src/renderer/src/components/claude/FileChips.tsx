@@ -47,14 +47,15 @@ function cachedPreviews(paths: string[]): Record<string, string> {
 function useImagePreviews(files: AttachedFile[]): Record<string, string> {
   const imagePaths = files.filter((f) => f.label === 'Image').map((f) => f.path);
   // Effect key: the identity of the image set, not the array reference (which
-  // changes on every parent render).
-  const key = imagePaths.join('\n');
+  // changes on every parent render). NUL-separated because a filename may
+  // legally contain a newline, which would split one path into two.
+  const key = imagePaths.join('\u0000');
   const [previews, setPreviews] = useState<Record<string, string>>(() =>
     cachedPreviews(imagePaths),
   );
 
   useEffect(() => {
-    const paths = key ? key.split('\n') : [];
+    const paths = key ? key.split('\u0000') : [];
     let cancelled = false;
     // Paint whatever is already cached immediately; the rest fill in below.
     setPreviews(cachedPreviews(paths));

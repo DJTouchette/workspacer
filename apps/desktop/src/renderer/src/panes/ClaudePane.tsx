@@ -58,13 +58,16 @@ import {
   classifyFile,
   buildPromptPrefix,
   extractFilePaths,
+  mergeAttachments,
 } from '../components/claude/fileAttachment';
 import type { AttachedFile } from '../components/claude/fileAttachment';
 import {
   shouldCollapsePaste,
   pastePlaceholder,
   expandPastedText,
-  pruneBlocks,
+  holdBlock,
+  releaseBlocks,
+  referencedBlockIds,
   spliceAtSelection,
 } from '../components/claude/pastedText';
 import { useLibrary } from '../hooks/useLibrary';
@@ -758,7 +761,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       if (e.dataTransfer) {
         const paths = extractFilePaths(e.dataTransfer);
         if (paths.length > 0) {
-          setAttachedFiles((prev) => [...prev, ...paths.map(classifyFile)]);
+          setAttachedFiles((prev) => mergeAttachments(prev, paths.map(classifyFile)));
           setViewMode('gui');
         }
       }
@@ -783,35 +786,36 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   const pastedBlocksRef = useRef(new Map<number, string>());
   const pasteCounterRef = useRef(0);
 
-  // Setting the composer text always prunes: a marker deleted from the draft
-  // takes its held text with it.
-  const handleInputChange = useCallback((next: string) => {
-    setInputValue(next);
-    pruneBlocks(next, pastedBlocksRef.current);
-  }, []);
-
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     // 1. Files with a real path on disk (from a file manager) → attachments.
     const paths = extractFilePaths(e.clipboardData);
     if (paths.length > 0) {
       e.preventDefault();
-      setAttachedFiles((prev) => [...prev, ...paths.map(classifyFile)]);
+      setAttachedFiles((prev) => mergeAttachments(prev, paths.map(classifyFile)));
       return;
     }
 
     // 2. An image with no path — a screenshot. Main spills it to a temp PNG so
     //    there's a path to attach. preventDefault must happen synchronously,
     //    before the await, or the paste's default handling has already run.
-    const hasImage = Array.from(e.clipboardData.items ?? []).some(
-      (it) => it.kind === 'file' && it.type.startsWith('image/'),
-    );
+    //
+    //    Only when the clipboard carries NO usable text: copying from a
+    //    spreadsheet or a word processor puts both a text flavour and a
+    //    rendered bitmap on the clipboard, and treating that as a screenshot
+    //    silently swallows the text the user meant to paste.
+    const text = e.clipboardData.getData('text/plain');
+    const hasImage =
+      !text.trim() &&
+      Array.from(e.clipboardData.items ?? []).some(
+        (it) => it.kind === 'file' && it.type.startsWith('image/'),
+      );
     if (hasImage) {
       e.preventDefault();
       void window.electronAPI
         .saveClipboardImage()
         .then((saved) => {
           if (!saved) return;
-          setAttachedFiles((prev) => [...prev, classifyFile(saved.path)]);
+          setAttachedFiles((prev) => mergeAttachments(prev, [classifyFile(saved.path)]));
           setViewMode('gui');
         })
         .catch((err) => console.warn('[ClaudePane] saving pasted image failed:', err));
@@ -819,15 +823,13 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     }
 
     // 3. A large text paste collapses to a marker so it can't bury the draft.
-    const text = e.clipboardData.getData('text/plain');
     if (!text || !shouldCollapsePaste(text)) return; // small paste: default behaviour
     e.preventDefault();
     const ta = e.currentTarget as HTMLTextAreaElement;
-    // Drop anything the box no longer refers to (a sent draft clears it, and a
-    // send doesn't go through handleInputChange) before holding onto more.
-    pruneBlocks(ta.value, pastedBlocksRef.current);
     const id = ++pasteCounterRef.current;
-    pastedBlocksRef.current.set(id, text);
+    // Held until the message it belongs to is actually delivered (see
+    // handleSend); bounded by age so the map can't grow without limit.
+    holdBlock(pastedBlocksRef.current, id, text);
     const { value, caret } = spliceAtSelection(
       ta.value,
       ta.selectionStart ?? ta.value.length,
@@ -846,7 +848,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   const openFilePicker = useCallback(async () => {
     const paths = await window.electronAPI.pickFiles(effectiveCwd);
     if (paths.length > 0) {
-      setAttachedFiles((prev) => [...prev, ...paths.map(classifyFile)]);
+      setAttachedFiles((prev) => mergeAttachments(prev, paths.map(classifyFile)));
       if (viewMode === 'terminal') setViewMode('gui');
     }
   }, [effectiveCwd, viewMode]);
@@ -904,6 +906,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     // What the agent receives: every `[Pasted text #N]` marker swapped back for
     // the text it stands for.
     const userText = expandPastedText(draftText, pastedBlocksRef.current);
+    // Held text is released only once the message is actually delivered — a
+    // rejected send restores the draft, and its markers have to expand again.
+    const deliveredBlockIds = referencedBlockIds(draftText);
+    const releaseDelivered = () => releaseBlocks(pastedBlocksRef.current, deliveredBlockIds);
     setInputValue('');
     setAttachedFiles([]);
 
@@ -932,8 +938,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     // guards avoid clobbering anything the user re-entered during the await;
     // the prefix is regenerated from the restored chips on the next send.
     const restoreComposer = () => {
-      // The draft, not the expansion — the blocks are still held (they're only
-      // pruned once their marker leaves the box), so the next send expands again.
+      // The draft, not the expansion — the blocks it points at are still held
+      // (nothing is released until a send lands), so the retry expands again.
       setInputValue((prev) => (prev.trim().length > 0 ? prev : draftText));
       if (hasFiles) setAttachedFiles((prev) => (prev.length > 0 ? prev : attachedFiles));
     };
@@ -953,6 +959,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       // instead of submitting; the CR after the ESC[201~ end marker is a real
       // Enter that submits. Mirrors the daemon's send_message_now.
       write('\x1b[200~' + fullMessage.replace(/[\r\n]+$/, '') + '\x1b[201~\r');
+      releaseDelivered();
     };
 
     if (!sessionId) {
@@ -970,7 +977,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     // raw PTY write stays reserved for transport failure (daemon unreachable).
     try {
       const res = await window.electronAPI.claudeMessage(sessionId, fullMessage);
-      if (res.ok) return; // sent or queued by the daemon
+      if (res.ok) {
+        releaseDelivered(); // the paste is on its way; stop holding it
+        return; // sent or queued by the daemon
+      }
       // The session has ended — nothing was delivered. Retract the optimistic
       // bubble and put the text back in the composer so the send visibly
       // didn't take (instead of a phantom message above a dead session).
@@ -2001,7 +2011,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
               {/* Composer / Input area — session pills live inside its bottom row */}
               <Composer
                 value={inputValue}
-                onChange={handleInputChange}
+                onChange={setInputValue}
                 onSend={handleSend}
                 onPaste={handlePaste}
                 onPickFiles={openFilePicker}

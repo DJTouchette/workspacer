@@ -323,7 +323,17 @@ function App() {
   // area from being treated as a navigation, which replaces the whole app with
   // the file. Passive: it never consumes a drop a pane wants.
   useEffect(() => {
-    const swallow = (e: DragEvent) => e.preventDefault();
+    // Dropping text into a text box is a normal edit, and preventing its
+    // default is what would break it — so only swallow drags that would
+    // actually navigate: anything carrying files, and anything at all landing
+    // outside an editable element.
+    const isEditable = (t: EventTarget | null) =>
+      t instanceof HTMLElement &&
+      (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA');
+    const swallow = (e: DragEvent) => {
+      const carriesFiles = e.dataTransfer?.types.includes('Files') ?? false;
+      if (carriesFiles || !isEditable(e.target)) e.preventDefault();
+    };
     window.addEventListener('dragover', swallow);
     window.addEventListener('drop', swallow);
     return () => {

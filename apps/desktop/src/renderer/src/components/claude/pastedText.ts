@@ -59,15 +59,43 @@ export function referencedBlockIds(input: string): Set<number> {
   return ids;
 }
 
+/** Bounds on held text. Generous — this is a handful of drafts, not a cache —
+ *  but finite, since nothing else evicts. */
+export const MAX_HELD_BLOCKS = 20;
+export const MAX_HELD_CHARS = 8_000_000;
+
 /**
- * Forget blocks whose marker is no longer in the composer (deleted, or cleared
- * by a send). Keeps the held text from outliving the draft that referenced it.
+ * Hold a paste, evicting oldest-first to stay inside the bounds.
+ *
+ * Eviction is by age, NOT by "is the marker still in the box". Pruning on what
+ * the composer currently contains looks tidier and is a trap: mid-edit the text
+ * passes through states where the marker doesn't parse (delete the `]`, cut it
+ * to move it, an undo step), and dropping the block at that instant destroys
+ * the paste — the map is the only copy. The marker would then survive to send
+ * and go out as the literal string `[Pasted text #1 +400 lines]`. Age-based
+ * eviction can only discard pastes far older than the current draft.
  */
-export function pruneBlocks(input: string, blocks: Map<number, string>): void {
-  const live = referencedBlockIds(input);
-  for (const id of [...blocks.keys()]) {
-    if (!live.has(id)) blocks.delete(id);
+export function holdBlock(blocks: Map<number, string>, id: number, text: string): void {
+  blocks.set(id, text);
+  const overBudget = () =>
+    blocks.size > MAX_HELD_BLOCKS ||
+    [...blocks.values()].reduce((n, t) => n + t.length, 0) > MAX_HELD_CHARS;
+  // Map preserves insertion order, so the first key is the oldest. Never evict
+  // the block just added, however large it is — the user is using that one.
+  while (blocks.size > 1 && overBudget()) {
+    const oldest = blocks.keys().next().value;
+    if (oldest === undefined || oldest === id) break;
+    blocks.delete(oldest);
   }
+}
+
+/**
+ * Release the blocks a delivered message carried. Called only once a send has
+ * actually gone through: until then the draft may come back (a rejected send
+ * restores it) and must still expand.
+ */
+export function releaseBlocks(blocks: Map<number, string>, ids: Set<number>): void {
+  for (const id of ids) blocks.delete(id);
 }
 
 /** Insert `insert` over [start, end) of `value` — the caret-aware splice a

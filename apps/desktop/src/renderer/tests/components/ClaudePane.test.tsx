@@ -546,3 +546,101 @@ describe('ClaudePane file drop', () => {
     expect(screen.queryByText('shot.png')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Regressions found by the v0.147.0 bug hunt, both reproduced before the fix:
+ *  - a transient edit that broke a marker's shape destroyed the held paste, and
+ *    the repaired marker then went out to the agent as a literal string;
+ *  - a clipboard carrying BOTH text and a bitmap (spreadsheet/word-processor
+ *    copy) was treated as a screenshot, silently swallowing the text.
+ */
+describe('ClaudePane paste regressions', () => {
+  beforeEach(() => {
+    mockSession = makeSnapshot();
+    (window.electronAPI.claudeMessage as any) = vi.fn().mockResolvedValue({ ok: true });
+    (window.electronAPI.saveClipboardImage as any) = vi.fn().mockResolvedValue(null);
+    (window.electronAPI.getPathForFile as any) = vi.fn().mockReturnValue('');
+  });
+
+  it('survives the marker being broken and repaired mid-edit', async () => {
+    render(<ClaudePane paneId="pr1" title="Claude" isActive cwd="/repo" />);
+    fireEvent.paste(composer(), { clipboardData: clipboard({ text: bigPaste }) });
+    const marker = composer().value;
+
+    // Backspace the closing bracket, then type it back.
+    fireEvent.change(composer(), { target: { value: marker.slice(0, -1) } });
+    fireEvent.change(composer(), { target: { value: marker } });
+    fireEvent.keyDown(composer(), { key: 'Enter' });
+
+    await waitFor(() =>
+      expect(window.electronAPI.claudeMessage).toHaveBeenCalledWith('sess-1', bigPaste),
+    );
+  });
+
+  it('survives the marker being cut away and pasted back elsewhere', async () => {
+    render(<ClaudePane paneId="pr2" title="Claude" isActive cwd="/repo" />);
+    fireEvent.paste(composer(), { clipboardData: clipboard({ text: bigPaste }) });
+    const marker = composer().value;
+
+    fireEvent.change(composer(), { target: { value: '' } }); // cut
+    fireEvent.change(composer(), { target: { value: 'why: ' } }); // type context
+    // Re-paste: short text, so the browser's own insertion applies.
+    fireEvent.change(composer(), { target: { value: `why: ${marker}` } });
+    fireEvent.keyDown(composer(), { key: 'Enter' });
+
+    await waitFor(() =>
+      expect(window.electronAPI.claudeMessage).toHaveBeenCalledWith('sess-1', `why: ${bigPaste}`),
+    );
+  });
+
+  it('still expands after a rejected send even if the composer was touched meanwhile', async () => {
+    (window.electronAPI.claudeMessage as any) = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, mode: 'stopped' })
+      .mockResolvedValue({ ok: true });
+    render(<ClaudePane paneId="pr3" title="Claude" isActive cwd="/repo" />);
+    fireEvent.paste(composer(), { clipboardData: clipboard({ text: bigPaste }) });
+    fireEvent.keyDown(composer(), { key: 'Enter' });
+    // Typing during the in-flight send used to prune the block out from under
+    // the restore.
+    fireEvent.change(composer(), { target: { value: ' ' } });
+    fireEvent.change(composer(), { target: { value: '' } });
+
+    await waitFor(() => expect(composer().value).toMatch(/^\[Pasted text #1/));
+    fireEvent.keyDown(composer(), { key: 'Enter' });
+    await waitFor(() =>
+      expect(window.electronAPI.claudeMessage).toHaveBeenLastCalledWith('sess-1', bigPaste),
+    );
+  });
+
+  it('pastes the text when the clipboard carries text AND a bitmap (spreadsheet copy)', () => {
+    render(<ClaudePane paneId="pr4" title="Claude" isActive cwd="/repo" />);
+    const ev = fireEvent.paste(composer(), {
+      clipboardData: clipboard({
+        text: 'a\tb\tc\n1\t2\t3',
+        items: [
+          { kind: 'string', type: 'text/plain' },
+          { kind: 'file', type: 'image/png' },
+        ],
+      }),
+    });
+    // Left to the browser to insert, and nothing spilled to disk.
+    expect(ev).toBe(true);
+    expect(window.electronAPI.saveClipboardImage).not.toHaveBeenCalled();
+  });
+
+  it('attaching the same file twice keeps one chip', async () => {
+    (window.electronAPI.getPathForFile as any) = vi.fn().mockReturnValue('/repo/shot.png');
+    const { container } = render(<ClaudePane paneId="pr5" title="Claude" isActive cwd="/repo" />);
+    const data = () => ({
+      files: [new File(['x'], 'shot.png')],
+      items: [],
+      types: ['Files'],
+      getData: () => '',
+    });
+    fireEvent.drop(container.firstChild as Element, { dataTransfer: data() });
+    fireEvent.drop(container.firstChild as Element, { dataTransfer: data() });
+
+    expect(await screen.findAllByText('shot.png')).toHaveLength(1);
+  });
+});
