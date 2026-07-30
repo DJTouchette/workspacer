@@ -306,7 +306,7 @@ const WorkCardInner: React.FC<{
                 cwd={cwd}
                 style={{
                   display: 'flex',
-                  alignItems: 'baseline',
+                  alignItems: 'center',
                   gap: 6,
                   padding: '2px 4px',
                   borderRadius: 'var(--wks-radius-sm)',

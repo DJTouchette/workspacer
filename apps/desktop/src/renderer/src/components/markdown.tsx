@@ -29,7 +29,7 @@ const MdPathLink: React.FC<{ hit: DetectedPath }> = ({ hit }) => {
   const cwd = useContext(MarkdownFileCwd);
   if (!cwd && !isAbsolutePath(hit.path)) return <>{hit.display}</>;
   return (
-    <FileLink path={hit.path} cwd={cwd} glyph={false}>
+    <FileLink path={hit.path} cwd={cwd}>
       {hit.display}
     </FileLink>
   );

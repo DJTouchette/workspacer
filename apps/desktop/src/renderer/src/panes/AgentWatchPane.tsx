@@ -395,7 +395,9 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({
           </div>
         )}
         {view === 'gui' && guiItems && (
-          <div style={{ maxWidth: 900, marginLeft: 'auto', marginRight: 'auto' }}>
+          <div
+            style={{ maxWidth: 'var(--wks-chat-width)', marginLeft: 'auto', marginRight: 'auto' }}
+          >
             {/* cwd provider: file mentions in watched-agent prose open like
                 tool-call FileLinks, resolved against the watched session. */}
             <MarkdownFileCwdProvider value={cwd}>{guiItems}</MarkdownFileCwdProvider>
@@ -405,7 +407,12 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({
           transcript?.map((t, i) => (
             <div
               key={i}
-              style={{ marginBottom: 12, maxWidth: 900, marginLeft: 'auto', marginRight: 'auto' }}
+              style={{
+                marginBottom: 12,
+                maxWidth: 'var(--wks-chat-width)',
+                marginLeft: 'auto',
+                marginRight: 'auto',
+              }}
             >
               <div
                 style={{

@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUp } from 'lucide-react';
+import { IconStop } from '../wksIcons';
 import { claudeColors as colors } from '../claude-shared';
 import { FileChips } from './FileChips';
 import type { AttachedFile } from './fileAttachment';
@@ -21,6 +22,10 @@ export interface ComposerProps {
   inputRef?: React.RefObject<HTMLTextAreaElement>;
   /** Show the send (↑) button. When false, Enter still sends. Defaults to true. */
   showSendButton?: boolean;
+  /** The agent is mid-turn — reveals the stop button beside send. */
+  working?: boolean;
+  /** Interrupt the current turn (same action as Escape). */
+  onStop?: () => void;
   /** Display name of the agent backend (Claude / Codex / …) for placeholders. */
   agentName?: string;
   /** Session controls (model / effort / permission) rendered inside the
@@ -54,6 +59,8 @@ export const Composer: React.FC<ComposerProps> = ({
   dimmed,
   inputRef,
   showSendButton = true,
+  working,
+  onStop,
   agentName = 'Claude',
   controls,
   slashItems,
@@ -132,7 +139,7 @@ export const Composer: React.FC<ComposerProps> = ({
         transition: 'opacity 0.15s',
       }}
     >
-      <div style={{ maxWidth: 1040, margin: '0 auto' }}>
+      <div style={{ maxWidth: 'var(--wks-chat-width)', margin: '0 auto' }}>
         <div
           style={{
             position: 'relative',
@@ -380,6 +387,19 @@ export const Composer: React.FC<ComposerProps> = ({
               </div>
             )}
             <div style={{ flex: 1 }} />
+            {/* Stop lives NEXT TO send, not instead of it: a message typed while
+                the agent works is queued for the next turn (the daemon settles
+                it), so turning send into stop would take away a real action. */}
+            {working && onStop && (
+              <button
+                onClick={onStop}
+                className="wks-composer-stop"
+                title="Stop (Esc)"
+                aria-label="Stop"
+              >
+                <IconStop size={13} strokeWidth={2} />
+              </button>
+            )}
             {showSendButton && (
               <button
                 onClick={onSend}

@@ -137,9 +137,11 @@ describe('ClaudePane optimistic sending indicator', () => {
     // The optimistic bubble is shown immediately.
     expect(await screen.findByText('do the thing')).toBeInTheDocument();
 
-    // ...and so is the streaming/cancel indicator — optimisticLoading bridges
-    // the gap until the daemon flips ambientState to thinking/streaming. It must
-    // NOT be cleared by the still-idle snapshot the same tick it was set.
-    expect(await screen.findByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    // ...and so is the streaming indicator — optimisticLoading bridges the gap
+    // until the daemon flips ambientState to thinking/streaming. It must NOT be
+    // cleared by the still-idle snapshot the same tick it was set. The elapsed
+    // label rides the same state, and Stop (in the composer) is its action.
+    expect(await screen.findByText(/Working for/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
   });
 });

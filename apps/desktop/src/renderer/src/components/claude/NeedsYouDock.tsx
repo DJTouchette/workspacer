@@ -86,7 +86,7 @@ export const NeedsYouDock: React.FC<{
             alignItems: 'center',
             gap: 8,
             width: '100%',
-            maxWidth: 1040,
+            maxWidth: 'var(--wks-chat-width)',
             margin: '0 auto',
             padding: '6px 16px',
             border: 'none',
@@ -142,7 +142,13 @@ export const NeedsYouDock: React.FC<{
         animation: 'claudeSlideUp 0.18s ease-out',
       }}
     >
-      <div style={{ maxWidth: 1040, margin: '0 auto', padding: '6px 16px 2px 16px' }}>
+      <div
+        style={{
+          maxWidth: 'var(--wks-chat-width)',
+          margin: '0 auto',
+          padding: '6px 16px 2px 16px',
+        }}
+      >
         <div
           style={{
             display: 'flex',

@@ -53,7 +53,6 @@ Expand/collapse → `ChevronDown`/`ChevronRight` · close/dismiss → `X` · suc
 - **Prose arrows** — "Settings → Keybindings" style inline references are text.
 - **`×N` multipliers** (e.g. file-frequency counts) are text.
 - **`❯` prompt glyph** in SpawnAgentDialog's cwd field — deliberate shell aesthetic.
-- **FileLink badges** (`M↓` etc.) — compact typographic file-type marks.
 - **User-supplied emoji** — plugin `icon` fields and configured app-launcher icons are
   data; render them as given (code-side *fallbacks* must be icon components).
 
@@ -118,6 +117,11 @@ Rules:
   (e.g. `'6px 12px'`). Avoid 5/7/9 stragglers.
 - Elevation: overlays use `--wks-overlay`, floating chrome uses `--wks-glass-*` +
   `--wks-shadow`; don't hand-roll rgba glass.
+- **The chat measure is a token**: `--wks-chat-width` (900px) is the centered column the
+  transcript, composer, tasks card, needs-you dock, GUI status row and the Agent Watch
+  transcript all share (`maxWidth: 'var(--wks-chat-width)'`, `margin: '0 auto'`). It used
+  to be `1040` copy-pasted across six sites; never reintroduce a literal — anything that
+  must sit flush under the composer reads the token.
 
 ## 5. Components
 
@@ -160,6 +164,18 @@ Converted so far: `AgentCard`, `AgentCardBody`, `AttentionCard`, `ApprovalPrompt
   outside Settings.
 - Hover states: background shifts to `--wks-bg-hover` (or `--wks-bg-selected` for
   selection), 0.1–0.12s transitions.
+- **A path affordance wears its destination's icon**: `FileLink` renders a leading
+  `PaneIcon` for the pane a click will open (editor / `mdpreview`), 11px at 0.5 opacity,
+  full opacity on hover. Both the icon and the click read `defaultOpenTarget()`, so the
+  badge can't advertise a surface the click doesn't open. This replaced the old
+  typographic `M↓` / `⊕` file-type marks — a destination is an action, and actions are
+  icons here.
+- Hover-revealed actions on a content block (copy a message, …) use the `.wks-hover-host`
+  → `.wks-hover-actions` → `.wks-hover-action` family in `App.css`: the action row always
+  occupies its 18px, only opacity moves, so revealing it can never reflow a streaming
+  transcript. `CopyTextButton` (`components/claude/CopyTextButton.tsx`) is the first
+  member. Touch devices get it at 0.5 opacity permanently (no hover to reveal it) —
+  same `@media (hover: none)` escape hatch as `.wks-tab-close`.
 - Interactive elements always get `cursor: pointer`, a `title` or `aria-label` when the
   label isn't text, and visible disabled styling (`--wks-text-disabled`).
 

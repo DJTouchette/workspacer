@@ -10,6 +10,7 @@ import { useConfig } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
 import type { ConversationTurn, ToolCall, PendingQuestion } from '../types/claudeSession';
 import { anchorWork } from '../lib/anchorWork';
+import { tailPadForAnchor, distanceFromContentEnd } from '../lib/chatScroll';
 import type { AgentProvider } from '../types/pane';
 import {
   claudeColors as colors,
@@ -30,6 +31,7 @@ import { clearMdCache, MarkdownFileCwdProvider } from '../components/markdown';
 import { InlineWorkLog } from '../components/claude/InlineWorkLog';
 import { TasksCard, planSignature } from '../components/claude/TasksCard';
 import { ConversationMessage } from '../components/claude/ConversationMessage';
+import { WorkingTimer } from '../components/claude/WorkingTimer';
 import { CommandCard } from '../components/claude/CommandCard';
 import { ConversationEmptyState, AgentHero } from '../components/claude/ConversationEmptyState';
 import { permissionModeLabel } from '../lib/providerCaps';
@@ -134,6 +136,14 @@ const CONVERSATION_PAGE_SIZE = 60;
 
 // ── Main component ──
 
+/**
+ * A user turn rendered before the daemon has echoed it back in the transcript —
+ * shown optimistically, but explicitly NOT acknowledged yet. `queued` marks the
+ * ones that landed behind work in progress (so they wait for the current turn to
+ * end) rather than being handed over immediately.
+ */
+type PendingUserTurn = ConversationTurn & { queued?: boolean };
+
 const ClaudePane: React.FC<ClaudePaneProps> = ({
   paneId,
   title,
@@ -201,8 +211,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // Guards the one-shot session spawn so the visible-fit retry loop below can't
   // start it twice (sessionId only lands async, after the spawn resolves).
   const sessionStartedRef = useRef(false);
-  const conversationEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // Marker sitting immediately above the newest user message — the element the
+  // tail spacer pins to the top of the viewport after a send (see chatScroll).
+  const pinAnchorRef = useRef<HTMLDivElement>(null);
   const contentAreaRef = useRef<HTMLDivElement>(null);
   // The pane's outermost element — the drop target (see the drag & drop effect).
   const paneRootRef = useRef<HTMLDivElement>(null);
@@ -693,13 +705,61 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // they return. A ref, not state — read from the ResizeObserver below.
   const stickToBottomRef = useRef(true);
 
+  // Tail spacer: dead space below the transcript that lets the newest user
+  // message sit at the TOP of the viewport, so the reply streams into the empty
+  // room below it instead of both being crushed against the composer. Armed by
+  // the first send in this pane (a freshly-restored transcript still opens at
+  // its natural bottom), then re-derived on every content/viewport resize.
+  const [tailPad, setTailPad] = useState(0);
+  const tailPadRef = useRef(0);
+  const pinArmedRef = useRef(false);
+
   // Track scroll position for "scroll to bottom" button + lazy load older messages
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
-    const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    // Measured against the end of real content, not the end of the scroll
+    // range — otherwise the tail spacer itself reads as "scrolled away".
+    const distFromBottom = distanceFromContentEnd({
+      scrollHeight: container.scrollHeight,
+      scrollTop: container.scrollTop,
+      clientHeight: container.clientHeight,
+      tailPad: tailPadRef.current,
+    });
     setShowScrollBtn(distFromBottom > 150);
     stickToBottomRef.current = distFromBottom <= 150;
+  }, []);
+
+  // Re-derive the tail spacer from the pinned message's position. Cheap enough
+  // to run from a ResizeObserver: it reads layout only, and because the spacer
+  // is excluded from the measurement it converges in one pass instead of
+  // feeding itself.
+  const measureTailPad = useCallback(() => {
+    const setPad = (next: number) => {
+      if (Math.abs(next - tailPadRef.current) <= 1) return;
+      tailPadRef.current = next;
+      setTailPad(next);
+    };
+    const container = scrollContainerRef.current;
+    const anchor = pinAnchorRef.current;
+    if (!container || !anchor || !pinArmedRef.current) {
+      setPad(0);
+      return;
+    }
+    // Scroll-coordinate top of the anchor (rect delta + current scroll), so the
+    // number doesn't depend on where the user happens to be scrolled.
+    const anchorTop =
+      anchor.getBoundingClientRect().top -
+      container.getBoundingClientRect().top +
+      container.scrollTop;
+    setPad(
+      tailPadForAnchor({
+        viewportHeight: container.clientHeight,
+        // The spacer is already in scrollHeight; measure without it.
+        contentHeight: container.scrollHeight - tailPadRef.current,
+        anchorTop,
+      }),
+    );
   }, []);
 
   const loadOlderMessages = useCallback(() => {
@@ -717,7 +777,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
 
   const scrollToBottom = useCallback(() => {
     stickToBottomRef.current = true;
-    conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Own container, not scrollIntoView: the end of the range includes the tail
+    // spacer, which is exactly where the pinned message sits at the top.
+    const container = scrollContainerRef.current;
+    container?.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
   }, []);
 
   // ── File drag & drop ──
@@ -885,7 +948,13 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // regardless of content — content-based matching was unreliable because
   // claude's JSONL records the post-input-processing text which can differ
   // from what we sent (whitespace, paste prefixes, autocomplete munging).
-  const [optimisticMessages, setOptimisticMessages] = useState<ConversationTurn[]>([]);
+  const [optimisticMessages, setOptimisticMessages] = useState<PendingUserTurn[]>([]);
+  // Mirrors of state the send handler needs at CALL time. Both are declared
+  // further down the body (ambientIdle) or would churn the callback's deps
+  // (the pending count), and handleSend only ever runs from an event, long
+  // after this render's body finished.
+  const pendingCountRef = useRef(0);
+  pendingCountRef.current = optimisticMessages.length;
   const [optimisticLoading, setOptimisticLoading] = useState(false);
   // Count of user-messages we've seen consumed by session.conversation.
   const consumedUserCountRef = useRef(0);
@@ -919,10 +988,15 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     const fullMessage = filePrefix + userText;
 
     // Show message immediately and set loading state
-    const optimisticTurn: ConversationTurn = {
+    // Is this message going to sit behind something? Either the agent is
+    // mid-turn (a turn parked on an approval counts — it hasn't ended), or an
+    // earlier send of ours is still unacknowledged. Captured at send time
+    // because that's when the distinction is true; the badge outlives it.
+    const optimisticTurn: PendingUserTurn = {
       role: 'user',
       content: fullMessage,
       timestamp: Date.now(),
+      queued: !ambientIdleRef.current || pendingCountRef.current > 0,
     };
     setOptimisticMessages((prev) => [...prev, optimisticTurn]);
     setOptimisticLoading(true);
@@ -932,6 +1006,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     // Sending re-sticks the view: your own message (and the reply) should be
     // in sight even if you'd scrolled up — the ResizeObserver does the rest.
     stickToBottomRef.current = true;
+    // …and from here on the message you just sent rides the top of the viewport
+    // with the reply growing below it (tail spacer, see measureTailPad).
+    pinArmedRef.current = true;
 
     // Restore the composer (text + attachments) verbatim when a send is
     // rejected, so a failed send loses nothing and can be retried as-is. The
@@ -1183,6 +1260,36 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // subagents run detached), so turn-scoped UI — changed-files snapshot
   // freezing, work-card collapse — must behave exactly as on a real idle.
   const ambientIdle = session?.ambientState === 'idle' || session?.ambientState === 'background';
+  const ambientIdleRef = useRef(ambientIdle);
+  ambientIdleRef.current = ambientIdle;
+
+  // When the current run started, for the "Working for 1m 04s" label. Taken from
+  // the newest user turn so the count is the wall clock since YOU asked — which
+  // is what you're actually waiting on — and so it survives a remount or an
+  // attach to a session already mid-turn (a locally stamped start would restart
+  // the clock at zero there and understate the wait).
+  //
+  // Cleared on IDLE, not on `!isStreaming`: a turn parked on an approval isn't
+  // over, and resetting there would restart the clock after every approval.
+  const lastUserTs = useMemo(() => {
+    for (let i = conversation.length - 1; i >= 0; i--) {
+      if (conversation[i].role === 'user') return conversation[i].timestamp;
+    }
+    return undefined;
+  }, [conversation]);
+  // Read through a ref so a follow-up message queued MID-run (which moves
+  // lastUserTs) can't restart the clock on a turn that never stopped.
+  const lastUserTsRef = useRef(lastUserTs);
+  lastUserTsRef.current = lastUserTs;
+  const [workStartedAt, setWorkStartedAt] = useState<number | null>(null);
+  useEffect(() => {
+    // Streaming wins over idle: the optimistic bridge right after a send is
+    // "streaming" while ambientState is STILL idle (the daemon hasn't flipped
+    // yet), and clearing first there left the label blank for the whole settle
+    // window — the exact stretch the user is waiting through.
+    if (isStreaming) setWorkStartedAt((prev) => prev ?? lastUserTsRef.current ?? Date.now());
+    else if (ambientIdle) setWorkStartedAt(null);
+  }, [isStreaming, ambientIdle]);
 
   // ── Changed-files snapshots ──
   //
@@ -1446,18 +1553,38 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // scrollTop assignment on our own container: no smooth animation to race
   // the near-bottom check, and (unlike scrollIntoView) it can't yank ancestor
   // scrollers to this tab while another one is active.
+  // The tail spacer is re-derived in the same pass, so growth and the space it
+  // eats are always measured together: the spacer shrinks by exactly what the
+  // reply grew, total scroll height holds still, and the pinned message stays
+  // where the send put it.
+  const followTail = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    measureTailPad();
+    if (!stickToBottomRef.current) return;
+    container.scrollTop = container.scrollHeight;
+  }, [measureTailPad]);
+
   useEffect(() => {
     if (viewMode !== 'gui') return;
     const container = scrollContainerRef.current;
     const content = container?.firstElementChild;
     if (!container || !content) return;
-    const ro = new ResizeObserver(() => {
-      if (!stickToBottomRef.current) return;
-      container.scrollTop = container.scrollHeight;
-    });
+    const ro = new ResizeObserver(followTail);
     ro.observe(content);
+    // The viewport itself changes height when the approval dock / tasks card
+    // appear above the composer, which changes how much slack the spacer needs.
+    ro.observe(container);
     return () => ro.disconnect();
-  }, [viewMode]);
+  }, [viewMode, followTail]);
+
+  // Belt to the observer's braces: a turn arriving (or the window growing) is a
+  // moment the spacer must be right even if the observer hasn't fired yet —
+  // notably the send itself, which is what arms the pin in the first place.
+  useLayoutEffect(() => {
+    if (viewMode !== 'gui') return;
+    followTail();
+  }, [viewMode, conversation, visibleCount, followTail]);
 
   // Which work-log surface renders a run of tool calls: prose summary cards,
   // or the waterfall trace monitor (see ToolTraceCard). Same props either way.
@@ -1488,6 +1615,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       else cardsByAnchor.set(a, [r]);
     }
 
+    // Where the newest user message lands in `items` — the tail spacer pins it
+    // to the top of the viewport (see measureTailPad).
+    let lastUserItemIdx = -1;
+    // Turns from here on are ours, not the daemon's: shown optimistically and
+    // still unacknowledged (`conversation` = authoritative + optimistic tail).
+    const pendingFrom = conversation.length - optimisticMessages.length;
     let pendingWork: { calls: ToolCall[]; keyStart: number; endIdx: number } | null = null;
     const workCardIdxs: number[] = []; // positions of WorkCards in `items`
     const flushWork = () => {
@@ -1552,13 +1685,26 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         flushWork();
         closeGroup(true);
         if (gi > 0) items.push(<TurnDivider key={`div-${gi}`} label={null} />);
+        // Candidate pin anchor — the last one to win is the newest message.
+        lastUserItemIdx = items.length;
         // Slash-command runs get their command card (invocation chip +
         // collapsible local output) instead of a plain text bubble.
         if (turn.command)
           items.push(<CommandCard key={`msg-${gi}`} turn={turn} showTimestamp={showTimestamps} />);
         else
           items.push(
-            <ConversationMessage key={`msg-${gi}`} turn={turn} showTimestamp={showTimestamps} />,
+            <ConversationMessage
+              key={`msg-${gi}`}
+              turn={turn}
+              showTimestamp={showTimestamps}
+              pending={
+                li < pendingFrom
+                  ? undefined
+                  : (turn as PendingUserTurn).queued
+                    ? 'queued'
+                    : 'sending'
+              }
+            />,
           );
         prevRole = 'user';
         return;
@@ -1611,11 +1757,23 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       items[lastIdx] = React.cloneElement(items[lastIdx] as React.ReactElement, { isLast: true });
     }
 
+    // Zero-height marker right above the newest user message. Inserted after
+    // the fact (rather than tracked through the loop) so nothing downstream —
+    // work cards, snapshots, dividers — has to know it exists.
+    if (lastUserItemIdx >= 0) {
+      items.splice(
+        lastUserItemIdx,
+        0,
+        <div key="pin-anchor" ref={pinAnchorRef} data-pin-anchor aria-hidden />,
+      );
+    }
+
     return items;
     // changesVersion re-renders cards once a frozen git snapshot lands.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     conversation,
+    optimisticMessages,
     convOffset,
     resolvedQuestions,
     visibleCount,
@@ -1709,10 +1867,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                   contain: 'paint',
                 }}
               >
-                {/* Centered content container */}
+                {/* Centered content container — the shared chat measure
+                    (--wks-chat-width), same as the composer and the docks. */}
                 <div
                   style={{
-                    maxWidth: 1040,
+                    maxWidth: 'var(--wks-chat-width)',
                     margin: '0 auto',
                   }}
                 >
@@ -1974,19 +2133,16 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                       }}
                     >
                       <BrandSpinner size={15} />
-                      <button
-                        onClick={cancelTask}
-                        className="wks-stop-btn"
-                        title="Cancel (Esc)"
-                        aria-label="Cancel"
-                      >
-                        <span className="wks-stop-square" />
-                        <span className="wks-stop-hint">esc to stop</span>
-                      </button>
+                      {/* Elapsed run time. Stopping lives in the composer now —
+                          one place for actions, and reachable without leaving
+                          the box you're typing in. */}
+                      {workStartedAt !== null && <WorkingTimer since={workStartedAt} />}
                     </div>
                   )}
 
-                  <div ref={conversationEndRef} />
+                  {/* Tail spacer — the room the newest user message is pinned
+                      above, filled in by the reply as it streams. */}
+                  {tailPad > 0 && <div data-tail-pad aria-hidden style={{ height: tailPad }} />}
                 </div>
               </div>
 
@@ -2020,6 +2176,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                 dimmed={!!(dockApproval || dockQuestions)}
                 inputRef={inputRef}
                 showSendButton={config.ui.showComposerSend !== false}
+                working={isStreaming}
+                onStop={cancelTask}
                 agentName={agentName}
                 slashItems={slashItems}
                 onSlashPick={handleSlashPick}
@@ -2050,7 +2208,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
               flexShrink: 0,
             }}
           >
-            {/* In GUI mode the row aligns to the composer's centered 1040px column
+            {/* In GUI mode the row aligns to the composer's centered chat column
             so the footer line sits flush under it; terminal mode stays
             edge-to-edge like a toolbar. */}
             <div
@@ -2060,7 +2218,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                 gap: 10,
                 minWidth: 0,
                 minHeight: 24,
-                ...(viewMode === 'gui' ? { maxWidth: 1040, margin: '0 auto' } : {}),
+                ...(viewMode === 'gui'
+                  ? { maxWidth: 'var(--wks-chat-width)', margin: '0 auto' }
+                  : {}),
               }}
             >
               <StatusBadge

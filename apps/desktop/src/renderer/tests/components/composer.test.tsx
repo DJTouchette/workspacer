@@ -181,4 +181,44 @@ describe('Composer / command picker', () => {
     expect(onSlashPick).not.toHaveBeenCalled();
     expect(onSend).toHaveBeenCalledTimes(1);
   });
+
+  /**
+   * Stopping the agent used to be a button in the transcript beside the
+   * streaming spinner; it now lives in the composer, NEXT TO send rather than
+   * replacing it — a message typed mid-turn is queued for the next one, so
+   * swapping send for stop would take a real action away.
+   */
+  describe('stop control', () => {
+    it('is absent while the agent is idle', () => {
+      renderComposer({ working: false, onStop: vi.fn() });
+      expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+    });
+
+    it('appears mid-turn and calls onStop', () => {
+      const onStop = vi.fn();
+      renderComposer({ working: true, onStop });
+      fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+      expect(onStop).toHaveBeenCalledTimes(1);
+    });
+
+    it('names Escape as the shortcut, so the hint survived the move', () => {
+      renderComposer({ working: true, onStop: vi.fn() });
+      expect(screen.getByRole('button', { name: 'Stop' })).toHaveAttribute('title', 'Stop (Esc)');
+    });
+
+    it('leaves send usable mid-turn so a follow-up can still be queued', () => {
+      const onStop = vi.fn();
+      const { onSend } = renderComposer({ value: 'and also fix the test', working: true, onStop });
+      const send = screen.getByRole('button', { name: 'Send message' });
+      expect(send).not.toBeDisabled();
+      fireEvent.click(send);
+      expect(onSend).toHaveBeenCalledTimes(1);
+      expect(onStop).not.toHaveBeenCalled();
+    });
+
+    it('stays out of the way when the host passes no onStop', () => {
+      renderComposer({ working: true });
+      expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+    });
+  });
 });

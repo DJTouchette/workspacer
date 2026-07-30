@@ -2,6 +2,8 @@ import React, { useMemo } from 'react';
 import type { ConversationTurn } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 import { parseMarkdownBlocks } from '../markdown';
+import { CopyTextButton } from './CopyTextButton';
+import { Clock } from 'lucide-react';
 
 /** "14:32" (locale 24h/12h per system) for a turn's ms timestamp; '' if unset. */
 export function turnTime(ms: number | undefined): string {
@@ -28,10 +30,43 @@ export const TurnStamp: React.FC<{ ms: number | undefined }> = ({ ms }) => {
   );
 };
 
-const ConversationMessageInner: React.FC<{ turn: ConversationTurn; showTimestamp?: boolean }> = ({
-  turn,
-  showTimestamp,
-}) => {
+/**
+ * A sent-but-not-yet-acknowledged user message: 'sending' while it's on its way
+ * to an idle agent, 'queued' when it landed behind work in progress and won't be
+ * read until the current turn ends. Absent once the daemon echoes the turn back
+ * in the transcript, which is the acknowledgement.
+ */
+export type PendingState = 'sending' | 'queued';
+
+const PENDING_LABEL: Record<PendingState, string> = {
+  sending: 'Sending…',
+  queued: 'Queued',
+};
+
+/** The un-acknowledged marker beside a pending user bubble. */
+const PendingMark: React.FC<{ state: PendingState }> = ({ state }) => (
+  <span
+    role="status"
+    style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 3,
+      fontSize: '0.6rem',
+      color: colors.mutedDim,
+      whiteSpace: 'nowrap',
+      userSelect: 'none',
+    }}
+  >
+    <Clock size={10} strokeWidth={2.25} />
+    {PENDING_LABEL[state]}
+  </span>
+);
+
+const ConversationMessageInner: React.FC<{
+  turn: ConversationTurn;
+  showTimestamp?: boolean;
+  pending?: PendingState;
+}> = ({ turn, showTimestamp, pending }) => {
   const isUser = turn.role === 'user';
   // Memoize per content string; module-level LRU cache in markdown.tsx also
   // deduplicates across instances, so this just avoids the map lookup overhead
@@ -53,6 +88,7 @@ const ConversationMessageInner: React.FC<{ turn: ConversationTurn; showTimestamp
           animation: 'claudeFadeIn 0.2s ease-out',
         }}
       >
+        {pending && <PendingMark state={pending} />}
         {showTimestamp && <TurnStamp ms={turn.timestamp} />}
         <div
           style={{
@@ -63,7 +99,13 @@ const ConversationMessageInner: React.FC<{ turn: ConversationTurn; showTimestamp
             borderRadius:
               'var(--wks-radius-lg) var(--wks-radius-lg) var(--wks-radius-sm) var(--wks-radius-lg)',
             backgroundColor: colors.userBubble,
-            border: `1px solid ${colors.userBubbleBorder}`,
+            // Dashed + dimmed until the agent has it: the bubble reads as
+            // provisional at a glance, and goes solid the moment the daemon
+            // echoes the turn back. Same geometry either way, so nothing shifts
+            // when it settles.
+            border: `1px ${pending ? 'dashed' : 'solid'} ${colors.userBubbleBorder}`,
+            opacity: pending ? 0.72 : 1,
+            transition: 'opacity 0.15s',
           }}
         >
           <div
@@ -88,27 +130,38 @@ const ConversationMessageInner: React.FC<{ turn: ConversationTurn; showTimestamp
   // instead of a flat flood of tool rows under every message.
   return (
     <div
+      className="wks-hover-host"
       style={{
-        marginBottom: 12,
+        // With text the action row below doubles as the trailing gap (it holds
+        // its 18px whether or not it's revealed); the empty case keeps the
+        // plain margin.
+        marginBottom: parsedContent ? 0 : 12,
         animation: 'claudeFadeIn 0.2s ease-out',
       }}
     >
       {parsedContent ? (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-          <div
-            style={{
-              flex: 1,
-              minWidth: 0,
-              paddingLeft: 4,
-              fontSize: 'calc(0.8rem * var(--claude-gui-font-scale, 1))',
-              lineHeight: 1.6,
-              color: colors.text,
-            }}
-          >
-            {parsedContent}
+        <>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <div
+              style={{
+                flex: 1,
+                minWidth: 0,
+                paddingLeft: 4,
+                fontSize: 'calc(0.8rem * var(--claude-gui-font-scale, 1))',
+                lineHeight: 1.6,
+                color: colors.text,
+              }}
+            >
+              {parsedContent}
+            </div>
+            {showTimestamp && <TurnStamp ms={turn.timestamp} />}
           </div>
-          {showTimestamp && <TurnStamp ms={turn.timestamp} />}
-        </div>
+          {/* Reserved (invisible until hover) so it can't reflow a streaming
+              transcript — see .wks-hover-actions. */}
+          <div className="wks-hover-actions" style={{ paddingLeft: 1, marginTop: 1 }}>
+            <CopyTextButton text={turn.content ?? ''} />
+          </div>
+        </>
       ) : null}
     </div>
   );

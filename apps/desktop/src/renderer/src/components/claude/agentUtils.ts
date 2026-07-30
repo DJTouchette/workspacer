@@ -17,7 +17,13 @@ export const fmtDuration = (ms?: number): string => {
   if (ms === undefined || ms < 0) return '';
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
+  // Past an hour, seconds stop being information and "83m 00s" stops being
+  // readable — long supervisor runs and live working timers both land here.
+  if (s >= 3600)
+    return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`;
+  // Space between the units, zero-padded seconds: the padding keeps a live
+  // timer's width stable (with tabular digits) so it can't jitter as it ticks.
+  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
 };
 
 /** "claude-sonnet-4-6" to "sonnet-4-6" (enough to tell agents apart at a glance).

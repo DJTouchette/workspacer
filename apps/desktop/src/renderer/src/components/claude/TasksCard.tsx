@@ -9,8 +9,8 @@ import { AgentSpinner } from './WorkflowAgentRow';
  * The agent's task list / plan as a persistent card pinned above the composer
  * — the tasks counterpart of the workflow/subagent cards. Renders whatever
  * feeds `session.plan` (Claude's TaskCreate/TaskUpdate and TodoWrite, Codex's
- * plan tool), view-only. Shares the composer's centered 1040px column and
- * raised chrome so the two read as one floating cluster.
+ * plan tool), view-only. Shares the composer's centered chat column
+ * (`--wks-chat-width`) and raised chrome so the two read as one floating cluster.
  *
  * A plan can go stale (the agent abandons its list mid-session), so the card
  * is dismissible: × hides it, and the host re-shows it only when the plan
@@ -29,7 +29,7 @@ export const TasksCard: React.FC<{
 
   return (
     <div style={{ padding: '0 16px 6px', flexShrink: 0 }}>
-      <div style={{ maxWidth: 1040, margin: '0 auto' }}>
+      <div style={{ maxWidth: 'var(--wks-chat-width)', margin: '0 auto' }}>
         {/* `raised`: fill + shadow, no border. The shadow is deepened past the
             primitive's hairline because this is floating chrome pinned over the
             transcript alongside the composer, not an inline transcript card. */}

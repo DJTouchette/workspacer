@@ -76,6 +76,11 @@
   --wks-radius-md: 8px;
   --wks-radius-lg: 12px;
   --wks-radius-pill: 999px;
+  /* The chat column's measure: transcript, composer, tasks card, needs-you dock
+   * and the GUI status row all center on this one number, so they can never
+   * drift apart. Deliberately narrower than the pane — long lines are harder to
+   * read, and the reading column is what every chat UI converges on. */
+  --wks-chat-width: 900px;
   /* Color tokens — first-paint defaults mirroring themes.ts darkTheme so bare
    * var(--wks-*) never resolves invalid before applyTheme runs. Keep in sync
    * with darkTheme; components must NOT re-declare per-site fallback hexes. */
@@ -335,48 +340,76 @@ body {
   width: 2px;
 }
 
-/* Streaming cancel — a quiet stop glyph beside the spinner; the label only
- * fades in on hover so the resting state stays featherweight. */
-.wks-stop-btn {
+/* Hover-revealed action row under a chat message (copy, …). The row always
+ * occupies its space so revealing it can't reflow the transcript mid-stream;
+ * only its opacity moves. Put it inside a `.wks-hover-host` block. */
+.wks-hover-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 18px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+.wks-hover-host:hover .wks-hover-actions,
+.wks-hover-actions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+.wks-hover-action {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 20px;
-  padding: 0 7px;
+  gap: 4px;
+  height: 18px;
+  padding: 0 5px;
   border: none;
-  border-radius: 999px;
+  border-radius: var(--wks-radius-sm, 4px);
   background: transparent;
-  color: var(--wks-text-muted);
-  cursor: pointer;
+  color: var(--wks-text-faint);
   font-family: inherit;
+  font-size: 0.64rem;
+  letter-spacing: 0.02em;
+  cursor: pointer;
   transition:
     color 0.12s,
     background-color 0.12s;
 }
-.wks-stop-btn .wks-stop-square {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  background: currentColor;
-  flex: none;
+.wks-hover-action:hover {
+  color: var(--wks-text-primary);
+  background-color: color-mix(in srgb, var(--wks-text-primary) 10%, transparent);
 }
-.wks-stop-btn .wks-stop-hint {
-  font-size: 0.64rem;
-  letter-spacing: 0.05em;
-  opacity: 0;
-  transform: translateX(-3px);
-  transition:
-    opacity 0.12s,
-    transform 0.12s;
-  white-space: nowrap;
+
+/* Touch devices have no hover — keep the actions reachable, dimmed. */
+@media (hover: none) {
+  .wks-hover-actions {
+    opacity: 0.5;
+    pointer-events: auto;
+  }
 }
-.wks-stop-btn:hover {
-  color: var(--wks-error);
+
+/* Composer stop — the interrupt lives beside send (not instead of it), so a
+ * follow-up can still be queued mid-turn. Error-tinted and quiet at rest; the
+ * same action as Escape. */
+.wks-composer-stop {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
   background-color: color-mix(in srgb, var(--wks-error) 12%, transparent);
+  color: var(--wks-error);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
 }
-.wks-stop-btn:hover .wks-stop-hint {
-  opacity: 1;
-  transform: none;
+.wks-composer-stop:hover {
+  background-color: color-mix(in srgb, var(--wks-error) 22%, transparent);
 }
 
 /* Shared frosted-glass surface. Apply alongside per-element layout styles. */
@@ -574,7 +607,7 @@ body {
 }
 
 /* ── Tab close affordance (hover-revealed ×) ─────────────────────────────────
- * Mirrors the .wks-stop-btn hover-reveal: hidden by default, shown when the tab
+ * Mirrors the .wks-hover-actions reveal: hidden by default, shown when the tab
  * is hovered or is the active tab. Space is reserved (opacity-only, never
  * display/width) so revealing it can't reflow the tab row. */
 .wks-tab-close {

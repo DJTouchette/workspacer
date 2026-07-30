@@ -3,13 +3,20 @@ import { ContextMenu, ContextMenuItem } from '../ContextMenu';
 import { requestOpenInEditor } from '../../lib/editorBus';
 import { requestMarkdownPreview } from '../../lib/previewBus';
 import { requestOpenInBrowser, fileUrlFromPath } from '../../lib/browserBus';
+import { PaneIcon } from '../icons';
+import type { PaneType } from '../../types/pane';
 
 /**
  * FileLink — the one clickable-file-path affordance for the chat's tool-call
- * UI (trace rows, diff/read headers, work-card file lists). Left-click opens
- * the file with its default action (markdown → preview pane, everything else →
- * editor); right-click offers the full menu: editor / markdown preview /
- * open-in-browser (html) / show in folder / copy path.
+ * UI (trace rows, diff/read headers, work-card file lists) and for file paths
+ * detected in assistant prose. Left-click opens the file with its default
+ * action (markdown → preview pane, everything else → editor); right-click
+ * offers the full menu: editor / markdown preview / open-in-browser (html) /
+ * show in folder / copy path.
+ *
+ * The link wears a leading icon of whatever the click will open — the same
+ * glyph that pane's tab carries — which doubles as the "this path is
+ * clickable" cue in flowing prose, where nothing else marks it until hover.
  *
  * Paths from tool inputs are usually absolute, but relative ones resolve
  * against `cwd` before hitting the IPC-backed actions.
@@ -30,10 +37,30 @@ const extOf = (p: string): string => /\.([a-z0-9]+)$/i.exec(p)?.[1]?.toLowerCase
 export const isMarkdownPath = (p: string): boolean => ['md', 'markdown'].includes(extOf(p));
 export const isHtmlPath = (p: string): boolean => ['html', 'htm'].includes(extOf(p));
 
+/** Where a left-click hands the file. */
+export type FileOpenTarget = 'editor' | 'preview';
+
+/**
+ * The ONE place the default action is decided. Both the dispatch below and the
+ * little icon the link wears read it, so the affordance can never advertise a
+ * surface the click doesn't actually open.
+ */
+export function defaultOpenTarget(path: string): FileOpenTarget {
+  return isMarkdownPath(path) ? 'preview' : 'editor';
+}
+
+/** Pane type whose icon stands for each target, plus the tooltip wording. The
+ *  icon is the *pane's own* icon, so the glyph beside a path is the same glyph
+ *  that ends up on the tab it opens. */
+const OPEN_TARGET_UI: Record<FileOpenTarget, { pane: PaneType; hint: string }> = {
+  editor: { pane: 'editor', hint: 'opens in the editor' },
+  preview: { pane: 'mdpreview', hint: 'opens a markdown preview' },
+};
+
 /** Default left-click action by extension: md → preview pane, else editor. */
 export function openFileDefault(path: string, cwd?: string): void {
   const abs = resolveWithCwd(path, cwd);
-  if (isMarkdownPath(abs)) requestMarkdownPreview({ path: abs, cwd });
+  if (defaultOpenTarget(abs) === 'preview') requestMarkdownPreview({ path: abs, cwd });
   else requestOpenInEditor({ path: abs, cwd });
 }
 
@@ -95,21 +122,24 @@ export const FileLink: React.FC<{
   /** Extra styles merged over the link's own (mono font, hover underline). */
   style?: React.CSSProperties;
   title?: string;
-  /** Tiny type glyph after the name for md/html files. Default true. */
-  glyph?: boolean;
-}> = ({ path, cwd, children, style, title, glyph = true }) => {
+  /** Leading icon for whatever a click will open. Default true. */
+  icon?: boolean;
+}> = ({ path, cwd, children, style, title, icon = true }) => {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [hover, setHover] = useState(false);
   const abs = resolveWithCwd(path, cwd);
   const basename = abs.replace(/\\/g, '/').split('/').pop() ?? abs;
-  const md = isMarkdownPath(abs);
-  const html = isHtmlPath(abs);
+  const target = defaultOpenTarget(abs);
+  const targetUi = OPEN_TARGET_UI[target];
 
   return (
     <>
       <span
         role="button"
-        title={title ?? abs}
+        data-open-target={target}
+        // The tooltip carries the destination too — the icon says which surface,
+        // the words say it out loud.
+        title={title ?? `${abs} — ${targetUi.hint}`}
         onClick={(e) => {
           // Rows/cards behind the link often toggle on click — the link wins.
           e.stopPropagation();
@@ -128,18 +158,34 @@ export const FileLink: React.FC<{
           textDecoration: hover ? 'underline' : 'none',
           textDecorationColor: 'var(--wks-text-muted)',
           textUnderlineOffset: 2,
+          // One inline unit, so a line break in prose can't strand the icon at
+          // the end of a line with its path on the next one. A path that can't
+          // fit moves down whole; one longer than the column still breaks
+          // (overflowWrap) rather than escaping it.
+          display: 'inline-block',
+          maxWidth: '100%',
+          overflowWrap: 'anywhere',
           ...style,
         }}
       >
-        {children ?? basename}
-        {glyph && (md || html) && (
-          <span
-            aria-hidden
-            style={{ marginLeft: 4, fontSize: '0.85em', opacity: 0.55, userSelect: 'none' }}
-          >
-            {html ? '⊕' : 'M↓'}
-          </span>
+        {/* Leading, not trailing: several hosts ellipsize the path (trace rows,
+            narrow diff headers), and a tail icon would be the first thing
+            clipped — exactly when you most want to know what a click does. */}
+        {icon && (
+          <PaneIcon
+            type={targetUi.pane}
+            size={11}
+            strokeWidth={2}
+            style={{
+              marginRight: 3,
+              verticalAlign: '-0.12em',
+              flex: 'none',
+              opacity: hover ? 1 : 0.5,
+              transition: 'opacity 0.12s',
+            }}
+          />
         )}
+        {children ?? basename}
       </span>
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
