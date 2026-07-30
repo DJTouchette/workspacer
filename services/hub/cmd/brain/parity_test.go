@@ -312,7 +312,9 @@ func TestProfilesCRUD(t *testing.T) {
 func TestFsReadWriteRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "note.txt")
-	reg := newRegistry(newClaudemonClient("http://unused"))
+	// The temp dir has to be a live agent cwd for the write to be allowed at all
+	// — fs.* is confined to agent cwds + the config dir (see fsguard_test.go).
+	reg := registryWithCwd(t, dir)
 
 	if _, err := reg.handle(context.Background(), "fs.write",
 		json.RawMessage(`{"path":`+jsonStr(p)+`,"contents":"hello"}`)); err != nil {

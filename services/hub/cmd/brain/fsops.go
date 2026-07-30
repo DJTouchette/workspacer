@@ -84,8 +84,17 @@ func readTextFile(p string) (*readFileResult, error) {
 	return &readFileResult{Path: p, Contents: string(buf), Size: st.Size()}, nil
 }
 
+// writeHostFile mirrors fileService.writeTextFile, including creating missing
+// parents: callers (fs.write, and plugins storing data under
+// <project>/.workspacer/plugins/<id>/) rely on that, and the desktop twin has
+// always done it. Containment is checked by the handler BEFORE this runs, so any
+// directory created here is inside an allowed root by construction.
 func writeHostFile(p, contents string) error {
-	return os.WriteFile(expandTilde(p), []byte(contents), 0o644)
+	full := expandTilde(p)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(full, []byte(contents), 0o644)
 }
 
 // dirEntry / listEntriesResult mirror fileService.listDir (the file-tree list).

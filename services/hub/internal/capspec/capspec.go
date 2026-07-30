@@ -17,6 +17,7 @@ import "strings"
 // be grantable to plugins without any path confinement.
 var PathParam = map[string]string{
 	"fs.read":        "path",
+	"fs.readImage":   "path",
 	"fs.write":       "path",
 	"fs.listEntries": "path",
 	"fs.listDir":     "path",

@@ -151,6 +151,29 @@ canonicalize-then-contain confined to live agent cwds + the config dir
 (fs.listDir to the home tree for the folder picker).
 `apps/desktop/src/main/services/hubCapabilities.ts` (`fs.read`, `fs.write`)
 
+**REGRESSED, then fixed again 2026-07-29.** The 2026-07-05 fix was confined to
+the desktop provider, which registers these methods through `cat(...)` — a no-op
+once the capability catalog was delegated to the Go brain, and that delegation is
+the DEFAULT (`brainDelegation.ts`, off only with `WORKSPACER_NO_BRAIN=1`). So the
+provider actually answering `fs.read`/`fs.write`/`fs.listEntries`/`fs.listDir`
+was `services/hub/cmd/brain`, whose handlers did `expandTilde` and then read or
+wrote the path with no containment at all. Any bus client — a remote-share client
+on the tailnet, a plugin, or an agent through the MCP facade — could read
+`~/.ssh/id_rsa` and write `~/.ssh/authorized_keys`, exactly the issue this entry
+records as fixed. The app-side test could not catch it: it mocks delegation OFF,
+so it only ever exercised the kill-switch path.
+
+The containment is now ported into the brain (`cmd/brain/fsguard.go`, same
+canonicalize-then-contain rule and the same roots) and covered by
+`cmd/brain/fsguard_test.go`, which asserts the deny for absolute, traversal,
+symlink-out-of-cwd and `~`-relative escapes, and that a denied write leaves the
+target byte-identical. `cmd/brain/delegation_guard_test.go` now cross-checks that
+the two providers partition the surface, so a capability cannot again be guarded
+behind a door the default configuration never opens.
+
+Lesson for any future path-bearing capability: the guard has to live with the
+provider that answers, and "which provider answers" depends on delegation.
+
 These accept an arbitrary `path` from any bus client and read/write it. Under
 remote sharing a client can read `/etc/passwd` or overwrite `~/.bashrc`, SSH
 keys, etc. The existing binary/size checks are not a security boundary.

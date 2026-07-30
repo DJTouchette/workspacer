@@ -266,13 +266,13 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 	case "app.supervisorHome":
 		return jsonResult(supervisorHome())
 	case "fs.listDir":
-		return r.fsListDir(params)
+		return r.fsListDir(ctx, params)
 	case "fs.listEntries":
-		return r.fsListEntries(params)
+		return r.fsListEntries(ctx, params)
 	case "fs.read":
-		return r.fsRead(params)
+		return r.fsRead(ctx, params)
 	case "fs.write":
-		return r.fsWrite(params)
+		return r.fsWrite(ctx, params)
 	case "search.project":
 		return r.searchProject(ctx, params)
 	case "notifications.post":
@@ -983,11 +983,16 @@ func (r *registry) getCwd() (json.RawMessage, error) {
 	return jsonResult(cwd)
 }
 
-func (r *registry) fsListDir(raw json.RawMessage) (json.RawMessage, error) {
+func (r *registry) fsListDir(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p struct {
 		Path string `json:"path"`
 	}
 	if err := unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	// Browsing is allowed across the home tree so a user can pick a project
+	// before an agent runs in it — but not /etc or another user's home.
+	if err := assertPathAllowed("fs.listDir", expandTilde(p.Path), r.browseRoots(ctx)); err != nil {
 		return nil, err
 	}
 	res, err := listHostDir(p.Path)
@@ -997,7 +1002,7 @@ func (r *registry) fsListDir(raw json.RawMessage) (json.RawMessage, error) {
 	return jsonResult(res)
 }
 
-func (r *registry) fsRead(raw json.RawMessage) (json.RawMessage, error) {
+func (r *registry) fsRead(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p struct {
 		Path string `json:"path"`
 	}
@@ -1007,6 +1012,9 @@ func (r *registry) fsRead(raw json.RawMessage) (json.RawMessage, error) {
 	if p.Path == "" {
 		return nil, fmt.Errorf("fs.read requires a path")
 	}
+	if err := assertPathAllowed("fs.read", expandTilde(p.Path), r.workspaceRoots(ctx)); err != nil {
+		return nil, err
+	}
 	res, err := readTextFile(p.Path)
 	if err != nil {
 		return nil, err
@@ -1014,7 +1022,7 @@ func (r *registry) fsRead(raw json.RawMessage) (json.RawMessage, error) {
 	return jsonResult(res)
 }
 
-func (r *registry) fsListEntries(raw json.RawMessage) (json.RawMessage, error) {
+func (r *registry) fsListEntries(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p struct {
 		Path string `json:"path"`
 	}
@@ -1023,6 +1031,9 @@ func (r *registry) fsListEntries(raw json.RawMessage) (json.RawMessage, error) {
 	}
 	if p.Path == "" {
 		return nil, fmt.Errorf("fs.listEntries requires a path")
+	}
+	if err := assertPathAllowed("fs.listEntries", expandTilde(p.Path), r.workspaceRoots(ctx)); err != nil {
+		return nil, err
 	}
 	res, err := listEntries(p.Path)
 	if err != nil {
@@ -1038,6 +1049,9 @@ func (r *registry) searchProject(ctx context.Context, raw json.RawMessage) (json
 	}
 	if opts.Query == "" || opts.Cwd == "" {
 		return nil, fmt.Errorf("search.project requires { query, cwd }")
+	}
+	if err := assertPathAllowed("search.project", expandTilde(opts.Cwd), r.workspaceRoots(ctx)); err != nil {
+		return nil, err
 	}
 	res, err := searchProject(ctx, opts)
 	if err != nil {
@@ -1060,7 +1074,7 @@ func (r *registry) notify(raw json.RawMessage) (json.RawMessage, error) {
 	return okResult()
 }
 
-func (r *registry) fsWrite(raw json.RawMessage) (json.RawMessage, error) {
+func (r *registry) fsWrite(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p struct {
 		Path     string `json:"path"`
 		Contents string `json:"contents"`
@@ -1070,6 +1084,9 @@ func (r *registry) fsWrite(raw json.RawMessage) (json.RawMessage, error) {
 	}
 	if p.Path == "" {
 		return nil, fmt.Errorf("fs.write requires a path")
+	}
+	if err := assertPathAllowed("fs.write", expandTilde(p.Path), r.workspaceRoots(ctx)); err != nil {
+		return nil, err
 	}
 	if err := writeHostFile(p.Path, p.Contents); err != nil {
 		return nil, err
