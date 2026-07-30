@@ -1697,6 +1697,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
               key={`msg-${gi}`}
               turn={turn}
               showTimestamp={showTimestamps}
+              cwd={effectiveCwd}
               pending={
                 li < pendingFrom
                   ? undefined
@@ -1730,7 +1731,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         flushWork();
         if (prevRole === 'user' && gi > 0) items.push(<TurnDivider key={`div-${gi}`} />);
         items.push(
-          <ConversationMessage key={`msg-${gi}`} turn={turn} showTimestamp={showTimestamps} />,
+          <ConversationMessage
+            key={`msg-${gi}`}
+            turn={turn}
+            showTimestamp={showTimestamps}
+            cwd={effectiveCwd}
+          />,
         );
         if (calls.length > 0) pendingWork = { calls: [...calls], keyStart: gi, endIdx: gi };
       } else if (calls.length > 0) {

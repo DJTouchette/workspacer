@@ -3,6 +3,8 @@ import type { ConversationTurn } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 import { parseMarkdownBlocks } from '../markdown';
 import { CopyTextButton } from './CopyTextButton';
+import { MessageImages } from './MessageImages';
+import { extractImageAttachments, imagePathsInText } from '../../lib/messageImages';
 import { Clock } from 'lucide-react';
 
 /** "14:32" (locale 24h/12h per system) for a turn's ms timestamp; '' if unset. */
@@ -66,8 +68,21 @@ const ConversationMessageInner: React.FC<{
   turn: ConversationTurn;
   showTimestamp?: boolean;
   pending?: PendingState;
-}> = ({ turn, showTimestamp, pending }) => {
+  /** Session cwd — resolves a relative image path mentioned in the message. */
+  cwd?: string;
+}> = ({ turn, showTimestamp, pending, cwd }) => {
   const isUser = turn.role === 'user';
+  // What you attached (markers, stripped from the text) versus what the message
+  // merely mentions (left in the text, thumbnailed underneath).
+  const attached = useMemo(
+    () =>
+      isUser ? extractImageAttachments(turn.content) : { text: turn.content ?? '', paths: [] },
+    [isUser, turn.content],
+  );
+  const mentioned = useMemo(
+    () => (isUser ? [] : imagePathsInText(turn.content)),
+    [isUser, turn.content],
+  );
   // Memoize per content string; module-level LRU cache in markdown.tsx also
   // deduplicates across instances, so this just avoids the map lookup overhead
   // on re-renders where turn.content hasn't changed.
@@ -108,17 +123,28 @@ const ConversationMessageInner: React.FC<{
             transition: 'opacity 0.15s',
           }}
         >
-          <div
-            style={{
-              fontSize: 'calc(0.8rem * var(--claude-gui-font-scale, 1))',
-              lineHeight: 1.6,
-              color: colors.textBright,
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-            }}
-          >
-            {turn.content || '(empty)'}
-          </div>
+          {attached.paths.length > 0 && (
+            <MessageImages
+              paths={attached.paths}
+              cwd={cwd}
+              style={{ marginBottom: attached.text ? 8 : 0 }}
+            />
+          )}
+          {/* An image-only message IS the image — no "(empty)" placeholder under
+              a bubble whose whole content is the picture above it. */}
+          {(attached.text || attached.paths.length === 0) && (
+            <div
+              style={{
+                fontSize: 'calc(0.8rem * var(--claude-gui-font-scale, 1))',
+                lineHeight: 1.6,
+                color: colors.textBright,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+              }}
+            >
+              {attached.text || '(empty)'}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -156,6 +182,9 @@ const ConversationMessageInner: React.FC<{
             </div>
             {showTimestamp && <TurnStamp ms={turn.timestamp} />}
           </div>
+          {mentioned.length > 0 && (
+            <MessageImages paths={mentioned} cwd={cwd} style={{ marginTop: 6, marginLeft: 4 }} />
+          )}
           {/* Reserved (invisible until hover) so it can't reflow a streaming
               transcript — see .wks-hover-actions. */}
           <div className="wks-hover-actions" style={{ paddingLeft: 1, marginTop: 1 }}>

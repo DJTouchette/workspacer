@@ -152,7 +152,7 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({
         return;
       }
       flush(false);
-      if (turn.content) items.push(<ConversationMessage key={`msg-${i}`} turn={turn} />);
+      if (turn.content) items.push(<ConversationMessage key={`msg-${i}`} turn={turn} cwd={cwd} />);
     });
     flush(true);
     return items;
