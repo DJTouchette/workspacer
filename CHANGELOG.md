@@ -7,6 +7,41 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.148.0] - 2026-07-29
+
+### Added
+- **Resizable sidebar.** Drag the panel's right edge to set any width from 220px
+  to 560px (double-click to reset; arrow keys nudge once the handle has focus).
+  The width persists in `config.ui.sidebarWidth` and is re-clamped to at most 45%
+  of the window on load, so a width set on an ultrawide can't swallow a laptop
+  screen. A drag writes config once on release, not once per frame.
+- **The chat says how long it has been working.** A live elapsed timer on the
+  in-progress turn, driven by the turn actually being open (an approval-parked
+  turn is not over) rather than by the streaming flag.
+- **Copy button on agent messages.** Hover an assistant message for a quiet
+  action row that copies its raw markdown; the row reserves its height whether
+  revealed or not, so it can't reflow a streaming transcript.
+- **Sent messages admit they aren't acknowledged yet.** Until the daemon echoes
+  the turn back, the bubble is dimmed and marked "Sending…" or "Queued".
+
+### Changed
+- **The sidebar's bottom belongs to the feed.** The full-width "Spawn agent"
+  pill and the hub status row are gone. Spawn is now an icon in the header
+  cluster beside the notification bell, and the mobile-client (Remote control)
+  phone icon moved there with it — the same three actions, in the same order, in
+  the collapsed rail. The History row pins to the real bottom of the panel.
+- Your newest message rides the top of the viewport while the reply streams in
+  below it, instead of both being crushed against the composer.
+- Stop moved into the composer beside send rather than replacing it, so you can
+  still queue a message mid-turn. Esc still cancels.
+- The chat column is narrower (900px) and now a token, `--wks-chat-width`.
+
+### Removed
+- The hub connection dot. Reconnect was always automatic (`useHubReconnect`,
+  and plugins re-subscribe) — the indicator was something to watch, not to act
+  on. The "? Help" button in that row went with it; help is still F1, the
+  command palette, and onboarding.
+
 ## [0.144.0] - 2026-07-22
 
 ### Added
