@@ -12,14 +12,15 @@ import { render, fireEvent, screen } from '@testing-library/react';
 import CommandPalette from '../src/components/CommandPalette';
 import { ConfigProvider } from '../src/contexts/ConfigContext';
 
+// Rows and the highlight are found by data attributes, not by their styling:
+// probing exact CSS values made this test fail on every palette restyle while
+// the behaviour it guards was fine.
 function paletteRows(container: HTMLElement): HTMLElement[] {
-  return (Array.from(container.querySelectorAll('div')) as HTMLElement[]).filter(
-    (el) => el.style.cursor === 'pointer' && el.style.gap === '10px',
-  );
+  return Array.from(container.querySelectorAll('[data-palette-row]')) as HTMLElement[];
 }
 
 const highlightedIndex = (rows: HTMLElement[]) =>
-  rows.findIndex((r) => r.style.backgroundColor === 'var(--wks-bg-selected)');
+  rows.findIndex((r) => r.dataset.selected === 'true');
 
 describe('CommandPalette — keyboard nav order matches visual order', () => {
   it('ArrowDown advances the highlight one visual row at a time', () => {
@@ -137,5 +138,55 @@ describe('CommandPalette — window-level keyboard net', () => {
     fireEvent.keyDown(window, { key: 'x' });
     expect(input.value).toBe('x');
     expect(document.activeElement).toBe(input);
+  });
+});
+
+/**
+ * The palette is the app's front door — it opens on ⌘/Ctrl+K, and it tells you
+ * how to drive it. Both are easy to lose in a restyle, so they're pinned here.
+ */
+describe('CommandPalette — the bar itself', () => {
+  const open = () =>
+    render(
+      <ConfigProvider>
+        <CommandPalette
+          visible
+          apps={[{ name: 'MyApp', url: 'https://example.com' }]}
+          onClose={vi.fn()}
+          onOpenPane={vi.fn()}
+          onOpenApp={vi.fn()}
+        />
+      </ConfigProvider>,
+    );
+
+  it('shows how to navigate and how many results it found', () => {
+    const { container } = open();
+    expect(screen.getByText('navigate')).toBeInTheDocument();
+    expect(screen.getByText('open')).toBeInTheDocument();
+    // The count is asserted by shape, not by an exact number: the command list
+    // grows with the app, and pinning a literal here would make every new
+    // palette entry a failing test.
+    const counts = Array.from(container.querySelectorAll('span'))
+      .map((el) => (el.textContent ?? '').trim())
+      .filter((t) => /^\d+ results?$/.test(t));
+    expect(counts).toHaveLength(1);
+    expect(parseInt(counts[0], 10)).toBeGreaterThan(0);
+  });
+
+  it('offers escape as a visible way out, not just a key that happens to work', () => {
+    open();
+    expect(screen.getByText('esc')).toBeInTheDocument();
+  });
+});
+
+describe('default keybindings', () => {
+  it('opens the palette on mod+K', async () => {
+    const { DEFAULT_CONFIG } = await import('../src/hooks/configDefaults');
+    const { KEYBINDING_PRESETS } = await import('../src/lib/keybindingPresets');
+    // The shipped config and the default preset must agree, or a fresh install
+    // and a preset re-pick would bind different keys.
+    expect(DEFAULT_CONFIG.keybindings.shortcuts['command-palette']).toBe('mod+k');
+    const { DEFAULT_PRESET_ID } = await import('../src/lib/keybindingPresets');
+    expect(KEYBINDING_PRESETS[DEFAULT_PRESET_ID].shortcuts['command-palette']).toBe('mod+k');
   });
 });

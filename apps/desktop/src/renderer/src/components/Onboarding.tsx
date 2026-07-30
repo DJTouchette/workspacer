@@ -91,7 +91,7 @@ const Onboarding: React.FC<{
 
   const rows: Array<{ combo: string; title: string; desc: string }> = [
     {
-      combo: k('command-palette', 'ctrl+shift+p'),
+      combo: k('command-palette', 'mod+k'),
       title: 'Command palette',
       desc: 'every action, searchable',
     },

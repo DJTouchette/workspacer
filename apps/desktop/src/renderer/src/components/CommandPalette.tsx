@@ -27,6 +27,7 @@ import {
   type LucideIcon,
 } from './icons';
 import { shortcutFor } from '../lib/shortcuts';
+import { BrandMark } from './Brand';
 import { useUiMode } from '../hooks/useUiMode';
 
 // ── Unified palette item ──
@@ -895,32 +896,34 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
           WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
           border: '1px solid var(--wks-glass-border)',
           borderRadius: 'var(--wks-radius-lg)',
-          width: 'min(440px, 94vw)',
+          // The app's front door, sized like one. Narrow enough to stay a bar,
+          // wide enough that an action and its shortcut don't fight for the row.
+          width: 'min(620px, 94vw)',
           boxSizing: 'border-box',
-          maxHeight: '420px',
+          maxHeight: '60vh',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
           boxShadow:
-            '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
+            '0 24px 64px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Search input — leading pack search glyph */}
-        <div style={{ padding: '12px 12px 8px', position: 'relative' }}>
-          <IconSearch
-            size={15}
-            strokeWidth={2}
-            accent="currentColor"
-            style={{
-              position: 'absolute',
-              left: '22px',
-              top: '50%',
-              transform: 'translateY(-50%)',
-              color: 'var(--wks-text-faint)',
-              pointerEvents: 'none',
-            }}
-          />
+        {/* Search bar — the brand mark stands in for a generic magnifier: this
+            is workspacer's own bar, and the row reads as one input rather than
+            a box inside a box. */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '0 16px',
+            height: 52,
+            flexShrink: 0,
+            borderBottom: '1px solid var(--wks-glass-border)',
+          }}
+        >
+          <BrandMark size={17} />
           <input
             ref={inputRef}
             value={query}
@@ -930,33 +933,28 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
             }}
             onKeyDown={handleKeyDown}
             placeholder={
-              restrictTo === 'library' ? 'Insert a prompt or skill…' : 'Search actions and apps...'
+              restrictTo === 'library' ? 'Insert a prompt or skill…' : 'Search actions and apps…'
             }
             spellCheck={false}
             style={{
-              width: '100%',
-              height: '32px',
-              padding: '0 12px 0 34px',
-              fontSize: '0.8rem',
+              flex: 1,
+              minWidth: 0,
+              height: '100%',
+              padding: 0,
+              fontSize: '0.95rem',
               fontFamily: 'inherit',
-              backgroundColor: 'var(--wks-bg-input)',
+              background: 'transparent',
               color: 'var(--wks-text-primary)',
-              border: '1px solid var(--wks-border-input)',
-              borderRadius: 'var(--wks-radius-sm)',
+              border: 'none',
               outline: 'none',
               boxSizing: 'border-box',
             }}
-            onFocus={(e) => {
-              e.currentTarget.style.borderColor = 'var(--wks-accent)';
-            }}
-            onBlur={(e) => {
-              e.currentTarget.style.borderColor = 'var(--wks-border-input)';
-            }}
           />
+          <Kbd>esc</Kbd>
         </div>
 
         {/* Results */}
-        <div style={{ overflow: 'auto', padding: '0 4px 8px' }}>
+        <div style={{ overflow: 'auto', padding: '6px 4px 8px' }}>
           {/* Pinned shortcut-help entry — always visible at the top (outside the filtered list) */}
           {pinnedHelpItem && !restrictTo && (
             <PaletteRow
@@ -1016,8 +1014,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
           {actions.length > 0 && appItems.length > 0 && (
             <div
               style={{
-                padding: '4px 12px 2px',
-                fontSize: '0.6rem',
+                padding: '6px 14px 3px',
+                fontSize: '0.62rem',
                 color: 'var(--wks-text-disabled)',
                 fontWeight: 600,
                 textTransform: 'uppercase',
@@ -1045,8 +1043,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
           {appItems.length > 0 && (
             <div
               style={{
-                padding: '6px 12px 2px',
-                fontSize: '0.6rem',
+                padding: '10px 14px 3px',
+                fontSize: '0.62rem',
                 color: 'var(--wks-text-disabled)',
                 fontWeight: 600,
                 textTransform: 'uppercase',
@@ -1073,8 +1071,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
           {commandItems.length > 0 && (
             <div
               style={{
-                padding: '6px 12px 2px',
-                fontSize: '0.6rem',
+                padding: '10px 14px 3px',
+                fontSize: '0.62rem',
                 color: 'var(--wks-text-disabled)',
                 fontWeight: 600,
                 textTransform: 'uppercase',
@@ -1102,8 +1100,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
           {pluginItems.length > 0 && (
             <div
               style={{
-                padding: '6px 12px 2px',
-                fontSize: '0.6rem',
+                padding: '10px 14px 3px',
+                fontSize: '0.62rem',
                 color: 'var(--wks-text-disabled)',
                 fontWeight: 600,
                 textTransform: 'uppercase',
@@ -1130,8 +1128,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
           {libraryFiltered.length > 0 && restrictTo !== 'library' && (
             <div
               style={{
-                padding: '6px 12px 2px',
-                fontSize: '0.6rem',
+                padding: '10px 14px 3px',
+                fontSize: '0.62rem',
                 color: 'var(--wks-text-disabled)',
                 fontWeight: 600,
                 textTransform: 'uppercase',
@@ -1156,28 +1154,39 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
           })}
         </div>
 
-        {(restrictTo === 'library' || libraryFiltered.length > 0) && (
-          <div
-            style={{
-              padding: '6px 14px',
-              borderTop: '1px solid var(--wks-border)',
-              fontSize: '0.62rem',
-              color: 'var(--wks-text-faint)',
-              display: 'flex',
-              gap: 12,
-            }}
-          >
-            <span>
-              <b>Enter</b> insert
-            </span>
-            <span>
-              <b>⌘/Ctrl+Enter</b> spawn
-            </span>
-            <span>
-              <b>Alt+Enter</b> copy
-            </span>
-          </div>
-        )}
+        {/* How to drive it. The palette is the one surface a new user opens
+            before reading anything, so the keys live on it rather than in the
+            help overlay. Library rows have their own verbs (insert / spawn /
+            copy), so that context replaces the generic hints instead of
+            stacking a second bar under them. */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '7px 14px',
+            flexShrink: 0,
+            borderTop: '1px solid var(--wks-glass-border)',
+            fontSize: '0.62rem',
+            color: 'var(--wks-text-disabled)',
+          }}
+        >
+          {restrictTo === 'library' || libraryFiltered.length > 0 ? (
+            <>
+              <HintKey combo="↵" label="insert" />
+              <HintKey combo="⌘/Ctrl+↵" label="spawn" />
+              <HintKey combo="Alt+↵" label="copy" />
+            </>
+          ) : (
+            <>
+              <HintKey combo="↑↓" label="navigate" />
+              <HintKey combo="↵" label="open" />
+            </>
+          )}
+          <span style={{ marginLeft: 'auto', fontFamily: 'var(--wks-font-mono)' }}>
+            {filtered.length} {filtered.length === 1 ? 'result' : 'results'}
+          </span>
+        </div>
       </div>
     </div>
   );
@@ -1195,15 +1204,25 @@ const PaletteRow: React.FC<{
   <div
     onClick={onActivate}
     onMouseEnter={onHover}
+    // Stable hooks for the nav-order test: it used to find rows by their exact
+    // gap and highlight colour, so restyling the palette broke it even though
+    // the behaviour it guards (visual order == arrow-key order) was intact.
+    data-palette-row
+    data-selected={selected ? 'true' : undefined}
     style={{
       display: 'flex',
       alignItems: 'center',
       gap: '10px',
-      padding: '7px 12px',
-      margin: '0 4px',
-      borderRadius: 'var(--wks-radius-sm)',
+      padding: '9px 12px',
+      margin: '0 6px',
+      borderRadius: 'var(--wks-radius-md)',
       cursor: 'pointer',
-      backgroundColor: selected ? 'var(--wks-bg-selected)' : 'transparent',
+      // Selection is a tinted fill plus a left accent rule — the same "this one"
+      // language the sidebar's active card uses, not a flat grey block.
+      backgroundColor: selected
+        ? 'color-mix(in srgb, var(--wks-accent) 16%, transparent)'
+        : 'transparent',
+      boxShadow: selected ? 'inset 2px 0 0 var(--wks-accent)' : 'none',
     }}
   >
     <span
@@ -1211,21 +1230,21 @@ const PaletteRow: React.FC<{
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        width: '20px',
+        width: '22px',
         flexShrink: 0,
-        color: 'var(--wks-text-tertiary)',
+        color: selected ? 'var(--wks-accent-text)' : 'var(--wks-text-tertiary)',
       }}
     >
       {item.icon}
     </span>
     <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ fontSize: '0.75rem', color: 'var(--wks-text-primary)', fontWeight: 500 }}>
+      <div style={{ fontSize: '0.8rem', color: 'var(--wks-text-primary)', fontWeight: 500 }}>
         {item.name}
       </div>
       {item.description && (
         <div
           style={{
-            fontSize: '0.64rem',
+            fontSize: '0.68rem',
             color: 'var(--wks-text-faint)',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -1238,6 +1257,14 @@ const PaletteRow: React.FC<{
     </div>
     {shortcut && <Kbd>{shortcut}</Kbd>}
   </div>
+);
+
+/** One footer hint: keycap, then the verb it performs. */
+const HintKey: React.FC<{ combo: string; label: string }> = ({ combo, label }) => (
+  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+    <Kbd>{combo}</Kbd>
+    {label}
+  </span>
 );
 
 /** Compact keyboard-shortcut chip shown on the right of a palette row. */

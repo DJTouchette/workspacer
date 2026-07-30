@@ -113,7 +113,7 @@ export const CONFIG_DEFAULTS = {
     chordHints: true,
     presetId: 'vscode',
     shortcuts: {
-      'command-palette': 'mod+shift+p',
+      'command-palette': 'mod+k',
       'open-file': 'mod+p',
       'next-agent': 'ctrl+tab',
       'prev-agent': 'ctrl+shift+tab',

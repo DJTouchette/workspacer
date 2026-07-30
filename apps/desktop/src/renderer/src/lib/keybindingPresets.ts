@@ -50,7 +50,10 @@ const VSCODE: KeybindingPreset = {
   prefix: 'ctrl+space',
   chordHints: true,
   shortcuts: {
-    'command-palette': 'mod+shift+p',
+    // ⌘K, not VS Code's ⌘⇧P: the command bar is the app's front door and every
+    // tool a workspacer user already has open (Linear, Slack, Raycast, the
+    // browser) opens one with ⌘K. Quick-open stays on ⌘P.
+    'command-palette': 'mod+k',
     'open-file': 'mod+p',
     // Literal ctrl (not mod): Cmd+Tab is the macOS app switcher, so mod+tab
     // would be hijacked on Mac. Ctrl+Tab works on every platform.
