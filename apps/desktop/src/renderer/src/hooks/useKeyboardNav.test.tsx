@@ -87,19 +87,11 @@ describe('useKeyboardNav chord lifetime', () => {
     const addTab = vi.fn(() => 'new');
     const onChordPathChange = vi.fn();
     const { rerender } = render(
-      <Harness
-        onChordPathChange={onChordPathChange}
-        onNextAttention={() => {}}
-        addTab={addTab}
-      />,
+      <Harness onChordPathChange={onChordPathChange} onNextAttention={() => {}} addTab={addTab} />,
     );
     pressLeader();
     rerender(
-      <Harness
-        onChordPathChange={onChordPathChange}
-        onNextAttention={() => {}}
-        addTab={addTab}
-      />,
+      <Harness onChordPathChange={onChordPathChange} onNextAttention={() => {}} addTab={addTab} />,
     );
 
     // 't' completes `prefix t` (new-terminal) — only reachable if the chord
@@ -113,9 +105,7 @@ describe('useKeyboardNav chord lifetime', () => {
 
   it('does not resolve a chord that was never armed', () => {
     const addTab = vi.fn(() => 'new');
-    render(
-      <Harness onChordPathChange={vi.fn()} onNextAttention={noop} addTab={addTab} />,
-    );
+    render(<Harness onChordPathChange={vi.fn()} onNextAttention={noop} addTab={addTab} />);
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 't', bubbles: true }));
     });

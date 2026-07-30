@@ -120,7 +120,9 @@ export function startEventLoopLagMonitor(): void {
     const windowStart = last;
     last = tickedAt;
     if (lag >= STALL_MS) {
-      console.warn(`[stall] main process blocked ~${Math.round(lag)}ms${attributeStall(lag, windowStart)}`);
+      console.warn(
+        `[stall] main process blocked ~${Math.round(lag)}ms${attributeStall(lag, windowStart)}`,
+      );
     }
     // Anything older than the window just closed can never be attributed again.
     recentBlocking = recentBlocking.filter((r) => r.endedAt > tickedAt - TICK_MS);

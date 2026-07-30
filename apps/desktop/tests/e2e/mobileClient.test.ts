@@ -11,8 +11,13 @@
  */
 import { test, expect, type Page } from '@playwright/test';
 import {
-  startMobileHub, HOST_TOKEN, TRIAGE_TOKEN, WORKING_FINISHED,
-  MULTI_QUESTION_A, MULTI_QUESTION_B, type MobileHub,
+  startMobileHub,
+  HOST_TOKEN,
+  TRIAGE_TOKEN,
+  WORKING_FINISHED,
+  MULTI_QUESTION_A,
+  MULTI_QUESTION_B,
+  type MobileHub,
 } from './fixtures/mobileHub';
 
 let hub: MobileHub;
@@ -91,20 +96,28 @@ test.describe('mobile client', () => {
 
     await recon.locator('.strip .allow').click();
     await expect.poll(() => hub.callsTo('claude.approve').length).toBe(1);
-    expect(hub.callsTo('claude.approve')[0].params).toMatchObject({ sessionId: 'rec', decision: 'yes' });
+    expect(hub.callsTo('claude.approve')[0].params).toMatchObject({
+      sessionId: 'rec',
+      decision: 'yes',
+    });
   });
 
   test('a question renders its options inline, not allow/deny', async ({ page }) => {
     await openClient(page);
     const rivet = page.locator('.agent[data-agent="riv"]');
-    await expect(rivet.locator('.strip .ask')).toHaveText('Which auth path should the mobile client take?');
+    await expect(rivet.locator('.strip .ask')).toHaveText(
+      'Which auth path should the mobile client take?',
+    );
     // Allow/Deny would post an answer the agent never asked for.
     await expect(rivet.locator('.strip .allow')).toHaveCount(0);
     await expect(rivet.locator('.strip .opt')).toHaveCount(3);
 
     await rivet.locator('.strip .opt').nth(1).click();
     await expect.poll(() => hub.callsTo('claude.answer').length).toBe(1);
-    expect(hub.callsTo('claude.answer')[0].params).toMatchObject({ sessionId: 'riv', answers: ['2'] });
+    expect(hub.callsTo('claude.answer')[0].params).toMatchObject({
+      sessionId: 'riv',
+      answers: ['2'],
+    });
   });
 
   test('the y / n key hints on the approval buttons actually work', async ({ page }) => {
@@ -112,7 +125,10 @@ test.describe('mobile client', () => {
     // Highest-priority item is recon's approval, so the keys target it.
     await page.locator('body').press('n');
     await expect.poll(() => hub.callsTo('claude.approve').length).toBe(1);
-    expect(hub.callsTo('claude.approve')[0].params).toMatchObject({ sessionId: 'rec', decision: 'no' });
+    expect(hub.callsTo('claude.approve')[0].params).toMatchObject({
+      sessionId: 'rec',
+      decision: 'no',
+    });
 
     // Typing a message must never fire them.
     await page.locator('.agent[data-agent="ws1"] .top').click();
@@ -169,7 +185,9 @@ test.describe('mobile client', () => {
     await expect(page.locator('.pills button', { hasText: 'ctx' })).toBeVisible();
 
     // User bubble + assistant prose.
-    await expect(page.locator('.msg.user .b').first()).toContainText('the mobile fleet list feels flat');
+    await expect(page.locator('.msg.user .b').first()).toContainText(
+      'the mobile fleet list feels flat',
+    );
     await expect(page.locator('.say').first()).toContainText('Reading the current route');
 
     // A collapsible work card that expands into its steps.
@@ -190,7 +208,10 @@ test.describe('mobile client', () => {
     await expect(page.locator('.streaming .lbl')).toBeVisible();
     await page.locator('.streaming button').click();
     await expect.poll(() => hub.callsTo('claude.signal').length).toBeGreaterThan(0);
-    expect(hub.callsTo('claude.signal').at(-1)!.params).toMatchObject({ sessionId: 'ws1', signal: 'SIGINT' });
+    expect(hub.callsTo('claude.signal').at(-1)!.params).toMatchObject({
+      sessionId: 'ws1',
+      signal: 'SIGINT',
+    });
   });
 
   test('composer sends a message and switches permission mode', async ({ page }) => {
@@ -200,7 +221,10 @@ test.describe('mobile client', () => {
     await page.locator('#msg').fill('ship it');
     await page.locator('#send').click();
     await expect.poll(() => hub.callsTo('agents.sendMessage').length).toBeGreaterThan(0);
-    expect(hub.callsTo('agents.sendMessage').at(-1)!.params).toMatchObject({ sessionId: 'ws1', text: 'ship it' });
+    expect(hub.callsTo('agents.sendMessage').at(-1)!.params).toMatchObject({
+      sessionId: 'ws1',
+      text: 'ship it',
+    });
     await expect(page.locator('#msg')).toHaveValue('');
 
     // The chips reflect the session and open a picker that really switches.
@@ -209,7 +233,10 @@ test.describe('mobile client', () => {
     await expect(page.locator('#sheet')).toBeVisible();
     await page.locator('#sheet .opt', { hasText: 'Plan mode' }).click();
     await expect.poll(() => hub.callsTo('claude.setPermissionMode').length).toBe(1);
-    expect(hub.callsTo('claude.setPermissionMode')[0].params).toMatchObject({ sessionId: 'ws1', mode: 'plan' });
+    expect(hub.callsTo('claude.setPermissionMode')[0].params).toMatchObject({
+      sessionId: 'ws1',
+      mode: 'plan',
+    });
   });
 
   test('a pending question docks above the composer and answers', async ({ page }) => {
@@ -222,7 +249,10 @@ test.describe('mobile client', () => {
     const before = hub.callsTo('claude.answer').length;
     await page.locator('#askDock .opt').first().click();
     await expect.poll(() => hub.callsTo('claude.answer').length).toBe(before + 1);
-    expect(hub.callsTo('claude.answer').at(-1)!.params).toMatchObject({ sessionId: 'riv', answers: ['1'] });
+    expect(hub.callsTo('claude.answer').at(-1)!.params).toMatchObject({
+      sessionId: 'riv',
+      answers: ['1'],
+    });
   });
 
   test('inspector shows flows, subagents and usage windows', async ({ page }) => {
@@ -381,7 +411,9 @@ test.describe('mobile client', () => {
   test('screens have no horizontal overflow at phone width', async ({ page }) => {
     await openClient(page);
     const overflow = async () =>
-      page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
     expect(await overflow()).toBeLessThanOrEqual(0);
 
     for (const tab of ['inbox', 'new']) {

@@ -3017,7 +3017,10 @@ mod tests {
         };
         // seq 9 can't follow seq 1 with one item — that's the gap.
         app.apply_msg(gap(9));
-        assert!(app.resyncing.contains_key("s1"), "first gap claims the slot");
+        assert!(
+            app.resyncing.contains_key("s1"),
+            "first gap claims the slot"
+        );
         assert!(
             !app.begin_resync("s1"),
             "further gaps during the fetch are dropped"

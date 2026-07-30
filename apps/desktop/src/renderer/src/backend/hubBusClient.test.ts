@@ -158,7 +158,10 @@ describe('HubBusClient send queue', () => {
   });
 
   const methodsSent = (ws: FakeWS): string[] =>
-    ws.sent.map((f) => JSON.parse(f)).filter((f) => f.op === 'call').map((f) => f.method);
+    ws.sent
+      .map((f) => JSON.parse(f))
+      .filter((f) => f.op === 'call')
+      .map((f) => f.method);
 
   it('flushes calls queued before the socket opened', async () => {
     const client = new HubBusClient('tok');

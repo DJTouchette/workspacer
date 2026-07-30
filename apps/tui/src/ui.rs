@@ -693,9 +693,10 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
     let inner_w = rows[0].width.saturating_sub(2) as usize;
     let commits = app.commits();
     let session_id = app.chat_session_id();
-    let stale = app.transcript_cache.as_ref().is_none_or(|c| {
-        c.width != inner_w || c.commits != commits || c.session_id != session_id
-    });
+    let stale = app
+        .transcript_cache
+        .as_ref()
+        .is_none_or(|c| c.width != inner_w || c.commits != commits || c.session_id != session_id);
     if stale {
         let lines = transcript_committed_lines(app, inner_w);
         app.transcript_cache = Some(crate::app::TranscriptCache {

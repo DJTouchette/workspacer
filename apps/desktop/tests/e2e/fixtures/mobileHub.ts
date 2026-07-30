@@ -74,14 +74,19 @@ export async function startMobileHub(): Promise<MobileHub> {
   // Always rebuild. mobile.html is go:embed'd into the binary, so a stale hub
   // would serve a stale client and the whole suite would be testing nothing.
   // Go's build cache makes the no-op case cheap.
-  const built = spawnSync('go', ['build', '-o', 'hub', './cmd/hub'], { cwd: HUB_DIR, encoding: 'utf8' });
+  const built = spawnSync('go', ['build', '-o', 'hub', './cmd/hub'], {
+    cwd: HUB_DIR,
+    encoding: 'utf8',
+  });
   if (built.status !== 0) throw new Error('failed to build hub: ' + built.stderr);
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-m-e2e-'));
   const tokensFile = path.join(dir, 'tokens.json');
   fs.writeFileSync(
     tokensFile,
-    JSON.stringify([{ token: TRIAGE_TOKEN, scope: 'triage', label: 'phone', created: new Date().toISOString() }]),
+    JSON.stringify([
+      { token: TRIAGE_TOKEN, scope: 'triage', label: 'phone', created: new Date().toISOString() },
+    ]),
   );
 
   const port = await freePort();
@@ -89,12 +94,18 @@ export async function startMobileHub(): Promise<MobileHub> {
   const proc: ChildProcess = spawn(
     HUB_BIN,
     [
-      '--addr', `127.0.0.1:${port}`,
-      '--token', HOST_TOKEN,
-      '--tokens-file', tokensFile,
-      '--layout-file', path.join(dir, 'layout.json'),
-      '--push-dir', path.join(dir, 'push'),
-      '--brain-scope', 'off',
+      '--addr',
+      `127.0.0.1:${port}`,
+      '--token',
+      HOST_TOKEN,
+      '--tokens-file',
+      tokensFile,
+      '--layout-file',
+      path.join(dir, 'layout.json'),
+      '--push-dir',
+      path.join(dir, 'push'),
+      '--brain-scope',
+      'off',
     ],
     // stdin must stay OPEN: the hub's parentwatch treats a closed stdin as "my
     // parent died" and shuts down immediately.
@@ -118,10 +129,22 @@ export async function startMobileHub(): Promise<MobileHub> {
   });
 
   const METHODS = [
-    'sessions.snapshots', 'sessions.snapshot', 'sessions.conversation', 'sessions.recent',
-    'agents.sendMessage', 'agents.spawn', 'claude.approve', 'claude.answer', 'claude.signal',
-    'claude.setPermissionMode', 'claude.setModel', 'claude.listModels',
-    'config.get', 'library.list', 'providers.listModels', 'providers.checkAll',
+    'sessions.snapshots',
+    'sessions.snapshot',
+    'sessions.conversation',
+    'sessions.recent',
+    'agents.sendMessage',
+    'agents.spawn',
+    'claude.approve',
+    'claude.answer',
+    'claude.signal',
+    'claude.setPermissionMode',
+    'claude.setModel',
+    'claude.listModels',
+    'config.get',
+    'library.list',
+    'providers.listModels',
+    'providers.checkAll',
   ];
   ws.send(JSON.stringify({ op: 'register', methods: METHODS }));
 
@@ -147,7 +170,10 @@ export async function startMobileHub(): Promise<MobileHub> {
         // empty log, not a 404). `dj` stands in for that case — a client that
         // reads "still at seq 0" as "something changed" polls and re-renders
         // forever against it.
-        return reply(f.id, params.sessionId === 'dj' ? { seq: 0, items: [] } : { seq: 1, items: [] });
+        return reply(
+          f.id,
+          params.sessionId === 'dj' ? { seq: 0, items: [] } : { seq: 1, items: [] },
+        );
       case 'sessions.recent':
         return reply(f.id, FIXTURE_RECENT);
       case 'config.get':
@@ -246,7 +272,8 @@ const WORKING = {
     },
     {
       role: 'assistant',
-      content: "Reading the current route and the attention router, then I'll restructure the list.",
+      content:
+        "Reading the current route and the attention router, then I'll restructure the list.",
       timestamp: now - 290000,
     },
     {
@@ -269,7 +296,15 @@ const WORKING = {
       timestamp: now - 200000,
     },
   ],
-  activeToolCalls: [tool('t4', 'Edit', { file_path: 'apps/mobile/src/components/AgentCard.tsx' }, 'running', now - 3000)],
+  activeToolCalls: [
+    tool(
+      't4',
+      'Edit',
+      { file_path: 'apps/mobile/src/components/AgentCard.tsx' },
+      'running',
+      now - 3000,
+    ),
+  ],
   completedToolCalls: [tool('t3', 'Edit', { file_path: 'apps/mobile/src/routes/fleet.tsx' })],
   fileChanges: [
     {
@@ -283,7 +318,11 @@ const WORKING = {
   pendingQuestions: null,
   plan: {
     steps: [
-      { content: 'Restructure the card', status: 'in_progress', activeForm: 'Restructuring the card' },
+      {
+        content: 'Restructure the card',
+        status: 'in_progress',
+        activeForm: 'Restructuring the card',
+      },
       { content: 'Wire the token plumbing', status: 'pending' },
     ],
     updatedAt: now,
@@ -323,22 +362,43 @@ const WORKING = {
       phases: [{ title: 'Phase 1 · Survey' }, { title: 'Phase 2 · Rewrite' }],
       agents: [
         {
-          id: 'wa-1', label: 'route-inventory', phaseTitle: 'Phase 1 · Survey', status: 'done',
-          tokens: 18000, toolCalls: 4, durationMs: 22000, lastToolName: 'Glob',
+          id: 'wa-1',
+          label: 'route-inventory',
+          phaseTitle: 'Phase 1 · Survey',
+          status: 'done',
+          tokens: 18000,
+          toolCalls: 4,
+          durationMs: 22000,
+          lastToolName: 'Glob',
           lastToolSummary: 'apps/mobile/src/routes/*',
         },
         {
-          id: 'wa-2', label: 'token-audit', phaseTitle: 'Phase 1 · Survey', status: 'done',
-          tokens: 31000, toolCalls: 21, durationMs: 41000,
+          id: 'wa-2',
+          label: 'token-audit',
+          phaseTitle: 'Phase 1 · Survey',
+          status: 'done',
+          tokens: 31000,
+          toolCalls: 21,
+          durationMs: 41000,
         },
         {
-          id: 'wa-3', label: 'fleet-card', phaseTitle: 'Phase 2 · Rewrite', status: 'running',
-          tokens: 44000, toolCalls: 14, startedAt: now - 62000, lastToolName: 'Edit',
+          id: 'wa-3',
+          label: 'fleet-card',
+          phaseTitle: 'Phase 2 · Rewrite',
+          status: 'running',
+          tokens: 44000,
+          toolCalls: 14,
+          startedAt: now - 62000,
+          lastToolName: 'Edit',
           lastToolSummary: 'components/AgentCard.tsx',
         },
         {
-          id: 'wa-4', label: 'chat-timeline', phaseTitle: 'Phase 2 · Rewrite', status: 'queued',
-          tokens: 0, toolCalls: 0,
+          id: 'wa-4',
+          label: 'chat-timeline',
+          phaseTitle: 'Phase 2 · Rewrite',
+          status: 'queued',
+          tokens: 0,
+          toolCalls: 0,
         },
       ],
     },
@@ -390,7 +450,14 @@ const APPROVAL = {
   pendingQuestions: null,
   subagents: [],
   workflows: [],
-  usage: { model: 'gpt-5.4', contextTokens: 16000, contextLimit: 100000, totalInputTokens: 16000, totalOutputTokens: 2000, costUSD: 0.19 },
+  usage: {
+    model: 'gpt-5.4',
+    contextTokens: 16000,
+    contextLimit: 100000,
+    totalInputTokens: 16000,
+    totalOutputTokens: 2000,
+    costUSD: 0.19,
+  },
 };
 
 /** Blocked on a question. */
@@ -421,7 +488,14 @@ const QUESTION = {
   ],
   subagents: [],
   workflows: [],
-  usage: { model: 'claude-opus-4-8', contextTokens: 17000, contextLimit: 200000, totalInputTokens: 17000, totalOutputTokens: 3000, costUSD: 0.23 },
+  usage: {
+    model: 'claude-opus-4-8',
+    contextTokens: 17000,
+    contextLimit: 200000,
+    totalInputTokens: 17000,
+    totalOutputTokens: 3000,
+    costUSD: 0.23,
+  },
 };
 
 /** Idle with a large uncommitted change — the "bigdiff" review path. */
@@ -434,14 +508,23 @@ const REVIEW = {
   ambientState: 'idle',
   lastActivity: now - 660000,
   totalToolCalls: 44,
-  conversation: [{ role: 'assistant', content: 'Finished — mobile fleet route rebuilt.', timestamp: now - 660000 }],
+  conversation: [
+    {
+      role: 'assistant',
+      content: 'Finished — mobile fleet route rebuilt.',
+      timestamp: now - 660000,
+    },
+  ],
   activeToolCalls: [],
   completedToolCalls: [],
   fileChanges: [
     {
       path: '/home/djtouchette/Work/worky/workspacer/apps/mobile/src/routes/fleet.tsx',
       toolName: 'Edit',
-      input: { old_string: new Array(34).fill('x').join('\n'), new_string: new Array(96).fill('y').join('\n') },
+      input: {
+        old_string: new Array(34).fill('x').join('\n'),
+        new_string: new Array(96).fill('y').join('\n'),
+      },
       timestamp: now - 700000,
     },
     {
@@ -455,7 +538,14 @@ const REVIEW = {
   pendingQuestions: null,
   subagents: [],
   workflows: [],
-  usage: { model: 'claude-opus-4-8', contextTokens: 17000, contextLimit: 200000, totalInputTokens: 17000, totalOutputTokens: 4000, costUSD: 0.26 },
+  usage: {
+    model: 'claude-opus-4-8',
+    contextTokens: 17000,
+    contextLimit: 200000,
+    totalInputTokens: 17000,
+    totalOutputTokens: 4000,
+    costUSD: 0.26,
+  },
 };
 
 /** Plain idle. */
@@ -482,21 +572,48 @@ const IDLE = {
 export const FIXTURE_SESSIONS = [WORKING, APPROVAL, QUESTION, REVIEW, IDLE];
 
 export const FIXTURE_RECENT = [
-  { sessionId: 'old-1', provider: 'claude', cwd: '/home/djtouchette/Work/worky/workspacer', title: 'wire push notifications through the hub', updatedAt: now - 7200000 },
-  { sessionId: 'old-2', provider: 'codex', cwd: '/home/djtouchette/Work/rivet-umbrella/rivet', title: 'triage inbox keyboard nav', updatedAt: now - 86400000 },
+  {
+    sessionId: 'old-1',
+    provider: 'claude',
+    cwd: '/home/djtouchette/Work/worky/workspacer',
+    title: 'wire push notifications through the hub',
+    updatedAt: now - 7200000,
+  },
+  {
+    sessionId: 'old-2',
+    provider: 'codex',
+    cwd: '/home/djtouchette/Work/rivet-umbrella/rivet',
+    title: 'triage inbox keyboard nav',
+    updatedAt: now - 86400000,
+  },
 ];
 
 export const FIXTURE_CONFIG = {
   directories: {
-    favourites: ['/home/djtouchette/Work/worky/workspacer', '/home/djtouchette/Work/rivet-umbrella/rivet'],
+    favourites: [
+      '/home/djtouchette/Work/worky/workspacer',
+      '/home/djtouchette/Work/rivet-umbrella/rivet',
+    ],
     recent: ['/home/djtouchette/Work/rivet-umbrella/recon', '/home/djtouchette'],
   },
   agents: { defaultProvider: 'claude' },
 };
 
 export const FIXTURE_LIBRARY = [
-  { id: 'lib-standup', scope: 'global', title: 'Standup', kind: 'prompt', body: 'Summarise what changed since yesterday.' },
-  { id: 'lib-triage', scope: 'global', title: 'Triage sweep', kind: 'prompt', body: 'Triage the open issues.' },
+  {
+    id: 'lib-standup',
+    scope: 'global',
+    title: 'Standup',
+    kind: 'prompt',
+    body: 'Summarise what changed since yesterday.',
+  },
+  {
+    id: 'lib-triage',
+    scope: 'global',
+    title: 'Triage sweep',
+    kind: 'prompt',
+    body: 'Triage the open issues.',
+  },
 ];
 
 export const FIXTURE_PROVIDERS = [

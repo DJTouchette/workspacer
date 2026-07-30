@@ -110,7 +110,9 @@ describe('compactClaudeSnapshotForBackground', () => {
     it('recomputes when a tool call settles into a new state', () => {
       const running = compactClaudeSnapshotForBackground(
         snapshot({
-          activeToolCalls: [{ ...settledTool('memo-2'), status: 'running', completedAt: undefined }],
+          activeToolCalls: [
+            { ...settledTool('memo-2'), status: 'running', completedAt: undefined },
+          ],
         }),
       );
       const done = compactClaudeSnapshotForBackground(

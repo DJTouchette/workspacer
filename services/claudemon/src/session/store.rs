@@ -3062,5 +3062,4 @@ mod tests {
             "the newer spawn keeps its plumbing"
         );
     }
-
 }

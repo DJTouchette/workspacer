@@ -968,7 +968,10 @@ mod tests {
 
         std::fs::write(&path, format!("{}\n", jsonl_row("m1", 500))).expect("truncate");
         let second = usage_for_path(Some(p));
-        assert!(second.cost_usd < first.cost_usd, "shrink invalidates the memo");
+        assert!(
+            second.cost_usd < first.cost_usd,
+            "shrink invalidates the memo"
+        );
 
         let _ = std::fs::remove_file(&path);
     }
@@ -979,5 +982,4 @@ mod tests {
         assert_eq!(usage.cost_usd, 0.0);
         assert_eq!(usage_for_path(None).cost_usd, 0.0);
     }
-
 }

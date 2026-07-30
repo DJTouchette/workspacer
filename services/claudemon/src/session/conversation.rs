@@ -1875,5 +1875,4 @@ mod tests {
         assert!(!second.reset);
         assert_eq!(second.seq, 2);
     }
-
 }
