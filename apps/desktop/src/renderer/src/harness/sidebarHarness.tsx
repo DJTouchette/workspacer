@@ -330,7 +330,7 @@ function Harness() {
               onTerminateAgent={noop}
               onRenameAgent={noop}
               onToggleCollapse={noop}
-              onToggleHelp={noop}
+              onOpenRemote={noop}
               viewLevel="piloting"
               collapsed={false}
               width={width}

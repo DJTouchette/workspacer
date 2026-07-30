@@ -2087,7 +2087,6 @@ function App() {
                   viewLevel={effectiveViewLevel}
                   onOpenRemote={() => setShowRemote(true)}
                   onToggleCollapse={toggleSidebar}
-                  onToggleHelp={toggleHelp}
                   noAttentionFlash={noAttentionFlash}
                   collapsed={!sidebarOverlay && railShown}
                   width={sidebarOverlay ? undefined : sidebarWidth}

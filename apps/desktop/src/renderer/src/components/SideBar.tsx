@@ -1,5 +1,13 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
-import { Plus, ChevronLeft, ChevronRight, LayoutGrid, Compass, History } from 'lucide-react';
+import {
+  Plus,
+  ChevronLeft,
+  ChevronRight,
+  LayoutGrid,
+  Compass,
+  History,
+  Smartphone,
+} from 'lucide-react';
 import { BrandMark, Wordmark } from './Brand';
 import { AgentWorkspace } from '../types/pane';
 import type { RecentAgentSession } from '../../../main/shared/ipcTypes';
@@ -14,7 +22,6 @@ import { AgentLogo } from './agentLogos';
 import { requestInspector } from '../lib/watchBus';
 import { useAttention } from '../contexts/AttentionContext';
 import { useUiMode } from '../hooks/useUiMode';
-import HubStatus from './HubStatus';
 import NotificationCenter from './notifications/NotificationCenter';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
 import { SIDEBAR_DEFAULT_WIDTH, SIDEBAR_RAIL_WIDTH } from '../lib/sidebarWidth';
@@ -22,6 +29,12 @@ import { SIDEBAR_DEFAULT_WIDTH, SIDEBAR_RAIL_WIDTH } from '../lib/sidebarWidth';
 // The expanded width is user-resizable and persisted, so it is NOT a constant
 // here — it arrives as the `width` prop (see lib/sidebarWidth.ts for the
 // default, the clamp band, and the constants the app shell offsets by).
+
+/** Below this width the header drops the wordmark and keeps only the { ▮ } mark.
+ *  Measured, not guessed: mark + wordmark + the action cluster + the collapse
+ *  toggle need 290px, so anything narrower would push brand text under the
+ *  icons. (The brand button also clips, so a wider font can't overlap either.) */
+const WORDMARK_MIN_WIDTH = 292;
 
 /** Ambient state (or `undefined` = stopped) → status dot color + label. */
 function statusVisual(state: SessionAmbientState | undefined): { color: string; label: string } {
@@ -91,6 +104,87 @@ function relTime(ms: number): string {
   return `${Math.round(h / 24)}d`;
 }
 
+/**
+ * A header/rail action icon. Sized and tinted to match the notification bell's
+ * own trigger button so "+ / bell / phone" reads as one cluster of app-level
+ * affordances rather than three buttons that happen to sit together.
+ */
+const IconAction: React.FC<{
+  title: string;
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}> = ({ title, label, onClick, children }) => (
+  <button
+    onClick={onClick}
+    title={title}
+    aria-label={label}
+    style={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 24,
+      height: 24,
+      padding: 0,
+      flexShrink: 0,
+      border: 'none',
+      borderRadius: 'var(--wks-radius-sm)',
+      cursor: 'pointer',
+      background: 'transparent',
+      color: 'var(--wks-text-muted)',
+      transition: 'background 0.12s, color 0.12s',
+    }}
+    onMouseEnter={(e) => {
+      (e.currentTarget as HTMLElement).style.background = 'var(--wks-bg-hover)';
+      (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)';
+    }}
+    onMouseLeave={(e) => {
+      (e.currentTarget as HTMLElement).style.background = 'transparent';
+      (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-muted)';
+    }}
+  >
+    {children}
+  </button>
+);
+
+/**
+ * The app-level action cluster: new agent, notifications, mobile client. One
+ * definition, two mount points (header row and collapsed rail column) in the
+ * same order, so nothing jumps when the sidebar collapses. Spawn is an icon
+ * here — it used to be a full-width pill pinned to the bottom, which spent the
+ * sidebar's scarcest space on a once-per-session action.
+ */
+const ActionCluster: React.FC<{
+  vertical?: boolean;
+  onSpawnAgent: () => void;
+  onOpenRemote?: () => void;
+}> = ({ vertical, onSpawnAgent, onOpenRemote }) => (
+  <div
+    style={{
+      display: 'flex',
+      flexDirection: vertical ? 'column' : 'row',
+      alignItems: 'center',
+      gap: 2,
+      flexShrink: 0,
+    }}
+  >
+    <IconAction title="New agent (Ctrl+Shift+N)" label="New agent" onClick={onSpawnAgent}>
+      <Plus size={15} strokeWidth={2} />
+    </IconAction>
+    {/* The bell's history lives with the agents, where what it records happened. */}
+    <NotificationCenter />
+    {onOpenRemote && (
+      <IconAction
+        title="Mobile client — drive agents from your phone"
+        label="Mobile client"
+        onClick={onOpenRemote}
+      >
+        <Smartphone size={14} strokeWidth={1.75} />
+      </IconAction>
+    )}
+  </div>
+);
+
 interface SideBarProps {
   agents: AgentWorkspace[];
   activeAgentId: string;
@@ -122,8 +216,6 @@ interface SideBarProps {
    *  (`config.ui.sidebarWidth`). Absent = the shipped default. The rail width is
    *  fixed and ignores this. */
   width?: number;
-  /** Toggle the keyboard-shortcuts help overlay (footer "?" button). */
-  onToggleHelp?: () => void;
   /** Brief flash on the header when "next attention" found nothing to jump to. */
   noAttentionFlash?: boolean;
   /** Resumable daemon sessions not in the layout — drives the History footer
@@ -147,7 +239,6 @@ const SideBar: React.FC<SideBarProps> = ({
   viewLevel,
   onOpenRemote,
   onToggleCollapse,
-  onToggleHelp,
   noAttentionFlash,
   collapsed,
   width,
@@ -398,6 +489,27 @@ const SideBar: React.FC<SideBarProps> = ({
           <ChevronRight size={16} strokeWidth={2} />
         </button>
 
+        {/* Same cluster as the expanded header, stacked. Kept above the tiles
+            (not below them) so collapsing the sidebar doesn't move it, and the
+            bell stays reachable in the rail — its panel is fixed-positioned and
+            opens over the content area. */}
+        <div
+          style={{
+            flexShrink: 0,
+            width: '100%',
+            display: 'flex',
+            justifyContent: 'center',
+            paddingBottom: 8,
+            borderBottom: '1px solid var(--wks-border-subtle)',
+          }}
+        >
+          <ActionCluster vertical onSpawnAgent={onSpawnAgent} onOpenRemote={onOpenRemote} />
+        </div>
+
+        {/* No aggregate needs-you badge here: each rail tile already carries its
+            agent's attention (amber dot + kind glyph, see railTile), and
+            `next-attention` (Ctrl+Shift+Space) jumps to the next blocked agent
+            from anywhere. A count pill on top of that was pure duplication. */}
         <div
           style={{
             flex: 1,
@@ -407,47 +519,12 @@ const SideBar: React.FC<SideBarProps> = ({
             flexDirection: 'column',
             alignItems: 'center',
             gap: '8px',
-            padding: '2px 0',
+            padding: '2px 0 10px',
             width: '100%',
           }}
         >
           {agents.map(railTile)}
         </div>
-
-        <button
-          onClick={onSpawnAgent}
-          title="Spawn a new agent (Ctrl+Shift+N)"
-          style={{
-            width: 40,
-            height: 40,
-            flexShrink: 0,
-            margin: '4px 0 10px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            border: 'none',
-            borderRadius: 11,
-            cursor: 'pointer',
-            background: 'var(--wks-accent)',
-            color: 'var(--wks-bg-raised)',
-          }}
-        >
-          <Plus size={18} strokeWidth={2.5} />
-        </button>
-
-        {/* No aggregate needs-you badge here: each rail tile already carries its
-            agent's attention (amber dot + kind glyph, see railTile), and
-            `next-attention` (Ctrl+Shift+Space) jumps to the next blocked agent
-            from anywhere. A count pill on top of that was pure duplication. */}
-
-        {/* Notification bell — kept reachable in the rail so the center never
-            disappears when the sidebar is collapsed; the panel is
-            fixed-positioned and opens over the content area. */}
-        <div style={{ flexShrink: 0, margin: '0 0 6px' }}>
-          <NotificationCenter />
-        </div>
-
-        <HubStatus onOpenRemote={onOpenRemote} compact />
 
         {contextMenu && (
           <ContextMenu
@@ -507,8 +584,8 @@ const SideBar: React.FC<SideBarProps> = ({
         // style resolves these to 0.
         borderTopRightRadius: 'var(--wks-radius-lg)',
         borderBottomRightRadius: 'var(--wks-radius-lg)',
-        // Clip children (e.g. the HubStatus footer's solid background) to the
-        // rounded corners. The context menu is position:fixed so it still escapes.
+        // Clip children (card backgrounds, the feed's scroll) to the rounded
+        // corners. The context menu is position:fixed so it still escapes.
         overflow: 'hidden',
         zIndex: 100,
         userSelect: 'none',
@@ -522,8 +599,8 @@ const SideBar: React.FC<SideBarProps> = ({
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 10,
-          padding: '4px 12px 10px 16px',
+          gap: 8,
+          padding: '4px 10px 10px 14px',
         }}
       >
         <button
@@ -532,13 +609,14 @@ const SideBar: React.FC<SideBarProps> = ({
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: 10,
+            gap: 8,
             padding: 0,
             border: 'none',
             background: 'transparent',
             cursor: 'pointer',
             fontFamily: 'inherit',
             minWidth: 0,
+            overflow: 'hidden',
           }}
         >
           <span
@@ -564,12 +642,13 @@ const SideBar: React.FC<SideBarProps> = ({
           >
             <BrandMark size={17} blink />
           </span>
-          <Wordmark size={17} />
+          {/* The wordmark is the first thing to go when the user drags the
+              sidebar narrow: the mark alone still opens Overview, and the
+              action cluster must never be overlapped by brand text. */}
+          {(width ?? SIDEBAR_DEFAULT_WIDTH) >= WORDMARK_MIN_WIDTH && <Wordmark size={16} />}
         </button>
-        {/* Notification bell — the center's history lives with the agents,
-            where the action it records happened. */}
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 2 }}>
-          <NotificationCenter />
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }}>
+          <ActionCluster onSpawnAgent={onSpawnAgent} onOpenRemote={onOpenRemote} />
         </div>
         {onToggleCollapse && (
           <button
@@ -634,7 +713,9 @@ const SideBar: React.FC<SideBarProps> = ({
           display: 'flex',
           flexDirection: 'column',
           gap: '8px',
-          padding: '2px 0',
+          // Bottom padding is the feed's own now that no footer sits under it —
+          // the History row would otherwise touch the window edge.
+          padding: '2px 0 10px',
         }}
       >
         {/* The pinned Overview doesn't count — with no real agents the feed is
@@ -1272,69 +1353,10 @@ const SideBar: React.FC<SideBarProps> = ({
         })()}
       </div>
 
-      {/* Spawn agent — the mock's bottom pill: green + coin, label, kbd hint. */}
-      <button
-        onClick={onSpawnAgent}
-        style={{
-          width: 'calc(100% - 24px)',
-          margin: '4px 12px 10px',
-          padding: '11px 12px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 9,
-          border: '1px solid transparent',
-          borderRadius: 9,
-          cursor: 'pointer',
-          fontFamily: 'inherit',
-          backgroundColor: 'var(--wks-bg-elevated)',
-          color: 'var(--wks-text-primary)',
-          textAlign: 'left',
-          boxSizing: 'border-box',
-          transition: 'border-color 0.14s',
-        }}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent)';
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLElement).style.borderColor = 'transparent';
-        }}
-        title="Spawn a new agent (Ctrl+Shift+N)"
-      >
-        <span
-          style={{
-            flexShrink: 0,
-            display: 'grid',
-            placeItems: 'center',
-            width: 22,
-            height: 22,
-            borderRadius: 'var(--wks-radius-pill)',
-            background: 'var(--wks-success)',
-            color: 'var(--wks-bg-base)',
-            fontWeight: 700,
-            fontSize: '0.85rem',
-            lineHeight: 1,
-          }}
-        >
-          +
-        </span>
-        <span style={{ fontSize: '0.78rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
-          Spawn agent
-        </span>
-        <span
-          style={{
-            marginLeft: 'auto',
-            fontFamily: 'var(--wks-font-mono)',
-            fontSize: '0.64rem',
-            color: 'var(--wks-text-faint)',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          ⌃⇧N
-        </span>
-      </button>
-
-      {/* Footer — one row like the mock: ● hub on the left, ? Help right. */}
-      <HubStatus onOpenRemote={onOpenRemote} onToggleHelp={onToggleHelp} />
+      {/* No footer: spawn, notifications and the mobile client moved into the
+          header cluster, and the hub dot went with them — a healthy bus is not
+          news, and `useHubReconnect` handles a dead one without being watched.
+          The feed now owns every pixel below the header. */}
 
       {/* Context menu */}
       {contextMenu && (

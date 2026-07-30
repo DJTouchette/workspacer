@@ -505,7 +505,7 @@
 <h2>remote and multi-client</h2>
 <p>Because your sessions live in the background daemon rather than in any one window, you can watch and drive the same fleet from more than one place at once: the desktop app, the terminal app, your phone, a second PC, or a full web app in a browser. They all see the same agents, and a layout change on one mirrors to the others like tmux clients on one session. Most of the time you'll just use the desktop app; this section is about reaching your fleet from somewhere else.</p>
 <h3>remote sharing is opt-in</h3>
-<p>By default nothing about your fleet is reachable from off your machine, everything stays on localhost. Sharing is a <strong>runtime toggle</strong>: open <strong>Remote control</strong> (the phone icon in the Hub status row) and hit <strong>Start sharing</strong>. Two environment variables cover the launch-time cases:</p>
+<p>By default nothing about your fleet is reachable from off your machine, everything stays on localhost. Sharing is a <strong>runtime toggle</strong>: open <strong>Remote control</strong> (the phone icon in the sidebar header) and hit <strong>Start sharing</strong>. Two environment variables cover the launch-time cases:</p>
 <ul>
 <li><code>WORKSPACER_REMOTE_SHARE=1</code> forces sharing on from launch (useful for testing, or a machine that should always share).</li>
 <li><code>WORKSPACER_REMOTE_ADDR=host:port</code> (optional) pins the address it listens on (default <code>0.0.0.0:7895</code>). Set it to your <strong>tailnet IP</strong> so it's only reachable over your private network, not the whole LAN.</li>
@@ -523,7 +523,7 @@ workspacer token revoke &lt;token-or-prefix&gt;</code></pre>
 <p>Scoped tokens <strong>fail closed</strong>: a method outside the token's grant set is denied (with an error naming the missing scope), and unknown methods are denied too. They take effect on the next connection, no restart needed. The original pairing token keeps working unchanged — it's an implicit <code>operator</code>.</p>
 <blockquote>The intended transport is a <strong>Tailscale tailnet</strong>, not the open internet. The connection isn't encrypted on its own, so keep both devices on the same trusted private network — or use the one-tap <strong>HTTPS via Tailscale</strong> option in the share dialog, which fronts the hub at <code>https://&lt;your-node&gt;.ts.net</code> via <code>tailscale serve</code>.</blockquote>
 <h3>the share dialog (QR)</h3>
-<p>Open <strong>Remote control</strong> from the phone icon in the Hub status row at the bottom of the sidebar.</p>
+<p>Open <strong>Remote control</strong> from the phone icon in the sidebar header, next to the notification bell.</p>
 <ul>
 <li><strong>Sharing off:</strong> a <strong>Start sharing</strong> button binds the hub to your network on the spot, no relaunch needed.</li>
 <li><strong>Sharing on:</strong> it shows a <strong>QR code</strong> of the ready-to-use URL, point your phone camera at it and tap, plus copy buttons for the URL and the token (masked behind a show/hide eye). Pick what the QR points at with the <strong>Full app</strong> / <strong>Mobile</strong> tabs.</li>

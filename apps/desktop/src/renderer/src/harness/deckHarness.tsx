@@ -333,7 +333,7 @@ function Harness() {
         onTerminateAgent={noop}
         onRenameAgent={noop}
         onToggleCollapse={noop}
-        onToggleHelp={noop}
+        onOpenRemote={noop}
         viewLevel="fleet"
         collapsed
         recentSessions={[]}
