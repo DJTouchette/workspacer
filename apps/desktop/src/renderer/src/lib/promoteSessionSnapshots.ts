@@ -33,3 +33,35 @@ export function promoteSessionSnapshots(sessions: ClaudeSessionSnapshot[]): Prom
   }
   return { statusBySession, snapshotBySession };
 }
+
+/**
+ * Whether a live `onClaudeSessionUpdate` tick should evict its session from the
+ * promoted maps instead of refreshing it.
+ *
+ * The mirror of the exclusions in [`promoteSessionSnapshots`]: an `ended`
+ * session never ticks again, so its (full-transcript) snapshot would stay
+ * pinned forever. An explicitly terminated one is evicted even before the
+ * daemon reports `ended`, because its teardown ticks — final hooks, a last
+ * status line — would otherwise re-promote the snapshot and let auto-adopt
+ * resurrect the card the user just closed.
+ */
+export function shouldEvictSession(
+  sessionId: string,
+  status: ClaudeSessionSnapshot['status'] | undefined,
+): boolean {
+  return status === 'ended' || wasSessionTerminated(sessionId);
+}
+
+/**
+ * Drop one session's entry from a promoted map.
+ *
+ * Returns the *same* object when the key isn't there. That identity is
+ * load-bearing: these maps are React state, and returning a fresh object for a
+ * session we never held would re-render every consumer on each teardown tick
+ * of an unrelated session.
+ */
+export function omitSession<T>(record: Record<string, T>, sessionId: string): Record<string, T> {
+  if (!(sessionId in record)) return record;
+  const { [sessionId]: _drop, ...rest } = record;
+  return rest;
+}

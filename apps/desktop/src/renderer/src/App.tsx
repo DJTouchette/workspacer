@@ -60,10 +60,8 @@ import { useAgentAutoTitle } from './hooks/useAgentAutoTitle';
 import type { Layout, LayoutAgent } from './types/layout';
 import { useLibrary } from './hooks/useLibrary';
 import { useLayoutSync, type HydrationResult } from './hooks/useLayoutSync';
-import { useHubReconnect } from './hooks/useHubReconnect';
 import { useAgentManager, GLOBAL_WORKSPACE_ID } from './hooks/useAgentManager';
 import type { PaneType, AgentWorkspace, AgentProvider, ViewLevel } from './types/pane';
-import type { SessionAmbientState, ClaudeSessionSnapshot } from './types/claudeSession';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useIsSmallScreen } from './hooks/useMediaQuery';
 import { useConfig, DEFAULT_CONFIG } from './hooks/useConfig';
@@ -76,9 +74,15 @@ import type { RecentAgentSession } from '../../main/shared/ipcTypes';
 import { usePluginHotkeys } from './hooks/usePluginHotkeys';
 import { buildPaneMenu } from './lib/paneMenu';
 import { PaneMenuProvider, type PaneMenuContextValue } from './contexts/PaneMenuContext';
-import { compactClaudeSnapshotForBackground } from './lib/compactClaudeSnapshot';
 import { wasSessionTerminated } from './lib/terminatedSessions';
-import { promoteSessionSnapshots } from './lib/promoteSessionSnapshots';
+import { useSessionSnapshots } from './hooks/useSessionSnapshots';
+import { useBrowserHibernation } from './hooks/useBrowserHibernation';
+import {
+  clampTextScale,
+  textScaleToRootFontSize,
+  DEFAULT_TEXT_SCALE,
+  TEXT_SCALE_STEP,
+} from './lib/textScale';
 
 /** Normalize a workspace dir into a stable config key (slashes + no trailing /). */
 function scriptKey(cwd: string): string {
@@ -546,98 +550,8 @@ function App() {
   // shared substrate the Triage Inbox and Fleet Deck both project from. (App
   // already re-renders on every status update, so storing the snapshot here is
   // no extra render churn; it just stops throwing the rich payload away.)
-  const [statusBySession, setStatusBySession] = useState<Record<string, SessionAmbientState>>({});
-  const [snapshotBySession, setSnapshotBySession] = useState<Record<string, ClaudeSessionSnapshot>>(
-    {},
-  );
-  // Daemon sessions that were already alive when Workspacer launched. claudemon
-  // outlives the app, so these are leftovers from a previous run. They must NOT
-  // be auto-adopted as orphan cards — the user reaches them only by explicitly
-  // resuming a saved session. Auto-adoption is for sessions that appear *after*
-  // launch (spawned via the MCP facade or by another agent). null until the
-  // first session list resolves, so adoption waits rather than guessing empty.
-  const preexistingSessionIdsRef = useRef<Set<string> | null>(null);
-  // Pull the full session list and promote each snapshot. Runs at mount and
-  // again on every hub reconnect — while the socket is down we miss
-  // `onClaudeSessionUpdate` ticks, so without this re-pull a web tab shows stale
-  // (or missing) sessions until a manual refresh.
-  const refreshSessionSnapshots = useCallback(() => {
-    window.electronAPI
-      .getAllClaudeSessions()
-      .then((sessions: any[]) => {
-        // Skip terminated sessions AND daemon-reported `ended` ones: ended
-        // sessions never tick again, so promoting one here would pin a dead
-        // snapshot the live-update cleanup can never evict.
-        const { statusBySession: map, snapshotBySession: snaps } =
-          promoteSessionSnapshots(sessions);
-        if (preexistingSessionIdsRef.current === null) {
-          preexistingSessionIdsRef.current = new Set(sessions.map((s) => s.sessionId));
-        }
-        setStatusBySession(map);
-        setSnapshotBySession(snaps);
-      })
-      .catch(() => {
-        // No daemon / empty list: nothing pre-existed, so adoption can proceed.
-        if (preexistingSessionIdsRef.current === null) {
-          preexistingSessionIdsRef.current = new Set();
-        }
-      });
-  }, []);
-  useHubReconnect(refreshSessionSnapshots);
-  useEffect(() => {
-    refreshSessionSnapshots();
-    const unsub = window.electronAPI.onClaudeSessionUpdate((sessionId: string, snapshot: any) => {
-      // An ended session will never tick again, so drop its (full-transcript)
-      // snapshot + status rather than leaving it pinned in memory forever.
-      // Explicitly-terminated sessions get the same treatment even before the
-      // daemon reports ended: their teardown ticks (final hooks / statusline)
-      // would otherwise re-promote the snapshot and auto-adopt would resurrect
-      // the card the user just closed.
-      if (snapshot.status === 'ended' || wasSessionTerminated(sessionId)) {
-        setStatusBySession((prev) => {
-          if (!(sessionId in prev)) return prev;
-          const { [sessionId]: _drop, ...rest } = prev;
-          return rest;
-        });
-        setSnapshotBySession((prev) => {
-          if (!(sessionId in prev)) return prev;
-          const { [sessionId]: _drop, ...rest } = prev;
-          return rest;
-        });
-        // Flip the owning agent to stopped so the card offers a respawn right
-        // away. (No-op after an explicit terminate — the agent is already
-        // gone by the time its session reports ended.)
-        stopAgentForSession(sessionId);
-        return;
-      }
-      setStatusBySession((prev) => ({ ...prev, [sessionId]: snapshot.ambientState }));
-      setSnapshotBySession((prev) => ({
-        ...prev,
-        [sessionId]: compactClaudeSnapshotForBackground(snapshot),
-      }));
-    });
-    return () => {
-      unsub();
-    };
-  }, [refreshSessionSnapshots, stopAgentForSession]);
-
-  // Drop a terminated agent's session snapshot/status from the promoted maps.
-  // useAgentManager.terminateAgent removes the agent + closes the daemon session
-  // but doesn't own these App-level maps, so without this they'd hold the dead
-  // session's full transcript for the rest of the app's lifetime.
-  const pruneSession = useCallback((sessionId: string | undefined) => {
-    if (!sessionId) return;
-    setStatusBySession((prev) => {
-      if (!(sessionId in prev)) return prev;
-      const { [sessionId]: _drop, ...rest } = prev;
-      return rest;
-    });
-    setSnapshotBySession((prev) => {
-      if (!(sessionId in prev)) return prev;
-      const { [sessionId]: _drop, ...rest } = prev;
-      return rest;
-    });
-  }, []);
+  const { statusBySession, snapshotBySession, pruneSession, preexistingSessionIdsRef } =
+    useSessionSnapshots(stopAgentForSession);
 
   const handleTerminateAgent = useCallback(
     (agentId: string) => {
@@ -762,50 +676,15 @@ function App() {
     [updatePaneUrl],
   );
 
-  // Hibernation tracking
-  const lastVisibleRef = useRef<Record<string, number>>({});
-  const hibernateAfter = (config.browser?.hibernateAfter ?? 300) * 1000;
-
-  useEffect(() => {
-    if (!activeTabId) return;
-    const now = Date.now();
-    const tab = tabs.find((t) => t.id === activeTabId);
-    if (tab) {
-      for (const pane of tab.panes) {
-        lastVisibleRef.current[pane.id] = now;
-      }
-    }
-  }, [activeTabId, tabs]);
-
-  // Auto-wake hibernated panes when their tab becomes active
-  useEffect(() => {
-    if (!activeTabId) return;
-    const tab = tabs.find((t) => t.id === activeTabId);
-    if (tab) {
-      for (const pane of tab.panes) {
-        if (pane.hibernated) wakePane(tab.id, pane.id);
-      }
-    }
-  }, [activeTabId, tabs, wakePane]);
-
-  // Hibernate timer (browser panes in inactive tabs)
-  useEffect(() => {
-    if (hibernateAfter <= 0 || sessionPhase !== 'active') return;
-    const interval = setInterval(() => {
-      const now = Date.now();
-      for (const tab of tabs) {
-        if (tab.id === activeTabId) continue;
-        for (const pane of tab.panes) {
-          if (pane.type !== 'browser' || pane.hibernated) continue;
-          const lastSeen = lastVisibleRef.current[pane.id] ?? 0;
-          if (lastSeen > 0 && now - lastSeen > hibernateAfter) {
-            hibernatePane(tab.id, pane.id);
-          }
-        }
-      }
-    }, 15000);
-    return () => clearInterval(interval);
-  }, [tabs, activeTabId, hibernateAfter, hibernatePane, sessionPhase]);
+  // Reclaim webviews from browser panes nobody is looking at.
+  useBrowserHibernation({
+    tabs,
+    activeTabId,
+    hibernateAfter: (config.browser?.hibernateAfter ?? 300) * 1000,
+    enabled: sessionPhase === 'active',
+    hibernatePane,
+    wakePane,
+  });
 
   // --- Normal app logic ---
 
@@ -1378,19 +1257,16 @@ function App() {
   }, [activeAgentId, tabs, activeTabId]);
 
   // ── App-wide text scale ──
-  // Applied as the document root font-size: every text size in the app is
-  // rem-based, so scaling the root scales all text (chrome + chat alike;
-  // the chat's own guiFontScale still multiplies on top). Clamped to sane
-  // bounds; mod+= / mod+- nudge by one step, mod+0 resets.
-  const uiFontScale = config.ui.uiFontScale ?? 1.0;
+  // Applied as the document root font-size — see lib/textScale for the bounds
+  // and why the value is quantised.
+  const uiFontScale = config.ui.uiFontScale ?? DEFAULT_TEXT_SCALE;
   useEffect(() => {
-    document.documentElement.style.fontSize =
-      uiFontScale === 1 ? '' : `${(uiFontScale * 100).toFixed(1)}%`;
+    document.documentElement.style.fontSize = textScaleToRootFontSize(uiFontScale);
   }, [uiFontScale]);
   const setTextScale = useCallback(
     (value: number) => {
-      const cur = config.ui.uiFontScale ?? 1.0;
-      const next = Math.round(Math.min(1.5, Math.max(0.8, value)) * 100) / 100;
+      const cur = config.ui.uiFontScale ?? DEFAULT_TEXT_SCALE;
+      const next = clampTextScale(value);
       if (next !== cur) void saveConfig({ ui: { ...config.ui, uiFontScale: next } });
     },
     [config.ui, saveConfig],
@@ -1435,12 +1311,15 @@ function App() {
     onToggleInbox: toggleInbox,
     onToggleFleet: toggleFleet,
     onToggleUiMode: toggleUiMode,
-    onTextSizeUp: useCallback(() => setTextScale(uiFontScale + 0.05), [setTextScale, uiFontScale]),
-    onTextSizeDown: useCallback(
-      () => setTextScale(uiFontScale - 0.05),
+    onTextSizeUp: useCallback(
+      () => setTextScale(uiFontScale + TEXT_SCALE_STEP),
       [setTextScale, uiFontScale],
     ),
-    onTextSizeReset: useCallback(() => setTextScale(1.0), [setTextScale]),
+    onTextSizeDown: useCallback(
+      () => setTextScale(uiFontScale - TEXT_SCALE_STEP),
+      [setTextScale, uiFontScale],
+    ),
+    onTextSizeReset: useCallback(() => setTextScale(DEFAULT_TEXT_SCALE), [setTextScale]),
     onOpenReview: openReview,
     shortcuts: resolvedShortcuts,
   });
