@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -16,7 +17,14 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/event"
 )
 
-const reconnectWait = time.Second
+// Reconnect backoff, matching the desktop sseConsumer's 200ms→5s schedule.
+const (
+	reconnectInitialWait = 200 * time.Millisecond
+	reconnectMaxWait     = 5 * time.Second
+	// How long a stream must stay open before a drop counts as a fresh incident
+	// rather than a continuation of the current backoff.
+	minProductiveStream = 5 * time.Second
+)
 
 // Publisher is the slice of the broker the bridge needs.
 type Publisher interface {
@@ -41,19 +49,42 @@ func NewBridge(url string, pub Publisher) *Bridge {
 }
 
 // Run connects and republishes until ctx is cancelled, reconnecting on drop.
+//
+// Mirrors the desktop's sseConsumer: report the error, back off exponentially
+// rather than hammering, and reset the backoff only after a connection that
+// stayed open long enough to be productive. The flat one-second retry this
+// replaced spun at 1 req/s forever against a daemon that was down or answering
+// 404, and discarded every error on the way — so the one signal that would have
+// explained a silent bridge never reached a log.
 func (b *Bridge) Run(ctx context.Context) {
+	backoff := reconnectInitialWait
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		_ = b.stream(ctx)
+		openedAt := time.Now()
+		err := b.stream(ctx)
 		if ctx.Err() != nil {
 			return
+		}
+		if err != nil {
+			log.Printf("claudemon bridge: stream ended: %v (retry in %s)", err, backoff)
+		}
+		if time.Since(openedAt) >= minProductiveStream {
+			// It ran long enough to have been working; treat the next failure as
+			// a fresh incident rather than continuing a long backoff.
+			backoff = reconnectInitialWait
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(reconnectWait):
+		case <-time.After(backoff):
+		}
+		if backoff < reconnectMaxWait {
+			backoff *= 2
+			if backoff > reconnectMaxWait {
+				backoff = reconnectMaxWait
+			}
 		}
 	}
 }
@@ -69,6 +100,12 @@ func (b *Bridge) stream(ctx context.Context) error {
 		return err
 	}
 	defer resp.Body.Close()
+	// A non-2xx is a real failure, not a stream: parseSSE on an error body just
+	// blocks until the connection drops, so the bridge looked connected while
+	// republishing nothing.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("claudemon %s: HTTP %d", b.url, resp.StatusCode)
+	}
 	return parseSSE(ctx, resp.Body, func(name string, data []byte) {
 		if ev, ok := mapEvent(name, data); ok {
 			b.pub.Publish(ev)

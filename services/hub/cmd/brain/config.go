@@ -131,7 +131,7 @@ func (c *configService) loadFromDisk() map[string]any {
 }
 
 func (c *configService) writeDefaults(defaults map[string]any) {
-	writeConfigYAML(defaults)
+	_ = writeConfigYAML(defaults)
 }
 
 func (c *configService) get() map[string]any {
@@ -245,7 +245,13 @@ func (c *configService) save(partial map[string]any) map[string]any {
 		c.current = merged
 		return merged
 	}
-	writeConfigYAML(merged)
+	if err := writeConfigYAML(merged); err != nil {
+		// Do not adopt a value that is not on disk — serving it would make the
+		// setting look applied until the next restart reverted it.
+		c.persistBlocked = true
+		return c.current
+	}
+	c.persistBlocked = false
 	c.current = merged
 	c.loadedAt = configMtime()
 	return merged
@@ -253,16 +259,27 @@ func (c *configService) save(partial map[string]any) map[string]any {
 
 func (c *configService) path() string { return configPath() }
 
-func writeConfigYAML(cfg map[string]any) {
+// writeConfigYAML persists the whole config. Returns the write error rather than
+// swallowing it: a discarded error here reported a SUCCESSFUL config.save for a
+// file that never reached disk, and the in-memory copy then served the phantom
+// value for the rest of the process's life — the setting looked applied until
+// the next restart silently reverted it.
+func writeConfigYAML(cfg map[string]any) error {
 	dir := configDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return
+		log.Printf("brain: config dir unavailable: %v", err)
+		return err
 	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
-		return
+		log.Printf("brain: config marshal failed: %v", err)
+		return err
 	}
-	_ = writeFileAtomic(configPath(), data, 0o644)
+	if err := writeFileAtomic(configPath(), data, 0o644); err != nil {
+		log.Printf("brain: config write failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 // writeFileAtomic replaces path with data via a unique temp file in the SAME
@@ -338,7 +355,7 @@ func pruneRemovedShortcuts(cfg map[string]any) map[string]any {
 		}
 	}
 	if changed {
-		writeConfigYAML(cfg)
+		_ = writeConfigYAML(cfg)
 	}
 	return cfg
 }
@@ -362,7 +379,7 @@ func migrateKeybindings(cfg map[string]any) map[string]any {
 	}
 	def := defaultConfig()
 	cfg["keybindings"] = def["keybindings"]
-	writeConfigYAML(cfg)
+	_ = writeConfigYAML(cfg)
 	return cfg
 }
 
@@ -417,7 +434,7 @@ func migrateFlatChords(cfg map[string]any) map[string]any {
 		}
 	}
 	if changed {
-		writeConfigYAML(cfg)
+		_ = writeConfigYAML(cfg)
 	}
 	return cfg
 }

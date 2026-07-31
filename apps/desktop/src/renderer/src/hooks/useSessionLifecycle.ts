@@ -148,10 +148,17 @@ export function useSessionLifecycle({
       // crash/kill in the debounce window lost them.
       const hash = JSON.stringify(payload);
       if (!force && hash === lastSaveHashRef.current) return Promise.resolve();
+      // Claim the hash up front so two saves racing in the same tick don't both
+      // write — but give it back if the write fails. Committing it permanently
+      // meant a failed save was remembered as done: the next attempt deduped
+      // against a payload that never reached disk, so one transient fault became
+      // a permanent loss until some other edit changed the hash.
+      const previous = lastSaveHashRef.current;
       lastSaveHashRef.current = hash;
       return window.electronAPI.saveSession(payload).then(
         () => undefined,
         (err: any) => {
+          if (lastSaveHashRef.current === hash) lastSaveHashRef.current = previous;
           console.error('[Session] save failed:', err);
         },
       );

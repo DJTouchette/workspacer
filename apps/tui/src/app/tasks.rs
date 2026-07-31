@@ -129,16 +129,24 @@ pub(super) async fn seed_prompt(
     sid: &str,
     prompt: &str,
 ) {
+    // The agent has to reach its prompt before a paste means anything. If it
+    // never does, the paste goes nowhere — say so rather than claiming success.
+    let mut ready = false;
     for _ in 0..40 {
         if cm.session_mode(sid).await.as_deref() == Some("input") {
+            ready = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(400)).await;
     }
-    let _ = cm.input_bytes(sid, &bracketed_paste(prompt)).await;
-    let _ = tx.send(AppMsg::Toast(
-        "Prompt seeded — open the agent and press enter".into(),
-    ));
+    let toast = if !ready {
+        "Agent never reached its prompt — the text was not seeded".to_string()
+    } else if let Err(err) = cm.input_bytes(sid, &bracketed_paste(prompt)).await {
+        format!("Could not seed the prompt: {err}")
+    } else {
+        "Prompt seeded — open the agent and press enter".to_string()
+    };
+    let _ = tx.send(AppMsg::Toast(toast));
     fetch_agents(cm, tx).await;
 }
 

@@ -5,6 +5,7 @@ import { requestMarkdownPreview } from '../../lib/previewBus';
 import { requestOpenInBrowser, fileUrlFromPath } from '../../lib/browserBus';
 import { PaneIcon } from '../icons';
 import type { PaneType } from '../../types/pane';
+import { postNotification } from '../../lib/notificationBus';
 
 /**
  * FileLink — the one clickable-file-path affordance for the chat's tool-call
@@ -104,7 +105,21 @@ export const FileActionMenuItems: React.FC<{
       )}
       <ContextMenuItem
         label="Show in folder"
-        onClick={run(() => void window.electronAPI.fileShowInFolder(abs))}
+        // The handler deliberately reports {ok:false, error} for a path that is
+        // gone — discarding it made a stale link a dead click with no feedback,
+        // which is the single most common case (the agent moved or deleted it).
+        onClick={run(() => {
+          void window.electronAPI.fileShowInFolder(abs).then((res) => {
+            if (res && res.ok === false) {
+              postNotification({
+                title: 'Could not show the file',
+                body: res.error || abs,
+                level: 'warn',
+                source: 'files',
+              });
+            }
+          });
+        })}
       />
       <ContextMenuItem
         label="Copy path"

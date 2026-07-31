@@ -247,4 +247,30 @@ describe('useSessionLifecycle — implicit-session boot', () => {
     expect(loadAgentsFromSession).not.toHaveBeenCalled();
     expect(result.current.sessionPhase).toBe('active');
   });
+
+  // A failed save must stay un-deduped: recording the hash before the write
+  // landed meant one transient failure was remembered as done, and the next
+  // attempt skipped as redundant — a permanent loss from a temporary fault.
+  it('retries after a failed save instead of deduping it away', async () => {
+    const { result } = render(mkAgents('p1'));
+    act(() => result.current.setSessionPhase('active'));
+
+    saveSession.mockRejectedValueOnce(new Error('ENOSPC'));
+    await act(async () => {
+      await result.current.saveCurrentSession();
+    });
+    expect(saveSession).toHaveBeenCalledTimes(1);
+
+    // Same payload, nothing else changed — it must go again, not dedup.
+    await act(async () => {
+      await result.current.saveCurrentSession();
+    });
+    expect(saveSession).toHaveBeenCalledTimes(2);
+
+    // ...and once one lands, the dedup takes over as before.
+    await act(async () => {
+      await result.current.saveCurrentSession();
+    });
+    expect(saveSession).toHaveBeenCalledTimes(2);
+  });
 });

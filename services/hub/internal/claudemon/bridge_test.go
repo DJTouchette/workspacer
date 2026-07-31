@@ -2,7 +2,10 @@ package claudemon
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -78,5 +81,73 @@ func TestBridgeReconnectsAfterDrop(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not exit on ctx cancel")
+	}
+}
+
+// A non-2xx is a real failure, not a stream. Without the status check parseSSE
+// just read an error body to EOF, so the bridge looked connected while
+// republishing nothing — and, because Run discarded the result, said nothing.
+func TestBridgeStreamRejectsNon2xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "nope", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	b := NewBridge(srv.URL+"/events", &capture{ch: make(chan event.Envelope, 1)})
+	err := b.stream(context.Background())
+	if err == nil {
+		t.Fatal("expected an error for HTTP 404, got nil")
+	}
+	if !strings.Contains(err.Error(), "404") {
+		t.Errorf("error should name the status, got %v", err)
+	}
+}
+
+// A 2xx stream still parses — the status check must not reject the happy path.
+func TestBridgeStreamAcceptsOkStream(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: session.update\ndata: {\"session_id\":\"s1\"}\n\n"))
+	}))
+	defer srv.Close()
+
+	got := make(chan event.Envelope, 1)
+	b := NewBridge(srv.URL+"/events", &capture{ch: got})
+	if err := b.stream(context.Background()); err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	select {
+	case ev := <-got:
+		if ev.Type != "agent.state_changed" {
+			t.Errorf("republished %q, want agent.state_changed", ev.Type)
+		}
+	default:
+		t.Fatal("nothing republished from a well-formed stream")
+	}
+}
+
+// The backoff must grow rather than hammering at a flat 1 req/s, and must stay
+// bounded. Counting attempts inside a fixed window is the observable proof.
+func TestBridgeBacksOffRatherThanSpinning(t *testing.T) {
+	var attempts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	b := NewBridge(srv.URL+"/events", &capture{ch: make(chan event.Envelope, 8)})
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	b.Run(ctx)
+
+	// 200,400,800 → ~3-5 attempts in 1.5s. A flat 1s retry would give ~2 and the
+	// old code's unconditional loop far more if the server answered instantly.
+	n := atomic.LoadInt32(&attempts)
+	if n < 2 {
+		t.Errorf("only %d attempts — it is not retrying", n)
+	}
+	if n > 12 {
+		t.Errorf("%d attempts in 1.5s — it is spinning, not backing off", n)
 	}
 }
