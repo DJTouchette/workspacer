@@ -100,6 +100,11 @@ vi.mock('fs', () => ({
   renameSync: vi.fn(),
   chmodSync: vi.fn(),
   rmSync: vi.fn(),
+  // withConfigLock (O_EXCL create + release) wraps every config write now, so
+  // its primitives must exist too. openSync returning a fd = the lock is free.
+  openSync: vi.fn().mockReturnValue(3),
+  writeSync: vi.fn(),
+  closeSync: vi.fn(),
   // Default: no file → mtime gate stays inert (configMtimeMs returns 0), so the
   // existing in-memory-cache tests behave exactly as before. The mtime-gate
   // suite below drives statSync explicitly.

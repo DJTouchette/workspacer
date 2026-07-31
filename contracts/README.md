@@ -11,6 +11,7 @@ consciously extend) the others.
 | `model-pricing-cases.json` | `apps/desktop/.../modelUsage.ts` (TS) · `services/claudemon/.../pricing.rs` (Rust) | Per-model USD rates. Longest-prefix match must price every listed id identically. |
 | `deepmerge-cases.json` | `apps/desktop/.../configService.ts` (TS) · `services/hub/cmd/brain/config.go` (Go) | `deepMerge(target, source)` — the config.yaml overlay algorithm both writers use. |
 | `session-schema.json` | `apps/desktop/.../shared/sessionSchema.ts` (TS) · `services/hub/cmd/brain/stores.go` (Go) | Saved-session format version. Both writers stamp it; a reader refuses a file stamped higher than its own rather than treating an unparseable shape as empty. |
+| `config-lock.json` | `apps/desktop/.../lib/configLock.ts` (TS) · `services/hub/cmd/brain/configlock.go` (Go) | The advisory lock guarding config.yaml. `staleMs` and the lock filename must match — a side that expires locks sooner steals one the other still holds. |
 | `host-trusted-config-cases.json` | `apps/desktop/.../lib/hostTrustedConfig.ts` (TS) · `services/hub/cmd/brain/config.go` (Go) | Config sections a bus caller may never write. Both `config.save` entry points must strip the same list — `updates.channel` reaches the updater feed URL. |
 
 Rates are USD per **million** tokens. Add a case whenever a new model id or merge

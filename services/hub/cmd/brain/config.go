@@ -194,9 +194,33 @@ func dropHostTrusted(partial map[string]any) map[string]any {
 func (c *configService) save(partial map[string]any) map[string]any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// The mutex above only serialises US. config.yaml has a second writer in
+	// another process, and the refresh → merge → write below is exactly the
+	// sequence that must not interleave with theirs: the mtime gate closes the
+	// refresh, nothing spans the three. Hold the cross-process lock across all
+	// of it. See contracts/config-lock.json.
+	var result map[string]any
+	if err := withConfigLock(configPath(), func() error {
+		result = c.saveLocked(partial)
+		return nil
+	}); err != nil {
+		// Could not take the lock: the other writer is mid-write (or wedged).
+		// Writing anyway is the bug this exists to prevent, so refuse and let the
+		// caller see the value it did not get.
+		log.Printf("brain: config.save skipped: %v", err)
+		c.persistBlocked = true
+		return c.current
+	}
+	return result
+}
+
+// saveLocked is save's body, run while holding both the in-process mutex and the
+// cross-process config lock.
+func (c *configService) saveLocked(partial map[string]any) map[string]any {
 	// Fold in any external write (e.g. the desktop app editing config.yaml in its
 	// own process) before merging our partial, so a stale cache doesn't clobber
-	// it. Mirrors the mtime gate in get().
+	// it. Mirrors the mtime gate in get(). Under the lock this is now a genuine
+	// read-modify-write rather than an optimistic one.
 	if c.current == nil || configMtime().After(c.loadedAt) {
 		c.current = c.loadFromDisk()
 		c.loadedAt = configMtime()

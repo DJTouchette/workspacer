@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as yaml from 'js-yaml';
 import { CONFIG_DEFAULTS } from './configDefaults.generated';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
+import { withConfigLock } from '../lib/configLock';
 
 interface ShellOption {
   name: string;
@@ -532,9 +533,28 @@ class ConfigService {
   }
 
   saveConfig(partial: Partial<Config>): Config {
+    // config.yaml has a second writer in another process (the Go brain, which
+    // answers config.save for the web and mobile Settings panes). The refresh →
+    // merge → write below is exactly the sequence that must not interleave with
+    // theirs: the mtime gate closes the refresh, nothing spans the three. Hold
+    // the cross-process lock across all of it — see contracts/config-lock.json.
+    try {
+      return withConfigLock(getConfigFilePath(), () => this.saveConfigLocked(partial));
+    } catch (err) {
+      // Could not take the lock: the other writer is mid-write (or wedged).
+      // Writing anyway is the bug this exists to prevent, so refuse — and say
+      // so, because the setting the user just changed did not land.
+      console.error('[ConfigService] config not saved:', err);
+      return this.config;
+    }
+  }
+
+  /** saveConfig's body, run while holding the cross-process config lock. */
+  private saveConfigLocked(partial: Partial<Config>): Config {
     // Fold in any external write (the brain editing config.yaml in its own
     // process) BEFORE merging our partial, so a stale in-memory cache can't
-    // clobber it — the whole point of the mtime gate (see loadedAtMs).
+    // clobber it — the whole point of the mtime gate (see loadedAtMs). Under the
+    // lock this is a genuine read-modify-write rather than an optimistic one.
     this.refreshIfChangedOnDisk();
     this.config = deepMerge(this.config, partial);
     // ui.customThemes is a map of user-created entries: when the caller sends
