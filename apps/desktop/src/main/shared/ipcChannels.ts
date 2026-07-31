@@ -48,6 +48,7 @@ export const IPC = {
 
   // ── Claude sessions ──
   CLAUDE_SPAWN: 'claude:spawn',
+  CONFIG_CHANGED: 'config:changed', // push (main → renderer)
   CLAUDE_LIST_MODELS: 'claude:listModels',
   AGENT_SUGGEST_TITLE: 'agent:suggestTitle',
   WORKFLOW_AGENT_TRANSCRIPT: 'workflow:agentTranscript',

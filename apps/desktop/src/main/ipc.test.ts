@@ -52,7 +52,9 @@ vi.mock('./services/cliInstall', () => ({
 // (setMainWindow / setEmitSink are called at registration time; the rest only
 // inside handler closures we never invoke).
 vi.mock('./services/configService', () => ({
-  configService: { getConfig: vi.fn(() => ({})) },
+  // onChange is subscribed at registration time (the config-changed push), so
+  // the stub has to hand back an unsubscribe like the real one.
+  configService: { getConfig: vi.fn(() => ({})), onChange: vi.fn(() => () => {}) },
 }));
 vi.mock('./services/libraryService', () => ({
   libraryService: { setMainWindow: vi.fn() },

@@ -206,6 +206,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     parentSessionId?: string;
     mcpItemIds?: string[];
   }): Promise<string> => ipcRenderer.invoke(IPC.CLAUDE_SPAWN, opts),
+  /** Config changed in main (its own write, or an external one the watcher
+   *  caught). Returns an unsubscribe. */
+  onConfigChanged: (cb: (config: unknown) => void): (() => void) => {
+    const handler = (_e: unknown, config: unknown) => cb(config);
+    ipcRenderer.on(IPC.CONFIG_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.CONFIG_CHANGED, handler);
+  },
   claudeListModels: (): Promise<{
     defaultModel: string;
     skipPermissionsDefault: boolean;

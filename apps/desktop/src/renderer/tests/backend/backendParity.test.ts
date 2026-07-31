@@ -144,6 +144,7 @@ const KNOWN_STUBS = [
   'getPathForFile', // Electron webUtils; a browser file has no host path → ''
   'saveClipboardImage', // the host clipboard isn't the browser user's clipboard → null
   'agentSuggestTitle', // runs a local headless `claude --print`; null on web (the desktop titles the agent and the layout syncs)
+  'onConfigChanged', // main-process config watcher; the bus has no equivalent event yet
 ] as const;
 
 function webBackendMethodKeys(): Set<string> {

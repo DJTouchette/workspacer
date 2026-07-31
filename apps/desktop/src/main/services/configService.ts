@@ -406,6 +406,11 @@ function pruneRemovedShortcuts(cfg: Config): Config {
 
 class ConfigService {
   private config: Config;
+  /** Notified whenever the effective config changes — our own saves AND writes
+   *  by anyone else (the brain serving the web/phone clients, a hand edit). */
+  private listeners = new Set<(cfg: Config) => void>();
+  private watcher: fs.FSWatcher | null = null;
+  private watchTimer: ReturnType<typeof setTimeout> | null = null;
   /** Set when the on-disk config exists but could not be read or parsed. While
    *  true we run on in-memory defaults and REFUSE to write config.yaml — saving
    *  would replace the user's (broken but recoverable) file with defaults.
@@ -565,6 +570,9 @@ class ConfigService {
       // Record our own write's mtime so the next gate check doesn't mistake it
       // for an external change and pointlessly re-read.
       this.loadedAtMs = this.configMtimeMs();
+      // Includes saves made by main itself (seen models, budgets) — the case
+      // the renderer could never see before.
+      this.emitChange();
     } catch (err) {
       console.error('[ConfigService] failed to save config:', err);
     }
@@ -573,6 +581,62 @@ class ConfigService {
 
   getConfigPath(): string {
     return getConfigFilePath();
+  }
+
+  /**
+   * Subscribe to config changes; returns an unsubscribe.
+   *
+   * Starts a file watcher on first use. The watcher is what catches writes that
+   * never went through this process — without it a renderer's snapshot only
+   * refreshed on its own save, so Settings could show (and re-send) a value the
+   * brain replaced hours ago.
+   */
+  onChange(cb: (cfg: Config) => void): () => void {
+    this.listeners.add(cb);
+    this.startWatching();
+    return () => {
+      this.listeners.delete(cb);
+    };
+  }
+
+  /** Tell subscribers about the current config. Safe to call redundantly. */
+  private emitChange(): void {
+    for (const cb of this.listeners) {
+      try {
+        cb(this.config);
+      } catch (err) {
+        console.error('[ConfigService] change listener failed:', err);
+      }
+    }
+  }
+
+  private startWatching(): void {
+    if (this.watcher) return;
+    try {
+      // Watch the DIRECTORY, not the file: an atomic write replaces the inode,
+      // which silently kills a file watch after the first save.
+      this.watcher = fs.watch(getConfigDir(), (_event, filename) => {
+        if (filename && filename !== path.basename(getConfigFilePath())) return;
+        // Editors and atomic writes fire several events per save; settle first.
+        if (this.watchTimer) clearTimeout(this.watchTimer);
+        this.watchTimer = setTimeout(() => {
+          const m = this.configMtimeMs();
+          // Our own writes already emitted; only react to someone else's.
+          if (m === 0 || m <= this.loadedAtMs) return;
+          this.config = this.loadFromDisk();
+          this.loadedAtMs = m;
+          this.emitChange();
+        }, 150);
+      });
+      this.watcher.on('error', (err) => {
+        console.warn('[ConfigService] config watch failed:', err.message);
+        this.watcher = null;
+      });
+    } catch (err) {
+      // No watcher (unsupported fs, permissions): saves still notify, only
+      // external writes go unseen — exactly the old behaviour.
+      console.warn('[ConfigService] could not watch config:', (err as Error).message);
+    }
   }
 }
 

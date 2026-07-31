@@ -653,6 +653,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // resolve to the latest model of each family (so they track Claude Code
   // updates with zero maintenance), and `seen` carries concrete ids observed
   // in real transcripts — past sessions plus anything persisted in config.
+  // Config changed under the renderer's feet — main writing seen models or a
+  // budget, the brain serving a phone client, a hand edit. Without this push the
+  // renderer's snapshot only refreshed on its own save.
+  configService.onChange((cfg) => {
+    if (!mainWindow?.isDestroyed()) mainWindow?.webContents.send(IPC.CONFIG_CHANGED, cfg);
+  });
+
   ipcMain.handle(IPC.CLAUDE_LIST_MODELS, () => listClaudeModels());
   ipcMain.handle(
     IPC.AGENT_SUGGEST_TITLE,

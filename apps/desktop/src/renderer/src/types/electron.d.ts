@@ -133,6 +133,8 @@ export interface ElectronAPI {
     userMessage: string;
     assistantReply?: string;
   }) => Promise<string | null>;
+  /** Push: config changed in main (own write or an external one). Unsubscribe. */
+  onConfigChanged: (cb: (config: unknown) => void) => () => void;
   claudeListModels: () => Promise<{
     defaultModel: string;
     skipPermissionsDefault: boolean;

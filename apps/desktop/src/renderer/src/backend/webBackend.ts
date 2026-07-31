@@ -269,6 +269,9 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // ── Claude sessions ──────────────────────────────────────────────────
     spawnClaude: (opts) =>
       client.call<{ sessionId: string }>('agents.spawn', opts).then((r) => r.sessionId),
+    // The bus has no config-changed event yet, so the web mirror keeps the
+    // old behaviour: its snapshot refreshes on its own saves and on reload.
+    onConfigChanged: () => () => {},
     claudeListModels: () => client.call('claude.listModels', {}),
     // Auto-titling runs a local headless `claude --print` in the desktop main
     // process; over the bus there is no such capability. Null = leave the name
