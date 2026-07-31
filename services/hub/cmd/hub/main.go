@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"io"
 	"log"
@@ -564,7 +565,15 @@ func main() {
 	// Install a plugin from a GitHub URL: download → extract → load → supervise.
 	srv.AddRoute("/plugins/install", guard(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		var body struct{ URL string }
+		var body struct {
+			URL string
+			// Set only by a client that has shown the user the exact command and
+			// been told to proceed — see plugin.InstallConsent. ConsentedArgv is
+			// what they were shown; the installer refuses if what downloads no
+			// longer matches it.
+			AllowInstallCommand bool     `json:"allowInstallCommand"`
+			ConsentedArgv       []string `json:"consentedArgv"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.URL == "" {
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing url"})
@@ -578,8 +587,22 @@ func main() {
 		// On update/reinstall the installer stops the running sidecar before
 		// swapping directories — Windows can't replace a live process's dir.
 		// mgr.Add below re-registers and restarts it from the new files.
-		m, err := plugin.Install(*pluginsDir, body.URL, progress, func(id string) { mgr.Remove(id) })
+		consent := plugin.InstallConsent{Allow: body.AllowInstallCommand, Argv: body.ConsentedArgv}
+		m, err := plugin.Install(*pluginsDir, body.URL, consent, progress, func(id string) { mgr.Remove(id) })
 		if err != nil {
+			// The plugin declares a build command and nobody has approved it.
+			// Nothing was installed; answer with the exact argv so the client can
+			// put it in front of the user and retry with their decision.
+			var need *plugin.ConsentRequiredError
+			if errors.As(err, &need) {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"needsConsent": true,
+					"pluginId":     need.PluginID,
+					"argv":         need.Argv,
+				})
+				return
+			}
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return

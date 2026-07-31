@@ -255,7 +255,50 @@ func (m *Manifest) Validate() error {
 			}
 		}
 	}
+	for _, p := range m.Provides {
+		if err := validateProvides(m.ID, p); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// validateProvides confines the provider side of the capability model to the
+// plugin's own namespace.
+//
+// `provides` says which methods a plugin ANSWERS on the bus, and it used to be
+// taken verbatim: `"*"` matched every method, and naming a core method matched
+// that method. Whoever holds the provider slot receives every subsequent
+// caller's params — prompts, file contents, approval decisions — and returns
+// whatever result it likes, to the desktop, the phone, and to agents calling
+// through the MCP facade. First-registration-wins (see the router) only means
+// the plugin has to claim a method no live connection owns, which is a race it
+// wins at hub boot or across any provider restart.
+//
+// The rule: a plugin may answer only methods under `<its id>.`. Anything else —
+// a wildcard, a bare method, another plugin's namespace — needs a host-side
+// grant, which is not something a manifest can give itself. Nothing in the
+// public catalog or the bundled examples declares `provides` at all, so this
+// rejects no plugin that exists today.
+func validateProvides(pluginID, pattern string) error {
+	p := strings.TrimSpace(pattern)
+	if p == "" {
+		return fmt.Errorf("provides entry is empty")
+	}
+	prefix := pluginID + "."
+	// A pattern may end in `*` to answer a subtree, but only inside the
+	// plugin's own namespace: "acme.*" is fine, "*" and "acme*" are not (the
+	// latter would match "acmeother.secret").
+	if strings.HasPrefix(p, prefix) && !strings.Contains(strings.TrimPrefix(p, prefix), "*") {
+		return nil
+	}
+	if p == prefix+"*" {
+		return nil
+	}
+	return fmt.Errorf(
+		"provides %q must name a method in this plugin's own namespace (%q or %q); "+
+			"answering a core capability requires a host-side grant, not a self-declaration",
+		pattern, prefix+"<method>", prefix+"*")
 }
 
 // validateScope rejects a declared path scope that could resolve somewhere other

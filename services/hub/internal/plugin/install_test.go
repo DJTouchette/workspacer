@@ -4,12 +4,14 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -80,7 +82,7 @@ func TestInstallFromTarballHappy(t *testing.T) {
 	url := serveTarball(t, data)
 	dir := t.TempDir()
 
-	m, err := installFromTarball(dir, url, "fallback", nil, nil)
+	m, err := installFromTarball(dir, url, "fallback", InstallConsent{}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +114,7 @@ func TestInstallFromFlatTarball(t *testing.T) {
 	})
 	dir := t.TempDir()
 
-	m, err := installFromTarball(dir, serveTarball(t, data), "flat", nil, nil)
+	m, err := installFromTarball(dir, serveTarball(t, data), "flat", InstallConsent{}, nil, nil)
 	if err != nil {
 		t.Fatalf("flat tarball rejected: %v", err)
 	}
@@ -132,10 +134,10 @@ func TestInstallReinstallOverwrites(t *testing.T) {
 			"index.html":  html,
 		}))
 	}
-	if _, err := installFromTarball(dir, mk("v1"), "r", nil, nil); err != nil {
+	if _, err := installFromTarball(dir, mk("v1"), "r", InstallConsent{}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := installFromTarball(dir, mk("v2"), "r", nil, nil); err != nil {
+	if _, err := installFromTarball(dir, mk("v2"), "r", InstallConsent{}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(filepath.Join(dir, "x-y", "index.html"))
@@ -144,12 +146,21 @@ func TestInstallReinstallOverwrites(t *testing.T) {
 	}
 }
 
-func TestInstallRunsBuildCommand(t *testing.T) {
-	data := makeTarGz(t, "b-main", map[string]string{
+// The build command is arbitrary code execution as the user, so it runs only
+// with consent that names the exact argv.
+var buildArgv = []string{"sh", "-c", "echo done > built.marker"}
+
+func buildingPlugin(t *testing.T) string {
+	t.Helper()
+	return serveTarball(t, makeTarGz(t, "b-main", map[string]string{
 		"plugin.json": `{"id":"b.uild","apiVersion":"1","install":["sh","-c","echo done > built.marker"]}`,
-	})
+	}))
+}
+
+func TestInstallRunsBuildCommandWithConsent(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := installFromTarball(dir, serveTarball(t, data), "b", nil, nil); err != nil {
+	consent := InstallConsent{Allow: true, Argv: buildArgv}
+	if _, err := installFromTarball(dir, buildingPlugin(t), "b", consent, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "b-uild", "built.marker")); err != nil {
@@ -157,10 +168,58 @@ func TestInstallRunsBuildCommand(t *testing.T) {
 	}
 }
 
+// Without consent the caller gets the argv to show the user — and, just as
+// importantly, nothing has been written: no half-installed plugin sits there
+// unbuilt while a dialog waits for an answer.
+func TestInstallWithoutConsentAsksAndChangesNothing(t *testing.T) {
+	dir := t.TempDir()
+	_, err := installFromTarball(dir, buildingPlugin(t), "b", InstallConsent{}, nil, nil)
+	var need *ConsentRequiredError
+	if !errors.As(err, &need) {
+		t.Fatalf("expected ConsentRequiredError, got %v", err)
+	}
+	if need.PluginID != "b.uild" || !slices.Equal(need.Argv, buildArgv) {
+		t.Fatalf("consent request must carry what the user has to approve, got %+v", need)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("refusing consent must leave the plugins dir untouched, found %v", entries)
+	}
+}
+
+// The consent round-trip re-downloads, so a source that served a harmless
+// command the first time could serve a different one the second. Consent is to
+// the command the user read, not to whatever arrives next.
+func TestInstallRefusesAnArgvThatChangedAfterConsent(t *testing.T) {
+	dir := t.TempDir()
+	consent := InstallConsent{Allow: true, Argv: []string{"npm", "run", "build"}}
+	_, err := installFromTarball(dir, buildingPlugin(t), "b", consent, nil, nil)
+	if err == nil {
+		t.Fatal("expected the swapped install command to be refused")
+	}
+	var need *ConsentRequiredError
+	if errors.As(err, &need) {
+		t.Fatal("a swapped command must fail the install, not re-prompt")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "b-uild", "built.marker")); statErr == nil {
+		t.Fatal("the unapproved command ran")
+	}
+}
+
+// A plugin with no install command never asks for anything.
+func TestInstallWithNoBuildCommandNeedsNoConsent(t *testing.T) {
+	data := makeTarGz(t, "q-main", map[string]string{
+		"plugin.json": `{"id":"quiet","apiVersion":"1"}`,
+	})
+	dir := t.TempDir()
+	if _, err := installFromTarball(dir, serveTarball(t, data), "q", InstallConsent{}, nil, nil); err != nil {
+		t.Fatalf("a plugin with no install command must install unprompted: %v", err)
+	}
+}
+
 func TestInstallNoManifest(t *testing.T) {
 	data := makeTarGz(t, "empty-main", map[string]string{"readme.md": "hi"})
 	dir := t.TempDir()
-	if _, err := installFromTarball(dir, serveTarball(t, data), "empty", nil, nil); err == nil {
+	if _, err := installFromTarball(dir, serveTarball(t, data), "empty", InstallConsent{}, nil, nil); err == nil {
 		t.Error("expected error when archive has no plugin.json")
 	}
 }
@@ -304,7 +363,7 @@ func TestInstallUnaffectedByBounds(t *testing.T) {
 		"index.html":  "<html>ok</html>",
 	})
 	dir := t.TempDir()
-	m, err := installFromTarball(dir, serveTarball(t, data), "ok", nil, nil)
+	m, err := installFromTarball(dir, serveTarball(t, data), "ok", InstallConsent{}, nil, nil)
 	if err != nil {
 		t.Fatalf("normal install rejected by bounds: %v", err)
 	}

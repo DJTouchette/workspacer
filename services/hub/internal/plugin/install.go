@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 )
@@ -110,7 +111,7 @@ func inspectTarball(tarballURL string) (Manifest, error) {
 // NOTE: this downloads and (via the Manager) RUNS code from the internet — the
 // caller is responsible for getting user consent. It's the trusted-install
 // model (like a VS Code extension), not a sandbox.
-func Install(pluginsDir, input string, progress func(stage string), stopForReplace func(pluginID string)) (Manifest, error) {
+func Install(pluginsDir, input string, consent InstallConsent, progress func(stage string), stopForReplace func(pluginID string)) (Manifest, error) {
 	if progress == nil {
 		progress = func(string) {}
 	}
@@ -128,7 +129,7 @@ func Install(pluginsDir, input string, progress func(stage string), stopForRepla
 
 	var lastErr error
 	for _, url := range urls {
-		m, err := installFromTarball(pluginsDir, url, name, progress, stopForReplace)
+		m, err := installFromTarball(pluginsDir, url, name, consent, progress, stopForReplace)
 		if err == nil {
 			// Record the install reference next to the plugin so the UI can offer
 			// one-click update. Best-effort: a missing source just disables update.
@@ -192,6 +193,10 @@ func InstallFromDir(pluginsDir, srcDir string, stopForReplace func(pluginID stri
 	if err != nil {
 		return Manifest{}, err
 	}
+	// No consent gate here, deliberately: the source is a bundled example inside
+	// the app's own installation, not a download. Its argv is whatever shipped in
+	// the signed app, so anyone who can change it can already run code as the
+	// user by easier means.
 	if len(final.Install) > 0 {
 		if err := runInstall(dest, final.Install); err != nil {
 			return Manifest{}, fmt.Errorf("install command failed: %w", err)
@@ -277,7 +282,7 @@ func resolveTarballURLs(input string) (urls []string, name string, err error) {
 	return urls, name, nil
 }
 
-func installFromTarball(pluginsDir, tarballURL, fallbackName string, progress func(stage string), stopForReplace func(pluginID string)) (Manifest, error) {
+func installFromTarball(pluginsDir, tarballURL, fallbackName string, consent InstallConsent, progress func(stage string), stopForReplace func(pluginID string)) (Manifest, error) {
 	if progress == nil {
 		progress = func(string) {}
 	}
@@ -323,6 +328,13 @@ func installFromTarball(pluginsDir, tarballURL, fallbackName string, progress fu
 	if err != nil {
 		return Manifest{}, err
 	}
+	// Ask BEFORE the existing install is touched. Everything so far lives in a
+	// temp dir that the deferred cleanup removes, so a refusal (or a request for
+	// consent) leaves the user's plugins exactly as they were — no half-installed
+	// plugin sitting there unbuilt while a dialog waits for an answer.
+	if err := consent.permits(m); err != nil {
+		return Manifest{}, err
+	}
 
 	name := sanitizeName(m.ID)
 	if name == "" {
@@ -349,12 +361,67 @@ func installFromTarball(pluginsDir, tarballURL, fallbackName string, progress fu
 	}
 
 	if len(final.Install) > 0 {
+		// Re-checked against the manifest that actually landed on disk, so the
+		// command that runs is the one consent named — not merely the one the
+		// staged copy declared a few lines ago.
+		if err := consent.permits(final); err != nil {
+			return Manifest{}, err
+		}
 		progress("building")
 		if err := runInstall(dest, final.Install); err != nil {
 			return Manifest{}, fmt.Errorf("install command failed: %w", err)
 		}
 	}
 	return final, nil
+}
+
+// InstallConsent is the caller's answer to "this download wants to run a build
+// command". Allow is only meaningful with the exact Argv the user was shown:
+// consent is to a specific command, not to the idea of one.
+type InstallConsent struct {
+	Allow bool
+	Argv  []string
+}
+
+// ConsentRequiredError says a downloaded plugin declares a build command and
+// nothing on disk has been touched. The caller is expected to show Argv to the
+// user verbatim and, if they agree, retry with that same Argv as consent.
+type ConsentRequiredError struct {
+	PluginID string
+	Argv     []string
+}
+
+func (e *ConsentRequiredError) Error() string {
+	return fmt.Sprintf("plugin %q declares an install command (%s); explicit consent is required to run it",
+		e.PluginID, strings.Join(e.Argv, " "))
+}
+
+// permits gates the build command on a consent that names it exactly.
+//
+// The route is token-guarded, but a token is not a person: a shared HUB_TOKEN,
+// a remote-share client, a plugin, or an agent through the MCP facade all reach
+// it, and `runInstall` executes argv[0] from the DOWNLOADED manifest. So an
+// authenticated POST cannot be the thing that authorizes arbitrary execution —
+// a human looking at the command has to be.
+//
+// Re-checking the argv is the other half. The consent round-trip re-downloads,
+// and a server that served a harmless command the first time can serve a
+// different one the second; consenting to `npm run build` must not authorize
+// whatever arrives next. A mismatch fails the install rather than falling back
+// to asking again, because by then the answer is "this source is not behaving".
+func (c InstallConsent) permits(m Manifest) error {
+	if len(m.Install) == 0 {
+		return nil
+	}
+	if !c.Allow {
+		return &ConsentRequiredError{PluginID: m.ID, Argv: append([]string(nil), m.Install...)}
+	}
+	if !slices.Equal(c.Argv, m.Install) {
+		return fmt.Errorf(
+			"install command changed after consent (approved %q, downloaded %q) — refusing to run it",
+			strings.Join(c.Argv, " "), strings.Join(m.Install, " "))
+	}
+	return nil
 }
 
 // runInstall runs a plugin's declared install/build command.

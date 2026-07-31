@@ -525,15 +525,46 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
   ipcMain.handle(IPC.HUB_INSTALL_PLUGIN, async (_event, url: string) => {
-    try {
-      const res = await fetch(`${HUB_HTTP_URL}/plugins/install`, {
+    // Download (60s hub-side) + optional build step (5 min cap).
+    const post = (extra: Record<string, unknown> = {}) =>
+      fetch(`${HUB_HTTP_URL}/plugins/install`, {
         method: 'POST',
         headers: hubAuthHeaders(),
-        body: JSON.stringify({ url }),
-        // Download (60s hub-side) + optional build step (5 min cap).
+        body: JSON.stringify({ url, ...extra }),
         signal: AbortSignal.timeout(6 * 60 * 1000),
       });
-      const body = (await res.json()) as any;
+    try {
+      let res = await post();
+      let body = (await res.json()) as any;
+
+      // 409: the plugin declares a build command and the hub installed nothing.
+      // That command is arbitrary code as this user, so it takes a person —
+      // holding the bus token is not the same as being one, and this route is
+      // reachable by a remote-share client, a plugin, or an agent through the
+      // MCP facade. Approval names the exact argv, and the hub refuses to run
+      // anything else if the re-download no longer matches.
+      if (res.status === 409 && body?.needsConsent) {
+        const argv: string[] = Array.isArray(body.argv) ? body.argv : [];
+        const command = argv.join(' ');
+        const { response } = await dialog.showMessageBox({
+          type: 'warning',
+          buttons: ['Cancel', 'Run and install'],
+          defaultId: 0,
+          cancelId: 0,
+          title: 'This plugin wants to run a build command',
+          message: `Install ${body.pluginId ?? 'this plugin'}?`,
+          detail:
+            `It runs this command on your machine during install:\n\n    ${command}\n\n` +
+            `Source: ${url}\n\n` +
+            'The command runs with your full user permissions — it can read and write ' +
+            'anything you can. Only continue if you trust this source.',
+          noLink: true,
+        });
+        if (response !== 1) return { ok: false, error: 'Install cancelled' };
+        res = await post({ allowInstallCommand: true, consentedArgv: argv });
+        body = (await res.json()) as any;
+      }
+
       if (!res.ok) return { ok: false, error: body?.error || `HTTP ${res.status}` };
       return { ok: true, plugin: body };
     } catch (err) {

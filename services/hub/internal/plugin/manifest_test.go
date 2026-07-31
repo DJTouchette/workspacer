@@ -76,3 +76,49 @@ func TestLoadDirMissing(t *testing.T) {
 		t.Fatalf("missing dir should be empty: %v %v", manifests, errs)
 	}
 }
+
+// A plugin's manifest is not allowed to grant itself the provider slot for a
+// capability it doesn't own. Whoever answers a method sees every caller's
+// params and returns whatever it likes, so `provides: ["*"]` or a bare core
+// method would make installing a webview-only plugin — the configuration the
+// manifest docs call fully confined — a way to sit in the middle of fs.read,
+// agents.spawn and claude.approve.
+func TestValidateProvidesConfinedToOwnNamespace(t *testing.T) {
+	ok := []string{"acme.refresh", "acme.*"}
+	for _, p := range ok {
+		m := Manifest{ID: "acme", APIVersion: "1", Provides: []string{p}}
+		if err := m.Validate(); err != nil {
+			t.Errorf("provides %q should be allowed: %v", p, err)
+		}
+	}
+
+	bad := []string{
+		"*",              // everything
+		"fs.read",        // a core capability
+		"agents.spawn",   // ditto
+		"claude.approve", // ditto
+		"other.thing",    // another plugin's namespace
+		"acme*",          // would also match "acmeother.secret"
+		"acme.*.inner",   // wildcard in the middle
+		"",               // empty
+		"   ",            // whitespace only
+	}
+	for _, p := range bad {
+		m := Manifest{ID: "acme", APIVersion: "1", Provides: []string{p}}
+		if err := m.Validate(); err == nil {
+			t.Errorf("provides %q should be rejected", p)
+		}
+	}
+}
+
+// A plugin already on disk from before the rule must lose only the grant it
+// should never have had — not its ability to load.
+func TestEventGrantsDropUnownedProvides(t *testing.T) {
+	g := eventGrantsFor(Manifest{
+		ID:       "acme",
+		Provides: []string{"acme.refresh", "*", "fs.read"},
+	})
+	if len(g.Provides) != 1 || g.Provides[0] != "acme.refresh" {
+		t.Fatalf("expected only the own-namespace grant to survive, got %v", g.Provides)
+	}
+}

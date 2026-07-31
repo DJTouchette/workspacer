@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -68,7 +69,8 @@ func main() {
 	}
 	mux := newMux(server, client, *mcpToken)
 
-	httpSrv := &http.Server{Addr: *addr, Handler: mux}
+	// The Host pin wraps everything the facade serves — see requireHost.
+	httpSrv := &http.Server{Addr: *addr, Handler: requireHost(*addr, mux)}
 	go func() {
 		log.Printf("mcp facade listening on %s (streamable: http://%s/mcp, sse: http://%s/sse)", *addr, *addr, *addr)
 		log.Printf("bridging to hub %s", *hubURL)
@@ -102,6 +104,69 @@ func newMux(server *mcp.Server, client *busclient.Client, mcpToken string) *http
 		})
 	})
 	return mux
+}
+
+// requireHost rejects a request whose `Host` header is neither loopback nor the
+// concrete address this facade was told to bind.
+//
+// This is the DNS-rebinding defense, and on the loopback default it is the ONLY
+// thing standing between a web page and the fleet. A browser cannot normally
+// reach this port cross-origin — a JSON-RPC POST is preflighted and no CORS
+// headers come back — but rebinding sidesteps that entirely: the attacker's own
+// name resolves to 127.0.0.1, so the request is same-origin, no preflight is
+// sent, and the credential-free bearer default lets it straight through. What
+// rebinding cannot forge is the `Host` header, which still carries the
+// attacker's domain.
+//
+// Deliberately wrapped around the WHOLE mux, /health included. Every legitimate
+// client dials 127.0.0.1 and sends a loopback Host; nothing that reaches this
+// port by name has business here.
+//
+// TWIN: claudemon's `host_guard` / `AllowedHosts::permits`
+// (services/claudemon/src/daemon/api.rs) — same rule, same shape. A request with
+// no Host at all is allowed, matching that twin: HTTP/1.0 and some local probes
+// omit it, and it is not a header an attacker gains anything by dropping.
+func requireHost(bindAddr string, h http.Handler) http.Handler {
+	// A wildcard bind names no host, so it adds nothing to the allowlist.
+	extra := hostWithoutPort(bindAddr)
+	if extra == "0.0.0.0" || extra == "::" {
+		extra = ""
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if host := r.Host; host != "" {
+			name := hostWithoutPort(host)
+			if !hostIsLoopback(name) && (extra == "" || name != extra) {
+				http.Error(w, "host not allowed", http.StatusForbidden)
+				return
+			}
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// hostWithoutPort strips a trailing `:port` from a Host/authority, handling
+// bracketed IPv6 (`[::1]:7897` → `::1`).
+func hostWithoutPort(h string) string {
+	if rest, ok := strings.CutPrefix(h, "["); ok {
+		if name, _, found := strings.Cut(rest, "]"); found {
+			return name
+		}
+		return h
+	}
+	if name, _, found := strings.Cut(h, ":"); found {
+		return name
+	}
+	return h
+}
+
+// hostIsLoopback reports whether a bare hostname names this machine's loopback:
+// the literal `localhost`, or any address in 127.0.0.0/8 / ::1.
+func hostIsLoopback(name string) bool {
+	if strings.EqualFold(name, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(name)
+	return ip != nil && ip.IsLoopback()
 }
 
 // requireBearer wraps h so it demands `Authorization: Bearer <token>`. When

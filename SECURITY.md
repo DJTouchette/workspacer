@@ -53,9 +53,9 @@ live conn, and/or consult the authorize callback on `register` too. Decision
 needed: the intended capability-ownership / delegation model.
 
 ### 3. Plugin install runs arbitrary commands + unbounded extraction — High
-**PARTIALLY FIXED 2026-07-05** (`aa87c8d`): extraction bounded (512 MiB total /
-128 MiB per file / 10k entries, enforced streaming). The build command still
-runs unconfined — the interactive-consent / sandbox decision remains open.
+**FIXED 2026-07-30** (unreleased). Extraction was bounded 2026-07-05 (`aa87c8d`:
+512 MiB total / 128 MiB per file / 10k entries, enforced streaming). The build
+command now requires explicit human consent naming the exact argv — see below.
 `services/hub/internal/plugin/install.go` (`runInstall`, tar extraction);
 route `cmd/hub/main.go` `/plugins/install`
 
@@ -65,10 +65,25 @@ token-guarded, but a shared `HUB_TOKEN` turns any token holder into RCE on the
 host. Separately, tar extraction uses `io.Copy` with no size ceiling, so a
 decompression bomb can fill the disk.
 
-Recommended (decision needed): treat install as an explicitly-consented trusted
-operation (interactive confirmation rather than any authenticated POST), and
-cap extraction with `io.CopyN` + a total-bytes ceiling. The zip-slip path guard
-(`filepath.Rel`) is already correct.
+**Decided: an authenticated POST is not consent.** A token is not a person —
+a shared `HUB_TOKEN`, a remote-share client, a plugin, or an agent through the
+MCP facade all reach this route. Install is now two-phase
+(`plugin.InstallConsent`, `plugin.ConsentRequiredError`): the hub downloads and
+extracts to a temp dir, and if the manifest declares an `install` command it
+stops and answers `409 {needsConsent, pluginId, argv}` with **nothing written**,
+so no half-installed plugin waits unbuilt behind a dialog. The desktop shows the
+exact command and its source, and only an explicit click retries with
+`allowInstallCommand` plus the argv the user read.
+
+The consent round-trip re-downloads, so the argv is re-checked at the point of
+execution: a source that served `npm run build` for the prompt and something
+else for the install fails the install rather than re-prompting. Consent is to a
+command, not to the idea of one.
+
+Bundled examples (`InstallFromDir`) are deliberately exempt — their argv ships
+inside the signed app, so anyone who can change it can already run code as the
+user by easier means. The zip-slip path guard (`filepath.Rel`) was already
+correct.
 
 ### 4. Hub `/health` leaks internal counts unauthenticated — Low
 **FIXED 2026-07-05**: `/health` now gates the detail on auth — when a token is
@@ -397,7 +412,8 @@ Only `..` is refused; absolute paths and `${token}/sub` subpaths behave exactly
 as before, so no manifest in the public catalog is affected.
 
 ### 15. Plugin manifest `provides` is not validated — High
-**DEFERRED 2026-07-30 — still open, decision required.**
+**FIXED 2026-07-30** (unreleased). Deferred earlier the same day pending a
+catalog audit; the audit found the migration concern was unfounded — see below.
 `services/hub/internal/plugin/manifest.go:65,184,238`;
 `services/hub/internal/bus/bus.go:577`; `services/hub/internal/bus/rpc.go:128`
 
@@ -417,17 +433,23 @@ precedence over WebSocket providers, so capabilities the hub answers itself are
 safe — but the brain and the desktop are both WebSocket providers, and that is
 where `fs.*`, `agents.spawn` and the `claude.*` surface live.
 
-Not fixed in this pass because rejecting `*` or a foreign namespace rejects
-manifests that validate today: it needs a catalog audit and a manifest schema
-version to migrate them behind. Decision needed: whether `provides` is restricted
-to the plugin's own id namespace (`<pluginID>.*`), with any core method requiring
-an explicit host-side grant rather than a self-declaration, and what the
-migration path is for manifests that already declare otherwise. Until then,
-installing a plugin means trusting it with the bus — consistent with #3, but not
-what the manifest's shape implies to someone reading it.
+**Decided: `provides` is confined to the plugin's own id namespace.** A
+manifest may declare `<pluginID>.<method>` or `<pluginID>.*` and nothing else;
+answering a core capability requires a host-side grant, which is not something a
+manifest can give itself. `Manifest.Validate` rejects anything wider, and
+`eventGrantsFor` re-filters at the grant boundary — so a plugin already on disk
+from before this rule, or one added through a path that skipped validation,
+loses only the grant it should never have had (logged, not fatal) rather than
+failing to load.
+
+The deferral assumed this would reject manifests that exist today. It does not:
+**no manifest in the 19-plugin public catalog, and none of the bundled examples,
+declares `provides` at all.** There was nothing to migrate, so no schema version
+was needed.
 
 ### 16. MCP facade is an unauthenticated local capability gateway — High
-**KNOWN GAP, unchanged 2026-07-30 — decision required.**
+**PARTIALLY FIXED 2026-07-30** (unreleased): the browser/DNS-rebinding vector is
+closed by a Host pin. Local-process reach remains — decision required.
 `apps/desktop/src/main/services/mcpFacadeDaemon.ts` (`getMcpFacadeToken`);
 `services/hub/cmd/mcp/main.go:44,95` (`-mcp-token`, `requireBearer`)
 
@@ -446,8 +468,28 @@ hands claudemon the facade as a bare URL string with nowhere to attach one.
 Setting the variable alone would trade a local-reachability risk for a certain
 loss of the supervisor and every MCP-facade worker.
 
-Decision needed: land header support in both clients together with the flip, and
-decide what happens to an already-written supervisor MCP entry on upgrade.
+**Fixed now: the Host pin** (`requireHost`, twin of claudemon's `host_guard`),
+wrapped around the whole mux. On the loopback default this was the only thing
+between a web page and the fleet: a cross-origin JSON-RPC POST is preflighted and
+gets no CORS headers back, but DNS rebinding sidesteps that entirely — the
+attacker's name resolves to 127.0.0.1, the request is same-origin, no preflight
+is sent, and the credential-free default let it through. Rebinding cannot forge
+`Host`, which still names the attacker's domain. This breaks no client: every
+legitimate one dials 127.0.0.1.
+
+**Still open: any LOCAL process can call the facade.** Only a credential fixes
+that, and the blocker is unchanged — the bearer has to be carried by every MCP
+client. Claude's config takes `headers` and would be fine; codex passes
+`-c mcp_servers.workspacer.url=...` and opencode a `{type:"remote"}` entry, and
+whether either can express a header is unverified; pi has no MCP support at all
+and already skips the facade. A token in the URL would work with all of them,
+but opencode persists its facade URL into the PROJECT's `opencode.json` — a live
+credential one `git add` from being published — so that path needs a
+short-lived, per-session token rather than the hub token.
+
+Decision needed: verify codex/opencode header support, or mint per-session
+facade tokens; and decide what happens to an already-written supervisor MCP
+entry on upgrade (`mcpConfig.ts` writes it only when absent).
 
 ---
 

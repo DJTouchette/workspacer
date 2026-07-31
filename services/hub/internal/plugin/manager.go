@@ -50,10 +50,25 @@ func grantsWithBindings(mf Manifest, extra map[string]string) []capspec.Grant {
 // of (provides). Verbatim from the manifest — the patterns are matched at the
 // bus with the same syntax as subscription topics.
 func eventGrantsFor(mf Manifest) capspec.EventGrants {
+	// Provides is re-checked here, not just in Validate: a plugin already on
+	// disk from before this rule, or one added through a path that skipped
+	// validation, must still not be able to claim a core method. Offending
+	// patterns are dropped (not fatal) so such a plugin loses only the grant it
+	// should never have had, rather than failing to load entirely — and the
+	// drop is logged, because silently narrowing a grant is how a plugin ends
+	// up mysteriously broken.
+	provides := make([]string, 0, len(mf.Provides))
+	for _, p := range mf.Provides {
+		if err := validateProvides(mf.ID, p); err != nil {
+			log.Printf("SECURITY: plugin %s: dropping provides %q (%v)", mf.ID, p, err)
+			continue
+		}
+		provides = append(provides, p)
+	}
 	return capspec.EventGrants{
 		Emits:    mf.Emits,
 		Consumes: mf.Consumes,
-		Provides: mf.Provides,
+		Provides: provides,
 	}
 }
 
