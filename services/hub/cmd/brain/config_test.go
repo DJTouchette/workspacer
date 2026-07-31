@@ -482,3 +482,58 @@ func TestEmbeddedDefaultsAreCompleteAndParse(t *testing.T) {
 		t.Error("agents.binaries missing from defaults")
 	}
 }
+
+// TestHostTrustedContractCases runs the shared cross-language fixture
+// (contracts/host-trusted-config-cases.json) through the Go dropHostTrusted.
+// The SAME fixture is consumed by a hostTrustedConfig.ts test in the desktop
+// main process. Both answer config.save over the bus — this one under the
+// default DELEGATE_CATALOG_TO_BRAIN, the TS one when delegation is off — so a
+// section either drops in both or the guard has a hole in whichever half runs.
+func TestHostTrustedContractCases(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "..", "contracts", "host-trusted-config-cases.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read contract fixture %s: %v", path, err)
+	}
+	var fixture struct {
+		Sections []string `json:"sections"`
+		Cases    []struct {
+			Name     string         `json:"name"`
+			Partial  map[string]any `json:"partial"`
+			Expected map[string]any `json:"expected"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatalf("parse contract fixture: %v", err)
+	}
+	if len(fixture.Cases) == 0 {
+		t.Fatal("fixture has no cases — a silently empty fixture guards nothing")
+	}
+
+	// The section list itself is part of the contract: adding one on only the
+	// Go side leaves the desktop's bus handler accepting it.
+	if !reflect.DeepEqual(fixture.Sections, hostTrustedSections) {
+		t.Errorf("hostTrustedSections = %v, fixture says %v", hostTrustedSections, fixture.Sections)
+	}
+
+	for _, c := range fixture.Cases {
+		t.Run(c.Name, func(t *testing.T) {
+			got := dropHostTrusted(c.Partial)
+			// An empty fixture object unmarshals to an empty (non-nil) map; a
+			// dropped-everything result may be either. Compare by length first.
+			if len(got) != len(c.Expected) {
+				t.Fatalf("dropHostTrusted(%v) = %v, want %v", c.Partial, got, c.Expected)
+			}
+			for k, want := range c.Expected {
+				if !reflect.DeepEqual(got[k], want) {
+					t.Errorf("key %q = %v, want %v", k, got[k], want)
+				}
+			}
+			for k := range got {
+				if _, ok := c.Expected[k]; !ok {
+					t.Errorf("unexpected key %q survived the drop", k)
+				}
+			}
+		})
+	}
+}

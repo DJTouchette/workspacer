@@ -286,6 +286,18 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		_ = os.Remove(tmpName)
 		return err
 	}
+	// Push the contents to disk before the rename publishes them.
+	//
+	// The rename is atomic against other READERS, but says nothing about
+	// durability: after a crash or power loss the directory entry can have
+	// reached the disk while the contents are still in the page cache, leaving a
+	// correctly-named EMPTY file — worse than the half-written file this helper
+	// exists to prevent, because the complete copy it replaced is already gone.
+	//
+	// Best-effort, matching the desktop twin's fsyncFile: a filesystem that
+	// cannot flush should not turn a successful save into a failed one, and the
+	// rename below still publishes the data.
+	_ = tmp.Sync()
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpName)
 		return err

@@ -19,6 +19,7 @@ import { claudeProfiles } from './claudeProfiles';
 import { registerCapability, callHub } from './hubClient';
 import { agentNotifier } from './agentNotifier';
 import { appIconPath } from '../lib/appIcon';
+import { dropHostTrusted } from '../lib/hostTrustedConfig';
 import { DELEGATE_CATALOG_TO_BRAIN } from './brainDelegation';
 import { configService, getConfigDir } from './configService';
 import { listClaudeModels } from './claudeModels';
@@ -840,8 +841,16 @@ export function registerHubCapabilities(): void {
   cat('config.get', () => configService.getConfig());
   cat('config.reload', () => configService.reloadConfig());
   cat('config.getPath', () => configService.getConfigPath());
+  // Bus callers do not get to write host-trusted sections — see
+  // lib/hostTrustedConfig for why `updates` in particular is code execution.
+  // The brain applies the same drop; this is the copy that runs when catalog
+  // delegation is off.
   cat('config.save', (params: unknown) =>
-    configService.saveConfig((params ?? {}) as Parameters<typeof configService.saveConfig>[0]),
+    configService.saveConfig(
+      dropHostTrusted((params ?? {}) as Record<string, unknown>) as Parameters<
+        typeof configService.saveConfig
+      >[0],
+    ),
   );
 
   // ── Model picker (web parity) ──────────────────────────────────────────

@@ -107,13 +107,14 @@ function scriptKey(cwd: string): string {
 export function migrateSessionData(
   data: any,
   cwd: string,
-): { agents: AgentWorkspace[]; activeAgentId: string; name: string } {
+): { agents: AgentWorkspace[]; activeAgentId: string; name: string; recognised: boolean } {
   if (data && Array.isArray(data.agents)) {
     // Modern format — pass through as-is.
     return {
       agents: data.agents,
       activeAgentId: data.activeAgentId || '',
       name: data.name || 'Default',
+      recognised: true,
     };
   }
   if (data && (data.tabs?.length > 0 || data.panes?.length > 0)) {
@@ -134,10 +135,25 @@ export function migrateSessionData(
       tabs: oldTabs,
       activeTabId: data.activeTabId || oldTabs[0]?.id || '',
     };
-    return { agents: [migrated], activeAgentId: migrated.id, name: data.name || 'Default' };
+    return {
+      agents: [migrated],
+      activeAgentId: migrated.id,
+      name: data.name || 'Default',
+      recognised: true,
+    };
   }
-  // Null / empty data → empty session.
-  return { agents: [], activeAgentId: '', name: 'Default' };
+  // Nothing matched. `data` being null/undefined is the legitimate "no saved
+  // session" case; anything else is a shape this build does not understand —
+  // a file from a newer nightly, or one a partial write left structurally
+  // valid but wrong. Both arrive here as an empty roster, so the caller is
+  // told which it was: autosaving an empty roster over the second kind erases
+  // the user's workspace. See useSessionLifecycle's restoreFailed gate.
+  return {
+    agents: [],
+    activeAgentId: '',
+    name: 'Default',
+    recognised: data == null,
+  };
 }
 
 /** Stable per-agent callbacks/props, bundled once in App so the memo below holds. */

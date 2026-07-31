@@ -10,6 +10,7 @@ consciously extend) the others.
 |---|---|---|
 | `model-pricing-cases.json` | `apps/desktop/.../modelUsage.ts` (TS) · `services/claudemon/.../pricing.rs` (Rust) | Per-model USD rates. Longest-prefix match must price every listed id identically. |
 | `deepmerge-cases.json` | `apps/desktop/.../configService.ts` (TS) · `services/hub/cmd/brain/config.go` (Go) | `deepMerge(target, source)` — the config.yaml overlay algorithm both writers use. |
+| `host-trusted-config-cases.json` | `apps/desktop/.../lib/hostTrustedConfig.ts` (TS) · `services/hub/cmd/brain/config.go` (Go) | Config sections a bus caller may never write. Both `config.save` entry points must strip the same list — `updates.channel` reaches the updater feed URL. |
 
 Rates are USD per **million** tokens. Add a case whenever a new model id or merge
 edge case ships; the cheapest place to catch drift is here, before it becomes a

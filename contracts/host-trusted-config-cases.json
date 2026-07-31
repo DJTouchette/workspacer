@@ -1,0 +1,51 @@
+{
+  "_comment": [
+    "Config sections only the HOST process may write, and what dropping them does.",
+    "",
+    "Every config.save that arrives over the hub bus — a remote/web client, a plugin,",
+    "or an agent through the MCP facade — is by definition not from the host, so these",
+    "sections are stripped before the merge. `updates` earns its place: updates.channel",
+    "is concatenated into the electron-updater feed URL the desktop then downloads and",
+    "installs from, so one '../' in a channel relocates the updater to somebody else's",
+    "repo — persistent code execution laundered through the app's own update dialog.",
+    "",
+    "Both bus entry points must agree: the Go brain (dropHostTrusted, the default under",
+    "DELEGATE_CATALOG_TO_BRAIN) and the desktop's own bus handler (hubCapabilities.ts).",
+    "The desktop's in-process Settings write does NOT go through either and is unaffected.",
+    "",
+    "Drop is by top-level section: a whole section goes or stays, never a sub-key."
+  ],
+  "sections": ["updates"],
+  "cases": [
+    {
+      "name": "a host-trusted section is dropped, the rest is kept",
+      "partial": { "updates": { "channel": "nightly" }, "ui": { "theme": "dark" } },
+      "expected": { "ui": { "theme": "dark" } }
+    },
+    {
+      "name": "the traversal payload this exists to stop",
+      "partial": { "updates": { "channel": "../../evil/repo" } },
+      "expected": {}
+    },
+    {
+      "name": "a partial with nothing host-trusted passes through untouched",
+      "partial": { "ui": { "theme": "dark" }, "panes": { "viewLevel": "fleet" } },
+      "expected": { "ui": { "theme": "dark" }, "panes": { "viewLevel": "fleet" } }
+    },
+    {
+      "name": "an empty partial stays empty",
+      "partial": {},
+      "expected": {}
+    },
+    {
+      "name": "the whole section goes even when it carries innocuous keys too",
+      "partial": { "updates": { "autoDownload": false }, "ui": { "theme": "dark" } },
+      "expected": { "ui": { "theme": "dark" } }
+    },
+    {
+      "name": "a null-valued host-trusted section is still a write attempt",
+      "partial": { "updates": null, "ui": { "theme": "dark" } },
+      "expected": { "ui": { "theme": "dark" } }
+    }
+  ]
+}

@@ -17,6 +17,7 @@ import {
 } from 'react';
 import type { AgentWorkspace } from '../types/pane';
 import { migrateSessionData } from '../App';
+import { postNotification } from '../lib/notificationBus';
 import { usePageVisible } from './usePageVisible';
 
 interface UseSessionLifecycleOptions {
@@ -104,9 +105,33 @@ export function useSessionLifecycle({
     };
   }, [sessionPhase, reconcileAgents]);
 
+  /**
+   * Set once a boot restore could not be trusted, and never cleared: for the
+   * rest of the run this window renders an empty roster that is NOT the user's
+   * layout, so every save path stays shut. A ref rather than state because
+   * `saveCurrentSession` is called from timers and `beforeunload` handlers that
+   * captured an older closure — a stale `false` there would defeat the gate.
+   */
+  const restoreFailedRef = useRef(false);
+  const blockSaves = useCallback((message: string): void => {
+    restoreFailedRef.current = true;
+    console.error('[Session]', message);
+    postNotification({
+      title: 'Session not restored',
+      body: message,
+      level: 'warn',
+      source: 'session',
+    });
+  }, []);
+
   const saveCurrentSession = useCallback(
     (force?: boolean): Promise<void> => {
       if (sessionPhase !== 'active') return Promise.resolve();
+      // A restore that failed leaves an empty roster in memory that is NOT the
+      // user's layout. Writing it back is how a workspace gets erased — the
+      // debounced autosave below fires a second after boot, long before anyone
+      // could notice the agents are missing. Stay read-only for the run.
+      if (restoreFailedRef.current) return Promise.resolve();
       const payload = {
         name: sessionName,
         activeAgentId,
@@ -181,6 +206,8 @@ export function useSessionLifecycle({
       .then((sessions) => {
         const latest = sessions[0];
         if (!latest) {
+          // Genuinely nothing saved (fresh install) — an empty roster IS the
+          // truth here, so saving stays armed.
           setSessionPhase('active');
           return;
         }
@@ -189,7 +216,16 @@ export function useSessionLifecycle({
             agents: migratedAgents,
             activeAgentId: migratedActiveId,
             name: migratedName,
+            recognised,
           } = migrateSessionData(data, appCwdRef.current);
+          if (!recognised) {
+            // The file is there but this build cannot read it — a newer
+            // nightly's schema, or a shape a bad write left behind. Do not
+            // overwrite it with the empty roster we are about to render.
+            blockSaves(
+              `Could not read the saved session "${latest.filename}". Your layout is unchanged on disk; this window started empty and will not save over it.`,
+            );
+          }
           loadAgentsFromSession(migratedAgents, migratedActiveId);
           setSessionName(migratedName);
           // Daemon reconciliation is NOT called here — the phase-triggered
@@ -197,7 +233,13 @@ export function useSessionLifecycle({
           setSessionPhase('active');
         });
       })
-      .catch(() => {
+      .catch((err) => {
+        // Listing or reading threw. We know a session file may exist and we
+        // could not read it, so this empty roster must never reach disk.
+        blockSaves(
+          'Could not restore the previous session. Your layout is unchanged on disk; this window started empty and will not save over it.',
+        );
+        console.error('[Session] restore failed:', err);
         loadAgentsFromSession([], '');
         setSessionPhase('active');
       });
