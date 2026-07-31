@@ -169,10 +169,7 @@ export function capLine(c: PluginCapability): PermissionLine {
       // because nobody had added a row for them. Failing closed means the worst
       // a stale list can do is over-warn about something harmless, instead of
       // under-warning about the one that runs commands.
-      known === undefined ||
-      known.sensitive ||
-      unscoped ||
-      scopes.some((s) => s.escapes)
+      known === undefined || known.sensitive || unscoped || scopes.some((s) => s.escapes)
         ? 'sensitive'
         : 'normal',
   };

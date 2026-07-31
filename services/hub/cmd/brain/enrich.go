@@ -110,6 +110,23 @@ func enrichSnapshot(snap json.RawMessage, meta *metaStore) json.RawMessage {
 
 // compatSnapshot overlays the desktop snapshot field names onto a raw
 // claudemon session row. Snake_case originals are kept alongside.
+// toolInputOf unwraps a PermissionRequest hook payload down to the tool's own
+// arguments, falling back to the whole payload when it carries none. The twin
+// is claudeSessionStore.ts's `raw.tool_input ?? raw`.
+func toolInputOf(raw any) any {
+	if m, ok := raw.(map[string]any); ok {
+		if ti, ok := m["tool_input"]; ok {
+			return ti
+		}
+		// Older payloads spelled it `input`; the daemon's approval_input reader
+		// accepts both, so this must too.
+		if ti, ok := m["input"]; ok {
+			return ti
+		}
+	}
+	return raw
+}
+
 func compatSnapshot(snap json.RawMessage) json.RawMessage {
 	var m map[string]any
 	if json.Unmarshal(snap, &m) != nil {
@@ -150,8 +167,13 @@ func compatSnapshot(snap json.RawMessage) json.RawMessage {
 		switch p["kind"] {
 		case "approval":
 			m["pendingApproval"] = map[string]any{
-				"toolName":  p["tool"],
-				"toolInput": p["raw"],
+				"toolName": p["tool"],
+				// `raw` is the whole PermissionRequest hook payload
+				// (tool_name, session_id, tool_input, …). The approval card wants
+				// the tool's ARGUMENTS — mirroring claudeSessionStore's
+				// `raw.tool_input ?? raw` — otherwise the headless clients render
+				// the envelope as JSON noise where the command should be.
+				"toolInput": toolInputOf(p["raw"]),
 			}
 		case "question":
 			m["pendingQuestions"] = p["questions"]

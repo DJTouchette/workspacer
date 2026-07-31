@@ -87,3 +87,74 @@ func TestStoreEnrichesOnSet(t *testing.T) {
 		t.Fatalf("store should enrich on set, got %v", m["label"])
 	}
 }
+
+// The approval card wants the tool's arguments. `pending.raw` is the whole
+// PermissionRequest hook payload, so passing it through put the envelope —
+// session_id, cwd, hook_event_name — where the command should be. The desktop
+// twin has always unwrapped it as `raw.tool_input ?? raw`.
+func TestCompatSnapshotUnwrapsTheToolInput(t *testing.T) {
+	row := mustJSONBytes(t, map[string]any{
+		"session_id": "s1",
+		"pending": map[string]any{
+			"kind": "approval",
+			"tool": "Bash",
+			// Exactly what claudemon stores: the hook payload, whole.
+			"raw": map[string]any{
+				"hook_event_name": "PermissionRequest",
+				"session_id":      "s1",
+				"cwd":             "/repo",
+				"tool_name":       "Bash",
+				"tool_input":      map[string]any{"command": "ls -la"},
+			},
+		},
+	})
+
+	var m map[string]any
+	if err := json.Unmarshal(compatSnapshot(row), &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	pa, ok := m["pendingApproval"].(map[string]any)
+	if !ok {
+		t.Fatalf("no pendingApproval in %v", m)
+	}
+	ti, ok := pa["toolInput"].(map[string]any)
+	if !ok {
+		t.Fatalf("toolInput is not the tool's arguments: %#v", pa["toolInput"])
+	}
+	if ti["command"] != "ls -la" {
+		t.Errorf("toolInput = %#v, want the command", ti)
+	}
+	if _, leaked := ti["hook_event_name"]; leaked {
+		t.Error("the hook envelope leaked into the approval card")
+	}
+}
+
+// A payload with no tool_input still shows something rather than nothing.
+func TestCompatSnapshotFallsBackToTheWholePayload(t *testing.T) {
+	row := mustJSONBytes(t, map[string]any{
+		"session_id": "s1",
+		"pending": map[string]any{
+			"kind": "approval",
+			"tool": "Custom",
+			"raw":  map[string]any{"detail": "no tool_input here"},
+		},
+	})
+	var m map[string]any
+	if err := json.Unmarshal(compatSnapshot(row), &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	pa := m["pendingApproval"].(map[string]any)
+	ti := pa["toolInput"].(map[string]any)
+	if ti["detail"] != "no tool_input here" {
+		t.Errorf("expected the whole payload as a fallback, got %#v", ti)
+	}
+}
+
+func mustJSONBytes(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}

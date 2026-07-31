@@ -58,6 +58,8 @@ export function openingExchange(
 export function agentsAwaitingTitle(
   agents: AgentWorkspace[],
   snapshotBySession: Record<string, ClaudeSessionSnapshot>,
+  /** Openings already banked from an uncompacted snapshot, keyed by session. */
+  remembered?: Map<string, { userMessage: string; assistantReply?: string }>,
 ): Array<{ agent: AgentWorkspace; exchange: { userMessage: string; assistantReply?: string } }> {
   const out = [];
   for (const agent of agents) {
@@ -67,11 +69,21 @@ export function agentsAwaitingTitle(
     // A compacted snapshot (conversationOffset > 0) has dropped its leading
     // turns, so its "first" user message is just the oldest one still in the
     // window — titling from it would name a resumed session after whatever it
-    // was doing an hour ago. Wait for a full snapshot instead; an agent that
-    // never gets one keeps its folder name, which is the honest answer.
-    if ((snap?.conversationOffset ?? 0) > 0) continue;
-    const exchange = openingExchange(snap?.conversation);
-    if (exchange) out.push({ agent, exchange });
+    // was doing an hour ago.
+    //
+    // But every promoted snapshot goes through compactClaudeSnapshotForBackground,
+    // which caps the conversation at 12 turns — so an agent whose opening burst
+    // runs past that was never titled at all, permanently, since the offset only
+    // ever grows. Bank the opening the first time we see an uncompacted snapshot
+    // and title from that; the guard keeps its meaning (never title from a window
+    // that lost its true first turn) without losing the chance to a fast start.
+    const compacted = (snap?.conversationOffset ?? 0) > 0;
+    const banked = remembered?.get(agent.sessionId);
+    const exchange = compacted ? banked : (openingExchange(snap?.conversation) ?? banked);
+    if (exchange) {
+      if (!compacted && remembered && !banked) remembered.set(agent.sessionId, exchange);
+      out.push({ agent, exchange });
+    }
   }
   return out;
 }
@@ -86,10 +98,15 @@ export function useAgentAutoTitle({
   // run, which happens on the very next snapshot — well before the round-trip
   // returns and marks the agent titled.
   const inFlightRef = useRef<Set<string>>(new Set());
+  // Openings seen while the snapshot was still whole. Compaction is one-way, so
+  // without this an agent that opened fast could never be titled.
+  const openingsRef = useRef<Map<string, { userMessage: string; assistantReply?: string }>>(
+    new Map(),
+  );
 
   useEffect(() => {
     if (!enabled) return;
-    const pending = agentsAwaitingTitle(agents, snapshotBySession);
+    const pending = agentsAwaitingTitle(agents, snapshotBySession, openingsRef.current);
     for (const { agent, exchange } of pending) {
       if (inFlightRef.current.has(agent.id)) continue;
       inFlightRef.current.add(agent.id);

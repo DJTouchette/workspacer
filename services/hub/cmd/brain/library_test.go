@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -224,4 +225,26 @@ func readFile(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// library.save has always been path-guarded; list and remove were not — and
+// under the default DELEGATE_CATALOG_TO_BRAIN these are the copies that run, so
+// the desktop's guarded twin never sees the call.
+func TestLibraryListAndRemoveRejectAnEscapingCwd(t *testing.T) {
+	dir := t.TempDir()
+	reg := registryWithCwd(t, dir)
+
+	// Inside the agent cwd is fine.
+	if _, err := reg.handle(context.Background(), "library.list",
+		json.RawMessage(`{"cwd":`+jsonStr(dir)+`}`)); err != nil {
+		t.Fatalf("list inside the agent cwd should be allowed: %v", err)
+	}
+
+	// Outside every workspace root is not.
+	for _, method := range []string{"library.list", "library.remove"} {
+		if _, err := reg.handle(context.Background(), method,
+			json.RawMessage(`{"cwd":"/etc","scope":"project","id":"x","kind":"agent"}`)); err == nil {
+			t.Errorf("%s accepted a cwd outside every workspace root", method)
+		}
+	}
 }

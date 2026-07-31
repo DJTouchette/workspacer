@@ -39,8 +39,18 @@ export function useBrowserHibernation({
   // a timer and nothing renders off it.
   const lastVisibleRef = useRef<Record<string, number>>({});
 
+  // Stamp on ENTRY and again on EXIT.
+  //
+  // Entry alone dates a pane from the moment you opened it, not from when you
+  // left it — so a tab you read for an hour was already an hour stale the
+  // instant you switched away, and the next sweep hibernated it immediately.
+  // The cleanup runs with the previous activeTabId still closed over, which is
+  // exactly the tab that just stopped being visible.
   useEffect(() => {
     lastVisibleRef.current = markVisible(lastVisibleRef.current, tabs, activeTabId, Date.now());
+    return () => {
+      lastVisibleRef.current = markVisible(lastVisibleRef.current, tabs, activeTabId, Date.now());
+    };
   }, [activeTabId, tabs]);
 
   useEffect(() => {

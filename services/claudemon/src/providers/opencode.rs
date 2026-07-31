@@ -558,13 +558,15 @@ async fn run_session(
         "--session".to_string(),
         oc_id.clone(),
     ];
-    let attach_pty = match super::spawn_attach_pty(store, session_id, &attach_argv, cwd) {
-        Ok(h) => Some(h),
-        Err(err) => {
-            tracing::warn!(?err, session = %session_id, "opencode attach TUI failed; Term view unavailable");
-            None
-        }
-    };
+    let attach_pty = AttachGuard(
+        match super::spawn_attach_pty(store, session_id, &attach_argv, cwd) {
+            Ok(h) => Some(h),
+            Err(err) => {
+                tracing::warn!(?err, session = %session_id, "opencode attach TUI failed; Term view unavailable");
+                None
+            }
+        },
+    );
 
     // Subscribe to the event stream.
     let resp = client
@@ -725,10 +727,26 @@ async fn run_session(
     }
 
     let _ = child.start_kill();
-    if let Some(handle) = &attach_pty {
-        let _ = pty::signal_child(handle, Signal::Sigkill);
-    }
+    // attach_pty's Drop kills the TUI — on this path and on every `?` above it.
+    drop(attach_pty);
     Ok(())
+}
+
+/// Kills an attached TUI when it goes out of scope.
+///
+/// `run_session` reaches the explicit teardown at its bottom only on the happy
+/// path: the `/event` subscribe below is two `?`s, the stream loop has a third,
+/// and any of them leaves the `opencode attach` child running with nobody left
+/// to reap it — an orphan holding a PTY for the life of the daemon. A guard
+/// cannot be walked past by a `?` that someone adds later.
+struct AttachGuard(Option<Arc<pty::PtyHandle>>);
+
+impl Drop for AttachGuard {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.0 {
+            let _ = pty::signal_child(handle, Signal::Sigkill);
+        }
+    }
 }
 
 /// Poll `/global/health` until the server answers (or we give up after ~10s).

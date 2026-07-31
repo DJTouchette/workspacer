@@ -159,8 +159,10 @@ describe('CAP_LABELS drift guard', () => {
       'utf-8',
     );
     const registered = [...source.matchAll(/registerCapability\('([^']+)'/g)].map((m) => m[1]);
-    expect(registered.length, 'the registry regex found nothing — has it been renamed?')
-      .toBeGreaterThan(20);
+    expect(
+      registered.length,
+      'the registry regex found nothing — has it been renamed?',
+    ).toBeGreaterThan(20);
 
     const missing = registered.filter((m) => !(m in CAP_LABELS));
     expect(

@@ -100,8 +100,35 @@ describe('useBrowserHibernation', () => {
     // p-bg's clock restarted when we came back to it, so it is spared even
     // though more than a budget has passed since it was first stamped.
     expect(hibernatePane).not.toHaveBeenCalledWith('bg', 'p-bg');
-    // p-active, meanwhile, has genuinely been away for longer than the budget.
-    expect(hibernatePane).toHaveBeenCalledWith('active', 'p-active');
+    // p-active was stamped again on the way OUT, so leaving it does not
+    // immediately make it stale — only 2s of its budget has actually elapsed.
+    expect(hibernatePane).not.toHaveBeenCalledWith('active', 'p-active');
+  });
+
+  // A tab you dwell in is dated from when you LEFT it, not when you opened it.
+  // Stamping only on entry meant an hour's reading made the pane an hour stale
+  // the instant you switched away, and the next sweep tore it down.
+  it('dates a pane from when you left it, not when you opened it', () => {
+    const { hibernatePane, rerender, props } = setup({ activeTabId: 'bg' });
+
+    // Dwell in 'bg' for well over a budget.
+    act(() => {
+      vi.advanceTimersByTime(BUDGET * 3);
+    });
+    // Now leave it.
+    rerender({ ...props, activeTabId: 'active' });
+    sweep();
+    expect(
+      hibernatePane,
+      'it was on screen the whole time — leaving must not make it instantly due',
+    ).not.toHaveBeenCalled();
+
+    // It becomes due a budget after the exit, as it should.
+    act(() => {
+      vi.advanceTimersByTime(BUDGET);
+    });
+    sweep();
+    expect(hibernatePane).toHaveBeenCalledWith('bg', 'p-bg');
   });
 
   /// A pane whose tab has never been focused has no sighting, so it is never

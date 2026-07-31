@@ -224,6 +224,15 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		if err := unmarshal(params, &p); err != nil {
 			return nil, err
 		}
+		// The caller chooses this cwd, and it decides which directories get
+		// read. library.save has always been guarded; list and remove were not,
+		// and under the default catalog delegation these are the copies that
+		// run — the desktop's guarded twin never sees the call.
+		if p.Cwd != "" {
+			if err := assertPathAllowed("library.list", expandTilde(p.Cwd), r.workspaceRoots(ctx)); err != nil {
+				return nil, err
+			}
+		}
 		return jsonResult(listLibrary(p.Cwd))
 	case "library.save":
 		var in libraryInput
@@ -244,6 +253,11 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		}
 		if err := unmarshal(params, &p); err != nil {
 			return nil, err
+		}
+		if p.Cwd != "" {
+			if err := assertPathAllowed("library.remove", expandTilde(p.Cwd), r.workspaceRoots(ctx)); err != nil {
+				return nil, err
+			}
 		}
 		if p.Scope == "" || p.ID == "" {
 			return nil, fmt.Errorf("library.remove requires { scope, id }")

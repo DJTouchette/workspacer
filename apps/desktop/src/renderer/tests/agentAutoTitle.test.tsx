@@ -177,4 +177,50 @@ describe('useAgentAutoTitle', () => {
     );
     expect(suggest).not.toHaveBeenCalled();
   });
+
+  // Every promoted snapshot is compacted at 12 turns, and conversationOffset
+  // only grows — so an agent whose opening burst ran past that was never titled
+  // at all. The opening is banked while the snapshot is still whole.
+  it('still titles an agent whose conversation compacts after the opening', async () => {
+    const onTitle = vi.fn();
+    const whole = {
+      s1: {
+        conversationOffset: 0,
+        conversation: [
+          { role: 'user', content: 'add retries to the uploader' },
+          { role: 'assistant', content: 'on it' },
+        ],
+      },
+    } as unknown as Record<string, ClaudeSessionSnapshot>;
+    const compacted = {
+      s1: {
+        conversationOffset: 30,
+        conversation: [
+          { role: 'user', content: 'and now something unrelated' },
+          { role: 'assistant', content: 'sure' },
+        ],
+      },
+    } as unknown as Record<string, ClaudeSessionSnapshot>;
+
+    const { rerender } = renderHook(
+      (p: { snaps: Record<string, ClaudeSessionSnapshot> }) =>
+        useAgentAutoTitle({
+          agents: [agent()],
+          snapshotBySession: p.snaps,
+          enabled: true,
+          onTitle,
+        }),
+      { initialProps: { snaps: whole } },
+    );
+    await waitFor(() => expect(suggest).toHaveBeenCalled());
+    expect(suggest.mock.calls[0][0].userMessage).toBe('add retries to the uploader');
+
+    // The same session, now compacted past its opening. Any further request must
+    // still carry the ORIGINAL opening, never the oldest surviving turn.
+    rerender({ snaps: compacted });
+    await waitFor(() => expect(onTitle).toHaveBeenCalled());
+    for (const [arg] of suggest.mock.calls) {
+      expect(arg.userMessage).toBe('add retries to the uploader');
+    }
+  });
 });
