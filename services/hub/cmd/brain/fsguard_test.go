@@ -1,5 +1,4 @@
-// Path confinement for the brain's fs.* / search.project handlers
-// (SECURITY.md #8).
+// Path confinement for the brain's fs.* / search.project handlers.
 //
 // This suite exists because the confinement was documented as FIXED while being
 // unreachable in the default configuration. The desktop registers these methods
@@ -187,8 +186,8 @@ func TestConfigStoresAreTheOnlyConfigDirRoots(t *testing.T) {
 // The deny-list half, and the reason it is a SEPARATE test from the roots half:
 // with no live agents the config dir is already outside every root, so denials
 // there prove nothing about pathIsSecret — stub the second gate out and the
-// assertions still pass. That is the SECURITY.md #8 failure mode (a guard the
-// test never reaches), so this case gives the registry a live agent cwd one
+// assertions still pass. That is the failure mode this whole suite exists for —
+// a guard the test never reaches — so this case gives the registry a live agent cwd one
 // level ABOVE the config dir — the "user spawned an agent in $HOME" case — which
 // makes the roots check say yes to everything below and leaves pathIsSecret as
 // the only thing that can refuse.

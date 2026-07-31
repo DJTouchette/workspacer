@@ -310,7 +310,7 @@ function createWindow(): void {
     },
   });
 
-  // Harden every <webview> the renderer attaches (SECURITY.md #10): force safe
+  // Harden every <webview> the renderer attaches: force safe
   // web preferences (no preload / nodeIntegration; contextIsolation on) so an
   // injected privileged webview can't reach the main process, and confine its
   // src — and every later navigation, BrowserPane's loadURL() included — to

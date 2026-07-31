@@ -1,5 +1,5 @@
 /**
- * SECURITY.md #9: the daemon signal endpoint must only ever receive a known
+ * The daemon signal endpoint must only ever receive a known
  * signal name. Both the `claude:signal` IPC handler and the `claude.signal` hub
  * capability funnel through claudemonSessionClient.signal(), so the allowlist
  * lives there — this suite pins that chokepoint.

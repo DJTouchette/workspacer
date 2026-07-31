@@ -16,7 +16,7 @@ const BACKOFF_INITIAL_MS = 200;
 const BACKOFF_MAX_MS = 5000;
 
 /**
- * Signal names we are willing to forward to the daemon (SECURITY.md #9). Both the
+ * Signal names we are willing to forward to the daemon. Both the
  * `claude:signal` IPC handler and the `claude.signal` hub capability funnel through
  * `signal()` below, so validating here gates every desktop path (renderer and
  * remote/MCP bus alike) — a caller can't push an arbitrary string into the daemon's

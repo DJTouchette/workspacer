@@ -66,7 +66,7 @@ function getSessionsDir(): string {
 
 /**
  * Resolve a caller-supplied session `filename` against the sessions dir and
- * confine it there (SECURITY.md #7). `loadSession` / `deleteSession` are reachable
+ * confine it there. `loadSession` / `deleteSession` are reachable
  * from the hub bus (the `sessions.load` / `sessions.delete` capabilities) and thus
  * from a remote client, so a `filename` like `"../../.ssh/id_rsa"` must not read or
  * delete outside the sessions directory. `path.resolve` collapses any `..`; we then

@@ -1,5 +1,5 @@
 /**
- * SECURITY.md #7: loadSession / deleteSession take a caller-supplied filename and
+ * loadSession / deleteSession take a caller-supplied filename and
  * are reachable from the hub bus (the sessions.load / sessions.delete caps), so a
  * traversal like "../../.ssh/id_rsa" must be rejected before touching the disk.
  */

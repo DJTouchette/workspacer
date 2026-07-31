@@ -476,7 +476,7 @@ describe('error propagation', () => {
   });
 });
 
-describe('fs.* path confinement (SECURITY.md #8)', () => {
+describe('fs.* path confinement', () => {
   // A real temp dir stands in for a live agent's cwd — the confinement helpers
   // canonicalize via the real filesystem, so the roots must exist.
   let agentCwd: string;
@@ -686,7 +686,7 @@ describe('notifications.post — external URL scheme check', () => {
   });
 });
 
-describe('git.* cwd confinement (SECURITY.md #6)', () => {
+describe('git.* cwd confinement', () => {
   // The review-pane git surface moved from claudemon to the host; its bus caps are
   // now the remote-reachable entry point, so a caller-supplied cwd must be confined
   // to the live agent cwds (the same workspace roots as fs.*), not any host repo.

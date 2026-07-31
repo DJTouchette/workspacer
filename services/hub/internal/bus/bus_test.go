@@ -179,7 +179,7 @@ func getHealth(t *testing.T, srv *Server, token string) map[string]any {
 	return body
 }
 
-// TestHealthGating verifies SECURITY.md #4: when a token is configured, an
+// TestHealthGating: when a token is configured, an
 // unauthenticated /health probe gets liveness only (no subscriber/method
 // counts), while an authorized caller still gets the detailed counts.
 func TestHealthGating(t *testing.T) {

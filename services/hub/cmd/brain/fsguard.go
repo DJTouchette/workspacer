@@ -1,5 +1,4 @@
-// Filesystem path confinement for the brain's fs.* / search.project handlers
-// (SECURITY.md #8).
+// Filesystem path confinement for the brain's fs.* / search.project handlers.
 //
 // This is a port of the confinement in the desktop's hubCapabilities.ts, and it
 // has to exist HERE as well because of who actually answers the bus: the desktop

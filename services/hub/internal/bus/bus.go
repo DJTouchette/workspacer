@@ -312,7 +312,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	// (the loopback default) or an authorized caller, expose them — they're handy
 	// for local ops and tests. But once a token guards the bus, an unauthenticated
 	// probe (a malicious page hitting loopback, or an unauthorized remote client)
-	// gets liveness only, never the counts. See SECURITY.md #4.
+	// gets liveness only, never the counts.
 	if s.token != "" && !s.Authorized(r) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
 		return

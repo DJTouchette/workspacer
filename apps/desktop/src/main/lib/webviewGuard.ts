@@ -1,5 +1,5 @@
 /**
- * Attach-time hardening for <webview> tags (SECURITY.md #10).
+ * Attach-time hardening for <webview> tags.
  *
  * The main window enables `webviewTag` so two things can embed pages: BrowserPane
  * (arbitrary http(s) browsing) and plugin panes (loaded from the hub UI origin or
@@ -79,9 +79,9 @@ export interface GuardableContents {
  * but only fires for navigations the GUEST PAGE starts (a link click,
  * `window.location = …`). BrowserPane doesn't navigate that way — it calls
  * `webview.loadURL()` from the renderer, an embedder-initiated navigation that
- * `will-navigate` never sees. So the address bar was, in practice, unguarded:
- * SECURITY.md #10's claim that a typed `file://` URL is blocked was false as
- * shipped. `did-start-navigation` fires for every navigation including
+ * `will-navigate` never sees. So the address bar was, in practice, unguarded —
+ * a typed `file://` URL was documented as blocked and was not, as shipped.
+ * `did-start-navigation` fires for every navigation including
  * loadURL — but it is NOT cancelable, so the block is stop() plus a bounce to
  * about:blank rather than preventDefault(). The cancelable pair stays wired as
  * well: catching a bad navigation before it starts is still better when the

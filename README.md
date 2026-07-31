@@ -201,8 +201,9 @@ the dev setup, how the codebase is laid out, the test/lint expectations, and the
 pull-request flow. TL;DR: fork or branch, `make install && make build`, make your
 change with tests, run `make test`, and open a PR against `master`.
 
-Found a security-sensitive issue? See [`SECURITY.md`](SECURITY.md) — please
-don't file those as public issues.
+Found a security-sensitive issue? Please don't file it as a public issue —
+[open a private security advisory](https://github.com/DJTouchette/workspacer/security/advisories/new)
+instead, so it stays between you and the maintainers until there's a fix.
 
 ## License
 

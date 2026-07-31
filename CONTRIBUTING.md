@@ -15,8 +15,9 @@ at the bottom of this file.
 - **Small, focused PRs** get reviewed faster than large ones. If a change is
   big or architectural, open an issue first so we can agree on the shape before
   you write it.
-- **Don't file security issues as public issues.** See
-  [`SECURITY.md`](SECURITY.md) for how those are handled.
+- **Don't file security issues as public issues.** Open a
+  [private security advisory](https://github.com/DJTouchette/workspacer/security/advisories/new)
+  instead.
 
 ## Prerequisites
 

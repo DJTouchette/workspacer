@@ -58,7 +58,7 @@ function detectDefaultShell(): string {
   return process.env.SHELL || '/bin/sh';
 }
 
-// ── Filesystem path confinement for fs.* / search.project (SECURITY.md #8) ──
+// ── Filesystem path confinement for fs.* / search.project ──────────────────
 //
 // These capabilities run in the trusted main process and, under remote sharing,
 // are reachable by a web/phone client holding the shared host token — which the
@@ -1115,7 +1115,7 @@ export function registerHubCapabilities(): void {
   // work tree exactly as the desktop does. A failed git command (non-zero exit,
   // not-a-work-tree) rejects the call; the renderer surfaces git's stderr.
   //
-  // SECURITY.md #6: the review-pane git surface moved out of claudemon into the
+  // The review-pane git surface moved out of claudemon into the
   // host (gitService.ts), so its remote-reachable entry point is now these bus
   // capabilities. Every one takes a caller-supplied `cwd`; without confinement a
   // remote/token-holding client could commit or push to — or read the diff of —

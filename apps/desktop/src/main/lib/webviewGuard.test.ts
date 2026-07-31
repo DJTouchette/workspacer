@@ -1,5 +1,5 @@
 /**
- * SECURITY.md #10: the will-attach-webview guard must force safe web prefs and
+ * The will-attach-webview guard must force safe web prefs and
  * confine a webview's src to remote-browsing schemes. index.ts wires these pure
  * helpers into the Electron event; this suite pins the policy.
  */
