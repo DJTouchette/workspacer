@@ -431,6 +431,10 @@ export interface SessionAgentData {
 /** Payload for session:save. timestamp is filled in by the IPC handler. */
 export interface SessionData {
   name: string;
+  /** Saved-session format version — see contracts/session-schema.json. Absent on
+   *  files written before versioning; a value HIGHER than the reader's own means
+   *  a newer build wrote it and it must not be overwritten. */
+  schemaVersion?: number;
   timestamp?: string;
   activeAgentId?: string;
   agents?: SessionAgentData[];

@@ -5,6 +5,7 @@ import { claudemonSessionClient } from './claudemonSessionClient';
 import { getConfigDir } from './configService';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { slugSession } from '../lib/fileUtils';
+import { SESSION_SCHEMA_VERSION } from '../shared/sessionSchema';
 
 interface SessionPaneData {
   id: string;
@@ -171,7 +172,12 @@ class SessionService {
       filename = `${base}-${i}.yaml`;
       filePath = path.join(dir, filename);
     }
-    const yamlStr = yaml.dump(data, { lineWidth: -1 });
+    // Stamp the format version so a future build can tell "I don't understand
+    // this" from "this is empty" — see contracts/session-schema.json.
+    const yamlStr = yaml.dump(
+      { schemaVersion: SESSION_SCHEMA_VERSION, ...data },
+      { lineWidth: -1 },
+    );
     atomicWriteFileSync(filePath, yamlStr);
     return filename;
   }

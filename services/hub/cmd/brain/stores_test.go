@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	yaml "gopkg.in/yaml.v3"
 )
 
 func TestSlugs(t *testing.T) {
@@ -216,5 +218,154 @@ func TestLayoutSavePathContainment(t *testing.T) {
 	removeLayout("My Layout")
 	if len(listLayouts()) != 0 {
 		t.Fatal("removeLayout should unlink the file saveLayout wrote")
+	}
+}
+
+// Two session names can slug to the same file, so a blind write lets the second
+// clobber the first. sessionService.saveSession has always guarded this; the
+// brain — the DEFAULT writer under DELEGATE_CATALOG_TO_BRAIN — did not, so the
+// guarded copy was the one that never ran.
+func TestSaveSavedSessionDoesNotClobberADifferentSession(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	first, err := saveSavedSession("Feature: Auth", map[string]any{"name": "Feature: Auth"})
+	if err != nil {
+		t.Fatalf("save first: %v", err)
+	}
+	second, err := saveSavedSession("Feature Auth", map[string]any{"name": "Feature Auth"})
+	if err != nil {
+		t.Fatalf("save second: %v", err)
+	}
+	if first == second {
+		t.Fatalf("both sessions wrote to %s — the second clobbered the first", first)
+	}
+
+	// Re-saving the FIRST one must go back to its own file, not mint a third:
+	// that is what keeps an ordinary autosave stable.
+	again, err := saveSavedSession("Feature: Auth", map[string]any{"name": "Feature: Auth"})
+	if err != nil {
+		t.Fatalf("re-save first: %v", err)
+	}
+	if again != first {
+		t.Errorf("re-save went to %s, want its original %s", again, first)
+	}
+}
+
+// A file we cannot parse is not a file we may overwrite — we cannot tell whose
+// it is.
+func TestSaveSavedSessionSkipsAnUnparseableFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	if err := os.MkdirAll(sessionsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	occupied := filepath.Join(sessionsDir(), "default.yaml")
+	if err := os.WriteFile(occupied, []byte("{{{ not yaml"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	name, err := saveSavedSession("Default", map[string]any{"name": "Default"})
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if name == "default.yaml" {
+		t.Fatal("wrote over a file it could not identify")
+	}
+	raw, err := os.ReadFile(occupied)
+	if err != nil || string(raw) != "{{{ not yaml" {
+		t.Errorf("the unreadable file was modified: %q, %v", raw, err)
+	}
+}
+
+// Both listers skip a file they cannot parse, so a corrupt default.yaml simply
+// vanishes from the list and the next autosave writes over it. The copy aside is
+// the backstop.
+func TestListingQuarantinesAnUnparseableFileOnce(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	if err := os.MkdirAll(sessionsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bad := filepath.Join(sessionsDir(), "default.yaml")
+	if err := os.WriteFile(bad, []byte("{{{ not yaml"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := listSavedSessions(); len(got) != 0 {
+		t.Fatalf("expected the bad file to be skipped, got %v", got)
+	}
+	matches, _ := filepath.Glob(bad + ".broken-*")
+	if len(matches) != 1 {
+		t.Fatalf("expected exactly one quarantine copy, got %d", len(matches))
+	}
+	content, _ := os.ReadFile(matches[0])
+	if string(content) != "{{{ not yaml" {
+		t.Errorf("quarantine copy lost the original bytes: %q", content)
+	}
+
+	// Listing again must not mint a second backup — this runs on every poll.
+	listSavedSessions()
+	listSavedSessions()
+	matches, _ = filepath.Glob(bad + ".broken-*")
+	if len(matches) != 1 {
+		t.Errorf("repeat listing minted %d backups, want 1", len(matches))
+	}
+}
+
+func TestListLayoutsQuarantinesToo(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	if err := os.MkdirAll(layoutsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bad := filepath.Join(layoutsDir(), "broken.yaml")
+	if err := os.WriteFile(bad, []byte("{{{ not yaml"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	listLayouts()
+	if matches, _ := filepath.Glob(bad + ".broken-*"); len(matches) != 1 {
+		t.Errorf("layouts got no quarantine copy (%d)", len(matches))
+	}
+}
+
+// The session format version is a cross-language contract: the desktop reader
+// refuses a file stamped higher than it understands, so the two writers must
+// agree on what "current" is.
+func TestSessionSchemaVersionMatchesContract(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "..", "contracts", "session-schema.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read contract fixture %s: %v", path, err)
+	}
+	var fixture struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatalf("parse contract fixture: %v", err)
+	}
+	if fixture.Version != sessionSchemaVersion {
+		t.Errorf("sessionSchemaVersion = %d, contract says %d", sessionSchemaVersion, fixture.Version)
+	}
+}
+
+func TestSaveSavedSessionStampsTheVersion(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	name, err := saveSavedSession("Default", map[string]any{"name": "Default"})
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(sessionsDir(), name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := yaml.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := out["schemaVersion"].(int); got != sessionSchemaVersion {
+		t.Errorf("schemaVersion = %v, want %d", out["schemaVersion"], sessionSchemaVersion)
 	}
 }

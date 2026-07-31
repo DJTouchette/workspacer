@@ -7,6 +7,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -38,12 +39,15 @@ func listLayouts() []map[string]any {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(layoutsDir(), e.Name()))
+		full := filepath.Join(layoutsDir(), e.Name())
+		data, err := os.ReadFile(full)
 		if err != nil {
+			log.Printf("brain: could not read layout %s: %v (skipped)", e.Name(), err)
 			continue
 		}
 		var l map[string]any
 		if yaml.Unmarshal(data, &l) != nil {
+			quarantineUnreadable(full, data)
 			continue
 		}
 		// Match the app: only well-formed layouts (an agents array) are listed.
@@ -127,12 +131,74 @@ func removeLayout(id string) {
 
 func sessionsDir() string { return filepath.Join(configDir(), "sessions") }
 
+// sessionSchemaVersion is the saved-session format version this build writes.
+// The TS twin is main/shared/sessionSchema.ts; both are pinned to
+// contracts/session-schema.json by a test on each side. A reader accepts an
+// absent version (pre-versioning) or one <= its own; a HIGHER version means a
+// newer build wrote the file and it must not be overwritten.
+const sessionSchemaVersion = 1
+
 type sessionListEntry struct {
 	Name       string `json:"name"`
 	Filename   string `json:"filename"`
 	Timestamp  string `json:"timestamp"`
 	PaneCount  int    `json:"paneCount"`
 	AgentCount int    `json:"agentCount"`
+}
+
+// resolveSessionFilename picks the file a session of this name should be written
+// to, mirroring sessionService.saveSession's identity check.
+//
+// Two distinct names can slug to the same file ("Feature: Auth" and
+// "Feature Auth" both give feature-auth.yaml). Writing blindly would let the
+// second session clobber the first. Reuse a file only when it already holds THIS
+// session — which is what keeps ordinary autosaves stable — and otherwise take
+// the next free numeric suffix.
+//
+// A file we cannot read or parse is deliberately treated as "not ours": we will
+// not overwrite data we cannot identify. The brain is the default writer under
+// DELEGATE_CATALOG_TO_BRAIN, so before this the desktop's copy of this guard was
+// the one that never ran.
+func resolveSessionFilename(name string) string {
+	base := slugSession(name)
+	filename := base + ".yaml"
+	for i := 2; ; i++ {
+		path, ok := sessionFilePath(filename)
+		if !ok {
+			return base + ".yaml" // containment rejects it; let the caller fail
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return filename // free slot (or unreadable dir) — take it
+		}
+		var existing map[string]any
+		if yaml.Unmarshal(raw, &existing) == nil && str(existing["name"]) == name {
+			return filename // already ours
+		}
+		filename = fmt.Sprintf("%s-%d.yaml", base, i)
+	}
+}
+
+// quarantineUnreadable copies a store file we could not parse to a timestamped
+// .broken-* sibling, once, so the data survives whatever overwrites it next.
+//
+// Both listers below skip a file they cannot parse, which means a corrupt
+// default.yaml simply vanishes from the list — the app then boots with an empty
+// roster and the autosave writes over it. The desktop blocks saving when a
+// restore fails, but a file that never appears in the list produces no failure
+// to notice, so the copy is the backstop. Mirrors the config loader's .broken-*.
+func quarantineUnreadable(path string, data []byte) {
+	backup := path + ".broken-" + time.Now().UTC().Format("2006-01-02T15-04-05.000")
+	// Only the first sighting writes a copy; a list call happens often and each
+	// one must not mint another backup of the same bad file.
+	if matches, _ := filepath.Glob(path + ".broken-*"); len(matches) > 0 {
+		return
+	}
+	if err := os.WriteFile(backup, data, 0o644); err != nil {
+		log.Printf("brain: could not quarantine unreadable %s: %v", path, err)
+		return
+	}
+	log.Printf("brain: %s could not be parsed; copied to %s and skipped", path, backup)
 }
 
 func listSavedSessions() []sessionListEntry {
@@ -146,12 +212,17 @@ func listSavedSessions() []sessionListEntry {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(sessionsDir(), e.Name()))
+		full := filepath.Join(sessionsDir(), e.Name())
+		data, err := os.ReadFile(full)
 		if err != nil {
+			log.Printf("brain: could not read session %s: %v (skipped)", e.Name(), err)
 			continue
 		}
 		var s map[string]any
 		if yaml.Unmarshal(data, &s) != nil {
+			// Skipping silently is what lets a corrupt default.yaml disappear
+			// from the list and then be overwritten by an empty autosave.
+			quarantineUnreadable(full, data)
 			continue
 		}
 		name := str(s["name"])
@@ -202,7 +273,7 @@ func loadSavedSession(filename string) map[string]any {
 // has already shaped `data` (name/timestamp/agents|tabs); we only choose the
 // filename, matching sessionService.saveSession.
 func saveSavedSession(name string, data map[string]any) (string, error) {
-	filename := slugSession(name) + ".yaml"
+	filename := resolveSessionFilename(name)
 	// The slug can't produce a separator, but the write goes through the same
 	// containment check as the reads so the three paths can never disagree about
 	// what a legal session file is.
@@ -213,7 +284,15 @@ func saveSavedSession(name string, data map[string]any) (string, error) {
 	if err := os.MkdirAll(sessionsDir(), 0o755); err != nil {
 		return "", err
 	}
-	raw, err := yaml.Marshal(data)
+	// Stamp the format version so a future build can tell "I don't understand
+	// this" from "this is empty" — see contracts/session-schema.json. Copy so
+	// the caller's map is untouched.
+	stamped := make(map[string]any, len(data)+1)
+	for k, v := range data {
+		stamped[k] = v
+	}
+	stamped["schemaVersion"] = sessionSchemaVersion
+	raw, err := yaml.Marshal(stamped)
 	if err != nil {
 		return "", err
 	}

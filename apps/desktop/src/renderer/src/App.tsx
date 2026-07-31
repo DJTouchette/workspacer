@@ -71,6 +71,7 @@ import { useSessionLifecycle } from './hooks/useSessionLifecycle';
 import { useRecentSessions } from './hooks/useRecentSessions';
 import { filterResumableSessions, recentSessionLabel } from './lib/recentSessionFilter';
 import type { RecentAgentSession } from '../../main/shared/ipcTypes';
+import { SESSION_SCHEMA_VERSION } from '../../main/shared/sessionSchema';
 import { usePluginHotkeys } from './hooks/usePluginHotkeys';
 import { buildPaneMenu } from './lib/paneMenu';
 import { PaneMenuProvider, type PaneMenuContextValue } from './contexts/PaneMenuContext';
@@ -108,6 +109,13 @@ export function migrateSessionData(
   data: any,
   cwd: string,
 ): { agents: AgentWorkspace[]; activeAgentId: string; name: string; recognised: boolean } {
+  // A version we don't know means a newer build wrote this file. Its shape may
+  // still *look* readable — a v2 that kept `agents` as an array would sniff
+  // fine and then be overwritten — so the version is checked before the shape.
+  const version = data?.schemaVersion;
+  if (typeof version === 'number' && version > SESSION_SCHEMA_VERSION) {
+    return { agents: [], activeAgentId: '', name: 'Default', recognised: false };
+  }
   if (data && Array.isArray(data.agents)) {
     // Modern format — pass through as-is.
     return {

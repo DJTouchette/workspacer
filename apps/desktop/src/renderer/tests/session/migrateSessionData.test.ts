@@ -257,3 +257,27 @@ describe('neither / null / empty data', () => {
     expect(result.agents).toEqual([]);
   });
 });
+
+describe('schemaVersion gate', () => {
+  // Sniffing the shape cannot tell "written by a newer build" from "empty": a
+  // v2 file that still carried an `agents` array would have read as an ordinary
+  // empty session and then been overwritten by the autosave.
+  it('refuses a file stamped by a newer build, even when the shape looks fine', () => {
+    const result = migrateSessionData(
+      { schemaVersion: 999, agents: [], name: 'Default' },
+      FALLBACK_CWD,
+    );
+    expect(result.recognised).toBe(false);
+  });
+
+  it('accepts the current version and anything older', () => {
+    expect(migrateSessionData({ schemaVersion: 1, agents: [] }, FALLBACK_CWD).recognised).toBe(
+      true,
+    );
+    expect(migrateSessionData({ agents: [] }, FALLBACK_CWD).recognised).toBe(true);
+  });
+
+  it('still calls a genuinely absent session recognised', () => {
+    expect(migrateSessionData(null, FALLBACK_CWD).recognised).toBe(true);
+  });
+});

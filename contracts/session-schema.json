@@ -1,0 +1,23 @@
+{
+  "_comment": [
+    "The saved-session file format version, stamped by every writer and checked by",
+    "every reader.",
+    "",
+    "Why it exists: before this, a reader decided whether it understood a session",
+    "file by sniffing its shape (is `agents` an array?). That cannot tell 'this is",
+    "a newer format' from 'this is empty', and the two are treated very",
+    "differently — one must be left alone, the other is a fresh install. With",
+    "nightly prereleases and auto-update in play, installing a nightly and rolling",
+    "back to stable is a routine path, and a v2 file that still had an `agents`",
+    "array would have sniffed as readable and then been overwritten.",
+    "",
+    "Contract: a reader accepts a file whose version is absent (pre-versioning,",
+    "fall back to shape) or <= its own. A HIGHER version means the file was",
+    "written by a newer build: the reader must refuse to overwrite it.",
+    "",
+    "Owners: apps/desktop/.../sessionService.ts + App.tsx (TS),",
+    "services/hub/cmd/brain/stores.go (Go). Bump this when the shape changes in a",
+    "way an older build cannot round-trip."
+  ],
+  "version": 1
+}
