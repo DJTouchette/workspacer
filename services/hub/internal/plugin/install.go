@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -180,6 +181,7 @@ func InstallFromDir(pluginsDir, srcDir string, stopForReplace func(pluginID stri
 	if err := os.CopyFS(staged, os.DirFS(srcDir)); err != nil {
 		return Manifest{}, fmt.Errorf("copy example: %w", err)
 	}
+	stripLoaderOwnedSidecars(staged)
 	dest := filepath.Join(pluginsDir, name)
 	if stopForReplace != nil {
 		if _, statErr := os.Stat(dest); statErr == nil {
@@ -203,6 +205,42 @@ func InstallFromDir(pluginsDir, srcDir string, stopForReplace func(pluginID stri
 		}
 	}
 	return final, nil
+}
+
+// loaderOwnedSidecars are files the hub keeps *beside* a plugin, in the plugin's
+// own directory. They are hub state, never plugin content, so an archive or
+// source tree supplying one is always either a mistake or an attack.
+//
+// The dangerous one is .bus-token: loadOrCreatePluginToken adopts an existing
+// file verbatim and only mints a token when it is absent, and that token is what
+// the bus keys the plugin's entire capability grant on. A published tarball
+// carrying a known .bus-token therefore hands its author that plugin's
+// authority from anywhere the hub is reachable — with no code execution and,
+// for a webview-only plugin, no install-consent prompt at all. .settings.json
+// is the same shape one level down: pre-seeding it sidesteps the manifest rule
+// that a `secret` setting may not declare a default.
+var loaderOwnedSidecars = []string{
+	busTokenFile,
+	settingsValuesFile,
+	disabledFile,
+	sourceFile,
+}
+
+// stripLoaderOwnedSidecars removes hub-owned files from a staged plugin tree
+// before it is swapped into place. Only the top level is scanned: that is where
+// the loader reads them from, so a copy nested deeper is inert content.
+func stripLoaderOwnedSidecars(dir string) {
+	for _, name := range loaderOwnedSidecars {
+		path := filepath.Join(dir, name)
+		if _, err := os.Lstat(path); err != nil {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			log.Printf("plugin: could not strip %s from a staged install: %v", name, err)
+			continue
+		}
+		log.Printf("plugin: ignored %s supplied by the install source (hub-owned)", name)
+	}
 }
 
 // replaceDir installs src as dest, replacing any existing directory.
@@ -324,6 +362,10 @@ func installFromTarball(pluginsDir, tarballURL, fallbackName string, consent Ins
 	if err != nil {
 		return Manifest{}, err
 	}
+	// The archive does not get to supply the hub's own state — see
+	// stripLoaderOwnedSidecars. extractTarGz writes every regular entry,
+	// dotfiles included.
+	stripLoaderOwnedSidecars(src)
 	m, err := Load(filepath.Join(src, "plugin.json"))
 	if err != nil {
 		return Manifest{}, err

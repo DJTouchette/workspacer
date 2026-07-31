@@ -139,6 +139,22 @@ struct TailLog {
     side: std::collections::HashMap<String, SideCursor>,
     items: Vec<ConversationItem>,
     seq: u64,
+    /// The sequence each retained item carries — parallel to `items`.
+    ///
+    /// `seq` counts everything ever pushed, including fragments coalesced into
+    /// an existing item and items since evicted, so the first item's sequence is
+    /// NOT `seq - items.len() + 1`. Stream providers emit one item per token
+    /// chunk and `try_coalesce_assistant_text` folds them, which makes the two
+    /// counts diverge by hundreds inside a single turn. Consumers that
+    /// reconstructed the window from the item count therefore looked far to the
+    /// right of the real one: `?since=` returned the whole retained
+    /// conversation on every poll, and the TUI's snapshot/delta continuity check
+    /// could never agree, leaving it refetching a snapshot per delta forever.
+    ///
+    /// A coalesced fragment updates its item's entry, so an item counts as new
+    /// for any `since` before the last fragment folded into it — which is what a
+    /// client polling mid-stream needs.
+    item_seqs: Vec<u64>,
     /// Folded TaskCreate/TaskUpdate state — the task-tool counterpart of the
     /// TodoWrite plan, carried across batches because task edits are
     /// incremental (unlike TodoWrite's full rewrites).
@@ -150,12 +166,25 @@ impl TailLog {
     /// by draining the oldest. Preserves ordering and the newest items. Note it
     /// does NOT touch `seq`: the caller bumps that by the number of items pushed
     /// so it stays a true running count even as older items are dropped.
-    fn extend_bounded(&mut self, new: impl IntoIterator<Item = ConversationItem>) {
+    /// Append items, stamping each with its own sequence, and evict from the
+    /// front past the cap. `first_of` is the sequence of the first appended item.
+    fn extend_bounded(&mut self, new: impl IntoIterator<Item = ConversationItem>, first_of: u64) {
+        let before = self.items.len();
         self.items.extend(new);
+        for i in 0..(self.items.len() - before) {
+            self.item_seqs.push(first_of + i as u64);
+        }
         if self.items.len() > MAX_CONVERSATION_ITEMS {
             let overflow = self.items.len() - MAX_CONVERSATION_ITEMS;
             self.items.drain(0..overflow);
+            self.item_seqs.drain(0..overflow);
         }
+    }
+
+    /// The sequence of the first retained item, or `seq` when nothing is
+    /// retained. Never derived from the item count — see [`TailLog::item_seqs`].
+    fn first_seq(&self) -> u64 {
+        self.item_seqs.first().copied().unwrap_or(self.seq)
     }
 
     /// Fold a streamed assistant-text delta into the trailing item when the log
@@ -220,6 +249,15 @@ impl ConversationStore {
         self.logs.get(session_id).map(|l| (l.seq, l.items.clone()))
     }
 
+    /// Like [`snapshot`], plus the sequence of the first retained item — the
+    /// number a caller needs to place the window, and which cannot be derived
+    /// from the item count. See [`TailLog::first_seq`].
+    pub fn snapshot_windowed(&self, session_id: &str) -> Option<(u64, u64, Vec<ConversationItem>)> {
+        self.logs
+            .get(session_id)
+            .map(|l| (l.seq, l.first_seq(), l.items.clone()))
+    }
+
     /// Append items for a *managed* session — one not backed by a transcript
     /// file (e.g. the OpenCode / Codex adapters drive their conversation from a
     /// live event stream). Maintains the same per-session seq + broadcast
@@ -233,12 +271,21 @@ impl ConversationStore {
         let delta = {
             let mut log = self.logs.entry(session_id.to_string()).or_default();
             let reset = log.seq == 0;
+            let first_of = log.seq + 1;
             log.seq += items.len() as u64;
             // The delta broadcast below is unchanged either way — live clients
             // still stream token by token. Only the retained log folds, so an
             // item means a message again for anything adopting the snapshot.
-            if !(items.len() == 1 && log.try_coalesce_assistant_text(&items[0])) {
-                log.extend_bounded(items.iter().cloned());
+            if items.len() == 1 && log.try_coalesce_assistant_text(&items[0]) {
+                // Absorbed into the trailing item: no new entry, but that item
+                // is now newer than it was, so a client polling from before this
+                // fragment must still be given it.
+                let now = log.seq;
+                if let Some(last) = log.item_seqs.last_mut() {
+                    *last = now;
+                }
+            } else {
+                log.extend_bounded(items.iter().cloned(), first_of);
             }
             ConversationDelta {
                 session_id: session_id.to_string(),
@@ -412,8 +459,9 @@ async fn tail_one(
             }
             return Ok(());
         }
+        let first_of = entry.seq + 1;
         entry.seq += items.len() as u64;
-        entry.extend_bounded(items.iter().cloned());
+        entry.extend_bounded(items.iter().cloned(), first_of);
         ConversationDelta {
             session_id: session_id.to_string(),
             seq: entry.seq,
@@ -526,8 +574,9 @@ async fn tail_subagents(
     }
     let delta = {
         let mut entry = conv.logs.entry(session_id.to_string()).or_default();
+        let first_of = entry.seq + 1;
         entry.seq += items.len() as u64;
-        entry.extend_bounded(items.iter().cloned());
+        entry.extend_bounded(items.iter().cloned(), first_of);
         ConversationDelta {
             session_id: session_id.to_string(),
             seq: entry.seq,
@@ -1953,5 +2002,54 @@ mod tests {
         assert_eq!(second.items.len(), 1);
         assert!(!second.reset);
         assert_eq!(second.seq, 2);
+    }
+
+    /// The invariant every consumer of a snapshot depends on: with coalescing,
+    /// `seq` and `items.len()` diverge, so the first item's sequence must come
+    /// from the store rather than be reconstructed as `seq - len + 1`.
+    ///
+    /// The divergence needs an item BEFORE the coalesced run — which is the
+    /// ordinary shape of a turn (the user's message, then the streamed reply).
+    #[test]
+    fn first_seq_is_not_the_reconstruction_once_text_coalesces() {
+        let conv = ConversationStore::new();
+        conv.push(
+            "s1",
+            vec![ConversationItem::UserMessage {
+                text: "go".into(),
+                timestamp: None,
+            }],
+        );
+        // The reply streams in as 50 token fragments that fold into one item.
+        for i in 0..50 {
+            conv.push(
+                "s1",
+                vec![ConversationItem::AssistantText {
+                    text: format!("chunk{i}"),
+                    timestamp: None,
+                }],
+            );
+        }
+
+        let (seq, first_seq, items) = conv.snapshot_windowed("s1").expect("snapshot");
+        assert_eq!(items.len(), 2, "one user message + one folded reply");
+        assert_eq!(seq, 51, "seq counted every fragment");
+        assert_eq!(first_seq, 1, "the user message is still item 0, at seq 1");
+
+        let reconstructed = seq - items.len() as u64 + 1;
+        assert_eq!(reconstructed, 50);
+        assert_ne!(
+            first_seq, reconstructed,
+            "reconstructing from the item count lands 49 sequences too far right"
+        );
+
+        // In user terms: a client polling from seq 1 already has the user
+        // message and wants only the reply. Skipping by the real first_seq
+        // drops exactly one item; the reconstruction would have dropped none
+        // and re-sent the whole conversation.
+        let skip_real = (1u64 + 1).saturating_sub(first_seq) as usize;
+        let skip_wrong = (1u64 + 1).saturating_sub(reconstructed) as usize;
+        assert_eq!(skip_real, 1);
+        assert_eq!(skip_wrong, 0, "the old formula re-sent everything");
     }
 }

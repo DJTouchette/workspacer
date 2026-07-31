@@ -434,6 +434,8 @@ func (m *Manager) UIDir(id string) (string, bool) {
 
 // Add registers a plugin: starts its sidecar (if any) and emits plugin.loaded.
 func (m *Manager) Add(mf Manifest) {
+	// Deferred so the previous incarnation is stopped first — see below.
+	var startNew func()
 	l := &loaded{manifest: mf}
 	// Mint/persist a bus token and bind it to the plugin's declared capabilities
 	// whenever something will connect to the bus as this plugin — a sidecar
@@ -482,7 +484,7 @@ func (m *Manager) Add(mf Manifest) {
 				HealthURL: healthURL(mf.Server),
 				LogLines:  logLines,
 			}, m.pub)
-			l.sup.Start()
+			startNew = l.sup.Start
 		}
 	}
 
@@ -491,8 +493,11 @@ func (m *Manager) Add(mf Manifest) {
 	m.plugins[mf.ID] = l
 	m.mu.Unlock()
 	if hadPrev {
-		// Stop the previous supervisor (avoid a goroutine leak) and drop its token
-		// unless we reused the same one (a stable reload keeps the persisted token).
+		// Stop the previous supervisor BEFORE the replacement starts. Starting
+		// first left two instances of the same plugin alive at once, both holding
+		// the same bus token and the same plugin directory — so a reload could
+		// double-handle every event in the overlap, and the old one's teardown
+		// could revoke pane tokens the new one had just been issued.
 		if prev.sup != nil {
 			prev.sup.Stop()
 		}
@@ -505,6 +510,12 @@ func (m *Manager) Add(mf Manifest) {
 		// reduced capabilities leaves panes on the OLD, broader grants. The host
 		// re-mints pane tokens against the new manifest when panes reopen.
 		m.revokePaneTokensFor(mf.ID)
+	}
+
+	// Now the previous incarnation is down and its tokens are swept, so the new
+	// sidecar starts into a bus where it is the only holder of its identity.
+	if startNew != nil {
+		startNew()
 	}
 
 	m.pub.Publish(event.New("plugin.loaded", "hub", mf))

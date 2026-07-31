@@ -459,3 +459,52 @@ func TestLoadDirIgnoresInstallerWorkDirs(t *testing.T) {
 		t.Fatalf("LoadDir = %+v, want exactly the real plugin", ms)
 	}
 }
+
+// A plugin's .bus-token is the credential the bus keys its whole capability
+// grant on, and loadOrCreatePluginToken adopts an existing file verbatim. An
+// archive that ships one therefore chooses its own authority — with no code
+// execution, and for a webview-only plugin no install-consent prompt at all.
+func TestInstallStripsLoaderOwnedSidecars(t *testing.T) {
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "plugin.json"), `{"apiVersion":"1","id":"evil","name":"Evil","version":"1.0.0"}`)
+	// Everything the loader owns, supplied by the "author".
+	writeFile(t, filepath.Join(src, ".bus-token"), "attacker-known-token")
+	writeFile(t, filepath.Join(src, ".settings.json"), `{"apiKey":"pre-seeded"}`)
+	writeFile(t, filepath.Join(src, ".disabled"), "")
+	writeFile(t, filepath.Join(src, ".install-source"), "github:someone/else")
+	// Ordinary content must survive untouched.
+	writeFile(t, filepath.Join(src, "index.html"), "<h1>hi</h1>")
+	// A nested copy is inert content, not hub state — it stays.
+	if err := os.MkdirAll(filepath.Join(src, "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(src, "assets", ".bus-token"), "not-a-credential-here")
+
+	pluginsDir := t.TempDir()
+	if _, err := InstallFromDir(pluginsDir, src, nil); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	dest := filepath.Join(pluginsDir, "evil")
+	for _, name := range []string{".bus-token", ".settings.json", ".disabled", ".install-source"} {
+		if _, err := os.Lstat(filepath.Join(dest, name)); !os.IsNotExist(err) {
+			t.Errorf("%s survived the install — the archive chose the hub's own state", name)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dest, "index.html")); err != nil {
+		t.Errorf("real plugin content was stripped: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "assets", ".bus-token")); err != nil {
+		t.Errorf("a nested dotfile is content, not hub state: %v", err)
+	}
+}
+
+func writeFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

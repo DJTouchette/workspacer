@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { pluginPermissions, hasSensitivePermission } from '../src/lib/pluginPermissions';
+import { readFileSync } from 'fs';
+import * as path from 'path';
+import {
+  pluginPermissions,
+  hasSensitivePermission,
+  CAP_LABELS,
+  capLine,
+} from '../src/lib/pluginPermissions';
 import type { PluginManifest } from '../src/types/plugin';
 
 function mf(partial: Partial<PluginManifest>): PluginManifest {
@@ -96,9 +103,14 @@ describe('pluginPermissions', () => {
     expect(call.lines[0]).toMatchObject({ severity: 'sensitive', detail: 'anywhere on disk' });
   });
 
-  it('falls back to the raw method id for unknown capabilities', () => {
+  it('falls back to the raw method id for unknown capabilities, and warns', () => {
+    // This used to assert severity 'normal'. That fail-open default is what let
+    // terminals.create and claude.approve — both absent from CAP_LABELS at the
+    // time — render as ordinary lines in the install dialog. An unlabelled
+    // capability is now treated as sensitive, so a stale list over-warns
+    // instead of under-warning.
     const [call] = pluginPermissions(mf({ capabilities: ['custom.thing'] }));
-    expect(call.lines[0]).toMatchObject({ label: 'custom.thing', severity: 'normal' });
+    expect(call.lines[0]).toMatchObject({ label: 'custom.thing', severity: 'sensitive' });
   });
 
   it('flags command.* / * emits as app-driving, others normal', () => {
@@ -133,5 +145,34 @@ describe('pluginPermissions', () => {
     expect(hasSensitivePermission(mf({ emits: ['command.*'] }))).toBe(true);
     expect(hasSensitivePermission(mf({ provides: ['*'] }))).toBe(true);
     expect(hasSensitivePermission(mf({}))).toBe(false);
+  });
+});
+
+describe('CAP_LABELS drift guard', () => {
+  // The label map is a hand-maintained mirror of the hub's capability registry.
+  // It fell 38 methods behind, so terminals.create, sessions.terminalInput and
+  // claude.approve — each of which runs commands or acts for the user —
+  // displayed in the install dialog as ordinary, unhighlighted lines.
+  it('labels every capability the main process actually registers', () => {
+    const source = readFileSync(
+      path.join(__dirname, '../../main/services/hubCapabilities.ts'),
+      'utf-8',
+    );
+    const registered = [...source.matchAll(/registerCapability\('([^']+)'/g)].map((m) => m[1]);
+    expect(registered.length, 'the registry regex found nothing — has it been renamed?')
+      .toBeGreaterThan(20);
+
+    const missing = registered.filter((m) => !(m in CAP_LABELS));
+    expect(
+      missing,
+      'these capabilities have no plain-English label, so consent shows a raw method id',
+    ).toEqual([]);
+  });
+
+  it('treats an unlabelled capability as sensitive, not normal', () => {
+    // Failing closed is what makes the guard above a warning rather than a hole:
+    // the worst a stale list can do is over-warn.
+    const line = capLine({ method: 'some.brand.new.capability' } as never);
+    expect(line.severity).toBe('sensitive');
   });
 });

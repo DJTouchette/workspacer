@@ -660,9 +660,17 @@ impl ConvFold {
         if let Some(items) = items {
             self.apply_items(items);
         }
-        // A snapshot carries no seq of its own; the item count IS the sequence
-        // of its last item, on the same 1-based counter the deltas use.
-        self.seq = count;
+        // Take the snapshot's own `seq`. The item count is NOT it: the daemon
+        // folds streamed assistant-text fragments into one retained item while
+        // `seq` keeps counting every fragment, so on any stream session the two
+        // diverge by hundreds within a turn. Deriving seq from the count left
+        // `apply_delta`'s continuity check permanently unsatisfiable — every
+        // delta read as a gap, every gap triggered a snapshot refetch, and the
+        // refetch restored the same wrong seq. That is a refetch per token, not
+        // merely a redundant one.
+        //
+        // `count` remains the fallback for a daemon too old to send `seq`.
+        self.seq = v.get("seq").and_then(|s| s.as_u64()).unwrap_or(count);
     }
 
     /// Apply one `conversation.delta` frame.
@@ -2028,5 +2036,44 @@ mod tests {
                 "is_busy mismatch for mode={mode:?}"
             );
         }
+    }
+
+    /// The daemon folds streamed assistant text into one retained item while
+    /// `seq` counts every fragment, so a snapshot's item count is not its
+    /// sequence. Deriving it from the count made every subsequent delta read as
+    /// a gap — and the resync that followed restored the same wrong number.
+    #[test]
+    fn adopt_snapshot_takes_the_daemons_seq_not_the_item_count() {
+        let mut fold = ConvFold::new(true);
+        fold.adopt_snapshot(&serde_json::json!({
+            "seq": 51,
+            "first_seq": 1,
+            "items": [
+                { "kind": "user_message", "text": "go" },
+                { "kind": "assistant_text", "text": "a reply built from 50 chunks" }
+            ]
+        }));
+        assert_eq!(
+            fold.seq, 51,
+            "not 2, which is what the item count would give"
+        );
+
+        // The next delta continues from 51 and must apply, not read as a gap.
+        let applied = fold.apply_delta(
+            52,
+            false,
+            &[serde_json::json!({ "kind": "assistant_text", "text": "more" })],
+        );
+        assert!(applied, "a contiguous delta must not trigger a resync");
+    }
+
+    /// A daemon too old to send `seq` still works off the item count.
+    #[test]
+    fn adopt_snapshot_falls_back_to_the_item_count() {
+        let mut fold = ConvFold::new(true);
+        fold.adopt_snapshot(&serde_json::json!({
+            "items": [{ "kind": "user_message", "text": "go" }]
+        }));
+        assert_eq!(fold.seq, 1);
     }
 }

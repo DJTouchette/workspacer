@@ -24,8 +24,11 @@ export interface PermissionGroup {
 
 // Plain-English verb per known capability method, plus whether it's sensitive
 // (mutates state, spawns/steers agents, or reaches the filesystem to write).
-// Unknown methods fall back to their id and are treated as normal.
-const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> = {
+// An unknown method falls back to its id and is treated as SENSITIVE — see
+// capLine. pluginPermissions.test.ts fails if this list falls behind the hub's
+// registerCapability registry, which is how terminals.create and claude.approve
+// came to display as ordinary.
+export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> = {
   'fs.read': { label: 'Read files' },
   'fs.listEntries': { label: 'List files' },
   'fs.listDir': { label: 'List files' },
@@ -38,6 +41,58 @@ const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> = {
   'agents.spawn': { label: 'Spawn new agents', sensitive: true },
   'agents.kill': { label: 'Terminate agents', sensitive: true },
   'notifications.post': { label: 'Show notifications' },
+  'notify.post': { label: 'Show notifications' },
+
+  // Terminals and agent steering — anything here can run commands or change
+  // what an agent is about to do.
+  'terminals.create': { label: 'Open terminals and run commands', sensitive: true },
+  'sessions.terminalInput': { label: "Type into an agent's terminal", sensitive: true },
+  'sessions.attachTerminal': { label: "Attach to an agent's terminal", sensitive: true },
+  'sessions.detachTerminal': { label: "Detach from an agent's terminal" },
+  'sessions.terminalResize': { label: "Resize an agent's terminal" },
+  'sessions.terminalKeepalive': { label: "Keep an agent's terminal alive" },
+  'claude.approve': { label: 'Approve or deny tool requests on your behalf', sensitive: true },
+  'claude.answer': { label: "Answer an agent's questions on your behalf", sensitive: true },
+  'claude.gate': { label: 'Gate what an agent may do', sensitive: true },
+  'claude.signal': { label: 'Interrupt or stop agents', sensitive: true },
+  'claude.setModel': { label: "Change an agent's model", sensitive: true },
+  'claude.setEffort': { label: "Change an agent's effort", sensitive: true },
+  'claude.setPermissionMode': { label: "Change an agent's permission mode", sensitive: true },
+  'claude.handoffBrief': { label: 'Hand an agent off to another provider', sensitive: true },
+  'claude.handoffAgentBrief': { label: 'Hand an agent off to another provider', sensitive: true },
+
+  // Reading a session reads its whole conversation.
+  'sessions.conversation': { label: 'Read your agent conversations' },
+  'sessions.transcript': { label: 'Read your agent transcripts' },
+  'sessions.snapshot': { label: 'Read agent state' },
+  'sessions.snapshots': { label: 'Read agent state' },
+  'sessions.recent': { label: 'See your recent sessions' },
+
+  // Git — the write side changes the work tree and can publish it.
+  'git.status': { label: 'See git status' },
+  'git.log': { label: 'Read git history' },
+  'git.diff': { label: 'Read git diffs' },
+  'git.numstat': { label: 'Read git diffs' },
+  'git.commitDiff': { label: 'Read git diffs' },
+  'git.commitNumstat': { label: 'Read git diffs' },
+  'git.stage': { label: 'Stage changes', sensitive: true },
+  'git.unstage': { label: 'Unstage changes', sensitive: true },
+  'git.commit': { label: 'Commit changes', sensitive: true },
+  'git.push': { label: 'Push commits to the remote', sensitive: true },
+
+  // Read-only discovery and history.
+  'fs.readImage': { label: 'Read image files' },
+  'app.getCwd': { label: 'See the app working directory' },
+  'app.supervisorHome': { label: 'See the supervisor folder' },
+  'analytics.recent': { label: 'Read usage history' },
+  'analytics.summary': { label: 'Read usage history' },
+  'providers.listModels': { label: 'List available models' },
+  'providers.checkAll': { label: 'Detect installed agent providers' },
+  'replay.open': { label: 'Replay a session timeline' },
+  'replay.read': { label: 'Replay a session timeline' },
+  'replay.seek': { label: 'Replay a session timeline' },
+  'replay.diff': { label: 'Replay a session timeline' },
+  'replay.close': { label: 'Replay a session timeline' },
 };
 
 /** Plain-English name for the folder a `${…}` binding resolves to. */
@@ -89,7 +144,7 @@ function describeScope(path: string): ScopeInfo {
     : { label: friendly, escapes: false };
 }
 
-function capLine(c: PluginCapability): PermissionLine {
+export function capLine(c: PluginCapability): PermissionLine {
   const method = capabilityMethod(c);
   const known = CAP_LABELS[method];
   const paths = capabilityPaths(c);
@@ -107,7 +162,19 @@ function capLine(c: PluginCapability): PermissionLine {
           ? 'anywhere on disk'
           : undefined,
     severity:
-      known?.sensitive || unscoped || scopes.some((s) => s.escapes) ? 'sensitive' : 'normal',
+      // Unlabelled methods read as SENSITIVE, not normal. CAP_LABELS is a
+      // hand-maintained subset of the hub's registry (registerCapability in
+      // hubCapabilities.ts), and it fell far behind — terminals.create,
+      // sessions.terminalInput and claude.approve all displayed as ordinary
+      // because nobody had added a row for them. Failing closed means the worst
+      // a stale list can do is over-warn about something harmless, instead of
+      // under-warning about the one that runs commands.
+      known === undefined ||
+      known.sensitive ||
+      unscoped ||
+      scopes.some((s) => s.escapes)
+        ? 'sensitive'
+        : 'normal',
   };
 }
 

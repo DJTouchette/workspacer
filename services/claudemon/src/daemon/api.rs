@@ -1099,12 +1099,12 @@ async fn get_conversation(
     Path(id): Path<String>,
     Query(q): Query<ConversationQuery>,
 ) -> impl IntoResponse {
-    let (seq, items) = conv.snapshot(&id).unwrap_or((0, Vec::new()));
+    let (seq, first_seq, items) = conv.snapshot_windowed(&id).unwrap_or((0, 0, Vec::new()));
     // Codex restart durability: the ws adapter's conversation lives in daemon
     // memory, so a restarted daemon serves Stopped codex rows empty — but the
     // codex-threads sidecar knows which rollout backed the session, and the
     // rollout is the durable transcript. Replay it once, lazily, on first read.
-    let (seq, mut items) = if items.is_empty() {
+    let (seq, first_seq, mut items) = if items.is_empty() {
         match crate::providers::codex_rollout::thread_for(&id)
             .and_then(|tid| crate::providers::codex_rollout::rollout_for_thread(&tid))
             .map(|path| crate::providers::codex_rollout::replay_conversation(&path))
@@ -1112,18 +1112,20 @@ async fn get_conversation(
         {
             Some(replayed) => {
                 conv.push(&id, replayed);
-                conv.snapshot(&id).unwrap_or((0, Vec::new()))
+                conv.snapshot_windowed(&id).unwrap_or((0, 0, Vec::new()))
             }
-            None => (seq, items),
+            None => (seq, first_seq, items),
         }
     } else {
-        (seq, items)
+        (seq, first_seq, items)
     };
     if let Some(since) = q.since {
-        let skip = items_skip(seq, items.len(), since);
+        let skip = items_skip(first_seq, items.len(), since);
         items.drain(0..skip);
     }
-    Json(json!({ "session_id": id, "seq": seq, "items": items }))
+    // `first_seq` rides along so a client can place the window without
+    // reconstructing it from the item count — which coalescing makes wrong.
+    Json(json!({ "session_id": id, "seq": seq, "first_seq": first_seq, "items": items }))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1177,10 +1179,14 @@ async fn post_handoff(
 }
 
 /// How many leading items to drop so only those with sequence > `since` remain,
-/// given a window of `len` items ending at sequence `seq`. The first item's
-/// sequence is `seq - len + 1`. Clamped to `[0, len]`.
-fn items_skip(seq: u64, len: usize, since: u64) -> usize {
-    let first_seq = seq.saturating_sub(len as u64).saturating_add(1);
+/// given a window of `len` items whose first carries sequence `first_seq`.
+/// Clamped to `[0, len]`.
+///
+/// `first_seq` is supplied by the store rather than reconstructed as
+/// `seq - len + 1`: coalesced stream fragments advance `seq` without adding an
+/// item, so that formula landed hundreds of sequences to the right and made
+/// `?since=` return the entire retained conversation on every poll.
+fn items_skip(first_seq: u64, len: usize, since: u64) -> usize {
     (since.saturating_add(1).saturating_sub(first_seq) as usize).min(len)
 }
 
@@ -2198,16 +2204,28 @@ mod tests {
 
     #[test]
     fn items_skip_window() {
-        // 5 items, seq=5, no resets → first item's seq is 1.
-        assert_eq!(items_skip(5, 5, 0), 0); // since 0 → keep all
-        assert_eq!(items_skip(5, 5, 3), 3); // since 3 → keep items 4,5
-        assert_eq!(items_skip(5, 5, 5), 5); // since 5 → keep none
-        assert_eq!(items_skip(5, 5, 9), 5); // since beyond seq → keep none
-                                            // A trimmed window (e.g. after items were consumed): seq=10, len=4 →
-                                            // first item's seq is 7.
-        assert_eq!(items_skip(10, 4, 6), 0); // since older than window → keep all
-        assert_eq!(items_skip(10, 4, 8), 2); // since 8 → keep items 9,10
+        // 5 items whose first carries seq 1.
+        assert_eq!(items_skip(1, 5, 0), 0); // since 0 → keep all
+        assert_eq!(items_skip(1, 5, 3), 3); // since 3 → keep items 4,5
+        assert_eq!(items_skip(1, 5, 5), 5); // since 5 → keep none
+        assert_eq!(items_skip(1, 5, 9), 5); // since beyond the window → keep none
+                                            // A trimmed window: 4 items starting at seq 7.
+        assert_eq!(items_skip(7, 4, 6), 0); // since older than the window → keep all
+        assert_eq!(items_skip(7, 4, 8), 2); // since 8 → keep items 9,10
         assert_eq!(items_skip(0, 0, 0), 0); // empty
+
+        // The case the old signature got wrong. A stream turn coalesces 800
+        // token fragments into 1 item plus 3 tool items: seq reaches 803 while
+        // len is 4. Reconstructing first_seq as seq-len+1 gave 800, so a client
+        // polling from 400 was told to skip nothing and re-read the whole
+        // conversation every time. With the real first_seq (1) it skips
+        // correctly.
+        assert_eq!(
+            items_skip(1, 4, 400),
+            4,
+            "everything is older than since=400"
+        );
+        assert_eq!(items_skip(1, 4, 0), 0);
     }
 
     // --- CORS + Host guard --------------------------------------------------
