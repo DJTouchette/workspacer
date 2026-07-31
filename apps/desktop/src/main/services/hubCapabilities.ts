@@ -265,6 +265,12 @@ export function registerHubCapabilities(): void {
       );
     }
     const skipPermissions = false;
+    // …and the same for a bypass smuggled in through the PROFILE: clamping the
+    // request's own fields left `profileId` as an open door (a bus caller can
+    // create a profile with `--dangerously-skip-permissions` in extraArgs, or
+    // reuse the user's own YOLO profile). The brain already scrubbed this; the
+    // desktop path did not, so the two stacks disagreed on the invariant.
+    const scrubProfileBypass = true;
     const permissionMode =
       reqMode === 'bypassPermissions' || reqMode === 'yolo' ? undefined : reqMode;
     // Managed (Tier-2) backend — Codex / OpenCode / Pi run through claudemon's
@@ -316,12 +322,14 @@ export function registerHubCapabilities(): void {
         label,
         parentSessionId,
         mcpItemIds,
+        scrubProfileBypass,
       });
       return { sessionId };
     }
     const sessionId = await spawnClaudeAgent({
       cwd,
       profileId,
+      scrubProfileBypass,
       model,
       permissionMode,
       skipPermissions,
@@ -567,6 +575,11 @@ export function registerHubCapabilities(): void {
       beforeTs?: string;
     };
     if (!cwd || !sessionId) throw new Error('replay.open requires { cwd, sessionId }');
+    // `cwd` picks the REPOSITORY the replay worktree is cut from, so it needs
+    // the same confinement every git.* handler gets (guardGitCwd). Without it a
+    // plugin scoped to its own project could open a replay on any repo and read
+    // files out of it through replay.read — bytes fs.read would have refused.
+    assertPathAllowed('replay.open', cwd, workspaceRoots());
     return timelineReplay.open(cwd, sessionId, beforeTs);
   });
   registerCapability('replay.seek', async (params: unknown) => {

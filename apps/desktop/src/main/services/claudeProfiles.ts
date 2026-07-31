@@ -21,6 +21,45 @@ export interface ClaudeProfile {
   isDefault: boolean;
 }
 
+/**
+ * Drop `--dangerously-skip-permissions` and a bypass `--permission-mode`
+ * (`bypassPermissions`/`yolo`, both `--flag value` and `--flag=value` forms)
+ * from a profile's extra args. Any other permission mode passes through.
+ *
+ * TWIN: `scrubBypassArgs` in services/hub/cmd/brain/profiles.go — the brain
+ * already did this and the desktop did not, which meant a remote spawn could
+ * carry a bypass in through `profileId` on one stack and not the other. Keep
+ * the two in step; the cases below mirror the Go implementation exactly.
+ */
+export function scrubBypassArgs(args: string[] | undefined): string[] {
+  const out: string[] = [];
+  const list = args ?? [];
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i];
+    if (a === '--dangerously-skip-permissions') continue;
+    if (
+      a === '--permission-mode' &&
+      (list[i + 1] === 'bypassPermissions' || list[i + 1] === 'yolo')
+    ) {
+      i++; // skip the value too
+      continue;
+    }
+    if (a.startsWith('--permission-mode=')) {
+      const v = a.slice('--permission-mode='.length);
+      if (v === 'bypassPermissions' || v === 'yolo') continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+
+/** A copy of `profile` whose extraArgs can't auto-approve anything. */
+export function scrubBypassProfile<T extends { extraArgs?: string[] }>(
+  profile: T | undefined,
+): T | undefined {
+  return profile ? { ...profile, extraArgs: scrubBypassArgs(profile.extraArgs) } : profile;
+}
+
 const profilesFile = path.join(getConfigDir(), 'claude-profiles.json');
 
 class ClaudeProfileService {

@@ -23,7 +23,7 @@ import * as fs from 'fs';
 import { randomUUID } from 'crypto';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
-import { claudeProfiles } from './claudeProfiles';
+import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
 import { resolveClaudeDefaultEffort } from './claudeEffortDefault';
 import { buildClaudeArgv } from './claudeResolver';
 import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
@@ -45,6 +45,11 @@ export interface ClaudeSpawnOptions {
    * old inline IPC path used.
    */
   permissionMode?: string;
+  /** Strip any permission bypass the chosen PROFILE carries. Set by callers on
+   *  an untrusted boundary (the hub/remote spawn capability): clamping the
+   *  request's own fields is not enough when a profile can smuggle the same
+   *  flag in through extraArgs. */
+  scrubProfileBypass?: boolean;
   /** YOLO / `--dangerously-skip-permissions`. */
   skipPermissions?: boolean;
   /** Re-use this id (resume an existing session). */
@@ -72,7 +77,8 @@ export interface ClaudeSpawnOptions {
  * Library MCP servers when `mcpItemIds` is present.
  */
 export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string> {
-  const profile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
+  const rawProfile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
+  const profile = opts.scrubProfileBypass ? scrubBypassProfile(rawProfile) : rawProfile;
   const env: Record<string, string> = {};
   if (profile?.configDir) {
     env.CLAUDE_CONFIG_DIR = profile.configDir.replace(/^~/, os.homedir());

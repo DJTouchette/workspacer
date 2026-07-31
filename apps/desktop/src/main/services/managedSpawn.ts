@@ -20,7 +20,7 @@ import * as os from 'os';
 import { randomUUID } from 'crypto';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
-import { claudeProfiles } from './claudeProfiles';
+import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
 import { resolveClaudeDefaultEffort } from './claudeEffortDefault';
 import { libraryService } from './libraryService';
 import { resolveAgentBinary, isAgentBinaryInstalled, type AgentProvider } from './agentProviders';
@@ -76,6 +76,9 @@ export interface ManagedSpawnOptions {
    *  (default/acceptEdits/plan/bypassPermissions). Managed providers use the
    *  ask/yolo pair via `skipPermissions`. */
   permissionMode?: string;
+  /** Strip any permission bypass the chosen PROFILE carries — set on untrusted
+   *  boundaries (the hub/remote spawn capability). See scrubBypassArgs. */
+  scrubProfileBypass?: boolean;
   /** Claude (stream) only: Claude profile (CLAUDE_CONFIG_DIR + extraArgs) —
    *  same semantics as the PTY path (claudeSpawn.ts). */
   profileId?: string;
@@ -156,7 +159,11 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   // instead of being silently dropped. Facade sessions take the facade MCP
   // config instead of the user's library servers, as on the PTY path.
   const profile =
-    isClaudeStream && opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
+    isClaudeStream && opts.profileId
+      ? opts.scrubProfileBypass
+        ? scrubBypassProfile(claudeProfiles.getProfile(opts.profileId))
+        : claudeProfiles.getProfile(opts.profileId)
+      : undefined;
   const env: Record<string, string> = {};
   if (profile?.configDir) {
     env.CLAUDE_CONFIG_DIR = profile.configDir.replace(/^~/, os.homedir());
