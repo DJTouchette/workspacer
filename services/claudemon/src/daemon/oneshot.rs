@@ -23,7 +23,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 use super::api::ApiState;
@@ -84,37 +84,48 @@ async fn run_claude_print(
 
     let (bin, base) = argv.split_first().context("argv must be non-empty")?;
     let mut cmd = Command::new(bin);
+    // The prompt goes on STDIN, never in argv. It carries text an agent wrote,
+    // and argv[0] is whatever the client resolved — on Windows that can be
+    // `cmd.exe /c claude`, where a quote in the prompt ends cmd's quoting and
+    // the rest is a command. stdin has no such grammar, so the whole class is
+    // gone regardless of the launcher.
     cmd.args(base)
-        .args(["--print", "--model", model, "--session-id", session_id])
-        .arg(prompt);
+        .args(["--print", "--model", model, "--session-id", session_id]);
     let mut child = cmd
         // Home, not a repo: a one-shot has no project context to pick up.
         .current_dir(super::heartbeat::home_dir())
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .context("spawning claude for one-shot")?;
 
-    let mut out = String::new();
-    if let Some(stdout) = child.stdout.take() {
-        let mut buf = Vec::new();
-        let _ = stdout
-            .take(MAX_OUTPUT_BYTES as u64)
-            .read_to_end(&mut buf)
-            .await;
-        out = String::from_utf8_lossy(&buf).to_string();
+    // Write the prompt and CLOSE stdin before reading: `--print` reads to EOF,
+    // so holding the handle open would deadlock exactly like an undrained pipe.
+    {
+        let mut stdin = child.stdin.take().context("one-shot: no stdin")?;
+        stdin.write_all(prompt.as_bytes()).await?;
+        let _ = stdin.shutdown().await;
     }
-    let mut err_text = String::new();
-    if let Some(stderr) = child.stderr.take() {
+
+    // Both pipes drain CONCURRENTLY. Reading stdout to EOF first would hang any
+    // child that fills the 64 KiB stderr buffer: it blocks in write(2), so it
+    // never exits, so stdout never reaches EOF, and the whole call burns its
+    // timeout instead of returning the answer it already produced.
+    let stdout = child.stdout.take().context("one-shot: no stdout")?;
+    let stderr = child.stderr.take().context("one-shot: no stderr")?;
+    let read_capped = |r: tokio::process::ChildStdout| async move {
         let mut buf = Vec::new();
-        let _ = stderr
-            .take(MAX_OUTPUT_BYTES as u64)
-            .read_to_end(&mut buf)
-            .await;
-        err_text = String::from_utf8_lossy(&buf).to_string();
-    }
+        let _ = r.take(MAX_OUTPUT_BYTES as u64).read_to_end(&mut buf).await;
+        String::from_utf8_lossy(&buf).to_string()
+    };
+    let read_capped_err = |r: tokio::process::ChildStderr| async move {
+        let mut buf = Vec::new();
+        let _ = r.take(MAX_OUTPUT_BYTES as u64).read_to_end(&mut buf).await;
+        String::from_utf8_lossy(&buf).to_string()
+    };
+    let (out, err_text) = tokio::join!(read_capped(stdout), read_capped_err(stderr));
     let status = child.wait().await.context("waiting for claude")?;
     if !status.success() {
         let tail: String = err_text

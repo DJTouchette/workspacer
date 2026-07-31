@@ -199,7 +199,11 @@ async fn run_ping_claude(
         .current_dir(home_dir())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        // Discarded, not piped: nothing here ever reads stderr, and an
+        // undrained pipe wedges the child in write(2) once it fills — the ping
+        // then dies on its 120s timeout with the window reset it had already
+        // parsed thrown away. Same choice as the codex ping below.
+        .stderr(Stdio::null())
         .kill_on_drop(true)
         .spawn()
         .context("spawning claude for heartbeat")?;
