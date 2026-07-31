@@ -1,6 +1,13 @@
 import type { ClaudeSessionState, PlanStep, ToolCall } from '../claudeSessionStore';
 import { applyStopEvent } from './hookEventRouter';
-import { capInPlace, MAX_FILE_CHANGES, truncateToolResponse } from './bounds';
+import {
+  capConversationInPlace,
+  capInPlace,
+  MAX_FILE_CHANGES,
+  resetConversationOffsetIfRebuilt,
+  truncateToolInput,
+  truncateToolResponse,
+} from './bounds';
 
 // ── Conversation delta application ───────────────────────────────────────────
 //
@@ -194,6 +201,8 @@ export function applyConversationItems(
   // adapter double-emit — must be dropped, not rendered as a duplicate turn.
   // Maintained as we push so in-batch repeats dedupe too, and reused by the
   // hook-reaping housekeeping at the bottom.
+  resetConversationOffsetIfRebuilt(session);
+
   const convToolIds = new Set<string>();
   for (const turn of session.conversation) {
     if (turn.toolCalls) for (const tc of turn.toolCalls) convToolIds.add(tc.id);
@@ -340,7 +349,10 @@ export function applyConversationItems(
         const tc: ToolCall = {
           id: item.id || `tc-${ts}-${Math.random().toString(36).slice(2, 6)}`,
           name: item.name ?? 'unknown',
-          input: item.input ?? {},
+          // Bounded on the way in for the same reason as the response below:
+          // an apply_patch diff or a Write's whole-file `content` is stored for
+          // the rest of the session and re-cloned on every flush.
+          input: truncateToolInput(item.input ?? {}),
           status: 'complete',
           startedAt: ts,
           completedAt: ts,
@@ -423,6 +435,11 @@ export function applyConversationItems(
         break;
     }
   }
+
+  // Trim once per batch rather than per push: a resync replays the whole
+  // transcript in one call, and splicing the head 10k times would be quadratic
+  // for the same end state.
+  capConversationInPlace(session);
 
   // Housekeeping: drop hook-tracked tool calls already absorbed into
   // conversation turns, so the live work log doesn't duplicate the timeline.

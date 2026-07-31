@@ -89,8 +89,12 @@ function runGit(
  *  `git diff`/`add` interpret a pathspec relative to the *current directory*.
  *  Run from a subdirectory those two conventions disagree, so a root-relative
  *  path silently matches nothing and the diff comes back empty. Anchoring at
- *  the root keeps both ends speaking the same path language. */
-async function workRoot(cwd: string): Promise<string | null> {
+ *  the root keeps both ends speaking the same path language.
+ *
+ *  Exported because the bus `git.diff` capability has to confine the caller's
+ *  `path` against the directory git will actually resolve it in — this root, not
+ *  the cwd the caller passed. */
+export async function workRoot(cwd: string): Promise<string | null> {
   const { ok, stdout } = await runGit(cwd, ['rev-parse', '--show-toplevel']);
   if (!ok) return null;
   const root = stdout.trim();

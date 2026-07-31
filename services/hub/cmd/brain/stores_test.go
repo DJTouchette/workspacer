@@ -175,3 +175,46 @@ func TestSavedSessionPathContainment(t *testing.T) {
 		t.Fatalf("deleteSavedSession removed out-of-dir file: %v", err)
 	}
 }
+
+// TestLayoutSavePathContainment is the sessions test above, for layouts — the
+// store that DIDN'T have the guard. saveLayout used the raw caller id as the
+// filename, so `layouts.save` with id "../config" wrote the layout over
+// ~/.config/workspacer/config.yaml: themes, keybindings, budgets, gone. And
+// silently, because the clobbered file still parses as YAML, so loadFromDisk
+// takes it as the user's config rather than backing it up as .broken-*.
+func TestLayoutSavePathContainment(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	// The real config.yaml, one directory above layouts/.
+	if err := os.MkdirAll(layoutsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "ui:\n  theme: everforest\n"
+	if err := os.WriteFile(configPath(), []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := saveLayout(map[string]any{
+		"id": filepath.Join("..", "config"), "name": "pwn", "agents": []any{},
+	}); err == nil {
+		t.Error("layouts.save with a traversal id should be refused")
+	}
+	if got := readFile(t, configPath()); got != original {
+		t.Fatalf("layouts.save clobbered config.yaml: %q", got)
+	}
+
+	// An id that merely needs tidying is slugged, not refused — and the file it
+	// lands in is the one removeLayout (which re-slugs) will unlink.
+	saved, err := saveLayout(map[string]any{"id": "My Layout", "agents": []any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved["id"] != "my-layout" {
+		t.Fatalf("saved id = %v, want the slug my-layout so save/remove agree", saved["id"])
+	}
+	removeLayout("My Layout")
+	if len(listLayouts()) != 0 {
+		t.Fatal("removeLayout should unlink the file saveLayout wrote")
+	}
+}

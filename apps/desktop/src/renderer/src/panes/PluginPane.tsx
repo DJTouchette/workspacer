@@ -5,11 +5,13 @@ interface PluginPaneProps {
   paneId: string;
   title: string;
   isActive: boolean;
-  /** The pre-built webview URL, with the static per-plugin busToken baked in as
-   *  the fallback. */
+  /** The webview URL. Carries the static per-plugin busToken as a fallback when
+   *  the pane was opened locally; a pane restored from the shared layout
+   *  document has none (it is redacted before publishing — see useLayoutSync)
+   *  and depends on the mint below. */
   url: string;
   hibernated?: boolean;
-  /** The contributing plugin's id; present for agent-scoped panes. */
+  /** The contributing plugin's id — what the pane mints its own token against. */
   pluginId?: string;
   /** The agent's working directory; present for agent-scoped panes. */
   cwd?: string;
@@ -18,16 +20,21 @@ interface PluginPaneProps {
 /**
  * Wraps a plugin's webview pane with a per-pane bus-token lifecycle.
  *
- * For an agent-scoped pane (it has both a plugin id and a cwd) we mint an
- * ephemeral token confined to that agent's directory and swap it into the
- * webview URL, so the plugin reaches only that project's files — not the broader
- * scope of the static per-plugin token. The token is revoked when the pane
- * unmounts (closed, tab removed, agent terminated — every path runs the cleanup),
- * and the hub also sweeps it if the plugin unloads.
+ * Every pane that knows its plugin mints its own ephemeral token here and swaps
+ * it into the webview URL. For an agent-scoped pane (it also has a cwd) the
+ * token is confined to that agent's directory, so the plugin reaches only that
+ * project's files rather than the broader scope of the static per-plugin token.
+ * For a global pane the mint carries no dynamic binding and lands on the same
+ * grants as the static token — worth doing anyway, because it means the pane
+ * works from a URL with no credential in it, which is what lets the shared
+ * layout document be published token-free (see useLayoutSync). The token is
+ * revoked when the pane unmounts (closed, tab removed, agent terminated — every
+ * path runs the cleanup), and the hub also sweeps it if the plugin unloads.
  *
- * If there's nothing to scope (a global pane) or minting is unavailable (the web
- * build, or the hub momentarily down), we render the URL as-is with its baked-in
- * static token. So the webview always loads; scoping is an upgrade, not a gate.
+ * If minting is unavailable (the web build, or the hub momentarily down) we
+ * render the URL as-is: with its baked-in static token when the pane was opened
+ * locally, and unauthenticated when it came from the shared layout — the webview
+ * loads either way and reports its own bus state. Scoping is an upgrade, not a gate.
  */
 const PluginPane: React.FC<PluginPaneProps> = ({
   paneId,
@@ -38,13 +45,13 @@ const PluginPane: React.FC<PluginPaneProps> = ({
   pluginId,
   cwd,
 }) => {
-  const canScope = !!(pluginId && cwd && window.electronAPI.pluginPaneToken);
-  // null = still minting (agent-scoped panes only); otherwise the URL to load.
-  const [resolvedUrl, setResolvedUrl] = useState<string | null>(canScope ? null : url);
+  const canMint = !!(pluginId && window.electronAPI.pluginPaneToken);
+  // null = still minting; otherwise the URL to load.
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(canMint ? null : url);
   const tokenRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!canScope) {
+    if (!canMint) {
       setResolvedUrl(url);
       return;
     }
@@ -78,7 +85,7 @@ const PluginPane: React.FC<PluginPaneProps> = ({
       }
     };
     const deadline = setTimeout(() => finish(null), 4000);
-    window.electronAPI.pluginPaneToken!(pluginId!, cwd!)
+    window.electronAPI.pluginPaneToken!(pluginId!, cwd)
       .then((token) => {
         clearTimeout(deadline);
         finish(token);
@@ -95,9 +102,9 @@ const PluginPane: React.FC<PluginPaneProps> = ({
         tokenRef.current = null;
       }
     };
-  }, [canScope, pluginId, cwd, url]);
+  }, [canMint, pluginId, cwd, url]);
 
-  // Brief, only while an agent-scoped pane mints its token (a local hub round-trip).
+  // Brief, only while the pane mints its token (a local hub round-trip).
   if (resolvedUrl === null) {
     return <div style={{ width: '100%', height: '100%', background: 'var(--bg, #1e1e1e)' }} />;
   }

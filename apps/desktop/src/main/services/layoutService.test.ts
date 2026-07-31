@@ -39,3 +39,39 @@ describe('layoutService — save/remove round trip', () => {
     expect(layoutService.list()).toHaveLength(0);
   });
 });
+
+describe('layoutService — save contains a caller-supplied id (layouts.save is bus-reachable)', () => {
+  // The rule has to be the Go brain's rule, not merely "closed against the
+  // escape": the brain answers layouts.save by default, so if TS silently slugged
+  // `../config` to `config` while Go errored, the same bus call would return
+  // success+rename or a failure depending on a delegation flag — and the success
+  // would have overwritten an unrelated layout named `config`.
+  it('rejects a traversal id instead of writing (or renaming) anything', () => {
+    expect(() => layoutService.save({ id: '../config', name: 'pwn', agents: [] })).toThrow(
+      /path separator/,
+    );
+    expect(fs.existsSync(path.join(h.dir, 'config.yaml'))).toBe(false);
+    expect(layoutService.list()).toHaveLength(0);
+  });
+
+  it('rejects an absolute-path id', () => {
+    const target = path.join(h.dir, 'stolen.yaml');
+    expect(() => layoutService.save({ id: target, name: 'pwn', agents: [] })).toThrow(
+      /path separator/,
+    );
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
+  it('remove ignores a traversal id rather than unlinking the slugged neighbour', () => {
+    const victim = layoutService.save({ name: 'config', agents: [] });
+    layoutService.remove('../config');
+    expect(layoutService.list().map((l) => l.id)).toContain(victim.id);
+  });
+
+  it('a non-slug id still round-trips through remove (save/remove agree)', () => {
+    const layout = layoutService.save({ id: 'My Layout!', name: 'pwn', agents: [] });
+    expect(layoutService.list().map((l) => l.id)).toContain(layout.id);
+    layoutService.remove('My Layout!');
+    expect(layoutService.list()).toHaveLength(0);
+  });
+});

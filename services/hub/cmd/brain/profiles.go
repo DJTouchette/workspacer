@@ -108,7 +108,7 @@ func saveProfiles(ps []profile) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(profilesPath(), data, 0o644)
+	return writeFileAtomic(profilesPath(), data, 0o644)
 }
 
 // addProfile appends a new profile and persists it, mirroring
@@ -224,41 +224,79 @@ func getProfile(id string) *profile {
 	return nil
 }
 
-// scrubBypassProfile returns a copy of the profile with any auto-approve/bypass
-// flags removed from ExtraArgs. Used by the remote (bus/web/MCP) spawn path so a
-// profile can't smuggle --dangerously-skip-permissions / --permission-mode
-// bypassPermissions past the request-field clamp in spawn().
+// scrubBypassProfile returns the copy of a profile a remote (bus/web/MCP) spawn
+// is allowed to use: extraArgs reduced to the allowlist below, and no
+// CLAUDE_CONFIG_DIR. Without it, clamping the request's own fields left
+// profileId as an open door — the caller points at (or mints, since
+// claude.profiles.add is itself a bus capability) a profile that carries the
+// bypass for them.
 func scrubBypassProfile(p *profile) *profile {
 	if p == nil {
 		return nil
 	}
 	cp := *p
 	cp.ExtraArgs = scrubBypassArgs(p.ExtraArgs)
+	// configDir is dropped rather than contained: it becomes CLAUDE_CONFIG_DIR,
+	// and that directory supplies claude's settings.json — permissions.allow and
+	// hooks, i.e. commands claude runs unprompted. A bus caller can write files
+	// anywhere inside an agent cwd (fs.write) and then name that directory in a
+	// profile, so there is no subtree we could allow that the same caller can't
+	// also fill in. A remote spawn therefore runs against the host's default
+	// claude config dir.
+	cp.ConfigDir = ""
 	return &cp
 }
 
-// scrubBypassArgs drops --dangerously-skip-permissions and a bypass-mode
-// --permission-mode (bypassPermissions/yolo, both `--flag value` and `--flag=value`
-// forms). Any other permission mode passes through unchanged.
+// remoteSafeFlags is the ALLOWLIST of profile extraArgs that survive onto a
+// remote spawn's argv, mapped to whether the flag takes a value. A denylist was
+// the wrong shape: it named --dangerously-skip-permissions and a bypass
+// --permission-mode, while --allowedTools (blanket tool auto-approval) and
+// --settings (an arbitrary settings file: permissions AND hooks) walked straight
+// through and handed the bypass back. These three are what a profile legitimately
+// pins for a remote spawn; anything else is dropped rather than reasoned about,
+// so a flag added to the CLI tomorrow is denied by default.
+var remoteSafeFlags = map[string]bool{
+	"--model":           true,
+	"--effort":          true,
+	"--permission-mode": true, // non-bypass modes only — see below
+}
+
+// scrubBypassArgs keeps only remoteSafeFlags (both `--flag value` and
+// `--flag=value` forms), and drops --permission-mode when it names a bypass mode.
 func scrubBypassArgs(args []string) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if a == "--dangerously-skip-permissions" {
-			continue
-		}
-		if a == "--permission-mode" && i+1 < len(args) &&
-			(args[i+1] == "bypassPermissions" || args[i+1] == "yolo") {
-			i++ // skip the value too
-			continue
-		}
-		if strings.HasPrefix(a, "--permission-mode=") {
-			v := strings.TrimPrefix(a, "--permission-mode=")
-			if v == "bypassPermissions" || v == "yolo" {
+		name, value, inline := strings.Cut(args[i], "=")
+		takesValue, allowed := remoteSafeFlags[name]
+		hasSeparateValue := allowed && takesValue && !inline
+		if hasSeparateValue {
+			// A flag whose value is the next element, unless it's missing or is
+			// itself a flag — in which case the profile is malformed and we drop it.
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
 				continue
 			}
+			value = args[i+1]
 		}
-		out = append(out, a)
+		if !allowed {
+			// Drop the flag AND the value riding beside it: a dropped "--settings"
+			// that left its path behind would hand claude a stray positional, which
+			// it reads as the prompt.
+			if !inline && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+			}
+			continue
+		}
+		if name == "--permission-mode" && (value == "bypassPermissions" || value == "yolo") {
+			if hasSeparateValue {
+				i++
+			}
+			continue
+		}
+		out = append(out, args[i])
+		if hasSeparateValue {
+			i++
+			out = append(out, value)
+		}
 	}
 	return out
 }

@@ -40,13 +40,53 @@ const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> = {
   'notifications.post': { label: 'Show notifications' },
 };
 
-/** Render a declared path scope in human terms. The `${…}` tokens are the
- *  manifest's dynamic bindings; absolute paths show as-is. */
-function scopeLabel(path: string): string {
-  if (path.includes('${agentCwd}')) return "the agent's folder";
-  if (path.includes('${pluginDir}')) return 'its own folder';
-  if (path === '*' || path === '') return 'anywhere';
-  return path;
+/** Plain-English name for the folder a `${…}` binding resolves to. */
+const BINDING_LABELS: Record<string, string> = {
+  '${agentCwd}': "the agent's folder",
+  '${pluginDir}': 'its own folder',
+};
+
+/** Does the path climb above its own first segment? Tracks depth below the
+ *  root: the scope is out of bounds the moment a `..` would take it negative. */
+function climbsAboveRoot(segments: string[]): boolean {
+  let depth = 0;
+  for (const seg of segments) {
+    if (seg === '..') {
+      if (depth === 0) return true;
+      depth -= 1;
+    } else if (seg !== '.' && seg !== '') {
+      depth += 1;
+    }
+  }
+  return false;
+}
+
+interface ScopeInfo {
+  label: string;
+  /** The scope reaches outside the folder its binding names. */
+  escapes: boolean;
+}
+
+/**
+ * Describe a declared path scope in human terms. The `${…}` tokens are the
+ * manifest's dynamic bindings; absolute paths show as-is.
+ *
+ * The label describes where the scope RESOLVES to, not which token it is
+ * spelled with. A manifest is free to write `${pluginDir}/../..` — the config
+ * directory, which holds the remote token — and matching on the token text
+ * alone showed that to the user as "its own folder", the reassuring opposite of
+ * what was being declared. (The hub refuses to expand a scope containing `..`,
+ * so such a capability is granted no root at all; that's enforcement, and it is
+ * not a reason for the consent dialog to describe the declaration wrongly.)
+ */
+function describeScope(path: string): ScopeInfo {
+  if (path === '*' || path === '') return { label: 'anywhere', escapes: true };
+  const segments = path.replace(/\\/g, '/').split('/');
+  const friendly = BINDING_LABELS[segments[0]];
+  if (!friendly) return { label: path, escapes: false };
+  return climbsAboveRoot(segments.slice(1))
+    ? { label: `a folder above ${friendly}`, escapes: true }
+    : { label: friendly, escapes: false };
 }
 
 function capLine(c: PluginCapability): PermissionLine {
@@ -57,15 +97,17 @@ function capLine(c: PluginCapability): PermissionLine {
   // An fs.* capability with no roots would reach anywhere — flag it (the hub
   // loader rejects this, but disclosure should still call it out if it appears).
   const unscoped = isFs && paths.length === 0;
+  const scopes = paths.map(describeScope);
   return {
     label: known?.label ?? method,
     detail:
-      paths.length > 0
-        ? `in ${paths.map(scopeLabel).join(', ')}`
+      scopes.length > 0
+        ? `in ${scopes.map((s) => s.label).join(', ')}`
         : unscoped
           ? 'anywhere on disk'
           : undefined,
-    severity: known?.sensitive || unscoped ? 'sensitive' : 'normal',
+    severity:
+      known?.sensitive || unscoped || scopes.some((s) => s.escapes) ? 'sensitive' : 'normal',
   };
 }
 
@@ -116,10 +158,21 @@ export function pluginPermissions(m: PluginManifest): PermissionGroup[] {
 
   const provides = m.provides ?? [];
   if (provides.length > 0) {
+    // Every provides entry is sensitive. Registering as a provider puts the
+    // plugin in the answer path for a capability the app and other plugins
+    // call, and the caller acts on what comes back — which is more than an
+    // emits/consumes pattern (already flagged when broad) buys. Rendering
+    // "Answers calls: *" at 'normal' meant the broadest grant in the manifest
+    // was the one line with no warning on it, and hasSensitivePermission()
+    // stayed false for a plugin that answers everything.
     groups.push({
       key: 'provide',
       title: 'Answers calls',
-      lines: provides.map((p) => ({ label: p, severity: 'normal' as const })),
+      lines: provides.map((p) => ({
+        label: p,
+        detail: p.includes('*') ? 'stands in for any matching capability' : undefined,
+        severity: 'sensitive' as const,
+      })),
     });
   }
 

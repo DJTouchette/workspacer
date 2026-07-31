@@ -387,14 +387,20 @@ function launch(bin: string): Promise<void> {
     '--sidecar-node',
     process.execPath,
   ];
-  if (HUB_TOKEN) hubArgs.push('--token', HUB_TOKEN);
   // Serve the full web app (real renderer) at /app/ when remote sharing is on
   // and a web build exists. The lightweight /remote client works regardless.
   const webDir = webappDir();
   if (remote && fs.existsSync(webDir)) {
     hubArgs.push('--webapp-dir', webDir);
   }
-  child = spawn(bin, hubArgs, daemonSpawnOptions());
+  // The token goes in the ENVIRONMENT, never argv: /proc/<pid>/cmdline is
+  // world-readable (0444) on Linux, so `--token <secret>` would publish to every
+  // local user the same secret we deliberately store at 0600 — and it's minted
+  // unconditionally, so this is the default desktop run, not just remote
+  // sharing. The hub's --token flag already defaults to os.Getenv("HUB_TOKEN")
+  // (cmd/hub/main.go), which is also how it forwards the token to the brain it
+  // supervises, so dropping the flag changes nothing else.
+  child = spawn(bin, hubArgs, daemonSpawnOptions(HUB_TOKEN ? { HUB_TOKEN } : undefined));
 
   if (remote) {
     // Log the reachable address but NOT the token — the tokened URL/QR lives in

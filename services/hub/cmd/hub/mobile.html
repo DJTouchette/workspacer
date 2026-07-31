@@ -1175,9 +1175,14 @@
   // Everything is escaped before it reaches the DOM; only the tags emitted here
   // are ever unescaped.
   const safeUrl = (u) => (/^(https?:|mailto:|\/)/i.test(String(u || '').trim()) ? String(u).trim() : null);
+  // The inline pass back-tracks, and its input is untrusted agent output on the
+  // weakest CPU in the fleet, so the link alternative is length-bounded and any
+  // segment past the cap falls back to plain escaped text rather than the regex.
+  const MAX_INLINE = 8192;
   function renderInline(text, depth) {
     depth = depth || 0;
-    const re = /(\*\*([\s\S]+?)\*\*|\*([^*\n]+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\))/g;
+    if (text.length > MAX_INLINE) return esc(text);
+    const re = /(\*\*([\s\S]+?)\*\*|\*([^*\n]+?)\*|`([^`]+)`|\[([^\]\n]{1,512})\]\(([^)\s]{1,2048})\))/g;
     let out = '', last = 0, m;
     while ((m = re.exec(text))) {
       out += esc(text.slice(last, m.index));

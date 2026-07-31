@@ -1,9 +1,11 @@
 import type { ClaudeSessionState, ToolCall } from '../claudeSessionStore';
 import {
+  capConversationInPlace,
   capInPlace,
   MAX_ACTIVE_TOOL_CALLS,
   MAX_COMPLETED_TOOL_CALLS,
   MAX_FILE_CHANGES,
+  truncateToolInput,
 } from './bounds';
 
 // ── HookEventRouter ───────────────────────────────────────────────────────────
@@ -71,7 +73,7 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
           session.fileChanges.push({
             path: event.tool_input?.file_path ?? 'unknown',
             toolName: event.tool_name,
-            input: event.tool_input ?? {},
+            input: truncateToolInput(event.tool_input ?? {}),
             timestamp: Date.now(),
           });
           capInPlace(session.fileChanges, MAX_FILE_CHANGES);
@@ -96,7 +98,11 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
       const tc: ToolCall = {
         id,
         name: event.tool_name ?? 'unknown',
-        input: event.tool_input ?? {},
+        // A Write/Edit hook payload carries the whole file body. Bounded here,
+        // once, so it can't be re-cloned to the renderer at flush rate for the
+        // rest of the session — the identifying fields below are short and
+        // survive verbatim (see truncateToolInput).
+        input: truncateToolInput(event.tool_input ?? {}),
         status: 'running',
         startedAt: Date.now(),
       };
@@ -239,6 +245,8 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
         content: event.message ?? event.notification ?? '[notification]',
         timestamp: Date.now(),
       });
+      // The other ingest path caps per batch; this one pushes a turn at a time.
+      capConversationInPlace(session);
       break;
 
     // Note: 'Stop' and 'SessionEnd' are handled by the coordinator because

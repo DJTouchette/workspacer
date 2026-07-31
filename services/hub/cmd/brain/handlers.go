@@ -230,7 +230,7 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		if err := unmarshal(params, &in); err != nil {
 			return nil, err
 		}
-		item, err := saveLibrary(in)
+		item, err := r.saveLibrary(ctx, in)
 		if err != nil {
 			return nil, err
 		}

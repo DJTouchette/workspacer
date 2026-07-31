@@ -13,6 +13,7 @@ package main
 import (
 	_ "embed"
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -153,6 +154,43 @@ func (c *configService) reload() map[string]any {
 	return c.current
 }
 
+// hostTrustedSections are config keys only the host process may write. Every
+// config.save this brain answers arrives over the bus — a remote/web client, a
+// plugin, or an agent through the MCP facade — so a section listed here can be
+// dropped unconditionally: if it came through us, it did not come from the host.
+//
+// `updates` is the whole list today, and it earns its place: updates.channel is
+// concatenated into the electron-updater feed URL the desktop then downloads and
+// installs from, so one "../" in a channel relocates the updater to somebody
+// else's repo. That is persistent code execution laundered through the app's own
+// update dialog — not a setting a bus caller gets to choose. The desktop's own
+// Settings write goes through configService.ts in-process and is unaffected.
+var hostTrustedSections = []string{"updates"}
+
+// dropHostTrusted returns partial without any host-trusted section, leaving the
+// on-disk values alone. It copies rather than deletes in place: the caller still
+// owns the map it passed us.
+func dropHostTrusted(partial map[string]any) map[string]any {
+	var found []string
+	for _, k := range hostTrustedSections {
+		if _, ok := partial[k]; ok {
+			found = append(found, k)
+		}
+	}
+	if len(found) == 0 {
+		return partial
+	}
+	log.Printf("brain: config.save: ignoring host-trusted section(s) %v from a bus client", found)
+	out := make(map[string]any, len(partial))
+	for k, v := range partial {
+		out[k] = v
+	}
+	for _, k := range found {
+		delete(out, k)
+	}
+	return out
+}
+
 func (c *configService) save(partial map[string]any) map[string]any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -163,7 +201,7 @@ func (c *configService) save(partial map[string]any) map[string]any {
 		c.current = c.loadFromDisk()
 		c.loadedAt = configMtime()
 	}
-	merged := deepMerge(c.current, partial)
+	merged := deepMerge(c.current, dropHostTrusted(partial))
 	// ui.customThemes is a map of user-created entries: when the caller sends it,
 	// it is the whole truth. Deep-merge would resurrect deleted themes (it never
 	// removes keys), so replace it wholesale instead. Mirrors
@@ -224,30 +262,44 @@ func writeConfigYAML(cfg map[string]any) {
 	if err != nil {
 		return
 	}
-	// Atomic write: a unique temp file in the SAME dir + rename over the target.
-	// A rename within one filesystem is atomic, so a crash/power-loss mid-write or
-	// a concurrent reader sees either the old, complete file or the new one —
-	// never a half-written config.yaml that loadFromDisk would treat as a parse
-	// error and back up as .broken-*. Mirrors the desktop's atomicWriteFileSync;
-	// a plain truncating os.WriteFile leaves the file corrupt if interrupted.
-	tmp, err := os.CreateTemp(dir, ".config.yaml.tmp-*")
+	_ = writeFileAtomic(configPath(), data, 0o644)
+}
+
+// writeFileAtomic replaces path with data via a unique temp file in the SAME
+// directory + a rename over the target. A rename within one filesystem is
+// atomic, so a crash/power-loss mid-write or a concurrent reader sees either the
+// old, complete file or the new one — never a half-written one that the reader
+// treats as a parse error (and, for config.yaml, backs up as .broken-*).
+//
+// This is the brain's atomicWriteFileSync: every file-backed store here is
+// brain-delegated by default, so the desktop twin's atomic write is the one that
+// never runs. Sharing one helper is what keeps the two from drifting apart again
+// the next time a store is added.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
-		return
+		return err
 	}
 	tmpName := tmp.Name()
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpName)
-		return
+		return err
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpName)
-		return
+		return err
 	}
-	_ = os.Chmod(tmpName, 0o644)
-	if err := os.Rename(tmpName, configPath()); err != nil {
+	// CreateTemp makes the file 0600; the stores are user-readable config.
+	if err := os.Chmod(tmpName, perm); err != nil {
 		_ = os.Remove(tmpName)
+		return err
 	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 // removedShortcuts are action ids deleted from the app whose bindings were

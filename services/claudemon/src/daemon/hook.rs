@@ -18,6 +18,17 @@ use crate::session::{HookEvent, SessionStore, Transport};
 const DECISION_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub fn router(store: SessionStore) -> Router {
+    router_with_host(store, None)
+}
+
+/// Build the hook ingress router with the same `Host` allowlist the API router
+/// enforces. The hook port is a write surface — everything posted here lands in
+/// the session state machine, the broadcast fanout and SQLite — so it needs the
+/// DNS-rebinding guard just as much: without it a malicious page can rebind its
+/// own hostname to 127.0.0.1 and POST forged hook events at port 7890 while the
+/// API port refuses the identical request.
+pub fn router_with_host(store: SessionStore, bind_host: Option<String>) -> Router {
+    let allowed_hosts = crate::daemon::api::AllowedHosts::new(bind_host);
     Router::new()
         .route("/hook", post(receive))
         .route("/hook/:kind", post(receive_named))
@@ -26,6 +37,10 @@ pub fn router(store: SessionStore) -> Router {
         // Cap hook/statusline payloads: they're cloned, broadcast to every
         // subscriber, and persisted to SQLite, so an unbounded body is a DoS seam.
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024))
+        .layer(axum::middleware::from_fn_with_state(
+            allowed_hosts,
+            crate::daemon::api::host_guard,
+        ))
         .with_state(store)
 }
 
@@ -178,6 +193,54 @@ pub type HookDecision = Value;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use axum::http::{header, Request};
+    use tower::ServiceExt; // for `oneshot`
+
+    /// Dispatch one request through the hook router (layers included) and return
+    /// the status plus body bytes.
+    async fn request(req: Request<Body>) -> (StatusCode, Vec<u8>) {
+        let resp = router(SessionStore::new())
+            .oneshot(req)
+            .await
+            .expect("router responds");
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .expect("collect body");
+        (status, bytes.to_vec())
+    }
+
+    #[tokio::test]
+    async fn host_guard_rejects_non_loopback_host() {
+        // Same DNS-rebinding defense the API router has: the hook port ingests
+        // straight into the session state machine, so a rebound page must not be
+        // able to post forged events at it.
+        let req = Request::builder()
+            .method("POST")
+            .uri("/hook")
+            .header("content-type", "application/json")
+            .header(header::HOST, "evil.example.com")
+            .body(Body::from(
+                json!({ "event": "SessionStart", "session_id": "s1" }).to_string(),
+            ))
+            .unwrap();
+        let (status, body) = request(req).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body, b"host not allowed");
+    }
+
+    #[tokio::test]
+    async fn host_guard_allows_loopback_host() {
+        let req = Request::builder()
+            .uri("/health")
+            .header(header::HOST, "127.0.0.1:7890")
+            .body(Body::empty())
+            .unwrap();
+        let (status, body) = request(req).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"ok");
+    }
 
     #[test]
     fn known_subroutes_map_to_event_names() {

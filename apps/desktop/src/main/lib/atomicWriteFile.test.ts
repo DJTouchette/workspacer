@@ -8,6 +8,8 @@ const control = vi.hoisted(() => ({
   failRename: false,
   failCleanup: false,
   writePaths: [] as string[],
+  /** fds handed to fsyncSync — the durability step before the rename. */
+  fsyncedFds: [] as number[],
 }));
 
 vi.mock('fs', async (importOriginal) => {
@@ -19,6 +21,10 @@ vi.mock('fs', async (importOriginal) => {
   };
   const wrapped = {
     ...actual,
+    fsyncSync: (fd: number) => {
+      control.fsyncedFds.push(fd);
+      return actual.fsyncSync(fd);
+    },
     writeFileSync: (p: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
       control.writePaths.push(String(p));
       if (control.failWrite) throw errWith('ENOSPC', 'ENOSPC: no space left on device');
@@ -48,6 +54,7 @@ beforeEach(() => {
   control.failRename = false;
   control.failCleanup = false;
   control.writePaths = [];
+  control.fsyncedFds = [];
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-atomic-'));
 });
 
@@ -98,6 +105,15 @@ describe('atomicWriteFileSync', () => {
     atomicWriteFileSync(target, '[]\n', { mode: 0o600 });
     // Low 9 permission bits should be owner read/write only.
     expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+  });
+
+  it('fsyncs the temp file before the rename', () => {
+    // Without this the rename can hit the disk while the contents are still in
+    // the page cache: after a crash the target exists, is correctly named, and
+    // is empty — and the old copy it replaced is gone.
+    const target = path.join(dir, 'config.yaml');
+    atomicWriteFileSync(target, 'ui:\n  theme: dark\n');
+    expect(control.fsyncedFds).toHaveLength(1);
   });
 
   it('writes distinct temp names for rapid successive writes (no collision)', () => {

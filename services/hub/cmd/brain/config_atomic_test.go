@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -44,6 +45,63 @@ func TestWriteConfigYAMLIsAtomic(t *testing.T) {
 	for _, e := range entries {
 		if e.Name() != "config.yaml" {
 			t.Errorf("leftover file in config dir after atomic write: %s", e.Name())
+		}
+	}
+}
+
+// TestFileBackedStoresWriteAtomically applies the same inode fingerprint to the
+// other stores. It matters MORE here than for config.yaml: these methods are
+// brain-delegated by default, so the desktop's atomicWriteFileSync — the
+// implementation everyone points at when asked whether saves are crash-safe — is
+// the one that never runs. A layout or saved session truncated in place by a
+// kill mid-write comes back as unparseable YAML, and list() just skips it.
+func TestFileBackedStoresWriteAtomically(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	ino := func(t *testing.T, path string) uint64 {
+		t.Helper()
+		st, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("write did not produce %s: %v", path, err)
+		}
+		return st.Sys().(*syscall.Stat_t).Ino
+	}
+
+	if _, err := saveSavedSession("Work", map[string]any{"name": "Work", "agents": []any{}}); err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := filepath.Join(sessionsDir(), "work.yaml")
+	sessIno1 := ino(t, sessionPath)
+	if _, err := saveSavedSession("Work", map[string]any{"name": "Work", "agents": []any{}}); err != nil {
+		t.Fatal(err)
+	}
+	if sessIno2 := ino(t, sessionPath); sessIno1 == sessIno2 {
+		t.Errorf("saveSavedSession reused inode %d — it truncates the session file in place instead of temp+rename", sessIno1)
+	}
+
+	if _, err := saveLayout(map[string]any{"name": "My Layout", "agents": []any{}}); err != nil {
+		t.Fatal(err)
+	}
+	layoutPath := filepath.Join(layoutsDir(), "my-layout.yaml")
+	layIno1 := ino(t, layoutPath)
+	if _, err := saveLayout(map[string]any{"name": "My Layout", "agents": []any{}}); err != nil {
+		t.Fatal(err)
+	}
+	if layIno2 := ino(t, layoutPath); layIno1 == layIno2 {
+		t.Errorf("saveLayout reused inode %d — it truncates the layout file in place instead of temp+rename", layIno1)
+	}
+
+	// No temp files survive either write.
+	for _, d := range []string{sessionsDir(), layoutsDir()} {
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			if strings.Contains(e.Name(), ".tmp-") {
+				t.Errorf("leftover temp file in %s: %s", d, e.Name())
+			}
 		}
 	}
 }

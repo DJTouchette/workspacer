@@ -273,6 +273,30 @@ func (st *Store) Lookup(token string) (Record, bool) {
 	return rec, ok
 }
 
+// HasFingerprint reports whether a live token in the store fingerprints to id
+// under fp. It exists for state that OUTLIVES the connection that created it —
+// a Web Push subscription is registered once and then notified forever, so
+// revocation has to be re-checked against the credential each time rather than
+// at handshake. The store holds raw tokens and never the fingerprints, and the
+// fingerprint function belongs to the bus, so the caller passes it in: that
+// keeps this package free of a bus import while guaranteeing both sides compute
+// the same string. Re-reads the file first, so `workspacer token revoke` takes
+// effect on the next notification with no restart.
+func (st *Store) HasFingerprint(id string, fp func(string) string) bool {
+	if id == "" || fp == nil {
+		return false
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.refreshLocked()
+	for tok := range st.byToken {
+		if fp(tok) == id {
+			return true
+		}
+	}
+	return false
+}
+
 func (st *Store) refreshLocked() {
 	info, err := os.Stat(st.path)
 	if err != nil {

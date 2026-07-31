@@ -22,42 +22,88 @@ export interface ClaudeProfile {
 }
 
 /**
- * Drop `--dangerously-skip-permissions` and a bypass `--permission-mode`
- * (`bypassPermissions`/`yolo`, both `--flag value` and `--flag=value` forms)
- * from a profile's extra args. Any other permission mode passes through.
+ * The ALLOWLIST of profile extraArgs that survive onto a remote (bus/web/MCP)
+ * spawn's argv, mapped to whether the flag takes a value.
  *
- * TWIN: `scrubBypassArgs` in services/hub/cmd/brain/profiles.go — the brain
- * already did this and the desktop did not, which meant a remote spawn could
- * carry a bypass in through `profileId` on one stack and not the other. Keep
- * the two in step; the cases below mirror the Go implementation exactly.
+ * A denylist was the wrong shape: it named `--dangerously-skip-permissions` and
+ * a bypass `--permission-mode`, while `--allowedTools` (blanket tool
+ * auto-approval) and `--settings` (an arbitrary settings file: permissions AND
+ * hooks) walked straight through and handed the bypass back. These three are
+ * what a profile legitimately pins for a remote spawn; anything else is dropped
+ * rather than reasoned about, so a flag added to the CLI tomorrow is denied by
+ * default.
+ */
+const REMOTE_SAFE_FLAGS: Record<string, boolean> = {
+  '--model': true,
+  '--effort': true,
+  '--permission-mode': true, // non-bypass modes only — see below
+};
+
+/**
+ * Keep only REMOTE_SAFE_FLAGS (both `--flag value` and `--flag=value` forms),
+ * and drop `--permission-mode` when it names a bypass mode.
+ *
+ * TWIN: `scrubBypassArgs` in services/hub/cmd/brain/profiles.go — the brain is
+ * the DEFAULT answerer for a bus spawn, so a rule that lives on only one side
+ * is a rule that doesn't run. The two implementations are line-for-line
+ * equivalents; change them together.
  */
 export function scrubBypassArgs(args: string[] | undefined): string[] {
   const out: string[] = [];
   const list = args ?? [];
   for (let i = 0; i < list.length; i++) {
-    const a = list[i];
-    if (a === '--dangerously-skip-permissions') continue;
-    if (
-      a === '--permission-mode' &&
-      (list[i + 1] === 'bypassPermissions' || list[i + 1] === 'yolo')
-    ) {
-      i++; // skip the value too
+    const eq = list[i].indexOf('=');
+    const inline = eq !== -1;
+    const name = inline ? list[i].slice(0, eq) : list[i];
+    let value = inline ? list[i].slice(eq + 1) : '';
+    const allowed = name in REMOTE_SAFE_FLAGS;
+    const hasSeparateValue = allowed && REMOTE_SAFE_FLAGS[name] && !inline;
+    if (hasSeparateValue) {
+      // A flag whose value is the next element, unless it's missing or is
+      // itself a flag — in which case the profile is malformed and we drop it.
+      if (i + 1 >= list.length || list[i + 1].startsWith('-')) continue;
+      value = list[i + 1];
+    }
+    if (!allowed) {
+      // Drop the flag AND the value riding beside it: a dropped "--settings"
+      // that left its path behind would hand claude a stray positional, which
+      // it reads as the prompt.
+      if (!inline && i + 1 < list.length && !list[i + 1].startsWith('-')) i++;
       continue;
     }
-    if (a.startsWith('--permission-mode=')) {
-      const v = a.slice('--permission-mode='.length);
-      if (v === 'bypassPermissions' || v === 'yolo') continue;
+    if (name === '--permission-mode' && (value === 'bypassPermissions' || value === 'yolo')) {
+      if (hasSeparateValue) i++;
+      continue;
     }
-    out.push(a);
+    out.push(list[i]);
+    if (hasSeparateValue) {
+      i++;
+      out.push(value);
+    }
   }
   return out;
 }
 
-/** A copy of `profile` whose extraArgs can't auto-approve anything. */
-export function scrubBypassProfile<T extends { extraArgs?: string[] }>(
+/**
+ * The copy of a profile a remote (bus/web/MCP) spawn is allowed to use:
+ * extraArgs reduced to the allowlist above, and no CLAUDE_CONFIG_DIR. Without
+ * it, clamping the request's own fields left profileId as an open door — the
+ * caller points at (or mints, since claude.profiles.add is itself a bus
+ * capability) a profile that carries the bypass for them.
+ *
+ * configDir is dropped rather than contained: it becomes CLAUDE_CONFIG_DIR, and
+ * that directory supplies claude's settings.json — permissions.allow and hooks,
+ * i.e. commands claude runs unprompted. A bus caller can write files anywhere
+ * inside an agent cwd (fs.write) and then name that directory in a profile, so
+ * there is no subtree we could allow that the same caller can't also fill in. A
+ * remote spawn therefore runs against the host's default claude config dir.
+ */
+export function scrubBypassProfile<T extends { extraArgs?: string[]; configDir?: string }>(
   profile: T | undefined,
 ): T | undefined {
-  return profile ? { ...profile, extraArgs: scrubBypassArgs(profile.extraArgs) } : profile;
+  return profile
+    ? { ...profile, extraArgs: scrubBypassArgs(profile.extraArgs), configDir: '' }
+    : profile;
 }
 
 const profilesFile = path.join(getConfigDir(), 'claude-profiles.json');

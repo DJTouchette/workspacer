@@ -62,3 +62,45 @@ describe('compactClaudeSnapshotForBackground — conversationOffset', () => {
     expect(rec.conversation[rec.conversation.length - 1].content).toBe('turn 51');
   });
 });
+
+/**
+ * The user-send tally has to survive compaction for the same reason the turn
+ * offset does: ClaudePane retires one optimistic bubble per user send that
+ * arrives, and a pane flipping compact↔full must not see that tally jump.
+ */
+describe('compactClaudeSnapshotForBackground — conversationUserOffset', () => {
+  const absoluteUserSends = (s: ClaudeSessionSnapshot) =>
+    (s.conversationUserOffset ?? 0) + s.conversation.filter((t) => t.role === 'user').length;
+
+  it('banks the user sends it drops, keeping the absolute tally identical', () => {
+    const before = snap(50);
+    const out = compactClaudeSnapshotForBackground(before);
+    // 38 dropped turns, every even one a user turn → 19 of them.
+    expect(out.conversationUserOffset).toBe(19);
+    expect(absoluteUserSends(out)).toBe(absoluteUserSends(before));
+  });
+
+  it('accumulates across repeated compaction', () => {
+    const once = compactClaudeSnapshotForBackground(snap(50));
+    const grown = {
+      ...once,
+      conversation: [...once.conversation, turn(50), turn(51)],
+    } as ClaudeSessionSnapshot;
+    const rec = compactClaudeSnapshotForBackground(grown);
+    // Two more turns dropped (38 → 40); turn 50 is a user turn, 51 is not.
+    expect(rec.conversationUserOffset).toBe(20);
+    expect(absoluteUserSends(rec)).toBe(absoluteUserSends(grown));
+  });
+
+  it('does not count a synthetic nameless command card as a user send', () => {
+    const base = snap(50);
+    // conversationApplier emits this for an orphaned command_output whose
+    // invocation has scrolled out — it is not something the user sent.
+    base.conversation[0] = {
+      ...base.conversation[0],
+      command: { name: '' },
+    } as ConversationTurn;
+    const out = compactClaudeSnapshotForBackground(base);
+    expect(out.conversationUserOffset).toBe(18);
+  });
+});

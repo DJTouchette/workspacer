@@ -18,7 +18,7 @@
  * bodies run.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -72,7 +72,18 @@ vi.mock('./agentProviders', () => ({
 }));
 
 const getConfig = vi.fn(() => ({ agents: { binaries: { codex: '/custom/codex' } } }));
-const getConfigDirMock = vi.fn(() => '/nonexistent-config-dir');
+// A real on-disk config dir: the confinement helpers canonicalize through the
+// filesystem, and the config-secret deny-list below only means anything if the
+// dir it guards actually exists.
+const cfg = vi.hoisted(() => {
+  const nodeFs = require('fs') as typeof import('fs');
+  const nodeOs = require('os') as typeof import('os');
+  const nodePath = require('path') as typeof import('path');
+  return {
+    dir: nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'wks-cap-cfg-'))),
+  };
+});
+const getConfigDirMock = vi.fn(() => cfg.dir);
 vi.mock('./configService', () => ({
   configService: {
     getConfig: (...a: unknown[]) => getConfig(...a),
@@ -90,13 +101,30 @@ vi.mock('./agentHandoff', () => ({
 
 // The rest are only referenced inside handlers we do not invoke; mock them so
 // importing hubCapabilities does not pull in Electron/native plumbing.
-vi.mock('electron', () => ({
-  Notification: vi.fn().mockImplementation(() => ({ show: vi.fn() })),
-}));
+// Notification instances record their listeners so a test can fire the click
+// handler — that handler is the openExternal sink under test.
+const notificationHandlers = new Map<string, (...a: unknown[]) => void>();
+const openExternal = vi.fn(async () => {});
+vi.mock('electron', () => {
+  // A plain function, not an arrow implementation: the capability calls
+  // `new Notification(...)`, which an arrow can't service.
+  const NotificationMock = vi.fn(function (this: Record<string, unknown>) {
+    this.show = vi.fn();
+    this.on = (event: string, cb: (...a: unknown[]) => void) => {
+      notificationHandlers.set(event, cb);
+    };
+  });
+  (NotificationMock as unknown as { isSupported: () => boolean }).isSupported = () => true;
+  return { Notification: NotificationMock, shell: { openExternal } };
+});
 vi.mock('./claudeProfiles', () => ({ claudeProfiles: {} }));
 vi.mock('../lib/appIcon', () => ({ appIconPath: () => undefined }));
 vi.mock('./claudeModels', () => ({ listClaudeModels: vi.fn(() => []) }));
-vi.mock('./libraryService', () => ({ libraryService: {} }));
+const libraryMock = { list: vi.fn(() => []), save: vi.fn(), remove: vi.fn() };
+vi.mock('./libraryService', () => ({ libraryService: libraryMock }));
+vi.mock('./agentNotifier', () => ({
+  agentNotifier: { postInApp: vi.fn(), focusAgent: vi.fn(), focusWindow: vi.fn() },
+}));
 vi.mock('./sessionService', () => ({ sessionService: {} }));
 vi.mock('./sessionHistory', () => ({ sessionHistory: {} }));
 vi.mock('./layoutService', () => ({ layoutService: {} }));
@@ -112,8 +140,14 @@ vi.mock('./fileWatchService', () => ({ startWatch: vi.fn(), stopWatch: vi.fn() }
 vi.mock('./searchService', () => ({
   searchProject: vi.fn(() => ({ results: [], truncated: false })),
 }));
+// `workRoot` is part of the mock because git.diff's path guard consults it:
+// gitService runs every command from the work-tree toplevel, so that — not the
+// caller's cwd — is what a `path` is resolved against. Default it to the cwd
+// (repo root == agent cwd); the nested-cwd test overrides it.
+const workRootFor = vi.fn(async (cwd: string): Promise<string | null> => cwd);
 vi.mock('./gitService', () => ({
   status: vi.fn(async () => ({ branch: 'main', files: [] })),
+  workRoot: (cwd: string) => workRootFor(cwd),
   diff: vi.fn(async () => ''),
   numstat: vi.fn(async () => []),
   stage: vi.fn(async () => ''),
@@ -503,6 +537,155 @@ describe('fs.* path confinement (SECURITY.md #8)', () => {
   });
 });
 
+describe('fs.* credential deny-list (twin of the brain fsguard)', () => {
+  // The config dir used to be a workspace root wholesale, which handed any bus
+  // caller remote-token / tokens.json / every plugin's .bus-token — i.e. the
+  // credential that makes a connection `trusted`, which drops per-plugin scoping
+  // and unlocks /plugins/install. Only library/, layouts/ and sessions/ are roots
+  // now, and the deny still applies however the path got admitted.
+  //
+  // Every case below runs with an agent cwd that CONTAINS the config dir (the
+  // user who spawned an agent in ~/.config), so the roots check passes and only
+  // the deny-list can refuse — testing the gate that actually has to hold.
+  let agentCwd: string;
+  beforeEach(() => {
+    fs.mkdirSync(path.join(cfg.dir, 'library'), { recursive: true });
+    fs.mkdirSync(path.join(cfg.dir, 'plugins', 'acme.ci'), { recursive: true });
+    fs.writeFileSync(path.join(cfg.dir, 'remote-token'), 'super-secret', 'utf-8');
+    fs.writeFileSync(path.join(cfg.dir, 'plugins', 'acme.ci', '.bus-token'), 'tok', 'utf-8');
+    agentCwd = path.dirname(cfg.dir);
+    getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
+  });
+
+  it('fs.read denies the remote-share token', () => {
+    expect(() => call('fs.read', { path: path.join(cfg.dir, 'remote-token') })).toThrow(
+      /outside the allowed workspace/,
+    );
+    expect(readTextFile).not.toHaveBeenCalled();
+  });
+
+  it("fs.read denies a plugin's .bus-token", () => {
+    expect(() =>
+      call('fs.read', { path: path.join(cfg.dir, 'plugins', 'acme.ci', '.bus-token') }),
+    ).toThrow(/outside the allowed workspace/);
+    expect(readTextFile).not.toHaveBeenCalled();
+  });
+
+  it('fs.write denies overwriting a credential (a token DoS is a bus outage)', () => {
+    expect(() =>
+      call('fs.write', { path: path.join(cfg.dir, 'remote-token'), contents: 'x' }),
+    ).toThrow(/outside the allowed workspace/);
+    expect(writeTextFile).not.toHaveBeenCalled();
+  });
+
+  it('denies .bus-token / .settings.json by basename anywhere, not just in the config dir', () => {
+    // `workspacer plugin dev <dir>` mints these inside an ordinary project, which
+    // is an agent cwd — a root no narrowing can help with.
+    const devPlugin = fs.mkdtempSync(path.join(agentCwd, 'wks-devplugin-'));
+    for (const name of ['.bus-token', '.settings.json']) {
+      expect(() => call('fs.read', { path: path.join(devPlugin, name) })).toThrow(
+        /outside the allowed workspace/,
+      );
+    }
+    expect(readTextFile).not.toHaveBeenCalled();
+    fs.rmSync(devPlugin, { recursive: true, force: true });
+  });
+
+  it('still allows the library/ subtree the UI edits', () => {
+    const item = path.join(cfg.dir, 'library', 'prompt.md');
+    expect(() => call('fs.read', { path: item })).not.toThrow();
+    expect(readTextFile).toHaveBeenCalledWith(item);
+  });
+
+  it('denies the config secret on the roots check too when no agent cwd covers it', () => {
+    getAllSnapshots.mockReturnValue([] as never);
+    expect(() => call('fs.read', { path: path.join(cfg.dir, 'remote-token') })).toThrow(
+      /outside the allowed workspace/,
+    );
+    expect(readTextFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('library.* cwd confinement', () => {
+  // `cwd` selects the project whose .workspacer/library + .claude assets are
+  // listed, written and (recursively) deleted — untrusted on the bus.
+  let agentCwd: string;
+  beforeEach(() => {
+    agentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-')));
+    getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
+  });
+
+  it('library.save is denied for a cwd outside the workspace', () => {
+    expect(() =>
+      call('library.save', {
+        scope: 'project',
+        cwd: os.homedir(),
+        title: 't',
+        kind: 'prompt',
+        body: 'b',
+      }),
+    ).toThrow(/outside the allowed workspace/);
+    expect(libraryMock.save).not.toHaveBeenCalled();
+  });
+
+  it('library.save runs for a live agent cwd', () => {
+    call('library.save', {
+      scope: 'project',
+      cwd: agentCwd,
+      title: 't',
+      kind: 'prompt',
+      body: 'b',
+    });
+    expect(libraryMock.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('library.remove is denied for a cwd outside the workspace', () => {
+    expect(() =>
+      call('library.remove', { scope: 'claude', id: 'x', cwd: '/etc', kind: 'skill' }),
+    ).toThrow(/outside the allowed workspace/);
+    expect(libraryMock.remove).not.toHaveBeenCalled();
+  });
+
+  it('library.list is denied for a cwd outside the browsable tree', () => {
+    expect(() => call('library.list', { cwd: '/etc' })).toThrow(/outside the allowed workspace/);
+    expect(libraryMock.list).not.toHaveBeenCalled();
+  });
+
+  it('library.list allows a directory under home that is not an agent cwd yet', () => {
+    // The New Agent dialog lists the library of the directory the user is about
+    // to spawn in, to populate the project-MCP picker — no agent runs there yet,
+    // and the dialog swallows errors, so a workspace-roots rule here would show
+    // an empty picker rather than an error. Same browse rule as fs.listDir.
+    const notYetSpawned = path.join(os.homedir(), 'some-project');
+    call('library.list', { cwd: notYetSpawned });
+    expect(libraryMock.list).toHaveBeenCalledWith(notYetSpawned);
+  });
+});
+
+describe('notifications.post — external URL scheme check', () => {
+  function clickWith(url: string): void {
+    call('notifications.post', { title: 't', url });
+    const onClick = notificationHandlers.get('click');
+    expect(onClick).toBeDefined();
+    onClick!();
+  }
+
+  it('opens an https URL', () => {
+    clickWith('https://example.com/build/42');
+    expect(openExternal).toHaveBeenCalledWith('https://example.com/build/42');
+  });
+
+  it('refuses a file:// URL (shell.openExternal would launch it)', () => {
+    clickWith('file:///etc/passwd');
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it('refuses a custom-protocol URL', () => {
+    clickWith('vscode://file/etc/shadow');
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+});
+
 describe('git.* cwd confinement (SECURITY.md #6)', () => {
   // The review-pane git surface moved from claudemon to the host; its bus caps are
   // now the remote-reachable entry point, so a caller-supplied cwd must be confined
@@ -511,6 +694,7 @@ describe('git.* cwd confinement (SECURITY.md #6)', () => {
   beforeEach(() => {
     agentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-git-')));
     getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
+    workRootFor.mockImplementation(async (cwd: string) => cwd);
   });
 
   it('git.commit runs when cwd is a live agent cwd', async () => {
@@ -538,5 +722,81 @@ describe('git.* cwd confinement (SECURITY.md #6)', () => {
   it('git.status runs for a live agent cwd', async () => {
     await call('git.status', { cwd: agentCwd });
     expect(gitMock.status).toHaveBeenCalledWith(agentCwd);
+  });
+
+  // git.diff's `path` is not just a pathspec: with untracked:true gitService
+  // hands it to `git diff --no-index -- /dev/null <path>`, where git treats it as
+  // a filesystem operand. A legal cwd plus an escaping path therefore read any
+  // file on the host as an all-added diff until the path was confined too.
+  it('git.diff denies an absolute path outside the repo (untracked --no-index operand)', async () => {
+    await expect(
+      call('git.diff', { cwd: agentCwd, path: '/etc/shadow', untracked: true }),
+    ).rejects.toThrow(/outside the allowed workspace/);
+    expect(gitMock.diff).not.toHaveBeenCalled();
+  });
+
+  it('git.diff denies a traversal path that escapes the repo', async () => {
+    await expect(
+      call('git.diff', { cwd: agentCwd, path: '../../../etc/passwd', untracked: true }),
+    ).rejects.toThrow(/outside the allowed workspace/);
+    expect(gitMock.diff).not.toHaveBeenCalled();
+  });
+
+  it('git.diff still allows a repo-relative path inside the agent cwd', async () => {
+    await call('git.diff', { cwd: agentCwd, path: 'src/new.ts', untracked: true });
+    expect(gitMock.diff).toHaveBeenCalledWith(agentCwd, 'src/new.ts', undefined, true);
+  });
+
+  // The guard has to measure `path` the way git will: gitService anchors every
+  // command at `rev-parse --show-toplevel`, so with the agent cwd nested in a
+  // monorepo (the normal case) a path resolved against the agent cwd names a
+  // different file than the one git opens.
+  describe('with the agent cwd nested below the repo root', () => {
+    let repoRoot: string;
+    beforeEach(() => {
+      repoRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-repo-')));
+      agentCwd = path.join(repoRoot, 'apps', 'desktop');
+      fs.mkdirSync(agentCwd, { recursive: true });
+      getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
+      workRootFor.mockImplementation(async () => repoRoot);
+    });
+    afterEach(() => fs.rmSync(repoRoot, { recursive: true, force: true }));
+
+    it('refuses a ../-path that measuring from the agent cwd would wave through', async () => {
+      // Measured from the agent cwd this names a file inside a SECOND live
+      // agent's cwd — inside a workspace root, so a cwd-based check admits it.
+      // git runs two levels shallower, from repoRoot, where the same string
+      // normalizes somewhere else entirely and outside every repo: the check and
+      // the read were looking at different files.
+      const otherAgent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-other-')));
+      getAllSnapshots.mockReturnValue([{ cwd: agentCwd }, { cwd: otherAgent }] as never);
+      const rel = path.relative(agentCwd, path.join(otherAgent, 'secret.env'));
+
+      await expect(call('git.diff', { cwd: agentCwd, path: rel, untracked: true })).rejects.toThrow(
+        /outside the allowed workspace/,
+      );
+      expect(gitMock.diff).not.toHaveBeenCalled();
+      fs.rmSync(otherAgent, { recursive: true, force: true });
+    });
+
+    it('refuses a path that climbs out of the repo root', async () => {
+      await expect(
+        call('git.diff', { cwd: agentCwd, path: '../../../etc/passwd', untracked: true }),
+      ).rejects.toThrow(/outside the allowed workspace/);
+      expect(gitMock.diff).not.toHaveBeenCalled();
+    });
+
+    it('still allows a root-relative path in a sibling subtree (what git.status hands back)', async () => {
+      // git.status prints repo-root-relative paths for the WHOLE repo, and the
+      // review pane feeds them straight back; refusing them because they sit
+      // outside the agent cwd would break review in every monorepo.
+      await call('git.diff', { cwd: agentCwd, path: 'services/hub/main.go' });
+      expect(gitMock.diff).toHaveBeenCalledWith(
+        agentCwd,
+        'services/hub/main.go',
+        undefined,
+        undefined,
+      );
+    });
   });
 });

@@ -28,14 +28,24 @@ const StreamTopicPrefix = "pty.bytes."
 // can't accumulate one entry per session it ever watched.
 const maxDesyncTopics = 64
 
+// MaxTopics caps how many patterns one subscription retains, for the same
+// reason maxDesyncTopics caps the desync map: the topic list is walked on every
+// publish (see [Subscription.matches]) under a lock the fan-out holds, so an
+// unbounded list turns one client's `subscribe` into a stall for every
+// publisher on the bus. Past the cap further patterns are simply not added —
+// the bus layer rejects oversized subscribe frames outright, so hitting this is
+// already pathological. Real clients subscribe to a handful of patterns or "*".
+const MaxTopics = 512
+
 // Subscription is a live consumer. Events matching its topics arrive on C.
 type Subscription struct {
 	C chan event.Envelope
 
-	id      uint64
-	mu      sync.RWMutex
-	topics  []string
-	dropped atomic.Uint64
+	id       uint64
+	mu       sync.RWMutex
+	topics   []string
+	topicSet map[string]struct{} // membership index for topics; guarded by mu
+	dropped  atomic.Uint64
 	// Stream topics that lost at least one event since the consumer last
 	// checked. Guarded by mu.
 	desynced map[string]struct{}
@@ -86,30 +96,57 @@ func (s *Subscription) TakeDesyncs() []string {
 // SetTopics replaces the subscription's topic patterns.
 func (s *Subscription) SetTopics(topics []string) {
 	s.mu.Lock()
-	s.topics = append([]string(nil), topics...)
+	s.topics, s.topicSet = nil, nil
+	s.addLocked(topics)
 	s.mu.Unlock()
 }
 
 // AddTopics adds patterns to the subscription, de-duplicating.
 func (s *Subscription) AddTopics(topics ...string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.addLocked(topics)
+	s.mu.Unlock()
+}
+
+// addLocked appends the patterns not already held, up to MaxTopics. De-dup goes
+// through topicSet rather than a scan of s.topics: the scan made applying N
+// patterns cost O(N²) string comparisons *while holding the write lock* that
+// every publisher's fan-out needs, so a single client could stall the whole bus
+// for seconds with one large subscribe frame.
+func (s *Subscription) addLocked(topics []string) {
 	for _, t := range topics {
-		if !contains(s.topics, t) {
-			s.topics = append(s.topics, t)
+		if len(s.topics) >= MaxTopics {
+			return
 		}
+		if _, dup := s.topicSet[t]; dup {
+			continue
+		}
+		if s.topicSet == nil {
+			s.topicSet = make(map[string]struct{}, len(topics))
+		}
+		s.topicSet[t] = struct{}{}
+		s.topics = append(s.topics, t)
 	}
 }
 
 // RemoveTopics drops the given patterns from the subscription.
 func (s *Subscription) RemoveTopics(topics ...string) {
+	// Index the removals first so the filter below is one pass, not one scan of
+	// the argument per retained topic — RemoveTopics is the same
+	// quadratic-under-lock primitive AddTopics was.
+	drop := make(map[string]struct{}, len(topics))
+	for _, t := range topics {
+		drop[t] = struct{}{}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	kept := s.topics[:0]
 	for _, t := range s.topics {
-		if !contains(topics, t) {
-			kept = append(kept, t)
+		if _, gone := drop[t]; gone {
+			delete(s.topicSet, t)
+			continue
 		}
+		kept = append(kept, t)
 	}
 	s.topics = kept
 }
@@ -157,10 +194,10 @@ func (b *Broker) Subscribe(topics []string) *Subscription {
 	defer b.mu.Unlock()
 	b.nextID++
 	sub := &Subscription{
-		C:      make(chan event.Envelope, b.buffer),
-		id:     b.nextID,
-		topics: append([]string(nil), topics...),
+		C:  make(chan event.Envelope, b.buffer),
+		id: b.nextID,
 	}
+	sub.addLocked(topics) // not yet published, so no other goroutine can see it
 	b.subs[sub.id] = sub
 	return sub
 }
@@ -205,13 +242,4 @@ func (b *Broker) SubscriberCount() int {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return len(b.subs)
-}
-
-func contains(ss []string, s string) bool {
-	for _, x := range ss {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }

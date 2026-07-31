@@ -97,3 +97,63 @@ describe('libraryService — saveClaude/remove target the real on-disk path', ()
     expect(fs.existsSync(path.join(cwd, '.claude', 'skills', 'MySkill'))).toBe(false);
   });
 });
+
+describe('libraryService — a claude id must be a basename, not a path', () => {
+  // The id is used verbatim to preserve non-slug-stable on-disk names (above),
+  // which makes it a path injection point on the bus-reachable save/remove.
+  it('saveClaude refuses a traversal id instead of writing outside .claude', () => {
+    expect(() =>
+      libraryService.save({
+        scope: 'claude',
+        id: '../../config',
+        title: 'pwn',
+        kind: 'agent',
+        body: 'x',
+        cwd,
+      }),
+    ).toThrow(/invalid library item id/);
+    expect(fs.existsSync(path.join(cwd, '..', '..', 'config.md'))).toBe(false);
+  });
+
+  it('saveClaude refuses an absolute id', () => {
+    const target = path.join(cwd, 'escaped.md');
+    expect(() =>
+      libraryService.save({
+        scope: 'claude',
+        id: target,
+        title: 'pwn',
+        kind: 'agent',
+        body: 'x',
+        cwd,
+      }),
+    ).toThrow(/invalid library item id/);
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
+  it('remove refuses a traversal id rather than recursively deleting it', () => {
+    const victim = path.join(cwd, 'precious');
+    fs.mkdirSync(victim, { recursive: true });
+    fs.writeFileSync(path.join(victim, 'file.txt'), 'keep me', 'utf-8');
+
+    // '../../precious' from <cwd>/.claude/skills would land exactly on it.
+    expect(() => libraryService.remove('claude', '../../precious', cwd, 'skill')).toThrow(
+      /invalid library item id/,
+    );
+    expect(fs.existsSync(path.join(victim, 'file.txt'))).toBe(true);
+  });
+
+  it('still edits a legitimate non-slug-stable basename in place', () => {
+    writeSkill('My.Skill', 'My.Skill', 'old');
+    libraryService.save({
+      scope: 'claude',
+      id: 'My.Skill',
+      title: 'My.Skill',
+      kind: 'skill',
+      body: 'updated',
+      cwd,
+    });
+    expect(
+      fs.readFileSync(path.join(cwd, '.claude', 'skills', 'My.Skill', 'SKILL.md'), 'utf-8'),
+    ).toContain('updated');
+  });
+});

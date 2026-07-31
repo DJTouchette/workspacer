@@ -59,3 +59,49 @@ export function isWebviewSrcAllowed(src: string | undefined): boolean {
   // other about: URL (about:config, about:srcdoc, about:blank#x, …) is rejected.
   return scheme === 'http:' || scheme === 'https:';
 }
+
+/**
+ * The bits of Electron's WebContents this guard needs, so the policy can be
+ * exercised against a plain event emitter in a test.
+ */
+export interface GuardableContents {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  on(event: string, listener: (...args: any[]) => void): unknown;
+  stop(): void;
+  loadURL(url: string): unknown;
+}
+
+/**
+ * Confine a guest <webview> to the schemes isWebviewSrcAllowed permits, for the
+ * lifetime of the webview.
+ *
+ * The subtlety is which event to hang this on. `will-navigate` is cancelable
+ * but only fires for navigations the GUEST PAGE starts (a link click,
+ * `window.location = …`). BrowserPane doesn't navigate that way — it calls
+ * `webview.loadURL()` from the renderer, an embedder-initiated navigation that
+ * `will-navigate` never sees. So the address bar was, in practice, unguarded:
+ * SECURITY.md #10's claim that a typed `file://` URL is blocked was false as
+ * shipped. `did-start-navigation` fires for every navigation including
+ * loadURL — but it is NOT cancelable, so the block is stop() plus a bounce to
+ * about:blank rather than preventDefault(). The cancelable pair stays wired as
+ * well: catching a bad navigation before it starts is still better when the
+ * event does fire.
+ */
+export function installWebviewNavigationGuard(guest: GuardableContents): void {
+  const cancel = (e: { preventDefault(): void }, url: string) => {
+    if (isWebviewSrcAllowed(url)) return;
+    console.warn(`[main] blocking <webview> navigation to disallowed url: ${url}`);
+    e.preventDefault();
+  };
+  guest.on('will-navigate', cancel);
+  guest.on('will-redirect', cancel);
+  guest.on('did-start-navigation', (details: { url: string; isMainFrame: boolean }) => {
+    if (!details.isMainFrame) return;
+    if (isWebviewSrcAllowed(details.url)) return;
+    console.warn(`[main] stopping <webview> navigation to disallowed url: ${details.url}`);
+    guest.stop();
+    // Leave the guest on a blank page rather than whatever it was showing —
+    // about:blank is allowed, so this doesn't re-enter the guard.
+    guest.loadURL('about:blank');
+  });
+}

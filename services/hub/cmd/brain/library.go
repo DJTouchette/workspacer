@@ -12,6 +12,7 @@ package main
 // namespaced separately. Filenames use slugLibrary so they match the app.
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -308,19 +309,30 @@ type libraryInput struct {
 	Cwd         string     `json:"cwd"`
 }
 
-func saveLibrary(in libraryInput) (*libraryItem, error) {
+// saveLibrary writes one library item. It is a registry method because the
+// project/claude scopes write relative to a CALLER-SUPPLIED cwd, which has to go
+// through the same fsguard containment as fs.write — the caller is a bus client,
+// and "where do I put this file" is not a question it gets to answer freely.
+// (No caller reaching here is unprivileged today: they all hold terminals.create
+// or a trusted conn. The point is that the two path-taking surfaces can't drift
+// apart, the way the fs.* guard drifted from the desktop's.)
+func (r *registry) saveLibrary(ctx context.Context, in libraryInput) (*libraryItem, error) {
 	if in.Scope == "claude" {
-		return saveLibraryClaude(in)
+		return r.saveLibraryClaude(ctx, in)
 	}
 	dir := libraryGlobalDir()
 	if in.Scope == "project" {
 		dir = libraryProjectDir(firstNonEmpty(in.Cwd, mustCwd()))
 	}
+	id := slugLibrary(firstNonEmpty(in.ID, in.Title))
+	full := filepath.Join(dir, id+".md")
+	// Checked BEFORE MkdirAll, so a denied save leaves no directories behind.
+	if err := assertPathAllowed("library.save", full, r.workspaceRoots(ctx)); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	id := slugLibrary(firstNonEmpty(in.ID, in.Title))
-	full := filepath.Join(dir, id+".md")
 	it := &libraryItem{
 		ID: id, Scope: in.Scope, Title: in.Title, Kind: in.Kind,
 		Description: in.Description, Tags: in.Tags, Action: in.Action,
@@ -329,13 +341,13 @@ func saveLibrary(in libraryInput) (*libraryItem, error) {
 	if in.Kind == "mcp" {
 		it.Mcp = cleanMcp(in.Mcp)
 	}
-	if err := os.WriteFile(full, []byte(serializeItem(it)), 0o644); err != nil {
+	if err := writeFileAtomic(full, []byte(serializeItem(it)), 0o644); err != nil {
 		return nil, err
 	}
 	return it, nil
 }
 
-func saveLibraryClaude(in libraryInput) (*libraryItem, error) {
+func (r *registry) saveLibraryClaude(ctx context.Context, in libraryInput) (*libraryItem, error) {
 	cwd := firstNonEmpty(in.Cwd, mustCwd())
 	kind := "skill"
 	if in.Kind == "agent" {
@@ -353,6 +365,9 @@ func saveLibraryClaude(in libraryInput) (*libraryItem, error) {
 	default:
 		full = filepath.Join(claudeAgentsDir(cwd), id+".md")
 	}
+	if err := assertPathAllowed("library.save", full, r.workspaceRoots(ctx)); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return nil, err
 	}
@@ -360,7 +375,7 @@ func saveLibraryClaude(in libraryInput) (*libraryItem, error) {
 	if raw, err := os.ReadFile(full); err == nil {
 		existing, _ = parseFrontmatter(string(raw))
 	}
-	if err := os.WriteFile(full, []byte(serializeClaude(existing, in.Title, in.Description, in.Body)), 0o644); err != nil {
+	if err := writeFileAtomic(full, []byte(serializeClaude(existing, in.Title, in.Description, in.Body)), 0o644); err != nil {
 		return nil, err
 	}
 	return &libraryItem{ID: id, Scope: "claude", Title: in.Title, Kind: kind, Description: in.Description, Body: in.Body, Path: full}, nil

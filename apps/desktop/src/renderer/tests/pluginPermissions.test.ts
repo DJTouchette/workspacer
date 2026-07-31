@@ -48,6 +48,47 @@ describe('pluginPermissions', () => {
       mf({ capabilities: [{ method: 'fs.write', paths: ['${agentCwd}', '${pluginDir}'] }] }),
     );
     expect(call.lines[0].detail).toBe("in the agent's folder, its own folder");
+    const [sub] = pluginPermissions(
+      mf({ capabilities: [{ method: 'fs.read', paths: ['${pluginDir}/data'] }] }),
+    );
+    expect(sub.lines[0]).toMatchObject({ detail: 'in its own folder', severity: 'normal' });
+  });
+
+  // The dialog is consent: it has to describe where the scope RESOLVES, not
+  // which token it is spelled with. `${pluginDir}/../..` is the config
+  // directory (remote-token lives there) and used to read as "its own folder".
+  it('describes a scope that climbs out of its binding as outside it, and flags it', () => {
+    const [call] = pluginPermissions(
+      mf({ capabilities: [{ method: 'fs.read', paths: ['${pluginDir}/../..'] }] }),
+    );
+    expect(call.lines[0]).toMatchObject({
+      detail: 'in a folder above its own folder',
+      severity: 'sensitive',
+    });
+    expect(
+      hasSensitivePermission(
+        mf({ capabilities: [{ method: 'fs.read', paths: ['${pluginDir}/../..'] }] }),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not flag `..` that stays inside the binding', () => {
+    const [call] = pluginPermissions(
+      mf({ capabilities: [{ method: 'fs.read', paths: ['${pluginDir}/data/../cache'] }] }),
+    );
+    expect(call.lines[0]).toMatchObject({ detail: 'in its own folder', severity: 'normal' });
+  });
+
+  it('treats a wildcard scope as reaching anywhere', () => {
+    const [call] = pluginPermissions(mf({ capabilities: [{ method: 'fs.read', paths: ['*'] }] }));
+    expect(call.lines[0]).toMatchObject({ detail: 'in anywhere', severity: 'sensitive' });
+  });
+
+  it('shows an absolute scope as written', () => {
+    const [call] = pluginPermissions(
+      mf({ capabilities: [{ method: 'fs.read', paths: ['/etc/hosts'] }] }),
+    );
+    expect(call.lines[0].detail).toBe('in /etc/hosts');
   });
 
   it('flags an unscoped fs.* capability as reaching anywhere on disk', () => {
@@ -75,10 +116,22 @@ describe('pluginPermissions', () => {
     expect(scoped.lines[0].severity).toBe('normal');
   });
 
+  // Answering a capability call puts the plugin in the path of something the
+  // app or another plugin will act on — strictly more than publishing an event.
+  // Every provides line is disclosed as sensitive; `*` (answer everything) was
+  // the broadest grant a manifest can ask for and rendered with no warning.
+  it('flags every provides entry as sensitive, wildcards louder', () => {
+    const [prov] = pluginPermissions(mf({ provides: ['recon.overview', 'recon.*', '*'] }));
+    expect(prov.lines.map((l) => l.severity)).toEqual(['sensitive', 'sensitive', 'sensitive']);
+    expect(prov.lines[0].detail).toBeUndefined();
+    expect(prov.lines[2].detail).toBe('stands in for any matching capability');
+  });
+
   it('hasSensitivePermission reflects any sensitive line', () => {
     expect(hasSensitivePermission(mf({ capabilities: ['agents.list'] }))).toBe(false);
     expect(hasSensitivePermission(mf({ capabilities: ['agents.spawn'] }))).toBe(true);
     expect(hasSensitivePermission(mf({ emits: ['command.*'] }))).toBe(true);
+    expect(hasSensitivePermission(mf({ provides: ['*'] }))).toBe(true);
     expect(hasSensitivePermission(mf({}))).toBe(false);
   });
 });

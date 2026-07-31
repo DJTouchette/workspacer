@@ -34,6 +34,100 @@ pub fn projects_dir() -> Option<PathBuf> {
     Some(base.home_dir().join(".claude").join("projects"))
 }
 
+/// Extra transcript roots learned at spawn time: a session launched with a
+/// profile's `CLAUDE_CONFIG_DIR` writes its JSONL under *that* dir's
+/// `projects/`, not `~/.claude/projects`. `read_at` confines reads to the known
+/// roots, so those dirs have to be registered or profile sessions would lose
+/// their transcripts. Grows only from spawn payloads the daemon itself acted on
+/// — never from a hook's `transcript_path`, which is the untrusted input the
+/// confinement exists to bound.
+static EXTRA_ROOTS: once_cell::sync::Lazy<std::sync::Mutex<Vec<PathBuf>>> =
+    once_cell::sync::Lazy::new(|| std::sync::Mutex::new(Vec::new()));
+
+/// Register a spawn's `CLAUDE_CONFIG_DIR` (if it set one) as a transcript root.
+pub fn allow_spawn_env(env: &std::collections::HashMap<String, String>) {
+    let Some(dir) = env.get("CLAUDE_CONFIG_DIR").map(|d| d.trim()) else {
+        return;
+    };
+    if dir.is_empty() {
+        return;
+    }
+    allow_root(PathBuf::from(dir).join("projects"));
+}
+
+/// Add one directory to the set [`read_at`] will read from.
+pub fn allow_root(root: impl Into<PathBuf>) {
+    let root = root.into();
+    if let Ok(mut roots) = EXTRA_ROOTS.lock() {
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+}
+
+/// Every directory a transcript may legitimately be read from: the default
+/// projects dir plus any profile config dir a spawn declared.
+fn allowed_roots() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = EXTRA_ROOTS.lock().map(|r| r.clone()).unwrap_or_default();
+    if let Some(dir) = projects_dir() {
+        roots.push(dir);
+    }
+    roots
+}
+
+/// The one containment predicate for a `transcript_path`. That field arrives on
+/// the unauthenticated hook ingress and is stored verbatim on the session, so
+/// every consumer of it has to ask this — a guard bolted onto one reader leaves
+/// the others (the conversation tailer, the usage fold) as open a primitive as
+/// before.
+///
+/// Two ways in. A path under a registered root ([`allowed_roots`]) is the
+/// ordinary case. The second exists because those roots are learned from spawn
+/// payloads and therefore die with the process: `claudemon wrap` run in a
+/// terminal that exported `CLAUDE_CONFIG_DIR` never tells the daemon about it,
+/// and a claude child orphaned by a daemon restart keeps posting hooks naming a
+/// profile the new process never registered. Refusing those is silent — zeroed
+/// usage, an empty transcript — so a path is also accepted on *shape*: it must
+/// sit inside the `projects/` directory of a directory that is itself a Claude
+/// config dir. `/etc/passwd`, `~/.claude/history.jsonl` and a private key are
+/// none of those, so the arbitrary-file read stays shut.
+pub fn path_is_allowed(path: &std::path::Path) -> bool {
+    let roots = allowed_roots();
+    // A machine with no home dir and no spawns has nothing to confine to.
+    if roots.is_empty() {
+        return true;
+    }
+    roots.iter().any(|root| is_within(root, path)) || under_a_claude_config_dir(path)
+}
+
+/// True if `path` is `<dir>/projects/**` and `<dir>` looks like a Claude config
+/// dir — named `.claude`, or holding the `settings.json` / `.credentials.json`
+/// Claude Code writes into whatever `CLAUDE_CONFIG_DIR` points at. Lexical apart
+/// from probing the candidate root, and any `..` in the path disqualifies it
+/// outright: a real transcript path never has one, and allowing them would let a
+/// forged hook use a genuine profile as a springboard.
+fn under_a_claude_config_dir(path: &std::path::Path) -> bool {
+    use std::path::Component;
+    if path.components().any(|c| matches!(c, Component::ParentDir)) {
+        return false;
+    }
+    let mut cursor = path.parent();
+    while let Some(dir) = cursor {
+        if dir.file_name().is_some_and(|name| name == "projects") {
+            if let Some(root) = dir.parent() {
+                if root.file_name().is_some_and(|name| name == ".claude")
+                    || root.join("settings.json").is_file()
+                    || root.join(".credentials.json").is_file()
+                {
+                    return true;
+                }
+            }
+        }
+        cursor = dir.parent();
+    }
+    false
+}
+
 /// Claude encodes `/foo/bar` as `-foo-bar` and `C:\foo` as `C--foo`.
 #[allow(dead_code)]
 pub fn encoded_cwd(cwd: &str) -> String {
@@ -80,8 +174,21 @@ pub fn read_for_session(cwd: &str, session_id: &str) -> Result<Transcript> {
 
 /// Parse the transcript at an exact absolute path (the `transcript_path` from
 /// the hook). The authoritative read — no cwd guessing.
+///
+/// Confined by [`path_is_allowed`], like the cwd-driven lookups below.
+/// `transcript_path` arrives from the (unauthenticated) hook ingress and is
+/// stored verbatim on the session, so without this an attacker who can post one
+/// hook points it at any file on disk and reads it back through
+/// `GET /sessions/:id/transcript`. A path the predicate refuses is not read.
 pub fn read_at(path: &str) -> Result<Transcript> {
-    read_transcript_file(PathBuf::from(path))
+    let path = PathBuf::from(path);
+    if !path_is_allowed(&path) {
+        anyhow::bail!(
+            "refusing to read transcript outside the claude projects root: {}",
+            path.display()
+        );
+    }
+    read_transcript_file(path)
 }
 
 fn read_for_cwd_and_session(cwd: &str, session_id: Option<&str>) -> Result<Transcript> {
@@ -511,6 +618,97 @@ mod tests {
 
     fn line(v: serde_json::Value) -> String {
         serde_json::to_string(&v).unwrap()
+    }
+
+    #[test]
+    fn read_at_refuses_a_path_outside_the_projects_root() {
+        // `transcript_path` comes off the unauthenticated hook ingress, so a
+        // forged hook must not turn GET /sessions/:id/transcript into an
+        // arbitrary file read.
+        if projects_dir().is_none() {
+            return; // no home dir to confine to; read_at is unrestricted by design
+        }
+        let err = read_at("/etc/passwd").unwrap_err();
+        assert!(
+            err.to_string().contains("refusing to read transcript"),
+            "got: {err}"
+        );
+        // Traversal back out of the root is caught lexically too.
+        let escape = projects_dir()
+            .unwrap()
+            .join("../../.ssh/id_rsa")
+            .to_string_lossy()
+            .into_owned();
+        assert!(read_at(&escape).is_err());
+    }
+
+    #[test]
+    fn a_spawns_config_dir_becomes_a_transcript_root() {
+        // Profile spawns (`CLAUDE_CONFIG_DIR`) write their JSONL outside
+        // ~/.claude/projects; the confinement must follow them there.
+        let dir = std::env::temp_dir().join(format!("wks-cfgdir-{}", std::process::id()));
+        let root = dir.join("projects");
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("sess.jsonl");
+        fs::write(&file, line(json!({ "type": "summary" })) + "\n").unwrap();
+        let path = file.to_string_lossy().into_owned();
+
+        assert!(read_at(&path).is_err(), "unknown root is refused");
+        allow_spawn_env(&std::collections::HashMap::from([(
+            "CLAUDE_CONFIG_DIR".to_string(),
+            dir.to_string_lossy().into_owned(),
+        )]));
+        assert!(read_at(&path).is_ok(), "registered root is readable");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_profile_transcript_is_readable_without_a_spawn_having_registered_it() {
+        // `claudemon wrap` in a terminal that exported CLAUDE_CONFIG_DIR never
+        // tells the daemon about that dir, and a daemon restart forgets every
+        // root it did learn. Both used to zero the session's usage silently.
+        // The dir is claude-shaped (it holds the settings.json Claude Code
+        // writes), so it is accepted on shape without any allow_root call.
+        let dir = std::env::temp_dir().join(format!(
+            "wks-profile-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let root = dir.join("projects").join("-home-me-work");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(dir.join("settings.json"), "{}").unwrap();
+        let file = root.join("sess.jsonl");
+        fs::write(
+            &file,
+            line(json!({
+                "type": "assistant",
+                "message": { "role": "assistant", "content": "hi" }
+            })) + "\n",
+        )
+        .unwrap();
+
+        let tx = read_at(&file.to_string_lossy()).expect("profile transcript reads");
+        assert_eq!(tx.messages.len(), 1);
+
+        // The shape rule is not a way back out: a real profile must not become a
+        // springboard to anything above its projects dir.
+        let escape = dir
+            .join("projects")
+            .join("../../../../etc/passwd")
+            .to_string_lossy()
+            .into_owned();
+        assert!(read_at(&escape).is_err(), "traversal out of a profile root");
+        // And a claude-shaped dir does not expose the files beside `projects/`.
+        assert!(
+            !under_a_claude_config_dir(&dir.join("settings.json")),
+            "only paths under projects/ are transcripts"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

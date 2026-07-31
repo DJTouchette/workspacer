@@ -147,20 +147,123 @@ func TestFsListDirAllowsTheHomeTreeAndNothingElse(t *testing.T) {
 	}
 }
 
-// The config dir is a root because library items, layouts and profiles live
-// there and the web client edits them through fs.read/fs.write.
-func TestConfigDirIsAWorkspaceRoot(t *testing.T) {
+// The config dir used to be a workspace root wholesale, and this test pinned
+// that. It is the wrong shape: the same directory that holds library/, layouts/
+// and sessions/ (the stores a client legitimately edits) also holds remote-token
+// — the host bus credential. Reading it promotes the caller to a TRUSTED
+// connection, and a trusted connection may call /plugins/install, which runs a
+// command. So a plugin that declared any fs.read path resolving into the config
+// dir had a two-step route from "read a file" to "execute anything".
+//
+// Now: only the three store subtrees are roots, and everything else in the
+// config dir is refused by pathIsSecret even when another root re-admits it.
+func TestConfigStoresAreTheOnlyConfigDirRoots(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	resetCwdCacheForTest()
 	t.Cleanup(resetCwdCacheForTest)
+
 	reg := newRegistry(newClaudemonClient("http://127.0.0.1:1"))
 	roots := reg.workspaceRoots(context.Background())
-	if len(roots) == 0 || roots[len(roots)-1] != configDir() {
-		t.Fatalf("config dir must be a workspace root; got %v", roots)
+	for _, store := range []string{"library", "layouts", "sessions"} {
+		want := filepath.Join(configDir(), store)
+		found := false
+		for _, r := range roots {
+			if r == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s must stay a workspace root (the UI edits it through fs.*); got %v", want, roots)
+		}
+	}
+	for _, r := range roots {
+		if r == configDir() {
+			t.Fatalf("the whole config dir must NOT be a workspace root; got %v", roots)
+		}
+	}
+}
+
+// The deny-list half, and the reason it is a SEPARATE test from the roots half:
+// with no live agents the config dir is already outside every root, so denials
+// there prove nothing about pathIsSecret — stub the second gate out and the
+// assertions still pass. That is the SECURITY.md #8 failure mode (a guard the
+// test never reaches), so this case gives the registry a live agent cwd one
+// level ABOVE the config dir — the "user spawned an agent in $HOME" case — which
+// makes the roots check say yes to everything below and leaves pathIsSecret as
+// the only thing that can refuse.
+func TestConfigDirIsRefusedEvenWhenAnAgentCwdReadmitsIt(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	if err := os.MkdirAll(configDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The agent cwd is the parent of <configDir>, so <configDir>/... is inside a
+	// legitimate root and the roots check cannot be what refuses below.
+	reg := registryWithCwd(t, dir)
+
+	// Not just the credentials: config.yaml is here because updates.channel is
+	// string-concatenated into the electron-updater feed URL, so a write to it
+	// walks around config.save's host-trusted gate on updates.* and relocates the
+	// updater; workspacer.db and the legacy plugin-settings.json overlay hold
+	// session history and pre-migration plaintext plugin secrets.
+	for _, name := range []string{
+		"remote-token", "tokens.json", "remote-server.json", "vapid.json",
+		"config.yaml", "claude-profiles.json", "plugin-settings.json", "workspacer.db",
+	} {
+		p := filepath.Join(configDir(), name)
+		if err := os.WriteFile(p, []byte("s3cret"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := reg.handle(context.Background(), "fs.read",
+			json.RawMessage(`{"path":`+jsonStr(p)+`}`)); err == nil {
+			t.Errorf("fs.read of %s must be denied even with the config dir inside an agent cwd", name)
+		}
+		if _, err := reg.handle(context.Background(), "fs.write",
+			json.RawMessage(`{"path":`+jsonStr(p)+`,"contents":"pwned"}`)); err == nil {
+			t.Errorf("fs.write of %s must be denied even with the config dir inside an agent cwd", name)
+		}
+		if got, err := os.ReadFile(p); err != nil || string(got) != "s3cret" {
+			t.Fatalf("a denied write touched %s: %q (%v)", name, got, err)
+		}
+	}
+
+	// A file the rule invents is as bad as one it misses: the three stores stay
+	// writable through the same wide root.
+	for _, store := range []string{"library", "layouts", "sessions"} {
+		p := filepath.Join(configDir(), store, "item.yaml")
+		if _, err := reg.handle(context.Background(), "fs.write",
+			json.RawMessage(`{"path":`+jsonStr(p)+`,"contents":"ok"}`)); err != nil {
+			t.Errorf("fs.write into %s/ must stay allowed: %v", store, err)
+		}
+	}
+}
+
+// A plugin's own credentials are denied by BASENAME, wherever they resolve: the
+// roots can only be as narrow as the cwds agents run in, and `workspacer plugin
+// dev` drops a .bus-token into whatever directory it is pointed at — including
+// one inside a project another agent is working in.
+func TestPluginCredentialsAreDeniedInsideAnAgentCwd(t *testing.T) {
+	dir := t.TempDir()
+	reg := registryWithCwd(t, dir)
+
+	for _, name := range []string{".bus-token", ".settings.json"} {
+		p := filepath.Join(dir, "plugin", name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("s3cret"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := reg.handle(context.Background(), "fs.read",
+			json.RawMessage(`{"path":`+jsonStr(p)+`}`)); err == nil {
+			t.Errorf("fs.read of %s must be denied even inside an agent cwd", name)
+		}
 	}
 }
 
 // With no live agents and no reachable claudemon, the allow-list must collapse to
-// the config dir — not open up. A shape change in claudemon's /sessions payload
+// the config stores — not open up. A shape change in claudemon's /sessions payload
 // must fail closed for the same reason.
 func TestNoLiveAgentsMeansNoWorkspaceRoots(t *testing.T) {
 	resetCwdCacheForTest()

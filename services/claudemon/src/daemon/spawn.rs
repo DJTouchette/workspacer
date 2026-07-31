@@ -77,6 +77,11 @@ pub async fn handle(
     let cols = payload.cols.unwrap_or(80);
     let rows = payload.rows.unwrap_or(24);
 
+    // A profile spawn's CLAUDE_CONFIG_DIR moves this session's transcript out of
+    // ~/.claude/projects; tell the transcript reader about that root so its
+    // containment check doesn't refuse our own child's file.
+    crate::session::transcript::allow_spawn_env(&payload.env);
+
     let pty_handle = match pty::spawn(
         &payload.argv,
         &cwd,
@@ -281,6 +286,8 @@ pub async fn handle_managed(
         .or_else(|| payload.resume.clone())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let bin = payload.bin.unwrap_or_else(|| payload.provider.clone());
+    // Same as the PTY path: a profile config dir relocates the transcript root.
+    crate::session::transcript::allow_spawn_env(&payload.env);
 
     store.register_managed(&session_id, &payload.cwd, &payload.provider);
     let facade = crate::providers::Facade {
@@ -396,10 +403,71 @@ pub struct ProviderModelsQuery {
     /// config + auth from there). Defaults to the daemon's cwd.
     #[serde(default)]
     pub cwd: Option<String>,
-    /// Resolved launcher binary (the desktop resolves it on PATH); falls back to
-    /// the provider name.
+    /// Deprecated and IGNORED. This used to be the launcher path the desktop had
+    /// resolved on PATH, which made a plain `GET` — the one shape a browser can
+    /// send cross-origin with no preflight, against a daemon that has no token —
+    /// execute a caller-chosen binary. The daemon now resolves the launcher
+    /// itself (see [`resolve_provider_bin`]), exactly like the Go brain's
+    /// `providersListModels`. The field stays accepted so existing clients don't
+    /// start getting 400s; nothing reads it.
     #[serde(default)]
     pub bin: Option<String>,
+}
+
+/// Candidate binary names for a provider, platform-aware — the Rust twin of the
+/// brain's `binNames` / the desktop's `agentProviders.binNames`.
+fn bin_names(provider: &str) -> Vec<String> {
+    if cfg!(windows) {
+        vec![
+            format!("{provider}.cmd"),
+            format!("{provider}.exe"),
+            provider.to_string(),
+        ]
+    } else {
+        vec![provider.to_string()]
+    }
+}
+
+/// Resolve a managed provider's launcher server-side: an explicit override from
+/// the daemon's own environment wins, then a fresh `PATH` probe, then the bare
+/// provider name so a just-installed CLI still works.
+///
+/// The brain's `resolveSpawnBin` has one tier this cannot reach: `config.yaml`'s
+/// `agents.binaries.<provider>`. claudemon has no YAML parser and no config file
+/// of its own, and it used to get that value relayed in the `bin` query param —
+/// which is exactly the caller-supplied-binary hole this route just closed, so
+/// taking it back is not an option. The intended replacement is
+/// `WKS_<PROVIDER>_BIN` (matching the `WKS_CLAUDE_BIN` escape hatch the TUI and
+/// the brain already read), but NOTHING EXPORTS IT YET: the two processes that
+/// launch this daemon — `apps/desktop/src/main/services/claudemonDaemon.ts` and
+/// the hub's daemon supervisor — must copy `config.agents.binaries` into the
+/// child environment for the tier to work. Until they do, a launcher configured
+/// off `PATH` resolves to the bare name here, `list_models` fails, and the Spawn
+/// dialog's model picker soft-fails to free-text entry.
+fn resolve_provider_bin(provider: &str) -> String {
+    let env_key = format!("WKS_{}_BIN", provider.to_uppercase());
+    if let Some(custom) = std::env::var(env_key)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    {
+        return custom;
+    }
+    let names = bin_names(provider);
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            if dir.as_os_str().is_empty() {
+                continue;
+            }
+            for name in &names {
+                let full = dir.join(name);
+                if full.is_file() {
+                    return full.to_string_lossy().into_owned();
+                }
+            }
+        }
+    }
+    provider.to_string()
 }
 
 /// `GET /providers/:provider/models` — list the models a managed provider can
@@ -411,19 +479,24 @@ pub async fn handle_provider_models(
     Path(provider): Path<String>,
     Query(q): Query<ProviderModelsQuery>,
 ) -> impl IntoResponse {
-    let bin = q.bin.unwrap_or_else(|| provider.clone());
+    // Validate the provider *before* resolving anything: the name is a path
+    // segment and feeds a PATH probe, so only the three known ids get that far.
+    if !matches!(provider.as_str(), "opencode" | "codex" | "pi") {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("unsupported managed provider: {provider}"),
+        )
+            .into_response();
+    }
+    if let Some(ignored) = q.bin.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+        tracing::debug!(%provider, ignored, "ignoring caller-supplied models binary");
+    }
+    let bin = resolve_provider_bin(&provider);
     let cwd = q.cwd.unwrap_or_else(|| ".".to_string());
     let result = match provider.as_str() {
         "opencode" => crate::providers::opencode::list_models(&bin, &cwd).await,
         "codex" => crate::providers::codex::list_models(&bin, &cwd).await,
-        "pi" => crate::providers::pi::list_models(&bin, &cwd).await,
-        other => {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!("unsupported managed provider: {other}"),
-            )
-                .into_response();
-        }
+        _ => crate::providers::pi::list_models(&bin, &cwd).await,
     };
     match result {
         Ok(models) => Json(json!({ "models": models })).into_response(),
@@ -431,5 +504,97 @@ pub async fn handle_provider_models(
             tracing::warn!(?err, %provider, "listing provider models failed");
             (StatusCode::BAD_GATEWAY, format!("{err}")).into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_provider_bin_prefers_the_environment_override() {
+        std::env::set_var("WKS_PI_BIN", "  /opt/pi/bin/pi  ");
+        assert_eq!(resolve_provider_bin("pi"), "/opt/pi/bin/pi");
+        std::env::remove_var("WKS_PI_BIN");
+    }
+
+    #[test]
+    fn resolve_provider_bin_falls_back_to_the_bare_name() {
+        // Nothing by this name is on any PATH, so the caller gets the command
+        // name and the spawn fails honestly instead of running something else.
+        assert_eq!(
+            resolve_provider_bin("wks-no-such-provider"),
+            "wks-no-such-provider"
+        );
+    }
+
+    /// The finding: `GET /providers/:provider/models` used to execute the `bin`
+    /// query param, so any page in any browser on this machine could run an
+    /// arbitrary binary against a daemon that has no token. The param is still
+    /// accepted (old clients keep working) but must never be executed.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn provider_models_ignores_a_caller_supplied_binary() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("wks-models-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = |name: &str, marker: &str, body: &str| {
+            let path = dir.join(name);
+            std::fs::write(
+                &path,
+                format!("#!/bin/sh\ntouch {}\n{body}\n", dir.join(marker).display()),
+            )
+            .unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let resolved = script("opencode", "resolved.ran", "echo anthropic/claude-sonnet-4");
+        let attacker = script("attacker", "attacker.ran", "echo evil/model");
+
+        std::env::set_var("WKS_OPENCODE_BIN", &resolved);
+        let resp = handle_provider_models(
+            Path("opencode".to_string()),
+            Query(ProviderModelsQuery {
+                cwd: Some(dir.to_string_lossy().into_owned()),
+                bin: Some(attacker.to_string_lossy().into_owned()),
+            }),
+        )
+        .await
+        .into_response();
+        std::env::remove_var("WKS_OPENCODE_BIN");
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let models: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            models["models"][0]["id"],
+            json!("anthropic/claude-sonnet-4")
+        );
+        assert!(
+            dir.join("resolved.ran").exists(),
+            "the daemon-resolved launcher is the one that ran"
+        );
+        assert!(
+            !dir.join("attacker.ran").exists(),
+            "the caller-supplied binary must never be executed"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn provider_models_rejects_an_unknown_provider() {
+        let resp = handle_provider_models(
+            Path("../../bin/sh".to_string()),
+            Query(ProviderModelsQuery {
+                cwd: None,
+                bin: None,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

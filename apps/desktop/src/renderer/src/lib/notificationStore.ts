@@ -50,6 +50,27 @@ function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 1) + '…';
 }
 
+/**
+ * Keep only a followable link. A notification's `url` is attacker-reachable —
+ * plugins and remote clients post them over the bus — and clicking one lands in
+ * an opener: `shell.openExternal` on the desktop, `window.open` on the web
+ * mirror. The desktop's opener refuses non-http(s) schemes (main/services/
+ * hubCapabilities.openExternalUrl); the web mirror's does not, so a `javascript:`
+ * or `file:` url only had to reach a browser to be honoured. Dropping it here,
+ * at the chokepoint every producer already funnels through, covers both
+ * backends — a second check in webBackend would be a second thing to drift.
+ */
+function safeUrl(url: unknown): string | undefined {
+  if (typeof url !== 'string' || !url.trim()) return undefined;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
+    return url;
+  } catch {
+    return undefined; // relative / unparseable — nothing safe to open
+  }
+}
+
 let counter = 0;
 function nextId(): string {
   counter += 1;
@@ -79,7 +100,7 @@ export function normalizeNotification(
         : fallbackSource,
     sessionId: typeof input.sessionId === 'string' ? input.sessionId : undefined,
     paneType: typeof input.paneType === 'string' ? input.paneType : undefined,
-    url: typeof input.url === 'string' ? input.url : undefined,
+    url: safeUrl(input.url),
     key: typeof input.key === 'string' && input.key ? input.key : undefined,
     createdAt: Date.now(),
     silent: input.silent === true,
@@ -119,17 +140,27 @@ export function loadPersisted(storage: StorageLike): StoredNotification[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(
-        (it): it is StoredNotification =>
-          !!it &&
-          typeof it === 'object' &&
-          typeof (it as StoredNotification).id === 'string' &&
-          typeof (it as StoredNotification).title === 'string' &&
-          typeof (it as StoredNotification).createdAt === 'number',
-      )
-      .map((it) => ({ ...it, level: clampLevel(it.level), read: it.read !== false }))
-      .slice(0, PERSIST_LIMIT);
+    return (
+      parsed
+        .filter(
+          (it): it is StoredNotification =>
+            !!it &&
+            typeof it === 'object' &&
+            typeof (it as StoredNotification).id === 'string' &&
+            typeof (it as StoredNotification).title === 'string' &&
+            typeof (it as StoredNotification).createdAt === 'number',
+        )
+        // Re-vet the url on the way out of storage too: entries written before
+        // the scheme check existed (or by anything else holding this key) are
+        // just as clickable as a fresh one.
+        .map((it) => ({
+          ...it,
+          level: clampLevel(it.level),
+          url: safeUrl(it.url),
+          read: it.read !== false,
+        }))
+        .slice(0, PERSIST_LIMIT)
+    );
   } catch {
     return [];
   }

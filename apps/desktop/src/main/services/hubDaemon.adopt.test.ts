@@ -19,7 +19,12 @@ vi.mock('../lib/daemonUtils', () => ({
   killStaleListener: (...a: unknown[]) => killStaleListener(...a),
   waitForHealth: (...a: unknown[]) => waitForHealth(...a),
   gracefulStop: (...a: unknown[]) => gracefulStop(...a),
-  daemonSpawnOptions: () => ({ stdio: ['pipe', 'pipe', 'pipe'] }),
+  // Mirrors the real helper closely enough to assert what lands in the child's
+  // environment (the token must ride there, not in argv).
+  daemonSpawnOptions: (extraEnv?: Record<string, string>) => ({
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...extraEnv },
+  }),
   PORTS: { claudemonHook: 7890, claudemonApi: 7891, hub: 7895, mcpFacade: 7897 },
   RestartBackoff: class {
     markStarted() {}
@@ -139,6 +144,26 @@ describe('hubDaemon adopt-vs-spawn', () => {
     const child = spawnMock.mock.results[0]!.value;
     await mod.stopHub();
     expect(gracefulStop).toHaveBeenCalledWith(child, 'hub', 6000);
+  });
+
+  // The bus token is minted on every run, not just when remote sharing is on,
+  // so an argv flag would publish it through /proc/<pid>/cmdline (0444) on the
+  // default desktop launch — while the same secret sits at 0600 on disk.
+  it('passes the hub token in the environment, never in argv', async () => {
+    probeHealth.mockResolvedValue(false);
+    const mod = await loadModule();
+    await mod.startHub();
+
+    const [, args, opts] = spawnMock.mock.calls[0] as unknown as [
+      string,
+      string[],
+      { env: Record<string, string> },
+    ];
+    const token = mod.getHubToken();
+    expect(token).not.toBe('');
+    expect(args).not.toContain('--token');
+    expect(args).not.toContain(token);
+    expect(opts.env.HUB_TOKEN).toBe(token);
   });
 
   it('setRemoteShare on an adopted hub persists the flag but does not restart it', async () => {

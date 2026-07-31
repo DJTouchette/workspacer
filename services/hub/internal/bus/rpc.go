@@ -14,6 +14,32 @@ import (
 // into the result frame; a non-nil error becomes an error frame.
 type LocalHandler func(params json.RawMessage) (any, error)
 
+// CallerIdentity is who a local handler is answering. The bus is otherwise
+// identity-free by design — it routes, it doesn't know what a capability means —
+// but a hub-owned capability that stores something OUTLIVING the connection
+// needs to record who asked for it. Web Push is the case that forced this: a
+// subscription registered by a phone survives every reconnect and every
+// restart, so without the subscriber's identity, revoking that phone's token cut
+// its bus access while leaving it notified forever.
+type CallerIdentity struct {
+	// Trusted is the host token (or an operator-tier token, which is promoted to
+	// the same authority at the handshake).
+	Trusted bool
+	// Scope is the tier the connection authenticated as: "operator" for a trusted
+	// conn, the tier name for a scoped user token, empty for a plugin.
+	Scope string
+	// PluginID is set when the caller presented a per-plugin token.
+	PluginID string
+	// TokenID fingerprints the presented credential (see [TokenFingerprint]).
+	// Empty when no token is configured — the loopback default, where there is
+	// no credential to identify.
+	TokenID string
+}
+
+// LocalIdentHandler is a [LocalHandler] that also receives the calling
+// connection's identity. Register with [Server.RegisterLocalIdent].
+type LocalIdentHandler func(caller CallerIdentity, params json.RawMessage) (any, error)
+
 // callTimeout bounds how long a caller waits for a provider's reply.
 const callTimeout = 30 * time.Second
 
@@ -27,14 +53,15 @@ const callTimeout = 30 * time.Second
 // a specific plugin (per-plugin token) with a fixed set of allowed capabilities;
 // call() consults that set via conn.mayCall.
 type router struct {
-	mu        sync.Mutex
-	connSeq   uint64
-	callSeq   uint64
-	conns     map[uint64]*conn
-	providers map[string]uint64       // method -> provider conn id
-	local     map[string]LocalHandler // method -> in-process handler (hub-owned)
-	pending   map[uint64]*pendingCall
-	timeout   time.Duration
+	mu         sync.Mutex
+	connSeq    uint64
+	callSeq    uint64
+	conns      map[uint64]*conn
+	providers  map[string]uint64            // method -> provider conn id
+	local      map[string]LocalHandler      // method -> in-process handler (hub-owned)
+	localIdent map[string]LocalIdentHandler // same, for handlers that need the caller
+	pending    map[uint64]*pendingCall
+	timeout    time.Duration
 }
 
 type pendingCall struct {
@@ -47,11 +74,12 @@ type pendingCall struct {
 
 func newRouter() *router {
 	return &router{
-		conns:     make(map[uint64]*conn),
-		providers: make(map[string]uint64),
-		local:     make(map[string]LocalHandler),
-		pending:   make(map[uint64]*pendingCall),
-		timeout:   callTimeout,
+		conns:      make(map[uint64]*conn),
+		providers:  make(map[string]uint64),
+		local:      make(map[string]LocalHandler),
+		localIdent: make(map[string]LocalIdentHandler),
+		pending:    make(map[uint64]*pendingCall),
+		timeout:    callTimeout,
 	}
 }
 
@@ -99,6 +127,15 @@ func (rt *router) dropConn(cn *conn) {
 func (rt *router) registerLocal(method string, h LocalHandler) {
 	rt.mu.Lock()
 	rt.local[method] = h
+	delete(rt.localIdent, method)
+	rt.mu.Unlock()
+}
+
+// registerLocalIdent installs an in-process handler that is told who called it.
+func (rt *router) registerLocalIdent(method string, h LocalIdentHandler) {
+	rt.mu.Lock()
+	rt.localIdent[method] = h
+	delete(rt.local, method)
 	rt.mu.Unlock()
 }
 
@@ -159,7 +196,13 @@ func (rt *router) call(caller *conn, f Frame) {
 	// connection, and reply directly with the JSON-encoded result.
 	rt.mu.Lock()
 	h, isLocal := rt.local[f.Method]
+	hi, isLocalIdent := rt.localIdent[f.Method]
 	rt.mu.Unlock()
+	if isLocalIdent {
+		h, isLocal = func(params json.RawMessage) (any, error) {
+			return hi(caller.identity(), params)
+		}, true
+	}
 	if isLocal {
 		go func() {
 			res, err := h(f.Params)
@@ -192,11 +235,20 @@ func (rt *router) call(caller *conn, f Frame) {
 	rt.pending[gid] = p
 	rt.mu.Unlock()
 
-	// Forward to the provider keyed by the global id.
-	if err := provider.send(Frame{
-		Op: "call", ID: strconv.FormatUint(gid, 10), Method: f.Method, Params: f.Params,
-	}); err != nil {
-		rt.failCall(gid, "failed to reach provider for "+f.Method)
+	// Forward to the provider keyed by the global id, through this caller's
+	// ordered dispatch queue: off the read loop, so an unresponsive provider can't
+	// head-of-line block everything else this client sends, but still in the order
+	// this client sent them — a goroutine per forward would let one caller's
+	// successive calls arrive inverted, and calls on this path (terminal input) are
+	// order-sensitive. See [conn.forward]. The pending entry is registered above,
+	// so a reply can't outrun the forward.
+	queued := caller.forward(forwardTask{
+		target: provider,
+		frame:  Frame{Op: "call", ID: strconv.FormatUint(gid, 10), Method: f.Method, Params: f.Params},
+		onErr:  func() { rt.failCall(gid, "failed to reach provider for "+f.Method) },
+	})
+	if !queued {
+		rt.failCall(gid, "too many calls queued behind an unresponsive provider for "+f.Method)
 	}
 }
 
@@ -226,7 +278,16 @@ func (rt *router) result(provider *conn, f Frame, isError bool) {
 		out.Op = "result"
 		out.Result = f.Result
 	}
-	_ = caller.send(out)
+	// Off the provider's read loop: the reply crosses to another connection, so
+	// sending it inline lets one slow caller stall every other call this provider
+	// is answering. Deliberately a bare goroutine rather than the provider's
+	// ordered forward queue, which is the opposite choice from the call path
+	// above: replies from one provider go to DIFFERENT callers, so ordering them
+	// would put a wedged caller's reply in front of everyone else's — precisely
+	// the head-of-line stall this is here to avoid. Nothing is lost by it, since
+	// callers correlate replies by id and events already arrive on their own
+	// goroutine, so there was never a total order to preserve.
+	go func() { _ = caller.send(out) }()
 }
 
 func (rt *router) timeoutCall(gid uint64) {
@@ -251,7 +312,7 @@ func (rt *router) failCall(gid uint64, msg string) {
 func (rt *router) methodCount() int {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	return len(rt.providers) + len(rt.local)
+	return len(rt.providers) + len(rt.local) + len(rt.localIdent)
 }
 
 type sendTask struct {

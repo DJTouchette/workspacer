@@ -114,7 +114,9 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
     tracing::info!(%hook_addr, "hook server listening");
     tracing::info!(%api_addr, "api server listening");
 
-    let hook_app = hook::router(store.clone());
+    // Same Host allowlist as the API router below — the hook port is an
+    // unauthenticated write surface and was the one router that never got it.
+    let hook_app = hook::router_with_host(store.clone(), Some(cfg.host.clone()));
     // Retained past the `store` move into ApiState so shutdown can kill the PTY
     // children the daemon spawned (they have no kill-on-drop).
     let store_for_shutdown = store.clone();

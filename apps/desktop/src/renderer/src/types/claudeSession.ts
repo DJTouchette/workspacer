@@ -228,8 +228,16 @@ export interface ClaudeSessionSnapshot {
    *  index = conversationOffset + array index — consumers that key or anchor
    *  by turn index must use the global form, or every key renumbers when a
    *  pane flips between compact (hidden) and full (active) snapshots.
-   *  Undefined/0 on full snapshots from the main process. */
+   *  Nonzero on a full snapshot too, once the main-process cap has trimmed a
+   *  very long session (sessionStore/bounds) — it means "turns dropped from the
+   *  front", not "this is a background snapshot". */
   conversationOffset?: number;
+  /** How many of the turns counted by `conversationOffset` were genuine user
+   *  sends. Banked by both trimmers because it cannot be derived from the turn
+   *  offset (which counts every role), and ClaudePane needs an absolute
+   *  user-send tally to retire its optimistic bubbles — a window-relative count
+   *  goes BACKWARDS when the head is trimmed, which reads as a thread reset. */
+  conversationUserOffset?: number;
   activeToolCalls: ToolCall[];
   completedToolCalls: ToolCall[];
   fileChanges: FileChange[];

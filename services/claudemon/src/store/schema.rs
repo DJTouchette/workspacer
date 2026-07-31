@@ -19,35 +19,78 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         );
     }
 
-    // Step-wise, forward-only migrations. Each block advances the on-disk
-    // `user_version` by exactly one, so a partial run resumes cleanly and every
-    // future upgrade is exercised by construction rather than being an untested
-    // monolith on the day it first ships.
+    // Step-wise, forward-only migrations. Each step runs inside ONE transaction
+    // that covers both its body and its `user_version` bump (see `step`), so a
+    // process death mid-migration leaves the DB either wholly before or wholly
+    // after that step — never applied-but-unstamped, which for a non-replayable
+    // step (`ALTER TABLE … ADD COLUMN`) would make every later `Db::open`, and
+    // therefore daemon boot, fail forever with no way out.
+    //
+    // Write every new step so it is *also* safe to replay (`IF NOT EXISTS`, or a
+    // catalog check like `add_heartbeat_provider`): DBs wedged by the pre-
+    // transaction versions of this code still have to heal on the next boot.
     if current < 1 {
-        conn.execute_batch(SCHEMA_V1)?;
-        conn.pragma_update(None, "user_version", 1)?;
+        step(conn, 1, |c| c.execute_batch(SCHEMA_V1))?;
     }
     if current < 2 {
         // v2: index `last_event_at` — the column `load_recent_sessions` orders by
         // and `Db::prune_archived` both filters and orders on. `IF NOT EXISTS`
         // keeps it safe on a DB that happened to already have it. The next real
         // migration adds its own `if current < 3 { … }` block right here.
-        conn.execute_batch(SCHEMA_V2)?;
-        conn.pragma_update(None, "user_version", 2)?;
+        step(conn, 2, |c| c.execute_batch(SCHEMA_V2))?;
     }
     if current < 3 {
         // v3: keep-warm heartbeats — deliberately their own table, NOT rows in
         // `sessions`, so a warm ping can never surface anywhere sessions do
         // (sidebar, recent list, fleet). See daemon::heartbeat.
-        conn.execute_batch(SCHEMA_V3)?;
-        conn.pragma_update(None, "user_version", 3)?;
+        step(conn, 3, |c| c.execute_batch(SCHEMA_V3))?;
     }
     if current < 4 {
         // v4: heartbeats grow a provider — Codex windows warm too.
-        conn.execute_batch(SCHEMA_V4)?;
-        conn.pragma_update(None, "user_version", 4)?;
+        step(conn, 4, add_heartbeat_provider)?;
     }
     Ok(())
+}
+
+/// Run one migration step atomically: its DDL and the `user_version` bump that
+/// records it commit together or not at all. SQLite's DDL *is* transactional and
+/// `PRAGMA user_version` is journaled with everything else, so the two can share
+/// a transaction — which is the whole point, since the version is what tells the
+/// next boot whether the body already ran.
+fn step(
+    conn: &Connection,
+    version: i32,
+    body: impl FnOnce(&Connection) -> rusqlite::Result<()>,
+) -> Result<()> {
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let applied = body(conn).and_then(|()| conn.pragma_update(None, "user_version", version));
+    match applied {
+        Ok(()) => {
+            conn.execute_batch("COMMIT")?;
+            Ok(())
+        }
+        Err(err) => {
+            // Best-effort: if the rollback itself fails the connection is beyond
+            // saving and the original error is the one worth reporting.
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(anyhow::Error::new(err).context(format!("applying schema v{version}")))
+        }
+    }
+}
+
+/// v4's body. `ALTER TABLE … ADD COLUMN` is the first non-replayable step in
+/// this file — a second run errors with "duplicate column name" — so it checks
+/// the catalog first. That makes the step idempotent for a DB left wedged
+/// (column added, `user_version` still 3) by a kill in the window the old
+/// two-statement migration left open.
+fn add_heartbeat_provider(conn: &Connection) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info('heartbeats') WHERE name = ?1")?;
+    let present = stmt.exists(["provider"])?;
+    drop(stmt);
+    if present {
+        return Ok(());
+    }
+    conn.execute_batch(SCHEMA_V4)
 }
 
 const SCHEMA_V1: &str = r#"
@@ -80,8 +123,10 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_session_time ON events(session_id, timestamp DESC);
 "#;
 
-/// v2 migration. Additive index only — a template for the real column-adding
-/// upgrades to come (`ALTER TABLE … ADD COLUMN …` goes in a block like this).
+/// v2 migration. Additive index only. A column-adding upgrade does NOT belong in
+/// a bare SQL const like this one: it goes through a step body that checks the
+/// catalog first, the way `add_heartbeat_provider` does, so replaying it on a DB
+/// where the column already exists is a no-op rather than an error.
 const SCHEMA_V2: &str = r#"
 CREATE INDEX IF NOT EXISTS sessions_last_event ON sessions(last_event_at DESC);
 "#;
@@ -118,6 +163,61 @@ mod tests {
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
         assert_eq!(v, USER_VERSION);
+    }
+
+    #[test]
+    fn replays_a_step_whose_version_bump_was_lost() {
+        // The wedge the pre-transaction migration could leave behind: v4's
+        // `ALTER TABLE … ADD COLUMN` committed, the `user_version` bump didn't.
+        // Re-running must heal the DB, not fail every boot with "duplicate
+        // column name" — which used to make `Db::open` (and the daemon) dead.
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.pragma_update(None, "user_version", 3).unwrap();
+
+        migrate(&conn).unwrap();
+
+        let v: i32 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, USER_VERSION, "re-stamped to current");
+        let cols: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('heartbeats') WHERE name = 'provider'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cols, 1, "provider column present exactly once");
+    }
+
+    #[test]
+    fn a_failed_step_leaves_neither_body_nor_version() {
+        // Atomicity: the body and the `user_version` bump share one transaction,
+        // so a step that blows up rolls back to the version it started at and the
+        // next run re-applies it from a clean state.
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.pragma_update(None, "user_version", 0).unwrap();
+
+        let err = step(&conn, 1, |c| {
+            c.execute_batch("CREATE TABLE half_applied (x INTEGER); SELECT bad_syntax(")
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("applying schema v1"), "got: {err}");
+
+        let v: i32 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, 0, "version not bumped for a step that failed");
+        let leftovers: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'half_applied'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(leftovers, 0, "the step's partial work was rolled back");
     }
 
     #[test]

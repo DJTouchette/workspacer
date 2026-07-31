@@ -546,10 +546,40 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     installExamplePlugin: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
     removePlugin: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
     setPluginEnabled: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
-    // Minting pane tokens is a trusted-host action (it talks to the hub's
-    // guarded route); a web/remote client can't, so it keeps its existing token.
-    pluginPaneToken: () => Promise.resolve(null),
-    revokePluginPaneToken: () => Promise.resolve(),
+    // Pane tokens are minted over the hub's guarded route, exactly as the
+    // desktop does it — this client holds a bearer token and already uses it for
+    // the sibling /plugins/* routes. It stopped being optional when the shared
+    // layout document stopped carrying busToken: a plugin pane restored from the
+    // layout here has no credential baked into its URL, so this mint is its only
+    // one. A weaker (view/triage) credential gets a non-ok answer and falls back
+    // to null, which is exactly the behaviour this had for every caller before.
+    pluginPaneToken: async (pluginId: string, agentCwd?: string) => {
+      try {
+        const res = await fetch(`${hubHttpBase}/plugins/pane-token`, {
+          method: 'POST',
+          headers: { ...hubAuth, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pluginId, agentCwd: agentCwd ?? '' }),
+          signal: AbortSignal.timeout(3000),
+        });
+        if (!res.ok) return null;
+        const body = (await res.json()) as { token?: string };
+        return body?.token ?? null;
+      } catch {
+        return null;
+      }
+    },
+    revokePluginPaneToken: async (token: string) => {
+      try {
+        await fetch(`${hubHttpBase}/plugins/pane-token/revoke`, {
+          method: 'POST',
+          headers: { ...hubAuth, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token }),
+          signal: AbortSignal.timeout(5000),
+        });
+      } catch {
+        /* best-effort; the hub also sweeps pane tokens on plugin unload */
+      }
+    },
     // Plugin settings live on the hub (the single source of truth, merged over
     // manifest defaults). The web client reads/writes them over the hub's guarded
     // HTTP route and hears about any edit — its own, the desktop's, or another

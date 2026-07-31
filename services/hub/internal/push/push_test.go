@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -134,6 +135,175 @@ func TestUnsubscribeRequiresProofOfPossession(t *testing.T) {
 	reopened, _ := New(dir)
 	if len(reopened.subs) != 0 {
 		t.Fatalf("expected 0 subscriptions after authorized unsubscribe, got %d", len(reopened.subs))
+	}
+}
+
+// subscribeAs registers a device against a token identity, the way the bus
+// wiring does for a real /m subscribe.
+func subscribeAs(t *testing.T, m *Manager, endpoint, tokenID, scope string) {
+	t.Helper()
+	params, _ := json.Marshal(map[string]any{
+		"endpoint": endpoint,
+		"keys":     map[string]string{"p256dh": "pk", "auth": "au-" + endpoint},
+	})
+	if _, err := m.RPCSubscribeAs(Subscriber{TokenID: tokenID, Scope: scope}, params); err != nil {
+		t.Fatalf("RPCSubscribeAs(%s): %v", endpoint, err)
+	}
+}
+
+func endpoints(subs []webpush.Subscription) []string {
+	out := make([]string, 0, len(subs))
+	for _, s := range subs {
+		out = append(out, s.Endpoint)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// The finding: a push subscription outlives the connection that created it, so
+// revoking a device's token cut its bus access while leaving it receiving
+// "<repo> needs you" forever — the only remedy was stopping the hub and editing
+// push-subscriptions.json by hand. Recording the subscriber's token identity
+// makes revocation cut push the same way it cuts the bus.
+func TestRevokedTokenStopsReceivingPushes(t *testing.T) {
+	dir := t.TempDir()
+	m, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	subscribeAs(t, m, "https://push.example/phone", "id-phone", "triage")
+	subscribeAs(t, m, "https://push.example/tablet", "id-tablet", "triage")
+
+	live := map[string]bool{"id-phone": true, "id-tablet": true}
+	m.SetTokenValidator(func(id string) bool { return live[id] })
+
+	if got := endpoints(m.recipients()); len(got) != 2 {
+		t.Fatalf("recipients before revocation = %v, want both devices", got)
+	}
+
+	// `workspacer token revoke` drops the tablet's token from the store.
+	delete(live, "id-tablet")
+	got := endpoints(m.recipients())
+	if len(got) != 1 || got[0] != "https://push.example/phone" {
+		t.Fatalf("recipients after revoking the tablet = %v, want only the phone", got)
+	}
+
+	// Skipped, not deleted: the validator is backed by a file that fails closed
+	// on a transient read error, so a momentary "no" must not unsubscribe every
+	// device permanently.
+	m.mu.Lock()
+	stored := len(m.subs)
+	m.mu.Unlock()
+	if stored != 2 {
+		t.Fatalf("stored subscriptions = %d, want both kept (revocation filters, it does not delete)", stored)
+	}
+
+	// The identity survives a restart, or revocation would only hold until the
+	// hub next started.
+	reopened, err := New(dir)
+	if err != nil {
+		t.Fatalf("New (reopen): %v", err)
+	}
+	reopened.SetTokenValidator(func(id string) bool { return live[id] })
+	if got := endpoints(reopened.recipients()); len(got) != 1 || got[0] != "https://push.example/phone" {
+		t.Fatalf("recipients after restart = %v, want only the phone", got)
+	}
+}
+
+// Two cases that must keep ringing: a hub with no token configured (the
+// loopback default has no revocation authority to consult) and a subscription
+// stored before identity was recorded. Failing closed on either would silently
+// switch off notifications for existing installs.
+func TestUnattributedSubscriptionsStillReceive(t *testing.T) {
+	dir := t.TempDir()
+	old := `[{"endpoint":"https://push.example/legacy","keys":{"p256dh":"pk","auth":"au"}}]`
+	if err := os.WriteFile(filepath.Join(dir, "push-subscriptions.json"), []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if got := endpoints(m.recipients()); len(got) != 1 || got[0] != "https://push.example/legacy" {
+		t.Fatalf("pre-identity subscription did not load: %v", got)
+	}
+	// A validator that rejects everything must not affect it — it has no
+	// recorded credential to check.
+	m.SetTokenValidator(func(string) bool { return false })
+	if got := endpoints(m.recipients()); len(got) != 1 {
+		t.Fatalf("recipients = %v, want the unattributed subscription kept", got)
+	}
+	// And with no validator at all (no token store wired), an attributed
+	// subscription is delivered to as before.
+	subscribeAs(t, m, "https://push.example/new", "id-new", "operator")
+	m.SetTokenValidator(nil)
+	if got := endpoints(m.recipients()); len(got) != 2 {
+		t.Fatalf("recipients with no validator = %v, want both", got)
+	}
+}
+
+// push.list / push.revoke are the operator's remedy: see which devices are
+// registered and cut one without holding its `keys.auth` secret — the
+// proof-of-possession gate on push.unsubscribe is exactly the wrong shape when
+// the device is the thing being revoked.
+func TestListAndRevokeAreTheOperatorRemedy(t *testing.T) {
+	dir := t.TempDir()
+	m, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	subscribeAs(t, m, "https://push.example/phone", "id-phone", "triage")
+	subscribeAs(t, m, "https://push.example/tablet", "id-gone", "triage")
+	subscribeAs(t, m, "https://push.example/tablet2", "id-gone", "triage")
+	m.SetTokenValidator(func(id string) bool { return id == "id-phone" })
+
+	listed, err := m.RPCList(nil)
+	if err != nil {
+		t.Fatalf("RPCList: %v", err)
+	}
+	rows := listed.(map[string]any)["subscriptions"].([]map[string]any)
+	if len(rows) != 3 {
+		t.Fatalf("listed %d subscriptions, want 3", len(rows))
+	}
+	revokedSeen := 0
+	for _, r := range rows {
+		if r["revoked"].(bool) {
+			revokedSeen++
+		}
+		if r["tokenId"] == "" {
+			t.Errorf("row %v has no recorded identity", r)
+		}
+	}
+	if revokedSeen != 2 {
+		t.Fatalf("%d rows flagged revoked, want the 2 registered by the dead token", revokedSeen)
+	}
+
+	// Revoking by token identity clears every device that credential registered,
+	// in one call and without any of their auth secrets.
+	res, err := m.RPCRevoke(json.RawMessage(`{"tokenId":"` + "id-gone" + `"}`))
+	if err != nil {
+		t.Fatalf("RPCRevoke by tokenId: %v", err)
+	}
+	if n := res.(map[string]any)["removed"].(int); n != 2 {
+		t.Fatalf("removed = %d, want 2", n)
+	}
+
+	// Revoking by endpoint takes the remaining one, and the removal persists.
+	if _, err := m.RPCRevoke(json.RawMessage(`{"endpoint":"https://push.example/phone"}`)); err != nil {
+		t.Fatalf("RPCRevoke by endpoint: %v", err)
+	}
+	reopened, _ := New(dir)
+	if len(reopened.subs) != 0 {
+		t.Fatalf("expected 0 subscriptions after revocation, got %d", len(reopened.subs))
+	}
+
+	// A revoke that matches nothing is a no-op success; a revoke naming neither
+	// selector is an error, so a typo can't quietly clear the whole store.
+	if _, err := m.RPCRevoke(json.RawMessage(`{"endpoint":"https://push.example/unknown"}`)); err != nil {
+		t.Fatalf("revoking an unknown endpoint should be a no-op success, got %v", err)
+	}
+	if _, err := m.RPCRevoke(json.RawMessage(`{}`)); err == nil {
+		t.Fatal("expected an error when push.revoke names neither endpoint nor tokenId")
 	}
 }
 

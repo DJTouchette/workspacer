@@ -761,9 +761,14 @@
   }
 
   // Markdown-lite: escape everything, then bring back fences / inline code /
-  // bold. Bubbles use white-space: pre-wrap, so newlines render as-is.
+  // bold. Bubbles use white-space: pre-wrap, so newlines render as-is. The three
+  // passes below measure linear even on adversarial input, so the cap is only
+  // there to stop a multi-megabyte paste rebuilding the whole string three times
+  // on every re-render; it sits far above any real reply, code blocks included.
+  const MAX_MD = 262144;
   function mdLite(text) {
     let s = esc(text);
+    if (s.length > MAX_MD) return s;
     s = s.replace(/```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g, (_, _lang, code) => `<pre>${code.replace(/\n$/, '')}</pre>`);
     s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
     s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');

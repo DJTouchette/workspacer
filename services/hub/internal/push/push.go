@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -39,6 +40,37 @@ type vapidKeys struct {
 	PrivateKey string `json:"privateKey"`
 }
 
+// Subscriber is the identity behind a push registration: which credential the
+// device presented when it subscribed. Recorded so revoking that credential
+// also cuts the notifications — before this, a revoked phone kept getting
+// "<repo> needs you" forever and the only remedy was stopping the hub and
+// editing push-subscriptions.json by hand.
+type Subscriber struct {
+	// TokenID is an opaque, stable fingerprint of the bearer token the
+	// subscribing connection presented — never the token itself, so the
+	// subscription store doesn't become a second place a credential can leak
+	// from. The bus produces it (bus.TokenFingerprint), and whoever wires
+	// SetTokenValidator fingerprints the live token set with that same function;
+	// this package only ever compares the strings. Empty when the hub runs
+	// without a token (the loopback default) or for registrations stored before
+	// identity was recorded.
+	TokenID string
+	// Scope is the tier that token authenticated as ("triage", "operator", …),
+	// kept for the operator listing so a device can be recognized.
+	Scope string
+}
+
+// storedSub is one persisted registration: the browser's PushSubscription plus
+// who registered it. The Subscription is embedded so the on-disk shape stays
+// the array of {endpoint, keys} it always was — a file written before
+// subscriber identity existed loads with an empty [Subscriber].
+type storedSub struct {
+	webpush.Subscription
+	TokenID string    `json:"tokenId,omitempty"`
+	Scope   string    `json:"scope,omitempty"`
+	Created time.Time `json:"created,omitempty"`
+}
+
 // Manager is safe for concurrent use. The snapshot watcher runs on one
 // goroutine (so `states` needs no lock); `subs` is guarded by `mu`.
 type Manager struct {
@@ -47,13 +79,29 @@ type Manager struct {
 	vapidKey string
 
 	mu   sync.Mutex
-	subs map[string]webpush.Subscription // keyed by endpoint
+	subs map[string]storedSub // keyed by endpoint
+	// tokenValid reports whether a recorded token identity is still live. Nil
+	// (the default, and what a hub with no token store has) means "no revocation
+	// authority to consult" — every subscription is delivered to, which is the
+	// behaviour that existed before revocation was wired.
+	tokenValid func(tokenID string) bool
 
 	states map[string]string // sessionId -> last ambientState (watcher goroutine only)
 
 	// notify is called on the un-blocked → blocked edge. Defaults to sendAll;
 	// overridden in tests to observe the transition logic without the network.
 	notify func(title, body, sessionID string)
+}
+
+// SetTokenValidator installs the revocation authority: given the token identity a
+// subscription recorded, it reports whether that credential still exists. The
+// hub backs it with its live token store, so `workspacer token revoke` cuts a
+// device's push the same way it cuts its bus access — no restart, no hand-edit.
+// Subscriptions with no recorded identity are never passed here (see sendAll).
+func (m *Manager) SetTokenValidator(fn func(tokenID string) bool) {
+	m.mu.Lock()
+	m.tokenValid = fn
+	m.mu.Unlock()
 }
 
 // New loads (or generates) the VAPID keypair and loads any stored subscriptions
@@ -66,7 +114,7 @@ func New(dir string) (*Manager, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	m := &Manager{dir: dir, subs: map[string]webpush.Subscription{}, states: map[string]string{}}
+	m := &Manager{dir: dir, subs: map[string]storedSub{}, states: map[string]string{}}
 	m.notify = m.sendAll
 	if err := m.loadVAPID(); err != nil {
 		return nil, err
@@ -104,7 +152,7 @@ func (m *Manager) loadSubs() {
 	if err != nil {
 		return
 	}
-	var list []webpush.Subscription
+	var list []storedSub
 	if json.Unmarshal(data, &list) != nil {
 		return
 	}
@@ -120,7 +168,7 @@ func (m *Manager) loadSubs() {
 
 // persistSubs writes the current set. Caller must hold mu.
 func (m *Manager) persistSubs() {
-	list := make([]webpush.Subscription, 0, len(m.subs))
+	list := make([]storedSub, 0, len(m.subs))
 	for _, s := range m.subs {
 		list = append(list, s)
 	}
@@ -138,8 +186,19 @@ func (m *Manager) RPCKey(_ json.RawMessage) (any, error) {
 	return map[string]string{"publicKey": m.vapidPub}, nil
 }
 
-// RPCSubscribe stores a browser PushSubscription ({ endpoint, keys:{p256dh, auth} }).
+// RPCSubscribe stores a browser PushSubscription ({ endpoint, keys:{p256dh, auth} })
+// with no recorded subscriber. It exists for callers that can't see who is
+// calling; prefer [Manager.RPCSubscribeAs], which records the identity that
+// makes revocation possible.
 func (m *Manager) RPCSubscribe(params json.RawMessage) (any, error) {
+	return m.RPCSubscribeAs(Subscriber{}, params)
+}
+
+// RPCSubscribeAs stores a browser PushSubscription against the credential the
+// calling connection presented. That identity is the whole point: a push
+// registration outlives the connection that made it, so without it a revoked
+// device keeps being notified for as long as the file survives.
+func (m *Manager) RPCSubscribeAs(who Subscriber, params json.RawMessage) (any, error) {
 	var s webpush.Subscription
 	if err := json.Unmarshal(params, &s); err != nil {
 		return nil, err
@@ -148,7 +207,12 @@ func (m *Manager) RPCSubscribe(params json.RawMessage) (any, error) {
 		return nil, errors.New("push.subscribe requires { endpoint, keys:{p256dh, auth} }")
 	}
 	m.mu.Lock()
-	m.subs[s.Endpoint] = s
+	m.subs[s.Endpoint] = storedSub{
+		Subscription: s,
+		TokenID:      who.TokenID,
+		Scope:        who.Scope,
+		Created:      time.Now().UTC().Truncate(time.Second),
+	}
 	m.persistSubs()
 	n := len(m.subs)
 	m.mu.Unlock()
@@ -190,6 +254,80 @@ func (m *Manager) RPCUnsubscribe(params json.RawMessage) (any, error) {
 	delete(m.subs, in.Endpoint)
 	m.persistSubs()
 	return map[string]any{"ok": true}, nil
+}
+
+// RPCList reports every stored subscription with the identity that registered
+// it and whether that identity still resolves. Operator surface: it appears in
+// no scoped tier's method list, so view/triage tokens fail closed on it, and the
+// endpoints it returns are what push.revoke takes. Without it, the set of
+// devices being notified was only visible by reading a file on the hub host.
+func (m *Manager) RPCList(_ json.RawMessage) (any, error) {
+	stored, valid := m.snapshot()
+	out := make([]map[string]any, 0, len(stored))
+	for _, s := range stored {
+		out = append(out, map[string]any{
+			"endpoint": s.Endpoint,
+			"tokenId":  s.TokenID,
+			"scope":    s.Scope,
+			"created":  s.Created,
+			// A subscription whose token no longer resolves is already being
+			// skipped by sendAll; surfacing it here is how an operator sees the
+			// dead weight worth revoking.
+			"revoked": s.TokenID != "" && valid != nil && !valid(s.TokenID),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i]["endpoint"].(string) < out[j]["endpoint"].(string)
+	})
+	return map[string]any{"subscriptions": out}, nil
+}
+
+// snapshot copies the stored subscriptions and the current validator. The
+// validator is host-supplied and reads a file, so it is called on the copy with
+// the lock released — nothing foreign runs under this mutex.
+func (m *Manager) snapshot() ([]storedSub, func(string) bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]storedSub, 0, len(m.subs))
+	for _, s := range m.subs {
+		out = append(out, s)
+	}
+	return out, m.tokenValid
+}
+
+// RPCRevoke drops subscriptions by endpoint or by token identity, with no
+// proof-of-possession — that gate exists on push.unsubscribe so a device can
+// only retire its own registration, which is exactly the wrong shape when the
+// device is the thing you're revoking. This is the operator's remedy (same
+// tier-by-omission as push.list): revoke the credential, then revoke what it
+// registered. Returns how many were removed; removing nothing is not an error.
+func (m *Manager) RPCRevoke(params json.RawMessage) (any, error) {
+	var in struct {
+		Endpoint string `json:"endpoint"`
+		TokenID  string `json:"tokenId"`
+	}
+	if err := json.Unmarshal(params, &in); err != nil {
+		return nil, err
+	}
+	if in.Endpoint == "" && in.TokenID == "" {
+		return nil, errors.New("push.revoke requires { endpoint } or { tokenId }")
+	}
+	m.mu.Lock()
+	removed := 0
+	for endpoint, s := range m.subs {
+		if (in.Endpoint != "" && endpoint == in.Endpoint) || (in.TokenID != "" && s.TokenID == in.TokenID) {
+			delete(m.subs, endpoint)
+			removed++
+		}
+	}
+	if removed > 0 {
+		m.persistSubs()
+	}
+	m.mu.Unlock()
+	if removed > 0 {
+		log.Printf("push: revoked %d subscription(s)", removed)
+	}
+	return map[string]any{"ok": true, "removed": removed}, nil
 }
 
 func (m *Manager) removeEndpoint(endpoint string) {
@@ -267,26 +405,49 @@ func dirName(p string) string {
 	return filepath.Base(p)
 }
 
-// sendAll pushes to every subscription concurrently. Payload is the JSON the
-// service worker's `push` handler reads (title/body/sessionId).
+// sendAll pushes to every still-authorized subscription concurrently. Payload
+// is the JSON the service worker's `push` handler reads (title/body/sessionId).
 //
-// NOTE: this broadcasts every "needs you" push to ALL stored subscriptions with
-// no per-user filtering. That is intentional for the single-operator personal-tool
+// A subscription whose recorded credential no longer resolves is skipped, not
+// deleted: the validator is backed by a file the hub re-reads, and that store
+// fails closed on a transient read error — deleting on a momentary "no" would
+// silently unsubscribe every device. Skipping makes revocation take effect
+// immediately and reversibly; push.revoke is how an operator makes it permanent.
+// A subscription with no recorded identity (registered before identity was
+// tracked, or on a hub running without a token at all) has no credential to
+// check and is delivered to.
+//
+// NOTE: within the authorized set this still broadcasts to ALL devices with no
+// per-user filtering. That is intentional for the single-operator personal-tool
 // model — one person, every device they've installed the /m PWA on should ring.
 // A multi-user deployment would leak one operator's agent activity to another's
-// devices; supporting that would require tagging each subscription with an owner
-// (or session scope) at subscribe time and filtering the recipient set here.
+// devices; supporting that would mean filtering on the subscriber identity
+// recorded here rather than only checking that it is still valid.
 func (m *Manager) sendAll(title, body, sessionID string) {
 	payload, _ := json.Marshal(map[string]string{"title": title, "body": body, "sessionId": sessionID})
-	m.mu.Lock()
-	subs := make([]webpush.Subscription, 0, len(m.subs))
-	for _, s := range m.subs {
-		subs = append(subs, s)
-	}
-	m.mu.Unlock()
-	for _, s := range subs {
+	for _, s := range m.recipients() {
 		go m.sendOne(s, payload)
 	}
+}
+
+// recipients is the authorized subset of the stored subscriptions — the
+// revocation filter itself, split out so it can be asserted on without a
+// network.
+func (m *Manager) recipients() []webpush.Subscription {
+	stored, valid := m.snapshot()
+	subs := make([]webpush.Subscription, 0, len(stored))
+	skipped := 0
+	for _, s := range stored {
+		if s.TokenID != "" && valid != nil && !valid(s.TokenID) {
+			skipped++
+			continue
+		}
+		subs = append(subs, s.Subscription)
+	}
+	if skipped > 0 {
+		log.Printf("push: skipped %d subscription(s) whose token has been revoked", skipped)
+	}
+	return subs
 }
 
 // pushTimeout bounds a single push attempt. Without it these ran with no

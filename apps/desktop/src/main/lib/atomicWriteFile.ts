@@ -26,6 +26,39 @@ export interface AtomicWriteOptions {
 let seq = 0;
 
 /**
+ * Push the temp file's contents to the disk before it is renamed into place.
+ *
+ * The rename is atomic against other READERS, but it says nothing about
+ * durability: after a crash or power loss the directory entry can have reached
+ * the disk while the contents are still in the page cache, leaving a
+ * correctly-named EMPTY file — worse than the half-written file this module
+ * exists to prevent, because the old copy it replaced is already gone. The Go
+ * twin does the same with tmp.Sync().
+ *
+ * Best-effort on purpose: a filesystem that can't flush shouldn't turn a
+ * successful save into a failed one, and the rename below still publishes the
+ * data.
+ */
+function fsyncFile(p: string): void {
+  let fd: number | undefined;
+  try {
+    // 'r+' rather than 'r': Windows' FlushFileBuffers needs write access.
+    fd = fs.openSync(p, 'r+');
+    fs.fsyncSync(fd);
+  } catch {
+    /* durability is best-effort; the write itself already succeeded */
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* nothing useful to do with a close failure here */
+      }
+    }
+  }
+}
+
+/**
  * Atomically write `data` to `filePath`. Creates the parent directory if
  * needed. Preserves `opts.mode` (chmod'd after write for filesystems that
  * ignore the open-time mode) and `opts.encoding` (default utf-8).
@@ -53,6 +86,7 @@ export function atomicWriteFileSync(
 
   try {
     fs.writeFileSync(tmp, data, writeOpts);
+    fsyncFile(tmp);
     if (opts.mode !== undefined) {
       try {
         fs.chmodSync(tmp, opts.mode);

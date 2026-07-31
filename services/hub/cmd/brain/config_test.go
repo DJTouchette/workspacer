@@ -191,6 +191,41 @@ func TestConfigSaveReloadRoundTrip(t *testing.T) {
 	}
 }
 
+// TestConfigSaveIgnoresUpdatesFromTheBus: `updates` is host-trusted. Every
+// config.save the brain answers came off the bus (a web/remote client, a plugin,
+// an agent via the MCP facade), and updates.channel is string-concatenated into
+// the electron-updater feed URL the desktop then downloads and installs from —
+// so honouring it hands a remote caller persistent code execution wearing the
+// app's own update dialog. The rest of the same save must still apply, or a
+// client that happens to echo the whole config back loses every setting.
+func TestConfigSaveIgnoresUpdatesFromTheBus(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	reg := newRegistry(newClaudemonClient("http://127.0.0.1:1"))
+	params := `{"ui":{"theme":"nord"},"updates":{"channel":"../../attacker/repo","enabled":false}}`
+	if _, err := reg.handle(context.Background(), "config.save", json.RawMessage(params)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Read from disk, not from the in-memory merge: the file is what the desktop
+	// updater reads at boot.
+	onDisk := newConfigService().get()
+	updates, _ := onDisk["updates"].(map[string]any)
+	if updates == nil {
+		t.Fatal("updates section missing from the persisted config")
+	}
+	if updates["channel"] != "latest" {
+		t.Errorf("a bus config.save rewrote updates.channel to %v — the updater feed is caller-controlled", updates["channel"])
+	}
+	if updates["enabled"] != true {
+		t.Errorf("a bus config.save disabled auto-update (enabled=%v)", updates["enabled"])
+	}
+	if ui, _ := onDisk["ui"].(map[string]any); ui["theme"] != "nord" {
+		t.Errorf("the rest of the save must still persist, theme = %v", ui["theme"])
+	}
+}
+
 func TestMigrateKeybindingsLegacyVim(t *testing.T) {
 	cfg := defaultConfig()
 	cfg["keybindings"] = map[string]any{"mode": "vim", "leader": "space"} // legacy shape

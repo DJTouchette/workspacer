@@ -76,6 +76,7 @@ import { useLibrary } from '../hooks/useLibrary';
 import { runLibraryItem } from '../lib/libraryBus';
 import type { SlashItem } from '../lib/slashItems';
 import type { LibraryItem } from '../types/library';
+import { countUserSends } from '../../../main/shared/conversationCount';
 
 /**
  * Map a submitted answer payload back to human-readable display strings (one per
@@ -1088,44 +1089,46 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // Drop optimistic entries FIFO as session.conversation grows past the
   // count we last consumed. This avoids content-matching pitfalls.
   useEffect(() => {
-    // Compact (hidden-pane) snapshots drop leading turns, so their user-turn
-    // count is not comparable to the full-snapshot count this ref tracks —
-    // treating that drop as a thread reset wiped optimistic state and the
-    // answered-question cards on every agent switch. Only full snapshots
-    // (conversationOffset 0) take part in the count bookkeeping.
-    if ((session?.conversationOffset ?? 0) === 0) {
-      // Count only genuine user sends. conversationApplier also pushes a synthetic
-      // "nameless command card" (role:'user', command.name === '') for orphaned
-      // command_output whose invocation scrolled out — that is NOT a user send and
-      // must not dequeue a pending optimistic bubble.
-      const userCount = (session?.conversation ?? []).filter(
-        (t) => t.role === 'user' && t.command?.name !== '',
-      ).length;
-      if (userCount < consumedUserCountRef.current) {
-        // The conversation reset under the same session id (managed-provider
-        // restart starts a fresh provider-side thread). Re-baseline the consumed
-        // count and drop optimistic turns — their real counterparts belong to
-        // the old thread and will never arrive to dequeue them.
-        consumedUserCountRef.current = userCount;
-        setOptimisticMessages([]);
-        // The old thread's answered-question cards anchored to indices that no
-        // longer exist — drop them so they don't render against the new thread.
-        setResolvedQuestions([]);
-      } else if (userCount > consumedUserCountRef.current) {
-        const newlyConsumed = userCount - consumedUserCountRef.current;
-        consumedUserCountRef.current = userCount;
-        setOptimisticMessages((prev) =>
-          newlyConsumed >= prev.length ? [] : prev.slice(newlyConsumed),
-        );
-        // A real user turn landing for THIS send is itself proof the daemon
-        // engaged — even if the turn never drove a visible thinking/streaming
-        // state (an instant no-op command like /model, or a thinking snapshot
-        // coalesced away by store batching). Count it as server activity so the
-        // idle-clear below can retire the optimistic spinner instead of spinning
-        // forever. (The pre-send idle snapshot never grows userCount, so this
-        // still cannot fire before the turn is acknowledged.)
-        sawServerActivitySinceSendRef.current = true;
-      }
+    // The tally is ABSOLUTE: user sends still in the window, plus the ones both
+    // trimmers banked when they dropped turns off the front. That is what makes
+    // it comparable across every shape a snapshot takes — a compact (hidden
+    // pane) snapshot holds a 12-turn tail, and a full snapshot of a very long
+    // session has been trimmed by the main-process cap. A window-relative count
+    // goes BACKWARDS in both cases, which the reset branch below would read as
+    // a fresh thread, wiping optimistic state and the answered-question cards
+    // on every agent switch. Counting absolutely means no snapshot has to be
+    // excluded from the bookkeeping at all.
+    //
+    // countUserSends is shared with both trimmers (main/shared) so all three
+    // agree on what a user send is: conversationApplier also pushes a synthetic
+    // "nameless command card" (role:'user', command.name === '') for orphaned
+    // command_output whose invocation scrolled out, and that is not a send.
+    const userCount =
+      (session?.conversationUserOffset ?? 0) + countUserSends(session?.conversation ?? []);
+    if (userCount < consumedUserCountRef.current) {
+      // The conversation reset under the same session id (managed-provider
+      // restart starts a fresh provider-side thread). Re-baseline the consumed
+      // count and drop optimistic turns — their real counterparts belong to
+      // the old thread and will never arrive to dequeue them.
+      consumedUserCountRef.current = userCount;
+      setOptimisticMessages([]);
+      // The old thread's answered-question cards anchored to indices that no
+      // longer exist — drop them so they don't render against the new thread.
+      setResolvedQuestions([]);
+    } else if (userCount > consumedUserCountRef.current) {
+      const newlyConsumed = userCount - consumedUserCountRef.current;
+      consumedUserCountRef.current = userCount;
+      setOptimisticMessages((prev) =>
+        newlyConsumed >= prev.length ? [] : prev.slice(newlyConsumed),
+      );
+      // A real user turn landing for THIS send is itself proof the daemon
+      // engaged — even if the turn never drove a visible thinking/streaming
+      // state (an instant no-op command like /model, or a thinking snapshot
+      // coalesced away by store batching). Count it as server activity so the
+      // idle-clear below can retire the optimistic spinner instead of spinning
+      // forever. (The pre-send idle snapshot never grows userCount, so this
+      // still cannot fire before the turn is acknowledged.)
+      sawServerActivitySinceSendRef.current = true;
     }
     // Clear optimistic loading once the server has actually engaged. A chat
     // message is normally sent from an *idle* prompt, so the pre-send idle
@@ -1141,7 +1144,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     ) {
       setOptimisticLoading(false);
     }
-  }, [session?.conversation, session?.ambientState, optimisticLoading]);
+  }, [
+    session?.conversation,
+    session?.conversationUserOffset,
+    session?.ambientState,
+    optimisticLoading,
+  ]);
 
   // ── Derived data ──
 

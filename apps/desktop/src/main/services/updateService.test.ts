@@ -127,11 +127,54 @@ describe('updateService – gating', () => {
     svc.stop();
   });
 
-  it('applies the configured channel to the updater', async () => {
+  it('applies a well-formed configured channel to the updater', async () => {
     configValue = { updates: { enabled: true, channel: 'beta' } };
     const svc = await loadService();
     svc.start(fakeWindow());
     expect(autoUpdater.channel).toBe('beta');
+    svc.stop();
+  });
+
+  // This used to assert VERBATIM pass-through of updates.channel. It isn't:
+  // the channel is concatenated into the feed URL and is writable by anything
+  // that can call config.save (bus + MCP facade included), so a traversal or a
+  // scheme-relative value would repoint the updater at someone else's release
+  // feed — code execution as the user, presented through our own install dialog.
+  it('falls back to latest for a channel that could repoint the feed URL', async () => {
+    for (const hostile of [
+      '../../attacker/workspacer/releases/latest',
+      '..',
+      '/etc/passwd',
+      '//evil.example.com/feed',
+      'https://evil.example.com/latest',
+      'beta/../../evil',
+      '.hidden',
+      '-flag',
+      'has space',
+    ]) {
+      configValue = { updates: { enabled: true, channel: hostile } };
+      const svc = await loadService();
+      svc.start(fakeWindow());
+      expect(autoUpdater.channel, hostile).toBe('latest');
+      svc.stop();
+    }
+  });
+
+  it('keeps ordinary channel names intact', async () => {
+    for (const ok of ['latest', 'beta', 'alpha', 'next-2', 'rc_1', '1.2.x']) {
+      configValue = { updates: { enabled: true, channel: ok } };
+      const svc = await loadService();
+      svc.start(fakeWindow());
+      expect(autoUpdater.channel, ok).toBe(ok);
+      svc.stop();
+    }
+  });
+
+  it('falls back to latest for a non-string channel', async () => {
+    configValue = { updates: { enabled: true, channel: { evil: true } } };
+    const svc = await loadService();
+    svc.start(fakeWindow());
+    expect(autoUpdater.channel).toBe('latest');
     svc.stop();
   });
 });

@@ -49,6 +49,34 @@ function layoutsDir(): string {
 
 const slug = slugLayout;
 
+/**
+ * Resolve the file for a layout id. `layouts.save` is reachable from the bus
+ * (web / remote / MCP) and either provider may answer it — the Go brain is the
+ * default — so this mirrors layoutFilePath in cmd/brain/stores.go rule for rule,
+ * or the same call succeeds here and errors there depending on a delegation flag.
+ *
+ * An id carrying a separator or a `..` is an escape attempt rather than an
+ * untidy name (taken verbatim, `../config` wrote over the user's config.yaml,
+ * and since the clobbered file still parses there is no .broken-* backup to
+ * recover themes/keybindings/budgets from), so it is refused rather than quietly
+ * slugged onto some unrelated layout's file. Everything else is slugged, which
+ * is what remove has always done — save used the raw id, so the two disagreed on
+ * the filename for any id that wasn't already a slug.
+ */
+function layoutFilePath(id: string): string {
+  if (/[\\/]/.test(id) || id.includes('..')) {
+    throw new Error('layout id must not contain a path separator');
+  }
+  const full = path.join(layoutsDir(), `${slug(id)}.yaml`);
+  // Belt and braces: the reject above plus slugging already strip separators,
+  // but re-assert the joined path really is a direct child of the layouts dir so
+  // a future change to the slug charset can't quietly reopen the escape.
+  if (path.dirname(path.resolve(full)) !== path.resolve(layoutsDir())) {
+    throw new Error('layout id resolves outside the layouts directory');
+  }
+  return full;
+}
+
 class LayoutService {
   private ensureDir(): void {
     fs.mkdirSync(layoutsDir(), { recursive: true });
@@ -76,23 +104,33 @@ class LayoutService {
 
   save(input: { id?: string; name: string; agents: LayoutAgent[] }): Layout {
     this.ensureDir();
-    const id = input.id || slug(input.name);
+    // Only an explicitly supplied id faces the separator rejection; a *name* is
+    // user prose that may legitimately contain a slash, so it becomes an id by
+    // slugging first — the same order as the brain's saveLayout.
+    const rawId = input.id || slug(input.name);
+    const file = layoutFilePath(rawId);
+    // The stored id is the slug we actually wrote under, so a later remove() —
+    // which re-slugs too — finds this file.
+    const id = slug(rawId);
     const layout: Layout = {
       id,
       name: input.name.trim() || id,
       createdAt: new Date().toISOString(),
       agents: input.agents ?? [],
     };
-    atomicWriteFileSync(
-      path.join(layoutsDir(), `${id}.yaml`),
-      yaml.dump(layout, { lineWidth: -1 }),
-    );
+    atomicWriteFileSync(file, yaml.dump(layout, { lineWidth: -1 }));
     return layout;
   }
 
   remove(id: string): void {
+    let file: string;
     try {
-      fs.unlinkSync(path.join(layoutsDir(), `${slug(id)}.yaml`));
+      file = layoutFilePath(id);
+    } catch {
+      return; // as in the brain: a separator-carrying id names no layout to remove
+    }
+    try {
+      fs.unlinkSync(file);
     } catch {
       /* already gone */
     }

@@ -252,10 +252,11 @@ func main() {
 	// next connection without restarting the hub — no minting endpoint needed.
 	// The host token itself never goes through this path: it stays trusted
 	// (implicit operator), which is what keeps every existing pairing working.
+	var tokenStore *authtoken.Store
 	if *tokensFile != "" {
-		store := authtoken.NewStore(*tokensFile)
+		tokenStore = authtoken.NewStore(*tokensFile)
 		srv.SetScopedTokenLookup(func(tok string) (bus.ScopedIdent, bool) {
-			rec, ok := store.Lookup(tok)
+			rec, ok := tokenStore.Lookup(tok)
 			if !ok {
 				return bus.ScopedIdent{}, false
 			}
@@ -284,8 +285,18 @@ func main() {
 		pushMgr = nil
 	} else {
 		srv.RegisterLocal("push.key", pushMgr.RPCKey)
-		srv.RegisterLocal("push.subscribe", pushMgr.RPCSubscribe)
+		// Subscribe records WHICH credential asked, because the subscription it
+		// stores outlives the connection: without the identity, revoking a
+		// phone's token cut its bus access and left it notified forever.
+		srv.RegisterLocalIdent("push.subscribe", func(c bus.CallerIdentity, p json.RawMessage) (any, error) {
+			return pushMgr.RPCSubscribeAs(push.Subscriber{TokenID: c.TokenID, Scope: c.Scope}, p)
+		})
 		srv.RegisterLocal("push.unsubscribe", pushMgr.RPCUnsubscribe)
+		pushMgr.SetTokenValidator(pushTokenValidator(*token, tokenStore))
+		// Operator-only by construction: neither method appears in the view or
+		// triage allowlists, so a scoped token cannot reach them.
+		srv.RegisterLocal("push.list", pushMgr.RPCList)
+		srv.RegisterLocal("push.revoke", pushMgr.RPCRevoke)
 	}
 
 	// guard wraps a mutating/sensitive route so it requires the bus token.
@@ -742,4 +753,26 @@ func main() {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(shutCtx)
+}
+
+// pushTokenValidator is the revocation authority behind a stored push
+// subscription's recorded identity: given the token fingerprint a subscription
+// was registered with, it reports whether that credential is still live, so
+// `workspacer token revoke` cuts a device's notifications the same way it cuts
+// its bus access.
+//
+// Two live credentials are deliberately absent from the scoped store and must
+// still validate, or turning this on would silently cut push for every device
+// that ever paired: the empty fingerprint (a hub running with no token — the
+// loopback default — and any subscription written before identity was
+// recorded), and the host pairing token, which stays trusted rather than
+// becoming a scoped record.
+func pushTokenValidator(hostToken string, store *authtoken.Store) func(string) bool {
+	hostFP := bus.TokenFingerprint(hostToken)
+	return func(tokenID string) bool {
+		if tokenID == "" || (hostFP != "" && tokenID == hostFP) {
+			return true
+		}
+		return store != nil && store.HasFingerprint(tokenID, bus.TokenFingerprint)
+	}
 }

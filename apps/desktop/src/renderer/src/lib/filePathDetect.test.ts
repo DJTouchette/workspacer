@@ -95,3 +95,42 @@ describe('linkifyText (prose)', () => {
     expect(linkifyText('no paths here at all')).toEqual(['no paths here at all']);
   });
 });
+
+/**
+ * Everything this module scans is agent-written, i.e. whatever a prompt-injected
+ * agent was told to emit. The scan therefore has to be linear in the input: the
+ * two shapes below each used to be quadratic and froze the renderer for seconds
+ * on input a chat message can carry.
+ */
+describe('linkifyText — pathological input stays bounded', () => {
+  const budget = (label: string, fn: () => void, ms: number) => {
+    const t0 = performance.now();
+    fn();
+    const took = performance.now() - t0;
+    expect(took, `${label} took ${Math.round(took)}ms (budget ${ms}ms)`).toBeLessThan(ms);
+  };
+
+  it('does not peel a huge punctuation run one character at a time', () => {
+    // The old anchored /[punct]+$/ test was re-run after every stripped
+    // character. At the largest input the 50 KB guard lets through — which a
+    // single chat line can carry — that measured ~850ms, per re-parse, on the
+    // streaming hot path.
+    const text = '/a' + '.'.repeat(49_000);
+    budget('trailing-punctuation strip', () => expect(linkifyText(text)).toEqual([text]), 300);
+  });
+
+  it('drops a candidate run far longer than any path instead of vetting it', () => {
+    // One unbroken 40 KB non-whitespace run is a single candidate. Nothing it
+    // could shed makes it path-length, so it must not be walked at all.
+    const text = '[a](/b'.repeat(7_000);
+    budget('candidate scan', () => expect(linkifyText(text)).toEqual([text]), 300);
+  });
+
+  it('still links a real path that trails one or two punctuation marks', () => {
+    // The bounded strip loop must not have cost the ordinary case.
+    const parts = linkifyText('(see src/a.ts).');
+    expect(parts.filter((p) => typeof p !== 'string').map((p) => (p as DetectedPath).path)).toEqual(
+      ['src/a.ts'],
+    );
+  });
+});

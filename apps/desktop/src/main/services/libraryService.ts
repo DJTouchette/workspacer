@@ -63,6 +63,26 @@ export interface LibraryItem {
 
 const slug = slugLibrary;
 
+/**
+ * Claude-scoped ids are real on-disk basenames rather than slugs (see
+ * readClaudeItems — the 1:1 map back to disk is what makes in-place edits of a
+ * `My.Skill` directory work), so they reach path.join unfiltered. That is a path
+ * injection point now that `library.save` / `library.remove` are bus-reachable:
+ * an id of `../../..` pointed saveClaude's write — and remove's recursive rmSync
+ * — anywhere on disk. Slugging is not an option here without breaking
+ * non-slug-stable names, so instead require what a basename actually is: one
+ * path segment, neither `.` nor `..`, no separator of either flavour (a
+ * backslash is only a separator on win32, but a Windows-shaped id is never a
+ * legitimate item name on any platform).
+ */
+function assertPlainBasename(id: string): string {
+  const name = String(id ?? '');
+  if (!name || name === '.' || name === '..' || /[\\/]/.test(name) || path.isAbsolute(name)) {
+    throw new Error(`invalid library item id: ${id}`);
+  }
+  return name;
+}
+
 function globalDir(): string {
   return path.join(getConfigDir(), 'library');
 }
@@ -333,7 +353,8 @@ class LibraryService {
       input.kind === 'agent' ? 'agent' : input.kind === 'command' ? 'command' : 'skill';
     // An existing item's id IS its real on-disk basename (see readClaudeItems),
     // so edit it in place; only slug when minting a brand-new item from a title.
-    const id = input.id ? input.id : slug(input.title);
+    // A supplied id is still caller data, so it must look like a basename.
+    const id = input.id ? assertPlainBasename(input.id) : slug(input.title);
     const full =
       kind === 'skill'
         ? path.join(claudeSkillsDir(cwd), id, 'SKILL.md')
@@ -370,23 +391,26 @@ class LibraryService {
     if (scope === 'claude') {
       const root = cwd || process.cwd();
       // The id is the item's real on-disk basename (from list()); use it verbatim
-      // rather than re-slugging, or a non-slug-stable name unlinks nothing.
+      // rather than re-slugging, or a non-slug-stable name unlinks nothing — but
+      // verbatim means it must first be proven to BE a basename, because the
+      // skill branch below is a recursive, force rmSync.
+      const name = assertPlainBasename(id);
       if (kind === 'agent') {
         try {
-          fs.unlinkSync(path.join(claudeAgentsDir(root), `${id}.md`));
+          fs.unlinkSync(path.join(claudeAgentsDir(root), `${name}.md`));
         } catch {
           /* already gone */
         }
       } else if (kind === 'command') {
         try {
-          fs.unlinkSync(path.join(claudeCommandsDir(root), `${id}.md`));
+          fs.unlinkSync(path.join(claudeCommandsDir(root), `${name}.md`));
         } catch {
           /* already gone */
         }
       } else {
         // A skill is a directory (SKILL.md + optional resources)
         try {
-          fs.rmSync(path.join(claudeSkillsDir(root), id), { recursive: true, force: true });
+          fs.rmSync(path.join(claudeSkillsDir(root), name), { recursive: true, force: true });
         } catch {
           /* already gone */
         }

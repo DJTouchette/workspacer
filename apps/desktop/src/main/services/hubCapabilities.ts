@@ -71,7 +71,15 @@ function detectDefaultShell(): string {
 // the directories the web workspace legitimately touches:
 //
 //   - each live agent's cwd — the workspaces the editor / search / watch act on
-//   - the workspacer config dir — its own settings / library / handoff files
+//   - the three config-dir subtrees the UI actually edits (library/, layouts/,
+//     sessions/) — NOT the config dir as a whole. The config dir is where
+//     remote-token, tokens.json, remote-server.json, vapid.json and every
+//     installed plugin's .bus-token / plaintext .settings.json live, so a root
+//     that spans it hands any caller the credential that would promote it to a
+//     `trusted` bus connection. Those subtrees are all the file-level access the
+//     web client ever needed; everything else in the config dir is reached
+//     through a typed capability (config.get/save, layouts.*, library.*), never
+//     through fs.*.
 //
 // The directory *picker* (fs.listDir) additionally allows browsing the home tree,
 // since its whole job is choosing a not-yet-open working directory for a new agent
@@ -79,7 +87,9 @@ function detectDefaultShell(): string {
 // intersects a plugin's own fs grant with these roots; a plugin needing fs access
 // to a root outside the workspace would need that root added here (or a per-caller
 // identity seam) — acceptable today since plugin fs grants target project files,
-// which are agent cwds.
+// which are agent cwds. The one grant this narrowing takes away is a `${pluginDir}`
+// fs scope (that dir is under the config dir): no catalog plugin declares one, and
+// a sidecar reads its own directory with local Node fs rather than over the bus.
 
 /**
  * Canonicalize `p`: absolute, with `..` and symlinks resolved. For a target that
@@ -106,6 +116,21 @@ function canonicalizePath(p: string): string {
   }
 }
 
+/** Canonical form of an allowed root: realpath when it exists, plain resolve when not. */
+function canonicalRoot(root: string): string {
+  try {
+    return fs.realpathSync(root);
+  } catch {
+    return path.resolve(root);
+  }
+}
+
+/** True when an already-canonicalized `target` sits at or inside `root`. */
+function isWithin(canonicalTarget: string, root: string): boolean {
+  const cr = canonicalRoot(root);
+  return canonicalTarget === cr || canonicalTarget.startsWith(cr + path.sep);
+}
+
 /** True when `target` canonicalizes to a location at or inside one of `roots`. */
 function pathWithinRoots(roots: string[], target: string): boolean {
   let ct: string;
@@ -114,24 +139,49 @@ function pathWithinRoots(roots: string[], target: string): boolean {
   } catch {
     return false; // couldn't verify → deny
   }
-  return roots.some((r) => {
-    let cr: string;
-    try {
-      cr = fs.realpathSync(r);
-    } catch {
-      cr = path.resolve(r);
-    }
-    return ct === cr || ct.startsWith(cr + path.sep);
-  });
+  return roots.some((r) => isWithin(ct, r));
 }
 
-/** Workspace roots for content-touching fs.* calls: live agent cwds + config dir. */
+/** The config-dir subtrees the web/remote UI legitimately reads and writes.
+ *  Mirrors configStoreRoots() in the Go brain (cmd/brain/fsguard.go) — the brain
+ *  is the DEFAULT answerer for fs.*, so the two lists have to be the same list. */
+function configStoreRoots(): string[] {
+  const cfg = getConfigDir();
+  return [path.join(cfg, 'library'), path.join(cfg, 'layouts'), path.join(cfg, 'sessions')];
+}
+
+/** Credential files denied by name wherever they resolve — a root is only as
+ *  narrow as the cwds an agent runs in, and `workspacer plugin dev <dir>` puts a
+ *  .bus-token inside an ordinary project. Same list as the brain's. */
+const SECRET_BASENAMES = new Set(['.bus-token', '.settings.json']);
+
+/**
+ * Second gate, applied to every guarded path after the roots check — reads AND
+ * writes, because handing a token out is a privilege promotion and overwriting
+ * one is a denial of service on the whole bus.
+ *
+ * Narrowing the config root is not enough on its own: an agent cwd is a root
+ * too, so a user who spawns an agent in `$HOME` (or `~/.config`) re-admits the
+ * entire config dir through THAT root. Anything landing in the config dir
+ * outside library/ layouts/ sessions/ is therefore refused here regardless of
+ * which root allowed it. (The Go twin denies the named files — remote-token,
+ * tokens.json, remote-server.json, vapid.json — where this denies the whole
+ * remainder of the dir, which also covers workspacer.db and the Electron cookie
+ * jar; stricter in the same direction, never looser.)
+ */
+function isSecretPath(canonicalTarget: string): boolean {
+  if (SECRET_BASENAMES.has(path.basename(canonicalTarget))) return true;
+  if (!isWithin(canonicalTarget, getConfigDir())) return false;
+  return !configStoreRoots().some((r) => isWithin(canonicalTarget, r));
+}
+
+/** Workspace roots for content-touching fs.* calls: live agent cwds + config stores. */
 function workspaceRoots(): string[] {
   const roots = new Set<string>();
   for (const s of claudeSessionStore.getAllSnapshots()) {
     if (s.cwd) roots.add(s.cwd);
   }
-  roots.add(getConfigDir());
+  for (const r of configStoreRoots()) roots.add(r);
   return [...roots];
 }
 
@@ -140,10 +190,46 @@ function browseRoots(): string[] {
   return [os.homedir(), ...workspaceRoots()];
 }
 
-/** Reject a call whose path escapes the allowed roots. */
+/** Reject a call whose path escapes the allowed roots or lands on a credential
+ *  file. One message for both refusals, matching the brain word for word: it
+ *  goes to a remote caller, and confirming where a denied path landed (or that
+ *  it hit something worth protecting) is a probe primitive. */
 function assertPathAllowed(cap: string, target: string, roots: string[]): void {
-  if (!pathWithinRoots(roots, target)) {
-    throw new Error(`${cap}: path is outside the allowed workspace (agent cwds + config dir)`);
+  let canonical: string;
+  try {
+    canonical = canonicalizePath(target);
+  } catch {
+    canonical = ''; // unverifiable → pathWithinRoots denies it below anyway
+  }
+  if (!canonical || !pathWithinRoots(roots, target) || isSecretPath(canonical)) {
+    throw new Error(`${cap}: path is outside the allowed workspace (agent cwds + config stores)`);
+  }
+}
+
+/**
+ * Open a URL with the OS default handler, refusing any scheme but http(s).
+ * `shell.openExternal` will happily launch a `file://` path or hand a custom
+ * protocol to whatever app claims it, so every caller — the IPC handler the
+ * renderer uses and the notification-click sink below — has to go through one
+ * check rather than each remembering to write its own. Exported because this is
+ * the only file in this lane both sinks can share; ipc.ts's SHELL_OPEN_EXTERNAL
+ * handler has the identical result shape and should call this.
+ */
+export async function openExternalUrl(url: string): Promise<{ ok: boolean; error?: string }> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { ok: false, error: 'Invalid URL' };
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, error: `Refusing to open ${parsed.protocol} URL` };
+  }
+  try {
+    await shell.openExternal(parsed.toString());
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -421,7 +507,10 @@ export function registerHubCapabilities(): void {
     });
     notification.on('click', () => {
       if (p.sessionId) agentNotifier.focusAgent(p.sessionId);
-      else if (p.url) void shell.openExternal(p.url);
+      // The url comes from whoever posted the notification — a plugin, or a
+      // remote client — so it gets the same scheme check as the renderer's own
+      // open-external path rather than being handed straight to the OS.
+      else if (p.url) void openExternalUrl(p.url);
       else agentNotifier.focusWindow();
     });
     notification.on('failed', (_e, err) =>
@@ -868,11 +957,33 @@ export function registerHubCapabilities(): void {
   });
 
   // ── Library (reusable prompts + skills) ────────────────────────────────
+  // The `cwd` these take picks the PROJECT whose .workspacer/library and
+  // .claude/{skills,agents,commands} are listed, written and deleted. It reached
+  // the service unchecked, so a bus caller could read a stranger's project assets
+  // — and, worse, have library.save write markdown (or library.remove rm -rf a
+  // skill dir) anywhere the desktop user can. Same confinement as the fs.* and
+  // git.* handlers; the service itself stays unguarded because the local IPC path
+  // is the trusted user working in their own repos.
+  const guardLibraryCwd = (cap: string, cwd?: string): void => {
+    if (cwd) assertPathAllowed(cap, cwd, workspaceRoots());
+  };
   cat('library.list', (params: unknown) => {
     const { cwd } = (params ?? {}) as { cwd?: string };
+    // The read-only list gets browseRoots, not workspaceRoots, for the same
+    // reason fs.listDir does: the New Agent dialog lists the library of the
+    // directory the user is ABOUT to spawn in, which by definition isn't a live
+    // agent cwd yet, and its `.catch(() => {})` would turn a refusal into a
+    // silently empty project-MCP picker. Browsing the home tree to read a
+    // project's own prompt files is the same exposure the picker already has;
+    // writing and deleting stay on the workspace roots.
+    if (cwd) assertPathAllowed('library.list', cwd, browseRoots());
     return libraryService.list(cwd);
   });
-  cat('library.save', (params: unknown) => libraryService.save((params ?? {}) as any));
+  cat('library.save', (params: unknown) => {
+    const input = (params ?? {}) as { cwd?: string };
+    guardLibraryCwd('library.save', input.cwd);
+    return libraryService.save(input as any);
+  });
   cat('library.remove', (params: unknown) => {
     const { scope, id, cwd, kind } = (params ?? {}) as {
       scope?: 'global' | 'project' | 'claude';
@@ -881,6 +992,7 @@ export function registerHubCapabilities(): void {
       kind?: 'prompt' | 'skill' | 'agent';
     };
     if (!scope || !id) throw new Error('library.remove requires { scope, id }');
+    guardLibraryCwd('library.remove', cwd);
     libraryService.remove(scope, id, cwd, kind);
     return { ok: true };
   });
@@ -1010,7 +1122,8 @@ export function registerHubCapabilities(): void {
   // any git repo the desktop user can write, and a symlinked `cwd` could point
   // outside the intended repo (the finding's original concern). We therefore
   // canonicalize and contain `cwd` to the same workspace roots as fs.* (#8): the
-  // live agent cwds the review pane legitimately operates on, plus the config dir.
+  // live agent cwds the review pane legitimately operates on, plus the config
+  // stores.
   // canonicalization resolves symlinks before the check, so a symlinked cwd can't
   // escape the roots. The local desktop IPC path is unchanged: it's the trusted
   // user reviewing their own repos, and this containment only guards the bus.
@@ -1028,8 +1141,13 @@ export function registerHubCapabilities(): void {
     guardGitCwd('git.log', cwd);
     return git.log(cwd, limit).then((commits) => ({ commits }));
   });
-  registerCapability('git.diff', (params: unknown) => {
-    const { cwd, path, staged, untracked } = (params ?? {}) as {
+  registerCapability('git.diff', async (params: unknown) => {
+    const {
+      cwd,
+      path: filePath,
+      staged,
+      untracked,
+    } = (params ?? {}) as {
       cwd?: string;
       path?: string;
       staged?: boolean;
@@ -1037,7 +1155,26 @@ export function registerHubCapabilities(): void {
     };
     if (!cwd) throw new Error('git.diff requires { cwd }');
     guardGitCwd('git.diff', cwd);
-    return git.diff(cwd, path, staged, untracked).then((diff) => ({ diff }));
+    // Guarding cwd alone was not enough here. For a tracked diff `path` is a
+    // repo pathspec git resolves inside the work tree, but with `untracked` it
+    // becomes an operand of `git diff --no-index -- /dev/null <path>`, where git
+    // reads it as a plain FILESYSTEM path — so an absolute or ../-laden value
+    // rendered any file on the host as an all-added diff, straight past the cwd
+    // confinement.
+    //
+    // The yardstick is the work-tree root, on both counts. gitService runs every
+    // command from `rev-parse --show-toplevel` (see its header), so resolving
+    // against `cwd` would check a different file than git opens whenever the
+    // agent cwd is a subdirectory — the ordinary monorepo case. And the root is
+    // also the right *boundary*: the review pane diffs the paths `git.status`
+    // printed, which are root-relative and routinely name files in a sibling
+    // subtree of the agent cwd, while confining to the repo concedes nothing a
+    // path-less `git.diff` (the whole tree's diff) doesn't already hand over.
+    if (filePath) {
+      const root = (await git.workRoot(cwd)) ?? cwd;
+      assertPathAllowed('git.diff', path.resolve(root, filePath), [root]);
+    }
+    return { diff: await git.diff(cwd, filePath, staged, untracked) };
   });
   registerCapability('git.numstat', (params: unknown) => {
     const { cwd, staged } = (params ?? {}) as { cwd?: string; staged?: boolean };

@@ -99,6 +99,10 @@ type Manifest struct {
 // can never obtain unrestricted host filesystem access. Supported path tokens:
 // "${pluginDir}" (the plugin's own install dir) and absolute paths. Other tokens
 // resolve to nothing at registration and therefore grant nothing (fail closed).
+//
+// A scope may only ever narrow what it names: a ".." segment is refused outright
+// (see validateScope), because the path join that expands a token Cleans it away,
+// turning a declared "${pluginDir}/../.." into a grant over the whole config dir.
 type Capability struct {
 	Method string   `json:"method"`
 	Paths  []string `json:"paths,omitempty"`
@@ -245,8 +249,39 @@ func (m *Manifest) Validate() error {
 		if _, scoped := capspec.IsPathScoped(c.Method); scoped && len(c.Paths) == 0 {
 			return fmt.Errorf("capability %q is filesystem-scoped and must declare \"paths\"", c.Method)
 		}
+		for _, p := range c.Paths {
+			if err := validateScope(p); err != nil {
+				return fmt.Errorf("capability %q: %w", c.Method, err)
+			}
+		}
 	}
 	return nil
+}
+
+// validateScope rejects a declared path scope that could resolve somewhere other
+// than the place it appears to name. Only ".." is caught here: expanding a token
+// joins it with the binding, and the join Cleans the "..", so "${pluginDir}/../.."
+// silently lands on the config directory — which holds remote-token, and a plugin
+// that can read that promotes itself to a trusted bus connection. Refusing the
+// manifest means the escape never reaches a grant; expandScope re-checks so a
+// manifest that arrived some other way still can't get out.
+func validateScope(p string) error {
+	if hasDotDotSegment(p) {
+		return fmt.Errorf("path scope %q must not contain a %q segment", p, "..")
+	}
+	return nil
+}
+
+// hasDotDotSegment reports whether the scope text — before any cleaning — has a
+// ".." path segment. Both separators are split on: a manifest is portable JSON
+// and an author (or an attacker) can write either.
+func hasDotDotSegment(p string) bool {
+	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // Load reads and validates a single plugin.json file.

@@ -89,13 +89,29 @@ const CodeBlock: React.FC<{ code: string; info?: string }> = ({ code, info }) =>
  *  (bold around code); the cap only guards pathological input. */
 const MAX_INLINE_DEPTH = 4;
 
+/** Longest run of text we'll scan for inline spans. Everything this renderer is
+ *  fed is agent-written or file content, i.e. untrusted: the link alternative is
+ *  bounded below but still costs its bound per `[` it tries, so a segment that
+ *  is one enormous line of `[a](` would spend it a million times over. Prose
+ *  paragraphs, headings, list items and table cells are all far under this, so
+ *  the fallback (render the segment as plain text) only ever hits machine
+ *  output — the same bargain excerptForCard and MAX_HIGHLIGHT_LINE_LENGTH make
+ *  for the deck and diff paths. */
+export const MAX_INLINE_LENGTH = 4000;
+
 /** Render inline markdown: **bold**, *italic*, `code` / ``code``, [links](url).
  *  Bold/italic/link content renders recursively, so spans Claude nests all the
  *  time — **`path/to.rs`**, *see `foo`* — style the inner code instead of
  *  leaking literal backticks into the styled text. Code spans stay literal. */
 export function renderInlineMarkdown(text: string, depth = 0): React.ReactNode[] {
+  if (text.length > MAX_INLINE_LENGTH) return [text];
   const nodes: React.ReactNode[] = [];
-  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|``(.+?)``|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
+  // Both halves of the link alternative are length-bounded. Unbounded
+  // `[^\]]+` / `[^)]+` backtrack across the whole remaining segment at every
+  // `[` that never closes, which is quadratic — 100 KB of `[a](` froze the
+  // renderer for seconds, and an agent emits whatever it was told to.
+  const regex =
+    /(\*\*(.+?)\*\*|\*(.+?)\*|``(.+?)``|`([^`]+)`|\[([^\]\n]{1,512})\]\(([^)\s]{1,2048})\))/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   let key = 0;

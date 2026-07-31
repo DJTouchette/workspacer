@@ -332,6 +332,17 @@ pub fn usage_for_path(transcript_path: Option<&str>) -> Usage {
         }
     }
 
+    // A confinement refusal is otherwise invisible here: `read_at`'s Err is
+    // swallowed below and the session just reports zero cost and zero tokens
+    // forever. Name the path, so someone staring at a session that bills nothing
+    // has a thread to pull. Past the cache lookup, so it can't loop.
+    if !super::transcript::path_is_allowed(std::path::Path::new(path)) {
+        tracing::warn!(
+            transcript = %path,
+            "transcript is outside every known transcript root — this session's usage will read as zero"
+        );
+    }
+
     // ONE shared dedup set (and peak-context high-water mark) across the main
     // transcript and every `subagents/*.jsonl` file: a sub-agent turn that
     // appears both inline (isSidechain) in the main file and in its own
@@ -782,6 +793,8 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
+        // `read_at` reads only inside known transcript roots (see transcript.rs).
+        super::super::transcript::allow_root(&dir);
 
         // One assistant row: opus, 1M output → $25. isSidechain so it never
         // touches the context gauge.
@@ -893,9 +906,13 @@ mod tests {
     }
 
     /// A temp path unique to this test binary + line, so tests don't collide.
+    /// `read_at` only reads inside known transcript roots, so the fixture dir is
+    /// registered as one — the same call a profile spawn makes for its own
+    /// `CLAUDE_CONFIG_DIR`.
     fn temp_transcript(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("claudemon-usage-test-{tag}"));
         std::fs::create_dir_all(&dir).expect("temp dir");
+        super::super::transcript::allow_root(&dir);
         dir.join("session.jsonl")
     }
 

@@ -60,10 +60,47 @@ interface UseLayoutSyncOptions {
   onHydration: (result: HydrationResult) => void;
 }
 
+/**
+ * Drop per-plugin bus tokens from plugin pane URLs before the layout leaves
+ * this client.
+ *
+ * A plugin pane's URL carries the plugin's static bus token as a query param so
+ * the webview can talk to the hub. The layout document is the opposite of a
+ * secret: the hub persists it 0644 (the token file is 0600) and broadcasts it
+ * to every connected client, web and remote included. Publishing the URL
+ * verbatim handed a live credential to anything that could read the file or
+ * join the bus. PluginPane re-attaches a token locally when it mounts, so a
+ * redacted URL costs nothing but the leak.
+ */
+function redactBusTokens(agents: AgentWorkspace[]): AgentWorkspace[] {
+  // Tolerant of a half-shaped agent: this also runs over documents another
+  // client wrote, and a projection that throws would kill the sync effect.
+  return agents.map((a) => ({
+    ...a,
+    tabs: (Array.isArray(a?.tabs) ? a.tabs : []).map((t) => ({
+      ...t,
+      panes: (Array.isArray(t?.panes) ? t.panes : []).map((p) => {
+        if (!p.url || !p.url.includes('busToken')) return p;
+        try {
+          const u = new URL(p.url);
+          if (!u.searchParams.has('busToken')) return p;
+          u.searchParams.delete('busToken');
+          return { ...p, url: u.toString() };
+        } catch {
+          return p; // not a parseable URL — nothing token-shaped to strip
+        }
+      }),
+    })),
+  }));
+}
+
 /** Stable projection used for both sending and echo-detection. Built identically
- *  on every client so a round-tripped document compares equal to what we sent. */
+ *  on every client so a round-tripped document compares equal to what we sent.
+ *  Redacted, because what we send is redacted: comparing the local (tokened)
+ *  URL against the document we published would make every push look like a new
+ *  local change and loop. */
 function project(agents: AgentWorkspace[], activeAgentId: string): string {
-  return JSON.stringify({ agents, activeAgentId });
+  return JSON.stringify({ agents: redactBusTokens(agents), activeAgentId });
 }
 
 /** A layout document counts as "seeded" only if it carries real agent state —
@@ -212,7 +249,7 @@ export function useLayoutSync({
       // recognised as our own echo.
       lastSyncedRef.current = latestJson;
       window.electronAPI
-        .layoutSet({ agents: latestAgents, activeAgentId: latestActiveAgentId })
+        .layoutSet({ agents: redactBusTokens(latestAgents), activeAgentId: latestActiveAgentId })
         .then((doc: LayoutDoc) => {
           if (doc?.version != null) {
             appliedVersionRef.current = Math.max(appliedVersionRef.current, doc.version);

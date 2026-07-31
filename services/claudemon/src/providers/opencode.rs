@@ -41,13 +41,21 @@ pub async fn list_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>>
 /// id per line for every provider it knows about. The ids are exactly what
 /// `--model` / the message `model` field accept, so the picker round-trips them.
 async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
-    let out = Command::new(bin)
+    // Same 10s ceiling the codex/pi listings use: `output()` waits for EOF on
+    // stdout, so a binary that never exits would otherwise buffer this request
+    // (and its task) forever. `kill_on_drop` reaps the child when we time out.
+    let child = Command::new(bin)
         .arg("models")
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stderr(Stdio::null())
-        .output()
+        .stdout(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| format!("running `{bin} models`"))?;
+    let out = tokio::time::timeout(std::time::Duration::from_secs(10), child.wait_with_output())
         .await
+        .context("timed out listing opencode models")?
         .with_context(|| format!("running `{bin} models`"))?;
     if !out.status.success() {
         anyhow::bail!("`{bin} models` exited with {}", out.status);

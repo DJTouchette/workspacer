@@ -54,6 +54,14 @@ const MODE_POLL_MS: u64 = 50;
 const MODE_CHANGE_TIMEOUT_MS: u64 = 1200;
 /// Terminal size assumed for sessions whose size was never reported.
 const DEFAULT_TERM_SIZE: (u16, u16) = (80, 24);
+/// Upper bound on a reported PTY grid. `screen_permission_mode` rebuilds the
+/// session's screen with `vt100::Parser::new(rows, cols, 0)`, which eagerly
+/// allocates `cols * rows` cells — so an unvalidated `65535x65535` from any of
+/// the three reporting paths (`/resize`, wrapper Register, spawn) turns one
+/// request into a multi-gigabyte allocation. No real terminal is anywhere near
+/// this; clamping (rather than rejecting) keeps an oversized report harmless
+/// instead of failing a resize the child itself accepted.
+const MAX_TERM_SIZE: (u16, u16) = (1000, 500);
 
 /// Tracks the child's bracketed-paste (DECSET 2004) state from its output
 /// stream. `enabled` is `None` until either toggle sequence has been seen.
@@ -804,12 +812,27 @@ impl SessionStore {
 
     // --- wrapper-driven session lifecycle -----------------------------------
 
+    /// Attach a wrapper's control channel to a session. First registration
+    /// wins: while another wrapper (or an in-daemon PTY spawn, which shares this
+    /// map) still holds the id, a second Register is refused with `None` rather
+    /// than silently taking over. `/wrapper/:id` is unauthenticated, so without
+    /// this any local process could name a live session's id and become the
+    /// destination for every subsequent input/signal/resize — the same hijack
+    /// the bus router's first-registration-wins guard closes. Ownership is
+    /// released the moment the incumbent's channel drops (`deregister_wrapper`,
+    /// or the sender closing when its pump task ends), so a genuine reconnect
+    /// after the old socket dies still registers cleanly.
     pub fn register_wrapper(
         &self,
         session_id: &str,
         cwd: &str,
         handle: WrapperHandle,
-    ) -> SessionState {
+    ) -> Option<SessionState> {
+        if let Some(live) = self.wrappers.get(session_id) {
+            if !live.tx.is_closed() {
+                return None;
+            }
+        }
         // Treat wrapper registration as a synthetic SessionStart so the state
         // machine produces the same observable behavior as hook-driven starts.
         let synthetic = HookEvent {
@@ -829,7 +852,7 @@ impl SessionStore {
         // Fresh child, unknown terminal state — a stale paste-mode reading from
         // a previous life of this session id must not gate (or ungate) sends.
         self.paste_modes.remove(session_id);
-        state
+        Some(state)
     }
 
     pub fn deregister_wrapper(&self, session_id: &str) {
@@ -1331,12 +1354,18 @@ impl SessionStore {
     // --- terminal size ------------------------------------------------------
 
     /// Record the session's PTY size — called at spawn/register and on
-    /// `/resize` so screen reconstruction uses the real grid.
+    /// `/resize` so screen reconstruction uses the real grid. Every reporting
+    /// path funnels through here, so this is the one place the grid is clamped
+    /// to [`MAX_TERM_SIZE`] before anything allocates against it.
     pub fn note_term_size(&self, session_id: &str, cols: u16, rows: u16) {
         if cols == 0 || rows == 0 {
             return;
         }
-        self.term_sizes.insert(session_id.to_string(), (cols, rows));
+        let (max_cols, max_rows) = MAX_TERM_SIZE;
+        self.term_sizes.insert(
+            session_id.to_string(),
+            (cols.min(max_cols), rows.min(max_rows)),
+        );
     }
 
     fn term_size(&self, session_id: &str) -> (u16, u16) {
@@ -1885,6 +1914,66 @@ mod tests {
         b.extend_from_slice(text.as_bytes());
         b.extend_from_slice(b"\x1b[201~\r");
         b
+    }
+
+    #[test]
+    fn note_term_size_clamps_absurd_grids() {
+        let store = SessionStore::new();
+        // `/resize`, the wrapper's Register and spawn all land here, and the
+        // screen reconstruction allocates cols*rows cells from what's stored.
+        store.note_term_size("s1", u16::MAX, u16::MAX);
+        assert_eq!(store.term_size("s1"), MAX_TERM_SIZE);
+        // Real sizes pass through untouched, and a zero dimension is ignored.
+        store.note_term_size("s2", 213, 57);
+        assert_eq!(store.term_size("s2"), (213, 57));
+        store.note_term_size("s2", 0, 40);
+        assert_eq!(store.term_size("s2"), (213, 57));
+    }
+
+    #[test]
+    fn register_wrapper_refuses_to_displace_a_live_wrapper() {
+        let store = SessionStore::new();
+        let (incumbent, mut rx) = handle_with_rx();
+        assert!(store.register_wrapper("s1", "/w", incumbent).is_some());
+
+        let (hijacker, _hijacker_rx) = handle_with_rx();
+        assert!(
+            store.register_wrapper("s1", "/w", hijacker).is_none(),
+            "a second wrapper must not take over a live session"
+        );
+
+        // Input still routes to the original wrapper.
+        store
+            .wrapper("s1")
+            .expect("incumbent still registered")
+            .tx
+            .send(WrapperMessage::Input {
+                bytes: B64.encode("hi"),
+            })
+            .unwrap();
+        assert_eq!(next_input(&mut rx), b"hi");
+    }
+
+    #[test]
+    fn register_wrapper_reclaims_a_dead_slot() {
+        // The incumbent's channel is closed (its pump task is gone), so the id is
+        // free again — a reconnecting wrapper must not be locked out forever.
+        let store = SessionStore::new();
+        let (dead, rx) = handle_with_rx();
+        assert!(store.register_wrapper("s1", "/w", dead).is_some());
+        drop(rx);
+
+        let (fresh, mut fresh_rx) = handle_with_rx();
+        assert!(store.register_wrapper("s1", "/w", fresh).is_some());
+        store
+            .wrapper("s1")
+            .expect("registered")
+            .tx
+            .send(WrapperMessage::Input {
+                bytes: B64.encode("hi"),
+            })
+            .unwrap();
+        assert_eq!(next_input(&mut fresh_rx), b"hi");
     }
 
     #[test]

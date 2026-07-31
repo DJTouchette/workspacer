@@ -19,7 +19,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::broadcast;
 
 use super::state::{Plan, PlanStatus, PlanStep};
-use super::transcript::{blocks, flatten_tool_result, Block};
+use super::transcript::{blocks, flatten_tool_result, path_is_allowed, Block};
 use super::{SessionMode, SessionStore};
 
 const CONV_BROADCAST_CAPACITY: usize = 1024;
@@ -311,6 +311,19 @@ async fn tail_one(
     session_id: &str,
     path: &str,
 ) -> std::io::Result<()> {
+    // `transcript_path` is whatever the unauthenticated hook ingress last said
+    // it was, and this loop re-reads it every tick and broadcasts the parsed
+    // lines to `/conversation` — a continuous read of a caller-named file, so a
+    // wider primitive than the one-shot `/transcript` endpoint, not a narrower
+    // one. Same predicate bounds both. The error is what surfaces the refusal in
+    // the caller's log; returning Ok would hide it.
+    if !path_is_allowed(std::path::Path::new(path)) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("transcript path is outside every known transcript root: {path}"),
+        ));
+    }
+
     let (mut offset, mut partial, mut reset, mut task_fold) = match conv.logs.get(session_id) {
         Some(l) if l.path == path => (l.offset, l.partial.clone(), false, l.tasks.clone()),
         // New session, or claude switched transcript files (e.g. resume).
@@ -428,6 +441,12 @@ async fn tail_subagents(
     session_id: &str,
     main_path: &str,
 ) -> std::io::Result<()> {
+    // The sidechain dir is derived from the same untrusted path, so it inherits
+    // the same bound. Quiet here — `tail_one` already reported the refusal for
+    // this session on this tick.
+    if !path_is_allowed(std::path::Path::new(main_path)) {
+        return Ok(());
+    }
     let Some(stem) = main_path.strip_suffix(".jsonl") else {
         return Ok(());
     };
@@ -1084,6 +1103,58 @@ mod tests {
         assert_eq!(conv.snapshot("s1").map(|(seq, _)| seq), Some(1));
     }
 
+    #[tokio::test]
+    async fn a_transcript_outside_every_root_is_never_tailed() {
+        // A forged hook can set `transcript_path` to any JSONL-shaped file on
+        // disk. The tailer would otherwise stream it, line by line, out through
+        // /conversation for as long as the session lives — so the containment
+        // has to sit here too, not only on the one-shot /transcript read.
+        let dir = std::env::temp_dir().join(format!(
+            "wks-tail-outside-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("someone-elses.jsonl");
+        std::fs::write(
+            &file,
+            serde_json::to_string(&json!({
+                "type": "assistant",
+                "message": { "role": "assistant", "content": "secret" }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+        let path = file.to_string_lossy().into_owned();
+
+        if path_is_allowed(&file) {
+            // No home dir and no registered roots: nothing to confine to.
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let err = tail_one(&store, &conv, "s1", &path)
+            .await
+            .expect_err("out-of-root transcript must be refused");
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(
+            tail_subagents(&conv, "s1", &path).await.is_ok(),
+            "the sidechain pass refuses quietly"
+        );
+        assert!(
+            conv.snapshot("s1").is_none(),
+            "not one item from a file outside every root"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn push_bounds_the_in_memory_log() {
         // Push well past the cap in one go; the log must retain exactly
@@ -1512,6 +1583,10 @@ mod tests {
         use std::io::Write;
         let dir = std::env::temp_dir().join(format!("claudemon-plan-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
+        // The tailer only reads inside known transcript roots (see
+        // transcript::path_is_allowed); a fixture dir has to be declared one the
+        // way a spawn's CLAUDE_CONFIG_DIR would be.
+        crate::session::transcript::allow_root(&dir);
         let path = dir.join("p.jsonl");
         let path_str = path.to_string_lossy().to_string();
 
@@ -1658,6 +1733,8 @@ mod tests {
         use std::io::Write;
         let dir = std::env::temp_dir().join(format!("claudemon-tasks-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
+        // Declared as a transcript root, as above — the tailer reads nowhere else.
+        crate::session::transcript::allow_root(&dir);
         let path = dir.join("t.jsonl");
         let path_str = path.to_string_lossy().to_string();
 
@@ -1701,6 +1778,8 @@ mod tests {
         use std::io::Write;
         let dir = std::env::temp_dir().join(format!("claudemon-tail-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
+        // Declared as a transcript root, as above — the tailer reads nowhere else.
+        crate::session::transcript::allow_root(&dir);
         let path = dir.join("t.jsonl");
         let path_str = path.to_string_lossy().to_string();
 

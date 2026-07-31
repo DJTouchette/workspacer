@@ -38,12 +38,17 @@ beforeEach(() => {
 
 function renderSync(
   load: ReturnType<typeof vi.fn>,
-  opts?: { adoptSharedLayout?: boolean; onHydration?: ReturnType<typeof vi.fn> },
+  opts?: {
+    adoptSharedLayout?: boolean;
+    onHydration?: ReturnType<typeof vi.fn>;
+    agents?: any[];
+    activeAgentId?: string;
+  },
 ) {
   return renderHook(() =>
     useLayoutSync({
-      agents: [],
-      activeAgentId: '',
+      agents: opts?.agents ?? [],
+      activeAgentId: opts?.activeAgentId ?? '',
       loadAgentsFromSession: load,
       sessionPhase: 'active',
       setSessionPhase: vi.fn(),
@@ -123,5 +128,85 @@ describe('useLayoutSync — adoption gated on auto-resume', () => {
       layoutChangedCb!({ version: 2, data: { agents: [mkAgent('live')], activeAgentId: 'live' } }),
     );
     expect(load.mock.calls.map((c) => c[0]?.[0]?.id)).toContain('live');
+  });
+});
+
+/**
+ * The layout document is the opposite of a secret: the hub persists it 0644
+ * (the plugin token file is 0600) and broadcasts it to every connected client,
+ * web and remote included. A plugin pane's URL carries that plugin's static bus
+ * token as a query param, so publishing the URL verbatim shipped a live
+ * credential to anything that could read the file or join the bus.
+ */
+describe('useLayoutSync — bus tokens never enter the shared document', () => {
+  function pluginAgent() {
+    return {
+      id: 'a1',
+      name: 'a1',
+      cwd: '/x',
+      sessionId: 'a1',
+      activeTabId: 't1',
+      tabs: [
+        {
+          id: 't1',
+          title: 'Plugin',
+          activePaneId: 'p1',
+          panes: [
+            {
+              id: 'p1',
+              type: 'plugin',
+              title: 'Plugin',
+              pluginId: 'acme.widget',
+              url: 'http://127.0.0.1:9999/index.html?busToken=s3cret&sessionId=abc',
+            },
+          ],
+        },
+      ],
+    } as any;
+  }
+
+  it('strips busToken from pane urls before pushing, keeping the rest of the query', async () => {
+    vi.useFakeTimers();
+    try {
+      const agents = [pluginAgent()];
+      renderSync(vi.fn(), { agents, activeAgentId: 'a1' });
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+      });
+
+      const layoutSet = (window as any).electronAPI.layoutSet;
+      expect(layoutSet).toHaveBeenCalledTimes(1);
+      const sent = layoutSet.mock.calls[0][0];
+      expect(JSON.stringify(sent)).not.toContain('busToken');
+      expect(JSON.stringify(sent)).not.toContain('s3cret');
+      const url = sent.agents[0].tabs[0].panes[0].url;
+      expect(url).toContain('sessionId=abc');
+      expect(sent.agents[0].tabs[0].panes[0].pluginId).toBe('acme.widget');
+
+      // Local state keeps its token — PluginPane still has a working URL if the
+      // mint is unavailable; only what leaves this client is redacted.
+      expect(agents[0].tabs[0].panes[0].url).toContain('busToken=s3cret');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('recognises the redacted document coming back as its own echo', async () => {
+    vi.useFakeTimers();
+    try {
+      const load = vi.fn();
+      renderSync(load, { agents: [pluginAgent()], activeAgentId: 'a1' });
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+      });
+      const sent = (window as any).electronAPI.layoutSet.mock.calls[0][0];
+      // The hub re-broadcasts what we pushed — token-free, unlike our local
+      // state. The echo-breaker projects both sides redacted, so this must be
+      // recognised as ours and not re-applied as someone else's layout.
+      act(() => layoutChangedCb!({ version: 1, data: sent }));
+      expect(load).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

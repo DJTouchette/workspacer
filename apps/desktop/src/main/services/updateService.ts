@@ -54,12 +54,47 @@ interface UpdatesConfig {
   channel: string;
 }
 
+/**
+ * A bare channel name and nothing else: it must start alphanumeric and may then
+ * carry dots, dashes and underscores. No slashes, so `../` can't appear and a
+ * leading `//` can't either.
+ */
+const CHANNEL_RE = /^[a-z0-9][a-z0-9._-]*$/;
+
+/**
+ * Clamp `updates.channel` to a channel NAME before it reaches
+ * electron-updater.
+ *
+ * The channel is string-concatenated into the update feed URL (it becomes
+ * `<channel>.yml` on the provider's base URL), and it is writable by anything
+ * that can call `config.save` — which includes the hub bus and the MCP facade,
+ * not just the settings UI. A value like `../../someone-else/repo/releases/latest`
+ * therefore relocates the updater onto a feed an attacker controls, and the next
+ * "Workspacer 99.0.0 is ready to install" dialog — the app's own, trusted
+ * dialog — hands them code execution as the user, persistently. A
+ * scheme-relative `//host/path` does the same thing at the host level.
+ *
+ * Anything that isn't a plain name falls back to 'latest' with a warning rather
+ * than failing the update check: a malformed channel is a config mistake as
+ * often as an attack, and the stable feed is the safe default either way.
+ */
+export function sanitizeUpdateChannel(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw) return 'latest';
+  if (!CHANNEL_RE.test(raw)) {
+    console.warn(
+      `[updateService] ignoring invalid updates.channel ${JSON.stringify(raw)} — using 'latest'`,
+    );
+    return 'latest';
+  }
+  return raw;
+}
+
 /** Read + normalise the `updates` config block (absent ⇒ enabled/latest). */
 function readUpdatesConfig(): UpdatesConfig {
   const u = ((configService.getConfig() as any).updates ?? {}) as Partial<UpdatesConfig>;
   return {
     enabled: u.enabled !== false,
-    channel: typeof u.channel === 'string' && u.channel ? u.channel : 'latest',
+    channel: sanitizeUpdateChannel(u.channel),
   };
 }
 

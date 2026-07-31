@@ -78,7 +78,16 @@ func resolveRoots(paths []string, bindings map[string]string) []string {
 // the subpath); an absolute path passes through. Anything whose binding is
 // missing/empty — including a relative path or an as-yet-unbound token — yields
 // "" so it grants nothing.
+//
+// A scope that tries to climb out of what it names is dropped rather than
+// expanded. Validate refuses such a manifest at install/load time; this second
+// check is what holds if one is loaded any other way, because the join below
+// Cleans ".." away and the escape would otherwise be invisible by the time the
+// bus canonicalizes the root.
 func expandScope(p string, bindings map[string]string) string {
+	if validateScope(p) != nil {
+		return ""
+	}
 	if strings.HasPrefix(p, "${") {
 		end := strings.Index(p, "}")
 		if end < 0 {
@@ -92,12 +101,33 @@ func expandScope(p string, bindings map[string]string) string {
 		if rest == "" {
 			return base
 		}
-		return filepath.Join(base, filepath.FromSlash(rest))
+		full := filepath.Join(base, filepath.FromSlash(rest))
+		if !withinRoot(base, full) {
+			return ""
+		}
+		return full
 	}
 	if filepath.IsAbs(p) {
 		return p
 	}
 	return ""
+}
+
+// withinRoot reports whether a token-derived scope stayed inside the directory
+// its token named. Purely lexical: the bindings are host-supplied directories,
+// and symlink resolution is the bus's job (it canonicalizes every root before
+// enforcing it). All this asks is that a subpath can narrow a binding, never
+// step outside it.
+func withinRoot(base, path string) bool {
+	root := filepath.Clean(base)
+	if path == root {
+		return true
+	}
+	prefix := root
+	if !strings.HasSuffix(prefix, string(filepath.Separator)) {
+		prefix += string(filepath.Separator)
+	}
+	return strings.HasPrefix(path, prefix)
 }
 
 // Publisher is the slice of the broker the manager needs.

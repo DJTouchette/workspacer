@@ -12,6 +12,13 @@ import { requestOpenInEditor } from '../lib/editorBus';
  * reading a doc the agent just wrote, not live editing.
  */
 
+/** How much of the file we hand the markdown renderer. `readFile` accepts up to
+ *  5 MB, and a document anywhere near that becomes millions of parsed spans and
+ *  DOM nodes on one click — the pane took the whole app down with it. Past this
+ *  the head is rendered and the tail is a pointer to the editor, which is the
+ *  right tool for a file that size. */
+const MAX_PREVIEW_CHARS = 200_000;
+
 const headerBtnStyle: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
@@ -155,7 +162,24 @@ const MarkdownPreviewPane: React.FC<{
             {content.trim() === '' ? (
               <span style={{ color: 'var(--wks-text-muted)' }}>(empty file)</span>
             ) : (
-              <Markdown text={content} />
+              <>
+                <Markdown text={content.slice(0, MAX_PREVIEW_CHARS)} />
+                {content.length > MAX_PREVIEW_CHARS && (
+                  <div
+                    style={{
+                      marginTop: 20,
+                      paddingTop: 12,
+                      borderTop: '1px solid var(--wks-border)',
+                      color: 'var(--wks-text-muted)',
+                      fontSize: '0.72rem',
+                    }}
+                  >
+                    Preview truncated at {Math.round(MAX_PREVIEW_CHARS / 1000)}k characters —{' '}
+                    {fileName} is {Math.round(content.length / 1000)}k. Open it in the editor to
+                    read the rest.
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

@@ -42,6 +42,29 @@ export function claudeSettingsOverlayEnabled(): boolean {
   return configService.getConfig().claude?.settingsOverlay === true;
 }
 
+/**
+ * `agents.binaries.<provider>` as the daemon's `WKS_<PROVIDER>_BIN` environment.
+ *
+ * claudemon resolves a provider launcher itself — it stopped honouring a
+ * caller-supplied `bin` on the models route, because that route is reachable
+ * cross-origin by any page in the user's browser and a caller-supplied path is
+ * a caller-supplied program. Its own resolution reads this environment first,
+ * then PATH. The Go brain reads the same config key directly, so without this
+ * the two would disagree about which binary a provider means: the picker would
+ * silently use whatever is on PATH while everything else used the configured
+ * path. Config is read at spawn, so an edit takes effect on the next daemon
+ * start (the same rule as every other flag passed here).
+ */
+export function providerBinaryEnv(): NodeJS.ProcessEnv {
+  const binaries = configService.getConfig().agents?.binaries ?? {};
+  const env: NodeJS.ProcessEnv = {};
+  for (const [provider, bin] of Object.entries(binaries)) {
+    const trimmed = typeof bin === 'string' ? bin.trim() : '';
+    if (trimmed) env[`WKS_${provider.toUpperCase()}_BIN`] = trimmed;
+  }
+  return env;
+}
+
 let child: ChildProcess | null = null;
 let readyPromise: Promise<void> | null = null;
 /** Set by stopClaudemon() / app shutdown so an intentional kill isn't respawned. */
@@ -133,7 +156,10 @@ function launch(bin: string): Promise<void> {
   child = spawn(
     bin,
     ['serve', '--hook-port', String(HOOK_PORT), '--api-port', String(API_PORT)],
-    daemonSpawnOptions({ RUST_LOG: process.env.RUST_LOG ?? 'claudemon=info' }),
+    daemonSpawnOptions({
+      RUST_LOG: process.env.RUST_LOG ?? 'claudemon=info',
+      ...providerBinaryEnv(),
+    }),
   );
 
   // AbortController so a fast-exiting daemon cancels the health-check poll

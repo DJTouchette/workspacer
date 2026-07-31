@@ -110,6 +110,11 @@ const BARE_BASENAMES = new Set([
 const DOMAINISH_FIRST_SEGMENT =
   /^[\w-]+\.(com|org|net|io|dev|ai|co|app|sh|gg|xyz|me|us|uk|ca|de|fr|edu|gov)$/i;
 
+/** Longest token that can still be a path. Also the scanner's bail-out: this
+ *  text is agent-written and therefore untrusted, so nothing below may do
+ *  per-character work on a run longer than a real path could ever be. */
+const MAX_TOKEN_LENGTH = 512;
+
 const LINE_SUFFIX = /:(\d{1,6})(?::\d{1,6})?$/;
 /** Extension: dot + letter-led alnum run (rejects version-ish `v1.2`). */
 const EXT = /\.([a-zA-Z][a-zA-Z0-9]{0,7})$/;
@@ -140,7 +145,7 @@ export function detectFilePath(
   context: 'code' | 'prose' = 'code',
 ): DetectedPath | null {
   const token = raw.trim();
-  if (!token || token.length > 512) return null;
+  if (!token || token.length > MAX_TOKEN_LENGTH) return null;
   if (/\s/.test(token)) return null; // multi-word span — a command, not a path
   if (token.includes('://') || token.startsWith('www.')) return null; // URL
   if (token.startsWith('-')) return null; // CLI flag
@@ -185,8 +190,14 @@ export function detectFilePath(
   return null;
 }
 
-/** Punctuation that commonly trails a path in prose ("see src/a.ts, then…"). */
-const TRAILING_PUNCT = /[.,;!?)\]}'"`]+$/;
+/** Punctuation that commonly trails a path in prose ("see src/a.ts, then…").
+ *  A character set rather than an anchored `[…]+$` regex: the strip loop below
+ *  re-tests after every character it peels, and re-running an anchored match
+ *  over a shrinking string is quadratic in the token's length. */
+const TRAILING_PUNCT = new Set(['.', ',', ';', '!', '?', ')', ']', '}', "'", '"', '`']);
+/** Clause syntax runs a character or three ("(see src/a.ts)."); past that the
+ *  token isn't prose punctuation around a path and peeling further is wasted. */
+const MAX_TRAILING_PUNCT = 8;
 const LEADING_PUNCT = /^[(\['"`{]+/;
 
 /**
@@ -212,12 +223,14 @@ export function linkifyText(text: string): Array<string | DetectedPath> {
     const lead = LEADING_PUNCT.exec(token)?.[0] ?? '';
     token = token.slice(lead.length);
     start += lead.length;
+    // A run longer than a path plus its clause punctuation can never vet as
+    // one, and the strip loop below would do per-character work on all of it.
+    if (token.length > MAX_TOKEN_LENGTH + MAX_TRAILING_PUNCT) continue;
     // Trailing punctuation is clause syntax, not path — but keep a `:12` line
     // suffix intact by only trimming AFTER the vetting fails, char by char.
-    let trail = '';
     let hit = detectFilePath(token, 'prose');
-    while (!hit && TRAILING_PUNCT.test(token)) {
-      trail = token.slice(-1) + trail;
+    for (let n = 0; !hit && n < MAX_TRAILING_PUNCT && token.length > 0; n++) {
+      if (!TRAILING_PUNCT.has(token[token.length - 1])) break;
       token = token.slice(0, -1);
       hit = detectFilePath(token, 'prose');
     }

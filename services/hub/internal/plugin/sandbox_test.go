@@ -2,7 +2,9 @@ package plugin
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -60,6 +62,79 @@ func TestValidate_RejectsUnscopedFilesystemCapability(t *testing.T) {
 	}
 }
 
+// A path scope that climbs out of the directory it names is refused by the
+// manifest itself, so it is never installed and never reaches a grant. The
+// concrete attack: "${pluginDir}/../.." resolves to the config dir, which holds
+// remote-token; reading that token gets the plugin a trusted bus connection and
+// with it /plugins/install, i.e. arbitrary command execution.
+func TestValidate_RejectsEscapingPathScope(t *testing.T) {
+	escapes := []string{
+		"${pluginDir}/../..",
+		"${pluginDir}/..",
+		"${pluginDir}/data/../../..",
+		"${agentCwd}/..",
+		filepath.FromSlash("/plugins/acme/../.."),
+		"${pluginDir}\\..\\..",
+	}
+	for _, p := range escapes {
+		m := Manifest{ID: "x", APIVersion: APIVersion, Capabilities: []Capability{{Method: "fs.read", Paths: []string{p}}}}
+		if err := m.Validate(); err == nil {
+			t.Errorf("expected path scope %q to be rejected", p)
+		}
+	}
+
+	// The escape is caught wherever it hides in the list, not just first.
+	buried := Manifest{ID: "x", APIVersion: APIVersion, Capabilities: []Capability{
+		{Method: "fs.read", Paths: []string{"${pluginDir}", "${pluginDir}/../.."}},
+	}}
+	if err := buried.Validate(); err == nil {
+		t.Fatal("expected a later escaping scope to be rejected")
+	}
+
+	// Scopes that only ever narrow still validate — including a dotfile subpath,
+	// which is not a ".." segment.
+	ok := Manifest{ID: "x", APIVersion: APIVersion, Capabilities: []Capability{
+		{Method: "fs.read", Paths: []string{"${pluginDir}", "${pluginDir}/data", "${agentCwd}/src", filepath.FromSlash("/abs/path"), "${pluginDir}/.cache"}},
+	}}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("narrowing scopes should validate, got %v", err)
+	}
+}
+
+// The real path a plugin arrives by: Load reads plugin.json and validates it, so
+// an escaping scope is refused at install/load time rather than granted.
+func TestLoad_RejectsEscapingPathScope(t *testing.T) {
+	dir := t.TempDir()
+	body := `{"id":"acme","apiVersion":"1","capabilities":[{"method":"fs.read","paths":["${pluginDir}/../.."]}]}`
+	path := filepath.Join(dir, "plugin.json")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected Load to reject a manifest with an escaping path scope")
+	} else if !strings.Contains(err.Error(), "..") {
+		t.Fatalf("error should name the offending scope, got %v", err)
+	}
+}
+
+// Defence in depth: a manifest that got past Validate some other way still yields
+// no root for the escaping scope, and a grant with no roots denies every call.
+func TestGrantsFor_DropsEscapingScope(t *testing.T) {
+	mf := Manifest{
+		Dir: filepath.FromSlash("/plugins/acme"),
+		Capabilities: []Capability{
+			{Method: "fs.read", Paths: []string{"${pluginDir}/../.."}},
+		},
+	}
+	grants := grantsFor(mf)
+	if len(grants) != 1 {
+		t.Fatalf("got %d grants, want 1: %+v", len(grants), grants)
+	}
+	if len(grants[0].FSRoots) != 0 {
+		t.Fatalf("escaping scope produced roots %v, want none", grants[0].FSRoots)
+	}
+}
+
 func TestExpandScope(t *testing.T) {
 	dir := filepath.FromSlash("/plugins/acme")
 	cwd := filepath.FromSlash("/work/project")
@@ -76,6 +151,14 @@ func TestExpandScope(t *testing.T) {
 		{"relative/path", ""}, // relative → dropped
 		{"${unknown}/x", ""},  // no such binding → dropped
 		{"${malformed", ""},   // no closing brace → dropped
+		// A ".." segment is dropped, not Cleaned. "${pluginDir}/../.." used to join
+		// to the config dir — remote-token's home, i.e. a trusted bus connection.
+		{"${pluginDir}/../..", ""},
+		{"${pluginDir}/..", ""},
+		{"${agentCwd}/../../etc", ""},
+		{"${pluginDir}/data/../../other", ""}, // climbing back in is still refused
+		{filepath.FromSlash("/plugins/acme/../.."), ""},
+		{"${pluginDir}\\..\\..", ""}, // the other separator is no way around it
 	}
 	for _, c := range cases {
 		if got := expandScope(c.in, bindings); got != c.want {
@@ -85,6 +168,26 @@ func TestExpandScope(t *testing.T) {
 	// With no agentCwd binding (the static load-time case), ${agentCwd} grants nothing.
 	if got := expandScope("${agentCwd}", map[string]string{"pluginDir": dir}); got != "" {
 		t.Errorf("unbound ${agentCwd} = %q, want \"\"", got)
+	}
+}
+
+func TestWithinRoot(t *testing.T) {
+	root := filepath.FromSlash("/plugins/acme")
+	cases := []struct {
+		base, path string
+		want       bool
+	}{
+		{root, root, true},
+		{root, filepath.Join(root, "data"), true},
+		{root + string(filepath.Separator), filepath.Join(root, "data"), true}, // trailing separator on the binding
+		{root, filepath.FromSlash("/plugins"), false},
+		{root, filepath.FromSlash("/plugins/acme-evil"), false}, // sibling with the root as a name prefix
+		{filepath.FromSlash("/"), filepath.FromSlash("/etc"), true},
+	}
+	for _, c := range cases {
+		if got := withinRoot(c.base, c.path); got != c.want {
+			t.Errorf("withinRoot(%q, %q) = %v, want %v", c.base, c.path, got, c.want)
+		}
 	}
 }
 

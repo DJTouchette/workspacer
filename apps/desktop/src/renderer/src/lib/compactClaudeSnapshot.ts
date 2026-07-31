@@ -5,6 +5,7 @@ import type {
   PendingApproval,
   ToolCall,
 } from '../types/claudeSession';
+import { countUserSends } from '../../../main/shared/conversationCount';
 
 const MAX_BACKGROUND_CONVERSATION_TURNS = 12;
 const MAX_BACKGROUND_COMPLETED_TOOLS = 20;
@@ -131,6 +132,13 @@ export function compactClaudeSnapshotForBackground(
     // or anchor by index (ClaudePane's conversation keys, turn snapshots).
     conversationOffset:
       (snapshot.conversationOffset ?? 0) + (fullConversation.length - keptConversation.length),
+    // The user sends among those dropped turns, banked the same way the
+    // main-process cap banks them (sessionStore/bounds). ClaudePane's optimistic
+    // dequeue counts user sends absolutely, so both trimmers have to pay this
+    // forward or a pane flipping compact↔full would see the tally jump.
+    conversationUserOffset:
+      (snapshot.conversationUserOffset ?? 0) +
+      countUserSends(fullConversation.slice(0, fullConversation.length - keptConversation.length)),
     activeToolCalls: tail(snapshot.activeToolCalls ?? [], MAX_BACKGROUND_ACTIVE_TOOLS).map(
       compactToolCall,
     ),

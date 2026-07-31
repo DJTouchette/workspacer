@@ -12,6 +12,8 @@ package bus
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -29,6 +31,26 @@ import (
 )
 
 const writeTimeout = 5 * time.Second
+
+// maxFrameTopics caps how many patterns one subscribe/unsubscribe frame may
+// carry. Both ops rewrite the subscription's topic list under the lock the
+// broker's fan-out needs, so the work a single frame can demand is work every
+// publisher on the bus waits for. `subscribe` is also the one op with no
+// authorization check at all — deliberately open to every tier — so without a
+// cap the lowest-privilege credential the system mints (a read-only `view`
+// token, or a plugin granted nothing) could wedge the entire control plane with
+// one ~1 MB frame. Oversized frames are rejected rather than truncated: a client
+// silently keeping a fraction of what it asked for would miss events with no way
+// to tell why.
+const maxFrameTopics = 256
+
+// forwardQueueDepth bounds how many cross-connection forwards one connection may
+// have waiting on peers that aren't draining (see [conn.forward]). Against a
+// healthy peer the queue is effectively always empty — the dispatcher drains it
+// as fast as a socket write completes — so reaching this depth means the target
+// has stopped reading, and a bounded backlog with a visible error beats growing
+// one client's queue without limit.
+const forwardQueueDepth = 256
 
 // Frame is the wire message exchanged with a client.
 //
@@ -246,6 +268,27 @@ func (s *Server) RegisterLocal(method string, h LocalHandler) {
 	s.router.registerLocal(method, h)
 }
 
+// RegisterLocalIdent is RegisterLocal for a handler that needs to know which
+// connection is calling — see [CallerIdentity]. Registering the same method
+// through either function replaces the other.
+func (s *Server) RegisterLocalIdent(method string, h LocalIdentHandler) {
+	s.router.registerLocalIdent(method, h)
+}
+
+// TokenFingerprint is the stable, non-secret identity of a bearer token: hex
+// SHA-256 of its value. Anything that must remember WHICH credential did
+// something records this instead of the token, so a stored fingerprint is never
+// a usable secret if the file holding it leaks. Callers that need to test a
+// fingerprint against the live token set fingerprint those tokens with this same
+// function — one implementation, so the two sides can't drift.
+func TokenFingerprint(token string) string {
+	if token == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
 // AddRoute registers an extra HTTP route (e.g. /plugins). Call before Handler().
 // Keeps the bus package decoupled from what it serves alongside the bus.
 func (s *Server) AddRoute(path string, h http.HandlerFunc) {
@@ -405,7 +448,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	cn := &conn{
 		ws: ws, ctx: ctx, trusted: trusted, caps: caps, pluginID: pluginID,
 		emits: events.Emits, consumes: events.Consumes, provides: events.Provides,
-		scope: scope, scopeMethods: scopeMethods,
+		scope: scope, scopeMethods: scopeMethods, tokenID: TokenFingerprint(tok),
 	}
 	s.router.addConn(cn)
 	defer cn.ws.CloseNow()
@@ -467,9 +510,17 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 		}
 		switch f.Op {
 		case "subscribe":
+			if len(f.Topics) > maxFrameTopics {
+				_ = cn.send(Frame{Op: "error", Error: tooManyTopics("subscribe", len(f.Topics))})
+				continue
+			}
 			sub.AddTopics(f.Topics...)
 			_ = cn.send(Frame{Op: "subscribed", Topics: sub.Topics()})
 		case "unsubscribe":
+			if len(f.Topics) > maxFrameTopics {
+				_ = cn.send(Frame{Op: "error", Error: tooManyTopics("unsubscribe", len(f.Topics))})
+				continue
+			}
 			sub.RemoveTopics(f.Topics...)
 			_ = cn.send(Frame{Op: "unsubscribed", Topics: sub.Topics()})
 		case "publish":
@@ -509,6 +560,12 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// tooManyTopics renders the rejection so a client can see the ceiling it hit
+// rather than guess why its subscription didn't take.
+func tooManyTopics(op string, n int) string {
+	return fmt.Sprintf("%s carries %d topics, over the %d limit for one frame", op, n, maxFrameTopics)
+}
+
 // conn serializes writes; coder/websocket forbids concurrent writers, and the
 // writer goroutine, read loop, and router all emit frames.
 type conn struct {
@@ -536,6 +593,89 @@ type conn struct {
 	emits    []string
 	consumes []string
 	provides []string
+	// tokenID fingerprints the credential this connection presented, for local
+	// handlers that persist something on its behalf (see [CallerIdentity]). Never
+	// the token itself: nothing downstream should be able to replay it.
+	tokenID string
+
+	// Frames this connection asked the hub to deliver to OTHER connections,
+	// drained in order by one goroutine started on first use — see [conn.forward].
+	fwdOnce sync.Once
+	fwd     chan forwardTask
+}
+
+// forwardTask is one frame a connection asked the hub to deliver to another
+// connection, with what to do if that delivery fails.
+type forwardTask struct {
+	target *conn
+	frame  Frame
+	onErr  func()
+}
+
+// forward hands a frame to this connection's dispatcher for delivery to another
+// connection: off the read loop, but in the order the read loop produced. Both
+// halves matter, and each was a bug on its own.
+//
+// Off the read loop, because conn.send serializes on the TARGET's write mutex.
+// Sent inline, one peer that has stopped draining head-of-line blocks every
+// subsequent frame this client sends — on a socket it has nothing to do with.
+//
+// In order, because a goroutine per forward is not ordered at all: Go schedules
+// them as it pleases, and successive calls from one connection routinely
+// inverted in practice. That is not abstract here — the web client fires
+// sessions.terminalInput per keystroke/chunk without awaiting the result, so
+// reordering scrambles what is typed into a PTY.
+//
+// The cost of the ordering is that a call to a wedged provider delays this
+// caller's LATER calls (a failing write gives up after writeTimeout, so the
+// queue drains rather than wedges). Returns false when the queue is full, which
+// only happens against a peer that has stopped reading entirely; the caller
+// fails the call rather than buffer without limit.
+func (cn *conn) forward(t forwardTask) bool {
+	cn.fwdOnce.Do(func() {
+		cn.fwd = make(chan forwardTask, forwardQueueDepth)
+		go cn.dispatchForwards()
+	})
+	select {
+	case cn.fwd <- t:
+		return true
+	default:
+		return false
+	}
+}
+
+// dispatchForwards delivers this connection's queued forwards one at a time,
+// which is what makes them ordered. It ends with the connection: anything still
+// queued when the caller goes away is already being cleaned up by dropConn,
+// which fails or drops the pending calls those frames belonged to.
+func (cn *conn) dispatchForwards() {
+	for {
+		select {
+		case <-cn.ctx.Done():
+			return
+		case t := <-cn.fwd:
+			if err := t.target.send(t.frame); err != nil && t.onErr != nil {
+				t.onErr()
+			}
+		}
+	}
+}
+
+// identity is what a local handler sees of its caller. Trusted conns report the
+// "operator" tier for the same reason helloFrame does — a host token and an
+// operator token are the same authority, and the latter is promoted to trusted
+// at the handshake, so the tier name isn't otherwise recoverable.
+func (cn *conn) identity() CallerIdentity {
+	id := CallerIdentity{
+		Trusted:  cn.trusted,
+		Scope:    cn.scope,
+		PluginID: cn.pluginID,
+		TokenID:  cn.tokenID,
+	}
+	if cn.trusted {
+		id.Scope = "operator"
+	}
+	return id
 }
 
 // helloFrame is the greeting a client gets the moment its token resolved. It
@@ -624,10 +764,12 @@ func (cn *conn) authorize(method string, params json.RawMessage) error {
 	field, scoped := capspec.IsPathScoped(method)
 	if !scoped {
 		// Defense in depth: RegisterPluginToken already refuses to grant a method
-		// that looks path-bearing but has no spec, so mayCall should have denied it
-		// before we got here. If one slips through anyway, deny rather than let an
-		// unscoped filesystem method run with no containment.
-		if capspec.LooksPathBearing(method) {
+		// that looks path-bearing but was never classified, so mayCall should have
+		// denied it before we got here. If one slips through anyway, deny rather
+		// than let an unscoped filesystem method run with no containment. The test
+		// is MissingSpec, not LooksPathBearing — a method capspec deliberately
+		// leaves unconfined (with its reason on the record) is allowed through.
+		if capspec.MissingSpec(method) {
 			return fmt.Errorf("%s: named like a filesystem capability but has no capspec entry; denied to avoid running unconfined", method)
 		}
 		return nil // verb-only capability; mayCall already governs it

@@ -58,13 +58,16 @@ impl FromRef<ApiState> for Db {
 /// that address is a legitimate `Host`; the wildcard binds (`0.0.0.0`, `::`)
 /// carry no meaningful host name, so only loopback is accepted for those and
 /// remote access is expected to go through the hub bus, not this API directly.
+///
+/// `pub(crate)` because the hook ingress server (port 7890) is a second router
+/// on the same host and needs the identical guard — see `hook::router_with_host`.
 #[derive(Clone, Default)]
-struct AllowedHosts {
+pub(crate) struct AllowedHosts {
     extra: Option<String>,
 }
 
 impl AllowedHosts {
-    fn new(bind_host: Option<String>) -> Self {
+    pub(crate) fn new(bind_host: Option<String>) -> Self {
         // A wildcard bind names no host, so it adds nothing to the allowlist.
         let extra = bind_host.filter(|h| h != "0.0.0.0" && h != "::" && !h.is_empty());
         Self { extra }
@@ -148,7 +151,11 @@ fn cors_layer() -> CorsLayer {
 /// pinning `Host` to expected values closes that hole for the side-effecting
 /// endpoints. Requests with no `Host` at all (non-browser clients that omit it)
 /// pass through — the rebinding vector requires a browser, which always sends one.
-async fn host_guard(State(allowed): State<AllowedHosts>, req: Request, next: Next) -> Response {
+pub(crate) async fn host_guard(
+    State(allowed): State<AllowedHosts>,
+    req: Request,
+    next: Next,
+) -> Response {
     match req
         .headers()
         .get(header::HOST)

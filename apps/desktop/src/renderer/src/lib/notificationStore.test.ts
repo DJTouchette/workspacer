@@ -66,6 +66,33 @@ describe('normalizeNotification', () => {
     const b = normalizeNotification({ title: 'b' }, 'x')!;
     expect(a.id).not.toBe(b.id);
   });
+
+  // A click on a notification hands `url` to an opener: shell.openExternal on
+  // the desktop (which refuses non-http(s)) or a raw window.open on the web
+  // mirror (which does not). The url comes from plugins and remote clients, so
+  // the scheme has to be settled here, where every producer passes through.
+  it('keeps http(s) urls', () => {
+    expect(normalizeNotification({ title: 'a', url: 'https://x.test/a' }, 'x')!.url).toBe(
+      'https://x.test/a',
+    );
+    expect(normalizeNotification({ title: 'a', url: 'http://x.test' }, 'x')!.url).toBe(
+      'http://x.test',
+    );
+  });
+
+  it('drops javascript:, file: and other schemes', () => {
+    for (const url of [
+      'javascript:alert(1)',
+      'JavaScript:alert(1)',
+      'file:///etc/passwd',
+      'data:text/html,<script>1</script>',
+      'workspacer://open',
+      '/relative/path',
+      '',
+    ]) {
+      expect(normalizeNotification({ title: 'a', url }, 'x')!.url).toBeUndefined();
+    }
+  });
 });
 
 describe('ingest', () => {
@@ -143,6 +170,18 @@ describe('persistence', () => {
       Array.from({ length: PERSIST_LIMIT + 50 }, (_, i) => make({ id: `n${i}` })),
     );
     expect(loadPersisted(storage)).toHaveLength(PERSIST_LIMIT);
+  });
+
+  it('re-vets urls on restore (entries predating the scheme check)', () => {
+    const storage = memStorage({
+      [STORAGE_KEY]: JSON.stringify([
+        make({ id: 'bad', url: 'javascript:alert(1)' }),
+        make({ id: 'good', url: 'https://x.test' }),
+      ]),
+    });
+    const restored = loadPersisted(storage);
+    expect(restored.find((i) => i.id === 'bad')!.url).toBeUndefined();
+    expect(restored.find((i) => i.id === 'good')!.url).toBe('https://x.test');
   });
 
   it('restores to empty on corrupt or wrong-shape payloads', () => {

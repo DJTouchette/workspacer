@@ -6,6 +6,7 @@ package main
 // so arbitrary pane/tab/agent shapes round-trip without a matching Go type.
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -57,15 +58,42 @@ func listLayouts() []map[string]any {
 	return out
 }
 
+// layoutFilePath resolves the file for a layout id, slugging it first and then
+// re-asserting the result stayed inside layoutsDir — the same hazard
+// sessionFilePath documents below, but worse: save used the RAW id, so an id of
+// "../config" wrote over ~/.config/workspacer/config.yaml, and because the
+// clobbered file still parses there is no .broken-* backup to recover the user's
+// themes/keybindings/budgets from. An id carrying a separator or a ".." segment
+// is an escape attempt rather than an untidy name, so it is refused instead of
+// quietly repointed at some other file; everything else is slugged, which is
+// also what removeLayout has always done (save and remove disagreed on the
+// filename for any id that wasn't already a slug).
+func layoutFilePath(id string) (string, error) {
+	if strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") {
+		return "", fmt.Errorf("layout id must not contain a path separator")
+	}
+	full := filepath.Join(layoutsDir(), slugLayout(id)+".yaml")
+	if filepath.Dir(full) != filepath.Clean(layoutsDir()) {
+		return "", fmt.Errorf("layout id resolves outside the layouts directory")
+	}
+	return full, nil
+}
+
 // saveLayout writes one layout file, mirroring layoutService.save: id defaults to
-// the slug of the name, name falls back to the id, createdAt is stamped now. The
-// filename uses the raw id (remove() re-slugs it — see slug.go).
+// the slug of the name, name falls back to the id, createdAt is stamped now.
 func saveLayout(input map[string]any) (map[string]any, error) {
 	id := str(input["id"])
 	name := strings.TrimSpace(str(input["name"]))
 	if id == "" {
 		id = slugLayout(str(input["name"]))
 	}
+	path, err := layoutFilePath(id)
+	if err != nil {
+		return nil, err
+	}
+	// The stored id is the slug we actually wrote under, so a later remove() —
+	// which re-slugs — finds this file.
+	id = slugLayout(id)
 	if name == "" {
 		name = id
 	}
@@ -81,14 +109,18 @@ func saveLayout(input map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(layoutsDir(), id+".yaml"), data, 0o644); err != nil {
+	if err := writeFileAtomic(path, data, 0o644); err != nil {
 		return nil, err
 	}
 	return layout, nil
 }
 
 func removeLayout(id string) {
-	_ = os.Remove(filepath.Join(layoutsDir(), slugLayout(id)+".yaml"))
+	path, err := layoutFilePath(id)
+	if err != nil {
+		return
+	}
+	_ = os.Remove(path)
 }
 
 // ── Saved sessions (<configDir>/sessions/<slug(name)>.yaml) ──────────────────
@@ -171,6 +203,13 @@ func loadSavedSession(filename string) map[string]any {
 // filename, matching sessionService.saveSession.
 func saveSavedSession(name string, data map[string]any) (string, error) {
 	filename := slugSession(name) + ".yaml"
+	// The slug can't produce a separator, but the write goes through the same
+	// containment check as the reads so the three paths can never disagree about
+	// what a legal session file is.
+	path, ok := sessionFilePath(filename)
+	if !ok {
+		return "", fmt.Errorf("invalid session name")
+	}
 	if err := os.MkdirAll(sessionsDir(), 0o755); err != nil {
 		return "", err
 	}
@@ -178,7 +217,7 @@ func saveSavedSession(name string, data map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(sessionsDir(), filename), raw, 0o644); err != nil {
+	if err := writeFileAtomic(path, raw, 0o644); err != nil {
 		return "", err
 	}
 	return filename, nil

@@ -59,6 +59,17 @@ const TAG: &str = "# claudemon-hook";
 /// two are matched independently.
 const STATUS_TAG: &str = "# claudemon-statusline";
 
+/// Sibling key we stash the user's untouched statusLine command under when we
+/// wrap it. Recovering their command by re-parsing our shell one-liner is
+/// guesswork the moment either end of it changes, and the command is the only
+/// copy they have — so the verbatim original travels with the entry and both
+/// the overlay path and `strip_our_entries` read it back from there.
+const STATUS_STASH_KEY: &str = "claudemonOriginalCommand";
+
+/// The `stdin`-replay prefix shared by our forward and the pipe into the user's
+/// own command, so the wrapper and the unwrapper can't drift apart.
+const PIPE_INPUT: &str = "printf '%s' \"$i\" | ";
+
 fn hook_command(hook_port: u16) -> String {
     format!(
         "curl -s -X POST http://127.0.0.1:{hook_port}/hook -H \"content-type: application/json\" -d @- {TAG}"
@@ -78,12 +89,52 @@ fn status_line_command(hook_port: u16, inner: Option<&str>) -> String {
     // re-run, latency-sensitive) status line; connection-refused already fails
     // fast when the daemon is simply down.
     let forward = format!(
-        "printf '%s' \"$i\" | curl -s --max-time 2 -X POST http://127.0.0.1:{hook_port}/statusline -H \"content-type: application/json\" -d @- >/dev/null 2>&1"
+        "{PIPE_INPUT}curl -s --max-time 2 -X POST http://127.0.0.1:{hook_port}/statusline -H \"content-type: application/json\" -d @- >/dev/null 2>&1"
     );
     match inner {
-        Some(cmd) => format!("i=$(cat); {forward}; printf '%s' \"$i\" | {cmd} {STATUS_TAG}"),
+        Some(cmd) => format!("i=$(cat); {forward}; {PIPE_INPUT}{cmd} {STATUS_TAG}"),
         None => format!("i=$(cat); {forward} {STATUS_TAG}"),
     }
+}
+
+/// Build the whole `statusLine` entry we install: our wrapper command plus, when
+/// we wrapped something, the user's original stashed verbatim beside it.
+fn status_line_entry(hook_port: u16, inner: Option<&str>) -> Value {
+    let mut entry = json!({
+        "type": "command",
+        "command": status_line_command(hook_port, inner),
+    });
+    if let (Some(inner), Some(obj)) = (inner, entry.as_object_mut()) {
+        obj.insert(
+            STATUS_STASH_KEY.to_string(),
+            Value::String(inner.to_string()),
+        );
+    }
+    entry
+}
+
+/// The user's own statusLine command, given whatever is in a settings doc's
+/// `statusLine`: their command untouched when it isn't ours, the command we
+/// wrapped when it is, and `None` when there was nothing to wrap. Preferring the
+/// stash means the common case never depends on parsing a shell string; the
+/// parse is only reached for entries written before the stash existed.
+fn inner_status_line(entry: Option<&Value>) -> Option<String> {
+    let entry = entry?;
+    let command = entry.get("command").and_then(Value::as_str)?;
+    if !command.contains(STATUS_TAG) {
+        return Some(command.to_string());
+    }
+    if let Some(stashed) = entry.get(STATUS_STASH_KEY).and_then(Value::as_str) {
+        return Some(stashed.to_string());
+    }
+    let body = command.trim_end().strip_suffix(STATUS_TAG)?.trim_end();
+    let (_, tail) = body.rsplit_once(PIPE_INPUT)?;
+    // With no inner command the last `printf | …` in the line is our own forward;
+    // that shape means there was nothing of the user's to recover.
+    if tail.starts_with("curl ") && tail.contains("/statusline") {
+        return None;
+    }
+    Some(tail.to_string())
 }
 
 fn settings_path() -> Result<PathBuf> {
@@ -183,13 +234,11 @@ pub async fn run_overlay(dry_run: bool, hook_port: u16, overlay_path: &PathBuf) 
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Value::Object(Default::default()),
         Err(err) => return Err(err).with_context(|| format!("reading {}", global.display())),
     };
-    let inner_status = global_doc
-        .get("statusLine")
-        .and_then(|sl| sl.get("command"))
-        .and_then(Value::as_str)
-        // Don't wrap our own forwarder if a prior overlay-less run left it there.
-        .filter(|c| !c.contains(STATUS_TAG))
-        .map(str::to_owned);
+    // A prior overlay-less `claudemon init` may have left OUR forwarder in the
+    // global file, with the user's command inside it. Unwrap rather than ignore:
+    // ignoring it wraps nothing here and then the strip below removes the global
+    // entry, and their command exists nowhere any more.
+    let inner_status = inner_status_line(global_doc.get("statusLine"));
 
     // Build the overlay: a fresh doc carrying only our hooks + statusLine.
     let command = hook_command(hook_port);
@@ -198,10 +247,7 @@ pub async fn run_overlay(dry_run: bool, hook_port: u16, overlay_path: &PathBuf) 
     if let Some(obj) = overlay_doc.as_object_mut() {
         obj.insert(
             "statusLine".to_string(),
-            json!({
-                "type": "command",
-                "command": status_line_command(hook_port, inner_status.as_deref()),
-            }),
+            status_line_entry(hook_port, inner_status.as_deref()),
         );
     }
     let overlay_formatted = serde_json::to_string_pretty(&overlay_doc)? + "\n";
@@ -261,14 +307,27 @@ fn strip_our_entries(mut doc: Value) -> (Value, bool) {
     };
     let mut removed = false;
 
-    // Drop our statusLine wrapper (leave a user's own untouched).
+    // Unwrap our statusLine wrapper (leave a user's own untouched). Removing the
+    // key outright would delete the user's command along with our wrapper — this
+    // file is where it lives, so put theirs back and only drop the entry when
+    // there was nothing but ours in it.
     if obj
         .get("statusLine")
         .and_then(|sl| sl.get("command"))
         .and_then(Value::as_str)
         .is_some_and(|c| c.contains(STATUS_TAG))
     {
-        obj.remove("statusLine");
+        match inner_status_line(obj.get("statusLine")) {
+            Some(inner) => {
+                if let Some(sl) = obj.get_mut("statusLine").and_then(Value::as_object_mut) {
+                    sl.insert("command".to_string(), Value::String(inner));
+                    sl.remove(STATUS_STASH_KEY);
+                }
+            }
+            None => {
+                obj.remove("statusLine");
+            }
+        }
         removed = true;
     }
 
@@ -337,18 +396,21 @@ fn merge_status_line(doc: &mut Value, hook_port: u16) -> bool {
         .and_then(|sl| sl.get("command"))
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let command = status_line_command(hook_port, inner.as_deref());
+    let wrapped = status_line_entry(hook_port, inner.as_deref());
 
     let entry = obj
         .entry("statusLine".to_string())
         .or_insert_with(|| Value::Object(Default::default()));
     let Some(map) = entry.as_object_mut() else {
         // A non-object statusLine is malformed; replace it wholesale.
-        *entry = json!({ "type": "command", "command": command });
+        *entry = wrapped;
         return true;
     };
-    map.insert("type".to_string(), Value::String("command".to_string()));
-    map.insert("command".to_string(), Value::String(command));
+    // Merge our keys over the user's entry so `padding` and friends survive; the
+    // stash key rides along so an unwrap never has to reverse the shell string.
+    for (key, value) in wrapped.as_object().expect("built as an object") {
+        map.insert(key.clone(), value.clone());
+    }
     true
 }
 
@@ -546,8 +608,77 @@ mod tests {
         let pre = pruned["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(pre.len(), 1, "only the user hook should remain");
         assert_eq!(pre[0]["hooks"][0]["command"], json!("echo user-hook"));
-        // Our statusLine wrapper (which had wrapped the user's) is removed.
+        // Our statusLine wrapper is removed — but the user's command, which the
+        // wrapper had swallowed, is restored in its place. Deleting the key (as
+        // this used to) destroyed the only copy of it they had.
+        assert_eq!(
+            pruned["statusLine"]["command"],
+            json!("bash ~/mine.sh"),
+            "the wrapped command must be handed back, not deleted"
+        );
+        assert!(
+            pruned["statusLine"].get(STATUS_STASH_KEY).is_none(),
+            "our stash goes with our wrapper"
+        );
+    }
+
+    #[test]
+    fn strip_drops_the_entry_when_it_only_ever_held_our_forwarder() {
+        // Nothing of the user's was wrapped, so there is nothing to hand back and
+        // the key goes away entirely.
+        let mut doc = json!({});
+        assert!(merge_status_line(&mut doc, 7890));
+        let (pruned, removed) = strip_our_entries(doc);
+        assert!(removed);
         assert!(pruned.get("statusLine").is_none());
+    }
+
+    #[test]
+    fn strip_unwraps_a_pre_stash_wrapper_by_parsing() {
+        // Entries written before the stash key existed have to survive too: the
+        // user's command is recovered from the shell string itself.
+        let wrapped = status_line_command(7890, Some("bash ~/legacy.sh"));
+        let doc = json!({ "statusLine": { "type": "command", "command": wrapped } });
+        let (pruned, removed) = strip_our_entries(doc);
+        assert!(removed);
+        assert_eq!(pruned["statusLine"]["command"], json!("bash ~/legacy.sh"));
+    }
+
+    #[test]
+    fn overlay_inner_command_survives_an_already_wrapped_global() {
+        // The overlay path reads the global file's statusLine to wrap it. When a
+        // prior `claudemon init` already wrapped it, the user's command must be
+        // unwrapped and re-wrapped — ignoring it (as this used to) dropped it,
+        // and the strip that follows then removed the last copy.
+        let mut global = json!({
+            "statusLine": { "type": "command", "command": "bash ~/mine.sh" }
+        });
+        merge_status_line(&mut global, 7890);
+
+        let inner = inner_status_line(global.get("statusLine"));
+        assert_eq!(inner.as_deref(), Some("bash ~/mine.sh"));
+
+        let overlay = status_line_entry(7890, inner.as_deref());
+        let cmd = overlay["command"].as_str().unwrap();
+        assert!(cmd.contains("bash ~/mine.sh"), "re-wrapped, not dropped");
+        assert_eq!(cmd.matches("bash ~/mine.sh").count(), 1, "wrapped once");
+        assert_eq!(overlay[STATUS_STASH_KEY], json!("bash ~/mine.sh"));
+    }
+
+    #[test]
+    fn inner_status_line_reads_plain_and_absent_entries() {
+        assert_eq!(inner_status_line(None), None);
+        assert_eq!(
+            inner_status_line(Some(&json!({ "command": "bash ~/mine.sh" }))).as_deref(),
+            Some("bash ~/mine.sh"),
+        );
+        // Our own forwarder with nothing wrapped inside it yields nothing.
+        let bare = status_line_command(7890, None);
+        assert_eq!(
+            inner_status_line(Some(&json!({ "command": bare }))),
+            None,
+            "the forward's own pipe must not be mistaken for a user command"
+        );
     }
 
     #[test]

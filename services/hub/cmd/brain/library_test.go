@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,7 +115,8 @@ func TestLibraryClaudeCommands(t *testing.T) {
 	}
 
 	// Save routes a command to .claude/commands (not skills/agents)…
-	if _, err := saveLibrary(libraryInput{Scope: "claude", Kind: "command", ID: "release", Title: "release", Body: "cut a release", Cwd: cwd}); err != nil {
+	reg := registryWithCwd(t, cwd)
+	if _, err := reg.saveLibrary(context.Background(), libraryInput{Scope: "claude", Kind: "command", ID: "release", Title: "release", Body: "cut a release", Cwd: cwd}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(claudeCommandsDir(cwd), "release.md")); err != nil {
@@ -130,7 +132,8 @@ func TestLibraryClaudeCommands(t *testing.T) {
 func TestLibrarySaveAndRemoveGlobal(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	it, err := saveLibrary(libraryInput{Scope: "global", Title: "My Prompt", Kind: "prompt", Body: "hello {{x}}"})
+	reg := registryWithCwd(t, t.TempDir())
+	it, err := reg.saveLibrary(context.Background(), libraryInput{Scope: "global", Title: "My Prompt", Kind: "prompt", Body: "hello {{x}}"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +157,8 @@ func TestLibrarySaveClaudePreservesUnmodeledFrontmatter(t *testing.T) {
 	skillFile := filepath.Join(claudeSkillsDir(cwd), "foo", "SKILL.md")
 	writeFile(t, skillFile, "---\nname: Old\ndescription: old\ntools:\n  - Read\nmodel: opus\n---\n\nold body\n")
 
-	if _, err := saveLibrary(libraryInput{Scope: "claude", Kind: "skill", ID: "foo", Title: "New Title", Description: "new", Body: "new body", Cwd: cwd}); err != nil {
+	reg := registryWithCwd(t, cwd)
+	if _, err := reg.saveLibrary(context.Background(), libraryInput{Scope: "claude", Kind: "skill", ID: "foo", Title: "New Title", Description: "new", Body: "new body", Cwd: cwd}); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := parseFrontmatter(readFile(t, skillFile))
@@ -163,6 +167,41 @@ func TestLibrarySaveClaudePreservesUnmodeledFrontmatter(t *testing.T) {
 	}
 	if data["model"] != "opus" || data["tools"] == nil {
 		t.Errorf("unmodeled keys (tools/model) must be preserved, got %+v", data)
+	}
+}
+
+// TestLibrarySaveIsConfinedToTheWorkspace: library.save takes the cwd it writes
+// under from the caller, so it has to answer to the same fsguard containment as
+// fs.write. Without it the method is a second, unguarded write primitive sitting
+// next to the guarded one — the exact drift that left the brain's fs.* handlers
+// unconfined while the desktop twin looked fixed.
+func TestLibrarySaveIsConfinedToTheWorkspace(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	agentCwd := t.TempDir()
+	elsewhere := t.TempDir() // no agent runs here
+	reg := registryWithCwd(t, agentCwd)
+
+	if _, err := reg.saveLibrary(context.Background(), libraryInput{
+		Scope: "project", Title: "Pwn", Kind: "prompt", Body: "x", Cwd: elsewhere,
+	}); err == nil {
+		t.Error("library.save into a directory with no live agent should be denied")
+	}
+	if _, err := os.Stat(libraryProjectDir(elsewhere)); !os.IsNotExist(err) {
+		t.Errorf("a denied library.save must not create directories: %v", err)
+	}
+
+	// The claude scope writes through a different branch — and its own check.
+	if _, err := reg.saveLibrary(context.Background(), libraryInput{
+		Scope: "claude", Kind: "skill", ID: "pwn", Title: "Pwn", Body: "x", Cwd: elsewhere,
+	}); err == nil {
+		t.Error("library.save (claude scope) outside the workspace should be denied")
+	}
+
+	// …and the legitimate write into a live agent's project still lands.
+	if _, err := reg.saveLibrary(context.Background(), libraryInput{
+		Scope: "project", Title: "Ok", Kind: "prompt", Body: "x", Cwd: agentCwd,
+	}); err != nil {
+		t.Fatalf("library.save inside a live agent cwd should be allowed: %v", err)
 	}
 }
 

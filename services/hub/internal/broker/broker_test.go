@@ -163,6 +163,48 @@ func TestDeliveredStreamEventsAreNotDesyncs(t *testing.T) {
 	}
 }
 
+// The topic list is walked on every publish under a lock the fan-out needs, so
+// it must be bounded — and applying a huge batch must not cost O(N²) string
+// comparisons while that write lock is held. With the old linear de-dup, 100k
+// patterns took ~14s of held lock, during which every publisher on the bus
+// stalled: a read-only `view` token (subscribe is open to every tier) could
+// wedge the whole control plane with one frame.
+func TestAddTopicsIsBoundedInSizeAndTime(t *testing.T) {
+	b := New()
+	sub := b.Subscribe(nil)
+	huge := make([]string, 100_000)
+	for i := range huge {
+		huge[i] = "topic." + strconv.Itoa(i)
+	}
+
+	start := time.Now()
+	sub.AddTopics(huge...)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("AddTopics(100k) took %s — the de-dup is quadratic again", elapsed)
+	}
+	if got := len(sub.Topics()); got != MaxTopics {
+		t.Fatalf("retained %d topics, want the %d cap", got, MaxTopics)
+	}
+
+	// RemoveTopics is the same primitive from the other direction: a huge
+	// removal batch must not be scanned once per retained topic.
+	start = time.Now()
+	sub.RemoveTopics(huge...)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("RemoveTopics(100k) took %s — the removal filter is quadratic", elapsed)
+	}
+	if got := sub.Topics(); len(got) != 0 {
+		t.Fatalf("topics after removing everything = %v, want none", got)
+	}
+
+	// The membership index must not outlive the topics it indexes, or a
+	// re-subscribe to a removed pattern would be silently dropped as a dup.
+	sub.AddTopics("topic.0")
+	if got := sub.Topics(); len(got) != 1 || got[0] != "topic.0" {
+		t.Fatalf("re-adding a removed topic gave %v, want [topic.0]", got)
+	}
+}
+
 // A client that is gone for a long time must not accumulate one remembered
 // topic per session it ever watched.
 func TestDesyncTopicsAreBounded(t *testing.T) {

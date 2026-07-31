@@ -21,6 +21,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 
 	"github.com/djtouchette/workspacer-hub/internal/broker"
@@ -29,6 +30,31 @@ import (
 
 // ChangedTopic is published on every accepted write.
 const ChangedTopic = "layout.changed"
+
+// busTokenQuery matches a `busToken=<value>` query param anywhere in the opaque
+// document. Plugin pane URLs carry the per-plugin bus token that way, and the
+// layout document is a *shared*, world-readable (0644) file that every connected
+// client also receives on layout.changed — while the token file it came from is
+// 0600. A capability token has no business riding along in it.
+//
+// The match stops at the JSON string terminator, a query separator, or a
+// backslash escape, so only the value is consumed. Redaction is done on the raw
+// bytes rather than by decoding and re-encoding: `Data` is the renderer's state
+// and the hub deliberately doesn't interpret it, so everything but the token
+// must round-trip byte for byte.
+var busTokenQuery = regexp.MustCompile(`busToken=[^"&\\]*`)
+
+// redactBusTokens blanks any bus token in the document, leaving the param in
+// place so a client reading the URL still sees an (empty) token rather than a
+// differently-shaped URL. The renderer strips the token before writing too;
+// this is the belt-and-braces half, so a stale document on disk or a
+// third-party writer can't reintroduce the leak.
+func redactBusTokens(data json.RawMessage) json.RawMessage {
+	if !busTokenQuery.Match(data) {
+		return data
+	}
+	return busTokenQuery.ReplaceAll(data, []byte("busToken="))
+}
 
 // Document is the shared workspace layout. Data is opaque to the hub (the
 // renderer's AgentWorkspace[] + globals). Version increments on every accepted
@@ -70,6 +96,9 @@ func (s *Service) load() {
 	if len(d.Data) == 0 {
 		d.Data = json.RawMessage("null")
 	}
+	// A document written before Set started redacting still holds live tokens;
+	// clean it on the way in so the first Get doesn't serve them.
+	d.Data = redactBusTokens(d.Data)
 	s.doc = d
 }
 
@@ -115,7 +144,7 @@ func (s *Service) Set(params json.RawMessage) (any, error) {
 
 	s.mu.Lock()
 	s.doc.Version++
-	s.doc.Data = append(json.RawMessage(nil), in.Data...)
+	s.doc.Data = redactBusTokens(append(json.RawMessage(nil), in.Data...))
 	d := s.doc
 	// Persist while still holding the lock so writes are serialized: a higher
 	// version can never be overwritten on disk by a slower, older-version
