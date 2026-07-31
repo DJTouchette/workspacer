@@ -50,7 +50,9 @@ export const FileChips: React.FC<{ files: AttachedFile[]; onRemove: (idx: number
   files,
   onRemove,
 }) => {
-  const previews = useImagePreviews(files.filter((f) => f.label === 'Image').map((f) => f.path));
+  const { previews } = useImagePreviews(
+    files.filter((f) => f.label === 'Image').map((f) => f.path),
+  );
   if (files.length === 0) return null;
   return (
     <div

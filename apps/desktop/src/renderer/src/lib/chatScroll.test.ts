@@ -38,6 +38,38 @@ describe('tailPadForAnchor', () => {
   });
 });
 
+/**
+ * The two scroll questions must not share an answer. Getting this wrong is what
+ * made a streaming reply yank the user back down: the tail spacer discounted
+ * their scroll, so 500px up still counted as "at the bottom".
+ */
+describe('stickiness vs the scroll-to-bottom button', () => {
+  const raw = (m: { scrollHeight: number; scrollTop: number; clientHeight: number }) =>
+    m.scrollHeight - m.scrollTop - m.clientHeight;
+
+  it('a scroll-up inside the spacer unsticks, while the button stays hidden', () => {
+    // 600px spacer, user scrolled up 300px mid-reply.
+    const m = { scrollHeight: 2400, scrollTop: 1500, clientHeight: 600, tailPad: 600 };
+    // The button asks about REAL content, which is still on screen.
+    expect(distanceFromContentEnd(m) > 150).toBe(false);
+    // Stickiness asks about the scroll position, which has clearly moved.
+    expect(raw(m) <= 150).toBe(false);
+  });
+
+  it('parked at the bottom of the spacer still counts as stuck', () => {
+    const m = { scrollHeight: 2400, scrollTop: 1800, clientHeight: 600, tailPad: 600 };
+    expect(raw(m) <= 150).toBe(true);
+    expect(distanceFromContentEnd(m) > 150).toBe(false);
+  });
+
+  it('with no spacer the two questions agree, as they always did', () => {
+    const m = { scrollHeight: 2000, scrollTop: 1000, clientHeight: 600, tailPad: 0 };
+    expect(raw(m)).toBe(distanceFromContentEnd(m));
+    expect(raw(m) <= 150).toBe(false);
+    expect(distanceFromContentEnd(m) > 150).toBe(true);
+  });
+});
+
 describe('distanceFromContentEnd', () => {
   it('reads as "at the bottom" while parked in the tail spacer', () => {
     // Scrolled all the way down with a 400px spacer: the raw distance is 0, and

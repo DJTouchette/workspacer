@@ -295,6 +295,10 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({ config, save, themeId }) => {
 
   const remove = () => {
     if (timerRef.current) clearTimeout(timerRef.current);
+    // …and drop the debounced payload with it. The unmount flush below writes
+    // whatever is still pending, which for a delete means re-saving the theme
+    // that was just removed (and reverting the theme switch that came with it).
+    pendingSaveRef.current = null;
     const cfg = configRef.current;
     const rest = { ...cfg.ui.customThemes };
     delete rest[themeId];

@@ -30,6 +30,11 @@ export interface MessageAttachments {
   text: string;
   /** Absolute paths pulled out of those markers, in order, deduped. */
   paths: string[];
+  /** The markers verbatim, for putting back when no thumbnail renders. The
+   *  text is stripped on EXTENSION alone, long before anything tries to decode
+   *  the file, so an image-only message whose file is gone (or is a .tiff no
+   *  browser draws) would otherwise be a bubble with nothing in it. */
+  markers: string[];
 }
 
 /**
@@ -40,17 +45,21 @@ export interface MessageAttachments {
  * evidence they were sent at all.
  */
 export function extractImageAttachments(content: string | undefined): MessageAttachments {
-  if (!content) return { text: '', paths: [] };
+  if (!content) return { text: '', paths: [], markers: [] };
   const paths: string[] = [];
+  const markers: string[] = [];
   const text = content.replace(IMAGE_MARKER, (whole, raw: string) => {
     const path = raw.trim();
     // A marker for something we can't render stays as text rather than
     // vanishing — otherwise the message would silently lose it.
     if (!isImagePath(path)) return whole;
-    if (!paths.includes(path)) paths.push(path);
+    if (!paths.includes(path)) {
+      paths.push(path);
+      markers.push(`[Image: ${path}]`);
+    }
     return '';
   });
-  return { text: text.trim(), paths };
+  return { text: text.trim(), paths, markers };
 }
 
 /**

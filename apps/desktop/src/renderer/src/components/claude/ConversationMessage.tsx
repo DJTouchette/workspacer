@@ -76,7 +76,9 @@ const ConversationMessageInner: React.FC<{
   // merely mentions (left in the text, thumbnailed underneath).
   const attached = useMemo(
     () =>
-      isUser ? extractImageAttachments(turn.content) : { text: turn.content ?? '', paths: [] },
+      isUser
+        ? extractImageAttachments(turn.content)
+        : { text: turn.content ?? '', paths: [], markers: [] },
     [isUser, turn.content],
   );
   const mentioned = useMemo(
@@ -128,6 +130,23 @@ const ConversationMessageInner: React.FC<{
               paths={attached.paths}
               cwd={cwd}
               style={{ marginBottom: attached.text ? 8 : 0 }}
+              fallback={
+                // No tile will ever render (file gone, too big, a format no
+                // browser draws): show what was attached rather than an empty
+                // bubble. The marker was stripped on extension alone, before
+                // anything tried to decode it.
+                <div
+                  style={{
+                    fontSize: 'calc(0.75rem * var(--claude-gui-font-scale, 1))',
+                    lineHeight: 1.6,
+                    color: colors.muted,
+                    wordBreak: 'break-word',
+                    marginBottom: attached.text ? 8 : 0,
+                  }}
+                >
+                  {attached.markers.join(' ')}
+                </div>
+              }
             />
           )}
           {/* An image-only message IS the image — no "(empty)" placeholder under

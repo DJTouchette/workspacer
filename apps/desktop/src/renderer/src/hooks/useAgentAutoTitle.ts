@@ -63,7 +63,14 @@ export function agentsAwaitingTitle(
   for (const agent of agents) {
     if (agent.global || !agent.sessionId) continue;
     if (agent.nameSetByUser || agent.autoTitled) continue;
-    const exchange = openingExchange(snapshotBySession[agent.sessionId]?.conversation);
+    const snap = snapshotBySession[agent.sessionId];
+    // A compacted snapshot (conversationOffset > 0) has dropped its leading
+    // turns, so its "first" user message is just the oldest one still in the
+    // window — titling from it would name a resumed session after whatever it
+    // was doing an hour ago. Wait for a full snapshot instead; an agent that
+    // never gets one keeps its folder name, which is the honest answer.
+    if ((snap?.conversationOffset ?? 0) > 0) continue;
+    const exchange = openingExchange(snap?.conversation);
     if (exchange) out.push({ agent, exchange });
   }
   return out;

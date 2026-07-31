@@ -40,6 +40,15 @@ export const SidebarResizeHandle: React.FC<Props> = ({ width, onResize, onCommit
     () => () => {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
       if (keyTimerRef.current) clearTimeout(keyTimerRef.current);
+      // The drag writes document.body styles that only endDrag clears — and a
+      // drag can outlive this component (collapsing the sidebar with Ctrl+B
+      // mid-drag unmounts the handle, and pointer capture means no other
+      // element sees the pointerup). Leaving them set makes the whole app
+      // unselectable with a col-resize cursor until reload.
+      if (dragRef.current) {
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+      }
     },
     [],
   );

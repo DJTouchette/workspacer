@@ -718,16 +718,27 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
-    // Measured against the end of real content, not the end of the scroll
-    // range — otherwise the tail spacer itself reads as "scrolled away".
-    const distFromBottom = distanceFromContentEnd({
+    // Two different questions, and they do NOT share an answer.
+    //
+    // "Is the latest content in view?" (the button) is about REAL content, so
+    // it discounts the tail spacer — parked in the spacer after a send, the
+    // newest message is on screen and the button would be a lie.
+    //
+    // "Should streaming keep dragging the view down?" is about the SCROLL
+    // POSITION, and must use the raw distance. Measuring it against the content
+    // end meant a full-viewport spacer bought the user a free ~600px of
+    // scrolling that still counted as "at the bottom": scroll up mid-reply to
+    // re-read something and the next chunk snapped you straight back, with no
+    // scroll-to-bottom button to escape with.
+    const rawDist = container.scrollHeight - container.scrollTop - container.clientHeight;
+    const contentDist = distanceFromContentEnd({
       scrollHeight: container.scrollHeight,
       scrollTop: container.scrollTop,
       clientHeight: container.clientHeight,
       tailPad: tailPadRef.current,
     });
-    setShowScrollBtn(distFromBottom > 150);
-    stickToBottomRef.current = distFromBottom <= 150;
+    setShowScrollBtn(contentDist > 150);
+    stickToBottomRef.current = rawDist <= 150;
   }, []);
 
   // Re-derive the tail spacer from the pinned message's position. Cheap enough

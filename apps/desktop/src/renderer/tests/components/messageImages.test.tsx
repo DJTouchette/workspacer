@@ -75,6 +75,26 @@ describe('attached images in a user message', () => {
     expect(screen.getByText('look at this')).toBeInTheDocument();
   });
 
+  it('shows what was attached when no tile can render, never an empty bubble', async () => {
+    // A .tiff (or a deleted file, or one over the size cap): the marker was
+    // stripped on extension alone, before anything tried to decode it.
+    readImagePreview.mockRejectedValue(new Error('cannot decode tiff'));
+    render(<ConversationMessage turn={{ role: 'user', content: '[Image: /p/scan.tiff]' }} />);
+    expect(await screen.findByText('[Image: /p/scan.tiff]')).toBeInTheDocument();
+  });
+
+  it('does not flash the marker while the preview is still loading', async () => {
+    let resolve!: (v: { dataUrl: string }) => void;
+    readImagePreview.mockReturnValue(new Promise((r) => (resolve = r)));
+    render(<ConversationMessage turn={{ role: 'user', content: '[Image: /a/slow.png]' }} />);
+    // In flight: neither a tile nor the fallback — settling is what decides.
+    expect(screen.queryByText('[Image: /a/slow.png]')).toBeNull();
+    expect(screen.queryByRole('img')).toBeNull();
+    resolve({ dataUrl: PNG });
+    expect(await screen.findByAltText('slow.png')).toBeInTheDocument();
+    expect(screen.queryByText('[Image: /a/slow.png]')).toBeNull();
+  });
+
   it('opens the image in a browser pane when clicked', async () => {
     const seen: any[] = [];
     const onOpen = (e: Event) => seen.push((e as CustomEvent).detail);

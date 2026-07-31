@@ -59,6 +59,11 @@ describe('extractImageAttachments', () => {
     expect(text).toContain('[Image: /a/thing.heic]');
   });
 
+  it('hands back the markers it removed, for putting them back', () => {
+    const { markers } = extractImageAttachments('[Image: /a/one.png] [Image: /a/two.jpg] hi');
+    expect(markers).toEqual(['[Image: /a/one.png]', '[Image: /a/two.jpg]']);
+  });
+
   it('dedupes the same attachment mentioned twice', () => {
     const { paths } = extractImageAttachments('[Image: /a/one.png] [Image: /a/one.png] hi');
     expect(paths).toEqual(['/a/one.png']);
@@ -73,8 +78,8 @@ describe('extractImageAttachments', () => {
   });
 
   it('survives empty and undefined content', () => {
-    expect(extractImageAttachments(undefined)).toEqual({ text: '', paths: [] });
-    expect(extractImageAttachments('')).toEqual({ text: '', paths: [] });
+    expect(extractImageAttachments(undefined)).toEqual({ text: '', paths: [], markers: [] });
+    expect(extractImageAttachments('')).toEqual({ text: '', paths: [], markers: [] });
   });
 });
 

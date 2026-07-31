@@ -26,12 +26,18 @@ export const MessageImages: React.FC<{
   cwd?: string;
   /** Own margin, so the caller decides the spacing above. */
   style?: React.CSSProperties;
-}> = ({ paths, cwd, style }) => {
+  /** Rendered instead of the tiles when nothing decodes. Without it an
+   *  image-ONLY message would be an empty bubble: the marker was already
+   *  stripped from the text on extension alone, before any decode was tried. */
+  fallback?: React.ReactNode;
+}> = ({ paths, cwd, style, fallback }) => {
   const [menu, setMenu] = useState<{ x: number; y: number; path: string } | null>(null);
   const absolute = paths.map((p) => resolveWithCwd(p, cwd));
-  const previews = useImagePreviews(absolute);
+  const { previews, settled } = useImagePreviews(absolute);
   const shown = absolute.filter((p) => previews[p]);
-  if (shown.length === 0) return null;
+  // Nothing yet: stay empty while the reads are in flight, then hand over to
+  // the fallback once we know none of them will ever render.
+  if (shown.length === 0) return settled ? <>{fallback ?? null}</> : null;
 
   return (
     <>
