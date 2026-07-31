@@ -89,4 +89,18 @@ describe('withConfigLock', () => {
     expect(LOCK_STALE_MS).toBe(fixture.staleMs);
     expect(lockOf(cfg)).toBe(cfg + fixture.lockFileSuffix);
   });
+
+  it('works on a fresh install, where the config directory does not exist yet', () => {
+    // The lock lives beside config.yaml, and the writer that creates that
+    // directory runs INSIDE the lock — so without an mkdir first, the very
+    // first save on a new machine throws ENOENT and is reported as refused.
+    const fresh = path.join(dir, 'not', 'created', 'yet', 'config.yaml');
+    let ran = false;
+    withConfigLock(fresh, () => {
+      ran = true;
+    });
+    expect(ran).toBe(true);
+    expect(fs.existsSync(path.dirname(fresh))).toBe(true);
+    expect(fs.existsSync(fresh + '.lock')).toBe(false);
+  });
 });

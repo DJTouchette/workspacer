@@ -841,8 +841,14 @@ pub fn spawn_session(store: SessionStore, conv: ConversationStore, cfg: SpawnCon
             tracing::warn!(?err, session = %session_id, "claude stream session ended with error");
         }
         // Child gone → a Stopped, resumable row (same lifecycle as PTY spawns).
-        store.deregister_managed(&session_id, generation);
-        conv.forget(&session_id);
+        // Both drops belong to this lifetime or to neither. Forgetting the
+        // conversation unconditionally was the hole left beside the guarded
+        // teardown: for a driver-fed provider there is no transcript to rebuild
+        // from, so a superseded exit erased the successor's visible history for
+        // good.
+        if store.deregister_managed(&session_id, generation) {
+            conv.forget(&session_id);
+        }
     });
 }
 

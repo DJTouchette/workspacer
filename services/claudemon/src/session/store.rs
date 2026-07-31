@@ -1238,14 +1238,19 @@ impl SessionStore {
     /// whose process has finally wound down after a restart no longer owns the
     /// id, and must not wipe the successor's channels or tombstone its row —
     /// see [`SessionStore::generations`].
-    pub fn deregister_managed(&self, session_id: &str, generation: u64) {
+    /// Returns whether the teardown actually ran. A superseded caller gets
+    /// `false` and must not proceed to drop anything else belonging to the id —
+    /// the conversation in particular, which has no transcript to rebuild from
+    /// for driver-fed providers.
+    #[must_use]
+    pub fn deregister_managed(&self, session_id: &str, generation: u64) -> bool {
         if !self.owns_generation(session_id, generation) {
             tracing::debug!(
                 session = %session_id,
                 generation,
                 "skipping deregister from a superseded generation"
             );
-            return;
+            return false;
         }
         self.managed_inputs.remove(session_id);
         self.managed_decisions.remove(session_id);
@@ -1272,6 +1277,7 @@ impl SessionStore {
                 state,
             });
         }
+        true
     }
 
     fn managed_input(&self, session_id: &str) -> Option<mpsc::UnboundedSender<String>> {
@@ -2970,7 +2976,7 @@ mod tests {
         assert!(store.wrapper("m2").is_some());
         assert!(store.subscribe_bytes("m2").is_some());
 
-        store.deregister_managed("m2", 1);
+        let _ = store.deregister_managed("m2", 1);
         assert!(store.wrapper("m2").is_none(), "input wrapper released");
         assert!(
             store.subscribe_bytes("m2").is_none(),
@@ -3304,7 +3310,7 @@ mod tests {
 
         // Only now does the first driver's process finish winding down and its
         // tail call deregister.
-        store.deregister_managed("m1", gen1);
+        let _ = store.deregister_managed("m1", gen1);
 
         assert!(
             store.is_managed("m1"),
@@ -3333,7 +3339,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         store.register_managed_input("m1", tx);
 
-        store.deregister_managed("m1", generation);
+        let _ = store.deregister_managed("m1", generation);
 
         assert!(!store.is_managed("m1"), "its own channels are released");
         assert_eq!(store.get("m1").map(|s| s.mode), Some(SessionMode::Stopped));
@@ -3401,6 +3407,36 @@ mod tests {
             store.get("s1").map(|s| s.mode),
             Some(SessionMode::Stopped),
             "the successor must not be tombstoned by the old life"
+        );
+    }
+
+    /// The teardown reports whether it ran, so the caller can gate everything
+    /// else it was about to drop on the same ownership check. The conversation
+    /// is the one that matters: a driver-fed provider has no transcript to
+    /// rebuild from, so a superseded exit erased the successor's history for
+    /// good.
+    #[test]
+    fn a_superseded_deregister_reports_that_it_did_nothing() {
+        let store = SessionStore::new();
+        store.register_managed("m1", "/repo", "codex");
+        let gen1 = store.claim_generation("m1");
+        let (tx1, _rx1) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input("m1", tx1);
+
+        // Restart on the same id.
+        assert!(store.terminate_managed("m1"));
+        store.register_managed("m1", "/repo", "codex");
+        let gen2 = store.claim_generation("m1");
+        let (tx2, _rx2) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input("m1", tx2);
+
+        assert!(
+            !store.deregister_managed("m1", gen1),
+            "the old life must report that it tore nothing down"
+        );
+        assert!(
+            store.deregister_managed("m1", gen2),
+            "and the owning life must report that it did"
         );
     }
 }

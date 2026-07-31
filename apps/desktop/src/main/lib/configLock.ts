@@ -22,6 +22,7 @@
  * reported as a failed save, not waited out.
  */
 import * as fs from 'fs';
+import * as path from 'path';
 
 /** Beside the file it guards, so it shares its filesystem and permissions. */
 const LOCK_SUFFIX = '.lock';
@@ -60,6 +61,11 @@ export class ConfigLockTimeout extends Error {
  */
 export function withConfigLock<T>(configPath: string, fn: () => T): T {
   const lockPath = configPath + LOCK_SUFFIX;
+  // The lock lives beside the file it guards, and on a fresh install that
+  // directory does not exist yet — the writer creates it, and the writer runs
+  // INSIDE the lock. Without this the very first save on a new machine throws
+  // ENOENT here and is reported as a refused save.
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
   const deadline = Date.now() + MAX_WAIT_MS;
 
   for (;;) {

@@ -181,6 +181,24 @@ impl TailLog {
         }
     }
 
+    /// Start the log over: a resume re-tails from a new transcript path, so the
+    /// previous life's items are void.
+    ///
+    /// `item_seqs` must go with `items`. Clearing one without the other leaves
+    /// `first_seq()` reporting a sequence from the previous life — larger than
+    /// the `seq` we just restarted at, which is incoherent. `items_skip` then
+    /// saturates to zero and `?since=` hands back the whole retained window on
+    /// every poll: the exact symptom the per-item sequences exist to remove.
+    /// `extend_bounded` drains both vectors equally, so the skew never heals.
+    fn reset_log(&mut self) {
+        self.items.clear();
+        self.item_seqs.clear();
+        self.seq = 0;
+        // Sub-agent usage was cleared with the items — rewind those cursors so
+        // the next subagent pass re-emits it into the new log.
+        self.side.clear();
+    }
+
     /// The sequence of the first retained item, or `seq` when nothing is
     /// retained. Never derived from the item count — see [`TailLog::item_seqs`].
     fn first_seq(&self) -> u64 {
@@ -440,11 +458,7 @@ async fn tail_one(
     let delta = {
         let mut entry = conv.logs.entry(session_id.to_string()).or_default();
         if reset {
-            entry.items.clear();
-            entry.seq = 0;
-            // Sub-agent usage was cleared with the items — rewind those
-            // cursors so the next subagent pass re-emits it into the new log.
-            entry.side.clear();
+            entry.reset_log();
         }
         entry.path = path.to_string();
         entry.offset = offset;
@@ -2051,5 +2065,55 @@ mod tests {
         let skip_wrong = (1u64 + 1).saturating_sub(reconstructed) as usize;
         assert_eq!(skip_real, 1);
         assert_eq!(skip_wrong, 0, "the old formula re-sent everything");
+    }
+
+    /// A reset restarts the sequence counter, so the retained per-item sequences
+    /// must go with it.
+    ///
+    /// The invariant is `item_seqs.len() == items.len()` — they are parallel, and
+    /// `item_seqs[i]` describes `items[i]`. Leaving the old sequences behind
+    /// breaks that correspondence permanently: `extend_bounded` drains equal
+    /// counts from both, so the stale prefix shifts every later item's label by
+    /// however many entries were stranded, and `first_seq()` ends up describing
+    /// an item that no longer exists.
+    #[test]
+    fn a_reset_clears_the_item_sequences_with_the_items() {
+        let conv = ConversationStore::new();
+        let lens = |c: &ConversationStore| -> (usize, usize) {
+            let log = c.logs.get("s1").expect("log");
+            (log.items.len(), log.item_seqs.len())
+        };
+
+        for i in 0..5 {
+            conv.push(
+                "s1",
+                vec![ConversationItem::UserMessage {
+                    text: format!("m{i}"),
+                    timestamp: None,
+                }],
+            );
+        }
+        assert_eq!(lens(&conv), (5, 5), "parallel before the reset");
+
+        // A resume re-tails from a new transcript path and resets the log.
+        conv.logs.get_mut("s1").expect("log").reset_log();
+        assert_eq!(lens(&conv), (0, 0), "and empty straight after it");
+
+        conv.push(
+            "s1",
+            vec![ConversationItem::UserMessage {
+                text: "after".into(),
+                timestamp: None,
+            }],
+        );
+
+        let (items, seqs) = lens(&conv);
+        assert_eq!(
+            items, seqs,
+            "item_seqs[i] must still describe items[i] — a stranded prefix shifts \
+             every later label and never heals"
+        );
+        let (seq, first_seq, _) = conv.snapshot_windowed("s1").unwrap();
+        assert_eq!((seq, first_seq), (1, 1), "the new life starts from one");
     }
 }

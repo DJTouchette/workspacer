@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -109,4 +110,53 @@ func TestConfigLockMatchesContract(t *testing.T) {
 	if fixture.LockFileSuffix != lockFileSuffix {
 		t.Errorf("lockFileSuffix = %q, contract says %q", lockFileSuffix, fixture.LockFileSuffix)
 	}
+}
+
+// A lock timeout is transient — an orphaned lockfile is stolen after staleMs.
+// Latching persistBlocked on it turned a ten-second obstruction into a
+// permanently write-only daemon that still reported every save as applied,
+// because saveLocked's persistBlocked branch returns before writeConfigYAML and
+// so can never clear the flag it set.
+func TestSaveRecoversAfterALockTimeout(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	resetCwdCacheForTest()
+	t.Cleanup(resetCwdCacheForTest)
+
+	c := &configService{}
+	// Prime it so there is an on-disk file and a loaded cache.
+	c.save(map[string]any{"ui": map[string]any{"theme": "one"}})
+
+	// Somebody else holds the lock — a desktop force-quit mid-write.
+	lock := configPath() + lockFileSuffix
+	if err := os.WriteFile(lock, []byte("9999 held\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := c.save(map[string]any{"ui": map[string]any{"theme": "two"}})
+	if theme := themeOf(got); theme != "one" {
+		t.Errorf("a refused save must report the UNCHANGED value, got %q", theme)
+	}
+
+	// The holder goes away (released, or stolen once stale).
+	if err := os.Remove(lock); err != nil {
+		t.Fatal(err)
+	}
+	got = c.save(map[string]any{"ui": map[string]any{"theme": "three"}})
+	if theme := themeOf(got); theme != "three" {
+		t.Fatalf("the next save must work again, got %q — the daemon latched write-only", theme)
+	}
+	// ...and it must actually be on disk, not just in memory.
+	raw, err := os.ReadFile(configPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "three") {
+		t.Error("reported success but wrote nothing")
+	}
+}
+
+func themeOf(cfg map[string]any) string {
+	ui, _ := cfg["ui"].(map[string]any)
+	s, _ := ui["theme"].(string)
+	return s
 }

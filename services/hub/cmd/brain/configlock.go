@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -44,6 +45,13 @@ var errConfigLocked = fmt.Errorf("config.yaml is locked by another process")
 // withConfigLock runs fn holding the lock for path.
 func withConfigLock(path string, fn func() error) error {
 	lockPath := path + lockFileSuffix
+	// The lock lives beside the file it guards, and on a fresh install that
+	// directory does not exist yet — the writer creates it, and the writer runs
+	// INSIDE the lock. Without this the very first save on a new machine fails to
+	// acquire and is refused.
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	deadline := time.Now().Add(lockMaxWait)
 
 	for {

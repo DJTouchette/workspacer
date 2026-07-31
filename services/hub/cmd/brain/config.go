@@ -207,8 +207,17 @@ func (c *configService) save(partial map[string]any) map[string]any {
 		// Could not take the lock: the other writer is mid-write (or wedged).
 		// Writing anyway is the bug this exists to prevent, so refuse and let the
 		// caller see the value it did not get.
+		// Deliberately does NOT set persistBlocked. That flag means "config.yaml
+		// exists but could not be LOADED, so never write over a file we might be
+		// able to recover", and it is a one-way latch: saveLocked's
+		// persistBlocked branch returns before writeConfigYAML, so the clear at
+		// the bottom becomes unreachable and only an external mtime bump can lift
+		// it — which cannot happen once we have stopped writing. A lock timeout
+		// is transient (an orphaned lockfile is stolen after staleMs), so
+		// latching on it turned a ten-second obstruction into a permanently
+		// write-only daemon that still reported every save as applied. The TS
+		// twin does not latch here either.
 		log.Printf("brain: config.save skipped: %v", err)
-		c.persistBlocked = true
 		return c.current
 	}
 	return result
@@ -271,11 +280,11 @@ func (c *configService) saveLocked(partial map[string]any) map[string]any {
 	}
 	if err := writeConfigYAML(merged); err != nil {
 		// Do not adopt a value that is not on disk — serving it would make the
-		// setting look applied until the next restart reverted it.
-		c.persistBlocked = true
+		// setting look applied until the next restart reverted it. Also does not
+		// latch persistBlocked: ENOSPC and EIO are transient, and the latch is
+		// unclearable from here for the reason described in save().
 		return c.current
 	}
-	c.persistBlocked = false
 	c.current = merged
 	c.loadedAt = configMtime()
 	return merged
