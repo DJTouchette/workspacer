@@ -300,6 +300,9 @@ pub fn spawn_session(
     yolo: bool,
     facade: Facade,
 ) {
+    // Claimed before the task starts: on a restart this driver's tail can
+    // outlive its own lifetime, and must not tear down a successor.
+    let generation = store.claim_generation(&session_id);
     tokio::spawn(async move {
         let headless = facade.mcp_url.is_some() || facade.instructions.is_some();
         // Both shapes get the AskUserQuestion tool via a generated `-e`
@@ -336,7 +339,7 @@ pub fn spawn_session(
         if let Some(path) = &ask_ext {
             let _ = std::fs::remove_file(path); // best-effort; a leak is inert
         }
-        store.deregister_managed(&session_id);
+        store.deregister_managed(&session_id, generation);
         conv.forget(&session_id);
     });
 }

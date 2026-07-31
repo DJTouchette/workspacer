@@ -670,6 +670,9 @@ pub fn spawn_session(
     resume_thread: Option<String>,
     facade: Facade,
 ) {
+    // Claimed before the task starts: on a restart this driver's tail can
+    // outlive its own lifetime, and must not tear down a successor.
+    let generation = store.claim_generation(&session_id);
     tokio::spawn(async move {
         if let Err(err) = run_session(
             &store,
@@ -688,7 +691,7 @@ pub fn spawn_session(
         {
             tracing::warn!(?err, session = %session_id, "codex managed session ended with error");
         }
-        store.deregister_managed(&session_id);
+        store.deregister_managed(&session_id, generation);
         conv.forget(&session_id);
     });
 }

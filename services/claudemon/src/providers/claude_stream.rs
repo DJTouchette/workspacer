@@ -834,13 +834,14 @@ fn surface_approval(
 /// Returns immediately; the session id is already registered in `store` (with
 /// `transport: Stream`) by the caller.
 pub fn spawn_session(store: SessionStore, conv: ConversationStore, cfg: SpawnConfig) {
+    let generation = store.claim_generation(&cfg.session_id);
     tokio::spawn(async move {
         let session_id = cfg.session_id.clone();
         if let Err(err) = run_session(&store, &conv, cfg).await {
             tracing::warn!(?err, session = %session_id, "claude stream session ended with error");
         }
         // Child gone → a Stopped, resumable row (same lifecycle as PTY spawns).
-        store.deregister_managed(&session_id);
+        store.deregister_managed(&session_id, generation);
         conv.forget(&session_id);
     });
 }

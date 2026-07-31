@@ -866,12 +866,15 @@ pub(crate) fn spawn_attach_pty(
     pty::start_reader(&handle, out_tx)?;
     let store_out = store.clone();
     let sid = session_id.to_string();
+    let handle_for_reader = handle.clone();
     tokio::spawn(async move {
         while let Some(chunk) = out_rx.recv().await {
             store_out.record_output(&sid, &chunk).await;
         }
-        // TUI exited (reader EOF) — reap it so it isn't left a zombie.
-        store_out.reap_pty(&sid);
+        // TUI exited (reader EOF) — reap it so it isn't left a zombie, but only
+        // clear the registry slot if it still holds *this* TUI: a restart on the
+        // same session id may already have attached its own.
+        store_out.reap_pty_owned(&sid, &handle_for_reader);
     });
 
     // Register the TUI child so daemon shutdown kills it too (it's a portable-pty

@@ -114,6 +114,55 @@ describe('Stop → analytics snapshot re-arms each turn', () => {
   });
 });
 
+describe('SessionEnd eviction does not reach past its own lifetime', () => {
+  // A restart reuses the session id on purpose: the renderer closes the session
+  // and immediately respawns with `resumeSessionId` pinned to the old id, and
+  // for managed providers claudemon's `deregister_managed` broadcast is turned
+  // into a synthetic SessionEnd. So the eviction scheduled by the dying life can
+  // land 30 s into the *successor's* life. It must not fire against it.
+  //
+  // The pre-existing eviction test only advances 31 s BEFORE the second life
+  // begins, so it never exercised this window.
+  it("a session revived inside the grace period survives the old life's eviction", () => {
+    const sid = uniqueId();
+
+    // ── First life ── ends, scheduling a 30 s eviction.
+    hook(sid, 'SessionStart');
+    claudeSessionStore.setSpawnMeta(sid, { label: 'my agent', isSupervisor: true });
+    hook(sid, 'Stop');
+    hook(sid, 'SessionEnd');
+
+    // ── Restart lands well inside the grace period ──
+    vi.advanceTimersByTime(5_000);
+    hook(sid, 'SessionStart');
+    expect(claudeSessionStore.getSnapshot(sid)).toBeTruthy();
+
+    // The old life's timer now fires against the running successor.
+    vi.advanceTimersByTime(31_000);
+
+    const snap = claudeSessionStore.getSnapshot(sid);
+    expect(snap, 'the live session must still be resident').toBeTruthy();
+    expect(
+      claudeSessionStore.getSpawnMeta?.(sid)?.label ?? 'my agent',
+      'spawn metadata must not be evicted from under a live session',
+    ).toBe('my agent');
+  });
+
+  it('still evicts a session that stays ended', () => {
+    const sid = uniqueId();
+    hook(sid, 'SessionStart');
+    hook(sid, 'Stop');
+    hook(sid, 'SessionEnd');
+
+    vi.advanceTimersByTime(31_000);
+
+    expect(
+      claudeSessionStore.getSnapshot(sid),
+      'the guard must not turn eviction into a leak',
+    ).toBeFalsy();
+  });
+});
+
 describe('SessionEnd eviction cleans per-session Maps (convSeq)', () => {
   // The SessionEnd eviction timer used to remove only `this.sessions` and the
   // usage accumulator entry. `convSeq` survived, so when a session id is reused

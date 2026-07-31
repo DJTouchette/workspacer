@@ -1724,7 +1724,7 @@ mod tests {
         // input channel), which is the only mode that rejects a chat message.
         let state = test_state();
         state.store.register_managed("sess-1", "/tmp/proj", "codex");
-        state.store.deregister_managed("sess-1");
+        state.store.deregister_managed("sess-1", 1);
         let req = post_json("/sessions/sess-1/message", json!({ "text": "hi" }));
         let (status, body) = request(state, req).await;
         assert_eq!(status, StatusCode::CONFLICT);

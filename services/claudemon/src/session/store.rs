@@ -235,6 +235,17 @@ pub struct SessionStore {
     /// tokio children) and their exit can be reaped. Without this, quitting the
     /// launcher orphans every `claude` PTY it spawned.
     ptys: Arc<DashMap<String, Arc<crate::wrapper::pty::PtyHandle>>>,
+    /// Monotonic spawn generation per session id.
+    ///
+    /// A restart reuses the id on purpose — the desktop, the TUI and the brain
+    /// all close a session and immediately respawn with `resume` pinned to the
+    /// same id — and every close path is fire-and-forget: `terminate_managed`
+    /// only drops the input sender, `POST /signal` only sends SIGTERM. Neither
+    /// waits for the child to die, so the *old* life's teardown routinely runs
+    /// after its successor has already registered under that id. Teardown is
+    /// therefore gated on still owning the generation it was born with; a stale
+    /// caller reaps only its own child and leaves the store alone.
+    generations: Arc<DashMap<String, u64>>,
     /// Last-known PTY size (cols, rows) per session — set at spawn/register and
     /// on `/resize`. The live permission-mode switch reconstructs the screen
     /// from the output ring with `vt100`, which needs the real grid to place
@@ -381,6 +392,7 @@ impl SessionStore {
             managed_inputs: Arc::new(DashMap::new()),
             managed_decisions: Arc::new(DashMap::new()),
             ptys: Arc::new(DashMap::new()),
+            generations: Arc::new(DashMap::new()),
             term_sizes: Arc::new(DashMap::new()),
             managed_yolo: Arc::new(DashMap::new()),
             managed_model: Arc::new(DashMap::new()),
@@ -421,10 +433,52 @@ impl SessionStore {
     /// is still alive. To avoid blocking a runtime worker on `wait()` in that case
     /// (and starving `signal_child`/`has_exited`, which take the same mutex), reap
     /// on the blocking pool and kill first if the child hasn't already exited.
-    pub fn reap_pty(&self, session_id: &str) {
-        let Some((_, handle)) = self.ptys.remove(session_id) else {
-            return;
-        };
+    /// Claim the next spawn generation for a session id.
+    ///
+    /// Every spawn path calls this and hands the token to whatever will tear the
+    /// session down. See [`SessionStore::generations`] for why teardown cannot
+    /// key on the id alone.
+    pub fn claim_generation(&self, session_id: &str) -> u64 {
+        let mut entry = self.generations.entry(session_id.to_string()).or_insert(0);
+        *entry += 1;
+        *entry
+    }
+
+    /// Whether `generation` is still the live one for this session. False once a
+    /// restart has claimed a newer one — the caller is a previous lifetime and
+    /// must not touch shared state.
+    ///
+    /// An id nobody has claimed answers **true**: there is no successor to
+    /// protect, and the alternative default would silently skip teardown and
+    /// leak the session's plumbing. The guard exists to stop one lifetime
+    /// clobbering another, not to gate teardown in general.
+    pub fn owns_generation(&self, session_id: &str, generation: u64) -> bool {
+        match self.generations.get(session_id) {
+            Some(live) => *live == generation,
+            None => true,
+        }
+    }
+
+    /// The registered PTY handle for a session, if any. Test/diagnostic accessor.
+    pub fn pty_handle(&self, session_id: &str) -> Option<Arc<crate::wrapper::pty::PtyHandle>> {
+        self.ptys.get(session_id).map(|h| h.clone())
+    }
+
+    /// Reap the caller's own PTY child, and clear the registry slot only if it
+    /// still holds that child.
+    ///
+    /// Ownership is by handle identity rather than generation because the reader
+    /// task already holds its `Arc` — and because it must reap its child either
+    /// way. A previous life's reader reaching EOF after a restart still needs to
+    /// collect its zombie; what it must not do is remove and SIGKILL the
+    /// successor's child, which is exactly what keying on the id alone did.
+    pub fn reap_pty_owned(&self, session_id: &str, mine: &Arc<crate::wrapper::pty::PtyHandle>) {
+        self.ptys
+            .remove_if(session_id, |_, live| Arc::ptr_eq(live, mine));
+        self.reap_handle(mine.clone());
+    }
+
+    fn reap_handle(&self, handle: Arc<crate::wrapper::pty::PtyHandle>) {
         tokio::task::spawn_blocking(move || {
             let mut child = handle.child.lock().expect("PTY child mutex poisoned");
             // Already exited (the common EOF path) → try_wait reaps it right away.
@@ -1180,7 +1234,19 @@ impl SessionStore {
     /// attached TUI's byte buffer + broadcast + input wrapper), and mark it
     /// Stopped. Idempotent — safe whether reached via `terminate_managed` or the
     /// driver loop exiting on its own.
-    pub fn deregister_managed(&self, session_id: &str) {
+    /// `generation` is the token the caller claimed when it spawned. A driver
+    /// whose process has finally wound down after a restart no longer owns the
+    /// id, and must not wipe the successor's channels or tombstone its row —
+    /// see [`SessionStore::generations`].
+    pub fn deregister_managed(&self, session_id: &str, generation: u64) {
+        if !self.owns_generation(session_id, generation) {
+            tracing::debug!(
+                session = %session_id,
+                generation,
+                "skipping deregister from a superseded generation"
+            );
+            return;
+        }
         self.managed_inputs.remove(session_id);
         self.managed_decisions.remove(session_id);
         self.managed_model.remove(session_id);
@@ -1274,7 +1340,15 @@ impl SessionStore {
     /// Drop a previously-registered spawn that has not yet bound to a claude
     /// hook session. Used when /sessions/spawn fails after partial setup or
     /// the child exits before SessionStart fires.
-    pub fn drop_pending_spawn(&self, session_id: &str, cwd: &str) {
+    pub fn drop_pending_spawn(&self, session_id: &str, cwd: &str, generation: u64) {
+        if !self.owns_generation(session_id, generation) {
+            tracing::debug!(
+                session = %session_id,
+                generation,
+                "skipping drop from a superseded generation"
+            );
+            return;
+        }
         self.release_spawn_plumbing(session_id, cwd);
         self.states.remove(session_id);
         // Drop any hook-id → canonical-id aliases pointing at this session, so the
@@ -1294,7 +1368,15 @@ impl SessionStore {
     /// Leaves the row marked [`SessionMode::Stopped`], since by definition
     /// nothing is driving it any more — `SessionEnd` usually got there first,
     /// but the two are racing and this must hold either way.
-    pub fn release_spawn(&self, session_id: &str, cwd: &str) {
+    pub fn release_spawn(&self, session_id: &str, cwd: &str, generation: u64) {
+        if !self.owns_generation(session_id, generation) {
+            tracing::debug!(
+                session = %session_id,
+                generation,
+                "skipping release from a superseded generation"
+            );
+            return;
+        }
         self.release_spawn_plumbing(session_id, cwd);
         if let Some(mut st) = self.states.get_mut(session_id) {
             if st.mode != SessionMode::Stopped {
@@ -1885,6 +1967,26 @@ mod tests {
             timestamp: None,
             payload: serde_json::Map::new(),
         }
+    }
+
+    /// A real but immediately-exiting PTY child. `PtyHandle` is three trait
+    /// objects over a live pty pair, so there is nothing to fake — and the
+    /// ownership check under test is `Arc::ptr_eq`, which needs two genuinely
+    /// distinct handles.
+    fn fake_pty_handle() -> Arc<crate::wrapper::pty::PtyHandle> {
+        let handle = crate::wrapper::pty::spawn(
+            &["true".to_string()],
+            ".",
+            portable_pty::PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            },
+            &std::collections::HashMap::new(),
+        )
+        .expect("spawn a throwaway pty");
+        Arc::new(handle)
     }
 
     fn handle() -> WrapperHandle {
@@ -2868,7 +2970,7 @@ mod tests {
         assert!(store.wrapper("m2").is_some());
         assert!(store.subscribe_bytes("m2").is_some());
 
-        store.deregister_managed("m2");
+        store.deregister_managed("m2", 1);
         assert!(store.wrapper("m2").is_none(), "input wrapper released");
         assert!(
             store.subscribe_bytes("m2").is_none(),
@@ -3099,7 +3201,7 @@ mod tests {
         store.register_spawn("s1", "/work", handle());
 
         assert!(store.is_resumable("s1"), "a prompted session is resumable");
-        store.release_spawn("s1", "/work");
+        store.release_spawn("s1", "/work", 1);
 
         let state = store.get("s1").expect("row survives PTY EOF");
         assert_eq!(state.mode, SessionMode::Stopped, "nothing drives it now");
@@ -3112,7 +3214,7 @@ mod tests {
         store.register_spawn("ghost", "/work", handle());
         // No SessionStart, no prompt: claude died before it ever came up.
         assert!(!store.is_resumable("ghost"));
-        store.drop_pending_spawn("ghost", "/work");
+        store.drop_pending_spawn("ghost", "/work", 1);
         assert!(store.get("ghost").is_none(), "nothing to resume, so no row");
     }
 
@@ -3145,10 +3247,160 @@ mod tests {
         // A replacement claims the cwd while the old child is still winding down.
         store.register_spawn("new", "/work", handle());
 
-        store.release_spawn("old", "/work");
+        store.release_spawn("old", "/work", 1);
         assert!(
             store.wrapper("new").is_some(),
             "the newer spawn keeps its plumbing"
+        );
+    }
+
+    // ── spawn generations ───────────────────────────────────────────────────
+    //
+    // A restart reuses the session id on purpose: the desktop, the TUI and the
+    // brain all close a session and immediately respawn with `resume` pinned to
+    // the same id. Every close path is fire-and-forget — `terminate_managed`
+    // only drops the input sender and `POST /signal` only sends SIGTERM — so the
+    // old life's teardown routinely lands *after* its successor has registered.
+    // Without a generation token that teardown reaches straight past its own
+    // lifetime and dismantles the running one.
+
+    #[test]
+    fn generations_are_monotonic_per_session_and_independent_across_them() {
+        let store = SessionStore::new();
+        assert_eq!(store.claim_generation("s1"), 1);
+        assert_eq!(store.claim_generation("s1"), 2);
+        assert_eq!(store.claim_generation("s2"), 1, "ids count separately");
+
+        assert!(store.owns_generation("s1", 2));
+        assert!(
+            !store.owns_generation("s1", 1),
+            "the old life lost the slot"
+        );
+        // An unclaimed id answers true: there is no successor to protect, and
+        // defaulting the other way would skip teardown and leak the plumbing.
+        assert!(store.owns_generation("never-spawned", 1));
+    }
+
+    /// The managed restart, end to end: terminate, respawn on the same id, then
+    /// let the previous driver's tail finally run. It must not touch the
+    /// successor.
+    #[test]
+    fn a_stale_managed_driver_exit_leaves_its_successor_running() {
+        let store = SessionStore::new();
+
+        // First life.
+        store.register_managed("m1", "/repo", "codex");
+        let gen1 = store.claim_generation("m1");
+        let (tx1, _rx1) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input("m1", tx1);
+
+        // Restart: the desktop terminates and immediately respawns the same id.
+        assert!(store.terminate_managed("m1"));
+        store.register_managed("m1", "/repo", "codex");
+        let gen2 = store.claim_generation("m1");
+        let (tx2, mut rx2) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input("m1", tx2);
+        assert_ne!(gen1, gen2);
+
+        // Only now does the first driver's process finish winding down and its
+        // tail call deregister.
+        store.deregister_managed("m1", gen1);
+
+        assert!(
+            store.is_managed("m1"),
+            "the successor's input channel must survive"
+        );
+        assert_eq!(
+            store.get("m1").map(|s| s.mode),
+            Some(SessionMode::Input),
+            "the successor must not be marked Stopped while it is running"
+        );
+        // ...and the channel that survived is genuinely the successor's.
+        assert!(matches!(
+            store.submit_message("m1", "ping".into()),
+            MessageOutcome::Sent | MessageOutcome::Queued
+        ));
+        assert_eq!(rx2.try_recv().ok().as_deref(), Some("ping"));
+    }
+
+    /// The owning generation still tears itself down — the guard must not turn
+    /// a normal exit into a leak.
+    #[test]
+    fn the_current_generation_still_deregisters_itself() {
+        let store = SessionStore::new();
+        store.register_managed("m1", "/repo", "codex");
+        let generation = store.claim_generation("m1");
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input("m1", tx);
+
+        store.deregister_managed("m1", generation);
+
+        assert!(!store.is_managed("m1"), "its own channels are released");
+        assert_eq!(store.get("m1").map(|s| s.mode), Some(SessionMode::Stopped));
+    }
+
+    /// The PTY twin of the same race. `reap_pty` used to remove whatever handle
+    /// sat under the id and SIGKILL it — so an old reader reaching EOF after the
+    /// restart killed the freshly spawned child.
+    #[tokio::test]
+    async fn a_stale_pty_reader_does_not_reap_the_successors_handle() {
+        let store = SessionStore::new();
+        let first = fake_pty_handle();
+        let second = fake_pty_handle();
+
+        store.register_pty("s1", first.clone());
+        store.register_pty("s1", second.clone()); // the restart replaces it
+
+        // The first reader hits EOF late and reaps with the handle it owns.
+        store.reap_pty_owned("s1", &first);
+
+        let live = store
+            .pty_handle("s1")
+            .expect("successor's PTY still registered");
+        assert!(
+            Arc::ptr_eq(&live, &second),
+            "the successor's handle must still be the registered one"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_owning_pty_reader_still_clears_its_handle() {
+        let store = SessionStore::new();
+        let only = fake_pty_handle();
+        store.register_pty("s1", only.clone());
+
+        store.reap_pty_owned("s1", &only);
+
+        assert!(
+            store.pty_handle("s1").is_none(),
+            "its own handle is cleared, so the map does not leak"
+        );
+    }
+
+    /// A stale reader must not release the successor's plumbing or flip its row
+    /// to Stopped (`release_spawn` runs right after `reap_pty` in the reader).
+    #[test]
+    fn a_stale_reader_does_not_release_the_successors_plumbing() {
+        let store = SessionStore::new();
+        store.register_spawn("s1", "/repo", handle());
+        let gen1 = store.claim_generation("s1");
+        store.ingest(hook("SessionStart", "s1", "/repo"));
+
+        // Restart on the same id.
+        store.register_spawn("s1", "/repo", handle());
+        let gen2 = store.claim_generation("s1");
+        assert_ne!(gen1, gen2);
+
+        store.release_spawn("s1", "/repo", gen1);
+
+        assert!(
+            store.wrapper("s1").is_some(),
+            "the successor keeps its input wrapper"
+        );
+        assert_ne!(
+            store.get("s1").map(|s| s.mode),
+            Some(SessionMode::Stopped),
+            "the successor must not be tombstoned by the old life"
         );
     }
 }

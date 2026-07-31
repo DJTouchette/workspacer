@@ -366,6 +366,11 @@ class ClaudeSessionStore {
   private pendingFlush = new Map<string, NodeJS.Timeout>();
   // Debounce: per-session statusLine debounce timers (STATUSLINE_DEBOUNCE_MS).
   private statusLineTimers = new Map<string, NodeJS.Timeout>();
+  // Grace period: per-session SessionEnd eviction timers. Held so a restart can
+  // cancel one — a restart reuses the session id (`resumeSessionId` pins it), so
+  // an uncancellable timer scheduled by the dying life fires 30 s into the
+  // successor's life and deletes a session that is running. See cancelEviction.
+  private evictionTimers = new Map<string, NodeJS.Timeout>();
   // Debounce: per-managed-session analytics snapshot timers. Managed (codex /
   // opencode) sessions don't fire Claude Stop/SessionEnd hooks, so we snapshot
   // their history off the conversation stream instead (see scheduleManagedHistory).
@@ -386,6 +391,9 @@ class ClaudeSessionStore {
     },
   ): void {
     if (!sessionId) return;
+    // A spawn onto this id supersedes whatever life scheduled an eviction for
+    // it; this is the earliest point in a restart, before any hook has landed.
+    this.cancelEviction(sessionId);
     this.spawnMeta.set(sessionId, meta);
     // A restart-with-settings re-spawns onto an id that may still have a live
     // entry — refresh its settings in place so the pills track the request.
@@ -437,6 +445,11 @@ class ClaudeSessionStore {
     const cwd: string = normalizeCwd(event.cwd ?? '');
 
     if (!sessionId) return;
+
+    // Any event that isn't the end of a life means this id is in use again, so
+    // an eviction scheduled by a previous life must not survive to fire. A
+    // restart reuses the id and lands well inside the 30 s grace period.
+    if (hookName !== 'SessionEnd') this.cancelEviction(sessionId);
 
     let session = this.sessions.get(sessionId);
     if (!session) {
@@ -529,7 +542,14 @@ class ClaudeSessionStore {
       // convSeq also lets a resumed (reused-id) session start fresh instead of
       // forcing a spurious resync on its first delta (a reused id would inherit
       // the prior life's seq and read the first delta as a gap).
-      setTimeout(() => {
+      this.cancelEviction(sessionId);
+      const evict = setTimeout(() => {
+        this.evictionTimers.delete(sessionId);
+        // Belt and braces alongside cancelEviction: if anything revived this id
+        // without going through a hook, the row is no longer 'ended' and this
+        // timer belongs to a lifetime that is over. Deleting here would strip a
+        // live agent of its label, parent and usage.
+        if (this.sessions.get(sessionId)?.status !== 'ended') return;
         this.sessions.delete(sessionId);
         this.usageAccumulator.forget(sessionId);
         this.convSeq.delete(sessionId);
@@ -551,7 +571,9 @@ class ClaudeSessionStore {
           clearTimeout(pf);
           this.pendingFlush.delete(sessionId);
         }
-      }, 30_000).unref();
+      }, 30_000);
+      evict.unref();
+      this.evictionTimers.set(sessionId, evict);
     } else {
       applyHookEvent(session, event);
     }
@@ -894,7 +916,18 @@ class ClaudeSessionStore {
 
   // ── Internals ──
 
+  /** Drop any pending SessionEnd eviction for this id — it belongs to a
+   *  lifetime that has been superseded. Safe to call when none is pending. */
+  private cancelEviction(sessionId: string): void {
+    const t = this.evictionTimers.get(sessionId);
+    if (!t) return;
+    clearTimeout(t);
+    this.evictionTimers.delete(sessionId);
+  }
+
   private createSession(sessionId: string, cwd: string): ClaudeSessionState {
+    // A reused id means the previous life's eviction is still armed.
+    this.cancelEviction(sessionId);
     const session: ClaudeSessionState = {
       sessionId,
       cwd,
