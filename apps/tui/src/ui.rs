@@ -18,6 +18,13 @@ use crate::types::{derive_stats, Agent, DerivedStats, Part, Role};
 use serde_json::Value;
 use tui_term::widget::PseudoTerminal;
 
+/// Render-level characterization tests, kept out of this file to stop it
+/// growing; they are a child module so they still reach the private `render_*`
+/// fns and helpers via `super::*`.
+#[cfg(test)]
+#[path = "ui_render_tests.rs"]
+mod render_tests;
+
 pub fn render(f: &mut Frame, app: &mut App) {
     let root = Layout::default()
         .direction(Direction::Vertical)
@@ -90,12 +97,48 @@ pub fn render(f: &mut Frame, app: &mut App) {
     render_whichkey(f, root[1], app);
 }
 
+/// Where a modal sits vertically in the frame.
+enum ModalY {
+    /// Centred — most dialogs.
+    Centered,
+    /// A fixed inset from the top. The query-style overlays sit high so their
+    /// result list has room beneath it.
+    Top(u16),
+    /// Flush to the bottom, out of the way of the content (which-key).
+    Bottom,
+}
+
+/// A modal box of at most `want_w` × `want_h`, placed in `area` and guaranteed
+/// to fit inside it.
+///
+/// The clamping is load-bearing, not cosmetic: ratatui panics when a widget's
+/// rect leaves the buffer, so an overlay that insists on its preferred size
+/// takes the whole TUI down on a short terminal. Every overlay in this module
+/// goes through here — `ui_render_tests` draws each one at sizes down to 1×1
+/// to keep it that way.
+fn modal_rect(area: Rect, want_w: u16, want_h: u16, y: ModalY) -> Rect {
+    let width = want_w.min(area.width);
+    let height = want_h.min(area.height);
+    let slack = area.height.saturating_sub(height);
+    let dy = match y {
+        ModalY::Centered => slack / 2,
+        ModalY::Top(inset) => inset.min(slack),
+        ModalY::Bottom => slack,
+    };
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + dy,
+        width,
+        height,
+    }
+}
+
 fn render_rename(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
     let Some(form) = app.rename.as_ref() else {
         return;
     };
-    let w = area.width.saturating_sub(8).clamp(20, 60);
+    let w = area.width.saturating_sub(8).clamp(20, 60).min(area.width);
     let lines = vec![
         Line::raw(""),
         Line::from(vec![
@@ -117,12 +160,7 @@ fn render_rename(f: &mut Frame, area: Rect, app: &App) {
         )),
     ];
     let h = lines.len() as u16 + 2;
-    let rect = Rect {
-        x: area.x + (area.width.saturating_sub(w)) / 2,
-        y: area.y + (area.height.saturating_sub(h)) / 2,
-        width: w,
-        height: h.min(area.height),
-    };
+    let rect = modal_rect(area, w, h, ModalY::Centered);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -1418,7 +1456,7 @@ fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
         return;
     };
 
-    let w = area.width.saturating_sub(8).clamp(20, 72);
+    let w = area.width.saturating_sub(8).clamp(20, 72).min(area.width);
     let inner_w = w.saturating_sub(2) as usize;
 
     let profile = app.profiles.get(form.profile_idx);
@@ -1511,13 +1549,8 @@ fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
         Style::default().fg(t.dim),
     )));
 
-    let h = (lines.len() as u16 + 2).min(area.height);
-    let rect = Rect {
-        x: area.x + (area.width.saturating_sub(w)) / 2,
-        y: area.y + (area.height.saturating_sub(h)) / 2,
-        width: w,
-        height: h,
-    };
+    let h = lines.len() as u16 + 2;
+    let rect = modal_rect(area, w, h, ModalY::Centered);
     // Clear underneath so the list doesn't bleed through.
     f.render_widget(ratatui::widgets::Clear, rect);
 
@@ -1536,17 +1569,12 @@ fn render_palette(f: &mut Frame, area: Rect, app: &App) {
         return;
     };
 
-    let w = area.width.saturating_sub(8).clamp(24, 76);
+    let w = area.width.saturating_sub(8).clamp(24, 76).min(area.width);
     let max_rows = area.height.saturating_sub(6).clamp(3, 14);
     let visible: Vec<_> = p.visible().collect();
     let shown = (visible.len() as u16).min(max_rows);
     let h = shown + 4; // search line + borders + padding
-    let rect = Rect {
-        x: area.x + (area.width.saturating_sub(w)) / 2,
-        y: area.y + 2,
-        width: w,
-        height: h.min(area.height),
-    };
+    let rect = modal_rect(area, w, h, ModalY::Top(2));
     f.render_widget(ratatui::widgets::Clear, rect);
 
     let inner_w = w.saturating_sub(2) as usize;
@@ -1606,16 +1634,11 @@ fn render_picker(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
     let Some(p) = app.picker.as_ref() else { return };
 
-    let w = area.width.saturating_sub(8).clamp(24, 64);
+    let w = area.width.saturating_sub(8).clamp(24, 64).min(area.width);
     let max_rows = area.height.saturating_sub(6).clamp(3, 12);
     let shown = (p.matched.len() as u16).min(max_rows);
-    let h = (shown + 5).min(area.height);
-    let rect = Rect {
-        x: area.x + (area.width.saturating_sub(w)) / 2,
-        y: area.y + 2,
-        width: w,
-        height: h,
-    };
+    let h = shown + 5;
+    let rect = modal_rect(area, w, h, ModalY::Top(2));
     f.render_widget(ratatui::widgets::Clear, rect);
     let inner_w = w.saturating_sub(2) as usize;
 
@@ -1685,17 +1708,12 @@ fn render_search(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
     let Some(s) = app.search.as_ref() else { return };
 
-    let w = area.width.saturating_sub(8).clamp(36, 100);
+    let w = area.width.saturating_sub(8).clamp(36, 100).min(area.width);
     let max_rows = area.height.saturating_sub(6).clamp(3, 16);
     let shown = (s.matched.len() as u16).min(max_rows);
     let body_rows = if s.matched.is_empty() { 1 } else { shown };
-    let h = (body_rows + 4).min(area.height);
-    let rect = Rect {
-        x: area.x + (area.width.saturating_sub(w)) / 2,
-        y: area.y + 2,
-        width: w,
-        height: h,
-    };
+    let h = body_rows + 4;
+    let rect = modal_rect(area, w, h, ModalY::Top(2));
     f.render_widget(ratatui::widgets::Clear, rect);
 
     const NAME_COL: usize = 16;
@@ -1794,7 +1812,7 @@ fn binding_lines(t: &Theme, app: &App, title: &str, ctx: Context) -> Vec<Line<'s
 
 fn render_help(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
-    let w = area.width.saturating_sub(6).clamp(24, 64);
+    let w = area.width.saturating_sub(6).clamp(24, 64).min(area.width);
 
     let mut lines = vec![Line::from(Span::styled(
         "Keybindings — edit ~/.config/workspacer/tui.json to remap",
@@ -1838,13 +1856,9 @@ fn render_help(f: &mut Frame, area: Rect, app: &App) {
     ]));
 
     // Cap height to the viewport; the box scrolls via Paragraph if it overflows.
+    // The -2 keeps a row of frame visible above and below when there is room.
     let h = (lines.len() as u16 + 2).min(area.height.saturating_sub(2));
-    let rect = Rect {
-        x: area.x + (area.width.saturating_sub(w)) / 2,
-        y: area.y + (area.height.saturating_sub(h)) / 2,
-        width: w,
-        height: h,
-    };
+    let rect = modal_rect(area, w, h, ModalY::Centered);
     f.render_widget(ratatui::widgets::Clear, rect);
 
     let block = Block::default()
@@ -1912,15 +1926,13 @@ fn render_whichkey(f: &mut Frame, area: Rect, app: &App) {
         .max()
         .unwrap_or(0)
         .max(title.chars().count()) as u16;
-    let w = (inner_w + 2).clamp(16, area.width.saturating_sub(2));
+    // `.max` then clamp, never `clamp(16, area.width - 2)`: on a terminal
+    // narrower than 18 columns that lower bound exceeds the upper one and
+    // `clamp` itself panics.
+    let w = (inner_w + 2).max(16).min(area.width.saturating_sub(2));
     let h = (rows.len() as u16 + 2).min(area.height.saturating_sub(1));
     // Bottom-anchored, like which-key.nvim — out of the way of the content.
-    let rect = Rect {
-        x: area.x + (area.width.saturating_sub(w)) / 2,
-        y: area.y + area.height.saturating_sub(h),
-        width: w,
-        height: h,
-    };
+    let rect = modal_rect(area, w, h, ModalY::Bottom);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -1941,14 +1953,9 @@ fn render_notes(f: &mut Frame, area: Rect, app: &App) {
         return;
     };
 
-    let w = area.width.saturating_sub(6).clamp(24, 76);
+    let w = area.width.saturating_sub(6).clamp(24, 76).min(area.width);
     let h = area.height.saturating_sub(4).clamp(6, 24);
-    let rect = Rect {
-        x: area.x + (area.width.saturating_sub(w)) / 2,
-        y: area.y + (area.height.saturating_sub(h)) / 2,
-        width: w,
-        height: h,
-    };
+    let rect = modal_rect(area, w, h, ModalY::Centered);
     f.render_widget(ratatui::widgets::Clear, rect);
 
     let mode = if n.editing { "editing" } else { "notes" };
@@ -3191,5 +3198,226 @@ mod tests {
         for (state, want) in cases {
             assert_eq!(sc(state), *want, "state_color({state:?}) expected {want:?}");
         }
+    }
+
+    // ── pure label/format helpers ────────────────────────────────────────────
+    //
+    // These are the small pure functions the render fns lean on. They carry no
+    // Frame and no App, so they are the part of this module that can be moved
+    // wholesale during decomposition — which is exactly why their output is
+    // pinned here first.
+
+    fn agent_with(json: serde_json::Value) -> Agent {
+        serde_json::from_value(json).expect("agent fixture")
+    }
+
+    fn stats(model: Option<&str>, ctx: Option<f64>, cost: Option<f64>) -> DerivedStats {
+        DerivedStats {
+            model: model.map(str::to_string),
+            context_pct: ctx,
+            cost,
+        }
+    }
+
+    /// The sidebar meta line is a space-joined digest, and each part is
+    /// independently optional — a session with only a model must not render
+    /// stray separators for the context and cost it doesn't have.
+    #[test]
+    fn meta_line_joins_only_the_parts_it_has() {
+        let a = agent_with(serde_json::json!({ "session_id": "s1", "mode": "responding" }));
+
+        assert_eq!(
+            meta_line(&a, &stats(Some("claude-opus-4-8"), Some(42.0), Some(1.5))),
+            "responding  opus-4-8  42% ctx  $1.50"
+        );
+        assert_eq!(
+            meta_line(&a, &stats(Some("claude-opus-4-8"), None, None)),
+            "responding  opus-4-8"
+        );
+        assert_eq!(meta_line(&a, &stats(None, None, None)), "responding");
+    }
+
+    /// Context is a whole number of percent and cost is always two decimals —
+    /// the column is narrow and a drifting width would ragged the sidebar.
+    #[test]
+    fn meta_line_rounds_context_and_pads_cost() {
+        let a = agent_with(serde_json::json!({ "session_id": "s1", "mode": "responding" }));
+        let line = meta_line(&a, &stats(None, Some(7.62), Some(2.0)));
+        assert!(line.contains("8% ctx"), "rounded, not truncated: {line}");
+        assert!(line.contains("$2.00"), "two decimals: {line}");
+    }
+
+    /// Before any usage or status line arrives there is still something worth
+    /// showing: how many tools the session has run. It is a *fallback* — one
+    /// real stat must suppress it, or the line says two things at once.
+    #[test]
+    fn meta_line_falls_back_to_a_tool_count_only_when_it_has_nothing_else() {
+        let busy = agent_with(serde_json::json!({
+            "session_id": "s1", "mode": "responding", "tool_calls": 7
+        }));
+        assert_eq!(
+            meta_line(&busy, &stats(None, None, None)),
+            "responding  7 tools"
+        );
+
+        // Any one real stat wins and the fallback stays quiet.
+        let with_model = meta_line(&busy, &stats(Some("opus"), None, None));
+        assert!(!with_model.contains("tools"), "got {with_model}");
+        let with_cost = meta_line(&busy, &stats(None, None, Some(0.01)));
+        assert!(!with_cost.contains("tools"), "got {with_cost}");
+
+        // A session that has run nothing says nothing.
+        let idle = agent_with(serde_json::json!({ "session_id": "s2", "mode": "input" }));
+        assert_eq!(meta_line(&idle, &stats(None, None, None)), "input");
+    }
+
+    /// Only the `claude-` vendor prefix is noise; anything else is the label.
+    #[test]
+    fn short_model_strips_only_the_claude_prefix() {
+        assert_eq!(short_model("claude-opus-4-8"), "opus-4-8");
+        assert_eq!(short_model("gpt-5-codex"), "gpt-5-codex");
+        assert_eq!(short_model("opus-4-8"), "opus-4-8");
+        assert_eq!(short_model("claude-"), "");
+        assert_eq!(short_model(""), "");
+        // Not a substring match — the prefix has to lead.
+        assert_eq!(
+            short_model("anthropic-claude-opus"),
+            "anthropic-claude-opus"
+        );
+    }
+
+    /// An empty state is "idle", not an empty badge, and the badge is always
+    /// lowercase so a daemon that starts shouting can't restyle the sidebar.
+    #[test]
+    fn badge_defaults_to_idle_and_lowercases() {
+        assert_eq!(badge(""), "idle");
+        assert_eq!(badge("Responding"), "responding");
+        assert_eq!(badge("ERROR"), "error");
+        assert_eq!(badge("input"), "input");
+    }
+
+    /// Rate-limit colour thresholds, checked on the boundaries themselves —
+    /// they are `>=`, so 75 and 90 are already the worse colour.
+    #[test]
+    fn rate_color_steps_at_seventy_five_and_ninety() {
+        let t = Theme::default();
+        let cases: &[(f64, Color)] = &[
+            (0.0, t.ok),
+            (74.9, t.ok),
+            (75.0, t.warn),
+            (89.9, t.warn),
+            (90.0, t.bad),
+            (100.0, t.bad),
+            (250.0, t.bad),
+        ];
+        for (pct, want) in cases {
+            assert_eq!(rate_color(&t, *pct), *want, "rate_color({pct})");
+        }
+    }
+
+    /// The approval panel wants the tool's arguments, not the envelope the hook
+    /// wrapped them in. `tool_input` wins, `input` is the older spelling, and a
+    /// payload with neither is shown whole rather than blanked.
+    #[test]
+    fn approval_input_unwraps_the_tool_payload() {
+        let both = serde_json::json!({
+            "tool_name": "Bash",
+            "tool_input": { "command": "ls" },
+            "input": { "command": "rm -rf /" },
+        });
+        let out = approval_input(&both);
+        assert!(
+            out.contains("\"command\": \"ls\""),
+            "tool_input wins: {out}"
+        );
+        assert!(!out.contains("rm -rf"), "not the legacy key too: {out}");
+
+        let legacy = serde_json::json!({ "input": { "command": "ls" } });
+        assert!(approval_input(&legacy).contains("\"command\": \"ls\""));
+
+        // Neither key: show the whole envelope rather than nothing.
+        let bare = serde_json::json!({ "anything": 1 });
+        assert!(approval_input(&bare).contains("\"anything\": 1"));
+
+        // Pretty-printed, so a multi-key payload is readable in the panel.
+        assert!(
+            approval_input(&serde_json::json!({ "a": 1, "b": 2 })).contains('\n'),
+            "pretty, not compact"
+        );
+    }
+
+    /// Esc only means "back" once there is somewhere to go back to.
+    #[test]
+    fn back_hint_appears_only_past_the_first_step() {
+        assert_eq!(back_hint("enter confirm", 0), "enter confirm");
+        assert_eq!(back_hint("enter confirm", 1), "enter confirm · esc back");
+        assert_eq!(back_hint("enter confirm", 9), "enter confirm · esc back");
+    }
+
+    /// Durations are read at a glance in a status row: seconds under a minute,
+    /// then zero-padded so the field doesn't jitter as the number ticks.
+    #[test]
+    fn human_duration_scales_and_zero_pads() {
+        assert_eq!(human_duration(0), "0s");
+        assert_eq!(human_duration(999), "0s", "sub-second rounds down");
+        assert_eq!(human_duration(59_000), "59s");
+        assert_eq!(human_duration(60_000), "1m00s", "padded, not 1m0s");
+        assert_eq!(human_duration(412_108), "6m52s");
+        assert_eq!(human_duration(3_599_000), "59m59s");
+        assert_eq!(human_duration(3_600_000), "1h00m", "padded, not 1h0m");
+        assert_eq!(human_duration(7_830_000), "2h10m");
+    }
+
+    /// Counts get a unit suffix past a thousand, one decimal place.
+    #[test]
+    fn human_count_switches_units_at_each_thousand() {
+        assert_eq!(human_count(0), "0");
+        assert_eq!(human_count(999), "999", "plain up to 999");
+        assert_eq!(human_count(1_000), "1.0k");
+        assert_eq!(human_count(1_263), "1.3k");
+        assert_eq!(human_count(999_999), "1000.0k", "k runs to the very top");
+        assert_eq!(human_count(1_000_000), "1.0M");
+        assert_eq!(human_count(1_263_590), "1.3M");
+    }
+
+    /// Run states carry their own palette, distinct from session states:
+    /// a *running* workflow is accent, not ok.
+    #[test]
+    fn run_state_colors_are_distinct_from_session_states() {
+        let t = Theme::default();
+        use crate::runs::RunState;
+        assert_eq!(state_color_for(&t, RunState::Running), t.accent);
+        assert_eq!(state_color_for(&t, RunState::Done), t.ok);
+        assert_eq!(state_color_for(&t, RunState::Failed), t.bad);
+        assert_eq!(state_color_for(&t, RunState::Queued), t.dim);
+    }
+
+    /// The detail pane's key column is a fixed 7 columns so the values line up.
+    #[test]
+    fn kv_pads_the_key_column_and_dims_it() {
+        let t = Theme::default();
+        let line = kv(&t, "cwd", "/tmp");
+        assert_eq!(line.spans[0].content.as_ref(), "cwd    ", "padded to 7");
+        assert_eq!(line.spans[0].style.fg, Some(t.dim));
+        assert_eq!(line.spans[1].content.as_ref(), "/tmp");
+
+        // An over-long key is not truncated — it pushes the value instead.
+        assert_eq!(
+            kv(&t, "transcript", "x").spans[0].content.as_ref(),
+            "transcript"
+        );
+    }
+
+    /// `wrap` is this module's seam onto the shared renderer. Pin the delegation
+    /// so a decomposition that re-homes it can't quietly swap the algorithm.
+    #[test]
+    fn wrap_delegates_to_the_shared_display_width_wrapper() {
+        assert_eq!(
+            wrap("hello world", 5),
+            crate::render::wrap_plain("hello world", 5)
+        );
+        assert_eq!(wrap("alpha beta", 20), vec!["alpha beta".to_string()]);
+        // Wide glyphs count two columns.
+        assert_eq!(wrap("日本語", 4), crate::render::wrap_plain("日本語", 4));
     }
 }
