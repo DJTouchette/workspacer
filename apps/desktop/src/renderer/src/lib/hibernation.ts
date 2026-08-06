@@ -8,7 +8,15 @@
  * it can be reasoned about without a running React tree.
  *
  * The rules are subtler than "old enough":
- *  - only `browser` panes hold a webview, so only they are worth reclaiming;
+ *  - only `browser` panes are reclaimed. `plugin` panes hold a webview too (they
+ *    ARE a BrowserPane — see PluginPane) and the teardown plumbing would work on
+ *    them, but a plugin webview can hold unsaved state the host knows nothing
+ *    about: the bundled editor plugin tracks a dirty buffer with no autosave, so
+ *    reclaiming it after five minutes out of view would silently discard edits.
+ *    Widening this needs a way for a plugin to say it's safe (a manifest opt-in,
+ *    or an event it can persist on) — not just a wider type test. Widgets are
+ *    unaffected: they live in the inspector rail rather than in a tab, so the
+ *    sweep below never sees them and closing the rail unmounts them outright;
  *  - a pane in the active tab is on screen by definition;
  *  - a pane with no recorded sighting is left alone, because "never seen" is
  *    indistinguishable from "seen before we started tracking" and hibernating
@@ -64,7 +72,13 @@ export function selectPanesToHibernate({
   return due;
 }
 
-/** A pane worth reclaiming: holds a webview and isn't already torn down. */
+/**
+ * A pane worth reclaiming: holds a webview, is safe to tear down, and isn't
+ * already torn down.
+ *
+ * Deliberately excludes `plugin` panes despite them holding a webview — see the
+ * module note. This is a data-loss guard, not an oversight.
+ */
 export function isHibernatable(pane: PaneConfig): boolean {
   return pane.type === 'browser' && !pane.hibernated;
 }

@@ -1,6 +1,8 @@
 // Plugin manifests, as served by the hub's /plugins endpoint, plus the
 // UI-ready shapes derived from them.
 
+import type { WidgetSize } from './widget';
+
 export interface PluginServerSpec {
   command: string;
   args?: string[];
@@ -16,6 +18,27 @@ export interface PluginPaneContribution {
   icon?: string;
   path?: string;
   scope?: PluginPaneScope;
+}
+
+/**
+ * A widget contribution: a small, glanceable view for a project's widget board.
+ * Mirrors Go plugin.WidgetContribution — keep in sync.
+ *
+ * A sibling of a pane, not a small one. See types/widget.ts for why the size set
+ * is closed and what each class spans.
+ */
+export interface PluginWidgetContribution {
+  id: string;
+  title: string;
+  icon?: string;
+  path?: string;
+  /** Supported footprints. Omitted means ['small'] — see widgetSizesOf. */
+  sizes?: WidgetSize[];
+}
+
+/** A widget's declared sizes, defaulting to ['small'] as the Go side does. */
+export function widgetSizesOf(w: PluginWidgetContribution): WidgetSize[] {
+  return w.sizes && w.sizes.length > 0 ? w.sizes : ['small'];
 }
 
 export interface PluginHotkeyContribution {
@@ -68,6 +91,7 @@ export interface PluginManifest {
   version?: string;
   server?: PluginServerSpec;
   panes?: PluginPaneContribution[];
+  widgets?: PluginWidgetContribution[];
   hotkeys?: PluginHotkeyContribution[];
   settings?: PluginSettingDef[];
   provides?: string[];
@@ -150,6 +174,22 @@ export interface PluginPane {
   busToken?: string;
 }
 
+/** A widget contribution resolved to a concrete webview URL. */
+export interface PluginWidget {
+  pluginId: string;
+  /** Plugin's display name, for the add-widget picker's grouping. */
+  pluginName: string;
+  /** Widget id, unique within its plugin. */
+  id: string;
+  title: string;
+  icon?: string;
+  url: string;
+  /** Footprints this widget declared it can render at (never empty). */
+  sizes: WidgetSize[];
+  /** Per-plugin bus token to inject into the webview URL (see PluginManifest.busToken). */
+  busToken?: string;
+}
+
 /** A hotkey contribution flattened for binding. */
 export interface PluginHotkey {
   pluginId: string;
@@ -163,25 +203,34 @@ export interface PluginHotkey {
 const DEFAULT_HUB_ORIGIN = 'http://127.0.0.1:7895';
 
 /**
- * Resolve a pane contribution's webview URL. A sidecar plugin loads from its own
- * server port; a webview-only plugin (no server, has `ui`) loads from the hub's
- * /plugins/ui/<id>/ route. The directory form (trailing slash) is used so the
- * hub serves index.html directly without a redirect that would drop the
- * busToken query.
+ * Resolve one of a plugin's declared paths to a concrete webview URL. A sidecar
+ * plugin loads from its own server port; a webview-only plugin (no server, has
+ * `ui`) loads from the hub's /plugins/ui/<id>/ route. The directory form
+ * (trailing slash) is used so the hub serves index.html directly without a
+ * redirect that would drop the busToken query.
+ *
+ * Shared by panes and widgets so a plugin's two surfaces always resolve against
+ * the same origin — which is also what lets their webviews share a renderer
+ * process.
  */
-export function pluginPaneURL(m: PluginManifest, pane: PluginPaneContribution): string {
+function pluginContentURL(m: PluginManifest, path: string | undefined): string {
   if (m.server?.port) {
-    return `http://127.0.0.1:${m.server.port}${pane.path || '/'}`;
+    return `http://127.0.0.1:${m.server.port}${path || '/'}`;
   }
   if (m.ui) {
     const base = m.uiBase || DEFAULT_HUB_ORIGIN;
-    const sub =
-      pane.path && pane.path !== '/'
-        ? pane.path.startsWith('/')
-          ? pane.path
-          : `/${pane.path}`
-        : '/';
+    const sub = path && path !== '/' ? (path.startsWith('/') ? path : `/${path}`) : '/';
     return `${base}/plugins/ui/${encodeURIComponent(m.id)}${sub}`;
   }
   return 'about:blank';
+}
+
+/** Resolve a pane contribution's webview URL. */
+export function pluginPaneURL(m: PluginManifest, pane: PluginPaneContribution): string {
+  return pluginContentURL(m, pane.path);
+}
+
+/** Resolve a widget contribution's webview URL. */
+export function pluginWidgetURL(m: PluginManifest, widget: PluginWidgetContribution): string {
+  return pluginContentURL(m, widget.path);
 }

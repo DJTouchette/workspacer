@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { PluginManifest, PluginPane, PluginHotkey } from '../types/plugin';
-import { pluginPaneURL } from '../types/plugin';
+import type { PluginManifest, PluginPane, PluginWidget, PluginHotkey } from '../types/plugin';
+import { pluginPaneURL, pluginWidgetURL, widgetSizesOf } from '../types/plugin';
 
 /**
  * Loads the hub's plugin list and keeps it fresh: refetches whenever a
- * `plugin.*` event crosses the bus (loaded / unloaded). Exposes the panes and
- * hotkeys plugins contribute, ready to inject into the UI.
+ * `plugin.*` event crosses the bus (loaded / unloaded). Exposes the panes,
+ * widgets and hotkeys plugins contribute, ready to inject into the UI.
  *
  * Boot race, hardened: on a cold hub start (first launch after an app update —
  * a normal relaunch adopts the still-running hub) the mount-time fetch can land
@@ -18,6 +18,7 @@ import { pluginPaneURL } from '../types/plugin';
 export function usePlugins(): {
   plugins: PluginManifest[];
   panes: PluginPane[];
+  widgets: PluginWidget[];
   hotkeys: PluginHotkey[];
 } {
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
@@ -87,7 +88,7 @@ export function usePlugins(): {
   }, [refresh]);
 
   // Disabled plugins stay in `plugins` (so the manager pane can show + re-enable
-  // them) but contribute no panes or hotkeys to the rest of the UI.
+  // them) but contribute no panes, widgets or hotkeys to the rest of the UI.
   const panes = useMemo<PluginPane[]>(
     () =>
       plugins
@@ -100,6 +101,25 @@ export function usePlugins(): {
             icon: pane.icon,
             url: pluginPaneURL(p, pane),
             scope: pane.scope ?? 'both',
+            busToken: p.busToken,
+          })),
+        ),
+    [plugins],
+  );
+
+  const widgets = useMemo<PluginWidget[]>(
+    () =>
+      plugins
+        .filter((p) => !p.disabled)
+        .flatMap((p) =>
+          (p.widgets ?? []).map((w) => ({
+            pluginId: p.id,
+            pluginName: p.name || p.id,
+            id: w.id,
+            title: w.title,
+            icon: w.icon,
+            url: pluginWidgetURL(p, w),
+            sizes: widgetSizesOf(w),
             busToken: p.busToken,
           })),
         ),
@@ -121,5 +141,5 @@ export function usePlugins(): {
     [plugins],
   );
 
-  return { plugins, panes, hotkeys };
+  return { plugins, panes, widgets, hotkeys };
 }

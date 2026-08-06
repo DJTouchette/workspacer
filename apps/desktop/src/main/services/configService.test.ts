@@ -234,6 +234,32 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     expect(cfg.terminal.fontSize).toBe(14);
   });
 
+  it('saves a widget board keyed by cwd without touching other top-level keys', () => {
+    const widgets = {
+      '/home/user/proj': [
+        { widget: 'git', size: 'large' as const },
+        { plugin: 'djtouchette.shiplight', widget: 'lamp', size: 'small' as const },
+      ],
+    };
+    configService.saveConfig({ widgets });
+    const cfg = configService.getConfig();
+
+    expect(cfg.widgets).toEqual(widgets);
+    expect(cfg.scripts).toEqual({}); // the sibling per-directory map is untouched
+    expect(cfg.terminal.fontSize).toBe(14);
+  });
+
+  // Boards are replaced wholesale, like scripts and customThemes: removing the
+  // last widget from a project has to persist as an empty array, not merge back
+  // into the previous contents.
+  it('replaces a project board wholesale — removing the last widget persists', () => {
+    configService.saveConfig({
+      widgets: { '/home/user/proj': [{ widget: 'git', size: 'small' as const }] },
+    });
+    configService.saveConfig({ widgets: { '/home/user/proj': [] } });
+    expect(configService.getConfig().widgets['/home/user/proj']).toEqual([]);
+  });
+
   it('replaces ui.customThemes wholesale — deleting a custom theme persists', () => {
     const two = {
       'custom:one': { name: 'One', base: 'dark', colors: { accent: '#ff0000' } },

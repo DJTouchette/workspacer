@@ -131,6 +131,7 @@
   "supervisor": { "provider": "claude", "model": "", "summarizerModel": "sonnet", "pollSeconds": 45 },
   "directories": { "recent": [], "favourites": [] },
   "scripts": {},
+  "widgets": {},
   "updates": { "enabled": true, "channel": "latest" },
   "apps": [
     { "name": "GitHub", "url": "https://github.com", "icon": "💻" },

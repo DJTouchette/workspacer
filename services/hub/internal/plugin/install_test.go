@@ -82,7 +82,7 @@ func TestInstallFromTarballHappy(t *testing.T) {
 	url := serveTarball(t, data)
 	dir := t.TempDir()
 
-	m, err := installFromTarball(dir, url, "fallback", InstallConsent{}, nil, nil)
+	m, err := installFromTarball(dir, url, "fallback", InstallConsent{}, nil, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestInstallFromFlatTarball(t *testing.T) {
 	})
 	dir := t.TempDir()
 
-	m, err := installFromTarball(dir, serveTarball(t, data), "flat", InstallConsent{}, nil, nil)
+	m, err := installFromTarball(dir, serveTarball(t, data), "flat", InstallConsent{}, nil, nil, "")
 	if err != nil {
 		t.Fatalf("flat tarball rejected: %v", err)
 	}
@@ -134,10 +134,10 @@ func TestInstallReinstallOverwrites(t *testing.T) {
 			"index.html":  html,
 		}))
 	}
-	if _, err := installFromTarball(dir, mk("v1"), "r", InstallConsent{}, nil, nil); err != nil {
+	if _, err := installFromTarball(dir, mk("v1"), "r", InstallConsent{}, nil, nil, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := installFromTarball(dir, mk("v2"), "r", InstallConsent{}, nil, nil); err != nil {
+	if _, err := installFromTarball(dir, mk("v2"), "r", InstallConsent{}, nil, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(filepath.Join(dir, "x-y", "index.html"))
@@ -160,7 +160,7 @@ func buildingPlugin(t *testing.T) string {
 func TestInstallRunsBuildCommandWithConsent(t *testing.T) {
 	dir := t.TempDir()
 	consent := InstallConsent{Allow: true, Argv: buildArgv}
-	if _, err := installFromTarball(dir, buildingPlugin(t), "b", consent, nil, nil); err != nil {
+	if _, err := installFromTarball(dir, buildingPlugin(t), "b", consent, nil, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "b-uild", "built.marker")); err != nil {
@@ -173,7 +173,7 @@ func TestInstallRunsBuildCommandWithConsent(t *testing.T) {
 // unbuilt while a dialog waits for an answer.
 func TestInstallWithoutConsentAsksAndChangesNothing(t *testing.T) {
 	dir := t.TempDir()
-	_, err := installFromTarball(dir, buildingPlugin(t), "b", InstallConsent{}, nil, nil)
+	_, err := installFromTarball(dir, buildingPlugin(t), "b", InstallConsent{}, nil, nil, "")
 	var need *ConsentRequiredError
 	if !errors.As(err, &need) {
 		t.Fatalf("expected ConsentRequiredError, got %v", err)
@@ -192,7 +192,7 @@ func TestInstallWithoutConsentAsksAndChangesNothing(t *testing.T) {
 func TestInstallRefusesAnArgvThatChangedAfterConsent(t *testing.T) {
 	dir := t.TempDir()
 	consent := InstallConsent{Allow: true, Argv: []string{"npm", "run", "build"}}
-	_, err := installFromTarball(dir, buildingPlugin(t), "b", consent, nil, nil)
+	_, err := installFromTarball(dir, buildingPlugin(t), "b", consent, nil, nil, "")
 	if err == nil {
 		t.Fatal("expected the swapped install command to be refused")
 	}
@@ -211,7 +211,7 @@ func TestInstallWithNoBuildCommandNeedsNoConsent(t *testing.T) {
 		"plugin.json": `{"id":"quiet","apiVersion":"1"}`,
 	})
 	dir := t.TempDir()
-	if _, err := installFromTarball(dir, serveTarball(t, data), "q", InstallConsent{}, nil, nil); err != nil {
+	if _, err := installFromTarball(dir, serveTarball(t, data), "q", InstallConsent{}, nil, nil, ""); err != nil {
 		t.Fatalf("a plugin with no install command must install unprompted: %v", err)
 	}
 }
@@ -219,7 +219,7 @@ func TestInstallWithNoBuildCommandNeedsNoConsent(t *testing.T) {
 func TestInstallNoManifest(t *testing.T) {
 	data := makeTarGz(t, "empty-main", map[string]string{"readme.md": "hi"})
 	dir := t.TempDir()
-	if _, err := installFromTarball(dir, serveTarball(t, data), "empty", InstallConsent{}, nil, nil); err == nil {
+	if _, err := installFromTarball(dir, serveTarball(t, data), "empty", InstallConsent{}, nil, nil, ""); err == nil {
 		t.Error("expected error when archive has no plugin.json")
 	}
 }
@@ -239,7 +239,7 @@ func TestInstallFromDir(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	m, err := InstallFromDir(dir, src, nil)
+	m, err := InstallFromDir(dir, src, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,7 @@ func TestInstallFromDir(t *testing.T) {
 	}
 
 	// Re-adding overwrites cleanly.
-	if _, err := InstallFromDir(dir, src, nil); err != nil {
+	if _, err := InstallFromDir(dir, src, nil, ""); err != nil {
 		t.Fatalf("re-add failed: %v", err)
 	}
 }
@@ -363,7 +363,7 @@ func TestInstallUnaffectedByBounds(t *testing.T) {
 		"index.html":  "<html>ok</html>",
 	})
 	dir := t.TempDir()
-	m, err := installFromTarball(dir, serveTarball(t, data), "ok", InstallConsent{}, nil, nil)
+	m, err := installFromTarball(dir, serveTarball(t, data), "ok", InstallConsent{}, nil, nil, "")
 	if err != nil {
 		t.Fatalf("normal install rejected by bounds: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestReinstallStopsPluginAndSwapsWholeDir(t *testing.T) {
 	stop := func(id string) { stopped = append(stopped, id) }
 
 	// Fresh install: nothing to stop.
-	if _, err := InstallFromDir(dir, src, stop); err != nil {
+	if _, err := InstallFromDir(dir, src, stop, ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(stopped) != 0 {
@@ -420,7 +420,7 @@ func TestReinstallStopsPluginAndSwapsWholeDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := InstallFromDir(dir, src, stop); err != nil {
+	if _, err := InstallFromDir(dir, src, stop, ""); err != nil {
 		t.Fatalf("reinstall failed: %v", err)
 	}
 	if len(stopped) != 1 || stopped[0] != "example.hello" {
@@ -481,7 +481,7 @@ func TestInstallStripsLoaderOwnedSidecars(t *testing.T) {
 	writeFile(t, filepath.Join(src, "assets", ".bus-token"), "not-a-credential-here")
 
 	pluginsDir := t.TempDir()
-	if _, err := InstallFromDir(pluginsDir, src, nil); err != nil {
+	if _, err := InstallFromDir(pluginsDir, src, nil, ""); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 
@@ -496,6 +496,77 @@ func TestInstallStripsLoaderOwnedSidecars(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dest, "assets", ".bus-token")); err != nil {
 		t.Errorf("a nested dotfile is content, not hub state: %v", err)
+	}
+}
+
+// A plugin's build step has to run on the same Node its sidecar will. The
+// sidecar path already pinned `node` to the app's bundled runtime
+// (Manager.sidecarNodeOverride) while the install path resolved `node` off the
+// hub's PATH — so a plugin could fail to build on a machine with no system Node
+// even though its sidecar would have started, or build against a different Node
+// than the one that then loads the result.
+func TestPinNodeRuntime(t *testing.T) {
+	const runtimeBin = "/opt/workspacer/Workspacer"
+
+	// No runtime configured (headless `workspacer serve`, tests): unchanged, and
+	// a nil env so exec still inherits the hub's environment.
+	bin, args, env := pinNodeRuntime([]string{"node", "build.js"}, "")
+	if bin != "node" || !slices.Equal(args, []string{"build.js"}) || env != nil {
+		t.Fatalf("without a runtime: bin=%q args=%v env=%v", bin, args, env)
+	}
+
+	// Configured: `node` runs on the bundled runtime, args preserved, and
+	// ELECTRON_RUN_AS_NODE set — without it the binary boots as the desktop app.
+	bin, args, env = pinNodeRuntime([]string{"node", "build.js", "--prod"}, runtimeBin)
+	if bin != runtimeBin {
+		t.Errorf("node not pinned to the bundled runtime: bin=%q", bin)
+	}
+	if !slices.Equal(args, []string{"build.js", "--prod"}) {
+		t.Errorf("args not preserved: %v", args)
+	}
+	if !slices.Contains(env, "ELECTRON_RUN_AS_NODE=1") {
+		t.Error("ELECTRON_RUN_AS_NODE missing — the runtime would launch as the app, not as Node")
+	}
+	if len(env) <= 1 {
+		t.Error("env must extend the inherited environment, not replace it")
+	}
+
+	// Package managers are never rewritten: Electron ships no npm, so there is
+	// nothing to re-point them at. Same for a plugin's own prebuilt binary.
+	for _, argv := range [][]string{
+		{"npm", "install"},
+		{"npx", "tsc"},
+		{"./bin/build.sh"},
+		{"go", "build", "-o", "server"},
+	} {
+		if bin, _, env := pinNodeRuntime(argv, runtimeBin); bin != argv[0] || env != nil {
+			t.Errorf("%v was rewritten: bin=%q env=%v", argv, bin, env)
+		}
+	}
+}
+
+// The rule for "is this the Node runtime" is shared with the sidecar path so the
+// two can't drift into disagreeing. Package managers must not match it.
+func TestIsNodeCommandAndToolchain(t *testing.T) {
+	for _, cmd := range []string{"node", "node.exe"} {
+		if !isNodeCommand(cmd) {
+			t.Errorf("isNodeCommand(%q) = false", cmd)
+		}
+	}
+	for _, cmd := range []string{"npm", "npx", "yarn", "pnpm", "./bin/server", "go", "sh"} {
+		if isNodeCommand(cmd) {
+			t.Errorf("isNodeCommand(%q) = true", cmd)
+		}
+	}
+	for _, cmd := range []string{"npm", "npm.cmd", "npx", "yarn", "pnpm"} {
+		if !isNodeToolchain(cmd) {
+			t.Errorf("isNodeToolchain(%q) = false — a missing one needs the explanatory error", cmd)
+		}
+	}
+	for _, cmd := range []string{"node", "sh", "go", "./bin/server"} {
+		if isNodeToolchain(cmd) {
+			t.Errorf("isNodeToolchain(%q) = true", cmd)
+		}
 	}
 }
 

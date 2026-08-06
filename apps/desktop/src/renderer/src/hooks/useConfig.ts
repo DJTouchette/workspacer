@@ -1,6 +1,7 @@
 import { useConfigContext } from '../contexts/ConfigContext';
 import type { AgentProvider } from '../types/pane';
 import type { CustomThemes } from '../themes';
+import type { WidgetPlacement } from '../types/widget';
 
 export interface ShellOption {
   name: string;
@@ -136,6 +137,9 @@ export interface Config {
   editor?: EditorConfig;
   /** Per-directory script buttons, keyed by workspace root (normalized cwd). */
   scripts: Record<string, ScriptEntry[]>;
+  /** Per-directory widget boards, keyed the same way as `scripts` (see
+   *  lib/projectKey). Absent for a project with no board yet. */
+  widgets?: Record<string, WidgetPlacement[]>;
   apps: AppEntry[];
   /** Directories surfaced in the Overview pane for quick agent launching. */
   directories?: {

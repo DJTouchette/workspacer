@@ -13,7 +13,7 @@ import { resolveLeader } from './lib/shortcuts';
 import { resolveNavHeight } from './lib/layoutUtils';
 import { markUiEvent } from './lib/longTaskMonitor';
 import PluginInstallDialog from './components/PluginInstallDialog';
-import { usePlugins } from './hooks/usePlugins';
+import { usePluginsContext } from './contexts/PluginsContext';
 import { useUiEventBus } from './hooks/useUiEventBus';
 import { REVIEW_REQUEST_FILE_EVENT, openReviewFile, type ReviewFileTarget } from './lib/reviewBus';
 import {
@@ -85,10 +85,9 @@ import {
   TEXT_SCALE_STEP,
 } from './lib/textScale';
 
-/** Normalize a workspace dir into a stable config key (slashes + no trailing /). */
-function scriptKey(cwd: string): string {
-  return cwd.replace(/\\/g, '/').replace(/\/+$/, '');
-}
+// Per-directory config keys (scripts here, widget boards in the inspector rail)
+// share one normalization so a repo can't key differently between them.
+import { projectKey as scriptKey } from './lib/projectKey';
 
 /**
  * Pure helper — normalizes a raw saved-session blob into a canonical
@@ -1729,7 +1728,7 @@ function App() {
   useUiEventBus(agents, activeAgentId);
 
   // --- Plugins (contributed panes + hotkeys from the hub) ---
-  const { panes: pluginPanes, hotkeys: pluginHotkeys } = usePlugins();
+  const { panes: pluginPanes, hotkeys: pluginHotkeys } = usePluginsContext();
   pluginPanesRef.current = pluginPanes; // let openFileInEditor resolve the editor plugin
   const [showInstallPlugin, setShowInstallPlugin] = useState(false);
 

@@ -72,6 +72,11 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
   // reach them. Inject the full token set (plus color-scheme and
   // zero-specificity body defaults) on every page load and theme change.
   // Regular browsing (appMode=false) is never touched.
+  //
+  // NOTE: hooks/usePluginWebview.ts is the same contract, extracted for the
+  // widget board's guests. This copy stays inline because readyRef below is
+  // shared with the key forwarder, whose injection order matters — see that
+  // file's KNOWN DUPLICATION note before changing either.
   const { theme } = useTheme();
   const themeRef = useRef(theme);
   themeRef.current = theme;

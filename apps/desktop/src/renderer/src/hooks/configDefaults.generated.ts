@@ -205,6 +205,7 @@ export const CONFIG_DEFAULTS = {
     favourites: [],
   },
   scripts: {},
+  widgets: {},
   updates: {
     enabled: true,
     channel: 'latest',

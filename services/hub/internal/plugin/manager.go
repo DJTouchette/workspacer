@@ -239,17 +239,24 @@ func (m *Manager) sidecarNodeOverride(mf Manifest) string {
 	if mf.Server == nil {
 		return ""
 	}
-	m.mu.Lock()
-	override := m.sidecarNode
-	m.mu.Unlock()
+	override := m.NodeRuntime()
 	if override == "" {
 		return ""
 	}
-	cmd := expandPlatformTokens(mf.Server.Command)
-	if cmd == "node" || cmd == "node.exe" {
+	if isNodeCommand(mf.Server.Command) {
 		return override
 	}
 	return ""
+}
+
+// NodeRuntime reports the runtime binary configured for `node` commands, or ""
+// when none is (headless `workspacer serve`, tests). A plugin's install/build
+// step has to run on the same runtime its sidecar will — see runInstall — and
+// the install path has no Manager, so it reads the value through here.
+func (m *Manager) NodeRuntime() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sidecarNode
 }
 
 // SetStreamSidecarLogs toggles publishing each sidecar's stdout/stderr line as a
@@ -439,9 +446,10 @@ func (m *Manager) Add(mf Manifest) {
 	l := &loaded{manifest: mf}
 	// Mint/persist a bus token and bind it to the plugin's declared capabilities
 	// whenever something will connect to the bus as this plugin — a sidecar
-	// (HUB_TOKEN env) or a webview pane (token injected into its URL by the host).
-	// A webview-only plugin has no sidecar but still needs a token for its pane.
-	if !mf.Disabled && m.reg != nil && (mf.Server != nil || len(mf.Panes) > 0) {
+	// (HUB_TOKEN env) or a webview pane/widget (token injected into its URL by the
+	// host). A webview-only plugin has no sidecar but still needs a token, and a
+	// widget-only plugin (ui + widgets, no panes) needs one just as much.
+	if !mf.Disabled && m.reg != nil && (mf.Server != nil || len(mf.Panes) > 0 || len(mf.Widgets) > 0) {
 		l.token = loadOrCreatePluginToken(mf.Dir)
 		if l.token != "" {
 			m.reg.RegisterPluginToken(l.token, mf.ID, grantsFor(mf), eventGrantsFor(mf))

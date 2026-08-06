@@ -137,6 +137,17 @@ And the matching sidecar manifest:
 
 A sidecar with no `panes` and no `ui` is a pure automation: it never shows a window, it just reacts on the bus. If you give it a `port` + `health`, the supervisor health-checks it and colors it in the Plugins Manager.
 
+### which Node your sidecar runs on
+
+A `"command": "node"` sidecar does **not** run on whatever Node happens to be on the user's machine. The desktop app re-points it at its own bundled runtime (Electron running as Node), so your sidecar gets a known-modern Node even on a machine with no Node installed at all. That's what makes the `wks.js` twin below safe to depend on: the global `WebSocket` it uses is a Node 22+ built-in, and the bundled runtime tracks the app's Electron, which is well past that.
+
+Only a bare `node` / `node.exe` command is redirected. A prebuilt per-platform binary (`./bin/${os}-${arch}/server${exe}`) is always launched exactly as written, and `"/usr/bin/node"` is treated as a path to a specific binary, not as "give me Node" — write plain `"node"` if you want the guarantee.
+
+Your **`install` step is where this stops.** Electron ships no package manager, so there is nothing to re-point `npm` at: an `"install": ["npm", "install"]` runs the user's own npm off their `PATH` and fails outright on a machine that hasn't got one. Two things follow:
+
+- **Prefer zero dependencies.** A sidecar that vendors `wks.js` and sticks to built-in `WebSocket` / `fs` / `http` needs no `install` step at all, and so installs cleanly for every user. The `require('ws')` in the example above is exactly what forces that `npm install` — drop it and the `install` line goes away with it.
+- **If you must build, depend on nothing the user has to have** — `["go", "build", "-o", "server", "."]`, or just commit a prebuilt binary. Note also that an `npm install` builds against the *system* Node while your sidecar runs on the *bundled* one, so a native module can end up compiled for a different ABI than the Node that later loads it; the failure surfaces at `require` time, a long way from the cause. An `install` step whose command is plain `node` (e.g. `["node", "build.js"]`) is pinned to the same runtime as the sidecar and doesn't have this problem.
+
 ### the Node twin (`wks.js`)
 
 Sidecars have no injected SDK, but you can vendor one file that gives you the same surface as `window.workspacer`. Drop this zero-dependency `wks.js` next to your `server.js` (it uses only Node >=22 built-ins — the global `WebSocket`, `fs`, `path`), then `require('./wks.js')`. It reads the token from `HUB_TOKEN` (falling back to `WKS_BUS_TOKEN` then a `.bus-token` file), connects to `ws://127.0.0.1:7895/bus`, and reconnects on drop:
@@ -281,6 +292,47 @@ const wks = connect();
 })();
 ```
 
+## Widgets
+
+A **widget** is a small, glanceable view pinned to a *project directory*. It lives in the inspector rail's Project board, keyed by the agent's cwd — so several agents working in one repo all see the same board.
+
+A widget is a **sibling of a pane, not a shrunken one**. This is the same distinction iPhone widgets make, and for the same reason: your pane may own a big bundle, a scroll region, or an editing surface, and none of that reads at 150px. Declare `widgets` alongside `panes`; they're served from the same origin, so one sidecar backs both.
+
+```json
+{
+  "id": "acme.ship",
+  "name": "Ship",
+  "apiVersion": "1",
+  "server": { "command": "node", "args": ["server.js"], "port": 9211, "health": "/health" },
+  "panes":   [{ "type": "acme.ship", "title": "Ship", "path": "/" }],
+  "widgets": [
+    { "id": "lamp", "title": "Ship status", "icon": "🚢", "path": "/widget/lamp", "sizes": ["small", "large"] }
+  ]
+}
+```
+
+**Sizes are a closed set of three**, iPhone's own, in a two-column board:
+
+| size | cells | shape |
+| --- | --- | --- |
+| `small` | 1×1 | a square (~148px) |
+| `medium` | 2×1 | full width, one row |
+| `large` | 2×2 | a full-width square |
+
+Declare only what your widget actually reads well at — the user picks among those and nothing else. Omitting `sizes` means `["small"]`. There is deliberately no free resizing: three classes force the design decision at authoring time and keep every board aligned. Your widget is told nothing about its size directly; lay out against the box you're given, and use a CSS container/media query if you need to reflow between classes.
+
+Your widget page gets the same treatment a pane does:
+
+- **The SDK**, auto-injected — `window.workspacer` with the same `call` / `publish` / `on` surface.
+- **Theme tokens** — the app's `--wks-*` variables, reapplied when the user switches theme. Style against them and your widget matches the app.
+- **Your settings** — `window.__WKS_SETTINGS__` plus a `wks-settings` event, same as a pane.
+- **Query params** — `?cwd=<project>&surface=widget` (plus your `busToken`). `surface=widget` lets one HTML file serve both a pane and a widget and branch on it.
+
+Two rules the host enforces on your behalf, worth designing for:
+
+- **A widget can be unmounted at any moment.** Closing the rail or switching to the Session tab tears the webview down; reopening loads it fresh. Keep no state in the widget that isn't recoverable — put it in your sidecar.
+- **Keep the sidecar the expensive part.** One sidecar can back a pane and several widgets while polling once. Don't give each widget its own poll loop, and avoid continuous animation — a widget on a visible board is not background-throttled.
+
 ## The manifest
 
 Schema version is `"apiVersion": "1"` (the loader rejects anything else). The authoritative field list is `internal/plugin/manifest.go`; the real fields:
@@ -288,15 +340,16 @@ Schema version is `"apiVersion": "1"` (the loader rejects anything else). The au
 - `id` (required), `name`. `id` is the install dir name and the token key; namespace it (`owner.thing`).
 - `apiVersion` — MUST be the string `"1"`.
 - `version` — your plugin's release version (semver-ish, e.g. `"1.4.0"`; an optional leading `v` is fine). Optional, but it's what powers update detection: the Plugins Manager re-fetches your repo's manifest and offers **Update** only when the published `version` is higher than the installed one. Omit it and the plugin can still be reinstalled, but never reports an update. Bump it on every release.
-- `server`, the sidecar process: `command` (required when `server` is set), `args`, `port`, `health` (a path, e.g. `/health`). The hub serves the plugin's panes from `http://127.0.0.1:<port><path>`.
+- `server`, the sidecar process: `command` (required when `server` is set), `args`, `port`, `health` (a path, e.g. `/health`). The hub serves the plugin's panes from `http://127.0.0.1:<port><path>`. A `command` of exactly `node` is run on the app's bundled Node rather than the system one — see "which Node your sidecar runs on".
 - `ui`, instead of `server`, a subdir of static assets the hub serves itself at `/plugins/ui/<id>/`. This is a webview plugin with no sidecar process. Only the named subdir is exposed (not `plugin.json` or `.bus-token`).
 - `panes`, pane types injected into the UI. Each: `type` (unique id), `title`, `icon`, `path` (the URL path served for the pane), and `scope` (`global` = Overview only, `agent` = inside an agent workspace and gets its sessionId/cwd, `both` = wherever you are, the default).
+- `widgets`, glanceable views for a project's widget board — see "Widgets" above. Each: `id` (unique within your plugin), `title`, `icon`, `path`, and `sizes` (any of `small` / `medium` / `large`; omitted = `["small"]`).
 - `hotkeys`, each with `id`, `default` (e.g. `ctrl+shift+a`), and `command`, which is either `open-pane:<paneType>` or `emit:<eventType>`.
 - `settings`, typed settings the host renders in Settings. Each: `key`, `label`, `type` (`boolean`/`number`/`string`/`select`), `default`, `options` (for `select`), and `help`. Delivered into the webview as `window.__WKS_SETTINGS__` + a `wks-settings` event.
 - `capabilities`, bus methods the plugin may **call**. A bare string (`"agents.list"`) for an unscoped verb, or the object form `{ "method": "fs.read", "paths": ["${pluginDir}"] }` for a filesystem-scoped one.
 - `provides`, capabilities the plugin **answers** on the bus (it becomes a provider other clients can call).
 - `emits` / `consumes`, event types it publishes / subscribes to.
-- `install`, a one-time setup argv run in the plugin dir after a GitHub install (e.g. `["go","build","-o","server","."]`).
+- `install`, a one-time setup argv run in the plugin dir after a GitHub install (e.g. `["go","build","-o","server","."]`). Requires the user's consent, which names the exact argv. A `node` command here is pinned to the bundled runtime like a sidecar's; `npm`/`npx`/`yarn`/`pnpm` cannot be, and fail if the user has no Node toolchain — prefer no `install` step at all (see "which Node your sidecar runs on").
 
 ## The bus protocol
 

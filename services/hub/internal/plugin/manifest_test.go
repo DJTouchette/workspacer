@@ -36,12 +36,61 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+// Widgets are a separate contribution kind from panes, with the same
+// serve-from-somewhere requirement and a closed size vocabulary.
+func TestValidateWidgets(t *testing.T) {
+	ok := Manifest{ID: "x", APIVersion: "1", UI: "ui",
+		Widgets: []WidgetContribution{{ID: "lamp", Title: "Lamp", Sizes: []WidgetSize{WidgetSmall, WidgetLarge}}}}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("expected valid: %v", err)
+	}
+
+	cases := map[string]Manifest{
+		"empty widget id": {ID: "x", APIVersion: "1", UI: "ui",
+			Widgets: []WidgetContribution{{ID: ""}}},
+		"duplicate widget id": {ID: "x", APIVersion: "1", UI: "ui",
+			Widgets: []WidgetContribution{{ID: "a"}, {ID: "a"}}},
+		"unknown size": {ID: "x", APIVersion: "1", UI: "ui",
+			Widgets: []WidgetContribution{{ID: "a", Sizes: []WidgetSize{"huge"}}}},
+		// Same rule as panes: a widget is a webview and needs an origin to load from.
+		"widgets with nothing to serve them": {ID: "x", APIVersion: "1",
+			Widgets: []WidgetContribution{{ID: "a"}}},
+	}
+	for name, mf := range cases {
+		if err := mf.Validate(); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+}
+
+// An omitted "sizes" defaults to small — the least presumptuous footprint.
+func TestWidgetSupportedSizes(t *testing.T) {
+	bare := WidgetContribution{ID: "a"}
+	if got := bare.SupportedSizes(); len(got) != 1 || got[0] != WidgetSmall {
+		t.Errorf("default sizes = %v, want [small]", got)
+	}
+	if !bare.Supports(WidgetSmall) {
+		t.Error("a bare widget must support small")
+	}
+	if bare.Supports(WidgetLarge) {
+		t.Error("a bare widget must not claim large")
+	}
+	declared := WidgetContribution{ID: "b", Sizes: []WidgetSize{WidgetMedium, WidgetLarge}}
+	if declared.Supports(WidgetSmall) {
+		t.Error("small was not declared")
+	}
+	if !declared.Supports(WidgetLarge) {
+		t.Error("large was declared")
+	}
+}
+
 func TestLoadDir(t *testing.T) {
 	root := t.TempDir()
 	writePlugin(t, root, "tracker", `{
 		"id":"acme.tracker","name":"Tracker","apiVersion":"1",
 		"server":{"command":"tracker-bin","port":9100,"health":"/healthz"},
 		"panes":[{"type":"acme.tracker","title":"Issues","icon":"📋","path":"/ui"}],
+		"widgets":[{"id":"count","title":"Open issues","icon":"📋","path":"/widget/count","sizes":["small","medium"]}],
 		"hotkeys":[{"id":"open","default":"ctrl+shift+i","command":"open-pane:acme.tracker"}]
 	}`)
 	writePlugin(t, root, "broken", `{ not json `)
@@ -64,6 +113,12 @@ func TestLoadDir(t *testing.T) {
 	}
 	if len(m.Hotkeys) != 1 || m.Hotkeys[0].Command != "open-pane:acme.tracker" {
 		t.Fatalf("hotkey not parsed: %+v", m.Hotkeys)
+	}
+	if len(m.Widgets) != 1 || m.Widgets[0].ID != "count" || m.Widgets[0].Path != "/widget/count" {
+		t.Fatalf("widget not parsed: %+v", m.Widgets)
+	}
+	if got := m.Widgets[0].SupportedSizes(); len(got) != 2 || got[0] != WidgetSmall || got[1] != WidgetMedium {
+		t.Fatalf("widget sizes not parsed: %v", got)
 	}
 	if m.Dir == "" {
 		t.Error("Dir should be set by the loader")

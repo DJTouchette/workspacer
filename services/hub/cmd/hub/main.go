@@ -588,7 +588,7 @@ func main() {
 		// swapping directories — Windows can't replace a live process's dir.
 		// mgr.Add below re-registers and restarts it from the new files.
 		consent := plugin.InstallConsent{Allow: body.AllowInstallCommand, Argv: body.ConsentedArgv}
-		m, err := plugin.Install(*pluginsDir, body.URL, consent, progress, func(id string) { mgr.Remove(id) })
+		m, err := plugin.Install(*pluginsDir, body.URL, consent, progress, func(id string) { mgr.Remove(id) }, mgr.NodeRuntime())
 		if err != nil {
 			// The plugin declares a build command and nobody has approved it.
 			// Nothing was installed; answer with the exact argv so the client can
@@ -705,7 +705,7 @@ func main() {
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "no such example: " + body.ID})
 			return
 		}
-		m, err := plugin.InstallFromDir(*pluginsDir, srcDir, func(id string) { mgr.Remove(id) })
+		m, err := plugin.InstallFromDir(*pluginsDir, srcDir, func(id string) { mgr.Remove(id) }, mgr.NodeRuntime())
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})

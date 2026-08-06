@@ -28,6 +28,20 @@ interface ScriptEntry {
   command: string;
 }
 
+/**
+ * One widget placed on a project's board. Mirrors the renderer's WidgetPlacement
+ * (src/renderer/src/types/widget.ts) — keep in sync.
+ *
+ * `plugin` absent means a host (built-in) widget, which keeps the YAML readable:
+ *   - { widget: git, size: large }
+ *   - { plugin: djtouchette.shiplight, widget: lamp, size: small }
+ */
+interface WidgetPlacementEntry {
+  plugin?: string;
+  widget: string;
+  size: 'small' | 'medium' | 'large';
+}
+
 interface Config {
   ui: {
     animations: boolean;
@@ -191,6 +205,14 @@ interface Config {
   };
   /** Per-directory script buttons, keyed by workspace root (normalized cwd). */
   scripts: Record<string, ScriptEntry[]>;
+  /**
+   * Per-directory widget boards, keyed by workspace root (normalized cwd) exactly
+   * as `scripts` is. Deliberately here rather than in the hub layout doc: the
+   * layout doc is per-AgentWorkspace and is broadcast to every connected client
+   * (including the phone mirror), whereas a widget board belongs to a project and
+   * several agents can share one cwd.
+   */
+  widgets: Record<string, WidgetPlacementEntry[]>;
   apps: AppEntry[];
   /** In-app auto-update (electron-updater over the GitHub Release feed). */
   updates: {

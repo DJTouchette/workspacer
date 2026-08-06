@@ -8,15 +8,31 @@ import { execSync, type SpawnOptions, type ChildProcess } from 'child_process';
 
 // ── Port registry ────────────────────────────────────────────────────────────
 
+/**
+ * Shift every managed daemon's port, so a dev build can run beside an installed
+ * one without touching its daemons.
+ *
+ * Without this the two instances collide on the same fixed ports, and neither
+ * outcome is what a developer wants: a HEALTHY daemon gets adopted (so the dev
+ * app silently runs against the *packaged* hub binary — your Go changes appear
+ * to do nothing), and an unhealthy one gets `taskkill /F /T`'d, sweeping the
+ * other instance's sidecars and agent PTYs with it.
+ *
+ * Unset (the default) is a no-op, so shipped builds keep the canonical ports.
+ * Usage: WORKSPACER_PORT_OFFSET=100 npm run dev — pair it with a scratch
+ * APPDATA/XDG_CONFIG_HOME to isolate config.yaml and the plugins dir too.
+ */
+const DEV_PORT_OFFSET = Number(process.env.WORKSPACER_PORT_OFFSET) || 0;
+
 export const PORTS = {
   /** claudemon: hook ingestion (receives Claude Code hook events) */
-  claudemonHook: 7890,
+  claudemonHook: 7890 + DEV_PORT_OFFSET,
   /** claudemon: API / session state / control */
-  claudemonApi: 7891,
+  claudemonApi: 7891 + DEV_PORT_OFFSET,
   /** hub: control-plane event bus */
-  hub: 7895,
+  hub: 7895 + DEV_PORT_OFFSET,
   /** mcp facade: exposes hub capabilities as MCP tools (the supervisor's control plane) */
-  mcpFacade: 7897,
+  mcpFacade: 7897 + DEV_PORT_OFFSET,
 } as const;
 
 // ── daemonSpawnOptions ───────────────────────────────────────────────────────

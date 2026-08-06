@@ -2458,9 +2458,13 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
           </div>
         </div>
 
-        {/* Inspector rail — files / workflows / agents / usage. Sibling of the
-          content area, so it persists in both GUI and Terminal mode. */}
-        {railOpen && <InspectorRail session={session} onClose={toggleRail} />}
+        {/* Inspector rail — the session inspector (files / workflows / agents /
+          usage) plus this project's widget board. Sibling of the content area,
+          so it persists in both GUI and Terminal mode. effectiveCwd is what the
+          board is keyed by, so it works before a session attaches. */}
+        {railOpen && (
+          <InspectorRail session={session} cwd={effectiveCwd} onClose={toggleRail} />
+        )}
       </div>
     </div>
   );

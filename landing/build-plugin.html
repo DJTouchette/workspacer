@@ -123,6 +123,7 @@
     <nav id="toc">
       <a href="#intro">the two kinds</a>
       <a href="#first">your first plugin</a>
+      <a href="#widgets">widgets</a>
       <a href="#manifest">the manifest</a>
       <a href="#bus">the bus protocol</a>
       <a href="#capabilities">capabilities &amp; permissions</a>
@@ -236,6 +237,14 @@ ws.on('message', (buf) =&gt; {
   "install": ["npm", "install"]
 }</code></pre>
 <p>A sidecar with no <code>panes</code> and no <code>ui</code> is a pure automation: it never shows a window, it just reacts on the bus. If you give it a <code>port</code> + <code>health</code>, the supervisor health-checks it and colors it in the Plugins Manager.</p>
+<h3>which Node your sidecar runs on</h3>
+<p>A <code>"command": "node"</code> sidecar does <strong>not</strong> run on whatever Node happens to be on the user's machine. The desktop app re-points it at its own bundled runtime (Electron running as Node), so your sidecar gets a known-modern Node even on a machine with no Node installed at all. That's what makes the <code>wks.js</code> twin below safe to depend on: the global <code>WebSocket</code> it uses is a Node 22+ built-in, and the bundled runtime tracks the app's Electron, which is well past that.</p>
+<p>Only a bare <code>node</code> / <code>node.exe</code> command is redirected. A prebuilt per-platform binary (<code>./bin/${os}-${arch}/server${exe}</code>) is always launched exactly as written, and <code>"/usr/bin/node"</code> is treated as a path to a specific binary, not as "give me Node" — write plain <code>"node"</code> if you want the guarantee.</p>
+<p>Your <strong><code>install</code> step is where this stops.</strong> Electron ships no package manager, so there is nothing to re-point <code>npm</code> at: an <code>"install": ["npm", "install"]</code> runs the user's own npm off their <code>PATH</code> and fails outright on a machine that hasn't got one. Two things follow:</p>
+<ul>
+<li><strong>Prefer zero dependencies.</strong> A sidecar that vendors <code>wks.js</code> and sticks to built-in <code>WebSocket</code> / <code>fs</code> / <code>http</code> needs no <code>install</code> step at all, and so installs cleanly for every user. The <code>require('ws')</code> in the example above is exactly what forces that <code>npm install</code> — drop it and the <code>install</code> line goes away with it.</li>
+<li><strong>If you must build, depend on nothing the user has to have</strong> — <code>["go", "build", "-o", "server", "."]</code>, or just commit a prebuilt binary. Note also that an <code>npm install</code> builds against the <em>system</em> Node while your sidecar runs on the <em>bundled</em> one, so a native module can end up compiled for a different ABI than the Node that later loads it; the failure surfaces at <code>require</code> time, a long way from the cause. An <code>install</code> step whose command is plain <code>node</code> (e.g. <code>["node", "build.js"]</code>) is pinned to the same runtime as the sidecar and doesn't have this problem.</li>
+</ul>
 <h3>the Node twin (<code>wks.js</code>)</h3>
 <p>Sidecars have no injected SDK, but you can vendor one file that gives you the same surface as <code>window.workspacer</code>. Drop this zero-dependency <code>wks.js</code> next to your <code>server.js</code> (it uses only Node &gt;=22 built-ins — the global <code>WebSocket</code>, <code>fs</code>, <code>path</code>), then <code>require('./wks.js')</code>. It reads the token from <code>HUB_TOKEN</code> (falling back to <code>WKS_BUS_TOKEN</code> then a <code>.bus-token</code> file), connects to <code>ws://127.0.0.1:7895/bus</code>, and reconnects on drop:</p>
 <pre><code>// wks.js — a zero-dependency hub-bus client for a sidecar (Node &gt;=22, built-in WebSocket).
@@ -373,6 +382,41 @@ const wks = connect();
 })();</code></pre>
     </section>
 
+    <section id="widgets" class="doc">
+<h2>widgets</h2>
+<p>A <strong>widget</strong> is a small, glanceable view pinned to a <em>project directory</em>. It lives in the inspector rail's Project board, keyed by the agent's cwd — so several agents working in one repo all see the same board.</p>
+<p>A widget is a <strong>sibling of a pane, not a shrunken one</strong>. This is the same distinction iPhone widgets make, and for the same reason: your pane may own a big bundle, a scroll region, or an editing surface, and none of that reads at 150px. Declare <code>widgets</code> alongside <code>panes</code>; they're served from the same origin, so one sidecar backs both.</p>
+<pre><code>{
+  "id": "acme.ship",
+  "name": "Ship",
+  "apiVersion": "1",
+  "server": { "command": "node", "args": ["server.js"], "port": 9211, "health": "/health" },
+  "panes":   [{ "type": "acme.ship", "title": "Ship", "path": "/" }],
+  "widgets": [
+    { "id": "lamp", "title": "Ship status", "icon": "🚢", "path": "/widget/lamp", "sizes": ["small", "large"] }
+  ]
+}</code></pre>
+<p><strong>Sizes are a closed set of three</strong>, iPhone's own, in a two-column board:</p>
+<ul>
+<li><code>small</code> — 1×1, a square (~148px)</li>
+<li><code>medium</code> — 2×1, full width, one row</li>
+<li><code>large</code> — 2×2, a full-width square</li>
+</ul>
+<p>Declare only what your widget actually reads well at — the user picks among those and nothing else. Omitting <code>sizes</code> means <code>["small"]</code>. There is deliberately no free resizing: three classes force the design decision at authoring time and keep every board aligned. Your widget is told nothing about its size directly; lay out against the box you're given, and use a CSS container/media query if you need to reflow between classes.</p>
+<p>Your widget page gets the same treatment a pane does:</p>
+<ul>
+<li><strong>The SDK</strong>, auto-injected — <code>window.workspacer</code> with the same <code>call</code> / <code>publish</code> / <code>on</code> surface.</li>
+<li><strong>Theme tokens</strong> — the app's <code>--wks-*</code> variables, reapplied when the user switches theme. Style against them and your widget matches the app.</li>
+<li><strong>Your settings</strong> — <code>window.__WKS_SETTINGS__</code> plus a <code>wks-settings</code> event, same as a pane.</li>
+<li><strong>Query params</strong> — <code>?cwd=&lt;project&gt;&amp;surface=widget</code> (plus your <code>busToken</code>). <code>surface=widget</code> lets one HTML file serve both a pane and a widget and branch on it.</li>
+</ul>
+<p>Two rules the host enforces on your behalf, worth designing for:</p>
+<ul>
+<li><strong>A widget can be unmounted at any moment.</strong> Closing the rail or switching to the Session tab tears the webview down; reopening loads it fresh. Keep no state in the widget that isn't recoverable — put it in your sidecar.</li>
+<li><strong>Keep the sidecar the expensive part.</strong> One sidecar can back a pane and several widgets while polling once. Don't give each widget its own poll loop, and avoid continuous animation — a widget on a visible board is not background-throttled.</li>
+</ul>
+    </section>
+
     <section id="manifest" class="doc">
 <h2>the manifest</h2>
 <p>Schema version is <code>"apiVersion": "1"</code> (the loader rejects anything else). The authoritative field list is <code>internal/plugin/manifest.go</code>; the real fields:</p>
@@ -380,15 +424,16 @@ const wks = connect();
 <li><code>id</code> (required), <code>name</code>. <code>id</code> is the install dir name and the token key; namespace it (<code>owner.thing</code>).</li>
 <li><code>apiVersion</code> — MUST be the string <code>"1"</code>.</li>
 <li><code>version</code> — your plugin's release version (semver-ish, e.g. <code>"1.4.0"</code>; an optional leading <code>v</code> is fine). Optional, but it's what powers update detection: the Plugins Manager re-fetches your repo's manifest and offers <strong>Update</strong> only when the published <code>version</code> is higher than the installed one. Omit it and the plugin can still be reinstalled, but never reports an update. Bump it on every release.</li>
-<li><code>server</code>, the sidecar process: <code>command</code> (required when <code>server</code> is set), <code>args</code>, <code>port</code>, <code>health</code> (a path, e.g. <code>/health</code>). The pane's webview loads the plugin's panes from <code>http://127.0.0.1:&lt;port&gt;&lt;path&gt;</code> directly.</li>
+<li><code>server</code>, the sidecar process: <code>command</code> (required when <code>server</code> is set), <code>args</code>, <code>port</code>, <code>health</code> (a path, e.g. <code>/health</code>). The pane's webview loads the plugin's panes from <code>http://127.0.0.1:&lt;port&gt;&lt;path&gt;</code> directly. A <code>command</code> of exactly <code>node</code> is run on the app's bundled Node rather than the system one — see "which Node your sidecar runs on".</li>
 <li><code>ui</code>, instead of <code>server</code>, a subdir of static assets the hub serves itself at <code>/plugins/ui/&lt;id&gt;/</code>. This is a webview plugin with no sidecar process. Only the named subdir is exposed (not <code>plugin.json</code> or <code>.bus-token</code>).</li>
 <li><code>panes</code>, pane types injected into the UI. Each: <code>type</code> (unique id), <code>title</code>, <code>icon</code>, <code>path</code> (the URL path served for the pane), and <code>scope</code> (<code>global</code> = Overview only, <code>agent</code> = inside an agent workspace and gets its sessionId/cwd, <code>both</code> = wherever you are, the default).</li>
+<li><code>widgets</code>, glanceable views for a project's widget board — see <a href="#widgets">widgets</a>. Each: <code>id</code> (unique within your plugin), <code>title</code>, <code>icon</code>, <code>path</code>, and <code>sizes</code> (any of <code>small</code> / <code>medium</code> / <code>large</code>; omitted = <code>["small"]</code>).</li>
 <li><code>hotkeys</code>, each with <code>id</code>, <code>default</code> (e.g. <code>ctrl+shift+a</code>), and <code>command</code>, which is either <code>open-pane:&lt;paneType&gt;</code> or <code>emit:&lt;eventType&gt;</code>.</li>
 <li><code>settings</code>, typed settings the host renders in Settings. Each: <code>key</code>, <code>label</code>, <code>type</code> (<code>boolean</code>/<code>number</code>/<code>string</code>/<code>select</code>), <code>default</code>, <code>options</code> (for <code>select</code>), <code>help</code>, and <code>secret</code> (masked write-only PAT/API-key handling — see Settings below). Delivered into the webview as <code>window.__WKS_SETTINGS__</code> (secrets redacted) + a <code>wks-settings</code> event.</li>
 <li><code>capabilities</code>, bus methods the plugin may <strong>call</strong>. A bare string (<code>"agents.list"</code>) for an unscoped verb, or the object form <code>{ "method": "fs.read", "paths": ["${pluginDir}"] }</code> for a filesystem-scoped one.</li>
 <li><code>provides</code>, capabilities the plugin <strong>answers</strong> on the bus (it becomes a provider other clients can call).</li>
 <li><code>emits</code> / <code>consumes</code>, event types it publishes / subscribes to.</li>
-<li><code>install</code>, a one-time setup argv run in the plugin dir after a GitHub install (e.g. <code>["go","build","-o","server","."]</code>).</li>
+<li><code>install</code>, a one-time setup argv run in the plugin dir after a GitHub install (e.g. <code>["go","build","-o","server","."]</code>). Requires the user's consent, which names the exact argv. A <code>node</code> command here is pinned to the bundled runtime like a sidecar's; <code>npm</code>/<code>npx</code>/<code>yarn</code>/<code>pnpm</code> cannot be, and fail if the user has no Node toolchain — prefer no <code>install</code> step at all (see "which Node your sidecar runs on").</li>
 </ul>
     </section>
 

@@ -9,18 +9,24 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 
 async function mount(): Promise<void> {
-  const [{ default: App }, { ConfigProvider }, { default: ErrorBoundary }] = await Promise.all([
-    import('./App'),
-    import('./contexts/ConfigContext'),
-    import('./components/ErrorBoundary'),
-  ]);
+  const [{ default: App }, { ConfigProvider }, { PluginsProvider }, { default: ErrorBoundary }] =
+    await Promise.all([
+      import('./App'),
+      import('./contexts/ConfigContext'),
+      import('./contexts/PluginsContext'),
+      import('./components/ErrorBoundary'),
+    ]);
   ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <React.StrictMode>
       {/* Last-resort boundary: a crash above the app shell still shows a
           recoverable screen instead of a blank window. */}
       <ErrorBoundary label="Workspacer" variant="region">
         <ConfigProvider>
-          <App />
+          {/* One shared plugin subscription: App reads panes/hotkeys, the
+              inspector rail's widget board reads widgets. */}
+          <PluginsProvider>
+            <App />
+          </PluginsProvider>
         </ConfigProvider>
       </ErrorBoundary>
     </React.StrictMode>,

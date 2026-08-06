@@ -47,6 +47,7 @@ type Manifest struct {
 
 	Server   *ServerSpec          `json:"server,omitempty"`
 	Panes    []PaneContribution   `json:"panes,omitempty"`
+	Widgets  []WidgetContribution `json:"widgets,omitempty"`
 	Hotkeys  []HotkeyContribution `json:"hotkeys,omitempty"`
 	Settings []SettingDef         `json:"settings,omitempty"`
 
@@ -176,6 +177,69 @@ type PaneContribution struct {
 	Scope string `json:"scope,omitempty"`
 }
 
+// WidgetSize is one of three fixed widget footprints, deliberately mirroring
+// iPhone's small/medium/large so the vocabulary is already familiar. The board is
+// two widget-columns wide, so in cells:
+//
+//	small  — 1x1, a square
+//	medium — 2x1, full width and half the height
+//	large  — 2x2, a full-width square
+//
+// The set is closed on purpose. Free resizing would let an author ship a widget
+// that only reads at one arbitrary size; three classes force a design decision at
+// authoring time and keep every board visually aligned.
+type WidgetSize string
+
+const (
+	WidgetSmall  WidgetSize = "small"
+	WidgetMedium WidgetSize = "medium"
+	WidgetLarge  WidgetSize = "large"
+)
+
+// validWidgetSizes is the closed set WidgetSize may take.
+var validWidgetSizes = map[WidgetSize]bool{
+	WidgetSmall: true, WidgetMedium: true, WidgetLarge: true,
+}
+
+// WidgetContribution is a small, glanceable view the plugin contributes to a
+// project's widget board (the grid in the inspector rail), rendered as a webview
+// at the same origin as that plugin's panes.
+//
+// A widget is a SIBLING of a pane, never a shrunken one. A pane is free to own a
+// PTY, a large bundle, or an editing surface; at 150px none of that reads, and
+// the host may unmount a widget whenever its board goes off screen. So a widget
+// must be cheap, stateless, and readable at a glance — which is also why the
+// sidecar, not the widget, is where a plugin should keep its polling and state:
+// one sidecar can back a pane and several widgets without polling more than once.
+type WidgetContribution struct {
+	ID    string `json:"id"`    // unique within the plugin, e.g. "lamp"
+	Title string `json:"title"` // shown in the add-widget picker and the widget chrome
+	Icon  string `json:"icon,omitempty"`
+	Path  string `json:"path,omitempty"` // URL path, e.g. "/widget/lamp"
+
+	// Sizes the widget supports, smallest first. Omitted means {"small"} — the
+	// least presumptuous footprint, and a nudge to declare what actually reads.
+	Sizes []WidgetSize `json:"sizes,omitempty"`
+}
+
+// SupportedSizes returns the widget's declared sizes, defaulting to {small}.
+func (w WidgetContribution) SupportedSizes() []WidgetSize {
+	if len(w.Sizes) == 0 {
+		return []WidgetSize{WidgetSmall}
+	}
+	return w.Sizes
+}
+
+// Supports reports whether the widget declared s as one of its footprints.
+func (w WidgetContribution) Supports(s WidgetSize) bool {
+	for _, got := range w.SupportedSizes() {
+		if got == s {
+			return true
+		}
+	}
+	return false
+}
+
 // HotkeyContribution binds a key to a command. Command is either
 // "open-pane:<paneType>" or "emit:<eventType>".
 type HotkeyContribution struct {
@@ -205,10 +269,27 @@ func (m *Manifest) Validate() error {
 		}
 		seen[p.Type] = true
 	}
-	// A pane has to be served from somewhere: a sidecar (server) or hub-served
-	// static assets (ui). Without either, the webview would have no URL to load.
-	if len(m.Panes) > 0 && m.Server == nil && m.UI == "" {
-		return fmt.Errorf("plugin has panes but neither a server nor a ui directory to serve them")
+	widgetIDs := map[string]bool{}
+	for _, w := range m.Widgets {
+		if w.ID == "" {
+			return fmt.Errorf("widget with empty id")
+		}
+		if widgetIDs[w.ID] {
+			return fmt.Errorf("duplicate widget id %q", w.ID)
+		}
+		widgetIDs[w.ID] = true
+		for _, s := range w.Sizes {
+			if !validWidgetSizes[s] {
+				return fmt.Errorf("widget %q has unknown size %q (want %q, %q or %q)",
+					w.ID, s, WidgetSmall, WidgetMedium, WidgetLarge)
+			}
+		}
+	}
+	// A pane or widget has to be served from somewhere: a sidecar (server) or
+	// hub-served static assets (ui). Without either, the webview would have no URL
+	// to load.
+	if len(m.Panes)+len(m.Widgets) > 0 && m.Server == nil && m.UI == "" {
+		return fmt.Errorf("plugin has panes or widgets but neither a server nor a ui directory to serve them")
 	}
 	keys := map[string]bool{}
 	for _, s := range m.Settings {

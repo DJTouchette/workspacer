@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -43,6 +44,33 @@ func expandPlatformTokensAll(ss []string) []string {
 		out[i] = expandPlatformTokens(s)
 	}
 	return out
+}
+
+// isNodeCommand reports whether cmd names the Node runtime itself, as opposed to
+// a prebuilt binary or a package manager. Only these can be re-pointed at the
+// app's bundled runtime: substituting Electron-as-Node works for `node build.js`
+// but not for `npm`/`npx`, which Electron does not ship (see isNodeToolchain).
+//
+// Shared by the sidecar path (Manager.sidecarNodeOverride) and the install path
+// (runInstall) so the two can't drift into disagreeing about what "node" means.
+func isNodeCommand(cmd string) bool {
+	switch expandPlatformTokens(cmd) {
+	case "node", "node.exe":
+		return true
+	}
+	return false
+}
+
+// isNodeToolchain reports whether cmd is a Node package manager or script
+// runner. These need a real Node installation — the bundled runtime cannot stand
+// in for them — so a missing one is worth an explanatory error rather than a
+// bare "executable file not found".
+func isNodeToolchain(cmd string) bool {
+	switch expandPlatformTokens(cmd) {
+	case "npm", "npm.cmd", "npx", "npx.cmd", "pnpm", "pnpm.cmd", "yarn", "yarn.cmd":
+		return true
+	}
+	return false
 }
 
 // Inspect downloads a plugin (GitHub URL / owner-repo / tarball) and returns its
@@ -112,7 +140,7 @@ func inspectTarball(tarballURL string) (Manifest, error) {
 // NOTE: this downloads and (via the Manager) RUNS code from the internet — the
 // caller is responsible for getting user consent. It's the trusted-install
 // model (like a VS Code extension), not a sandbox.
-func Install(pluginsDir, input string, consent InstallConsent, progress func(stage string), stopForReplace func(pluginID string)) (Manifest, error) {
+func Install(pluginsDir, input string, consent InstallConsent, progress func(stage string), stopForReplace func(pluginID string), nodeRuntime string) (Manifest, error) {
 	if progress == nil {
 		progress = func(string) {}
 	}
@@ -130,7 +158,7 @@ func Install(pluginsDir, input string, consent InstallConsent, progress func(sta
 
 	var lastErr error
 	for _, url := range urls {
-		m, err := installFromTarball(pluginsDir, url, name, consent, progress, stopForReplace)
+		m, err := installFromTarball(pluginsDir, url, name, consent, progress, stopForReplace, nodeRuntime)
 		if err == nil {
 			// Record the install reference next to the plugin so the UI can offer
 			// one-click update. Best-effort: a missing source just disables update.
@@ -154,7 +182,7 @@ func Install(pluginsDir, input string, consent InstallConsent, progress func(sta
 // example has nothing to "update" from, so the UI shows no Update button.
 //
 // stopForReplace: see Install — same live-sidecar replacement hazard.
-func InstallFromDir(pluginsDir, srcDir string, stopForReplace func(pluginID string)) (Manifest, error) {
+func InstallFromDir(pluginsDir, srcDir string, stopForReplace func(pluginID string), nodeRuntime string) (Manifest, error) {
 	if pluginsDir == "" {
 		return Manifest{}, fmt.Errorf("no plugins directory configured")
 	}
@@ -200,7 +228,7 @@ func InstallFromDir(pluginsDir, srcDir string, stopForReplace func(pluginID stri
 	// the signed app, so anyone who can change it can already run code as the
 	// user by easier means.
 	if len(final.Install) > 0 {
-		if err := runInstall(dest, final.Install); err != nil {
+		if err := runInstall(dest, final.Install, nodeRuntime); err != nil {
 			return Manifest{}, fmt.Errorf("install command failed: %w", err)
 		}
 	}
@@ -320,7 +348,7 @@ func resolveTarballURLs(input string) (urls []string, name string, err error) {
 	return urls, name, nil
 }
 
-func installFromTarball(pluginsDir, tarballURL, fallbackName string, consent InstallConsent, progress func(stage string), stopForReplace func(pluginID string)) (Manifest, error) {
+func installFromTarball(pluginsDir, tarballURL, fallbackName string, consent InstallConsent, progress func(stage string), stopForReplace func(pluginID string), nodeRuntime string) (Manifest, error) {
 	if progress == nil {
 		progress = func(string) {}
 	}
@@ -410,7 +438,7 @@ func installFromTarball(pluginsDir, tarballURL, fallbackName string, consent Ins
 			return Manifest{}, err
 		}
 		progress("building")
-		if err := runInstall(dest, final.Install); err != nil {
+		if err := runInstall(dest, final.Install, nodeRuntime); err != nil {
 			return Manifest{}, fmt.Errorf("install command failed: %w", err)
 		}
 	}
@@ -475,17 +503,51 @@ func (c InstallConsent) permits(m Manifest) error {
 // user can. Sandboxing this (namespaces / seccomp / a restricted PATH) is a
 // larger design deliberately out of scope for the extraction-bounds pass; the
 // download+extract path above is now size-bounded, this exec is not.
-func runInstall(dir string, argv []string) error {
+//
+// nodeRuntime is Manager.NodeRuntime — see pinNodeRuntime for what it changes.
+func runInstall(dir string, argv []string, nodeRuntime string) error {
 	argv = expandPlatformTokensAll(argv)
+	bin, args, env := pinNodeRuntime(argv, nodeRuntime)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) && isNodeToolchain(argv[0]) {
+			return fmt.Errorf("this plugin builds with %q, which is not installed on this machine — "+
+				"the app's bundled Node cannot substitute for it (Electron ships no package manager), "+
+				"so building it needs a system Node.js install: %w", argv[0], err)
+		}
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// pinNodeRuntime decides what a plugin's install/build step actually execs.
+//
+// When nodeRuntime is set and argv names the Node runtime, the command is
+// re-pointed at it with ELECTRON_RUN_AS_NODE — the same substitution
+// Manager.sidecarNodeOverride makes for that plugin's sidecar. Keeping the two in
+// step matters: the build step ran off the hub's PATH while the sidecar it builds
+// for runs on the app's bundled Node, so a plugin could fail to build on a
+// machine with no system Node even though its sidecar would have started fine,
+// or build against a different Node than the one that then loads the result
+// (a native module compiled for the wrong ABI fails at require time, far from
+// the cause).
+//
+// Package managers are deliberately NOT rewritten: Electron ships no npm, so
+// there is nothing to re-point them at. Those get an explanatory error instead
+// when they're missing — see runInstall and isNodeToolchain.
+//
+// A nil env means "inherit the hub's environment", matching exec's default.
+func pinNodeRuntime(argv []string, nodeRuntime string) (bin string, args, env []string) {
+	bin, args = argv[0], argv[1:]
+	if nodeRuntime != "" && isNodeCommand(bin) {
+		return nodeRuntime, args, append(os.Environ(), "ELECTRON_RUN_AS_NODE=1")
+	}
+	return bin, args, nil
 }
 
 // locateManifestDir returns the dir under root that contains plugin.json
