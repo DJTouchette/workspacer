@@ -36,6 +36,10 @@ interface SpawnAgentDialogProps {
   defaultTransport?: 'pty' | 'stream';
   /** Pre-check the git-worktree toggle (config.agents.spawnInWorktree). */
   defaultWorktree?: boolean;
+  /** First message handed over by the caller (the command palette). Shown as an
+   *  editable field so it's never carried invisibly, and pre-fills the new
+   *  agent's composer rather than being sent. Absent = the field isn't shown. */
+  defaultPrompt?: string;
   onSpawn: (opts: {
     cwd: string;
     name?: string;
@@ -51,6 +55,8 @@ interface SpawnAgentDialogProps {
     resumeSessionId?: string;
     /** Spawn into a fresh git worktree of `cwd` instead of `cwd` itself. */
     worktree?: boolean;
+    /** Pre-fills the new agent's composer (not sent). */
+    initialPrompt?: string;
   }) => void;
   onCancel: () => void;
 }
@@ -105,11 +111,13 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   defaultProvider,
   defaultTransport,
   defaultWorktree,
+  defaultPrompt,
   onSpawn,
   onCancel,
 }) => {
   const [cwd, setCwd] = useState(defaultCwd);
   const [name, setName] = useState('');
+  const [prompt, setPrompt] = useState(defaultPrompt ?? '');
   const [provider, setProvider] = useState<AgentProvider>(defaultProvider ?? 'claude');
   // Claude transport override for this spawn — pre-set from config.claude.transport.
   const [transport, setTransport] = useState<'pty' | 'stream'>(defaultTransport ?? 'pty');
@@ -437,6 +445,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     // bypass-family modes for back-compat consumers (saved defaults, respawn).
     const resolvedMode = permissionMode || defaultModeFor(provider);
     const skipPermissions = resolvedMode === 'bypassPermissions' || resolvedMode === 'yolo';
+    const initialPrompt = prompt.trim() || undefined;
     // Claude-only options are dropped for other providers (they run their own
     // TUI in Tier-1 and don't take Claude's profile/model/MCP/resume flags).
     onSpawn(
@@ -453,6 +462,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             mcpItemIds: mcpSel.length ? mcpSel : undefined,
             resumeSessionId: resumeSessionId || undefined,
             worktree: useWorktree && worktreeEligible ? true : undefined,
+            initialPrompt,
           }
         : {
             cwd: cwd.trim(),
@@ -466,6 +476,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             permissionMode: resolvedMode,
             skipPermissions,
             worktree: useWorktree && worktreeEligible ? true : undefined,
+            initialPrompt,
           },
     );
   };
@@ -1332,6 +1343,45 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             </div>
           )}
 
+          {/* ── First message ───────────────────────────────────────────────
+              Only when a caller handed one over (the command palette's
+              ⌘/Ctrl+↵). Editable, so the text you typed into the bar is visible
+              and fixable here rather than travelling invisibly. */}
+          {defaultPrompt !== undefined && (
+            <div style={{ marginTop: 30, width: '100%', maxWidth: 560 }}>
+              <div style={quietLabel}>first message</div>
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  // Enter writes a newline here (it's prose); ⌘/Ctrl+Enter is
+                  // the deliberate "go", matching the composer it pre-fills.
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit();
+                }}
+                rows={3}
+                placeholder="What should this agent do first?"
+                style={{
+                  marginTop: 6,
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  resize: 'vertical',
+                  background: 'var(--wks-bg-input)',
+                  border: '1px solid var(--wks-border-input)',
+                  borderRadius: 'var(--wks-radius-md)',
+                  outline: 'none',
+                  padding: '8px 10px',
+                  fontFamily: 'inherit',
+                  fontSize: '0.76rem',
+                  lineHeight: 1.5,
+                  color: 'var(--wks-text-primary)',
+                }}
+              />
+              <div style={{ marginTop: 5, fontSize: '0.64rem', color: 'var(--wks-text-faint)' }}>
+                Waits in the composer — it isn&rsquo;t sent until you press enter there.
+              </div>
+            </div>
+          )}
+
           {/* ── Launch ──────────────────────────────────────────────────── */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 38 }}>
             <button
@@ -1370,7 +1420,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             </button>
           </div>
           <div style={{ marginTop: 14, fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>
-            enter to spawn · esc to cancel
+            {defaultPrompt !== undefined
+              ? '⌘/ctrl+enter to spawn · esc to cancel'
+              : 'enter to spawn · esc to cancel'}
           </div>
         </div>
       </div>

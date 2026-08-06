@@ -99,6 +99,91 @@ describe('CommandPalette — keyboard nav order matches visual order', () => {
   });
 });
 
+/**
+ * Typing something that isn't a command is a task, not a typo: the palette
+ * offers to hand it to a fresh agent. The risk this guards is the offer being
+ * too eager — it must never take Enter away from a real command match.
+ */
+describe('CommandPalette — spawn an agent on the typed text', () => {
+  const open = (onSpawnAgent: ReturnType<typeof vi.fn>) =>
+    render(
+      <ConfigProvider>
+        <CommandPalette
+          visible
+          apps={[]}
+          onClose={vi.fn()}
+          onLaunchApp={vi.fn()}
+          onAddTab={vi.fn()}
+          onSpawnAgent={onSpawnAgent}
+        />
+      </ConfigProvider>,
+    );
+
+  it('offers no spawn row until something is typed', () => {
+    const { container } = open(vi.fn());
+    expect(container.textContent).not.toContain('Hand it to an agent');
+  });
+
+  it('Enter on free text spawns immediately with it as the first message', () => {
+    const onSpawnAgent = vi.fn();
+    const { container } = open(onSpawnAgent);
+    const input = container.querySelector('input')!;
+
+    fireEvent.change(input, { target: { value: 'fix the login redirect' } });
+    // Nothing else matches, so the spawn row is the only — and selected — row.
+    expect(screen.getByText('New agent: fix the login redirect')).toBeInTheDocument();
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(onSpawnAgent).toHaveBeenCalledWith({ prompt: 'fix the login redirect' });
+  });
+
+  it('⌘/Ctrl+Enter carries the text into the full spawn dialog instead', () => {
+    const onSpawnAgent = vi.fn();
+    const { container } = open(onSpawnAgent);
+    const input = container.querySelector('input')!;
+
+    fireEvent.change(input, { target: { value: 'audit the auth flow' } });
+    fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
+
+    expect(onSpawnAgent).toHaveBeenCalledWith({
+      prompt: 'audit the auth flow',
+      openDialog: true,
+    });
+  });
+
+  it('never steals Enter from a real match — the spawn row sorts last', () => {
+    const onAddTab = vi.fn();
+    const onSpawnAgent = vi.fn();
+    const { container } = render(
+      <ConfigProvider>
+        <CommandPalette
+          visible
+          apps={[]}
+          onClose={vi.fn()}
+          onLaunchApp={vi.fn()}
+          onAddTab={onAddTab}
+          onSpawnAgent={onSpawnAgent}
+        />
+      </ConfigProvider>,
+    );
+    const input = container.querySelector('input')!;
+
+    fireEvent.change(input, { target: { value: 'terminal' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(onAddTab).toHaveBeenCalled();
+    expect(onSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it('finds the spawn action by the name the sidebar button uses', () => {
+    const { container } = open(vi.fn());
+    const input = container.querySelector('input')!;
+    fireEvent.change(input, { target: { value: 'new agent' } });
+    // Matched via keywords — the row itself is still labelled "New Claude Code".
+    expect(screen.getByText('New Claude Code')).toBeInTheDocument();
+  });
+});
+
 describe('CommandPalette — window-level keyboard net', () => {
   // If the input's focus claim loses (a webview guest refusing to release
   // focus — the Windows "Ctrl+Shift+P kills my keyboard" report), the palette

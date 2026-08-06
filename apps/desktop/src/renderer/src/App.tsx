@@ -381,6 +381,9 @@ function App() {
   // dashboard favourite/recent), this holds its cwd so the dialog opens
   // pre-filled there instead of at the configured default. Cleared on close.
   const [spawnDialogCwd, setSpawnDialogCwd] = useState<string | null>(null);
+  // First message carried into the new-agent view (the command palette can hand
+  // over what you typed). Pre-fills the agent's composer, not sent. Cleared on close.
+  const [spawnDialogPrompt, setSpawnDialogPrompt] = useState<string | null>(null);
   const [showLayouts, setShowLayouts] = useState(false);
   const [showRemote, setShowRemote] = useState(false);
   const [showLibraryPanel, setShowLibraryPanel] = useState(false);
@@ -979,9 +982,12 @@ function App() {
       mcpItemIds?: string[];
       resumeSessionId?: string;
       worktree?: boolean;
+      /** Pre-fills the new agent's composer (not sent) — see spawnAgent. */
+      initialPrompt?: string;
     }) => {
       setShowSpawnDialog(false);
       setSpawnDialogCwd(null);
+      setSpawnDialogPrompt(null);
       const provider = opts.provider ?? 'claude';
       // Remember the harness/provider used so the next new-agent view reopens on
       // it (this is what makes a favourite launch restore your last choice).
@@ -1172,6 +1178,46 @@ function App() {
     setShowSpawnDialog(true);
   }, []);
   const handleSpawnAgentShortcut = openSpawnDialog;
+  // Same view, carrying a first message across (the palette's ⌘/Ctrl+↵ path).
+  // Kept separate from openSpawnDialog because that one is wired straight to
+  // onClick handlers, which would feed a MouseEvent into any parameter it grew.
+  const openSpawnDialogWithPrompt = useCallback((prompt: string) => {
+    setSpawnDialogPrompt(prompt.trim() || null);
+    markUiEvent('open-spawn-dialog');
+    setShowSpawnDialog(true);
+  }, []);
+
+  // Skip the dialog entirely: spawn on the saved defaults — the same values the
+  // new-agent view would reopen on — with the typed text waiting in the composer.
+  const spawnAgentWithPrompt = useCallback(
+    async (prompt: string) => {
+      const cwd = config.agents?.defaultCwd?.trim() || appCwdRef.current;
+      if (!cwd) return;
+      const provider = config.agents?.defaultProvider ?? 'claude';
+      // Claude's saved model/permission defaults are Claude's alone — sending
+      // them to a Codex/OpenCode spawn would be meaningless at best. They're
+      // read the same way the new-agent view reads them (claudeListModels), so
+      // both paths start from the identical picture of "your defaults".
+      const isClaude = provider === 'claude';
+      const saved = isClaude
+        ? await window.electronAPI.claudeListModels?.().catch(() => null)
+        : null;
+      const skipPermissions = saved?.skipPermissionsDefault === true;
+      handleSpawnAgent({
+        cwd,
+        provider,
+        transport: isClaude ? config.claude?.transport : undefined,
+        model: saved?.defaultModel || undefined,
+        permissionMode: skipPermissions
+          ? 'bypassPermissions'
+          : saved?.defaultPermissionMode || undefined,
+        skipPermissions,
+        worktree: config.agents?.spawnInWorktree ?? false,
+        initialPrompt: prompt,
+      });
+    },
+    [config.agents, config.claude?.transport, handleSpawnAgent],
+  );
 
   // The single cross-agent attention feed — lifted here so the SAME instance
   // (its dismiss/snooze state included) drives goToNextAttention below and the
@@ -2192,9 +2238,12 @@ function App() {
               }}
               shortcuts={resolvedShortcuts}
               prefix={kbPrefix}
-              onSpawnAgent={() => {
+              onSpawnAgent={(opts) => {
                 setShowCommandPalette(false);
-                openSpawnDialog();
+                const prompt = opts?.prompt?.trim();
+                if (!prompt) openSpawnDialog();
+                else if (opts?.openDialog) openSpawnDialogWithPrompt(prompt);
+                else void spawnAgentWithPrompt(prompt);
               }}
               onShowWelcome={() => {
                 setShowCommandPalette(false);
@@ -2294,10 +2343,12 @@ function App() {
                 defaultProvider={config.agents?.defaultProvider}
                 defaultTransport={config.claude?.transport}
                 defaultWorktree={config.agents?.spawnInWorktree ?? false}
+                defaultPrompt={spawnDialogPrompt ?? undefined}
                 onSpawn={handleSpawnAgent}
                 onCancel={() => {
                   setShowSpawnDialog(false);
                   setSpawnDialogCwd(null);
+                  setSpawnDialogPrompt(null);
                 }}
               />
             )}

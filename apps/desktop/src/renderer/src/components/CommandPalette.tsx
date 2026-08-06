@@ -53,8 +53,10 @@ export interface PaletteItem {
   id: string;
   name: string;
   description?: string;
+  /** Extra search terms that match the row without appearing on it. */
+  keywords?: string[];
   icon: React.ReactNode;
-  category: 'action' | 'command' | 'app' | 'plugin' | 'library';
+  category: 'action' | 'command' | 'app' | 'plugin' | 'library' | 'spawn';
   /** For actions: the pane type to create */
   paneType?: PaneType;
   /** For actions: whether to prompt for folder (Claude) */
@@ -73,6 +75,9 @@ export interface PaletteItem {
   shortcut?: string;
 }
 
+/** Id of the synthetic "spawn an agent on what you just typed" row. */
+const SPAWN_PROMPT_ID = 'spawn-with-prompt';
+
 // ── Built-in actions ──
 
 export const builtInActions: PaletteItem[] = [
@@ -80,6 +85,8 @@ export const builtInActions: PaletteItem[] = [
     id: 'new-claude',
     name: 'New Claude Code',
     description: 'AI-powered coding assistant',
+    // The sidebar calls this button "New agent", so that's what people type.
+    keywords: ['agent', 'new agent', 'spawn'],
     icon: <PaneIcon type="claude" size={16} />,
     category: 'action',
     paneType: 'claude',
@@ -177,8 +184,13 @@ interface CommandPaletteProps {
   shortcuts?: Record<string, string>;
   /** Workspace prefix combo, for rendering 'prefix …' chord badges. */
   prefix?: string;
-  /** Spawn a new agent (opens the spawn dialog). */
-  onSpawnAgent?: () => void;
+  /**
+   * Spawn a new agent. Called three ways:
+   *  - no args — open the spawn dialog, exactly as the sidebar's New agent button does.
+   *  - `{ prompt }` — spawn immediately on the configured defaults, composer pre-filled.
+   *  - `{ prompt, openDialog: true }` — open the dialog carrying that prompt.
+   */
+  onSpawnAgent?: (opts?: { prompt?: string; openDialog?: boolean }) => void;
   /** Toggle the left sidebar. */
   onToggleSidebar?: () => void;
   /** Toggle the Triage Inbox drawer. */
@@ -598,11 +610,30 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   }, [visible]);
 
   const q = query.toLowerCase();
-  const filtered = items.filter(
+  const matched = items.filter(
     (item) =>
       (item.name ?? '').toLowerCase().includes(q) ||
-      (item.description ?? '').toLowerCase().includes(q),
+      (item.description ?? '').toLowerCase().includes(q) ||
+      (item.keywords ?? []).some((k) => k.includes(q)),
   );
+
+  // Typing something that isn't a command is a task, not a typo — offer to hand
+  // it to a fresh agent. Appended LAST (and rendered last) so it never steals
+  // Enter from a real match: type "term" and Enter still opens a terminal, but
+  // type "fix the login redirect" and this is the only row there is.
+  const spawnPrompt = query.trim();
+  const spawnPromptItem: PaletteItem | null =
+    onSpawnAgent && spawnPrompt && !restrictTo
+      ? {
+          id: SPAWN_PROMPT_ID,
+          name: `New agent: ${spawnPrompt}`,
+          description:
+            'Spawn on your defaults with this as the first message · ⌘/Ctrl+↵ for options',
+          icon: <PaneIcon type="claude" size={16} />,
+          category: 'spawn',
+        }
+      : null;
+  const filtered = spawnPromptItem ? [...matched, spawnPromptItem] : matched;
 
   // Clamp selected index when results change
   useEffect(() => {
@@ -612,7 +643,16 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   }, [filtered.length, selectedIndex]);
 
   const activateItem = useCallback(
-    async (item: PaletteItem, libraryAction?: LibraryAction) => {
+    async (item: PaletteItem, libraryAction?: LibraryAction, alternate?: boolean) => {
+      // Spawn on the typed text. Plain activation goes straight to a new agent
+      // on the configured defaults; ⌘/Ctrl/Shift carries the same text into the
+      // full spawn dialog when the defaults aren't what you want.
+      if (item.id === SPAWN_PROMPT_ID && onSpawnAgent) {
+        const prompt = query.trim();
+        onSpawnAgent(alternate ? { prompt, openDialog: true } : { prompt });
+        onClose();
+        return;
+      }
       if (item.run) {
         item.run();
         onClose();
@@ -689,6 +729,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       onOpenLibrary,
       onSpawnAgent,
       agentCwd,
+      query,
     ],
   );
 
@@ -717,7 +758,9 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
                   ? 'copy'
                   : undefined
               : undefined;
-          activateItem(item, libAction);
+          // For the spawn row: any of ⌘/Ctrl/Shift means "let me pick the
+          // options first" instead of spawning on the defaults.
+          activateItem(item, libAction, e.metaKey || e.ctrlKey || e.shiftKey);
         }
       }
     },
@@ -872,6 +915,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   const appItems = filtered.filter((i) => i.category === 'app');
   const pluginItems = filtered.filter((i) => i.category === 'plugin');
   const libraryFiltered = filtered.filter((i) => i.category === 'library');
+  const spawnItems = filtered.filter((i) => i.category === 'spawn');
 
   return (
     <div
@@ -1152,6 +1196,34 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
               />
             );
           })}
+
+          {spawnItems.length > 0 && (
+            <div
+              style={{
+                padding: '10px 14px 3px',
+                fontSize: '0.62rem',
+                color: 'var(--wks-text-disabled)',
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+              }}
+            >
+              Hand it to an agent
+            </div>
+          )}
+
+          {spawnItems.map((item) => {
+            const globalIdx = filtered.indexOf(item);
+            return (
+              <PaletteRow
+                key={item.id}
+                item={item}
+                selected={globalIdx === selectedIndex}
+                onActivate={(e) => activateItem(item, undefined, e.metaKey || e.ctrlKey)}
+                onHover={() => setSelectedIndex(globalIdx)}
+              />
+            );
+          })}
         </div>
 
         {/* How to drive it. The palette is the one surface a new user opens
@@ -1181,6 +1253,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
             <>
               <HintKey combo="↑↓" label="navigate" />
               <HintKey combo="↵" label="open" />
+              {spawnItems.length > 0 && <HintKey combo="⌘/Ctrl+↵" label="spawn with options" />}
             </>
           )}
           <span style={{ marginLeft: 'auto', fontFamily: 'var(--wks-font-mono)' }}>
@@ -1197,7 +1270,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
 const PaletteRow: React.FC<{
   item: PaletteItem;
   selected: boolean;
-  onActivate: () => void;
+  /** Receives the click so modifier-held activation (spawn options) can differ. */
+  onActivate: (e: React.MouseEvent) => void;
   onHover: () => void;
   shortcut?: string;
 }> = ({ item, selected, onActivate, onHover, shortcut }) => (
@@ -1238,7 +1312,18 @@ const PaletteRow: React.FC<{
       {item.icon}
     </span>
     <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ fontSize: '0.8rem', color: 'var(--wks-text-primary)', fontWeight: 500 }}>
+      {/* Ellipsized like the description below it: the spawn row's name carries
+          whatever was typed into the bar, which can be a paragraph. */}
+      <div
+        style={{
+          fontSize: '0.8rem',
+          color: 'var(--wks-text-primary)',
+          fontWeight: 500,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
         {item.name}
       </div>
       {item.description && (
