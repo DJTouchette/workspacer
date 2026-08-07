@@ -14,11 +14,35 @@
 // else in the config dir even when an agent cwd contains it. Canonicalize means
 // absolute with `..` AND symlinks resolved, so neither traversal nor a symlink
 // planted inside a project can reach out of it.
+//
+// This file implements the normative containment algorithm shared with
+// apps/desktop/src/main/lib/pathConfinement.ts and services/hub/internal/bus/
+// policy.go; contracts/path-containment-cases.json is the fixture all three are
+// held to. Three decisions are load-bearing and each one has shipped as a bug:
+//
+//  1. NO TILDE EXPANSION, at any layer that handles a caller-supplied path. The
+//     brain used to expandTilde() every guarded path while TypeScript did not, so
+//     "~/notes.txt" was allowed by one provider and denied by the other. "~" is
+//     now an ordinary character: a '~'-prefixed path is not absolute and is
+//     refused, and a directory literally named "~" is an ordinary directory.
+//  2. RESOLVE PER COMPONENT, and hand the RESULT to the filesystem. Every
+//     whole-path helper (filepath.Abs, Clean, Join on caller input,
+//     EvalSymlinks, Dir on caller input) collapses ".." textually BEFORE any
+//     symlink is read, so with one directory symlink inside any allowed root the
+//     guard validated ${ROOT}/token while the handler opened ${OUTSIDE}/token.
+//     canonicalizePath walks component by component and assertPathAllowed
+//     returns what it validated so there is exactly one string per request.
+//  3. A ROOT THAT IS A VOLUME ROOT CONTAINS EVERYTHING BELOW IT. within("/",
+//     "/etc/passwd") used to be true on the bus and false here — same inputs,
+//     opposite verdicts. Refusing was not fail-closed, it was wrong containment.
+//     The secret gate below is what still refuses the credentials under such a
+//     root, and it is unaffected by that widening.
 package main
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,71 +51,249 @@ import (
 	"time"
 )
 
-// canonicalizePath returns p as an absolute path with `..` and symlinks
-// resolved. For a target that does not exist yet (the file fs.write is about to
-// create) it resolves the longest existing ancestor and re-appends the missing
-// tail — so a write cannot be aimed outside a root through a not-yet-created
-// intermediate, while a symlink along the existing prefix is still followed.
-// Any non-ENOENT error fails closed.
-func canonicalizePath(p string) (string, error) {
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		return "", err
+// maxLinkHops bounds the hand-rolled symlink walk below. The platform realpath
+// has its own ELOOP limit; this walk does not delegate to it, so the counter is
+// the only thing standing between a symlink cycle and a spin.
+const maxLinkHops = 40
+
+// onWindows is a compile-time constant so the volume-prefix rules below are
+// decided once rather than per call. `filepath.Separator` is the CANONICAL
+// separator (used for joining and for the containment comparison);
+// `os.IsPathSeparator` is the separator SET (used only for splitting, and on
+// Windows it accepts '/' as well as '\\').
+const onWindows = filepath.Separator == '\\'
+
+// errNotAbsolute and errEmptyPath are the two pre-filesystem refusals. They are
+// never surfaced to a caller — assertPathAllowed collapses every reason into one
+// message — but keeping them distinct makes the walk debuggable.
+var (
+	errEmptyPath   = errors.New("path is empty")
+	errNotAbsolute = errors.New("path is not absolute")
+	errTooManyHops = errors.New("too many levels of symbolic links")
+)
+
+// splitPath decomposes an ABSOLUTE path into its volume prefix and its
+// components. On POSIX the volume is "/"; on Windows it is `C:\` or
+// `\\server\share\`. A path that does not start with a valid volume prefix is
+// not absolute and is rejected here — including a '~'-prefixed one, which is an
+// ordinary (relative) string with an unusual first character and nothing else.
+//
+// "." and empty components are discarded; ".." is NOT, because step 2 of the
+// algorithm has to pop it against an already-resolved prefix rather than
+// textually against the caller's string.
+func splitPath(p string) (volume string, comps []string, ok bool) {
+	v := filepath.VolumeName(p) // "" on POSIX; "C:" or `\\server\share` on Windows
+	rest := p[len(v):]
+	if v == "" {
+		// A Windows path with no drive/UNC prefix ("\foo") is drive-RELATIVE:
+		// it resolves against whatever drive the process happens to be on.
+		if onWindows {
+			return "", nil, false
+		}
+		if len(rest) == 0 || !os.IsPathSeparator(rest[0]) {
+			return "", nil, false
+		}
+	} else if len(rest) == 0 || !os.IsPathSeparator(rest[0]) {
+		// "C:foo" is relative to the current directory ON drive C.
+		return "", nil, false
 	}
-	rem := ""
-	for {
-		real, err := filepath.EvalSymlinks(abs)
-		if err == nil {
-			if rem == "" {
-				return real, nil
-			}
-			return filepath.Join(real, rem), nil
-		}
-		if !os.IsNotExist(err) {
-			return "", err // permission, ELOOP, … → fail closed
-		}
-		parent := filepath.Dir(abs)
-		if parent == abs { // reached the filesystem root
-			if rem == "" {
-				return abs, nil
-			}
-			return filepath.Join(abs, rem), nil
-		}
-		if rem == "" {
-			rem = filepath.Base(abs)
-		} else {
-			rem = filepath.Join(filepath.Base(abs), rem)
-		}
-		abs = parent
-	}
+	return v + string(filepath.Separator), splitComponents(rest[1:]), true
 }
 
-// canonicalRoot is the comparable form of an allowed root: its realpath when it
-// exists, a plain absolute path when it does not — the config stores are created
-// lazily and must still be comparable before anything has been saved.
-func canonicalRoot(root string) (string, bool) {
-	if cr, err := filepath.EvalSymlinks(root); err == nil {
-		return cr, true
+// splitComponents splits on any run of separator-set characters and drops "."
+// and empty elements. It performs no other transformation: case is preserved
+// byte for byte and "~" is an ordinary name.
+func splitComponents(s string) []string {
+	out := []string{}
+	start := -1
+	for i := 0; i < len(s); i++ {
+		if os.IsPathSeparator(s[i]) {
+			if start >= 0 {
+				if c := s[start:i]; c != "." {
+					out = append(out, c)
+				}
+				start = -1
+			}
+			continue
+		}
+		if start < 0 {
+			start = i
+		}
 	}
-	abs, err := filepath.Abs(root)
+	if start >= 0 {
+		if c := s[start:]; c != "." {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// appendPath joins a name onto a prefix the algorithm itself built. It is not
+// filepath.Join: it must not Clean, because Clean is what collapses `link/..`
+// before the link is read.
+func appendPath(base, name string) string {
+	if len(base) > 0 && os.IsPathSeparator(base[len(base)-1]) {
+		return base + name
+	}
+	return base + string(filepath.Separator) + name
+}
+
+// parentPath pops one component off a prefix the algorithm built, clamping at
+// the volume root. Pure string arithmetic, never a filesystem access: `base` is
+// by construction already fully symlink-resolved, so its textual parent IS its
+// real parent — which is exactly why the per-component walk closes the
+// symlink-plus-".." hole that a whole-path Clean opens.
+func parentPath(base, volume string) string {
+	if base == volume {
+		return volume
+	}
+	i := strings.LastIndexByte(base, filepath.Separator)
+	if i < 0 {
+		return volume
+	}
+	p := base[:i]
+	if p == "" || len(p) < len(volume) {
+		return volume
+	}
+	return p
+}
+
+// canonicalizePath resolves target one component at a time: `..` pops the
+// already-resolved prefix, a symlink is read and its value pushed back onto the
+// queue, and a component that does not exist is appended and the walk CONTINUES
+// (a later `..` can pop back onto a path that does exist, and must resume
+// resolving there). The result is absolute, has no "." or ".." left, and every
+// symlink on it has been followed.
+//
+// What it deliberately does NOT use: filepath.Abs, filepath.Clean,
+// filepath.Join on caller input, filepath.EvalSymlinks, filepath.Dir on caller
+// input. Every one of them collapses ".." textually before a symlink is read,
+// so the guard would validate one path while the handler opened another.
+//
+// Fail-closed everywhere: an empty or non-absolute target is refused before any
+// syscall, and the ONLY tolerated Lstat error is "does not exist". ENOTDIR,
+// EACCES, ELOOP and anything unrecognised fail the whole call rather than
+// becoming "not contained, keep looking" (which would make the guard an
+// existence oracle) or "contained" (which would make it an escape).
+func canonicalizePath(target string) (string, error) {
+	if strings.TrimSpace(target) == "" {
+		return "", errEmptyPath
+	}
+	// Everything past the emptiness test runs on the ORIGINAL string: a
+	// filename may legitimately begin or end with a space.
+	volume, queue, ok := splitPath(target)
+	if !ok {
+		return "", errNotAbsolute
+	}
+
+	resolved := volume
+	hops := 0
+	for len(queue) > 0 {
+		c := queue[0]
+		queue = queue[1:]
+
+		if c == ".." {
+			resolved = parentPath(resolved, volume)
+			continue
+		}
+
+		next := appendPath(resolved, c)
+		st, err := os.Lstat(next)
+		if err != nil {
+			if os.IsNotExist(err) {
+				resolved = next
+				continue
+			}
+			return "", err
+		}
+		if st.Mode()&os.ModeSymlink == 0 {
+			resolved = next
+			continue
+		}
+
+		hops++
+		if hops > maxLinkHops {
+			return "", errTooManyHops
+		}
+		link, err := os.Readlink(next)
+		if err != nil {
+			return "", err
+		}
+		if lv, lc, abs := splitPath(link); abs {
+			// An absolute link restarts from its own volume.
+			resolved = lv
+			queue = append(lc, queue...)
+		} else {
+			// A relative link is interpreted against the directory that
+			// CONTAINS it — `resolved`, which is why it is not advanced here.
+			queue = append(splitComponents(link), queue...)
+		}
+	}
+	return resolved, nil
+}
+
+// canonicalRoot is the comparable form of an allowed root, or DISCARD (ok
+// false). A root that does not exist yet still canonicalizes — the config-dir
+// stores are created lazily and have to be comparable before anything has been
+// saved.
+//
+// DISCARD removes that one root and nothing else: it never aborts the check and
+// never denies on its own, or a single stale session snapshot with an empty cwd
+// would disable every other root. An empty, whitespace-only or relative root is
+// discarded rather than resolved, because filepath.Abs("") returns the PROCESS
+// working directory — which would silently make the daemon's own cwd an allowed
+// root. A '~'-prefixed root is relative by that rule and is discarded too;
+// nothing expands it (BINDING DECISION 1).
+func canonicalRoot(root string) (string, bool) {
+	cr, err := canonicalizePath(root)
 	if err != nil {
 		return "", false
 	}
-	return abs, true
+	return cr, true
+}
+
+// containsPath is the containment comparison itself, over two ALREADY canonical
+// paths. Byte-exact, no case folding on any platform.
+//
+// The trailing-separator arm is reached only when the root canonicalized to a
+// volume prefix ("/" on POSIX, `C:\` or `\\server\share\` on Windows). Such a
+// root contains everything below it; appending another separator would produce
+// "//" and match nothing, which is not fail-closed, it is simply wrong
+// containment. Otherwise the separator is mandatory: without it root "/srv/fo"
+// contains "/srv/foo".
+func containsPath(canonRoot, canonTarget string) bool {
+	if canonTarget == canonRoot {
+		return true
+	}
+	if strings.HasSuffix(canonRoot, string(filepath.Separator)) {
+		return strings.HasPrefix(canonTarget, canonRoot)
+	}
+	return strings.HasPrefix(canonTarget, canonRoot+string(filepath.Separator))
 }
 
 // isWithin reports whether an ALREADY canonicalized target sits at or inside
 // root. Callers that hold the canonical form use this directly so a path is
 // resolved once per check rather than once per root.
 func isWithin(canonicalTarget, root string) bool {
-	if root == "" {
-		return false
-	}
 	cr, ok := canonicalRoot(root)
 	if !ok {
 		return false
 	}
-	return canonicalTarget == cr || strings.HasPrefix(canonicalTarget, cr+string(filepath.Separator))
+	return containsPath(cr, canonicalTarget)
+}
+
+// pathWithinRootsCanonical is the roots test over a path that has already been
+// canonicalized exactly once by the caller.
+//
+// An empty roots list means NOTHING is allowed. It never means unrestricted —
+// that is the state a failed session-store read leaves behind.
+func pathWithinRootsCanonical(roots []string, canonicalTarget string) bool {
+	for _, root := range roots {
+		if isWithin(canonicalTarget, root) {
+			return true
+		}
+	}
+	return false
 }
 
 // pathWithinRoots reports whether target canonicalizes to a location at or
@@ -101,12 +303,7 @@ func pathWithinRoots(roots []string, target string) bool {
 	if err != nil {
 		return false
 	}
-	for _, root := range roots {
-		if isWithin(ct, root) {
-			return true
-		}
-	}
-	return false
+	return pathWithinRootsCanonical(roots, ct)
 }
 
 // Live agent cwds change as agents spawn and stop, and in catalog scope reading
@@ -231,30 +428,71 @@ func pathIsSecret(target string) bool {
 	if err != nil {
 		return true // unverifiable → deny, same posture as pathWithinRoots
 	}
-	if secretBasenames[filepath.Base(ct)] {
+	return pathIsSecretCanonical(ct)
+}
+
+// pathIsSecretCanonical is the same gate over a path already canonicalized once
+// by the caller.
+//
+// Order is load-bearing: the BASENAME check runs first and unconditionally, so a
+// credential name dropped inside a store carve-out (<configDir>/library/.bus-token,
+// the one directory a remote caller can write to) is still refused. Returning
+// "allowed" as soon as a carve-out matches would re-open that hole.
+func pathIsSecretCanonical(canonicalTarget string) bool {
+	if secretBasenames[canonicalBase(canonicalTarget)] {
 		return true
 	}
-	if !isWithin(ct, configDir()) {
-		return false
+	cfg, ok := canonicalRoot(configDir())
+	if !ok {
+		return true // unverifiable config dir → cannot prove the target is outside it
 	}
-	for _, root := range configStoreRoots() {
-		if isWithin(ct, root) {
+	if !containsPath(cfg, canonicalTarget) {
+		return false // nothing outside the config dir is secret by location
+	}
+	for _, store := range configStoreRoots() {
+		if sr, ok := canonicalRoot(store); ok && containsPath(sr, canonicalTarget) {
 			return false
 		}
 	}
 	return true
 }
 
-// assertPathAllowed rejects a call whose path escapes the allowed roots or lands
-// on a credential file. The message deliberately does not echo the resolved path
-// and is the same for both refusals — it goes to a remote caller, and confirming
-// where a denied path landed (or that it hit something worth protecting) is a
-// probe primitive.
-func assertPathAllowed(capability, target string, roots []string) error {
-	if !pathWithinRoots(roots, target) || pathIsSecret(target) {
-		return fmt.Errorf("%s: path is outside the allowed workspace (agent cwds + config stores)", capability)
+// canonicalBase is the substring after the final canonical separator — "" when
+// the path is exactly a volume prefix. filepath.Base is not used: it Cleans, and
+// it answers "/" rather than "" for the root.
+func canonicalBase(p string) string {
+	i := strings.LastIndexByte(p, filepath.Separator)
+	if i < 0 {
+		return p
 	}
-	return nil
+	return p[i+1:]
+}
+
+// assertPathAllowed rejects a call whose path escapes the allowed roots or lands
+// on a credential file, and RETURNS the canonical path it validated. Every call
+// site must hand that value to the filesystem operation: check-path and
+// opened-path cannot differ if there is only one string (BINDING DECISION 2).
+// Canonicalization runs exactly once per call, not once per gate.
+//
+// The message deliberately does not echo the target, the resolved path or the
+// matched root, and is the same for all three refusals — it goes to a remote
+// caller, and confirming where a denied path landed (or that it hit something
+// worth protecting) is a probe primitive.
+func assertPathAllowed(capability, target string, roots []string) (string, error) {
+	refuse := func() (string, error) {
+		return "", fmt.Errorf("%s: path is outside the allowed workspace (agent cwds + config stores)", capability)
+	}
+	ct, err := canonicalizePath(target)
+	if err != nil {
+		return refuse()
+	}
+	if !pathWithinRootsCanonical(roots, ct) {
+		return refuse()
+	}
+	if pathIsSecretCanonical(ct) {
+		return refuse()
+	}
+	return ct, nil
 }
 
 // resetCwdCacheForTest drops the memoized root list. Tests change what counts as

@@ -3,6 +3,20 @@
  * mcpItemIds to claudeProfiles.addProfile. The web/remote Settings UI sends the
  * user's selected MCP servers in that field; the handler dropped it, so remote
  * profiles were created with no MCP servers (the desktop IPC path forwards it).
+ *
+ * SCOPE: this file covers the KILL-SWITCH copy of the handler, not the shipping
+ * one. `claude.profiles.add` is registered through `cat()`, which is a no-op
+ * unless DELEGATE_CATALOG_TO_BRAIN is false (i.e. WORKSPACER_NO_BRAIN=1) — by
+ * default the headless Go brain is the single provider for it on the bus. The
+ * mock below forces the non-delegated path on purpose, so main's copy is pinned
+ * even though most users never reach it.
+ *
+ * TWIN: TestProfilesAddForwardsMcpItemIds / TestProfilesAddDefaultsMcpItemIds in
+ * services/hub/cmd/brain/profiles_test.go pin the same two behaviours on the
+ * copy that answers by default. Change the two together — the brain already
+ * forwarded mcpItemIds, but it left the field nil (and `omitempty` dropped the
+ * key), so the same method replied with two different shapes depending on which
+ * provider ran until the Go side learned main's `?? []` default.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 

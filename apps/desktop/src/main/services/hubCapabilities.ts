@@ -20,8 +20,9 @@ import { registerCapability, callHub } from './hubClient';
 import { agentNotifier } from './agentNotifier';
 import { appIconPath } from '../lib/appIcon';
 import { dropHostTrusted } from '../lib/hostTrustedConfig';
+import { assertPathAllowed, canonicalRoot, configStoreRoots } from '../lib/pathConfinement';
 import { DELEGATE_CATALOG_TO_BRAIN } from './brainDelegation';
-import { configService, getConfigDir } from './configService';
+import { configService } from './configService';
 import { listClaudeModels } from './claudeModels';
 import { libraryService } from './libraryService';
 import { sessionService } from './sessionService';
@@ -92,89 +93,12 @@ function detectDefaultShell(): string {
 // fs scope (that dir is under the config dir): no catalog plugin declares one, and
 // a sidecar reads its own directory with local Node fs rather than over the bus.
 
-/**
- * Canonicalize `p`: absolute, with `..` and symlinks resolved. For a target that
- * doesn't exist yet (e.g. a file fs.write is about to create) it resolves the
- * longest existing ancestor and re-appends the missing tail, so a write can't be
- * aimed outside a root through a not-yet-created intermediate, and a symlink along
- * the existing prefix is still followed. Throws on any non-ENOENT error mid-walk
- * (permission, etc.) so the caller fails closed.
- */
-function canonicalizePath(p: string): string {
-  let abs = path.resolve(p);
-  let rem = '';
-  for (;;) {
-    try {
-      const real = fs.realpathSync(abs);
-      return rem ? path.join(real, rem) : real;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err; // fail closed
-      const parent = path.dirname(abs);
-      if (parent === abs) return rem ? path.join(abs, rem) : abs; // reached fs root
-      rem = rem ? path.join(path.basename(abs), rem) : path.basename(abs);
-      abs = parent;
-    }
-  }
-}
-
-/** Canonical form of an allowed root: realpath when it exists, plain resolve when not. */
-function canonicalRoot(root: string): string {
-  try {
-    return fs.realpathSync(root);
-  } catch {
-    return path.resolve(root);
-  }
-}
-
-/** True when an already-canonicalized `target` sits at or inside `root`. */
-function isWithin(canonicalTarget: string, root: string): boolean {
-  const cr = canonicalRoot(root);
-  return canonicalTarget === cr || canonicalTarget.startsWith(cr + path.sep);
-}
-
-/** True when `target` canonicalizes to a location at or inside one of `roots`. */
-function pathWithinRoots(roots: string[], target: string): boolean {
-  let ct: string;
-  try {
-    ct = canonicalizePath(target);
-  } catch {
-    return false; // couldn't verify → deny
-  }
-  return roots.some((r) => isWithin(ct, r));
-}
-
-/** The config-dir subtrees the web/remote UI legitimately reads and writes.
- *  Mirrors configStoreRoots() in the Go brain (cmd/brain/fsguard.go) — the brain
- *  is the DEFAULT answerer for fs.*, so the two lists have to be the same list. */
-function configStoreRoots(): string[] {
-  const cfg = getConfigDir();
-  return [path.join(cfg, 'library'), path.join(cfg, 'layouts'), path.join(cfg, 'sessions')];
-}
-
-/** Credential files denied by name wherever they resolve — a root is only as
- *  narrow as the cwds an agent runs in, and `workspacer plugin dev <dir>` puts a
- *  .bus-token inside an ordinary project. Same list as the brain's. */
-const SECRET_BASENAMES = new Set(['.bus-token', '.settings.json']);
-
-/**
- * Second gate, applied to every guarded path after the roots check — reads AND
- * writes, because handing a token out is a privilege promotion and overwriting
- * one is a denial of service on the whole bus.
- *
- * Narrowing the config root is not enough on its own: an agent cwd is a root
- * too, so a user who spawns an agent in `$HOME` (or `~/.config`) re-admits the
- * entire config dir through THAT root. Anything landing in the config dir
- * outside library/ layouts/ sessions/ is therefore refused here regardless of
- * which root allowed it. (The Go twin denies the named files — remote-token,
- * tokens.json, remote-server.json, vapid.json — where this denies the whole
- * remainder of the dir, which also covers workspacer.db and the Electron cookie
- * jar; stricter in the same direction, never looser.)
- */
-function isSecretPath(canonicalTarget: string): boolean {
-  if (SECRET_BASENAMES.has(path.basename(canonicalTarget))) return true;
-  if (!isWithin(canonicalTarget, getConfigDir())) return false;
-  return !configStoreRoots().some((r) => isWithin(canonicalTarget, r));
-}
+// The predicate itself now lives in ../lib/pathConfinement (canonicalizePath,
+// canonicalRoot, isWithin, pathWithinRoots, configStoreRoots, SECRET_BASENAMES,
+// isSecretPath, assertPathAllowed) so the cross-language contract test can pin it
+// directly instead of through a capability handler. What stays here is the root
+// SUPPLY — which allow-list each capability gets — because that depends on the
+// live session store.
 
 /** Workspace roots for content-touching fs.* calls: live agent cwds + config stores. */
 function workspaceRoots(): string[] {
@@ -189,22 +113,6 @@ function workspaceRoots(): string[] {
 /** Broader roots for the directory picker: the home tree plus the workspace roots. */
 function browseRoots(): string[] {
   return [os.homedir(), ...workspaceRoots()];
-}
-
-/** Reject a call whose path escapes the allowed roots or lands on a credential
- *  file. One message for both refusals, matching the brain word for word: it
- *  goes to a remote caller, and confirming where a denied path landed (or that
- *  it hit something worth protecting) is a probe primitive. */
-function assertPathAllowed(cap: string, target: string, roots: string[]): void {
-  let canonical: string;
-  try {
-    canonical = canonicalizePath(target);
-  } catch {
-    canonical = ''; // unverifiable → pathWithinRoots denies it below anyway
-  }
-  if (!canonical || !pathWithinRoots(roots, target) || isSecretPath(canonical)) {
-    throw new Error(`${cap}: path is outside the allowed workspace (agent cwds + config stores)`);
-  }
 }
 
 /**
@@ -669,8 +577,13 @@ export function registerHubCapabilities(): void {
     // the same confinement every git.* handler gets (guardGitCwd). Without it a
     // plugin scoped to its own project could open a replay on any repo and read
     // files out of it through replay.read — bytes fs.read would have refused.
-    assertPathAllowed('replay.open', cwd, workspaceRoots());
-    return timelineReplay.open(cwd, sessionId, beforeTs);
+    // The canonical repo path is what the worktree is cut from — the checked
+    // string and the used string are the same string.
+    return timelineReplay.open(
+      assertPathAllowed('replay.open', cwd, workspaceRoots()),
+      sessionId,
+      beforeTs,
+    );
   });
   registerCapability('replay.seek', async (params: unknown) => {
     const { sessionId, ops } = (params ?? {}) as { sessionId?: string; ops?: ReplayOp[] };
@@ -973,8 +886,14 @@ export function registerHubCapabilities(): void {
   // skill dir) anywhere the desktop user can. Same confinement as the fs.* and
   // git.* handlers; the service itself stays unguarded because the local IPC path
   // is the trusted user working in their own repos.
-  const guardLibraryCwd = (cap: string, cwd?: string): void => {
-    if (cwd) assertPathAllowed(cap, cwd, workspaceRoots());
+  //
+  // Each guard RETURNS the canonical cwd and the handler passes that on: the
+  // string that was checked has to be the string the service opens, or a symlink
+  // (or a `..` behind one) makes the check describe a different directory than
+  // the read.
+  const guardLibraryCwd = (cap: string, cwd?: string): string | undefined => {
+    if (!cwd) return undefined;
+    return assertPathAllowed(cap, cwd, workspaceRoots());
   };
   cat('library.list', (params: unknown) => {
     const { cwd } = (params ?? {}) as { cwd?: string };
@@ -985,13 +904,13 @@ export function registerHubCapabilities(): void {
     // silently empty project-MCP picker. Browsing the home tree to read a
     // project's own prompt files is the same exposure the picker already has;
     // writing and deleting stay on the workspace roots.
-    if (cwd) assertPathAllowed('library.list', cwd, browseRoots());
-    return libraryService.list(cwd);
+    const canonicalCwd = cwd ? assertPathAllowed('library.list', cwd, browseRoots()) : undefined;
+    return libraryService.list(canonicalCwd);
   });
   cat('library.save', (params: unknown) => {
     const input = (params ?? {}) as { cwd?: string };
-    guardLibraryCwd('library.save', input.cwd);
-    return libraryService.save(input as any);
+    const canonicalCwd = guardLibraryCwd('library.save', input.cwd);
+    return libraryService.save({ ...input, cwd: canonicalCwd } as any);
   });
   cat('library.remove', (params: unknown) => {
     const { scope, id, cwd, kind } = (params ?? {}) as {
@@ -1001,8 +920,8 @@ export function registerHubCapabilities(): void {
       kind?: 'prompt' | 'skill' | 'agent';
     };
     if (!scope || !id) throw new Error('library.remove requires { scope, id }');
-    guardLibraryCwd('library.remove', cwd);
-    libraryService.remove(scope, id, cwd, kind);
+    const canonicalCwd = guardLibraryCwd('library.remove', cwd);
+    libraryService.remove(scope, id, canonicalCwd, kind);
     return { ok: true };
   });
 
@@ -1036,10 +955,16 @@ export function registerHubCapabilities(): void {
   cat('fs.listDir', (params: unknown) => {
     const { path: p } = (params ?? {}) as { path?: string };
     const home = os.homedir();
-    const resolved = path.resolve(p && p.trim() ? p.replace(/^~/, home) : home);
+    // A blank path is the picker's "start me somewhere" default, applied HERE as
+    // an explicit handler default rather than inside the guard. What is NOT done
+    // is tilde expansion: '~' is an ordinary filename to every layer that handles
+    // a caller-supplied path (the brain used to expand it and this side did not,
+    // so the same string was allowed by one provider and denied by the other).
+    const requested = p && p.trim() ? p : home;
     // Browsing is limited to the home tree + live agent cwds so a remote client
     // can pick a project dir but can't enumerate /etc, /root, or other users' homes.
-    assertPathAllowed('fs.listDir', resolved, browseRoots());
+    // readdir gets the CANONICAL path the guard validated, never the raw request.
+    const resolved = assertPathAllowed('fs.listDir', requested, browseRoots());
     let dirs: string[] = [];
     try {
       dirs = fs
@@ -1059,8 +984,7 @@ export function registerHubCapabilities(): void {
   cat('fs.read', (params: unknown) => {
     const { path: p } = (params ?? {}) as { path?: string };
     if (!p) throw new Error('fs.read requires a path');
-    assertPathAllowed('fs.read', p, workspaceRoots());
-    return readTextFile(p);
+    return readTextFile(assertPathAllowed('fs.read', p, workspaceRoots()));
   });
   // Thumbnail for an image attachment — the web client's composer renders the
   // same previews as the desktop one, over host paths it can't read directly.
@@ -1073,21 +997,18 @@ export function registerHubCapabilities(): void {
   registerCapability('fs.readImage', (params: unknown) => {
     const { path: p } = (params ?? {}) as { path?: string };
     if (!p) throw new Error('fs.readImage requires a path');
-    assertPathAllowed('fs.readImage', p, workspaceRoots());
-    return readImagePreview(p);
+    return readImagePreview(assertPathAllowed('fs.readImage', p, workspaceRoots()));
   });
   cat('fs.write', (params: unknown) => {
     const { path: p, contents } = (params ?? {}) as { path?: string; contents?: string };
     if (!p) throw new Error('fs.write requires a path');
-    assertPathAllowed('fs.write', p, workspaceRoots());
-    return writeTextFile(p, contents ?? '');
+    return writeTextFile(assertPathAllowed('fs.write', p, workspaceRoots()), contents ?? '');
   });
   // Files-included, gitignore-aware listing for the editor's file tree (web client).
   cat('fs.listEntries', (params: unknown) => {
     const { path: p } = (params ?? {}) as { path?: string };
     if (!p) throw new Error('fs.listEntries requires a path');
-    assertPathAllowed('fs.listEntries', p, workspaceRoots());
-    return listDir(p);
+    return listDir(assertPathAllowed('fs.listEntries', p, workspaceRoots()));
   });
 
   // ── File watch (editor external-change detection, web client) ──────────
@@ -1097,15 +1018,13 @@ export function registerHubCapabilities(): void {
   registerCapability('fs.watch', (params: unknown) => {
     const { path: p } = (params ?? {}) as { path?: string };
     if (!p) throw new Error('fs.watch requires a path');
-    assertPathAllowed('fs.watch', p, workspaceRoots());
-    startWatch(p);
+    startWatch(assertPathAllowed('fs.watch', p, workspaceRoots()));
     return { ok: true };
   });
   registerCapability('fs.unwatch', (params: unknown) => {
     const { path: p } = (params ?? {}) as { path?: string };
     if (!p) throw new Error('fs.unwatch requires a path');
-    assertPathAllowed('fs.unwatch', p, workspaceRoots());
-    stopWatch(p);
+    stopWatch(assertPathAllowed('fs.unwatch', p, workspaceRoots()));
     return { ok: true };
   });
 
@@ -1115,8 +1034,8 @@ export function registerHubCapabilities(): void {
     const opts = (params ?? {}) as Parameters<typeof searchProject>[0];
     if (!opts.query) throw new Error('search.project requires { query, cwd }');
     if (!opts.cwd) throw new Error('search.project requires { query, cwd }');
-    assertPathAllowed('search.project', opts.cwd, workspaceRoots());
-    return searchProject(opts);
+    const cwd = assertPathAllowed('search.project', opts.cwd, workspaceRoots());
+    return searchProject({ ...opts, cwd });
   });
 
   // ── Git (review pane) ──────────────────────────────────────────────────
@@ -1136,19 +1055,20 @@ export function registerHubCapabilities(): void {
   // canonicalization resolves symlinks before the check, so a symlinked cwd can't
   // escape the roots. The local desktop IPC path is unchanged: it's the trusted
   // user reviewing their own repos, and this containment only guards the bus.
-  const guardGitCwd = (cap: string, cwd: string): void =>
+  // Returns the CANONICAL cwd, which is what gitService is then run in: the
+  // directory that was checked and the directory git runs in have to be the same
+  // one, or a symlinked cwd is validated in one place and used in another.
+  const guardGitCwd = (cap: string, cwd: string): string =>
     assertPathAllowed(cap, cwd, workspaceRoots());
   registerCapability('git.status', (params: unknown) => {
     const { cwd } = (params ?? {}) as { cwd?: string };
     if (!cwd) throw new Error('git.status requires { cwd }');
-    guardGitCwd('git.status', cwd);
-    return git.status(cwd);
+    return git.status(guardGitCwd('git.status', cwd));
   });
   registerCapability('git.log', (params: unknown) => {
     const { cwd, limit } = (params ?? {}) as { cwd?: string; limit?: number };
     if (!cwd) throw new Error('git.log requires { cwd }');
-    guardGitCwd('git.log', cwd);
-    return git.log(cwd, limit).then((commits) => ({ commits }));
+    return git.log(guardGitCwd('git.log', cwd), limit).then((commits) => ({ commits }));
   });
   registerCapability('git.diff', async (params: unknown) => {
     const {
@@ -1163,7 +1083,7 @@ export function registerHubCapabilities(): void {
       untracked?: boolean;
     };
     if (!cwd) throw new Error('git.diff requires { cwd }');
-    guardGitCwd('git.diff', cwd);
+    const canonicalCwd = guardGitCwd('git.diff', cwd);
     // Guarding cwd alone was not enough here. For a tracked diff `path` is a
     // repo pathspec git resolves inside the work tree, but with `untracked` it
     // becomes an operand of `git diff --no-index -- /dev/null <path>`, where git
@@ -1179,53 +1099,72 @@ export function registerHubCapabilities(): void {
     // printed, which are root-relative and routinely name files in a sibling
     // subtree of the agent cwd, while confining to the repo concedes nothing a
     // path-less `git.diff` (the whole tree's diff) doesn't already hand over.
+    let operand = filePath;
     if (filePath) {
-      const root = (await git.workRoot(cwd)) ?? cwd;
-      assertPathAllowed('git.diff', path.resolve(root, filePath), [root]);
+      const root = (await git.workRoot(canonicalCwd)) ?? canonicalCwd;
+      // Anchor a relative pathspec on the work-tree root by plain concatenation,
+      // NOT path.resolve/path.join: those collapse a `link/..` pair textually
+      // before any symlink is read, which is precisely the check-path /
+      // opened-path split the component walk exists to close. The walk inside
+      // assertPathAllowed does the resolving.
+      const anchored = path.isAbsolute(filePath)
+        ? filePath
+        : root.endsWith(path.sep)
+          ? root + filePath
+          : root + path.sep + filePath;
+      const canonicalFile = assertPathAllowed('git.diff', anchored, [root]);
+      // git runs from the work-tree root, so it receives the validated path
+      // expressed from that root: the operand is a function of the CANONICAL
+      // path, never of the caller's string. (Root-relative is what git wants for
+      // a tracked pathspec; the absolute form is the fallback for the degenerate
+      // "the path IS the root" case.)
+      const canonicalRootPath = canonicalRoot(root) ?? root;
+      operand = path.relative(canonicalRootPath, canonicalFile) || canonicalFile;
     }
-    return { diff: await git.diff(cwd, filePath, staged, untracked) };
+    return { diff: await git.diff(canonicalCwd, operand, staged, untracked) };
   });
   registerCapability('git.numstat', (params: unknown) => {
     const { cwd, staged } = (params ?? {}) as { cwd?: string; staged?: boolean };
     if (!cwd) throw new Error('git.numstat requires { cwd }');
-    guardGitCwd('git.numstat', cwd);
-    return git.numstat(cwd, staged).then((files) => ({ files }));
+    return git.numstat(guardGitCwd('git.numstat', cwd), staged).then((files) => ({ files }));
   });
   registerCapability('git.commitDiff', (params: unknown) => {
     const { cwd, hash, path } = (params ?? {}) as { cwd?: string; hash?: string; path?: string };
     if (!cwd || !hash) throw new Error('git.commitDiff requires { cwd, hash }');
-    guardGitCwd('git.commitDiff', cwd);
-    return git.commitDiff(cwd, hash, path).then((diff) => ({ diff }));
+    return git
+      .commitDiff(guardGitCwd('git.commitDiff', cwd), hash, path)
+      .then((diff) => ({ diff }));
   });
   registerCapability('git.commitNumstat', (params: unknown) => {
     const { cwd, hash } = (params ?? {}) as { cwd?: string; hash?: string };
     if (!cwd || !hash) throw new Error('git.commitNumstat requires { cwd, hash }');
-    guardGitCwd('git.commitNumstat', cwd);
-    return git.commitNumstat(cwd, hash).then((files) => ({ files }));
+    return git
+      .commitNumstat(guardGitCwd('git.commitNumstat', cwd), hash)
+      .then((files) => ({ files }));
   });
   registerCapability('git.stage', (params: unknown) => {
     const { cwd, path } = (params ?? {}) as { cwd?: string; path?: string };
     if (!cwd) throw new Error('git.stage requires { cwd }');
-    guardGitCwd('git.stage', cwd);
-    return git.stage(cwd, path).then((output) => ({ ok: true, output }));
+    return git.stage(guardGitCwd('git.stage', cwd), path).then((output) => ({ ok: true, output }));
   });
   registerCapability('git.unstage', (params: unknown) => {
     const { cwd, path } = (params ?? {}) as { cwd?: string; path?: string };
     if (!cwd) throw new Error('git.unstage requires { cwd }');
-    guardGitCwd('git.unstage', cwd);
-    return git.unstage(cwd, path).then((output) => ({ ok: true, output }));
+    return git
+      .unstage(guardGitCwd('git.unstage', cwd), path)
+      .then((output) => ({ ok: true, output }));
   });
   registerCapability('git.commit', (params: unknown) => {
     const { cwd, message } = (params ?? {}) as { cwd?: string; message?: string };
     if (!cwd || typeof message !== 'string')
       throw new Error('git.commit requires { cwd, message }');
-    guardGitCwd('git.commit', cwd);
-    return git.commit(cwd, message).then((output) => ({ ok: true, output }));
+    return git
+      .commit(guardGitCwd('git.commit', cwd), message)
+      .then((output) => ({ ok: true, output }));
   });
   registerCapability('git.push', (params: unknown) => {
     const { cwd } = (params ?? {}) as { cwd?: string };
     if (!cwd) throw new Error('git.push requires { cwd }');
-    guardGitCwd('git.push', cwd);
-    return git.push(cwd).then((output) => ({ ok: true, output }));
+    return git.push(guardGitCwd('git.push', cwd)).then((output) => ({ ok: true, output }));
   });
 }

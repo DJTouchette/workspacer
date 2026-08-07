@@ -327,9 +327,15 @@ func (r *registry) saveLibrary(ctx context.Context, in libraryInput) (*libraryIt
 	id := slugLibrary(firstNonEmpty(in.ID, in.Title))
 	full := filepath.Join(dir, id+".md")
 	// Checked BEFORE MkdirAll, so a denied save leaves no directories behind.
-	if err := assertPathAllowed("library.save", full, r.workspaceRoots(ctx)); err != nil {
+	canonical, err := assertPathAllowed("library.save", full, r.workspaceRoots(ctx))
+	if err != nil {
 		return nil, err
 	}
+	// Create and write exactly what was validated. A symlinked component makes
+	// the checked path and the opened path two different files otherwise, and
+	// `dir` has to be re-derived or MkdirAll would rebuild the unresolved one.
+	full = canonical
+	dir = filepath.Dir(full)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -365,9 +371,13 @@ func (r *registry) saveLibraryClaude(ctx context.Context, in libraryInput) (*lib
 	default:
 		full = filepath.Join(claudeAgentsDir(cwd), id+".md")
 	}
-	if err := assertPathAllowed("library.save", full, r.workspaceRoots(ctx)); err != nil {
+	canonical, err := assertPathAllowed("library.save", full, r.workspaceRoots(ctx))
+	if err != nil {
 		return nil, err
 	}
+	// Read, create and write the validated path — the returned item's Path is
+	// this string too, so a caller round-tripping it stays inside the guard.
+	full = canonical
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return nil, err
 	}

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 )
 
 // registry holds the dependencies the handlers close over and dispatches calls
@@ -228,12 +229,21 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		// read. library.save has always been guarded; list and remove were not,
 		// and under the default catalog delegation these are the copies that
 		// run — the desktop's guarded twin never sees the call.
-		if p.Cwd != "" {
-			if err := assertPathAllowed("library.list", expandTilde(p.Cwd), r.workspaceRoots(ctx)); err != nil {
+		//
+		// BROWSE roots, not workspace: the New Agent dialog lists the library of
+		// the directory the user is ABOUT to spawn in, which by definition is not
+		// yet a live agent cwd, and the caller's `.catch(() => {})` turned the
+		// refusal into a silently empty project-MCP picker. Reading is the widest
+		// this gets — library.save/remove stay on the workspace roots.
+		cwd := p.Cwd
+		if cwd != "" {
+			canonical, err := assertPathAllowed("library.list", cwd, r.browseRoots(ctx))
+			if err != nil {
 				return nil, err
 			}
+			cwd = canonical // check-path and used-path must be the same string
 		}
-		return jsonResult(listLibrary(p.Cwd))
+		return jsonResult(listLibrary(cwd))
 	case "library.save":
 		var in libraryInput
 		if err := unmarshal(params, &in); err != nil {
@@ -254,15 +264,18 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		if err := unmarshal(params, &p); err != nil {
 			return nil, err
 		}
-		if p.Cwd != "" {
-			if err := assertPathAllowed("library.remove", expandTilde(p.Cwd), r.workspaceRoots(ctx)); err != nil {
+		cwd := p.Cwd
+		if cwd != "" {
+			canonical, err := assertPathAllowed("library.remove", cwd, r.workspaceRoots(ctx))
+			if err != nil {
 				return nil, err
 			}
+			cwd = canonical // delete exactly what was validated, not the raw string
 		}
 		if p.Scope == "" || p.ID == "" {
 			return nil, fmt.Errorf("library.remove requires { scope, id }")
 		}
-		removeLibrary(p.Scope, p.ID, p.Cwd, p.Kind)
+		removeLibrary(p.Scope, p.ID, cwd, p.Kind)
 		return okResult()
 	case "claude.sessionsForDir":
 		var p struct {
@@ -1004,12 +1017,26 @@ func (r *registry) fsListDir(ctx context.Context, raw json.RawMessage) (json.Raw
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
+	// The picker opens on $HOME when it has nowhere to start from. That default
+	// belongs HERE, before the guard: an empty path is otherwise unverifiable
+	// (it would absolutize to the daemon's own working directory) and the guard
+	// refuses it, so the substitution has to happen while there is still a
+	// decision to make.
+	target := p.Path
+	if strings.TrimSpace(target) == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		target = home
+	}
 	// Browsing is allowed across the home tree so a user can pick a project
 	// before an agent runs in it — but not /etc or another user's home.
-	if err := assertPathAllowed("fs.listDir", expandTilde(p.Path), r.browseRoots(ctx)); err != nil {
+	canonical, err := assertPathAllowed("fs.listDir", target, r.browseRoots(ctx))
+	if err != nil {
 		return nil, err
 	}
-	res, err := listHostDir(p.Path)
+	res, err := listHostDir(canonical)
 	if err != nil {
 		return nil, err
 	}
@@ -1026,10 +1053,11 @@ func (r *registry) fsRead(ctx context.Context, raw json.RawMessage) (json.RawMes
 	if p.Path == "" {
 		return nil, fmt.Errorf("fs.read requires a path")
 	}
-	if err := assertPathAllowed("fs.read", expandTilde(p.Path), r.workspaceRoots(ctx)); err != nil {
+	canonical, err := assertPathAllowed("fs.read", p.Path, r.workspaceRoots(ctx))
+	if err != nil {
 		return nil, err
 	}
-	res, err := readTextFile(p.Path)
+	res, err := readTextFile(canonical)
 	if err != nil {
 		return nil, err
 	}
@@ -1046,10 +1074,11 @@ func (r *registry) fsListEntries(ctx context.Context, raw json.RawMessage) (json
 	if p.Path == "" {
 		return nil, fmt.Errorf("fs.listEntries requires a path")
 	}
-	if err := assertPathAllowed("fs.listEntries", expandTilde(p.Path), r.workspaceRoots(ctx)); err != nil {
+	canonical, err := assertPathAllowed("fs.listEntries", p.Path, r.workspaceRoots(ctx))
+	if err != nil {
 		return nil, err
 	}
-	res, err := listEntries(p.Path)
+	res, err := listEntries(canonical)
 	if err != nil {
 		return nil, err
 	}
@@ -1064,9 +1093,11 @@ func (r *registry) searchProject(ctx context.Context, raw json.RawMessage) (json
 	if opts.Query == "" || opts.Cwd == "" {
 		return nil, fmt.Errorf("search.project requires { query, cwd }")
 	}
-	if err := assertPathAllowed("search.project", expandTilde(opts.Cwd), r.workspaceRoots(ctx)); err != nil {
+	canonical, err := assertPathAllowed("search.project", opts.Cwd, r.workspaceRoots(ctx))
+	if err != nil {
 		return nil, err
 	}
+	opts.Cwd = canonical // search the directory that was checked, not the one that was asked for
 	res, err := searchProject(ctx, opts)
 	if err != nil {
 		return nil, err
@@ -1099,10 +1130,11 @@ func (r *registry) fsWrite(ctx context.Context, raw json.RawMessage) (json.RawMe
 	if p.Path == "" {
 		return nil, fmt.Errorf("fs.write requires a path")
 	}
-	if err := assertPathAllowed("fs.write", expandTilde(p.Path), r.workspaceRoots(ctx)); err != nil {
+	canonical, err := assertPathAllowed("fs.write", p.Path, r.workspaceRoots(ctx))
+	if err != nil {
 		return nil, err
 	}
-	if err := writeHostFile(p.Path, p.Contents); err != nil {
+	if err := writeHostFile(canonical, p.Contents); err != nil {
 		return nil, err
 	}
 	return okResult()

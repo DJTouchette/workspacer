@@ -1,9 +1,11 @@
 package capspec
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -109,6 +111,113 @@ func TestEveryClassifiedMethodIsUnderAKnownNamespaceOrHasAReason(t *testing.T) {
 			t.Errorf("%q is in both PathParam and unscopedByDecision — it can't be scoped and deliberately unscoped at once", method)
 		}
 	}
+}
+
+// contractFixtureRel is the cross-language path-containment corpus, relative to
+// this package dir: services/hub/internal/capspec → repo root is four levels up.
+const contractFixtureRel = "../../../../contracts/path-containment-cases.json"
+
+// fixtureMethod is the fixture's `methods` block: the corpus's copy of "which
+// capability is path-scoped, and which params field carries the path". Only the
+// fields this package can hold an opinion about are decoded — `params` and the
+// per-entry notes belong to the loaders that actually call the providers.
+type fixtureMethod struct {
+	Method    string   `json:"method"`
+	Field     string   `json:"field"`
+	RootSet   string   `json:"rootSet"`
+	Providers []string `json:"providers"`
+}
+
+// fixtureRootSets and fixtureProviders are the closed vocabularies the methods
+// block may use. `workspace` is the live-agent cwd set and `browse` the wider
+// home tree the directory picker and the pre-spawn library listing need;
+// providers name which door answers the call — the brain, the desktop's
+// registerCapability provider, or the cat-door methods main only serves under
+// WORKSPACER_NO_BRAIN=1. A typo in either would silently mean nothing to every
+// loader that filters on them, which is how a corpus stops covering what it
+// claims to cover.
+var fixtureRootSets = map[string]bool{"workspace": true, "browse": true}
+
+var fixtureProviders = map[string]bool{"brain": true, "main": true, "main-killswitch": true}
+
+// TestPathContainmentFixtureCoversPathParam closes the loop on the fixture's
+// method list, which is a FOURTH copy of the thing this package exists to keep
+// in one place (after PathParam itself, the desktop registrations, and the
+// brain's dispatch tables). Copies drift; the config_defaults.json codegen check
+// is the same shape and exists for the same reason.
+//
+// Both directions are failures, and they are different failures. A PathParam
+// entry with no fixture entry means a path-bearing capability shipped with no
+// behavioural corpus — nothing anywhere asserts that its provider reaches the
+// guard. A fixture entry with no PathParam entry is worse in the other
+// direction: the corpus is exercising confinement the bus does not apply, so it
+// reads as coverage while the method is grantable to a plugin unconfined.
+func TestPathContainmentFixtureCoversPathParam(t *testing.T) {
+	raw, err := os.ReadFile(contractFixtureRel)
+	if err != nil {
+		t.Fatalf("read %s: %v", contractFixtureRel, err)
+	}
+	var fx struct {
+		Methods []fixtureMethod `json:"methods"`
+	}
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatalf("parse %s: %v", contractFixtureRel, err)
+	}
+	if len(fx.Methods) == 0 {
+		t.Fatalf("%s has no methods block — the corpus can no longer say which capabilities it covers", contractFixtureRel)
+	}
+
+	inFixture := map[string]fixtureMethod{}
+	for _, m := range fx.Methods {
+		if _, dup := inFixture[m.Method]; dup {
+			t.Errorf("%s lists %q twice in methods", contractFixtureRel, m.Method)
+		}
+		inFixture[m.Method] = m
+	}
+
+	for _, method := range sortedFixtureMethods(inFixture) {
+		m := inFixture[method]
+		field, scoped := PathParam[method]
+		if !scoped {
+			t.Errorf("the fixture's methods block has %q, but capspec.PathParam does not — the bus grants that method with no path confinement, so the corpus is pinning a guard that never runs", method)
+			continue
+		}
+		// Which params key the guard reads. Disagreeing on it is the quiet
+		// version of no guard at all: the corpus injects its traversal into one
+		// field while the bus confines another, and the case passes for the
+		// wrong reason.
+		if m.Field != field {
+			t.Errorf("the fixture injects %q's path into %q, but capspec.PathParam says the bus reads %q", method, m.Field, field)
+		}
+		if !fixtureRootSets[m.RootSet] {
+			t.Errorf("the fixture's rootSet for %q is %q; want one of workspace, browse", method, m.RootSet)
+		}
+		if len(m.Providers) == 0 {
+			t.Errorf("the fixture entry for %q names no providers — nothing says which side has to enforce it", method)
+		}
+		for _, p := range m.Providers {
+			if !fixtureProviders[p] {
+				t.Errorf("the fixture says %q is provided by %q; want one of brain, main, main-killswitch", method, p)
+			}
+		}
+	}
+
+	for _, method := range sortedFixtureMethods(PathParam) {
+		if _, ok := inFixture[method]; !ok {
+			t.Errorf("capspec.PathParam has %q but the fixture's methods block does not — a path-scoped capability shipped with no containment corpus behind it", method)
+		}
+	}
+}
+
+// sortedFixtureMethods gives map iteration a stable order, so a drift failure
+// reads the same on every run.
+func sortedFixtureMethods[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // pathishParams are param field names that carry a filesystem location. A
@@ -269,5 +378,94 @@ func TestDesktopCapabilitiesAllScoped(t *testing.T) {
 	}
 	if !seenPathCap {
 		t.Errorf("expected at least one fs.*/search.* capability in hubCapabilities.ts; parsed none — capNameRe likely stopped matching")
+	}
+}
+
+// guardCallRe matches a confinement call that names `method` as a string
+// literal: either assertPathAllowed('fs.read', …) directly, or one of the
+// small guardXxx wrappers that pass the capability name through to it
+// (guardGitCwd('git.diff', …), guardLibraryCwd('library.save', …)). The callee
+// is captured so the canary below can tell the two shapes apart. Single-quoted
+// literals only, matching the file's convention for capability names.
+func guardCallRe(method string) *regexp.Regexp {
+	return regexp.MustCompile(`\b(assertPathAllowed|guard[A-Za-z]*)\(\s*'` + regexp.QuoteMeta(method) + `'`)
+}
+
+// TestDesktopPathCapabilitiesAreGuarded is the second half of the question the
+// scan above asks. TestDesktopCapabilitiesAllScoped only asks whether a
+// registered method is CLASSIFIED — that capspec has an opinion about it.
+// Classification is bookkeeping: it makes the bus confine a *plugin's* call to
+// that plugin's granted roots. It says nothing about the provider's own door,
+// which the desktop UI, the web client and the remote client all come through
+// with a trusted connection and no grants at all. A capability that is in
+// PathParam but whose handler never calls the guard is confined for plugins and
+// wide open for everyone else.
+//
+// So: for every registration site whose name is in PathParam, the handler body
+// must contain a guard call naming that method. The body is the slice from this
+// registration site to the next one — the same slicing
+// TestCapabilitiesWithAPathParamAreClassified uses, and for the same reason: a
+// guard belonging to the capability registered above must not be read as this
+// one's. Requiring the method name as a literal is what makes that precise; a
+// bare assertPathAllowed(cap, …) inside a shared helper is attributed to
+// nobody, and the wrappers pass the literal at the call site for exactly that
+// reason.
+//
+// Sites registered through `cat` are scanned identically to `registerCapability`
+// ones. Which door serves a method is a routing decision — cat-door methods
+// normally go to the brain, which guards them in fsguard.go — but
+// WORKSPACER_NO_BRAIN=1 opens main's copy instead, so main's handler needs the
+// guard regardless of who answers on a normal boot.
+//
+// Skips (not fails) when the TS source isn't reachable, since it's cross-repo.
+func TestDesktopPathCapabilitiesAreGuarded(t *testing.T) {
+	src := filepath.Join("..", "..", "..", "..", "apps", "desktop", "src", "main", "services", "hubCapabilities.ts")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Skipf("hubCapabilities.ts not reachable (%v); skipping cross-repo cross-check", err)
+	}
+	text := string(data)
+	sites := capNameRe.FindAllStringSubmatchIndex(text, -1)
+	if len(sites) == 0 {
+		t.Fatalf("parsed no capability names from %s — the registration syntax changed; update capNameRe", src)
+	}
+
+	guarded := 0
+	sawDirect, sawWrapper := false, false
+	for i, site := range sites {
+		name := text[site[2]:site[3]]
+		if _, scoped := PathParam[name]; !scoped {
+			continue
+		}
+		end := len(text)
+		if i+1 < len(sites) {
+			end = sites[i+1][0]
+		}
+		m := guardCallRe(name).FindStringSubmatch(text[site[0]:end])
+		if m == nil {
+			t.Errorf("hubCapabilities.ts registers %q, which capspec.PathParam scopes, but its handler never calls assertPathAllowed('%s', …) or a guard wrapper naming it — every trusted caller (UI, web, remote) reaches the filesystem through it unconfined", name, name)
+			continue
+		}
+		guarded++
+		if m[1] == "assertPathAllowed" {
+			sawDirect = true
+		} else {
+			sawWrapper = true
+		}
+	}
+	if guarded == 0 {
+		t.Fatalf("matched no path-scoped capability at all in %s — capspec.PathParam and the registrations have stopped overlapping, so this guard is guarding nothing", src)
+	}
+	// One canary per call shape, for the same reason the classification scan
+	// names one capability per parsing idiom: the fs.* methods and
+	// search.project call assertPathAllowed directly, while library.save/remove
+	// and git.diff route through guardLibraryCwd/guardGitCwd. If either shape
+	// stops matching, this test silently covers half the surface it claims to —
+	// so losing one has to fail out loud rather than shrink the loop.
+	if !sawDirect {
+		t.Errorf("no path-scoped capability in %s was seen calling assertPathAllowed('<method>', …) directly — the direct-call shape has stopped matching, so every capability written that way is now unchecked by this test", src)
+	}
+	if !sawWrapper {
+		t.Errorf("no path-scoped capability in %s was seen guarded through a guardXxx('<method>', …) wrapper — the wrapper shape has stopped matching (renamed helper?), so library.*/git.* are now unchecked by this test", src)
 	}
 }

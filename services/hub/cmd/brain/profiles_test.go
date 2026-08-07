@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -267,5 +270,141 @@ func TestRemoteProfileScrubDropsConfigDir(t *testing.T) {
 	}
 	if p.ConfigDir == "" {
 		t.Error("scrubBypassProfile must not mutate the stored profile")
+	}
+}
+
+// ── claude.profiles.add: the mcpItemIds twin of apps/desktop/tests/main/
+// hubCapabilitiesProfiles.test.ts ──────────────────────────────────────────
+//
+// That TS file pins two behaviours of main's claude.profiles.add — it forwards
+// mcpItemIds, and it defaults them to [] — and it has to force
+// DELEGATE_CATALOG_TO_BRAIN=false to reach the handler at all, because under
+// the shipping default main's `cat()` registers nothing and THIS provider
+// answers the method. The pins below are the same two behaviours on the copy
+// that actually runs, driven through reg.handle so the param decoding in
+// profilesAdd is covered too, not just addProfile.
+
+// readProfilesJSON returns the raw decoded claude-profiles.json, so a test can
+// assert on key presence (absent vs null vs []) rather than Go zero values.
+func readProfilesJSON(t *testing.T) []map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(profilesPath())
+	if err != nil {
+		t.Fatalf("reading %s: %v", profilesPath(), err)
+	}
+	var parsed struct {
+		Profiles []map[string]any `json:"profiles"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("claude-profiles.json is not valid JSON: %v", err)
+	}
+	return parsed.Profiles
+}
+
+func TestProfilesAddForwardsMcpItemIds(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	reg := newRegistry(newClaudemonClient("http://unused"))
+
+	res, err := reg.handle(context.Background(), "claude.profiles.add",
+		[]byte(`{"name":"P","configDir":"  /c  ","extraArgs":["--x"],"mcpItemIds":["mcp-1","mcp-2"]}`))
+	if err != nil {
+		t.Fatalf("claude.profiles.add: %v", err)
+	}
+
+	var got profile
+	if err := json.Unmarshal(res, &got); err != nil {
+		t.Fatalf("result not valid JSON: %v", err)
+	}
+	if !slices.Equal(got.MCPItemIDs, []string{"mcp-1", "mcp-2"}) {
+		t.Errorf("reply dropped mcpItemIds: got %v, want [mcp-1 mcp-2]", got.MCPItemIDs)
+	}
+	// The rest of the forwarding main pins in the same call, so a param-name
+	// typo here can't hide behind the mcpItemIds assertion.
+	if got.Name != "P" || got.ConfigDir != "/c" || !slices.Equal(got.ExtraArgs, []string{"--x"}) {
+		t.Errorf("add mangled the other fields: %+v", got)
+	}
+	if got.ID == "" {
+		t.Error("add returned a profile with no id")
+	}
+
+	// Forwarded to the caller AND to disk — a spawn reads the file, not the reply.
+	stored := readProfilesJSON(t)
+	if len(stored) != 1 {
+		t.Fatalf("expected 1 stored profile, got %d", len(stored))
+	}
+	if !reflect.DeepEqual(stored[0]["mcpItemIds"], []any{"mcp-1", "mcp-2"}) {
+		t.Errorf("stored profile lost mcpItemIds: %v", stored[0]["mcpItemIds"])
+	}
+}
+
+func TestProfilesAddDefaultsMcpItemIds(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	reg := newRegistry(newClaudemonClient("http://unused"))
+
+	res, err := reg.handle(context.Background(), "claude.profiles.add", []byte(`{"name":"P"}`))
+	if err != nil {
+		t.Fatalf("claude.profiles.add: %v", err)
+	}
+
+	// main returns mcpItemIds: [] here. Decode to a map: a nil Go slice would
+	// pass a slices.Equal against []string{} while marshalling to null, and an
+	// omitempty tag would drop the key entirely — both are shapes main never
+	// emits, and both are invisible to a typed decode.
+	var reply map[string]any
+	if err := json.Unmarshal(res, &reply); err != nil {
+		t.Fatalf("result not valid JSON: %v", err)
+	}
+	ids, ok := reply["mcpItemIds"]
+	if !ok {
+		t.Fatalf("reply omits mcpItemIds entirely; main emits []. got %v", reply)
+	}
+	if !reflect.DeepEqual(ids, []any{}) {
+		t.Errorf("mcpItemIds should default to [], got %#v", ids)
+	}
+	// Same for extraArgs/configDir, the other two main defaults ('' and []).
+	if !reflect.DeepEqual(reply["extraArgs"], []any{}) || reply["configDir"] != "" {
+		t.Errorf("add should default configDir='' and extraArgs=[], got %#v / %#v",
+			reply["configDir"], reply["extraArgs"])
+	}
+
+	stored := readProfilesJSON(t)
+	if len(stored) != 1 {
+		t.Fatalf("expected 1 stored profile, got %d", len(stored))
+	}
+	if v, ok := stored[0]["mcpItemIds"]; !ok || !reflect.DeepEqual(v, []any{}) {
+		t.Errorf("stored profile should carry mcpItemIds: [], got %#v (present=%v)", v, ok)
+	}
+}
+
+// A profile written before mcpItemIds existed has no such key. claude.profiles
+// .list must still hand clients an array — the renderer does `?? []` today, but
+// the brain's own guarantee is the array, and a JSON null is what a nil slice
+// marshals to.
+func TestProfilesListNeverServesNullLists(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := os.MkdirAll(configDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"profiles":[{"id":"old","name":"Old","configDir":"","isDefault":true}]}`
+	if err := os.WriteFile(profilesPath(), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg := newRegistry(newClaudemonClient("http://unused"))
+	res, err := reg.handle(context.Background(), "claude.profiles.list", nil)
+	if err != nil {
+		t.Fatalf("claude.profiles.list: %v", err)
+	}
+	var listed []map[string]any
+	if err := json.Unmarshal(res, &listed); err != nil {
+		t.Fatalf("result not valid JSON: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("expected 1 profile, got %d", len(listed))
+	}
+	for _, key := range []string{"extraArgs", "mcpItemIds"} {
+		if !reflect.DeepEqual(listed[0][key], []any{}) {
+			t.Errorf("%s should be served as [], got %#v", key, listed[0][key])
+		}
 	}
 }

@@ -13,6 +13,17 @@
  *   - a throwing handler surfaces a structured Error to the caller rather than
  *     crashing.
  *
+ * DELEGATION MODE: this file runs with DELEGATE_CATALOG_TO_BRAIN = true, the
+ * production default. Everything asserted here registers through
+ * `registerCapability`, so main owns it in the mode it actually ships in. The
+ * `cat`-door capabilities (fs.read/write/listEntries/listDir, library.*) are
+ * NOT registered here — the Go brain answers those — and their main-side
+ * handlers are exercised in the sibling hubCapabilitiesKillSwitch.test.ts,
+ * which is the only file allowed to mock delegation off. Delegation-off is the
+ * marked special case; it is not the baseline. This file used to mock it off
+ * "for completeness", and that is precisely why a security bug in the shipping
+ * path stayed invisible: the test never touched the code that runs.
+ *
  * Strategy: mock ./hubClient so registerCapability records handlers into a map
  * we can invoke directly, and mock every collaborator so only the capability
  * bodies run.
@@ -31,11 +42,11 @@ vi.mock('./hubClient', () => ({
   },
 }));
 
-// Keep catalog delegation OFF so `cat`-registered caps register through the real
-// registerCapability too (the default env has DELEGATE_CATALOG_TO_BRAIN = true,
-// which no-ops them). Not strictly needed for the caps under test — they all use
-// registerCapability directly — but keeps the registry complete.
-vi.mock('./brainDelegation', () => ({ DELEGATE_CATALOG_TO_BRAIN: false }));
+// PRODUCTION MODE: the brain owns the catalog, so `cat(...)` registers nothing
+// and only main's own registerCapability handlers exist on the bus. Do not flip
+// this to false to make a test pass — a capability that is missing here is a
+// capability the brain serves, and it belongs in hubCapabilitiesKillSwitch.test.ts.
+vi.mock('./brainDelegation', () => ({ DELEGATE_CATALOG_TO_BRAIN: true }));
 
 const spawnManagedAgent = vi.fn(async () => 'managed-session-id');
 vi.mock('./managedSpawn', () => ({
@@ -159,14 +170,18 @@ vi.mock('./terminalShare', () => ({}));
 vi.mock('./supervisorSkill', () => ({ ensureSupervisorHome: vi.fn(() => '/home/super') }));
 
 const { registerHubCapabilities } = await import('./hubCapabilities');
-const { readTextFile, writeTextFile } = await import('./fileService');
 const { searchProject } = await import('./searchService');
 const gitMock = await import('./gitService');
 
 /** Invoke a registered capability by method name. */
 function call(method: string, params?: unknown): unknown {
   const handler = registered.get(method);
-  if (!handler) throw new Error(`capability not registered: ${method}`);
+  if (!handler)
+    throw new Error(
+      `capability not registered under DELEGATE_CATALOG_TO_BRAIN=true: ${method} — ` +
+        `if this is a \`cat\`-door capability the brain answers it, and its main-side ` +
+        `handler belongs in hubCapabilitiesKillSwitch.test.ts`,
+    );
   return handler(params);
 }
 
@@ -476,43 +491,17 @@ describe('error propagation', () => {
   });
 });
 
-describe('fs.* path confinement', () => {
+describe('search.project cwd confinement', () => {
+  // search.project is registerCapability, not `cat`: main answers it in
+  // production, so its confinement is asserted here rather than in the
+  // kill-switch file the fs.*/library.* cases moved to.
+  //
   // A real temp dir stands in for a live agent's cwd — the confinement helpers
   // canonicalize via the real filesystem, so the roots must exist.
   let agentCwd: string;
   beforeEach(() => {
     agentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-agent-')));
     getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
-  });
-
-  it('fs.read allows a path inside a live agent cwd', () => {
-    const inside = path.join(agentCwd, 'notes.txt');
-    expect(() => call('fs.read', { path: inside })).not.toThrow();
-    expect(readTextFile).toHaveBeenCalledWith(inside);
-  });
-
-  it('fs.read denies an arbitrary host path (e.g. /etc/passwd)', () => {
-    expect(() => call('fs.read', { path: '/etc/passwd' })).toThrow(/outside the allowed workspace/);
-    expect(readTextFile).not.toHaveBeenCalled();
-  });
-
-  it('fs.read denies a traversal escape from the agent cwd', () => {
-    const escape = path.join(agentCwd, '..', '..', '..', 'etc', 'passwd');
-    expect(() => call('fs.read', { path: escape })).toThrow(/outside the allowed workspace/);
-    expect(readTextFile).not.toHaveBeenCalled();
-  });
-
-  it('fs.write denies writing outside the workspace', () => {
-    expect(() =>
-      call('fs.write', { path: path.join(os.homedir(), '.ssh', 'authorized_keys'), contents: 'x' }),
-    ).toThrow(/outside the allowed workspace/);
-    expect(writeTextFile).not.toHaveBeenCalled();
-  });
-
-  it('fs.write allows a not-yet-existing file inside the agent cwd (nearest-ancestor canonicalize)', () => {
-    const newFile = path.join(agentCwd, 'sub', 'new.txt'); // parent dir does not exist yet
-    expect(() => call('fs.write', { path: newFile, contents: 'x' })).not.toThrow();
-    expect(writeTextFile).toHaveBeenCalledWith(newFile, 'x');
   });
 
   it('search.project denies a cwd outside the workspace', () => {
@@ -525,140 +514,6 @@ describe('fs.* path confinement', () => {
   it('search.project allows a cwd inside a live agent cwd', () => {
     expect(() => call('search.project', { query: 'x', cwd: agentCwd })).not.toThrow();
     expect(searchProject).toHaveBeenCalled();
-  });
-
-  it('fs.listDir (folder picker) denies browsing outside the home tree', () => {
-    expect(() => call('fs.listDir', { path: '/etc' })).toThrow(/outside the allowed workspace/);
-  });
-
-  it('fs.listDir allows browsing inside a live agent cwd', () => {
-    const res = call('fs.listDir', { path: agentCwd }) as { path: string };
-    expect(res.path).toBe(agentCwd);
-  });
-});
-
-describe('fs.* credential deny-list (twin of the brain fsguard)', () => {
-  // The config dir used to be a workspace root wholesale, which handed any bus
-  // caller remote-token / tokens.json / every plugin's .bus-token — i.e. the
-  // credential that makes a connection `trusted`, which drops per-plugin scoping
-  // and unlocks /plugins/install. Only library/, layouts/ and sessions/ are roots
-  // now, and the deny still applies however the path got admitted.
-  //
-  // Every case below runs with an agent cwd that CONTAINS the config dir (the
-  // user who spawned an agent in ~/.config), so the roots check passes and only
-  // the deny-list can refuse — testing the gate that actually has to hold.
-  let agentCwd: string;
-  beforeEach(() => {
-    fs.mkdirSync(path.join(cfg.dir, 'library'), { recursive: true });
-    fs.mkdirSync(path.join(cfg.dir, 'plugins', 'acme.ci'), { recursive: true });
-    fs.writeFileSync(path.join(cfg.dir, 'remote-token'), 'super-secret', 'utf-8');
-    fs.writeFileSync(path.join(cfg.dir, 'plugins', 'acme.ci', '.bus-token'), 'tok', 'utf-8');
-    agentCwd = path.dirname(cfg.dir);
-    getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
-  });
-
-  it('fs.read denies the remote-share token', () => {
-    expect(() => call('fs.read', { path: path.join(cfg.dir, 'remote-token') })).toThrow(
-      /outside the allowed workspace/,
-    );
-    expect(readTextFile).not.toHaveBeenCalled();
-  });
-
-  it("fs.read denies a plugin's .bus-token", () => {
-    expect(() =>
-      call('fs.read', { path: path.join(cfg.dir, 'plugins', 'acme.ci', '.bus-token') }),
-    ).toThrow(/outside the allowed workspace/);
-    expect(readTextFile).not.toHaveBeenCalled();
-  });
-
-  it('fs.write denies overwriting a credential (a token DoS is a bus outage)', () => {
-    expect(() =>
-      call('fs.write', { path: path.join(cfg.dir, 'remote-token'), contents: 'x' }),
-    ).toThrow(/outside the allowed workspace/);
-    expect(writeTextFile).not.toHaveBeenCalled();
-  });
-
-  it('denies .bus-token / .settings.json by basename anywhere, not just in the config dir', () => {
-    // `workspacer plugin dev <dir>` mints these inside an ordinary project, which
-    // is an agent cwd — a root no narrowing can help with.
-    const devPlugin = fs.mkdtempSync(path.join(agentCwd, 'wks-devplugin-'));
-    for (const name of ['.bus-token', '.settings.json']) {
-      expect(() => call('fs.read', { path: path.join(devPlugin, name) })).toThrow(
-        /outside the allowed workspace/,
-      );
-    }
-    expect(readTextFile).not.toHaveBeenCalled();
-    fs.rmSync(devPlugin, { recursive: true, force: true });
-  });
-
-  it('still allows the library/ subtree the UI edits', () => {
-    const item = path.join(cfg.dir, 'library', 'prompt.md');
-    expect(() => call('fs.read', { path: item })).not.toThrow();
-    expect(readTextFile).toHaveBeenCalledWith(item);
-  });
-
-  it('denies the config secret on the roots check too when no agent cwd covers it', () => {
-    getAllSnapshots.mockReturnValue([] as never);
-    expect(() => call('fs.read', { path: path.join(cfg.dir, 'remote-token') })).toThrow(
-      /outside the allowed workspace/,
-    );
-    expect(readTextFile).not.toHaveBeenCalled();
-  });
-});
-
-describe('library.* cwd confinement', () => {
-  // `cwd` selects the project whose .workspacer/library + .claude assets are
-  // listed, written and (recursively) deleted — untrusted on the bus.
-  let agentCwd: string;
-  beforeEach(() => {
-    agentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-')));
-    getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
-  });
-
-  it('library.save is denied for a cwd outside the workspace', () => {
-    expect(() =>
-      call('library.save', {
-        scope: 'project',
-        cwd: os.homedir(),
-        title: 't',
-        kind: 'prompt',
-        body: 'b',
-      }),
-    ).toThrow(/outside the allowed workspace/);
-    expect(libraryMock.save).not.toHaveBeenCalled();
-  });
-
-  it('library.save runs for a live agent cwd', () => {
-    call('library.save', {
-      scope: 'project',
-      cwd: agentCwd,
-      title: 't',
-      kind: 'prompt',
-      body: 'b',
-    });
-    expect(libraryMock.save).toHaveBeenCalledTimes(1);
-  });
-
-  it('library.remove is denied for a cwd outside the workspace', () => {
-    expect(() =>
-      call('library.remove', { scope: 'claude', id: 'x', cwd: '/etc', kind: 'skill' }),
-    ).toThrow(/outside the allowed workspace/);
-    expect(libraryMock.remove).not.toHaveBeenCalled();
-  });
-
-  it('library.list is denied for a cwd outside the browsable tree', () => {
-    expect(() => call('library.list', { cwd: '/etc' })).toThrow(/outside the allowed workspace/);
-    expect(libraryMock.list).not.toHaveBeenCalled();
-  });
-
-  it('library.list allows a directory under home that is not an agent cwd yet', () => {
-    // The New Agent dialog lists the library of the directory the user is about
-    // to spawn in, to populate the project-MCP picker — no agent runs there yet,
-    // and the dialog swallows errors, so a workspace-roots rule here would show
-    // an empty picker rather than an error. Same browse rule as fs.listDir.
-    const notYetSpawned = path.join(os.homedir(), 'some-project');
-    call('library.list', { cwd: notYetSpawned });
-    expect(libraryMock.list).toHaveBeenCalledWith(notYetSpawned);
   });
 });
 

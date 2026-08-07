@@ -19,11 +19,19 @@ import (
 // profile mirrors a claude-profiles.json entry. configDir becomes
 // CLAUDE_CONFIG_DIR; extraArgs is where --model / skip-permissions may be pinned.
 type profile struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	ConfigDir  string   `json:"configDir"`
-	ExtraArgs  []string `json:"extraArgs"`
-	MCPItemIDs []string `json:"mcpItemIds,omitempty"`
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	ConfigDir string   `json:"configDir"`
+	ExtraArgs []string `json:"extraArgs"`
+	// mcpItemIds carries the Library MCP servers a spawn pre-selects. NOT
+	// omitempty: main's claude.profiles.add stores `mcpItemIds ?? []`, so the
+	// desktop copy always emits the key, and the brain is the DEFAULT answerer
+	// for this method (main's `cat()` is a no-op unless WORKSPACER_NO_BRAIN=1).
+	// omitempty made the brain's reply and its on-disk record drop the field
+	// entirely for a profile with no servers — the same method answering with
+	// two different shapes depending on which provider ran. normalizeProfiles
+	// keeps it an array rather than the JSON null a nil slice would marshal to.
+	MCPItemIDs []string `json:"mcpItemIds"`
 	IsDefault  bool     `json:"isDefault"`
 }
 
@@ -76,14 +84,24 @@ func loadProfiles() []profile {
 	if !hasDefault {
 		out = append([]profile{{ID: "default", Name: "Default", IsDefault: true}}, out...)
 	}
-	// Never serve a nil extraArgs: it marshals as JSON null, and clients (the
-	// desktop renderer over the web bridge) index/measure it as an array.
-	for i := range out {
-		if out[i].ExtraArgs == nil {
-			out[i].ExtraArgs = []string{}
+	normalizeProfiles(out)
+	return out
+}
+
+// normalizeProfiles replaces nil list fields with empty arrays, in place.
+// Never serve a nil extraArgs/mcpItemIds: it marshals as JSON null, and clients
+// (the desktop renderer over the web bridge) index/measure them as arrays.
+// Applied on both read (loadProfiles) and write (saveProfiles) so neither the
+// bus reply nor the file on disk can carry a null where main writes [].
+func normalizeProfiles(ps []profile) {
+	for i := range ps {
+		if ps[i].ExtraArgs == nil {
+			ps[i].ExtraArgs = []string{}
+		}
+		if ps[i].MCPItemIDs == nil {
+			ps[i].MCPItemIDs = []string{}
 		}
 	}
-	return out
 }
 
 func readProfilesFile() []profile {
@@ -104,6 +122,7 @@ func saveProfiles(ps []profile) error {
 	if err := os.MkdirAll(configDir(), 0o755); err != nil {
 		return err
 	}
+	normalizeProfiles(ps)
 	data, err := json.MarshalIndent(map[string][]profile{"profiles": ps}, "", "  ")
 	if err != nil {
 		return err
@@ -125,6 +144,11 @@ func addProfile(name, configDirVal string, extraArgs, mcpItemIDs []string) (*pro
 	}
 	if extraArgs == nil {
 		extraArgs = []string{}
+	}
+	// Same default main applies (`mcpItemIds ?? []`): the returned profile is
+	// what the caller renders, and it must not differ by provider.
+	if mcpItemIDs == nil {
+		mcpItemIDs = []string{}
 	}
 	p := profile{
 		ID:         id,

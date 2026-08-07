@@ -15,6 +15,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -182,24 +183,35 @@ func (s *Server) RegisterPluginToken(token, pluginID string, grants []capspec.Gr
 			log.Printf("[bus] SECURITY: refusing to grant %q to plugin %q — it is named like a filesystem capability but has no internal/capspec.PathParam entry, so it would run unconfined. Add it to capspec (with the params field carrying its path) before granting it.", g.Method, pluginID)
 			continue
 		}
-		set[g.Method] = capGrant{fsRoots: canonRoots(g.FSRoots)}
+		set[g.Method] = capGrant{fsRoots: canonRoots(g.FSRoots, pluginID, g.Method)}
 	}
 	s.ptMu.Lock()
 	s.pluginTokens[token] = pluginIdent{id: pluginID, caps: set, events: events}
 	s.ptMu.Unlock()
 }
 
-// canonRoots canonicalizes grant roots once at registration, dropping any that
-// don't resolve (a root that isn't a real path can't confine anything safely).
-func canonRoots(roots []string) []string {
+// canonRoots canonicalizes grant roots once at registration, DISCARDING any that
+// can't confine anything safely: empty, whitespace-only, relative (including a
+// "~" prefix, which nobody expands) or unresolvable. Handing "" to a resolver
+// would return the daemon's own working directory and silently grant it, which
+// is why the empty/relative test lives in canonicalizeRoot rather than being
+// left to the walk.
+//
+// A discard is logged with the plugin and capability that declared it: a broken
+// manifest root that merely stops working is a support ticket nobody can read,
+// and one that silently widened the grant would be worse.
+func canonRoots(roots []string, pluginID, method string) []string {
 	if len(roots) == 0 {
 		return nil
 	}
 	out := make([]string, 0, len(roots))
 	for _, r := range roots {
-		if c, err := canonicalize(r); err == nil {
-			out = append(out, c)
+		c, ok := canonicalizeRoot(r)
+		if !ok {
+			log.Printf("[bus] plugin %q capability %q: discarding declared filesystem root %q — it is empty, relative or unresolvable, so it grants nothing. Declare an absolute path (no \"~\").", pluginID, method, r)
+			continue
 		}
+		out = append(out, c)
 	}
 	return out
 }
@@ -782,10 +794,18 @@ func (cn *conn) authorize(method string, params json.RawMessage) error {
 		return fmt.Errorf("%s: missing %q for filesystem-scoped capability", method, field)
 	}
 	within, err := pathWithinRoots(g.fsRoots, target)
-	if err != nil {
+	switch {
+	case errors.Is(err, errSecretPath):
+		// The SECRET arm deliberately says nothing about the path: it reaches a
+		// remote caller, and confirming that a denied path hit something worth
+		// protecting is a probe primitive. Same wording as the brain's
+		// assertPathAllowed. The containment arm below keeps its own, path-
+		// echoing message — a plugin's grant scope is its own install-time
+		// consented data, so naming it back is not a disclosure.
+		return fmt.Errorf("%s: path is outside the allowed workspace (agent cwds + config stores)", method)
+	case err != nil:
 		return fmt.Errorf("%s: cannot resolve %q: %w", method, target, err)
-	}
-	if !within {
+	case !within:
 		return fmt.Errorf("%s: path %q is outside the plugin's granted scope", method, target)
 	}
 	return nil

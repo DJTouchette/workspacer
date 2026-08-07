@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/djtouchette/workspacer-hub/internal/bus"
 	"github.com/djtouchette/workspacer-hub/internal/capspec"
 	"github.com/djtouchette/workspacer-hub/internal/event"
 	"github.com/djtouchette/workspacer-hub/internal/sandbox"
@@ -123,6 +124,38 @@ func expandScope(p string, bindings map[string]string) string {
 		return full
 	}
 	if filepath.IsAbs(p) {
+		// An absolute scope used to pass through unexamined, on install-time
+		// consent alone: a manifest declaring fs.read on the config dir could
+		// read remote-token and reconnect as a TRUSTED bus connection, which
+		// drops per-plugin scoping and unlocks /plugins/install — arbitrary
+		// commands. Refuse the scope here, at manifest resolution, where it is
+		// cheaper than a per-call check and visible in the load log.
+		//
+		// This does NOT replace the bus's per-call secret gate (policy.go
+		// pathIsSecret): a symlink planted into the config dir AFTER install
+		// would make an innocuous-looking scope reach it, and that resolution
+		// only happens at call time. Both ship.
+		//
+		// The ${…} branch above is deliberately NOT checked here: ${pluginDir}
+		// resolves inside <config>/plugins/<id>, so checking it would drop every
+		// such grant at load time. Note the per-call gate still refuses those
+		// paths (the config dir minus library/ layouts/ sessions/ is secret by
+		// location, plugins/** included), so a plugin that wants its own data
+		// through fs.* is refused at call time rather than at load time — the
+		// place to fix that, if it ever needs fixing, is the shared rule in
+		// contracts/path-containment-cases.json, not a second opinion here.
+		canon, ok := bus.CanonicalizeRoot(p)
+		if !ok {
+			// Unresolvable (a component that is not a directory, an unreadable
+			// ancestor, a symlink cycle). The bus would discard it at grant
+			// registration anyway; dropping it here keeps the two in step.
+			log.Printf("plugin: dropping absolute path scope %q — it does not canonicalize, so it can confine nothing", p)
+			return ""
+		}
+		if bus.PathIsSecret(canon) {
+			log.Printf("SECURITY: dropping absolute path scope %q — it names a credential file or lands in the config dir outside library/ layouts/ sessions/", p)
+			return ""
+		}
 		return p
 	}
 	return ""
