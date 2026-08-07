@@ -17,6 +17,8 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+
+	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 )
 
 // slugFixtureRel is relative to this package dir (services/hub/cmd/brain).
@@ -36,6 +38,10 @@ type slugFixture struct {
 	Owners map[string][]string `json:"owners"`
 	Cases  []slugCase          `json:"cases"`
 }
+
+// slugCorpusFloor is the size of the corpus today. See fsguard_test.go's floors:
+// a floor of "not zero" is met by a corpus that lost 16 of its 17 cases.
+const slugCorpusFloor = 17
 
 func TestFilenameSlugContractCases(t *testing.T) {
 	raw, err := os.ReadFile(slugFixtureRel)
@@ -66,8 +72,13 @@ func TestFilenameSlugContractCases(t *testing.T) {
 		"layout":  slugLayout,
 		"session": slugSession,
 	}
+	// The floor. `len(fx.Cases) == 0` above catches a corpus that vanished; it
+	// does not catch one that SHRANK, and it does not notice a case that
+	// registered and then never asserted. The tally counts inside the body.
+	var tally sweepguard.Tally
 	for _, c := range fx.Cases {
 		t.Run(c.Name, func(t *testing.T) {
+			tally.Ran("other")
 			for variant, fn := range fns {
 				want, ok := c.Expect[variant]
 				if !ok {
@@ -91,4 +102,8 @@ func TestFilenameSlugContractCases(t *testing.T) {
 			}
 		})
 	}
+	if err := tally.RequireEvery("the filename-slug corpus", slugCorpusFloor); err != nil {
+		t.Fatal(err)
+	}
+	t.Log(tally.String())
 }

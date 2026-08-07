@@ -60,9 +60,7 @@ func mustSymlink(t *testing.T, target, link string) {
 	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(target, link); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
+	gateSymlink(t, target, link)
 }
 
 func TestLibraryItemDirsRefuseEveryShapeOfTheComparison(t *testing.T) {

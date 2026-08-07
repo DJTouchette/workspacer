@@ -22,6 +22,54 @@
  * The Go twin is services/hub/internal/sweepguard.
  */
 import { it, expect } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFileSync } from 'child_process';
+
+/**
+ * The lever that makes every host gate in this repo falsifiable on a machine
+ * that HAS the privilege: WKS_TEST_NO_SYMLINKS=1 / WKS_TEST_NO_GIT=1 simulate
+ * the host that does not. Without it the only way to watch a floor bite is to
+ * find such a host — which is precisely why gates without assertions survived
+ * here for so long: their failure is invisible everywhere anyone looks.
+ *
+ * The Go twin is cmd/brain/hostgate_test.go's hostFeatureDisabled.
+ */
+export function hostFeatureDisabled(feature: string): boolean {
+  const v = (process.env[`WKS_TEST_NO_${feature}`] ?? '').trim();
+  return v !== '' && v !== '0' && v.toLowerCase() !== 'false';
+}
+
+/**
+ * Can this host create a symlink? Five test files had a byte-identical copy of
+ * this probe, none of which honoured the lever above; keeping one copy is what
+ * lets a single env var turn the whole suite into a no-symlink host and prove
+ * the floors are real.
+ */
+export const CAN_SYMLINK: boolean = (() => {
+  if (hostFeatureDisabled('SYMLINKS')) return false;
+  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-symprobe-'));
+  try {
+    fs.symlinkSync(probe, path.join(probe, 'l'));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    fs.rmSync(probe, { recursive: true, force: true });
+  }
+})();
+
+/** Is a real `git` binary on PATH? Same lever, same reason. */
+export const HAS_GIT: boolean = (() => {
+  if (hostFeatureDisabled('GIT')) return false;
+  try {
+    execFileSync('git', ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 const ALLOW_WORDS = new Set(['allow', 'accept', 'ok', 'pass']);
 const DENY_WORDS = new Set(['deny', 'refuse', 'reject', 'fail']);
@@ -56,6 +104,13 @@ export class SweepTally {
     return this.allow + this.deny + this.other;
   }
 
+  /** Every case the sweep REACHED — executed plus skipped. The host-independent
+   *  number: a case that skips for want of symlink privilege still counts, a case
+   *  deleted from the fixture does not. */
+  get enumerated(): number {
+    return this.executed + this.skippedCount;
+  }
+
   private skipSuffix(): string {
     if (this.skippedCount === 0) return '';
     const parts = [...this.reasons.entries()]
@@ -87,6 +142,37 @@ export class SweepTally {
 export function itSweptBothVerdicts(tally: SweepTally, what: string): void {
   it(`[floor] ${what} executed both allow and deny cases`, () => {
     expect(tally.problem(what, 1, 1), tally.summary()).toBeNull();
+  });
+}
+
+/**
+ * The floor with a RATCHET, and what a fixture-driven sweep must use instead of
+ * itSweptBothVerdicts.
+ *
+ * A floor of one is satisfied by a corpus that lost 98% of its cases: 79
+ * executed cases shrinking to 2 (a bad merge, a filter that stopped matching, a
+ * fixture edit that drops an array) keeps one allow and one deny and stays green
+ * forever. `minEnumerated` is checked against `enumerated`, not `executed`,
+ * because execution is host-dependent — a machine that cannot make symlinks
+ * legitimately skips half the corpus — while enumeration is a property of the
+ * fixture and the loader, identical everywhere. The verdict floors stay small
+ * and stay on executed: they answer a different question ("did THIS host prove
+ * anything about each class").
+ *
+ * The Go twin is sweepguard.Tally.RequireCorpus.
+ */
+export function itSweptTheWholeCorpus(
+  tally: SweepTally,
+  what: string,
+  minEnumerated: number,
+  min: { allow?: number; deny?: number } = { allow: 1, deny: 1 },
+): void {
+  it(`[floor] ${what} swept its whole corpus`, () => {
+    expect(
+      tally.enumerated,
+      `${what} reached ${tally.enumerated} cases but the floor is ${minEnumerated} — the corpus SHRANK. This count is host-independent, so it is not a skip: restore the cases, or lower the floor deliberately and say why. ${tally.summary()}`,
+    ).toBeGreaterThanOrEqual(minEnumerated);
+    expect(tally.problem(what, min.allow ?? 1, min.deny ?? 1), tally.summary()).toBeNull();
   });
 }
 

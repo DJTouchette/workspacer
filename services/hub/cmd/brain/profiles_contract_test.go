@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 )
 
 type profilesContract struct {
@@ -85,11 +87,22 @@ func profileIDs(ps []profile) []string {
 	return out
 }
 
+// The three blocks' sizes today. Whether the fixture decoded at all was the only
+// thing this loader checked, and an empty `add` block behind a populated `list`
+// one reads the same as a full file.
+const (
+	profilesListFloor   = 4
+	profilesAddFloor    = 2
+	profilesMutateFloor = 2
+)
+
 func TestClaudeProfilesContractCases(t *testing.T) {
 	fx := loadProfilesContract(t)
 
+	var list, add, mutate sweepguard.Tally
 	for _, c := range fx.List {
 		t.Run("list/"+c.Name, func(t *testing.T) {
+			list.Ran("other")
 			seedProfiles(t, c.File)
 			gotJSON, _ := json.Marshal(loadProfiles())
 			wantJSON, _ := json.Marshal(c.ExpectedList)
@@ -106,6 +119,7 @@ func TestClaudeProfilesContractCases(t *testing.T) {
 
 	for _, c := range fx.Add {
 		t.Run("add/"+c.Name, func(t *testing.T) {
+			add.Ran("other")
 			seedProfiles(t, c.File)
 			got, err := addProfile(c.Add.Name, c.Add.ConfigDir, c.Add.ExtraArgs, c.Add.MCPItemIDs)
 			if err != nil {
@@ -138,6 +152,7 @@ func TestClaudeProfilesContractCases(t *testing.T) {
 
 	for _, c := range fx.Mutate {
 		t.Run("mutate/"+c.Name, func(t *testing.T) {
+			mutate.Ran("other")
 			seedProfiles(t, c.File)
 			if c.UpdateID != "" {
 				_ = loadProfiles() // the caller has listed first, as a client would
@@ -161,5 +176,20 @@ func TestClaudeProfilesContractCases(t *testing.T) {
 				}
 			}
 		})
+	}
+
+	for _, f := range []struct {
+		what  string
+		tally *sweepguard.Tally
+		floor int
+	}{
+		{"the claude-profiles list block", &list, profilesListFloor},
+		{"the claude-profiles add block", &add, profilesAddFloor},
+		{"the claude-profiles mutate block", &mutate, profilesMutateFloor},
+	} {
+		if err := f.tally.RequireEvery(f.what, f.floor); err != nil {
+			t.Error(err)
+		}
+		t.Logf("%s: %s", f.what, f.tally.String())
 	}
 }

@@ -117,9 +117,7 @@ func TestFsCallsOutsideTheWorkspaceAreDenied(t *testing.T) {
 	// A symlink INSIDE the allowed cwd pointing out of it: the reason
 	// containment has to resolve symlinks rather than string-prefix the input.
 	link := filepath.Join(dir, "escape")
-	if err := os.Symlink(filepath.Dir(outside), link); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
+	gateSymlink(t, filepath.Dir(outside), link)
 
 	cases := []struct {
 		name string
@@ -351,9 +349,7 @@ func TestLibraryListDoesNotReadThroughASymlinkOutOfTheRoots(t *testing.T) {
 	if err := os.MkdirAll(projLib, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(token, filepath.Join(projLib, "pwn.md")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
+	gateSymlink(t, token, filepath.Join(projLib, "pwn.md"))
 	skill := filepath.Join(cwd, ".claude", "skills", "x")
 	if err := os.MkdirAll(skill, 0o755); err != nil {
 		t.Fatal(err)
@@ -401,9 +397,7 @@ func TestLibraryRemoveDoesNotDeleteOutsideTheRootsThroughASymlink(t *testing.T) 
 	if err := os.MkdirAll(filepath.Join(cwd, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(configDir(), filepath.Join(cwd, ".claude", "skills")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
+	gateSymlink(t, configDir(), filepath.Join(cwd, ".claude", "skills"))
 
 	reg := registryWithCwd(t, cwd)
 	if _, err := reg.handle(context.Background(), "library.remove",
@@ -456,6 +450,48 @@ func TestNoLiveAgentsMeansNoWorkspaceRoots(t *testing.T) {
 // and then the second half of the contract: that every path-bearing method the
 // brain answers actually calls the predicate.
 // ---------------------------------------------------------------------------
+
+// The FLOORS. Each is the size the sweep has today, checked in so that a corpus
+// or an overlap which SHRINKS is a named failure instead of a smaller green run.
+// Raise them when the corpus grows; lowering one is a deliberate act that has to
+// be explained in the commit, which is the whole point of writing them down.
+const (
+	// containmentCorpusFloor is the number of `cases` entries this
+	// implementation owns. Checked against ENUMERATED cases (executed +
+	// skipped), so it is the same number on a host that can make symlinks and
+	// one that cannot.
+	containmentCorpusFloor = 107
+	// brainMethodFloor is how many of capspec.PathParam's path-bearing methods
+	// this brain both provides and dispatches. Checked against EXECUTED
+	// subtests: nothing here is host-gated, so a shortfall is drift between
+	// capspec, the corpus and the registry.
+	brainMethodFloor = 8
+	// asciiFoldFloor is the size of the `asciiFold.cases` block.
+	asciiFoldFloor = 10
+	// sessionFilenameFloor is the size of the `sessionFilenames.cases` block.
+	sessionFilenameFloor = 12
+	// The rootSet column, split by the verdict each arm demands of the $HOME
+	// probe: browse must accept it, workspace must refuse it.
+	browseRootSetFloor    = 2
+	workspaceRootSetFloor = 6
+)
+
+// methodDenyFloor is how many corpus deny cases one method's sweep must
+// actually execute. The two derivation methods (library.save composes its
+// destination) legitimately sweep only the containment group, and the browse
+// methods lose the cases that aim at the home tree, so a single global number
+// would have to be the minimum over all of them — which is no floor at all for
+// the rest.
+func methodDenyFloor(m contractMethod) int {
+	switch {
+	case derivesDestination(m):
+		return 35
+	case m.RootSet == "browse":
+		return 60
+	default:
+		return 65
+	}
+}
 
 // contractFixtureRel is relative to this package dir (services/hub/cmd/brain).
 const contractFixtureRel = "../../../../contracts/path-containment-cases.json"
@@ -587,15 +623,20 @@ func TestAsciiFoldMatchesTheFixture(t *testing.T) {
 		t.Fatal("the fixture must carry asciiFold vectors, or this guard guards nothing")
 	}
 	sawNonASCII := false
+	var tally sweepguard.Tally
 	for _, c := range fx.AsciiFold.Cases {
 		for _, r := range c.In {
 			if r > 127 {
 				sawNonASCII = true
 			}
 		}
+		tally.Ran("other")
 		if got := asciiLower(c.In); got != c.Out {
 			t.Errorf("asciiLower(%q) = %q, want %q", c.In, got, c.Out)
 		}
+	}
+	if err := tally.RequireEvery("the asciiFold block", asciiFoldFloor); err != nil {
+		t.Fatal(err)
 	}
 	if !sawNonASCII {
 		t.Fatal("every asciiFold vector is pure ASCII, so strings.ToLower would pass them all — the block distinguishes nothing")
@@ -1352,10 +1393,14 @@ func TestPathContainmentContractCases(t *testing.T) {
 		})
 	}
 
-	// Both classes, separately. A corpus that ran only allows says the guard
-	// lets things through and nothing else; a corpus that ran only denies is
-	// satisfied by a guard that refuses everything.
-	if err := tally.RequireBoth("the fsguard containment corpus"); err != nil {
+	// Both classes, separately, over a corpus that did not SHRINK. A corpus that
+	// ran only allows says the guard lets things through and nothing else; one
+	// that ran only denies is satisfied by a guard that refuses everything; and
+	// a floor of one of each is satisfied by a 107-case corpus that lost 105 of
+	// them, which is the same failure arriving through a bad merge instead of a
+	// bad host. containmentCorpusFloor is checked against ENUMERATED cases, so
+	// it holds identically on a machine that skips most of the sweep.
+	if err := tally.RequireCorpus("the fsguard containment corpus", containmentCorpusFloor, 1, 1); err != nil {
 		t.Fatal(err)
 	}
 	t.Log(tally.String())
@@ -1433,7 +1478,12 @@ func TestEveryPathBearingBrainMethodIsConfined(t *testing.T) {
 		}
 	}
 
-	exercised := 0
+	// `exercised` counts what the loop EXECUTED, and it is incremented inside the
+	// subtest for that reason: incrementing it here, next to t.Run, counts
+	// REGISTRATION, and a registration count is a full house in a run where every
+	// subtest skipped. That is the exact species this file keeps re-finding, so
+	// it is not repeated in the loop that hunts it.
+	var exercised sweepguard.Tally
 	for _, method := range sortedMethods(capspec.PathParam) {
 		m, ok := byMethod[method]
 		if !ok {
@@ -1448,13 +1498,27 @@ func TestEveryPathBearingBrainMethodIsConfined(t *testing.T) {
 		if !m.providedByBrain() {
 			t.Errorf("the brain dispatches %s but the corpus does not list it as a brain provider, so nothing would have tested this side of it", method)
 		}
-		exercised++
-		t.Run(method, func(t *testing.T) { assertMethodRejectsCorpus(t, fx, groups, m) })
+		t.Run(method, func(t *testing.T) {
+			t.Cleanup(func() {
+				if t.Skipped() {
+					exercised.Skip("the whole method subtest skipped")
+				}
+			})
+			assertMethodRejectsCorpus(t, fx, groups, m)
+			// Past every gate, and the per-method floor inside has already
+			// insisted the method ran corpus cases: this method was swept. It
+			// is filed as a deny because that is what the sweep asserts — every
+			// case it drives is a refusal.
+			exercised.Ran("deny")
+		})
 	}
-	if exercised == 0 {
-		t.Fatal("no path-bearing brain method was exercised — capspec, the corpus and the registry have drifted out of overlap and this guard is guarding nothing")
+	// EXECUTED, not enumerated: nothing in this sweep is host-gated, so a
+	// subtest that did not run is a drift between capspec, the corpus and the
+	// registry — the very overlap this test measures — and not a machine.
+	if err := exercised.Require("the path-bearing brain method sweep", 0, brainMethodFloor); err != nil {
+		t.Fatal(err)
 	}
-	t.Logf("%d of capspec's %d path-bearing methods are answered by this brain", exercised, len(capspec.PathParam))
+	t.Logf("%s of capspec's %d path-bearing methods are answered by this brain", exercised.String(), len(capspec.PathParam))
 }
 
 // assertMethodRejectsCorpus drives one real handler with every deny case the
@@ -1463,7 +1527,12 @@ func TestEveryPathBearingBrainMethodIsConfined(t *testing.T) {
 // would mask a missing guard.
 func assertMethodRejectsCorpus(t *testing.T, fx contractFixture, groups map[string]bool, m contractMethod) {
 	t.Helper()
-	ran := 0
+	// A Tally, not an int, and every "did not assert" path files a Skip with its
+	// reason. The int this replaces was incremented at a point that had already
+	// stopped being "about to assert": the derivationCleansTheEscape arm below
+	// returns on an unrelated error, so a handler that failed for ANY reason —
+	// a decode error, a missing param — counted as a case run.
+	var tally sweepguard.Tally
 	for _, c := range fx.Cases {
 		if !groups[c.Group] || c.Expect != "deny" {
 			continue
@@ -1517,6 +1586,7 @@ func assertMethodRejectsCorpus(t *testing.T, fx contractFixture, groups map[stri
 			}
 			target := sub(c.Target)
 			if why := blankTargetIsAnsweredBeforeTheGuard(m, target); why != "" {
+				tally.Skip(why)
 				t.Skip(why)
 			}
 			// What remains after the relocation: the handful of cases that AIM at
@@ -1525,9 +1595,9 @@ func assertMethodRejectsCorpus(t *testing.T, fx contractFixture, groups map[stri
 			// browses those, so they cannot be deny cases for it. This skip now
 			// covers only them.
 			if m.RootSet == "browse" && underHome(target) {
+				tally.Skip("target under $HOME, which a browse method legitimately serves")
 				t.Skipf("target %s is inside $HOME, which %s legitimately browses", target, m.Method)
 			}
-			ran++
 
 			roots := substituted(sub, c.Roots)
 			reg := registryWithCwds(t, roots...)
@@ -1554,11 +1624,20 @@ func assertMethodRejectsCorpus(t *testing.T, fx contractFixture, groups map[stri
 				// directly — with EvalSymlinks, an oracle that shares no code
 				// with the thing under test.
 				if err != nil {
+					// The handler refused, for a reason this branch cannot
+					// attribute — the escape was collapsed before the guard, so
+					// the refusal may be about anything at all. NOTHING has been
+					// asserted here, and counting it as a case run is how the
+					// old int reported a full sweep for cases that tested
+					// nothing.
+					tally.Skip("derivation collapsed the escape and the handler refused; there is nothing left to attribute")
 					return
 				}
+				tally.Ran(c.Expect)
 				assertWroteInsideARoot(t, res, roots)
 				return
 			}
+			tally.Ran(c.Expect)
 
 			if err == nil {
 				t.Fatalf("%s with %s=%q must be refused\n  roots: %q\n  why:   %s",
@@ -1580,11 +1659,16 @@ func assertMethodRejectsCorpus(t *testing.T, fx contractFixture, groups map[stri
 			}
 		})
 	}
-	// The per-method floor. TestEveryPathBearingBrainMethodIsConfined counts
-	// METHODS, not cases, so a method that contributed zero cases was invisible.
-	if ran == 0 {
-		t.Fatalf("%s ran ZERO corpus deny cases — this subtest asserted nothing", m.Method)
+	// The per-method floor, RATCHETED. TestEveryPathBearingBrainMethodIsConfined
+	// counts METHODS, not cases, so a method that contributed zero cases was
+	// invisible; and `> 0` would still be met by a method down to its last case.
+	// The floor is per-method because the two derivation methods legitimately
+	// sweep a subset (see derivesDestination), and it is on EXECUTED deny cases
+	// because every skip above is attributed, not host-dependent.
+	if err := tally.Require(m.Method+"'s corpus deny sweep", 0, methodDenyFloor(m)); err != nil {
+		t.Fatal(err)
 	}
+	t.Logf("%s: %s", m.Method, tally.String())
 
 	// The floor. Every assertion above is a denial, and a handler that refuses
 	// unconditionally satisfies all of them — so one legitimate in-root call must
@@ -1734,13 +1818,24 @@ func TestPathBearingMethodRootSetsMatchTheCorpus(t *testing.T) {
 		}
 	}
 
-	ran := 0
+	// THE COUNTER IS INSIDE THE SUBTEST. It used to be `ran++` here, next to
+	// t.Run, which counts REGISTRATION — and this test's own header describes the
+	// run in which all eight of its subtests skipped and the package printed ok.
+	// A registration counter cannot see that; it reports 8 either way. The rule
+	// is sweepguard's, in its first paragraph, and this was the loop that broke
+	// it. browse and workspace are filed apart, too: a sweep that ran only browse
+	// methods asserted that the guard admits things and nothing else.
+	var swept sweepguard.Tally
 	for _, m := range fx.Methods {
 		if !m.providedByBrain() || !dispatched[m.Method] {
 			continue
 		}
-		ran++
 		t.Run(m.Method, func(t *testing.T) {
+			t.Cleanup(func() {
+				if t.Skipped() {
+					swept.Skip("the rootSet probe for " + m.Method + " skipped")
+				}
+			})
 			// A config dir of its own, so the config stores cannot be what
 			// admits (or refuses) the probe.
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -1813,6 +1908,13 @@ func TestPathBearingMethodRootSetsMatchTheCorpus(t *testing.T) {
 			default:
 				t.Fatalf("unknown rootSet %q in the corpus for %s", m.RootSet, m.Method)
 			}
+			// Past every assertion, filed by the verdict the probe demanded:
+			// browse must ACCEPT the $HOME probe, workspace must REFUSE it.
+			if m.RootSet == "browse" {
+				swept.Ran("allow")
+			} else {
+				swept.Ran("deny")
+			}
 		})
 	}
 	// Zero subtests is the failure mode this whole family of tests keeps
@@ -1820,10 +1922,14 @@ func TestPathBearingMethodRootSetsMatchTheCorpus(t *testing.T) {
 	// set for the same reason. Without this, a corpus that stopped naming
 	// "brain" as a provider — or a registry that stopped dispatching — would
 	// report a green PASS having asserted nothing at all.
-	if ran == 0 {
-		t.Fatal("no brain-provided path-bearing method was swept — the corpus, the registry and this loop have drifted out of overlap and the rootSet column is pinned by nothing")
+	// Two browse methods and six workspace ones today, and BOTH numbers are the
+	// floor: the browse arm is the only thing that proves the guard still admits
+	// a $HOME path, and the workspace arm the only thing that proves it refuses
+	// one. A sweep that lost either class would still pass a floor of one.
+	if err := swept.Require("the rootSet sweep", browseRootSetFloor, workspaceRootSetFloor); err != nil {
+		t.Fatal(err)
 	}
-	t.Logf("swept the rootSet column for %d brain-provided methods", ran)
+	t.Logf("swept the rootSet column: %s", swept.String())
 }
 
 // ---------------------------------------------------------------------------
@@ -1856,9 +1962,7 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 	// `<dir>/sub/link` -> `<dir>/real`, so the link's own parent (`<dir>/sub`)
 	// and its target's parent (`<dir>`) differ — the only shape that separates a
 	// per-component walk from a textual clean.
-	if err := os.Symlink(filepath.Join(dir, "real"), filepath.Join(dir, "sub", "link")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
+	gateSymlink(t, filepath.Join(dir, "real"), filepath.Join(dir, "sub", "link"))
 	// The probe every subtest uses, carrying BOTH defects at once. It resolves to
 	// `<dir>/<name>` and nothing else does:
 	//
@@ -1883,8 +1987,14 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 	// hand-maintained table here silently covered six of them.
 	covered := map[string]bool{}
 	run := func(site string, fn func(t *testing.T)) {
-		covered[site] = true
-		t.Run(site, fn)
+		// Marked from the BODY. Marking it here, beside t.Run, records what was
+		// REGISTERED — so a subtest that skipped, or one whose body was emptied,
+		// would still report its call site as covered and the comparison against
+		// the fixture's checkUse list at the bottom would still agree.
+		t.Run(site, func(t *testing.T) {
+			covered[site] = true
+			fn(t)
+		})
 	}
 
 	run("handlers.go fs.read -> readTextFile", func(t *testing.T) {
@@ -2121,9 +2231,7 @@ func TestGuardedHandlersDoNotRenormalizeTheCanonicalPath(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(outside, filepath.Join(dir, "link")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
+	gateSymlink(t, outside, filepath.Join(dir, "link"))
 	parent := filepath.Dir(dir)
 
 	// Each probe is an ALLOWED path (it resolves inside the agent cwd) that

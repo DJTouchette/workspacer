@@ -52,9 +52,7 @@ func TestSessionsForDir(t *testing.T) {
 }
 
 func TestListEntriesHidesGitAndIgnored(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
+	gateGit(t)
 	dir := t.TempDir()
 	if err := exec.Command("git", "-C", dir, "init").Run(); err != nil {
 		t.Skipf("git init failed: %v", err)

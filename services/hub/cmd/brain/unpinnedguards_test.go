@@ -179,9 +179,7 @@ func TestGlobalLibraryItemsSurviveASymlinkedConfigDir(t *testing.T) {
 	if err := os.MkdirAll(real, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(real, link); err != nil {
-		t.Skipf("cannot create symlinks here: %v", err)
-	}
+	gateSymlink(t, real, link)
 	t.Setenv("XDG_CONFIG_HOME", link)
 	t.Setenv("APPDATA", link)
 	t.Setenv("HOME", filepath.Join(sandbox, "home"))
@@ -250,9 +248,7 @@ func TestStoreWriteAndDeleteLegsUseTheGuardsAnswer(t *testing.T) {
 		if err := os.WriteFile(target, []byte("id: target\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(target, link); err != nil {
-			t.Skipf("cannot create symlinks here: %v", err)
-		}
+		gateSymlink(t, target, link)
 		removeLayout("alias")
 		if _, err := os.Stat(target); err == nil {
 			t.Error("removeLayout deleted the LINK and left the file layoutFilePath validated — check-path and opened-path are two different strings again")
@@ -272,9 +268,7 @@ func TestStoreWriteAndDeleteLegsUseTheGuardsAnswer(t *testing.T) {
 		if err := os.WriteFile(target, []byte("name: target\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(target, link); err != nil {
-			t.Skipf("cannot create symlinks here: %v", err)
-		}
+		gateSymlink(t, target, link)
 		deleteSavedSession("alias.yaml")
 		if _, err := os.Stat(target); err == nil {
 			t.Error("deleteSavedSession deleted the LINK and left the file sessionFilePath validated")
@@ -296,9 +290,7 @@ func TestStoreWriteAndDeleteLegsUseTheGuardsAnswer(t *testing.T) {
 		if err := os.WriteFile(target, []byte("name: walias\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(target, link); err != nil {
-			t.Skipf("cannot create symlinks here: %v", err)
-		}
+		gateSymlink(t, target, link)
 		if _, err := saveSavedSession("walias", map[string]any{"name": "walias", "agents": []any{}}); err != nil {
 			t.Fatalf("saveSavedSession: %v", err)
 		}
@@ -362,9 +354,7 @@ func TestListEntriesResolvesASymlinkedDirectoryAsADirectory(t *testing.T) {
 	if err := os.MkdirAll(real, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(real, filepath.Join(proj, "linkdir")); err != nil {
-		t.Skipf("cannot create symlinks here: %v", err)
-	}
+	gateSymlink(t, real, filepath.Join(proj, "linkdir"))
 	if err := os.WriteFile(filepath.Join(proj, "a.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -475,9 +465,7 @@ func TestLibrarySaveWritesThroughTheGuardsAnswer(t *testing.T) {
 		if err := os.WriteFile(target, []byte("old"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(target, link); err != nil {
-			t.Skipf("cannot create symlinks here: %v", err)
-		}
+		gateSymlink(t, target, link)
 		raw, _ := json.Marshal(map[string]any{
 			"scope": "project", "id": "note", "title": "Note", "kind": "prompt",
 			"body": "NEWBODY", "cwd": proj,
@@ -508,9 +496,7 @@ func TestLibrarySaveWritesThroughTheGuardsAnswer(t *testing.T) {
 		if err := os.WriteFile(target, []byte("old"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(target, link); err != nil {
-			t.Skipf("cannot create symlinks here: %v", err)
-		}
+		gateSymlink(t, target, link)
 		raw, _ := json.Marshal(map[string]any{
 			"scope": "claude", "kind": "agent", "id": "reviewer", "title": "reviewer",
 			"body": "CLAUDEBODY", "cwd": proj,

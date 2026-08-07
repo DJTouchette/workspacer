@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 )
 
 // TestDeepMergeContractCases runs the shared cross-language deepMerge fixture
@@ -38,8 +40,14 @@ func TestDeepMergeContractCases(t *testing.T) {
 	if len(fixture.Cases) == 0 {
 		t.Fatal("contract fixture has no cases")
 	}
+	// deepMergeFloor is the corpus's size today: "not zero" is met by a fixture
+	// that lost every case but one, and this corpus is the only thing holding
+	// the Go merge to the TypeScript one.
+	const deepMergeFloor = 9
+	var tally sweepguard.Tally
 	for _, c := range fixture.Cases {
 		t.Run(c.Name, func(t *testing.T) {
+			tally.Ran("other")
 			var target, source, expected map[string]any
 			if err := json.Unmarshal(c.Target, &target); err != nil {
 				t.Fatalf("unmarshal target: %v", err)
@@ -56,6 +64,10 @@ func TestDeepMergeContractCases(t *testing.T) {
 			}
 		})
 	}
+	if err := tally.RequireEvery("the deepMerge corpus", deepMergeFloor); err != nil {
+		t.Fatal(err)
+	}
+	t.Log(tally.String())
 }
 
 func TestConfigGetReloadsOnExternalChange(t *testing.T) {
@@ -529,8 +541,12 @@ func TestHostTrustedContractCases(t *testing.T) {
 		t.Errorf("hostTrustedPaths = %v, fixture says %v", hostTrustedPaths, fixture.Paths)
 	}
 
+	// hostTrustedFloor: the corpus's size today, for the same reason.
+	const hostTrustedFloor = 13
+	var tally sweepguard.Tally
 	for _, c := range fixture.Cases {
 		t.Run(c.Name, func(t *testing.T) {
+			tally.Ran("other")
 			got := dropHostTrusted(c.Partial)
 			// An empty fixture object unmarshals to an empty (non-nil) map; a
 			// dropped-everything result may be either. Compare by length first.
@@ -549,4 +565,8 @@ func TestHostTrustedContractCases(t *testing.T) {
 			}
 		})
 	}
+	if err := tally.RequireEvery("the host-trusted-config corpus", hostTrustedFloor); err != nil {
+		t.Fatal(err)
+	}
+	t.Log(tally.String())
 }

@@ -6,6 +6,7 @@
  * looks in a non-existent folder and the resume picker is always empty.
  */
 import { describe, it, expect, afterEach } from 'vitest';
+import { SweepTally, itSweptTheWholeCorpus } from '../../../tests/support/sweepTally';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -85,8 +86,13 @@ describe('claudeProjectDirName — contracts/path-containment-cases.json project
     expect(projectDirNameCases.length).toBeGreaterThan(0);
   });
 
+  // Counted in the BODY and filed by verdict: the refusals are what the capspec
+  // exemption for this encoder rests on, and the accepts are the only thing that
+  // says it still encodes. `length > 0` above sees neither.
+  const tally = new SweepTally();
   for (const c of projectDirNameCases) {
     it(`${JSON.stringify(c.cwd)} → ${JSON.stringify(c.expect)}`, async () => {
+      tally.ran(c.expect === null ? 'refuse' : 'accept');
       const { claudeProjectDirName } = await import('./claudeSessionList');
       const got = claudeProjectDirName(c.cwd);
       expect(got, c.why).toBe(c.expect);
@@ -98,6 +104,8 @@ describe('claudeProjectDirName — contracts/path-containment-cases.json project
       }
     });
   }
+
+  itSweptTheWholeCorpus(tally, 'the projectDirNames block', 8);
 
   it('does not enumerate ~/.claude when the cwd is ".."', async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-home-'));

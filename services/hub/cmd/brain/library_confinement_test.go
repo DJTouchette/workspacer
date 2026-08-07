@@ -84,9 +84,7 @@ func TestEveryLibraryListWalkerGuardsTheFileItOpens(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(plant), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Symlink(token, plant); err != nil {
-				t.Skipf("symlinks unavailable: %v", err)
-			}
+			gateSymlink(t, token, plant)
 			// The floor for this same leg, so a guard that simply refuses
 			// everything cannot satisfy the assertion below.
 			real := leg.real(cwd)
@@ -151,9 +149,7 @@ func TestLibraryListWithHomeAsTheCwdIsNotAnArbitraryHomeReader(t *testing.T) {
 	if err := os.MkdirAll(lib, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(key, filepath.Join(lib, "a.md")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
+	gateSymlink(t, key, filepath.Join(lib, "a.md"))
 
 	// Control: fs.read of the same path is refused (no live agents at all).
 	reg := newRegistry(nil)
@@ -222,9 +218,7 @@ func TestLibraryWritesAndDeletesStayInTheProjectTheCallerNamed(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := os.Symlink(projB, filepath.Join(projA, tc.link)); err != nil {
-				t.Skipf("symlinks unavailable: %v", err)
-			}
+			gateSymlink(t, projB, filepath.Join(projA, tc.link))
 			// A file in projB the delete leg would destroy.
 			keep := filepath.Join(projB, "keep")
 			if tc.name == "project scope" {

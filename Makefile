@@ -70,8 +70,22 @@ test: test-desktop test-hub test-claudemon test-tui
 test-desktop:
 	cd $(DESKTOP) && npm test
 
+## test-hub: the Go suite. -count=1 is the second belt on the cross-repo guards.
+##           Much of services/hub's suite reads files ABOVE the module —
+##           apps/desktop/src/main/services/hubCapabilities.ts, contracts/*.json,
+##           this Makefile, .github/workflows/ci.yml — and cmd/go's test cache
+##           drops out-of-module inputs from the cache key
+##           (computeTestInputsID: "Do not recheck files outside the module").
+##           internal/extinput puts them back by reading through a path that
+##           still descends lexically from the module root, which covers the
+##           edits that change a file's size or mtime; it does NOT cover a
+##           listing that grew a file where nothing was read, and cmd/go never
+##           hashes contents for these. The whole module runs uncached in 7s, so
+##           there is no reason to pay that risk for a saving nobody notices.
+##           cmd/brain's TestTheTestCacheBeltIsInCIAndTheMakefile asserts this
+##           flag is still here.
 test-hub:
-	cd $(HUB) && go test -race ./...
+	cd $(HUB) && go test -race -count=1 ./...
 
 test-claudemon:
 	cd $(CLAUDEMON) && cargo test

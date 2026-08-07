@@ -14,7 +14,7 @@
 // listDir, and a static sweep so the next `execFile('git', …)` cannot forget.
 
 import { describe, it, expect } from 'vitest';
-import { itRanEveryGatedTest, gatedIt } from '../../../tests/support/sweepTally';
+import { itRanEveryGatedTest, gatedIt, HAS_GIT } from '../../../tests/support/sweepTally';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -49,15 +49,6 @@ function plantRepo(sandbox: string, extraConfig: string, real = false): string {
   fs.appendFileSync(path.join(repo, '.git', 'config'), extraConfig);
   return repo;
 }
-
-const HAS_GIT = (() => {
-  try {
-    execFileSync('git', ['--version'], { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
-})();
 
 describe('git invocations carry the no-exec config prefix', () => {
   // The four tests below are the only ones that RUN git; the rest read source

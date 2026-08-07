@@ -9,6 +9,7 @@
 // contract test fails.
 
 import { describe, it, expect } from 'vitest';
+import { SweepTally, itSweptTheWholeCorpus } from '../../../tests/support/sweepTally';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import * as path from 'path';
@@ -42,12 +43,18 @@ describe('model pricing contract (shared with Rust pricing.rs)', () => {
     expect(fixture.cases.length).toBeGreaterThan(0);
   });
 
+  // A floor of ONE ("has cases") is met by a corpus that lost all but one of its
+  // rows, and this corpus is the only thing holding the TS pricing table to the
+  // Rust one.
+  const tally = new SweepTally();
   for (const c of fixture.cases) {
     it(`${c.model} → input ${c.input}/M, output ${c.output}/M${c.note ? ` (${c.note})` : ''}`, () => {
+      tally.ran('other');
       const inputRate = turnCostUSD(c.model, { input_tokens: 1_000_000 });
       const outputRate = turnCostUSD(c.model, { output_tokens: 1_000_000 });
       expect(inputRate).toBeCloseTo(c.input, 6);
       expect(outputRate).toBeCloseTo(c.output, 6);
     });
   }
+  itSweptTheWholeCorpus(tally, 'the model-pricing corpus', 11, { allow: 0, deny: 0 });
 });

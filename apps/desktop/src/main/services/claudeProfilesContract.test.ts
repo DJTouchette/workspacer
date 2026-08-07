@@ -14,6 +14,7 @@
 // config dir, so each case re-imports it against a fresh sandbox.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { SweepTally, itSweptTheWholeCorpus } from '../../../tests/support/sweepTally';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -98,9 +99,14 @@ async function service(): Promise<typeof import('./claudeProfiles').claudeProfil
   return mod.claudeProfiles;
 }
 
+const listTally = new SweepTally();
+const addTally = new SweepTally();
+const mutateTally = new SweepTally();
+
 describe('contracts/claude-profiles-cases.json — list', () => {
   for (const c of fixture.list) {
     it(c.name, async () => {
+      listTally.ran('other');
       seed(c.file);
       const svc = await service();
       expect(svc.getProfiles(), c.why).toEqual(c.expectedList);
@@ -112,6 +118,7 @@ describe('contracts/claude-profiles-cases.json — list', () => {
 describe('contracts/claude-profiles-cases.json — add', () => {
   for (const c of fixture.add) {
     it(c.name, async () => {
+      addTally.ran('other');
       seed(c.file);
       const svc = await service();
       const added = svc.addProfile(
@@ -133,6 +140,7 @@ describe('contracts/claude-profiles-cases.json — add', () => {
 describe('contracts/claude-profiles-cases.json — update/remove', () => {
   for (const c of fixture.mutate) {
     it(c.name, async () => {
+      mutateTally.ran('other');
       seed(c.file);
       const svc = await service();
       if (c.updateId) {
@@ -155,4 +163,13 @@ describe('contracts/claude-profiles-cases.json — update/remove', () => {
       }
     });
   }
+});
+
+// The three floors, declared last so every case above has run. `describe` blocks
+// that merely EXIST are what this file had; a block whose array emptied would
+// have registered no tests and reported green.
+describe('contracts/claude-profiles-cases.json — the floors', () => {
+  itSweptTheWholeCorpus(listTally, 'the claude-profiles list block', 4, { allow: 0, deny: 0 });
+  itSweptTheWholeCorpus(addTally, 'the claude-profiles add block', 2, { allow: 0, deny: 0 });
+  itSweptTheWholeCorpus(mutateTally, 'the claude-profiles mutate block', 2, { allow: 0, deny: 0 });
 });

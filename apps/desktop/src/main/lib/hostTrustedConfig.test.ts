@@ -11,6 +11,7 @@
 // electron-updater feed URL the app downloads and installs from.
 
 import { describe, it, expect } from 'vitest';
+import { SweepTally, itSweptTheWholeCorpus } from '../../../tests/support/sweepTally';
 import { readFileSync } from 'fs';
 import * as path from 'path';
 import { dropHostTrusted, HOST_TRUSTED_PATHS, HOST_TRUSTED_SECTIONS } from './hostTrustedConfig';
@@ -40,8 +41,10 @@ describe('dropHostTrusted — cross-language contract', () => {
     expect([...HOST_TRUSTED_PATHS].sort()).toEqual([...fixture.paths].sort());
   });
 
+  const tally = new SweepTally();
   for (const c of fixture.cases) {
     it(c.name, () => {
+      tally.ran('other');
       expect(dropHostTrusted(c.partial)).toEqual(c.expected);
     });
   }
@@ -58,4 +61,6 @@ describe('dropHostTrusted — cross-language contract', () => {
     const partial = { ui: { theme: 'dark' } };
     expect(dropHostTrusted(partial)).toBe(partial);
   });
+
+  itSweptTheWholeCorpus(tally, 'the host-trusted-config corpus', 13, { allow: 0, deny: 0 });
 });

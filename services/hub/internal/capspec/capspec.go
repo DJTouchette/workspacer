@@ -5,7 +5,12 @@
 // one place, so enforcement and validation can never drift apart.
 package capspec
 
-import "strings"
+import (
+	"sort"
+	"strconv"
+	"strings"
+	"unicode"
+)
 
 // PathParam maps a capability method to the params field that carries the
 // filesystem path it operates on. A method present here is "path-scoped": a
@@ -248,9 +253,35 @@ var dangerousParams = map[string]ParamKind{
 	"webhook": KindURL, "port": KindPort,
 	// Ids that RESOLVE into one of the above.
 	"id": KindID, "itemId": KindID, "mcpItemIds": KindID, "profileId": KindID,
+	// A patch WRAPPER: claude.profiles.update carries its configDir/extraArgs/
+	// mcpItemIds inside `updates`, and a scanner that only saw the wrapper name
+	// (the desktop's does — the object is passed whole) saw a param the
+	// vocabulary did not know, so the decision recorded for it was consulted by
+	// nobody. See TestEveryParamDecisionNamesAParamAScannerCanSee.
+	"updates": KindArgv,
 	// Patterns someone compiles or hands to a matcher.
 	"query": KindRegex, "pattern": KindRegex, "regex": KindRegex, "glob": KindRegex,
 }
+
+// dangerousParamsFold indexes the vocabulary by lowercased name, because ONE of
+// the two scanners matches names the way its language does. encoding/json binds
+// a caller key to a struct field case-insensitively, so a field tagged `Env`, or
+// a field with no tag at all named `Env`, receives the caller's "env" — while an
+// exact-spelling lookup against the map above reports "not in the vocabulary"
+// and the param is classified by nobody. (JavaScript destructuring is
+// case-SENSITIVE, so the desktop scan keeps using the exact lookup.)
+var dangerousParamsFold = func() map[string]string {
+	out := map[string]string{}
+	for p := range dangerousParams {
+		lower := strings.ToLower(p)
+		// Deterministic winner if two spellings ever fold together, so the
+		// canonical name a scanner reports cannot depend on map order.
+		if prev, dup := out[lower]; !dup || p < prev {
+			out[lower] = p
+		}
+	}
+	return out
+}()
 
 // DangerousKind reports what a caller param of this NAME usually becomes, and
 // whether the vocabulary knows it at all. Scanners use it to decide which
@@ -260,14 +291,238 @@ func DangerousKind(param string) (ParamKind, bool) {
 	return k, ok
 }
 
+// DangerousKindFold is DangerousKind for a scanner whose language matches
+// caller keys case-insensitively (encoding/json). It returns the CANONICAL
+// spelling as well, because the decision tables are keyed by that spelling: a
+// handler binding `Env` has to be checked against the decision recorded for
+// `env`, or the fold would find the danger and then look its excuse up under a
+// name nothing records.
+func DangerousKindFold(param string) (canonical string, kind ParamKind, ok bool) {
+	// Exact first, then the fold — encoding/json's own precedence. It matters
+	// because the vocabulary carries two spellings that fold together
+	// (`filename` and `fileName`), and answering `fileName` for a handler that
+	// literally binds `filename` would look the decision up under the spelling
+	// nothing records.
+	if kind, ok := dangerousParams[param]; ok {
+		return param, kind, true
+	}
+	canonical, ok = dangerousParamsFold[strings.ToLower(param)]
+	if !ok {
+		return "", "", false
+	}
+	return canonical, dangerousParams[canonical], true
+}
+
+// FoldSpellings lists the vocabulary spellings a caller key of this name would
+// bind to, exact first. More than one is possible (`filename`/`fileName`), and a
+// decision may be recorded under any of them.
+func FoldSpellings(param string) []string {
+	var out []string
+	lower := strings.ToLower(param)
+	for name := range dangerousParams {
+		if name != param && strings.ToLower(name) == lower {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	if _, ok := dangerousParams[param]; ok {
+		out = append([]string{param}, out...)
+	}
+	return out
+}
+
+// ClassifyParamFold is ClassifyParam for a scanner whose language binds caller
+// keys case-insensitively. It consults every vocabulary spelling the key would
+// bind to and returns the first classified answer, with the spelling that
+// carried it, so a failure message names something a reader can grep for.
+func ClassifyParamFold(method, param string) (ParamStatus, ParamDecision, string) {
+	spellings := FoldSpellings(param)
+	if len(spellings) == 0 {
+		spellings = []string{param}
+	}
+	for _, s := range spellings {
+		if status, d := ClassifyParam(method, s); status != ParamUnclassified {
+			return status, d, s
+		}
+	}
+	return ParamUnclassified, ParamDecision{}, spellings[0]
+}
+
 // DangerousParamNames lists the vocabulary, for tests that want to assert it
-// hasn't silently shrunk.
+// hasn't silently shrunk. Sorted, so a fixture diff reads the same on every run.
 func DangerousParamNames() []string {
 	out := make([]string, 0, len(dangerousParams))
 	for p := range dangerousParams {
 		out = append(out, p)
 	}
+	sort.Strings(out)
 	return out
+}
+
+// ── The denylist's blind side ──────────────────────────────────────────────
+//
+// dangerousParams is a DENYLIST, and a denylist of names is only as good as the
+// namer's imagination: `entrypoint`, `exe`, `launcher` and `shellPath` are all
+// argv[0] on terminals.create and all of them sailed through, because none of
+// them is spelled `shell` or `command`.
+//
+// The airtight fix is to invert it — demand a decision for EVERY param either
+// provider binds. We did not, and the reason is that it would demand written
+// decisions for several hundred inert fields (`sessionId`, `limit`, `agentId`,
+// `title`, every snapshot field the brain re-binds) on the first run. A guard
+// that lands as a two-hundred-line chore is a guard someone deletes or
+// blanket-excuses, and a blanket excuse is where this package started.
+//
+// So: keep the denylist for what a param IS, and add a SHAPE heuristic for what
+// its name looks like. A param name whose tokens include an exec/argv/path/
+// network stem, and which the vocabulary does not know, fails — with the
+// instruction to add it to dangerousParams (if it is one of those things) or to
+// knownInertParams with a reason (if the shape is a coincidence). That covers
+// the synonym class — every one of the four above — at the cost of a handful of
+// coincidences, which are enumerated below rather than guessed at.
+
+// paramStems are the name fragments that mean "this value becomes code, a file,
+// or a destination". Matched per TOKEN (camelCase / snake_case / dotted), so
+// `shellPath`, `exec_path` and `launcher` all hit while `sessionId` does not.
+var paramStems = map[string]bool{
+	// filesystem
+	"path": true, "paths": true, "dir": true, "dirs": true, "directory": true,
+	"folder": true, "file": true, "filename": true, "cwd": true, "root": true,
+	"workdir": true,
+	// exec
+	"cmd": true, "command": true, "exec": true, "executable": true, "exe": true,
+	"shell": true, "bin": true, "binary": true, "binaries": true, "launch": true,
+	"launcher": true, "entrypoint": true, "program": true, "script": true,
+	"interpreter": true, "spawn": true, "run": true,
+	// argv / environment
+	"argv": true, "arg": true, "args": true, "argument": true, "arguments": true,
+	"flag": true, "flags": true, "env": true, "environment": true,
+	// network destinations
+	"url": true, "uri": true, "href": true, "endpoint": true, "webhook": true,
+	"port": true, "socket": true,
+}
+
+// knownInertParams are names whose SHAPE trips paramStems but whose value
+// provably becomes none of those things on the surfaces that bind them. Each
+// carries a reason for the same rationale the ParamDecision table does: an
+// unexplained entry here is how the heuristic gets quietly emptied out. Every
+// entry is a name a scanner actually found — the list is evidence, not
+// anticipation.
+var knownInertParams = map[string]string{}
+
+// SuspiciousUnknownParam reports a param name that LOOKS like it becomes code,
+// a file or a network destination but is not in the shared vocabulary, so no
+// scanner would ever demand a decision for it. Fail closed on true: either the
+// name belongs in dangerousParams, or in knownInertParams with the reason it is
+// a coincidence.
+//
+// The known-check is fold-insensitive so the Go scanner (whose json binding is)
+// gets the same answer as the desktop one.
+func SuspiciousUnknownParam(param string) bool {
+	if param == "" {
+		return false
+	}
+	if _, _, known := DangerousKindFold(param); known {
+		return false
+	}
+	if _, inert := knownInertParams[param]; inert {
+		return false
+	}
+	for _, tok := range paramTokens(param) {
+		if paramStems[tok] {
+			return true
+		}
+	}
+	return false
+}
+
+// RatchetError implements the coverage-floor rule BOTH provider scans are held
+// to, in one place so the two cannot ratchet differently. It returns "" when
+// observed == floor, and an explanation otherwise.
+//
+// A floor is a ratchet or it is nothing. `if flagged < 10` (with the true value
+// 38) let a 66% collapse of the brain scan pass silently: delete most of the
+// vocabulary, or break the AST walk for every handler shape but one, and the
+// suite stays green. Requiring EQUALITY means a real drop fails, and so does an
+// undeclared rise — the second half being what keeps the number honest, since a
+// floor nobody updates drifts back into meaninglessness the first time the
+// surface grows.
+func RatchetError(scan string, observed, floor int) string {
+	switch {
+	case observed == floor:
+		return ""
+	case observed < floor:
+		return "the " + scan + " scan classified " + strconv.Itoa(observed) + " dangerous params, but its recorded floor is " +
+			strconv.Itoa(floor) + ". Coverage went DOWN: either the vocabulary shrank, the parse went blind to a handler shape, " +
+			"or a capability stopped binding a param. Find out which before touching this number."
+	default:
+		return "the " + scan + " scan classified " + strconv.Itoa(observed) + " dangerous params and its recorded floor is " +
+			strconv.Itoa(floor) + ". Coverage went UP — good — but the floor has to move with it (set it to " + strconv.Itoa(observed) +
+			"), or the next collapse back down to " + strconv.Itoa(floor) + " passes."
+	}
+}
+
+// InertParamReason returns the recorded reason a stem-shaped name is inert.
+func InertParamReason(param string) (string, bool) {
+	r, ok := knownInertParams[param]
+	return r, ok
+}
+
+// ParamStems lists the shape heuristic's stems, sorted. Pinned by the same
+// fixture as the vocabulary: emptying this map is the quiet way to switch the
+// synonym check off, and it would leave every scan green.
+func ParamStems() []string {
+	out := make([]string, 0, len(paramStems))
+	for s := range paramStems {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// InertParamNames lists the heuristic's escape hatch, for a test that holds each
+// entry to a written reason.
+func InertParamNames() []string {
+	out := make([]string, 0, len(knownInertParams))
+	for p := range knownInertParams {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// paramTokens splits a param name into lowercase words on camelCase humps and
+// on the separators the two languages use (_, -, ., digits). `shellPath` →
+// [shell path]; `mcp_server_url` → [mcp server url]; `argv0` → [argv].
+func paramTokens(param string) []string {
+	var tokens []string
+	var cur strings.Builder
+	flush := func() {
+		if cur.Len() > 0 {
+			tokens = append(tokens, strings.ToLower(cur.String()))
+			cur.Reset()
+		}
+	}
+	runes := []rune(param)
+	for i, r := range runes {
+		switch {
+		case r == '_' || r == '-' || r == '.' || r == ' ' || unicode.IsDigit(r):
+			flush()
+		case unicode.IsUpper(r):
+			// A hump starts a token, except inside a run of capitals (URLPath →
+			// [url path]): break before the LAST capital of such a run.
+			prevUpper := i > 0 && unicode.IsUpper(runes[i-1])
+			nextLower := i+1 < len(runes) && unicode.IsLower(runes[i+1])
+			if !prevUpper || nextLower {
+				flush()
+			}
+			cur.WriteRune(unicode.ToLower(r))
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	flush()
+	return tokens
 }
 
 // ParamDecision is one param's classification: what it becomes on this

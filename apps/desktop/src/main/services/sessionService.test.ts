@@ -7,9 +7,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   SweepTally,
-  itSweptBothVerdicts,
   itRanEveryGatedTest,
   gatedIt,
+  CAN_SYMLINK,
+  itSweptTheWholeCorpus,
 } from '../../../tests/support/sweepTally';
 import * as os from 'os';
 import * as path from 'path';
@@ -138,10 +139,51 @@ interface SessionFilenameCase {
   name: string;
   filename: string;
   expect: 'accept' | 'refuse';
+  /** The RIGHT-REASON half of a refusal, from the fixture's
+   *  `vocabulary.sessionRefuseReasons`. `expect: 'refuse'` alone is satisfied by
+   *  a refusal for ANY reason — including a resolver that refuses everything —
+   *  and it hid something specific: the case named "a multi-segment name that
+   *  traverses a symlink out of the sessions dir" is refused by the BASENAME
+   *  rule and never reaches the symlink. Naming the reason says which of the two
+   *  rules each case exercises, and keeps the single case that exercises the
+   *  second one from being deleted by accident. Twin: cmd/brain/stores_test.go. */
+  refusedBy?: string;
   resolvesTo?: string;
   needsSymlinks?: boolean;
   tree?: { dirs?: string[]; files?: Record<string, string>; symlinks?: Record<string, string> };
   why?: string;
+}
+
+/**
+ * The INDEPENDENT oracle for WHY a session filename must be refused, written
+ * from the two rules rather than from the implementation: rule 1 is "a plain
+ * basename", rule 2 is "canonicalizes inside the sessions dir". It shares no
+ * code with resolveWithinSessionsDir, so a copy that collapsed the two rules
+ * into one (which is exactly what this side shipped) cannot satisfy it.
+ */
+function sessionRefusalReason(filename: string): string {
+  if (
+    filename.trim() === '' ||
+    filename === '.' ||
+    filename === '..' ||
+    path.isAbsolute(filename) ||
+    filename !== path.basename(filename)
+  ) {
+    return 'not-a-basename';
+  }
+  const dir = path.join(configDir, 'sessions');
+  let real: string;
+  let realDir: string;
+  try {
+    real = fs.realpathSync(path.join(dir, filename));
+    realDir = fs.realpathSync(dir);
+  } catch {
+    return 'unresolvable (the fixture declares no such reason — a case that lands here is one nothing can attribute)';
+  }
+  if (real === realDir || real.startsWith(realDir + path.sep)) {
+    return 'inside the sessions dir (so this case is refused by neither rule, and the fixture is wrong to expect a refusal)';
+  }
+  return 'escapes-sessions-dir';
 }
 
 const sessionFixture: { sessionFilenames: { cases: SessionFilenameCase[] } } = JSON.parse(
@@ -152,17 +194,7 @@ const sessionFixture: { sessionFilenames: { cases: SessionFilenameCase[] } } = J
 );
 
 /** Windows without developer mode cannot create symlinks; report a skip, never a pass. */
-const CAN_SYMLINK_SESSIONS = (() => {
-  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-sessym-'));
-  try {
-    fs.symlinkSync(probe, path.join(probe, 'l'));
-    return true;
-  } catch {
-    return false;
-  } finally {
-    fs.rmSync(probe, { recursive: true, force: true });
-  }
-})();
+const CAN_SYMLINK_SESSIONS = CAN_SYMLINK;
 
 describe('session filenames — cross-language contract', () => {
   const cases = sessionFixture.sessionFilenames?.cases ?? [];
@@ -203,6 +235,9 @@ describe('session filenames — cross-language contract', () => {
         }
 
         if (c.expect === 'refuse') {
+          // The right reason, from an oracle that shares no code with
+          // resolveWithinSessionsDir (rule 2 is answered with realpath).
+          expect(sessionRefusalReason(c.filename), `${c.name}: ${c.why ?? ''}`).toBe(c.refusedBy);
           // Both bus-reachable verbs, because a copy that answered "no" and then
           // opened the file anyway would be green on the resolver alone.
           expect(() => sessionService.loadSession(c.filename), c.why).toThrow(
@@ -247,7 +282,9 @@ describe('session filenames — cross-language contract', () => {
   // Declared last so it runs after every case above. Accepts and refuses
   // separately: a resolver that refused everything satisfies every refuse case
   // in this block, and one that accepted everything satisfies every accept case.
-  itSweptBothVerdicts(tally, 'the sessionFilenames corpus');
+  // RATCHETED to the block's size: both verdict classes AND the whole corpus.
+  // TWIN: cmd/brain/stores_test.go's sessionFilenameFloor.
+  itSweptTheWholeCorpus(tally, 'the sessionFilenames corpus', 12);
 });
 
 // listSessions derives `<sessionsDir>/<readdir entry>` itself, so it needs the
@@ -268,39 +305,30 @@ describe('listSessions — derived entries stay inside the sessions dir', () => 
   // listSessions made this file 24 passed / 3 skipped on such a host. The
   // file's own comment on CAN_SYMLINK_SESSIONS already states the rule: a missing
   // privilege is "reported as a skip, never as a pass".
-  itLinks(
-    'skips an entry that resolves out of the sessions dir',
-    () => {
-      fs.symlinkSync(secretOutside, path.join(sessionsDir, 'pwn.yaml'));
-      expect(sessionService.listSessions().map((s) => s.name)).toEqual(['real']);
-    },
-  );
+  itLinks('skips an entry that resolves out of the sessions dir', () => {
+    fs.symlinkSync(secretOutside, path.join(sessionsDir, 'pwn.yaml'));
+    expect(sessionService.listSessions().map((s) => s.name)).toEqual(['real']);
+  });
 
-  itLinks(
-    'still lists a symlink that stays inside the sessions dir',
-    () => {
-      fs.symlinkSync(path.join(sessionsDir, 'real.yaml'), path.join(sessionsDir, 'alias.yaml'));
-      expect(sessionService.listSessions()).toHaveLength(2);
-    },
-  );
+  itLinks('still lists a symlink that stays inside the sessions dir', () => {
+    fs.symlinkSync(path.join(sessionsDir, 'real.yaml'), path.join(sessionsDir, 'alias.yaml'));
+    expect(sessionService.listSessions()).toHaveLength(2);
+  });
 
   // A config-dir sibling whose NAME starts with the store's — the prefix
   // collision the Go twin covers for both listers and this side did not. The
   // case above plants its victim at <configDir>/secret.yaml, so a containment
   // that drops the separator boundary (`canonical.startsWith(dir)`) passes it.
-  itLinks(
-    "skips an entry resolving into a sibling whose name starts with the store's",
-    () => {
-      const sibling = path.join(configDir, 'sessions-backup');
-      fs.mkdirSync(sibling, { recursive: true });
-      const loot = path.join(sibling, 'loot.yaml');
-      fs.writeFileSync(loot, 'name: LOOT-OUTSIDE-THE-SESSIONS-DIR\nagents: []\n', 'utf-8');
-      fs.symlinkSync(loot, path.join(sessionsDir, 'pwn.yaml'));
-      expect(sessionService.listSessions().map((s) => s.name)).not.toContain(
-        'LOOT-OUTSIDE-THE-SESSIONS-DIR',
-      );
-    },
-  );
+  itLinks("skips an entry resolving into a sibling whose name starts with the store's", () => {
+    const sibling = path.join(configDir, 'sessions-backup');
+    fs.mkdirSync(sibling, { recursive: true });
+    const loot = path.join(sibling, 'loot.yaml');
+    fs.writeFileSync(loot, 'name: LOOT-OUTSIDE-THE-SESSIONS-DIR\nagents: []\n', 'utf-8');
+    fs.symlinkSync(loot, path.join(sessionsDir, 'pwn.yaml'));
+    expect(sessionService.listSessions().map((s) => s.name)).not.toContain(
+      'LOOT-OUTSIDE-THE-SESSIONS-DIR',
+    );
+  });
 
   // These three are the ENTIRE oracle for derived-entry containment: the
   // fixture's sessionFilenames block only ever covers a caller-supplied
@@ -330,27 +358,24 @@ describe('listSessions — derived entries stay inside the sessions dir', () => 
 describe('saveSession — containment (the write leg of the same resolver)', () => {
   const saveGate = { ran: 0 };
   const itLinks = gatedIt(CAN_SYMLINK_SESSIONS, saveGate);
-  itLinks(
-    'refuses an entry that resolves out of the sessions dir, and does not read it',
-    () => {
-      fs.writeFileSync(secretOutside, 'name: my-session\n');
-      const link = path.join(sessionsDir, 'my-session.yaml');
-      fs.symlinkSync(secretOutside, link);
+  itLinks('refuses an entry that resolves out of the sessions dir, and does not read it', () => {
+    fs.writeFileSync(secretOutside, 'name: my-session\n');
+    const link = path.join(sessionsDir, 'my-session.yaml');
+    fs.symlinkSync(secretOutside, link);
 
-      // The control: load refuses the identical entry.
-      expect(() => sessionService.loadSession('my-session.yaml')).toThrow(/escapes/);
+    // The control: load refuses the identical entry.
+    expect(() => sessionService.loadSession('my-session.yaml')).toThrow(/escapes/);
 
-      expect(() => sessionService.saveSession({ name: 'my-session' } as never)).toThrow(/escapes/);
-      // Untouched: still a symlink, and the file it points at is unchanged.
-      expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
-      expect(fs.readFileSync(secretOutside, 'utf-8')).toBe('name: my-session\n');
+    expect(() => sessionService.saveSession({ name: 'my-session' } as never)).toThrow(/escapes/);
+    // Untouched: still a symlink, and the file it points at is unchanged.
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(secretOutside, 'utf-8')).toBe('name: my-session\n');
 
-      // The ORACLE, which is the part a "did it write" assertion cannot see: the
-      // returned filename must not depend on the bytes of a file outside the store.
-      fs.writeFileSync(secretOutside, 'name: something-else\n');
-      expect(() => sessionService.saveSession({ name: 'my-session' } as never)).toThrow(/escapes/);
-    },
-  );
+    // The ORACLE, which is the part a "did it write" assertion cannot see: the
+    // returned filename must not depend on the bytes of a file outside the store.
+    fs.writeFileSync(secretOutside, 'name: something-else\n');
+    expect(() => sessionService.saveSession({ name: 'my-session' } as never)).toThrow(/escapes/);
+  });
 
   // The COLLISION-SUFFIX leg. The test above plants its symlink at the BASE
   // filename, so it only ever exercises the first resolveWithinSessionsDir call;
@@ -404,23 +429,20 @@ describe('saveSession — containment (the write leg of the same resolver)', () 
 describe('sessions.load / sessions.delete open the resolver ANSWER', () => {
   const answerGate = { ran: 0 };
   const itLinks = gatedIt(CAN_SYMLINK_SESSIONS, answerGate);
-  itLinks(
-    'deleteSession removes what the entry RESOLVES to, not the link',
-    () => {
-      const target = path.join(sessionsDir, 'target.yaml');
-      const link = path.join(sessionsDir, 'alias.yaml');
-      fs.writeFileSync(target, 'name: target\nagents: []\n');
-      fs.symlinkSync(target, link);
+  itLinks('deleteSession removes what the entry RESOLVES to, not the link', () => {
+    const target = path.join(sessionsDir, 'target.yaml');
+    const link = path.join(sessionsDir, 'alias.yaml');
+    fs.writeFileSync(target, 'name: target\nagents: []\n');
+    fs.symlinkSync(target, link);
 
-      sessionService.deleteSession('alias.yaml');
+    sessionService.deleteSession('alias.yaml');
 
-      expect(
-        fs.existsSync(target),
-        'deleteSession unlinked the LINK; the Go twin removes the TARGET, so the same call destroys a different file per provider',
-      ).toBe(false);
-      expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
-    },
-  );
+    expect(
+      fs.existsSync(target),
+      'deleteSession unlinked the LINK; the Go twin removes the TARGET, so the same call destroys a different file per provider',
+    ).toBe(false);
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+  });
 
   itLinks('loadSession reads through to the resolved file', () => {
     const target = path.join(sessionsDir, 'target.yaml');

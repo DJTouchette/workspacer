@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { SweepTally, itSweptTheWholeCorpus } from '../../../tests/support/sweepTally';
 import { slugLibrary, slugLayout, slugSession } from './fileUtils';
 
 // ── slugLibrary (libraryService variant) ─────────────────────────────────────
@@ -171,8 +172,10 @@ describe('filename slugs — cross-language contract', () => {
     expect(slugFixture.cases.length).toBeGreaterThan(0);
   });
 
+  const tally = new SweepTally();
   for (const c of slugFixture.cases) {
     it(c.name, () => {
+      tally.ran('other');
       expect(slugLibrary(c.input), `slugLibrary — ${c.why ?? ''}`).toBe(c.expect.library);
       expect(slugLayout(c.input), `slugLayout — ${c.why ?? ''}`).toBe(c.expect.layout);
       expect(slugSession(c.input), `slugSession — ${c.why ?? ''}`).toBe(c.expect.session);
@@ -187,4 +190,7 @@ describe('filename slugs — cross-language contract', () => {
       expect(slugLayout(slugLayout(c.input))).toBe(slugLayout(c.input));
     });
   }
+  // The twin of cmd/brain/slug_test.go's slugCorpusFloor. Both loaders had only
+  // a `> 0` check, which a corpus down to one case passes.
+  itSweptTheWholeCorpus(tally, 'the filename-slug corpus', 17, { allow: 0, deny: 0 });
 });

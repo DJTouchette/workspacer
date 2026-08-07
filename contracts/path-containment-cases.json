@@ -286,6 +286,145 @@
       "unresolvable": "The component walk itself failed — ENOTDIR, EACCES, or the symlink hop limit. Never ENOENT, which is the one error that keeps the walk going.",
       "outside-roots": "The target canonicalized cleanly and landed at or inside NO granted root. The secret gate is never reached.",
       "secret": "The target canonicalized INSIDE a granted root, and the secret gate refused it."
+    },
+    "sessionRefuseReasons": {
+      "not-a-basename": "Refused by the FIRST rule, before the filesystem is touched: the name is empty, '.', '..', absolute, or carries a separator. Most of this block lands here, including 'esc/loot.yaml' — whose NAME says 'traverses a symlink' but which never reaches the symlink, because a multi-segment name is refused outright. Saying so is the point: the lexical copy that shipped accepted it.",
+      "escapes-sessions-dir": "Refused by the SECOND rule: a legal bare basename whose per-component canonicalization lands outside <configDir>/sessions. This is the only reason a plain basename can be refused for, and 'escape.yaml' (a session file that IS a symlink out of the dir) is the whole reason the second rule exists."
+    },
+    "blocks": {
+      "_comment": [
+        "THE BLOCK REGISTRY, and the answer to a hole this vocabulary block had while",
+        "claiming to close one: `groups` and `deniedBy` were validated for `cases` and",
+        "for NOTHING ELSE. spawnCwds, methods, checkUse, paramShapes, projectDirNames,",
+        "asciiFold and sessionFilenames were unvalidated — and sessionFilenames.cases",
+        "carried the exact species the deniedBy work existed to kill: a bare",
+        "`expect: refuse` with no reason, satisfied by a refusal for ANY reason,",
+        "including a resolver that refuses everything.",
+        "",
+        "Every array-of-objects block in this file must appear here, and everything",
+        "here must be a block — closure in both directions, so a NEW block is a",
+        "failure until someone declares what its cases must carry. `required` are the",
+        "fields every case must have; `verdictField`/`verdicts` close the verdict",
+        "vocabulary and say which reason field each verdict owes, and which sibling",
+        "vocabulary map that reason must be a key of.",
+        "",
+        "Read by cmd/brain/corpusvocab_test.go and by",
+        "apps/desktop/src/main/services/contractsVocabulary.test.ts, which hold every",
+        "fixture in contracts/ to its own declaration."
+      ],
+      "cases": {
+        "why": "The containment corpus proper.",
+        "required": [
+          "name",
+          "group",
+          "expect",
+          "why",
+          "roots",
+          "target"
+        ],
+        "verdictField": "expect",
+        "verdicts": {
+          "allow": {
+            "requires": [
+              "resolvesTo"
+            ],
+            "forbids": [
+              "deniedBy"
+            ]
+          },
+          "deny": {
+            "requires": [
+              "deniedBy"
+            ],
+            "forbids": [
+              "resolvesTo"
+            ],
+            "reasons": "denyReasons"
+          }
+        }
+      },
+      "sessionFilenames.cases": {
+        "why": "The fourth copy of containment: sessions.load/save/delete's caller-supplied filename.",
+        "required": [
+          "name",
+          "filename",
+          "expect",
+          "why"
+        ],
+        "verdictField": "expect",
+        "verdicts": {
+          "accept": {
+            "requires": [
+              "resolvesTo"
+            ],
+            "forbids": [
+              "refusedBy"
+            ]
+          },
+          "refuse": {
+            "requires": [
+              "refusedBy"
+            ],
+            "forbids": [
+              "resolvesTo"
+            ],
+            "reasons": "sessionRefuseReasons"
+          }
+        }
+      },
+      "paramShapes": {
+        "why": "The params GATE: what the bus does with a body that is not the object the method's field lives in.",
+        "required": [
+          "name",
+          "field",
+          "expect"
+        ],
+        "verdictField": "expect",
+        "verdicts": {
+          "accept": {},
+          "deny": {}
+        }
+      },
+      "projectDirNames.cases": {
+        "why": "claude.sessionsForDir's encoder. `expect` is the encoded name or null for a refusal — a value, not a verdict word, so there is no verdict vocabulary to close here.",
+        "required": [
+          "cwd",
+          "expect",
+          "why"
+        ]
+      },
+      "spawnCwds.cases": {
+        "why": "The one normalization a caller-supplied spawn/terminal cwd gets.",
+        "required": [
+          "in",
+          "out",
+          "why"
+        ]
+      },
+      "asciiFold.cases": {
+        "why": "The ASCII-only fold the secret gate runs, pinned as a primitive.",
+        "required": [
+          "in",
+          "out"
+        ]
+      },
+      "methods": {
+        "why": "The path-bearing method table; must equal capspec.PathParam exactly.",
+        "required": [
+          "method",
+          "field",
+          "rootSet",
+          "providers",
+          "params"
+        ]
+      },
+      "checkUse": {
+        "why": "BINDING DECISION 2's second half: the guard's ANSWER is what reaches the filesystem, per owner. `callSites` is not required — the bus owner has none, because authorize() only decides and never opens the path.",
+        "required": [
+          "owner",
+          "requirement"
+        ]
+      }
     }
   },
   "owners": {
@@ -2766,37 +2905,43 @@
         "name": "an empty filename",
         "filename": "",
         "expect": "refuse",
-        "why": "The empty string joins to the sessions dir ITSELF, which is a directory, not a session."
+        "why": "The empty string joins to the sessions dir ITSELF, which is a directory, not a session.",
+        "refusedBy": "not-a-basename"
       },
       {
         "name": "a lone dot",
         "filename": ".",
         "expect": "refuse",
-        "why": "Same as empty after a Clean, and it is the shape a resolver written as 'contains no separator' lets through."
+        "why": "Same as empty after a Clean, and it is the shape a resolver written as 'contains no separator' lets through.",
+        "refusedBy": "not-a-basename"
       },
       {
         "name": "a lone double dot",
         "filename": "..",
         "expect": "refuse",
-        "why": "Resolves to the config dir, which holds remote-token and config.yaml."
+        "why": "Resolves to the config dir, which holds remote-token and config.yaml.",
+        "refusedBy": "not-a-basename"
       },
       {
         "name": "a parent traversal",
         "filename": "../config.yaml",
         "expect": "refuse",
-        "why": "config.yaml carries updates.channel, which is concatenated into the electron-updater feed URL."
+        "why": "config.yaml carries updates.channel, which is concatenated into the electron-updater feed URL.",
+        "refusedBy": "not-a-basename"
       },
       {
         "name": "a deep parent traversal",
         "filename": "../../../.ssh/id_rsa",
         "expect": "refuse",
-        "why": "The classic escape; a lexical resolve+startsWith already caught this one, which is why it was mistaken for containment."
+        "why": "The classic escape; a lexical resolve+startsWith already caught this one, which is why it was mistaken for containment.",
+        "refusedBy": "not-a-basename"
       },
       {
         "name": "an absolute path",
         "filename": "/etc/passwd",
         "expect": "refuse",
-        "why": "path.resolve keeps an absolute second argument verbatim, so this is only refused because it then fails the prefix test — and it must ALSO be refused for not being a basename."
+        "why": "path.resolve keeps an absolute second argument verbatim, so this is only refused because it then fails the prefix test — and it must ALSO be refused for not being a basename.",
+        "refusedBy": "not-a-basename"
       },
       {
         "name": "a multi-segment name that stays under the sessions dir",
@@ -2807,7 +2952,8 @@
             "config/workspacer/sessions/sub/x.yaml": "name: Nested\n"
           }
         },
-        "why": "THE DIVERGENCE. Go refused it (not a basename); TypeScript accepted it (it is textually under the dir). Nothing here is dangerous on its own — the danger is that accepting a multi-segment name is what makes the symlink case below reachable — but the two copies must answer the same question the same way, and the narrower answer is the one that has no escape in it."
+        "why": "THE DIVERGENCE. Go refused it (not a basename); TypeScript accepted it (it is textually under the dir). Nothing here is dangerous on its own — the danger is that accepting a multi-segment name is what makes the symlink case below reachable — but the two copies must answer the same question the same way, and the narrower answer is the one that has no escape in it.",
+        "refusedBy": "not-a-basename"
       },
       {
         "name": "a multi-segment name that traverses a symlink out of the sessions dir",
@@ -2825,7 +2971,8 @@
             "config/workspacer/sessions/esc": "outside"
           }
         },
-        "why": "The escape the lexical check could not see: `esc` is a directory symlink, so the resolved file is outside the sessions dir while the string is inside it. loadSession returned its contents and deleteSession unlinked it."
+        "why": "The escape the lexical check could not see: `esc` is a directory symlink, so the resolved file is outside the sessions dir while the string is inside it. loadSession returned its contents and deleteSession unlinked it.",
+        "refusedBy": "not-a-basename"
       },
       {
         "name": "a session file that is itself a symlink out of the sessions dir",
@@ -2843,7 +2990,8 @@
             "config/workspacer/sessions/escape.yaml": "outside/loot.yaml"
           }
         },
-        "why": "A basename rule alone does not close this: 'escape.yaml' IS a basename. Both copies followed the link and opened the file it named, which is why the second half of the rule (canonicalize, then contain) is not optional."
+        "why": "A basename rule alone does not close this: 'escape.yaml' IS a basename. Both copies followed the link and opened the file it named, which is why the second half of the rule (canonicalize, then contain) is not optional.",
+        "refusedBy": "escapes-sessions-dir"
       },
       {
         "name": "a symlink that stays inside the sessions dir is fine",

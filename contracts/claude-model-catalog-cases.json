@@ -21,6 +21,30 @@
     "in claudemon's live sessions (session.usage.model), which both copies merge in.",
     "`expected` is the whole reply, field for field and in order."
   ],
+  "vocabulary": {
+    "_comment": [
+      "THE BLOCK REGISTRY. Every array-of-objects block in this file must be declared",
+      "here and everything here must be a block — closure in both directions, so a new",
+      "block is a failure until someone says what its cases must carry, and a renamed",
+      "one cannot quietly stop being validated.",
+      "",
+      "Held by cmd/brain/corpusvocab_test.go and",
+      "apps/desktop/src/main/services/contractsVocabulary.test.ts. Before those, this",
+      "kind of validation existed for exactly ONE block of ONE fixture."
+    ],
+    "blocks": {
+      "cases": {
+        "why": "claude.listModels' catalog answer for a config + live-snapshot pair.",
+        "required": [
+          "name",
+          "config",
+          "live",
+          "expected",
+          "why"
+        ]
+      }
+    }
+  },
   "cases": [
     {
       "name": "no models seen at all: bare alias labels, empty seen",

@@ -11,6 +11,7 @@
 // Twin loader: TestClaudeModelCatalogContractCases in cmd/brain.
 
 import { describe, it, expect, vi } from 'vitest';
+import { SweepTally, itSweptTheWholeCorpus } from '../../../tests/support/sweepTally';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -50,8 +51,10 @@ describe('contracts/claude-model-catalog-cases.json', () => {
     expect(fixture.cases.length).toBeGreaterThan(0);
   });
 
+  const tally = new SweepTally();
   for (const c of fixture.cases) {
     it(c.name, () => {
+      tally.ran('other');
       state.cfg = { claude: { ...c.config } };
       state.snapshots = c.live.map((model) => ({ usage: { model } }));
       // Compared as JSON so field ORDER is pinned too — the Go twin marshals its
@@ -59,4 +62,5 @@ describe('contracts/claude-model-catalog-cases.json', () => {
       expect(JSON.parse(JSON.stringify(listClaudeModels())), c.why).toEqual(c.expected);
     });
   }
+  itSweptTheWholeCorpus(tally, 'the claude-model-catalog corpus', 7, { allow: 0, deny: 0 });
 });

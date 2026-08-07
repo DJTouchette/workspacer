@@ -9,7 +9,7 @@
  *    delete unlinked a path that didn't exist (no-op).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { itRanEveryGatedTest, gatedIt } from '../../../tests/support/sweepTally';
+import { itRanEveryGatedTest, gatedIt, CAN_SYMLINK } from '../../../tests/support/sweepTally';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -18,17 +18,7 @@ import * as path from 'path';
  *  Every test below that plants one is gated on this and COUNTED, because the
  *  form it replaces — `try { fs.symlinkSync(...) } catch { return }` — reports a
  *  PASS while asserting nothing at all. */
-const CAN_SYMLINK_LIB = (() => {
-  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-libsym-'));
-  try {
-    fs.symlinkSync(probe, path.join(probe, 'l'));
-    return true;
-  } catch {
-    return false;
-  } finally {
-    fs.rmSync(probe, { recursive: true, force: true });
-  }
-})();
+const CAN_SYMLINK_LIB = CAN_SYMLINK;
 
 // Seed a real temp configDir at hoist time: the libraryService singleton runs
 // seedGlobalIfEmpty() in its constructor at import, before beforeEach, so an
@@ -725,4 +715,13 @@ describe('libraryService — every leg opens the path the guard RESOLVED', () =>
     expect(item).toBeDefined();
     expect(item!.path).toBe(target);
   });
+
+  // THE COUNTER WAS NEVER READ. This group built a GateCounter, incremented it
+  // four times, and asserted nothing about it — so on a host without symlink
+  // privilege all four of the tests that are the ENTIRE oracle for "the leg
+  // opens the path the guard resolved" turned into `it.skip`, and the file
+  // reported green. A counter with no assertion is not a floor, it is a comment
+  // that costs a line; the whole reason gatedIt returns a wrapper is that
+  // itRanEveryGatedTest reads what it wrote.
+  itRanEveryGatedTest(resolvedGate, 'the every-leg-opens-the-resolved-path tests', 4);
 });

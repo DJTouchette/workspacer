@@ -169,9 +169,18 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      # -race matches the Makefile's `make test-hub` target.
+      # -race -count=1 matches the Makefile's `make test-hub` target, and the
+      # -count=1 is load-bearing HERE in particular: actions/setup-go restores
+      # ~/.cache/go-build, which is where the test result cache lives, so a run
+      # on a tree whose cross-repo inputs changed can otherwise be served from a
+      # previous run's results. cmd/go drops out-of-module inputs from the test
+      # cache key, and every TS<->Go drift guard in this suite reads one
+      # (apps/desktop/src/main/services/hubCapabilities.ts, contracts/*.json,
+      # this file). internal/extinput makes those inputs visible again; this
+      # flag is the belt that does not depend on cmd/go internals staying put.
+      # The whole module runs uncached in ~7s.
       - name: Test
-        run: go test -race ./...
+        run: go test -race -count=1 ./...
 
   # ---------------------------------------------------------------------------
   # WINDOWS. Every job above is ubuntu-latest, and only release.yml touches
@@ -216,10 +225,13 @@ jobs:
           cache-dependency-path: apps/desktop/package-lock.json
 
       # The containment corpus and its loaders are plain Go — no cgo, no
-      # sidecars — so the hub suite runs as-is.
+      # sidecars — so the hub suite runs as-is. -count=1 for the same reason as
+      # the linux `hub` job: the cached go-build directory plus a cache key that
+      # ignores out-of-module inputs is how a cross-repo guard reports green on
+      # a tree it never read.
       - name: hub (Go) test
         working-directory: services/hub
-        run: go test ./...
+        run: go test -count=1 ./...
 
       # --ignore-scripts skips apps/desktop's postinstall (electron-rebuild
       # against better-sqlite3), which needs an Electron download and a native

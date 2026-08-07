@@ -26,6 +26,28 @@
     "DELEGATE_CATALOG_TO_BRAIN) and the desktop's own bus handler (hubCapabilities.ts).",
     "The desktop's in-process Settings write does NOT go through either and is unaffected."
   ],
+  "vocabulary": {
+    "_comment": [
+      "THE BLOCK REGISTRY. Every array-of-objects block in this file must be declared",
+      "here and everything here must be a block — closure in both directions, so a new",
+      "block is a failure until someone says what its cases must carry, and a renamed",
+      "one cannot quietly stop being validated.",
+      "",
+      "Held by cmd/brain/corpusvocab_test.go and",
+      "apps/desktop/src/main/services/contractsVocabulary.test.ts. Before those, this",
+      "kind of validation existed for exactly ONE block of ONE fixture."
+    ],
+    "blocks": {
+      "cases": {
+        "why": "dropHostTrusted over a partial config a bus caller sent.",
+        "required": [
+          "name",
+          "partial",
+          "expected"
+        ]
+      }
+    }
+  },
   "sections": [
     "updates"
   ],

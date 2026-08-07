@@ -18,19 +18,19 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
 // gitAvailable reports whether the `git` binary exists; without it the probe is
-// vacuous (gitIgnored short-circuits on exit 128) and must skip, not pass.
+// vacuous (gitIgnored short-circuits on exit 128) and must skip, not pass — and
+// the skip is COUNTED (gateGit), because "must skip, not pass" was still a green
+// package that asserted nothing about the one command whose argv this file
+// exists to pin.
 func gitAvailable(t *testing.T) {
 	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not on PATH")
-	}
+	gateGit(t)
 }
 
 func TestListEntriesDoesNotExecuteGitConfigCommands(t *testing.T) {

@@ -10,6 +10,7 @@
 // $HOME. Each suite tested its own rule, so neither noticed.
 
 import { describe, it, expect } from 'vitest';
+import { SweepTally, itSweptTheWholeCorpus } from '../../../tests/support/sweepTally';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -39,8 +40,13 @@ describe('spawn cwd normalization — cross-language contract', () => {
     ).toBe(true);
   });
 
+  // 'has vectors at all' is a floor of one, and the '~' check next to it reads
+  // the fixture rather than the run — so a block whose cases all failed to
+  // register would satisfy both. The tally counts bodies.
+  const tally = new SweepTally();
   for (const c of fixture.spawnCwds.cases) {
     it(`${JSON.stringify(c.in)} -> ${JSON.stringify(c.out)}`, () => {
+      tally.ran('other');
       const want = c.out.split('${HOME}').join(os.homedir());
       expect(want, 'the only token this block defines is ${HOME}').not.toContain('${');
       expect(normalizeSpawnCwd(c.in), c.why).toBe(want);
@@ -53,4 +59,6 @@ describe('spawn cwd normalization — cross-language contract', () => {
     expect(normalizeSpawnCwd(undefined)).toBe(os.homedir());
     expect(normalizeSpawnCwd(null)).toBe(os.homedir());
   });
+
+  itSweptTheWholeCorpus(tally, 'the spawnCwds block', 10, { allow: 0, deny: 0 });
 });

@@ -33,6 +33,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { SweepTally, itSweptTheWholeCorpus } from '../../../tests/support/sweepTally';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -677,9 +678,11 @@ describe('fixture-driven guard coverage — kill-switch-only path capabilities',
     expect(killSwitchOnly.length).toBeGreaterThan(0);
   });
 
+  const killSweep = new SweepTally();
   for (const entry of killSwitchOnly) {
     describe(entry.method, () => {
       it('is registered when the kill switch is on', () => {
+        killSweep.ran('other');
         expect(registered.has(entry.method)).toBe(true);
       });
 
@@ -742,8 +745,10 @@ describe('fixture-driven guard coverage — kill-switch-only path capabilities',
     ).not.toEqual([]);
   });
 
+  const derivedSweep = new SweepTally();
   for (const entry of derivedItemMethods) {
     it(`${entry.method}'s per-file guard uses the item roots, not the ${entry.rootSet} roots`, () => {
+      derivedSweep.ran('other');
       const secondAgentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-projB-')));
       getAllSnapshots.mockReturnValue([{ cwd: agentCwd }, { cwd: secondAgentCwd }] as never);
       const mock = (libraryMock as unknown as Record<string, { mock: { calls: unknown[][] } }>)[
@@ -764,6 +769,17 @@ describe('fixture-driven guard coverage — kill-switch-only path capabilities',
       expect(guard(inStore)).toBe(inStore);
     });
   }
+
+  // Ratcheted to the sizes the fixture carries today. Both `.length > 0` checks
+  // above read the FIXTURE; these read the run.
+  itSweptTheWholeCorpus(killSweep, 'the kill-switch-owned method sweep', 7, {
+    allow: 0,
+    deny: 0,
+  });
+  itSweptTheWholeCorpus(derivedSweep, "the derivedRootSet 'item' sweep", 3, {
+    allow: 0,
+    deny: 0,
+  });
 });
 
 /**

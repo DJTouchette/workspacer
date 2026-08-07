@@ -15,9 +15,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   SweepTally,
-  itSweptBothVerdicts,
   itRanEveryGatedTest,
   gatedIt,
+  CAN_SYMLINK,
+  itSweptTheWholeCorpus,
 } from '../../../tests/support/sweepTally';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -116,17 +117,6 @@ const WIN32 = process.platform === 'win32';
 
 /** Can this process create symlinks? (Windows without developer mode cannot.)
  *  A case that needs them is SKIPPED — reported as a skip, never as a pass. */
-const CAN_SYMLINK = (() => {
-  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-symprobe-'));
-  try {
-    fs.symlinkSync(probe, path.join(probe, 'l'));
-    return true;
-  } catch {
-    return false;
-  } finally {
-    fs.rmSync(probe, { recursive: true, force: true });
-  }
-})();
 
 /** root reads a 0o000 directory regardless of its mode, so that case proves
  *  nothing when the tests run as root (containers, CI images). */
@@ -713,7 +703,13 @@ describe('path containment — cross-language contract', () => {
   // Declared last so it runs after every case above. Both classes, separately:
   // an allow-only sweep says the guard lets things through and nothing else,
   // and a deny-only sweep is satisfied by a guard that refuses everything.
-  itSweptBothVerdicts(corpusTally, 'the desktop containment corpus');
+  // RATCHETED. A floor of one allow and one deny is met by a 107-case corpus
+  // that lost 105 of them — the same "asserted almost nothing while green"
+  // failure arriving through a bad merge instead of a bad host. The enumerated
+  // count is host-independent, so this number means the same thing on a machine
+  // that skips most of the sweep. TWINS: cmd/brain/fsguard_test.go's
+  // containmentCorpusFloor and internal/bus's busContainmentCorpusFloor.
+  itSweptTheWholeCorpus(corpusTally, 'the desktop containment corpus', 107);
 });
 
 describe('the canonical path assertPathAllowed returns', () => {

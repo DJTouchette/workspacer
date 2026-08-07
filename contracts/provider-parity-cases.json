@@ -36,6 +36,47 @@
     "Owners: apps/desktop/src/main/lib/providerParity.ts (+ its call sites) and",
     "services/hub/cmd/brain (stores.go, library.go, fsops.go, discovery.go)."
   ],
+  "vocabulary": {
+    "_comment": [
+      "THE BLOCK REGISTRY. Every array-of-objects block in this file must be declared",
+      "here and everything here must be a block — closure in both directions, so a new",
+      "block is a failure until someone says what its cases must carry, and a renamed",
+      "one cannot quietly stop being validated.",
+      "",
+      "Held by cmd/brain/corpusvocab_test.go and",
+      "apps/desktop/src/main/services/contractsVocabulary.test.ts. Before those, this",
+      "kind of validation existed for exactly ONE block of ONE fixture."
+    ],
+    "blocks": {
+      "order": {
+        "why": "The byte-order both providers must sort by.",
+        "required": [
+          "name",
+          "input",
+          "expected",
+          "why"
+        ]
+      },
+      "scalar": {
+        "why": "The scalar-to-string rendering both providers must agree on.",
+        "required": [
+          "name",
+          "value",
+          "expected"
+        ]
+      },
+      "suffix": {
+        "why": "Suffix trimming, with and without the case fold.",
+        "required": [
+          "name",
+          "value",
+          "suffix",
+          "expected",
+          "fold"
+        ]
+      }
+    }
+  },
   "order": [
     {
       "name": "uppercase sorts before lowercase, byte-wise",

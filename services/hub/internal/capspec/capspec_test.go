@@ -228,11 +228,18 @@ func sortedFixtureMethods[V any](m map[string]V) []string {
 // exactly why the Go providers, which destructure the same param names in the
 // brain, were scanned by nobody at all.
 
-// paramsDestructureRe pulls the `const { … } = (params` destructuring out of a
-// capability handler body — the most common of the file's two ways of naming
-// what a call carries. Renames (`path: p`) keep their source name on the left of
-// the colon.
-var paramsDestructureRe = regexp.MustCompile(`const\s*\{([^}]*)\}\s*=\s*\(params`)
+// paramsDestructureRe finds the START of a `const { … } = (params` destructuring
+// — the most common of the file's two ways of naming what a call carries. Only
+// the opening is matched by regex; the block itself is taken by brace matching
+// (see balancedBraces), because the closing `}` of a NESTED pattern is not the
+// closing `}` of the outer one. The old `[^}]*` form stopped at the first inner
+// brace, so `const { cwd, opts: { env, command } } = (params …)` matched
+// nothing at all and both nested names were invisible.
+var paramsDestructureRe = regexp.MustCompile(`const\s*\{`)
+
+// destructureTailRe is what has to follow the balanced block for it to be a
+// params destructuring rather than any other object pattern in the body.
+var destructureTailRe = regexp.MustCompile(`^\s*=\s*\(params`)
 
 // paramsAliasRe pulls the OTHER idiom: `const input = (params ?? {}) as { cwd?:
 // string }`, where the params object is bound whole and its fields are reached
@@ -242,30 +249,103 @@ var paramsDestructureRe = regexp.MustCompile(`const\s*\{([^}]*)\}\s*=\s*\(params
 // exactly the drift it was added to catch.
 var paramsAliasRe = regexp.MustCompile(`const\s+([A-Za-z_$][\w$]*)\s*=\s*\(params`)
 
-// typeLiteralRe finds the `as { … }` annotation following an alias binding, whose
-// field names are the second place a path-ish param shows up in that idiom (the
-// first being member access on the alias). Non-nested by construction: these
-// annotations are flat `{ cwd?: string }` shapes, and one that isn't simply
-// contributes no fields — the member-access scan still sees the accesses.
-var typeLiteralRe = regexp.MustCompile(`\bas\s*\{([^{}]*)\}`)
+// typeLiteralRe finds the START of the `as { … }` annotation following an alias
+// binding, whose field names are the second place a path-ish param shows up in
+// that idiom (the first being member access on the alias). As with the
+// destructuring above, only the opening is matched: the annotation used to be
+// read with a `[^{}]*` body on the stated grounds that these shapes are "flat by
+// construction", and a NESTED one — `as { cwd?: string; opts?: { env?: …;
+// command?: string } }` — therefore matched nothing rather than matching
+// partially. An options object is the obvious place to carry an env and an
+// argv[0], and it was the one shape guaranteed to be waved through.
+var typeLiteralRe = regexp.MustCompile(`\bas\s*\{`)
 
-// dangerousFieldsIn returns the vocabulary params one capability's body names,
-// by either idiom. Bodies are the slice from a registration site to the next
-// one, so an alias and its uses can't be read across capability boundaries.
-func dangerousFieldsIn(body string) []string {
+// balancedBraces returns the contents of the `{ … }` block starting at open
+// (which must index a '{'), and the offset just past its closing brace.
+func balancedBraces(s string, open int) (inner string, end int, ok bool) {
+	if open < 0 || open >= len(s) || s[open] != '{' {
+		return "", 0, false
+	}
+	depth := 0
+	for i := open; i < len(s); i++ {
+		switch s[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return s[open+1 : i], i + 1, true
+			}
+		}
+	}
+	return "", 0, false
+}
+
+// keyIdentifierRe collects the identifiers in KEY position inside a
+// destructuring pattern or a type literal, at any depth: an identifier that
+// follows '{', ',' or ';'. That is what distinguishes `path` from `p` in a
+// rename (`path: p`, where the alias follows ':'), and a field name from its
+// TYPE (`cwd?: string`). Nested blocks need no special handling — a key inside
+// one still follows a '{' or a ','.
+var keyIdentifierRe = regexp.MustCompile(`[{,;]\s*\.{0,3}\s*([A-Za-z_$][\w$]*)`)
+
+// keyIdentifiers pulls the field names out of a brace block. The leading '{' is
+// re-attached because the FIRST key has nothing before it otherwise.
+func keyIdentifiers(block string) []string {
+	var out []string
+	for _, m := range keyIdentifierRe.FindAllStringSubmatch("{"+block, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// paramFieldsIn returns every param name one capability's body names, by either
+// idiom, WITHOUT filtering on the vocabulary — the unknown names are the input
+// to the shape heuristic (SuspiciousUnknownParam), which is the only thing that
+// can catch a synonym the denylist never learned. Bodies are the slice from a
+// registration site to the next one, so an alias and its uses can't be read
+// across capability boundaries.
+func paramFieldsIn(body string) []string {
 	var fields []string
 	seen := map[string]bool{}
 	add := func(name string) {
-		name = strings.TrimSpace(strings.SplitN(name, ":", 2)[0])
 		name = strings.TrimSuffix(strings.TrimSpace(name), "?")
-		if _, dangerous := DangerousKind(name); dangerous && !seen[name] {
+		if name != "" && !seen[name] {
 			seen[name] = true
 			fields = append(fields, name)
 		}
 	}
-	for _, m := range paramsDestructureRe.FindAllStringSubmatch(body, -1) {
-		for _, part := range strings.Split(m[1], ",") {
-			add(part)
+	var destructured []string
+	for _, loc := range paramsDestructureRe.FindAllStringIndex(body, -1) {
+		open := strings.Index(body[loc[0]:loc[1]], "{") + loc[0]
+		inner, end, ok := balancedBraces(body, open)
+		if !ok || !destructureTailRe.MatchString(body[end:]) {
+			continue // an object pattern bound from something other than params
+		}
+		for _, k := range keyIdentifiers(inner) {
+			add(k)
+			destructured = append(destructured, k)
+		}
+		// The TYPE side of the same statement: `const { cwd, opts } = (params ??
+		// {}) as { cwd?: string; opts?: { env?: …; command?: string } }`. The
+		// pattern names `opts` and the annotation is where the fields inside it
+		// are declared, so reading only the pattern sees the wrapper and none of
+		// what it carries.
+		rest := body[end:]
+		if lit := typeLiteralRe.FindStringIndex(rest); lit != nil && lit[0] < 200 {
+			if annotated, _, ok := balancedBraces(rest, lit[1]-1); ok {
+				for _, k := range keyIdentifiers(annotated) {
+					add(k)
+				}
+			}
+		}
+	}
+	// …and member access on a destructured wrapper, which is the only signal
+	// when the annotation is a NAMED type: `const { opts } = (params …) as
+	// TerminalOpts; opts.env`.
+	for _, name := range destructured {
+		for _, hop := range memberChainsOn(body, name) {
+			add(hop)
 		}
 	}
 	for _, m := range paramsAliasRe.FindAllStringSubmatchIndex(body, -1) {
@@ -274,18 +354,46 @@ func dangerousFieldsIn(body string) []string {
 		// named type: `as { cwd?: string; kind?: … }`. Anchored at the binding so a
 		// later, unrelated `as {…}` in the same body isn't attributed to it.
 		rest := body[m[1]:]
-		if lit := typeLiteralRe.FindStringSubmatchIndex(rest); lit != nil && lit[0] < 200 {
-			for _, part := range strings.Split(rest[lit[2]:lit[3]], ";") {
-				for _, f := range strings.Split(part, ",") {
-					add(f)
+		if lit := typeLiteralRe.FindStringIndex(rest); lit != nil && lit[0] < 200 {
+			if inner, _, ok := balancedBraces(rest, lit[1]-1); ok {
+				for _, k := range keyIdentifiers(inner) {
+					add(k)
 				}
 			}
 		}
 		// Member access on the alias, which is the only signal when the annotation
 		// is a named type (`as SessionData`) or an imported parameter type.
-		accessRe := regexp.MustCompile(`\b` + regexp.QuoteMeta(alias) + `\.([A-Za-z_$][\w$]*)`)
-		for _, a := range accessRe.FindAllStringSubmatch(body, -1) {
-			add(a[1])
+		for _, hop := range memberChainsOn(body, alias) {
+			add(hop)
+		}
+	}
+	return fields
+}
+
+// memberChainsOn returns every property named in a member-access chain on
+// `base`. The whole CHAIN is taken, not just the first hop: `input.opts.env`
+// names `env` just as surely as `input.env` does, and an options object is
+// where an environment and an argv[0] would sit.
+func memberChainsOn(body, base string) []string {
+	var out []string
+	re := regexp.MustCompile(`\b` + regexp.QuoteMeta(base) + `((?:\??\.[A-Za-z_$][\w$]*)+)`)
+	for _, m := range re.FindAllStringSubmatch(body, -1) {
+		for _, hop := range strings.Split(strings.ReplaceAll(m[1], "?", ""), ".") {
+			if hop != "" {
+				out = append(out, hop)
+			}
+		}
+	}
+	return out
+}
+
+// dangerousFieldsIn narrows paramFieldsIn to the shared vocabulary: the params
+// that demand a classification by NAME.
+func dangerousFieldsIn(body string) []string {
+	var fields []string
+	for _, name := range paramFieldsIn(body) {
+		if _, dangerous := DangerousKind(name); dangerous {
+			fields = append(fields, name)
 		}
 	}
 	return fields
@@ -315,24 +423,33 @@ func TestCapabilitiesWithAPathParamAreClassified(t *testing.T) {
 		t.Fatalf("parsed no capability names from %s — the registration syntax changed; update capNameRe", src)
 	}
 	sawPathParam := map[string]bool{}
+	flagged := 0
 	for i, site := range sites {
 		name := text[site[2]:site[3]]
 		end := len(text)
 		if i+1 < len(sites) {
 			end = sites[i+1][0]
 		}
-		fields := dangerousFieldsIn(text[site[0]:end])
-		if len(fields) == 0 {
-			continue
-		}
-		sawPathParam[name] = true
-		// PER PARAM, not per method. `_, excused := unscopedByDecision[name]` is
-		// what let terminals.create's `shell` hide behind its `cwd` excuse, and it
-		// is why adding `mcpItemIds` to the vocabulary flagged nothing:
-		// agents.spawn was already listed, for a different field. Every dangerous
-		// param a handler names has to be either THE scoped one or covered by its
-		// own decision, with a kind and a written reason.
-		for _, field := range fields {
+		for _, field := range paramFieldsIn(text[site[0]:end]) {
+			if _, dangerous := DangerousKind(field); !dangerous {
+				// Not in the vocabulary — which is only reassuring if the name does
+				// not LOOK like one of the things the vocabulary is about. The
+				// denylist cannot see `entrypoint`, `exe` or `shellPath`; the shape
+				// heuristic is what turns "we never thought of that spelling" into a
+				// failure instead of a pass.
+				if SuspiciousUnknownParam(field) {
+					t.Errorf("hubCapabilities.ts registers %q taking %q, a name shaped like an executable/path/argv/destination that capspec's vocabulary does not know — so NO scan will ever demand a decision for it. Add it to dangerousParams with a kind, or to knownInertParams with the reason its shape is a coincidence.", name, field)
+				}
+				continue
+			}
+			sawPathParam[name] = true
+			flagged++
+			// PER PARAM, not per method. `_, excused := unscopedByDecision[name]` is
+			// what let terminals.create's `shell` hide behind its `cwd` excuse, and it
+			// is why adding `mcpItemIds` to the vocabulary flagged nothing:
+			// agents.spawn was already listed, for a different field. Every dangerous
+			// param a handler names has to be either THE scoped one or covered by its
+			// own decision, with a kind and a written reason.
 			if status, _ := ClassifyParam(name, field); status != ParamUnclassified {
 				continue
 			}
@@ -350,6 +467,82 @@ func TestCapabilitiesWithAPathParamAreClassified(t *testing.T) {
 		if !sawPathParam[canary] {
 			t.Errorf("did not parse a path-ish param out of %q in %s — the params-parsing regexes have stopped seeing one of the two idioms hubCapabilities.ts writes, so this detector is now blind to every capability written that way", canary, src)
 		}
+	}
+	// The desktop scan had NO floor at all: every regex here could stop matching,
+	// or the vocabulary could be gutted, and it would report success over an
+	// empty parse. The canaries above catch a total blindness per idiom; the
+	// ratchet catches the partial collapse they cannot.
+	if msg := RatchetError("desktop hubCapabilities.ts", flagged, desktopDangerousParamFloor); msg != "" {
+		t.Error(msg)
+	}
+}
+
+// desktopDangerousParamFloor is how many (capability, param) pairs the desktop
+// scan finds in the vocabulary. A ratchet, held by RatchetError — see
+// brainDangerousParamFloor in cmd/brain/capspec_params_test.go, which is the
+// same rule over the other provider.
+const desktopDangerousParamFloor = 53
+
+// TestNestedParamsAreNotInvisible is the mutation this parser used to fail. An
+// options object is the obvious place for a handler to carry an env and an
+// argv[0], and the `as { … }` reader was written with a `[^{}]*` body — so a
+// nested annotation matched NOTHING rather than matching partially, and every
+// name inside it was waved through. Same for a nested destructuring pattern,
+// and for a member-access chain through the alias.
+func TestNestedParamsAreNotInvisible(t *testing.T) {
+	cases := map[string]string{
+		"nested type literal": `registerCapability('terminals.create', async (params: unknown) => {
+	    const input = (params ?? {}) as { cwd?: string; opts?: { env?: Record<string,string>; command?: string } };`,
+		"nested destructuring": `registerCapability('terminals.create', async (params: unknown) => {
+	    const { cwd, opts: { env, command } } = (params ?? {}) as TerminalOpts;`,
+		"member-access chain": `registerCapability('terminals.create', async (params: unknown) => {
+	    const input = (params ?? {}) as TerminalOpts;
+	    void input.opts.env; void input.opts.command;`,
+		// The shape the real file writes: a DESTRUCTURING whose nested fields are
+		// declared in the `as { … }` annotation that follows it. The pattern names
+		// only the wrapper, so reading the pattern alone sees `opts` and nothing
+		// inside it.
+		"destructured wrapper, nested annotation": `registerCapability('terminals.create', async (params: unknown) => {
+	    const { cwd, opts } = (params ?? {}) as {
+	      cwd?: string;
+	      opts?: { env?: Record<string, string>; command?: string };
+	    };`,
+		// …and the same wrapper when the annotation is a NAMED type, so the only
+		// evidence is the member access.
+		"destructured wrapper, named type": `registerCapability('terminals.create', async (params: unknown) => {
+	    const { cwd, opts } = (params ?? {}) as TerminalOpts;
+	    void opts?.env; void opts.command;`,
+	}
+	for name, body := range cases {
+		got := map[string]bool{}
+		for _, f := range paramFieldsIn(body) {
+			got[f] = true
+		}
+		for _, want := range []string{"env", "command"} {
+			if !got[want] {
+				t.Errorf("%s: the desktop params parser did not see %q (saw %v) — a capability carrying an environment and an argv[0] one level down is invisible to the classification scan", name, want, paramFieldsIn(body))
+			}
+		}
+		if !got["cwd"] && name != "member-access chain" {
+			t.Errorf("%s: the parser lost the top-level `cwd` too (saw %v)", name, paramFieldsIn(body))
+		}
+	}
+	// A rename still reports the SOURCE name, not the local alias: `path: p`
+	// binds the caller's `path`, and reporting `p` would look up a decision
+	// nothing records.
+	fields := paramFieldsIn(`registerCapability('fs.read', async (params: unknown) => {
+	    const { path: p, cwd } = (params ?? {}) as { path?: string; cwd?: string };`)
+	var sawPath, sawAlias bool
+	for _, f := range fields {
+		if f == "path" {
+			sawPath = true
+		}
+		if f == "p" {
+			sawAlias = true
+		}
+	}
+	if !sawPath || sawAlias {
+		t.Errorf("rename handling regressed: got %v, want the source name `path` and not the alias `p`", fields)
 	}
 }
 
@@ -713,6 +906,215 @@ func TestConfigSaveDecisionsMatchTheHostTrustedContract(t *testing.T) {
 	for k := range got {
 		if !want[k] {
 			t.Errorf("capspec classifies config.save's %q as dangerous, but %s does not strip it from a bus write — either the corpus lost a key or the decision is describing a guard that does not exist", k, rel)
+		}
+	}
+}
+
+// ── The vocabulary itself ──────────────────────────────────────────────────
+
+// vocabularyGoldenRel is the golden copy of dangerousParams + paramStems: the
+// SOLE input to both classification scans, written down where a change to it
+// shows up as a data diff instead of one line in a map in a non-test file.
+//
+// Not in contracts/, deliberately. That corpus is for behaviour two LANGUAGES
+// implement, and cmd/brain/contracts_test.go fails any fixture with fewer than
+// two loaders in two languages — correctly, since a fixture only one language
+// reads pins nothing. Both scans that consume this vocabulary are Go (the
+// desktop one parses hubCapabilities.ts from Go), so a TS loader would exist
+// only to satisfy the count, which is the dead contract that guard is about.
+const vocabularyGoldenRel = "testdata/param-vocabulary.json"
+
+type vocabularyFixture struct {
+	Params          map[string]string `json:"params"`
+	Stems           []string          `json:"stems"`
+	InertExceptions map[string]string `json:"inertExceptions"`
+}
+
+func readVocabularyFixture(t *testing.T) vocabularyFixture {
+	t.Helper()
+	// os.ReadFile, not extinput: this file is INSIDE the Go module, so cmd/go's
+	// test cache already keys on it (extinput exists for the cross-repo reads
+	// that it does not).
+	raw, err := os.ReadFile(vocabularyGoldenRel)
+	if err != nil {
+		t.Fatalf("read %s: %v", vocabularyGoldenRel, err)
+	}
+	var fx vocabularyFixture
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatalf("parse %s: %v", vocabularyGoldenRel, err)
+	}
+	if len(fx.Params) == 0 || len(fx.Stems) == 0 {
+		t.Fatalf("%s has an empty params or stems block — the corpus can no longer say what either scan looks for", vocabularyGoldenRel)
+	}
+	return fx
+}
+
+// TestDangerousParamVocabularyMatchesTheGolden is the pin the whole params
+// detector was missing. dangerousParams is the SOLE input to both scans, it
+// lives in a non-test file, and NOTHING held it to anything: nine names could be
+// deleted with the entire Go suite green, and the three process identifiers that
+// started this work could then be re-added to terminals.create — silently, and
+// without the diff even looking like a test edit.
+//
+// DangerousParamNames() shipped for exactly this test and had zero callers,
+// which is the same defect one level up: an antidote nobody ever administered.
+// Both directions fail, and they fail differently — a name in the map but not
+// the fixture is an unreviewed EXPANSION (fine, but say so in the corpus), while
+// a name in the fixture but not the map is the disarm.
+func TestDangerousParamVocabularyMatchesTheGolden(t *testing.T) {
+	fx := readVocabularyFixture(t)
+
+	inMap := map[string]bool{}
+	for _, name := range DangerousParamNames() {
+		inMap[name] = true
+		kind, ok := DangerousKind(name)
+		if !ok {
+			t.Fatalf("DangerousParamNames listed %q but DangerousKind does not know it — the two disagree about the same map", name)
+		}
+		want, listed := fx.Params[name]
+		if !listed {
+			t.Errorf("capspec's vocabulary has %q (a %s) and %s does not list it — add it to the fixture, so a reviewer sees the vocabulary the scans actually run on", name, kind, vocabularyGoldenRel)
+			continue
+		}
+		if want != string(kind) {
+			t.Errorf("%s says %q is a %q, capspec says %q — the corpus and the map disagree about what a caller's value BECOMES", vocabularyGoldenRel, name, want, kind)
+		}
+		if !KnownKind(kind) {
+			t.Errorf("capspec classifies %q as kind %q, which is not a known kind", name, kind)
+		}
+	}
+	for name, kind := range fx.Params {
+		if !inMap[name] {
+			t.Errorf("%s pins %q (a %s) as a param that demands a decision, but capspec's dangerousParams no longer contains it — every handler binding %q is now invisible to BOTH scans. This is the silent-disarm case: restore the name, or delete it from the fixture in the same commit and say why.", vocabularyGoldenRel, name, kind, name)
+		}
+	}
+
+	// The heuristic's stems are the other half of the input, and emptying that
+	// map is the other way to switch the detector off without touching a test.
+	stemsInFixture := map[string]bool{}
+	for _, s := range fx.Stems {
+		stemsInFixture[s] = true
+	}
+	stemsInCode := map[string]bool{}
+	for _, s := range ParamStems() {
+		stemsInCode[s] = true
+		if !stemsInFixture[s] {
+			t.Errorf("capspec's shape heuristic uses the stem %q, which %s does not list", s, vocabularyGoldenRel)
+		}
+	}
+	for s := range stemsInFixture {
+		if !stemsInCode[s] {
+			t.Errorf("%s pins the stem %q, but capspec's paramStems no longer has it — every synonym built on that stem (the class `entrypoint`, `exe`, `launcher`, `shellPath` belong to) is waved through again", vocabularyGoldenRel, s)
+		}
+	}
+
+	// The escape hatch is a corpus entry too, so adding one is a reviewed act
+	// rather than a line in a map nobody diffs.
+	for _, name := range InertParamNames() {
+		why, _ := InertParamReason(name)
+		if len(strings.TrimSpace(why)) < 40 {
+			t.Errorf("knownInertParams[%q] has no real reason (%q) — an unexplained entry here is how the heuristic gets emptied one name at a time", name, why)
+		}
+		if _, listed := fx.InertExceptions[name]; !listed {
+			t.Errorf("capspec excuses the stem-shaped name %q from the heuristic, but %s does not list it — the exception is invisible to review", name, vocabularyGoldenRel)
+		}
+		if _, alsoDangerous := DangerousKind(name); alsoDangerous {
+			t.Errorf("%q is both in the vocabulary and in knownInertParams — it cannot be a param that demands a decision and a coincidence at the same time", name)
+		}
+	}
+	for name := range fx.InertExceptions {
+		if _, ok := InertParamReason(name); !ok {
+			t.Errorf("%s lists %q as a heuristic exception, but capspec's knownInertParams does not — the fixture is describing an excuse that no longer exists", vocabularyGoldenRel, name)
+		}
+	}
+}
+
+// TestParamStemHeuristicCatchesTheSynonymClass is the behavioural half: the
+// stems exist to catch the names the DENYLIST cannot, and each of these is a
+// real argv[0] spelling that passed on terminals.create with the vocabulary
+// alone.
+func TestParamStemHeuristicCatchesTheSynonymClass(t *testing.T) {
+	for _, name := range []string{
+		"entrypoint", "exe", "launcher", "shellPath", "execPath", "exec_path",
+		"binPath", "commandLine", "argv0", "ENTRYPOINT", "launchCommand",
+		"envVarsExtra", "downloadUrl", "workDirectory",
+	} {
+		if !SuspiciousUnknownParam(name) {
+			t.Errorf("SuspiciousUnknownParam(%q) = false — a synonym of argv[0]/a path/a destination that no scan will ever ask about, which is the exact hole the denylist has by construction", name)
+		}
+	}
+	// …and it stays quiet on the names that are already classified, on the
+	// deliberate omission, and on ordinary inert fields — a heuristic that flags
+	// everything gets switched off within a week.
+	for _, name := range []string{
+		"path", "cwd", "shell", "command", // in the vocabulary: already covered
+		"sessionId", "agentId", "title", "body", "level", "limit", "cols", "rows",
+		"permissionMode", "model", "provider", "transport", "staged", "untracked",
+		"contents", "message", "activeTabId", "tabs", "answers", "silent",
+	} {
+		if SuspiciousUnknownParam(name) {
+			t.Errorf("SuspiciousUnknownParam(%q) = true — the heuristic is flagging a name that is either already classified or plainly inert, and a noisy detector is a disabled one", name)
+		}
+	}
+}
+
+// TestDangerousKindFoldMatchesTheWayGoBinds pins the case-insensitivity the Go
+// scanner needs and the desktop one must NOT have. encoding/json binds {"env":…}
+// to a field tagged `Env`, and to an untagged `Env`, so an exact lookup answered
+// "not in the vocabulary" for both — a rename away from a silent disarm.
+// JavaScript destructuring is case-sensitive, so DangerousKind stays exact.
+func TestDangerousKindFoldMatchesTheWayGoBinds(t *testing.T) {
+	for _, c := range []struct{ spelling, canonical string }{
+		{"env", "env"}, {"Env", "env"}, {"ENV", "env"},
+		{"configdir", "configDir"}, {"ConfigDir", "configDir"},
+		{"BytesB64", "bytesB64"}, {"Shell", "shell"}, {"ExtraArgs", "extraArgs"},
+	} {
+		canonical, kind, ok := DangerousKindFold(c.spelling)
+		if !ok {
+			t.Errorf("DangerousKindFold(%q) says the vocabulary does not know it, but encoding/json would bind a caller's %q to it", c.spelling, c.canonical)
+			continue
+		}
+		if canonical != c.canonical {
+			t.Errorf("DangerousKindFold(%q) canonicalized to %q, want %q — the decision tables are keyed by the canonical spelling, so the wrong one looks the excuse up under a name nothing records", c.spelling, canonical, c.canonical)
+		}
+		if !KnownKind(kind) {
+			t.Errorf("DangerousKindFold(%q) returned kind %q", c.spelling, kind)
+		}
+	}
+	if _, _, ok := DangerousKindFold("sessionId"); ok {
+		t.Error("DangerousKindFold matched `sessionId`, which is deliberately absent from the vocabulary")
+	}
+	if _, ok := DangerousKind("Env"); ok {
+		t.Error("DangerousKind (the EXACT lookup the desktop scan uses) matched `Env` — JS destructuring is case-sensitive, and folding there would flag params no caller can send")
+	}
+}
+
+// TestEveryParamDecisionNamesAParamAScannerCanSee is the rot check. A
+// ParamDecision reads as coverage forever, whether or not any scanner will ever
+// consult it: nothing checked that the param it names still EXISTS in the
+// vocabulary. claude.profiles.update's `updates` was exactly that — a decision
+// for a wrapper name no scan could match, so the four fields inside it were
+// argued for in a sentence that was never reachable. A decision naming a param
+// no scan can see is indistinguishable from a decision about a param that was
+// deleted years ago.
+func TestEveryParamDecisionNamesAParamAScannerCanSee(t *testing.T) {
+	for _, method := range sortedFixtureMethods(unscopedParams) {
+		scopedField := PathParam[method]
+		for _, param := range sortedFixtureMethods(unscopedParams[method]) {
+			if param == scopedField {
+				continue // the bus's own field; TestEveryParamDecisionCarriesAKindAndAReason rejects it separately
+			}
+			if _, known := DangerousKind(param); known {
+				continue
+			}
+			// config.save is the one method whose decision keys are not caller
+			// PARAMS at all: it binds the whole config partial, so its keys are
+			// dotted CONFIG keys, held equal to contracts/host-trusted-config-cases.json
+			// by TestConfigSaveDecisionsMatchTheHostTrustedContract.
+			if method == "config.save" {
+				continue
+			}
+			t.Errorf("%s has a decision for %q, but %q is not in capspec's vocabulary — no scanner will ever ask about that param, so the decision is a description of a guard nobody consults (and would keep reading as coverage if the param were removed entirely). Add the name to dangerousParams, or delete the decision.", method, param, param)
 		}
 	}
 }

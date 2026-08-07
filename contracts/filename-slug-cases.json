@@ -48,6 +48,29 @@
     "variants; `expect` carries one string per variant."
   ],
 
+  "vocabulary": {
+    "_comment": [
+      "THE BLOCK REGISTRY. Every array-of-objects block in this file must be declared",
+      "here and everything here must be a block — closure in both directions, so a new",
+      "block is a failure until someone says what its cases must carry, and a renamed",
+      "one cannot quietly stop being validated.",
+      "",
+      "Held by cmd/brain/corpusvocab_test.go and",
+      "apps/desktop/src/main/services/contractsVocabulary.test.ts. Before those, this",
+      "kind of validation existed for exactly ONE block of ONE fixture."
+    ],
+    "blocks": {
+      "cases": {
+        "why": "One input, one expected slug per variant (library/layout/session).",
+        "required": [
+          "name",
+          "input",
+          "expect",
+          "why"
+        ]
+      }
+    }
+  },
   "owners": {
     "apps/desktop/src/main/lib/fileUtils.ts": ["library", "layout", "session"],
     "services/hub/cmd/brain/slug.go": ["library", "layout", "session"]

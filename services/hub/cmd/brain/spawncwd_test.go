@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 )
 
 type spawnCwdCase struct {
@@ -51,6 +53,10 @@ func loadSpawnCwdCases(t *testing.T) []spawnCwdCase {
 	return fx.SpawnCwds.Cases
 }
 
+// spawnCwdFloor is the block's size today; `len(...) == 0` is met by a block
+// down to one case.
+const spawnCwdFloor = 10
+
 func TestSpawnCwdNormalizationContractCases(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
@@ -58,12 +64,19 @@ func TestSpawnCwdNormalizationContractCases(t *testing.T) {
 	}
 	cases := loadSpawnCwdCases(t)
 
+	// sawTilde is counted in the BODY. Registered-and-never-run is the failure
+	// this whole family keeps re-learning, and a tilde vector that was
+	// enumerated but never executed satisfies nothing: the guard it stands for
+	// (BINDING DECISION 1 on this seam) would be unpinned with the flag still
+	// true. Same for the tally.
 	sawTilde := false
+	var tally sweepguard.Tally
 	for _, c := range cases {
-		if strings.HasPrefix(c.In, "~") {
-			sawTilde = true
-		}
 		t.Run(c.In, func(t *testing.T) {
+			if strings.HasPrefix(c.In, "~") {
+				sawTilde = true
+			}
+			tally.Ran("other")
 			want := strings.ReplaceAll(c.Out, "${HOME}", home)
 			if i := strings.Index(want, "${"); i >= 0 {
 				t.Fatalf("unsubstituted token in %q — the only token this block defines is ${HOME}", want)
@@ -76,8 +89,12 @@ func TestSpawnCwdNormalizationContractCases(t *testing.T) {
 	// The block's whole reason for existing. Without a '~' vector this test is
 	// satisfied by the tilde-expanding version that shipped.
 	if !sawTilde {
-		t.Fatal("no '~' vector in the spawnCwds block — BINDING DECISION 1 is unpinned on this seam again")
+		t.Fatal("no '~' vector RAN in the spawnCwds block — BINDING DECISION 1 is unpinned on this seam again")
 	}
+	if err := tally.RequireEvery("the spawnCwds block", spawnCwdFloor); err != nil {
+		t.Fatal(err)
+	}
+	t.Log(tally.String())
 }
 
 // The other half of BINDING DECISION 1 on this seam: expandTilde still exists

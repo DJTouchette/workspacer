@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 )
 
 type modelCatalogCase struct {
@@ -43,8 +45,12 @@ func TestClaudeModelCatalogContractCases(t *testing.T) {
 	if len(fx.Cases) == 0 {
 		t.Fatal("the fixture has no cases; this loader guards nothing")
 	}
+	// The block's size today; `len(fx.Cases) == 0` is met by a corpus down to one.
+	const modelCatalogFloor = 7
+	var tally sweepguard.Tally
 	for _, c := range fx.Cases {
 		t.Run(c.Name, func(t *testing.T) {
+			tally.Ran("other")
 			got := buildListModels(c.Config.DefaultModel, c.Config.SkipPermissionsDefault,
 				c.Config.DefaultPermissionMode, c.Config.SeenModels, c.Live)
 			gotJSON, _ := json.Marshal(got)
@@ -55,4 +61,8 @@ func TestClaudeModelCatalogContractCases(t *testing.T) {
 			}
 		})
 	}
+	if err := tally.RequireEvery("the claude-model-catalog corpus", modelCatalogFloor); err != nil {
+		t.Fatal(err)
+	}
+	t.Log(tally.String())
 }

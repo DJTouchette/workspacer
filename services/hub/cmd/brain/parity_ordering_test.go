@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 )
 
 const parityFixtureRel = "../../../../contracts/provider-parity-cases.json"
@@ -56,11 +58,21 @@ func loadParityFixture(t *testing.T) parityFixture {
 	return fx
 }
 
+// The three blocks' sizes today. A `len(...) == 0` check is the only floor this
+// loader had, and it is met by a block that lost every case but one.
+const (
+	parityOrderFloor  = 4
+	parityScalarFloor = 7
+	paritySuffixFloor = 10
+)
+
 func TestProviderParityFixtureCases(t *testing.T) {
 	fx := loadParityFixture(t)
 
+	var order, scalar, suffix sweepguard.Tally
 	for _, c := range fx.Order {
 		t.Run("order/"+c.Name, func(t *testing.T) {
+			order.Ran("other")
 			got := append([]string(nil), c.Input...)
 			sort.SliceStable(got, func(i, j int) bool { return got[i] < got[j] })
 			if strings.Join(got, "\x00") != strings.Join(c.Expected, "\x00") {
@@ -70,6 +82,7 @@ func TestProviderParityFixtureCases(t *testing.T) {
 	}
 	for _, c := range fx.Scalar {
 		t.Run("scalar/"+c.Name, func(t *testing.T) {
+			scalar.Ran("other")
 			if got := str(c.Value); got != c.Expected {
 				t.Fatalf("str(%#v) = %q, want %q", c.Value, got, c.Expected)
 			}
@@ -80,14 +93,40 @@ func TestProviderParityFixtureCases(t *testing.T) {
 			got := strings.TrimSuffix(c.Value, c.Suffix)
 			if c.Fold {
 				if c.Suffix != ".md" {
+					suffix.Skip("a fold case whose suffix is not .md; the twin shipped here is trimMDSuffix")
 					t.Skipf("the folding twin shipped here is trimMDSuffix, which is .md-specific")
 				}
 				got = trimMDSuffix(c.Value)
 			}
+			suffix.Ran("other")
 			if got != c.Expected {
 				t.Fatalf("trim(%q, %q, fold=%v) = %q, want %q\n  why: %s", c.Value, c.Suffix, c.Fold, got, c.Expected, c.Why)
 			}
 		})
+	}
+	// One floor per block: these are three independent corpora sharing a file,
+	// and a total would let a block empty itself behind the other two.
+	for _, f := range []struct {
+		what  string
+		tally *sweepguard.Tally
+		floor int
+	}{
+		{"the provider-parity order block", &order, parityOrderFloor},
+		{"the provider-parity scalar block", &scalar, parityScalarFloor},
+		{"the provider-parity suffix block", &suffix, paritySuffixFloor},
+	} {
+		// The suffix block has one skip gate (a non-.md fold case), so it is
+		// held to the enumerated floor; the other two have none.
+		var err error
+		if f.tally == &suffix {
+			err = f.tally.RequireCorpus(f.what, f.floor, 0, 0)
+		} else {
+			err = f.tally.RequireEvery(f.what, f.floor)
+		}
+		if err != nil {
+			t.Error(err)
+		}
+		t.Logf("%s: %s", f.what, f.tally.String())
 	}
 }
 

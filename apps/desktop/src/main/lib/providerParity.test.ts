@@ -9,6 +9,7 @@
  * TWIN: services/hub/cmd/brain/parity_ordering_test.go.
  */
 import * as fs from 'fs';
+import { SweepTally, itSweptTheWholeCorpus } from '../../../tests/support/sweepTally';
 import * as os from 'os';
 import * as path from 'path';
 import { describe, expect, it } from 'vitest';
@@ -42,8 +43,14 @@ describe('contracts/provider-parity-cases.json', () => {
     expect(fixture.suffix.length).toBeGreaterThan(0);
   });
 
+  // One tally per block: three independent corpora share this file, and a total
+  // would let one of them empty itself behind the other two.
+  const order = new SweepTally();
+  const scalar = new SweepTally();
+  const suffix = new SweepTally();
   for (const c of fixture.order) {
     it(`order: ${c.name}`, () => {
+      order.ran('other');
       expect([...c.input].sort(byteCompare)).toEqual(c.expected);
     });
   }
@@ -59,12 +66,14 @@ describe('contracts/provider-parity-cases.json', () => {
 
   for (const c of fixture.scalar) {
     it(`scalar: ${c.name}`, () => {
+      scalar.ran('other');
       expect(asString(c.value)).toBe(c.expected);
     });
   }
 
   for (const c of fixture.suffix) {
     it(`suffix: ${c.name}`, () => {
+      suffix.ran('other');
       const got = c.fold ? trimSuffixFold(c.value, c.suffix) : trimSuffix(c.value, c.suffix);
       expect(got).toBe(c.expected);
     });
@@ -76,6 +85,10 @@ describe('contracts/provider-parity-cases.json', () => {
     );
     expect(disagreements.length).toBeGreaterThan(0);
   });
+
+  itSweptTheWholeCorpus(order, 'the provider-parity order block', 4, { allow: 0, deny: 0 });
+  itSweptTheWholeCorpus(scalar, 'the provider-parity scalar block', 7, { allow: 0, deny: 0 });
+  itSweptTheWholeCorpus(suffix, 'the provider-parity suffix block', 10, { allow: 0, deny: 0 });
 });
 
 // The helpers pinned in isolation are not enough — the divergence shipped at the

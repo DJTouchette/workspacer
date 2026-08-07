@@ -7,6 +7,7 @@
 // diverge, one side's contract test fails.
 
 import { describe, it, expect, vi } from 'vitest';
+import { SweepTally, itSweptTheWholeCorpus } from '../../../tests/support/sweepTally';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import * as path from 'path';
@@ -60,12 +61,18 @@ describe('deepMerge contract (shared with Go config.go)', () => {
     expect(fixture.cases.length).toBeGreaterThan(0);
   });
 
+  // The floor. "the fixture loads and has cases" above is a floor of ONE: a
+  // corpus that lost every case but one passes it, and deepMerge is the only
+  // thing holding the desktop's config merge to the brain's.
+  const tally = new SweepTally();
   for (const c of fixture.cases) {
     it(c.name, () => {
+      tally.ran('other');
       // Clone inputs so a case can't be mutated across the shared fixture.
       const target = structuredClone(c.target);
       const source = structuredClone(c.source);
       expect(deepMerge(target, source)).toEqual(c.expected);
     });
   }
+  itSweptTheWholeCorpus(tally, 'the deepMerge corpus', 9, { allow: 0, deny: 0 });
 });

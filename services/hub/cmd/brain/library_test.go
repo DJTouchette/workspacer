@@ -291,9 +291,7 @@ func TestLibraryListDoesNotReadOutsideTheProjectItNamed(t *testing.T) {
 		[]byte("---\ntitle: Keeper\nkind: prompt\n---\n\nbody\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(key, filepath.Join(libDir, "a.md")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
+	gateSymlink(t, key, filepath.Join(libDir, "a.md"))
 
 	// No live agents at all: `project` is reachable only through the BROWSE
 	// widening, which is exactly the configuration the New Agent dialog is in.

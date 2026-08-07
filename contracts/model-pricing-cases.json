@@ -1,5 +1,28 @@
 {
   "_comment": "Cross-language pricing contract. input/output are USD per million tokens. Both modelUsage.ts (MODEL_RATES) and pricing.rs (BUILTIN) must price every id here identically via longest-prefix match. Regression cases below caught a real Rust drift bug (dated Opus 4.0 + Claude 3 Opus mispriced).",
+  "vocabulary": {
+    "_comment": [
+      "THE BLOCK REGISTRY. Every array-of-objects block in this file must be declared",
+      "here and everything here must be a block — closure in both directions, so a new",
+      "block is a failure until someone says what its cases must carry, and a renamed",
+      "one cannot quietly stop being validated.",
+      "",
+      "Held by cmd/brain/corpusvocab_test.go and",
+      "apps/desktop/src/main/services/contractsVocabulary.test.ts. Before those, this",
+      "kind of validation existed for exactly ONE block of ONE fixture."
+    ],
+    "blocks": {
+      "cases": {
+        "why": "USD per million tokens, priced by longest-prefix match in both tables.",
+        "required": [
+          "model",
+          "input",
+          "output",
+          "note"
+        ]
+      }
+    }
+  },
   "cases": [
     { "model": "claude-opus-4-8-20260101", "input": 5, "output": 25, "note": "current Opus 4.x -> generic claude-opus 5/25" },
     { "model": "claude-opus-4-5-20251101", "input": 5, "output": 25, "note": "current Opus 4.5 -> generic 5/25" },

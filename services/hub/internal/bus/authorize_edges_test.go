@@ -73,9 +73,7 @@ func TestAuthorizeRefusesASymlinkTraversalOutOfTheGrantedRoot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(outside, "token"), []byte("s3kr3t"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
+	gateSymlink(t, outside, filepath.Join(root, "link"))
 	canon, err := canonicalize(root)
 	if err != nil {
 		t.Fatal(err)
@@ -110,8 +108,13 @@ func TestAuthorizeDeniesEveryTargetItCannotResolve(t *testing.T) {
 	}
 	targets := []string{"../../../etc/passwd", "notes.txt", "~/.ssh/id_rsa", "~"}
 
+	// The ELOOP target is the only input in this list that reaches
+	// canonicalize's hop-limit arm, and it used to be added `if err == nil` —
+	// so a host without symlink privilege dropped it and nothing said so. The
+	// gate does not skip the test (the other targets are still worth running);
+	// it makes the missing coverage a named failure instead of an absence.
 	if runtime.GOOS != "windows" {
-		if err := os.Symlink(filepath.Join(root, "loop"), filepath.Join(root, "loop")); err == nil {
+		if gateSymlinkOptional(t, filepath.Join(root, "loop"), filepath.Join(root, "loop")) {
 			targets = append(targets, filepath.Join(root, "loop", "x"))
 		}
 	}

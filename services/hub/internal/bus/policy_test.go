@@ -510,6 +510,11 @@ func TestEveryCorpusCaseBelongsToAGroupSOMEBODYOwns(t *testing.T) {
 	t.Logf("corpus groups: %v", counts)
 }
 
+// busContainmentCorpusFloor is how many `cases` entries this implementation
+// owns today. See the twin in cmd/brain/fsguard_test.go: enumerated, not
+// executed, so it holds on every host.
+const busContainmentCorpusFloor = 107
+
 // containmentTokenTable is this loader's substitution table, and the ONE place
 // the token names it understands are written down. The case runner substitutes
 // out of it and TestFixtureVocabularyIsClosed compares its key set against the
@@ -1052,7 +1057,12 @@ func TestPathContainmentContractCases(t *testing.T) {
 	// The floor `seen` cannot provide: it counts registrations, and a registered
 	// case that skipped asserted nothing. Both verdict classes, separately — an
 	// allow-only sweep says the predicate lets things through and nothing else.
-	if err := tally.RequireBoth("the bus containment corpus"); err != nil {
+	// RATCHETED, not a floor of one: 107 enumerated cases dropping to 2 keeps an
+	// allow and a deny and would otherwise stay green forever. The number is
+	// checked against ENUMERATED cases so it means the same thing on a host that
+	// skips most of the sweep. TWIN: cmd/brain/fsguard_test.go's
+	// containmentCorpusFloor, and the desktop's in pathConfinement.test.ts.
+	if err := tally.RequireCorpus("the bus containment corpus", busContainmentCorpusFloor, 1, 1); err != nil {
 		t.Fatal(err)
 	}
 	t.Log(tally.String())
@@ -1125,8 +1135,15 @@ func TestParamShapeContractCases(t *testing.T) {
 	if len(fx.ParamShapes) == 0 {
 		t.Fatal("fixture has no paramShapes cases")
 	}
+	// paramShapesFloor is the block's size today. `len(...) == 0` is a floor of
+	// ONE, and this is the gate that runs BEFORE containment: a block down to a
+	// single case would leave every other shape (null, array, string, a nested
+	// object, a numeric field) unasserted with the suite green.
+	const paramShapesFloor = 17
+	var tally sweepguard.Tally
 	for _, c := range fx.ParamShapes {
 		t.Run(c.Name, func(t *testing.T) {
+			tally.Ran(c.Expect)
 			params := c.Params // verbatim JSON, exactly as the fixture spells it
 			if c.ParamsAbsent {
 				params = nil // a call that carried no params at all
@@ -1138,6 +1155,13 @@ func TestParamShapeContractCases(t *testing.T) {
 			}
 		})
 	}
+	// Both classes: a paramString that returned ok=false unconditionally
+	// satisfies every deny case here, and one that returned ok=true satisfies
+	// every accept case.
+	if err := tally.RequireCorpus("the paramShapes block", paramShapesFloor, 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	t.Log(tally.String())
 }
 
 // TestAuthorizeRefusalMessages pins the two refusal wordings apart (spec 7.5).

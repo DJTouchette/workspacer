@@ -29,7 +29,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { itRanEveryGatedTest, gatedIt } from '../../../tests/support/sweepTally';
+import {
+  itRanEveryGatedTest,
+  gatedIt,
+  CAN_SYMLINK,
+  SweepTally,
+  itSweptTheWholeCorpus,
+} from '../../../tests/support/sweepTally';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -37,17 +43,7 @@ import * as fs from 'fs';
 /** Can this process create symlinks? (Windows without developer mode cannot.)
  *  A test that needs them is SKIPPED and then COUNTED — reported as a skip,
  *  never as a pass, and never as a silent zero. */
-const CAN_SYMLINK_HERE = (() => {
-  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-capsym-'));
-  try {
-    fs.symlinkSync(probe, path.join(probe, 'l'));
-    return true;
-  } catch {
-    return false;
-  } finally {
-    fs.rmSync(probe, { recursive: true, force: true });
-  }
-})();
+const CAN_SYMLINK_HERE = CAN_SYMLINK;
 
 // Capture every registered capability handler so tests can invoke them directly.
 const registered = new Map<string, (params: unknown) => unknown>();
@@ -314,9 +310,14 @@ describe('fixture-driven guard coverage — path capabilities main owns in produ
     expect(brainOwned.length).toBeGreaterThan(0);
   });
 
+  // `mainOwned.length > 0` above counts what the FIXTURE lists. This counts what
+  // ran: a filter that stopped matching, or a describe whose bodies all threw
+  // past their assertions, leaves the length check green.
+  const mainSweep = new SweepTally();
   for (const entry of mainOwned) {
     describe(entry.method, () => {
       it('is registered with the brain owning the catalog', () => {
+        mainSweep.ran('other');
         // Not a skip, not a conditional: if main does not register this in the
         // shipping mode, no provider answers it and every remote call fails.
         expect(registered.has(entry.method)).toBe(true);
@@ -425,9 +426,19 @@ describe('fixture-driven guard coverage — path capabilities main owns in produ
   // The mirror image. These are `cat`-door methods: with delegation on the Go
   // brain is the single provider, and main registering them too would collide on
   // a router that is single-owner per method.
+  const brainSweep = new SweepTally();
   for (const entry of brainOwned) {
     it(`${entry.method} is left to the brain (not registered here)`, () => {
+      brainSweep.ran('other');
       expect(registered.has(entry.method)).toBe(false);
     });
   }
+
+  // Ratcheted to the number of methods each owner serves today. A fixture whose
+  // `providers` lists shrank would otherwise still satisfy `.length > 0`.
+  itSweptTheWholeCorpus(mainSweep, "the methods 'main' owns in production", 5, {
+    allow: 0,
+    deny: 0,
+  });
+  itSweptTheWholeCorpus(brainSweep, 'the methods left to the brain', 7, { allow: 0, deny: 0 });
 });

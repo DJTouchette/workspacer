@@ -18,6 +18,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 )
 
 // ---------------------------------------------------------------------------
@@ -41,9 +43,7 @@ import (
 // containment guard runs before either sink — but exactly the drift the corpus
 // exists to catch.
 func TestListEntriesHidesGitignoredNamesTheDesktopHides(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
+	gateGit(t)
 	dir := t.TempDir()
 	if err := exec.Command("git", "-C", dir, "init").Run(); err != nil {
 		t.Skipf("git init failed: %v", err)
@@ -107,8 +107,20 @@ func TestClaudeProjectDirNameContractCases(t *testing.T) {
 		t.Fatalf("%s decoded to zero projectDirNames cases — a silently empty block guards nothing", contractFixtureRel)
 	}
 
+	// projectDirNamesFloor: the block's size today. `len(...) == 0` above is met
+	// by a block that lost seven of its eight cases.
+	const projectDirNamesFloor = 8
+	var tally sweepguard.Tally
 	for _, c := range fx.ProjectDirNames.Cases {
 		t.Run(c.Cwd, func(t *testing.T) {
+			// Filed by verdict: a nil `expect` is a refusal, and a sweep that
+			// ran only refusals is satisfied by an encoder that refuses
+			// everything.
+			if c.Expect == nil {
+				tally.Ran("refuse")
+			} else {
+				tally.Ran("accept")
+			}
 			got, ok := claudeProjectDirName(c.Cwd)
 			if c.Expect == nil {
 				if ok {
@@ -129,6 +141,15 @@ func TestClaudeProjectDirNameContractCases(t *testing.T) {
 			}
 		})
 	}
+	if err := tally.RequireEvery("the projectDirNames block", projectDirNamesFloor); err != nil {
+		t.Fatal(err)
+	}
+	// Both classes: the refusals are what the capspec exemption rests on, and
+	// the accepts are the only thing that says the encoder still encodes.
+	if err := tally.Require("the projectDirNames block", 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	t.Log(tally.String())
 }
 
 // TestSessionsForDirCannotClimbOutOfTheProjectsDir is the behavioural half: the
@@ -224,9 +245,7 @@ func TestLibraryDerivedRootSetIsTheItemRoots(t *testing.T) {
 		if err := os.MkdirAll(target, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(target, link); err != nil {
-			t.Skipf("cannot create symlinks here: %v", err)
-		}
+		gateSymlink(t, target, link)
 		body := `{"scope":"project","cwd":` + jsonStr(projA) + `,"id":"pwn","title":"t","kind":"prompt","body":"OWNED"}`
 		res, err := reg.handle(context.Background(), "library.save", json.RawMessage(body))
 		if err == nil {

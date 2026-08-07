@@ -444,9 +444,20 @@ func TestSaveSavedSessionStampsTheVersion(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type sessionFilenameCase struct {
-	Name          string       `json:"name"`
-	Filename      string       `json:"filename"`
-	Expect        string       `json:"expect"`
+	Name     string `json:"name"`
+	Filename string `json:"filename"`
+	Expect   string `json:"expect"`
+	// RefusedBy is the RIGHT-REASON half of a refusal, named from the fixture's
+	// `vocabulary.sessionRefuseReasons`. `expect: refuse` on its own is
+	// satisfied by a refusal for ANY reason — including a resolver that refuses
+	// everything, which is the failure the accept cases are the only defence
+	// against — and it hid something specific here: the case named "a
+	// multi-segment name that traverses a symlink out of the sessions dir" is
+	// refused by the BASENAME rule and never reaches the symlink at all. Naming
+	// the reason says which of the two rules each case actually exercises, and
+	// keeps the one case that exercises the second rule from being deleted by
+	// accident.
+	RefusedBy     string       `json:"refusedBy"`
 	ResolvesTo    string       `json:"resolvesTo"`
 	NeedsSymlinks bool         `json:"needsSymlinks"`
 	Tree          contractTree `json:"tree"`
@@ -539,6 +550,12 @@ func TestSessionFilenameContractCases(t *testing.T) {
 				t.Fatalf("sessionFilePath(%q) ok=%v, want %v\n  why: %s", c.Filename, ok, want, c.Why)
 			}
 			if !ok {
+				// THE RIGHT REASON, computed by an oracle that shares no code
+				// with sessionFilePath.
+				if got := sessionRefusalReason(c.Filename); got != c.RefusedBy {
+					t.Fatalf("refused for the WRONG REASON: the oracle says %q, the fixture says %q\n  filename: %q\n  why: %s",
+						got, c.RefusedBy, c.Filename, c.Why)
+				}
 				// A refusal must also be inert at the store level: the two verbs a
 				// bus caller can reach must neither return the file's contents nor
 				// delete it. Asking sessionFilePath alone would leave a copy that
@@ -567,10 +584,36 @@ func TestSessionFilenameContractCases(t *testing.T) {
 	// unconditionally satisfies every refuse case in this block, and one that
 	// returned ok=true satisfies every accept case. Only running both classes
 	// says anything.
-	if err := tally.RequireBoth("the sessionFilenames corpus"); err != nil {
+	if err := tally.RequireCorpus("the sessionFilenames corpus", sessionFilenameFloor, 1, 1); err != nil {
 		t.Fatal(err)
 	}
 	t.Log(tally.String())
+}
+
+// sessionRefusalReason is the INDEPENDENT oracle for why a session filename must
+// be refused, written from the two rules rather than from the implementation:
+// rule 1 is "a plain basename", rule 2 is "canonicalizes inside the sessions
+// dir". It shares no code with sessionFilePath — rule 2 is answered with
+// EvalSymlinks — so a copy that collapsed the two rules into one cannot satisfy
+// it, and a case whose name claims a symlink escape but which is really refused
+// for its separators is named as such.
+func sessionRefusalReason(filename string) string {
+	if strings.TrimSpace(filename) == "" || filename == "." || filename == ".." ||
+		filepath.IsAbs(filename) || filename != filepath.Base(filename) {
+		return "not-a-basename"
+	}
+	real, err := filepath.EvalSymlinks(filepath.Join(sessionsDir(), filename))
+	if err != nil {
+		return "unresolvable (the fixture declares no such reason — a case that lands here is one nothing can attribute)"
+	}
+	dir, err := filepath.EvalSymlinks(sessionsDir())
+	if err != nil {
+		return "unresolvable sessions dir"
+	}
+	if real == dir || strings.HasPrefix(real, strings.TrimSuffix(dir, string(filepath.Separator))+string(filepath.Separator)) {
+		return "inside the sessions dir (so this case is not refused by either rule, and the fixture is wrong to expect a refusal)"
+	}
+	return "escapes-sessions-dir"
 }
 
 // A store lister builds its own paths — `<storeDir>/<readdir entry>` — and those
@@ -625,9 +668,7 @@ func TestStoreListersDoNotReadThroughASymlinkOutOfTheStore(t *testing.T) {
 					t.Fatal(err)
 				}
 				link := filepath.Join(tc.dir(), "pwn.yaml")
-				if err := os.Symlink(token, link); err != nil {
-					t.Skipf("symlinks unavailable: %v", err)
-				}
+				gateSymlink(t, token, link)
 
 				before := treeSnapshot(t, cfg)
 				tc.list()
@@ -716,9 +757,7 @@ func TestSessionWriteAndDeleteRefuseAnEntryThatResolvesOutOfTheStore(t *testing.
 		t.Fatal(err)
 	}
 	link := filepath.Join(sessionsDir(), "precious.yaml")
-	if err := os.Symlink(victim, link); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
+	gateSymlink(t, victim, link)
 
 	if got := loadSavedSession("precious.yaml"); got != nil {
 		t.Errorf("sessions.load read through the symlink: %v", got)
@@ -764,9 +803,7 @@ func TestLayoutWriteAndDeleteRefuseAnEntryThatResolvesOutOfTheStore(t *testing.T
 	if err := os.WriteFile(victim, []byte("ui: {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(victim, filepath.Join(layoutsDir(), "pwn.yaml")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
+	gateSymlink(t, victim, filepath.Join(layoutsDir(), "pwn.yaml"))
 
 	if _, err := saveLayout(map[string]any{"id": "pwn", "agents": []any{}}); err == nil {
 		t.Error("layouts.save through an entry that resolves out of the store should be refused")
@@ -793,9 +830,7 @@ func TestStoreListersFollowASymlinkThatStaysInsideTheStore(t *testing.T) {
 	if err := os.WriteFile(real, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(real, filepath.Join(layoutsDir(), "alias.yaml")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
+	gateSymlink(t, real, filepath.Join(layoutsDir(), "alias.yaml"))
 	if got := listLayouts(); len(got) != 2 {
 		t.Fatalf("an in-store symlink must still be listed; got %d layouts: %+v", len(got), got)
 	}

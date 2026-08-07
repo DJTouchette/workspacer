@@ -22,6 +22,49 @@
     "`file` is claude-profiles.json's `profiles` array, or null for no file at all.",
     "`<added>` in expectedFileIds stands for the freshly minted uuid."
   ],
+  "vocabulary": {
+    "_comment": [
+      "THE BLOCK REGISTRY. Every array-of-objects block in this file must be declared",
+      "here and everything here must be a block — closure in both directions, so a new",
+      "block is a failure until someone says what its cases must carry, and a renamed",
+      "one cannot quietly stop being validated.",
+      "",
+      "Held by cmd/brain/corpusvocab_test.go and",
+      "apps/desktop/src/main/services/contractsVocabulary.test.ts. Before those, this",
+      "kind of validation existed for exactly ONE block of ONE fixture."
+    ],
+    "blocks": {
+      "list": {
+        "why": "loadProfiles over a seeded profiles file, and what it leaves on disk.",
+        "required": [
+          "name",
+          "file",
+          "expectedList",
+          "expectedFile",
+          "why"
+        ]
+      },
+      "add": {
+        "why": "addProfile's answer and the id order it leaves behind.",
+        "required": [
+          "name",
+          "file",
+          "add",
+          "expectedAdded",
+          "expectedFileIds",
+          "why"
+        ]
+      },
+      "mutate": {
+        "why": "update/remove against an id the caller got from list().",
+        "required": [
+          "name",
+          "file",
+          "why"
+        ]
+      }
+    }
+  },
   "list": [
     {
       "name": "an absent profiles file materializes exactly one Default row",
