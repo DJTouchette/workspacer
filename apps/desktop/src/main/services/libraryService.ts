@@ -64,6 +64,54 @@ export interface LibraryItem {
 const slug = slugLibrary;
 
 /**
+ * Validates ONE DERIVED library file — never the caller's cwd — and returns the
+ * canonical path to open, or null to skip it.
+ *
+ * `list` and `remove` are bus-reachable, and confining their `cwd` is not the
+ * same thing as confining what they touch: every read is
+ * `<cwd>/.workspacer/library/<name>.md` or `<cwd>/.claude/skills/<id>/SKILL.md`,
+ * composed AFTER the check and handed straight to readFileSync/rmSync. One
+ * symlink planted inside the (allowed) project — writing it is an ordinary
+ * permitted `fs.write` — therefore read `~/.config/workspacer/remote-token`
+ * through `library.list`, which `fs.read` of the identical symlink refuses, and
+ * `rm -rf`'d the config dir through `library.remove`.
+ *
+ * The local IPC path passes no guard: that is the desktop user working in their
+ * own repos, exactly as `save` has always been. The Go twin (cmd/brain
+ * library.go `libraryFileGuard`) has the same shape.
+ */
+export type LibraryFileGuard = (filePath: string) => string | null;
+
+/** The identity guard — the trusted local IPC path, and the format unit tests. */
+const allowAnyLibraryFile: LibraryFileGuard = (filePath) => filePath;
+
+/**
+ * The same guard applied to a WRITE target, where a refusal must fail the whole
+ * call rather than skip an item: `save` returns the path it claims to have
+ * written, so silently writing nothing would hand the caller a path that never
+ * received the bytes.
+ *
+ * It runs BEFORE mkdir, and the canonical answer is what the directory is
+ * created for and what is opened — `library.save` composed
+ * `<cwd>/.workspacer/library/<slug>.md` and `<cwd>/.claude/skills/<id>/SKILL.md`
+ * AFTER its cwd check and handed the raw string to writeFileSync, so a symlink
+ * planted in the (allowed) project by an ordinary permitted fs.write overwrote
+ * `<configDir>/config.yaml` with caller-controlled body content — and
+ * `updates.channel` is concatenated into the electron-updater feed URL. The Go
+ * twin (cmd/brain library.go saveLibrary / saveLibraryClaude) guards the derived
+ * destination exactly here, and refused what this copy allowed.
+ */
+function guardWriteTarget(guard: LibraryFileGuard, target: string): string {
+  const full = guard(target);
+  if (full === null) {
+    throw new Error(
+      'library.save: path is outside the allowed workspace (agent cwds + config stores)',
+    );
+  }
+  return full;
+}
+
+/**
  * Claude-scoped ids are real on-disk basenames rather than slugs (see
  * readClaudeItems — the 1:1 map back to disk is what makes in-place edits of a
  * `My.Skill` directory work), so they reach path.join unfiltered. That is a path
@@ -136,7 +184,7 @@ function serialize(
   return `---\n${head}\n---\n\n${item.body.replace(/\s+$/, '')}\n`;
 }
 
-function readDir(dir: string, scope: LibraryScope): LibraryItem[] {
+function readDir(dir: string, scope: LibraryScope, guard: LibraryFileGuard): LibraryItem[] {
   let names: string[];
   try {
     names = fs.readdirSync(dir).filter((n) => n.toLowerCase().endsWith('.md'));
@@ -145,7 +193,8 @@ function readDir(dir: string, scope: LibraryScope): LibraryItem[] {
   }
   const items: LibraryItem[] = [];
   for (const name of names) {
-    const full = path.join(dir, name);
+    const full = guard(path.join(dir, name));
+    if (full === null) continue; // a symlink out of the roots, or onto a credential
     try {
       const raw = fs.readFileSync(full, 'utf-8');
       const { data, body } = parseFrontmatter(raw);
@@ -185,10 +234,13 @@ function readDir(dir: string, scope: LibraryScope): LibraryItem[] {
 
 /** Build a LibraryItem from a Claude-format markdown file (name/description frontmatter). */
 function claudeItem(
-  full: string,
+  fullPath: string,
   id: string,
   kind: 'skill' | 'agent' | 'command',
+  guard: LibraryFileGuard,
 ): LibraryItem | null {
+  const full = guard(fullPath);
+  if (full === null) return null;
   try {
     const raw = fs.readFileSync(full, 'utf-8');
     const { data, body } = parseFrontmatter(raw);
@@ -206,7 +258,7 @@ function claudeItem(
   }
 }
 
-function readClaudeItems(cwd: string): LibraryItem[] {
+function readClaudeItems(cwd: string, guard: LibraryFileGuard): LibraryItem[] {
   const items: LibraryItem[] = [];
 
   // The id for a claude item is its REAL on-disk basename (skill dir name, or
@@ -219,7 +271,12 @@ function readClaudeItems(cwd: string): LibraryItem[] {
   try {
     for (const e of fs.readdirSync(claudeSkillsDir(cwd), { withFileTypes: true })) {
       if (!e.isDirectory()) continue;
-      const it = claudeItem(path.join(claudeSkillsDir(cwd), e.name, 'SKILL.md'), e.name, 'skill');
+      const it = claudeItem(
+        path.join(claudeSkillsDir(cwd), e.name, 'SKILL.md'),
+        e.name,
+        'skill',
+        guard,
+      );
       if (it) items.push(it);
     }
   } catch {
@@ -234,6 +291,7 @@ function readClaudeItems(cwd: string): LibraryItem[] {
         path.join(claudeAgentsDir(cwd), name),
         name.replace(/\.md$/i, ''),
         'agent',
+        guard,
       );
       if (it) items.push(it);
     }
@@ -251,6 +309,7 @@ function readClaudeItems(cwd: string): LibraryItem[] {
         path.join(claudeCommandsDir(cwd), name),
         name.replace(/\.md$/i, ''),
         'command',
+        guard,
       );
       if (it) items.push(it);
     }
@@ -296,34 +355,48 @@ class LibraryService {
 
   /** Merged item list, project winning over global on id collision.
    *  Claude items (.claude/skills + .claude/agents) are namespaced separately. */
-  list(cwd?: string): LibraryItem[] {
+  list(cwd?: string, guard: LibraryFileGuard = allowAnyLibraryFile): LibraryItem[] {
     const byId = new Map<string, LibraryItem>();
-    for (const it of readDir(globalDir(), 'global')) byId.set(it.id, it);
+    // The GLOBAL dir is guarded too: <configDir>/library is the one directory a
+    // remote caller can write into, so a symlink planted there aimed at the
+    // sibling remote-token is the shortest version of the same attack.
+    for (const it of readDir(globalDir(), 'global', guard)) byId.set(it.id, it);
     if (cwd) {
-      for (const it of readDir(projectDir(cwd), 'project')) byId.set(it.id, it);
-      for (const it of readClaudeItems(cwd)) byId.set(`claude:${it.kind}:${it.id}`, it);
+      for (const it of readDir(projectDir(cwd), 'project', guard)) byId.set(it.id, it);
+      for (const it of readClaudeItems(cwd, guard)) byId.set(`claude:${it.kind}:${it.id}`, it);
       this.ensureProjectWatch(cwd);
     }
     return Array.from(byId.values()).sort((a, b) => a.title.localeCompare(b.title));
   }
 
-  save(input: {
-    scope: LibraryScope;
-    id?: string;
-    title: string;
-    kind: LibraryKind;
-    description?: string;
-    tags?: string[];
-    action?: LibraryAction;
-    mcp?: McpServerConfig;
-    body: string;
-    cwd?: string;
-  }): LibraryItem {
-    if (input.scope === 'claude') return this.saveClaude(input);
-    const dir = input.scope === 'project' ? projectDir(input.cwd || process.cwd()) : globalDir();
-    fs.mkdirSync(dir, { recursive: true });
+  save(
+    input: {
+      scope: LibraryScope;
+      id?: string;
+      title: string;
+      kind: LibraryKind;
+      description?: string;
+      tags?: string[];
+      action?: LibraryAction;
+      mcp?: McpServerConfig;
+      body: string;
+      cwd?: string;
+    },
+    guard: LibraryFileGuard = allowAnyLibraryFile,
+  ): LibraryItem {
+    if (input.scope === 'claude') return this.saveClaude(input, guard);
     const id = slug(input.id || input.title);
-    const full = path.join(dir, `${id}.md`);
+    // Checked BEFORE mkdir, so a denied save leaves no directories behind, and
+    // the directory is re-derived from the CANONICAL file or mkdir would
+    // rebuild the unresolved one.
+    const full = guardWriteTarget(
+      guard,
+      path.join(
+        input.scope === 'project' ? projectDir(input.cwd || process.cwd()) : globalDir(),
+        `${id}.md`,
+      ),
+    );
+    fs.mkdirSync(path.dirname(full), { recursive: true });
     fs.writeFileSync(full, serialize(input), 'utf-8');
     return {
       id,
@@ -340,14 +413,17 @@ class LibraryService {
   }
 
   /** Write a claude-scoped item back in Claude Code's native format/location. */
-  private saveClaude(input: {
-    id?: string;
-    title: string;
-    kind: LibraryKind;
-    description?: string;
-    body: string;
-    cwd?: string;
-  }): LibraryItem {
+  private saveClaude(
+    input: {
+      id?: string;
+      title: string;
+      kind: LibraryKind;
+      description?: string;
+      body: string;
+      cwd?: string;
+    },
+    guard: LibraryFileGuard = allowAnyLibraryFile,
+  ): LibraryItem {
     const cwd = input.cwd || process.cwd();
     const kind: 'skill' | 'agent' | 'command' =
       input.kind === 'agent' ? 'agent' : input.kind === 'command' ? 'command' : 'skill';
@@ -355,12 +431,16 @@ class LibraryService {
     // so edit it in place; only slug when minting a brand-new item from a title.
     // A supplied id is still caller data, so it must look like a basename.
     const id = input.id ? assertPlainBasename(input.id) : slug(input.title);
-    const full =
+    // A `.claude/skills` DIRECTORY symlink inside the (allowed) cwd is the same
+    // escape library.remove had to close, in the write direction.
+    const full = guardWriteTarget(
+      guard,
       kind === 'skill'
         ? path.join(claudeSkillsDir(cwd), id, 'SKILL.md')
         : kind === 'command'
           ? path.join(claudeCommandsDir(cwd), `${id}.md`)
-          : path.join(claudeAgentsDir(cwd), `${id}.md`);
+          : path.join(claudeAgentsDir(cwd), `${id}.md`),
+    );
     fs.mkdirSync(path.dirname(full), { recursive: true });
 
     // Preserve frontmatter keys we don't model (tools, model, metadata, ...)
@@ -387,7 +467,30 @@ class LibraryService {
     };
   }
 
-  remove(scope: LibraryScope, id: string, cwd?: string, kind?: LibraryKind): void {
+  remove(
+    scope: LibraryScope,
+    id: string,
+    cwd?: string,
+    kind?: LibraryKind,
+    guard: LibraryFileGuard = allowAnyLibraryFile,
+  ): void {
+    // The DELETE TARGET goes through the guard, not the cwd it was composed
+    // from: `<cwd>/.claude/skills` is a caller-writable location inside an
+    // allowed root, so a directory symlink there turned a remove of id
+    // 'remote-token' into an rm -rf of the bus credential while the cwd the
+    // guard saw was impeccable. rmSync does not follow the FINAL symlink but it
+    // does traverse symlinked parents, so the whole derived path has to be
+    // canonical before anything is unlinked.
+    const unlink = (target: string, recursive: boolean): void => {
+      const full = guard(target);
+      if (full === null) return;
+      try {
+        if (recursive) fs.rmSync(full, { recursive: true, force: true });
+        else fs.unlinkSync(full);
+      } catch {
+        /* already gone */
+      }
+    };
     if (scope === 'claude') {
       const root = cwd || process.cwd();
       // The id is the item's real on-disk basename (from list()); use it verbatim
@@ -396,33 +499,17 @@ class LibraryService {
       // skill branch below is a recursive, force rmSync.
       const name = assertPlainBasename(id);
       if (kind === 'agent') {
-        try {
-          fs.unlinkSync(path.join(claudeAgentsDir(root), `${name}.md`));
-        } catch {
-          /* already gone */
-        }
+        unlink(path.join(claudeAgentsDir(root), `${name}.md`), false);
       } else if (kind === 'command') {
-        try {
-          fs.unlinkSync(path.join(claudeCommandsDir(root), `${name}.md`));
-        } catch {
-          /* already gone */
-        }
+        unlink(path.join(claudeCommandsDir(root), `${name}.md`), false);
       } else {
         // A skill is a directory (SKILL.md + optional resources)
-        try {
-          fs.rmSync(path.join(claudeSkillsDir(root), name), { recursive: true, force: true });
-        } catch {
-          /* already gone */
-        }
+        unlink(path.join(claudeSkillsDir(root), name), true);
       }
       return;
     }
     const dir = scope === 'project' ? projectDir(cwd || process.cwd()) : globalDir();
-    try {
-      fs.unlinkSync(path.join(dir, `${slug(id)}.md`));
-    } catch {
-      /* already gone */
-    }
+    unlink(path.join(dir, `${slug(id)}.md`), false);
   }
 
   // ── watching ──────────────────────────────────────────────────────────────

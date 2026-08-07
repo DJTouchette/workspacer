@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	yaml "gopkg.in/yaml.v3"
@@ -367,5 +368,212 @@ func TestSaveSavedSessionStampsTheVersion(t *testing.T) {
 	}
 	if got, _ := out["schemaVersion"].(int); got != sessionSchemaVersion {
 		t.Errorf("schemaVersion = %v, want %d", out["schemaVersion"], sessionSchemaVersion)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// contracts/path-containment-cases.json → sessionFilenames
+//
+// sessions.load / sessions.save / sessions.delete are the FOURTH copy of path
+// containment and the one nothing classified: capspec's pathVerbPrefixes do not
+// cover sessions.*, its pathishParams did not include `filename`, and the
+// corpus's `methods` block cannot hold it (that set must equal capspec.PathParam
+// exactly, and PathParam entries are absolute paths — a session basename is
+// not). So the two copies drifted: Go required a bare basename while the desktop
+// used path.resolve + startsWith, a purely lexical check that accepted any
+// multi-segment name under the sessions dir and therefore read and unlinked
+// through a directory symlink. This loader and the one in
+// apps/desktop/src/main/services/sessionService.test.ts read the same block.
+// ---------------------------------------------------------------------------
+
+type sessionFilenameCase struct {
+	Name          string       `json:"name"`
+	Filename      string       `json:"filename"`
+	Expect        string       `json:"expect"`
+	ResolvesTo    string       `json:"resolvesTo"`
+	NeedsSymlinks bool         `json:"needsSymlinks"`
+	Tree          contractTree `json:"tree"`
+	Why           string       `json:"why"`
+}
+
+type sessionFilenameFixture struct {
+	SessionFilenames struct {
+		Cases []sessionFilenameCase `json:"cases"`
+	} `json:"sessionFilenames"`
+}
+
+func TestSessionFilenameContractCases(t *testing.T) {
+	raw, err := os.ReadFile(contractFixtureRel)
+	if err != nil {
+		t.Fatalf("read the shared fixture: %v", err)
+	}
+	var fx sessionFilenameFixture
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatalf("parse %s: %v", contractFixtureRel, err)
+	}
+	cases := fx.SessionFilenames.Cases
+	if len(cases) == 0 {
+		t.Fatalf("%s decoded to zero sessionFilenames cases — a silently empty corpus guards nothing", contractFixtureRel)
+	}
+
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			sandbox, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			configHome := filepath.Join(sandbox, "config")
+			for _, d := range []string{filepath.Join("config", "workspacer", "sessions"), "outside"} {
+				if err := os.MkdirAll(filepath.Join(sandbox, d), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("XDG_CONFIG_HOME", configHome)
+			t.Setenv("APPDATA", configHome)
+
+			for _, d := range c.Tree.Dirs {
+				if err := os.MkdirAll(filepath.Join(sandbox, d), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for rel, body := range c.Tree.Files {
+				full := filepath.Join(sandbox, rel)
+				if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for rel, dest := range c.Tree.Symlinks {
+				full := filepath.Join(sandbox, rel)
+				if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(sandbox, dest), full); err != nil {
+					if c.NeedsSymlinks {
+						t.Skipf("needsSymlinks: cannot create symlinks here: %v", err)
+					}
+					t.Fatal(err)
+				}
+			}
+
+			got, ok := sessionFilePath(c.Filename)
+			want := c.Expect == "accept"
+			if ok != want {
+				t.Fatalf("sessionFilePath(%q) ok=%v, want %v\n  why: %s", c.Filename, ok, want, c.Why)
+			}
+			if !ok {
+				// A refusal must also be inert at the store level: the two verbs a
+				// bus caller can reach must neither return the file's contents nor
+				// delete it. Asking sessionFilePath alone would leave a copy that
+				// answered "no" and then opened the file anyway completely green.
+				if s := loadSavedSession(c.Filename); len(s) != 0 {
+					t.Fatalf("loadSavedSession(%q) returned data for a refused filename: %v", c.Filename, s)
+				}
+				deleteSavedSession(c.Filename)
+				for rel := range c.Tree.Files {
+					if _, err := os.Stat(filepath.Join(sandbox, rel)); err != nil {
+						t.Fatalf("deleteSavedSession(%q) removed %s, which it refused to resolve: %v", c.Filename, rel, err)
+					}
+				}
+				return
+			}
+			if c.ResolvesTo == "" {
+				t.Fatalf("an accept case must pin `resolvesTo` — the returned string is what gets opened")
+			}
+			if wantPath := filepath.Join(sandbox, c.ResolvesTo); got != wantPath {
+				t.Fatalf("sessionFilePath(%q) = %q, want %q\n  why: %s", c.Filename, got, wantPath, c.Why)
+			}
+		})
+	}
+}
+
+// A store lister builds its own paths — `<storeDir>/<readdir entry>` — and those
+// are DERIVED paths, which the same rule covers as the ones a caller names
+// (BINDING DECISION 2). The entry name is a bare basename, so nothing can escape
+// textually; a SYMLINK named like a store file is what escapes, and
+// <configDir>/layouts and <configDir>/sessions are precisely the two directories
+// a bus caller may write into (they are configStoreRoots).
+//
+// Unguarded, the leak was not just "the lister reads it": quarantineUnreadable
+// COPIED the bytes of whatever would not parse to `<name>.broken-<ts>`, an
+// ordinary file inside the same carve-out, with a basename that is not a
+// credential — so it passed the secret gate and `fs.read` handed it back.
+// remote-token in, TRUSTED bus connection out, through two allowed calls.
+func TestStoreListersDoNotReadThroughASymlinkOutOfTheStore(t *testing.T) {
+	const secret = "wks_remote_TRUSTED_PROMOTION_TOKEN"
+
+	for _, tc := range []struct {
+		name string
+		dir  func() string
+		list func()
+	}{
+		{"layouts.list", layoutsDir, func() { listLayouts() }},
+		{"sessions.list", sessionsDir, func() { listSavedSessions() }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := t.TempDir()
+			t.Setenv("XDG_CONFIG_HOME", cfg)
+			if err := os.MkdirAll(tc.dir(), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			token := filepath.Join(configDir(), "remote-token")
+			if err := os.WriteFile(token, []byte(secret), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			link := filepath.Join(tc.dir(), "pwn.yaml")
+			if err := os.Symlink(token, link); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+
+			tc.list()
+
+			// The control: fs.read of the symlink itself is refused, and the
+			// quarantine copy must not be a way around that.
+			reg := registryWithCwds(t)
+			if _, err := reg.handle(context.Background(), "fs.read",
+				json.RawMessage(`{"path":`+jsonStr(link)+`}`)); err == nil {
+				t.Fatal("fs.read of the planted symlink should be denied")
+			}
+
+			matches, _ := filepath.Glob(link + ".broken-*")
+			for _, m := range matches {
+				body, _ := os.ReadFile(m)
+				if strings.Contains(string(body), secret) {
+					t.Fatalf("%s minted %s holding the credential — fs.read of it is allowed "+
+						"(a plain file in a store carve-out), so this launders remote-token", tc.name, filepath.Base(m))
+				}
+			}
+			if len(matches) != 0 {
+				t.Errorf("%s quarantined an entry that resolves outside the store (%v); it should be skipped", tc.name, matches)
+			}
+			// And the credential itself is untouched: a lister must not rewrite
+			// what it refuses to read.
+			if body, err := os.ReadFile(token); err != nil || string(body) != secret {
+				t.Fatalf("remote-token was disturbed: %q %v", body, err)
+			}
+		})
+	}
+}
+
+// The floor: a symlink that stays INSIDE the store is an ordinary entry and must
+// still be listed. Refusing every symlink would satisfy the test above.
+func TestStoreListersFollowASymlinkThatStaysInsideTheStore(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	if err := os.MkdirAll(layoutsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(layoutsDir(), "real.yaml")
+	body := "id: real\nname: Real\ncreatedAt: '2026-01-01T00:00:00.000Z'\nagents: []\n"
+	if err := os.WriteFile(real, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(layoutsDir(), "alias.yaml")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if got := listLayouts(); len(got) != 2 {
+		t.Fatalf("an in-store symlink must still be listed; got %d layouts: %+v", len(got), got)
 	}
 }

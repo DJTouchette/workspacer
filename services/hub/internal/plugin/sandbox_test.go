@@ -214,3 +214,63 @@ func TestGrantsFor(t *testing.T) {
 		t.Errorf("grant[1] = %+v, want fs.read scoped to %q", grants[1], dir)
 	}
 }
+
+// The absolute branch of expandScope is a named anti-escalation check with its
+// own comment naming the escalation ("a manifest declaring fs.read on the config
+// dir could read remote-token and reconnect as a TRUSTED bus connection, which
+// drops per-plugin scoping and unlocks /plugins/install — arbitrary commands"),
+// and nothing entered it: the table above only covers the ${token} cases, and
+// `/abs/path` passes because it is nowhere near a credential.
+//
+// Reverting the branch to the pre-fix `return p` left the whole hub suite green
+// while granting a plugin a bus root of <configDir>/workspacer, or of
+// remote-token itself. The per-call gate (policy.go pathIsSecret) still refuses
+// at call time — both layers ship deliberately — but the load-time half must not
+// be deletable in silence.
+func TestExpandScopeRefusesAnAbsoluteScopeOnACredential(t *testing.T) {
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	t.Setenv("APPDATA", cfgHome)
+	cfg := filepath.Join(cfgHome, "workspacer")
+	for _, d := range []string{"library", "layouts", "sessions", "plugins"} {
+		if err := os.MkdirAll(filepath.Join(cfg, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(cfg, "remote-token"), []byte("tok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	project := t.TempDir()
+	bindings := map[string]string{"pluginDir": filepath.Join(cfg, "plugins", "acme"), "agentCwd": project}
+
+	refused := []string{
+		cfg,                                  // the config dir itself
+		filepath.Join(cfg, "remote-token"),   // the credential by location
+		filepath.Join(cfg, "plugins"),        // every plugin's .bus-token
+		filepath.Join(cfg, "config.yaml"),    // updates.channel → the updater feed URL
+		filepath.Join(project, ".bus-token"), // a credential BASENAME anywhere
+		filepath.Join(project, ".settings.json"),
+	}
+	for _, scope := range refused {
+		if got := expandScope(scope, bindings); got != "" {
+			t.Errorf("expandScope(%q) = %q, want \"\" — this scope names a credential or the config dir", scope, got)
+		}
+		if got := resolveRoots([]string{scope}, bindings); len(got) != 0 {
+			t.Errorf("resolveRoots(%q) granted %v, want no roots", scope, got)
+		}
+	}
+
+	// The floor: the three store carve-outs and an ordinary project directory
+	// are still grantable, or a check that dropped every absolute scope would
+	// satisfy the loop above.
+	for _, scope := range []string{
+		filepath.Join(cfg, "library"),
+		filepath.Join(cfg, "layouts"),
+		filepath.Join(cfg, "sessions"),
+		project,
+	} {
+		if got := expandScope(scope, bindings); got != scope {
+			t.Errorf("expandScope(%q) = %q, want it granted", scope, got)
+		}
+	}
+}

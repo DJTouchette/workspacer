@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -189,7 +190,11 @@ type containmentTree struct {
 	Dirs     []string          `json:"dirs"`
 	Files    map[string]string `json:"files"`
 	Symlinks map[string]string `json:"symlinks"`
-	Modes    map[string]string `json:"modes"`
+	// RelativeSymlinks values are written VERBATIM as the link body — the only
+	// way to reach the walk's relative-link arm, which every absolutized
+	// `Symlinks` case leaves unexecuted.
+	RelativeSymlinks map[string]string `json:"relativeSymlinks"`
+	Modes            map[string]string `json:"modes"`
 }
 
 type containmentCase struct {
@@ -198,11 +203,21 @@ type containmentCase struct {
 	NeedsSymlinks      bool            `json:"needsSymlinks"`
 	PosixOnly          bool            `json:"posixOnly"`
 	NeedsUnreadableDir bool            `json:"needsUnreadableDir"`
+	NeedsHome          bool            `json:"needsHome"`
 	Tree               containmentTree `json:"tree"`
-	Roots              []string        `json:"roots"`
-	Target             string          `json:"target"`
-	Expect             string          `json:"expect"`
-	Why                string          `json:"why"`
+	// ConfigDirVia names a sandbox-relative symlink to the config HOME that the
+	// implementation is pointed through, while ${CONFIG} keeps naming the real
+	// path — so the case passes only if the gate resolves its own config dir.
+	ConfigDirVia string   `json:"configDirVia"`
+	Roots        []string `json:"roots"`
+	Target       string   `json:"target"`
+	Expect       string   `json:"expect"`
+	// ResolvesTo is the token-substituted path canonicalize() must produce on an
+	// allow. The bus never opens it (authorize only decides), but it computes
+	// the same walk, and a copy whose ANSWER drifts is a copy whose verdict will
+	// drift next. Mandatory on every allow case.
+	ResolvesTo string `json:"resolvesTo"`
+	Why        string `json:"why"`
 }
 
 type paramShapeCase struct {
@@ -228,10 +243,12 @@ type methodCase struct {
 }
 
 type containmentFixture struct {
-	Owners      map[string][]string `json:"owners"`
-	Cases       []containmentCase   `json:"cases"`
-	Methods     []methodCase        `json:"methods"`
-	ParamShapes []paramShapeCase    `json:"paramShapes"`
+	Owners             map[string][]string `json:"owners"`
+	SecretBasenames    []string            `json:"secretBasenames"`
+	ConfigStoreSubdirs []string            `json:"configStoreSubdirs"`
+	Cases              []containmentCase   `json:"cases"`
+	Methods            []methodCase        `json:"methods"`
+	ParamShapes        []paramShapeCase    `json:"paramShapes"`
 }
 
 // thisOwner is the key this file answers to in the fixture's `owners` block.
@@ -247,6 +264,61 @@ func containedByAny(roots []string, canonicalTarget string) bool {
 		}
 	}
 	return false
+}
+
+// TestSecretGateConstantsMatchTheFixture pins the two parts of the `secrets`
+// gate the CASES cannot reach: every secrets case names one of the two
+// credential basenames and one of the three stores, so a THIRD basename, or a
+// fourth store carve-out, keeps the whole corpus green while the copies drift.
+// Carving out `plugins` in particular is a live widening — pathIsSecret flips
+// from true to false for <configDir>/plugins/**, which is where every installed
+// plugin keeps its .bus-token and settings.
+//
+// The fixture has carried both lists all along and only the TypeScript loader
+// consumed them; this struct did not even declare the fields, so the bus copy
+// could drift with the whole hub suite green.
+func TestSecretGateConstantsMatchTheFixture(t *testing.T) {
+	fx := loadContainmentFixture(t)
+	if len(fx.SecretBasenames) == 0 || len(fx.ConfigStoreSubdirs) == 0 {
+		t.Fatal("the fixture must carry both secretBasenames and configStoreSubdirs, or this guard guards nothing")
+	}
+
+	got := make([]string, 0, len(secretBasenames))
+	for name := range secretBasenames {
+		got = append(got, name)
+	}
+	want := append([]string(nil), fx.SecretBasenames...)
+	sort.Strings(got)
+	sort.Strings(want)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("secretBasenames drifted from the fixture\n  got:  %v\n  want: %v", got, want)
+	}
+	// Order too: the brain joins these onto the config dir in this order and the
+	// desktop pins the order with toEqual, so all three are one list.
+	if strings.Join(configStoreSubdirs, ",") != strings.Join(fx.ConfigStoreSubdirs, ",") {
+		t.Errorf("configStoreSubdirs drifted from the fixture\n  got:  %v\n  want: %v", configStoreSubdirs, fx.ConfigStoreSubdirs)
+	}
+}
+
+// userHome / realpathOf feed the two out-of-sandbox tokens. The RESOLVED form
+// matters: every other path in this loader is realpath'd, and on macOS /var ->
+// /private/var alone would make the comparison wrong.
+func userHome() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
+}
+
+func realpathOf(p string) string {
+	if p == "" {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return real
+	}
+	return p
 }
 
 func loadContainmentFixture(t *testing.T) containmentFixture {
@@ -290,6 +362,19 @@ func materializeTree(t *testing.T, sandbox string, tr containmentTree, needsSyml
 			t.Fatalf("mkdir parent of %s: %v", link, err)
 		}
 		if err := os.Symlink(filepath.Join(sandbox, filepath.FromSlash(target)), full); err != nil {
+			if needsSymlinks {
+				t.Skipf("cannot create symlinks here: %v", err)
+			}
+			t.Fatalf("symlink %s -> %s: %v", link, target, err)
+		}
+	}
+	for link, target := range tr.RelativeSymlinks {
+		full := filepath.Join(sandbox, filepath.FromSlash(link))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir parent of %s: %v", link, err)
+		}
+		// Verbatim: resolving a relative link body is the implementation's job.
+		if err := os.Symlink(filepath.FromSlash(target), full); err != nil {
 			if needsSymlinks {
 				t.Skipf("cannot create symlinks here: %v", err)
 			}
@@ -353,6 +438,21 @@ func TestPathContainmentContractCases(t *testing.T) {
 			if c.NeedsUnreadableDir && (runtime.GOOS == "windows" || os.Geteuid() == 0) {
 				t.Skip("needsUnreadableDir: this process can read a 0o000 directory anyway")
 			}
+			// ${HOME} and ${PROCESS_CWD} deliberately leave the sandbox: they are
+			// the two places a re-introduced tilde expansion, or a bad root
+			// resolved against the process cwd, would actually LAND. Every case
+			// keeping both root and target inside one temp dir is exactly what
+			// made the tilde and bad-root cases vacuous here — a widened root
+			// still contained nothing, so the deny verdict never moved. No case
+			// using these tokens expects `allow`.
+			home := realpathOf(userHome())
+			if c.NeedsHome && home == "" {
+				t.Skip("needsHome: this process has no resolvable home directory")
+			}
+			processCwd := ""
+			if wd, err := os.Getwd(); err == nil {
+				processCwd = realpathOf(wd)
+			}
 
 			sandbox, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
@@ -367,12 +467,23 @@ func TestPathContainmentContractCases(t *testing.T) {
 					t.Fatalf("mkdir %s: %v", d, err)
 				}
 			}
+			// A case may ask for the config dir to be REACHED through a symlink,
+			// while ${CONFIG} keeps naming the real path: the two agree only if
+			// the gate canonicalizes its own config dir.
+			configEnv := configHome
+			if c.ConfigDirVia != "" {
+				link := filepath.Join(sandbox, filepath.FromSlash(c.ConfigDirVia))
+				if err := os.Symlink(configHome, link); err != nil {
+					t.Skipf("configDirVia: cannot create symlinks here: %v", err)
+				}
+				configEnv = link
+			}
 			// The secret gate resolves the config dir through authtoken.ConfigDir()
 			// at call time, so pointing the environment at the sandbox is what puts
 			// ${CONFIG} in scope.
-			t.Setenv("XDG_CONFIG_HOME", configHome)
+			t.Setenv("XDG_CONFIG_HOME", configEnv)
 			if runtime.GOOS == "windows" {
-				t.Setenv("APPDATA", configHome)
+				t.Setenv("APPDATA", configEnv)
 			}
 
 			materializeTree(t, sandbox, c.Tree, c.NeedsSymlinks)
@@ -382,6 +493,8 @@ func TestPathContainmentContractCases(t *testing.T) {
 				"${ROOT}", root,
 				"${OUTSIDE}", outside,
 				"${CONFIG}", config,
+				"${HOME}", home,
+				"${PROCESS_CWD}", processCwd,
 			)
 			roots := make([]string, 0, len(c.Roots))
 			for _, r := range c.Roots {
@@ -403,6 +516,25 @@ func TestPathContainmentContractCases(t *testing.T) {
 				t.Errorf("pathWithinRoots(%v, %q) = %v, want %v\ncase: %s\nwhy: %s",
 					roots, target, ok, want, c.Name, c.Why)
 			}
+			// The ANSWER, not only the verdict. The corpus used to pin the
+			// decision alone, which is half the predicate: a walk that produced
+			// a textually-cleaned path instead of the resolved one (the thing
+			// canonicalize()'s header forbids) satisfies every allow and every
+			// deny here while naming a different file. On the bus that string is
+			// never opened — but it is the same walk the brain opens with, and a
+			// divergence in it is the drift this fixture exists to catch.
+			if want {
+				if c.ResolvesTo == "" {
+					t.Fatalf("allow case %q carries no resolvesTo; every allow case must pin the path the walk produces", c.Name)
+				}
+				ct, err := canonicalize(target)
+				if err != nil {
+					t.Fatalf("allow case %q: canonicalize(%q) failed: %v", c.Name, target, err)
+				}
+				if expect := filepath.FromSlash(sub.Replace(c.ResolvesTo)); ct != expect {
+					t.Errorf("canonicalize(%q) = %q, want %q\ncase: %s\nwhy: %s", target, ct, expect, c.Name, c.Why)
+				}
+			}
 			// Bus-only strengthening, not part of the shared corpus. The bus
 			// carries TWO refusals: the containment one may echo the plugin's own
 			// requested path, the secret one must not (spec 7.5), and they are
@@ -411,7 +543,7 @@ func TestPathContainmentContractCases(t *testing.T) {
 			// resolved target sits inside a granted root, containment passed and
 			// only the gate can have refused it. Without this, a regression that
 			// collapsed the two arms back into one path-echoing message would
-			// leave all 65 cases green.
+			// leave every case in the corpus green.
 			//
 			// Note the fixture's `group` is NOT that discriminator: "a symlink
 			// out of an allowed root into the config dir" is a secrets case that
@@ -581,5 +713,68 @@ func TestAuthorizeRefusalMessages(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "outside the plugin's granted scope") {
 		t.Errorf("containment refusal = %q, want the granted-scope wording", err.Error())
+	}
+}
+
+// TestAuthorizeRefusesCaseVariantDuplicateOfTheScopedField is the grant-scoping
+// half of the case-variant-key bypass, at the layer that actually decides.
+//
+// paramString's lookup is byte-exact. A Go provider's struct decode is not:
+// encoding/json matches a field to a JSON key exactly if it can and
+// CASE-INSENSITIVELY if it cannot, so the later "Path" overwrote the "path" this
+// file had confined. authorize() therefore returned nil on
+// `{"path":"<grantRoot>/ok.txt","Path":"<victim>/loot.txt"}` while the brain —
+// the default answerer for fs.*/library.* — read and wrote the second one. That
+// is the entire purpose of this file bypassed for every PathParam method a Go
+// provider answers, with both suites green.
+//
+// The corpus pins the shape through paramShapes; this pins the CONSEQUENCE: the
+// two-key form must be refused exactly as firmly as the honest one-key form of
+// the same escape.
+func TestAuthorizeRefusesCaseVariantDuplicateOfTheScopedField(t *testing.T) {
+	sandbox, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	grantRoot := filepath.Join(sandbox, "plugin")
+	victim := filepath.Join(sandbox, "victim")
+	for _, d := range []string{grantRoot, victim} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	canonRoot, ok := canonicalizeRoot(grantRoot)
+	if !ok {
+		t.Fatal("the grant root should canonicalize")
+	}
+	cn := &conn{caps: map[string]capGrant{"fs.read": {fsRoots: []string{canonRoot}}}}
+
+	benign := filepath.Join(grantRoot, "ok.txt")
+	loot := filepath.Join(victim, "loot.txt")
+
+	// Control: the honest request for the same file is refused, so the two-key
+	// form has something to smuggle.
+	honest, _ := json.Marshal(map[string]string{"path": loot})
+	if err := cn.authorize("fs.read", honest); err == nil {
+		t.Fatal("the one-key form of this path must already be refused, or this test proves nothing")
+	}
+	// And the benign path on its own is allowed, so a refusal below cannot be
+	// mistaken for "this conn is denied everything".
+	fine, _ := json.Marshal(map[string]string{"path": benign})
+	if err := cn.authorize("fs.read", fine); err != nil {
+		t.Fatalf("the plugin's own file must stay readable: %v", err)
+	}
+
+	// json.Marshal of a map cannot produce two keys differing only by case, so
+	// the attack shape is spelled out literally — as a caller would send it.
+	for _, params := range []string{
+		`{"path":` + strconv.Quote(benign) + `,"Path":` + strconv.Quote(loot) + `}`,
+		`{"PATH":` + strconv.Quote(loot) + `,"path":` + strconv.Quote(benign) + `}`,
+	} {
+		if err := cn.authorize("fs.read", json.RawMessage(params)); err == nil {
+			t.Errorf("authorize allowed an ambiguous params object: %s\n"+
+				"the bus confined %q while a Go provider's decoder reads %q — one call must carry exactly one path",
+				params, benign, loot)
+		}
 	}
 }

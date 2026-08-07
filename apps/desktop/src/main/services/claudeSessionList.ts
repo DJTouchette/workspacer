@@ -25,9 +25,35 @@ function encodeDirName(dir: string): string {
   return dir.replace(/[/\\]+$/, '').replace(/[/\\:]/g, '-');
 }
 
+/**
+ * encodeDirName plus the one thing the encoding does not give you on its own:
+ * the guarantee that the result is a PLAIN COMPONENT. Returns null to refuse.
+ *
+ * capspec.unscopedByDecision excuses `claude.sessionsForDir` from bus
+ * confinement on the stated grounds that "the caller's string is never opened as
+ * a path". That was false: the encoder maps '/', '\' and ':' to '-' and touches
+ * nothing else, so '.' and '..' survive verbatim and become a real path
+ * component — path.join(~/.claude/projects, '..') is ~/.claude, and the handler
+ * then enumerated every *.jsonl one level ABOVE the transcript sandbox
+ * (~/.claude/history.jsonl, the user's whole prompt history). '' is the same
+ * shape one level down: it names the projects dir itself.
+ *
+ * No real cwd encodes to any of the three ('/' encodes to '-'), so refusing them
+ * costs nothing and makes the exemption's sentence true. Mirrors
+ * claudeProjectDirName in services/hub/cmd/brain/discovery.go; the pairs are
+ * pinned by the `projectDirNames` block of
+ * contracts/path-containment-cases.json.
+ */
+export function claudeProjectDirName(cwd: string): string | null {
+  const name = encodeDirName(cwd);
+  if (name === '' || name === '.' || name === '..') return null;
+  return name;
+}
+
 export function listClaudeSessionsForDir(cwd: string): ClaudeSessionSummary[] {
   const claudeDir = path.join(os.homedir(), '.claude', 'projects');
-  const encoded = encodeDirName(cwd);
+  const encoded = claudeProjectDirName(cwd);
+  if (encoded === null) return [];
   const projectDir = path.join(claudeDir, encoded);
 
   if (!fs.existsSync(projectDir)) return [];

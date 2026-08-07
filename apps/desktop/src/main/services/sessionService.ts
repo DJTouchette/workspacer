@@ -5,6 +5,7 @@ import { claudemonSessionClient } from './claudemonSessionClient';
 import { getConfigDir } from './configService';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { slugSession } from '../lib/fileUtils';
+import { canonicalizePath, isWithin, resolveStoreEntry } from '../lib/pathConfinement';
 import { SESSION_SCHEMA_VERSION } from '../shared/sessionSchema';
 
 interface SessionPaneData {
@@ -67,20 +68,47 @@ function getSessionsDir(): string {
 
 /**
  * Resolve a caller-supplied session `filename` against the sessions dir and
- * confine it there. `loadSession` / `deleteSession` are reachable
- * from the hub bus (the `sessions.load` / `sessions.delete` capabilities) and thus
- * from a remote client, so a `filename` like `"../../.ssh/id_rsa"` must not read or
- * delete outside the sessions directory. `path.resolve` collapses any `..`; we then
- * require the result to sit at or under the sessions dir, rejecting anything that
- * escapes (including an absolute path, which resolve keeps verbatim).
+ * confine it there. `loadSession` / `deleteSession` are reachable from the hub
+ * bus (`sessions.load` / `sessions.delete`) and therefore from a remote client,
+ * so a `filename` must not read or delete outside the sessions directory.
+ *
+ * This is a FOURTH copy of path containment, and it used to be the odd one out
+ * twice over. It accepted any MULTI-SEGMENT name (`path.resolve` + `startsWith`,
+ * a purely lexical check) where the Go twin — cmd/brain stores.go
+ * `sessionFilePath`, the copy that answers under the default catalog delegation
+ * — requires a bare basename; so `sessions.load('esc/loot.yaml')` returned a
+ * file outside the sessions dir and `sessions.delete` unlinked it, through a
+ * directory symlink, while the brain refused the identical input. And a lexical
+ * check is exactly the algorithm BINDING DECISION 2 exists to reject: it
+ * collapses `..` before any symlink is read, so the checked path and the opened
+ * path are two different files.
+ *
+ * Both halves are now the rule, in both copies:
+ *   1. a bare basename, never a path — `.`/`..`/anything with a separator is
+ *      refused rather than resolved, matching sessionFilePath;
+ *   2. canonicalize per component and require the RESULT to sit inside the
+ *      sessions dir, so a symlink named like a session file cannot point out of
+ *      it, and the caller gets back the string that is actually opened.
+ *
+ * The contract corpus pins both sides: contracts/path-containment-cases.json
+ * `sessionFilenames`, loaded here and by cmd/brain/stores_test.go.
  */
 function resolveWithinSessionsDir(filename: string): string {
   const dir = getSessionsDir();
-  const resolved = path.resolve(dir, filename);
-  if (resolved !== dir && !resolved.startsWith(dir + path.sep)) {
+  const refuse = (): never => {
     throw new Error(`session filename escapes the sessions directory: ${filename}`);
+  };
+  if (!filename || filename === '.' || filename === '..' || filename !== path.basename(filename)) {
+    refuse();
   }
-  return resolved;
+  let canonical: string;
+  try {
+    canonical = canonicalizePath(path.join(dir, filename));
+  } catch {
+    refuse(); // unverifiable → deny, same posture as the fs.* guard
+  }
+  if (!isWithin(canonical!, dir)) refuse();
+  return canonical!;
 }
 
 const sanitizeFilename = slugSession;
@@ -105,8 +133,15 @@ class SessionService {
       const entries: SessionListEntry[] = [];
 
       for (const file of files) {
+        // Same rule the caller-supplied `filename` gets above, applied to a name
+        // this method DERIVED from a readdir: a symlink named like a session is
+        // a legal entry, the sessions dir is bus-writable, and listing must not
+        // become a reader of whatever it points at. Twin: stores.go
+        // storeEntryPath.
+        const full = resolveStoreEntry(dir, file);
+        if (full === null) continue;
         try {
-          const data = fs.readFileSync(path.join(dir, file), 'utf-8');
+          const data = fs.readFileSync(full, 'utf-8');
           const session = yaml.load(data) as SessionData;
           const agents = session.agents ?? [];
           const paneCount =

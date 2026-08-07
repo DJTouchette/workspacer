@@ -165,6 +165,11 @@ vi.mock('./gitService', () => ({
   unstage: vi.fn(async () => ''),
   commit: vi.fn(async () => 'committed'),
   push: vi.fn(async () => 'pushed'),
+  // log / commitDiff / commitNumstat were not even mocked, which is the tell:
+  // no test in this file had ever invoked those three handlers at all.
+  log: vi.fn(async () => []),
+  commitDiff: vi.fn(async () => ''),
+  commitNumstat: vi.fn(async () => []),
 }));
 vi.mock('./terminalShare', () => ({}));
 vi.mock('./supervisorSkill', () => ({ ensureSupervisorHome: vi.fn(() => '/home/super') }));
@@ -577,6 +582,91 @@ describe('git.* cwd confinement', () => {
   it('git.status runs for a live agent cwd', async () => {
     await call('git.status', { cwd: agentCwd });
     expect(gitMock.status).toHaveBeenCalledWith(agentCwd);
+  });
+
+  // EVERY git.* capability, not the four somebody happened to write a test for.
+  //
+  // All ten take a caller-supplied absolute `cwd` and guardGitCwd is the only
+  // thing confining them; capspec excuses all of them from PathParam on exactly
+  // that ground. Yet only git.status / git.commit / git.push / git.diff were
+  // ever named by a test, so the guardGitCwd() call could be deleted from
+  // git.log, git.numstat, git.commitDiff, git.commitNumstat, git.stage and
+  // git.unstage with the whole Go and desktop suites staying green — handing
+  // every bus client (web / remote / MCP / any trusted connection) the diffs,
+  // commit messages and file contents of any repo on the host, and write access
+  // to any index. Table-driven so a new git.* handler has to be added here to
+  // pass the completeness assertion at the end.
+  const gitMethods: {
+    method: string;
+    params: Record<string, unknown>;
+    fn: () => { mock: { calls: unknown[][] } };
+  }[] = [
+    { method: 'git.status', params: {}, fn: () => gitMock.status as never },
+    { method: 'git.log', params: { limit: 5 }, fn: () => gitMock.log as never },
+    { method: 'git.diff', params: {}, fn: () => gitMock.diff as never },
+    { method: 'git.numstat', params: {}, fn: () => gitMock.numstat as never },
+    { method: 'git.commitDiff', params: { hash: 'abc123' }, fn: () => gitMock.commitDiff as never },
+    {
+      method: 'git.commitNumstat',
+      params: { hash: 'abc123' },
+      fn: () => gitMock.commitNumstat as never,
+    },
+    { method: 'git.stage', params: { path: 'a.txt' }, fn: () => gitMock.stage as never },
+    { method: 'git.unstage', params: { path: 'a.txt' }, fn: () => gitMock.unstage as never },
+    { method: 'git.commit', params: { message: 'wip' }, fn: () => gitMock.commit as never },
+    { method: 'git.push', params: {}, fn: () => gitMock.push as never },
+  ];
+
+  /** Some handlers are async (git.diff), so a refusal surfaces as a rejection
+   *  rather than a synchronous throw. Normalize both into a message. */
+  async function refusal(method: string, params: unknown): Promise<string> {
+    try {
+      await call(method, params);
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+    throw new Error(`${method} returned instead of refusing`);
+  }
+
+  for (const { method, params, fn } of gitMethods) {
+    it(`${method} is confined to the workspace roots`, async () => {
+      const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-other-repo-')));
+      expect(await refusal(method, { cwd: outside, ...params })).toMatch(
+        /outside the allowed workspace/,
+      );
+      // A refusal that still ran the command would be worse than no guard.
+      expect(fn().mock.calls, `${method} must not reach gitService`).toHaveLength(0);
+    });
+
+    it(`${method} refuses a cwd that leaves the roots through a symlink`, async () => {
+      const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-other-repo-')));
+      // The reason the guard canonicalizes rather than string-prefixing: the
+      // link SITS inside the allowed root.
+      const link = path.join(agentCwd, 'escape');
+      fs.symlinkSync(outside, link);
+      expect(await refusal(method, { cwd: link, ...params })).toMatch(
+        /outside the allowed workspace/,
+      );
+      expect(fn().mock.calls, `${method} must not reach gitService`).toHaveLength(0);
+    });
+
+    it(`${method} runs for a live agent cwd, and gets the CANONICAL path`, async () => {
+      // The floor: a guard that refused everything would satisfy both cases
+      // above. And what reaches gitService has to be the resolved directory —
+      // the checked path and the directory git runs in cannot differ.
+      const inner = path.join(agentCwd, 'real');
+      fs.mkdirSync(inner, { recursive: true });
+      fs.symlinkSync(inner, path.join(agentCwd, 'alias'));
+      await call(method, { cwd: path.join(agentCwd, 'alias'), ...params });
+      expect(fn().mock.calls[0]?.[0], `${method} must receive the canonical cwd`).toBe(inner);
+    });
+  }
+
+  it('covers every git.* capability the provider registers', () => {
+    // Without this, adding git.blame with no entry above would leave it as
+    // unpinned as the six this block was written for.
+    const registeredGit = [...registered.keys()].filter((m) => m.startsWith('git.')).sort();
+    expect(gitMethods.map((g) => g.method).sort()).toEqual(registeredGit);
   });
 
   // git.diff's `path` is not just a pathspec: with untracked:true gitService

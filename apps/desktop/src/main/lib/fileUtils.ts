@@ -38,13 +38,43 @@ export interface SlugOpts {
 }
 
 /**
+ * Lowercase A-Z and leave every other character alone.
+ *
+ * `String.prototype.toLowerCase` is NOT interchangeable with Go's
+ * `strings.ToLower`, and this is the one place in the repo where the difference
+ * decides a FILENAME. JS applies the full Unicode SPECIAL CASING map, which can
+ * make a string LONGER; Go does a per-rune simple fold. U+0130 (İ) becomes
+ * 'i' + U+0307 COMBINING DOT ABOVE here — and the combining mark is then a bad
+ * character and becomes a '-' — while Go produces a single 'i'. So a layout
+ * named 'aİb' was written as ai-b.yaml by this side and aib.yaml by the brain,
+ * into the same store: the item was invisible to the other provider's list, and
+ * remove() re-slugged and unlinked a filename that was never written, so it
+ * could not be deleted either. (Which side answers depends on
+ * DELEGATE_CATALOG_TO_BRAIN, so this was live in the default configuration.)
+ *
+ * Every character the two implementations can disagree about is non-ASCII, and
+ * every non-ASCII character is replaced by '-' below anyway, so narrowing the
+ * fold to ASCII costs nothing a caller could want and removes the whole class —
+ * including the cases nobody has enumerated yet. The twin is cmd/brain/slug.go
+ * `lowerASCII`; contracts/filename-slug-cases.json holds both to it.
+ */
+function lowerAscii(input: string): string {
+  let out = '';
+  for (let i = 0; i < input.length; i++) {
+    const code = input.charCodeAt(i);
+    out += code >= 65 && code <= 90 ? String.fromCharCode(code + 32) : input[i];
+  }
+  return out;
+}
+
+/**
  * Core slug implementation. Call the named wrappers below at production
  * call sites to guarantee byte-identical output.
  */
 export function slug(input: string, opts: SlugOpts = {}): string {
   const { maxLen, fallback, trimDashes = false, charsetVariant = 'layout' } = opts;
 
-  let out = (input || '').toLowerCase();
+  let out = lowerAscii(input || '');
 
   const trimRe = charsetVariant === 'library' ? /^-+|-+$/g : /^-|-$/g;
   if (charsetVariant === 'library') {

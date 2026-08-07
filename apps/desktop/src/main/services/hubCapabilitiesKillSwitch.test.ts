@@ -32,7 +32,7 @@
  * the two files differ only in the ./brainDelegation mock.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -172,7 +172,8 @@ vi.mock('./terminalShare', () => ({}));
 vi.mock('./supervisorSkill', () => ({ ensureSupervisorHome: vi.fn(() => '/home/super') }));
 
 const { registerHubCapabilities } = await import('./hubCapabilities');
-const { readTextFile, writeTextFile } = await import('./fileService');
+const { readTextFile, writeTextFile, listDir } = await import('./fileService');
+const { searchProject } = await import('./searchService');
 
 /** Invoke a registered capability by method name. */
 function call(method: string, params?: unknown): unknown {
@@ -238,6 +239,50 @@ describe('fs.* path confinement', () => {
   it('fs.listDir allows browsing inside a live agent cwd', () => {
     const res = call('fs.listDir', { path: agentCwd }) as { path: string };
     expect(res.path).toBe(agentCwd);
+  });
+
+  // checkUse — the other half of BINDING DECISION 2, which the fixture states
+  // and nothing enforced. Every allow-case above hands the service a path that
+  // is already its own canonical form (the temp dir is realpath'd), so a handler
+  // that went back to re-passing `params.path` satisfied all of them.
+  //
+  // `<cwd>/nope/../notes.txt` separates the two: the walk appends a component
+  // that does not exist and lets the following '..' pop back onto ground that
+  // does (the corpus's "'..' after a non-existent component pops lexically and
+  // lands inside", an ALLOW case), so the guard returns `<cwd>/notes.txt` —
+  // while the raw string is a different string, and the kernel would refuse it
+  // with ENOENT because `nope` is not there to walk through.
+  describe('the guarded handlers pass the CANONICAL path on, not the caller string', () => {
+    const via = (name: string): string => `${path.join(agentCwd, 'nope')}/../${name}`;
+
+    it('fs.read', () => {
+      call('fs.read', { path: via('notes.txt') });
+      expect(readTextFile).toHaveBeenCalledWith(path.join(agentCwd, 'notes.txt'));
+    });
+
+    it('fs.write', () => {
+      call('fs.write', { path: via('out.txt'), contents: 'x' });
+      expect(writeTextFile).toHaveBeenCalledWith(path.join(agentCwd, 'out.txt'), 'x');
+    });
+
+    it('fs.listEntries', () => {
+      call('fs.listEntries', { path: `${path.join(agentCwd, 'nope')}/..` });
+      expect(listDir).toHaveBeenCalledWith(agentCwd);
+    });
+
+    it('fs.listDir', () => {
+      const res = call('fs.listDir', { path: `${path.join(agentCwd, 'nope')}/..` }) as {
+        path: string;
+      };
+      expect(res.path).toBe(agentCwd);
+    });
+
+    it('search.project', () => {
+      call('search.project', { cwd: `${path.join(agentCwd, 'nope')}/..`, query: 'needle' });
+      expect(searchProject).toHaveBeenCalledWith(
+        expect.objectContaining({ cwd: agentCwd, query: 'needle' }),
+      );
+    });
   });
 });
 
@@ -343,6 +388,31 @@ describe('library.* cwd confinement', () => {
     expect(libraryMock.save).toHaveBeenCalledTimes(1);
   });
 
+  it('library.save hands the service a per-file guard that confines the DESTINATION', () => {
+    // The cwd check is not the write check: the destination
+    // (<cwd>/.workspacer/library/<slug>.md, <cwd>/.claude/skills/<id>/SKILL.md)
+    // is composed after it and handed to writeFileSync, which follows a symlink
+    // planted there by an ordinary permitted fs.write. list and remove got this
+    // guard and save did not, so the desktop overwrote <configDir>/config.yaml
+    // through a call the Go brain refuses. (libraryService.save's own end of the
+    // contract — that it uses this guard, before mkdir, on the path it opens —
+    // is pinned in libraryService.test.ts.)
+    call('library.save', {
+      scope: 'project',
+      cwd: agentCwd,
+      title: 't',
+      kind: 'prompt',
+      body: 'b',
+    });
+    const guard = libraryMock.save.mock.calls[0][1] as (p: string) => string | null;
+    expect(typeof guard).toBe('function');
+    expect(guard(path.join(agentCwd, '.workspacer', 'library', 'ok.md'))).toBe(
+      path.join(agentCwd, '.workspacer', 'library', 'ok.md'),
+    );
+    expect(guard(path.join(cfg.dir, 'config.yaml'))).toBeNull();
+    expect(guard(path.join(cfg.dir, 'remote-token'))).toBeNull();
+  });
+
   it('library.remove is denied for a cwd outside the workspace', () => {
     expect(() =>
       call('library.remove', { scope: 'claude', id: 'x', cwd: '/etc', kind: 'skill' }),
@@ -362,7 +432,52 @@ describe('library.* cwd confinement', () => {
     // an empty picker rather than an error. Same browse rule as fs.listDir.
     const notYetSpawned = path.join(os.homedir(), 'some-project');
     call('library.list', { cwd: notYetSpawned });
-    expect(libraryMock.list).toHaveBeenCalledWith(notYetSpawned);
+    expect(libraryMock.list).toHaveBeenCalledWith(notYetSpawned, expect.any(Function));
+  });
+
+  // Confining the cwd is not the same thing as confining what the service then
+  // touches: every read and unlink is a path DERIVED from that cwd
+  // (<cwd>/.workspacer/library/<name>.md, <cwd>/.claude/skills/<id>), composed
+  // after the check. Unguarded, a symlink planted in the allowed project — an
+  // ordinary permitted fs.write — read remote-token through library.list and
+  // rm -rf'd the config dir through library.remove. So the handler passes a
+  // per-file guard, and these assert the guard it passed actually confines.
+  it('library.list hands the service a per-file guard that confines derived paths', () => {
+    call('library.list', { cwd: agentCwd });
+    const guard = libraryMock.list.mock.calls[0][1] as (p: string) => string | null;
+    expect(guard(path.join(agentCwd, '.workspacer', 'library', 'ok.md'))).toBe(
+      path.join(agentCwd, '.workspacer', 'library', 'ok.md'),
+    );
+    expect(guard(path.join(cfg.dir, 'remote-token'))).toBeNull();
+    expect(guard(path.join(os.tmpdir(), 'somewhere-else', 'x.md'))).toBeNull();
+    // …and the guard's roots are NOT the cwd's roots. library.list checks its
+    // cwd against the browse roots (workspace + the whole home tree) because the
+    // New Agent dialog lists a directory no agent runs in yet — handing those
+    // same roots to the per-file guard made this call an arbitrary
+    // home-directory READER: `<cwd>/.workspacer/library/a.md -> ~/.ssh/id_rsa`
+    // canonicalizes inside $HOME, passes, and comes back as an item body, while
+    // fs.read of the identical path is refused. A library item lives in the
+    // project or in the global store, and nowhere else.
+    //
+    // Written against $HOME rather than a temp path on purpose: the assertion
+    // above only holds because os.tmpdir() happens to sit outside the home tree,
+    // so it inverts under TMPDIR=~/tmp and proved nothing about this widening.
+    expect(guard(path.join(os.homedir(), '.ssh', 'id_rsa'))).toBeNull();
+    expect(guard(path.join(os.homedir(), '.claude', '.credentials.json'))).toBeNull();
+    // The global store stays readable: it is the other place items live.
+    expect(guard(path.join(cfg.dir, 'library', 'shared.md'))).toBe(
+      path.join(cfg.dir, 'library', 'shared.md'),
+    );
+  });
+
+  it('library.remove hands the service a per-file guard that confines delete targets', () => {
+    call('library.remove', { scope: 'claude', id: 'x', cwd: agentCwd, kind: 'skill' });
+    const guard = libraryMock.remove.mock.calls[0][4] as (p: string) => string | null;
+    expect(guard(path.join(agentCwd, '.claude', 'skills', 'x'))).toBe(
+      path.join(agentCwd, '.claude', 'skills', 'x'),
+    );
+    expect(guard(path.join(cfg.dir, 'remote-token'))).toBeNull();
+    expect(guard(path.join(cfg.dir, 'config.yaml'))).toBeNull();
   });
 });
 
@@ -384,6 +499,10 @@ interface MethodEntry {
   field: string;
   params: Record<string, unknown>;
   rootSet: 'workspace' | 'browse';
+  /** The narrower list a method's DERIVED paths are confined to, when it has
+   *  one: 'item' = [<configDir>/library, cwd]. Absent for methods that open the
+   *  field they were handed. */
+  derivedRootSet?: 'item';
   providers: string[];
   note?: string;
 }
@@ -400,14 +519,52 @@ const killSwitchOnly = fixture.methods.filter((m) => m.providers.includes('main-
 describe('fixture-driven guard coverage — kill-switch-only path capabilities', () => {
   let agentCwd: string;
   let outside: string;
+  let sandboxHome: string;
+  const realHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   beforeEach(() => {
     agentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-guard-')));
     // A real directory that is in neither root set: not a live agent cwd (so it
     // is outside `workspace`) and under the temp dir rather than home (so it is
     // outside `browse` too, which is why the browse cases use /etc instead).
     outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-guard-outside-')));
+    // A HOME of our own — see homeProbe below for why the probe has to live
+    // under the home tree, and why it must not be the developer's real one.
+    sandboxHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-guard-home-')));
+    process.env.HOME = sandboxHome;
+    process.env.USERPROFILE = sandboxHome;
     getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
   });
+
+  afterEach(() => {
+    process.env.HOME = realHome.HOME;
+    process.env.USERPROFILE = realHome.USERPROFILE;
+  });
+
+  /**
+   * The probe that separates `workspace` from `browse`.
+   *
+   * browse = workspace roots + os.homedir(). This sweep used to probe
+   * out-of-roots with an os.tmpdir() path for `workspace` and '/etc' for
+   * `browse` — os.tmpdir() is outside BOTH sets and a live agent cwd is inside
+   * both, so nothing here could distinguish workspaceRoots() from browseRoots()
+   * and the fixture's `rootSet` column was decorative. Six methods could be
+   * widened to the whole home tree with 951/951 desktop tests and all 19 Go
+   * packages green.
+   *
+   * A path under the sandbox home that is nobody's cwd is inside `browse` and
+   * outside `workspace`, by construction. The home is sandboxed because the
+   * sweep drives the real handlers, so a widened fs.write LANDS a file in
+   * whatever home it is pointed at — which is how the Go twin of this sweep
+   * disarmed itself: it probed a fixed name in the real $HOME and skipped when
+   * that name existed, and its own fs.write subtest created it.
+   */
+  function homeProbe(): string {
+    expect(os.homedir()).toBe(sandboxHome);
+    const probe = path.join(sandboxHome, 'wks-contract-probe-not-an-agent-cwd');
+    // Never a skip on collision: "I could not run" must not read as "I passed".
+    expect(fs.existsSync(probe)).toBe(false);
+    return probe;
+  }
 
   /** Run a capability and return the error message it produced, or '' for none.
    *  Handlers guard both synchronously and inside an async body, so both shapes
@@ -446,6 +603,48 @@ describe('fixture-driven guard coverage — kill-switch-only path capabilities',
         const msg = await attempt(entry.method, { ...entry.params, [entry.field]: agentCwd });
         expect(msg).not.toMatch(/outside the allowed workspace/);
       });
+
+      it(`consults the ${entry.rootSet} roots and not the other set`, async () => {
+        const msg = await attempt(entry.method, { ...entry.params, [entry.field]: homeProbe() });
+        if (entry.rootSet === 'browse') {
+          expect(msg).not.toMatch(/outside the allowed workspace/);
+        } else {
+          expect(msg).toMatch(/outside the allowed workspace/);
+        }
+      });
+    });
+  }
+
+  // derivedRootSet is the SECOND allow-list: library.* confine the caller's cwd
+  // against `rootSet` and then confine every path DERIVED from it against
+  // [<configDir>/library, cwd] — strictly narrower than either root set, because
+  // a library item may only live in the global store or the project the caller
+  // named. Conflating the two is what the brain did (it used the WORKSPACE roots
+  // for the derived write), so one library.save with a
+  // `<projA>/.workspacer/library -> <projB>` symlink wrote into a second agent's
+  // project and into <configDir>/sessions there and was refused here. This pins
+  // the side that was already right, so the two cannot re-diverge in either
+  // direction. The Go half is TestLibraryDerivedRootSetIsTheItemRoots.
+  for (const entry of killSwitchOnly.filter((m) => m.derivedRootSet === 'item')) {
+    it(`${entry.method}'s per-file guard uses the item roots, not the ${entry.rootSet} roots`, () => {
+      const secondAgentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-projB-')));
+      getAllSnapshots.mockReturnValue([{ cwd: agentCwd }, { cwd: secondAgentCwd }] as never);
+      const mock = (libraryMock as unknown as Record<string, { mock: { calls: unknown[][] } }>)[
+        entry.method.split('.')[1]
+      ];
+      call(entry.method, { ...entry.params, cwd: agentCwd });
+      const guard = mock.mock.calls[0].at(-1) as (p: string) => string | null;
+      expect(typeof guard).toBe('function');
+      // Both cwds are live agents, so both are inside the workspace roots. Only
+      // the one the caller named is inside the item roots.
+      expect(guard(path.join(secondAgentCwd, 'pwn.md'))).toBeNull();
+      expect(guard(path.join(cfg.dir, 'sessions', 'pwn.md'))).toBeNull();
+      expect(guard(path.join(cfg.dir, 'layouts', 'pwn.md'))).toBeNull();
+      // …while the two places an item legitimately lives still pass.
+      const inProject = path.join(agentCwd, '.workspacer', 'library', 'ok.md');
+      expect(guard(inProject)).toBe(inProject);
+      const inStore = path.join(cfg.dir, 'library', 'ok.md');
+      expect(guard(inStore)).toBe(inStore);
     });
   }
 });

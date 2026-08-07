@@ -46,11 +46,18 @@ var PathParam = map[string]string{
 // decision on the record, not an oversight; [MissingSpec] treats it as
 // classified rather than missing.
 var unscopedByDecision = map[string]string{
-	"agents.spawn":          "starting an agent is a separate authorization decision — the cwd picks where a process runs, and confining it would need the spawn paths to learn root containment first (see cmd/brain's TestSpawnStaysDeliberatelyUnscoped)",
-	"terminals.create":      "same as agents.spawn: cwd is a process working directory, and holding the capability at all is the gate",
-	"sessions.transcript":   "cwd only selects which historical session to resolve under ~/.claude/projects; the transcript path is derived by the provider, never taken from the caller",
-	"providers.listModels":  "cwd picks which project's provider config to read; the provider resolves the file itself",
-	"claude.sessionsForDir": "cwd is hashed into a ~/.claude/projects slug by the provider; the caller's string is never opened as a path",
+	"agents.spawn":         "starting an agent is a separate authorization decision — the cwd picks where a process runs, and confining it would need the spawn paths to learn root containment first (see cmd/brain's TestSpawnStaysDeliberatelyUnscoped)",
+	"terminals.create":     "same as agents.spawn: cwd is a process working directory, and holding the capability at all is the gate",
+	"sessions.transcript":  "cwd only selects which historical session to resolve under ~/.claude/projects; the transcript path is derived by the provider, never taken from the caller",
+	"providers.listModels": "cwd picks which project's provider config to read; the provider resolves the file itself",
+	// The sentence used to stop at "never opened as a path", and it was false:
+	// the encoder maps only '/', '\' and ':' to '-', so a cwd of ".." survived
+	// verbatim, became a real path COMPONENT, and joined to ~/.claude — one
+	// level out of the sandbox this exemption assumes. Both providers now run
+	// the encoded name through claudeProjectDirName, which refuses "", "." and
+	// "..", so the slug really is a single plain component and the reason below
+	// is true rather than aspirational.
+	"claude.sessionsForDir": "cwd is encoded into a ~/.claude/projects slug by the provider (claudeProjectDirName, which refuses '', '.' and '..' so the slug is always ONE plain component); the caller's string is never opened as a path",
 	"replay.open":           "confined by the provider to the same workspace roots git.* uses (assertPathAllowed in hubCapabilities.ts), because it cuts a worktree from the repo at cwd",
 	"replay.read":           "the path is a repo-relative coordinate inside a worktree the replay service itself created and keyed by sessionId; containment is structural (resolveInside), and fsRoots would be scoping the wrong namespace",
 	"replay.diff":           "same as replay.read — a coordinate inside a service-owned worktree, not a host path",
@@ -69,6 +76,21 @@ var unscopedByDecision = map[string]string{
 	"git.unstage":       "provider-confined to the workspace roots (guardGitCwd); per-plugin scoping pending a catalog manifest update",
 	"git.commit":        "provider-confined to the workspace roots (guardGitCwd); per-plugin scoping pending a catalog manifest update",
 	"git.push":          "provider-confined to the workspace roots (guardGitCwd); per-plugin scoping pending a catalog manifest update",
+	// sessions.* take a `filename`, not a path. It is a BARE BASENAME inside
+	// <configDir>/sessions — never absolute, never a caller-chosen directory —
+	// so PathParam is the wrong tool (the bus canonicalizes a PathParam value
+	// and contains it against the plugin's roots, and a basename is not
+	// absolute, so every call would simply be denied). Both providers instead
+	// resolve it against the sessions dir themselves and confine it there:
+	// cmd/brain stores.go sessionFilePath and the desktop's
+	// sessionService.resolveWithinSessionsDir, held to each other by the
+	// `sessionFilenames` block of contracts/path-containment-cases.json. Listed
+	// here because `filename` IS path-ish and the classification scan must see a
+	// decision rather than silence — that silence is how the two copies drifted
+	// far enough apart for one of them to read and unlink through a symlink.
+	"sessions.load":   "filename is a bare basename resolved and confined to <configDir>/sessions by both providers (sessionFilePath / resolveWithinSessionsDir); pinned by the corpus's sessionFilenames block",
+	"sessions.save":   "same as sessions.load: the filename is derived from the session name by the provider's slug and re-checked by the same resolver",
+	"sessions.delete": "same as sessions.load",
 }
 
 // IsPathScoped reports whether method operates on a filesystem path and, if so,

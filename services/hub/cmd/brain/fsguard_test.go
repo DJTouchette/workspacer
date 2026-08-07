@@ -285,6 +285,131 @@ func TestPluginCredentialsAreDeniedInsideAnAgentCwd(t *testing.T) {
 	}
 }
 
+// library.list and library.remove confine the caller's `cwd`, and for a long
+// time that was ALL they confined. Everything they actually touch is DERIVED
+// from that cwd — <cwd>/.workspacer/library/<name>.md, <cwd>/.claude/skills/
+// <id>/SKILL.md — and those derived paths went straight to os.ReadFile /
+// os.RemoveAll without ever being canonicalized. One symlink inside the allowed
+// root (writing it is an ordinary permitted fs.write) therefore did what fs.read
+// of the identical symlink refuses to do.
+//
+// libraryCwdWithConfigDir sets up that world once: a sandbox holding a config
+// dir with a live remote-token, and an agent cwd BESIDE it (not above it, so the
+// roots check is not what refuses — the derived-path guard has to be).
+func libraryCwdWithConfigDir(t *testing.T) (cwd, token string) {
+	t.Helper()
+	sandbox, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(sandbox, "config"))
+	t.Setenv("APPDATA", filepath.Join(sandbox, "config"))
+	if err := os.MkdirAll(configDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	token = filepath.Join(configDir(), "remote-token")
+	if err := os.WriteFile(token, []byte("SUPERSECRET-REMOTE-TOKEN"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cwd = filepath.Join(sandbox, "project")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return cwd, token
+}
+
+func TestLibraryListDoesNotReadThroughASymlinkOutOfTheRoots(t *testing.T) {
+	cwd, token := libraryCwdWithConfigDir(t)
+
+	// Two plants, because list() reaches the filesystem through two different
+	// walkers: the .md sweep of the project library dir, and the per-skill
+	// SKILL.md read under .claude/skills.
+	projLib := filepath.Join(cwd, ".workspacer", "library")
+	if err := os.MkdirAll(projLib, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(token, filepath.Join(projLib, "pwn.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	skill := filepath.Join(cwd, ".claude", "skills", "x")
+	if err := os.MkdirAll(skill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(token, filepath.Join(skill, "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	// The control: fs.read of the very same symlink is refused. If that ever
+	// stops being true the leak below is not the finding this test describes.
+	reg := registryWithCwd(t, cwd)
+	if _, err := reg.handle(context.Background(), "fs.read",
+		json.RawMessage(`{"path":`+jsonStr(filepath.Join(projLib, "pwn.md"))+`}`)); err == nil {
+		t.Fatal("fs.read of the planted symlink must be denied (the control for this test)")
+	}
+
+	reg = registryWithCwd(t, cwd)
+	res, err := reg.handle(context.Background(), "library.list",
+		json.RawMessage(`{"cwd":`+jsonStr(cwd)+`}`))
+	if err != nil {
+		t.Fatalf("library.list of a legitimate cwd must still succeed: %v", err)
+	}
+	if strings.Contains(string(res), "SUPERSECRET-REMOTE-TOKEN") {
+		t.Fatalf("library.list returned the bus credential through a symlink planted in an allowed root: %s", res)
+	}
+
+	// The floor: a REAL item in the same directory is still listed, so the fix
+	// is a guard and not "library.list stopped reading files".
+	if err := os.WriteFile(filepath.Join(projLib, "ok.md"), []byte("---\ntitle: Fine\n---\n\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg = registryWithCwd(t, cwd)
+	res, err = reg.handle(context.Background(), "library.list",
+		json.RawMessage(`{"cwd":`+jsonStr(cwd)+`}`))
+	if err != nil || !strings.Contains(string(res), "Fine") {
+		t.Fatalf("an ordinary project library item must still be listed: %s (%v)", res, err)
+	}
+}
+
+func TestLibraryRemoveDoesNotDeleteOutsideTheRootsThroughASymlink(t *testing.T) {
+	cwd, token := libraryCwdWithConfigDir(t)
+
+	// A DIRECTORY symlink: .claude/skills -> <configDir>. removeLibrary then
+	// composes <cwd>/.claude/skills/remote-token and RemoveAll's it.
+	if err := os.MkdirAll(filepath.Join(cwd, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(configDir(), filepath.Join(cwd, ".claude", "skills")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	reg := registryWithCwd(t, cwd)
+	if _, err := reg.handle(context.Background(), "library.remove",
+		json.RawMessage(`{"scope":"claude","kind":"skill","id":"remote-token","cwd":`+jsonStr(cwd)+`}`)); err != nil {
+		t.Fatalf("library.remove reported an error rather than silently skipping: %v", err)
+	}
+	if _, err := os.Stat(token); err != nil {
+		t.Fatalf("library.remove destroyed the bus credential outside every allowed root: %v", err)
+	}
+
+	// The floor again: a real skill inside the project is still removable.
+	realCwd := t.TempDir()
+	realSkill := filepath.Join(realCwd, ".claude", "skills", "keeper")
+	if err := os.MkdirAll(realSkill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(realSkill, "SKILL.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg = registryWithCwd(t, realCwd)
+	if _, err := reg.handle(context.Background(), "library.remove",
+		json.RawMessage(`{"scope":"claude","kind":"skill","id":"keeper","cwd":`+jsonStr(realCwd)+`}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(realSkill); err == nil {
+		t.Fatal("library.remove must still delete a skill that really is inside the agent cwd")
+	}
+}
+
 // With no live agents and no reachable claudemon, the allow-list must collapse to
 // the config stores — not open up. A shape change in claudemon's /sessions payload
 // must fail closed for the same reason.
@@ -320,7 +445,11 @@ type contractTree struct {
 	Dirs     []string          `json:"dirs"`
 	Files    map[string]string `json:"files"`
 	Symlinks map[string]string `json:"symlinks"`
-	Modes    map[string]string `json:"modes"`
+	// RelativeSymlinks values are written VERBATIM as the link body, which is
+	// the only way to reach the walk's relative-link arm. `Symlinks` values are
+	// sandbox-relative and absolutized by the loader.
+	RelativeSymlinks map[string]string `json:"relativeSymlinks"`
+	Modes            map[string]string `json:"modes"`
 }
 
 type contractCase struct {
@@ -329,19 +458,34 @@ type contractCase struct {
 	NeedsSymlinks      bool         `json:"needsSymlinks"`
 	PosixOnly          bool         `json:"posixOnly"`
 	NeedsUnreadableDir bool         `json:"needsUnreadableDir"`
+	NeedsHome          bool         `json:"needsHome"`
 	Tree               contractTree `json:"tree"`
-	Roots              []string     `json:"roots"`
-	Target             string       `json:"target"`
-	Expect             string       `json:"expect"`
-	Why                string       `json:"why"`
+	// ConfigDirVia names a sandbox-relative symlink to the config HOME that the
+	// implementation's config dir is pointed through, while ${CONFIG} keeps
+	// naming the real path.
+	ConfigDirVia string   `json:"configDirVia"`
+	Roots        []string `json:"roots"`
+	Target       string   `json:"target"`
+	Expect       string   `json:"expect"`
+	// ResolvesTo is the token-substituted path assertPathAllowed must RETURN on
+	// an allow — the string BINDING DECISION 2 then hands to the filesystem.
+	// Mandatory on every allow case; a deny returns no path.
+	ResolvesTo string `json:"resolvesTo"`
+	Why        string `json:"why"`
 }
 
 type contractMethod struct {
-	Method    string         `json:"method"`
-	Field     string         `json:"field"`
-	Params    map[string]any `json:"params"`
-	RootSet   string         `json:"rootSet"`
-	Providers []string       `json:"providers"`
+	Method  string         `json:"method"`
+	Field   string         `json:"field"`
+	Params  map[string]any `json:"params"`
+	RootSet string         `json:"rootSet"`
+	// DerivedRootSet names the SECOND, narrower allow-list a method's derived
+	// paths are confined to when it has one — library.* compose
+	// <cwd>/.workspacer/library/<slug>.md out of the cwd they were given, and
+	// "item" means [<configDir>/library, cwd]. Empty for methods that open the
+	// field they were handed. See TestLibraryDerivedRootSetIsTheItemRoots.
+	DerivedRootSet string   `json:"derivedRootSet"`
+	Providers      []string `json:"providers"`
 }
 
 func (m contractMethod) providedByBrain() bool {
@@ -354,9 +498,11 @@ func (m contractMethod) providedByBrain() bool {
 }
 
 type contractFixture struct {
-	Owners  map[string][]string `json:"owners"`
-	Cases   []contractCase      `json:"cases"`
-	Methods []contractMethod    `json:"methods"`
+	Owners             map[string][]string `json:"owners"`
+	SecretBasenames    []string            `json:"secretBasenames"`
+	ConfigStoreSubdirs []string            `json:"configStoreSubdirs"`
+	Cases              []contractCase      `json:"cases"`
+	Methods            []contractMethod    `json:"methods"`
 }
 
 // ownedGroups is the set of case groups fsguard.go is on the hook for. A copy
@@ -373,6 +519,53 @@ func (fx contractFixture) ownedGroups(t *testing.T) map[string]bool {
 			fsguardOwnerKey, fx.Owners[fsguardOwnerKey])
 	}
 	return groups
+}
+
+// TestSecretGateConstantsMatchTheFixture pins the two parts of the `secrets`
+// gate the CASES cannot reach.
+//
+// Every secrets case names one of the two credential basenames and one of the
+// three stores, so adding a THIRD basename here — or a fourth store carve-out —
+// keeps the whole corpus green while the copies silently drift apart. That is
+// not hypothetical drift either: carving out `plugins` flips pathIsSecret from
+// true to false for <configDir>/plugins/**, i.e. every plugin's stored files
+// become readable and writable through fs.* the moment an agent cwd re-admits
+// the config dir.
+//
+// The fixture carries `secretBasenames` and `configStoreSubdirs` for exactly
+// this reason, and the desktop loader has consumed them since it was written —
+// but neither Go loader's fixture struct even DECLARED the fields, so both Go
+// copies could drift freely with every hub suite green. The lists are one list;
+// all three owners have to be held to it.
+func TestSecretGateConstantsMatchTheFixture(t *testing.T) {
+	fx := loadContractFixture(t)
+	if len(fx.SecretBasenames) == 0 || len(fx.ConfigStoreSubdirs) == 0 {
+		t.Fatal("the fixture must carry both secretBasenames and configStoreSubdirs, or this guard guards nothing")
+	}
+
+	got := make([]string, 0, len(secretBasenames))
+	for name := range secretBasenames {
+		got = append(got, name)
+	}
+	want := append([]string(nil), fx.SecretBasenames...)
+	sort.Strings(got)
+	sort.Strings(want)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("secretBasenames drifted from the fixture\n  got:  %v\n  want: %v", got, want)
+	}
+
+	// configStoreRoots() is the same three names joined onto the config dir, in
+	// the same order — the desktop twin asserts the identical shape, and the bus
+	// asserts the bare list.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	wantRoots := make([]string, 0, len(fx.ConfigStoreSubdirs))
+	for _, store := range fx.ConfigStoreSubdirs {
+		wantRoots = append(wantRoots, filepath.Join(configDir(), store))
+	}
+	gotRoots := configStoreRoots()
+	if strings.Join(gotRoots, "\x00") != strings.Join(wantRoots, "\x00") {
+		t.Errorf("configStoreRoots drifted from the fixture's configStoreSubdirs\n  got:  %v\n  want: %v", gotRoots, wantRoots)
+	}
 }
 
 func loadContractFixture(t *testing.T) contractFixture {
@@ -410,6 +603,10 @@ func caseSandbox(t *testing.T, c contractCase) (string, func(string) string) {
 	if c.NeedsUnreadableDir && (runtime.GOOS == "windows" || os.Geteuid() == 0) {
 		t.Skip("needsUnreadableDir: this process can read a 0o000 directory anyway")
 	}
+	home := realHome()
+	if c.NeedsHome && home == "" {
+		t.Skip("needsHome: this process has no resolvable home directory")
+	}
 
 	sandbox, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -421,15 +618,40 @@ func caseSandbox(t *testing.T, c contractCase) (string, func(string) string) {
 			t.Fatal(err)
 		}
 	}
+	// A case may ask for the config dir to be REACHED through a symlink. The
+	// link is created here, before the tree, because the environment below has
+	// to point at it; ${CONFIG} still substitutes to the real path, so the two
+	// only agree if the implementation canonicalizes its own config dir.
+	configEnv := configHome
+	if c.ConfigDirVia != "" {
+		link := filepath.Join(sandbox, filepath.FromSlash(c.ConfigDirVia))
+		if err := os.Symlink(configHome, link); err != nil {
+			t.Skipf("configDirVia: cannot create symlinks here: %v", err)
+		}
+		configEnv = link
+	}
 	// Read at call time by configDir(), so this redirects the secret gate's
 	// config dir to ${CONFIG} = ${SANDBOX}/config/workspacer.
-	t.Setenv("XDG_CONFIG_HOME", configHome)
-	t.Setenv("APPDATA", configHome)
+	t.Setenv("XDG_CONFIG_HOME", configEnv)
+	t.Setenv("APPDATA", configEnv)
 
+	// ${HOME} and ${PROCESS_CWD} deliberately leave the sandbox: they are the two
+	// places a re-introduced tilde expansion, or a bad root resolved against the
+	// process cwd, would actually LAND. No case using them expects `allow` (see
+	// the fixture's TOKENS note).
+	processCwd := ""
+	if wd, err := os.Getwd(); err == nil {
+		processCwd = wd
+		if real, err := filepath.EvalSymlinks(wd); err == nil {
+			processCwd = real
+		}
+	}
 	sub := func(s string) string {
 		s = strings.ReplaceAll(s, "${ROOT}", filepath.Join(sandbox, "root"))
 		s = strings.ReplaceAll(s, "${OUTSIDE}", filepath.Join(sandbox, "outside"))
 		s = strings.ReplaceAll(s, "${CONFIG}", filepath.Join(configHome, "workspacer"))
+		s = strings.ReplaceAll(s, "${HOME}", home)
+		s = strings.ReplaceAll(s, "${PROCESS_CWD}", processCwd)
 		return strings.ReplaceAll(s, "${SANDBOX}", sandbox)
 	}
 
@@ -452,8 +674,22 @@ func caseSandbox(t *testing.T, c contractCase) (string, func(string) string) {
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		// Absolute by construction: no case depends on relative-link resolution.
+		// Absolutized here; `relativeSymlinks` below is the arm that is not.
 		if err := os.Symlink(filepath.Join(sandbox, dest), full); err != nil {
+			if c.NeedsSymlinks {
+				t.Skipf("needsSymlinks: cannot create symlinks here: %v", err)
+			}
+			t.Fatal(err)
+		}
+	}
+	// Written verbatim: the link BODY stays relative, so resolving it is the
+	// implementation's job and not the loader's.
+	for rel, dest := range c.Tree.RelativeSymlinks {
+		full := filepath.Join(sandbox, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.FromSlash(dest), full); err != nil {
 			if c.NeedsSymlinks {
 				t.Skipf("needsSymlinks: cannot create symlinks here: %v", err)
 			}
@@ -474,6 +710,32 @@ func caseSandbox(t *testing.T, c contractCase) (string, func(string) string) {
 		}
 	}
 	return sandbox, sub
+}
+
+// realHome is the process's home directory with symlinks resolved, or "" when
+// there isn't one. Both the ${HOME} token and the browse-skip need the RESOLVED
+// form: every other path in this file is realpath'd, and on macOS /var ->
+// /private/var alone would make the comparison wrong.
+func realHome() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(home); err == nil {
+		return real
+	}
+	return home
+}
+
+// underHome reports whether an absolute target sits at or inside the home tree.
+// Used only to skip browse-rootSet method cases whose target is legitimately
+// browsable; it is never consulted for a verdict.
+func underHome(target string) bool {
+	home := realHome()
+	if home == "" || !filepath.IsAbs(target) {
+		return false
+	}
+	return target == home || strings.HasPrefix(target, home+string(filepath.Separator))
 }
 
 func substituted(sub func(string) string, in []string) []string {
@@ -521,6 +783,24 @@ func TestPathContainmentContractCases(t *testing.T) {
 				t.Fatalf("expected %s, got allowed=%v (err=%v)\n  target: %q\n  roots:  %q\n  why:    %s",
 					c.Expect, allowed, err, target, roots, c.Why)
 			}
+
+			// The verdict must DECOMPOSE into the two named predicates this file
+			// exports for a raw (not-yet-canonicalized) target. Both shipped with
+			// zero callers and 0.0% coverage — while carrying the same names as
+			// the bus's twins, which ARE live (bus.go authorize, policy.go). So
+			// their fail-closed branches (`return false` and `return true` on an
+			// unverifiable target) had never been executed by anything, and the
+			// first future call site to reach for the obvious-looking name would
+			// have got a predicate no case had ever run. Asserting the identity
+			// rather than each half separately is what makes this non-vacuous:
+			// it says these two ARE the gates assertPathAllowed applies, in the
+			// same order, with the same posture on an unverifiable path.
+			within := pathWithinRoots(roots, target)
+			secret := pathIsSecret(target)
+			if got := within && !secret; got != allowed {
+				t.Fatalf("assertPathAllowed says allowed=%v but pathWithinRoots=%v && !pathIsSecret=%v decomposes to %v — the exported predicates and the guard disagree\n  target: %q\n  roots:  %q",
+					allowed, within, !secret, got, target, roots)
+			}
 			if !allowed {
 				// 7.5: one message for all three refusal reasons, echoing
 				// neither the target, nor where it resolved, nor which gate
@@ -538,6 +818,19 @@ func TestPathContainmentContractCases(t *testing.T) {
 				if comp == ".." || comp == "." {
 					t.Fatalf("canonical path still carries a %q component: %q", comp, canonical)
 				}
+			}
+			// The VALUE, not just its shape. Shape alone is what let a
+			// `return filepath.Clean(target)` — the forbidden whole-path helper,
+			// named as such in fsguard.go's own header — pass every case in this
+			// corpus while fs.read handed back a file outside the only allowed
+			// root: Clean's answer is absolute and free of "." and ".." too, it
+			// just points somewhere else. resolvesTo is mandatory on an allow so
+			// a future case cannot be written without pinning the answer.
+			if c.ResolvesTo == "" {
+				t.Fatalf("allow case %q carries no resolvesTo; every allow case must pin the path the guard returns", c.Name)
+			}
+			if want := filepath.FromSlash(sub(c.ResolvesTo)); canonical != want {
+				t.Fatalf("the guard returned a different path than it validated\n  got:  %q\n  want: %q\n  why:  %s", canonical, want, c.Why)
 			}
 		})
 	}
@@ -668,14 +961,17 @@ func assertMethodRejectsCorpus(t *testing.T, fx contractFixture, groups map[stri
 				t.Skip(why)
 			}
 			// A browse-rootSet method also allows the whole home tree, so a
-			// sandbox that happens to live under $HOME (TMPDIR=~/tmp) would make
-			// a deny case allow for a legitimate reason.
-			if m.RootSet == "browse" {
-				if home, err := os.UserHomeDir(); err == nil && home != "" &&
-					(sandbox == home || strings.HasPrefix(sandbox, home+string(filepath.Separator))) {
-					t.Skipf("sandbox %s is inside $HOME, which %s legitimately browses", sandbox, m.Method)
-				}
+			// TARGET under $HOME is refused by no root and the deny case would
+			// fail for a legitimate reason. Two ways that happens: a sandbox
+			// living under $HOME (TMPDIR=~/tmp), and the ${HOME}/${PROCESS_CWD}
+			// cases, whose whole point is to place the probe outside the
+			// sandbox. Keying the skip off the RESOLVED TARGET covers both, and
+			// covers only the cases that need it rather than exempting every
+			// case whenever TMPDIR happens to be homely.
+			if m.RootSet == "browse" && underHome(target) {
+				t.Skipf("target %s is inside $HOME, which %s legitimately browses", target, m.Method)
 			}
+			_ = sandbox
 
 			roots := substituted(sub, c.Roots)
 			reg := registryWithCwds(t, roots...)
@@ -847,11 +1143,27 @@ func assertWroteInsideARoot(t *testing.T, res json.RawMessage, roots []string) {
 //
 // browse = workspace roots + $HOME. So: a directory under $HOME that is not any
 // agent's cwd must be accepted by a browse method and refused by a workspace one.
+//
+// THE HOME IS A SANDBOX, AND THAT IS THE WHOLE POINT OF THIS PARAGRAPH. This
+// sweep used to probe with a FIXED name in the developer's REAL home
+// ($HOME/wks-contract-probe-not-an-agent-cwd) and t.Skipf if that path already
+// existed — "the probe must be a path nothing owns". But the sweep drives the
+// REAL handlers, so the fs.write subtest CREATES that exact file the moment
+// fs.write admits a $HOME path. The test therefore disarmed itself, permanently
+// and for every OTHER method too, the first time it detected the defect it
+// exists to detect: five later subtests were already skipped within that same
+// run, and every run afterwards skipped all eight and reported PASS. It had
+// already happened on the developer machine (a 5-byte file containing "hello",
+// which is verbatim the corpus's fs.write params), so fs.read and
+// search.project could each be widened to browseRoots with the entire Go suite
+// green. Any process running as the user could arm it with one `touch`.
+//
+// So HOME is redirected at a fresh t.TempDir() per subtest: the probe cannot
+// pre-exist, cannot be squatted, and a write that lands there is thrown away
+// with the sandbox instead of poisoning the next run. A probe that somehow
+// exists anyway is a FATAL, never a skip — the one thing this test must not do
+// is treat "I could not run" as "I passed" — and the loop asserts it ran.
 func TestPathBearingMethodRootSetsMatchTheCorpus(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		t.Skip("no home dir: browse and workspace roots are identical here")
-	}
 	fx := loadContractFixture(t)
 	reg := newRegistry(newClaudemonClient("http://127.0.0.1:1"))
 	dispatched := map[string]bool{}
@@ -861,14 +1173,32 @@ func TestPathBearingMethodRootSetsMatchTheCorpus(t *testing.T) {
 		}
 	}
 
+	ran := 0
 	for _, m := range fx.Methods {
 		if !m.providedByBrain() || !dispatched[m.Method] {
 			continue
 		}
+		ran++
 		t.Run(m.Method, func(t *testing.T) {
 			// A config dir of its own, so the config stores cannot be what
 			// admits (or refuses) the probe.
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			// A home of its own, for the reasons in the header. USERPROFILE is
+			// what os.UserHomeDir reads on Windows, HOME everywhere else; set
+			// both so the sandbox holds on either.
+			fakeHome, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HOME", fakeHome)
+			t.Setenv("USERPROFILE", fakeHome)
+			home, err := os.UserHomeDir()
+			if err != nil || home == "" {
+				t.Fatalf("os.UserHomeDir must follow the sandboxed home (%q): %v", fakeHome, err)
+			}
+			if home != fakeHome {
+				t.Fatalf("os.UserHomeDir returned %q, not the sandbox %q — the probe below would land in the real home", home, fakeHome)
+			}
 			cwd, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
 				t.Fatal(err)
@@ -877,7 +1207,7 @@ func TestPathBearingMethodRootSetsMatchTheCorpus(t *testing.T) {
 			// browse roots and outside the workspace roots, by construction.
 			probe := filepath.Join(home, "wks-contract-probe-not-an-agent-cwd")
 			if _, err := os.Lstat(probe); err == nil {
-				t.Skipf("%s exists on this machine; the probe must be a path nothing owns", probe)
+				t.Fatalf("%s exists inside a freshly created sandbox home — the sandbox is not fresh, and the probe no longer proves anything", probe)
 			}
 			reg := registryWithCwds(t, cwd)
 			params := map[string]any{}
@@ -902,5 +1232,346 @@ func TestPathBearingMethodRootSetsMatchTheCorpus(t *testing.T) {
 				t.Fatalf("unknown rootSet %q in the corpus for %s", m.RootSet, m.Method)
 			}
 		})
+	}
+	// Zero subtests is the failure mode this whole family of tests keeps
+	// re-learning: TestPathContainmentContractCases fails hard on an empty owned
+	// set for the same reason. Without this, a corpus that stopped naming
+	// "brain" as a provider — or a registry that stopped dispatching — would
+	// report a green PASS having asserted nothing at all.
+	if ran == 0 {
+		t.Fatal("no brain-provided path-bearing method was swept — the corpus, the registry and this loop have drifted out of overlap and the rootSet column is pinned by nothing")
+	}
+	t.Logf("swept the rootSet column for %d brain-provided methods", ran)
+}
+
+// ---------------------------------------------------------------------------
+// checkUse: the OTHER half of BINDING DECISION 2.
+//
+// The fixture's `checkUse` block requires that assertPathAllowed's RETURN VALUE
+// is what reaches the filesystem, and lists the call sites — but a corpus case
+// can only ever exercise the predicate, so every one of those call sites could
+// go back to opening the caller's raw string with the whole corpus green. The
+// ordinary symlink cases cannot catch it either: the kernel resolves a symlink
+// the same way this walk does, so raw and canonical name the SAME file.
+//
+// One input tells them apart. `<root>/nope/../notes.txt` canonicalizes to
+// `<root>/notes.txt` — the walk appends a component that does not exist and lets
+// a later ".." pop back onto ground that does (the corpus's "'..' after a
+// non-existent component pops lexically and lands inside", an ALLOW case) —
+// while the kernel refuses the raw string with ENOENT, because `nope` is not
+// there to walk through. So a handler that re-opens the caller's string fails
+// every assertion below, and one that opens the guard's answer passes.
+func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"sub", "real", "other"} {
+		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// `<dir>/sub/link` -> `<dir>/real`, so the link's own parent (`<dir>/sub`)
+	// and its target's parent (`<dir>`) differ — the only shape that separates a
+	// per-component walk from a textual clean.
+	if err := os.Symlink(filepath.Join(dir, "real"), filepath.Join(dir, "sub", "link")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	// The probe every subtest uses, carrying BOTH defects at once. It resolves to
+	// `<dir>/<name>` and nothing else does:
+	//
+	//   raw string            ENOENT — `nope` is not there to walk through, so a
+	//                         handler that re-opens the caller's string fails.
+	//   textual clean         `<dir>/sub/<name>` — `link/..` collapses to `<dir>/sub`
+	//                         before the link is read, so a handler that Cleans (or a
+	//                         guard that RETURNS a Clean) names a different file.
+	//   per-component walk    `<dir>/<name>`, which is what must be opened.
+	//
+	// Four of these six subtests used the `nope/..`-only probe, for which a clean
+	// and the walk agree — so they stayed green while fs.read was handing back a
+	// file outside the root.
+	via := func(name string) string {
+		return filepath.Join(dir, "sub", "link") + "/../nope/../" + name
+	}
+
+	t.Run("fs.read", func(t *testing.T) {
+		reg := registryWithCwd(t, dir)
+		raw, err := reg.handle(context.Background(), "fs.read",
+			json.RawMessage(`{"path":`+jsonStr(via("notes.txt"))+`}`))
+		if err != nil {
+			t.Fatalf("fs.read must open the path the guard returned, not the caller's string: %v", err)
+		}
+		var res struct {
+			Path     string `json:"path"`
+			Contents string `json:"contents"`
+		}
+		if err := json.Unmarshal(raw, &res); err != nil {
+			t.Fatal(err)
+		}
+		if res.Contents != "hello" {
+			t.Fatalf("fs.read returned %q", res.Contents)
+		}
+		if res.Path != filepath.Join(dir, "notes.txt") {
+			t.Errorf("fs.read reported %q, want the canonical %q — a caller round-tripping this "+
+				"path must stay inside the guard", res.Path, filepath.Join(dir, "notes.txt"))
+		}
+	})
+
+	t.Run("fs.write", func(t *testing.T) {
+		reg := registryWithCwd(t, dir)
+		if _, err := reg.handle(context.Background(), "fs.write",
+			json.RawMessage(`{"path":`+jsonStr(via("out.txt"))+`,"contents":"written"}`)); err != nil {
+			t.Fatalf("fs.write must write the path the guard returned: %v", err)
+		}
+		body, err := os.ReadFile(filepath.Join(dir, "out.txt"))
+		if err != nil || string(body) != "written" {
+			t.Fatalf("fs.write did not land on the canonical path: %q %v", body, err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "nope")); err == nil {
+			t.Error("fs.write materialized the unresolved component instead of using the canonical path")
+		}
+		// writeHostFile creates missing parents, so a cleaned path does not fail
+		// — it lands one directory over, silently. Name that outcome.
+		if _, err := os.Stat(filepath.Join(dir, "sub", "out.txt")); err == nil {
+			t.Error("fs.write landed on the TEXTUALLY CLEANED path <dir>/sub/out.txt instead of the canonical <dir>/out.txt")
+		}
+	})
+
+	// The two directory listers get `<dir>/other`, an EXISTING directory the
+	// cleaned form (`<dir>/sub/other`) does not name.
+	t.Run("fs.listEntries", func(t *testing.T) {
+		reg := registryWithCwd(t, dir)
+		raw, err := reg.handle(context.Background(), "fs.listEntries",
+			json.RawMessage(`{"path":`+jsonStr(via("other"))+`}`))
+		if err != nil {
+			t.Fatalf("fs.listEntries must list the path the guard returned: %v", err)
+		}
+		var res listEntriesResult
+		if err := json.Unmarshal(raw, &res); err != nil {
+			t.Fatal(err)
+		}
+		if res.Path != filepath.Join(dir, "other") {
+			t.Errorf("fs.listEntries reported %q, want the canonical %q", res.Path, filepath.Join(dir, "other"))
+		}
+	})
+
+	t.Run("fs.listDir", func(t *testing.T) {
+		reg := registryWithCwd(t, dir)
+		raw, err := reg.handle(context.Background(), "fs.listDir",
+			json.RawMessage(`{"path":`+jsonStr(via("other"))+`}`))
+		if err != nil {
+			t.Fatalf("fs.listDir must list the path the guard returned: %v", err)
+		}
+		var res listDirResult
+		if err := json.Unmarshal(raw, &res); err != nil {
+			t.Fatal(err)
+		}
+		if res.Path != filepath.Join(dir, "other") {
+			t.Errorf("fs.listDir reported %q, want the canonical %q", res.Path, filepath.Join(dir, "other"))
+		}
+	})
+
+	t.Run("search.project", func(t *testing.T) {
+		reg := registryWithCwd(t, dir)
+		raw, err := reg.handle(context.Background(), "search.project",
+			json.RawMessage(`{"cwd":`+jsonStr(filepath.Join(dir, "sub", "link")+"/../nope/..")+`,"query":"hello"}`))
+		if err != nil {
+			t.Fatalf("search.project must search the path the guard returned: %v", err)
+		}
+		// notes.txt lives in <dir>, not in the cleaned <dir>/sub.
+		if !strings.Contains(string(raw), "notes.txt") {
+			t.Errorf("search.project found nothing under the canonical cwd: %s", raw)
+		}
+	})
+
+	t.Run("library.save", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		reg := registryWithCwd(t, dir)
+		raw, err := reg.handle(context.Background(), "library.save",
+			json.RawMessage(`{"scope":"project","id":"n","title":"N","kind":"prompt","body":"b","cwd":`+
+				jsonStr(filepath.Join(dir, "sub", "link")+"/../nope/..")+`}`))
+		if err != nil {
+			t.Fatalf("library.save must write under the path the guard returned: %v", err)
+		}
+		var item libraryItem
+		if err := json.Unmarshal(raw, &item); err != nil {
+			t.Fatal(err)
+		}
+		want := filepath.Join(dir, ".workspacer", "library", "n.md")
+		if item.Path != want {
+			t.Errorf("library.save reported %q, want %q", item.Path, want)
+		}
+		if _, err := os.Stat(want); err != nil {
+			t.Errorf("library.save did not land on the canonical path: %v", err)
+		}
+	})
+}
+
+// TestGuardedHandlersDoNotRenormalizeTheCanonicalPath is the other direction of
+// BINDING DECISION 2, and the one that shipped broken: not "does the handler use
+// the guard's answer" but "does it use it UNCHANGED".
+//
+// Every helper in fsops.go used to re-normalize its argument. listHostDir ran
+// strings.TrimSpace, then expandTilde, then filepath.Abs (which Cleans);
+// listEntries ran Abs too; readTextFile and writeHostFile ran expandTilde. Each
+// one is a second, different opinion about what the caller's string means, and
+// the guard's whole contract is that there is only one.
+//
+// A single trailing space was enough. `.. ` is an ordinary component: it does
+// not exist, it resolves INSIDE the root, and the guard correctly allows it —
+// then TrimSpace turned it back into `..` and Abs collapsed that, so
+// `fs.listDir {"path": "<root>/.. "}` listed the root's PARENT. On the real
+// browse roots that is `$HOME/.. ` -> /home (every other user's home directory
+// name) and `<configDir>/layouts/.. ` -> the config dir itself, the directory
+// holding remote-token — while both parents named directly are refused. The same
+// trim re-attached a space to a symlink name the guard had just denied.
+//
+// The corpus pins the guard's half of this (the two trailing-space cases and
+// their resolvesTo); this pins the handlers'.
+func TestGuardedHandlersDoNotRenormalizeTheCanonicalPath(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "HIDDEN"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "link")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	parent := filepath.Dir(dir)
+
+	// Each probe is an ALLOWED path (it resolves inside the agent cwd) that
+	// names nothing on disk. The handler must therefore fail with ENOENT — the
+	// one thing it must never do is trim the space and succeed.
+	for _, tc := range []struct {
+		method string
+		params string
+		note   string
+	}{
+		{"fs.listDir", `{"path":` + jsonStr(dir+"/.. ") + `}`,
+			"trimming makes this the parent of the only allowed root"},
+		{"fs.listDir", `{"path":` + jsonStr(dir+"/link ") + `}`,
+			"trimming makes this the symlink out of the root, which the guard denies by name"},
+		{"fs.listEntries", `{"path":` + jsonStr(dir+"/link ") + `}`,
+			"same trim, other lister"},
+		{"fs.read", `{"path":` + jsonStr(dir+"/notes.txt ") + `}`,
+			"trimming makes this an existing file the caller did not name"},
+	} {
+		t.Run(tc.method+" "+tc.note, func(t *testing.T) {
+			reg := registryWithCwd(t, dir)
+			raw, err := reg.handle(context.Background(), tc.method, json.RawMessage(tc.params))
+			if err == nil {
+				t.Fatalf("%s succeeded on a path that does not exist — the handler re-normalized the guard's answer and opened something else: %s", tc.method, raw)
+			}
+			if strings.Contains(err.Error(), refusalText) {
+				t.Fatalf("%s was refused by the GUARD (%v); the point of this case is that the guard allows the string and the handler must then fail to open it", tc.method, err)
+			}
+		})
+	}
+
+	// fs.write is the one that must SUCCEED, on the literal name with the space.
+	t.Run("fs.write keeps the trailing space instead of clobbering the neighbour", func(t *testing.T) {
+		reg := registryWithCwd(t, dir)
+		if _, err := reg.handle(context.Background(), "fs.write",
+			json.RawMessage(`{"path":`+jsonStr(dir+"/w.txt ")+`,"contents":"spaced"}`)); err != nil {
+			t.Fatalf("writing a filename that ends in a space is legal: %v", err)
+		}
+		if body, err := os.ReadFile(filepath.Join(dir, "w.txt ")); err != nil || string(body) != "spaced" {
+			t.Errorf("fs.write did not land on the canonical %q: %q %v", dir+"/w.txt ", body, err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "w.txt")); err == nil {
+			t.Error("fs.write trimmed the space and wrote a DIFFERENT file")
+		}
+	})
+
+	// The escalation the trim actually bought: fs.listDir runs on browseRoots, so
+	// "<store>/.. " is the config dir — which is denied when it is named directly.
+	t.Run("fs.listDir cannot reach the config dir through a store", func(t *testing.T) {
+		cfgHome := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", cfgHome)
+		t.Setenv("APPDATA", cfgHome)
+		cfg := configDir()
+		if err := os.MkdirAll(filepath.Join(cfg, "layouts"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(cfg, "remote-token"), []byte("tok"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		reg := registryWithCwd(t, dir)
+		if _, err := reg.handle(context.Background(), "fs.listDir",
+			json.RawMessage(`{"path":`+jsonStr(cfg)+`}`)); err == nil {
+			t.Fatal("naming the config dir directly must be refused — the premise of this case")
+		}
+		reg = registryWithCwd(t, dir)
+		raw, err := reg.handle(context.Background(), "fs.listDir",
+			json.RawMessage(`{"path":`+jsonStr(filepath.Join(cfg, "layouts")+"/.. ")+`}`))
+		if err == nil {
+			t.Fatalf("fs.listDir listed the config dir through a trailing space: %s", raw)
+		}
+	})
+
+	// And the plain statement of the whole test, in case a future refactor makes
+	// the calls above fail for some other reason.
+	t.Run("no handler ever reports the parent of a root", func(t *testing.T) {
+		reg := registryWithCwd(t, dir)
+		raw, err := reg.handle(context.Background(), "fs.listDir",
+			json.RawMessage(`{"path":`+jsonStr(dir+"/.. ")+`}`))
+		if err != nil {
+			return
+		}
+		var res listDirResult
+		if err := json.Unmarshal(raw, &res); err != nil {
+			t.Fatal(err)
+		}
+		if res.Path == parent {
+			t.Fatalf("fs.listDir returned the parent %q of the only allowed root %q", parent, dir)
+		}
+	})
+}
+
+// TestBrainRefusesCaseVariantDuplicateParamKeys pins the decoder half of the
+// case-variant-key bypass.
+//
+// encoding/json matches a struct field to a JSON key exactly if it can and
+// CASE-INSENSITIVELY if it cannot, so `{"path":a,"Path":b}` decodes to b — while
+// the bus's grant confinement reads the map key "path" byte-exactly and sees a.
+// One request, two paths, and the plugin's fsRoots scope confined the wrong one:
+// a plugin granted only its own directory got read and write over every live
+// agent cwd and over <configDir>/library|layouts|sessions.
+//
+// The bus refuses the shape (contracts paramShapes), and so does this decoder,
+// which is what makes it hold for a TRUSTED connection and for every params
+// field rather than only the one capspec classified.
+func TestBrainRefusesCaseVariantDuplicateParamKeys(t *testing.T) {
+	dir := t.TempDir()
+	victim := t.TempDir()
+	if err := os.WriteFile(filepath.Join(victim, "loot.txt"), []byte("SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("benign"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both directories are live agent cwds, so containment alone would allow
+	// either one: the question here is purely which STRING the handler reads.
+	reg := registryWithCwds(t, dir, victim)
+	raw, err := reg.handle(context.Background(), "fs.read",
+		json.RawMessage(`{"path":`+jsonStr(filepath.Join(dir, "ok.txt"))+
+			`,"Path":`+jsonStr(filepath.Join(victim, "loot.txt"))+`}`))
+	if err == nil {
+		t.Fatalf("an ambiguous params object must be refused, got %s", raw)
+	}
+	if !strings.Contains(err.Error(), "differ only by case") {
+		t.Errorf("refused for the wrong reason: %v", err)
+	}
+
+	// The unambiguous request is unaffected.
+	reg = registryWithCwds(t, dir, victim)
+	if _, err := reg.handle(context.Background(), "fs.read",
+		json.RawMessage(`{"path":`+jsonStr(filepath.Join(dir, "ok.txt"))+`}`)); err != nil {
+		t.Fatalf("the ordinary single-key call must still work: %v", err)
 	}
 }

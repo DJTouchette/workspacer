@@ -27,7 +27,7 @@ func TestSlugLibrary(t *testing.T) {
 func TestLibrarySeedAndList(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	items := listLibrary("")
+	items := listLibrary("", allowAnyLibraryFile)
 	if len(items) != 4 {
 		t.Fatalf("expected 4 seeded items, got %d", len(items))
 	}
@@ -55,7 +55,7 @@ func TestLibraryProjectOverridesGlobal(t *testing.T) {
 	writeFile(t, filepath.Join(libraryGlobalDir(), "foo.md"), "---\ntitle: Global Foo\n---\n\nglobal body\n")
 	writeFile(t, filepath.Join(libraryProjectDir(cwd), "foo.md"), "---\ntitle: Project Foo\n---\n\nproject body\n")
 
-	items := listLibrary(cwd)
+	items := listLibrary(cwd, allowAnyLibraryFile)
 	var foo *libraryItem
 	for i := range items {
 		if items[i].ID == "foo" {
@@ -75,7 +75,7 @@ func TestLibraryClaudeAssets(t *testing.T) {
 	writeFile(t, filepath.Join(claudeAgentsDir(cwd), "myAgent.md"), "---\nname: My Agent\n---\n\nagent body\n")
 
 	var skill, agent *libraryItem
-	for _, it := range listLibrary(cwd) {
+	for _, it := range listLibrary(cwd, allowAnyLibraryFile) {
 		switch it.Kind {
 		case "skill":
 			s := it
@@ -85,7 +85,11 @@ func TestLibraryClaudeAssets(t *testing.T) {
 			agent = &a
 		}
 	}
-	if skill == nil || skill.Scope != "claude" || skill.Title != "My Skill" || skill.ID != "myskill" {
+	// "MySkill", not "myskill": a claude-scoped id is the item's REAL on-disk
+	// basename, so save/remove can address the directory that is actually there.
+	// This assertion used to demand the slug, which is what let the two providers
+	// disagree — libraryService.ts has never slugged a claude id.
+	if skill == nil || skill.Scope != "claude" || skill.Title != "My Skill" || skill.ID != "MySkill" {
 		t.Fatalf("skill not discovered correctly: %+v", skill)
 	}
 	if agent == nil || agent.Title != "My Agent" {
@@ -101,7 +105,7 @@ func TestLibraryClaudeCommands(t *testing.T) {
 	writeFile(t, filepath.Join(claudeCommandsDir(cwd), "deploy.md"), "---\ndescription: Ship it\n---\n\nRun the deploy playbook.\n")
 
 	var cmd *libraryItem
-	for _, it := range listLibrary(cwd) {
+	for _, it := range listLibrary(cwd, allowAnyLibraryFile) {
 		if it.Kind == "command" {
 			c := it
 			cmd = &c
@@ -124,7 +128,7 @@ func TestLibraryClaudeCommands(t *testing.T) {
 		t.Fatalf("saved command not at .claude/commands/release.md: %v", err)
 	}
 	// …and remove deletes the command file, not a same-named skill dir.
-	removeLibrary("claude", "deploy", cwd, "command")
+	removeLibrary("claude", "deploy", cwd, "command", allowAnyLibraryFile)
 	if _, err := os.Stat(filepath.Join(claudeCommandsDir(cwd), "deploy.md")); !os.IsNotExist(err) {
 		t.Fatal("command file should be removed")
 	}
@@ -146,7 +150,7 @@ func TestLibrarySaveAndRemoveGlobal(t *testing.T) {
 		t.Fatalf("serialized file missing expected content:\n%s", raw)
 	}
 
-	removeLibrary("global", "my-prompt", "", "")
+	removeLibrary("global", "my-prompt", "", "", allowAnyLibraryFile)
 	if _, err := os.Stat(filepath.Join(libraryGlobalDir(), "my-prompt.md")); !os.IsNotExist(err) {
 		t.Fatal("file should be removed")
 	}
@@ -246,5 +250,85 @@ func TestLibraryListAndRemoveRejectAnEscapingCwd(t *testing.T) {
 			json.RawMessage(`{"cwd":"/etc","scope":"project","id":"x","kind":"agent"}`)); err == nil {
 			t.Errorf("%s accepted a cwd outside every workspace root", method)
 		}
+	}
+}
+
+// library.list checks its CWD against the browse roots — workspace roots plus
+// the whole home tree — because the New Agent dialog lists the library of a
+// directory no agent is running in yet. Handing those same roots to the
+// PER-FILE guard is a different thing entirely: fs.listDir browses the home tree
+// and returns directory NAMES, while this call returns file BODIES. With the
+// browse roots on the files, one symlink anywhere under $HOME (git stores
+// symlink values verbatim, so a clone carries them) turned library.list into an
+// arbitrary home-directory reader — ~/.ssh/id_rsa and ~/.claude/.credentials.json
+// came back as an item Body, while fs.read of the identical path is refused.
+//
+// A library item lives in the project the caller named or in the global store.
+// Nowhere else, whatever the cwd was allowed against.
+func TestLibraryListDoesNotReadOutsideTheProjectItNamed(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	const secret = "-----BEGIN OPENSSH PRIVATE KEY-----\nSTOLEN\n"
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(home, ".ssh", "id_rsa")
+	if err := os.WriteFile(key, []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	project := filepath.Join(home, "scratch")
+	libDir := filepath.Join(project, ".workspacer", "library")
+	if err := os.MkdirAll(libDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The floor, alongside the plant: a genuine item in the project must still
+	// be listed, or a guard that refused everything would pass this test.
+	if err := os.WriteFile(filepath.Join(libDir, "keeper.md"),
+		[]byte("---\ntitle: Keeper\nkind: prompt\n---\n\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(key, filepath.Join(libDir, "a.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	// No live agents at all: `project` is reachable only through the BROWSE
+	// widening, which is exactly the configuration the New Agent dialog is in.
+	reg := registryWithCwds(t)
+	raw, err := reg.handle(context.Background(), "library.list",
+		json.RawMessage(`{"cwd":`+jsonStr(project)+`}`))
+	if err != nil {
+		t.Fatalf("library.list of a browsable directory should be allowed: %v", err)
+	}
+	var items []libraryItem
+	if err := json.Unmarshal(raw, &items); err != nil {
+		t.Fatal(err)
+	}
+
+	titles := []string{}
+	for _, it := range items {
+		titles = append(titles, it.Title)
+		if strings.Contains(it.Body, "STOLEN") || strings.Contains(it.Path, ".ssh") {
+			t.Fatalf("library.list returned a file outside the project it was given: id=%q path=%q", it.ID, it.Path)
+		}
+	}
+	found := false
+	for _, title := range titles {
+		if title == "Keeper" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the project's own item disappeared; got %v", titles)
+	}
+
+	// The control: fs.read of the identical path is refused, which is the
+	// disagreement this test exists to close.
+	if _, err := reg.handle(context.Background(), "fs.read",
+		json.RawMessage(`{"path":`+jsonStr(filepath.Join(libDir, "a.md"))+`}`)); err == nil {
+		t.Fatal("fs.read of the planted symlink must be denied (control)")
 	}
 }

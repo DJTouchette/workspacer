@@ -34,15 +34,28 @@ interface Case {
     dirs?: string[];
     files?: Record<string, string>;
     symlinks?: Record<string, string>;
+    /** Link bodies written VERBATIM — the only way to reach the walk's
+     *  relative-link arm, which every absolutized `symlinks` case leaves
+     *  unexecuted. */
+    relativeSymlinks?: Record<string, string>;
     modes?: Record<string, string>;
   };
+  /** A sandbox-relative symlink to the config HOME that getConfigDir is pointed
+   *  through, while ${CONFIG} keeps naming the real path — so the case passes
+   *  only if the secret gate canonicalizes its own config dir. */
+  configDirVia?: string;
   roots: string[];
   target: string;
   expect: 'allow' | 'deny';
+  /** The token-substituted path assertPathAllowed must RETURN on an allow — the
+   *  string every call site then hands to the filesystem (BINDING DECISION 2).
+   *  Mandatory on every allow case; a deny returns no path. */
+  resolvesTo?: string;
   why?: string;
   needsSymlinks?: boolean;
   posixOnly?: boolean;
   needsUnreadableDir?: boolean;
+  needsHome?: boolean;
 }
 
 interface Fixture {
@@ -83,10 +96,37 @@ const CAN_SYMLINK = (() => {
  *  nothing when the tests run as root (containers, CI images). */
 const CAN_HAVE_UNREADABLE_DIR = !WIN32 && (process.getuid?.() ?? 0) !== 0;
 
+/** The two tokens that deliberately point OUTSIDE the per-case sandbox.
+ *
+ *  Every other case keeps root and target inside one temp dir, and that is
+ *  exactly what made the tilde and bad-root cases vacuous: a '~' that expands to
+ *  $HOME, or an empty root that resolves to the process cwd, still failed to
+ *  contain a target under /tmp, so the deny verdict never moved and a copy that
+ *  re-introduced either widening passed the whole corpus. These place the probe
+ *  where the widening would actually land. Resolved, because every other path
+ *  here is realpath'd and on macOS /var -> /private/var alone would make the
+ *  comparison wrong. No case using them expects `allow`. */
+const realpathOf = (p: string): string => {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return p;
+  }
+};
+const REAL_HOME = (() => {
+  try {
+    return realpathOf(os.homedir());
+  } catch {
+    return '';
+  }
+})();
+const PROCESS_CWD = realpathOf(process.cwd());
+
 function skipReason(c: Case): string | null {
   if (c.posixOnly && WIN32) return 'posixOnly';
   if (c.needsSymlinks && !CAN_SYMLINK) return 'needsSymlinks';
   if (c.needsUnreadableDir && !CAN_HAVE_UNREADABLE_DIR) return 'needsUnreadableDir';
+  if (c.needsHome && !REAL_HOME) return 'needsHome';
   return null;
 }
 
@@ -135,9 +175,14 @@ function materialize(tree: Case['tree']): void {
   for (const [link, target] of Object.entries(tree.symlinks ?? {})) {
     const p = abs(link);
     fs.mkdirSync(path.dirname(p), { recursive: true });
-    // Absolute link targets: no case is meant to depend on relative-symlink
-    // resolution, so the loader converts before creating.
+    // Absolutized here; `relativeSymlinks` below is the arm that is not.
     fs.symlinkSync(abs(target), p);
+  }
+  for (const [link, target] of Object.entries(tree.relativeSymlinks ?? {})) {
+    const p = abs(link);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    // Verbatim: resolving a relative link body is the implementation's job.
+    fs.symlinkSync(target, p);
   }
   for (const [target, mode] of Object.entries(tree.modes ?? {})) {
     const p = abs(target);
@@ -191,7 +236,18 @@ function subst(s: string): string {
     .split('${OUTSIDE}')
     .join(path.join(sandbox, 'outside'))
     .split('${CONFIG}')
-    .join(path.join(sandbox, 'config', 'workspacer'));
+    .join(path.join(sandbox, 'config', 'workspacer'))
+    .split('${HOME}')
+    .join(REAL_HOME)
+    .split('${PROCESS_CWD}')
+    .join(PROCESS_CWD);
+}
+
+/** The fixture spells `resolvesTo` with '/' separators; the tokens inside it
+ *  substitute to native ones. Only the fixture-authored separators need
+ *  translating, and on POSIX this is a no-op. */
+function nativeSep(s: string): string {
+  return WIN32 ? s.split('/').join(path.sep) : s;
 }
 
 describe('path containment — cross-language contract', () => {
@@ -216,7 +272,7 @@ describe('path containment — cross-language contract', () => {
   // The two constants are the parts of the `secrets` gate the CASES cannot
   // reach: every case names one of the two credential basenames and one of the
   // three stores, so adding a THIRD basename here (or dropping 'layouts') keeps
-  // all 65 passing while the copies silently drift apart. The fixture carries
+  // the whole corpus passing while the copies silently drift apart. The fixture carries
   // both lists for exactly this reason; hostTrustedConfig.test.ts pins its
   // section list the same way.
   it('denies exactly the credential basenames the fixture names', () => {
@@ -236,6 +292,12 @@ describe('path containment — cross-language contract', () => {
     const reason = skipReason(c);
     const run = reason ? it.skip : it;
     run(`[${c.group}] ${c.name}${reason ? ` (skipped: ${reason})` : ''}`, () => {
+      // Before the tree, because the config dir has to be repointed through the
+      // link while ${CONFIG} keeps substituting to the real path.
+      if (c.configDirVia) {
+        fs.symlinkSync(path.join(sandbox, 'config'), path.join(sandbox, c.configDirVia));
+        state.configDir = path.join(sandbox, c.configDirVia, 'workspacer');
+      }
       materialize(c.tree);
       const roots = c.roots.map(subst);
       const target = subst(c.target);
@@ -255,6 +317,17 @@ describe('path containment — cross-language contract', () => {
         expect(typeof canonical, c.why).toBe('string');
         expect(path.isAbsolute(canonical)).toBe(true);
         expect(canonicalShapeProblem(canonical), `canonical form of ${c.target}`).toBeNull();
+        // The VALUE, not only its shape. Shape alone is what let a whole-path
+        // clean (path.normalize, or Go's filepath.Clean) satisfy every case in
+        // this corpus in all three copies while returning a path that points at
+        // a different file — Clean's answer is absolute and free of '.' and '..'
+        // too. resolvesTo is mandatory on an allow so a future case cannot be
+        // added without pinning the answer.
+        expect(
+          c.resolvesTo,
+          `allow case "${c.name}" must carry resolvesTo — the path the guard returns is half the contract`,
+        ).toBeTruthy();
+        expect(canonical, c.why).toBe(nativeSep(subst(c.resolvesTo as string)));
       }
     });
   }

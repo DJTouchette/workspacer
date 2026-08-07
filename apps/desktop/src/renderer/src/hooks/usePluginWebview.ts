@@ -40,22 +40,25 @@ export function usePluginWebview(
   const readyRef = useRef(false);
   const cssKeyRef = useRef<string | null>(null);
 
-  const applyTheme = useCallback(async (newDocument = false) => {
-    const wv = ref.current as any;
-    if (!wv || !readyRef.current) return;
-    try {
-      // insertCSS keys die with the document they were inserted into.
-      if (newDocument) cssKeyRef.current = null;
-      if (cssKeyRef.current && wv.removeInsertedCSS) {
-        await wv.removeInsertedCSS(cssKeyRef.current).catch(() => {});
-        cssKeyRef.current = null;
+  const applyTheme = useCallback(
+    async (newDocument = false) => {
+      const wv = ref.current as any;
+      if (!wv || !readyRef.current) return;
+      try {
+        // insertCSS keys die with the document they were inserted into.
+        if (newDocument) cssKeyRef.current = null;
+        if (cssKeyRef.current && wv.removeInsertedCSS) {
+          await wv.removeInsertedCSS(cssKeyRef.current).catch(() => {});
+          cssKeyRef.current = null;
+        }
+        cssKeyRef.current = await wv.insertCSS(webviewThemeCSS(themeRef.current));
+        await wv.executeJavaScript(webviewThemeJS(themeRef.current));
+      } catch {
+        /* mid-navigation or destroyed — the next dom-ready re-applies */
       }
-      cssKeyRef.current = await wv.insertCSS(webviewThemeCSS(themeRef.current));
-      await wv.executeJavaScript(webviewThemeJS(themeRef.current));
-    } catch {
-      /* mid-navigation or destroyed — the next dom-ready re-applies */
-    }
-  }, [ref]);
+    },
+    [ref],
+  );
 
   const applySettings = useCallback(async () => {
     if (!pluginId) return;

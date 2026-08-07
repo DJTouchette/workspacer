@@ -125,3 +125,66 @@ describe('slugSession', () => {
     expect(slugSession(long)).toBe('a'.repeat(64));
   });
 });
+
+// ---------------------------------------------------------------------------
+// contracts/filename-slug-cases.json — the cross-language corpus.
+//
+// Everything above is a characterization test of THIS copy. That is exactly how
+// the U+0130 divergence survived: the Go port in cmd/brain/slug.go has its own
+// characterization test, neither ever saw the other's answers, and the two
+// wrote different filenames into the same config store. Unlike pricing,
+// deepMerge and path containment there was no contracts/ fixture pinning the
+// slugs; there is now, and this block is one of its two loaders.
+// ---------------------------------------------------------------------------
+
+import * as fs from 'fs';
+import * as path from 'path';
+
+interface SlugCase {
+  name: string;
+  input: string;
+  expect: { library: string; layout: string; session: string };
+  why?: string;
+}
+
+interface SlugFixture {
+  owners: Record<string, string[]>;
+  cases: SlugCase[];
+}
+
+const SLUG_OWNER = 'apps/desktop/src/main/lib/fileUtils.ts';
+
+// apps/desktop/src/main/lib/ → five levels below the repo root, where contracts/ sits.
+const slugFixture: SlugFixture = JSON.parse(
+  fs.readFileSync(
+    path.join(__dirname, '../../../../../contracts/filename-slug-cases.json'),
+    'utf-8',
+  ),
+);
+
+describe('filename slugs — cross-language contract', () => {
+  it('the fixture loads and names this owner', () => {
+    // Renaming this file without updating the fixture must FAIL, not silently
+    // stop testing anything.
+    expect(slugFixture.owners[SLUG_OWNER], `the fixture must name ${SLUG_OWNER}`).toBeDefined();
+    expect([...slugFixture.owners[SLUG_OWNER]].sort()).toEqual(['layout', 'library', 'session']);
+    expect(slugFixture.cases.length).toBeGreaterThan(0);
+  });
+
+  for (const c of slugFixture.cases) {
+    it(c.name, () => {
+      expect(slugLibrary(c.input), `slugLibrary — ${c.why ?? ''}`).toBe(c.expect.library);
+      expect(slugLayout(c.input), `slugLayout — ${c.why ?? ''}`).toBe(c.expect.layout);
+      expect(slugSession(c.input), `slugSession — ${c.why ?? ''}`).toBe(c.expect.session);
+    });
+
+    it(`${c.name} — idempotent where the variant claims to be`, () => {
+      // remove()/delete re-slug a STORED id, so a non-idempotent variant unlinks
+      // a filename save() never wrote. library and layout both trim and both
+      // re-trim after truncation for this reason; session deliberately does not
+      // trim, so it is only required to be stable on its own output's shape.
+      expect(slugLibrary(slugLibrary(c.input))).toBe(slugLibrary(c.input));
+      expect(slugLayout(slugLayout(c.input))).toBe(slugLayout(c.input));
+    });
+  }
+});

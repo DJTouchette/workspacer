@@ -75,3 +75,35 @@ describe('layoutService — save contains a caller-supplied id (layouts.save is 
     expect(layoutService.list()).toHaveLength(0);
   });
 });
+
+// A lister's own `<layoutsDir>/<readdir entry>` is a DERIVED path, and the
+// layouts dir is one of the three the bus lets a caller write into. The entry
+// name is a bare basename so nothing escapes textually — a symlink named like a
+// layout is what escapes, and readFileSync follows it. Twin:
+// cmd/brain/stores.go storeEntryPath (where the same gap additionally COPIED the
+// bytes to a `.broken-*` sibling that fs.read then handed back).
+describe('layoutService.list — derived entries stay inside the store', () => {
+  it('skips an entry that resolves out of the layouts dir', () => {
+    const layoutsDir = path.join(h.dir, 'layouts');
+    fs.mkdirSync(layoutsDir, { recursive: true });
+    const outside = path.join(h.dir, 'stolen.yaml');
+    fs.writeFileSync(outside, 'id: x\nname: Stolen\ncreatedAt: z\nagents: []\n', 'utf-8');
+    try {
+      fs.symlinkSync(outside, path.join(layoutsDir, 'pwn.yaml'));
+    } catch {
+      return; // no symlink privilege here
+    }
+    expect(layoutService.list().map((l) => l.name)).not.toContain('Stolen');
+  });
+
+  it('still lists a symlink that stays inside the layouts dir', () => {
+    const real = layoutService.save({ name: 'Real', agents: [] });
+    const layoutsDir = path.join(h.dir, 'layouts');
+    try {
+      fs.symlinkSync(path.join(layoutsDir, `${real.id}.yaml`), path.join(layoutsDir, 'alias.yaml'));
+    } catch {
+      return;
+    }
+    expect(layoutService.list()).toHaveLength(2);
+  });
+});

@@ -22,9 +22,9 @@ import { appIconPath } from '../lib/appIcon';
 import { dropHostTrusted } from '../lib/hostTrustedConfig';
 import { assertPathAllowed, canonicalRoot, configStoreRoots } from '../lib/pathConfinement';
 import { DELEGATE_CATALOG_TO_BRAIN } from './brainDelegation';
-import { configService } from './configService';
+import { configService, getConfigDir } from './configService';
 import { listClaudeModels } from './claudeModels';
-import { libraryService } from './libraryService';
+import { libraryService, type LibraryFileGuard } from './libraryService';
 import { sessionService } from './sessionService';
 import { sessionHistory } from './sessionHistory';
 import { layoutService } from './layoutService';
@@ -895,6 +895,36 @@ export function registerHubCapabilities(): void {
     if (!cwd) return undefined;
     return assertPathAllowed(cap, cwd, workspaceRoots());
   };
+  // Confining the cwd is not the same thing as confining what the service then
+  // TOUCHES. Every read and every unlink is a path DERIVED from that cwd
+  // (`<cwd>/.workspacer/library/<name>.md`, `<cwd>/.claude/skills/<id>`),
+  // composed after the check and never resolved — so one symlink planted in the
+  // allowed project (an ordinary permitted fs.write) read remote-token through
+  // library.list and rm -rf'd the config dir through library.remove. This guard
+  // is handed to the service and applied per file; a refusal skips that item
+  // rather than failing the call.
+  const guardLibraryFile =
+    (cap: string, roots: string[]): LibraryFileGuard =>
+    (filePath: string) => {
+      try {
+        return assertPathAllowed(cap, filePath, roots);
+      } catch {
+        return null;
+      }
+    };
+  // Where a library item may legitimately LIVE — deliberately narrower than the
+  // allow-list the caller's `cwd` is checked against. Every file the service
+  // reads, writes or unlinks is under the project it was given or in the global
+  // store. Handing the per-file guard the BROWSE roots (which library.list uses
+  // for its cwd, and must) made it an arbitrary home-directory reader: a
+  // `<cwd>/.workspacer/library/a.md -> ~/.ssh/id_rsa` symlink canonicalizes
+  // inside $HOME, passes, and comes back as an item body — while fs.read of the
+  // identical path is refused. Mirrors libraryItemRoots in cmd/brain/library.go.
+  const libraryItemRoots = (canonicalCwd?: string): string[] => {
+    const roots = [path.join(getConfigDir(), 'library')];
+    if (canonicalCwd) roots.push(canonicalCwd);
+    return roots;
+  };
   cat('library.list', (params: unknown) => {
     const { cwd } = (params ?? {}) as { cwd?: string };
     // The read-only list gets browseRoots, not workspaceRoots, for the same
@@ -904,13 +934,28 @@ export function registerHubCapabilities(): void {
     // silently empty project-MCP picker. Browsing the home tree to read a
     // project's own prompt files is the same exposure the picker already has;
     // writing and deleting stay on the workspace roots.
-    const canonicalCwd = cwd ? assertPathAllowed('library.list', cwd, browseRoots()) : undefined;
-    return libraryService.list(canonicalCwd);
+    const roots = browseRoots();
+    const canonicalCwd = cwd ? assertPathAllowed('library.list', cwd, roots) : undefined;
+    // The FILES get the item roots, not the browse roots: this call returns file
+    // bodies, while the browse widening exists for a picker that returns names.
+    return libraryService.list(
+      canonicalCwd,
+      guardLibraryFile('library.list', libraryItemRoots(canonicalCwd)),
+    );
   });
   cat('library.save', (params: unknown) => {
     const input = (params ?? {}) as { cwd?: string };
     const canonicalCwd = guardLibraryCwd('library.save', input.cwd);
-    return libraryService.save({ ...input, cwd: canonicalCwd } as any);
+    // The DESTINATION is guarded too, not just the cwd it is composed from —
+    // `<cwd>/.workspacer/library/<slug>.md` and `<cwd>/.claude/skills/<id>/`
+    // are caller-writable locations inside an allowed root, so a symlink there
+    // aimed writeFileSync at <configDir>/config.yaml while the cwd the guard
+    // saw was impeccable. The brain has always guarded this derived path; this
+    // copy did not, so the two providers disagreed about the same call.
+    return libraryService.save(
+      { ...input, cwd: canonicalCwd } as any,
+      guardLibraryFile('library.save', libraryItemRoots(canonicalCwd)),
+    );
   });
   cat('library.remove', (params: unknown) => {
     const { scope, id, cwd, kind } = (params ?? {}) as {
@@ -921,7 +966,13 @@ export function registerHubCapabilities(): void {
     };
     if (!scope || !id) throw new Error('library.remove requires { scope, id }');
     const canonicalCwd = guardLibraryCwd('library.remove', cwd);
-    libraryService.remove(scope, id, canonicalCwd, kind);
+    libraryService.remove(
+      scope,
+      id,
+      canonicalCwd,
+      kind,
+      guardLibraryFile('library.remove', libraryItemRoots(canonicalCwd)),
+    );
     return { ok: true };
   });
 

@@ -210,6 +210,28 @@ export function pathWithinRoots(roots: string[], canonicalTarget: string): boole
   return roots.some((r) => isWithin(canonicalTarget, r));
 }
 
+/**
+ * Resolve ONE directory-listing entry against the store directory it came from,
+ * or null to skip it. The returned path is the string the caller must open
+ * (BINDING DECISION 2).
+ *
+ * The entry name is a bare basename, so the join cannot escape textually — but a
+ * SYMLINK named `x.yaml` is a perfectly legal entry and readFileSync follows it,
+ * and <configDir>/layouts and <configDir>/sessions are exactly the directories a
+ * bus caller may write into. Without this, `layouts.list` / `sessions.list`
+ * launder out-of-store bytes into their own responses; the Go twin
+ * (cmd/brain/stores.go storeEntryPath) additionally used to COPY them to a
+ * `.broken-*` sibling that `fs.read` then handed back.
+ */
+export function resolveStoreEntry(dir: string, name: string): string | null {
+  try {
+    const canonical = canonicalizePath(path.join(dir, name));
+    return isWithin(canonical, dir) ? canonical : null;
+  } catch {
+    return null; // unverifiable → skip, same posture as the fs.* guard
+  }
+}
+
 /** The config-dir subtrees the web/remote UI legitimately reads and writes.
  *  Mirrors configStoreRoots() in the Go brain (cmd/brain/fsguard.go) — the brain
  *  is the DEFAULT answerer for fs.*, so the two lists have to be the same list. */

@@ -226,6 +226,14 @@ func sortedFixtureMethods[V any](m map[string]V) []string {
 // in PathParam, or written down in unscopedByDecision with the reason.
 var pathishParams = map[string]bool{
 	"path": true, "cwd": true, "dir": true, "filePath": true, "root": true, "paths": true,
+	// `filename` was the blind spot that let sessions.load / sessions.save /
+	// sessions.delete ship as a FOURTH, unclassified copy of path containment:
+	// their names carry no fs./library./git. prefix so LooksPathBearing is false,
+	// and without this entry the params scan could not see them either. Their two
+	// providers had drifted (a bare-basename rule in Go, a lexical
+	// resolve+startsWith in TypeScript that read and unlinked through a symlink)
+	// with both suites green.
+	"filename": true,
 }
 
 // paramsDestructureRe pulls the `const { … } = (params` destructuring out of a
@@ -389,6 +397,82 @@ func TestDesktopCapabilitiesAllScoped(t *testing.T) {
 // literals only, matching the file's convention for capability names.
 func guardCallRe(method string) *regexp.Regexp {
 	return regexp.MustCompile(`\b(assertPathAllowed|guard[A-Za-z]*)\(\s*'` + regexp.QuoteMeta(method) + `'`)
+}
+
+// TestUnscopedByDecisionProviderClaimsAreTrue holds unscopedByDecision to its
+// own word.
+//
+// Nine git.* methods are excused from PathParam on one stated ground: "provider-
+// confined to the workspace roots (guardGitCwd)". That sentence is the ONLY
+// thing standing between a bus caller (web / remote / MCP / any trusted
+// connection) and `git.commitDiff` on an arbitrary checkout, or `git.stage` on
+// an arbitrary index — and nothing checked it. TestDesktopPathCapabilitiesAreGuarded
+// iterates PathParam, which by construction excludes everything listed here, so
+// six of the nine (git.log, git.numstat, git.commitDiff, git.commitNumstat,
+// git.stage, git.unstage) could have their guardGitCwd() call deleted with the
+// entire Go and desktop suites staying green.
+//
+// So: any entry whose reason NAMES a guard helper must actually call that helper
+// with its own method name, in its own handler body. This is the same slice-to-
+// the-next-registration parse the tests above use, for the same reason — a guard
+// belonging to the capability registered above must not be read as this one's.
+// The behavioural half lives in hubCapabilities.test.ts; this half is what makes
+// a silent deletion impossible.
+func TestUnscopedByDecisionProviderClaimsAreTrue(t *testing.T) {
+	src := filepath.Join("..", "..", "..", "..", "apps", "desktop", "src", "main", "services", "hubCapabilities.ts")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Skipf("hubCapabilities.ts not reachable (%v); skipping cross-repo cross-check", err)
+	}
+	text := string(data)
+	sites := capNameRe.FindAllStringSubmatchIndex(text, -1)
+	if len(sites) == 0 {
+		t.Fatalf("parsed no capability names from %s — the registration syntax changed; update capNameRe", src)
+	}
+	bodies := map[string]string{}
+	for i, site := range sites {
+		end := len(text)
+		if i+1 < len(sites) {
+			end = sites[i+1][0]
+		}
+		bodies[text[site[2]:site[3]]] = text[site[0]:end]
+	}
+
+	// The helper names a reason may claim. Adding one here is how a future
+	// "confined by the provider" excuse becomes enforceable rather than prose.
+	helpers := []string{"guardGitCwd", "assertPathAllowed"}
+	checked := 0
+	for _, method := range sortedFixtureMethods(unscopedByDecision) {
+		reason := unscopedByDecision[method]
+		var claimed string
+		for _, h := range helpers {
+			if strings.Contains(reason, h) {
+				claimed = h
+				break
+			}
+		}
+		if claimed == "" {
+			continue // the reason rests on something this file cannot read (see replay.*, agents.spawn)
+		}
+		body, ok := bodies[method]
+		if !ok {
+			t.Errorf("unscopedByDecision says %s is confined by %s in the provider, but hubCapabilities.ts registers no such capability — the excuse names a handler that does not exist", method, claimed)
+			continue
+		}
+		if !guardCallRe(method).MatchString(body) {
+			t.Errorf("unscopedByDecision excuses %s on the grounds that the provider confines it (%q), but its handler in %s never calls %s('%s', …) — every bus caller reaches it with an unconfined cwd", method, reason, src, claimed, method)
+			continue
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Fatalf("no unscopedByDecision entry claimed a provider-side guard this test could verify — either the reasons were reworded or the parse broke, and in both cases this guard is guarding nothing")
+	}
+	// The git block is the reason this test exists; losing it silently would put
+	// the six unpinned methods straight back where they were.
+	if checked < 9 {
+		t.Errorf("expected at least the nine git.* provider-confinement claims to be verified, got %d", checked)
+	}
 }
 
 // TestDesktopPathCapabilitiesAreGuarded is the second half of the question the

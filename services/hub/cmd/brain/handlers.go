@@ -235,15 +235,26 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		// yet a live agent cwd, and the caller's `.catch(() => {})` turned the
 		// refusal into a silently empty project-MCP picker. Reading is the widest
 		// this gets — library.save/remove stay on the workspace roots.
+		roots := r.browseRoots(ctx)
 		cwd := p.Cwd
 		if cwd != "" {
-			canonical, err := assertPathAllowed("library.list", cwd, r.browseRoots(ctx))
+			canonical, err := assertPathAllowed("library.list", cwd, roots)
 			if err != nil {
 				return nil, err
 			}
 			cwd = canonical // check-path and used-path must be the same string
 		}
-		return jsonResult(listLibrary(cwd))
+		// …and so must every file DERIVED from it. Confining the cwd alone left
+		// <cwd>/.workspacer/library/x.md and <cwd>/.claude/skills/x/SKILL.md
+		// unresolved, so a symlink planted in the (allowed) project read
+		// remote-token straight out of the config dir.
+		//
+		// The FILES get libraryItemRoots, not `roots`: browse roots are wide
+		// enough to browse with, and this call returns file bodies. A symlink in
+		// the project aimed at ~/.ssh/id_rsa canonicalizes inside $HOME, which
+		// the browse roots contain and the two directories library items
+		// actually live in do not.
+		return jsonResult(listLibrary(cwd, libraryFileGuardFor("library.list", libraryItemRoots(cwd))))
 	case "library.save":
 		var in libraryInput
 		if err := unmarshal(params, &in); err != nil {
@@ -264,9 +275,10 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		if err := unmarshal(params, &p); err != nil {
 			return nil, err
 		}
+		roots := r.workspaceRoots(ctx)
 		cwd := p.Cwd
 		if cwd != "" {
-			canonical, err := assertPathAllowed("library.remove", cwd, r.workspaceRoots(ctx))
+			canonical, err := assertPathAllowed("library.remove", cwd, roots)
 			if err != nil {
 				return nil, err
 			}
@@ -275,7 +287,12 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		if p.Scope == "" || p.ID == "" {
 			return nil, fmt.Errorf("library.remove requires { scope, id }")
 		}
-		removeLibrary(p.Scope, p.ID, cwd, p.Kind)
+		// The unlink target is guarded separately, and against the two
+		// directories library items live in rather than the whole workspace: a
+		// `.claude/skills` symlink inside the (allowed) cwd pointed os.RemoveAll
+		// at the config dir, and a link aimed at a SECOND allowed root would
+		// otherwise still delete out of the project the caller named.
+		removeLibrary(p.Scope, p.ID, cwd, p.Kind, libraryFileGuardFor("library.remove", libraryItemRoots(cwd)))
 		return okResult()
 	case "claude.sessionsForDir":
 		var p struct {
@@ -1144,12 +1161,49 @@ func (r *registry) fsWrite(ctx context.Context, raw json.RawMessage) (json.RawMe
 
 // unmarshal decodes params, tolerating an empty/null body as an empty object so
 // no-arg capabilities (and optional fields) don't error.
+//
+// It first refuses any params object carrying two top-level keys that differ
+// only by case. encoding/json matches a struct field to a JSON key EXACTLY if it
+// can and CASE-INSENSITIVELY if it cannot, so `{"path":a,"Path":b}` decodes to
+// b — while every byte-exact reader of the same bytes (the bus's grant
+// confinement, the desktop provider, any JS client) sees a. That divergence was
+// a full bypass of per-plugin FSRoots scoping: authorize() confined the "path"
+// value and this decoder handed the handler the "Path" one. The bus refuses the
+// shape too; this is the same refusal at the decoder, so it holds for a trusted
+// connection and for every other params field as well. No legitimate caller
+// spells one key two ways.
 func unmarshal(raw json.RawMessage, out any) error {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
+	if err := rejectCaseVariantKeys(raw); err != nil {
+		return err
+	}
 	if err := json.Unmarshal(raw, out); err != nil {
 		return fmt.Errorf("invalid params: %w", err)
+	}
+	return nil
+}
+
+// rejectCaseVariantKeys fails when a params OBJECT has two top-level keys that
+// fold together. Non-objects are left to the decode above to reject or accept —
+// this is about ambiguity, not shape.
+func rejectCaseVariantKeys(raw json.RawMessage) error {
+	if len(raw) == 0 || raw[0] != '{' {
+		return nil
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil // malformed: the real decode below reports it
+	}
+	folded := make(map[string]string, len(m))
+	for k := range m {
+		lower := strings.ToLower(k)
+		if prev, dup := folded[lower]; dup {
+			return fmt.Errorf("invalid params: keys %q and %q differ only by case; "+
+				"the guard and the handler would read different values", prev, k)
+		}
+		folded[lower] = k
 	}
 	return nil
 }

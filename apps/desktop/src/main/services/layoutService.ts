@@ -12,6 +12,7 @@ import * as yaml from 'js-yaml';
 import { getConfigDir } from './configService';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { slugLayout } from '../lib/fileUtils';
+import { resolveStoreEntry } from '../lib/pathConfinement';
 
 export interface LayoutPane {
   type: string;
@@ -89,8 +90,14 @@ class LayoutService {
         .readdirSync(layoutsDir())
         .filter((f) => f.endsWith('.yaml'))
         .map((f) => {
+          // A symlink named like a layout is a legal directory entry, and the
+          // layouts dir is one of the few a bus caller can write into — so the
+          // entry is confined before it is read, and the canonical path is what
+          // gets opened. Twin: cmd/brain/stores.go storeEntryPath.
+          const full = resolveStoreEntry(layoutsDir(), f);
+          if (full === null) return null;
           try {
-            return yaml.load(fs.readFileSync(path.join(layoutsDir(), f), 'utf-8')) as Layout;
+            return yaml.load(fs.readFileSync(full, 'utf-8')) as Layout;
           } catch {
             return null;
           }

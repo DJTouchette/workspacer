@@ -98,9 +98,7 @@ export function clampWidgetSize(want: WidgetSize, supported: readonly WidgetSize
   if (supported.length === 0) return 'small';
   if (supported.includes(want)) return want;
   const wantIdx = WIDGET_SIZES.indexOf(want);
-  const ordered = [...supported].sort(
-    (a, b) => WIDGET_SIZES.indexOf(a) - WIDGET_SIZES.indexOf(b),
-  );
+  const ordered = [...supported].sort((a, b) => WIDGET_SIZES.indexOf(a) - WIDGET_SIZES.indexOf(b));
   const smallerOrEqual = ordered.filter((s) => WIDGET_SIZES.indexOf(s) <= wantIdx);
   return smallerOrEqual.length > 0 ? smallerOrEqual[smallerOrEqual.length - 1] : ordered[0];
 }

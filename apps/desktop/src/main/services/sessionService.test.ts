@@ -114,3 +114,137 @@ describe('deleteSession — containment', () => {
     expect(() => sessionService.deleteSession('nope.yaml')).not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// contracts/path-containment-cases.json → sessionFilenames
+//
+// The hand-written cases above cover the two LEXICAL escapes ('../secret.yaml',
+// '/etc/passwd') and nothing else, which is how this copy came to disagree with
+// its Go twin (cmd/brain stores.go sessionFilePath, the provider that answers
+// under the default catalog delegation) without either suite noticing: Go
+// required a bare basename, this side accepted any multi-segment name that
+// textually sat under the sessions dir, and a directory symlink then made
+// loadSession return — and deleteSession unlink — a file outside it. The shared
+// block is what keeps the two answering the same question the same way.
+// ---------------------------------------------------------------------------
+
+interface SessionFilenameCase {
+  name: string;
+  filename: string;
+  expect: 'accept' | 'refuse';
+  resolvesTo?: string;
+  needsSymlinks?: boolean;
+  tree?: { dirs?: string[]; files?: Record<string, string>; symlinks?: Record<string, string> };
+  why?: string;
+}
+
+const sessionFixture: { sessionFilenames: { cases: SessionFilenameCase[] } } = JSON.parse(
+  fs.readFileSync(
+    path.join(__dirname, '../../../../../contracts/path-containment-cases.json'),
+    'utf-8',
+  ),
+);
+
+/** Windows without developer mode cannot create symlinks; report a skip, never a pass. */
+const CAN_SYMLINK_SESSIONS = (() => {
+  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-sessym-'));
+  try {
+    fs.symlinkSync(probe, path.join(probe, 'l'));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    fs.rmSync(probe, { recursive: true, force: true });
+  }
+})();
+
+describe('session filenames — cross-language contract', () => {
+  const cases = sessionFixture.sessionFilenames?.cases ?? [];
+
+  it('the fixture block loads', () => {
+    expect(cases.length, 'sessionFilenames.cases must not be empty').toBeGreaterThan(0);
+  });
+
+  for (const c of cases) {
+    const skipped = c.needsSymlinks && !CAN_SYMLINK_SESSIONS;
+    const run = skipped ? it.skip : it;
+    run(`${c.name}${skipped ? ' (skipped: needsSymlinks)' : ''}`, () => {
+      // A sandbox of its own: the shared beforeEach configDir is a different
+      // shape (no config/workspacer nesting) and these cases place files
+      // OUTSIDE the config dir on purpose.
+      const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-sessfx-')));
+      const previousConfigDir = configDir;
+      configDir = path.join(sandbox, 'config', 'workspacer');
+      try {
+        fs.mkdirSync(path.join(configDir, 'sessions'), { recursive: true });
+        fs.mkdirSync(path.join(sandbox, 'outside'), { recursive: true });
+        const abs = (rel: string): string => path.join(sandbox, ...rel.split('/'));
+        for (const d of c.tree?.dirs ?? []) fs.mkdirSync(abs(d), { recursive: true });
+        for (const [f, body] of Object.entries(c.tree?.files ?? {})) {
+          fs.mkdirSync(path.dirname(abs(f)), { recursive: true });
+          fs.writeFileSync(abs(f), body, 'utf-8');
+        }
+        for (const [link, target] of Object.entries(c.tree?.symlinks ?? {})) {
+          fs.mkdirSync(path.dirname(abs(link)), { recursive: true });
+          fs.symlinkSync(abs(target), abs(link));
+        }
+
+        if (c.expect === 'refuse') {
+          // Both bus-reachable verbs, because a copy that answered "no" and then
+          // opened the file anyway would be green on the resolver alone.
+          expect(() => sessionService.loadSession(c.filename), c.why).toThrow(
+            /escapes the sessions directory/,
+          );
+          expect(() => sessionService.deleteSession(c.filename), c.why).toThrow(
+            /escapes the sessions directory/,
+          );
+          for (const f of Object.keys(c.tree?.files ?? {})) {
+            expect(fs.existsSync(abs(f)), `a refused delete must not remove ${f}`).toBe(true);
+          }
+          return;
+        }
+
+        expect(c.resolvesTo, 'an accept case must pin `resolvesTo`').toBeTruthy();
+        const resolved = abs(c.resolvesTo as string);
+        // loadSession returns the parsed file, so the strongest observable of
+        // "which path did it open" is the content of the file resolvesTo names.
+        if (fs.existsSync(resolved)) {
+          expect(sessionService.loadSession(c.filename), c.why).toEqual(
+            require('js-yaml').load(fs.readFileSync(resolved, 'utf-8')),
+          );
+        } else {
+          expect(sessionService.loadSession(c.filename), c.why).toBeNull();
+        }
+        expect(() => sessionService.deleteSession(c.filename)).not.toThrow();
+      } finally {
+        configDir = previousConfigDir;
+        fs.rmSync(sandbox, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+// listSessions derives `<sessionsDir>/<readdir entry>` itself, so it needs the
+// same rule resolveWithinSessionsDir applies to a caller-supplied filename: a
+// symlink named like a session is a legal entry in a bus-writable directory, and
+// its `name:` field would come back in the listing. Twin: cmd/brain/stores.go
+// listSavedSessions.
+describe('listSessions — derived entries stay inside the sessions dir', () => {
+  it('skips an entry that resolves out of the sessions dir', () => {
+    try {
+      fs.symlinkSync(secretOutside, path.join(sessionsDir, 'pwn.yaml'));
+    } catch {
+      return; // no symlink privilege here
+    }
+    expect(sessionService.listSessions().map((s) => s.name)).toEqual(['real']);
+  });
+
+  it('still lists a symlink that stays inside the sessions dir', () => {
+    try {
+      fs.symlinkSync(path.join(sessionsDir, 'real.yaml'), path.join(sessionsDir, 'alias.yaml'));
+    } catch {
+      return;
+    }
+    expect(sessionService.listSessions()).toHaveLength(2);
+  });
+});

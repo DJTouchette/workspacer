@@ -33,13 +33,43 @@ func encodeDirName(dir string) string {
 	return reSepColon.ReplaceAllString(reTrailingSep.ReplaceAllString(dir, ""), "-")
 }
 
+// claudeProjectDirName is encodeDirName plus the one thing the encoding does not
+// give you on its own: the guarantee that the result is a PLAIN COMPONENT.
+//
+// capspec.unscopedByDecision excuses claude.sessionsForDir from bus confinement
+// on the stated grounds that "the caller's string is never opened as a path".
+// That was false. The encoder maps '/', '\' and ':' to '-' and touches nothing
+// else, so '.' and '..' survive verbatim and become a real path component:
+// filepath.Join(home, ".claude", "projects", "..") Cleans to ~/.claude, and the
+// handler then enumerated (and summarized) every *.jsonl one level ABOVE the
+// transcript sandbox — ~/.claude/history.jsonl, the user's whole prompt history.
+// "" is the same shape one level down: it names the projects dir itself.
+//
+// Refusing exactly those three is what makes the exemption's sentence true, and
+// it costs nothing: no real cwd encodes to them ('/' encodes to '-', and '..'
+// as a cwd is not a location any caller legitimately names). Mirrors
+// claudeProjectDirName in apps/desktop/src/main/services/claudeSessionList.ts;
+// the pairs are pinned by the `projectDirNames` block of
+// contracts/path-containment-cases.json.
+func claudeProjectDirName(cwd string) (string, bool) {
+	name := encodeDirName(cwd)
+	if name == "" || name == "." || name == ".." {
+		return "", false
+	}
+	return name, true
+}
+
 func listClaudeSessionsForDir(cwd string) []claudeSessionSummary {
 	out := []claudeSessionSummary{}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return out
 	}
-	projectDir := filepath.Join(home, ".claude", "projects", encodeDirName(cwd))
+	encoded, ok := claudeProjectDirName(cwd)
+	if !ok {
+		return out
+	}
+	projectDir := filepath.Join(home, ".claude", "projects", encoded)
 	entries, err := os.ReadDir(projectDir)
 	if err != nil {
 		return out

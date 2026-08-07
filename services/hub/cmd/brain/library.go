@@ -13,6 +13,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -54,6 +55,117 @@ var (
 	reFrontmatter  = regexp.MustCompile(`(?s)^---\r?\n(.*?)\r?\n---\r?\n?(.*)$`)
 	reLeadingBlank = regexp.MustCompile(`^\s*\n`)
 )
+
+// libraryFileGuard validates ONE DERIVED library file — not the caller's cwd —
+// and returns the canonical path to open, or ok=false to skip it entirely.
+//
+// Guarding the cwd alone was not containment. library.list confined `cwd` and
+// then handed the (allowed) directory to a walker that os.ReadFile'd every
+// <dir>/<name>.md it found; library.remove confined `cwd` and then
+// os.Remove/os.RemoveAll'd <cwd>/.claude/skills/<id>. Neither derived path was
+// ever canonicalized, so ONE symlink planted inside an allowed root — a
+// `.workspacer/library/pwn.md -> ~/.config/workspacer/remote-token`, or a
+// `.claude/skills -> ~/.config/workspacer` directory link — read the bus
+// credential out through library.list (fs.read of the identical symlink is
+// refused) or deleted config.yaml through library.remove. Writing that symlink
+// is an ordinary allowed fs.write into the root.
+//
+// BINDING DECISION 2 in one sentence: the path that is CHECKED must be the path
+// that is OPENED. So every read and every unlink below goes through this.
+type libraryFileGuard func(path string) (canonical string, ok bool)
+
+// allowAnyLibraryFile is the identity guard, for the markdown-format unit tests
+// that build their own temp trees and have no registry. It is deliberately not
+// a default parameter value: a bus-reachable call site that forgot to pass a
+// guard would not compile.
+func allowAnyLibraryFile(path string) (string, bool) { return path, true }
+
+// libraryItemRoots is the allow-list for DERIVED library files, and it is
+// deliberately NARROWER than the roots the capability's `cwd` was checked
+// against. Every file listLibrary reads and removeLibrary unlinks lives in
+// exactly two places: the global store (<configDir>/library) and the project the
+// caller named.
+//
+// library.list checks its cwd against the BROWSE roots — workspace roots plus
+// the whole home tree — because the New Agent dialog lists the library of a
+// directory no agent is running in yet. Handing those same roots to the PER-FILE
+// guard turned the derived-path fix into an arbitrary home-directory reader: a
+// `<cwd>/.workspacer/library/a.md -> ~/.ssh/id_rsa` symlink (the ordinary
+// real-world form — git stores symlinks verbatim, so a clone carries them)
+// canonicalized inside $HOME, passed the guard, and came back as an item Body,
+// while fs.read of the identical path is refused. browseRoots exists for
+// fs.listDir, which returns directory NAMES; library.list returns file BODIES.
+//
+// SAVE USES THIS LIST TOO. It did not, and that was a live divergence from the
+// desktop twin: saveLibrary/saveLibraryClaude guarded their derived destination
+// against r.workspaceRoots(ctx) — EVERY live agent cwd plus all three config
+// stores — while hubCapabilities.ts guarded it against these item roots. So a
+// `<projA>/.workspacer/library -> <projB>` directory symlink (an ordinary
+// permitted fs.write, and the form a git clone carries verbatim) let one bus
+// call with cwd=<projA> write attacker markdown into a SECOND project, and into
+// <configDir>/sessions, on the copy that actually answers under
+// DELEGATE_CATALOG_TO_BRAIN — while the desktop refused the identical call. The
+// bus's own scoping makes it worse rather than better: capspec.PathParam
+// ["library.save"] is "cwd", so a plugin granted paths:[<projA>] is authorized
+// on the cwd alone and everything past it is the provider's job.
+//
+// It also left the brain disagreeing with ITSELF: save wrote items that its own
+// remove (already on the item roots) then refused to delete.
+func libraryItemRoots(canonicalCwd string) []string {
+	roots := []string{libraryGlobalDir()}
+	if canonicalCwd != "" {
+		roots = append(roots, canonicalCwd)
+	}
+	return roots
+}
+
+// trimMDSuffix drops a case-insensitive ".md" extension, matching the regex
+// replace of /\.md$/i the desktop does. TrimSuffix(name, ".md") alone leaves
+// ".MD" and ".Md" on, so the two sides would mint different ids for the same
+// file on the case-insensitive volumes where those names are ordinary.
+func trimMDSuffix(name string) string {
+	if len(name) >= 3 && strings.EqualFold(name[len(name)-3:], ".md") {
+		return name[:len(name)-3]
+	}
+	return name
+}
+
+// assertPlainBasename is the claude-scope id gate, and the Go twin of
+// libraryService.ts's function of the same name.
+//
+// A claude-scoped id is a REAL ON-DISK BASENAME, not a slug (see
+// readClaudeItems), so it reaches filepath.Join unfiltered — which is a path
+// injection point now that library.save / library.remove are bus-reachable: an
+// id of "../../.." aimed saveLibraryClaude's write, and removeLibrary's
+// os.RemoveAll, at whatever that composed to. Slugging is not the fix (it breaks
+// every non-slug-stable name, which is the whole reason claude ids are
+// basenames); requiring what a basename actually IS, is: one path segment,
+// neither "." nor "..", no separator of either flavour — a backslash is only a
+// separator on Windows, but a Windows-shaped id is not a legitimate item name on
+// any platform.
+func assertPlainBasename(id string) (string, bool) {
+	if id == "" || id == "." || id == ".." {
+		return "", false
+	}
+	if strings.ContainsAny(id, `/\`) || filepath.IsAbs(id) {
+		return "", false
+	}
+	return id, true
+}
+
+// libraryFileGuardFor builds the real guard: the same assertPathAllowed the fs.*
+// handlers use, over the roots the derived files are allowed to live in.
+// A refusal skips that one item rather than failing the whole call — a project
+// with one poisoned symlink still lists its other prompts.
+func libraryFileGuardFor(capability string, roots []string) libraryFileGuard {
+	return func(path string) (string, bool) {
+		canonical, err := assertPathAllowed(capability, path, roots)
+		if err != nil {
+			return "", false
+		}
+		return canonical, true
+	}
+}
 
 // parseFrontmatter splits a markdown file into its YAML frontmatter map + body.
 func parseFrontmatter(raw string) (map[string]any, string) {
@@ -170,7 +282,7 @@ func validAction(a any) string {
 	return ""
 }
 
-func readLibraryDir(dir, scope string) []libraryItem {
+func readLibraryDir(dir, scope string, guard libraryFileGuard) []libraryItem {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
@@ -178,10 +290,17 @@ func readLibraryDir(dir, scope string) []libraryItem {
 	var items []libraryItem
 	for _, e := range entries {
 		name := e.Name()
+		// e.IsDir() follows nothing: os.ReadDir returns the LSTAT type, so a
+		// symlink is neither a dir nor skipped here. The guard below is what
+		// resolves it.
 		if e.IsDir() || !strings.HasSuffix(strings.ToLower(name), ".md") {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(dir, name))
+		full, ok := guard(filepath.Join(dir, name))
+		if !ok {
+			continue // a symlink out of the roots, or onto a credential
+		}
+		raw, err := os.ReadFile(full)
 		if err != nil {
 			continue
 		}
@@ -197,7 +316,7 @@ func readLibraryDir(dir, scope string) []libraryItem {
 			Tags:        toStringSlice(data["tags"]),
 			Action:      validAction(data["action"]),
 			Body:        reLeadingBlank.ReplaceAllString(body, ""),
-			Path:        filepath.Join(dir, name),
+			Path:        full, // the validated path, so a round-tripping caller stays inside it
 		}
 		if kind == "mcp" {
 			it.Mcp = toMcp(data["mcp"])
@@ -207,7 +326,11 @@ func readLibraryDir(dir, scope string) []libraryItem {
 	return items
 }
 
-func readClaudeItem(full, id, kind string) *libraryItem {
+func readClaudeItem(full, id, kind string, guard libraryFileGuard) *libraryItem {
+	full, ok := guard(full)
+	if !ok {
+		return nil
+	}
 	raw, err := os.ReadFile(full)
 	if err != nil {
 		return nil
@@ -224,14 +347,26 @@ func readClaudeItem(full, id, kind string) *libraryItem {
 	}
 }
 
-func readClaudeItems(cwd string) []libraryItem {
+// readClaudeItems lists the project's Claude Code assets.
+//
+// The id of a claude item is its REAL ON-DISK BASENAME (skill directory name, or
+// agent/command filename sans .md), NOT a slug of it — the same rule
+// libraryService.ts states and for the same two reasons. Slugging loses the 1:1
+// map back to disk: two names that slug to the same id collide on listLibrary's
+// map key and one of them silently disappears from the list, and save/remove
+// re-slugging a supplied id then miss the real path. This side slugged and the
+// desktop did not, so a project holding both `My.Skill` and `my-skill` listed
+// ONE item here and two there, and library.remove(id="My.Skill") re-slugged to
+// `my-skill` and os.RemoveAll'd a skill the caller never named while leaving the
+// one it did. The trigger is any uppercase letter, dot or space in a skill name.
+func readClaudeItems(cwd string, guard libraryFileGuard) []libraryItem {
 	var items []libraryItem
 	if entries, err := os.ReadDir(claudeSkillsDir(cwd)); err == nil {
 		for _, e := range entries {
 			if !e.IsDir() {
 				continue
 			}
-			if it := readClaudeItem(filepath.Join(claudeSkillsDir(cwd), e.Name(), "SKILL.md"), slugLibrary(e.Name()), "skill"); it != nil {
+			if it := readClaudeItem(filepath.Join(claudeSkillsDir(cwd), e.Name(), "SKILL.md"), e.Name(), "skill", guard); it != nil {
 				items = append(items, *it)
 			}
 		}
@@ -242,7 +377,7 @@ func readClaudeItems(cwd string) []libraryItem {
 			if e.IsDir() || !strings.HasSuffix(strings.ToLower(name), ".md") {
 				continue
 			}
-			if it := readClaudeItem(filepath.Join(claudeAgentsDir(cwd), name), slugLibrary(strings.TrimSuffix(name, ".md")), "agent"); it != nil {
+			if it := readClaudeItem(filepath.Join(claudeAgentsDir(cwd), name), trimMDSuffix(name), "agent", guard); it != nil {
 				items = append(items, *it)
 			}
 		}
@@ -256,7 +391,7 @@ func readClaudeItems(cwd string) []libraryItem {
 			if e.IsDir() || !strings.HasSuffix(strings.ToLower(name), ".md") {
 				continue
 			}
-			if it := readClaudeItem(filepath.Join(claudeCommandsDir(cwd), name), slugLibrary(strings.TrimSuffix(name, ".md")), "command"); it != nil {
+			if it := readClaudeItem(filepath.Join(claudeCommandsDir(cwd), name), trimMDSuffix(name), "command", guard); it != nil {
 				items = append(items, *it)
 			}
 		}
@@ -266,7 +401,7 @@ func readClaudeItems(cwd string) []libraryItem {
 
 // listLibrary merges global + project (project wins on id) + claude (namespaced),
 // sorted by title. Seeds the global dir with starter items on first use.
-func listLibrary(cwd string) []libraryItem {
+func listLibrary(cwd string, guard libraryFileGuard) []libraryItem {
 	seedLibraryIfEmpty()
 	byID := map[string]libraryItem{}
 	order := []string{}
@@ -276,14 +411,18 @@ func listLibrary(cwd string) []libraryItem {
 		}
 		byID[key] = it
 	}
-	for _, it := range readLibraryDir(libraryGlobalDir(), "global") {
+	// The GLOBAL dir is guarded too, not just the project ones: <configDir>/
+	// library is the one directory a remote caller can write into, so a symlink
+	// planted there aimed at the sibling remote-token is the shortest version of
+	// the same attack.
+	for _, it := range readLibraryDir(libraryGlobalDir(), "global", guard) {
 		put(it.ID, it)
 	}
 	if cwd != "" {
-		for _, it := range readLibraryDir(libraryProjectDir(cwd), "project") {
+		for _, it := range readLibraryDir(libraryProjectDir(cwd), "project", guard) {
 			put(it.ID, it)
 		}
-		for _, it := range readClaudeItems(cwd) {
+		for _, it := range readClaudeItems(cwd, guard) {
 			put("claude:"+it.Kind+":"+it.ID, it)
 		}
 	}
@@ -320,14 +459,30 @@ func (r *registry) saveLibrary(ctx context.Context, in libraryInput) (*libraryIt
 	if in.Scope == "claude" {
 		return r.saveLibraryClaude(ctx, in)
 	}
+	// The cwd is confined FIRST, against the workspace roots, and the canonical
+	// answer is what the destination is composed from — same two-step as the
+	// desktop's guardLibraryCwd + guardLibraryFile. Composing from the caller's
+	// raw string and checking only the result would let filepath.Join Clean a
+	// `link/..` escape away before the guard ever saw it.
+	cwd := firstNonEmpty(in.Cwd, mustCwd())
+	canonicalCwd := ""
+	if in.Scope == "project" {
+		var err error
+		if canonicalCwd, err = assertPathAllowed("library.save", cwd, r.workspaceRoots(ctx)); err != nil {
+			return nil, err
+		}
+	}
 	dir := libraryGlobalDir()
 	if in.Scope == "project" {
-		dir = libraryProjectDir(firstNonEmpty(in.Cwd, mustCwd()))
+		dir = libraryProjectDir(canonicalCwd)
 	}
 	id := slugLibrary(firstNonEmpty(in.ID, in.Title))
 	full := filepath.Join(dir, id+".md")
 	// Checked BEFORE MkdirAll, so a denied save leaves no directories behind.
-	canonical, err := assertPathAllowed("library.save", full, r.workspaceRoots(ctx))
+	// The ITEM roots, not the workspace roots: where a library item may
+	// legitimately live is the global store plus the project the caller named,
+	// and nothing else — see libraryItemRoots.
+	canonical, err := assertPathAllowed("library.save", full, libraryItemRoots(canonicalCwd))
 	if err != nil {
 		return nil, err
 	}
@@ -354,14 +509,31 @@ func (r *registry) saveLibrary(ctx context.Context, in libraryInput) (*libraryIt
 }
 
 func (r *registry) saveLibraryClaude(ctx context.Context, in libraryInput) (*libraryItem, error) {
-	cwd := firstNonEmpty(in.Cwd, mustCwd())
+	canonicalCwd, err := assertPathAllowed("library.save", firstNonEmpty(in.Cwd, mustCwd()), r.workspaceRoots(ctx))
+	if err != nil {
+		return nil, err
+	}
+	cwd := canonicalCwd
 	kind := "skill"
 	if in.Kind == "agent" {
 		kind = "agent"
 	} else if in.Kind == "command" {
 		kind = "command"
 	}
-	id := slugLibrary(firstNonEmpty(in.ID, in.Title))
+	// A claude id is the item's REAL on-disk basename, never a slug of it. This
+	// side used to slugLibrary() it while libraryService.ts took it verbatim, so
+	// the same params produced two different files: save(id="My.Skill") wrote
+	// .claude/skills/my-skill/SKILL.md here and .claude/skills/My.Skill/SKILL.md
+	// there. An EXISTING item's id is its basename, so edit it in place; only a
+	// brand-new item minted from a title gets slugged. A supplied id is still
+	// caller data, so it has to look like a basename — see assertPlainBasename.
+	id := slugLibrary(in.Title)
+	if in.ID != "" {
+		var ok bool
+		if id, ok = assertPlainBasename(in.ID); !ok {
+			return nil, fmt.Errorf("invalid library item id: %q", in.ID)
+		}
+	}
 	var full string
 	switch kind {
 	case "skill":
@@ -371,7 +543,7 @@ func (r *registry) saveLibraryClaude(ctx context.Context, in libraryInput) (*lib
 	default:
 		full = filepath.Join(claudeAgentsDir(cwd), id+".md")
 	}
-	canonical, err := assertPathAllowed("library.save", full, r.workspaceRoots(ctx))
+	canonical, err := assertPathAllowed("library.save", full, libraryItemRoots(canonicalCwd))
 	if err != nil {
 		return nil, err
 	}
@@ -391,16 +563,44 @@ func (r *registry) saveLibraryClaude(ctx context.Context, in libraryInput) (*lib
 	return &libraryItem{ID: id, Scope: "claude", Title: in.Title, Kind: kind, Description: in.Description, Body: in.Body, Path: full}, nil
 }
 
-func removeLibrary(scope, id, cwd, kind string) {
+// removeLibrary deletes one item. The DELETE TARGET is guarded, not the cwd it
+// was composed from: `<cwd>/.claude/skills` is a caller-writable location inside
+// the root, so pointing it at the config dir with a directory symlink turned a
+// library.remove of id "remote-token" into an os.RemoveAll of the bus credential
+// — the cwd the guard saw was impeccable. os.RemoveAll in particular does not
+// follow the final symlink but DOES traverse symlinked parents, so the whole
+// derived path has to be canonical before anything is unlinked.
+func removeLibrary(scope, id, cwd, kind string, guard libraryFileGuard) {
+	remove := func(path string, recursive bool) {
+		canonical, ok := guard(path)
+		if !ok {
+			return
+		}
+		if recursive {
+			_ = os.RemoveAll(canonical)
+			return
+		}
+		_ = os.Remove(canonical)
+	}
 	if scope == "claude" {
 		root := firstNonEmpty(cwd, mustCwd())
+		// The id is the item's real on-disk basename (readClaudeItems), so it is
+		// used verbatim rather than re-slugged: slugging deleted a DIFFERENT
+		// skill than the one named — remove(id="My.Skill") unlinked `my-skill`
+		// and left `My.Skill` standing — while a name that is not slug-stable
+		// unlinked nothing at all. Verbatim means caller data reaches
+		// filepath.Join, so it must look like a basename first.
+		name, ok := assertPlainBasename(id)
+		if !ok {
+			return
+		}
 		switch kind {
 		case "agent":
-			_ = os.Remove(filepath.Join(claudeAgentsDir(root), slugLibrary(id)+".md"))
+			remove(filepath.Join(claudeAgentsDir(root), name+".md"), false)
 		case "command":
-			_ = os.Remove(filepath.Join(claudeCommandsDir(root), slugLibrary(id)+".md"))
+			remove(filepath.Join(claudeCommandsDir(root), name+".md"), false)
 		default:
-			_ = os.RemoveAll(filepath.Join(claudeSkillsDir(root), slugLibrary(id)))
+			remove(filepath.Join(claudeSkillsDir(root), name), true)
 		}
 		return
 	}
@@ -408,7 +608,7 @@ func removeLibrary(scope, id, cwd, kind string) {
 	if scope == "project" {
 		dir = libraryProjectDir(firstNonEmpty(cwd, mustCwd()))
 	}
-	_ = os.Remove(filepath.Join(dir, slugLibrary(id)+".md"))
+	remove(filepath.Join(dir, slugLibrary(id)+".md"), false)
 }
 
 // seedLibraryIfEmpty writes starter items to the global dir on first use, the

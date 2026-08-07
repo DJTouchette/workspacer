@@ -20,6 +20,32 @@ import (
 // nowISO matches JS `new Date().toISOString()` (UTC, millisecond precision).
 func nowISO() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
 
+// storeEntryPath resolves ONE os.ReadDir entry against the store directory it
+// came from and refuses anything that does not stay inside it. It returns the
+// canonical path, which is the string the caller must then open (BINDING
+// DECISION 2).
+//
+// The entry name is a bare basename, so the join cannot escape textually — but a
+// SYMLINK named "x.yaml" sitting in the store is a perfectly legal entry, and
+// os.ReadFile follows it. <configDir>/layouts and <configDir>/sessions are the
+// two directories a bus caller can write into (they are configStoreRoots), so
+// planting that symlink is an ordinary allowed fs.write. Without this the
+// listers read straight through it, and quarantineUnreadable then COPIED the
+// bytes to <name>.broken-<ts> — a plain file inside the same carve-out, which
+// the secret gate permits — so `layouts.list` followed by `fs.read` of the
+// quarantine copy handed a caller <configDir>/remote-token, i.e. promotion to a
+// TRUSTED bus connection. Same rule as readLibraryDir's per-file guard.
+func storeEntryPath(dir, name string) (string, bool) {
+	canonical, err := canonicalizePath(filepath.Join(dir, name))
+	if err != nil {
+		return "", false // unverifiable → skip, same posture as the fs.* guard
+	}
+	if !isWithin(canonical, dir) {
+		return "", false
+	}
+	return canonical, true
+}
+
 func str(v any) string           { s, _ := v.(string); return s }
 func asMap(v any) map[string]any { m, _ := v.(map[string]any); return m }
 func asSlice(v any) []any        { s, _ := v.([]any); return s }
@@ -39,7 +65,11 @@ func listLayouts() []map[string]any {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
 			continue
 		}
-		full := filepath.Join(layoutsDir(), e.Name())
+		full, ok := storeEntryPath(layoutsDir(), e.Name())
+		if !ok {
+			log.Printf("brain: layout %s does not resolve inside the layouts dir (skipped)", e.Name())
+			continue
+		}
 		data, err := os.ReadFile(full)
 		if err != nil {
 			log.Printf("brain: could not read layout %s: %v (skipped)", e.Name(), err)
@@ -187,6 +217,12 @@ func resolveSessionFilename(name string) string {
 // roster and the autosave writes over it. The desktop blocks saving when a
 // restore fails, but a file that never appears in the list produces no failure
 // to notice, so the copy is the backstop. Mirrors the config loader's .broken-*.
+//
+// `path` is the CANONICAL store path — storeEntryPath already refused anything
+// that resolved out of the store — so the backup lands in that same store
+// directory. That matters: a copy of an out-of-store file would be a laundering
+// primitive, because the copy is an ordinary readable file inside a carve-out
+// the secret gate permits, while the file it was copied FROM is not.
 func quarantineUnreadable(path string, data []byte) {
 	backup := path + ".broken-" + time.Now().UTC().Format("2006-01-02T15-04-05.000")
 	// Only the first sighting writes a copy; a list call happens often and each
@@ -212,7 +248,11 @@ func listSavedSessions() []sessionListEntry {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
 			continue
 		}
-		full := filepath.Join(sessionsDir(), e.Name())
+		full, ok := storeEntryPath(sessionsDir(), e.Name())
+		if !ok {
+			log.Printf("brain: session %s does not resolve inside the sessions dir (skipped)", e.Name())
+			continue
+		}
 		data, err := os.ReadFile(full)
 		if err != nil {
 			log.Printf("brain: could not read session %s: %v (skipped)", e.Name(), err)
@@ -241,16 +281,34 @@ func listSavedSessions() []sessionListEntry {
 	return out
 }
 
-// sessionFilePath joins filename onto sessionsDir but only for a plain base name
-// — anything containing a path separator or "." / ".." is rejected so a caller
-// can't escape the sessions directory via traversal (e.g. "../../etc/passwd").
-// filepath.Join runs Clean, which collapses ".." rather than blocking it, so the
-// raw client-supplied filename must be validated here.
+// sessionFilePath resolves a caller-supplied session filename to the file to
+// open, or ok=false. It is a FOURTH copy of path containment (the desktop's
+// sessionService.resolveWithinSessionsDir is the twin) and it owes the same two
+// rules the shared corpus pins under `sessionFilenames`:
+//
+//  1. A PLAIN BASE NAME, never a path. Anything with a separator, or "." / "..",
+//     is refused rather than resolved — filepath.Join runs Clean, which
+//     collapses ".." instead of blocking it. (The desktop copy used to accept
+//     any multi-segment name that textually landed under the sessions dir, so
+//     the two providers disagreed about what a legal session file even is.)
+//  2. CANONICALIZE, then contain. A basename is not enough on its own: a
+//     symlink in the sessions dir named "x.yaml" is a legal basename and points
+//     wherever it likes, and os.ReadFile/os.Remove follow it. So resolve per
+//     component and require the RESULT to sit inside sessionsDir — and hand
+//     that result back, so the checked path and the opened path are one string
+//     (BINDING DECISION 2).
 func sessionFilePath(filename string) (string, bool) {
 	if filename == "" || filename == "." || filename == ".." || filename != filepath.Base(filename) {
 		return "", false
 	}
-	return filepath.Join(sessionsDir(), filename), true
+	canonical, err := canonicalizePath(filepath.Join(sessionsDir(), filename))
+	if err != nil {
+		return "", false // unverifiable → deny, same posture as the fs.* guard
+	}
+	if !isWithin(canonical, sessionsDir()) {
+		return "", false
+	}
+	return canonical, true
 }
 
 func loadSavedSession(filename string) map[string]any {

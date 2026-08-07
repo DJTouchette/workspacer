@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	yaml "gopkg.in/yaml.v3"
 )
 
 // A contract fixture with one loader is a dead contract: it looks like a
@@ -243,4 +245,76 @@ func sortedKeys(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// ---------------------------------------------------------------------------
+// The containment corpus on Windows.
+
+// TestCorpusRunsOnWindowsInCI asserts that some CI job actually runs the two
+// suites that own the Windows-only branches of path containment, on Windows.
+//
+// This is a test about a workflow file because the gap was a workflow file.
+// Every job in ci.yml was `runs-on: ubuntu-latest`; only release.yml touches
+// windows-latest, and that leg builds and signs an installer rather than
+// running a suite. So the Windows arms of all three copies — pathConfinement.ts
+// splitAbsolute's drive/UNC regex pair, fsguard.go splitPath's VolumeName plus
+// drive-relative reject, and bus/policy.go splitVolume's hand-rolled scanner,
+// three DIFFERENT parsers of the same thing — were executed by nothing at test
+// time. All three could be broken so that a drive-relative "C:foo" (which
+// resolves against whatever directory the process is on, on drive C) counts as
+// absolute, and both full suites stayed green on Linux. That is precisely the
+// check-path/opened-path split BINDING DECISION 2 exists to close: the guard
+// canonicalizes against a volume root while the handler opens against the
+// per-drive cwd.
+//
+// The corpus cannot close this on its own — its cases run wherever the process
+// runs, and every runner is Linux — so the job IS the fix, and this is what
+// keeps the job from quietly disappearing. It asserts the shape (a
+// windows-latest job that runs `go test` and a vitest invocation naming the
+// containment suites), not the exact YAML, so the job can be reorganised.
+func TestCorpusRunsOnWindowsInCI(t *testing.T) {
+	path := filepath.Join(repoRootRel, ".github", "workflows", "ci.yml")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("ci.yml unreachable from %s: %v", repoRootRel, err)
+	}
+	var wf struct {
+		Jobs map[string]struct {
+			RunsOn string `yaml:"runs-on"`
+			Steps  []struct {
+				Name string `yaml:"name"`
+				Run  string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(raw, &wf); err != nil {
+		t.Fatalf("parse ci.yml: %v", err)
+	}
+	if len(wf.Jobs) == 0 {
+		t.Fatal("ci.yml decoded to zero jobs — the parse broke and this guard is guarding nothing")
+	}
+
+	var goOnWindows, tsOnWindows string
+	for name, job := range wf.Jobs {
+		if !strings.Contains(job.RunsOn, "windows") {
+			continue
+		}
+		for _, step := range job.Steps {
+			if strings.Contains(step.Run, "go test") {
+				goOnWindows = name
+			}
+			// The desktop suites that own pathConfinement.ts. Either the whole
+			// suite or the confinement files by name counts.
+			if strings.Contains(step.Run, "vitest") &&
+				(strings.Contains(step.Run, "pathConfinement") || !strings.Contains(step.Run, ".test.ts")) {
+				tsOnWindows = name
+			}
+		}
+	}
+	if goOnWindows == "" {
+		t.Error("no windows-latest job in .github/workflows/ci.yml runs `go test` — fsguard.go's and bus/policy.go's Windows volume-prefix branches (and every posixOnly/needsSymlinks flag the corpus spends on them) are executed by nothing, on any machine anyone runs")
+	}
+	if tsOnWindows == "" {
+		t.Error("no windows-latest job in .github/workflows/ci.yml runs vitest over pathConfinement — splitAbsolute's drive/UNC regexes are the third hand-rolled volume parser and the only one with no Windows execution at all")
+	}
 }

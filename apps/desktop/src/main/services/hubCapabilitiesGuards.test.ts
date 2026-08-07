@@ -28,7 +28,7 @@
  * same fixture. What is under test is that these handlers CALL it.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -200,6 +200,8 @@ const brainOwned = fixture.methods.filter((m) => m.providers.includes('main-kill
 
 let agentCwd: string;
 let outside: string;
+let sandboxHome: string;
+const realHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -211,8 +213,55 @@ beforeEach(() => {
   // A real directory in neither root set: not a live agent cwd (outside
   // `workspace`) and under the temp dir rather than home (outside `browse`).
   outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-guard-outside-')));
+  // A HOME of our own. browseRoots() is [os.homedir(), ...workspaceRoots()], so
+  // the only probe that can tell the two root sets apart lives under the home
+  // tree — and pointing that probe at the developer's real home would mean the
+  // sweep writes there the moment a handler is widened. os.homedir() reads $HOME
+  // on POSIX and %USERPROFILE% on Windows; both are redirected, and the
+  // assertion below refuses to run if the redirect did not take.
+  sandboxHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-guard-home-')));
+  process.env.HOME = sandboxHome;
+  process.env.USERPROFILE = sandboxHome;
   getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
 });
+
+afterEach(() => {
+  process.env.HOME = realHome.HOME;
+  process.env.USERPROFILE = realHome.USERPROFILE;
+});
+
+/**
+ * The probe that separates `workspace` from `browse`, and the reason this file
+ * needed one.
+ *
+ * browse = workspace roots + os.homedir(). Both fixture-driven sweeps used to
+ * probe out-of-roots with an os.tmpdir() path (workspace) or '/etc' (browse) —
+ * and os.tmpdir() is outside BOTH sets while a live agent cwd is inside both, so
+ * no probe here could ever tell the two apart. The fixture's `rootSet` column
+ * was therefore decorative on this side: fs.read, fs.readImage, fs.listEntries,
+ * fs.watch, fs.unwatch and search.project could each be swapped from
+ * workspaceRoots() to browseRoots() with the entire desktop suite green, which
+ * turns bus-reachable capabilities into readers of ~/.ssh/id_rsa,
+ * ~/.aws/credentials, ~/.claude/.credentials.json and ~/.netrc (none of which is
+ * a secret BASENAME or inside the config dir, so the second gate does not catch
+ * them either). fs.readImage, fs.watch and fs.unwatch are main-only in
+ * production, so for those three this is the ONLY oracle that exists.
+ *
+ * A path under the sandbox home that is nobody's cwd is inside `browse` and
+ * outside `workspace`, by construction.
+ */
+function homeProbe(): string {
+  // If the redirect did not take, the probe would name the real home — fail
+  // rather than silently assert against it.
+  expect(os.homedir()).toBe(sandboxHome);
+  const probe = path.join(sandboxHome, 'wks-contract-probe-not-an-agent-cwd');
+  // A fresh sandbox per test, so a collision means the sandbox is not fresh and
+  // the probe proves nothing. Never a skip: the Go twin of this sweep skipped on
+  // exactly this condition, and a widened fs.write created the very file that
+  // made it skip — permanently, for all eight of its methods.
+  expect(fs.existsSync(probe)).toBe(false);
+  return probe;
+}
 
 describe('fixture-driven guard coverage — path capabilities main owns in production', () => {
   it('the fixture lists methods this owner serves', () => {
@@ -243,8 +292,47 @@ describe('fixture-driven guard coverage — path capabilities main owns in produ
         const msg = await attempt(entry.method, { ...entry.params, [entry.field]: agentCwd });
         expect(msg).not.toMatch(/outside the allowed workspace/);
       });
+
+      it(`consults the ${entry.rootSet} roots and not the other set`, async () => {
+        // See homeProbe: this is the only assertion in either sweep that can
+        // distinguish workspaceRoots() from browseRoots().
+        const msg = await attempt(entry.method, { ...entry.params, [entry.field]: homeProbe() });
+        if (entry.rootSet === 'browse') {
+          expect(msg).not.toMatch(/outside the allowed workspace/);
+        } else {
+          expect(msg).toMatch(/outside the allowed workspace/);
+        }
+      });
     });
   }
+
+  // replay.open cannot live in the `methods` block — that set must equal
+  // capspec.PathParam exactly, and replay.open is deliberately NOT bus-scoped:
+  // capspec.unscopedByDecision grants it to a plugin with no fsRoots at all, on
+  // the stated grounds that "the provider confines it to the same workspace
+  // roots git.* uses (assertPathAllowed in hubCapabilities.ts)". So this one
+  // line is the ONLY confinement the method has, on either side.
+  //
+  // capspec_test.go's TestUnscopedByDecisionProviderClaimsAreTrue greps this
+  // file for that call, which catches a deletion — but a grep only proves the
+  // call was WRITTEN. A guard behind an `if`, or one whose return value is
+  // dropped, passes it and confines nothing. replay.open cuts a git worktree
+  // from the repo at `cwd` and replay.read/replay.diff then read files out of
+  // it — bytes fs.read would refuse — so the claim gets a behavioural test too.
+  describe('replay.open (bus-unscoped by decision; the provider is the whole guard)', () => {
+    it('denies a cwd outside the workspace roots', async () => {
+      const msg = await attempt('replay.open', { cwd: outside, sessionId: 's1' });
+      expect(msg).toMatch(/outside the allowed workspace/);
+    });
+
+    it('lets a live agent cwd past the confinement check', async () => {
+      // It still fails afterwards — the temp dir is not a git repository — but
+      // on the replay service's own terms, not the guard's. Asserting the
+      // negative is what keeps a guard that refuses everything from passing.
+      const msg = await attempt('replay.open', { cwd: agentCwd, sessionId: 's1' });
+      expect(msg).not.toMatch(/outside the allowed workspace/);
+    });
+  });
 
   // The mirror image. These are `cat`-door methods: with delegation on the Go
   // brain is the single provider, and main registering them too would collide on

@@ -50,3 +50,70 @@ describe('listClaudeSessionsForDir — project folder encoding', () => {
     expect(ids).toEqual(['sess-win']);
   });
 });
+
+/**
+ * The corpus half. capspec.unscopedByDecision leaves `claude.sessionsForDir`
+ * unconfined by the bus on the stated grounds that the caller's string is never
+ * opened as a path — and that sentence was FALSE in both copies, identically.
+ * The encoder rewrites only '/', '\' and ':', so '..' survived verbatim, became
+ * a real path COMPONENT, and path.join(~/.claude/projects, '..') is ~/.claude:
+ * one directory out of the sandbox, where the handler enumerated and summarized
+ * every *.jsonl the user owns (on a real machine, history.jsonl).
+ *
+ * The two copies AGREED on the escape rather than diverging on it, which is why
+ * neither side's own tests found it — agreement is not correctness. So the pair
+ * is pinned by the shared corpus instead: services/hub/cmd/brain/discovery.go
+ * runs the same cases against its claudeProjectDirName.
+ */
+interface ProjectDirNameCase {
+  cwd: string;
+  expect: string | null;
+  why: string;
+}
+// src/main/services/ → five levels below the repo root, where contracts/ sits.
+const projectDirNameCases: ProjectDirNameCase[] = JSON.parse(
+  fs.readFileSync(
+    path.join(__dirname, '../../../../../contracts/path-containment-cases.json'),
+    'utf-8',
+  ),
+).projectDirNames.cases;
+
+describe('claudeProjectDirName — contracts/path-containment-cases.json projectDirNames', () => {
+  it('the corpus block is not empty', () => {
+    // A block that decoded to nothing would turn every case below into zero
+    // assertions and still report green.
+    expect(projectDirNameCases.length).toBeGreaterThan(0);
+  });
+
+  for (const c of projectDirNameCases) {
+    it(`${JSON.stringify(c.cwd)} → ${JSON.stringify(c.expect)}`, async () => {
+      const { claudeProjectDirName } = await import('./claudeSessionList');
+      const got = claudeProjectDirName(c.cwd);
+      expect(got, c.why).toBe(c.expect);
+      if (got !== null) {
+        // Whatever it produces must be ONE plain component, or the exemption's
+        // sentence is still not true.
+        expect(got, c.why).not.toMatch(/^\.?\.$/);
+        expect(got, c.why).not.toMatch(/[/\\]/);
+      }
+    });
+  }
+
+  it('does not enumerate ~/.claude when the cwd is ".."', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-home-'));
+    process.env.HOME = home;
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.claude', 'LEAK.jsonl'),
+      JSON.stringify({ type: 'summary', summary: 'CONTENTS OF ~/.claude/LEAK.jsonl' }) + '\n',
+    );
+    seedSession(home, '-proj', 'sess-ok');
+
+    const { listClaudeSessionsForDir } = await import('./claudeSessionList');
+    for (const cwd of ['..', '.', '/proj/..']) {
+      expect(listClaudeSessionsForDir(cwd).map((s) => s.sessionId)).toEqual([]);
+    }
+    // The floor: a legitimate lookup still resolves.
+    expect(listClaudeSessionsForDir('/proj').map((s) => s.sessionId)).toEqual(['sess-ok']);
+  });
+});

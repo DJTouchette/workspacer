@@ -172,3 +172,62 @@ jobs:
       # -race matches the Makefile's `make test-hub` target.
       - name: Test
         run: go test -race ./...
+
+  # ---------------------------------------------------------------------------
+  # WINDOWS. Every job above is ubuntu-latest, and only release.yml touches
+  # windows-latest — where it BUILDS and signs an installer rather than running
+  # a test. So every Windows-only branch of the three path-containment copies
+  # was dead code at test time, on every machine anyone runs:
+  #
+  #   pathConfinement.ts splitAbsolute  — a hand-written drive/UNC regex pair
+  #   fsguard.go         splitPath      — filepath.VolumeName + the drive-relative reject
+  #   bus/policy.go      splitVolume    — a hand-rolled UNC/drive scanner
+  #
+  # Three different volume parsers, and the fixture spends much of its header and
+  # its whole case-flag vocabulary (posixOnly, needsSymlinks "Windows without
+  # developer mode", needsUnreadableDir) on their semantics. All three could be
+  # broken so that a DRIVE-RELATIVE path ("C:foo", which resolves against
+  # whatever directory the process is on ON DRIVE C) is accepted as absolute —
+  # the exact check-path/opened-path split BINDING DECISION 2 exists to close —
+  # with both full suites completely green on Linux.
+  #
+  # This leg runs the two suites that own those branches. It is deliberately not
+  # a full matrix: the Rust crates and the Electron rebuild are a different
+  # (much slower) problem, and nothing about them is what went untested.
+  # contracts_test.go's TestCorpusRunsOnWindowsInCI asserts this job keeps
+  # existing and keeps running both, so deleting it fails the Go suite.
+  # ---------------------------------------------------------------------------
+  containment-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.4'
+          cache-dependency-path: services/hub/go.sum
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      # The containment corpus and its loaders are plain Go — no cgo, no
+      # sidecars — so the hub suite runs as-is.
+      - name: hub (Go) test
+        working-directory: services/hub
+        run: go test ./...
+
+      # --ignore-scripts skips apps/desktop's postinstall (electron-rebuild
+      # against better-sqlite3), which needs an Electron download and a native
+      # toolchain and is not on the path to pathConfinement.ts.
+      - name: Install desktop deps
+        working-directory: apps/desktop
+        run: npm ci --ignore-scripts
+
+      - name: Path confinement + guard sweeps (TypeScript)
+        working-directory: apps/desktop
+        run: npx vitest run src/main/lib/pathConfinement.test.ts src/main/services/hubCapabilitiesGuards.test.ts src/main/services/hubCapabilitiesKillSwitch.test.ts

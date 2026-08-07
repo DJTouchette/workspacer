@@ -402,6 +402,16 @@ func pathWithinRoots(roots []string, target string) (bool, error) {
 //
 // The value is returned UNTRIMMED: trimming is only the emptiness test here, and
 // canonicalize owns what a leading space in a real filename means.
+//
+// A CASE-VARIANT DUPLICATE of the field is refused outright, and that is not
+// pedantry — it was a complete bypass of every per-plugin grant. This lookup is
+// byte-exact (`m[field]`), but the providers on the other end are Go structs and
+// encoding/json falls back to a CASE-INSENSITIVE field match, so a later "Path"
+// overwrites the "path" this function read. `{"path":"<pluginDir>/ok.txt",
+// "Path":"<victimDir>/loot.txt"}` therefore authorized one string and opened
+// another: the bus confined the benign path while the brain — the default
+// answerer for fs.*/library.* — read and wrote the other one. There is exactly
+// one path per call or there is no call.
 func paramString(params json.RawMessage, field string) (value string, ok bool) {
 	if len(params) == 0 {
 		return "", false
@@ -409,6 +419,11 @@ func paramString(params json.RawMessage, field string) (value string, ok bool) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(params, &m); err != nil {
 		return "", false
+	}
+	for k := range m {
+		if k != field && strings.EqualFold(k, field) {
+			return "", false // ambiguous: guard and provider would read different keys
+		}
 	}
 	raw, present := m[field]
 	if !present {
