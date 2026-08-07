@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -114,19 +115,50 @@ type Record struct {
 // CLI's configDir: %APPDATA%\workspacer on Windows, $XDG_CONFIG_HOME/workspacer
 // or ~/.config/workspacer elsewhere. Sharing the directory is deliberate — the
 // token file must sit next to the remote-token every component already reads.
+// Returns "" when there is no home directory to anchor on — see HomeDir. That
+// is the refusal: internal/bus's secret gate canonicalizes this root and
+// discards anything non-absolute, so "" fails closed where a RELATIVE
+// ".config/workspacer" silently named a directory under the daemon's cwd.
 func ConfigDir() string {
 	if runtime.GOOS == "windows" {
 		if appData := os.Getenv("APPDATA"); appData != "" {
 			return filepath.Join(appData, "workspacer")
 		}
-		home, _ := os.UserHomeDir()
+		home := HomeDir()
+		if home == "" {
+			return ""
+		}
 		return filepath.Join(home, "AppData", "Roaming", "workspacer")
 	}
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
 		return filepath.Join(xdg, "workspacer")
 	}
-	home, _ := os.UserHomeDir()
+	home := HomeDir()
+	if home == "" {
+		return ""
+	}
 	return filepath.Join(home, ".config", "workspacer")
+}
+
+// HomeDir is os.UserHomeDir with the fallback Node's os.homedir() has and Go's
+// does not: the effective uid's passwd entry.
+//
+// os.UserHomeDir reads $HOME and nothing else, and every caller here discarded
+// its error — so under a systemd unit, a launchd job or a container entrypoint
+// with no HOME, ConfigDir answered the RELATIVE ".config/workspacer" while the
+// desktop and the TUI (Node / Rust, both of which consult passwd) went on using
+// the real one. Same rule, three copies, one of them off by a whole directory.
+//
+// Exported because cmd/brain's configDirFor carries the twin of this comment and
+// the two are pinned against each other by a test.
+func HomeDir() string {
+	if h, err := os.UserHomeDir(); err == nil && h != "" {
+		return h
+	}
+	if u, err := user.Current(); err == nil && u.HomeDir != "" {
+		return u.HomeDir
+	}
+	return ""
 }
 
 // DefaultPath is where scoped tokens persist: <config>/workspacer/tokens.json,

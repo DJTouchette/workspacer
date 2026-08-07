@@ -30,11 +30,32 @@
  *
  * TWIN: normalizeCwd in services/hub/cmd/brain/profiles.go. The `spawnCwds`
  * block of contracts/path-containment-cases.json holds the two together.
+ *
+ * The TRIM SET is spelled out rather than delegated to `String.trim`. JS
+ * `.trim()` and Go's `strings.TrimSpace` are not the same function, and the two
+ * differences point in opposite directions:
+ *
+ *   U+FEFF (ZWNBSP/BOM)  in ECMAScript's WhiteSpace production, NOT in Go's
+ *                        `unicode.IsSpace` — so `{"cwd":"<U+FEFF>"}` trimmed to
+ *                        empty here and became `$HOME`, while the brain ran the
+ *                        agent in a directory literally named U+FEFF.
+ *   U+0085 (NEL)         `unicode.IsSpace` in Go, neither <USP> nor a
+ *                        LineTerminator in JS — the same split, reversed.
+ *
+ * A BOM is exactly what a path pasted out of a Windows editor carries, and this
+ * string is what lands in `workspaceRoots()`, so the disagreement is "$HOME is
+ * an fs.* root" versus "a nonexistent directory is". Neither built-in is
+ * portable, so both copies trim the ASCII whitespace set and nothing else; every
+ * other code point is an ordinary character in a filename.
  */
 import * as os from 'os';
 
+/** The whitespace `normalizeSpawnCwd` strips — space, tab and the four ASCII
+ *  vertical/form controls. The Go twin carries the identical literal set. */
+const TRIM_SET = /^[ \t\n\v\f\r]+|[ \t\n\v\f\r]+$/g;
+
 export function normalizeSpawnCwd(cwd: string | undefined | null): string {
-  let s = (cwd ?? '').trim();
+  let s = (cwd ?? '').replace(TRIM_SET, '');
   while (s.length > 1 && (s.endsWith('/') || s.endsWith('\\'))) s = s.slice(0, -1);
   return s === '' ? os.homedir() : s;
 }

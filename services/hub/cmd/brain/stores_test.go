@@ -256,6 +256,53 @@ func TestSaveSavedSessionDoesNotClobberADifferentSession(t *testing.T) {
 	}
 }
 
+// The rejected-slot arm of the same loop, which is where the clobber the test
+// above prevents came back in.
+//
+// resolveSessionFilename walks feature-auth.yaml, feature-auth-2.yaml, … until
+// it finds a free or already-ours slot. When containment REFUSES a slot the arm
+// answered `base + ".yaml"` — described in the comment as "let the caller fail",
+// which it is only on the first iteration. From the second on it is "fall back
+// to the file belonging to a DIFFERENT session", and saveSavedSession then
+// re-checks that name (it passes: an ordinary file inside the store) and writes.
+// The other session is destroyed with no .broken-* copy, because quarantine
+// fires on a parse failure and that file parses.
+//
+// The refusal is reachable by design: <configDir>/sessions is a
+// configStoreRoot, so planting feature-auth-2.yaml as a symlink out of the store
+// is an ordinary permitted fs.write.
+func TestARejectedSessionSlotDoesNotFallBackOntoAnotherSessionsFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	outside := t.TempDir()
+	if err := os.MkdirAll(sessionsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := saveSavedSession("Feature: Auth", map[string]any{"name": "Feature: Auth"})
+	if err != nil {
+		t.Fatalf("save first: %v", err)
+	}
+	if first != "feature-auth.yaml" {
+		t.Fatalf("precondition: expected the first session at feature-auth.yaml, got %s", first)
+	}
+	loot := filepath.Join(outside, "loot.yaml")
+	gateSymlink(t, loot, filepath.Join(sessionsDir(), "feature-auth-2.yaml"))
+
+	// "Feature Auth" slugs to the same base, so the loop must skip
+	// feature-auth.yaml (not its session) and then meet the refused slot.
+	if got, err := saveSavedSession("Feature Auth", map[string]any{"name": "Feature Auth"}); err == nil {
+		t.Errorf("a refused slot must fail the save, not redirect it; wrote %s", got)
+	}
+	raw, err := os.ReadFile(filepath.Join(sessionsDir(), first))
+	if err != nil || !strings.Contains(string(raw), "Feature: Auth") {
+		t.Errorf("the OTHER session's file was overwritten: %q (%v)", raw, err)
+	}
+	if _, err := os.Lstat(loot); err == nil {
+		t.Error("the save wrote through the symlink, out of the store")
+	}
+}
+
 // A file we cannot parse is not a file we may overwrite — we cannot tell whose
 // it is.
 func TestSaveSavedSessionSkipsAnUnparseableFile(t *testing.T) {
@@ -392,11 +439,8 @@ func TestListLayoutsQuarantinesToo(t *testing.T) {
 // refuses a file stamped higher than it understands, so the two writers must
 // agree on what "current" is.
 func TestSessionSchemaVersionMatchesContract(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "..", "contracts", "session-schema.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read contract fixture %s: %v", path, err)
-	}
+	const path = "contracts/session-schema.json"
+	data := mustReadRepoFile(t, "contracts", "session-schema.json")
 	var fixture struct {
 		Version int `json:"version"`
 	}
@@ -471,10 +515,7 @@ type sessionFilenameFixture struct {
 }
 
 func TestSessionFilenameContractCases(t *testing.T) {
-	raw, err := os.ReadFile(contractFixtureRel)
-	if err != nil {
-		t.Fatalf("read the shared fixture: %v", err)
-	}
+	raw := readContractFixtureBytes(t)
 	var fx sessionFilenameFixture
 	if err := json.Unmarshal(raw, &fx); err != nil {
 		t.Fatalf("parse %s: %v", contractFixtureRel, err)
@@ -814,6 +855,51 @@ func TestLayoutWriteAndDeleteRefuseAnEntryThatResolvesOutOfTheStore(t *testing.T
 	removeLayout("pwn")
 	if _, err := os.Stat(victim); err != nil {
 		t.Errorf("layouts.delete unlinked the file outside the store: %v", err)
+	}
+}
+
+// The two "unverifiable → refuse" arms the store guards still had uncovered:
+// storeEntryPath's `canonicalizePath error → skip` and layoutFilePath's
+// `canonicalizePath error → refuse`. Both carry an explicit posture comment
+// ("unverifiable → skip, same posture as the fs.* guard"), the coverage profile
+// reported both blocks with zero executions, and both could be changed to return
+// the LEXICAL filepath.Join with ok=true / a nil error against a green package.
+// Every equivalent posture on this surface — canonicalRoot's discard,
+// assertPathAllowed's refusal, pathIsSecret's unverifiable target — is pinned;
+// these were the last two that were not.
+//
+// A self-referential symlink is the cheapest unresolvable entry: the walk hits
+// maxLinkHops rather than any filesystem verdict, so the assertion does not
+// depend on which errno this platform reports.
+func TestStoreGuardsRefuseAnEntryTheyCannotResolve(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	for _, d := range []string{sessionsDir(), layoutsDir()} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sessionCycle := filepath.Join(sessionsDir(), "cycle.yaml")
+	gateSymlink(t, sessionCycle, sessionCycle)
+	layoutCycle := filepath.Join(layoutsDir(), "cycle.yaml")
+	if err := os.Symlink(layoutCycle, layoutCycle); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, ok := storeEntryPath(sessionsDir(), "cycle.yaml"); ok {
+		t.Errorf("storeEntryPath accepted an entry it could not resolve, answering %q", got)
+	}
+	if got, err := layoutFilePath("cycle"); err == nil {
+		t.Errorf("layoutFilePath accepted an id it could not resolve, answering %q", got)
+	}
+	// And the write leg refuses rather than renaming a fresh file over the
+	// unresolvable entry, which is what a lexical fallback would do.
+	if _, err := saveLayout(map[string]any{"id": "cycle", "name": "C"}); err == nil {
+		t.Error("saveLayout must refuse a layout id that does not resolve")
+	}
+	st, err := os.Lstat(layoutCycle)
+	if err != nil || st.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("saveLayout replaced the unresolvable entry with a regular file: %v", err)
 	}
 }
 

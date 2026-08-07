@@ -18,7 +18,10 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 )
 
-const parityFixtureRel = "../../../../contracts/provider-parity-cases.json"
+// parityFixtureRel names the fixture from the REPO ROOT, not from this package
+// dir. It is read through mustReadRepoFile so cmd/go's test cache sees it; a
+// "../../../.." path handed to os.ReadFile is dropped from the cache key.
+const parityFixtureRel = "contracts/provider-parity-cases.json"
 
 type parityFixture struct {
 	Order []struct {
@@ -44,10 +47,7 @@ type parityFixture struct {
 
 func loadParityFixture(t *testing.T) parityFixture {
 	t.Helper()
-	raw, err := os.ReadFile(parityFixtureRel)
-	if err != nil {
-		t.Fatalf("read the parity fixture: %v", err)
-	}
+	raw := mustReadRepoFile(t, "contracts", "provider-parity-cases.json")
 	var fx parityFixture
 	if err := json.Unmarshal(raw, &fx); err != nil {
 		t.Fatalf("parse %s: %v", parityFixtureRel, err)

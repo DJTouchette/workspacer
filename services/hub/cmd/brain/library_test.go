@@ -156,6 +156,55 @@ func TestLibrarySaveAndRemoveGlobal(t *testing.T) {
 	}
 }
 
+// removeLibrary's claude kind="agent" leg. The coverage profile reported both of
+// its lines as never executed: the three kinds share one `remove` closure, so the
+// skill and command legs looked like they covered it, and neither of the two
+// things that make this leg DIFFERENT from its siblings — which directory it
+// points at, and that it is the non-recursive form — was pinned.
+//
+// library.remove is a destructive bus capability whose surrounding comments are
+// entirely about deleting the wrong item ("remove(id=\"My.Skill\") unlinked
+// my-skill and left My.Skill standing"), so both halves get an assertion:
+//
+//	claudeAgentsDir -> claudeCommandsDir  deletes the slash command of the same
+//	                                      name and leaves the agent standing;
+//	false -> true                         turns one unlink into os.RemoveAll,
+//	                                      which is how the skill leg erases a
+//	                                      whole directory tree.
+func TestClaudeAgentRemoveUnlinksOneFileInTheAgentsDirectory(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cwd := t.TempDir()
+	agent := filepath.Join(claudeAgentsDir(cwd), "reviewer.md")
+	command := filepath.Join(claudeCommandsDir(cwd), "reviewer.md")
+	writeFile(t, agent, "---\nname: Reviewer\n---\n\nbody\n")
+	writeFile(t, command, "---\n---\n\nslash command\n")
+
+	reg := registryWithCwd(t, cwd)
+	if _, err := reg.handle(context.Background(), "library.remove",
+		json.RawMessage(`{"scope":"claude","kind":"agent","id":"reviewer","cwd":`+jsonStr(cwd)+`}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(agent); !os.IsNotExist(err) {
+		t.Errorf("the agent must be removed: %v", err)
+	}
+	if _, err := os.Stat(command); err != nil {
+		t.Errorf("the SLASH COMMAND of the same name must be left standing: %v", err)
+	}
+
+	// The recursive half. A directory sitting at the agent's path is unusual but
+	// it is the only thing that separates os.Remove from os.RemoveAll, and the
+	// separation is the contract: only the skill leg deletes a tree.
+	tree := filepath.Join(claudeAgentsDir(cwd), "notes.md")
+	writeFile(t, filepath.Join(tree, "inside.txt"), "keep me")
+	if _, err := reg.handle(context.Background(), "library.remove",
+		json.RawMessage(`{"scope":"claude","kind":"agent","id":"notes","cwd":`+jsonStr(cwd)+`}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(tree, "inside.txt")); err != nil {
+		t.Errorf("the agent leg is a single unlink, not a recursive delete: %v", err)
+	}
+}
+
 func TestLibrarySaveClaudePreservesUnmodeledFrontmatter(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cwd := t.TempDir()

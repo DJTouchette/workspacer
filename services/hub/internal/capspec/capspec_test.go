@@ -481,7 +481,7 @@ func TestCapabilitiesWithAPathParamAreClassified(t *testing.T) {
 // scan finds in the vocabulary. A ratchet, held by RatchetError — see
 // brainDangerousParamFloor in cmd/brain/capspec_params_test.go, which is the
 // same rule over the other provider.
-const desktopDangerousParamFloor = 53
+const desktopDangerousParamFloor = 64
 
 // TestNestedParamsAreNotInvisible is the mutation this parser used to fail. An
 // options object is the obvious place for a handler to carry an env and an
@@ -1132,6 +1132,12 @@ var claimableHelpers = []string{
 	"resolveInside", "resolveSessionFilename", "buildSessionMcpConfig",
 	"libraryItemRoots", "busMcpItemIds", "profilesPath", "slugSession",
 	"assertLibraryItemPath", "slugLibrary",
+	// The composition guards: a git pathspec anchored on the DERIVED work-tree
+	// root (never on the caller's cwd), the cwd-bounded substitute for a
+	// path-less `git add -A`, the replay worktree re-anchor, the live
+	// permission-mode clamp, and the shared live-effort body.
+	"anchorGitPathspec", "cwdPathspec", "containInWorktree",
+	"assertNoPermissionBypass", "applyLiveEffort",
 }
 
 // helperRe matches a helper name as a WHOLE identifier. Substring matching is
@@ -1161,12 +1167,23 @@ func TestParamDecisionHelperClaimsExist(t *testing.T) {
 	seenTree := 0
 	for _, parts := range providerTrees {
 		root := filepath.Join(parts...)
-		if _, err := os.Stat(root); err != nil {
-			continue // cross-repo; the skip is honest for a hub-only checkout
+		if _, err := extinput.ReadDir(root); err != nil {
+			// Cross-repo; the skip is honest for a hub-only checkout. It goes
+			// through extinput and not os.Stat so the ABSENCE is pinned too:
+			// hashOpen records the failed stat, so the skip stops the moment the
+			// tree comes back. An unpinned probe would cache the skip and this
+			// guard would switch itself off and stay off.
+			continue
 		}
 		seenTree++
-		err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
+		// extinput.WalkDir, not filepath.WalkDir: the file reads below were
+		// already pinned, but the LISTINGS were not, so DELETING the file that
+		// holds the only definition of a claimed helper was not a cache miss —
+		// the file just stops being read, and a file that is not read is not in
+		// the key. That is exactly the claim-outlived-its-implementation drift
+		// this test exists to catch.
+		err := extinput.WalkDir(root, func(p string, d os.DirEntry) error {
+			if d.IsDir() {
 				return nil
 			}
 			switch filepath.Ext(p) {

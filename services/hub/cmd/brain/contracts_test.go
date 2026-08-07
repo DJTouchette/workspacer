@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/djtouchette/workspacer-hub/internal/extinput"
 	yaml "gopkg.in/yaml.v3"
 )
 
@@ -27,8 +28,10 @@ import (
 // fsguard_test.go all reach four levels up for contracts/). It does NOT inherit
 // their old skip-if-unreachable posture: see mustReadRepoFile.
 
-// repoRootRel is relative to this package dir (services/hub/cmd/brain).
-const repoRootRel = "../../../.."
+// (There is deliberately no "../../../.." repo-root constant here any more. The
+// root comes from sweepguard.Root, and every file below it is read through
+// extinput, because a path that escapes the module root is exactly what cmd/go
+// drops from the test cache key.)
 
 // contractSourceExt maps a source-file extension to the language it counts as.
 // A fixture needs loaders in at least two DIFFERENT languages: two Go files
@@ -154,7 +157,14 @@ func contractsDir(t *testing.T) (repoRoot, contractsDir string) {
 
 func contractFixtureNames(t *testing.T, contractsDir string) []string {
 	t.Helper()
-	entries, err := os.ReadDir(contractsDir)
+	// extinput.ReadDir, not os.ReadDir: this LISTING is the guard's input — the
+	// whole test is "every fixture in contracts/ has two loaders" — and cmd/go
+	// only re-hashes what a test opened through a path that lexically descends
+	// from the module root. Read straight, adding a fixture nobody loads is not
+	// a cache miss, and the guard written to catch exactly that reports
+	// `ok (cached)`. hashOpen hashes a directory as its entry names plus each
+	// entry's stat, so through extinput a new fixture IS a miss.
+	entries, err := extinput.ReadDir(contractsDir)
 	if err != nil {
 		t.Fatalf("read contracts dir %s: %v — an unreadable corpus directory is a broken guard, not a reason to pass", contractsDir, err)
 	}
@@ -171,11 +181,12 @@ func contractFixtureNames(t *testing.T, contractsDir string) []string {
 
 func contractReadme(t *testing.T, contractsDir string) []byte {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(contractsDir, "README.md"))
-	if err != nil {
-		t.Fatalf("read contracts/README.md: %v", err)
-	}
-	return raw
+	// mustReadRepoFile: contracts/README.md is above the module root, so an
+	// os.ReadFile of it never entered cmd/go's test cache key. Measured: touch
+	// contracts/README.md and `go test ./...` reported EVERY package cached,
+	// this one included — so the owner table could drift from the fixtures it
+	// documents and this guard would keep printing a pass it did not earn.
+	return mustReadRepoFile(t, "contracts", "README.md")
 }
 
 // readmeFixtureMentions pulls every *.json basename the README names, so a
@@ -237,14 +248,12 @@ func isContractTestFile(name, lang string, content []byte) bool {
 func contractSourceFiles(t *testing.T, repoRoot string) []contractSource {
 	t.Helper()
 	var out []contractSource
-	err := filepath.WalkDir(repoRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			// An unreadable corner of the tree must not fail the whole guard.
-			if d != nil && d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
+	// walkPinned, not filepath.WalkDir: an unreadable corner of the tree is
+	// still skipped, but the directory LISTINGS now enter cmd/go's test cache
+	// key. Without that, a fixture's second loader could be DELETED — the file
+	// simply stops appearing — and this guard, whose whole job is counting
+	// loaders, would print `ok (cached)`.
+	err := walkPinned(repoRoot, func(path string, d os.DirEntry) error {
 		if d.IsDir() {
 			if contractSkipDirs[d.Name()] {
 				return filepath.SkipDir
@@ -258,7 +267,15 @@ func contractSourceFiles(t *testing.T, repoRoot string) []contractSource {
 		if strings.HasSuffix(d.Name(), ".d.ts") {
 			return nil // generated declarations, never a loader
 		}
-		content, readErr := os.ReadFile(path)
+		// extinput.ReadFile, not os.ReadFile. Most of this walk is OUTSIDE the
+		// Go module (apps/desktop's TypeScript, apps/tui and services/claudemon's
+		// Rust), and those are precisely the second and third loaders this guard
+		// exists to count. Read straight, they are absent from cmd/go's test
+		// cache key: measured, touching apps/tui/src/config.rs left every
+		// package cached, so deleting a fixture's only Rust loader would keep
+		// printing `ok (cached)`. In-module files come back through the same
+		// call unchanged — extinput cleans a path it does not have to escape.
+		content, readErr := extinput.ReadFile(path)
 		if readErr != nil {
 			return nil
 		}

@@ -91,10 +91,7 @@ func TestWithConfigLockStealsADeadHolder(t *testing.T) {
 }
 
 func TestConfigLockMatchesContract(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "contracts", "config-lock.json"))
-	if err != nil {
-		t.Fatalf("read contract fixture: %v", err)
-	}
+	raw := mustReadRepoFile(t, "contracts", "config-lock.json")
 	var fixture struct {
 		LockFileSuffix string `json:"lockFileSuffix"`
 		StaleMs        int    `json:"staleMs"`

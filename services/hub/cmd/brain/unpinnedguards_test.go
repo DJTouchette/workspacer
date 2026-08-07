@@ -278,6 +278,38 @@ func TestStoreWriteAndDeleteLegsUseTheGuardsAnswer(t *testing.T) {
 		}
 	})
 
+	// The fourth leg the comment above counts. It was missing: this test shipped
+	// with three subtests, so layouts.save could go on renaming a temp file over
+	// the LINK — destroying the alias and leaving the file layoutFilePath
+	// validated untouched — while its three siblings were all pinned. Same verb
+	// as saveSavedSession's, same guard shape, opposite coverage.
+	t.Run("saveLayout writes through to the resolved file", func(t *testing.T) {
+		dir := layoutsDir()
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(dir, "ltarget.yaml")
+		link := filepath.Join(dir, "lalias.yaml")
+		if err := os.WriteFile(target, []byte("id: lalias\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gateSymlink(t, target, link)
+		if _, err := saveLayout(map[string]any{"id": "lalias", "name": "L"}); err != nil {
+			t.Fatalf("saveLayout: %v", err)
+		}
+		st, err := os.Lstat(link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Mode()&os.ModeSymlink == 0 {
+			t.Error("the atomic write REPLACED the link with a regular file instead of writing the file layoutFilePath validated")
+		}
+		raw, err := os.ReadFile(target)
+		if err != nil || !strings.Contains(string(raw), "name: L") {
+			t.Errorf("the resolved target was not written: %v / %q", err, raw)
+		}
+	})
+
 	t.Run("saveSavedSession writes through to the resolved file", func(t *testing.T) {
 		dir := sessionsDir()
 		if err := os.MkdirAll(dir, 0o755); err != nil {

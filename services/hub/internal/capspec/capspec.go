@@ -75,6 +75,24 @@ var unscopedByDecision = map[string]string{
 	"replay.open":           "confined by the provider to the same workspace roots git.* uses (assertPathAllowed in hubCapabilities.ts), because it cuts a worktree from the repo at cwd",
 	"replay.read":           "the path is a repo-relative coordinate inside a worktree the replay service itself created and keyed by sessionId; containment is structural (resolveInside), and fsRoots would be scoping the wrong namespace",
 	"replay.diff":           "same as replay.read — a coordinate inside a service-owned worktree, not a host path",
+	// replay.seek is the WRITE leg of the block above and the only one of the
+	// four that had no entry at all. `ops` is not a path-shaped name, its file
+	// path lives a level deeper (ops[].input.file_path) behind a NAMED type, and
+	// replay.* is not a path-bearing prefix — so nothing on either side could
+	// reach it, and "decided and safe" was indistinguishable from "nobody
+	// looked" for the one leg that puts caller-supplied bytes on disk.
+	"replay.seek": "the ops carry a file_path and content, but both are re-anchored inside the service-owned worktree by containInWorktree (timelineReplayService), which resolves per component and writes the RESULT — the escape it closed was a committed symlink that made the join and the write two different files",
+	// The claude.* CONTROL family. None of these carries a path, which is why
+	// LooksPathBearing is false for all of them and MissingSpec never asked —
+	// and until `mode`, `effort`, `text`, `answers` and `option` entered the
+	// shared vocabulary, the params scans could not ask either. They were
+	// classified NOWHERE while being, between them, a live approval-policy
+	// switch and a second door onto sessions.terminalInput's raw-PTY write.
+	"claude.setPermissionMode": "mode is an approval POLICY, not a path: it decides whether the host asks before the agent's next tool call. agents.spawn refuses to let a bus caller start a bypassing agent, so this method — which reaches an ALREADY RUNNING one, including a session the local user started in ask mode — applies the same clamp (assertNoPermissionBypass in hubCapabilities.ts); de-escalating modes stay open, because tightening is not an escalation",
+	"claude.setEffort":         "effort reaches a live claude session as the message `/effort <level>` (applyLiveEffort), i.e. exactly the reach agents.sendMessage already has and no more; there is no path and nothing to confine, so holding the capability is the gate",
+	"claude.setModel":          "same shape as claude.setEffort: `model` names a model the daemon resolves and `effort` rides the same live-switch endpoint; neither becomes a path or an argv element the caller controls",
+	"claude.answer":            "types the answer into the session's PTY, which is sessions.terminalInput's primitive under another name — see the per-param decisions, which say so rather than implying this method is narrower than it is",
+	"agents.sendMessage":       "text is a prompt for an agent that is already running; the agent's own tool approvals are the gate, and there is no path to confine. Recorded because the value IS bytes into a live process and the silence around that class is what left claude.answer unexamined",
 	// The rest of git.*: every one takes a mandatory absolute `cwd` and the
 	// desktop provider already contains it to the workspace roots (guardGitCwd).
 	// Per-plugin root confinement is the right end state, but two shipped
@@ -188,6 +206,15 @@ const (
 	KindID ParamKind = "id"
 	// KindRegex — a pattern compiled or handed to a matcher.
 	KindRegex ParamKind = "regex"
+	// KindPermission — a value that changes what the host will do WITHOUT
+	// asking. Not a path, not argv, not bytes: `permissionMode: "yolo"` runs no
+	// code of its own, it removes the approval that gates every tool call the
+	// agent makes from then on. This kind exists because the previous list had
+	// no slot for it, and a param with no slot is a param nobody writes a
+	// decision for: agents.spawn CLAMPS exactly these values for a bus caller
+	// and claude.setPermissionMode handed the same escalation back through a
+	// second door, unclassified.
+	KindPermission ParamKind = "permission"
 	// KindInert — the name is in the vocabulary, but on THIS method the value
 	// provably never becomes any of the above. Recording it is a decision, not
 	// an omission: the Why has to say what it becomes instead.
@@ -197,7 +224,7 @@ const (
 var knownKinds = map[ParamKind]bool{
 	KindPath: true, KindFilename: true, KindExecutable: true, KindArgv: true,
 	KindShell: true, KindEnv: true, KindURL: true, KindPort: true,
-	KindID: true, KindRegex: true, KindInert: true,
+	KindID: true, KindRegex: true, KindInert: true, KindPermission: true,
 }
 
 // KnownKind reports whether k is one of the classification kinds above.
@@ -244,8 +271,25 @@ var dangerousParams = map[string]ParamKind{
 	"hash": KindArgv, "ref": KindArgv, "rev": KindArgv,
 	// Bytes into a live process. Not a path, but the most direct process-control
 	// class on the surface: bytes into a shell are argv of whatever is typed.
+	//
+	// `text`, `answers` and `option` are that same primitive under three other
+	// names. claude.answer types each of them into the session's PTY verbatim
+	// (`input(sessionId, text + "\r")` on BOTH providers — byte-for-byte what
+	// sessions.terminalInput does with `data`), and the sessionId may be a
+	// terminals.create shell, so a caller holding only claude.answer types into
+	// /bin/bash. `effort` reaches a live agent as the message `/effort <level>`.
+	// None of the four was in this list, so no scan on either provider could
+	// ever demand a decision for them.
 	"data": KindShell, "bytesB64": KindShell, "stdin": KindShell,
-	"script": KindShell, "keys": KindShell,
+	"script": KindShell, "keys": KindShell, "text": KindShell,
+	"answers": KindShell, "option": KindShell, "effort": KindShell,
+	// Approval policy of a process that is ALREADY running. agents.spawn clamps
+	// `skipPermissions` and `permissionMode` off for a bus caller on both
+	// providers; `mode` is the same value arriving after the fact, through
+	// claude.setPermissionMode, and it was in neither the vocabulary nor any
+	// decision table.
+	"mode": KindPermission, "permissionMode": KindPermission,
+	"skipPermissions": KindPermission,
 	// Environment of a spawned process.
 	"env": KindEnv, "envVars": KindEnv, "environment": KindEnv,
 	// Network destinations the host opens or fetches.
@@ -259,6 +303,14 @@ var dangerousParams = map[string]ParamKind{
 	// vocabulary did not know, so the decision recorded for it was consulted by
 	// nobody. See TestEveryParamDecisionNamesAParamAScannerCanSee.
 	"updates": KindArgv,
+	// The same wrapper problem one namespace over: replay.seek's `ops` is a
+	// []ReplayOp, and the path it writes to lives at ops[].input.file_path with
+	// caller-supplied ops[].input.content beside it. Both scanners see the
+	// wrapper and nothing else (the desktop's annotation is a NAMED type), so
+	// the write leg of replay.* was the only one of the four with no entry
+	// anywhere — while being the only one that writes caller bytes at a
+	// caller-named path.
+	"ops": KindPath,
 	// Patterns someone compiles or hands to a matcher.
 	"query": KindRegex, "pattern": KindRegex, "regex": KindRegex, "glob": KindRegex,
 }
@@ -566,6 +618,14 @@ var unscopedParams = map[string]map[string]ParamDecision{
 		"cwd":        {KindPath, "the working directory of a process the caller is already authorized to start; holding agents.spawn is the gate, and confining it needs the spawn paths to learn root containment first (TestSpawnStaysDeliberatelyUnscoped)"},
 		"mcpItemIds": {KindID, "each id resolves through libraryService -> toClaudeEntry -> buildSessionMcpConfig into a --mcp-config entry whose command/args/env come verbatim from a library item, pre-approved by --allowedTools mcp__<id>; the BUS path therefore forces it to nil (busMcpItemIds / spawn_bypass) and only a locally-initiated spawn honours a selection"},
 		"profileId":  {KindID, "resolves to a stored profile whose configDir becomes CLAUDE_CONFIG_DIR and whose extraArgs become argv, so it is the other way to smuggle a bypass; both bus providers scrub the RESOLVED profile before spawning (scrubProfileBypass in hubCapabilities.ts, scrubBypassProfile in the brain — see spawn_bypass_test.go)"},
+		// The two fields the SECURITY comment in both spawn handlers is actually
+		// about. They were never in the vocabulary, so the clamp that is the
+		// whole argument for this method's exemption was pinned by behavioural
+		// tests only and by no classification at all — and the identical
+		// escalation shipped unnoticed on claude.setPermissionMode.
+		"skipPermissions": {KindPermission, "--dangerously-skip-permissions by another name; forced to false on both bus providers (assertNoPermissionBypass in hubCapabilities.ts, the same clamp in the brain's spawn) so a remote caller cannot start an agent that auto-approves everything"},
+		"permissionMode":  {KindPermission, "the same escalation spelled as a mode: 'bypassPermissions' and 'yolo' are dropped to undefined on both bus providers, every other mode is passed through. A YOLO agent has to be started locally"},
+		"effort":          {KindShell, "a reasoning-effort level handed to the daemon at spawn (codex model_reasoning_effort, claude's /effort); it selects among the provider's own levels and never becomes argv the caller composes"},
 	},
 	"terminals.create": {
 		"cwd":   {KindPath, "a process working directory, as agents.spawn's — holding the capability is the gate"},
@@ -589,12 +649,37 @@ var unscopedParams = map[string]map[string]ParamDecision{
 	"replay.diff": {
 		"path": {KindPath, "same as replay.read — a coordinate inside a service-owned worktree, not a host path"},
 	},
+	"replay.seek": {
+		"ops": {KindPath, "the wrapper the scanners can see: each op carries input.file_path and input.content, and the service re-anchors the path inside the worktree it owns — path.relative against the repo root, then containInWorktree, which resolves per component and writes the RESULT rather than the join. Written down here because the path is a level deeper than any scan reaches, so its confinement can only be pinned by naming the helper"},
+	},
+	"claude.setPermissionMode": {
+		"mode": {KindPermission, "turns the host's approval prompts off (or back on) for an agent that is ALREADY running, so it is agents.spawn's clamped `permissionMode` arriving after the fact — through a method that does not ownership-check the session, i.e. one the local user started in ask mode. The bus handler therefore applies the SAME clamp as the spawn path (assertNoPermissionBypass): bypassPermissions/yolo are refused, everything that tightens or is neutral passes"},
+	},
+	"claude.setEffort": {
+		"effort": {KindShell, "sent to a live claude session as the message `/effort <level>` (applyLiveEffort), so the value is prompt text for an already-running agent — the reach agents.sendMessage has, not the raw PTY write claude.answer has. Managed providers take the structural /model endpoint instead, where it selects among the provider's own levels"},
+	},
+	"claude.setModel": {
+		"effort": {KindShell, "the same live-switch endpoint as claude.setEffort, reached with a model beside it; neither value is composed into argv by this process"},
+	},
+	// claude.answer's three payload spellings all end at
+	// claudemonSessionClient.input / r.cm.input — the same call
+	// sessions.terminalInput makes with `data`. The decisions say so: a reason
+	// that implied "this is only an answer" would be the excuse-wearing-a-
+	// decision's-clothes shape this table exists to refuse.
+	"claude.answer": {
+		"text":    {KindShell, "typed into the session's PTY as `text + \"\\r\"` on both providers — byte-for-byte sessions.terminalInput's primitive, with no pending question required and no ownership check on the sessionId, so it reaches a terminals.create shell as readily as an agent. Holding the capability is the gate, exactly as for sessions.terminalInput; it buys nothing that granting THAT method does not, and grants nothing less"},
+		"answers": {KindShell, "the multi-part spelling of `text`: each element is typed into the same PTY in turn, so excusing only `text` would leave the identical primitive unclassified under a second name (the mistake sessions.terminalInput's `bytesB64` records)"},
+		"option":  {KindShell, "the numeric spelling — `option + \"\\r\"` into the same PTY. It is the narrowest of the three (a number), and it is listed because the decision has to cover every param that reaches the sink, not the one that looks worst"},
+	},
+	"agents.sendMessage": {
+		"text": {KindShell, "a prompt delivered to an agent that is already running, through the daemon's POST /message rather than the PTY. What bounds it is the agent's own tool approvals — which is why claude.setPermissionMode's clamp is load-bearing for this method too"},
+	},
 	"git.status": {"cwd": gitCwd},
 	"git.log":    {"cwd": gitCwd},
 	"git.diff": {
 		// git.diff's `cwd` is the SCOPED one (PathParam); only `path` needs a
 		// decision here.
-		"path": {KindPath, "an optional pathspec git interprets INSIDE the repo at cwd, and the provider confines it against the work-tree root git will actually resolve it in (workRoot), not the cwd the caller passed"},
+		"path": {KindPath, "an optional pathspec git interprets INSIDE the repo at cwd, and the provider confines it against the work-tree root git will actually resolve it in (workRoot via anchorGitPathspec), not the cwd the caller passed; the `untracked` leg is additionally held to the workspace roots"},
 	},
 	"git.numstat": {"cwd": gitCwd},
 	"git.commitDiff": {
@@ -606,13 +691,22 @@ var unscopedParams = map[string]map[string]ParamDecision{
 		"cwd":  gitCwd,
 		"hash": {KindArgv, "same assertCommitHash gate as git.commitDiff — hex only, so it can never be an option-shaped argv element"},
 	},
+	// git.stage/git.unstage's `path` used to be excused as "a pathspec inside the
+	// confined repo; git resolves it relative to the work-tree root the guard
+	// returned" — a sentence that named the guard's cwd and then described a
+	// DIFFERENT directory. `git add` runs from the derived work-tree root, and
+	// nothing checked the pathspec at all, so `backend/prod-key.pem` (or no
+	// pathspec, i.e. `git add -A` over the whole repository) indexed files
+	// outside every allowed root, and a path-less `git.diff {staged}` handed
+	// their full contents back. The staging leg now gets the same boundary the
+	// untracked-diff leg got.
 	"git.stage": {
 		"cwd":  gitCwd,
-		"path": {KindPath, "a pathspec inside the confined repo; git resolves it relative to the work-tree root the guard returned"},
+		"path": {KindPath, "anchored on the work-tree root git will actually resolve it in and then held to the ordinary workspace roots (anchorGitPathspec in hubCapabilities.ts), because staging a file that is not in HEAD is what makes its full content readable through git.diff{staged}; with no path the call is bounded to the guarded cwd (cwdPathspec) instead of running `git add -A` from the root"},
 	},
 	"git.unstage": {
 		"cwd":  gitCwd,
-		"path": {KindPath, "a pathspec inside the confined repo; git resolves it relative to the work-tree root the guard returned"},
+		"path": {KindPath, "same anchorGitPathspec treatment as git.stage, and the path-less form is likewise bounded to the guarded cwd by cwdPathspec — `git reset -q HEAD` from the derived root drops the index of a whole repository the caller was granted one directory of"},
 	},
 	"git.commit": {"cwd": gitCwd},
 	"git.push":   {"cwd": gitCwd},

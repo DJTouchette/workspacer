@@ -378,8 +378,22 @@ var (
 	cwdCacheVals []string
 )
 
-// agentCwds returns the cwd of every session claudemon knows about (or the local
-// store's, in full scope).
+// agentCwds returns the cwd of every LIVE session — the local store's in full
+// scope, claudemon's /sessions in catalog scope (the default).
+//
+// The liveness filter is the load-bearing part, and it was missing. claudemon's
+// /sessions is RESUMABLE HISTORY, not a fleet: api.rs list_sessions hides only
+// `archived` rows (stopped AND idle past a seven-day window) and `empty_stopped`
+// ones. Everything else it lists — an agent that ended this morning, a shell
+// somebody opened with terminals.create — came back as an fs.read + fs.write
+// root. So a closed project's whole tree stayed writable for up to a week after
+// the agent died, and terminals.create (whose `cwd` capspec deliberately leaves
+// unconfined, because holding the method IS the grant) doubled as a way to
+// nominate any directory on the host as a workspace root.
+//
+// snapshotLive is the same vocabulary agents.list already filters on, minus the
+// curation half — see its comment for why a stopped-but-curated row is visible
+// yet must not be a root.
 func (r *registry) agentCwds(ctx context.Context) []string {
 	cwdCacheMu.Lock()
 	if !cwdCacheAt.IsZero() && time.Since(cwdCacheAt) < cwdCacheTTL {
@@ -405,9 +419,13 @@ func (r *registry) agentCwds(ctx context.Context) []string {
 		var s struct {
 			Cwd string `json:"cwd"`
 		}
-		if err := json.Unmarshal(raw, &s); err == nil && s.Cwd != "" {
-			cwds = append(cwds, s.Cwd)
+		if err := json.Unmarshal(raw, &s); err != nil || s.Cwd == "" {
+			continue
 		}
+		if !snapshotLive(raw) {
+			continue
+		}
+		cwds = append(cwds, s.Cwd)
 	}
 
 	cwdCacheMu.Lock()
@@ -507,6 +525,9 @@ func pathIsSecretCanonical(canonicalTarget string) bool {
 	if traversesGitDir(canonicalTarget) {
 		return true
 	}
+	if pathIsGitGlobalConfig(canonicalTarget) {
+		return true
+	}
 	cfg, ok := canonicalRoot(configDir())
 	if !ok {
 		return true // unverifiable config dir → cannot prove the target is outside it
@@ -551,10 +572,13 @@ const gitMetadataDir = ".git"
 // diff.external, but nothing there can reach the NAMESPACED ones —
 // filter.<drv>.clean (which `git add`, i.e. git.stage, runs),
 // diff.<drv>.command/textconv, merge.<drv>.driver, trailer.<t>.command — because
-// the driver name belongs to whoever wrote the file. Those definitions can only
-// live in a config file under `.git`, so the write is refused here instead.
-// `.git/hooks/*`, `.git/config.worktree` and `.git/info/attributes` are the same
-// surface and the same rule covers them.
+// the driver name belongs to whoever wrote the file. So the write is refused
+// here instead. `.git/hooks/*`, `.git/config.worktree` and
+// `.git/info/attributes` are the same surface and the same rule covers them.
+//
+// This is HALF of the definition-site answer: git reads the same namespaced keys
+// out of the per-user global config, which has no `.git` component at all. See
+// pathIsGitGlobalConfig for the other half.
 //
 // Reads are refused too, on the same footing as the credential basenames: a
 // `.git/config` routinely holds a remote URL with an embedded token and the name
@@ -572,6 +596,79 @@ func traversesGitDir(canonicalTarget string) bool {
 		if asciiLower(comp) == gitMetadataDir {
 			return true
 		}
+	}
+	return false
+}
+
+// gitGlobalConfigBasename is git's per-user configuration file. It gets its own
+// gate rather than joining secretBasenames because the reason is different: this
+// is not a credential, it is a place to define a PROGRAM git will run.
+const gitGlobalConfigBasename = ".gitconfig"
+
+// gitXdgConfigDir is git's other per-user configuration directory —
+// $XDG_CONFIG_HOME/git, or $HOME/.config/git — holding `config`, `attributes`
+// and `ignore`. Returns the RESOLVED directory, or ok=false when neither the
+// environment nor the home directory yields one.
+func gitXdgConfigDir() (string, bool) {
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if !filepath.IsAbs(base) {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return "", false
+		}
+		base = filepath.Join(home, ".config")
+	}
+	cb, ok := canonicalRoot(base)
+	if !ok {
+		return "", false
+	}
+	return filepath.Join(cb, "git"), true
+}
+
+// pathIsGitGlobalConfig reports whether an ALREADY canonical path is one of
+// git's per-user configuration files — the OTHER place a namespaced exec driver
+// can be defined.
+//
+// gitExec.ts's third mechanism used to claim that filter.<drv>.clean and its
+// siblings "have to be DEFINED in a config file inside the repository's `.git`
+// directory", which traversesGitDir refuses. That was false. git reads those
+// keys from ~/.gitconfig and $XDG_CONFIG_HOME/git/config too, and $HOME is an
+// ordinary workspace root the moment any agent's cwd is $HOME — which is what a
+// bare agents.spawn({}) produces, since normalizeCwd("") returns the home
+// directory. Neither file is a secretBasename, neither is under the config dir,
+// and neither carries a `.git` component, so fs.write allowed both; the `*
+// filter=drv` half of the chain is an ordinary .gitattributes that nothing
+// refuses (nor should it). The definition site was the only thing left to close.
+//
+// It cannot be closed from the exec side: `-c` can only SET keys, and
+// neutralizing GIT_CONFIG_GLOBAL wholesale would drop core.excludesFile, which
+// check-ignore, status and add all depend on.
+//
+// THREE clauses, because the file moves:
+//  1. the BASENAME anywhere, folded like the credential basenames;
+//  2. whatever <home>/.gitconfig RESOLVES to — a global config symlinked into a
+//     dotfiles repo is an ordinary arrangement, and that repo can be an agent
+//     cwd;
+//  3. anything at or inside the resolved $XDG_CONFIG_HOME/git.
+//
+// Reads go with writes, as for .git/config: a global config routinely holds
+// credential-helper settings and url.<base>.insteadOf rewrites carrying tokens.
+//
+// TWIN: pathConfinement.ts isGitGlobalConfigPath, internal/bus/policy.go
+// pathIsGitGlobalConfig.
+func pathIsGitGlobalConfig(canonicalTarget string) bool {
+	if asciiLower(canonicalBase(canonicalTarget)) == gitGlobalConfigBasename {
+		return true
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if resolved, err := canonicalizePath(filepath.Join(home, gitGlobalConfigBasename)); err == nil {
+			if resolved == canonicalTarget {
+				return true
+			}
+		}
+	}
+	if xdgGit, ok := gitXdgConfigDir(); ok && containsPathFolded(xdgGit, canonicalTarget) {
+		return true
 	}
 	return false
 }

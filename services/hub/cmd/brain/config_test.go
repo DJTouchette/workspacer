@@ -20,12 +20,12 @@ import (
 // unmarshal to float64 on both the actual and expected sides, so reflect.DeepEqual
 // is clean.
 func TestDeepMergeContractCases(t *testing.T) {
-	// Resolve repo root from this test's package dir (services/hub/cmd/brain).
-	path := filepath.Join("..", "..", "..", "..", "contracts", "deepmerge-cases.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read contract fixture %s: %v", path, err)
-	}
+	// mustReadRepoFile, not os.ReadFile of a "../../../.." path: contracts/
+	// lives above this module and cmd/go's test cache drops out-of-module
+	// inputs from the key, so a direct read leaves this guard printing
+	// `ok (cached)` over a fixture it never looked at. See repofile_test.go.
+	const path = "contracts/deepmerge-cases.json"
+	data := mustReadRepoFile(t, "contracts", "deepmerge-cases.json")
 	var fixture struct {
 		Cases []struct {
 			Name     string          `json:"name"`
@@ -508,11 +508,8 @@ func TestEmbeddedDefaultsAreCompleteAndParse(t *testing.T) {
 // default DELEGATE_CATALOG_TO_BRAIN, the TS one when delegation is off — so a
 // section either drops in both or the guard has a hole in whichever half runs.
 func TestHostTrustedContractCases(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "..", "contracts", "host-trusted-config-cases.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read contract fixture %s: %v", path, err)
-	}
+	const path = "contracts/host-trusted-config-cases.json"
+	data := mustReadRepoFile(t, "contracts", "host-trusted-config-cases.json")
 	var fixture struct {
 		Sections []string `json:"sections"`
 		Paths    []string `json:"paths"`

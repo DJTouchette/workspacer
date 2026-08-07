@@ -2,10 +2,12 @@ package main
 
 import (
 	"errors"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/djtouchette/workspacer-hub/internal/extinput"
 	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 	yaml "gopkg.in/yaml.v3"
 )
@@ -55,6 +57,21 @@ func mustRepoPath(t *testing.T, parts ...string) string {
 	return p
 }
 
+// walkPinned is extinput.WalkDir under this suite's own name: a walk whose
+// directory LISTINGS are in cmd/go's test cache key, not just the bytes of the
+// files it opens.
+//
+// mustReadRepoFile closes half the hole — a file this suite READS is re-hashed.
+// The other half is enumeration, and it is the half that matters to the guards
+// below: "every fixture in contracts/ has two loaders" and "every .test.ts's
+// tally is asserted on" are questions about a SET, and with a plain
+// filepath.WalkDir a member of that set arriving or leaving is not a cache miss
+// at all. Measured before this existed: dropping a new fixture into contracts/
+// left `go test ./...` reporting every package cached, this one included.
+func walkPinned(root string, visit func(path string, d os.DirEntry) error) error {
+	return extinput.WalkDir(root, visit)
+}
+
 // TestTheTestCacheBeltIsInCIAndTheMakefile keeps the second belt on every
 // cross-repo guard in this module.
 //
@@ -67,10 +84,12 @@ func mustRepoPath(t *testing.T, parts ...string) string {
 // search.InDir tests.
 //
 // That belt is exact about what it covers: cmd/go hashes a regular file's SIZE
-// and MTIME, not its bytes, and it only hashes what a test actually OPENED — so
-// a new file appearing in a directory this suite merely enumerates
-// (sweepguard.RepoPath + os.ReadDir / filepath.WalkDir) is not a cache miss.
-// It also rests on cmd/go internals that are free to change; when they do, the
+// and MTIME, not its bytes, so an edit preserving both is invisible. (The other
+// documented gap — a new file appearing in a directory this suite merely
+// enumerates — is closed now: every out-of-module listing goes through
+// extinput.ReadDir / walkPinned, and dropping an unloaded fixture into
+// contracts/ is a miss.) It also rests on cmd/go internals that are free to
+// change; when they do, the
 // failure mode is silence, which is the failure mode this whole round exists to
 // remove. -count=1 does not care about any of that, and the module's tests run
 // uncached in about seven seconds.

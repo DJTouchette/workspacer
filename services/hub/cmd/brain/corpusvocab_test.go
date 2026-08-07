@@ -3,12 +3,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/djtouchette/workspacer-hub/internal/extinput"
 	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 )
 
@@ -297,7 +297,12 @@ func contractsFixtures(t *testing.T) map[string]map[string]any {
 	if err != nil {
 		t.Fatalf("locate contracts/: %v", err)
 	}
-	entries, err := os.ReadDir(dir)
+	// extinput.ReadDir: the LISTING is this guard's input — it validates every
+	// fixture in contracts/ — and an out-of-module directory read with
+	// os.ReadDir is not in cmd/go's test cache key, so a NEW fixture with an
+	// undeclared block would arrive to `ok (cached)`. The per-file reads below
+	// already go through sweepguard; this closes the enumeration.
+	entries, err := extinput.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("read contracts/: %v", err)
 	}

@@ -5,13 +5,16 @@ import * as path from 'path';
 import { resolveOnPath, toolsStatus, TOOL_REGISTRY } from './toolCheck';
 
 const savedPath = process.env.PATH;
+let dir: string | undefined;
 afterEach(() => {
   process.env.PATH = savedPath;
+  if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  dir = undefined;
 });
 
 describe('toolCheck', () => {
   it('resolveOnPath finds a binary in a PATH dir and misses an absent one', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-tools-'));
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-tools-'));
     const bin = path.join(dir, process.platform === 'win32' ? 'fakegit.exe' : 'fakegit');
     fs.writeFileSync(bin, '#!/bin/sh\n', { mode: 0o755 });
     process.env.PATH = dir;

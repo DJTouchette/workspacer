@@ -205,7 +205,23 @@ func resolveSessionFilename(name string) string {
 	for i := 2; ; i++ {
 		path, ok := sessionFilePath(filename)
 		if !ok {
-			return base + ".yaml" // containment rejects it; let the caller fail
+			// Containment rejects THIS slot; let the caller fail on it.
+			//
+			// It used to return `base + ".yaml"`, which is not "let the caller
+			// fail" after the first iteration — it is "fall back to the slot
+			// belonging to a DIFFERENT session". <configDir>/sessions is a
+			// configStoreRoot, so an ordinary fs.write can plant
+			// feature-auth-2.yaml as a symlink out of the store; the loop then
+			// reached this arm on i=2 and answered feature-auth.yaml, which
+			// saveSavedSession re-checks (it passes — it is a real file inside
+			// the store) and then overwrites. The session already living there
+			// is destroyed with no .broken-* copy, because quarantine only fires
+			// on a PARSE failure and that file parsed fine.
+			//
+			// Returning the rejected name instead makes saveSavedSession's own
+			// sessionFilePath call fail closed with "invalid session name", which
+			// is what the arm always claimed to do.
+			return filename
 		}
 		raw, err := os.ReadFile(path)
 		if err != nil {

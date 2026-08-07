@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/djtouchette/workspacer-hub/internal/extinput"
 	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 )
 
@@ -160,6 +161,134 @@ func TestSweepCountersAreIncrementedFromTheBody(t *testing.T) {
 	}
 }
 
+// TestNoUncountedHostGateInTypeScriptTests is rule 4, and it closes a hole in
+// this guard's VOCABULARY rather than in its wiring.
+//
+// Rules 1–3 key on the literal tokens `new SweepTally()`, `gatedIt(X, name)`,
+// `.ran(` and `sweepguard.Gate`. A group that uses none of them is structurally
+// invisible: reverting a gated group to the pre-round-3 idiom
+//
+//	const itLinks = CAN_SYMLINK ? it : it.skip;   // and delete the floor line
+//
+// left cmd/brain's three meta-guard tests reporting `ok`, while the group they
+// were meant to protect became "silently skipped on a host without symlink
+// privilege" again. The two positive controls DO bite (deleting a
+// tally.RequireCorpus, or a floor line next to a surviving `gatedIt`), so the
+// gap was the set of shapes recognised, not the mechanism.
+//
+// It is not hypothetical. pathConfinement.test.ts's resolveStoreEntry group
+// shipped in the OTHER unrecognised shape — `try { fs.symlinkSync(...) } catch {
+// return }` — and reported three green ticks on a host that could not make a
+// symlink, while being the only oracle for the fix it was written for.
+//
+// So both shapes are banned by name, with the accounted alternatives spelled
+// out in the failure message. Comments are stripped first: several of these
+// files QUOTE the banned idiom in prose explaining why it is banned, and a guard
+// that fires on its own documentation is the joke the rest of this file exists
+// to stop telling.
+func TestNoUncountedHostGateInTypeScriptTests(t *testing.T) {
+	// A catch whose entire body is a bare `return`: the test abandons itself and
+	// vitest records a PASS.
+	swallow := regexp.MustCompile(`catch\s*(\([^)]*\))?\s*\{\s*return\s*;?\s*\}`)
+	// Any reference to a host-capability constant.
+	hostCap := regexp.MustCompile(`\bCAN_[A-Z0-9_]+\b`)
+	// The three accounted ways to consume one.
+	viaGatedIt := regexp.MustCompile(`gatedIt\(`)
+	viaAlias := regexp.MustCompile(`^\s*(export\s+)?const\s+CAN_[A-Z0-9_]+\s*(:[^=]+)?=`)
+	// A skip-REASON producer feeds a SweepTally through `tally.skip(reason)`;
+	// the fixture's own vocabulary is the tell.
+	viaSkipReason := regexp.MustCompile(`needs[A-Z]\w*`)
+	// An import naming the constant is not a use of it.
+	viaImport := regexp.MustCompile(`^\s*(import\b|.*\bfrom\s+'|CAN_[A-Z0-9_]+,\s*$)`)
+
+	checked := 0
+	for _, file := range tsTestFiles(t, sweptTSDirs) {
+		src := stripTSComments(readText(t, file))
+		for _, idx := range swallow.FindAllStringIndex(src, -1) {
+			t.Errorf("%s:%d: `catch { return }` swallows a setup failure and vitest reports the test as PASSED. If the setup needs a host privilege, register the test with gatedIt(CAN_X, counter) and assert the group with itRanEveryGatedTest — a host that cannot run the test must be RED, not green with a tick.",
+				relTo(t, file), 1+strings.Count(src[:idx[0]], "\n"))
+		}
+		for _, line := range strings.Split(src, "\n") {
+			if !hostCap.MatchString(line) {
+				continue
+			}
+			checked++
+			if viaGatedIt.MatchString(line) || viaAlias.MatchString(line) ||
+				viaSkipReason.MatchString(line) || viaImport.MatchString(line) {
+				continue
+			}
+			t.Errorf("%s: a host-capability constant is consumed by an UNCOUNTED gate:\n    %s\n  Only three shapes are accounted for: `gatedIt(CAN_X, counter)` (+ itRanEveryGatedTest), an alias declaration, or a skip-REASON producer feeding a SweepTally. `CAN_X ? it : it.skip` is none of them — it makes the group skippable inside a green file, which is the defect this whole family of guards exists to stop.",
+				relTo(t, file), strings.TrimSpace(line))
+		}
+	}
+	if checked < hostCapUseFloor {
+		t.Fatalf("this rule found only %d host-capability references (floor %d) — either the constants were renamed or it is reading the wrong directories, and a guard that finds nothing passes", checked, hostCapUseFloor)
+	}
+	t.Logf("checked %d host-capability references", checked)
+}
+
+// hostCapUseFloor is how many CAN_* references the rule above finds today.
+const hostCapUseFloor = 20
+
+// stripTSComments blanks `//` and `/* */` comments, preserving every byte
+// position (and therefore every line number) by writing spaces in their place.
+// String and template literals are tracked so a `//` inside one is not mistaken
+// for a comment.
+func stripTSComments(src string) string {
+	out := []byte(src)
+	const (
+		code = iota
+		line
+		block
+		sq
+		dq
+		tick
+	)
+	state := code
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		switch state {
+		case code:
+			switch {
+			case c == '/' && i+1 < len(src) && src[i+1] == '/':
+				state, out[i], out[i+1] = line, ' ', ' '
+				i++
+			case c == '/' && i+1 < len(src) && src[i+1] == '*':
+				state, out[i], out[i+1] = block, ' ', ' '
+				i++
+			case c == '\'':
+				state = sq
+			case c == '"':
+				state = dq
+			case c == '`':
+				state = tick
+			}
+		case line:
+			if c == '\n' {
+				state = code
+			} else {
+				out[i] = ' '
+			}
+		case block:
+			if c == '*' && i+1 < len(src) && src[i+1] == '/' {
+				state, out[i], out[i+1] = code, ' ', ' '
+				i++
+			} else if c != '\n' {
+				out[i] = ' '
+			}
+		case sq, dq, tick:
+			if c == '\\' {
+				i++
+				continue
+			}
+			if (state == sq && c == '\'') || (state == dq && c == '"') || (state == tick && c == '`') {
+				state = code
+			}
+		}
+	}
+	return string(out)
+}
+
 // TestEveryHostGateIsCheckedByTestMain is rule 3. A Go GateCounter has no
 // per-test floor of its own: RunGates is what reads it, from TestMain, so that a
 // package cannot report ok while a whole gated group skipped. A package that
@@ -230,7 +359,7 @@ func goTestFiles(t *testing.T, dir string) []string {
 	if err != nil {
 		t.Fatalf("locate %s: %v", dir, err)
 	}
-	entries, err := os.ReadDir(root)
+	entries, err := extinput.ReadDir(root)
 	if err != nil {
 		t.Fatalf("read %s: %v", root, err)
 	}
@@ -255,16 +384,18 @@ func tsTestFiles(t *testing.T, dirs []string) []string {
 		if err != nil {
 			t.Fatalf("locate %s: %v", dir, err)
 		}
-		err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
+		// walkPinned, not filepath.WalkDir: apps/desktop is outside this Go
+		// module, and cmd/go re-hashes only what a test OPENED through a path
+		// that lexically descends from the module root. readText below pins the
+		// CONTENTS it reads, but a plain WalkDir leaves the LISTING unpinned —
+		// so a NEW .test.ts carrying an unasserted tally, which is precisely
+		// what this meta-guard exists to catch, would arrive to `ok (cached)`.
+		if err := walkPinned(root, func(path string, d os.DirEntry) error {
 			if !d.IsDir() && strings.HasSuffix(path, ".test.ts") {
 				out = append(out, path)
 			}
 			return nil
-		})
-		if err != nil {
+		}); err != nil {
 			t.Fatalf("walk %s: %v", root, err)
 		}
 	}

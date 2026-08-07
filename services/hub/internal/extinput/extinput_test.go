@@ -1,9 +1,11 @@
 package extinput_test
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -278,5 +280,65 @@ func write(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// TestWalkDirTraversesAndPrunes covers [extinput.WalkDir]'s traversal contract.
+// The CACHE property it adds is inherited from ReadDir, which
+// TestTheCachePinActuallyMisses proves against cmd/go itself; what is new here
+// is the recursion, and a walk that silently visited only the top level would
+// pin only the top level while looking like it pinned the tree.
+func TestWalkDirTraversesAndPrunes(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{
+		filepath.Join("a.txt"),
+		filepath.Join("sub", "b.txt"),
+		filepath.Join("sub", "deep", "c.txt"),
+		filepath.Join("skipme", "d.txt"),
+	} {
+		write(t, filepath.Join(root, rel), "x")
+	}
+
+	var seen []string
+	err := extinput.WalkDir(root, func(path string, d os.DirEntry) error {
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+		if d.IsDir() && d.Name() == "skipme" {
+			return filepath.SkipDir
+		}
+		if !d.IsDir() {
+			seen = append(seen, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WalkDir: %v", err)
+	}
+	sort.Strings(seen)
+	want := []string{"a.txt", "sub/b.txt", "sub/deep/c.txt"}
+	if strings.Join(seen, ",") != strings.Join(want, ",") {
+		t.Fatalf("WalkDir visited %v, want %v — a walk that stops at the top level pins only the top level's listing while reading as a whole-tree guard", seen, want)
+	}
+
+	// A root that is not there is the caller looking in the wrong place, and
+	// must be an error rather than an empty, successful walk: an empty walk is
+	// how "every fixture has two loaders" would pass by finding no loaders and
+	// no fixtures.
+	if err := extinput.WalkDir(filepath.Join(root, "nope"), func(string, os.DirEntry) error { return nil }); err == nil {
+		t.Fatal("WalkDir over a missing root returned nil — a guard that walks the wrong path would report a clean sweep of nothing")
+	}
+
+	// An error from visit propagates, from any depth.
+	sentinel := errors.New("boom")
+	err = extinput.WalkDir(root, func(path string, d os.DirEntry) error {
+		if d.Name() == "c.txt" {
+			return sentinel
+		}
+		return nil
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("WalkDir swallowed a visit error from depth 2: %v", err)
 	}
 }

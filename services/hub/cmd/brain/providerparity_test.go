@@ -91,10 +91,7 @@ type projectDirNameCase struct {
 // block — the invariant capspec's exemption for claude.sessionsForDir rests on.
 // The desktop twin (claudeSessionList.ts) is held to the same block.
 func TestClaudeProjectDirNameContractCases(t *testing.T) {
-	raw, err := os.ReadFile(contractFixtureRel)
-	if err != nil {
-		t.Fatalf("read the shared fixture: %v", err)
-	}
+	raw := readContractFixtureBytes(t)
 	var fx struct {
 		ProjectDirNames struct {
 			Cases []projectDirNameCase `json:"cases"`

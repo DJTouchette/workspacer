@@ -77,7 +77,9 @@
 package extinput
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -176,6 +178,52 @@ func ReadDir(path string) ([]os.DirEntry, error) {
 		return nil, err
 	}
 	return entries, nil
+}
+
+// WalkDir is filepath.WalkDir for a tree that may live outside the module, with
+// every directory LISTING on the way down pinned through [ReadDir].
+//
+// [ReadFile] closes half the hole; this closes the other half, and the half is
+// not small. cmd/go re-hashes only what a test OPENED, so a guard that answers a
+// question about a SET — "every fixture in contracts/ has two loaders", "every
+// .test.ts's tally is asserted on", "every helper a decision names still exists
+// somewhere in the desktop tree" — gets no cache miss when a member of that set
+// APPEARS or DISAPPEARS. The file simply stops being read, and a file that is
+// not read is not in the key. That is a guard whose entire subject matter can
+// change under a cached pass.
+//
+// `visit` may return [filepath.SkipDir] for a directory, exactly as
+// filepath.WalkDir's callback does. A subtree that cannot be listed is skipped
+// rather than fatal — an unreadable corner of a monorepo (a permission-denied
+// directory, a path that vanished mid-walk) must not delete the whole guard —
+// but a root that cannot be listed IS an error, because that is the guard
+// looking in the wrong place. The root itself is not visited.
+func WalkDir(root string, visit func(path string, d os.DirEntry) error) error {
+	entries, err := ReadDir(root)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		path := filepath.Join(root, e.Name())
+		if err := visit(path, e); err != nil {
+			if errors.Is(err, filepath.SkipDir) {
+				continue
+			}
+			return err
+		}
+		if !e.IsDir() {
+			continue
+		}
+		switch err := WalkDir(path, visit); {
+		case err == nil:
+		case errors.Is(err, fs.ErrPermission), errors.Is(err, fs.ErrNotExist):
+			// Unreadable or vanished subtree: skipped, which is what the
+			// filepath.WalkDir callers this replaces did in their err branch.
+		default:
+			return err
+		}
+	}
+	return nil
 }
 
 // pinError keeps the two failures apart. A missing file is the caller's

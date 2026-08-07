@@ -386,6 +386,9 @@ func pathIsSecret(canonicalTarget string) bool {
 	if traversesGitDir(canonicalTarget) {
 		return true
 	}
+	if pathIsGitGlobalConfig(canonicalTarget) {
+		return true
+	}
 	// Read the environment at call time — a test points this at a sandbox.
 	cfg, ok := canonicalizeRoot(authtoken.ConfigDir())
 	if !ok {
@@ -432,9 +435,12 @@ const gitMetadataDir = ".git"
 // the exec-valued keys that have a FIXED name, but not the namespaced ones —
 // filter.<drv>.clean (which `git add` runs), diff.<drv>.command/textconv,
 // merge.<drv>.driver, trailer.<t>.command — because the driver name belongs to
-// whoever wrote the file. Those definitions can only live under `.git`, so the
-// write is refused here. Reads go with them: a .git/config routinely carries a
-// remote URL with an embedded token.
+// whoever wrote the file. So the write is refused here. Reads go with them: a
+// .git/config routinely carries a remote URL with an embedded token.
+//
+// HALF of the definition-site answer — git reads the same namespaced keys out of
+// the per-user global config, which carries no `.git` component. See
+// pathIsGitGlobalConfig.
 //
 // Folded, because ".GIT" opens .git on APFS and NTFS. The final component counts
 // too: a FILE named .git is the "gitfile" pointer form and is equally a repo.
@@ -445,6 +451,60 @@ func traversesGitDir(canonicalTarget string) bool {
 		if asciiLower(comp) == gitMetadataDir {
 			return true
 		}
+	}
+	return false
+}
+
+// gitGlobalConfigBasename is git's per-user configuration file — its own gate
+// rather than a secretBasename, because it is not a credential but a place to
+// define a PROGRAM git will run.
+const gitGlobalConfigBasename = ".gitconfig"
+
+// gitXdgConfigDir is git's other per-user configuration directory
+// ($XDG_CONFIG_HOME/git, else $HOME/.config/git), resolved.
+func gitXdgConfigDir() (string, bool) {
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if !isAbsolutePath(base) {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return "", false
+		}
+		base = appendComponent(home, ".config")
+	}
+	cb, ok := canonicalizeRoot(base)
+	if !ok {
+		return "", false
+	}
+	return appendComponent(cb, "git"), true
+}
+
+// pathIsGitGlobalConfig reports whether an ALREADY canonical path is one of
+// git's per-user configuration files — the OTHER place a namespaced exec driver
+// (filter.<drv>.clean, diff.<drv>.textconv, merge.<drv>.driver,
+// trailer.<t>.command) can be defined.
+//
+// The `.git` rule above was documented as covering every definition site. It
+// does not: git reads those keys from ~/.gitconfig and $XDG_CONFIG_HOME/git/
+// config as well, and $HOME becomes an ordinary granted root the moment an agent
+// runs there. Three clauses, because the file moves — the basename anywhere,
+// whatever <home>/.gitconfig resolves to (a dotfiles symlink is ordinary), and
+// the resolved XDG git directory.
+//
+// TWIN: cmd/brain/fsguard.go pathIsGitGlobalConfig, pathConfinement.ts
+// isGitGlobalConfigPath.
+func pathIsGitGlobalConfig(canonicalTarget string) bool {
+	if asciiLower(lastComponent(canonicalTarget)) == gitGlobalConfigBasename {
+		return true
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if resolved, err := canonicalize(appendComponent(home, gitGlobalConfigBasename)); err == nil {
+			if resolved == canonicalTarget {
+				return true
+			}
+		}
+	}
+	if xdgGit, ok := gitXdgConfigDir(); ok && withinFolded(xdgGit, canonicalTarget) {
+		return true
 	}
 	return false
 }

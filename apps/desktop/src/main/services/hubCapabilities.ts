@@ -18,6 +18,7 @@ import { resolveAgentBinary, checkAllProviders, type AgentProvider } from './age
 import { byteCompare } from '../lib/providerParity';
 import { resolveTerminalShell } from '../lib/shellAllowlist';
 import { normalizeSpawnCwd } from '../lib/spawnCwd';
+import { assertNoPermissionBypass, isPermissionEscalation } from '../lib/permissionBypass';
 import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
 import { registerCapability, callHub } from './hubClient';
 import { agentNotifier } from './agentNotifier';
@@ -257,7 +258,13 @@ export function registerHubCapabilities(): void {
     // approval (`--dangerously-skip-permissions` / bypass-sandbox). Approvals
     // still surface and can be answered remotely; a YOLO agent must be started
     // locally. So `skipPermissions` is forced off here.
-    if (reqSkip || reqMode === 'bypassPermissions' || reqMode === 'yolo') {
+    //
+    // The two mode spellings used to be compared inline here, which made the
+    // invariant look like a property of SPAWNING. It is a property of the mode,
+    // and `claude.setPermissionMode` reached the same escalation on an already
+    // running agent with no clamp at all — see lib/permissionBypass.ts, now the
+    // single vocabulary both doors consult.
+    if (reqSkip || isPermissionEscalation(reqMode)) {
       console.warn(
         '[hub] agents.spawn: ignoring permission bypass from a bus client — remote spawns never auto-bypass approvals.',
       );
@@ -285,8 +292,7 @@ export function registerHubCapabilities(): void {
     // reuse the user's own YOLO profile). The brain already scrubbed this; the
     // desktop path did not, so the two stacks disagreed on the invariant.
     const scrubProfileBypass = true;
-    const permissionMode =
-      reqMode === 'bypassPermissions' || reqMode === 'yolo' ? undefined : reqMode;
+    const permissionMode = isPermissionEscalation(reqMode) ? undefined : reqMode;
     // Managed (Tier-2) backend — Codex / OpenCode / Pi run through claudemon's
     // adapter, not a Claude PTY. Shares the dispatch with the `claude:spawn` IPC
     // handler so this path can't silently fall back to spawning Claude (it did
@@ -476,12 +482,28 @@ export function registerHubCapabilities(): void {
   // the `claude:setPermissionMode` IPC handler; claudemon drives and verifies
   // the switch, and the snapshot store is updated the same way so remote and
   // desktop pills stay in sync.
+  //
+  // SECURITY: this is agents.spawn's clamp arriving after the fact, and it was
+  // missing. `mode` was validated as `typeof mode === 'string' && mode` and
+  // forwarded verbatim to POST /sessions/:id/permission-mode, which accepts
+  // 'bypassPermissions' on a PTY claude session (the daemon cycles Shift+Tab to
+  // the bypass footer and verifies it landed) and 'yolo' on every managed
+  // provider (the adapter's auto-approve flag). The sessionId is not
+  // ownership-checked on either provider, so the target could be an agent the
+  // LOCAL user started in ask mode — and the spawn-time clamp that refuses to
+  // start a bypassing agent for a bus caller was defeated by one extra call,
+  // followed by agents.sendMessage. Only the REVERSE direction (yolo→ask on a
+  // session spawned in bypass) was ever gated, by claudemon, for a different
+  // reason. De-escalating and neutral modes stay open: tightening is not an
+  // escalation, and the remote pill needs them.
   registerCapability('claude.setPermissionMode', async (params: unknown) => {
     const { sessionId, mode } = (params ?? {}) as { sessionId?: string; mode?: string };
     if (!sessionId || typeof mode !== 'string' || !mode) {
       throw new Error('claude.setPermissionMode requires { sessionId, mode }');
     }
-    const result = await claudemonSessionClient.setPermissionMode(sessionId, mode);
+    // The CHECKED value is the one that travels, not the caller's variable.
+    const requested = assertNoPermissionBypass('claude.setPermissionMode', mode);
+    const result = await claudemonSessionClient.setPermissionMode(sessionId, requested);
     if (result.ok && result.mode) claudeSessionStore.notePermissionMode(sessionId, result.mode);
     return result;
   });
@@ -1169,6 +1191,72 @@ export function registerHubCapabilities(): void {
   // one, or a symlinked cwd is validated in one place and used in another.
   const guardGitCwd = (cap: string, cwd: string): string =>
     assertPathAllowed(cap, cwd, workspaceRoots());
+  /**
+   * Anchor a caller-supplied pathspec on the work-tree root git will actually
+   * resolve it in, hold the result to every root set in `rootSets`, and return
+   * it in the root-relative form git wants.
+   *
+   * The DERIVED work-tree root is the thing to be careful about here. gitService
+   * runs every command from `rev-parse --show-toplevel` (see its header), and
+   * that directory comes out of git AFTER the cwd guard — nothing ever checked
+   * it against the allow-list. So resolving a pathspec against the caller's
+   * `cwd` would check a different file than git opens whenever the agent cwd is
+   * a subdirectory (the ordinary monorepo case), and treating the root as
+   * trusted turns "a pathspec inside the confined repo" into "any path inside a
+   * repository that merely CONTAINS an allowed directory".
+   *
+   * Concatenation, not path.resolve/path.join: those collapse a `link/..` pair
+   * textually before any symlink is read, which is precisely the check-path /
+   * opened-path split the component walk exists to close. The walk inside
+   * assertPathAllowed does the resolving.
+   */
+  const anchorGitPathspec = async (
+    cap: string,
+    canonicalCwd: string,
+    filePath: string,
+    extraRootSets: string[][] = [],
+  ): Promise<string> => {
+    const root = (await git.workRoot(canonicalCwd)) ?? canonicalCwd;
+    const anchored = path.isAbsolute(filePath)
+      ? filePath
+      : root.endsWith(path.sep)
+        ? root + filePath
+        : root + path.sep + filePath;
+    // Always: inside the repository git is about to resolve the pathspec in.
+    const canonicalFile = assertPathAllowed(cap, anchored, [root]);
+    // …plus whatever narrower boundary the particular leg demands. Each set is a
+    // separate assertion, so a caller has to satisfy ALL of them.
+    for (const roots of extraRootSets) assertPathAllowed(cap, anchored, roots);
+    // git runs from the work-tree root, so it receives the validated path
+    // expressed from that root: the operand is a function of the CANONICAL path,
+    // never of the caller's string. (Root-relative is what git wants for a
+    // pathspec; the absolute form is the fallback for the degenerate "the path
+    // IS the root" case.)
+    const canonicalRootPath = canonicalRoot(root) ?? root;
+    return path.relative(canonicalRootPath, canonicalFile) || canonicalFile;
+  };
+  /**
+   * The pathspec that means "everything this call is allowed to touch" for a
+   * git.* mutation that was given no `path` — the already-guarded cwd, expressed
+   * from the work-tree root.
+   *
+   * Without it, `git.stage {cwd}` with no path runs `git add -A` FROM THE ROOT,
+   * which stages every file in a repository that merely contains the allowed
+   * cwd: an agent cwd of <repo>/proj staged <repo>/prod-key.pem, and a path-less
+   * `git.diff {staged: true}` then rendered each newly-indexed file as an
+   * all-added diff with full content — a file fs.read, fs.watch and
+   * git.diff{untracked} all refuse for the same caller. Neither call is a path
+   * escape on its own; the pair is, so the staging leg is bounded here.
+   */
+  const cwdPathspec = async (cap: string, canonicalCwd: string): Promise<string> => {
+    const root = (await git.workRoot(canonicalCwd)) ?? canonicalCwd;
+    // Proves the cwd really is at-or-inside the derived root before path.relative
+    // is trusted to describe it (a `..` result would be a pathspec pointing OUT
+    // of the repo, i.e. the escape this helper exists to close).
+    const checked = assertPathAllowed(cap, canonicalCwd, [root]);
+    const canonicalRootPath = canonicalRoot(root) ?? root;
+    return path.relative(canonicalRootPath, checked) || '.';
+  };
   registerCapability('git.status', (params: unknown) => {
     const { cwd } = (params ?? {}) as { cwd?: string };
     if (!cwd) throw new Error('git.status requires { cwd }');
@@ -1208,41 +1296,26 @@ export function registerHubCapabilities(): void {
     // printed, which are root-relative and routinely name files in a sibling
     // subtree of the agent cwd, while confining to the repo concedes nothing a
     // path-less `git.diff` (the whole tree's diff) doesn't already hand over.
-    let operand = filePath;
-    if (filePath) {
-      const root = (await git.workRoot(canonicalCwd)) ?? canonicalCwd;
-      // Anchor a relative pathspec on the work-tree root by plain concatenation,
-      // NOT path.resolve/path.join: those collapse a `link/..` pair textually
-      // before any symlink is read, which is precisely the check-path /
-      // opened-path split the component walk exists to close. The walk inside
-      // assertPathAllowed does the resolving.
-      const anchored = path.isAbsolute(filePath)
-        ? filePath
-        : root.endsWith(path.sep)
-          ? root + filePath
-          : root + path.sep + filePath;
-      const canonicalFile = assertPathAllowed('git.diff', anchored, [root]);
-      // …but the "concedes nothing a path-less git.diff doesn't already hand
-      // over" argument is only true for a TRACKED pathspec. With `untracked`,
-      // git.diff runs `git diff --no-index -- /dev/null <path>`, which renders
-      // ANY readable file as an all-added diff — gitignored, untracked, and
-      // tracked-but-unmodified files alike, none of which appear in a path-less
-      // diff (verified: it returns ""). That turns the derived work-tree root —
-      // a directory nothing ever checked against the allow-list, since it comes
-      // out of `rev-parse --show-toplevel` AFTER the cwd guard — into an
-      // arbitrary reader: an agent cwd of <repo>/frontend read <repo>/backend/
-      // .env, and a $HOME that happens to be a dotfiles repo read ~/.ssh/id_rsa,
-      // both of which fs.read and fs.watch refuse for the same caller. So this
-      // one leg is held to the ordinary workspace roots as well.
-      if (untracked) assertPathAllowed('git.diff', anchored, workspaceRoots());
-      // git runs from the work-tree root, so it receives the validated path
-      // expressed from that root: the operand is a function of the CANONICAL
-      // path, never of the caller's string. (Root-relative is what git wants for
-      // a tracked pathspec; the absolute form is the fallback for the degenerate
-      // "the path IS the root" case.)
-      const canonicalRootPath = canonicalRoot(root) ?? root;
-      operand = path.relative(canonicalRootPath, canonicalFile) || canonicalFile;
-    }
+    //
+    // …but the "concedes nothing a path-less git.diff doesn't already hand
+    // over" argument is only true for a TRACKED pathspec. With `untracked`,
+    // git.diff runs `git diff --no-index -- /dev/null <path>`, which renders
+    // ANY readable file as an all-added diff — gitignored, untracked, and
+    // tracked-but-unmodified files alike, none of which appear in a path-less
+    // diff (verified: it returns ""). That turns the derived work-tree root —
+    // a directory nothing ever checked against the allow-list — into an
+    // arbitrary reader: an agent cwd of <repo>/frontend read <repo>/backend/
+    // .env, and a $HOME that happens to be a dotfiles repo read ~/.ssh/id_rsa,
+    // both of which fs.read and fs.watch refuse for the same caller. So this
+    // one leg is held to the ordinary workspace roots as well.
+    const operand = filePath
+      ? await anchorGitPathspec(
+          'git.diff',
+          canonicalCwd,
+          filePath,
+          untracked ? [workspaceRoots()] : [],
+        )
+      : filePath;
     return { diff: await git.diff(canonicalCwd, operand, staged, untracked) };
   });
   registerCapability('git.numstat', (params: unknown) => {
@@ -1264,17 +1337,50 @@ export function registerHubCapabilities(): void {
       .commitNumstat(guardGitCwd('git.commitNumstat', cwd), hash)
       .then((files) => ({ files }));
   });
-  registerCapability('git.stage', (params: unknown) => {
-    const { cwd, path } = (params ?? {}) as { cwd?: string; path?: string };
+  // git.stage is the WRITE half of an exfiltration the read half alone does not
+  // achieve, which is why the guard is here and not only on git.diff.
+  //
+  // `git add` runs from the DERIVED work-tree root, and `path` used to travel to
+  // gitService with no check at all: a root-relative pathspec
+  // (`backend/prod-key.pem`) — or NO pathspec, which meant `git add -A` over the
+  // whole repository — put files outside every allowed root into the index. A
+  // path-less `git.diff {staged: true}` then renders each of them as an
+  // all-added diff with FULL CONTENT, because they are not in HEAD; git.commit
+  // persists it, git.commitDiff hands it back, git.push publishes it. Every one
+  // of those files is refused to the same caller by fs.read, fs.watch and the
+  // (already fixed) `git.diff {path, untracked}` leg.
+  //
+  // So the staging leg gets the boundary the untracked-diff leg got — the
+  // ordinary workspace roots, not merely "inside the repo" — and the path-less
+  // form is bounded to the guarded cwd instead of the root. That narrows a
+  // remote "Stage All" in a monorepo whose agent cwd is a subdirectory to that
+  // subdirectory; it is the same trade the untracked leg already made, and the
+  // local desktop IPC path (the trusted user reviewing their own repo) is
+  // untouched.
+  registerCapability('git.stage', async (params: unknown) => {
+    const { cwd, path: filePath } = (params ?? {}) as { cwd?: string; path?: string };
     if (!cwd) throw new Error('git.stage requires { cwd }');
-    return git.stage(guardGitCwd('git.stage', cwd), path).then((output) => ({ ok: true, output }));
+    const canonicalCwd = guardGitCwd('git.stage', cwd);
+    const operand = filePath
+      ? await anchorGitPathspec('git.stage', canonicalCwd, filePath, [workspaceRoots()])
+      : await cwdPathspec('git.stage', canonicalCwd);
+    const output = await git.stage(canonicalCwd, operand);
+    return { ok: true, output };
   });
-  registerCapability('git.unstage', (params: unknown) => {
-    const { cwd, path } = (params ?? {}) as { cwd?: string; path?: string };
+  // The same two holes, pointed the other way. Unstaging does not hand content
+  // back, but `git reset -q HEAD` from the root drops the index for a whole
+  // repository the caller was granted one directory of — and the decision on
+  // record for this param ("git resolves it relative to the work-tree root the
+  // guard returned") was as untrue here as it was for git.stage.
+  registerCapability('git.unstage', async (params: unknown) => {
+    const { cwd, path: filePath } = (params ?? {}) as { cwd?: string; path?: string };
     if (!cwd) throw new Error('git.unstage requires { cwd }');
-    return git
-      .unstage(guardGitCwd('git.unstage', cwd), path)
-      .then((output) => ({ ok: true, output }));
+    const canonicalCwd = guardGitCwd('git.unstage', cwd);
+    const operand = filePath
+      ? await anchorGitPathspec('git.unstage', canonicalCwd, filePath, [workspaceRoots()])
+      : await cwdPathspec('git.unstage', canonicalCwd);
+    const output = await git.unstage(canonicalCwd, operand);
+    return { ok: true, output };
   });
   registerCapability('git.commit', (params: unknown) => {
     const { cwd, message } = (params ?? {}) as { cwd?: string; message?: string };

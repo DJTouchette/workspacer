@@ -14,6 +14,13 @@
 import { execFile } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+// The code-point-counting clip, shared with claude.sessionsForDir rather than
+// re-spelled: `String.slice` counts UTF-16 CODE UNITS and the Go twin counts
+// RUNES, so a matching line of astral characters came back at 300 code points
+// from the brain and 153 from here — and an odd boundary left a LONE LEAD
+// SURROGATE, which JSON.stringify emits as a bare \ud83d that Go's
+// json.Unmarshal turns into U+FFFD and a strict reader rejects outright.
+import { clip } from './claudeSessionList';
 
 /**
  * Resolve @vscode/ripgrep's prebuilt binary path.
@@ -71,8 +78,16 @@ const RG_BIN: string = (() => {
 
 /** Hard cap on total matches returned when the caller doesn't specify one. */
 const DEFAULT_MAX_RESULTS = 500;
-/** Matching lines are display-only; clip very long lines so the UI stays sane. */
+/** Matching lines are display-only; clip very long lines so the UI stays sane.
+ *  Counted in CODE POINTS, not UTF-16 units — see the `clip` import below. */
 const MAX_TEXT_LEN = 300;
+/** The whitespace a matching line is trimmed of. Spelled out rather than
+ *  `String.trim`, for the reason spawnCwd.ts's TRIM_SET spells out: JS
+ *  `.trim()` and Go's `strings.TrimSpace` disagree on U+FEFF and U+0085, and
+ *  `search.project` is answered by whichever of the two providers is
+ *  registered — the brain, by default. A line starting with a BOM came back
+ *  with different text from each. */
+const TEXT_TRIM = /^[ \t\n\v\f\r]+|[ \t\n\v\f\r]+$/g;
 /** Bound rg's runtime and output so a pathological repo can't hang/OOM main. */
 const EXEC_TIMEOUT_MS = 15_000;
 const EXEC_MAX_BUFFER = 64 * 1024 * 1024;
@@ -115,7 +130,17 @@ export async function searchProject(opts: SearchProjectOpts): Promise<SearchProj
   const { query, cwd } = opts;
   if (!query) return { results: [], truncated: false };
 
-  const maxResults = opts.maxResults ?? DEFAULT_MAX_RESULTS;
+  // NOT `opts.maxResults ?? DEFAULT_MAX_RESULTS`: `??` only replaces null and
+  // undefined, so a caller that computed its cap and landed on 0 got a literal
+  // cap of ZERO here — an empty result list flagged `truncated: true` — while
+  // the brain's `if maxResults <= 0 { maxResults = searchMaxResults }` read the
+  // same value as "unset" and returned everything. Same request, opposite
+  // answers, decided by which provider happened to be registered. A
+  // non-positive cap is not a cap.
+  const maxResults =
+    typeof opts.maxResults === 'number' && opts.maxResults > 0
+      ? opts.maxResults
+      : DEFAULT_MAX_RESULTS;
 
   // Flags mirror the contract. Default is smart-case; explicit case sensitivity
   // wins. Fixed-string (-F) unless the caller asked for regex. --json carries
@@ -183,10 +208,7 @@ export async function searchProject(opts: SearchProjectOpts): Promise<SearchProj
     // rg reports paths relative to cwd; the contract wants absolute paths.
     const abs = path.resolve(cwd, rel);
     const rawText = data.lines.text ?? '';
-    const text = rawText
-      .replace(/\r?\n$/, '')
-      .trim()
-      .slice(0, MAX_TEXT_LEN);
+    const text = clip(rawText.replace(/\r?\n$/, '').replace(TEXT_TRIM, ''), MAX_TEXT_LEN);
 
     let bucket = byFile.get(abs);
     if (!bucket) {

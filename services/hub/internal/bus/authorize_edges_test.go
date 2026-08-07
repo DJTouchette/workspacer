@@ -18,6 +18,7 @@ package bus
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -140,6 +141,72 @@ func TestAuthorizeDeniesEveryTargetItCannotResolve(t *testing.T) {
 	for _, target := range targets {
 		if err := cn.authorize("fs.read", json.RawMessage(`{"path":`+jstr(target)+`}`)); err == nil {
 			t.Errorf("authorize allowed %q, which it cannot resolve — anything unverifiable must fail closed", target)
+		}
+	}
+}
+
+// Denying is not enough: the DENIALS MUST NOT DIFFER.
+//
+// pathWithinRoots canonicalizes before it contains, canonicalize fails hard on
+// every Lstat errno that is not ENOENT, and authorize used to wrap that errno
+// straight back to the caller ("cannot resolve %q: %w"), which rpc.go sends
+// verbatim as an `error` frame. The containment verdict is never reached on that
+// arm, so the grant's roots did not gate the answer at all, and three
+// distinguishable replies came back for paths the plugin holds no root for:
+//
+//	<dir>/afile/sub   -> "not a directory"      (a regular file is there)
+//	<dir>/locked/sub  -> "permission denied"    (an unreadable ancestor)
+//	<dir>/absent/sub  -> "outside the granted scope"
+//
+// Walk a plugin confined to one directory over any tree and that is a
+// whole-filesystem existence/type/permission oracle — the exact disclosure the
+// SECRET arm two lines above it is deliberately silent about, on the arm that
+// runs FIRST. One string for every out-of-root path is the fix; the errno is
+// logged host-side instead.
+func TestAuthorizeGivesOneAnswerForEveryPathOutsideTheGrant(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix mode bits and ENOTDIR spellings")
+	}
+	base := t.TempDir()
+	sandbox := filepath.Join(base, "sandbox")
+	outside := filepath.Join(base, "outside")
+	if err := os.MkdirAll(filepath.Join(outside, "realdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sandbox, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "afile"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	probes := []string{
+		filepath.Join(outside, "afile", "sub"),  // ENOTDIR: a regular file is there
+		filepath.Join(outside, "absent", "sub"), // ENOENT: nothing is there
+		filepath.Join(outside, "realdir"),       // a real directory
+	}
+	locked := filepath.Join(outside, "locked")
+	if err := os.MkdirAll(filepath.Join(locked, "sub"), 0o755); err == nil && os.Geteuid() != 0 {
+		if os.Chmod(locked, 0) == nil {
+			t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+			probes = append(probes, filepath.Join(locked, "sub", "x")) // EACCES
+		}
+	}
+
+	canon, err := canonicalize(sandbox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cn := &conn{caps: map[string]capGrant{"fs.read": {fsRoots: []string{canon}}}}
+	for _, target := range probes {
+		err := cn.authorize("fs.read", json.RawMessage(`{"path":`+jstr(target)+`}`))
+		if err == nil {
+			t.Fatalf("floor: %q is outside every granted root and must be denied", target)
+		}
+		// The caller's own string may be echoed — it sent it — but nothing
+		// ABOUT THE HOST may be. One sentence, for all of them.
+		want := fmt.Sprintf("fs.read: path %q is outside the plugin's granted scope", target)
+		if err.Error() != want {
+			t.Errorf("the denial distinguishes this path from an ordinary out-of-scope one:\n  got:  %q\n  want: %q", err.Error(), want)
 		}
 	}
 }

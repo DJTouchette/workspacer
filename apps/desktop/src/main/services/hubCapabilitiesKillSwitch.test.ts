@@ -32,8 +32,14 @@
  * the two files differ only in the ./brainDelegation mock.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SweepTally, itSweptTheWholeCorpus } from '../../../tests/support/sweepTally';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
+import {
+  SweepTally,
+  itSweptTheWholeCorpus,
+  itRanEveryGatedTest,
+  gatedIt,
+  CAN_SYMLINK,
+} from '../../../tests/support/sweepTally';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -108,6 +114,22 @@ vi.mock('./configService', () => ({
   },
   getConfigDir: (...a: unknown[]) => getConfigDirMock(...a),
 }));
+
+// Every temp dir a beforeEach/test creates goes through here so the matching
+// afterEach can remove it — this suite runs under mutation testing, where a
+// leaked dir per test multiplies into hundreds of thousands in /tmp.
+const tmpDirs: string[] = [];
+const mkTmp = (prefix: string): string => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  tmpDirs.push(dir);
+  return dir;
+};
+afterEach(() => {
+  while (tmpDirs.length) fs.rmSync(tmpDirs.pop()!, { recursive: true, force: true });
+});
+afterAll(() => {
+  fs.rmSync(cfg.dir, { recursive: true, force: true });
+});
 
 // Handoff brief authored path — used by claude.handoffAgentBrief.
 vi.mock('./agentHandoff', () => ({
@@ -205,7 +227,7 @@ describe('fs.* path confinement', () => {
   // canonicalize via the real filesystem, so the roots must exist.
   let agentCwd: string;
   beforeEach(() => {
-    agentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-agent-')));
+    agentCwd = mkTmp('wks-agent-');
     getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
   });
 
@@ -442,7 +464,7 @@ describe('library.* cwd confinement', () => {
   // listed, written and (recursively) deleted — untrusted on the bus.
   let agentCwd: string;
   beforeEach(() => {
-    agentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-')));
+    agentCwd = mkTmp('wks-lib-');
     getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
   });
 
@@ -561,6 +583,61 @@ describe('library.* cwd confinement', () => {
     expect(guard(path.join(cfg.dir, 'remote-token'))).toBeNull();
     expect(guard(path.join(cfg.dir, 'config.yaml'))).toBeNull();
   });
+
+  // The per-file guard's ANSWER, which every assertion above leaves free.
+  //
+  // They all call `guard(x)` on symlink-free paths and expect `x` back, so
+  // `assertPathAllowed(cap, filePath, roots); return filePath;` — the guard
+  // deciding correctly and then handing back the CALLER-DERIVED string — passed
+  // 188/188 focused and the whole 86-file main suite. `path.resolve(filePath)`
+  // passed too. This is BINDING DECISION 2 at the one factory that supplies the
+  // guard libraryService uses for every readFileSync / writeFileSync /
+  // mkdirSync / fs.watch / unlinkSync / rmSync of a DERIVED library path, and
+  // the module header says "every caller must hand the RETURNED canonical path
+  // to the filesystem".
+  //
+  // Only a symlink separates the two strings: an alias and its target are both
+  // legal, both inside the item roots, and they name different files. os.unlink
+  // and fs.watch do not follow the final link while the guard does, so which
+  // string comes back decides which file is opened.
+  //
+  // TWIN: the three `(per-file guard)` subtests of
+  // TestGuardedHandlersOpenTheCanonicalPathTheyValidated in
+  // services/hub/cmd/brain/fsguard_test.go.
+  const perFileGate = { ran: 0 };
+  const itLinks = gatedIt(CAN_SYMLINK, perFileGate);
+
+  for (const leg of [
+    { method: 'library.list', params: {}, argIndex: -1 },
+    { method: 'library.remove', params: { scope: 'claude', id: 'x', kind: 'skill' }, argIndex: -1 },
+    {
+      method: 'library.save',
+      params: { scope: 'project', title: 't', kind: 'prompt', body: 'b' },
+      argIndex: -1,
+    },
+  ]) {
+    itLinks(`${leg.method}'s per-file guard returns the RESOLVED path, not the caller's`, () => {
+      const itemDir = path.join(agentCwd, '.workspacer', 'library');
+      fs.mkdirSync(itemDir, { recursive: true });
+      const target = path.join(itemDir, 'target.md');
+      const alias = path.join(itemDir, 'alias.md');
+      fs.writeFileSync(target, '---\ntitle: T\n---\n\nb\n', 'utf-8');
+      fs.symlinkSync(target, alias);
+
+      call(leg.method, { ...leg.params, cwd: agentCwd });
+      const mock = (libraryMock as unknown as Record<string, { mock: { calls: unknown[][] } }>)[
+        leg.method.split('.')[1]
+      ];
+      const guard = mock.mock.calls[0].at(leg.argIndex) as (p: string) => string | null;
+      expect(typeof guard).toBe('function');
+      expect(
+        guard(alias),
+        'the guard must hand back the file it validated, not the link the caller named',
+      ).toBe(target);
+    });
+  }
+
+  itRanEveryGatedTest(perFileGate, "the per-file guard's canonical-answer tests", 3);
 });
 
 // ── Fixture-driven sweep over every kill-switch-only path capability ────────
@@ -607,14 +684,14 @@ describe('fixture-driven guard coverage — kill-switch-only path capabilities',
   let sandboxHome: string;
   const realHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   beforeEach(() => {
-    agentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-guard-')));
+    agentCwd = mkTmp('wks-guard-');
     // A real directory that is in neither root set: not a live agent cwd (so it
     // is outside `workspace`) and under the temp dir rather than home (so it is
     // outside `browse` too, which is why the browse cases use /etc instead).
-    outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-guard-outside-')));
+    outside = mkTmp('wks-guard-outside-');
     // A HOME of our own — see homeProbe below for why the probe has to live
     // under the home tree, and why it must not be the developer's real one.
-    sandboxHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-guard-home-')));
+    sandboxHome = mkTmp('wks-guard-home-');
     process.env.HOME = sandboxHome;
     process.env.USERPROFILE = sandboxHome;
     getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
@@ -749,7 +826,7 @@ describe('fixture-driven guard coverage — kill-switch-only path capabilities',
   for (const entry of derivedItemMethods) {
     it(`${entry.method}'s per-file guard uses the item roots, not the ${entry.rootSet} roots`, () => {
       derivedSweep.ran('other');
-      const secondAgentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-projB-')));
+      const secondAgentCwd = mkTmp('wks-projB-');
       getAllSnapshots.mockReturnValue([{ cwd: agentCwd }, { cwd: secondAgentCwd }] as never);
       const mock = (libraryMock as unknown as Record<string, { mock: { calls: unknown[][] } }>)[
         entry.method.split('.')[1]
@@ -770,8 +847,57 @@ describe('fixture-driven guard coverage — kill-switch-only path capabilities',
     });
   }
 
+  // BINDING DECISION 1 at the HANDLERS. The corpus's six tilde cases all call
+  // the PREDICATE, so they pin only that canonicalizePath treats '~' as an
+  // ordinary name; nothing pinned that a handler hands the predicate the
+  // caller's string UNMODIFIED, and the fixture's own prose names that layer as
+  // the hazard ("the brain used to expandTilde() every guarded path while
+  // TypeScript did not"). A tilde pre-pass inserted at any of these handlers
+  // survived the whole suite: under it `fs.listDir({path:'~'})` returned the
+  // $HOME listing and `library.list({cwd:'~'})` returned the BODIES of
+  // $HOME/.claude/{skills,agents,commands}/*.md.
+  //
+  // $HOME is pointed at the live agent cwd so the expanded form is inside BOTH
+  // root sets — otherwise a `workspace`-rootSet method refuses the expansion for
+  // the wrong reason and the mutant survives. An agent whose cwd IS $HOME is
+  // what a bare `agents.spawn({})` produces.
+  //
+  // TWIN: the same sweep over the providers:["main"] entries in
+  // hubCapabilitiesGuards.test.ts.
+  const tildeSweep = new SweepTally();
+  for (const entry of killSwitchOnly) {
+    it(`${entry.method} does not expand '~' before the guard sees it`, async () => {
+      tildeSweep.ran('other');
+      const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+      process.env.HOME = agentCwd;
+      process.env.USERPROFILE = agentCwd;
+      try {
+        expect(os.homedir(), 'the probe needs $HOME to be an allowed root').toBe(agentCwd);
+        for (const spelling of ['~', '~/notes.txt', '~/']) {
+          const msg = await attempt(entry.method, { ...entry.params, [entry.field]: spelling });
+          expect(
+            msg,
+            `${entry.method} accepted ${JSON.stringify(spelling)} — '~' is an ordinary filename here, so a '~'-prefixed path is not absolute and must be refused (BINDING DECISION 1)`,
+          ).toMatch(/outside the allowed workspace/);
+        }
+      } finally {
+        process.env.HOME = saved.HOME;
+        process.env.USERPROFILE = saved.USERPROFILE;
+      }
+    });
+  }
+
   // Ratcheted to the sizes the fixture carries today. Both `.length > 0` checks
   // above read the FIXTURE; these read the run.
+  itSweptTheWholeCorpus(
+    tildeSweep,
+    'the no-tilde-expansion sweep over the kill-switch methods',
+    7,
+    {
+      allow: 0,
+      deny: 0,
+    },
+  );
   itSweptTheWholeCorpus(killSweep, 'the kill-switch-owned method sweep', 7, {
     allow: 0,
     deny: 0,
@@ -798,7 +924,7 @@ describe('terminals.create — shell is an allowlist, not a passthrough', () => 
   let sandbox: string;
 
   beforeEach(() => {
-    sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-term-')));
+    sandbox = mkTmp('wks-term-');
     shellConfig.etcShellsPath = path.join(sandbox, 'shells');
     fs.writeFileSync(shellConfig.etcShellsPath, '/bin/bash\n');
     process.env.SHELL = '/bin/zsh';
@@ -850,7 +976,7 @@ describe('terminals.create — shell is an allowlist, not a passthrough', () => 
 describe('what workspaceRoots() is made of', () => {
   let agentCwd: string;
   beforeEach(() => {
-    agentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-roots-')));
+    agentCwd = mkTmp('wks-roots-');
     getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
   });
 

@@ -60,5 +60,5 @@ describe('spawn cwd normalization — cross-language contract', () => {
     expect(normalizeSpawnCwd(null)).toBe(os.homedir());
   });
 
-  itSweptTheWholeCorpus(tally, 'the spawnCwds block', 10, { allow: 0, deny: 0 });
+  itSweptTheWholeCorpus(tally, 'the spawnCwds block', 14, { allow: 0, deny: 0 });
 });

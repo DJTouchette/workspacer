@@ -5,7 +5,7 @@
  * declines to decode — SVG in particular comes back as an *empty* nativeImage
  * rather than an error, which is easy to mistake for a valid thumbnail.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -37,6 +37,9 @@ let dir: string;
 beforeEach(() => {
   createFromPath.mockReset();
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-thumb-'));
+});
+afterEach(() => {
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 function write(name: string, contents: string | Buffer): string {

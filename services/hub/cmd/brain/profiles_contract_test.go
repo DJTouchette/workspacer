@@ -6,7 +6,6 @@ package main
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
@@ -47,11 +46,8 @@ type profilesContract struct {
 
 func loadProfilesContract(t *testing.T) profilesContract {
 	t.Helper()
-	path := filepath.Join("..", "..", "..", "..", "contracts", "claude-profiles-cases.json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
+	const path = "contracts/claude-profiles-cases.json"
+	raw := mustReadRepoFile(t, "contracts", "claude-profiles-cases.json")
 	var fx profilesContract
 	if err := json.Unmarshal(raw, &fx); err != nil {
 		t.Fatalf("parse %s: %v", path, err)

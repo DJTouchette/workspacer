@@ -135,6 +135,50 @@ func snapshotVisible(snap json.RawMessage, layoutIDs map[string]bool, hasLayout 
 	return now.Sub(t) <= stoppedVisibleWindow
 }
 
+// snapshotLive is the LIVENESS half of the rule above, without the curation
+// half — "is a process running in this directory right now", not "should the
+// sidebar draw a card for it".
+//
+// It exists because fsguard.go's agentCwds needs exactly this and nothing else.
+// The fs.* allow-list is a grant, not a view: a stopped agent's directory has to
+// leave it (that is the entire justification for cwdCacheTTL being seconds), and
+// a curated stopped card or the 24h headless fallback — both of which
+// snapshotVisible answers true for — must NOT re-admit a root. So the two
+// callers share the vocabulary, not the verdict.
+//
+// The clauses are snapshotVisible's, in the same order and for the same reasons:
+//
+//   - a row that will not decode is not live (a /sessions shape change must
+//     never widen an allow-list);
+//   - mode "unknown" is not live. This is the clause that matters most here and
+//     least there: a terminals.create SHELL sits in "unknown" for its whole life
+//     and never leaves it, and capspec deliberately leaves that method's `cwd`
+//     UNCONFINED — holding terminals.create is the grant. Counting a shell's cwd
+//     as an agent cwd therefore let any caller who could open a terminal at `/`
+//     hand itself `/` as an fs.read root, which is a self-grant, not a
+//     workspace;
+//   - stopped is not live, in either spelling (claudemon's mode, or the
+//     desktop-shaped `status: "ended"` the enrich overlay produces);
+//   - archived is not live.
+//
+// An empty mode with no ended status is treated as live, exactly as
+// snapshotVisible treats it: that is the desktop-shaped row that carries its
+// state in `status`, and refusing it here would revoke roots the twin grants.
+func snapshotLive(snap json.RawMessage) bool {
+	var s struct {
+		Mode     string `json:"mode"`
+		Status   string `json:"status"`
+		Archived bool   `json:"archived"`
+	}
+	if json.Unmarshal(snap, &s) != nil {
+		return false
+	}
+	if s.Mode == "unknown" || s.Archived {
+		return false
+	}
+	return !(s.Mode == "stopped" || (s.Mode == "" && s.Status == "ended"))
+}
+
 // layoutSessionIDs extracts every session id the shared layout curates: each
 // non-global agent card's sessionId / lastSessionId plus its panes'
 // attachSessionId. hasLayout is false when the document is null/absent (a hub

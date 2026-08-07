@@ -15,14 +15,15 @@ package main
 
 import (
 	"encoding/json"
-	"os"
 	"testing"
 
 	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 )
 
-// slugFixtureRel is relative to this package dir (services/hub/cmd/brain).
-const slugFixtureRel = "../../../../contracts/filename-slug-cases.json"
+// slugFixtureRel is relative to the REPO ROOT: the fixture is read through
+// mustReadRepoFile, because an out-of-module path handed to os.ReadFile is not
+// part of cmd/go's test cache key.
+const slugFixtureRel = "contracts/filename-slug-cases.json"
 
 // slugOwnerKey is this implementation's key in the fixture's `owners` map.
 const slugOwnerKey = "services/hub/cmd/brain/slug.go"
@@ -44,10 +45,7 @@ type slugFixture struct {
 const slugCorpusFloor = 17
 
 func TestFilenameSlugContractCases(t *testing.T) {
-	raw, err := os.ReadFile(slugFixtureRel)
-	if err != nil {
-		t.Fatalf("read %s: %v", slugFixtureRel, err)
-	}
+	raw := mustReadRepoFile(t, "contracts", "filename-slug-cases.json")
 	var fx slugFixture
 	if err := json.Unmarshal(raw, &fx); err != nil {
 		t.Fatalf("parse %s: %v", slugFixtureRel, err)

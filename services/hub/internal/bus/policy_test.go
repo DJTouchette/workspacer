@@ -513,7 +513,7 @@ func TestEveryCorpusCaseBelongsToAGroupSOMEBODYOwns(t *testing.T) {
 // busContainmentCorpusFloor is how many `cases` entries this implementation
 // owns today. See the twin in cmd/brain/fsguard_test.go: enumerated, not
 // executed, so it holds on every host.
-const busContainmentCorpusFloor = 107
+const busContainmentCorpusFloor = 112
 
 // containmentTokenTable is this loader's substitution table, and the ONE place
 // the token names it understands are written down. The case runner substitutes
@@ -636,10 +636,7 @@ func TestFixtureVocabularyIsClosed(t *testing.T) {
 	}
 
 	// 2. Every token reference in the WHOLE document names a declared token.
-	raw, err := os.ReadFile(containmentFixturePath())
-	if err != nil {
-		t.Fatalf("read fixture: %v", err)
-	}
+	raw := readContainmentFixture(t)
 	var doc any
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("parse fixture: %v", err)
@@ -748,16 +745,49 @@ func sortedVocabKeys(m map[string]string) []string {
 	return out
 }
 
+// containmentFixtureName is the corpus this package is held to, repo-relative
+// and used verbatim in failure text. It is no longer a "../../../.." literal,
+// because the only way to READ it is now the one below.
+var containmentFixtureName = []string{"contracts", "path-containment-cases.json"}
+
+// readContainmentFixture is the ONLY reader of the shared corpus in this
+// package, and it goes through sweepguard.ReadRepoFile -> extinput.ReadFile
+// rather than os.ReadFile.
+//
+// The reason is cmd/go's test cache, not tidiness. contracts/ lives four levels
+// ABOVE this module, and computeTestInputsID drops every input whose path fails
+// search.InDir(name, a.Package.Root) — so an os.ReadFile of
+// "../../../../contracts/path-containment-cases.json" is invisible to the cache
+// key. Measured, on this tree: delete all 69 `expect: "deny"` cases from the
+// corpus and `go test ./internal/bus/` prints `ok (cached)` while cmd/brain and
+// internal/capspec — which already read through extinput — fail. Every
+// containment guard in this file was pinned only until the next cached run.
+//
+// extinput reads the same bytes through a path that still descends LEXICALLY
+// from the module root, which is the only property InDir tests, so cmd/go
+// hashes the file. sweepguard adds the other half: a MISSING corpus inside a
+// real checkout is a hard failure (a rename silently deleting this whole sweep),
+// and only a genuinely vendored hub skips.
+func readContainmentFixture(t *testing.T) []byte {
+	t.Helper()
+	raw, err := sweepguard.ReadRepoFile(containmentFixtureName...)
+	if err == nil {
+		return raw
+	}
+	if errors.Is(err, sweepguard.ErrNoCheckout) {
+		t.Skipf("not a monorepo checkout, so the shared containment corpus has nothing to read: %v", err)
+	}
+	t.Fatalf("%v", err)
+	return nil
+}
+
 func containmentFixturePath() string {
-	return filepath.Join("..", "..", "..", "..", "contracts", "path-containment-cases.json")
+	return filepath.ToSlash(filepath.Join(containmentFixtureName...))
 }
 
 func loadContainmentFixture(t *testing.T) containmentFixture {
 	t.Helper()
-	raw, err := os.ReadFile(containmentFixturePath())
-	if err != nil {
-		t.Fatalf("read fixture: %v", err)
-	}
+	raw := readContainmentFixture(t)
 	var fx containmentFixture
 	if err := json.Unmarshal(raw, &fx); err != nil {
 		t.Fatalf("parse fixture: %v", err)

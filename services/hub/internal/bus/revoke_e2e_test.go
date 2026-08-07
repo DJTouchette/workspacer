@@ -12,6 +12,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/djtouchette/workspacer-hub/internal/capspec"
+	"github.com/djtouchette/workspacer-hub/internal/event"
 )
 
 // trySend / tryReadUntil are the non-fatal twins of the shared client helpers.
@@ -294,6 +295,112 @@ func TestRevocationCannotRaceAnInFlightHandshake(t *testing.T) {
 		default:
 		}
 	}
+}
+
+// The CloseNow half, which the two tests above cannot see.
+//
+// Both of them go through `if !caller.trySend(...) { return }` — a closed socket
+// is a PASS there, and it is also a pass when the socket is WIDE OPEN and the
+// call is merely denied. So `_ = cn.ws.CloseNow()` could be deleted outright
+// with internal/bus, internal/plugin, internal/integration and cmd/brain all
+// green, and the deletion is not equivalent: `revoked` is consulted only by
+// mayCall (bus.go), which gates CALLS. It does not gate subscribe, and it does
+// not gate DELIVERY — the writer goroutine checks mayConsume and nothing else.
+// So an uninstalled plugin's sidecar went on receiving every event type its
+// manifest declared, for the life of the hub process, on a socket the host
+// believed it had revoked. `agent.*` alone carries session ids, cwds and
+// transcript-adjacent state.
+//
+// The comment on UnregisterPluginToken names exactly this: "CloseNow is what
+// stops the connection from sitting there consuming events." This asserts both
+// halves of that sentence — the socket ENDS, and nothing more arrives on it.
+func TestRevocationClosesTheConnectionAndStopsEventDelivery(t *testing.T) {
+	url, srv := rpcServerWith(t)
+	srv.SetToken("host-secret")
+	srv.RegisterPluginToken("pane-tok", "test.plugin", nil, capspec.EventGrants{
+		Consumes: []string{"*"},
+	})
+
+	plug := dialClientToken(t, url, "pane-tok")
+	plug.send(Frame{Op: "subscribe", Topics: []string{"*"}})
+	plug.readUntil("subscribed")
+
+	// Floor: while the token is live, this socket really does receive events.
+	host := dialClientToken(t, url, "host-secret")
+	host.send(Frame{Op: "publish", Event: &event.Envelope{Type: "agent.state_changed"}})
+	if got, ok := plug.tryReadUntil("event", "event", 2*time.Second); !ok || got.Event == nil {
+		t.Fatal("floor: a live plugin socket subscribed to \"*\" must receive a published event")
+	}
+
+	srv.UnregisterPluginToken("pane-tok")
+
+	// The socket must END. A read on a closed connection fails; a read on an
+	// open one blocks until the deadline and then fails too, so the two are told
+	// apart by TIME — a close lands in milliseconds. `event` is not the only
+	// wrong answer here: staying open at all is.
+	start := time.Now()
+	host.send(Frame{Op: "publish", Event: &event.Envelope{Type: "agent.state_changed"}})
+	got, ok := plug.tryReadUntil("event", "event", 3*time.Second)
+	if ok {
+		t.Fatalf("a revoked plugin was still delivered %+v — the socket is sitting there consuming events", got.Event)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("the read did not fail until the %v deadline: the connection was never closed, it just had nothing to say", elapsed)
+	}
+	plug.ws.CloseNow()
+}
+
+// The `revoked.Store(true)` half, i.e. the flag's only production WRITER.
+//
+// TestARevokedConnectionMayCallNothing below pins mayCall's READ of the flag,
+// but it sets the flag itself, so deleting the store from UnregisterPluginToken
+// left the whole module green: the e2e tests cannot see it either, because
+// CloseNow is synchronous and their early-return branch fires first.
+//
+// There is no socket-level observation available — the close and the flag are
+// applied to the same connection microseconds apart — so this reaches for the
+// server-side conn directly and asserts BOTH halves landed on it. The pair
+// matters: with only the close, a call already read off the wire and being
+// dispatched concurrently is still authorized by a credential the host has
+// dropped, which is the interleaving the flag exists for.
+func TestUnregisterPluginTokenFlagsAndClosesEveryLiveConnection(t *testing.T) {
+	url, srv := rpcServerWith(t)
+	srv.SetToken("host-secret")
+	srv.RegisterPluginToken("pane-tok", "test.plugin", []capspec.Grant{
+		{Method: "fs.read", FSRoots: []string{t.TempDir()}},
+	}, capspec.EventGrants{})
+
+	plug := dialClientToken(t, url, "pane-tok")
+	plug.send(Frame{Op: "subscribe", Topics: []string{"*"}})
+	plug.readUntil("subscribed") // the handshake, and therefore trackPluginConn, has completed
+
+	// Capture the server's own conn before revocation empties the map.
+	var tracked []*conn
+	srv.ptMu.Lock()
+	for cn := range srv.pluginConns["pane-tok"] {
+		tracked = append(tracked, cn)
+	}
+	srv.ptMu.Unlock()
+	if len(tracked) != 1 {
+		t.Fatalf("expected exactly one tracked connection for the token, got %d", len(tracked))
+	}
+	cn := tracked[0]
+	if cn.revoked.Load() {
+		t.Fatal("floor: a live connection must not already be flagged revoked")
+	}
+	if !cn.mayCall("fs.read") {
+		t.Fatal("floor: the live connection must be able to call its granted capability")
+	}
+
+	srv.UnregisterPluginToken("pane-tok")
+
+	if !cn.revoked.Load() {
+		t.Fatal("UnregisterPluginToken closed the socket but never set `revoked` — a call already read off the wire is still authorized by a credential the host has dropped")
+	}
+	if cn.mayCall("fs.read") {
+		t.Fatal("the revoked connection may still call fs.read")
+	}
+	plug.ws.CloseNow()
 }
 
 // The `revoked` flag on its own. UnregisterPluginToken's own comment says both

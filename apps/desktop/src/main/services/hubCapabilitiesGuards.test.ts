@@ -28,7 +28,7 @@
  * same fixture. What is under test is that these handlers CALL it.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 import {
   itRanEveryGatedTest,
   gatedIt,
@@ -255,6 +255,11 @@ beforeEach(() => {
 afterEach(() => {
   process.env.HOME = realHome.HOME;
   process.env.USERPROFILE = realHome.USERPROFILE;
+  for (const d of [agentCwd, outside, sandboxHome]) fs.rmSync(d, { recursive: true, force: true });
+});
+
+afterAll(() => {
+  fs.rmSync(cfg.dir, { recursive: true, force: true });
 });
 
 /**
@@ -434,8 +439,55 @@ describe('fixture-driven guard coverage — path capabilities main owns in produ
     });
   }
 
+  // BINDING DECISION 1 at the HANDLERS, which is where it was unpinned.
+  //
+  // "NO TILDE EXPANSION, at any layer that handles a caller-supplied path" —
+  // fsguard.go's header, and the corpus carries six tilde cases for it. But
+  // every one of them calls the PREDICATE directly, so they pin only that
+  // canonicalizePath treats '~' as an ordinary name. Nothing pinned that a
+  // handler hands the predicate the caller's string UNMODIFIED, and the
+  // fixture's own prose names that as the hazard: "the brain used to
+  // expandTilde() every guarded path while TypeScript did not" — a LAYER above
+  // the predicate. Inserting one back at any of these handlers survived the
+  // whole 86-file suite; under it `fs.listDir({path:'~'})` returned the $HOME
+  // listing and `library.list({cwd:'~'})` returned the BODIES of
+  // $HOME/.claude/{skills,agents,commands}/*.md.
+  //
+  // $HOME is pointed at the live agent cwd for the probe, so the expanded form
+  // is inside BOTH root sets: without that, a `workspace`-rootSet method refuses
+  // the expansion for the wrong reason and the mutant survives at five of the
+  // ten sites. An agent whose cwd IS $HOME is not contrived — it is what a bare
+  // `agents.spawn({})` produces, since normalizeSpawnCwd('') returns the home
+  // directory.
+  const tildeSweep = new SweepTally();
+  for (const entry of mainOwned) {
+    it(`${entry.method} does not expand '~' before the guard sees it`, async () => {
+      tildeSweep.ran('other');
+      const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+      process.env.HOME = agentCwd;
+      process.env.USERPROFILE = agentCwd;
+      try {
+        expect(os.homedir(), 'the probe needs $HOME to be an allowed root').toBe(agentCwd);
+        for (const spelling of ['~', '~/notes.txt', '~/']) {
+          const msg = await attempt(entry.method, { ...entry.params, [entry.field]: spelling });
+          expect(
+            msg,
+            `${entry.method} accepted ${JSON.stringify(spelling)} — '~' is an ordinary filename here, so a '~'-prefixed path is not absolute and must be refused (BINDING DECISION 1)`,
+          ).toMatch(/outside the allowed workspace/);
+        }
+      } finally {
+        process.env.HOME = saved.HOME;
+        process.env.USERPROFILE = saved.USERPROFILE;
+      }
+    });
+  }
+
   // Ratcheted to the number of methods each owner serves today. A fixture whose
   // `providers` lists shrank would otherwise still satisfy `.length > 0`.
+  itSweptTheWholeCorpus(tildeSweep, "the no-tilde-expansion sweep over 'main'", 5, {
+    allow: 0,
+    deny: 0,
+  });
   itSweptTheWholeCorpus(mainSweep, "the methods 'main' owns in production", 5, {
     allow: 0,
     deny: 0,

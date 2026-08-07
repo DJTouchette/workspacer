@@ -401,11 +401,17 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	// still surface and can be answered remotely; a YOLO agent must be started
 	// locally. So skipPermissions is forced off, and a bypass permissionMode is
 	// dropped (other modes pass through).
-	if p.SkipPermissions || p.PermissionMode == "bypassPermissions" || p.PermissionMode == "yolo" {
+	//
+	// The two mode spellings were compared inline here, which made the invariant
+	// read as a property of spawning rather than of the MODE. It is the latter,
+	// and the desktop takes the same mode through a second door
+	// (claude.setPermissionMode) that had no clamp at all — see permissionmode.go
+	// and lib/permissionBypass.ts, one allowlist, held equal by a test.
+	if p.SkipPermissions || isPermissionEscalation(p.PermissionMode) {
 		log.Printf("brain: agents.spawn: ignoring permission bypass from a bus client — remote spawns never auto-bypass approvals.")
 	}
 	p.SkipPermissions = false
-	if p.PermissionMode == "bypassPermissions" || p.PermissionMode == "yolo" {
+	if isPermissionEscalation(p.PermissionMode) {
 		p.PermissionMode = ""
 	}
 

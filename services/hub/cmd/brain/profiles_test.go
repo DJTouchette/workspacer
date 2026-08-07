@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/user"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 )
 
 // argv tests ported from apps/tui/src/profiles.rs so the Go brain stays in
@@ -209,6 +213,54 @@ func TestConfigDirWindowsFallsBackToRoaming(t *testing.T) {
 	want := filepath.Join(home, "AppData", "Roaming", "workspacer")
 	if got != want {
 		t.Fatalf("windows configDir fallback = %q, want %q", got, want)
+	}
+}
+
+// configDirFor's header binds three copies — "this must stay in lockstep with
+// authtoken.ConfigDir() and the desktop's getConfigDir" — and with no HOME they
+// came apart.
+//
+// Go's os.UserHomeDir reads $HOME and nothing else; the error was discarded, so
+// filepath.Join("", ".config", "workspacer") answered the RELATIVE
+// ".config/workspacer", resolved against whatever cwd a systemd unit or a
+// container entrypoint happened to have. Node's os.homedir() falls back to the
+// effective uid's passwd entry, so the desktop kept using the real directory:
+// one headless `workspacer serve` reading its config, profiles, layouts,
+// sessions and token store from somewhere else entirely. Downstream in fsguard
+// the relative root is DISCARDED, which switches the config-dir half of the
+// secret gate off for the whole process.
+//
+// Two claims, and the second is the one that could regress silently:
+//
+//  1. ABSOLUTE, always. A relative config dir is never an acceptable answer.
+//  2. THE SAME absolute path from both Go copies, which is what "in lockstep"
+//     means — a fallback added to one of them is not a fix.
+func TestConfigDirResolvesWithoutHOME(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("HOME is not how Windows resolves a home directory")
+	}
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+	os.Unsetenv("HOME")
+
+	got := configDirFor("linux")
+	if got == "" {
+		t.Skip("this host has no passwd home for the effective uid either — nothing to compare")
+	}
+	if !filepath.IsAbs(got) {
+		t.Fatalf("with no HOME the brain's config dir is %q — a RELATIVE path resolved against the daemon's cwd, not a config directory", got)
+	}
+	if want := authtoken.ConfigDir(); got != want {
+		t.Fatalf("the two Go copies disagree with no HOME:\n  cmd/brain configDirFor = %q\n  authtoken.ConfigDir    = %q", got, want)
+	}
+	// And the value is the passwd home, i.e. what Node's os.homedir() answers —
+	// the behaviour the desktop copy has had all along.
+	u, err := user.Current()
+	if err != nil || u.HomeDir == "" {
+		t.Skip("no passwd entry to compare against")
+	}
+	if want := filepath.Join(u.HomeDir, ".config", "workspacer"); got != want {
+		t.Fatalf("config dir = %q, want the passwd home's %q (what os.homedir() gives the desktop)", got, want)
 	}
 }
 

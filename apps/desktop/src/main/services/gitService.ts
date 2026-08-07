@@ -401,10 +401,16 @@ async function action(cwd: string, args: string[]): Promise<string> {
   return res.stdout;
 }
 
-/** Stage a single path, or the whole work tree (`-A`) when `path` is omitted. */
+/** Stage a pathspec, or the whole work tree when `path` is omitted.
+ *
+ *  `-A` on BOTH arms, so "stage this subtree" and "stage everything" mean the
+ *  same three things (adds, modifications, deletions). The bus caller's
+ *  path-less form is rewritten to an explicit cwd pathspec by hubCapabilities —
+ *  `git add -A` from the derived work-tree root stages files outside every
+ *  allowed root — and that rewrite must not quietly stop staging removals. */
 export function stage(cwd: string, path?: string): Promise<string> {
   // `--` keeps a path that looks like a flag from being parsed as one.
-  return action(cwd, path ? ['add', '--', path] : ['add', '-A']);
+  return action(cwd, path ? ['add', '-A', '--', path] : ['add', '-A']);
 }
 
 /** Unstage a single path, or everything, leaving the work tree untouched. */

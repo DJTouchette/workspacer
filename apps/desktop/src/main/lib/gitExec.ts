@@ -36,19 +36,28 @@
  *     `gitArgs` itself. That is git's own documented off switch for
  *     `diff.external` (and it is what covers `gpg.program`'s sibling risk too,
  *     since no diff driver runs).
- *  3. The shared path guard. What 1 and 2 structurally cannot cover is the
+ *  3. The shared path guard, over EVERY definition site — which is the part this
+ *     comment used to get wrong. What 1 and 2 structurally cannot cover is the
  *     NAMESPACED exec keys — `filter.<drv>.clean/smudge/process`,
  *     `diff.<drv>.command/textconv`, `merge.<drv>.driver`, `trailer.<t>.command`
  *     — because the driver name is the attacker's, so no fixed list can name
- *     them. Every one of those drivers has to be DEFINED in a config file inside
- *     the repository's `.git` directory, and pathConfinement.ts `isSecretPath`
- *     (with its Go twins) refuses every caller-supplied path that traverses a
- *     `.git` component. The definition can never be written.
+ *     them. The claim that stood here was that every such driver "has to be
+ *     DEFINED in a config file inside the repository's `.git` directory", which
+ *     `isSecretPath` refuses. git reads them out of the PER-USER config too
+ *     (`~/.gitconfig`, `$XDG_CONFIG_HOME/git/config`), and that file is an
+ *     ordinary 0644 file with no `.git` component in its path — writable through
+ *     `fs.write` the moment any agent's cwd is $HOME, which is exactly what
+ *     `agents.spawn({})` produces. `isSecretPath` now refuses those locations
+ *     too (`isGitGlobalConfigPath`), so the sentence is true again: the
+ *     definition cannot be written, wherever git would look for it.
  *
- * GIT_CONFIG_GLOBAL is deliberately NOT neutralized: `core.excludesFile` in the
- * user's own ~/.gitconfig is a legitimate part of the ignore answer, and the
- * user's home config is not the attacker's. Mirrors gitNoExecConfig() in
- * services/hub/cmd/brain/fsops.go.
+ * GIT_CONFIG_GLOBAL is deliberately NOT neutralized, and that is a decision
+ * rather than an oversight: `core.excludesFile` in the user's own ~/.gitconfig is
+ * a legitimate part of the ignore answer that `check-ignore`, `status` and `add`
+ * all depend on, so blanking the global config would silently start staging
+ * files the user has globally ignored. The exposure it leaves — a driver defined
+ * in a file the user owns — is closed on the write side instead. Mirrors
+ * gitNoExecConfig() in services/hub/cmd/brain/fsops.go.
  */
 export const GIT_NO_EXEC_KEYS: readonly string[] = [
   'core.fsmonitor=',

@@ -30,6 +30,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { getConfigDir } from '../services/configService';
 
@@ -309,10 +310,13 @@ export const GIT_METADATA_DIR = '.git';
  * exec-valued key with a FIXED name, but it structurally cannot cover the
  * namespaced ones — `filter.<drv>.clean` (which `git add`, i.e. git.stage, runs),
  * `diff.<drv>.command`/`textconv`, `merge.<drv>.driver`, `trailer.<t>.command` —
- * because the driver name belongs to whoever wrote the file. Those definitions
- * can only live in the repository config, so the WRITE is refused here instead.
- * `.git/hooks/*`, `.git/config.worktree` and `.git/info/attributes` are the same
- * surface and the same rule covers them.
+ * because the driver name belongs to whoever wrote the file. So the WRITE is
+ * refused here instead. `.git/hooks/*`, `.git/config.worktree` and
+ * `.git/info/attributes` are the same surface and the same rule covers them.
+ *
+ * This is HALF of the definition-site answer, not all of it: git reads the same
+ * namespaced keys out of the per-user global config, which carries no `.git`
+ * component at all. See isGitGlobalConfigPath for the other half.
  *
  * Reads are refused on the same footing as the credential basenames: a
  * `.git/config` routinely carries a remote URL with an embedded token and the
@@ -327,6 +331,78 @@ export const GIT_METADATA_DIR = '.git';
  */
 export function traversesGitDir(canonicalTarget: string): boolean {
   return canonicalTarget.split(path.sep).some((c) => asciiLower(c) === GIT_METADATA_DIR);
+}
+
+/** The basename of git's per-user configuration file. Its own gate, not a
+ *  SECRET_BASENAME, because the reason is different: this file is not a
+ *  credential, it is a place to define a PROGRAM. */
+export const GIT_GLOBAL_CONFIG_BASENAME = '.gitconfig';
+
+/** `$XDG_CONFIG_HOME/git`, or `$HOME/.config/git` — git's other per-user
+ *  configuration directory, holding `config`, `attributes` and `ignore`. */
+function gitXdgConfigDir(): string | null {
+  const xdg = process.env.XDG_CONFIG_HOME;
+  const base = xdg && path.isAbsolute(xdg) ? xdg : path.join(os.homedir(), '.config');
+  const canonicalBase = canonicalRoot(base);
+  return canonicalBase === null ? null : path.join(canonicalBase, 'git');
+}
+
+/**
+ * True when an ALREADY-canonical path is one of git's per-user configuration
+ * files — the OTHER place a namespaced exec driver can be defined.
+ *
+ * lib/gitExec.ts's third mechanism used to read: "Every one of those drivers has
+ * to be DEFINED in a config file inside the repository's `.git` directory, and
+ * [the guard] refuses every caller-supplied path that traverses a `.git`
+ * component. The definition can never be written."
+ *
+ * That sentence was false. git reads `filter.<drv>.clean`, `diff.<drv>.textconv`,
+ * `merge.<drv>.driver` and `trailer.<t>.command` out of `~/.gitconfig` and
+ * `$XDG_CONFIG_HOME/git/config` exactly as it reads them out of `.git/config` —
+ * and $HOME is an ordinary workspace root the moment any agent's cwd is $HOME,
+ * which is not exotic: it is what `agents.spawn({})` produces, since
+ * normalizeSpawnCwd('') returns the home directory. Neither file is a
+ * SECRET_BASENAME, neither lives in the config dir, and neither carries a `.git`
+ * component, so `fs.write` allowed both. The `* filter=drv` half of the chain is
+ * an ordinary `.gitattributes` that nothing refuses (nor should it — see the
+ * corpus case), so the definition site was the only thing left to close.
+ *
+ * The `-c` prefix cannot close it from the other side: `-c` can only SET keys,
+ * and the driver name belongs to whoever wrote the file. Nor can
+ * GIT_CONFIG_GLOBAL be neutralized wholesale — `core.excludesFile` in the user's
+ * own global config is a legitimate part of the ignore answer that
+ * `check-ignore`, `status` and `add` all depend on.
+ *
+ * THREE clauses, because the file moves:
+ *   1. the BASENAME anywhere — `~/.gitconfig` however it is reached, folded for
+ *      the same reason the credential basenames are;
+ *   2. whatever `<home>/.gitconfig` RESOLVES to — a global config symlinked into
+ *      a dotfiles repo (an extremely ordinary arrangement) has a canonical path
+ *      that clause 1 does not match, and that repo may itself be an agent cwd;
+ *   3. anything at or inside the resolved `$XDG_CONFIG_HOME/git` — `config`,
+ *      `attributes` and `ignore` alike.
+ *
+ * Reads go with writes, on the same footing as `.git/config`: a global config
+ * routinely carries credential-helper settings and `url.<base>.insteadOf`
+ * rewrites with tokens in them.
+ *
+ * TWIN: pathIsGitGlobalConfig in cmd/brain/fsguard.go and internal/bus/policy.go.
+ */
+export function isGitGlobalConfigPath(canonicalTarget: string): boolean {
+  if (asciiLower(canonicalBasename(canonicalTarget)) === GIT_GLOBAL_CONFIG_BASENAME) return true;
+  const home = os.homedir();
+  if (home) {
+    try {
+      if (canonicalizePath(path.join(home, GIT_GLOBAL_CONFIG_BASENAME)) === canonicalTarget) {
+        return true;
+      }
+    } catch {
+      // Unresolvable home config: nothing to compare against. The basename and
+      // XDG clauses still apply.
+    }
+  }
+  const xdgGit = gitXdgConfigDir();
+  return xdgGit !== null && containsCanonicalFolded(xdgGit, canonicalTarget);
 }
 
 /**
@@ -344,13 +420,17 @@ export function traversesGitDir(canonicalTarget: string): boolean {
  * remainder; the two are supposed to stay word for word.
  *
  * Order matters: the basename check runs FIRST and unconditionally, so a
- * credential name inside a store carve-out is still refused.
+ * credential name inside a store carve-out is still refused. The two git gates
+ * (`.git/**` and the per-user global config) run next, for the same reason and
+ * with the same unconditional reach: both are places to define a program git
+ * will execute, and both are reachable through an ordinary agent cwd.
  */
 export function isSecretPath(canonicalTarget: string): boolean {
   // Folded: '.BUS-TOKEN' opens .bus-token on macOS and Windows, and the walk
   // hands this gate the caller's spelling. See containsCanonicalFolded.
   if (SECRET_BASENAMES.has(asciiLower(canonicalBasename(canonicalTarget)))) return true;
   if (traversesGitDir(canonicalTarget)) return true;
+  if (isGitGlobalConfigPath(canonicalTarget)) return true;
   const cfg = canonicalRoot(getConfigDir());
   // An unverifiable config dir means we cannot prove the target is outside it.
   if (cfg === null) return true;

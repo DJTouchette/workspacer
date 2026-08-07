@@ -12,13 +12,19 @@ import { defaultShell, resolveTerminalShell, shellConfig } from './shellAllowlis
 describe('terminals.create shell allowlist', () => {
   const realEtcShells = shellConfig.etcShellsPath;
   const realShell = process.env.SHELL;
+  const sandboxes: string[] = [];
   afterEach(() => {
     shellConfig.etcShellsPath = realEtcShells;
     if (realShell === undefined) delete process.env.SHELL;
     else process.env.SHELL = realShell;
+    while (sandboxes.length) fs.rmSync(sandboxes.pop()!, { recursive: true, force: true });
   });
 
-  const sandbox = (): string => fs.mkdtempSync(path.join(os.tmpdir(), 'wks-shells-'));
+  const sandbox = (): string => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-shells-'));
+    sandboxes.push(dir);
+    return dir;
+  };
 
   it('allows the host login shells and nothing else', () => {
     const dir = sandbox();

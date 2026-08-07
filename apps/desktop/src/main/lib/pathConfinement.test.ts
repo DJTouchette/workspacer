@@ -158,6 +158,7 @@ function skipReason(c: Case): string | null {
 
 let sandbox = '';
 let restoreModes: string[] = [];
+let savedXdg: string | undefined;
 
 beforeEach(() => {
   // realpath: on macOS os.tmpdir() is itself a symlink, and every expectation
@@ -167,6 +168,13 @@ beforeEach(() => {
   // The fixture's ${CONFIG} token — every config-dir resolver in the repo
   // appends the 'workspacer' segment, so the mock returns it verbatim.
   state.configDir = path.join(sandbox, 'config', 'workspacer');
+  // …and the OTHER config home the gate reads directly from the environment
+  // rather than through getConfigDir: git's own, `$XDG_CONFIG_HOME/git`. The two
+  // Go loaders already point XDG_CONFIG_HOME at ${SANDBOX}/config, so without
+  // this the corpus could not express a case about git's per-user config
+  // directory that all three copies answer the same way.
+  savedXdg = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = path.join(sandbox, 'config');
   for (const d of ['root', 'outside', path.join('config', 'workspacer')]) {
     fs.mkdirSync(path.join(sandbox, d), { recursive: true });
   }
@@ -182,6 +190,8 @@ afterEach(() => {
   if (sandbox) fs.rmSync(sandbox, { recursive: true, force: true });
   sandbox = '';
   state.configDir = '';
+  if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+  else process.env.XDG_CONFIG_HOME = savedXdg;
 });
 
 /** Sandbox-relative → absolute, without touching the caller-facing tokens. */
@@ -709,7 +719,7 @@ describe('path containment — cross-language contract', () => {
   // count is host-independent, so this number means the same thing on a machine
   // that skips most of the sweep. TWINS: cmd/brain/fsguard_test.go's
   // containmentCorpusFloor and internal/bus's busContainmentCorpusFloor.
-  itSweptTheWholeCorpus(corpusTally, 'the desktop containment corpus', 107);
+  itSweptTheWholeCorpus(corpusTally, 'the desktop containment corpus', 112);
 });
 
 describe('the canonical path assertPathAllowed returns', () => {
@@ -812,32 +822,43 @@ describe('resolveStoreEntry returns the path it validated', () => {
   });
   afterEach(() => fs.rmSync(store, { recursive: true, force: true }));
 
-  it('resolves an in-store symlink to its target', () => {
+  // COUNTED, like the checkUse group sixty lines above. These three shipped as
+  // `try { fs.symlinkSync(...) } catch { return }`, which is a PASS on a host
+  // that cannot make symlinks — Windows without developer mode, a container
+  // mount, or WKS_TEST_NO_SYMLINKS=1, the lever built to simulate exactly that.
+  // On this host precisely ONE test kills the mutant this block was written for
+  // (`resolveStoreEntry` returning the unresolved join), and it sat inside the
+  // swallowing catch: under the lever the corpus above skips 30 cases and its
+  // floor fires, while these three still reported a green tick. A host that
+  // cannot run the only oracle for a fix must be RED.
+  const storeGate = { ran: 0 };
+  const itLinks = gatedIt(CAN_SYMLINK, storeGate);
+
+  itLinks('resolves an in-store symlink to its target', () => {
     const target = path.join(store, 'target.yaml');
     fs.writeFileSync(target, 'x');
-    try {
-      fs.symlinkSync(target, path.join(store, 'alias.yaml'));
-    } catch {
-      return; // no symlink privilege here
-    }
+    fs.symlinkSync(target, path.join(store, 'alias.yaml'));
     expect(resolveStoreEntry(store, 'alias.yaml')).toBe(target);
   });
 
+  // Ungated on purpose: it needs no privilege, so it is not part of the group
+  // the floor counts. It is also not an oracle for the ANSWER — an unresolved
+  // join and a canonical walk agree on a plain file in the store.
   it('returns the canonical path for an ordinary entry', () => {
     fs.writeFileSync(path.join(store, 'a.yaml'), 'x');
     expect(resolveStoreEntry(store, 'a.yaml')).toBe(path.join(store, 'a.yaml'));
   });
 
-  it('still returns null for an entry that leaves the store', () => {
+  itLinks('still returns null for an entry that leaves the store', () => {
     const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-store-out-')));
-    fs.writeFileSync(path.join(outside, 'loot.yaml'), 'x');
     try {
+      fs.writeFileSync(path.join(outside, 'loot.yaml'), 'x');
       fs.symlinkSync(path.join(outside, 'loot.yaml'), path.join(store, 'pwn.yaml'));
-    } catch {
+      expect(resolveStoreEntry(store, 'pwn.yaml')).toBeNull();
+    } finally {
       fs.rmSync(outside, { recursive: true, force: true });
-      return;
     }
-    expect(resolveStoreEntry(store, 'pwn.yaml')).toBeNull();
-    fs.rmSync(outside, { recursive: true, force: true });
   });
+
+  itRanEveryGatedTest(storeGate, 'the resolveStoreEntry canonical-answer tests', 2);
 });

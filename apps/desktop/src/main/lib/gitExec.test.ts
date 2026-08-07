@@ -51,7 +51,7 @@ function plantRepo(sandbox: string, extraConfig: string, real = false): string {
 }
 
 describe('git invocations carry the no-exec config prefix', () => {
-  // The four tests below are the only ones that RUN git; the rest read source
+  // The five tests below are the only ones that RUN git; the rest read source
   // text. Without the floor at the bottom, a machine with no git on PATH runs
   // this file as a green pass over zero executions of the thing under test.
   const gitGate = { ran: 0 };
@@ -174,6 +174,66 @@ describe('git invocations carry the no-exec config prefix', () => {
     fs.rmSync(sandbox, { recursive: true, force: true });
   });
 
+  // The SAME chain, defined in the file the header's third mechanism forgot.
+  //
+  // "Every one of those drivers has to be DEFINED in a config file inside the
+  // repository's `.git` directory" was false: git reads filter.<drv>.clean out of
+  // ~/.gitconfig and $XDG_CONFIG_HOME/git/config too. Neither path carries a
+  // `.git` component, neither is a credential basename, and neither is in the
+  // workspacer config dir — so with $HOME as an agent cwd (what a bare
+  // `agents.spawn({})` produces, since normalizeSpawnCwd('') returns the home
+  // directory) `fs.write` would mint the definition and `git add` would run it.
+  // `-c` cannot answer this: it can only SET keys, and the driver name is the
+  // attacker's. So both halves are asserted here, exactly as for `.git`.
+  itGit('the filter.clean chain is closed at the GLOBAL definition site too', async () => {
+    const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-gitexec-glb-')));
+    const marker = path.join(sandbox, 'PWN_GLOBAL_CLEAN');
+    const home = path.join(sandbox, 'home');
+    fs.mkdirSync(path.join(home, '.config', 'git'), { recursive: true });
+    const repo = plantRepo(sandbox, '', true);
+
+    const savedHome = process.env.HOME;
+    const savedXdg = process.env.XDG_CONFIG_HOME;
+    process.env.HOME = home;
+    process.env.XDG_CONFIG_HOME = path.join(home, '.config');
+    try {
+      // Half one: with $HOME itself granted — an agent spawned there — neither
+      // global config location is writable through a guarded capability, while an
+      // ordinary file beside them still is.
+      expect(() =>
+        assertPathAllowed('fs.write', path.join(home, 'notes.txt'), [home]),
+      ).not.toThrow();
+      for (const rel of ['.gitconfig', '.config/git/config', '.config/git/attributes']) {
+        expect(
+          () => assertPathAllowed('fs.write', path.join(home, ...rel.split('/')), [home]),
+          `${rel} is writable — filter.<drv>.clean can be DEFINED there and git.stage runs it`,
+        ).toThrow(/outside the allowed workspace/);
+      }
+
+      // Half two: given the definition (planted directly, i.e. by the user rather
+      // than through a capability), `git add` DOES run it — from the GLOBAL config,
+      // with the repository's own .git/config untouched. That is what makes half
+      // one load-bearing rather than decorative.
+      fs.writeFileSync(
+        path.join(home, '.gitconfig'),
+        `[filter "evil"]\n\tclean = "sh -c 'touch ${marker}'; cat"\n`,
+      );
+      fs.writeFileSync(path.join(repo, '.gitattributes'), '*.txt filter=evil\n');
+      await gitStage(repo, 'a.txt');
+      expect(
+        fs.existsSync(marker),
+        'the global-config driver did not fire — if git grew a switch that disables it, ' +
+          'say so here rather than deleting the guard',
+      ).toBe(true);
+    } finally {
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+      if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = savedXdg;
+    }
+    fs.rmSync(sandbox, { recursive: true, force: true });
+  });
+
   it('every git invocation in main/ goes through gitArgs', () => {
     const root = path.join(__dirname, '..');
     const offenders: string[] = [];
@@ -210,5 +270,5 @@ describe('git invocations carry the no-exec config prefix', () => {
     expect(offenders, 'git invoked without gitArgs()').toEqual([]);
   });
 
-  itRanEveryGatedTest(gitGate, 'the tests that actually execute git', 4);
+  itRanEveryGatedTest(gitGate, 'the tests that actually execute git', 5);
 });

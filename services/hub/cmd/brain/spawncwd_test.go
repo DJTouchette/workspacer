@@ -55,7 +55,7 @@ func loadSpawnCwdCases(t *testing.T) []spawnCwdCase {
 
 // spawnCwdFloor is the block's size today; `len(...) == 0` is met by a block
 // down to one case.
-const spawnCwdFloor = 10
+const spawnCwdFloor = 14
 
 func TestSpawnCwdNormalizationContractCases(t *testing.T) {
 	home, err := os.UserHomeDir()

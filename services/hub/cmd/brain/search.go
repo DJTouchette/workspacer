@@ -32,6 +32,23 @@ type searchOpts struct {
 	MaxResults    int    `json:"maxResults"`
 }
 
+// effectiveMaxResults resolves the caller's cap. A NON-POSITIVE value means
+// "unset", not "return nothing".
+//
+// Pulled out of searchProject to be testable without a `rg` binary, and because
+// it is a twin: searchService.ts wrote `opts.maxResults ?? DEFAULT_MAX_RESULTS`,
+// and `??` only replaces null/undefined — so `maxResults: 0` was a literal cap
+// of zero there (an empty result list flagged truncated:true) and the whole 500
+// here. search.project is registered by both providers, so the same request got
+// opposite answers depending on which one answered; under the shipping
+// catalog-delegation layout that is this copy.
+func effectiveMaxResults(requested int) int {
+	if requested <= 0 {
+		return searchMaxResults
+	}
+	return requested
+}
+
 type searchMatch struct {
 	Line   int    `json:"line"`
 	Column int    `json:"column"`
@@ -51,10 +68,7 @@ func searchProject(ctx context.Context, opts searchOpts) (searchProjectResult, e
 	if opts.Query == "" {
 		return res, nil
 	}
-	maxResults := opts.MaxResults
-	if maxResults <= 0 {
-		maxResults = searchMaxResults
-	}
+	maxResults := effectiveMaxResults(opts.MaxResults)
 
 	args := []string{"--json", "--line-number", "--column"}
 	if opts.CaseSensitive {
@@ -175,7 +189,12 @@ func (c *ripgrepCollector) addLine(line string) bool {
 		return false
 	}
 	abs := filepath.Join(c.cwd, rel) // rg reports paths relative to cwd
-	text := clip(strings.TrimSpace(strings.TrimRight(msg.Data.Lines.Text, "\r\n")), searchMaxTextLen)
+	// asciiWhitespace, not strings.TrimSpace: search.project is answered by
+	// whichever provider is registered (the brain by default), and JS `.trim()`
+	// and Go's TrimSpace do not agree on U+FEFF or U+0085 — so a matching line
+	// beginning with a BOM came back with different `text` from each. Same
+	// literal set as normalizeCwd's, and as searchService.ts's TEXT_TRIM.
+	text := clip(strings.Trim(strings.TrimRight(msg.Data.Lines.Text, "\r\n"), asciiWhitespace), searchMaxTextLen)
 	// One column per submatch. rg still emits a match message even with an
 	// empty submatch list (rare), so fall back to column 1 rather than drop
 	// the whole line.

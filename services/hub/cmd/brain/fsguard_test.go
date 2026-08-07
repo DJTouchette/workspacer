@@ -17,12 +17,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -75,7 +78,11 @@ func registryWithCwds(t *testing.T, dirs ...string) *registry {
 	store := newSessionStore()
 	for i, dir := range dirs {
 		id := "s" + strconv.Itoa(i)
-		store.set(id, json.RawMessage(`{"session_id":`+jsonStr(id)+`,"cwd":`+jsonStr(dir)+`}`))
+		// mode "input" — a LIVE agent sitting at its prompt. Spelled out rather
+		// than left off because agentCwds now filters on liveness, and a helper
+		// whose name says "live agent cwds" should not be leaning on the
+		// default-is-live arm to get them.
+		store.set(id, json.RawMessage(`{"session_id":`+jsonStr(id)+`,"cwd":`+jsonStr(dir)+`,"mode":"input"}`))
 	}
 	reg.store = store
 	return reg
@@ -283,6 +290,71 @@ func TestConfigDirIsRefusedEvenWhenAnAgentCwdReadmitsIt(t *testing.T) {
 	}
 }
 
+// The DISCARD arm of the secret gate's carve-out loop — `sr, ok :=
+// canonicalRoot(store); if !ok { continue }`.
+//
+// Every other posture on this surface (canonicalRoot's own discard,
+// pathIsSecret's unverifiable-target arm, assertPathAllowed's refusal) is
+// pinned; this one was not, and the coverage profile reported the two lines as
+// never executed. The comment below them says "a carve-out only ever NARROWS the
+// gate, so everything about this arm is fail-closed" — but `continue` could be
+// changed to `return false` with the whole package green, and that mutant makes
+// ONE unresolvable carve-out turn the gate off for the entire config dir:
+// remote-token (a TRUSTED bus connection, hence /plugins/install, hence
+// arbitrary commands) and config.yaml (updates.channel → the electron-updater
+// feed URL) both become readable and writable.
+//
+// The trigger is not exotic. <configDir>/library is the one directory a remote
+// caller can fs.write into, so it is the one carve-out an attacker can aim a
+// symlink at — the same fact that motivated the `!containsPath(cfg, sr)` clause
+// on the line below. A cycle is enough; nothing has to point anywhere useful.
+//
+// `break` is covered too, by the second half: the gate must go on consulting the
+// carve-outs it CAN resolve, or one broken store silently locks the UI out of
+// the other two.
+func TestAnUnresolvableStoreCarveOutDoesNotDisarmTheSecretGate(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	cfg := configDir()
+	for _, sub := range []string{"", "sessions", "layouts"} {
+		if err := os.MkdirAll(filepath.Join(cfg, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A self-referential symlink: canonicalRoot(<configDir>/library) hits
+	// maxLinkHops and returns ok=false.
+	gateSymlink(t, filepath.Join(cfg, "library"), filepath.Join(cfg, "library"))
+
+	// Agent cwd one level above the config dir, so the ROOTS check says yes to
+	// everything below and the secret gate is the only thing that can refuse.
+	reg := registryWithCwd(t, dir)
+	ctx := context.Background()
+
+	secret := filepath.Join(cfg, "remote-token")
+	if err := os.WriteFile(secret, []byte("s3cret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg.handle(ctx, "fs.read", json.RawMessage(`{"path":`+jsonStr(secret)+`}`)); err == nil {
+		t.Error("an unresolvable library carve-out must not make remote-token readable")
+	}
+	if _, err := reg.handle(ctx, "fs.write",
+		json.RawMessage(`{"path":`+jsonStr(secret)+`,"contents":"pwned"}`)); err == nil {
+		t.Error("an unresolvable library carve-out must not make remote-token writable")
+	}
+	if got, err := os.ReadFile(secret); err != nil || string(got) != "s3cret" {
+		t.Fatalf("a denied write reached remote-token: %q (%v)", got, err)
+	}
+
+	// …and the carve-outs that still resolve keep carving.
+	for _, store := range []string{"sessions", "layouts"} {
+		p := filepath.Join(cfg, store, "item.yaml")
+		if _, err := reg.handle(ctx, "fs.write",
+			json.RawMessage(`{"path":`+jsonStr(p)+`,"contents":"ok"}`)); err != nil {
+			t.Errorf("one broken carve-out must not close %s/: %v", store, err)
+		}
+	}
+}
+
 // A plugin's own credentials are denied by BASENAME, wherever they resolve: the
 // roots can only be as narrow as the cwds agents run in, and `workspacer plugin
 // dev` drops a .bus-token into whatever directory it is pointed at — including
@@ -440,6 +512,92 @@ func TestNoLiveAgentsMeansNoWorkspaceRoots(t *testing.T) {
 	}
 }
 
+// The root SUPPLY in the shipping deployment, which had no test at all.
+//
+// Under DELEGATE_CATALOG_TO_BRAIN the hub is spawned with --brain-scope catalog,
+// main.go leaves reg.store nil, and agentCwds takes the `r.cm != nil` arm: every
+// fs.* root this process grants comes out of a claudemon /sessions body. Nothing
+// exercised that arm — every other test in this file uses registryWithCwds,
+// which sets reg.store precisely so the claudemon client is never reached — so
+// the whole branch could be replaced with "$HOME is the only agent cwd" with the
+// package green, and the liveness filter it now applies had nothing holding it
+// in place either.
+//
+// The rows below are the ones claudemon really serves. list_sessions hides only
+// `archived` and `empty_stopped`, so a stopped agent, a session the desktop
+// enrich overlay marks status "ended", and a terminals.create shell (mode
+// "unknown" for life) are all in the payload — and every one of them used to
+// become a read+write root.
+func TestCatalogScopeRootsAreTheLiveClaudemonSessionsOnly(t *testing.T) {
+	live := t.TempDir()
+	stopped := t.TempDir()
+	ended := t.TempDir()
+	shell := t.TempDir()
+	archived := t.TempDir()
+
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sessions" {
+			http.NotFound(w, r)
+			return
+		}
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `[
+		 {"session_id":"s-live","cwd":%s,"mode":"input"},
+		 {"session_id":"s-stopped","cwd":%s,"mode":"stopped","updated_at":%s},
+		 {"session_id":"s-ended","cwd":%s,"mode":"","status":"ended"},
+		 {"session_id":"s-shell","cwd":%s,"mode":"unknown"},
+		 {"session_id":"s-archived","cwd":%s,"mode":"input","archived":true}
+		]`, jsonStr(live), jsonStr(stopped), jsonStr(time.Now().UTC().Format(time.RFC3339)),
+			jsonStr(ended), jsonStr(shell), jsonStr(archived))
+	}))
+	t.Cleanup(srv.Close)
+
+	resetCwdCacheForTest()
+	t.Cleanup(resetCwdCacheForTest)
+	reg := newRegistry(newClaudemonClient(srv.URL)) // catalog scope: store stays nil
+	ctx := context.Background()
+
+	if _, err := reg.handle(ctx, "fs.write",
+		json.RawMessage(`{"path":`+jsonStr(filepath.Join(live, "notes.txt"))+`,"contents":"hi"}`)); err != nil {
+		t.Fatalf("the LIVE session's cwd must be a root in catalog scope: %v", err)
+	}
+	if hits.Load() == 0 {
+		t.Fatal("no /sessions request was made — the catalog-scope arm was not exercised, so this test proves nothing")
+	}
+
+	for _, tc := range []struct{ what, dir string }{
+		{"a stopped agent's cwd", stopped},
+		{"a session whose status is ended", ended},
+		{"a terminals.create shell's cwd (mode \"unknown\")", shell},
+		{"an archived session's cwd", archived},
+	} {
+		// Cache the root list once per probe: the point is the root SET, and the
+		// 2s TTL would otherwise let one lookup answer for all five.
+		resetCwdCacheForTest()
+		for _, method := range []string{"fs.read", "fs.write"} {
+			body := `{"path":` + jsonStr(filepath.Join(tc.dir, "notes.txt")) + `,"contents":"x"}`
+			_, err := reg.handle(ctx, method, json.RawMessage(body))
+			if err == nil || !strings.Contains(err.Error(), refusalText) {
+				t.Errorf("%s: %s must be refused (%q), got %v", method, tc.what, refusalText, err)
+			}
+		}
+	}
+
+	// And the roots are the SESSIONS' — not the daemon's own environment. A
+	// branch that answered with $HOME would satisfy nothing above on a host
+	// whose temp dir lives outside home, but say so explicitly.
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		resetCwdCacheForTest()
+		_, err := reg.handle(ctx, "fs.read",
+			json.RawMessage(`{"path":`+jsonStr(filepath.Join(home, "wks-not-a-root.txt"))+`}`))
+		if err == nil || !strings.Contains(err.Error(), refusalText) {
+			t.Errorf("$HOME must not be a workspace root just because the daemon runs there: %v", err)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // contracts/path-containment-cases.json — the cross-language corpus.
 //
@@ -460,7 +618,7 @@ const (
 	// implementation owns. Checked against ENUMERATED cases (executed +
 	// skipped), so it is the same number on a host that can make symlinks and
 	// one that cannot.
-	containmentCorpusFloor = 107
+	containmentCorpusFloor = 112
 	// brainMethodFloor is how many of capspec.PathParam's path-bearing methods
 	// this brain both provides and dispatches. Checked against EXECUTED
 	// subtests: nothing here is host-gated, so a shortfall is drift between
@@ -493,8 +651,20 @@ func methodDenyFloor(m contractMethod) int {
 	}
 }
 
-// contractFixtureRel is relative to this package dir (services/hub/cmd/brain).
-const contractFixtureRel = "../../../../contracts/path-containment-cases.json"
+// contractFixtureRel names the shared containment corpus from the REPO ROOT,
+// and readContractFixture is the only way this package reads it.
+//
+// It used to be a "../../../.." path fed to os.ReadFile, which reads the right
+// bytes and is INVISIBLE to cmd/go's test cache: computeTestInputsID drops any
+// input failing search.InDir(name, a.Package.Root), and contracts/ is four
+// levels above this module. mustReadRepoFile goes through extinput, whose path
+// still descends lexically from the module root, so the file lands in the key.
+const contractFixtureRel = "contracts/path-containment-cases.json"
+
+func readContractFixtureBytes(t *testing.T) []byte {
+	t.Helper()
+	return mustReadRepoFile(t, "contracts", "path-containment-cases.json")
+}
 
 // fsguardOwnerKey is this implementation's key in the fixture's `owners` map;
 // the groups listed there are the ones this copy must satisfy.
@@ -944,10 +1114,7 @@ func TestFixtureVocabularyIsClosed(t *testing.T) {
 	}
 
 	// 2. Every token reference in the WHOLE document names a declared token.
-	raw, err := os.ReadFile(contractFixtureRel)
-	if err != nil {
-		t.Fatalf("read the shared fixture: %v", err)
-	}
+	raw := readContractFixtureBytes(t)
 	var doc any
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("parse %s: %v", contractFixtureRel, err)
@@ -1059,10 +1226,7 @@ func sortedVocabKeys(m map[string]string) []string {
 
 func loadContractFixture(t *testing.T) contractFixture {
 	t.Helper()
-	raw, err := os.ReadFile(contractFixtureRel)
-	if err != nil {
-		t.Fatalf("read the shared fixture: %v", err)
-	}
+	raw := readContractFixtureBytes(t)
 	var fx contractFixture
 	if err := json.Unmarshal(raw, &fx); err != nil {
 		t.Fatalf("parse %s: %v", contractFixtureRel, err)
@@ -2174,6 +2338,103 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 		}
 		if _, err := os.Stat(victim); err == nil {
 			t.Error("library.remove did not unlink the item under the CANONICAL cwd")
+		}
+	})
+
+	// ── The PER-FILE guard (libraryFileGuardFor -> assertLibraryItemPath) ──
+	//
+	// The nine sites above are all cwd-level. The factory that guards a path
+	// DERIVED from an already-validated cwd — the one every readFileSync,
+	// os.Remove and os.RemoveAll of a library item goes through — was outside
+	// the contract entirely, so `return path` in place of `return canonical`
+	// survived the whole package while its own doc comment states BINDING
+	// DECISION 2 verbatim.
+	//
+	// `nope/..` cannot separate the two here: the derived path is composed by the
+	// walker, not supplied by the caller. An ordinary IN-STORE symlink can —
+	// alias.md and the file it points at are both inside the item roots, both
+	// legal, and they are two different strings. The guard resolves to the
+	// target; the caller-derived string names the link. os.ReadFile follows a
+	// symlink so a read leg is told apart by the PATH IT REPORTS, and os.Remove
+	// does not, so the unlink leg is told apart by which of the two disappears.
+	perFileTree := func(t *testing.T, sub, target, alias string) (string, string) {
+		t.Helper()
+		root := filepath.Join(dir, sub)
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		full := filepath.Join(root, target)
+		if err := os.WriteFile(full, []byte("---\ntitle: T\nname: T\n---\n\nb\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(root, alias)
+		if err := os.Symlink(full, link); err != nil {
+			t.Fatal(err)
+		}
+		return full, link
+	}
+	itemPaths := func(t *testing.T, raw json.RawMessage) map[string]bool {
+		t.Helper()
+		var items []libraryItem
+		if err := json.Unmarshal(raw, &items); err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]bool{}
+		for _, it := range items {
+			out[it.Path] = true
+		}
+		return out
+	}
+
+	run("library.go readLibraryDir -> os.ReadFile (per-file guard)", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		full, link := perFileTree(t, filepath.Join(".workspacer", "library"), "ptarget.md", "palias.md")
+		reg := registryWithCwd(t, dir)
+		raw, err := reg.handle(context.Background(), "library.list",
+			json.RawMessage(`{"cwd":`+jsonStr(dir)+`}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		paths := itemPaths(t, raw)
+		if !paths[full] {
+			t.Errorf("the aliased item was not reported at the CANONICAL path %q; got %v", full, paths)
+		}
+		if paths[link] {
+			t.Errorf("readLibraryDir reported the caller-derived link path %q instead of the guard's answer", link)
+		}
+	})
+
+	run("library.go readClaudeItem -> os.ReadFile (per-file guard)", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		full, link := perFileTree(t, filepath.Join(".claude", "agents"), "ctarget.md", "calias.md")
+		reg := registryWithCwd(t, dir)
+		raw, err := reg.handle(context.Background(), "library.list",
+			json.RawMessage(`{"cwd":`+jsonStr(dir)+`}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		paths := itemPaths(t, raw)
+		if !paths[full] {
+			t.Errorf("the aliased claude item was not reported at the CANONICAL path %q; got %v", full, paths)
+		}
+		if paths[link] {
+			t.Errorf("readClaudeItem reported the caller-derived link path %q instead of the guard's answer", link)
+		}
+	})
+
+	run("library.go removeLibrary remove() -> os.Remove/os.RemoveAll (per-file guard)", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		full, link := perFileTree(t, filepath.Join(".claude", "agents"), "rtarget.md", "ralias.md")
+		reg := registryWithCwd(t, dir)
+		if _, err := reg.handle(context.Background(), "library.remove",
+			json.RawMessage(`{"scope":"claude","kind":"agent","id":"ralias","cwd":`+jsonStr(dir)+`}`)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(full); err == nil {
+			t.Errorf("library.remove unlinked something other than the guard's answer %q", full)
+		}
+		if _, err := os.Lstat(link); err != nil {
+			t.Errorf("library.remove unlinked the LINK the caller named instead of the file the guard validated: %v", err)
 		}
 	})
 

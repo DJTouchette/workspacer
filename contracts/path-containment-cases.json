@@ -519,7 +519,7 @@
   "checkUse": [
     {
       "owner": "services/hub/cmd/brain/fsguard.go",
-      "requirement": "assertPathAllowed returns the canonical path it validated, and every call site passes THAT to the filesystem operation instead of the caller's raw string.",
+      "requirement": "assertPathAllowed returns the canonical path it validated, and every call site passes THAT to the filesystem operation instead of the caller's raw string. This covers the PER-FILE guard (libraryFileGuardFor -> assertLibraryItemPath) as well as the cwd-level one: the first nine sites below are cwd-level, and the last three are the legs that guard a path DERIVED from an already-validated cwd. Those three were outside the contract while carrying the same rule in their own doc comment, so the factory could hand back the caller-derived string with the whole Go tree green — and one of the legs is an os.RemoveAll.",
       "callSites": [
         "handlers.go fs.listDir -> listHostDir",
         "handlers.go fs.read -> readTextFile",
@@ -529,7 +529,10 @@
         "handlers.go library.list -> listLibrary",
         "handlers.go library.remove -> removeLibrary",
         "library.go saveLibrary -> writeFileAtomic",
-        "library.go saveLibraryClaude -> writeFileAtomic"
+        "library.go saveLibraryClaude -> writeFileAtomic",
+        "library.go readLibraryDir -> os.ReadFile (per-file guard)",
+        "library.go readClaudeItem -> os.ReadFile (per-file guard)",
+        "library.go removeLibrary remove() -> os.Remove/os.RemoveAll (per-file guard)"
       ]
     },
     {
@@ -623,6 +626,22 @@
       "expect": "allow",
       "resolvesTo": "${ROOT}/notes.txt",
       "why": "Dropping '.' is the one textual normalization that is always safe; a component walk that treats it as a real name would deny every path a shell tab-completes."
+    },
+    {
+      "name": "a TRAILING '.' component is a no-op too",
+      "group": "containment",
+      "tree": {
+        "dirs": [
+          "root/proj"
+        ]
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/proj/.",
+      "expect": "allow",
+      "resolvesTo": "${ROOT}/proj",
+      "why": "The case above only covers an INTERIOR dot, and one of the three copies filters the final component on a separate arm from the rest (fsguard.go splitComponents has a trailing-run branch after the loop). Dropping the filter there survived every other case: canonicalizePath('<dir>/.') then answers '<dir>/.', which is what the handler opens, and canonicalRoot of an agent cwd reported as '<proj>/.' yields a root that containsPath matches against nothing — that agent's whole tree silently stops being allowed. 'ls .' and every directory a picker hands back in that form are ordinary inputs, so the no-op has to hold at both ends of the path."
     },
     {
       "name": "the second root in the list matches",
@@ -2595,7 +2614,7 @@
       "target": "${ROOT}/proj/.gitattributes",
       "expect": "allow",
       "resolvesTo": "${ROOT}/proj/.gitattributes",
-      "why": "The .git rule is COMPONENT-exact, never a prefix: .gitignore, .gitattributes, .gitmodules and .github/ are ordinary project files an agent and the UI both edit, and a `startsWith('.git')` spelling of the gate would make every one of them unreadable. A .gitattributes on its own is inert — it can only select a driver that some .git/config defines, and that file is the one being refused."
+      "why": "The .git rule is COMPONENT-exact, never a prefix: .gitignore, .gitattributes, .gitmodules and .github/ are ordinary project files an agent and the UI both edit, and a `startsWith('.git')` spelling of the gate would make every one of them unreadable. A .gitattributes is the SELECTION half of the filter/diff driver chain (`* filter=p`), never the DEFINITION half — it can only name a driver that some config file defines, and every file git would read that definition out of is refused: `.git/config` and `.git/config.worktree` by this rule, `~/.gitconfig` and $XDG_CONFIG_HOME/git/config by the three cases above. That second clause is why those cases exist: without them this sentence was false, and .gitattributes really was one fs.write away from arbitrary execution."
     },
     {
       "name": "a directory named .github is not the repository metadata directory",
@@ -2615,6 +2634,80 @@
       "expect": "allow",
       "resolvesTo": "${ROOT}/proj/.github/workflows/ci.yml",
       "why": "The other half of component-exactness, in the direction a deny case cannot see: .github is the single most-edited directory in a repository and a prefix test would blank it out of the UI entirely."
+    },
+    {
+      "name": "git's per-user config is refused by NAME wherever it sits",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/proj"
+        ],
+        "files": {
+          "root/proj/.gitconfig": "[filter \"p\"]\n\tclean = sh -c 'touch /tmp/PWNED'; cat\n"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/proj/.gitconfig",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "The `.git` rule was documented as covering every place a NAMESPACED exec driver (filter.<drv>.clean, which `git add` runs for git.stage; diff.<drv>.textconv; merge.<drv>.driver; trailer.<t>.command) can be DEFINED. It does not: git reads those keys out of the per-user global config too, and that file carries no `.git` component, is no credential basename, and lives nowhere near the config dir — so fs.write allowed it. $HOME becomes an ordinary root the moment an agent's cwd is $HOME, which is exactly what a bare agents.spawn({}) produces (normalizeCwd(\"\") returns the home directory), and the `* filter=p` half of the chain is an ordinary .gitattributes nothing refuses. Refused by BASENAME here, so it is refused however the file is reached rather than only at one computed location."
+    },
+    {
+      "name": "git's per-user config is refused where it actually lives, under $HOME",
+      "group": "secrets",
+      "needsHome": true,
+      "tree": {
+        "dirs": [
+          "root"
+        ]
+      },
+      "roots": [
+        "${HOME}"
+      ],
+      "target": "${HOME}/.gitconfig",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "The same gate at the address that matters. Granting ${HOME} is not a contrivance — it is what one agent spawned in the home directory does to the root set — and every other case in this group would still pass if the rule only bit inside ${ROOT}. The file does not exist in the sandbox, deliberately: the gate runs on the canonical path, and a copy that only refused EXISTING files would let fs.write create one."
+    },
+    {
+      "name": "git's XDG configuration directory is refused, config and attributes alike",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "config/git"
+        ],
+        "files": {
+          "config/git/config": "[core]\n\texcludesFile = /dev/null\n"
+        }
+      },
+      "roots": [
+        "${SANDBOX}"
+      ],
+      "target": "${SANDBOX}/config/git/config",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "The second location git reads the same namespaced keys from: $XDG_CONFIG_HOME/git/config, with `attributes` and `ignore` beside it. The basename here is the utterly ordinary `config`, so the name rule cannot reach it and the gate has to know the LOCATION — which means resolving the environment's config home for itself, as it already does for the workspacer config dir."
+    },
+    {
+      "name": "a directory merely NAMED git inside a project is not git's config home",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/git"
+        ],
+        "files": {
+          "root/git/config": "port = 8080\n"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/git/config",
+      "expect": "allow",
+      "resolvesTo": "${ROOT}/git/config",
+      "why": "The allow direction the case above must not take with it, and the one that distinguishes a LOCATION rule from a name rule. `git/config` is an ordinary pair of names — a Go package, a helm chart, a services/git/config — and a copy that implemented the XDG clause as \"basename `config` under a parent named `git`\" denies every one of them while passing all three deny cases."
     },
     {
       "name": "a directory whose NAME ends in a backslash still gets a separator before its child",
@@ -3224,6 +3317,26 @@
         "in": "/does/not/exist",
         "out": "/does/not/exist",
         "why": "No existence check on either side. A spawn that cannot run where it was asked to must fail where it was asked to, not open a shell in $HOME."
+      },
+      {
+        "in": "\ufeff",
+        "out": "\ufeff",
+        "why": "U+FEFF (ZWNBSP/BOM) is in ECMAScript's WhiteSpace production and is NOT unicode.IsSpace in Go (it was dropped from White_Space in Unicode 4.0.1), so JS .trim() and Go strings.TrimSpace are not the same function. This exact string trimmed to empty on the desktop and became $HOME \u2014 which agentCwds() then feeds into workspaceRoots(), making the whole home tree an fs.* root \u2014 while the brain ran the agent in a directory named U+FEFF. Both copies now trim the ASCII set only, so the BOM is an ordinary character, which is what it is on the filesystem. A BOM-prefixed path is what a value pasted out of a Windows editor or read from a UTF-8-with-BOM file actually carries."
+      },
+      {
+        "in": "\ufeff/tmp/x",
+        "out": "\ufeff/tmp/x",
+        "why": "The same code point with a real path behind it: the desktop answered /tmp/x and the brain answered the U+FEFF-prefixed string, so one provider spawned in an existing directory and the other did not."
+      },
+      {
+        "in": "\u0085",
+        "out": "\u0085",
+        "why": "U+0085 (NEL) is the mirror image: unicode.IsSpace in Go, and neither <USP> nor a LineTerminator in JS. The brain trimmed it to empty and answered $HOME while the desktop kept it. Both differences have to be closed together or the seam merely swaps which provider is wrong."
+      },
+      {
+        "in": "\u00a0/tmp",
+        "out": "\u00a0/tmp",
+        "why": "NBSP is whitespace to BOTH built-ins, so it used to be trimmed on both sides and agreed by accident. It is pinned as KEPT because the fix is 'trim the ASCII set, nothing else' rather than 'trim the intersection' \u2014 a filename may legitimately begin with a non-breaking space, and a rule stated as a code-point list is the only one three stacks can implement identically."
       }
     ]
   }

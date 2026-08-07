@@ -10,8 +10,6 @@ package main
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
@@ -31,11 +29,8 @@ type modelCatalogCase struct {
 }
 
 func TestClaudeModelCatalogContractCases(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "..", "contracts", "claude-model-catalog-cases.json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
+	const path = "contracts/claude-model-catalog-cases.json"
+	raw := mustReadRepoFile(t, "contracts", "claude-model-catalog-cases.json")
 	var fx struct {
 		Cases []modelCatalogCase `json:"cases"`
 	}

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -50,19 +51,61 @@ func configDir() string {
 
 // configDirFor resolves the config dir for a given GOOS. Parameterized so the
 // Windows branch is unit-testable on any host.
+//
+// Returns "" when there is no home directory to anchor on — see homeDir. Every
+// security gate that consumes this already treats a non-absolute config dir as
+// unverifiable and fails closed (canonicalRoot discards it, so
+// pathIsSecretCanonical answers "secret" for everything), which a RELATIVE
+// answer would not have done.
 func configDirFor(goos string) string {
 	if goos == "windows" {
 		if appData := os.Getenv("APPDATA"); appData != "" {
 			return filepath.Join(appData, "workspacer")
 		}
-		home, _ := os.UserHomeDir()
+		home := homeDir()
+		if home == "" {
+			return ""
+		}
 		return filepath.Join(home, "AppData", "Roaming", "workspacer")
 	}
 	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
 		return filepath.Join(x, "workspacer")
 	}
-	home, _ := os.UserHomeDir()
+	home := homeDir()
+	if home == "" {
+		return ""
+	}
 	return filepath.Join(home, ".config", "workspacer")
+}
+
+// homeDir is os.UserHomeDir with the fallback Node's os.homedir() has and Go's
+// does not: the effective uid's passwd entry.
+//
+// os.UserHomeDir reads $HOME and NOTHING ELSE, and it returns an error rather
+// than a path when the variable is unset — which a systemd unit, a launchd job
+// and most container entrypoints all are. The error was discarded here, so
+// filepath.Join("", ".config", "workspacer") produced the RELATIVE string
+// ".config/workspacer", resolved against whatever cwd the daemon happened to
+// have. Node's os.homedir() falls back to the passwd entry and still answers
+// /home/<user>, so the desktop and the TUI went on using the real config dir
+// while a headless `workspacer serve` quietly used a different one: config,
+// profiles, layouts, sessions and the token store all split in two, and
+// downstream in fsguard the relative root was DISCARDED, which turns the
+// config-dir half of the secret gate off for the whole process.
+//
+// "" is the refusal, and it is deliberate: an empty config dir is unverifiable
+// everywhere it is consumed and therefore fail-closed, where a relative one
+// silently names a real directory.
+//
+// TWIN: authtoken.HomeDir, and the desktop's os.homedir() (Node builtin).
+func homeDir() string {
+	if h, err := os.UserHomeDir(); err == nil && h != "" {
+		return h
+	}
+	if u, err := user.Current(); err == nil && u.HomeDir != "" {
+		return u.HomeDir
+	}
+	return ""
 }
 
 func profilesPath() string {
@@ -451,6 +494,13 @@ func expandTilde(p string) string {
 	return p
 }
 
+// asciiWhitespace is the whitespace every caller-string trim on this seam
+// strips: space, tab, and the four ASCII vertical/form controls. Spelled as a
+// literal set because neither language's built-in trim is portable — see
+// normalizeCwd's TRIM SET note. Twins: searchService.ts TEXT_TRIM and
+// spawnCwd.ts TRIM_SET.
+const asciiWhitespace = " \t\n\v\f\r"
+
 // normalizeCwd is the ONE normalization a caller-supplied spawn/terminal cwd
 // gets, on both providers. It trims surrounding whitespace and strips trailing
 // slashes, and does nothing else.
@@ -474,8 +524,27 @@ func expandTilde(p string) string {
 //
 // TWIN: apps/desktop/src/main/lib/spawnCwd.ts normalizeSpawnCwd. The fixture's
 // `spawnCwds` block holds the two together.
+//
+// The TRIM SET is spelled out rather than delegated. strings.TrimSpace and JS
+// `.trim()` are not the same function, and the two differences point in opposite
+// directions:
+//
+//	U+FEFF (ZWNBSP/BOM)  in ECMAScript's WhiteSpace production, NOT in Go's
+//	                     unicode.IsSpace (dropped from White_Space in Unicode
+//	                     4.0.1) — so {"cwd":"<U+FEFF>"} trimmed to empty on the
+//	                     desktop and became $HOME, while the brain ran a session
+//	                     in a directory literally named U+FEFF.
+//	U+0085 (NEL)         unicode.IsSpace in Go, neither <USP> nor a
+//	                     LineTerminator in JS — the same split, the other way.
+//
+// A BOM is exactly what a path pasted out of a Windows editor or read from a
+// UTF-8-with-BOM file carries, and this cwd is the string that lands in
+// workspaceRoots(), so "$HOME is a root" versus "a nonexistent directory is a
+// root" is the difference. Neither language's built-in is portable, so both
+// copies trim the ASCII whitespace set and nothing else; every other code point
+// is an ordinary character in a filename, which is what it is on the filesystem.
 func normalizeCwd(p string) string {
-	s := strings.TrimSpace(p)
+	s := strings.Trim(p, asciiWhitespace)
 	for len(s) > 1 && (strings.HasSuffix(s, "/") || strings.HasSuffix(s, "\\")) {
 		s = s[:len(s)-1]
 	}

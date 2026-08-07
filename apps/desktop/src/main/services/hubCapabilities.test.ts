@@ -448,6 +448,35 @@ describe('claude control pass-throughs', () => {
     ).rejects.toThrow(/requires \{ sessionId, mode \}/);
   });
 
+  // agents.spawn refuses to let a bus caller start an auto-approving agent —
+  // "a YOLO agent must be started locally". claude.setPermissionMode reaches an
+  // agent that is ALREADY RUNNING, does not ownership-check the sessionId, and
+  // had no clamp at all: `mode` was validated as a non-empty string and
+  // forwarded verbatim to POST /sessions/:id/permission-mode, which claudemon
+  // applies for real (Shift+Tab to the bypass footer on PTY claude, the
+  // adapter's auto-approve flag on codex/opencode/pi). One extra call therefore
+  // undid the spawn clamp on an agent the LOCAL user had started in ask mode,
+  // and agents.sendMessage drove it from there.
+  for (const mode of ['bypassPermissions', 'yolo', 'dontAsk', 'auto']) {
+    it(`claude.setPermissionMode refuses '${mode}' from a bus caller`, async () => {
+      await expect(
+        async () => await call('claude.setPermissionMode', { sessionId: 's1', mode }),
+      ).rejects.toThrow(/cannot switch a running session into/);
+      // A refusal that still reached the daemon would be no refusal at all.
+      expect(clientMock.setPermissionMode).not.toHaveBeenCalled();
+      expect(notePermissionMode).not.toHaveBeenCalled();
+    });
+  }
+
+  // The floor: an allowlist that refused everything would satisfy the four cases
+  // above while breaking the remote pill entirely. Tightening is not escalation.
+  for (const mode of ['default', 'ask', 'acceptEdits', 'plan', 'manual']) {
+    it(`claude.setPermissionMode still allows '${mode}'`, async () => {
+      await call('claude.setPermissionMode', { sessionId: 's1', mode });
+      expect(clientMock.setPermissionMode).toHaveBeenCalledWith('s1', mode);
+    });
+  }
+
   it('claude.setModel forwards model + effort to claudemon', async () => {
     await call('claude.setModel', { sessionId: 's1', model: 'gpt', effort: 'high' });
     expect(clientMock.setModel).toHaveBeenCalledWith('s1', 'gpt', 'high');
@@ -771,6 +800,56 @@ describe('git.* cwd confinement', () => {
       const rel = path.relative(repoRoot, path.join(agentCwd, 'src', 'new.ts'));
       await call('git.diff', { cwd: agentCwd, path: rel, untracked: true });
       expect(gitMock.diff).toHaveBeenCalledWith(agentCwd, rel, undefined, true);
+    });
+
+    // ── the staging leg ────────────────────────────────────────────────
+    //
+    // git.stage and a path-less git.diff{staged} COMPOSE into exfiltration that
+    // neither is on its own. `git add` runs from the DERIVED work-tree root
+    // (rev-parse --show-toplevel, a directory nothing ever checked against the
+    // allow-list), and `path` reached gitService with no guard at all — so a
+    // root-relative pathspec, or NO pathspec at all (`git add -A` over the whole
+    // repository), put files outside every allowed root into the index, where
+    // `git diff --staged` renders each of them as an all-added diff with full
+    // content because they are not in HEAD. git.commit persists it,
+    // git.commitDiff hands it back, git.push publishes it.
+    it('git.stage refuses a sibling-subtree pathspec the tracked diff would allow', async () => {
+      await expect(call('git.stage', { cwd: agentCwd, path: 'services/hub/.env' })).rejects.toThrow(
+        /outside the allowed workspace/,
+      );
+      expect(gitMock.stage).not.toHaveBeenCalled();
+    });
+
+    it('git.stage refuses an absolute pathspec outside the repo', async () => {
+      await expect(call('git.stage', { cwd: agentCwd, path: '/etc/shadow' })).rejects.toThrow(
+        /outside the allowed workspace/,
+      );
+      expect(gitMock.stage).not.toHaveBeenCalled();
+    });
+
+    // The path-LESS form is the half a per-path guard cannot reach: `git add -A`
+    // from the root stages the sibling subtree without naming it.
+    it('git.stage with no path stages the guarded cwd, not the whole repository', async () => {
+      await call('git.stage', { cwd: agentCwd });
+      expect(gitMock.stage).toHaveBeenCalledWith(agentCwd, 'apps/desktop');
+    });
+
+    it('git.unstage with no path is bounded the same way', async () => {
+      await call('git.unstage', { cwd: agentCwd });
+      expect(gitMock.unstage).toHaveBeenCalledWith(agentCwd, 'apps/desktop');
+    });
+
+    it('git.unstage refuses a sibling-subtree pathspec', async () => {
+      await expect(
+        call('git.unstage', { cwd: agentCwd, path: 'services/hub/.env' }),
+      ).rejects.toThrow(/outside the allowed workspace/);
+      expect(gitMock.unstage).not.toHaveBeenCalled();
+    });
+
+    it('git.stage still stages a path inside the agent cwd, root-relative', async () => {
+      const rel = path.relative(repoRoot, path.join(agentCwd, 'src', 'new.ts'));
+      await call('git.stage', { cwd: agentCwd, path: rel });
+      expect(gitMock.stage).toHaveBeenCalledWith(agentCwd, rel);
     });
 
     it('still allows a root-relative path in a sibling subtree (what git.status hands back)', async () => {

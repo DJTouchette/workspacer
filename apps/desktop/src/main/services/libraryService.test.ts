@@ -417,6 +417,34 @@ describe('libraryService — every leg applies the guard it was handed', () => {
     expect(fs.existsSync(path.join(outside, 'library'))).toBe(false);
     fs.rmSync(outside, { recursive: true, force: true });
   });
+
+  // The same argument WITHOUT a symlink, which is the half that was free.
+  //
+  // With `.workspacer` symlinked out of the root the per-file guard refuses the
+  // derived directory anyway, so the test above passes whether mayCreate is true
+  // or false — reverting `ensureProjectWatch(cwd, true, false, guard)` to
+  // `(cwd, true, true, guard)` left libraryService.test.ts 33/33 and the whole
+  // main suite green, while the sibling fix on the identical argument in list()
+  // IS pinned. Two legs of one fix, opposite coverage.
+  //
+  // Ordinarily — no symlink — the mkdir lands INSIDE the allowed cwd, passes the
+  // guard, and happens: a claude-scope library.save silently creates and watches
+  // `<cwd>/.workspacer/library`, where the Go twin (saveLibraryClaude) creates
+  // nothing at all. That is a provider-visible on-disk side effect and an extra
+  // `library.changed` emitter, decided by which provider answered.
+  it('save({scope:claude}) does not create the project library dir at all', () => {
+    const root = fs.realpathSync(cwd);
+    const item = libraryService.save(
+      { scope: 'claude', id: 'my-skill', title: 'My Skill', kind: 'skill', body: 'b', cwd: root },
+      itemGuard('library.save', root),
+    );
+    // The floor: the claude item itself is still written.
+    expect(fs.existsSync(item.path)).toBe(true);
+    expect(
+      fs.existsSync(path.join(root, '.workspacer')),
+      'saveClaude writes into .claude/… and has no business mkdir-ing the project library dir — the Go twin creates nothing',
+    ).toBe(false);
+  });
 });
 
 /**

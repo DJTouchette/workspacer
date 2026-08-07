@@ -918,7 +918,25 @@ func (cn *conn) authorize(method string, params json.RawMessage) error {
 		// consented data, so naming it back is not a disclosure.
 		return fmt.Errorf("%s: path is outside the allowed workspace (agent cwds + config stores)", method)
 	case err != nil:
-		return fmt.Errorf("%s: cannot resolve %q: %w", method, target, err)
+		// The ERRNO stays on this side. pathWithinRoots canonicalizes BEFORE it
+		// contains, and the walk fails hard on every Lstat error that is not
+		// ENOENT — so wrapping that error back to the caller answered a question
+		// the grant was supposed to gate, for paths ANYWHERE on the host:
+		//
+		//   an existing regular file  -> "not a directory"
+		//   an unreadable ancestor    -> "permission denied"
+		//   absent, or a real dir     -> the containment message below
+		//
+		// Three distinguishable replies for three out-of-root paths, none of
+		// which the plugin was granted, which is a filesystem existence/type/
+		// permission oracle for a program confined to one directory. The secret
+		// arm two lines up is deliberately non-echoing for exactly this reason;
+		// this arm was not, and it is reached FIRST, so the roots never got a
+		// say. Same verdict as being outside the scope — which is true: it is
+		// outside every root the guard could verify — logged here so the hub
+		// operator can still see why a legitimate grant stopped resolving.
+		log.Printf("[bus] plugin %q capability %q: %q did not resolve (%v) — denied as out of scope", cn.pluginID, method, target, err)
+		return fmt.Errorf("%s: path %q is outside the plugin's granted scope", method, target)
 	case !within:
 		return fmt.Errorf("%s: path %q is outside the plugin's granted scope", method, target)
 	}
