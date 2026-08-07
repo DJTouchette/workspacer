@@ -101,13 +101,18 @@ func resolveRoots(paths []string, bindings map[string]string) []string {
 // segment, which is asserted directly (sandbox_test.go drives a manifest
 // declaring "${pluginDir}/../..").
 //
-// The withinRoot() call in the token branch below is therefore UNREACHABLE as
-// this function is reached today, and it is kept deliberately rather than
-// trimmed: filepath.Join Cleans ".." away, so if validateScope is ever relaxed
-// — or a second entry point appears — the escape becomes invisible by the time
-// the bus canonicalizes the root, and this is the only thing left standing. A
-// mutation on it survives by construction; that is what a redundant fail-closed
-// check looks like, not a gap. Do not "simplify" it away to raise a score.
+// The LEXICAL withinRoot() call in the token branch below is therefore
+// UNREACHABLE as this function is reached today, and it is kept deliberately
+// rather than trimmed: filepath.Join Cleans ".." away, so if validateScope is
+// ever relaxed — or a second entry point appears — the escape becomes invisible
+// by the time the bus canonicalizes the root, and this is the only thing left
+// standing. A mutation on it survives by construction; that is what a redundant
+// fail-closed check looks like, not a gap. Do not "simplify" it away to raise a
+// score.
+//
+// The CANONICAL withinRoot() call right after it is a different animal and is
+// very much reachable — see the note there. Lexical containment was never
+// enough, because the bus resolves the root it stores.
 func expandScope(p string, bindings map[string]string) string {
 	if validateScope(p) != nil {
 		return ""
@@ -127,6 +132,28 @@ func expandScope(p string, bindings map[string]string) string {
 		}
 		full := filepath.Join(base, filepath.FromSlash(rest))
 		if !withinRoot(base, full) {
+			return ""
+		}
+		// …and the same containment again, CANONICALLY, because the lexical test
+		// above is not the last word: the bus canonicalizes every grant root at
+		// registration (BINDING DECISION 2), so a symlink SHIPPED INSIDE the
+		// plugin's own directory relocates the root after this function has
+		// approved it. `${pluginDir}/all` with `<pluginDir>/all -> /` passed the
+		// lexical test, canonicalized to "/", and — since a volume root contains
+		// everything below it (BINDING DECISION 3) — granted the plugin fs.write
+		// on ~/.claude/settings.json (hooks are arbitrary commands),
+		// ~/.ssh/authorized_keys and /etc. `/plugins/install` clones a repository
+		// verbatim, so the link arrives with the plugin; the plugin's own sidecar
+		// can equally create it before a pane token is minted.
+		//
+		// A subpath may only NARROW the binding it names, and "narrow" has to
+		// mean where it LANDS, not how it is spelled. Cheap: once per declared
+		// scope at load/pane-token time, never per call. An unresolvable side
+		// denies, matching canonRoots' discard.
+		cb, okBase := bus.CanonicalizeRoot(base)
+		cf, okFull := bus.CanonicalizeRoot(full)
+		if !okBase || !okFull || !withinRoot(cb, cf) {
+			log.Printf("SECURITY: dropping path scope %q — it resolves to %q, outside the directory %q it names (a symlink inside the base relocates the root the bus would store)", p, cf, base)
 			return ""
 		}
 		return full

@@ -93,6 +93,35 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   'replay.seek': { label: 'Replay a session timeline' },
   'replay.diff': { label: 'Replay a session timeline' },
   'replay.close': { label: 'Replay a session timeline' },
+
+  // The CATALOG capabilities. hubCapabilities.ts registers through TWO helpers —
+  // registerCapability() and the delegation-aware alias cat() — and the drift
+  // guard below only ever matched the first, so these twenty registered methods
+  // were outside the list that claims to cover "every capability the main process
+  // actually registers". capspec's own parser for the same file has always known
+  // both spellings, which is what makes the omission an oversight rather than a
+  // decision. config.save in particular is the method whose own capspec entry
+  // says agents.binaries is "argv[0] of every spawned agent".
+  'config.get': { label: 'Read your app settings' },
+  'config.getPath': { label: 'See where your settings file lives' },
+  'config.reload': { label: 'Reload your app settings' },
+  'config.save': { label: 'Change your app settings', sensitive: true },
+  'claude.listModels': { label: 'List available models' },
+  'claude.profiles.list': { label: 'See your Claude profiles' },
+  'claude.profiles.add': { label: 'Add a Claude profile', sensitive: true },
+  'claude.profiles.update': { label: 'Change a Claude profile', sensitive: true },
+  'claude.profiles.remove': { label: 'Remove a Claude profile', sensitive: true },
+  'claude.sessionsForDir': { label: 'See past sessions for a folder' },
+  'sessions.list': { label: 'See your saved sessions' },
+  'sessions.load': { label: 'Read a saved session' },
+  'sessions.save': { label: 'Save a session', sensitive: true },
+  'sessions.delete': { label: 'Delete a saved session', sensitive: true },
+  'layouts.list': { label: 'See your saved layouts' },
+  'layouts.save': { label: 'Save a layout', sensitive: true },
+  'layouts.delete': { label: 'Delete a saved layout', sensitive: true },
+  'library.list': { label: 'Read your prompt library' },
+  'library.save': { label: 'Write to your prompt library', sensitive: true },
+  'library.remove': { label: 'Delete from your prompt library', sensitive: true },
 };
 
 /** Plain-English name for the folder a `${…}` binding resolves to. */
@@ -138,10 +167,27 @@ function describeScope(path: string): ScopeInfo {
   if (path === '*' || path === '') return { label: 'anywhere', escapes: true };
   const segments = path.replace(/\\/g, '/').split('/');
   const friendly = BINDING_LABELS[segments[0]];
-  if (!friendly) return { label: path, escapes: false };
-  return climbsAboveRoot(segments.slice(1))
-    ? { label: `a folder above ${friendly}`, escapes: true }
-    : { label: friendly, escapes: false };
+  if (friendly) {
+    return climbsAboveRoot(segments.slice(1))
+      ? { label: `a folder above ${friendly}`, escapes: true }
+      : { label: friendly, escapes: false };
+  }
+  // An ABSOLUTE scope, which is the case this function used to get exactly
+  // backwards. The two spellings it flagged — `*` and `${…}/../..` — are the two
+  // the hub resolves to NO root at all (expandScope returns ""), while `/` was
+  // rendered "in /" at severity normal even though the bus stores it verbatim as
+  // a grant root and a volume root contains everything below it. So the scope
+  // that granted the whole filesystem read as an ordinary line while the two
+  // that granted nothing read as sensitive, in a disclosure whose own contract
+  // is that under-warning is the failure mode that matters.
+  //
+  // An absolute scope is outside every folder the plugin's own bindings name, by
+  // construction — it is not `${pluginDir}` and not `${agentCwd}` — so it is a
+  // filesystem grant the user is being asked to hand over on install-time
+  // consent alone. It says so.
+  const volumeRoot = /^(?:\/|[A-Za-z]:\/?)$/.test(path.replace(/\\/g, '/'));
+  if (volumeRoot) return { label: 'the WHOLE filesystem', escapes: true };
+  return { label: `${path} (outside its own folder)`, escapes: true };
 }
 
 export function capLine(c: PluginCapability): PermissionLine {

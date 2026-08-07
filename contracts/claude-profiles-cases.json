@@ -42,6 +42,10 @@
           "expectedList",
           "expectedFile",
           "why"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/profiles_contract_test.go::TestClaudeProfilesContractCases(",
+          "apps/desktop/src/main/services/claudeProfilesContract.test.ts::contracts/claude-profiles-cases.json — list"
         ]
       },
       "add": {
@@ -53,6 +57,10 @@
           "expectedAdded",
           "expectedFileIds",
           "why"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/profiles_contract_test.go::TestClaudeProfilesContractCases(",
+          "apps/desktop/src/main/services/claudeProfilesContract.test.ts::contracts/claude-profiles-cases.json — add"
         ]
       },
       "mutate": {
@@ -61,6 +69,17 @@
           "name",
           "file",
           "why"
+        ],
+        "optional": [
+          "update",
+          "updateId",
+          "removeId",
+          "expectFound",
+          "expectedFileIds"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/profiles_contract_test.go::TestClaudeProfilesContractCases(",
+          "apps/desktop/src/main/services/claudeProfilesContract.test.ts::contracts/claude-profiles-cases.json — update/remove"
         ]
       }
     }

@@ -499,6 +499,102 @@ func TestLibraryRemoveDoesNotDeleteOutsideTheRootsThroughASymlink(t *testing.T) 
 	}
 }
 
+// TestLibraryRemoveEveryLegStaysInsideTheRoots is the same escape as the test
+// above, against the THREE other delete legs.
+//
+// removeLibrary has four of them (skill, agent, command, and project/global)
+// sharing one guard, and only the skill leg was covered — dropping
+// libraryFileGuardFor from the `command` leg or from the project/global leg left
+// `go test ./... -count=1` at exit 0, with both mutations applied at once. Every
+// one of these paths is DERIVED from the caller's cwd after the cwd check, so a
+// symlinked directory component relocates it: `.claude/commands -> /elsewhere`
+// and `.workspacer/library -> /elsewhere` are both forms a git clone carries
+// verbatim, and scope "global" runs against <configDir>/library, the one
+// directory a remote bus caller can already write into.
+//
+// Each leg gets its own subtest so the failure NAMES the leg, and each carries
+// its own floor: an ordinary item in the same place is still deleted, so a
+// passing run cannot mean "removeLibrary stopped unlinking".
+func TestLibraryRemoveEveryLegStaysInsideTheRoots(t *testing.T) {
+	for _, leg := range []struct {
+		name    string
+		dir     []string // the DERIVED directory, relative to the cwd, that is symlinked out
+		params  string   // library.remove params, minus the cwd
+		victim  string   // the file planted outside, which must survive
+		keeper  string   // a legitimate item of the same shape, which must be removed
+		keepDir []string
+	}{
+		{
+			name:    "claude/command",
+			dir:     []string{".claude", "commands"},
+			params:  `"scope":"claude","kind":"command","id":"victim"`,
+			victim:  "victim.md",
+			keeper:  "keeper.md",
+			keepDir: []string{".claude", "commands"},
+		},
+		{
+			name:    "claude/agent",
+			dir:     []string{".claude", "agents"},
+			params:  `"scope":"claude","kind":"agent","id":"victim"`,
+			victim:  "victim.md",
+			keeper:  "keeper.md",
+			keepDir: []string{".claude", "agents"},
+		},
+		{
+			name:    "project",
+			dir:     []string{".workspacer", "library"},
+			params:  `"scope":"project","id":"victim"`,
+			victim:  "victim.md",
+			keeper:  "keeper.md",
+			keepDir: []string{".workspacer", "library"},
+		},
+	} {
+		t.Run(leg.name, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			cwd := t.TempDir()
+			outside := t.TempDir()
+			victim := filepath.Join(outside, leg.victim)
+			if err := os.WriteFile(victim, []byte("do not delete me"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			parent := filepath.Join(append([]string{cwd}, leg.dir[:len(leg.dir)-1]...)...)
+			if err := os.MkdirAll(parent, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			gateSymlink(t, outside, filepath.Join(cwd, filepath.Join(leg.dir...)))
+
+			reg := registryWithCwd(t, cwd)
+			if _, err := reg.handle(context.Background(), "library.remove",
+				json.RawMessage(`{`+leg.params+`,"cwd":`+jsonStr(cwd)+`}`)); err != nil {
+				t.Fatalf("library.remove reported an error rather than silently skipping: %v", err)
+			}
+			if _, err := os.Stat(victim); err != nil {
+				t.Fatalf("library.remove unlinked %s, outside every allowed root, through a symlinked %s component: %v",
+					victim, filepath.Join(leg.dir...), err)
+			}
+
+			// The floor: the same call against a real directory still deletes.
+			realCwd := t.TempDir()
+			keepDir := filepath.Join(append([]string{realCwd}, leg.keepDir...)...)
+			if err := os.MkdirAll(keepDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			keeper := filepath.Join(keepDir, leg.keeper)
+			if err := os.WriteFile(keeper, []byte("---\ntitle: K\n---\n\nb\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			reg = registryWithCwd(t, realCwd)
+			if _, err := reg.handle(context.Background(), "library.remove",
+				json.RawMessage(`{`+strings.Replace(leg.params, `"id":"victim"`, `"id":"keeper"`, 1)+`,"cwd":`+jsonStr(realCwd)+`}`)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(keeper); err == nil {
+				t.Fatalf("library.remove must still delete %s, which really is inside the agent cwd", keeper)
+			}
+		})
+	}
+}
+
 // With no live agents and no reachable claudemon, the allow-list must collapse to
 // the config stores — not open up. A shape change in claudemon's /sessions payload
 // must fail closed for the same reason.
@@ -692,10 +788,19 @@ type contractCase struct {
 	// ConfigDirVia names a sandbox-relative symlink to the config HOME that the
 	// implementation's config dir is pointed through, while ${CONFIG} keeps
 	// naming the real path.
-	ConfigDirVia string   `json:"configDirVia"`
-	Roots        []string `json:"roots"`
-	Target       string   `json:"target"`
-	Expect       string   `json:"expect"`
+	ConfigDirVia string `json:"configDirVia"`
+	// HomeVia names a sandbox-relative directory the implementation's HOME is
+	// pointed at, and ${HOME} then names it too. Without it, the only clause of
+	// the git per-user-config gate that compares against whatever <home>/.gitconfig
+	// RESOLVES to could not be reached by any case: it needs a symlink inside
+	// $HOME, and no test may write into the real one. Every existing case for that
+	// gate has a canonical basename of ".gitconfig", which the basename clause
+	// already answers, so deleting the resolved-home clause left all three copies
+	// green.
+	HomeVia string   `json:"homeVia"`
+	Roots   []string `json:"roots"`
+	Target  string   `json:"target"`
+	Expect  string   `json:"expect"`
 	// DeniedBy is the RIGHT-REASON half of a deny, named from the fixture's
 	// `vocabulary.denyReasons`. `expect: deny` on its own is satisfied by a
 	// refusal for ANY reason — including "the token did not substitute, so the
@@ -1257,13 +1362,26 @@ func caseSandbox(t *testing.T, c contractCase) (string, func(string) string) {
 		t.Skip("needsUnreadableDir: this process can read a 0o000 directory anyway")
 	}
 	home := realHome()
-	if c.NeedsHome && home == "" {
+	if c.NeedsHome && c.HomeVia == "" && home == "" {
 		t.Skip("needsHome: this process has no resolvable home directory")
 	}
 
 	sandbox, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatalf("realpath the sandbox: %v", err)
+	}
+	// A case may ask for the implementation's HOME to be a directory INSIDE the
+	// sandbox. That is the only way to reach the git gate's resolved-home clause:
+	// it compares against whatever <home>/.gitconfig points at, which needs a
+	// symlink in $HOME, and no test may write into the real one. ${HOME} then
+	// substitutes to this directory rather than the process's own.
+	if c.HomeVia != "" {
+		home = filepath.Join(sandbox, filepath.FromSlash(c.HomeVia))
+		if err := os.MkdirAll(home, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
 	}
 	configHome := filepath.Join(sandbox, "config")
 	for _, d := range []string{"root", "outside", filepath.Join("config", "workspacer")} {
@@ -2648,5 +2766,65 @@ func assertNoResidualToken(t *testing.T, s string) {
 			tok = s[i : i+end+1]
 		}
 		t.Fatalf("unsubstituted token %s in %q — the token set is DECLARED in the fixture's `vocabulary.tokens` block and closed by TestFixtureVocabularyIsClosed; an undeclared one passes through verbatim and silently defangs the case", tok, s)
+	}
+}
+
+// A RELATIVE XDG_CONFIG_HOME must fall back to $HOME/.config, not switch git's
+// per-user config gate off for the whole process.
+//
+// The absoluteness test is the only thing that produces that fallback: without
+// it canonicalRoot rejects the relative string, gitXdgConfigDir returns ok=false,
+// and the third clause of pathIsGitGlobalConfig is disabled — $HOME/.config/git/
+// config becomes an ordinary writable file inside any agent cwd under $HOME, and
+// filter.<drv>.clean is one fs.write away. Every corpus case points
+// XDG_CONFIG_HOME at an absolute sandbox path, so the relative branch was taken
+// by nothing.
+//
+// TWINS: internal/bus/policy_test.go and pathConfinement.test.ts carry the same
+// test over their own copies.
+func TestARelativeXdgConfigHomeFallsBackToTheHomeConfigDir(t *testing.T) {
+	home := t.TempDir()
+	real, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", real)
+	t.Setenv("USERPROFILE", real)
+	for _, xdg := range []string{"", "relative/config", ".", "~/config"} {
+		t.Run("XDG_CONFIG_HOME="+xdg, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", xdg)
+			target := filepath.Join(real, ".config", "git", "config")
+			if !pathIsGitGlobalConfig(target) {
+				t.Errorf("%s is git's per-user config on this host, and the gate missed it — a non-absolute XDG_CONFIG_HOME must fall back to $HOME/.config, not disable the clause", target)
+			}
+			// The other direction: the fallback must not turn every `config`
+			// under a `git` directory into git's own.
+			ordinary := filepath.Join(real, "proj", "git", "config")
+			if pathIsGitGlobalConfig(ordinary) {
+				t.Errorf("%s is an ordinary project file and the gate claimed it", ordinary)
+			}
+		})
+	}
+}
+
+// maxLinkHops is a TWIN-PARITY constant: all three copies of the walk declare
+// their own, none of them was compared to anything, and raising one to 4000 left
+// every suite green. That is not cosmetic — the guard would then canonicalize
+// chains the kernel refuses at 40, so its answer would stop describing a path
+// the OS can open, which is exactly the check-path/opened-path split BINDING
+// DECISION 2 exists to close.
+func TestMaxLinkHopsMatchesTheFixture(t *testing.T) {
+	raw := readContractFixtureBytes(t)
+	var fx struct {
+		MaxLinkHops *int `json:"maxLinkHops"`
+	}
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatalf("parse %s: %v", contractFixtureRel, err)
+	}
+	if fx.MaxLinkHops == nil {
+		t.Fatalf("%s no longer declares maxLinkHops — the three copies are free to drift again", contractFixtureRel)
+	}
+	if maxLinkHops != *fx.MaxLinkHops {
+		t.Errorf("maxLinkHops = %d, the contract says %d", maxLinkHops, *fx.MaxLinkHops)
 	}
 }

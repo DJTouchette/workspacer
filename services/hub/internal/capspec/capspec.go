@@ -140,7 +140,7 @@ var unscopedByDecision = map[string]string{
 	// (configDir → CLAUDE_CONFIG_DIR, extraArgs → --dangerously-skip-permissions).
 	// Both are stripped from a bus write by dropHostTrusted, pinned by
 	// contracts/host-trusted-config-cases.json.
-	"config.save": "takes no path; the config file is the provider's own and the dangerous KEYS (agents.binaries, claude.profiles) are stripped from a bus write by dropHostTrusted — see contracts/host-trusted-config-cases.json",
+	"config.save": "takes no path; the config file is the provider's own and every key that the host later hands to a process — agents.binaries, claude.profiles, terminal.shell, terminal.shells, editor.terminalCommand, scripts — is stripped from a bus write by dropHostTrusted. That list is held equal to contracts/host-trusted-config-cases.json, so a newly dangerous key cannot be classified on one side only",
 	// claude.profiles.* persist a `configDir` that becomes CLAUDE_CONFIG_DIR (the
 	// settings.json supplying permissions.allow and hooks) and `extraArgs`. Not
 	// confined to roots — there is no subtree we could allow that the same caller
@@ -169,7 +169,120 @@ var unscopedByDecision = map[string]string{
 	// What the reason has to say honestly is that holding this capability IS the
 	// gate, at the same level as terminals.create — and that the allowlist buys
 	// its protection only against a caller that does NOT hold this one.
-	"sessions.terminalInput": "writes raw bytes into an existing session's PTY: there is no path and no subtree to confine, so holding the capability is the gate, exactly as for terminals.create. NOTE that this makes terminals.create's shell allowlist a boundary only against callers that do not ALSO hold this method — allowlisted /bin/bash plus typed bytes is full argv[0] freedom — and that the sessionId is not ownership-checked on either provider, so it reaches the local user's own agent PTY too",
+	// claude.approve + claude.gate are an approval-OVERRIDE pair, and neither was
+	// classified anywhere: claude.* is not a path-verb prefix, so MissingSpec is
+	// false for both, and `decision`/`on` were in no vocabulary, so no scan could
+	// ask. Composed with agents.sendMessage they are arbitrary host command
+	// execution — gate on, send "run: <cmd>", approve — and agents.sendMessage's
+	// own excuse names precisely these approvals as its only bound. For a managed
+	// / stream session (the shipping default transport) the gate step is not even
+	// needed: post_approve calls submit_managed_decision, which sends allow=true
+	// down the adapter's can_use_tool channel.
+	//
+	// There is nothing to CONFINE — an approval verdict has no path and no
+	// subtree — so, exactly as for terminals.create and sessions.terminalInput,
+	// holding the capability is the gate. What was missing was saying so, in a
+	// form a scan can check, so that the next param either of them grows is
+	// visible.
+	"claude.approve":           "resolves a tool-approval prompt for a session that is ALREADY running: there is no path and no subtree to confine, so holding the capability is the gate, at the same level as sessions.terminalInput. NOTE that this is the RESOLVER of the approvals agents.sendMessage's own excuse rests on, that claude.gate can arm the parked-hook path it answers, and that the sessionId is ownership-checked on neither provider, so it reaches the local user's own agent too",
+	"claude.gate":              "turns the PreToolUse parking gate on or off for a session that is already running. Same shape as claude.approve — no path, no subtree, holding it is the gate — and the two are meant to be read together: gate ON parks every tool call, and claude.approve is what then releases them",
+	"claude.signal":            "the signal name is deserialized into a three-variant enum by claudemon (protocol.rs Signal) before anything is sent, so the caller chooses among interrupt/stop/kill and cannot compose a value; the sessionId is not ownership-checked on either provider",
+	"claude.handoffBrief":      "writes a deterministic brief the PROVIDER composes into ~/.workspacer/handoffs/<generated>.md — the caller supplies a session id, never the filename and never the directory — so there is no caller path to confine",
+	"claude.handoffAgentBrief": "same as claude.handoffBrief, plus it injects the resulting read-this instruction into a live agent; that half is the agents.sendMessage primitive and is bounded the same way",
+	"sessions.attachTerminal":  "binds a PTY stream to the caller's connection. No path and no subtree: what it grants is the OUTPUT side of sessions.terminalInput, so holding it is the gate at the same level",
+	"sessions.terminalInput":   "writes raw bytes into an existing session's PTY: there is no path and no subtree to confine, so holding the capability is the gate, exactly as for terminals.create. NOTE that this makes terminals.create's shell allowlist a boundary only against callers that do not ALSO hold this method — allowlisted /bin/bash plus typed bytes is full argv[0] freedom — and that the sessionId is not ownership-checked on either provider, so it reaches the local user's own agent PTY too",
+}
+
+// inertMethods are the capabilities that carry NO caller value which becomes
+// anything on the host: no path, no filename, no argv, no bytes into a process,
+// no approval verdict, no destination the host opens. They are classified HERE,
+// with a reason each, rather than by silence.
+//
+// The distinction matters because the ONLY method-level drift detector this
+// package had was [MissingSpec], a name-prefix heuristic over
+// {fs., search., library., git.}. It returns false for every claude.*,
+// sessions.*, config.*, layouts.*, app.*, analytics.*, providers.* and replay.*
+// method no matter what that method does — so 27 of the 73 registered
+// capabilities were classified nowhere at all, and six of those were ones the
+// app's OWN consent list (CAP_LABELS in pluginPermissions.ts) marks
+// `sensitive: true`. claude.approve and claude.gate — an approval-OVERRIDE pair
+// that composes with agents.sendMessage into arbitrary host command execution —
+// were two of them, and a brand-new `claude.autoApprove` capability, registered
+// and dispatched and byte-for-byte claude.approve under another name, could be
+// added with the whole Go module green.
+//
+// So "somebody looked at this" is now a REQUIREMENT rather than an accident of
+// naming: [Classified] is PathParam ∪ unscopedByDecision ∪ this map, and
+// TestBrainMethodsAllClassified / TestDesktopCapabilitiesAllClassified hold the
+// registries to it. A read-only method belongs here; a method that takes a value
+// the host acts on belongs in unscopedByDecision with a per-param decision.
+//
+// The bar for an entry is one sentence naming what the caller may supply and why
+// none of it reaches a sink. "It is read-only" on its own is the shrug this map
+// replaced.
+var inertMethods = map[string]string{
+	"agents.list":                "no caller params at all; it returns the session rows the provider already holds",
+	"analytics.recent":           "the only params are a row limit and a time window, both coerced to numbers before they reach the store; nothing composes a path, an argv or a query the host runs",
+	"analytics.summary":          "same as analytics.recent — numeric window only",
+	"app.getCwd":                 "no params; returns the provider's own working directory",
+	"app.supervisorHome":         "no params. It DOES create ~/.workspacer and a README there, but both are fixed literals the provider composes — no part of the location comes from the caller",
+	"claude.listModels":          "no params; the answer is the provider's own model catalog",
+	"claude.profiles.list":       "no params; the mutating siblings (add/update/remove) carry their own decisions",
+	"config.get":                 "no params. It hands back the whole config document, which is a disclosure decision rather than a confinement one: the keys a bus caller must not WRITE are the host-trusted list, and the keys it must not READ would be a different mechanism (there are none today — the config holds no credential; those live in remote-token, tokens.json and the plugin .settings.json files, none of which is in config.yaml)",
+	"config.getPath":             "no params; returns the config file's location, which the caller can already derive from the platform rules",
+	"config.reload":              "no params; re-reads the provider's own config file from disk",
+	"layouts.list":               "no params; the entry names come from a readdir of the layouts store and are re-contained by the store resolver before anything is opened",
+	"providers.checkAll":         "no params; it stats a fixed set of provider binary names against the process's own PATH, and the answer is a boolean per provider rather than a path the caller chose",
+	"sessions.conversation":      "sessionId selects an existing session row; it is never joined into a path (the transcript location is derived by the provider) and never becomes argv",
+	"sessions.detachTerminal":    "sessionId only, and the effect is to STOP streaming — the narrowing direction. The attach half carries its own decision",
+	"sessions.list":              "no params; entry names come from a readdir of the sessions store and are re-contained by the store resolver",
+	"sessions.recent":            "a numeric limit over rows the provider already holds",
+	"sessions.snapshot":          "sessionId selects an existing session row; the snapshot is assembled by the provider from state it already holds",
+	"sessions.snapshots":         "no params at all; it returns the whole snapshot set the provider already holds in memory, with nothing composed from a caller string",
+	"sessions.terminalKeepalive": "sessionId only; it refreshes an idle timer and moves no bytes",
+	"sessions.terminalResize":    "sessionId plus cols/rows, both coerced to integers before they reach the PTY ioctl; there is no string the host acts on",
+	"replay.close":               "an opaque handle the provider minted; closing it releases the provider's own reader",
+	"notify.post":                "title/body are display text the host renders, never argv and never a path; the clickable destination lives on notifications.post's `url`, which carries its own decision",
+	"agents.kill":                "sessionId selects an existing session to stop — the narrowing direction, and the same authorization question agents.spawn answers in the other direction",
+}
+
+// Classified reports whether SOMEBODY has decided what this method is: the bus
+// confines its path (PathParam), somebody wrote down why it is safe unconfined
+// (unscopedByDecision), or it carries nothing the host acts on (inertMethods).
+// It is deliberately not derived from the method's NAME — that heuristic is
+// [MissingSpec], and it is exactly what let 27 capabilities ship unexamined.
+func Classified(method string) bool {
+	if _, ok := PathParam[method]; ok {
+		return true
+	}
+	if _, ok := unscopedByDecision[method]; ok {
+		return true
+	}
+	_, ok := inertMethods[method]
+	return ok
+}
+
+// MissingClassification is the fail-open condition [Classified] guards: a
+// registered capability nobody has said anything about. Callers should treat it
+// as a build failure, not a runtime denial — the point is that the decision gets
+// made before the method ships, not that the bus guesses at call time.
+func MissingClassification(method string) bool { return !Classified(method) }
+
+// InertReason returns the recorded reason a method carries nothing the host acts
+// on, for tests that report what IS classified when they report what isn't.
+func InertReason(method string) (string, bool) {
+	r, ok := inertMethods[method]
+	return r, ok
+}
+
+// InertMethods lists every method on the inert record.
+func InertMethods() []string {
+	out := make([]string, 0, len(inertMethods))
+	for m := range inertMethods {
+		out = append(out, m)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ParamKind is what a caller-supplied value BECOMES on the host. "Is it a
@@ -290,6 +403,17 @@ var dangerousParams = map[string]ParamKind{
 	// decision table.
 	"mode": KindPermission, "permissionMode": KindPermission,
 	"skipPermissions": KindPermission,
+	// …and the RESOLVER of those approvals, which was the biggest hole of the
+	// three. `decision` is claude.approve's "yes"|"no"|"always": claudemon maps
+	// it to {"decision":"approve"} on Claude Code's PreToolUse hook stdout, or
+	// straight down a managed adapter's can_use_tool channel. `on` is
+	// claude.gate's switch, which ARMS the parked-hook path a caller can then
+	// resolve. KindPermission is the definition this package already gives —
+	// "a value that changes what the host will do WITHOUT asking" — and
+	// agents.sendMessage's own excuse rests on exactly these approvals ("what
+	// bounds it is the agent's own tool approvals"), so leaving them
+	// unclassified made that sentence unfalsifiable.
+	"decision": KindPermission, "on": KindPermission,
 	// Environment of a spawned process.
 	"env": KindEnv, "envVars": KindEnv, "environment": KindEnv,
 	// Network destinations the host opens or fetches.
@@ -737,9 +861,13 @@ var unscopedParams = map[string]map[string]ParamDecision{
 	// — so a newly host-trusted key must be classified here, and a key
 	// classified here that nothing strips is caught from the other side.
 	"config.save": {
-		"agents.binaries": {KindExecutable, "the launcher path handed to claudemon's Command::new for every spawned agent, i.e. argv[0]; stripped from a bus write by dropHostTrusted as a dotted PATH so its sibling agents.* settings stay writable"},
-		"claude.profiles": {KindExecutable, "the profile list, each entry carrying configDir (CLAUDE_CONFIG_DIR) and extraArgs (--dangerously-skip-permissions); stripped from a bus write for the same reason claude.profiles.add scrubs"},
-		"updates":         {KindURL, "updates.channel is concatenated into the electron-updater feed URL the desktop downloads and installs from, so one '../' relocates the updater to somebody else's repo; the whole section is stripped from a bus write"},
+		"agents.binaries":        {KindExecutable, "the launcher path handed to claudemon's Command::new for every spawned agent, i.e. argv[0]; stripped from a bus write by dropHostTrusted as a dotted PATH so its sibling agents.* settings stay writable"},
+		"claude.profiles":        {KindExecutable, "the profile list, each entry carrying configDir (CLAUDE_CONFIG_DIR) and extraArgs (--dangerously-skip-permissions); stripped from a bus write for the same reason claude.profiles.add scrubs"},
+		"updates":                {KindURL, "updates.channel is concatenated into the electron-updater feed URL the desktop downloads and installs from, so one '../' relocates the updater to somebody else's repo; the whole section is stripped from a bus write"},
+		"terminal.shell":         {KindShell, "argv[0] of the next terminal the LOCAL user opens: TerminalPane passes `shell || termCfg.shell` to IPC.TERMINAL_CREATE, which spawns argv:[resolvedShell]. The BUS door onto that primitive (terminals.create) has a shell allow-list; the local IPC door deliberately has none, so this is stripped from a bus write rather than allow-listed"},
+		"terminal.shells":        {KindShell, "the same argv[0] as terminal.shell, reached through the NavBar \"+\" menu (shells[].path). Stripped as a dotted PATH so the sibling terminal.* settings a bus client legitimately edits stay writable"},
+		"editor.terminalCommand": {KindShell, "not argv[0] but raw shell TEXT: ScrollContainer builds \"<cmd> <file>\" and TerminalPane types it into the user's own shell with a trailing CR, so ';' and '|' need no planted binary. Live when editor.engine is \"terminal\", which the same call can set"},
+		"scripts":                {KindShell, "a map of agent cwd -> [{name,command}] the desktop renders as top-bar buttons and runs as a terminal's initialCommand, verbatim. The attacker picks the LABEL too and the cwd key comes free from agents.list; stripped as a whole SECTION because every key under it is a caller-chosen directory"},
 	},
 	"claude.profiles.add": {
 		"configDir":  {KindPath, "persisted as CLAUDE_CONFIG_DIR — the directory supplying settings.json, permissions.allow and hooks. Not confinable (no subtree the same caller cannot fill in with fs.write), so it is SCRUBBED at write time on both bus providers (scrubBypassProfile)"},
@@ -757,6 +885,16 @@ var unscopedParams = map[string]map[string]ParamDecision{
 	},
 	"claude.profiles.remove": {
 		"id": {KindID, "selects a row to delete from the single claude-profiles.json; never joined into a path, so there is no store directory to escape"},
+	},
+	// The approval-override pair. `decision` is the canonical KindPermission
+	// value — this package defines that kind as "a value that changes what the
+	// host will do WITHOUT asking", and "yes" on a pending PreToolUse is exactly
+	// that.
+	"claude.approve": {
+		"decision": {KindPermission, "'yes'|'no'|'always' -> claudemon answers Claude Code's PreToolUse hook with {\"decision\":\"approve\"} on stdout, or sends allow=true down a managed adapter's can_use_tool channel; nothing downstream re-asks, so this value alone decides whether a queued tool call runs on the host"},
+	},
+	"claude.gate": {
+		"on": {KindPermission, "arms or disarms the PreToolUse parking gate for a running session: with it ON every tool call stops and waits for claude.approve, and with it OFF the agent's own configured permissions apply. It changes what the host will do without asking, which is what KindPermission means"},
 	},
 	"notifications.post": {
 		"url": {KindURL, "opened on click by the HOST, so a bus caller chooses a destination the desktop user's browser then visits; it goes through openExternalUrl, the same scheme allowlist the renderer's open-external path uses, rather than straight to the OS"},

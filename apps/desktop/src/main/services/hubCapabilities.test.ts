@@ -852,6 +852,73 @@ describe('git.* cwd confinement', () => {
       expect(gitMock.stage).toHaveBeenCalledWith(agentCwd, rel);
     });
 
+    // ── the TRACKED leg, where the work-tree-root assertion is the ONLY guard ──
+    //
+    // git.diff passes `untracked ? [workspaceRoots()] : []` as extraRootSets, so
+    // on a TRACKED diff the extra sets are EMPTY and the single
+    // `assertPathAllowed(cap, anchored, [root])` is the whole boundary — its
+    // containment half and its secret gate both. Every git-pathspec test above
+    // rides an extraRootSet (untracked, stage, unstage), so replacing that line
+    // with `const canonicalFile = anchored;` left 88 files / 1379 tests green.
+    it('a TRACKED diff refuses a pathspec that climbs out of the work-tree root', async () => {
+      await expect(
+        call('git.diff', { cwd: agentCwd, path: '../../../etc/passwd' }),
+      ).rejects.toThrow(/outside the allowed workspace/);
+      expect(gitMock.diff).not.toHaveBeenCalled();
+    });
+
+    it('a TRACKED diff refuses an absolute pathspec outside the work-tree root', async () => {
+      await expect(call('git.diff', { cwd: agentCwd, path: '/etc/shadow' })).rejects.toThrow(
+        /outside the allowed workspace/,
+      );
+      expect(gitMock.diff).not.toHaveBeenCalled();
+    });
+
+    it('a TRACKED diff refuses a credential the secret gate names', async () => {
+      // The gate only ever runs INSIDE assertPathAllowed. A modified ~/.gitconfig
+      // routinely carries credential-helper settings and url.<base>.insteadOf
+      // tokens, and `.bus-token` / `.git/config` are the same shape.
+      for (const p of ['.git/config', '.bus-token', '.gitconfig']) {
+        await expect(call('git.diff', { cwd: agentCwd, path: p })).rejects.toThrow(
+          /outside the allowed workspace/,
+        );
+      }
+      expect(gitMock.diff).not.toHaveBeenCalled();
+    });
+
+    // BINDING DECISION 2 on the OPERAND: what git receives is a function of the
+    // CANONICAL path, never of the caller's string. `return filePath` survived
+    // the whole suite because every test above happens to pass a string that is
+    // already the answer.
+    it('hands git the pathspec derived from the canonical path, not the caller string', async () => {
+      await call('git.diff', { cwd: agentCwd, path: path.join(repoRoot, 'services', 'a.go') });
+      expect(gitMock.diff).toHaveBeenCalledWith(agentCwd, 'services/a.go', undefined, undefined);
+      gitMock.diff.mockClear();
+      await call('git.diff', { cwd: agentCwd, path: 'services/./hub/../a.go' });
+      expect(gitMock.diff).toHaveBeenCalledWith(agentCwd, 'services/a.go', undefined, undefined);
+    });
+
+    // cwdPathspec's own fail-closed precondition. Its comment says the assertion
+    // "proves the cwd really is at-or-inside the derived root before path.relative
+    // is trusted to describe it (a `..` result would be a pathspec pointing OUT of
+    // the repo)". The helper's OUTPUT is pinned by the two tests above; the
+    // precondition was pinned by nothing, and the work-tree root is DERIVED — a
+    // gitfile, GIT_WORK_TREE or a submodule can make it a directory that does not
+    // contain the cwd at all.
+    it('git.stage with no path refuses a work-tree root that does not contain the cwd', async () => {
+      const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-elsewhere-')));
+      workRootFor.mockImplementation(async () => elsewhere);
+      await expect(call('git.stage', { cwd: agentCwd })).rejects.toThrow(
+        /outside the allowed workspace/,
+      );
+      expect(gitMock.stage).not.toHaveBeenCalled();
+      await expect(call('git.unstage', { cwd: agentCwd })).rejects.toThrow(
+        /outside the allowed workspace/,
+      );
+      expect(gitMock.unstage).not.toHaveBeenCalled();
+      fs.rmSync(elsewhere, { recursive: true, force: true });
+    });
+
     it('still allows a root-relative path in a sibling subtree (what git.status hands back)', async () => {
       // git.status prints repo-root-relative paths for the WHOLE repo, and the
       // review pane feeds them straight back; refusing them because they sit

@@ -91,11 +91,42 @@ describe('pluginPermissions', () => {
     expect(call.lines[0]).toMatchObject({ detail: 'in anywhere', severity: 'sensitive' });
   });
 
-  it('shows an absolute scope as written', () => {
+  // The disclosure used to be INVERTED relative to what the hub enforces: the two
+  // spellings it flagged sensitive (`*` and `${…}/../..`) are the two expandScope
+  // resolves to NO root at all, while `/` — which the bus stores verbatim as a
+  // grant root, and a volume root contains everything below it — rendered "in /"
+  // at severity normal. The old test asserted only `detail`, never `severity`, so
+  // it read as coverage.
+  it('shows an absolute scope as written, and says it is outside the plugin', () => {
     const [call] = pluginPermissions(
       mf({ capabilities: [{ method: 'fs.read', paths: ['/etc/hosts'] }] }),
     );
-    expect(call.lines[0].detail).toBe('in /etc/hosts');
+    expect(call.lines[0].detail).toContain('/etc/hosts');
+    expect(call.lines[0].severity).toBe('sensitive');
+  });
+
+  it('a scope of / is disclosed as the whole filesystem, not as an ordinary line', () => {
+    for (const root of ['/', 'C:\\', 'C:/']) {
+      const [call] = pluginPermissions(
+        mf({ capabilities: [{ method: 'fs.read', paths: [root] }] }),
+      );
+      expect(call.lines[0].detail, `scope ${root}`).toBe('in the WHOLE filesystem');
+      expect(call.lines[0].severity, `scope ${root}`).toBe('sensitive');
+    }
+    // …and it badges the plugin in the gallery and the install-confirm step.
+    expect(
+      hasSensitivePermission(mf({ capabilities: [{ method: 'fs.read', paths: ['/'] }] })),
+      'a whole-filesystem grant installed with no sensitivity badge',
+    ).toBe(true);
+  });
+
+  it('still describes a plugin-owned scope as ordinary', () => {
+    // The floor: making every scope sensitive would be the same defect pointed
+    // the other way — a dialog that shouts at everything discloses nothing.
+    const [call] = pluginPermissions(
+      mf({ capabilities: [{ method: 'fs.read', paths: ['${pluginDir}/data'] }] }),
+    );
+    expect(call.lines[0]).toMatchObject({ detail: 'in its own folder', severity: 'normal' });
   });
 
   it('flags an unscoped fs.* capability as reaching anywhere on disk', () => {
@@ -158,11 +189,25 @@ describe('CAP_LABELS drift guard', () => {
       path.join(__dirname, '../../main/services/hubCapabilities.ts'),
       'utf-8',
     );
-    const registered = [...source.matchAll(/registerCapability\('([^']+)'/g)].map((m) => m[1]);
+    // BOTH registration helpers. hubCapabilities.ts registers through
+    // registerCapability() and through the delegation-aware alias cat(), and this
+    // regex matched only the first — so a third of the surface (config.save,
+    // library.save, sessions.delete, layouts.delete and seventeen more) was
+    // outside a guard whose name says "every capability the main process actually
+    // registers", and the `> 20` canary passed comfortably at 49 while saying
+    // nothing about the 24 it could not see. capspec's parser for the same file
+    // has always matched `(?:registerCapability|cat)\(`.
+    const registered = [
+      ...source.matchAll(/(?:registerCapability|cat)\(\s*'([a-zA-Z][\w.]*)'/g),
+    ].map((m) => m[1]);
     expect(
       registered.length,
       'the registry regex found nothing — has it been renamed?',
-    ).toBeGreaterThan(20);
+    ).toBeGreaterThan(60);
+    expect(
+      registered.filter((m) => m.startsWith('config.')).length,
+      'the cat()-registered catalog capabilities are invisible to this guard again',
+    ).toBeGreaterThan(0);
 
     const missing = registered.filter((m) => !(m in CAP_LABELS));
     expect(

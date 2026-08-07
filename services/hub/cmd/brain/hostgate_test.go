@@ -34,7 +34,7 @@ import (
 // symlinkGate counts the tests that cannot assert ANYTHING without creating a
 // symlink. The number is the size of the group; adding a gated test without
 // raising it fails, so the count cannot go stale in either direction.
-var symlinkGate = sweepguard.Gate("cmd/brain's symlink-gated tests", 23)
+var symlinkGate = sweepguard.Gate("cmd/brain's symlink-gated tests", 24)
 
 // gitGate counts the tests that shell out to a real `git`.
 var gitGate = sweepguard.Gate("cmd/brain's git-gated tests", 3)

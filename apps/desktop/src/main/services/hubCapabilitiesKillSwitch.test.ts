@@ -289,10 +289,26 @@ describe('fs.* path confinement', () => {
     // used to be read only for the presence of this owner's KEY — never the
     // requirement text and never the call-site list — so a hand-maintained table
     // that covered eight of ten entries looked complete.
+    //
+    // Marked from INSIDE the body, beside the assertions, not beside `it`. The
+    // Go twin (fsguard_test.go's `run` helper) says why verbatim: "Marking it
+    // here, beside t.Run, records what was REGISTERED — so a subtest that
+    // skipped, or one whose body was emptied, would still report its call site
+    // as covered and the comparison against the fixture's checkUse list at the
+    // bottom would still agree." This copy marked at registration, which is
+    // exactly that lie: emptying the body of `fs.read -> readTextFile` kept the
+    // set equal to the fixture, and fs.read could then go back to opening the
+    // caller's unresolved string with 88 files / 1379 tests green.
     const covered = new Set<string>();
     const site = (name: string, fn: () => void | Promise<void>): void => {
-      covered.add(name);
-      it(name, fn);
+      it(name, async () => {
+        // hasAssertions(), because "the body ran" is not the same claim as "the
+        // body proved something": an EMPTIED body still reaches the line below
+        // and still reports its call site as covered.
+        expect.hasAssertions();
+        await fn();
+        covered.add(name);
+      });
     };
 
     site('fs.read -> readTextFile', () => {

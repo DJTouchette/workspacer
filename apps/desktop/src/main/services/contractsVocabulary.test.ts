@@ -41,6 +41,9 @@ const VOCAB_CHECK_IDS = [
   'reason-vocabulary-used',
   'unique-case-names',
   'token-references',
+  'unknown-fields',
+  'optional-used',
+  'block-loaders',
 ];
 
 /** Fixtures that carry no case blocks. An ALLOW-LIST, not a heuristic: "has no
@@ -59,6 +62,22 @@ interface VerdictDef {
 interface BlockSpec {
   why?: string;
   required?: string[];
+  /** Closes the field set from the other side. A field NAME the loaders act on
+   *  was closed by nothing: renaming `configDirVia` by one character left every
+   *  suite green, because encoding/json and JSON.parse both ignore an unknown
+   *  key — and that field is uniquely SILENT, since dropping the symlink
+   *  indirection flips no verdict, so both cases kept passing while exercising
+   *  nothing they claimed to. */
+  optional?: string[];
+  /** The same, for the sub-keys of a field whose shape is a SCHEMA
+   *  (path-containment's `tree`) rather than a data payload (deepmerge's
+   *  `target`). Opt-in per block for exactly that reason. */
+  nested?: Record<string, string[]>;
+  /** The tests that read THIS BLOCK, "<repo-relative file>::<needle>". The
+   *  per-fixture loader count is a per-FILE guard, so a block could lose every
+   *  loader it had while the file kept the others; cmd/brain/contracts_test.go
+   *  resolves these. */
+  loaders?: string[];
   verdictField?: string;
   verdicts?: Record<string, VerdictDef>;
 }
@@ -214,6 +233,65 @@ export function validateFixtureVocabulary(name: string, doc: Row): string[] {
       }
     }
 
+    // FIELD CLOSURE, both directions.
+    const allowed = new Set([...(spec.required ?? []), ...(spec.optional ?? [])]);
+    const usedOptional = new Set<string>();
+    const usedNested: Record<string, Set<string>> = {};
+    rows.forEach((row, i) => {
+      const named = typeof row.name === 'string' && row.name !== '';
+      const label = named ? `${at} "${row.name as string}"` : `${at}[${i}]`;
+      for (const [key, val] of Object.entries(row)) {
+        if (!allowed.has(key)) {
+          add(
+            `${label} carries "${key}", which vocabulary.blocks declares neither required nor optional — an undeclared key is ignored by encoding/json AND by JSON.parse, so a one-character typo in a field name silently defangs the case in every loader at once [unknown-fields]`,
+          );
+          continue;
+        }
+        usedOptional.add(key);
+        const sub = (spec.nested ?? {})[key];
+        if (!sub || !val || typeof val !== 'object' || Array.isArray(val)) continue;
+        for (const k of Object.keys(val as Row)) {
+          if (!sub.includes(k)) {
+            add(
+              `${label} has ${key}.${k}, which vocabulary.blocks.${at}.nested.${key} does not declare — the same silent-typo defect one level down [unknown-fields]`,
+            );
+            continue;
+          }
+          (usedNested[key] ??= new Set()).add(k);
+        }
+      }
+    });
+    for (const f of spec.optional ?? []) {
+      if (!usedOptional.has(f)) {
+        add(
+          `vocabulary.blocks.${at} declares the optional field "${f}" and no case carries it — an optional field nothing uses legalizes a typo instead of catching one [optional-used]`,
+        );
+      }
+    }
+    for (const [key, sub] of Object.entries(spec.nested ?? {})) {
+      for (const f of sub) {
+        if (!usedNested[key]?.has(f)) {
+          add(
+            `vocabulary.blocks.${at}.nested.${key} declares "${f}" and no case carries it [optional-used]`,
+          );
+        }
+      }
+    }
+
+    // Every block names the tests that READ it.
+    if ((spec.loaders ?? []).length === 0) {
+      add(
+        `vocabulary.blocks.${at} names no \`loaders\` — the fixture-level loader count is per FILE, so this block could lose every test that reads it while the file kept the others and nothing would go red [block-loaders]`,
+      );
+    }
+    for (const l of spec.loaders ?? []) {
+      if (!l.includes('::')) {
+        add(
+          `vocabulary.blocks.${at} loader "${l}" is not "<repo-relative file>::<needle>" — without a needle the entry only says a file exists, not that anything in it reads this block [block-loaders]`,
+        );
+      }
+    }
+
     for (const [verdict, def] of Object.entries(spec.verdicts ?? {})) {
       if (!def.reasons) continue;
       const declared = (vocab[def.reasons] as Row | undefined) ?? {};
@@ -309,6 +387,41 @@ describe('the vocabulary guard is falsifiable', () => {
   };
 
   const mutations: Array<{ name: string; check: string; mutate: (doc: Row) => void }> = [
+    {
+      name: 'a case field name is mis-spelled by one character',
+      check: 'unknown-fields',
+      mutate: (d) => {
+        const row = rowsAt(d, 'cases').find((c) => 'configDirVia' in c)!;
+        row.configDirVla = row.configDirVia;
+        delete row.configDirVia;
+      },
+    },
+    {
+      name: 'a tree sub-key is mis-spelled',
+      check: 'unknown-fields',
+      mutate: (d) => {
+        const row = rowsAt(d, 'cases').find((c) => c.tree && 'symlinks' in (c.tree as Row))!;
+        const tree = row.tree as Row;
+        tree.symLinks = tree.symlinks;
+        delete tree.symlinks;
+      },
+    },
+    {
+      name: 'an optional field is declared and used by nothing',
+      check: 'optional-used',
+      mutate: (d) => {
+        const spec = ((d.vocabulary as Row).blocks as Row).cases as BlockSpec;
+        spec.optional = [...(spec.optional ?? []), 'configDirVla'];
+      },
+    },
+    {
+      name: 'a block stops naming the tests that read it',
+      check: 'block-loaders',
+      mutate: (d) => {
+        const spec = ((d.vocabulary as Row).blocks as Row)['sessionFilenames.cases'] as BlockSpec;
+        delete spec.loaders;
+      },
+    },
     {
       name: 'a deny case loses its reason',
       check: 'verdict-reason-required',

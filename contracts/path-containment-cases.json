@@ -274,7 +274,7 @@
       "ROOT": "${SANDBOX}/root — the directory nearly every case grants.",
       "OUTSIDE": "${SANDBOX}/outside — a sibling of ${ROOT} that no case ever grants.",
       "CONFIG": "The implementation's own config dir, ${SANDBOX}/config/workspacer. A case may point the implementation at it through a symlink (`configDirVia`) while this token keeps naming the real path.",
-      "HOME": "The process's home directory, resolved. Deliberately OUTSIDE the sandbox: it is where a re-introduced tilde expansion would actually land, and a case that kept it inside the sandbox would deny anyway and prove nothing.",
+      "HOME": "The process's home directory, resolved. Deliberately OUTSIDE the sandbox: it is where a re-introduced tilde expansion would actually land, and a case that kept it inside the sandbox would deny anyway and prove nothing. A case that declares `homeVia` is the exception — it points the implementation's home at a directory INSIDE the sandbox so the ~/.gitconfig clause can be reached at all, and this token then names that directory.",
       "PROCESS_CWD": "The test process's working directory, resolved. Deliberately OUTSIDE the sandbox: it is where an empty or relative root resolved against the process cwd would actually land."
     },
     "groups": {
@@ -308,9 +308,27 @@
         "vocabulary and say which reason field each verdict owes, and which sibling",
         "vocabulary map that reason must be a key of.",
         "",
+        "`optional` closes the field set from the other side. A field NAME the loaders act",
+        "on was closed by nothing: renaming the key `configDirVia` by one character left",
+        "every suite green (encoding/json and JSON.parse both ignore an unknown key), and",
+        "that field is uniquely SILENT — dropping the symlink indirection does not flip",
+        "either case's verdict, so both kept passing while exercising nothing. So every",
+        "key a case carries must be `required` or `optional`, every declared `optional`",
+        "must be used by some case, and `nested` does the same for the sub-keys of a field",
+        "whose shape is a schema rather than a data payload.",
+        "",
+        "`loaders` is the per-BLOCK answer to a guard that was per-FILE. cmd/brain's",
+        "TestEveryContractFixtureHasAtLeastTwoLoaders counts test files that mention the",
+        "fixture BASENAME, so a block could lose every loader it had while the file kept",
+        "eight: both loaders of sessionFilenames were deletable with the Go module and the",
+        "whole desktop suite green, and so was the desktop's entire containment sweep.",
+        "Each entry is \"<repo-relative test file>::<needle>\"; the needle must still be in",
+        "that file. Naming them is what makes deleting one red.",
+        "",
         "Read by cmd/brain/corpusvocab_test.go and by",
         "apps/desktop/src/main/services/contractsVocabulary.test.ts, which hold every",
-        "fixture in contracts/ to its own declaration."
+        "fixture in contracts/ to its own declaration; the loader existence half is",
+        "cmd/brain/contracts_test.go."
       ],
       "cases": {
         "why": "The containment corpus proper.",
@@ -341,7 +359,32 @@
             ],
             "reasons": "denyReasons"
           }
-        }
+        },
+        "optional": [
+          "tree",
+          "configDirVia",
+          "homeVia",
+          "needsSymlinks",
+          "posixOnly",
+          "needsUnreadableDir",
+          "needsHome",
+          "deniedBy",
+          "resolvesTo"
+        ],
+        "nested": {
+          "tree": [
+            "dirs",
+            "files",
+            "symlinks",
+            "relativeSymlinks",
+            "modes"
+          ]
+        },
+        "loaders": [
+          "services/hub/cmd/brain/fsguard_test.go::TestPathContainmentContractCases(",
+          "services/hub/internal/bus/policy_test.go::TestPathContainmentContractCases(",
+          "apps/desktop/src/main/lib/pathConfinement.test.ts::path containment — cross-language contract"
+        ]
       },
       "sessionFilenames.cases": {
         "why": "The fourth copy of containment: sessions.load/save/delete's caller-supplied filename.",
@@ -370,7 +413,24 @@
             ],
             "reasons": "sessionRefuseReasons"
           }
-        }
+        },
+        "optional": [
+          "tree",
+          "needsSymlinks",
+          "refusedBy",
+          "resolvesTo"
+        ],
+        "nested": {
+          "tree": [
+            "dirs",
+            "files",
+            "symlinks"
+          ]
+        },
+        "loaders": [
+          "services/hub/cmd/brain/stores_test.go::TestSessionFilenameContractCases(",
+          "apps/desktop/src/main/services/sessionService.test.ts::session filenames — cross-language contract"
+        ]
       },
       "paramShapes": {
         "why": "The params GATE: what the bus does with a body that is not the object the method's field lives in.",
@@ -383,7 +443,15 @@
         "verdicts": {
           "accept": {},
           "deny": {}
-        }
+        },
+        "optional": [
+          "params",
+          "paramsAbsent",
+          "note"
+        ],
+        "loaders": [
+          "services/hub/internal/bus/policy_test.go::TestParamShapeContractCases("
+        ]
       },
       "projectDirNames.cases": {
         "why": "claude.sessionsForDir's encoder. `expect` is the encoded name or null for a refusal — a value, not a verdict word, so there is no verdict vocabulary to close here.",
@@ -391,6 +459,10 @@
           "cwd",
           "expect",
           "why"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/providerparity_test.go::TestClaudeProjectDirNameContractCases(",
+          "apps/desktop/src/main/services/claudeSessionList.test.ts::claudeProjectDirName — contracts/path-containment-cases.json projectDirNames"
         ]
       },
       "spawnCwds.cases": {
@@ -399,6 +471,11 @@
           "in",
           "out",
           "why"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/spawncwd_test.go::TestSpawnCwdNormalizationContractCases(",
+          "apps/desktop/src/main/lib/spawnCwd.test.ts::spawn cwd normalization — cross-language contract",
+          "apps/tui/src/profiles.rs::fn spawn_cwds_contract_cases("
         ]
       },
       "asciiFold.cases": {
@@ -406,6 +483,11 @@
         "required": [
           "in",
           "out"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/fsguard_test.go::TestAsciiFoldMatchesTheFixture(",
+          "services/hub/internal/bus/policy_test.go::TestAsciiFoldMatchesTheFixture(",
+          "apps/desktop/src/main/lib/pathConfinement.test.ts::fixture.asciiFold.cases"
         ]
       },
       "methods": {
@@ -416,6 +498,16 @@
           "rootSet",
           "providers",
           "params"
+        ],
+        "optional": [
+          "derivedRootSet",
+          "note"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/fsguard_test.go::TestCorpusMethodsMatchCapspec(",
+          "services/hub/internal/bus/policy_test.go::TestFixtureMethodsMatchCapspec(",
+          "services/hub/internal/capspec/capspec_test.go::TestPathContainmentFixtureCoversPathParam(",
+          "apps/desktop/src/main/services/hubCapabilitiesGuards.test.ts::fixture-driven guard coverage"
         ]
       },
       "checkUse": {
@@ -423,6 +515,26 @@
         "required": [
           "owner",
           "requirement"
+        ],
+        "optional": [
+          "callSites"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/fsguard_test.go::TestGuardedHandlersOpenTheCanonicalPathTheyValidated(",
+          "apps/desktop/src/main/services/hubCapabilitiesKillSwitch.test.ts::fixture.checkUse.find"
+        ]
+      },
+      "agentCwdLiveness.cases": {
+        "why": "Which session rows put a cwd in the fs.* allow-list — the root SUPPLY the containment corpus's rootSet column depends on.",
+        "required": [
+          "name",
+          "snapshot",
+          "live",
+          "why"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/visibility_test.go::TestAgentCwdLivenessContractCases(",
+          "apps/desktop/src/main/lib/snapshotLiveness.test.ts::agent-cwd liveness — cross-language contract"
         ]
       }
     }
@@ -2728,6 +2840,156 @@
       "expect": "allow",
       "resolvesTo": "${ROOT}/foo\\/x.txt",
       "why": "The JOINING half of the same rule the two cases above pin for SPLITTING. `foo\\` is a legal POSIX directory name, so the already-resolved prefix ends in a backslash — and appendComponent/appendPath decide whether to insert a separator by asking whether that last byte IS one. Widening THAT predicate (isSepChar returning true for '\\\\' on POSIX) concatenates the child with no separator at all: `/root/foo\\` + `x.txt` becomes `/root/foo\\x.txt`, a different file for the containment comparison and for whatever the caller then opens. It is invisible to a deny case — the wrong path is still inside the root — which is why this is an allow with a mandatory resolvesTo. SEP_RE's twin mutation IS killed by the two cases above; this one was not killed by anything."
+    },
+    {
+      "name": "git's XDG config directory is refused through a dotfiles symlink on the git component",
+      "group": "secrets",
+      "needsSymlinks": true,
+      "tree": {
+        "dirs": [
+          "root",
+          "dotfiles/git"
+        ],
+        "files": {
+          "dotfiles/git/config": "[filter \"p\"]\n\tclean = sh -c 'touch /tmp/PWNED'; cat\n"
+        },
+        "symlinks": {
+          "config/git": "dotfiles/git"
+        }
+      },
+      "roots": [
+        "${SANDBOX}"
+      ],
+      "target": "${SANDBOX}/dotfiles/git/config",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "`~/.config/git -> ~/dotfiles/git` is the ordinary stow/chezmoi/yadm arrangement, and every copy canonicalized the config HOME and then appended a literal `git` to it. The target is resolved per component, so comparing it against an unresolved directory can only miss — and nothing else catches this file: basename `config`, no `.git` component, nowhere near the workspacer config dir. One fs.write then defines filter.<drv>.clean and git.stage / git.diff execute it. The workspacer store carve-outs already resolve the WHOLE path ('a store carve-out is canonicalized too'); git's did not."
+    },
+    {
+      "name": "git's XDG config directory is refused when the config home itself is a symlink",
+      "group": "secrets",
+      "needsSymlinks": true,
+      "configDirVia": "cfglink",
+      "tree": {
+        "dirs": [
+          "root",
+          "config/git"
+        ],
+        "files": {
+          "config/git/config": "[diff \"p\"]\n\ttextconv = sh -c 'touch /tmp/PWNED'\n"
+        }
+      },
+      "roots": [
+        "${SANDBOX}"
+      ],
+      "target": "${SANDBOX}/config/git/config",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "The other half of the same resolution, one component up: the environment's config home reached through a link (a symlinked $HOME, /var on macOS, a dotfiles-managed config home). The existing XDG case builds every component as a real directory, so the resolution step it depends on was observed by nothing."
+    },
+    {
+      "name": "a case-variant spelling of git's per-user config is refused",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/proj"
+        ]
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/proj/.GITCONFIG",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "Same reasoning as the case-variant `.git` case and the folded credential basenames: APFS and NTFS open `.gitconfig` when handed `.GITCONFIG`, and the per-component walk appends the CALLER's spelling, so a byte-exact gate answers for the string rather than for the file. This is the one exec-driver gate whose fold no case reached, while both of its siblings had one."
+    },
+    {
+      "name": "git's per-user config is refused where a dotfiles-symlinked ~/.gitconfig RESOLVES",
+      "group": "secrets",
+      "needsSymlinks": true,
+      "homeVia": "home",
+      "tree": {
+        "dirs": [
+          "root/dotfiles",
+          "home"
+        ],
+        "files": {
+          "root/dotfiles/gitconfig": "[filter \"p\"]\n\tclean = sh -c 'touch /tmp/PWNED'; cat\n"
+        },
+        "symlinks": {
+          "home/.gitconfig": "root/dotfiles/gitconfig"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/dotfiles/gitconfig",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "The gate's SECOND clause — whatever <home>/.gitconfig resolves to — and the only case that can reach it. The in-repo file is named `gitconfig` with no leading dot, so the basename clause cannot see it; it carries no `.git` component and is not under git's XDG directory. A global config symlinked into a dotfiles repo is an extremely ordinary arrangement and that repo is routinely an agent cwd, so without this clause the file is an ordinary writable target and the filter.<drv>.clean chain is one fs.write away. Every existing case for this gate has a canonical basename of `.gitconfig`, which clause one already answers, so deleting clause two left all three copies green."
+    },
+    {
+      "name": "an ordinary file named gitconfig that the home config does not point at is allowed",
+      "group": "secrets",
+      "homeVia": "home",
+      "tree": {
+        "dirs": [
+          "root/proj",
+          "home"
+        ],
+        "files": {
+          "root/proj/gitconfig": "port = 8080\n"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/proj/gitconfig",
+      "expect": "allow",
+      "resolvesTo": "${ROOT}/proj/gitconfig",
+      "why": "The allow direction the case above must not take with it. Clause two is a COMPARISON against one resolved location, never a second basename rule: `gitconfig` without a dot is an ordinary name (a chezmoi source file, a dotfiles repo's own copy, a fixture), and a copy that answered it by name would deny every one of them while passing the deny case."
+    },
+    {
+      "name": "the secret gate runs for whichever root matched, not only the first",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root",
+          "config/workspacer"
+        ],
+        "files": {
+          "config/workspacer/remote-token": "tok"
+        }
+      },
+      "roots": [
+        "${OUTSIDE}",
+        "${SANDBOX}"
+      ],
+      "target": "${CONFIG}/remote-token",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "The gate lives INSIDE the roots loop, and every other case in this group hands the loader a single root — so the loop index was never varied and 'the gate runs for whichever root matched' was asserted nowhere. Running it only for roots[0] passed both loaders and the whole internal/... tree while handing out remote-token, and a multi-root grant is the NORMAL shape (a plugin scope plus an agent cwd). The containment half of the same loop IS covered by 'the second root in the list matches'; this is the gate half."
+    },
+    {
+      "name": "a legitimate file under a later root is still allowed",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root",
+          "config/workspacer/library"
+        ],
+        "files": {
+          "config/workspacer/library/note.md": "# n"
+        }
+      },
+      "roots": [
+        "${OUTSIDE}",
+        "${SANDBOX}"
+      ],
+      "target": "${CONFIG}/library/note.md",
+      "expect": "allow",
+      "resolvesTo": "${CONFIG}/library/note.md",
+      "why": "The allow direction of the case above: running the gate for the matching root must not become 'a later root grants nothing'. A store carve-out reached through the second root of a two-root grant is ordinary."
     }
   ],
   "methods": [
@@ -3248,7 +3510,16 @@
       "The ONE normalization a caller-supplied spawn / terminal working directory gets.",
       "",
       "OWNERS: services/hub/cmd/brain/profiles.go normalizeCwd,",
-      "        apps/desktop/src/main/lib/spawnCwd.ts normalizeSpawnCwd.",
+      "        apps/desktop/src/main/lib/spawnCwd.ts normalizeSpawnCwd,",
+      "        apps/tui/src/profiles.rs normalize_cwd.",
+      "",
+      "The Rust copy was on this seam the whole time and registered nowhere: the TUI's",
+      "spawn dialog feeds it straight to claudemon's /sessions/spawn, and claudemon's",
+      "stored session cwd is what agentCwds() lifts into the fs.* allow-list. It",
+      "disagreed on 7 of the cases below — it tilde-expanded, it used Rust's UNICODE",
+      "trim (which eats U+0085 and U+00A0, ordinary filename characters here), it",
+      "stripped only '/' and not the other separator, and it answered '' for an empty",
+      "cwd where the twins answer the home directory.",
       "",
       "`cwd` is not confined by the path guard — capspec lists agents.spawn and",
       "terminals.create under unscopedByDecision because a process working directory",
@@ -3319,24 +3590,138 @@
         "why": "No existence check on either side. A spawn that cannot run where it was asked to must fail where it was asked to, not open a shell in $HOME."
       },
       {
-        "in": "\ufeff",
-        "out": "\ufeff",
-        "why": "U+FEFF (ZWNBSP/BOM) is in ECMAScript's WhiteSpace production and is NOT unicode.IsSpace in Go (it was dropped from White_Space in Unicode 4.0.1), so JS .trim() and Go strings.TrimSpace are not the same function. This exact string trimmed to empty on the desktop and became $HOME \u2014 which agentCwds() then feeds into workspaceRoots(), making the whole home tree an fs.* root \u2014 while the brain ran the agent in a directory named U+FEFF. Both copies now trim the ASCII set only, so the BOM is an ordinary character, which is what it is on the filesystem. A BOM-prefixed path is what a value pasted out of a Windows editor or read from a UTF-8-with-BOM file actually carries."
+        "in": "﻿",
+        "out": "﻿",
+        "why": "U+FEFF (ZWNBSP/BOM) is in ECMAScript's WhiteSpace production and is NOT unicode.IsSpace in Go (it was dropped from White_Space in Unicode 4.0.1), so JS .trim() and Go strings.TrimSpace are not the same function. This exact string trimmed to empty on the desktop and became $HOME — which agentCwds() then feeds into workspaceRoots(), making the whole home tree an fs.* root — while the brain ran the agent in a directory named U+FEFF. Both copies now trim the ASCII set only, so the BOM is an ordinary character, which is what it is on the filesystem. A BOM-prefixed path is what a value pasted out of a Windows editor or read from a UTF-8-with-BOM file actually carries."
       },
       {
-        "in": "\ufeff/tmp/x",
-        "out": "\ufeff/tmp/x",
+        "in": "﻿/tmp/x",
+        "out": "﻿/tmp/x",
         "why": "The same code point with a real path behind it: the desktop answered /tmp/x and the brain answered the U+FEFF-prefixed string, so one provider spawned in an existing directory and the other did not."
       },
       {
-        "in": "\u0085",
-        "out": "\u0085",
+        "in": "",
+        "out": "",
         "why": "U+0085 (NEL) is the mirror image: unicode.IsSpace in Go, and neither <USP> nor a LineTerminator in JS. The brain trimmed it to empty and answered $HOME while the desktop kept it. Both differences have to be closed together or the seam merely swaps which provider is wrong."
       },
       {
-        "in": "\u00a0/tmp",
-        "out": "\u00a0/tmp",
-        "why": "NBSP is whitespace to BOTH built-ins, so it used to be trimmed on both sides and agreed by accident. It is pinned as KEPT because the fix is 'trim the ASCII set, nothing else' rather than 'trim the intersection' \u2014 a filename may legitimately begin with a non-breaking space, and a rule stated as a code-point list is the only one three stacks can implement identically."
+        "in": " /tmp",
+        "out": " /tmp",
+        "why": "NBSP is whitespace to BOTH built-ins, so it used to be trimmed on both sides and agreed by accident. It is pinned as KEPT because the fix is 'trim the ASCII set, nothing else' rather than 'trim the intersection' — a filename may legitimately begin with a non-breaking space, and a rule stated as a code-point list is the only one three stacks can implement identically."
+      }
+    ]
+  },
+  "maxLinkHops": 40,
+  "_maxLinkHopsComment": [
+    "The hand-rolled symlink walk's hop cap, shared verbatim by all three copies.",
+    "Each copy declares its own constant and none of them was compared to anything:",
+    "raising one to 4000 left every suite green, so the guard would canonicalize",
+    "chains the kernel refuses at 40 and its answer would stop describing a path the",
+    "OS can open. A value, not a case block — the loaders assert their constant",
+    "equals it."
+  ],
+  "agentCwdLiveness": {
+    "_comment": [
+      "WHICH SESSION ROWS PUT A cwd IN THE fs.* ALLOW-LIST.",
+      "",
+      "Containment answers 'is this path inside a root'. This block answers the other",
+      "half — which roots there are — and the two providers disagreed on it completely:",
+      "the brain has filtered on snapshotLive since it was written, and the desktop's",
+      "workspaceRoots() iterated every snapshot with no state test at all. So one",
+      "session row granted an fs root on one provider and was refused by the other,",
+      "permanently. The desktop's only removal path is a 30s timer armed by a SessionEnd",
+      "hook, so a PTY killed without one (SIGKILL, crash, OOM) kept status 'active' and",
+      "kept its directory granted for the life of the app process.",
+      "",
+      "The fs.* allow-list is a GRANT, not a view: a stopped agent's directory has to",
+      "leave it. That is a different question from 'should the sidebar draw a card', and",
+      "the two must not share a verdict.",
+      "",
+      "Owners: services/hub/cmd/brain/visibility.go snapshotLive and",
+      "apps/desktop/src/main/lib/snapshotLiveness.ts snapshotGrantsFsRoot."
+    ],
+    "cases": [
+      {
+        "name": "an active session grants its cwd",
+        "snapshot": {
+          "cwd": "/w/p",
+          "status": "active"
+        },
+        "live": true,
+        "why": "The ordinary case, and the one that must keep working: every other row here is a narrowing."
+      },
+      {
+        "name": "a row carrying only a cwd is live",
+        "snapshot": {
+          "cwd": "/w/p"
+        },
+        "live": true,
+        "why": "The desktop-shaped row that carries its state in `status` and has no `mode` yet. Refusing it would revoke roots the other provider grants, so an empty mode with no ended status is live in both copies."
+      },
+      {
+        "name": "an ended session stops granting its cwd",
+        "snapshot": {
+          "cwd": "/w/p",
+          "status": "ended"
+        },
+        "live": false,
+        "why": "The desktop spelling of stopped. This is the row the desktop kept granting forever."
+      },
+      {
+        "name": "a stopped session stops granting its cwd",
+        "snapshot": {
+          "cwd": "/w/p",
+          "mode": "stopped"
+        },
+        "live": false,
+        "why": "claudemon's own spelling. Both spellings must answer the same, because the store carries both shapes."
+      },
+      {
+        "name": "an archived session grants nothing",
+        "snapshot": {
+          "cwd": "/w/p",
+          "mode": "running",
+          "archived": true
+        },
+        "live": false,
+        "why": "Archived is a user decision to put the session away; a grant must not outlive it."
+      },
+      {
+        "name": "a shell terminal is not an agent cwd",
+        "snapshot": {
+          "cwd": "/",
+          "mode": "unknown"
+        },
+        "live": false,
+        "why": "A terminals.create SHELL sits in mode 'unknown' for its whole life, and capspec deliberately leaves that method's cwd unconfined — holding terminals.create IS the grant. Counting a shell's cwd let any caller who could open a terminal at '/' hand itself '/' as an fs.read root, which is a self-grant and not a workspace."
+      },
+      {
+        "name": "a mode wins over a stale ended status",
+        "snapshot": {
+          "cwd": "/w/p",
+          "mode": "running",
+          "status": "ended"
+        },
+        "live": true,
+        "why": "The ended-status clause is guarded by an empty mode on purpose: a row that has a live mode is authoritative, and the desktop-shaped `status` is only consulted when there is no mode to consult."
+      },
+      {
+        "name": "a row that will not decode grants nothing",
+        "snapshot": {
+          "cwd": "/w/p",
+          "mode": 42
+        },
+        "live": false,
+        "why": "A snapshot shape change must never WIDEN an allow-list. A field of the wrong type is the decode failure, and both copies have to treat it as such rather than as 'no mode, therefore live'."
+      },
+      {
+        "name": "a non-boolean archived grants nothing either",
+        "snapshot": {
+          "cwd": "/w/p",
+          "archived": "yes"
+        },
+        "live": false,
+        "why": "The same clause on the other field. Go's decoder fails the whole row; the TypeScript copy has to check the type rather than compare against `true`, or the two disagree on exactly the input a shape change produces."
       }
     ]
   }

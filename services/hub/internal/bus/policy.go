@@ -462,6 +462,15 @@ const gitGlobalConfigBasename = ".gitconfig"
 
 // gitXdgConfigDir is git's other per-user configuration directory
 // ($XDG_CONFIG_HOME/git, else $HOME/.config/git), resolved.
+//
+// The `git` component is resolved WITH the base, not appended to a resolved
+// base: `~/.config/git -> ~/dotfiles/git` is the ordinary stow/chezmoi/yadm
+// layout, and the target this is compared against is already canonical, so an
+// unresolved trailing component can only ever fail to match — which took git's
+// per-user config out of the gate on every dotfiles host.
+//
+// TWIN: cmd/brain/fsguard.go gitXdgConfigDir, pathConfinement.ts
+// gitXdgConfigDir.
 func gitXdgConfigDir() (string, bool) {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if !isAbsolutePath(base) {
@@ -471,11 +480,7 @@ func gitXdgConfigDir() (string, bool) {
 		}
 		base = appendComponent(home, ".config")
 	}
-	cb, ok := canonicalizeRoot(base)
-	if !ok {
-		return "", false
-	}
-	return appendComponent(cb, "git"), true
+	return canonicalizeRoot(appendComponent(base, "git"))
 }
 
 // pathIsGitGlobalConfig reports whether an ALREADY canonical path is one of

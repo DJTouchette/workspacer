@@ -297,3 +297,53 @@ func TestBusClientDispatchRoutesCallReplies(t *testing.T) {
 	// Unknown ids (or late replies after timeout cleanup) are dropped quietly.
 	b.dispatch(context.Background(), frame{Op: "error", ID: "gone", Error: "boom"})
 }
+
+// TestAgentCwdLivenessContractCases holds snapshotLive to the fixture's
+// `agentCwdLiveness` block — the root SUPPLY half of path containment.
+//
+// The containment corpus answers "is this path inside a root". Which roots there
+// ARE was a per-provider decision nothing compared: this copy has filtered on
+// snapshotLive since it was written, and the desktop's workspaceRoots() iterated
+// every snapshot with no state test at all, so the SAME session row granted an
+// fs root on one provider and was refused by the other, permanently. The
+// desktop's only removal path is a 30s timer armed by a SessionEnd hook, so a
+// PTY killed without one kept `status: "active"` and kept its directory in the
+// allow-list for the life of the app process.
+//
+// TWIN: apps/desktop/src/main/lib/snapshotLiveness.test.ts.
+func TestAgentCwdLivenessContractCases(t *testing.T) {
+	raw := readContractFixtureBytes(t)
+	var fx struct {
+		AgentCwdLiveness struct {
+			Cases []struct {
+				Name     string          `json:"name"`
+				Snapshot json.RawMessage `json:"snapshot"`
+				Live     bool            `json:"live"`
+				Why      string          `json:"why"`
+			} `json:"cases"`
+		} `json:"agentCwdLiveness"`
+	}
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatalf("parse %s: %v", contractFixtureRel, err)
+	}
+	if len(fx.AgentCwdLiveness.Cases) < 9 {
+		t.Fatalf("%s carries %d agentCwdLiveness cases — a silently shrunken block agrees with everything",
+			contractFixtureRel, len(fx.AgentCwdLiveness.Cases))
+	}
+	sawLive, sawDead := false, false
+	for _, c := range fx.AgentCwdLiveness.Cases {
+		t.Run(c.Name, func(t *testing.T) {
+			if got := snapshotLive(c.Snapshot); got != c.Live {
+				t.Errorf("snapshotLive(%s) = %v, the contract says %v\n  why: %s", c.Snapshot, got, c.Live, c.Why)
+			}
+		})
+		if c.Live {
+			sawLive = true
+		} else {
+			sawDead = true
+		}
+	}
+	if !sawLive || !sawDead {
+		t.Fatal("the block must carry both verdicts, or a copy that answers one constant passes it")
+	}
+}

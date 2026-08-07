@@ -28,7 +28,7 @@ func containmentSkipReason(c containmentCase) string {
 		return "needsSymlinks"
 	case c.NeedsUnreadableDir:
 		return "needsUnreadableDir"
-	case c.NeedsHome:
+	case c.NeedsHome && c.HomeVia == "":
 		return "needsHome"
 	case c.ConfigDirVia != "":
 		return "configDirVia (needs symlinks)"
@@ -256,10 +256,16 @@ type containmentCase struct {
 	// ConfigDirVia names a sandbox-relative symlink to the config HOME that the
 	// implementation is pointed through, while ${CONFIG} keeps naming the real
 	// path — so the case passes only if the gate resolves its own config dir.
-	ConfigDirVia string   `json:"configDirVia"`
-	Roots        []string `json:"roots"`
-	Target       string   `json:"target"`
-	Expect       string   `json:"expect"`
+	ConfigDirVia string `json:"configDirVia"`
+	// HomeVia names a sandbox-relative directory the implementation's HOME is
+	// pointed at, and ${HOME} then names it too. It is the only way to reach the
+	// git per-user-config gate's resolved-home clause, which compares against
+	// whatever <home>/.gitconfig points at: that needs a symlink inside $HOME,
+	// and no test may write into the real one.
+	HomeVia string   `json:"homeVia"`
+	Roots   []string `json:"roots"`
+	Target  string   `json:"target"`
+	Expect  string   `json:"expect"`
 	// DeniedBy is the RIGHT-REASON half of a deny, named from the fixture's
 	// `vocabulary.denyReasons`. `expect: deny` alone is satisfied by a refusal
 	// for ANY reason, including "the token did not substitute, so the target was
@@ -326,6 +332,7 @@ type containmentFixture struct {
 	Cases              []containmentCase     `json:"cases"`
 	Methods            []methodCase          `json:"methods"`
 	ParamShapes        []paramShapeCase      `json:"paramShapes"`
+	MaxLinkHops        *int                  `json:"maxLinkHops"`
 }
 
 // TestAsciiFoldMatchesTheFixture pins the bus copy of asciiLower against the
@@ -916,7 +923,7 @@ func TestPathContainmentContractCases(t *testing.T) {
 			// still contained nothing, so the deny verdict never moved. No case
 			// using these tokens expects `allow`.
 			home := realpathOf(userHome())
-			if c.NeedsHome && home == "" {
+			if c.NeedsHome && c.HomeVia == "" && home == "" {
 				t.Skip("needsHome: this process has no resolvable home directory")
 			}
 			processCwd := ""
@@ -930,6 +937,17 @@ func TestPathContainmentContractCases(t *testing.T) {
 			}
 			root := filepath.Join(sandbox, "root")
 			outside := filepath.Join(sandbox, "outside")
+			// A case may ask for the implementation's HOME to be a directory
+			// INSIDE the sandbox — the only way to reach the git gate's
+			// resolved-home clause, which needs a symlink in $HOME.
+			if c.HomeVia != "" {
+				home = filepath.Join(sandbox, filepath.FromSlash(c.HomeVia))
+				if err := os.MkdirAll(home, 0o755); err != nil {
+					t.Fatalf("mkdir %s: %v", home, err)
+				}
+				t.Setenv("HOME", home)
+				t.Setenv("USERPROFILE", home)
+			}
 			configHome := filepath.Join(sandbox, "config")
 			config := filepath.Join(configHome, "workspacer")
 			for _, d := range []string{root, outside, config} {
@@ -1310,5 +1328,45 @@ func TestAuthorizeRefusesCaseVariantDuplicateOfTheScopedField(t *testing.T) {
 				"the bus confined %q while a Go provider's decoder reads %q — one call must carry exactly one path",
 				params, benign, loot)
 		}
+	}
+}
+
+// A RELATIVE XDG_CONFIG_HOME must fall back to $HOME/.config rather than
+// switching git's per-user config gate off for the whole process. See the twin
+// in cmd/brain/fsguard_test.go for the full reasoning; every corpus case points
+// XDG_CONFIG_HOME at an absolute sandbox path, so this branch was taken by
+// nothing.
+func TestARelativeXdgConfigHomeFallsBackToTheHomeConfigDir(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	for _, xdg := range []string{"", "relative/config", ".", "~/config"} {
+		t.Run("XDG_CONFIG_HOME="+xdg, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", xdg)
+			target := filepath.Join(home, ".config", "git", "config")
+			if !pathIsGitGlobalConfig(target) {
+				t.Errorf("%s is git's per-user config on this host and the gate missed it — a non-absolute XDG_CONFIG_HOME must fall back to $HOME/.config, not disable the clause", target)
+			}
+			if ordinary := filepath.Join(home, "proj", "git", "config"); pathIsGitGlobalConfig(ordinary) {
+				t.Errorf("%s is an ordinary project file and the gate claimed it", ordinary)
+			}
+		})
+	}
+}
+
+// maxLinkHops is a twin-parity constant that was compared to nothing: raising
+// one copy to 4000 left every suite green, and the guard would then canonicalize
+// chains the kernel refuses at 40 — its answer would stop describing a path the
+// OS can open.
+func TestMaxLinkHopsMatchesTheFixture(t *testing.T) {
+	fx := loadContainmentFixture(t)
+	if fx.MaxLinkHops == nil {
+		t.Fatal("the fixture no longer declares maxLinkHops — the three copies are free to drift again")
+	}
+	if maxLinkHops != *fx.MaxLinkHops {
+		t.Errorf("maxLinkHops = %d, the contract says %d", maxLinkHops, *fx.MaxLinkHops)
 	}
 }

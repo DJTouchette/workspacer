@@ -41,6 +41,10 @@
           "live",
           "expected",
           "why"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/models_contract_test.go::TestClaudeModelCatalogContractCases(",
+          "apps/desktop/src/main/services/claudeModelCatalogContract.test.ts::contracts/claude-model-catalog-cases.json"
         ]
       }
     }

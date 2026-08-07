@@ -35,7 +35,7 @@ import (
 // number below is stale. The value it replaced was `if flagged < 10` against a
 // true count in the high thirties — a floor that let two thirds of the coverage
 // evaporate without a word.
-const brainDangerousParamFloor = 49
+const brainDangerousParamFloor = 51
 
 // assertParamFloor applies the shared ratchet rule to one scan's count.
 func assertParamFloor(t *testing.T, scan string, observed, floor int) {

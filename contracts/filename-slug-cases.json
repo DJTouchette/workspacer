@@ -47,7 +47,6 @@
     "services/hub/cmd/brain/slug_test.go. Both must run every case for all three",
     "variants; `expect` carries one string per variant."
   ],
-
   "vocabulary": {
     "_comment": [
       "THE BLOCK REGISTRY. Every array-of-objects block in this file must be declared",
@@ -67,26 +66,45 @@
           "input",
           "expect",
           "why"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/slug_test.go::TestFilenameSlugContractCases(",
+          "apps/desktop/src/main/lib/fileUtils.test.ts::filename slugs — cross-language contract"
         ]
       }
     }
   },
   "owners": {
-    "apps/desktop/src/main/lib/fileUtils.ts": ["library", "layout", "session"],
-    "services/hub/cmd/brain/slug.go": ["library", "layout", "session"]
+    "apps/desktop/src/main/lib/fileUtils.ts": [
+      "library",
+      "layout",
+      "session"
+    ],
+    "services/hub/cmd/brain/slug.go": [
+      "library",
+      "layout",
+      "session"
+    ]
   },
-
   "cases": [
     {
       "name": "an ordinary title",
       "input": "Hello World",
-      "expect": { "library": "hello-world", "layout": "hello-world", "session": "hello-world" },
+      "expect": {
+        "library": "hello-world",
+        "layout": "hello-world",
+        "session": "hello-world"
+      },
       "why": "The regression floor. Every real save looks like this and must keep the byte-for-byte filename it has today."
     },
     {
       "name": "already a slug (idempotence)",
       "input": "hello-world",
-      "expect": { "library": "hello-world", "layout": "hello-world", "session": "hello-world" },
+      "expect": {
+        "library": "hello-world",
+        "layout": "hello-world",
+        "session": "hello-world"
+      },
       "why": "remove() re-slugs a stored id, so slug(slug(x)) must equal slug(x) or an item becomes undeletable — the same failure shape as the U+0130 divergence, from the other direction."
     },
     {
@@ -102,73 +120,121 @@
     {
       "name": "a run of bad characters",
       "input": "a//b**c",
-      "expect": { "library": "a-b-c", "layout": "a-b-c", "session": "a-b-c" },
+      "expect": {
+        "library": "a-b-c",
+        "layout": "a-b-c",
+        "session": "a-b-c"
+      },
       "why": "The two charset variants differ in HOW they collapse (one pass over runs vs. single-char replace then dedup) and must still agree on the answer."
     },
     {
       "name": "leading and trailing punctuation",
       "input": "  spaced  ",
-      "expect": { "library": "spaced", "layout": "spaced", "session": "-spaced-" },
+      "expect": {
+        "library": "spaced",
+        "layout": "spaced",
+        "session": "-spaced-"
+      },
       "why": "The one place the variants legitimately differ: session does NOT trim dashes. Pinning it here stops a well-meaning unification from renaming every saved session file."
     },
     {
       "name": "nothing but punctuation",
       "input": "!!!",
-      "expect": { "library": "item", "layout": "layout", "session": "-" },
+      "expect": {
+        "library": "item",
+        "layout": "layout",
+        "session": "-"
+      },
       "why": "Three different fallbacks — 'item', 'layout', and none at all. A shared helper that picked one would break two call sites."
     },
     {
       "name": "the empty string",
       "input": "",
-      "expect": { "library": "item", "layout": "layout", "session": "" },
+      "expect": {
+        "library": "item",
+        "layout": "layout",
+        "session": ""
+      },
       "why": "sessionService relies on empty-in/empty-out; the other two must produce their fallback rather than an empty filename."
     },
     {
       "name": "uppercase ASCII folds",
       "input": "ABC",
-      "expect": { "library": "abc", "layout": "abc", "session": "abc" },
+      "expect": {
+        "library": "abc",
+        "layout": "abc",
+        "session": "abc"
+      },
       "why": "The floor for the narrowed fold: restricting case folding to ASCII must not stop ASCII from folding."
     },
     {
       "name": "U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE, inside a word",
       "input": "aİb",
-      "expect": { "library": "a-b", "layout": "a-b", "session": "a-b" },
+      "expect": {
+        "library": "a-b",
+        "layout": "a-b",
+        "session": "a-b"
+      },
       "why": "THE DIVERGENCE. Go folded it to 'i' and answered 'aib'; JS folded it to 'i' + U+0307 and answered 'ai-b'. Under catalog delegation the brain wrote <configDir>/layouts/aib.yaml while the app wrote ai-b.yaml, so the item was invisible to the other provider's list and its delete unlinked a name that was never written. Now both treat it as the non-ASCII character it is."
     },
     {
       "name": "U+0130 alone",
       "input": "İ",
-      "expect": { "library": "item", "layout": "layout", "session": "-" },
+      "expect": {
+        "library": "item",
+        "layout": "layout",
+        "session": "-"
+      },
       "why": "The session variant made it worse than the layout one because it does not trim: Go said 'i' and JS said 'i-'. With the shared fold both see a single bad character."
     },
     {
       "name": "U+0130 after a dash",
       "input": "-İ",
-      "expect": { "library": "item", "layout": "layout", "session": "-" },
+      "expect": {
+        "library": "item",
+        "layout": "layout",
+        "session": "-"
+      },
       "why": "Go '-i' vs JS '-i-'. Included because it is the case where the two answers differ in LENGTH as well as content, which is what makes the two files impossible to reconcile after the fact."
     },
     {
       "name": "U+212A KELVIN SIGN",
       "input": "Kelvin",
-      "expect": { "library": "elvin", "layout": "elvin", "session": "-elvin" },
+      "expect": {
+        "library": "elvin",
+        "layout": "elvin",
+        "session": "-elvin"
+      },
       "why": "The mirror of U+0130: both languages used to fold it INTO ASCII ('kelvin'), so this is the one input the narrowed fold deliberately changes. Recorded as a decision, not an accident — a character that renders as a unit symbol is not a 'K', and the two copies agreeing is worth more than either answer."
     },
     {
       "name": "a Turkish dotless i is an ordinary non-ASCII character",
       "input": "ıstanbul",
-      "expect": { "library": "stanbul", "layout": "stanbul", "session": "-stanbul" },
+      "expect": {
+        "library": "stanbul",
+        "layout": "stanbul",
+        "session": "-stanbul"
+      },
       "why": "Neither language ever folded this one into ASCII, so it pins that the narrowed fold did not accidentally start doing so."
     },
     {
       "name": "accented letters",
       "input": "Café Straße",
-      "expect": { "library": "caf-stra-e", "layout": "caf-stra-e", "session": "caf-stra-e" },
+      "expect": {
+        "library": "caf-stra-e",
+        "layout": "caf-stra-e",
+        "session": "caf-stra-e"
+      },
       "why": "The ordinary non-ASCII case, unchanged by the fold narrowing: both copies already answered this identically and must keep doing so."
     },
     {
       "name": "a multi-byte character next to the length cap",
       "input": "ééééééééééééééééééééééééééééééééééé",
-      "expect": { "library": "item", "layout": "layout", "session": "-" },
+      "expect": {
+        "library": "item",
+        "layout": "layout",
+        "session": "-"
+      },
       "why": "Go caps by BYTES (len) and TypeScript by UTF-16 code units (substring). They coincide only because the cap is applied AFTER the alphabet replacement, which leaves pure ASCII — this case fails loudly if anyone ever moves the truncation earlier."
     },
     {

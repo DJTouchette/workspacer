@@ -544,6 +544,35 @@ describe('libraryService — a caller-supplied id cannot escape its directory', 
       ),
     ).toThrow(/invalid library item id/);
   });
+
+  // The BACKSLASH half of the separator check, which nothing reached: every id
+  // the block above tries either carries a forward slash or is '.'/'..', so
+  // narrowing the regex to /\// alone was green. The clause is justified in the
+  // source ("a backslash is only a separator on win32, but a Windows-shaped id
+  // is never a legitimate item name on any platform") and it guards a path that
+  // ends in a recursive force rmSync — on Windows, `..\..` IS a traversal.
+  it('a Windows-shaped id is refused on every platform', () => {
+    const root = fs.realpathSync(cwd);
+    for (const id of ['..\\..', 'a\\b', '\\\\server\\share', 'sub\\SKILL']) {
+      expect(() => libraryService.remove('claude', id, root, 'skill', anyGuard)).toThrow(
+        /invalid library item id/,
+      );
+      expect(() =>
+        libraryService.save(
+          { scope: 'claude', id, title: 'x', kind: 'skill', body: 'y', cwd: root },
+          anyGuard,
+        ),
+      ).toThrow(/invalid library item id/);
+    }
+    // The floor: an ordinary non-slug-stable claude id still works, which is the
+    // whole reason these ids are not slugged.
+    expect(() =>
+      libraryService.save(
+        { scope: 'claude', id: 'My.Skill', title: 'x', kind: 'skill', body: 'y', cwd: root },
+        anyGuard,
+      ),
+    ).not.toThrow();
+  });
 });
 
 // The ORDER a list comes back in is part of the same bus answer. Go sorts
@@ -591,8 +620,8 @@ describe('libraryService — the derived watch paths go through the same guard',
   // REPORTS A PASS on a host with no symlink privilege while asserting nothing.
   const watchGate = { ran: 0 };
   const itLinks = gatedIt(CAN_SYMLINK_LIB, watchGate);
-  const itemGuard = (root: string) => {
-    const roots = [path.join(fs.realpathSync(h.configDir), 'library'), root];
+  const itemGuard = (root: string, ...extra: string[]) => {
+    const roots = [path.join(fs.realpathSync(h.configDir), 'library'), root, ...extra];
     return (p: string): string | null => {
       try {
         return assertPathAllowed('library.list', p, roots);
@@ -604,46 +633,197 @@ describe('libraryService — the derived watch paths go through the same guard',
 
   const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 400));
 
+  // ALL FOUR legs, not just the agents one.
+  //
+  // ensureProjectWatch installs four watches — projectDir, claudeSkillsDir
+  // (recursive), claudeAgentsDir, claudeCommandsDir — and this test used to
+  // create `outside/agents` and nothing else, so THREE of the four `guard`
+  // arguments could be deleted with 88 files / 1379 tests green: the legs were
+  // never reached, because the directories they watch did not exist. The skills
+  // one is the recursive watch, i.e. a change oracle over a whole subtree.
   itLinks('does not turn an out-of-root directory into a library.changed oracle', async () => {
     const realCwd = fs.realpathSync(cwd);
     const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-outside-')));
-    // An ordinary permitted write inside the allowed root: a symlinked
-    // component of the DERIVED path.
+    const outsideProj = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-outsidep-')),
+    );
+    // Ordinary permitted writes inside the allowed root: symlinked components of
+    // the DERIVED paths. Both are shapes a git clone carries verbatim.
     fs.symlinkSync(outside, path.join(realCwd, '.claude'));
-    fs.mkdirSync(path.join(outside, 'agents'), { recursive: true });
+    fs.symlinkSync(outsideProj, path.join(realCwd, '.workspacer'));
+    for (const d of ['agents', 'skills', 'skills/deep', 'commands']) {
+      fs.mkdirSync(path.join(outside, ...d.split('/')), { recursive: true });
+    }
+    fs.mkdirSync(path.join(outsideProj, 'library'), { recursive: true });
 
     libraryService.list(realCwd, itemGuard(realCwd));
     await settle();
-    busEvents.length = 0;
 
     // Stand-in for remote-token: a file in neither the item roots nor the cwd
-    // root, one that assertPathAllowed refuses to read.
-    fs.writeFileSync(path.join(outside, 'agents', 'remote-token'), 'tok');
-    await settle();
-
-    expect(
-      busEvents,
-      'library.list installed an fs.watch outside every allowed root — a write there reached the bus as library.changed, which is a change oracle on whatever the link points at',
-    ).toEqual([]);
+    // root, one that assertPathAllowed refuses to read. One probe per leg, so a
+    // failure names the leg that leaked.
+    for (const [leg, target] of [
+      ['claudeAgentsDir', path.join(outside, 'agents', 'remote-token')],
+      ['claudeSkillsDir (recursive)', path.join(outside, 'skills', 'deep', 'remote-token')],
+      ['claudeCommandsDir', path.join(outside, 'commands', 'remote-token')],
+      ['projectDir', path.join(outsideProj, 'library', 'remote-token')],
+    ] as const) {
+      busEvents.length = 0;
+      fs.writeFileSync(target, 'tok');
+      await settle();
+      expect(
+        busEvents,
+        `the ${leg} watch was installed outside every allowed root — a write there reached the bus as library.changed, which is a change oracle on whatever the link points at`,
+      ).toEqual([]);
+    }
     fs.rmSync(outside, { recursive: true, force: true });
+    fs.rmSync(outsideProj, { recursive: true, force: true });
   });
 
   it('still reports changes in the ordinary derived directories inside the root', async () => {
     const realCwd = fs.realpathSync(cwd);
-    fs.mkdirSync(path.join(realCwd, '.claude', 'agents'), { recursive: true });
+    for (const d of [
+      '.claude/agents',
+      '.claude/skills/deep',
+      '.claude/commands',
+      '.workspacer/library',
+    ]) {
+      fs.mkdirSync(path.join(realCwd, ...d.split('/')), { recursive: true });
+    }
 
     libraryService.list(realCwd, itemGuard(realCwd));
     await settle();
-    busEvents.length = 0;
 
-    fs.writeFileSync(path.join(realCwd, '.claude', 'agents', 'a.md'), 'x');
-    await settle();
-
-    // The floor: without this the test above is satisfied by watching nothing.
-    expect(busEvents).toContainEqual({ type: 'library.changed' });
+    // The floor, per leg: without this the test above is satisfied by watching
+    // nothing at all, which is how three of the four guards were free.
+    for (const rel of [
+      '.claude/agents/a.md',
+      '.claude/skills/deep/SKILL.md',
+      '.claude/commands/c.md',
+      '.workspacer/library/p.md',
+    ]) {
+      busEvents.length = 0;
+      fs.writeFileSync(path.join(realCwd, ...rel.split('/')), 'x');
+      await settle();
+      expect(busEvents, `no library.changed for an ordinary write at ${rel}`).toContainEqual({
+        type: 'library.changed',
+      });
+    }
   });
 
-  itRanEveryGatedTest(watchGate, 'the derived-watch containment test', 1);
+  // THE MAP KEY, and the de-duplication that depends on it.
+  //
+  // `watch()` stores the watcher under the DERIVED name (`dir`), not under the
+  // RESOLVED one, and the source says why: the teardown loop recomputes the same
+  // derived names for the PREVIOUS cwd, so a resolved key would never be found
+  // there. Both halves killed zero tests. Keyed by `resolved`,
+  // `this.watchers.has(dir)` is false forever — so every library.list on the
+  // same cwd opens ANOTHER fs.watch on the same four directories (unbounded fd
+  // growth in a long-lived Electron main process), and the previous project's
+  // directories keep publishing `library.changed` to the bus after the user
+  // switches projects. That is the same remote-visible activity oracle the
+  // derived-watch guard closed, reached through a stale watcher instead of a
+  // symlink.
+  // BINDING DECISION 2 at this sink: watch() must hand fs.watch/mkdir the string
+  // the guard RESOLVED, not the caller-derived one it was asked about. Making it
+  // `if (guard(dir) === null) return; const resolved = dir;` — keep the verdict,
+  // discard the answer — left the whole desktop suite green, because every other
+  // test here uses a guard whose answer is the same inode as its question. This
+  // one hands back a DIFFERENT directory, which is the only way to tell the two
+  // strings apart from outside.
+  itLinks('every watch leg watches the directory the guard ANSWERED', async () => {
+    const realCwd = fs.realpathSync(cwd);
+    const answers = new Map<string, string>();
+    for (const derived of [
+      path.join(realCwd, '.workspacer', 'library'),
+      path.join(realCwd, '.claude', 'skills'),
+      path.join(realCwd, '.claude', 'agents'),
+      path.join(realCwd, '.claude', 'commands'),
+    ]) {
+      const real = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-ans-')));
+      answers.set(derived, real);
+      fs.mkdirSync(derived, { recursive: true });
+    }
+    const relocating = (p: string): string | null => answers.get(p) ?? itemGuard(realCwd)(p);
+
+    libraryService.list(realCwd, relocating);
+    await settle();
+
+    for (const [derived, answered] of answers) {
+      busEvents.length = 0;
+      fs.writeFileSync(path.join(answered, 'a.md'), 'x');
+      await settle();
+      expect(
+        busEvents,
+        `watch() ignored the guard's answer for ${derived}: a change in ${answered}, the path the guard RESOLVED to, produced no library.changed`,
+      ).toContainEqual({ type: 'library.changed' });
+
+      busEvents.length = 0;
+      fs.writeFileSync(path.join(derived, 'b.md'), 'x');
+      await settle();
+      expect(
+        busEvents,
+        `watch() opened the caller-derived ${derived} instead of the guard's answer — the checked path and the opened path are two different strings again`,
+      ).toEqual([]);
+    }
+    for (const answered of answers.values()) fs.rmSync(answered, { recursive: true, force: true });
+  });
+
+  // THE MAP KEY, and the de-duplication that depends on it.
+  //
+  // watch() stores the watcher under the DERIVED name, not the RESOLVED one, and
+  // the source says why: the teardown loop recomputes the same derived names for
+  // the PREVIOUS cwd, so a resolved key would never be found there. Both halves
+  // killed zero tests. Keyed by `resolved`, `this.watchers.has(dir)` is false
+  // forever — so every library.list on the same cwd opens ANOTHER fs.watch on
+  // the same four directories, the map only ever holds the last one, and the
+  // teardown closes one of five. The previous project's directories then keep
+  // publishing `library.changed` to the bus after the user switches projects:
+  // the same remote-visible activity oracle the derived-watch guard closed,
+  // reached through a leaked watcher instead of a symlink.
+  itLinks('switching project closes EVERY watcher the previous project opened', async () => {
+    const realCwd = fs.realpathSync(cwd);
+    // A symlinked component, so the derived name and the resolved name differ —
+    // without that a resolved key coincides with the derived one and the
+    // mutation is invisible. The store is an allowed root, so the guard answers.
+    const store = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-store-')));
+    fs.mkdirSync(path.join(store, 'agents'), { recursive: true });
+    fs.symlinkSync(store, path.join(realCwd, '.claude'));
+    const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-other-')));
+
+    // list() alone cannot grow the set — ensureProjectWatch returns early when
+    // the cwd has not changed. `library.save` scope=claude passes force=true and
+    // is therefore the path that reaches watch() again and again, which is what
+    // makes watch()'s own de-duplication load-bearing rather than redundant.
+    const guard = itemGuard(realCwd, store);
+    libraryService.list(realCwd, guard);
+    for (let i = 0; i < 5; i++) {
+      libraryService.save(
+        { scope: 'claude', id: `dup${i}`, title: `T${i}`, kind: 'agent', body: 'b', cwd: realCwd },
+        guard,
+      );
+    }
+    await settle();
+    // The floor: the watch really is live before the switch.
+    busEvents.length = 0;
+    fs.writeFileSync(path.join(store, 'agents', 'live.md'), 'x');
+    await settle();
+    expect(busEvents).toContainEqual({ type: 'library.changed' });
+
+    libraryService.list(other, itemGuard(other));
+    await settle();
+    busEvents.length = 0;
+    fs.writeFileSync(path.join(store, 'agents', 'stale.md'), 'x');
+    await settle();
+    expect(
+      busEvents,
+      "the previous project's directories are still publishing library.changed after the switch — either the teardown loop cannot find the watcher (a resolved map key) or list() opened more of them than the map holds (no de-duplication)",
+    ).toEqual([]);
+    fs.rmSync(store, { recursive: true, force: true });
+    fs.rmSync(other, { recursive: true, force: true });
+  });
+
+  itRanEveryGatedTest(watchGate, 'the derived-watch containment test', 3);
 });
 
 /**

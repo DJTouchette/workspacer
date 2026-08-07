@@ -609,6 +609,20 @@ const gitGlobalConfigBasename = ".gitconfig"
 // $XDG_CONFIG_HOME/git, or $HOME/.config/git — holding `config`, `attributes`
 // and `ignore`. Returns the RESOLVED directory, or ok=false when neither the
 // environment nor the home directory yields one.
+//
+// The WHOLE directory is canonicalized, `git` component included — not the base
+// alone with `git` appended afterwards. `~/.config/git -> ~/dotfiles/git` is the
+// ordinary stow/chezmoi/yadm arrangement, and the target this is compared
+// against has already been resolved per component, so appending an UNRESOLVED
+// component compares a resolved path against an unresolved directory and can
+// only ever miss. That miss took git's per-user config out of the gate entirely
+// on every dotfiles host: basename `config`, no `.git` component, nowhere near
+// the workspacer config dir, so nothing else caught it and fs.write could define
+// filter.<drv>.clean. The workspacer store carve-outs already resolve the whole
+// path this way ("a store carve-out is canonicalized too"); git's did not.
+//
+// A missing directory still canonicalizes (the walk keeps going on ENOENT), so
+// this stays comparable on a host that has never created either component.
 func gitXdgConfigDir() (string, bool) {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if !filepath.IsAbs(base) {
@@ -618,11 +632,7 @@ func gitXdgConfigDir() (string, bool) {
 		}
 		base = filepath.Join(home, ".config")
 	}
-	cb, ok := canonicalRoot(base)
-	if !ok {
-		return "", false
-	}
-	return filepath.Join(cb, "git"), true
+	return canonicalRoot(filepath.Join(base, "git"))
 }
 
 // pathIsGitGlobalConfig reports whether an ALREADY canonical path is one of

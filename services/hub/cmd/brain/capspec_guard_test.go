@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/djtouchette/workspacer-hub/internal/capspec"
@@ -45,4 +46,48 @@ func TestSpawnStaysDeliberatelyUnscoped(t *testing.T) {
 	if capspec.MissingSpec("agents.spawn") {
 		t.Fatal("agents.spawn now looks path-bearing by name to capspec — align this guard and the spawn handlers")
 	}
+}
+
+// TestBrainMethodsAllClassified is the METHOD-level completeness check the
+// package had no counterpart to.
+//
+// TestBrainMethodsAllScoped above asks capspec.MissingSpec, which is a name
+// PREFIX heuristic over {fs., search., library., git.}: it returns false for
+// every claude.*, sessions.*, config.*, layouts.*, app.*, analytics.*,
+// providers.* and replay.* method no matter what that method does. Measured on
+// the union of both providers' registries, 27 of 73 capabilities were classified
+// NOWHERE — and six of them are the ones the app's own consent list marks
+// sensitive:true, including claude.approve and claude.gate, an approval-override
+// pair that composes with agents.sendMessage into arbitrary host command
+// execution. A brand-new `claude.autoApprove`, registered and dispatched and
+// byte-for-byte claude.approve under another name, passed the whole Go module.
+//
+// The repo already had this shape for the HUMAN-facing list —
+// pluginPermissions.test.ts's "labels every capability the main process actually
+// registers". The machine-enforced list had none.
+func TestBrainMethodsAllClassified(t *testing.T) {
+	r := newRegistry(newClaudemonClient("http://unused"))
+	seen := map[string]bool{}
+	for _, set := range [][]string{r.methods(), r.catalogMethods()} {
+		for _, m := range set {
+			seen[m] = true
+		}
+	}
+	if len(seen) < 40 {
+		t.Fatalf("the brain registry enumerated only %d methods — the method lists changed and this guard is guarding nothing", len(seen))
+	}
+	for _, m := range sortedMethodNames(seen) {
+		if capspec.MissingClassification(m) {
+			t.Errorf("the brain registers %q and capspec says nothing about it — not a PathParam entry, not an unscopedByDecision reason, not an inertMethods reason. That silence is what let claude.approve and claude.gate (an approval-override pair) ship unexamined: MissingSpec only ever asks about fs./search./library./git. names. Decide what it is and write it down.", m)
+		}
+	}
+}
+
+func sortedMethodNames(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

@@ -25,6 +25,7 @@ import { agentNotifier } from './agentNotifier';
 import { appIconPath } from '../lib/appIcon';
 import { dropHostTrusted } from '../lib/hostTrustedConfig';
 import { assertPathAllowed, canonicalRoot, configStoreRoots } from '../lib/pathConfinement';
+import { snapshotGrantsFsRoot } from '../lib/snapshotLiveness';
 import { DELEGATE_CATALOG_TO_BRAIN } from './brainDelegation';
 import { configService, getConfigDir } from './configService';
 import { listClaudeModels } from './claudeModels';
@@ -104,11 +105,22 @@ function detectDefaultShell(): string {
 // SUPPLY — which allow-list each capability gets — because that depends on the
 // live session store.
 
-/** Workspace roots for content-touching fs.* calls: live agent cwds + config stores. */
+/** Workspace roots for content-touching fs.* calls: live agent cwds + config stores.
+ *
+ *  LIVE is load-bearing and used to be a word in this comment only: the loop
+ *  below added every snapshot's cwd with no state test whatsoever, while the
+ *  brain's `agentCwds()` has filtered on `snapshotLive` since it was written. So
+ *  one session row granted a root on one provider and was refused by the other,
+ *  permanently — and this store's only removal path is a 30-second timer armed
+ *  by a SessionEnd hook, so a PTY killed without one (SIGKILL, crash, OOM) kept
+ *  `status: 'active'` and kept its directory in the allow-list for the life of
+ *  the app process. git.diff / fs.readImage / fs.watch / fs.unwatch are answered
+ *  here even under the default catalog delegation, so that was the shipping
+ *  configuration. See lib/snapshotLiveness.ts for the clause-by-clause rule. */
 function workspaceRoots(): string[] {
   const roots = new Set<string>();
   for (const s of claudeSessionStore.getAllSnapshots()) {
-    if (s.cwd) roots.add(s.cwd);
+    if (s.cwd && snapshotGrantsFsRoot(s)) roots.add(s.cwd);
   }
   for (const r of configStoreRoots()) roots.add(r);
   return [...roots];

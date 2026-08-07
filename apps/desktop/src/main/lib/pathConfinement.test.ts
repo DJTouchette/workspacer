@@ -44,6 +44,8 @@ import {
   isSecretPath,
   traversesGitDir,
   resolveStoreEntry,
+  isGitGlobalConfigPath,
+  MAX_LINK_HOPS,
 } from './pathConfinement';
 
 interface Case {
@@ -63,6 +65,14 @@ interface Case {
    *  through, while ${CONFIG} keeps naming the real path — so the case passes
    *  only if the secret gate canonicalizes its own config dir. */
   configDirVia?: string;
+  /** A sandbox-relative directory the implementation's HOME is pointed at, and
+   *  which `${HOME}` then names too. It is the only way to reach the git
+   *  per-user-config gate's resolved-home clause, which compares against
+   *  whatever `<home>/.gitconfig` points at: that needs a symlink inside $HOME,
+   *  and no test may write into the real one. Every other case for that gate has
+   *  a canonical basename of `.gitconfig`, which clause 1 already answers, so
+   *  deleting clause 2 left all three copies green. */
+  homeVia?: string;
   roots: string[];
   target: string;
   expect: 'allow' | 'deny';
@@ -95,6 +105,7 @@ interface Vocabulary {
 
 interface Fixture {
   vocabulary: Vocabulary;
+  maxLinkHops: number;
   owners: Record<string, string[]>;
   secretBasenames: string[];
   configStoreSubdirs: string[];
@@ -152,13 +163,17 @@ function skipReason(c: Case): string | null {
   if (c.posixOnly && WIN32) return 'posixOnly';
   if (c.needsSymlinks && !CAN_SYMLINK) return 'needsSymlinks';
   if (c.needsUnreadableDir && !CAN_HAVE_UNREADABLE_DIR) return 'needsUnreadableDir';
-  if (c.needsHome && !REAL_HOME) return 'needsHome';
+  if (c.needsHome && !c.homeVia && !REAL_HOME) return 'needsHome';
   return null;
 }
 
 let sandbox = '';
 let restoreModes: string[] = [];
 let savedXdg: string | undefined;
+let savedHome: string | undefined;
+/** The home this case's implementation sees: the process's own, or the sandbox
+ *  directory a `homeVia` case points it at. `${HOME}` substitutes to this. */
+let caseHome = '';
 
 beforeEach(() => {
   // realpath: on macOS os.tmpdir() is itself a symlink, and every expectation
@@ -175,6 +190,8 @@ beforeEach(() => {
   // directory that all three copies answer the same way.
   savedXdg = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = path.join(sandbox, 'config');
+  savedHome = process.env.HOME;
+  caseHome = REAL_HOME;
   for (const d of ['root', 'outside', path.join('config', 'workspacer')]) {
     fs.mkdirSync(path.join(sandbox, d), { recursive: true });
   }
@@ -192,6 +209,9 @@ afterEach(() => {
   state.configDir = '';
   if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = savedXdg;
+  if (savedHome === undefined) delete process.env.HOME;
+  else process.env.HOME = savedHome;
+  caseHome = '';
 });
 
 /** Sandbox-relative → absolute, without touching the caller-facing tokens. */
@@ -301,7 +321,7 @@ function tokenTable(): Record<string, string> {
     ROOT: path.join(sandbox, 'root'),
     OUTSIDE: path.join(sandbox, 'outside'),
     CONFIG: path.join(sandbox, 'config', 'workspacer'),
-    HOME: REAL_HOME,
+    HOME: caseHome,
     PROCESS_CWD,
   };
 }
@@ -659,10 +679,22 @@ describe('path containment — cross-language contract', () => {
       // run with a skip count into a red one.
       corpusTally.ran(c.expect);
       // Before the tree, because the config dir has to be repointed through the
-      // link while ${CONFIG} keeps substituting to the real path.
+      // link while ${CONFIG} keeps substituting to the real path. XDG_CONFIG_HOME
+      // moves with it, exactly as it does in the two Go loaders: git's own
+      // per-user config directory is read straight out of the environment rather
+      // than through getConfigDir, so leaving it on the real path would let the
+      // case pass without ever resolving the base.
       if (c.configDirVia) {
         fs.symlinkSync(path.join(sandbox, 'config'), path.join(sandbox, c.configDirVia));
         state.configDir = path.join(sandbox, c.configDirVia, 'workspacer');
+        process.env.XDG_CONFIG_HOME = path.join(sandbox, c.configDirVia);
+      }
+      // …and a case may point HOME at a directory inside the sandbox, which is
+      // the only way to reach the git gate's resolved-home clause.
+      if (c.homeVia) {
+        caseHome = path.join(sandbox, ...c.homeVia.split('/'));
+        fs.mkdirSync(caseHome, { recursive: true });
+        process.env.HOME = caseHome;
       }
       materialize(c.tree);
       const roots = c.roots.map(subst);
@@ -860,5 +892,73 @@ describe('resolveStoreEntry returns the path it validated', () => {
     }
   });
 
-  itRanEveryGatedTest(storeGate, 'the resolveStoreEntry canonical-answer tests', 2);
+  // The catch arm. Its posture is written into the source — "unverifiable → skip,
+  // same posture as the fs.* guard" — and flipping it to `return path.join(dir,
+  // name)` (fail-OPEN) left the focused file AND the whole desktop suite green:
+  // every other arm of this function is pinned, this one is reached by no case.
+  // Both consumers (sessionService.listSessions, layoutService) then readFileSync
+  // a path the guard explicitly could not verify.
+  //
+  // ENOTDIR is the portable spelling: a FILE where the store directory should be
+  // makes the walk fail without needing symlinks or a chmod, so this needs no
+  // host gate.
+  it('skips an entry it cannot verify rather than handing back the raw join', () => {
+    const notADir = path.join(store, 'plain.txt');
+    fs.writeFileSync(notADir, 'x');
+    expect(
+      resolveStoreEntry(notADir, 'a.yaml'),
+      'an unverifiable entry must be skipped; the fs.* guard denies on the same input',
+    ).toBeNull();
+    expect(resolveStoreEntry(path.join(notADir, 'deeper'), 'a.yaml')).toBeNull();
+  });
+
+  itLinks('skips an entry whose symlink chain exceeds the hop limit', () => {
+    // The other way the walk fails: ELOOP. A two-link cycle inside the store is
+    // something a bus caller can create, since <configDir>/sessions and
+    // <configDir>/layouts are both bus-writable.
+    fs.symlinkSync(path.join(store, 'b.yaml'), path.join(store, 'a.yaml'));
+    fs.symlinkSync(path.join(store, 'a.yaml'), path.join(store, 'b.yaml'));
+    expect(resolveStoreEntry(store, 'a.yaml')).toBeNull();
+  });
+
+  itRanEveryGatedTest(storeGate, 'the resolveStoreEntry canonical-answer tests', 3);
+});
+
+// ---------------------------------------------------------------------------
+// The two environment-shaped rules the corpus cannot express, pinned here in the
+// same shape the two Go copies pin them (fsguard_test.go, bus/policy_test.go).
+
+describe('a relative XDG_CONFIG_HOME falls back to the home config dir', () => {
+  // The absoluteness test is the only thing that produces that fallback: without
+  // it canonicalRoot discards the relative string, gitXdgConfigDir returns null,
+  // and clause 3 of isGitGlobalConfigPath is switched OFF for the whole process
+  // — $HOME/.config/git/config becomes an ordinary writable file inside any agent
+  // cwd under $HOME, and filter.<drv>.clean is one fs.write away. Every corpus
+  // case sets an ABSOLUTE sandbox path, so this branch was taken by nothing.
+  for (const xdg of ['', 'relative/config', '.', '~/config']) {
+    it(`XDG_CONFIG_HOME=${JSON.stringify(xdg)}`, () => {
+      const home = fs.realpathSync(sandbox);
+      process.env.HOME = home;
+      process.env.XDG_CONFIG_HOME = xdg;
+      expect(
+        isGitGlobalConfigPath(path.join(home, '.config', 'git', 'config')),
+        'a non-absolute XDG_CONFIG_HOME must fall back to $HOME/.config, not disable the clause',
+      ).toBe(true);
+      expect(
+        isGitGlobalConfigPath(path.join(home, 'proj', 'git', 'config')),
+        'the fallback must not claim every `config` under a directory named git',
+      ).toBe(false);
+    });
+  }
+});
+
+describe('MAX_LINK_HOPS is the number the other two copies use', () => {
+  it('matches the fixture', () => {
+    // Compared to nothing until the fixture declared it: raising one copy to
+    // 4000 left every suite green, and the guard would then resolve chains the
+    // kernel refuses at 40 — its answer would stop describing a path the OS can
+    // open, which is the check-path/opened-path split BINDING DECISION 2 closes.
+    expect(typeof fixture.maxLinkHops).toBe('number');
+    expect(MAX_LINK_HOPS).toBe(fixture.maxLinkHops);
+  });
 });

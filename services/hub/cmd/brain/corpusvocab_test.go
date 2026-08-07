@@ -53,11 +53,30 @@ var vocabCheckIDs = []string{
 	"reason-vocabulary-used",
 	"unique-case-names",
 	"token-references",
+	"unknown-fields",
+	"optional-used",
+	"block-loaders",
 }
 
 type vocabBlockSpec struct {
-	Why         string                     `json:"why"`
-	Required    []string                   `json:"required"`
+	Why      string   `json:"why"`
+	Required []string `json:"required"`
+	// Optional closes the field set from the other side. A field NAME the loaders
+	// act on was closed by nothing: renaming `configDirVia` by one character left
+	// every suite green, because encoding/json and JSON.parse both ignore an
+	// unknown key — and that field is uniquely SILENT, since dropping the symlink
+	// indirection does not flip either case's verdict, so both cases kept passing
+	// while exercising nothing they claimed to.
+	Optional []string `json:"optional"`
+	// Nested does the same for the sub-keys of a field whose shape is a SCHEMA
+	// (path-containment's `tree`) rather than a data payload (deepmerge's
+	// `target`). Opt-in per block for exactly that reason.
+	Nested map[string][]string `json:"nested"`
+	// Loaders are the tests that read THIS BLOCK, "<repo-relative file>::<needle>".
+	// The per-fixture loader count is a per-FILE guard and a block could lose
+	// every loader it had while the file kept eight; see contracts_test.go
+	// TestEveryDeclaredBlockLoaderStillExists, which is what checks these resolve.
+	Loaders     []string                   `json:"loaders"`
 	VerdictFld  string                     `json:"verdictField"`
 	Verdicts    map[string]vocabVerdictDef `json:"verdicts"`
 	unusedGuard struct{}
@@ -214,6 +233,74 @@ func validateFixtureVocabulary(name string, doc map[string]any) []string {
 		for n, count := range names {
 			if count > 1 {
 				add("%s has %d cases named %q — a duplicate name hides one of them in every report [unique-case-names]", path, count, n)
+			}
+		}
+
+		// 2b. FIELD CLOSURE, both directions.
+		allowed := map[string]bool{}
+		for _, f := range spec.Required {
+			allowed[f] = true
+		}
+		for _, f := range spec.Optional {
+			allowed[f] = true
+		}
+		usedOptional := map[string]bool{}
+		usedNested := map[string]map[string]bool{}
+		for i, row := range rows {
+			label := fmt.Sprintf("%s[%d]", path, i)
+			if n, ok := row["name"].(string); ok && n != "" {
+				label = fmt.Sprintf("%s %q", path, n)
+			}
+			for key, val := range row {
+				if !allowed[key] {
+					add("%s carries %q, which vocabulary.blocks declares neither required nor optional — an undeclared key is ignored by encoding/json AND by JSON.parse, so a one-character typo in a field name silently defangs the case in every loader at once [unknown-fields]", label, key)
+					continue
+				}
+				usedOptional[key] = true
+				sub, declared := spec.Nested[key]
+				if !declared {
+					continue
+				}
+				obj, ok := val.(map[string]any)
+				if !ok {
+					continue
+				}
+				ok2 := map[string]bool{}
+				for _, f := range sub {
+					ok2[f] = true
+				}
+				for k := range obj {
+					if !ok2[k] {
+						add("%s has %s.%s, which vocabulary.blocks.%s.nested.%s does not declare — the same silent-typo defect one level down [unknown-fields]", label, key, k, path, key)
+						continue
+					}
+					if usedNested[key] == nil {
+						usedNested[key] = map[string]bool{}
+					}
+					usedNested[key][k] = true
+				}
+			}
+		}
+		for _, f := range spec.Optional {
+			if !usedOptional[f] {
+				add("vocabulary.blocks.%s declares the optional field %q and no case carries it — an optional field nothing uses legalizes a typo instead of catching one [optional-used]", path, f)
+			}
+		}
+		for key, sub := range spec.Nested {
+			for _, f := range sub {
+				if !usedNested[key][f] {
+					add("vocabulary.blocks.%s.nested.%s declares %q and no case carries it [optional-used]", path, key, f)
+				}
+			}
+		}
+
+		// 2c. Every block names the tests that READ it.
+		if len(spec.Loaders) == 0 {
+			add("vocabulary.blocks.%s names no `loaders` — the fixture-level loader count is per FILE, so this block could lose every test that reads it while the file kept the others and nothing would go red [block-loaders]", path)
+		}
+		for _, l := range spec.Loaders {
+			if !strings.Contains(l, "::") {
+				add("vocabulary.blocks.%s loader %q is not \"<repo-relative file>::<needle>\" — without a needle the entry only says a file exists, not that anything in it reads this block [block-loaders]", path, l)
 			}
 		}
 
@@ -443,6 +530,33 @@ func TestTheVocabularyGuardIsFalsifiable(t *testing.T) {
 		}},
 		{"a token reference is unterminated", "token-references", func(doc map[string]any) {
 			casesOf(doc, "cases")[0]["target"] = "${ROOT/x"
+		}},
+		{"a case field name is mis-spelled by one character", "unknown-fields", func(doc map[string]any) {
+			for _, row := range casesOf(doc, "cases") {
+				if v, ok := row["configDirVia"]; ok {
+					delete(row, "configDirVia")
+					row["configDirVla"] = v
+					return
+				}
+			}
+		}},
+		{"a tree sub-key is mis-spelled", "unknown-fields", func(doc map[string]any) {
+			for _, row := range casesOf(doc, "cases") {
+				tree, _ := row["tree"].(map[string]any)
+				if v, ok := tree["symlinks"]; ok {
+					delete(tree, "symlinks")
+					tree["symLinks"] = v
+					return
+				}
+			}
+		}},
+		{"an optional field is declared and used by nothing", "optional-used", func(doc map[string]any) {
+			spec := doc["vocabulary"].(map[string]any)["blocks"].(map[string]any)["cases"].(map[string]any)
+			spec["optional"] = append(spec["optional"].([]any), "configDirVla")
+		}},
+		{"a block stops naming the tests that read it", "block-loaders", func(doc map[string]any) {
+			spec := doc["vocabulary"].(map[string]any)["blocks"].(map[string]any)["sessionFilenames.cases"].(map[string]any)
+			delete(spec, "loaders")
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -189,15 +189,54 @@ pub fn expand_tilde(p: &str) -> String {
     p.to_string()
 }
 
-/// The cwd to spawn with: tilde-expanded and trailing-slash-stripped. The strip
-/// matters — tab-completion leaves a trailing `/` on directories, but Claude
-/// reports its cwd without one, and claudemon aliases a spawn to Claude's
-/// session by exact cwd match. A mismatched slash means the agent shows up
+/// The ASCII whitespace set every caller-string trim on this seam strips: space,
+/// tab, and the four vertical/form controls. Spelled as a literal set because no
+/// language's built-in trim is portable across the three copies — Rust's
+/// `str::trim` is Unicode White_Space (it strips U+0085 NEL and U+00A0 NBSP),
+/// Go's `strings.TrimSpace` strips U+0085 but not U+FEFF, and JS `.trim()`
+/// strips U+FEFF but not U+0085. Every one of those code points is an ordinary
+/// character in a filename, which is what it is on the filesystem.
+///
+/// TWINS: `asciiWhitespace` in cmd/brain/profiles.go, `TRIM_SET` in spawnCwd.ts.
+const ASCII_WHITESPACE: [char; 6] = [' ', '\t', '\n', '\u{b}', '\u{c}', '\r'];
+
+/// The ONE normalization a spawn / terminal working directory gets before it is
+/// handed to claudemon. Trims the ASCII whitespace set, strips trailing
+/// separators, and falls back to the home directory only when nothing is left.
+///
+/// The strip matters: tab-completion leaves a trailing `/` on directories, but
+/// Claude reports its cwd without one, and claudemon aliases a spawn to Claude's
+/// own session by EXACT cwd match. A mismatched slash means the agent shows up
 /// twice (one row with the terminal, one with only the hook state).
+///
+/// It deliberately does NOT expand `~` any more. This is the THIRD copy of a
+/// rule contracts/path-containment-cases.json owns, and it was registered
+/// nowhere: it diverged from the two declared owners on 7 of the block's 14
+/// cases — the tilde expansion BINDING DECISION 1 exists to kill, Rust's Unicode
+/// trim eating U+0085 and U+00A0, only `/` stripped and not `\\`, and `""`
+/// answering `""` where the twins answer the home directory. What comes out of
+/// here becomes claudemon's stored session cwd, which is exactly what the
+/// brain's `agentCwds()` lifts into the fs.* allow-list, so a divergence here is
+/// a divergence in what every bus client may read.
+///
+/// Tilde expansion for a path a HUMAN typed belongs in the dialog that took the
+/// keystrokes (see `submit_spawn`), not in the seam normalizer — the same split
+/// the other two copies make.
+///
+/// TWINS: `normalizeCwd` in cmd/brain/profiles.go, `normalizeSpawnCwd` in
+/// apps/desktop/src/main/lib/spawnCwd.ts. The fixture's `spawnCwds` block holds
+/// all three together.
 pub fn normalize_cwd(p: &str) -> String {
-    let mut s = expand_tilde(p.trim());
-    while s.len() > 1 && s.ends_with('/') {
+    let trimmed = p.trim_matches(|c| ASCII_WHITESPACE.contains(&c));
+    let mut s = trimmed.to_string();
+    while s.len() > 1 && (s.ends_with('/') || s.ends_with('\\')) {
         s.pop();
+    }
+    if s.is_empty() {
+        // A terminal has to open SOMEWHERE, and this is the only fallback.
+        return directories::BaseDirs::new()
+            .map(|d| d.home_dir().display().to_string())
+            .unwrap_or_default();
     }
     s
 }
@@ -293,5 +332,61 @@ mod tests {
         assert_eq!(normalize_cwd("  /home/u/backshop/  "), "/home/u/backshop");
         assert_eq!(normalize_cwd("/home/u/backshop"), "/home/u/backshop");
         assert_eq!(normalize_cwd("/"), "/"); // root preserved
+    }
+
+    /// The THIRD copy of the spawn-cwd normalizer, held to the same fixture as
+    /// the other two.
+    ///
+    /// `contracts/path-containment-cases.json`'s `spawnCwds` block named exactly
+    /// two owners — cmd/brain/profiles.go and spawnCwd.ts — and this function
+    /// was neither, while sitting on the same seam: `submit_spawn` feeds it
+    /// straight to claudemon's `/sessions/spawn`, and claudemon's stored session
+    /// cwd is what the brain's `agentCwds()` lifts into the fs.* allow-list every
+    /// bus client is confined to. It diverged on 7 of the 14 cases (tilde
+    /// expansion, Rust's Unicode trim eating U+0085 and U+00A0, only `/`
+    /// stripped, and `""` answering `""` instead of the home directory).
+    ///
+    /// `include_str!` rather than a runtime read, exactly as
+    /// services/claudemon/src/session/pricing.rs consumes its fixture: it puts
+    /// the file in this crate's rebuild inputs, so editing a case recompiles the
+    /// test instead of leaving a cached pass behind.
+    #[test]
+    fn spawn_cwds_contract_cases() {
+        const FIXTURE: &str = include_str!("../../../contracts/path-containment-cases.json");
+        #[derive(serde::Deserialize)]
+        struct Case {
+            #[serde(rename = "in")]
+            input: String,
+            out: String,
+            why: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct Block {
+            cases: Vec<Case>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            #[serde(rename = "spawnCwds")]
+            spawn_cwds: Block,
+        }
+        let fx: Fixture = serde_json::from_str(FIXTURE).expect("the containment fixture parses");
+        assert!(
+            fx.spawn_cwds.cases.len() >= 14,
+            "the spawnCwds block shrank to {} cases — a silently emptied block agrees with everything",
+            fx.spawn_cwds.cases.len()
+        );
+        let home = directories::BaseDirs::new()
+            .map(|d| d.home_dir().display().to_string())
+            .expect("this process has a home directory");
+        for c in &fx.spawn_cwds.cases {
+            // ${HOME} is the block's only token.
+            let want = c.out.replace("${HOME}", &home);
+            let got = normalize_cwd(&c.input);
+            assert_eq!(
+                got, want,
+                "normalize_cwd({:?}) = {:?}, the contract says {:?}\n  why: {}",
+                c.input, got, want, c.why
+            );
+        }
     }
 }

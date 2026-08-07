@@ -212,7 +212,14 @@ impl App {
         let Some(form) = self.spawn_form.clone() else {
             return;
         };
-        let cwd = profiles::normalize_cwd(&form.cwd);
+        // Tilde expansion happens HERE, where a human typed the keystrokes — not
+        // in normalize_cwd, which is the seam normalizer the two other providers
+        // share and which BINDING DECISION 1 forbids from expanding anything
+        // (contracts/path-containment-cases.json, spawnCwds). The dialog is a
+        // local picker, so `~/proj` should mean what the user's shell means by
+        // it; the string that then goes to claudemon is normalized by the same
+        // rule the brain and the desktop apply.
+        let cwd = profiles::normalize_cwd(&profiles::expand_tilde(&form.cwd));
         if cwd.is_empty() {
             self.set_toast("working directory required");
             return;

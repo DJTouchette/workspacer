@@ -55,6 +55,10 @@
           "input",
           "expected",
           "why"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/parity_ordering_test.go::TestProviderParityFixtureCases(",
+          "apps/desktop/src/main/lib/providerParity.test.ts::contracts/provider-parity-cases.json"
         ]
       },
       "scalar": {
@@ -63,6 +67,10 @@
           "name",
           "value",
           "expected"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/parity_ordering_test.go::TestStoreListersSurviveANonStringScalar(",
+          "apps/desktop/src/main/services/storeListerParity.test.ts::provider-parity-cases.json"
         ]
       },
       "suffix": {
@@ -73,6 +81,13 @@
           "suffix",
           "expected",
           "fold"
+        ],
+        "optional": [
+          "why"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/parity_ordering_test.go::TestProviderParityFixtureCases(",
+          "apps/desktop/src/main/lib/providerParity.test.ts::contracts/provider-parity-cases.json"
         ]
       }
     }

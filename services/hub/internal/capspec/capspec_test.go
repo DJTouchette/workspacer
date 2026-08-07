@@ -481,7 +481,7 @@ func TestCapabilitiesWithAPathParamAreClassified(t *testing.T) {
 // scan finds in the vocabulary. A ratchet, held by RatchetError — see
 // brainDangerousParamFloor in cmd/brain/capspec_params_test.go, which is the
 // same rule over the other provider.
-const desktopDangerousParamFloor = 64
+const desktopDangerousParamFloor = 66
 
 // TestNestedParamsAreNotInvisible is the mutation this parser used to fail. An
 // options object is the obvious place for a handler to carry an env and an
@@ -580,6 +580,65 @@ func TestDesktopCapabilitiesAllScoped(t *testing.T) {
 	}
 	if !seenPathCap {
 		t.Errorf("expected at least one fs.*/search.* capability in hubCapabilities.ts; parsed none — capNameRe likely stopped matching")
+	}
+}
+
+// TestDesktopCapabilitiesAllClassified is the METHOD-level completeness check,
+// over the OTHER registry.
+//
+// TestDesktopCapabilitiesAllScoped above asks MissingSpec, which is a name
+// PREFIX heuristic over {fs., search., library., git.} — it returns false for
+// every claude.*, sessions.*, config.*, layouts.*, app.*, analytics.*,
+// providers.* and replay.* method however dangerous. Measured on the union of
+// both providers' registries, 27 of 73 capabilities were classified nowhere at
+// all, six of them ones the app's own consent list (CAP_LABELS) marks
+// sensitive:true — claude.approve and claude.gate among them, an
+// approval-OVERRIDE pair that composes with agents.sendMessage into arbitrary
+// host command execution, and whose absence made agents.sendMessage's own excuse
+// ("what bounds it is the agent's own tool approvals") unfalsifiable.
+//
+// The repo already had exactly this shape for the human-facing list —
+// pluginPermissions.test.ts's "labels every capability the main process actually
+// registers". The machine-enforced list had no counterpart.
+func TestDesktopCapabilitiesAllClassified(t *testing.T) {
+	data := mustReadRepoFile(t, desktopCapabilitiesSrc...)
+	matches := capNameRe.FindAllStringSubmatch(string(data), -1)
+	if len(matches) < 40 {
+		t.Fatalf("parsed only %d capability names from hubCapabilities.ts — the registration syntax changed and this guard is guarding nothing", len(matches))
+	}
+	seen := map[string]bool{}
+	for _, m := range matches {
+		seen[m[1]] = true
+	}
+	names := make([]string, 0, len(seen))
+	for n := range seen {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if MissingClassification(name) {
+			t.Errorf("hubCapabilities.ts registers %q and capspec says nothing about it — not a PathParam entry, not an unscopedByDecision reason, not an inertMethods reason. Decide what the caller may supply and where it goes, then write it down; that silence is what let claude.approve and claude.gate ship unexamined, because MissingSpec only ever asks about fs./search./library./git. names.", name)
+		}
+	}
+}
+
+// TestNoMethodIsClassifiedTwoWays keeps the three classification maps disjoint.
+// A method that is both "inert" and "excused with a dangerous param" is a record
+// a reader cannot act on, and whichever entry is read first wins by accident.
+func TestNoMethodIsClassifiedTwoWays(t *testing.T) {
+	for _, m := range InertMethods() {
+		if _, ok := PathParam[m]; ok {
+			t.Errorf("%q is in both PathParam and inertMethods — a method whose path the bus confines is not inert", m)
+		}
+		if why, ok := unscopedByDecision[m]; ok {
+			t.Errorf("%q is in both unscopedByDecision (%q) and inertMethods — pick one: either it carries something the host acts on, or it does not", m, why)
+		}
+		if len(strings.TrimSpace(inertMethods[m])) < 40 {
+			t.Errorf("inertMethods[%q] has no real reason (%q) — \"it is read-only\" on its own is the shrug this map replaced", m, inertMethods[m])
+		}
+		if _, ok := unscopedParams[m]; ok {
+			t.Errorf("%q is inert but carries per-param decisions — a param decision on an inert method reads as coverage of something that was declared to carry nothing", m)
+		}
 	}
 }
 

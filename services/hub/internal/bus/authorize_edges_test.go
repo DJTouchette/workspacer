@@ -276,3 +276,42 @@ func TestAGrantWhoseRootsAllFailToResolveGrantsNothing(t *testing.T) {
 		t.Fatal("a grant whose roots were all unresolvable authorized /etc/shadow")
 	}
 }
+
+// A path-scoped grant that declares NO paths at all must grant NOTHING, and the
+// early return that decides it has to be exercised through the registration path
+// a real plugin takes.
+//
+// TestAGrantWhoseRootsAllFailToResolveGrantsNothing above drives only canonRoots'
+// DISCARD arm (roots present, none resolvable). The `len(roots) == 0` arm — the
+// one a manifest capability written as {"method":"fs.write"} with no `paths`
+// reaches, since resolveRoots returns nil for it — was executed by no test with
+// an observable consequence: turning it into `return []string{"/"}` left both
+// suites green, and within("/", p) is true for every absolute path (BINDING
+// DECISION 3), so that mutant authorized fs.write on /etc/shadow. The neighbouring
+// TestAuthorize_PathScopedWithNoRootsDenied hand-builds `caps` and never goes
+// through RegisterPluginToken, so it could not see it either.
+func TestAGrantThatDeclaresNoRootsGrantsNothing(t *testing.T) {
+	s := NewServer(nil)
+	const tok = "tok-no-roots"
+	s.RegisterPluginToken(tok, "p", []capspec.Grant{
+		{Method: "fs.write", FSRoots: nil},
+		{Method: "fs.read", FSRoots: []string{}},
+	}, capspec.EventGrants{})
+	ident, ok := s.lookupPluginToken(tok)
+	if !ok {
+		t.Fatal("token not registered")
+	}
+	for method, g := range ident.caps {
+		if len(g.fsRoots) != 0 {
+			t.Fatalf("%s was stored with roots %v — a capability that declared no paths must be stored with none, not with a default", method, g.fsRoots)
+		}
+	}
+	cn := &conn{caps: ident.caps}
+	for _, probe := range []string{"/etc/shadow", "/", "/tmp"} {
+		for _, method := range []string{"fs.read", "fs.write"} {
+			if err := cn.authorize(method, json.RawMessage(`{"path":"`+probe+`"}`)); err == nil {
+				t.Errorf("%s of %q was authorized by a grant that declared no paths", method, probe)
+			}
+		}
+	}
+}

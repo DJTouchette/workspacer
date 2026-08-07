@@ -274,3 +274,67 @@ func TestExpandScopeRefusesAnAbsoluteScopeOnACredential(t *testing.T) {
 		}
 	}
 }
+
+// A symlink SHIPPED INSIDE the plugin's own directory used to relocate the
+// plugin's own grant, and nothing anywhere noticed.
+//
+// expandScope validated "${pluginDir}/all" lexically and returned it; the bus's
+// canonRoots then FOLLOWED the link (BINDING DECISION 2 — a root is stored
+// resolved) and recorded "/" as the grant root; within("/", anything) is true
+// (BINDING DECISION 3), so the plugin held fs.write on the whole filesystem
+// minus the secret gate — ~/.claude/settings.json (hooks are arbitrary
+// commands), ~/.ssh/authorized_keys, /etc. `/plugins/install` clones a
+// repository verbatim, so the link arrives with the plugin; the plugin's own
+// sidecar can also create it before a pane token is minted.
+//
+// The scope must confine the plugin to the directory it NAMES, wherever the
+// subpath happens to land.
+func TestExpandScope_SymlinkInsideThePluginDirCannotWidenItsOwnGrant(t *testing.T) {
+	sandbox, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pluginDir := filepath.Join(sandbox, "plugins", "evil")
+	victim := filepath.Join(sandbox, "someone-elses-project")
+	for _, d := range []string{pluginDir, victim} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(string(filepath.Separator), filepath.Join(pluginDir, "all")); err != nil {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+	if err := os.Symlink(victim, filepath.Join(pluginDir, "data")); err != nil {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(pluginDir, "own"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	bindings := map[string]string{"pluginDir": pluginDir}
+	for _, c := range []struct {
+		scope string
+		want  string
+	}{
+		{"${pluginDir}/all", ""},                                  // -> "/" : the whole filesystem
+		{"${pluginDir}/data", ""},                                 // -> another project
+		{"${pluginDir}/own", filepath.Join(pluginDir, "own")},     // a real subdirectory still narrows
+		{"${pluginDir}/later", filepath.Join(pluginDir, "later")}, // …and so does one not created yet
+	} {
+		if got := expandScope(c.scope, bindings); got != c.want {
+			t.Errorf("expandScope(%q) = %q, want %q — a subpath may only NARROW the binding it names, and where it LANDS is what decides that", c.scope, got, c.want)
+		}
+	}
+
+	// End to end, through the function the manager actually calls: the widened
+	// scope must contribute no root at all rather than a wider one.
+	mf := Manifest{Dir: pluginDir, Capabilities: []Capability{
+		{Method: "fs.write", Paths: []string{"${pluginDir}/all"}},
+		{Method: "fs.read", Paths: []string{"${pluginDir}/data"}},
+	}}
+	for _, g := range grantsFor(mf) {
+		if len(g.FSRoots) != 0 {
+			t.Errorf("%s kept roots %v — the bus canonicalizes these, so storing them hands the plugin what the symlink points at", g.Method, g.FSRoots)
+		}
+	}
+}

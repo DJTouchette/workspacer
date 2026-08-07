@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -373,4 +374,91 @@ func TestCorpusRunsOnWindowsInCI(t *testing.T) {
 	if tsOnWindows == "" {
 		t.Error("no windows-latest job in .github/workflows/ci.yml runs vitest over pathConfinement — splitAbsolute's drive/UNC regexes are the third hand-rolled volume parser and the only one with no Windows execution at all")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Per-BLOCK loaders.
+
+// TestEveryDeclaredBlockLoaderStillExists resolves the `loaders` list every
+// block in every contracts/ fixture now declares.
+//
+// TestEveryContractFixtureHasAtLeastTwoLoaders above is a per-FILE guard: it
+// counts test files whose CONTENT mentions the fixture basename. That is the
+// wrong granularity for a fixture with nine blocks. path-containment-cases.json
+// keeps roughly eight such files no matter which block they read, so a block
+// could lose every loader it had and the count would not move — measured, not
+// inferred: deleting BOTH loaders of the sessionFilenames block (the fourth copy
+// of containment, covering sessions.load/save/delete) left `go test ./cmd/brain
+// ./internal/bus` at ok and the desktop suite green with 14 fewer tests, and
+// deleting the desktop's entire 112-case containment sweep dropped it by 119
+// tests with zero failures. The shape validator only ever checked that the
+// orphaned block's CASES were well-formed, which made it look covered.
+//
+// So each block names the tests that read it, "<repo-relative file>::<needle>",
+// and this resolves both halves. The needle is what makes the entry mean
+// something: a path alone says a file exists, not that anything in it reads the
+// block.
+func TestEveryDeclaredBlockLoaderStillExists(t *testing.T) {
+	repoRoot, contractsDir := contractsDir(t)
+	fixtures := contractFixtureNames(t, contractsDir)
+	if len(fixtures) == 0 {
+		t.Fatal("no fixtures in contracts/; discovery is broken")
+	}
+	checked := 0
+	for _, fixture := range fixtures {
+		raw := mustReadRepoFile(t, "contracts", fixture)
+		var doc struct {
+			Vocabulary struct {
+				Blocks map[string]json.RawMessage `json:"blocks"`
+			} `json:"vocabulary"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("parse contracts/%s: %v", fixture, err)
+		}
+		for block, rawSpec := range doc.Vocabulary.Blocks {
+			if block == "_comment" {
+				continue
+			}
+			var spec struct {
+				Loaders []string `json:"loaders"`
+			}
+			if err := json.Unmarshal(rawSpec, &spec); err != nil {
+				continue // the shape validator owns malformed specs
+			}
+			for _, entry := range spec.Loaders {
+				rel, needle, ok := strings.Cut(entry, "::")
+				if !ok {
+					continue // shape is the vocabulary guard's business
+				}
+				checked++
+				parts := strings.Split(rel, "/")
+				body, err := mustReadRepoFileErr(repoRoot, parts...)
+				if err != nil {
+					t.Errorf("contracts/%s block %q names loader %q and that file is unreadable (%v) — the block is orphaned: the per-fixture loader COUNT will not notice, because the other blocks' loaders keep the file count up",
+						fixture, block, rel, err)
+					continue
+				}
+				if !strings.Contains(string(body), needle) {
+					t.Errorf("contracts/%s block %q names loader %q, but %q no longer appears in it — the test that read this block is gone or renamed, and nothing else holds the block to anything",
+						fixture, block, entry, needle)
+				}
+			}
+		}
+	}
+	if checked < 25 {
+		t.Fatalf("only %d block loaders were resolved — the blocks stopped declaring them and this guard is guarding nothing", checked)
+	}
+	t.Logf("resolved %d declared block loaders across %d fixtures", checked, len(fixtures))
+}
+
+// mustReadRepoFileErr is the error-returning form of mustReadRepoFile: this
+// guard reports an unreadable loader as a per-block failure naming the block,
+// rather than aborting the whole sweep on the first one.
+func mustReadRepoFileErr(repoRoot string, parts ...string) ([]byte, error) {
+	// extinput.ReadFile: most of these loaders are OUTSIDE the Go module
+	// (apps/desktop TypeScript, apps/tui Rust), and an out-of-module read is not
+	// in cmd/go's test cache key — so DELETING a fixture's only TypeScript
+	// loader would arrive to `ok (cached)`, which is the exact failure this test
+	// exists to make loud.
+	return extinput.ReadFile(filepath.Join(append([]string{repoRoot}, parts...)...))
 }

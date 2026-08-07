@@ -36,8 +36,16 @@ import { getConfigDir } from '../services/configService';
 
 /** Cap on symlinks followed in one walk. The walk is hand-rolled (the platform
  *  realpath is what we are deliberately not using), so the ELOOP protection has
- *  to be hand-rolled too or a two-link cycle spins forever. */
-const MAX_LINK_HOPS = 40;
+ *  to be hand-rolled too or a two-link cycle spins forever.
+ *
+ *  A TWIN-PARITY constant: `maxLinkHops` in cmd/brain/fsguard.go and
+ *  internal/bus/policy.go must hold the same number, and until
+ *  contracts/path-containment-cases.json declared it none of the three was
+ *  compared to anything — raising this one to 4000 left the whole suite green,
+ *  and the guard would then canonicalize chains the kernel refuses at 40, so its
+ *  answer would stop describing a path the OS can open. Exported so the drift
+ *  guard can read it. */
+export const MAX_LINK_HOPS = 40;
 
 const WIN32 = process.platform === 'win32';
 /** Splitting alphabet. Windows accepts both slashes; POSIX only '/'. */
@@ -339,12 +347,22 @@ export function traversesGitDir(canonicalTarget: string): boolean {
 export const GIT_GLOBAL_CONFIG_BASENAME = '.gitconfig';
 
 /** `$XDG_CONFIG_HOME/git`, or `$HOME/.config/git` — git's other per-user
- *  configuration directory, holding `config`, `attributes` and `ignore`. */
+ *  configuration directory, holding `config`, `attributes` and `ignore`.
+ *
+ *  The `git` component is resolved WITH the base rather than appended to an
+ *  already-resolved base. `~/.config/git -> ~/dotfiles/git` is the ordinary
+ *  stow/chezmoi/yadm arrangement, and the target this is compared against has
+ *  already been canonicalized per component — so appending an unresolved
+ *  component compares a resolved path against an unresolved directory and can
+ *  only miss, which took git's per-user config out of the gate entirely on every
+ *  dotfiles host (basename `config`, no `.git` component, nowhere near the
+ *  config dir: nothing else catches it).
+ *
+ *  TWIN: gitXdgConfigDir in cmd/brain/fsguard.go and internal/bus/policy.go. */
 function gitXdgConfigDir(): string | null {
   const xdg = process.env.XDG_CONFIG_HOME;
   const base = xdg && path.isAbsolute(xdg) ? xdg : path.join(os.homedir(), '.config');
-  const canonicalBase = canonicalRoot(base);
-  return canonicalBase === null ? null : path.join(canonicalBase, 'git');
+  return canonicalRoot(path.join(base, 'git'));
 }
 
 /**

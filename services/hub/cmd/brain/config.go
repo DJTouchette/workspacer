@@ -160,13 +160,24 @@ func (c *configService) reload() map[string]any {
 // plugin, or an agent through the MCP facade — so a section listed here can be
 // dropped unconditionally: if it came through us, it did not come from the host.
 //
-// `updates` is the whole list today, and it earns its place: updates.channel is
-// concatenated into the electron-updater feed URL the desktop then downloads and
-// installs from, so one "../" in a channel relocates the updater to somebody
-// else's repo. That is persistent code execution laundered through the app's own
-// update dialog — not a setting a bus caller gets to choose. The desktop's own
-// Settings write goes through configService.ts in-process and is unaffected.
-var hostTrustedSections = []string{"updates"}
+// `updates` earns its place: updates.channel is concatenated into the
+// electron-updater feed URL the desktop then downloads and installs from, so one
+// "../" in a channel relocates the updater to somebody else's repo. That is
+// persistent code execution laundered through the app's own update dialog — not
+// a setting a bus caller gets to choose. The desktop's own Settings write goes
+// through configService.ts in-process and is unaffected.
+//
+// `scripts` is a map of agent cwd → [{name, command}], which the desktop renders
+// as buttons in its top bar and runs by opening a terminal whose initialCommand
+// is the string verbatim (App.tsx handleRunScript). The attacker picks the
+// button's LABEL too, and the cwd key comes free from the read-only agents.list
+// capability. Section-level and not sub-key, because every key under it is a
+// caller-chosen directory — there is no fixed sub-key to name.
+//
+// THE RULE, so the next key gets classified rather than missed: a config value is
+// host-trusted when the HOST later hands it to a process — as argv[0], as an argv
+// element, or as a line typed into a shell — on a path that does not scrub it.
+var hostTrustedSections = []string{"updates", "scripts"}
 
 // hostTrustedPaths are the same rule at SUB-KEY granularity, dotted from the
 // root. A section-level drop is the wrong tool for these: they live inside
@@ -186,7 +197,27 @@ var hostTrustedSections = []string{"updates"}
 //     the settings.json supplying permissions.allow and hooks) and extraArgs
 //     (--dangerously-skip-permissions). A bus caller planting one there is
 //     persistent, and the desktop's LOCAL spawn path does not scrub it.
-var hostTrustedPaths = []string{"agents.binaries", "claude.profiles"}
+//   - terminal.shell and terminal.shells[].path are argv[0] of the next terminal
+//     the LOCAL user opens: TerminalPane passes `shell || termCfg.shell` to
+//     IPC.TERMINAL_CREATE, which spawns `argv: [resolvedShell]`, and the NavBar
+//     "+" menu passes shells[].path the same way. The BUS door onto that
+//     primitive (terminals.create) already has a whole shell allow-list
+//     (shellallow.go) built on "shell is argv[0] of a process spawned on the
+//     host, taken verbatim from a bus caller"; the local IPC door deliberately
+//     has none, so config.save must not be a second, PERSISTENT way in. The
+//     shipped default panes include three terminals, so it fires on the next
+//     launch without the user choosing anything.
+//   - editor.terminalCommand is not even argv[0] — it is raw shell TEXT.
+//     ScrollContainer builds "<cmd> <file>" and TerminalPane types it into the
+//     user's own shell with a trailing CR, so ';' and '|' need no planted binary.
+//     Live when editor.engine is "terminal", which the same call can set.
+var hostTrustedPaths = []string{
+	"agents.binaries",
+	"claude.profiles",
+	"terminal.shell",
+	"terminal.shells",
+	"editor.terminalCommand",
+}
 
 // dropHostTrusted returns partial without any host-trusted section, leaving the
 // on-disk values alone. It copies rather than deletes in place: the caller still

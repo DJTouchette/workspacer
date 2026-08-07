@@ -7,11 +7,17 @@
  * The desktop's own Settings write goes through configService in-process and is
  * unaffected.
  *
- * `updates` is the whole list today and it earns its place: `updates.channel` is
- * concatenated into the electron-updater feed URL the desktop then downloads and
- * installs from, so one `../` in a channel relocates the updater to somebody
- * else's repo. That is persistent code execution laundered through the app's own
- * update dialog, not a setting a bus caller gets to choose.
+ * `updates` earns its place: `updates.channel` is concatenated into the
+ * electron-updater feed URL the desktop then downloads and installs from, so one
+ * `../` in a channel relocates the updater to somebody else's repo. That is
+ * persistent code execution laundered through the app's own update dialog, not a
+ * setting a bus caller gets to choose.
+ *
+ * THE RULE FOR THIS LIST, so the next key gets classified rather than missed: a
+ * config value is host-trusted when the HOST later hands it to a process — as
+ * argv[0], as an argv element, or as a line typed into a shell — on a path that
+ * does not scrub it. Two of the three keys below were missed for years because
+ * the list was reasoned about one exploit at a time rather than from that rule.
  *
  * This is the twin of `dropHostTrusted` in services/hub/cmd/brain/config.go —
  * the Go copy is the one that runs under the default DELEGATE_CATALOG_TO_BRAIN,
@@ -19,8 +25,18 @@
  * pins both against the same fixture.
  */
 
-/** Top-level config keys a bus caller may never write. */
-export const HOST_TRUSTED_SECTIONS = ['updates'] as const;
+/**
+ * Top-level config keys a bus caller may never write.
+ *
+ * - `updates`: see above.
+ * - `scripts` is a map of agent cwd → `[{name, command}]`, rendered by App.tsx
+ *   as buttons in the top bar and run by `handleRunScript`, which opens a
+ *   terminal whose `initialCommand` is the string verbatim. The attacker picks
+ *   the button's LABEL as well, and the cwd key is obtainable from the read-only
+ *   `agents.list` capability. Section-level rather than sub-key, because every
+ *   key under it is a caller-chosen directory: there is no fixed sub-key to name.
+ */
+export const HOST_TRUSTED_SECTIONS = ['updates', 'scripts'] as const;
 
 /**
  * The same rule at SUB-KEY granularity, dotted from the root. A section-level
@@ -40,8 +56,31 @@ export const HOST_TRUSTED_SECTIONS = ['updates'] as const;
  *   the settings.json supplying permissions.allow and hooks) and `extraArgs`
  *   (--dangerously-skip-permissions). A bus caller planting one there is
  *   persistent, and the LOCAL spawn path (ipc.ts) does not scrub it.
+ * - `terminal.shell` and `terminal.shells[].path` are argv[0] of the next
+ *   terminal the LOCAL user opens. `terminal.shell` reaches TerminalPane
+ *   (`shell || termCfg.shell`) → `IPC.TERMINAL_CREATE` → `argv: [resolvedShell]`,
+ *   and `terminal.shells[].path` is the same string through the NavBar "+" menu.
+ *   The bus's own `terminals.create` already has a whole shell ALLOWLIST
+ *   (lib/shellAllowlist.ts) built on the premise that "`shell` is argv[0] of a
+ *   process spawned on the host, taken verbatim from a bus caller" — but
+ *   ipc.ts's local TERMINAL_CREATE calls `resolveTerminalShell` nowhere, by
+ *   design (the local door is trusted). config.save must therefore not be a
+ *   second, PERSISTENT door onto the same primitive; the config-defaults panes
+ *   include three terminals, so it fires on the next launch without the user
+ *   picking anything.
+ * - `editor.terminalCommand` is not even argv[0] — it is raw shell TEXT.
+ *   ScrollContainer builds `${editorCmd} <file>` and TerminalPane types it into
+ *   the user's own shell with a trailing CR, so `;` and `|` need no binary
+ *   planted first. It only fires when `editor.engine` is 'terminal', which the
+ *   same config.save can set.
  */
-export const HOST_TRUSTED_PATHS = ['agents.binaries', 'claude.profiles'] as const;
+export const HOST_TRUSTED_PATHS = [
+  'agents.binaries',
+  'claude.profiles',
+  'terminal.shell',
+  'terminal.shells',
+  'editor.terminalCommand',
+] as const;
 
 /**
  * Return `partial` without any host-trusted section, leaving the on-disk values
