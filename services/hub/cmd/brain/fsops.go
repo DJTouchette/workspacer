@@ -187,15 +187,56 @@ func listEntries(dirPath string) (listEntriesResult, error) {
 // /plugins/install) and rewrites config.yaml — the two prizes the secret gate
 // exists to protect, reached without ever asking the guard for them.
 //
-// core.fsmonitor is the only key that execs during check-ignore (every other
-// exec-valued key — core.pager, diff.external, core.sshCommand,
-// core.alternateRefsCommand, credential.helper — was probed and does not fire),
-// but the list is a list because the answer is per-subcommand and this prefix is
-// shared with the git.* capabilities. GIT_CONFIG_GLOBAL is deliberately NOT
-// neutralized: core.excludesFile in the user's own ~/.gitconfig is a legitimate
-// part of the ignore answer, and the user's home config is not the attacker's.
+// The answer is PER SUBCOMMAND, which is why this is a list and not one key.
+// core.fsmonitor is the only one that execs during check-ignore, but the prefix
+// is shared with the git.* capabilities, and there `diff.external` execs on
+// `git diff` — measured, not assumed. Every key below is one git runs as a shell
+// command and every one is settable from a caller-minted .git/config; an empty
+// value is the documented "no program" spelling for all of them
+// (credential.helper= additionally RESETS the inherited helper list).
+//
+// What a -c prefix structurally CANNOT cover is the namespaced exec keys —
+// filter.<drv>.clean/smudge/process, diff.<drv>.command/textconv,
+// merge.<drv>.driver, trailer.<t>.command — because the driver name is the
+// attacker's. That leg is closed on the other side: every such driver must be
+// DEFINED in a config file inside the repository's .git directory, and
+// pathIsSecret refuses every caller-supplied path that traverses a ".git"
+// component, so the definition cannot be written. Both halves are required.
+//
+// GIT_CONFIG_GLOBAL is deliberately NOT neutralized: core.excludesFile in the
+// user's own ~/.gitconfig is a legitimate part of the ignore answer, and the
+// user's home config is not the attacker's.
+//
+// TWIN: apps/desktop/src/main/lib/gitExec.ts GIT_NO_EXEC_CONFIG. Same keys, same
+// order — TestGitNoExecKeysMatchTheDesktopTwin holds them together.
 func gitNoExecConfig() []string {
-	return []string{"-c", "core.fsmonitor="}
+	out := make([]string, 0, 2*len(gitNoExecKeys))
+	for _, kv := range gitNoExecKeys {
+		out = append(out, "-c", kv)
+	}
+	return out
+}
+
+// gitNoExecKeys is the neutralization list itself, as `key=value` pairs.
+//
+// diff.external is deliberately ABSENT: git treats an empty external diff as a
+// command to run and dies with "cannot run :", so the -c spelling breaks every
+// real diff. Its off switch is the `--no-ext-diff` diff OPTION, which the
+// desktop's gitArgs inserts after the subcommand (this daemon only ever runs
+// check-ignore, which has no diff). gpg.program is absent for the opposite
+// reason: the user's own commit.gpgsign is legitimate and an empty value would
+// break signed commits.
+var gitNoExecKeys = []string{
+	"core.fsmonitor=",
+	"core.pager=cat",
+	"core.sshCommand=",
+	"core.askPass=",
+	"core.editor=",
+	"core.alternateRefsCommand=",
+	"core.gitProxy=",
+	"credential.helper=",
+	"sequence.editor=",
+	"uploadpack.packObjectsHook=",
 }
 
 // gitIgnored asks git which of `names` are ignored in `dir`. Empty when `dir`

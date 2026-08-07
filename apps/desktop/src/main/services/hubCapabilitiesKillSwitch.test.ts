@@ -804,3 +804,104 @@ describe('terminals.create — shell is an allowlist, not a passthrough', () => 
     expect(clientMock.spawn).toHaveBeenCalledWith(expect.objectContaining({ argv: ['/bin/zsh'] }));
   });
 });
+
+/**
+ * workspaceRoots() is the allow-list every workspace-confined capability uses —
+ * fs.read / fs.write / fs.listEntries / fs.readImage / fs.watch / fs.unwatch /
+ * search.project / all ten git.* / library.save / library.remove / replay.open —
+ * so its MEMBERSHIP is the security boundary and has to be pinned in both
+ * directions.
+ *
+ * It was pinned in neither. Adding one line (`roots.add(process.cwd())`) and
+ * deleting one line (the configStoreRoots loop) each left 84 files / 1213 tests
+ * green. Neither fixture-driven sweep can see it: they probe {agent cwd},
+ * {os.tmpdir() sibling}, {$HOME}, {$HOME sibling} — none of which is
+ * process.cwd() — and the one test that touches a config store sets
+ * `agentCwd = path.dirname(cfg.dir)`, so the store is inside the agent cwd
+ * anyway and the configStoreRoots leg is never required.
+ */
+describe('what workspaceRoots() is made of', () => {
+  let agentCwd: string;
+  beforeEach(() => {
+    agentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-roots-')));
+    getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
+  });
+
+  it('does not grant the desktop process its OWN working directory', () => {
+    // For a packaged Electron main, process.cwd() is wherever the app was
+    // launched from — routinely $HOME, and on a macOS Dock launch, '/'.
+    const probe = path.join(fs.realpathSync(process.cwd()), 'wks-not-an-agent-cwd.txt');
+    expect(
+      () => call('fs.read', { path: probe }),
+      "fs.read of a file under the desktop process's own cwd was ALLOWED",
+    ).toThrow(/outside the allowed workspace/);
+    expect(readTextFile).not.toHaveBeenCalled();
+  });
+
+  it('keeps the config stores in, with NO agent running', () => {
+    // No live agents at all, so the only thing that can admit these is the
+    // configStoreRoots leg. The web/remote UI reads and writes its own
+    // library/layouts/sessions this way.
+    getAllSnapshots.mockReturnValue([] as never);
+    for (const store of ['library', 'layouts', 'sessions']) {
+      const item = path.join(cfg.dir, store, 'entry.yaml');
+      expect(() => call('fs.read', { path: item }), store).not.toThrow();
+    }
+    expect(readTextFile).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not grant the rest of the config dir along with them', () => {
+    getAllSnapshots.mockReturnValue([] as never);
+    for (const rel of ['remote-token', 'config.yaml', path.join('plugins', 'p', 'manifest.json')]) {
+      expect(() => call('fs.read', { path: path.join(cfg.dir, rel) }), rel).toThrow(
+        /outside the allowed workspace/,
+      );
+    }
+  });
+});
+
+/**
+ * guardLibraryCwd's absent-cwd posture. With no `cwd`, the guard returns
+ * undefined, so libraryItemRoots is just `[<configDir>/library]` — and
+ * libraryService's own internal `input.cwd || process.cwd()` fallback then
+ * composes a project destination the PER-FILE guard refuses. That pairing is
+ * deliberate and fail-closed, and nothing exercised it: `if (!cwd) return
+ * process.cwd();` left the whole suite green while turning the app's working
+ * directory into a writable and deletable library root.
+ */
+describe('library.* with no cwd at all', () => {
+  beforeEach(() => {
+    getAllSnapshots.mockReturnValue([] as never);
+  });
+
+  it('passes NO cwd through to the service rather than substituting one', () => {
+    call('library.save', { scope: 'project', title: 't', kind: 'prompt', body: 'b' });
+    expect(libraryMock.save).toHaveBeenCalledTimes(1);
+    const [input] = libraryMock.save.mock.calls[0] as [{ cwd?: string }];
+    expect(
+      input.cwd,
+      'a missing cwd was replaced with a real directory — that directory becomes a library item root',
+    ).toBeUndefined();
+  });
+
+  it('refuses a project-scope write derived from a substituted cwd', () => {
+    // The pairing made behavioural: the per-file guard the handler builds must
+    // not admit anything under the process working directory.
+    call('library.save', { scope: 'project', title: 't', kind: 'prompt', body: 'b' });
+    const [, guard] = libraryMock.save.mock.calls[0] as [unknown, (p: string) => string | null];
+    expect(typeof guard).toBe('function');
+    const underProcessCwd = path.join(
+      fs.realpathSync(process.cwd()),
+      '.workspacer',
+      'library',
+      't.md',
+    );
+    expect(
+      guard(underProcessCwd),
+      'the per-file guard admitted a path under the process working directory',
+    ).toBeNull();
+    // Floor: the global store IS admitted, or the assertion above is satisfied
+    // by a guard that refuses everything.
+    expect(guard(path.join(cfg.dir, 'library', 't.md'))).not.toBeNull();
+  });
+});

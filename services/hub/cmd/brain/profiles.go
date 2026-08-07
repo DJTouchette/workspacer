@@ -299,6 +299,18 @@ func scrubBypassProfile(p *profile) *profile {
 	// also fill in. A remote spawn therefore runs against the host's default
 	// claude config dir.
 	cp.ConfigDir = ""
+	// mcpItemIds goes with it, for the same reason and with a sharper edge. A
+	// library item of kind `mcp` carries `command`, `args` and `env` verbatim
+	// into a --mcp-config file, and the spawn passes `--allowedTools mcp__<id>`
+	// alongside it, so the server is PRE-APPROVED and no prompt gates it: a
+	// persisted id list is a persisted argv[0]. It used to be forwarded PAST this
+	// scrub on both providers — the one field capspec's "scrubbed at write time
+	// on both bus providers" record did not actually cover — and the desktop's
+	// New Agent dialog copies a profile's mcpItemIds into the spawn the moment
+	// the profile is selected, so a bus-planted profile loaded the caller's MCP
+	// servers into a LOCAL spawn. Nil, not empty: normalizeProfiles turns it back
+	// into [] for the wire.
+	cp.MCPItemIDs = nil
 	return &cp
 }
 
@@ -439,13 +451,39 @@ func expandTilde(p string) string {
 	return p
 }
 
-// normalizeCwd tilde-expands and strips trailing slashes. The strip matters:
-// claudemon aliases a spawn to Claude's session by exact cwd match, and Claude
-// reports its cwd without a trailing slash (mirrors the TUI's normalize_cwd).
+// normalizeCwd is the ONE normalization a caller-supplied spawn/terminal cwd
+// gets, on both providers. It trims surrounding whitespace and strips trailing
+// slashes, and does nothing else.
+//
+// The strip matters: claudemon aliases a spawn to Claude's session by exact cwd
+// match, and Claude reports its cwd without a trailing slash (mirrors the TUI's
+// normalize_cwd).
+//
+// It deliberately does NOT expand '~' (BINDING DECISION 1, fsguard.go's header).
+// It used to, and the desktop twin never did, so `agents.spawn {"cwd":"~"}` was
+// $HOME on this provider and the literal string "~" on the other. That is not
+// cosmetic: the stored session cwd is what agentCwds() feeds into
+// workspaceRoots(), so one caller string turned the ENTIRE home tree into an
+// fs.* root here and into nothing at all there — the same allowed-by-one-
+// provider / denied-by-the-other split the tilde rule exists to close.
+//
+// It also does NOT check existence or fall back to $HOME. The desktop's
+// terminals.create used to (`fs.existsSync(cwd) ? cwd : os.homedir()`), which
+// silently rewrote the caller's target to somewhere else entirely; a spawn that
+// cannot run where it was asked to should fail where it was asked to.
+//
+// TWIN: apps/desktop/src/main/lib/spawnCwd.ts normalizeSpawnCwd. The fixture's
+// `spawnCwds` block holds the two together.
 func normalizeCwd(p string) string {
-	s := expandTilde(strings.TrimSpace(p))
-	for len(s) > 1 && strings.HasSuffix(s, "/") {
-		s = strings.TrimSuffix(s, "/")
+	s := strings.TrimSpace(p)
+	for len(s) > 1 && (strings.HasSuffix(s, "/") || strings.HasSuffix(s, "\\")) {
+		s = s[:len(s)-1]
+	}
+	if s == "" {
+		// A terminal has to open SOMEWHERE. Both call sites did this
+		// individually; it lives here so the twins are one function.
+		home, _ := os.UserHomeDir()
+		return home
 	}
 	return s
 }

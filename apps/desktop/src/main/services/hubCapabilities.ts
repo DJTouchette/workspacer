@@ -17,6 +17,7 @@ import { spawnClaudeAgent } from './claudeSpawn';
 import { resolveAgentBinary, checkAllProviders, type AgentProvider } from './agentProviders';
 import { byteCompare } from '../lib/providerParity';
 import { resolveTerminalShell } from '../lib/shellAllowlist';
+import { normalizeSpawnCwd } from '../lib/spawnCwd';
 import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
 import { registerCapability, callHub } from './hubClient';
 import { agentNotifier } from './agentNotifier';
@@ -262,6 +263,22 @@ export function registerHubCapabilities(): void {
       );
     }
     const skipPermissions = false;
+    // …and the same clamp on `mcpItemIds`, for the same reason and with a
+    // sharper edge. A library item of kind `mcp` carries a `command`, `args` and
+    // `env` verbatim into a `--mcp-config` file, and the spawn then passes
+    // `--allowedTools mcp__<id>`, so the server is PRE-APPROVED and no permission
+    // prompt gates it: `mcpItemIds: ['x']` is argv[0] of a host process chosen by
+    // whoever wrote item `x`. And the write side cannot be closed — a bus caller
+    // reaches the item through library.save OR through a plain fs.write into
+    // <configDir>/library, which is a configStoreRoot by design. So the identity
+    // of the SPAWNER is the only thing left to gate on: a locally-initiated spawn
+    // (ipc.ts) still honours the selection, a bus one does not.
+    if (mcpItemIds && mcpItemIds.length) {
+      console.warn(
+        '[hub] agents.spawn: ignoring mcpItemIds from a bus client — an MCP server definition is argv[0] of a host process, and it is pre-approved via --allowedTools.',
+      );
+    }
+    const busMcpItemIds = undefined;
     // …and the same for a bypass smuggled in through the PROFILE: clamping the
     // request's own fields left `profileId` as an open door (a bus caller can
     // create a profile with `--dangerously-skip-permissions` in extraArgs, or
@@ -318,7 +335,7 @@ export function registerHubCapabilities(): void {
         mcpFacade,
         label,
         parentSessionId,
-        mcpItemIds,
+        mcpItemIds: busMcpItemIds,
         scrubProfileBypass,
       });
       return { sessionId };
@@ -337,7 +354,7 @@ export function registerHubCapabilities(): void {
       parentSessionId,
       cols,
       rows,
-      mcpItemIds,
+      mcpItemIds: busMcpItemIds,
     });
     return { sessionId };
   });
@@ -357,7 +374,9 @@ export function registerHubCapabilities(): void {
     if (resolvedShell === null) {
       throw new Error(`terminals.create: ${shell} is not one of this host's login shells`);
     }
-    const resolvedCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
+    // One normalization, shared with the brain (lib/spawnCwd.ts explains why
+    // `fs.existsSync(cwd) ? cwd : os.homedir()` had to go).
+    const resolvedCwd = normalizeSpawnCwd(cwd);
     const id = await claudemonSessionClient.spawn({
       argv: [resolvedShell],
       cwd: resolvedCwd,
@@ -870,11 +889,19 @@ export function registerHubCapabilities(): void {
     // --dangerously-skip-permissions, and wait for the LOCAL user to pick that
     // profile in the New Agent dialog, where nothing scrubs. Twin of the brain's
     // registry.profilesAdd.
-    const safe = scrubBypassProfile({ configDir: configDir ?? '', extraArgs: extraArgs ?? [] })!;
-    // Forward mcpItemIds — the web/remote client sends the user's selected MCP
-    // servers here (matching the desktop IPC path); dropping it silently lost
-    // them, so profiles created remotely had no MCP servers.
-    return claudeProfiles.addProfile(name, safe.configDir, safe.extraArgs, mcpItemIds ?? []);
+    const safe = scrubBypassProfile({
+      configDir: configDir ?? '',
+      extraArgs: extraArgs ?? [],
+      mcpItemIds: mcpItemIds ?? [],
+    })!;
+    // mcpItemIds goes through the scrub too, and is therefore dropped. It used
+    // to be forwarded PAST it — the one field the "scrubbed at write time on
+    // both bus providers" record in capspec did not actually cover — and an MCP
+    // server definition is `command`+`args`+`env` handed to a host process, with
+    // `--allowedTools mcp__<id>` pre-approving it. SpawnAgentDialog copies a
+    // profile's mcpItemIds into the spawn on selection, so a bus-planted profile
+    // loaded the caller's servers into a LOCAL spawn.
+    return claudeProfiles.addProfile(name, safe.configDir, safe.extraArgs, safe.mcpItemIds);
   });
   cat('claude.profiles.update', (params: unknown) => {
     const { id, updates } = (params ?? {}) as { id?: string; updates?: ProfileUpdate };
@@ -882,13 +909,15 @@ export function registerHubCapabilities(): void {
     // Same scrub as add: update is the other way to plant a CLAUDE_CONFIG_DIR or
     // a bypass flag on a profile the local user then picks.
     const u = { ...(updates ?? ({} as ProfileUpdate)) };
-    if (u.configDir !== undefined || u.extraArgs !== undefined) {
+    if (u.configDir !== undefined || u.extraArgs !== undefined || u.mcpItemIds !== undefined) {
       const scrubbed = scrubBypassProfile({
         configDir: u.configDir ?? '',
         extraArgs: u.extraArgs ?? [],
+        mcpItemIds: u.mcpItemIds ?? [],
       })!;
       if (u.configDir !== undefined) u.configDir = scrubbed.configDir;
       if (u.extraArgs !== undefined) u.extraArgs = scrubbed.extraArgs;
+      if (u.mcpItemIds !== undefined) u.mcpItemIds = scrubbed.mcpItemIds;
     }
     return claudeProfiles.updateProfile(id, u);
   });

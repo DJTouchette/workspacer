@@ -26,6 +26,5 @@ pub fn save(notes: &HashMap<String, String>) {
 }
 
 fn path() -> Option<PathBuf> {
-    let dirs = directories::BaseDirs::new()?;
-    Some(dirs.config_dir().join("workspacer").join("tui-notes.json"))
+    Some(crate::config::config_dir()?.join("tui-notes.json"))
 }

@@ -373,7 +373,7 @@ class LibraryService {
       // write, and a symlinked `.workspacer` component put that directory
       // outside every allowed root, in a process where fs.write to the same
       // location is refused. The Go twin (listLibrary) is ReadDir-only.
-      this.ensureProjectWatch(cwd, false, false);
+      this.ensureProjectWatch(cwd, false, false, guard);
     }
     // Byte-wise, not localeCompare: the Go twin sorts `out[i].Title < out[j].Title`
     // (raw bytes), so localeCompare made library.list come back in a different
@@ -478,7 +478,7 @@ class LibraryService {
     // activity oracle — outside every allowed root, in a process where fs.write
     // to the same location is refused. The Go twin (saveLibraryClaude) creates
     // no watch directory at all.
-    this.ensureProjectWatch(cwd, true, false);
+    this.ensureProjectWatch(cwd, true, false, guard);
     return {
       id,
       scope: 'claude',
@@ -537,7 +537,24 @@ class LibraryService {
 
   // ── watching ──────────────────────────────────────────────────────────────
 
-  private ensureProjectWatch(cwd: string, force = false, mayCreate = true): void {
+  /**
+   * `guard` is the SAME per-file guard the read/write legs take, and it has to
+   * reach here too: every directory below is DERIVED from the caller's cwd after
+   * the cwd check, and `fs.watch` follows symlinks. A `<cwd>/.claude/agents`
+   * pointing anywhere on the host — an ordinary permitted write inside the
+   * allowed root — turned that target into a bus-visible change ORACLE: every
+   * write to it publishes `{type:'library.changed'}`, so aiming it at
+   * ~/.config/workspacer tells a remote caller exactly when remote-token,
+   * tokens.json and config.yaml are written, and the skills watch is recursive so
+   * on macOS it covers a whole subtree. The previous pass closed the mkdir leg
+   * (mayCreate:false) and left the watch on the same unresolved path.
+   */
+  private ensureProjectWatch(
+    cwd: string,
+    force = false,
+    mayCreate = true,
+    guard: LibraryFileGuard = allowAnyLibraryFile,
+  ): void {
     if (cwd === this.watchedProjectCwd && !force) return;
     if (cwd !== this.watchedProjectCwd) {
       // Drop the old project's watchers (keep the global one).
@@ -555,24 +572,37 @@ class LibraryService {
       }
       this.watchedProjectCwd = cwd;
     }
-    this.watch(projectDir(cwd), { createIfMissing: mayCreate });
+    this.watch(projectDir(cwd), { createIfMissing: mayCreate }, guard);
     // Claude dirs: watch only if they exist — don't litter repos with empty
     // .claude/skills dirs. list()/save() re-call this, so a dir created later
     // gets picked up. Skills need recursive (SKILL.md is one level down).
-    this.watch(claudeSkillsDir(cwd), { createIfMissing: false, recursive: true });
-    this.watch(claudeAgentsDir(cwd), { createIfMissing: false });
-    this.watch(claudeCommandsDir(cwd), { createIfMissing: false });
+    this.watch(claudeSkillsDir(cwd), { createIfMissing: false, recursive: true }, guard);
+    this.watch(claudeAgentsDir(cwd), { createIfMissing: false }, guard);
+    this.watch(claudeCommandsDir(cwd), { createIfMissing: false }, guard);
   }
 
-  private watch(dir: string, opts: { createIfMissing?: boolean; recursive?: boolean } = {}): void {
+  private watch(
+    dir: string,
+    opts: { createIfMissing?: boolean; recursive?: boolean } = {},
+    guard: LibraryFileGuard = allowAnyLibraryFile,
+  ): void {
     if (this.watchers.has(dir)) return;
+    // BINDING DECISION 2, on a sink that is not a read or a write: resolve the
+    // derived directory, refuse it if it leaves the item roots, and hand the
+    // RESOLVED string to mkdir/existsSync/fs.watch. The map stays keyed by the
+    // derived name so the teardown loop above (which recomputes the same derived
+    // names for the previous cwd) still finds the watcher.
+    const resolved = guard(dir);
+    if (resolved === null) return;
     try {
       if (opts.createIfMissing === false) {
-        if (!fs.existsSync(dir)) return;
+        if (!fs.existsSync(resolved)) return;
       } else {
-        fs.mkdirSync(dir, { recursive: true });
+        fs.mkdirSync(resolved, { recursive: true });
       }
-      const w = fs.watch(dir, { recursive: opts.recursive ?? false }, () => this.notifyChanged());
+      const w = fs.watch(resolved, { recursive: opts.recursive ?? false }, () =>
+        this.notifyChanged(),
+      );
       this.watchers.set(dir, w);
     } catch {
       /* watching is best-effort */

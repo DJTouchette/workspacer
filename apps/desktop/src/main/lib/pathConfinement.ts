@@ -296,6 +296,39 @@ function canonicalBasename(canonicalTarget: string): string {
   return canonicalTarget.slice(canonicalTarget.lastIndexOf(path.sep) + 1);
 }
 
+/** The one directory name that turns an ordinary write into command execution. */
+export const GIT_METADATA_DIR = '.git';
+
+/**
+ * True when any component of an ALREADY-canonical path is the repository
+ * metadata directory.
+ *
+ * A `.git` directory is not data, it is a program: `git` discovers the
+ * repository at whatever cwd it is handed and then executes whatever
+ * `.git/config` tells it to. The `-c` prefix in lib/gitExec.ts neutralizes every
+ * exec-valued key with a FIXED name, but it structurally cannot cover the
+ * namespaced ones — `filter.<drv>.clean` (which `git add`, i.e. git.stage, runs),
+ * `diff.<drv>.command`/`textconv`, `merge.<drv>.driver`, `trailer.<t>.command` —
+ * because the driver name belongs to whoever wrote the file. Those definitions
+ * can only live in the repository config, so the WRITE is refused here instead.
+ * `.git/hooks/*`, `.git/config.worktree` and `.git/info/attributes` are the same
+ * surface and the same rule covers them.
+ *
+ * Reads are refused on the same footing as the credential basenames: a
+ * `.git/config` routinely carries a remote URL with an embedded token and the
+ * name of a credential store. Nothing legitimate reaches these guards with a
+ * `.git` path — both providers already drop the entry from directory listings.
+ *
+ * Folded, because '.GIT' opens `.git` on APFS and NTFS and the walk hands this
+ * gate the caller's spelling. The FINAL component counts too: a FILE named
+ * `.git` is the "gitfile" pointer form (`gitdir: …`) and is equally a repository.
+ *
+ * TWIN: traversesGitDir in cmd/brain/fsguard.go and internal/bus/policy.go.
+ */
+export function traversesGitDir(canonicalTarget: string): boolean {
+  return canonicalTarget.split(path.sep).some((c) => asciiLower(c) === GIT_METADATA_DIR);
+}
+
 /**
  * Second gate, applied to every guarded path after the roots check — reads AND
  * writes, because handing a token out is a privilege promotion and overwriting
@@ -317,6 +350,7 @@ export function isSecretPath(canonicalTarget: string): boolean {
   // Folded: '.BUS-TOKEN' opens .bus-token on macOS and Windows, and the walk
   // hands this gate the caller's spelling. See containsCanonicalFolded.
   if (SECRET_BASENAMES.has(asciiLower(canonicalBasename(canonicalTarget)))) return true;
+  if (traversesGitDir(canonicalTarget)) return true;
   const cfg = canonicalRoot(getConfigDir());
   // An unverifiable config dir means we cannot prove the target is outside it.
   if (cfg === null) return true;

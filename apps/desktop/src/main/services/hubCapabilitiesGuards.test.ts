@@ -156,6 +156,21 @@ vi.mock('./gitService', () => ({
 }));
 vi.mock('./terminalShare', () => ({}));
 vi.mock('./supervisorSkill', () => ({ ensureSupervisorHome: vi.fn(() => '/home/super') }));
+// Recorded, not just stubbed: replay.open's confinement is one line, and what
+// that line is worth depends on WHICH string reaches the worktree cutter.
+const replayOpenCalls = vi.hoisted(() => [] as string[]);
+vi.mock('./timelineReplayService', () => ({
+  timelineReplay: {
+    open: (cwd: string) => {
+      replayOpenCalls.push(cwd);
+      return { ok: true };
+    },
+    seek: vi.fn(),
+    close: vi.fn(),
+    read: vi.fn(),
+    diff: vi.fn(),
+  },
+}));
 
 const { registerHubCapabilities } = await import('./hubCapabilities');
 
@@ -354,11 +369,35 @@ describe('fixture-driven guard coverage — path capabilities main owns in produ
     });
 
     it('lets a live agent cwd past the confinement check', async () => {
-      // It still fails afterwards — the temp dir is not a git repository — but
-      // on the replay service's own terms, not the guard's. Asserting the
-      // negative is what keeps a guard that refuses everything from passing.
+      // Asserting the negative is what keeps a guard that refuses everything
+      // from passing.
       const msg = await attempt('replay.open', { cwd: agentCwd, sessionId: 's1' });
       expect(msg).not.toMatch(/outside the allowed workspace/);
+    });
+
+    // BINDING DECISION 2 on the one path handoff that had no assertion. The two
+    // tests above assert the DENY and the not-DENY and nothing else, so
+    // `(assertPathAllowed('replay.open', cwd, workspaceRoots()), cwd)` — keep the
+    // check, hand the service the caller's raw string — passed the whole suite.
+    // The same substitution on fs.read/fs.write/fs.readImage/fs.listEntries/
+    // fs.watch/fs.unwatch/fs.listDir/search.project/library.list IS killed;
+    // replay.open was the one left. It cuts a git worktree from the string it is
+    // handed, and replay.read/replay.diff then serve files out of that worktree.
+    it('cuts the worktree from the CANONICAL cwd, not the callerstring', async () => {
+      const link = path.join(path.dirname(agentCwd), `${path.basename(agentCwd)}-link`);
+      try {
+        fs.symlinkSync(agentCwd, link);
+      } catch {
+        return; // no symlink privilege here
+      }
+      replayOpenCalls.length = 0;
+      const msg = await attempt('replay.open', { cwd: link, sessionId: 's1' });
+      fs.rmSync(link, { force: true });
+      expect(msg).toBe('');
+      expect(
+        replayOpenCalls,
+        'replay.open handed the replay service the string it was given rather than the one the guard validated',
+      ).toEqual([agentCwd]);
     });
   });
 

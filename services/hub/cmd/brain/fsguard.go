@@ -504,6 +504,9 @@ func pathIsSecretCanonical(canonicalTarget string) bool {
 	if secretBasenames[asciiLower(canonicalBase(canonicalTarget))] {
 		return true
 	}
+	if traversesGitDir(canonicalTarget) {
+		return true
+	}
 	cfg, ok := canonicalRoot(configDir())
 	if !ok {
 		return true // unverifiable config dir → cannot prove the target is outside it
@@ -532,6 +535,45 @@ func pathIsSecretCanonical(canonicalTarget string) bool {
 		}
 	}
 	return true
+}
+
+// gitMetadataDir is the one directory name that turns an ordinary write into
+// command execution. See traversesGitDir.
+const gitMetadataDir = ".git"
+
+// traversesGitDir reports whether any component of an ALREADY canonical path is
+// the repository metadata directory.
+//
+// A `.git` directory is not data, it is a program: `git` discovers the
+// repository at whatever cwd it is handed and then executes what `.git/config`
+// tells it to. The `-c` prefix in fsops.go / gitExec.ts neutralizes every
+// exec-valued key that has a FIXED name, and `--no-ext-diff` covers
+// diff.external, but nothing there can reach the NAMESPACED ones —
+// filter.<drv>.clean (which `git add`, i.e. git.stage, runs),
+// diff.<drv>.command/textconv, merge.<drv>.driver, trailer.<t>.command — because
+// the driver name belongs to whoever wrote the file. Those definitions can only
+// live in a config file under `.git`, so the write is refused here instead.
+// `.git/hooks/*`, `.git/config.worktree` and `.git/info/attributes` are the same
+// surface and the same rule covers them.
+//
+// Reads are refused too, on the same footing as the credential basenames: a
+// `.git/config` routinely holds a remote URL with an embedded token and the name
+// of a credential store. Nothing legitimate goes through these guards for a
+// `.git` path — both providers' directory listings already drop the entry.
+//
+// Folded, because ".GIT" opens .git on APFS and NTFS, and the walk hands this
+// gate the caller's spelling (see containsPathFolded). The FINAL component
+// counts as well as the interior ones: a FILE named `.git` is the "gitfile"
+// pointer form (`gitdir: ...`) and is equally a repository.
+//
+// TWIN: pathConfinement.ts traversesGitDir, internal/bus/policy.go traversesGitDir.
+func traversesGitDir(canonicalTarget string) bool {
+	for _, comp := range strings.Split(canonicalTarget, string(filepath.Separator)) {
+		if asciiLower(comp) == gitMetadataDir {
+			return true
+		}
+	}
+	return false
 }
 
 // canonicalBase is the substring after the final canonical separator — "" when

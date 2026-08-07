@@ -383,6 +383,9 @@ func pathIsSecret(canonicalTarget string) bool {
 	if secretBasenames[asciiLower(lastComponent(canonicalTarget))] {
 		return true
 	}
+	if traversesGitDir(canonicalTarget) {
+		return true
+	}
 	// Read the environment at call time — a test points this at a sandbox.
 	cfg, ok := canonicalizeRoot(authtoken.ConfigDir())
 	if !ok {
@@ -414,6 +417,36 @@ func pathIsSecret(canonicalTarget string) bool {
 	// workspacer.db, the Electron cookie/localStorage jars, plugins/** and the
 	// dir itself.
 	return true
+}
+
+// gitMetadataDir is the one directory name that turns an ordinary write into
+// command execution.
+const gitMetadataDir = ".git"
+
+// traversesGitDir reports whether any component of an ALREADY canonical path is
+// the repository metadata directory.
+//
+// A `.git` directory is not data, it is a program: git discovers the repository
+// at whatever cwd it is handed and executes what .git/config tells it to. The
+// `-c` prefix the fs providers put in front of every git invocation neutralizes
+// the exec-valued keys that have a FIXED name, but not the namespaced ones —
+// filter.<drv>.clean (which `git add` runs), diff.<drv>.command/textconv,
+// merge.<drv>.driver, trailer.<t>.command — because the driver name belongs to
+// whoever wrote the file. Those definitions can only live under `.git`, so the
+// write is refused here. Reads go with them: a .git/config routinely carries a
+// remote URL with an embedded token.
+//
+// Folded, because ".GIT" opens .git on APFS and NTFS. The final component counts
+// too: a FILE named .git is the "gitfile" pointer form and is equally a repo.
+//
+// TWIN: cmd/brain/fsguard.go traversesGitDir, pathConfinement.ts traversesGitDir.
+func traversesGitDir(canonicalTarget string) bool {
+	for _, comp := range strings.Split(canonicalTarget, canonicalSep()) {
+		if asciiLower(comp) == gitMetadataDir {
+			return true
+		}
+	}
+	return false
 }
 
 // PathIsSecret exposes the gate above for the plugin manager's load-time check.

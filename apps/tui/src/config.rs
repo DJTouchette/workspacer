@@ -15,6 +15,52 @@
 
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::path::PathBuf;
+
+/// The shared `workspacer` config dir — the one the Electron app, the Go brain,
+/// `authtoken.ConfigDir()` and this TUI all have to agree on.
+///
+/// This is a FOURTH copy of that rule, and it used a different one.
+/// `directories::BaseDirs::config_dir()` is `~/Library/Application Support` on
+/// macOS (directories-5.0.1 src/mac.rs) where all three other copies are
+/// `~/.config`, and macOS is a shipped release target. On Linux it also filters
+/// `XDG_CONFIG_HOME` through `dirs_sys::is_absolute_path`, silently falling back
+/// to `~/.config` for a relative value the other copies use verbatim.
+///
+/// The seam is real, not theoretical: the brain reads
+/// `filepath.Join(configDir(), "tui-names.json")` (enrich.go), which
+/// `names.rs` writes — and on macOS this side was reading the bus token, the
+/// Claude profiles and the library out of a directory nothing else ever wrote.
+///
+/// TWIN: `configDirFor` in services/hub/cmd/brain/profiles.go and `getConfigDir`
+/// in apps/desktop/src/main/services/configService.ts. Same order of precedence,
+/// same env var names, no filtering.
+pub fn config_dir() -> Option<PathBuf> {
+    config_dir_for(std::env::consts::OS)
+}
+
+/// `config_dir` with the platform as a parameter, so the Windows and macOS
+/// branches are testable on any host — the same shape as the Go twin's
+/// `configDirFor(goos)`.
+pub fn config_dir_for(os: &str) -> Option<PathBuf> {
+    let home = || directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf());
+    if os == "windows" {
+        if let Some(app_data) = non_empty_env("APPDATA") {
+            return Some(PathBuf::from(app_data).join("workspacer"));
+        }
+        return Some(home()?.join("AppData").join("Roaming").join("workspacer"));
+    }
+    if let Some(xdg) = non_empty_env("XDG_CONFIG_HOME") {
+        return Some(PathBuf::from(xdg).join("workspacer"));
+    }
+    Some(home()?.join(".config").join("workspacer"))
+}
+
+/// An env var that is set but EMPTY is not a config dir. Both twins test the
+/// same way (`os.Getenv(...) != ""`, `process.env.X ||`).
+fn non_empty_env(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.is_empty())
+}
 
 use crate::keys::{Chord, Context, Keymap};
 use crate::theme::{self, Theme};
@@ -160,15 +206,13 @@ pub fn load() -> Config {
 /// the TUI either spawns its own token-less hub or talks to claudemon directly.
 /// Presenting this token to a token-less hub is harmless: the hub ignores it.
 pub fn hub_token() -> Option<String> {
-    let dirs = directories::BaseDirs::new()?;
-    let path = dirs.config_dir().join("workspacer").join("remote-token");
+    let path = config_dir()?.join("remote-token");
     let token = std::fs::read_to_string(path).ok()?.trim().to_string();
     (!token.is_empty()).then_some(token)
 }
 
 fn read_file() -> Option<RawConfig> {
-    let dirs = directories::BaseDirs::new()?;
-    let path = dirs.config_dir().join("workspacer").join("tui.json");
+    let path = config_dir()?.join("tui.json");
     let text = std::fs::read_to_string(path).ok()?;
     // A broken config shouldn't brick the TUI — warn-and-default instead.
     match serde_json::from_str(&text) {
@@ -295,5 +339,77 @@ mod tests {
             cfg.keymap.action(Context::List, Chord::parse("z").unwrap()),
             None
         );
+    }
+
+    /// The shared config dir, which this crate is the FOURTH implementation of.
+    ///
+    /// `directories::BaseDirs::config_dir()` is `~/Library/Application Support`
+    /// on macOS — a shipped release target — where the Go brain, the Electron
+    /// app and `authtoken.ConfigDir()` all say `~/.config`. So on macOS the TUI
+    /// was looking for remote-token, claude-profiles.json and the library in a
+    /// directory nothing else ever writes, and the brain reads a file
+    /// (`tui-names.json`) that names.rs writes, straight across that seam.
+    ///
+    /// These vectors are the Go twin's `configDirFor(goos)` table.
+    #[test]
+    fn config_dir_matches_the_other_three_copies() {
+        // Isolated from whatever the developer's environment says.
+        let prev_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+        let prev_appdata = std::env::var("APPDATA").ok();
+        std::env::remove_var("XDG_CONFIG_HOME");
+        std::env::remove_var("APPDATA");
+
+        let home = directories::BaseDirs::new()
+            .map(|d| d.home_dir().to_path_buf())
+            .expect("a home directory");
+
+        // macOS takes the SAME branch as Linux — that is the whole point.
+        for os in ["macos", "linux", "freebsd"] {
+            assert_eq!(
+                config_dir_for(os),
+                Some(home.join(".config").join("workspacer")),
+                "{os}: BaseDirs::config_dir() would answer ~/Library/Application Support here"
+            );
+        }
+        assert_eq!(
+            config_dir_for("windows"),
+            Some(home.join("AppData").join("Roaming").join("workspacer"))
+        );
+
+        // XDG_CONFIG_HOME is used VERBATIM, including a relative value:
+        // directories filters it through is_absolute_path and the Go and TS
+        // copies do not, so a relative value was the second divergence.
+        std::env::set_var("XDG_CONFIG_HOME", "relative/cfg");
+        assert_eq!(
+            config_dir_for("linux"),
+            Some(PathBuf::from("relative/cfg").join("workspacer")),
+            "a relative XDG_CONFIG_HOME must be honoured, as it is in Go and TypeScript"
+        );
+        // …but an EMPTY one is not a config dir.
+        std::env::set_var("XDG_CONFIG_HOME", "");
+        assert_eq!(
+            config_dir_for("linux"),
+            Some(home.join(".config").join("workspacer"))
+        );
+        // and it does not leak into the Windows branch.
+        std::env::set_var("XDG_CONFIG_HOME", "/xdg");
+        assert_eq!(
+            config_dir_for("windows"),
+            Some(home.join("AppData").join("Roaming").join("workspacer"))
+        );
+        std::env::set_var("APPDATA", "/appdata");
+        assert_eq!(
+            config_dir_for("windows"),
+            Some(PathBuf::from("/appdata").join("workspacer"))
+        );
+
+        match prev_xdg {
+            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match prev_appdata {
+            Some(v) => std::env::set_var("APPDATA", v),
+            None => std::env::remove_var("APPDATA"),
+        }
     }
 }

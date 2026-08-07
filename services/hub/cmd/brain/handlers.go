@@ -410,10 +410,6 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	}
 
 	cwd := normalizeCwd(p.Cwd)
-	if cwd == "" {
-		home, _ := os.UserHomeDir()
-		cwd = home
-	}
 
 	// Managed (Tier-2) backend — Codex / OpenCode / Pi run through claudemon's
 	// adapter, not a Claude PTY. Same dispatch split as the desktop's
@@ -773,9 +769,6 @@ func (r *registry) terminalsCreate(ctx context.Context, raw json.RawMessage) (js
 		return nil, fmt.Errorf("terminals.create: %q is not one of this host's login shells", p.Shell)
 	}
 	cwd := normalizeCwd(p.Cwd)
-	if cwd == "" {
-		cwd, _ = os.UserHomeDir()
-	}
 	cols, rows := p.Cols, p.Rows
 	if cols == 0 {
 		cols = 120
@@ -854,8 +847,8 @@ func (r *registry) profilesAdd(raw json.RawMessage) (json.RawMessage, error) {
 	// profile in the New Agent dialog, where nothing scrubs. The capability is
 	// classified nowhere — `configDir` is not in the params scanner's path-ish
 	// set and claude.* is not a path-bearing prefix — so neither detector saw it.
-	safe := scrubBypassProfile(&profile{ConfigDir: p.ConfigDir, ExtraArgs: p.ExtraArgs})
-	prof, err := addProfile(p.Name, safe.ConfigDir, safe.ExtraArgs, p.MCPItemIDs)
+	safe := scrubBypassProfile(&profile{ConfigDir: p.ConfigDir, ExtraArgs: p.ExtraArgs, MCPItemIDs: p.MCPItemIDs})
+	prof, err := addProfile(p.Name, safe.ConfigDir, safe.ExtraArgs, safe.MCPItemIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -875,17 +868,20 @@ func (r *registry) profilesUpdate(raw json.RawMessage) (json.RawMessage, error) 
 	}
 	// Same scrub as claude.profiles.add: update is the other way to plant a
 	// CLAUDE_CONFIG_DIR or a bypass flag on a profile the local user then picks.
-	if p.Updates.ConfigDir != nil || p.Updates.ExtraArgs != nil {
+	if p.Updates.ConfigDir != nil || p.Updates.ExtraArgs != nil || p.Updates.MCPItemIDs != nil {
 		cur := ""
 		if p.Updates.ConfigDir != nil {
 			cur = *p.Updates.ConfigDir
 		}
-		safe := scrubBypassProfile(&profile{ConfigDir: cur, ExtraArgs: p.Updates.ExtraArgs})
+		safe := scrubBypassProfile(&profile{ConfigDir: cur, ExtraArgs: p.Updates.ExtraArgs, MCPItemIDs: p.Updates.MCPItemIDs})
 		if p.Updates.ConfigDir != nil {
 			p.Updates.ConfigDir = &safe.ConfigDir
 		}
 		if p.Updates.ExtraArgs != nil {
 			p.Updates.ExtraArgs = safe.ExtraArgs
+		}
+		if p.Updates.MCPItemIDs != nil {
+			p.Updates.MCPItemIDs = []string{}
 		}
 	}
 	prof, err := updateProfile(p.ID, p.Updates)

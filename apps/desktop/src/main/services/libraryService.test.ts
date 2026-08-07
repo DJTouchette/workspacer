@@ -23,7 +23,11 @@ const h = vi.hoisted(() => {
   return { configDir: nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'wks-lib-cfg-')) };
 });
 vi.mock('./configService', () => ({ getConfigDir: () => h.configDir }));
-vi.mock('./hubClient', () => ({ publishToHub: () => {} }));
+// Recorded, not swallowed: `library.changed` on the bus is the observable the
+// derived-watch test below asserts on — a watch outside the roots is only a leak
+// because that event reaches a remote caller.
+const busEvents = vi.hoisted(() => [] as unknown[]);
+vi.mock('./hubClient', () => ({ publishToHub: (e: unknown) => void busEvents.push(e) }));
 
 import { libraryService } from './libraryService';
 import { assertPathAllowed } from '../lib/pathConfinement';
@@ -533,5 +537,188 @@ describe('libraryService — list ordering matches the Go provider', () => {
     });
 
     expect(libraryService.list().map((i) => i.title)).toEqual(c.expected);
+  });
+});
+
+// library.list is READ-ONLY by contract, which is why it is handed the WIDEST
+// root set — and the fs.watch it installs is neither a read nor a write, so the
+// per-file guard the previous pass threaded through readDir/claudeItem never
+// reached it. Every one of the four watched directories is DERIVED from the
+// caller's cwd after the cwd check, and fs.watch follows symlinks.
+//
+// The result was a bus-visible change ORACLE on any directory on the host: every
+// write to the symlink's target publishes {type:'library.changed'}, so aiming
+// `<cwd>/.claude/agents` at ~/.config/workspacer tells a remote caller exactly
+// when remote-token, tokens.json and config.yaml are written. The skills watch
+// is recursive, so on macOS one link covers a whole subtree.
+describe('libraryService — the derived watch paths go through the same guard', () => {
+  const itemGuard = (root: string) => {
+    const roots = [path.join(fs.realpathSync(h.configDir), 'library'), root];
+    return (p: string): string | null => {
+      try {
+        return assertPathAllowed('library.list', p, roots);
+      } catch {
+        return null;
+      }
+    };
+  };
+
+  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 400));
+
+  it('does not turn an out-of-root directory into a library.changed oracle', async () => {
+    const realCwd = fs.realpathSync(cwd);
+    const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-outside-')));
+    try {
+      // An ordinary permitted write inside the allowed root: a symlinked
+      // component of the DERIVED path.
+      fs.symlinkSync(outside, path.join(realCwd, '.claude'));
+    } catch {
+      fs.rmSync(outside, { recursive: true, force: true });
+      return; // no symlink privilege here; the Go twin covers the same axis
+    }
+    fs.mkdirSync(path.join(outside, 'agents'), { recursive: true });
+
+    libraryService.list(realCwd, itemGuard(realCwd));
+    await settle();
+    busEvents.length = 0;
+
+    // Stand-in for remote-token: a file in neither the item roots nor the cwd
+    // root, one that assertPathAllowed refuses to read.
+    fs.writeFileSync(path.join(outside, 'agents', 'remote-token'), 'tok');
+    await settle();
+
+    expect(
+      busEvents,
+      'library.list installed an fs.watch outside every allowed root — a write there reached the bus as library.changed, which is a change oracle on whatever the link points at',
+    ).toEqual([]);
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+
+  it('still reports changes in the ordinary derived directories inside the root', async () => {
+    const realCwd = fs.realpathSync(cwd);
+    fs.mkdirSync(path.join(realCwd, '.claude', 'agents'), { recursive: true });
+
+    libraryService.list(realCwd, itemGuard(realCwd));
+    await settle();
+    busEvents.length = 0;
+
+    fs.writeFileSync(path.join(realCwd, '.claude', 'agents', 'a.md'), 'x');
+    await settle();
+
+    // The floor: without this the test above is satisfied by watching nothing.
+    expect(busEvents).toContainEqual({ type: 'library.changed' });
+  });
+});
+
+/**
+ * The guard's ANSWER at every leg, not just its verdict.
+ *
+ * `guardLibraryFile` returns the canonical path (BINDING DECISION 2), and the
+ * killswitch tests pin that the guard REFUSES an out-of-roots path — but nothing
+ * pinned that the string it returned is the string that gets opened, written or
+ * unlinked. Making the guard `assertPathAllowed(...); return filePath;`, or any
+ * one of the six consumer legs re-open the raw join, left 84 files / 1213 tests
+ * green.
+ *
+ * The divergence is concrete on the remove leg: `fs.rmSync(rawTarget)` removes
+ * only the SYMLINK `<cwd>/.claude/skills/x`, while cmd/brain/library.go
+ * removeLibrary does `os.RemoveAll(canonical)` and destroys the directory it
+ * resolves to — same library.remove, two different outcomes depending on which
+ * provider answered. Every other leg is the same check-then-open window on a
+ * path a bus caller can plant symlinks in.
+ */
+describe('libraryService — every leg opens the path the guard RESOLVED', () => {
+  const itemGuard = (root: string) => {
+    const roots = [path.join(fs.realpathSync(h.configDir), 'library'), root];
+    return (p: string): string | null => {
+      try {
+        return assertPathAllowed('library', p, roots);
+      } catch {
+        return null;
+      }
+    };
+  };
+
+  it('remove deletes what the entry resolves to (parity with the brain)', () => {
+    const root = fs.realpathSync(cwd);
+    const real = path.join(root, 'real-skill-dir');
+    fs.mkdirSync(real, { recursive: true });
+    fs.writeFileSync(path.join(real, 'SKILL.md'), '---\nname: x\n---\n\nb\n');
+    fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+    const link = path.join(root, '.claude', 'skills', 'aliased');
+    try {
+      fs.symlinkSync(real, link);
+    } catch {
+      return; // no symlink privilege here
+    }
+
+    libraryService.remove('claude', 'aliased', root, 'skill', itemGuard(root));
+
+    expect(
+      fs.existsSync(real),
+      'remove unlinked the LINK; removeLibrary in the brain RemoveAll s the resolved directory, so the same call destroys a different tree per provider',
+    ).toBe(false);
+  });
+
+  it('save writes through an in-root symlink rather than replacing it', () => {
+    const root = fs.realpathSync(cwd);
+    const dir = path.join(root, '.workspacer', 'library');
+    fs.mkdirSync(dir, { recursive: true });
+    const target = path.join(root, 'target.md');
+    fs.writeFileSync(target, 'old');
+    const link = path.join(dir, 'note.md');
+    try {
+      fs.symlinkSync(target, link);
+    } catch {
+      return;
+    }
+
+    libraryService.save(
+      { scope: 'project', id: 'note', title: 'Note', kind: 'prompt', body: 'NEW', cwd: root },
+      itemGuard(root),
+    );
+
+    expect(fs.lstatSync(link).isSymbolicLink(), 'the write replaced the link with a file').toBe(
+      true,
+    );
+    expect(fs.readFileSync(target, 'utf-8')).toContain('NEW');
+  });
+
+  it('list reads through an in-root symlink to the resolved file', () => {
+    const root = fs.realpathSync(cwd);
+    const dir = path.join(root, '.workspacer', 'library');
+    fs.mkdirSync(dir, { recursive: true });
+    const target = path.join(root, 'target.md');
+    fs.writeFileSync(target, '---\ntitle: RESOLVED\nkind: prompt\n---\n\nbody\n');
+    try {
+      fs.symlinkSync(target, path.join(dir, 'alias.md'));
+    } catch {
+      return;
+    }
+    const items = libraryService.list(root, itemGuard(root));
+    const item = items.find((i) => i.title === 'RESOLVED');
+    expect(item).toBeDefined();
+    // The `path` a list item carries IS the guard's answer, and it goes on the
+    // wire — so this is the observable that separates "opened the canonical
+    // path" from "re-opened the raw join". (For the bytes alone the two are
+    // equivalent: readFileSync follows the link either way. The difference is
+    // the string the caller is handed, and the check-then-open window.)
+    expect(item!.path).toBe(target);
+  });
+
+  it('a claude item reports the resolved path too', () => {
+    const root = fs.realpathSync(cwd);
+    const skills = path.join(root, '.claude', 'skills', 'aliased');
+    fs.mkdirSync(skills, { recursive: true });
+    const target = path.join(root, 'realskill.md');
+    fs.writeFileSync(target, '---\nname: aliased\ndescription: d\n---\n\nbody\n');
+    try {
+      fs.symlinkSync(target, path.join(skills, 'SKILL.md'));
+    } catch {
+      return;
+    }
+    const item = libraryService.list(root, itemGuard(root)).find((i) => i.id === 'aliased');
+    expect(item).toBeDefined();
+    expect(item!.path).toBe(target);
   });
 });

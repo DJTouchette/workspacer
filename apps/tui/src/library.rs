@@ -28,11 +28,9 @@ pub fn load() -> Vec<LibraryItem> {
     };
     let home = dirs.home_dir();
 
-    load_md_dir(
-        &dirs.config_dir().join("workspacer").join("library"),
-        "prompt",
-        &mut items,
-    );
+    if let Some(cfg) = crate::config::config_dir() {
+        load_md_dir(&cfg.join("library"), "prompt", &mut items);
+    }
     load_skills(&home.join(".claude").join("skills"), &mut items);
     load_agents(&home.join(".claude").join("agents"), &mut items);
 

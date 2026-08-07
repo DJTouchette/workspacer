@@ -33,6 +33,9 @@ import {
   pathWithinRoots,
   SECRET_BASENAMES,
   asciiLower,
+  isSecretPath,
+  traversesGitDir,
+  resolveStoreEntry,
 } from './pathConfinement';
 
 interface Case {
@@ -235,9 +238,18 @@ function canonicalShapeProblem(p: string): string | null {
 }
 
 /** Plain string substitution, applied to `roots` and `target` and nothing else:
- *  a root written without a token ("/", "", "~", "root") is literal on purpose. */
+ *  a root written without a token ("/", "", "~", "root") is literal on purpose.
+ *
+ *  An UNRECOGNISED `${TOKEN}` is passed through verbatim by every substituter in
+ *  every loader, and what comes out is then a RELATIVE string, which all three
+ *  copies refuse for not being absolute. So a one-character typo — `${CONFI}` for
+ *  `${CONFIG}` — turns a deny case into a case that passes while exercising
+ *  nothing, silently and in all three languages at once. Applying that to all 64
+ *  deny targets left every suite 100% green. Allow cases are immune (a bogus
+ *  target fails `resolvesTo`), so this throw is the negative half's only
+ *  protection. */
 function subst(s: string): string {
-  return s
+  const out = s
     .split('${SANDBOX}')
     .join(sandbox)
     .split('${ROOT}')
@@ -250,6 +262,15 @@ function subst(s: string): string {
     .join(REAL_HOME)
     .split('${PROCESS_CWD}')
     .join(PROCESS_CWD);
+  const residual = /\$\{[^}]*\}?/.exec(out);
+  if (residual) {
+    throw new Error(
+      `unsubstituted token ${residual[0]} in ${JSON.stringify(out)} — the fixture's token ` +
+        'vocabulary is ${SANDBOX} ${ROOT} ${OUTSIDE} ${CONFIG} ${HOME} ${PROCESS_CWD}; an ' +
+        'unknown one passes through verbatim and silently defangs the case',
+    );
+  }
+  return out;
 }
 
 /** The fixture spells `resolvesTo` with '/' separators; the tokens inside it
@@ -312,6 +333,55 @@ describe('path containment — cross-language contract', () => {
     expect(configStoreRoots()).toEqual(
       fixture.configStoreSubdirs.map((s) => path.join(state.configDir, s)),
     );
+  });
+
+  // The BEHAVIOURAL half of the test above, and the half that guards the
+  // escalation. `configStoreRoots()` returning the right three strings is not
+  // the same claim as `isSecretPath` ITERATING them: the gate holds its own
+  // loop, so a fourth hardcoded carve-out there re-admits <configDir>/plugins/**
+  // — every installed plugin's manifest, cache and state, next door to the
+  // .bus-token the basename list covers — with the constant, the fixture and all
+  // 106 cases green. Every secrets case names one of the three real stores, so a
+  // gate with FOUR carve-outs satisfies all of them.
+  it('the GATE exempts exactly those stores, and nothing else in the config dir', () => {
+    for (const store of fixture.configStoreSubdirs) {
+      fs.mkdirSync(path.join(state.configDir, store), { recursive: true });
+      expect(
+        isSecretPath(path.join(state.configDir, store, 'item.md')),
+        `the fixture carves out ${store} but the gate still refuses it`,
+      ).toBe(false);
+    }
+    for (const name of ['plugins', 'cache', 'logs', 'handoffs', 'backups', 'supervisor']) {
+      if (fixture.configStoreSubdirs.includes(name)) continue;
+      fs.mkdirSync(path.join(state.configDir, name), { recursive: true });
+      expect(
+        isSecretPath(path.join(state.configDir, name, 'anything.json')),
+        `the gate exempts <configDir>/${name}, which the fixture does not list`,
+      ).toBe(true);
+    }
+    expect(isSecretPath(path.join(state.configDir, 'remote-token'))).toBe(true);
+  });
+
+  // The `.git` rule is a PRIMITIVE, and the fixture cases only ever reach it
+  // through a full guard verdict. These vectors pin its shape directly: exact
+  // component match, folded, final component included, no prefix behaviour. A
+  // `startsWith('.git')` spelling passes every deny case in the corpus and blanks
+  // .gitignore / .gitattributes / .github out of the UI.
+  it('treats .git as a whole path COMPONENT, not a prefix', () => {
+    const abs = (p: string): string => path.join(path.sep + 'r', ...p.split('/'));
+    for (const p of ['.git', '.git/config', 'proj/.git/config', '.GIT/config', 'a/.Git/b']) {
+      expect(traversesGitDir(abs(p)), p).toBe(true);
+    }
+    for (const p of [
+      '.gitignore',
+      '.gitattributes',
+      '.gitmodules',
+      '.github/workflows/ci.yml',
+      'git/config',
+      'x.git/y',
+    ]) {
+      expect(traversesGitDir(abs(p)), p).toBe(false);
+    }
   });
 
   for (const c of fixture.cases) {
@@ -429,5 +499,56 @@ describe('an empty root contains nothing', () => {
   it('but the FILESYSTEM root still contains everything (BINDING DECISION 3)', () => {
     expect(containsCanonical(path.sep, '/etc/passwd')).toBe(true);
     expect(pathWithinRoots([path.sep], '/etc/passwd')).toBe(true);
+  });
+});
+
+/**
+ * resolveStoreEntry's ANSWER, not just its verdict.
+ *
+ * Its own docstring says "the returned path is the string the caller must open
+ * (BINDING DECISION 2)", and its two consumers — sessionService.listSessions and
+ * layoutService — readFileSync whatever it hands back. Only the null/non-null
+ * half was asserted anywhere: `isWithin(canonical, dir) ? path.join(dir, name) :
+ * null` passed 108/108 focused and 84 files / 1213 tests, while a store entry
+ * that is a symlink resolving back INSIDE the store got opened through the link
+ * rather than at the location the check described — the same check-then-open
+ * window the function exists to close, in the one function whose comment names
+ * it. (Deleting the containment test entirely IS killed, so only the value half
+ * was free.)
+ */
+describe('resolveStoreEntry returns the path it validated', () => {
+  let store: string;
+  beforeEach(() => {
+    store = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-store-')));
+  });
+  afterEach(() => fs.rmSync(store, { recursive: true, force: true }));
+
+  it('resolves an in-store symlink to its target', () => {
+    const target = path.join(store, 'target.yaml');
+    fs.writeFileSync(target, 'x');
+    try {
+      fs.symlinkSync(target, path.join(store, 'alias.yaml'));
+    } catch {
+      return; // no symlink privilege here
+    }
+    expect(resolveStoreEntry(store, 'alias.yaml')).toBe(target);
+  });
+
+  it('returns the canonical path for an ordinary entry', () => {
+    fs.writeFileSync(path.join(store, 'a.yaml'), 'x');
+    expect(resolveStoreEntry(store, 'a.yaml')).toBe(path.join(store, 'a.yaml'));
+  });
+
+  it('still returns null for an entry that leaves the store', () => {
+    const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-store-out-')));
+    fs.writeFileSync(path.join(outside, 'loot.yaml'), 'x');
+    try {
+      fs.symlinkSync(path.join(outside, 'loot.yaml'), path.join(store, 'pwn.yaml'));
+    } catch {
+      fs.rmSync(outside, { recursive: true, force: true });
+      return;
+    }
+    expect(resolveStoreEntry(store, 'pwn.yaml')).toBeNull();
+    fs.rmSync(outside, { recursive: true, force: true });
   });
 });

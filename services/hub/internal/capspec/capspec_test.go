@@ -249,6 +249,22 @@ var pathishParams = map[string]bool{
 	//                 `configDir` was not, and the scan matches names exactly.
 	"shell":     true,
 	"configDir": true,
+	// `mcpItemIds` is a LIST of process identifiers. Each id resolves, through
+	// libraryService -> toClaudeEntry -> buildSessionMcpConfig, into a
+	// --mcp-config entry whose `command`, `args` and `env` are taken verbatim
+	// from a library item, and the spawn passes `--allowedTools mcp__<id>`
+	// alongside it, so the server is PRE-APPROVED and no permission prompt gates
+	// it. Adding this name to the vocabulary on its own changed NOTHING, because
+	// agents.spawn and claude.profiles.add were already excused for a different
+	// field — which is why the excuse is now per (method, param).
+	"mcpItemIds": true,
+	// The PTY byte stream. Not a path, but the most direct process-control param
+	// on the surface: bytes into a shell are argv of whatever the caller types,
+	// and sessions.terminalInput was classified nowhere at all. `sessionId` is
+	// deliberately NOT here: it is a handle to something the daemon already owns,
+	// carried by two dozen read/control methods, and adding it would drown the
+	// signal rather than sharpen it.
+	"data": true,
 }
 
 // paramsDestructureRe pulls the `const { … } = (params` destructuring out of a
@@ -348,10 +364,22 @@ func TestCapabilitiesWithAPathParamAreClassified(t *testing.T) {
 			continue
 		}
 		sawPathParam[name] = true
-		_, scoped := PathParam[name]
-		_, excused := unscopedByDecision[name]
-		if !scoped && !excused {
-			t.Errorf("hubCapabilities.ts registers %q taking %v, but capspec classifies it nowhere — add a PathParam entry (with the field carrying its path) or an unscopedByDecision entry saying why it needs no confinement", name, fields)
+		scopedField, scoped := PathParam[name]
+		// PER PARAM, not per method. `_, excused := unscopedByDecision[name]` is
+		// what let terminals.create's `shell` hide behind its `cwd` excuse, and it
+		// is why adding `mcpItemIds` to the vocabulary above flagged nothing:
+		// agents.spawn was already listed, for a different field. Every path-ish
+		// param a handler names has to be either THE scoped one or covered by the
+		// method's own decision.
+		for _, field := range fields {
+			if scoped && field == scopedField {
+				continue
+			}
+			if UnscopedParamCovered(name, field) {
+				continue
+			}
+			t.Errorf("hubCapabilities.ts registers %q taking %q, and capspec classifies that PARAM nowhere — PathParam[%q] is %q (scoped=%v) and unscopedParams[%q] is %v. Add the param to the method's unscopedParams entry (and say why in its unscopedByDecision reason), or scope it.",
+				name, field, name, scopedField, scoped, name, unscopedParams[name])
 		}
 	}
 	// One canary per idiom: fs.read and library.remove destructure their params,

@@ -29,6 +29,5 @@ pub fn save(cwds: &[String]) {
 }
 
 fn path() -> Option<PathBuf> {
-    let dirs = directories::BaseDirs::new()?;
-    Some(dirs.config_dir().join("workspacer").join("tui-pins.json"))
+    Some(crate::config::config_dir()?.join("tui-pins.json"))
 }

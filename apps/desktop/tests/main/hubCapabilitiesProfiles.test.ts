@@ -89,18 +89,38 @@ const { registerHubCapabilities } = await import('../../src/main/services/hubCap
 
 beforeEach(() => {
   addProfile.mockClear();
+  updateProfile.mockClear();
   handlers.clear();
   registerHubCapabilities();
 });
 
 describe('claude.profiles.add capability', () => {
-  it('forwards mcpItemIds to addProfile', () => {
+  // mcpItemIds is SCRUBBED here, not forwarded. This test used to pin the
+  // opposite, and the forwarding was deliberate — the comment at the call site
+  // said the web/remote client sends the user's selected MCP servers.
+  //
+  // What that missed: a library item of kind `mcp` carries `command`, `args` and
+  // `env` verbatim into a --mcp-config file, and the spawn passes
+  // `--allowedTools mcp__<id>` alongside it, so the server is PRE-APPROVED and no
+  // prompt gates it — a persisted id list is a persisted argv[0]. The id resolves
+  // against a library a bus caller can write (library.save, or a plain fs.write
+  // into <configDir>/library, a configStoreRoot by design), so there is nothing
+  // to validate on the way in. SpawnAgentDialog copies a profile's mcpItemIds
+  // into the spawn the moment the profile is selected, which is exactly the
+  // "wait for the LOCAL user, where nothing scrubs" escalation this capability's
+  // capspec reason claims to have closed — through the one field it did not.
+  it('scrubs mcpItemIds at write time, like configDir and extraArgs', () => {
     const handler = handlers.get('claude.profiles.add')!;
     expect(handler).toBeTypeOf('function');
     // extraArgs spelled with a REMOTE-SAFE flag: this is a bus entry point and
     // the write is scrubbed (see the next test for the dropping half).
     handler({ name: 'P', extraArgs: ['--model', 'opus'], mcpItemIds: ['mcp-1', 'mcp-2'] });
-    expect(addProfile).toHaveBeenCalledWith('P', '', ['--model', 'opus'], ['mcp-1', 'mcp-2']);
+    expect(addProfile).toHaveBeenCalledWith('P', '', ['--model', 'opus'], []);
+  });
+
+  it('scrubs mcpItemIds on update too — the other way to plant one', () => {
+    handlers.get('claude.profiles.update')!({ id: 'p1', updates: { mcpItemIds: ['mcp-1'] } });
+    expect(updateProfile).toHaveBeenCalledWith('p1', { mcpItemIds: [] });
   });
 
   it('defaults mcpItemIds to [] when absent', () => {

@@ -129,9 +129,41 @@ fn under_a_claude_config_dir(path: &std::path::Path) -> bool {
 }
 
 /// Claude encodes `/foo/bar` as `-foo-bar` and `C:\foo` as `C--foo`.
-#[allow(dead_code)]
+///
+/// A TRAILING separator is dropped first: a real cwd never carries one, and
+/// keeping it would produce a second project folder for the same directory. That
+/// strip is not cosmetic here — this is the THIRD copy of an encoder whose two
+/// other owners (`claudeProjectDirName` in services/hub/cmd/brain/discovery.go
+/// and in apps/desktop/src/main/services/claudeSessionList.ts) both bind
+/// themselves to *this* function by name in their comments, while this one had
+/// neither the strip nor the refusal they grew. It disagreed with them on 18 of
+/// 25 probe inputs. Held to the `projectDirNames` block of
+/// contracts/path-containment-cases.json by the test at the bottom of this file.
 pub fn encoded_cwd(cwd: &str) -> String {
-    cwd.replace(['/', '\\', ':'], "-")
+    let trimmed = cwd.trim_end_matches(['/', '\\']);
+    trimmed.replace(['/', '\\', ':'], "-")
+}
+
+/// [`encoded_cwd`] plus the one thing the encoding does not give you on its own:
+/// the guarantee that the result is a PLAIN COMPONENT. `None` means refuse.
+///
+/// The encoder rewrites only `/`, `\` and `:`, so `.` and `..` survive verbatim
+/// and become real path components: `~/.claude/projects` joined with `".."` is
+/// `~/.claude`, one level out of the transcript sandbox, where `history.jsonl`
+/// is the user's entire prompt history. `""` is the same shape one level down —
+/// it names the projects dir itself — and `"/"` encodes to `"-"`, which is a
+/// legal component but names no project.
+///
+/// The two other copies refuse exactly `""`, `"."` and `".."`. This one is only
+/// reachable through [`read_for_cwd`], which currently has no callers, so the
+/// escape was latent rather than live — but "unreachable today" is not a
+/// property a shared encoder should rely on.
+pub fn project_dir_name(cwd: &str) -> Option<String> {
+    let name = encoded_cwd(cwd);
+    if name.is_empty() || name == "." || name == ".." {
+        return None;
+    }
+    Some(name)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,7 +227,12 @@ fn read_for_cwd_and_session(cwd: &str, session_id: Option<&str>) -> Result<Trans
     let Some(root) = projects_dir() else {
         return Ok(Transcript::default());
     };
-    let dir = root.join(encoded_cwd(cwd));
+    // Refuse a cwd that does not encode to one plain component, rather than
+    // joining it: see project_dir_name.
+    let Some(name) = project_dir_name(cwd) else {
+        return Ok(Transcript::default());
+    };
+    let dir = root.join(name);
 
     if let Some(session_id) = session_id {
         // Exact match only. We must NOT fall back to "newest jsonl in cwd" here:
@@ -1435,5 +1472,74 @@ mod tests {
         let msgs = parse_jsonl(&jsonl);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].role, "user");
+    }
+
+    /// The `projectDirNames` block of contracts/path-containment-cases.json.
+    ///
+    /// `encoded_cwd` is the THIRD copy of this encoder, and the other two bind
+    /// themselves to it by name in their comments — discovery.go's says "Must
+    /// match claudemon's encoded_cwd", claudeSessionList.ts's names this exact
+    /// file. Nothing held it to either: this copy had neither the trailing-
+    /// separator strip nor the ''/'.'/'..'  refusal they grew, and disagreed
+    /// with them on 18 of 25 spellings — including all six the fixture refuses.
+    /// The fixture's own owner note listed two owners; there were always three.
+    #[test]
+    fn project_dir_names_match_the_shared_fixture() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../contracts/path-containment-cases.json");
+        let Ok(raw) = fs::read_to_string(&path) else {
+            eprintln!("contract fixture not reachable from this checkout; skipping");
+            return;
+        };
+        let fx: serde_json::Value = serde_json::from_str(&raw).expect("fixture is valid JSON");
+        let cases = fx["projectDirNames"]["cases"]
+            .as_array()
+            .expect("projectDirNames.cases");
+        assert!(
+            !cases.is_empty(),
+            "the projectDirNames block is empty — this loader holds nothing to anything"
+        );
+        let mut refusals = 0;
+        for c in cases {
+            let cwd = c["cwd"].as_str().expect("cwd");
+            let why = c["why"].as_str().unwrap_or("");
+            match c["expect"].as_str() {
+                Some(want) => assert_eq!(
+                    project_dir_name(cwd).as_deref(),
+                    Some(want),
+                    "project_dir_name({cwd:?})\n  why: {why}"
+                ),
+                None => {
+                    refusals += 1;
+                    assert_eq!(
+                        project_dir_name(cwd),
+                        None,
+                        "project_dir_name({cwd:?}) must REFUSE\n  why: {why}"
+                    );
+                }
+            }
+        }
+        assert!(
+            refusals > 0,
+            "no refusal cases ran — the escape half of this block is not being exercised"
+        );
+    }
+
+    /// The WIRING, as far as it can be asserted without repointing $HOME (which
+    /// `projects_dir` reads through `BaseDirs`, and which these tests share a
+    /// process for): `read_for_cwd_and_session` consults `project_dir_name` and
+    /// returns an empty transcript rather than joining a refused name onto the
+    /// projects root.
+    #[test]
+    fn read_for_cwd_returns_nothing_for_a_refused_cwd() {
+        for cwd in ["..", ".", "", "/"] {
+            let t = read_for_cwd(cwd).expect("must not error");
+            if project_dir_name(cwd).is_none() {
+                assert!(
+                    t.messages.is_empty(),
+                    "read_for_cwd({cwd:?}) returned messages for a cwd the encoder refuses — the refusal is not wired into the join"
+                );
+            }
+        }
     }
 }

@@ -123,8 +123,102 @@ var unscopedByDecision = map[string]string{
 	// confined to roots — there is no subtree we could allow that the same caller
 	// cannot fill in with fs.write — but SCRUBBED at write time on both bus
 	// providers, so a bus caller cannot plant one for the local user to pick.
-	"claude.profiles.add":    "configDir/extraArgs are scrubbed at write time on both bus providers (scrubBypassProfile), so nothing a bus caller persists can carry a CLAUDE_CONFIG_DIR or a permission bypass into a later LOCAL spawn",
+	"claude.profiles.add":    "configDir/extraArgs/mcpItemIds are scrubbed at write time on both bus providers (scrubBypassProfile), so nothing a bus caller persists can carry a CLAUDE_CONFIG_DIR, a permission bypass, or an MCP server definition into a later LOCAL spawn",
 	"claude.profiles.update": "same as claude.profiles.add",
+	// sessions.terminalInput writes raw bytes into a session's PTY. It was
+	// classified NOWHERE — `sessionId` and `data` are not path-shaped, and
+	// sessions.* is not a path-bearing prefix — while being, by construction, the
+	// most direct process-control primitive on the surface: bytes into a shell
+	// are argv of whatever the caller types. That silence also made
+	// terminals.create's shell ALLOWLIST look like a boundary it is not, since a
+	// caller holding both can spawn /bin/bash and then type anything.
+	//
+	// There is nothing to confine: a PTY byte stream has no path and no subtree.
+	// What the reason has to say honestly is that holding this capability IS the
+	// gate, at the same level as terminals.create — and that the allowlist buys
+	// its protection only against a caller that does NOT hold this one.
+	"sessions.terminalInput": "writes raw bytes into an existing session's PTY: there is no path and no subtree to confine, so holding the capability is the gate, exactly as for terminals.create. NOTE that this makes terminals.create's shell allowlist a boundary only against callers that do not ALSO hold this method — allowlisted /bin/bash plus typed bytes is full argv[0] freedom — and that the sessionId is not ownership-checked on either provider, so it reaches the local user's own agent PTY too",
+}
+
+// unscopedParams names, PER EXCUSED METHOD, the caller params that method's
+// decision actually covers.
+//
+// The drift detector used to ask only `_, excused := unscopedByDecision[name]`,
+// which is a per-METHOD excuse: once a capability was listed for ONE param, no
+// other param on it could ever be flagged, no matter what was added to the
+// scanner's vocabulary. That is exactly how terminals.create's `shell` hid
+// behind its `cwd` excuse for as long as it did, and it is why widening the
+// scanner to see agents.spawn's `mcpItemIds` changed nothing at all: the method
+// was already excused, for a different field.
+//
+// So the excuse is now per (method, param). A capability that grows a second
+// caller string which is a filesystem or process identifier has to say so here,
+// with the reason in unscopedByDecision naming it.
+var unscopedParams = map[string][]string{
+	"agents.spawn": {"cwd", "mcpItemIds"},
+	// git.diff's `path` rides alongside its SCOPED `cwd`; see the note below.
+	"git.diff": {"path"},
+	// `shell` is argv[0]; see the reason text.
+	"terminals.create":       {"cwd", "shell"},
+	"sessions.transcript":    {"cwd"},
+	"providers.listModels":   {"cwd"},
+	"claude.sessionsForDir":  {"cwd"},
+	"replay.open":            {"cwd"},
+	"replay.read":            {"path"},
+	"replay.diff":            {"path"},
+	"git.status":             {"cwd"},
+	"git.log":                {"cwd"},
+	"git.numstat":            {"cwd"},
+	"git.commitDiff":         {"cwd", "path"},
+	"git.commitNumstat":      {"cwd"},
+	"git.stage":              {"cwd", "path"},
+	"git.unstage":            {"cwd", "path"},
+	"git.commit":             {"cwd"},
+	"git.push":               {"cwd"},
+	"sessions.load":          {"filename"},
+	"sessions.save":          {"filename"},
+	"sessions.delete":        {"filename"},
+	"sessions.terminalInput": {"data"},
+	"layouts.save":           {"id"},
+	"layouts.delete":         {"id"},
+	"config.save":            {},
+	"claude.profiles.add":    {"configDir", "mcpItemIds"},
+	"claude.profiles.update": {"configDir", "mcpItemIds"},
+}
+
+// UnscopedParamCovered reports whether method's unscopedByDecision entry covers
+// this particular param. A method excused for one field is NOT excused for a
+// second one it grew later.
+func UnscopedParamCovered(method, param string) bool {
+	_, excused := unscopedByDecision[method]
+	_, scoped := PathParam[method]
+	// The method has to be classified SOMEHOW first: a wholly unknown method
+	// picking up a covered param name must not become classified by accident.
+	if !excused && !scoped {
+		return false
+	}
+	for _, p := range unscopedParams[method] {
+		if p == param {
+			return true
+		}
+	}
+	return false
+}
+
+// UnscopedMethods lists every method with a decision on the record, so a test
+// can check that unscopedParams and unscopedByDecision describe the same set.
+func UnscopedMethods() []string {
+	out := make([]string, 0, len(unscopedByDecision))
+	for m := range unscopedByDecision {
+		out = append(out, m)
+	}
+	return out
+}
+
+// UnscopedReason returns the recorded reason for an excused method.
+func UnscopedReason(method string) (string, bool) {
+	r, ok := unscopedByDecision[method]
+	return r, ok
 }
 
 // IsPathScoped reports whether method operates on a filesystem path and, if so,

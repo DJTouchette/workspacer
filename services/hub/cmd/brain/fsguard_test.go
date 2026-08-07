@@ -624,6 +624,71 @@ func TestSecretGateConstantsMatchTheFixture(t *testing.T) {
 	}
 }
 
+// TestTheSecretGateCarvesOutExactlyTheFixturesStores is the BEHAVIOURAL half of
+// the test above, and the half that actually guards the escalation.
+//
+// TestSecretGateConstantsMatchTheFixture pins what configStoreRoots() RETURNS.
+// Nothing pinned that pathIsSecretCanonical ITERATES that same list — the gate
+// holds its own loop, so hardcoding a wider set there (say a fourth entry for
+// `plugins`) re-admits <configDir>/plugins/** while the helper, the fixture and
+// all 106 cases stay green. That directory is every installed plugin's manifest,
+// cache and state, sitting next to the .bus-token and .settings.json the two
+// basenames cover. The corpus cases cannot see it either: each one names one of
+// the three real stores, so a gate with FOUR carve-outs satisfies every one.
+//
+// So: the carve-out set the gate applies must equal the fixture's list exactly,
+// asserted in both directions on the gate itself.
+func TestTheSecretGateCarvesOutExactlyTheFixturesStores(t *testing.T) {
+	fx := loadContractFixture(t)
+	if len(fx.ConfigStoreSubdirs) == 0 {
+		t.Fatal("the fixture must carry configStoreSubdirs")
+	}
+	sandbox, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", sandbox)
+	t.Setenv("APPDATA", sandbox)
+	cfg := configDir()
+	if err := os.MkdirAll(cfg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, store := range fx.ConfigStoreSubdirs {
+		if err := os.MkdirAll(filepath.Join(cfg, store), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(cfg, store, "item.md")
+		if pathIsSecret(target) {
+			t.Errorf("the fixture carves out %q but the gate still refuses %s — the web/remote UI cannot reach its own store", store, target)
+		}
+	}
+
+	// The other direction. These are ordinary config-dir neighbours; every one of
+	// them must stay refused, and `plugins` is the one whose exemption is the
+	// documented escalation.
+	exempt := map[string]bool{}
+	for _, store := range fx.ConfigStoreSubdirs {
+		exempt[store] = true
+	}
+	for _, name := range []string{"plugins", "cache", "logs", "handoffs", "backups", "supervisor"} {
+		if exempt[name] {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Join(cfg, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(cfg, name, "anything.json")
+		if !pathIsSecret(target) {
+			t.Errorf("the gate exempts <configDir>/%s, which the fixture does not list — its carve-out set has drifted from configStoreSubdirs", name)
+		}
+	}
+	// And the dir itself, which is neither a carve-out nor inside one.
+	if !pathIsSecret(filepath.Join(cfg, "remote-token")) {
+		t.Error("remote-token is not refused — the gate is not running at all")
+	}
+}
+
 // TestEveryCorpusCaseBelongsToAGroupSOMEBODYOwns closes the complement of the
 // `owned == 0` floors.
 //
@@ -751,7 +816,9 @@ func caseSandbox(t *testing.T, c contractCase) (string, func(string) string) {
 		s = strings.ReplaceAll(s, "${CONFIG}", filepath.Join(configHome, "workspacer"))
 		s = strings.ReplaceAll(s, "${HOME}", home)
 		s = strings.ReplaceAll(s, "${PROCESS_CWD}", processCwd)
-		return strings.ReplaceAll(s, "${SANDBOX}", sandbox)
+		s = strings.ReplaceAll(s, "${SANDBOX}", sandbox)
+		assertNoResidualToken(t, s)
+		return s
 	}
 
 	for _, d := range c.Tree.Dirs {
@@ -1863,5 +1930,27 @@ func TestBrainRefusesCaseVariantDuplicateParamKeys(t *testing.T) {
 	if _, err := reg.handle(context.Background(), "fs.read",
 		json.RawMessage(`{"path":`+jsonStr(filepath.Join(dir, "ok.txt"))+`}`)); err != nil {
 		t.Fatalf("the ordinary single-key call must still work: %v", err)
+	}
+}
+
+// assertNoResidualToken is the fixture's own spell-checker, and it is not
+// paranoia: every substituter in every loader passes an UNRECOGNISED ${TOKEN}
+// through verbatim, and the result is then a RELATIVE string, which every copy
+// refuses because it is not absolute. So a one-character typo in a token —
+// ${CONFI} for ${CONFIG} — turns a deny case into a case that passes while
+// exercising nothing, silently and in all three languages at once. Applying that
+// to the config-dir-canonicalization case defanged the only guard on that axis
+// and a lexical config dir went green everywhere; applying it to all 64 deny
+// targets left every suite 100% green. Allow cases are immune (a bogus target
+// fails resolvesTo), so this is the negative half's only protection.
+func assertNoResidualToken(t *testing.T, s string) {
+	t.Helper()
+	if i := strings.Index(s, "${"); i >= 0 {
+		end := strings.Index(s[i:], "}")
+		tok := s[i:]
+		if end >= 0 {
+			tok = s[i : i+end+1]
+		}
+		t.Fatalf("unsubstituted token %s in %q — the fixture's token vocabulary is ${SANDBOX} ${ROOT} ${OUTSIDE} ${CONFIG} ${HOME} ${PROCESS_CWD}; an unknown one passes through verbatim and silently defangs the case", tok, s)
 	}
 }

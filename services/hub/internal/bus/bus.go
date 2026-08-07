@@ -260,16 +260,38 @@ func (s *Server) UnregisterPluginToken(token string) {
 }
 
 // trackPluginConn registers a live plugin connection under the token it
-// presented, so UnregisterPluginToken can reach it.
-func (s *Server) trackPluginConn(token string, cn *conn) {
+// presented, so UnregisterPluginToken can reach it. It reports whether the token
+// is STILL registered; false means the caller must treat the connection as
+// revoked before serving anything on it.
+//
+// That return value closes a real race, not a theoretical one. The handshake
+// resolves the token (lookupPluginToken) BEFORE websocket.Accept, and only
+// registers the connection here afterwards. UnregisterPluginToken snapshots
+// pluginConns under the same lock and closes exactly what it finds — so a dial
+// whose lookup ran before the delete and whose track runs after it is in NEITHER
+// set: never closed, never flagged, and conn.caps is a snapshot taken at accept,
+// so it keeps its full ${agentCwd} grants for the life of the process. A plugin
+// sidecar holding its .bus-token and reconnecting in a loop wins that race
+// trivially, which means the grant survives disable, reload and uninstall — the
+// exact state pane close and plugin removal call this function to prevent.
+//
+// Re-checking the token HERE, under the same mutex UnregisterPluginToken takes,
+// serializes the two: either the delete lands first and this returns false, or
+// this lands first and the delete finds the connection. There is no third
+// interleaving.
+func (s *Server) trackPluginConn(token string, cn *conn) bool {
 	s.ptMu.Lock()
 	defer s.ptMu.Unlock()
+	if _, live := s.pluginTokens[token]; !live {
+		return false
+	}
 	set := s.pluginConns[token]
 	if set == nil {
 		set = map[*conn]struct{}{}
 		s.pluginConns[token] = set
 	}
 	set[cn] = struct{}{}
+	return true
 }
 
 // untrackPluginConn removes a connection when it goes away on its own.
@@ -525,7 +547,15 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 		// Tracked under the raw token so revocation can find it. The token itself
 		// is not stored on the conn (tokenID is a fingerprint, deliberately);
 		// only this map holds it, and only for the life of the socket.
-		s.trackPluginConn(tok, cn)
+		if !s.trackPluginConn(tok, cn) {
+			// Revoked between the handshake's lookup and this registration. Both
+			// halves, exactly as UnregisterPluginToken applies them: the flag so
+			// anything already read off the wire is denied, and the close so the
+			// socket does not sit there consuming events.
+			cn.revoked.Store(true)
+			_ = ws.CloseNow()
+			return
+		}
 		defer s.untrackPluginConn(tok, cn)
 	}
 	defer cn.ws.CloseNow()

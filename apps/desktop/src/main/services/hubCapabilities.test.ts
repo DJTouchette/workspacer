@@ -248,7 +248,18 @@ describe('agents.spawn — dispatch', () => {
     expect(res).toEqual({ sessionId: 'managed-session-id' });
   });
 
-  it('routes provider=claude (or unset) through spawnClaudeAgent and forwards mcpItemIds', async () => {
+  // mcpItemIds is CLAMPED on this path, the same way skipPermissions is, and for
+  // a sharper reason. Each id resolves — through libraryService -> toClaudeEntry
+  // -> buildSessionMcpConfig — into a --mcp-config entry whose `command`, `args`
+  // and `env` come verbatim out of a library item, and the spawn passes
+  // `--allowedTools mcp__<id>` alongside it, so the server is PRE-APPROVED and no
+  // permission prompt gates it: `mcpItemIds: ['x']` is argv[0] of a host process
+  // chosen by whoever wrote item x. The write side cannot be closed — a bus
+  // caller reaches the item through library.save OR a plain fs.write into
+  // <configDir>/library, which is a configStoreRoot by design — so the identity
+  // of the SPAWNER is the only thing left to gate on. The local IPC path
+  // (ipc.ts) still honours the selection.
+  it('routes provider=claude (or unset) through spawnClaudeAgent and CLAMPS mcpItemIds', async () => {
     const res = await call('agents.spawn', {
       provider: 'claude',
       cwd: '/proj',
@@ -257,10 +268,14 @@ describe('agents.spawn — dispatch', () => {
 
     expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
     expect(spawnManagedAgent).not.toHaveBeenCalled();
-    const arg = spawnClaudeAgent.mock.calls[0][0] as { mcpItemIds: string[] };
-    // Regression: the hub path used to drop mcpItemIds so remote-spawned agents
-    // came up with none of their selected Library MCP servers.
-    expect(arg.mcpItemIds).toEqual(['srv1', 'srv2']);
+    const arg = spawnClaudeAgent.mock.calls[0][0] as { mcpItemIds?: string[]; cwd?: string };
+    expect(
+      arg.mcpItemIds,
+      'a bus spawn carried mcpItemIds — an MCP server definition is argv[0] of a host process, pre-approved via --allowedTools',
+    ).toBeUndefined();
+    // The rest of the call still rides through, so the clamp cannot be
+    // "everything was dropped".
+    expect(arg.cwd).toBe('/proj');
     expect(res).toEqual({ sessionId: 'claude-session-id' });
   });
 
@@ -293,7 +308,7 @@ describe('agents.spawn — dispatch', () => {
     expect(res).toEqual({ sessionId: 'managed-session-id' });
   });
 
-  it("forwards profileId and mcpItemIds on the claude 'stream' branch (parity with the IPC stream path — this branch used to drop both)", async () => {
+  it("forwards profileId but CLAMPS mcpItemIds on the claude 'stream' branch", async () => {
     await call('agents.spawn', {
       provider: 'claude',
       transport: 'stream',
@@ -306,9 +321,15 @@ describe('agents.spawn — dispatch', () => {
     const arg = spawnManagedAgent.mock.calls[0][0] as {
       profileId?: string;
       mcpItemIds?: string[];
+      scrubProfileBypass?: boolean;
     };
+    // profileId still rides through — and is scrubbed downstream, which is where
+    // the profile's OWN mcpItemIds are dropped (scrubBypassProfile).
     expect(arg.profileId).toBe('profile-1');
-    expect(arg.mcpItemIds).toEqual(['mcp-a', 'mcp-b']);
+    expect(arg.scrubProfileBypass).toBe(true);
+    expect(arg.mcpItemIds, 'the stream branch is the shipping default and must clamp too').toBe(
+      undefined,
+    );
   });
 
   it("claude + transport 'pty' (or unset, with no config default) stays on spawnClaudeAgent", async () => {

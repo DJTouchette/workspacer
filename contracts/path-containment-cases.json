@@ -2215,6 +2215,142 @@
       "expect": "allow",
       "resolvesTo": "${OUTSIDE}/x\\..\\..\\root/loot.txt",
       "why": "The other half: the target IS inside ${OUTSIDE} and must stay there, and resolvesTo pins the ANSWER — a copy that treats '\\\\' as a separator returns ${ROOT}/loot.txt, a path in a different root entirely."
+    },
+    {
+      "name": "a backup mirror that repeats the whole root as an INTERIOR component is not inside it",
+      "group": "containment",
+      "tree": {
+        "dirs": [
+          "root"
+        ]
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${SANDBOX}/backup${ROOT}/id_rsa",
+      "expect": "deny",
+      "why": "Containment is `starts with`, not `contains`, and nothing pinned the ANCHOR. Replacing HasPrefix with strings.Contains in containsPath (brain) and within (bus) — and startsWith with includes in the desktop — passed all 99 cases and both full suites, while granting every path that repeats an allowed root anywhere inside it. That is the exact layout of an `rsync -aR` / `tar -P` mirror, a Timeshift or btrfs snapshot of the whole filesystem, a Time Machine volume, and a container overlay upperdir: /mnt/backup<agentCwd>/id_rsa is a real file with real contents and it is outside every root. The three existing prefix-collision cases only vary the BYTE after the root, so they are all satisfied by an unanchored compare."
+    },
+    {
+      "name": "a repository config inside an allowed root is refused",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/proj/.git"
+        ],
+        "files": {
+          "root/proj/.git/config": "[core]\n\trepositoryformatversion = 0\n"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/proj/.git/config",
+      "expect": "deny",
+      "why": "A .git directory is not data, it is a program. git discovers the repository at whatever cwd fs.listEntries / git.diff / git.stage / replay.open is handed and then executes what .git/config tells it to, as the desktop user, with no agent approval and no plugin sandbox. The `-c` prefix in gitExec.ts / fsops.go neutralizes the exec-valued keys that have a FIXED name (core.fsmonitor, diff.external, credential.helper, ...), but it structurally cannot cover the namespaced ones — filter.<drv>.clean, which `git add` runs for git.stage, plus diff.<drv>.command/textconv, merge.<drv>.driver and trailer.<t>.command — because the driver name belongs to whoever wrote the file. Those definitions can only live in a config file under .git, so the WRITE is refused here. Every directory these commands run in is an agent cwd or a config store, and both are fs.write-able."
+    },
+    {
+      "name": "a git hook inside an allowed root is refused",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/proj/.git/hooks"
+        ]
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/proj/.git/hooks/pre-commit",
+      "expect": "deny",
+      "why": "The rule is the whole .git subtree, not the config file: hooks are executables git runs on the next commit, and .git/info/attributes is the other half of the filter-driver chain. Denying only the basename `config` would leave both."
+    },
+    {
+      "name": "a FILE named .git — the gitfile pointer form — is refused too",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/proj"
+        ]
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/proj/.git",
+      "expect": "deny",
+      "why": "`gitdir: /elsewhere` in a FILE named .git is how worktrees and submodules point at their real repository, so writing one redirects git at a config the caller controls. The final component has to count, not just the interior ones."
+    },
+    {
+      "name": "a case-variant spelling of .git is refused",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/proj/.GIT"
+        ]
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/proj/.GIT/config",
+      "expect": "deny",
+      "why": "Same reasoning as the credential basenames: APFS and NTFS open .git when handed .GIT, and the per-component walk appends the CALLER's spelling, so a byte-exact test answers for the string rather than for the file. Folding here is fail-closed on every platform."
+    },
+    {
+      "name": ".gitignore and .gitattributes are ordinary files, not the .git directory",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/proj"
+        ],
+        "files": {
+          "root/proj/.gitattributes": "*.txt filter=lfs\n"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/proj/.gitattributes",
+      "expect": "allow",
+      "resolvesTo": "${ROOT}/proj/.gitattributes",
+      "why": "The .git rule is COMPONENT-exact, never a prefix: .gitignore, .gitattributes, .gitmodules and .github/ are ordinary project files an agent and the UI both edit, and a `startsWith('.git')` spelling of the gate would make every one of them unreadable. A .gitattributes on its own is inert — it can only select a driver that some .git/config defines, and that file is the one being refused."
+    },
+    {
+      "name": "a directory named .github is not the repository metadata directory",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/proj/.github/workflows"
+        ],
+        "files": {
+          "root/proj/.github/workflows/ci.yml": "on: push\n"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/proj/.github/workflows/ci.yml",
+      "expect": "allow",
+      "resolvesTo": "${ROOT}/proj/.github/workflows/ci.yml",
+      "why": "The other half of component-exactness, in the direction a deny case cannot see: .github is the single most-edited directory in a repository and a prefix test would blank it out of the UI entirely."
+    },
+    {
+      "name": "a directory whose NAME ends in a backslash still gets a separator before its child",
+      "group": "containment",
+      "posixOnly": true,
+      "tree": {
+        "dirs": [
+          "root"
+        ],
+        "files": {
+          "root/foo\\/x.txt": "hi"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/foo\\/x.txt",
+      "expect": "allow",
+      "resolvesTo": "${ROOT}/foo\\/x.txt",
+      "why": "The JOINING half of the same rule the two cases above pin for SPLITTING. `foo\\` is a legal POSIX directory name, so the already-resolved prefix ends in a backslash — and appendComponent/appendPath decide whether to insert a separator by asking whether that last byte IS one. Widening THAT predicate (isSepChar returning true for '\\\\' on POSIX) concatenates the child with no separator at all: `/root/foo\\` + `x.txt` becomes `/root/foo\\x.txt`, a different file for the containment comparison and for whatever the caller then opens. It is invisible to a deny case — the wrong path is still inside the root — which is why this is an allow with a mandatory resolvesTo. SEP_RE's twin mutation IS killed by the two cases above; this one was not killed by anything."
     }
   ],
   "methods": [
@@ -2377,8 +2513,12 @@
       "sessionFilenames, it gets its own block. `expect` is the directory name",
       "the encoder must produce, or null to REFUSE the call outright.",
       "",
-      "Owners: services/hub/cmd/brain/discovery.go claudeProjectDirName and",
-      "apps/desktop/src/main/services/claudeSessionList.ts claudeProjectDirName.",
+      "Owners (THREE, not two): services/hub/cmd/brain/discovery.go claudeProjectDirName,",
+      "apps/desktop/src/main/services/claudeSessionList.ts claudeProjectDirName, and",
+      "services/claudemon/src/session/transcript.rs project_dir_name — the copy the",
+      "other two bind themselves to BY NAME in their comments while nothing held it",
+      "to anything. It had neither the trailing-separator strip nor the refusal, and",
+      "disagreed with them on 18 of 25 spellings, every refusal case included.",
       "The two shared the escape rather than diverging on it, which is why",
       "neither side's tests caught it: agreement is not correctness."
     ],
@@ -2716,5 +2856,82 @@
       "expect": "accept",
       "note": "The only accept-case here. It exists so a paramString rewritten to reject everything cannot pass this block."
     }
-  ]
+  ],
+  "spawnCwds": {
+    "_comment": [
+      "The ONE normalization a caller-supplied spawn / terminal working directory gets.",
+      "",
+      "OWNERS: services/hub/cmd/brain/profiles.go normalizeCwd,",
+      "        apps/desktop/src/main/lib/spawnCwd.ts normalizeSpawnCwd.",
+      "",
+      "`cwd` is not confined by the path guard — capspec lists agents.spawn and",
+      "terminals.create under unscopedByDecision because a process working directory",
+      "IS the point of the call. But the two providers still have to hand the daemon",
+      "the same string, and they did not:",
+      "",
+      "  - the brain tilde-expanded it and the desktop did not, so {\"cwd\":\"~\"} was",
+      "    $HOME on one provider and the literal \"~\" on the other. The stored session",
+      "    cwd is what agentCwds() feeds into workspaceRoots(), so one caller string",
+      "    turned the whole home tree into an fs.* root on one side and nothing on the",
+      "    other. BINDING DECISION 1 says no layer handling caller input expands '~';",
+      "    this is such a layer.",
+      "  - the desktop's terminals.create did `fs.existsSync(cwd) ? cwd : os.homedir()`,",
+      "    silently rewriting the caller's target, while the brain ran it as given.",
+      "",
+      "The rule: trim, strip trailing separators, fall back to the home directory only",
+      "when what is left is empty. `${HOME}` is the only token."
+    ],
+    "cases": [
+      {
+        "in": "",
+        "out": "${HOME}",
+        "why": "A terminal has to open somewhere; this is the picker's default and the only fallback."
+      },
+      {
+        "in": "   ",
+        "out": "${HOME}",
+        "why": "Whitespace-only is empty after the trim, not a directory named ' '."
+      },
+      {
+        "in": "  /tmp  ",
+        "out": "/tmp",
+        "why": "The brain trimmed and the desktop did not, so a padded string opened /tmp on one provider and $HOME on the other."
+      },
+      {
+        "in": "/tmp/",
+        "out": "/tmp",
+        "why": "claudemon aliases a spawn to Claude's own session by EXACT cwd match and Claude reports no trailing slash, so the strip is load-bearing rather than tidy."
+      },
+      {
+        "in": "/tmp//",
+        "out": "/tmp",
+        "why": "A run of separators, not just one."
+      },
+      {
+        "in": "/",
+        "out": "/",
+        "why": "The volume root is a real directory and must survive the strip — `len > 1` is what stops it becoming empty and then $HOME."
+      },
+      {
+        "in": "~",
+        "out": "~",
+        "why": "BINDING DECISION 1 made concrete on this seam: '~' stays an ordinary string on BOTH providers. The spawn then fails identically instead of silently rooting an agent at $HOME on one of them."
+      },
+      {
+        "in": "~/proj",
+        "out": "~/proj",
+        "why": "Same, with a tail — the spelling a remote client actually sends."
+      },
+      {
+        "in": "~root",
+        "out": "~root",
+        "why": "The brain's expandTilde produced '$HOMEroot' here, which is not even a plausible directory: proof the expansion was string surgery, not path resolution."
+      },
+      {
+        "in": "/does/not/exist",
+        "out": "/does/not/exist",
+        "why": "No existence check on either side. A spawn that cannot run where it was asked to must fail where it was asked to, not open a shell in $HOME."
+      }
+    ]
+  }
 }

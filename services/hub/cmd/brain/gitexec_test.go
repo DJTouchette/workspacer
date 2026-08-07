@@ -51,27 +51,129 @@ func TestListEntriesDoesNotExecuteGitConfigCommands(t *testing.T) {
 	marker := filepath.Join(sandbox, "PWNED")
 
 	reg := newRegistry(nil)
-	write := func(rel, contents string) {
+	// The skeleton is planted with direct writes, NOT through fs.write: the
+	// guard now refuses every caller-supplied path that traverses a `.git`
+	// component (TestWritingIntoAGitDirectoryIsRefused below is that half). This
+	// probe is the residual case — a repository that exists for its own reasons,
+	// with a config this process did not write — and the `-c` prefix is what has
+	// to hold there.
+	plant := func(rel, contents string) {
 		t.Helper()
-		params := map[string]string{"path": filepath.Join(lib, rel), "contents": contents}
-		raw, _ := json.Marshal(params)
-		if _, err := reg.handle(context.Background(), "fs.write", raw); err != nil {
-			t.Fatalf("fs.write %s: %v (the attack needs these writes to be ALLOWED)", rel, err)
+		full := filepath.Join(lib, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
-	// A minimal repository skeleton, all of it through fs.write.
-	write(".git/HEAD", "ref: refs/heads/main\n")
-	write(".git/refs/heads/.keep", "")
-	write(".git/objects/info/packs", "")
-	write("a.txt", "hello")
-	write(".git/config", "[core]\n\trepositoryformatversion = 0\n\tfsmonitor = \"sh -c 'touch "+marker+"; echo'\"\n")
+	plant(".git/HEAD", "ref: refs/heads/main\n")
+	plant(".git/refs/heads/.keep", "")
+	plant(".git/objects/info/packs", "")
+	plant("a.txt", "hello")
+	plant(".git/config", "[core]\n\trepositoryformatversion = 0\n\tfsmonitor = \"sh -c 'touch "+marker+"; echo'\"\n")
 
 	raw, _ := json.Marshal(map[string]string{"path": lib})
 	if _, err := reg.handle(context.Background(), "fs.listEntries", raw); err != nil {
 		t.Fatalf("fs.listEntries on a config store must be allowed: %v", err)
 	}
 	if _, err := os.Stat(marker); err == nil {
-		t.Fatalf("ARBITRARY COMMAND EXECUTED: %s exists after fs.write + fs.listEntries", marker)
+		t.Fatalf("ARBITRARY COMMAND EXECUTED: %s exists after fs.listEntries", marker)
+	}
+}
+
+// The other half, and the one that closes the keys a `-c` prefix cannot reach.
+//
+// `filter.<drv>.clean` — which `git add` runs, i.e. git.stage — and
+// `diff.<drv>.command` / `merge.<drv>.driver` / `trailer.<t>.command` are all
+// NAMESPACED by a driver name the attacker chooses, so no fixed list of `-c`
+// overrides can neutralize them. What they have in common is that the driver has
+// to be DEFINED in a config file inside the repository's `.git` directory. So
+// the guard refuses caller-supplied paths that traverse `.git` at all, and the
+// definition can never be written.
+//
+// <configDir>/library is a configStoreRoot with zero live agents, and
+// writeHostFile MkdirAll's the parents — the cheapest possible reach.
+func TestWritingIntoAGitDirectoryIsRefused(t *testing.T) {
+	sandbox, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", filepath.Join(sandbox, "home"))
+	t.Setenv("USERPROFILE", filepath.Join(sandbox, "home"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(sandbox, "config"))
+	t.Setenv("APPDATA", filepath.Join(sandbox, "config"))
+	resetCwdCacheForTest()
+
+	lib := filepath.Join(configDir(), "library")
+	reg := newRegistry(nil)
+
+	// Sanity: an ordinary file in the same directory IS writable, or the case
+	// below proves nothing about `.git` in particular.
+	raw, _ := json.Marshal(map[string]string{"path": filepath.Join(lib, "ok.txt"), "contents": "hi"})
+	if _, err := reg.handle(context.Background(), "fs.write", raw); err != nil {
+		t.Fatalf("control: an ordinary write inside a config store must be allowed: %v", err)
+	}
+
+	for _, rel := range []string{
+		".git/config",           // filter.<drv>.clean / diff.<drv>.command live here
+		".git/config.worktree",  // same file, per-worktree spelling
+		".git/info/attributes",  // the attribute half of the filter chain
+		".git/hooks/pre-commit", // an executable git runs on the next commit
+		".GIT/config",           // APFS/NTFS open .git when handed .GIT
+		"proj/.git/config",      // an interior component, not just the first
+		".git",                  // the gitfile pointer form: `gitdir: /elsewhere`
+	} {
+		t.Run(rel, func(t *testing.T) {
+			raw, _ := json.Marshal(map[string]string{
+				"path":     filepath.Join(lib, rel),
+				"contents": "[filter \"evil\"]\n\tclean = \"sh -c 'id > /tmp/PWNED'; cat\"\n",
+			})
+			if _, err := reg.handle(context.Background(), "fs.write", raw); err == nil {
+				t.Fatalf("fs.write %s was ALLOWED — a caller-written git config is command execution", rel)
+			}
+			// And the read direction, because a .git/config carries remote URLs
+			// with embedded tokens and the name of a credential store.
+			raw, _ = json.Marshal(map[string]string{"path": filepath.Join(lib, rel)})
+			if _, err := reg.handle(context.Background(), "fs.read", raw); err == nil {
+				t.Fatalf("fs.read %s was ALLOWED", rel)
+			}
+		})
+	}
+}
+
+// The exec-key list is a TWIN of GIT_NO_EXEC_CONFIG in
+// apps/desktop/src/main/lib/gitExec.ts. The two providers answer the same bus
+// methods, so a key neutralized on one side and not the other is a capability
+// that executes commands depending on who happened to answer.
+func TestGitNoExecKeysMatchTheDesktopTwin(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "apps", "desktop", "src", "main", "lib", "gitExec.ts"))
+	if err != nil {
+		t.Skipf("desktop twin not present in this checkout: %v", err)
+	}
+	ts := map[string]bool{}
+	for _, line := range strings.Split(string(src), "\n") {
+		line = strings.TrimSpace(strings.Trim(strings.TrimSpace(line), ","))
+		if !strings.HasPrefix(line, "'") || !strings.HasSuffix(line, "'") {
+			continue
+		}
+		v := strings.Trim(line, "'")
+		if v == "-c" || !strings.Contains(v, "=") {
+			continue
+		}
+		ts[v] = true
+	}
+	if len(ts) == 0 {
+		t.Fatal("parsed zero keys out of gitExec.ts — this parity test has stopped comparing anything")
+	}
+	for _, kv := range gitNoExecKeys {
+		if !ts[kv] {
+			t.Errorf("gitNoExecConfig() neutralizes %q and the desktop twin does not", kv)
+		}
+		delete(ts, kv)
+	}
+	for kv := range ts {
+		t.Errorf("gitExec.ts neutralizes %q and gitNoExecConfig() does not", kv)
 	}
 }
 

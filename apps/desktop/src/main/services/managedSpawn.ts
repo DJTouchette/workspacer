@@ -29,6 +29,7 @@ import { MCP_FACADE_URL, managedFacadeInstructions, buildSessionMcpConfig } from
 import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
 import { ensureSupervisorHome } from './supervisorSkill';
 import { notifySystem } from './systemNotice';
+import { normalizeSpawnCwd } from '../lib/spawnCwd';
 
 /** Install hints surfaced when a provider CLI isn't on PATH. */
 const INSTALL_HINT: Record<AgentProvider, string> = {
@@ -132,7 +133,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   }
   // Supervisors with no explicit cwd open in their dedicated home (~/.workspacer)
   // rather than inheriting some repo; everything else uses the given cwd.
-  let cwd = opts.cwd || process.env.HOME || os.homedir();
+  let cwd = normalizeSpawnCwd(opts.cwd);
   if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
 
   const isClaudeStream = provider === 'claude';

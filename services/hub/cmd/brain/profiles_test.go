@@ -301,7 +301,22 @@ func readProfilesJSON(t *testing.T) []map[string]any {
 	return parsed.Profiles
 }
 
-func TestProfilesAddForwardsMcpItemIds(t *testing.T) {
+// mcpItemIds is SCRUBBED on a bus write, not forwarded. This test used to pin
+// the opposite, and the forwarding was deliberate — the comment above the call
+// said the web/remote client sends the user's selected MCP servers here.
+//
+// What that missed: a library item of kind `mcp` carries `command`, `args` and
+// `env` verbatim into a --mcp-config file, and the spawn passes
+// `--allowedTools mcp__<id>` alongside it, so the server is PRE-APPROVED and no
+// permission prompt gates it. A persisted id list is a persisted argv[0]. And
+// the id resolves against a library a bus caller can write — through
+// library.save, or through a plain fs.write into <configDir>/library, which is a
+// configStoreRoot by design — so there is nothing to validate on the way in.
+// SpawnAgentDialog copies a profile's mcpItemIds into the spawn the moment the
+// profile is selected, which is precisely the "wait for the LOCAL user to pick
+// that profile, where nothing scrubs" escalation scrubBypassProfile exists to
+// close, through the one field it did not cover.
+func TestProfilesAddScrubsMcpItemIdsAtWriteTime(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	reg := newRegistry(newClaudemonClient("http://unused"))
 
@@ -315,12 +330,12 @@ func TestProfilesAddForwardsMcpItemIds(t *testing.T) {
 	if err := json.Unmarshal(res, &got); err != nil {
 		t.Fatalf("result not valid JSON: %v", err)
 	}
-	if !slices.Equal(got.MCPItemIDs, []string{"mcp-1", "mcp-2"}) {
-		t.Errorf("reply dropped mcpItemIds: got %v, want [mcp-1 mcp-2]", got.MCPItemIDs)
+	if len(got.MCPItemIDs) != 0 {
+		t.Errorf("a bus write persisted mcpItemIds %v — each id becomes argv[0] of a host process, pre-approved via --allowedTools", got.MCPItemIDs)
 	}
 	// The rest of the forwarding main pins in the same call, so a param-name
 	// typo here can't hide behind the mcpItemIds assertion. extraArgs is spelled
-	// with a REMOTE-SAFE flag now: every call this brain answers arrives over the
+	// with a REMOTE-SAFE flag: every call this brain answers arrives over the
 	// bus, and the write is scrubbed — see
 	// TestProfilesWritesOverTheBusAreScrubbedAtWriteTime for the dropping half.
 	if got.Name != "P" || !slices.Equal(got.ExtraArgs, []string{"--model", "opus"}) {
@@ -330,13 +345,22 @@ func TestProfilesAddForwardsMcpItemIds(t *testing.T) {
 		t.Error("add returned a profile with no id")
 	}
 
-	// Forwarded to the caller AND to disk — a spawn reads the file, not the reply.
-	// Two rows: the materialized "Default" (which claudeProfiles.ts's constructor
-	// writes on the desktop side, and which the brain used to only PRETEND was
-	// there) plus the one just added.
+	// Scrubbed on DISK too — a spawn reads the file, not the reply — and still
+	// present as [], because the desktop twin always emits the key and the two
+	// providers must answer with the same shape.
 	stored := lastStoredProfile(t)
-	if !reflect.DeepEqual(stored["mcpItemIds"], []any{"mcp-1", "mcp-2"}) {
-		t.Errorf("stored profile lost mcpItemIds: %v", stored["mcpItemIds"])
+	if !reflect.DeepEqual(stored["mcpItemIds"], []any{}) {
+		t.Errorf("stored profile's mcpItemIds is %v, want an empty array", stored["mcpItemIds"])
+	}
+
+	// And through update, the other way to plant one on a profile the local user
+	// then picks.
+	if _, err := reg.handle(context.Background(), "claude.profiles.update",
+		[]byte(`{"id":"`+got.ID+`","updates":{"mcpItemIds":["mcp-3"]}}`)); err != nil {
+		t.Fatalf("claude.profiles.update: %v", err)
+	}
+	if ids := lastStoredProfile(t)["mcpItemIds"]; !reflect.DeepEqual(ids, []any{}) {
+		t.Errorf("claude.profiles.update persisted mcpItemIds %v", ids)
 	}
 }
 

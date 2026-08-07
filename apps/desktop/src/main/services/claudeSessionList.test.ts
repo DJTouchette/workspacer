@@ -117,3 +117,36 @@ describe('claudeProjectDirName — contracts/path-containment-cases.json project
     expect(listClaudeSessionsForDir('/proj').map((s) => s.sessionId)).toEqual(['sess-ok']);
   });
 });
+
+// clip is the twin of clip() in services/hub/cmd/brain/discovery.go, and the
+// summary it produces goes on the wire for claude.sessionsForDir — a method
+// whichever provider is registered answers. `.slice(0, 100)` counts UTF-16 CODE
+// UNITS, so every non-BMP character costs two: the same transcript came back at
+// 100 code points from the brain and 50 from here, and an odd boundary left a
+// LONE LEAD SURROGATE that JSON.stringify emits as a bare \ud83d and every
+// consumer renders as a replacement char. The Go side has had
+// TestClipDoesNotSplitRune since it was written; this side had nothing.
+describe('summary clipping counts code points, not UTF-16 units', () => {
+  it('keeps 100 whole characters at an odd boundary', async () => {
+    const { clip } = await import('./claudeSessionList');
+    const odd = 'a' + '\u{1F600}'.repeat(150);
+    const got = clip(odd, 100);
+    expect(Array.from(got).length).toBe(100);
+    // A lone surrogate is the visible symptom; it must not survive.
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(got), 'lone lead surrogate').toBe(false);
+    expect(got.endsWith('\u{1F600}')).toBe(true);
+  });
+
+  it('keeps 100 whole characters at an even boundary too', async () => {
+    const { clip } = await import('./claudeSessionList');
+    // A UTF-16 counter keeps 50 whole characters here — valid text, and
+    // therefore invisible unless something counts.
+    expect(Array.from(clip('\u{1F600}'.repeat(150), 100)).length).toBe(100);
+  });
+
+  it('leaves a short summary alone and matches the Go rune vector', async () => {
+    const { clip } = await import('./claudeSessionList');
+    expect(clip('hi', 100)).toBe('hi');
+    expect(clip('a'.repeat(99) + '\u00e9', 100)).toBe('a'.repeat(99) + '\u00e9');
+  });
+});

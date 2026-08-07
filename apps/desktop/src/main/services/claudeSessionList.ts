@@ -23,6 +23,24 @@ export interface ClaudeSessionSummary {
  *  (as this did before) pointed every lookup at a non-existent folder, so the
  *  resume picker came up empty on unix/macOS. A trailing separator is dropped
  *  first since a real cwd never carries one. */
+/** How many CHARACTERS of a transcript summary reach the wire.
+ *
+ *  Code POINTS, not UTF-16 code units. `String.prototype.slice` counts units, so
+ *  every non-BMP character costs two and this side returned half the text the Go
+ *  twin did — and an odd boundary left a LONE LEAD SURROGATE, which
+ *  JSON.stringify emits as a bare \ud83d and every consumer renders as a
+ *  replacement char. claude.sessionsForDir is answered by whichever provider is
+ *  registered, so the two must clip identically; the brain's clip()
+ *  (cmd/brain/discovery.go) counts runes and has had TestClipDoesNotSplitRune
+ *  since it was written. */
+const SUMMARY_MAX_CHARS = 100;
+
+/** Twin of clip() in services/hub/cmd/brain/discovery.go. */
+export function clip(s: string, n: number): string {
+  const points = Array.from(s);
+  return points.length > n ? points.slice(0, n).join('') : s;
+}
+
 function encodeDirName(dir: string): string {
   return dir.replace(/[/\\]+$/, '').replace(/[/\\:]/g, '-');
 }
@@ -96,7 +114,7 @@ export function listClaudeSessionsForDir(cwd: string): ClaudeSessionSummary[] {
           }
           // Look for a session name (set via --name flag)
           if (entry.type === 'summary' && entry.summary) {
-            summary = entry.summary.slice(0, 100);
+            summary = clip(entry.summary, SUMMARY_MAX_CHARS);
             break;
           }
           // Look for first user message
@@ -112,7 +130,7 @@ export function listClaudeSessionsForDir(cwd: string): ClaudeSessionSummary[] {
                       .join('\n')
                   : '';
             if (content) {
-              summary = content.slice(0, 100).replace(/\n/g, ' ');
+              summary = clip(content, SUMMARY_MAX_CHARS).replace(/\n/g, ' ');
             }
           }
         } catch {

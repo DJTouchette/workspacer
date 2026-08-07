@@ -19,6 +19,7 @@
  * the already-safe `skipPermissions` / `permissionMode` in.
  */
 import * as os from 'os';
+import { normalizeSpawnCwd } from '../lib/spawnCwd';
 import * as fs from 'fs';
 import { randomUUID } from 'crypto';
 import { claudeSessionStore } from './claudeSessionStore';
@@ -174,7 +175,7 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   // (~/.workspacer); everything else uses the given cwd (when it exists) or
   // falls back to home. The existence guard tolerates a stale/bad path from a
   // remote caller instead of failing the spawn.
-  let cwd = opts.cwd && fs.existsSync(opts.cwd) ? opts.cwd : (process.env.HOME ?? os.homedir());
+  let cwd = normalizeSpawnCwd(opts.cwd);
   if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
   return claudemonSessionClient.spawn({
     argv,

@@ -97,12 +97,22 @@ export function scrubBypassArgs(args: string[] | undefined): string[] {
  * inside an agent cwd (fs.write) and then name that directory in a profile, so
  * there is no subtree we could allow that the same caller can't also fill in. A
  * remote spawn therefore runs against the host's default claude config dir.
+ *
+ * mcpItemIds is dropped for the same reason, and it is the sharper one. A
+ * library item of kind `mcp` carries `command`, `args` and `env` verbatim into a
+ * `--mcp-config`, and the spawn passes `--allowedTools mcp__<id>` alongside it,
+ * so the server is PRE-APPROVED and no prompt gates it — a persisted id list is
+ * a persisted argv[0]. It was explicitly forwarded PAST this scrub on both
+ * providers, so `claude.profiles.add` over the bus, then the local user picking
+ * that profile in the New Agent dialog (SpawnAgentDialog copies
+ * `p.mcpItemIds` into the spawn), was exactly the "wait for the LOCAL user,
+ * where nothing scrubs" escalation this function's own comment describes.
  */
-export function scrubBypassProfile<T extends { extraArgs?: string[]; configDir?: string }>(
-  profile: T | undefined,
-): T | undefined {
+export function scrubBypassProfile<
+  T extends { extraArgs?: string[]; configDir?: string; mcpItemIds?: string[] },
+>(profile: T | undefined): T | undefined {
   return profile
-    ? { ...profile, extraArgs: scrubBypassArgs(profile.extraArgs), configDir: '' }
+    ? { ...profile, extraArgs: scrubBypassArgs(profile.extraArgs), configDir: '', mcpItemIds: [] }
     : profile;
 }
 

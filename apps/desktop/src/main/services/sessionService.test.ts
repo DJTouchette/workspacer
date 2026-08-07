@@ -238,42 +238,49 @@ describe('session filenames — cross-language contract', () => {
 // its `name:` field would come back in the listing. Twin: cmd/brain/stores.go
 // listSavedSessions.
 describe('listSessions — derived entries stay inside the sessions dir', () => {
-  it('skips an entry that resolves out of the sessions dir', () => {
-    try {
+  // (CAN_SYMLINK_SESSIONS ? it : it.skip), not `try { symlink } catch { return }`.
+  // The swallowing form reports a PASS on a host that cannot create symlinks —
+  // Windows without developer mode, some container and CI mounts — while
+  // asserting nothing at all, and these four tests are the ENTIRE oracle for the
+  // sessions store's derived-entry and save-leg containment (the fixture's
+  // sessionFilenames block only ever covers the caller-supplied `filename`, never
+  // a name that came back from readdir). Deleting the containment from
+  // listSessions made this file 24 passed / 3 skipped on such a host. The
+  // file's own comment on CAN_SYMLINK_SESSIONS already states the rule: a missing
+  // privilege is "reported as a skip, never as a pass".
+  (CAN_SYMLINK_SESSIONS ? it : it.skip)(
+    'skips an entry that resolves out of the sessions dir',
+    () => {
       fs.symlinkSync(secretOutside, path.join(sessionsDir, 'pwn.yaml'));
-    } catch {
-      return; // no symlink privilege here
-    }
-    expect(sessionService.listSessions().map((s) => s.name)).toEqual(['real']);
-  });
+      expect(sessionService.listSessions().map((s) => s.name)).toEqual(['real']);
+    },
+  );
 
-  it('still lists a symlink that stays inside the sessions dir', () => {
-    try {
+  (CAN_SYMLINK_SESSIONS ? it : it.skip)(
+    'still lists a symlink that stays inside the sessions dir',
+    () => {
       fs.symlinkSync(path.join(sessionsDir, 'real.yaml'), path.join(sessionsDir, 'alias.yaml'));
-    } catch {
-      return;
-    }
-    expect(sessionService.listSessions()).toHaveLength(2);
-  });
+      expect(sessionService.listSessions()).toHaveLength(2);
+    },
+  );
 
   // A config-dir sibling whose NAME starts with the store's — the prefix
   // collision the Go twin covers for both listers and this side did not. The
   // case above plants its victim at <configDir>/secret.yaml, so a containment
   // that drops the separator boundary (`canonical.startsWith(dir)`) passes it.
-  it("skips an entry resolving into a sibling whose name starts with the store's", () => {
-    const sibling = path.join(configDir, 'sessions-backup');
-    fs.mkdirSync(sibling, { recursive: true });
-    const loot = path.join(sibling, 'loot.yaml');
-    fs.writeFileSync(loot, 'name: LOOT-OUTSIDE-THE-SESSIONS-DIR\nagents: []\n', 'utf-8');
-    try {
+  (CAN_SYMLINK_SESSIONS ? it : it.skip)(
+    "skips an entry resolving into a sibling whose name starts with the store's",
+    () => {
+      const sibling = path.join(configDir, 'sessions-backup');
+      fs.mkdirSync(sibling, { recursive: true });
+      const loot = path.join(sibling, 'loot.yaml');
+      fs.writeFileSync(loot, 'name: LOOT-OUTSIDE-THE-SESSIONS-DIR\nagents: []\n', 'utf-8');
       fs.symlinkSync(loot, path.join(sessionsDir, 'pwn.yaml'));
-    } catch {
-      return;
-    }
-    expect(sessionService.listSessions().map((s) => s.name)).not.toContain(
-      'LOOT-OUTSIDE-THE-SESSIONS-DIR',
-    );
-  });
+      expect(sessionService.listSessions().map((s) => s.name)).not.toContain(
+        'LOOT-OUTSIDE-THE-SESSIONS-DIR',
+      );
+    },
+  );
 });
 
 /**
@@ -293,28 +300,50 @@ describe('listSessions — derived entries stay inside the sessions dir', () => 
  *  2. the entry was silently replaced.
  */
 describe('saveSession — containment (the write leg of the same resolver)', () => {
-  it('refuses an entry that resolves out of the sessions dir, and does not read it', () => {
-    fs.writeFileSync(secretOutside, 'name: my-session\n');
-    const link = path.join(sessionsDir, 'my-session.yaml');
-    try {
+  (CAN_SYMLINK_SESSIONS ? it : it.skip)(
+    'refuses an entry that resolves out of the sessions dir, and does not read it',
+    () => {
+      fs.writeFileSync(secretOutside, 'name: my-session\n');
+      const link = path.join(sessionsDir, 'my-session.yaml');
       fs.symlinkSync(secretOutside, link);
-    } catch {
-      return; // no symlink support
-    }
 
-    // The control: load refuses the identical entry.
-    expect(() => sessionService.loadSession('my-session.yaml')).toThrow(/escapes/);
+      // The control: load refuses the identical entry.
+      expect(() => sessionService.loadSession('my-session.yaml')).toThrow(/escapes/);
 
-    expect(() => sessionService.saveSession({ name: 'my-session' } as never)).toThrow(/escapes/);
-    // Untouched: still a symlink, and the file it points at is unchanged.
-    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
-    expect(fs.readFileSync(secretOutside, 'utf-8')).toBe('name: my-session\n');
+      expect(() => sessionService.saveSession({ name: 'my-session' } as never)).toThrow(/escapes/);
+      // Untouched: still a symlink, and the file it points at is unchanged.
+      expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(secretOutside, 'utf-8')).toBe('name: my-session\n');
 
-    // The ORACLE, which is the part a "did it write" assertion cannot see: the
-    // returned filename must not depend on the bytes of a file outside the store.
-    fs.writeFileSync(secretOutside, 'name: something-else\n');
-    expect(() => sessionService.saveSession({ name: 'my-session' } as never)).toThrow(/escapes/);
-  });
+      // The ORACLE, which is the part a "did it write" assertion cannot see: the
+      // returned filename must not depend on the bytes of a file outside the store.
+      fs.writeFileSync(secretOutside, 'name: something-else\n');
+      expect(() => sessionService.saveSession({ name: 'my-session' } as never)).toThrow(/escapes/);
+    },
+  );
+
+  // The COLLISION-SUFFIX leg. The test above plants its symlink at the BASE
+  // filename, so it only ever exercises the first resolveWithinSessionsDir call;
+  // the one inside the loop — which produces every path the loop then reads and
+  // the atomic write finally opens — was unexercised, and reverting it alone to a
+  // bare path.join left the whole suite green while sessions.save read through a
+  // symlinked `<base>-2.yaml` and leaked that file's `name` field as the RETURN
+  // VALUE.
+  (CAN_SYMLINK_SESSIONS ? it : it.skip)(
+    'refuses a collision-suffix entry that resolves out of the store, and does not read it',
+    () => {
+      // The base name must be OCCUPIED by a real file, or the loop never runs.
+      fs.writeFileSync(path.join(sessionsDir, 'my-session.yaml'), 'name: someone-else\n');
+      fs.writeFileSync(secretOutside, 'name: LOOT\n');
+      fs.symlinkSync(secretOutside, path.join(sessionsDir, 'my-session-2.yaml'));
+
+      expect(() => sessionService.saveSession({ name: 'my-session' } as never)).toThrow(/escapes/);
+      // And the oracle: the answer must not move when the out-of-store bytes do.
+      fs.writeFileSync(secretOutside, 'name: my-session\n');
+      expect(() => sessionService.saveSession({ name: 'my-session' } as never)).toThrow(/escapes/);
+      expect(fs.readFileSync(secretOutside, 'utf-8')).toBe('name: my-session\n');
+    },
+  );
 
   it('still saves an ordinary session, and still picks the next free suffix', () => {
     const first = sessionService.saveSession({ name: 'Feature: Auth' } as never);
@@ -323,5 +352,82 @@ describe('saveSession — containment (the write leg of the same resolver)', () 
     expect(second).toBe('feature-auth-2.yaml');
     // Re-saving the SAME name reuses its file rather than minting another.
     expect(sessionService.saveSession({ name: 'Feature: Auth' } as never)).toBe(first);
+  });
+});
+
+/**
+ * The resolver's ANSWER, and its unverifiable arm.
+ *
+ * The previous pass pinned what resolveWithinSessionsDir RETURNS (mutating
+ * `return canonical!` to `return path.join(dir, filename)` IS killed). Nothing
+ * pinned that the two CALL SITES use it: each could independently go back to the
+ * join while keeping the resolver call for its verdict, with 84 files / 1213
+ * tests green. For a symlinked entry that stays inside the store, `unlinkSync`
+ * removes the LINK and leaves the target, while the Go twin's deleteSavedSession
+ * does `os.Remove(canonical)` and removes the TARGET — one sessions.delete, two
+ * different files destroyed depending on which provider answered.
+ */
+describe('sessions.load / sessions.delete open the resolver ANSWER', () => {
+  (CAN_SYMLINK_SESSIONS ? it : it.skip)(
+    'deleteSession removes what the entry RESOLVES to, not the link',
+    () => {
+      const target = path.join(sessionsDir, 'target.yaml');
+      const link = path.join(sessionsDir, 'alias.yaml');
+      fs.writeFileSync(target, 'name: target\nagents: []\n');
+      fs.symlinkSync(target, link);
+
+      sessionService.deleteSession('alias.yaml');
+
+      expect(
+        fs.existsSync(target),
+        'deleteSession unlinked the LINK; the Go twin removes the TARGET, so the same call destroys a different file per provider',
+      ).toBe(false);
+      expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    },
+  );
+
+  (CAN_SYMLINK_SESSIONS ? it : it.skip)('loadSession reads through to the resolved file', () => {
+    const target = path.join(sessionsDir, 'target.yaml');
+    fs.writeFileSync(target, 'name: RESOLVED\nagents: []\n');
+    fs.symlinkSync(target, path.join(sessionsDir, 'alias.yaml'));
+    expect(sessionService.loadSession('alias.yaml')?.name).toBe('RESOLVED');
+  });
+});
+
+/**
+ * The `unverifiable -> deny` arm. The comment states the posture explicitly
+ * ("same posture as the fs.* guard"), the Go twin returns `"", false` on a
+ * canonicalize error, and the fs.* corpus pins the equivalent branch with a
+ * `needsUnreadableDir` case — but the fixture's `sessionFilenames` block has no
+ * entry whose canonicalization FAILS, so the whole catch arm was unexecuted, in a
+ * resolver that hands its answer to readFileSync and unlinkSync. Flipping it to
+ * fail OPEN was 1213/1213 green.
+ */
+describe('resolveWithinSessionsDir on an unverifiable entry', () => {
+  (CAN_SYMLINK_SESSIONS ? it : it.skip)('denies an ELOOP symlink cycle', () => {
+    // a -> b -> a. canonicalizePath's hop counter throws; the catch must refuse.
+    fs.symlinkSync(path.join(sessionsDir, 'b.yaml'), path.join(sessionsDir, 'a.yaml'));
+    fs.symlinkSync(path.join(sessionsDir, 'a.yaml'), path.join(sessionsDir, 'b.yaml'));
+    expect(() => resolveWithinSessionsDir('a.yaml')).toThrow(/escapes/);
+    expect(() => sessionService.loadSession('a.yaml')).toThrow(/escapes/);
+    expect(() => sessionService.deleteSession('a.yaml')).toThrow(/escapes/);
+  });
+
+  it('denies an entry whose parent is a FILE (ENOTDIR)', () => {
+    // The sessions dir itself is replaced by a regular file, so every lstat on
+    // the way in fails with ENOTDIR rather than ENOENT — the error class the
+    // walk must NOT swallow.
+    fs.rmSync(sessionsDir, { recursive: true, force: true });
+    fs.writeFileSync(sessionsDir, 'not a directory');
+    try {
+      expect(() => resolveWithinSessionsDir('x.yaml')).toThrow(/escapes/);
+    } finally {
+      fs.rmSync(sessionsDir, { force: true });
+      fs.mkdirSync(sessionsDir, { recursive: true });
+    }
+  });
+
+  it('still resolves an ordinary entry (the floor)', () => {
+    expect(resolveWithinSessionsDir('real.yaml')).toBe(path.join(sessionsDir, 'real.yaml'));
   });
 });

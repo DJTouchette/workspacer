@@ -82,54 +82,70 @@ describe('layoutService — save contains a caller-supplied id (layouts.save is 
 // layout is what escapes, and readFileSync follows it. Twin:
 // cmd/brain/stores.go storeEntryPath (where the same gap additionally COPIED the
 // bytes to a `.broken-*` sibling that fs.read then handed back).
-describe('layoutService.list — derived entries stay inside the store', () => {
-  it('skips an entry that resolves out of the layouts dir', () => {
-    const layoutsDir = path.join(h.dir, 'layouts');
-    fs.mkdirSync(layoutsDir, { recursive: true });
-    const outside = path.join(h.dir, 'stolen.yaml');
-    fs.writeFileSync(outside, 'id: x\nname: Stolen\ncreatedAt: z\nagents: []\n', 'utf-8');
-    try {
-      fs.symlinkSync(outside, path.join(layoutsDir, 'pwn.yaml'));
-    } catch {
-      return; // no symlink privilege here
-    }
-    expect(layoutService.list().map((l) => l.name)).not.toContain('Stolen');
-  });
+/** Windows without developer mode (and some container/CI mounts) cannot create
+ *  symlinks. `try { symlinkSync } catch { return }` reports a PASS on such a
+ *  host having asserted NOTHING, and these tests are the entire oracle for the
+ *  layouts store's derived-entry, save and delete containment — deleting the
+ *  guard from the implementation left the whole file green under a mocked
+ *  EPERM. sessionService.test.ts's CAN_SYMLINK_SESSIONS already states the rule:
+ *  a missing privilege is reported as a SKIP, never as a pass. */
+const CAN_SYMLINK_LAYOUTS = (() => {
+  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-laysym-'));
+  try {
+    fs.symlinkSync(probe, path.join(probe, 'l'));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    fs.rmSync(probe, { recursive: true, force: true });
+  }
+})();
 
-  it('still lists a symlink that stays inside the layouts dir', () => {
-    const real = layoutService.save({ name: 'Real', agents: [] });
-    const layoutsDir = path.join(h.dir, 'layouts');
-    try {
+describe('layoutService.list — derived entries stay inside the store', () => {
+  (CAN_SYMLINK_LAYOUTS ? it : it.skip)(
+    'skips an entry that resolves out of the layouts dir',
+    () => {
+      const layoutsDir = path.join(h.dir, 'layouts');
+      fs.mkdirSync(layoutsDir, { recursive: true });
+      const outside = path.join(h.dir, 'stolen.yaml');
+      fs.writeFileSync(outside, 'id: x\nname: Stolen\ncreatedAt: z\nagents: []\n', 'utf-8');
+      fs.symlinkSync(outside, path.join(layoutsDir, 'pwn.yaml'));
+      expect(layoutService.list().map((l) => l.name)).not.toContain('Stolen');
+    },
+  );
+
+  (CAN_SYMLINK_LAYOUTS ? it : it.skip)(
+    'still lists a symlink that stays inside the layouts dir',
+    () => {
+      const real = layoutService.save({ name: 'Real', agents: [] });
+      const layoutsDir = path.join(h.dir, 'layouts');
       fs.symlinkSync(path.join(layoutsDir, `${real.id}.yaml`), path.join(layoutsDir, 'alias.yaml'));
-    } catch {
-      return;
-    }
-    expect(layoutService.list()).toHaveLength(2);
-  });
+      expect(layoutService.list()).toHaveLength(2);
+    },
+  );
 
   // A sibling of the store whose NAME starts with the store's — the prefix
   // collision the Go twin's TestStoreListersDoNotReadThroughASymlinkOutOfTheStore
   // covers and this side did not. Both existing cases plant their victim at
   // <configDir>/stolen.yaml, so a containment that drops the separator boundary
   // (`canonical.startsWith(dir)`) passes them both.
-  it("skips an entry that resolves into a config-dir sibling whose name starts with the store's", () => {
-    const layoutsDir = path.join(h.dir, 'layouts');
-    const sibling = path.join(h.dir, 'layouts-backup');
-    fs.mkdirSync(layoutsDir, { recursive: true });
-    fs.mkdirSync(sibling, { recursive: true });
-    const loot = path.join(sibling, 'loot.yaml');
-    fs.writeFileSync(
-      loot,
-      'id: x\nname: LOOT-OUTSIDE-THE-STORE\ncreatedAt: z\nagents: []\n',
-      'utf-8',
-    );
-    try {
+  (CAN_SYMLINK_LAYOUTS ? it : it.skip)(
+    "skips an entry that resolves into a config-dir sibling whose name starts with the store's",
+    () => {
+      const layoutsDir = path.join(h.dir, 'layouts');
+      const sibling = path.join(h.dir, 'layouts-backup');
+      fs.mkdirSync(layoutsDir, { recursive: true });
+      fs.mkdirSync(sibling, { recursive: true });
+      const loot = path.join(sibling, 'loot.yaml');
+      fs.writeFileSync(
+        loot,
+        'id: x\nname: LOOT-OUTSIDE-THE-STORE\ncreatedAt: z\nagents: []\n',
+        'utf-8',
+      );
       fs.symlinkSync(loot, path.join(layoutsDir, 'pwn.yaml'));
-    } catch {
-      return;
-    }
-    expect(layoutService.list().map((l) => l.name)).not.toContain('LOOT-OUTSIDE-THE-STORE');
-  });
+      expect(layoutService.list().map((l) => l.name)).not.toContain('LOOT-OUTSIDE-THE-STORE');
+    },
+  );
 });
 
 // The WRITE and DELETE legs of the same store. list() has always resolved and
@@ -140,36 +156,36 @@ describe('layoutService.list — derived entries stay inside the store', () => {
 // resolved by whichever provider a delegation flag happened to pick.
 // Twin: TestLayoutWriteAndDeleteRefuseAnEntryThatResolvesOutOfTheStore.
 describe('layoutService save/remove — a store entry that resolves out is refused', () => {
-  const plant = (name: string): string | null => {
+  const plant = (name: string): string => {
     const layoutsDir = path.join(h.dir, 'layouts');
     fs.mkdirSync(layoutsDir, { recursive: true });
     const victim = path.join(h.dir, 'config.yaml');
     fs.writeFileSync(victim, 'ui: {}\n', 'utf-8');
-    try {
-      fs.symlinkSync(victim, path.join(layoutsDir, `${name}.yaml`));
-    } catch {
-      return null; // no symlink privilege here
-    }
+    fs.symlinkSync(victim, path.join(layoutsDir, `${name}.yaml`));
     return victim;
   };
 
-  it('save refuses a layout id whose store entry is a symlink out of the store', () => {
-    const victim = plant('evil');
-    if (!victim) return;
-    expect(() => layoutService.save({ id: 'evil', name: 'x', agents: [] })).toThrow(
-      /outside the layouts directory/,
-    );
-    expect(fs.readFileSync(victim, 'utf-8')).toBe('ui: {}\n');
-    expect(fs.lstatSync(path.join(h.dir, 'layouts', 'evil.yaml')).isSymbolicLink()).toBe(true);
-  });
+  (CAN_SYMLINK_LAYOUTS ? it : it.skip)(
+    'save refuses a layout id whose store entry is a symlink out of the store',
+    () => {
+      const victim = plant('evil');
+      expect(() => layoutService.save({ id: 'evil', name: 'x', agents: [] })).toThrow(
+        /outside the layouts directory/,
+      );
+      expect(fs.readFileSync(victim, 'utf-8')).toBe('ui: {}\n');
+      expect(fs.lstatSync(path.join(h.dir, 'layouts', 'evil.yaml')).isSymbolicLink()).toBe(true);
+    },
+  );
 
-  it('remove refuses the same entry rather than unlinking it', () => {
-    const victim = plant('evil');
-    if (!victim) return;
-    layoutService.remove('evil');
-    expect(fs.existsSync(path.join(h.dir, 'layouts', 'evil.yaml'))).toBe(true);
-    expect(fs.existsSync(victim)).toBe(true);
-  });
+  (CAN_SYMLINK_LAYOUTS ? it : it.skip)(
+    'remove refuses the same entry rather than unlinking it',
+    () => {
+      const victim = plant('evil');
+      layoutService.remove('evil');
+      expect(fs.existsSync(path.join(h.dir, 'layouts', 'evil.yaml'))).toBe(true);
+      expect(fs.existsSync(victim)).toBe(true);
+    },
+  );
 
   it('the floor: an ordinary id still saves and removes', () => {
     const l = layoutService.save({ id: 'ordinary', name: 'Ordinary', agents: [] });

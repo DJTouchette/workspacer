@@ -361,6 +361,55 @@ func TestSecretGateConstantsMatchTheFixture(t *testing.T) {
 	}
 }
 
+// TestTheSecretGateCarvesOutExactlyTheFixturesStores is the BEHAVIOURAL half.
+//
+// The test above pins the CONTENTS of configStoreSubdirs. Nothing pinned that
+// pathIsSecret iterates that same slice — the gate holds its own loop, so a
+// hardcoded wider set there (a fourth entry for `plugins`) re-admits
+// <configDir>/plugins/** with the constant, the fixture and every case green.
+// Each secrets case names one of the three real stores, so a gate with FOUR
+// carve-outs satisfies all of them.
+func TestTheSecretGateCarvesOutExactlyTheFixturesStores(t *testing.T) {
+	fx := loadContainmentFixture(t)
+	if len(fx.ConfigStoreSubdirs) == 0 {
+		t.Fatal("the fixture must carry configStoreSubdirs")
+	}
+	configHome := realpathOf(t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	if runtime.GOOS == "windows" {
+		t.Setenv("APPDATA", configHome)
+	}
+	cfg := filepath.Join(configHome, "workspacer")
+	if err := os.MkdirAll(cfg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	exempt := map[string]bool{}
+	for _, store := range fx.ConfigStoreSubdirs {
+		exempt[store] = true
+		if err := os.MkdirAll(filepath.Join(cfg, store), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if pathIsSecret(filepath.Join(cfg, store, "item.md")) {
+			t.Errorf("the fixture carves out %q but the gate still refuses it", store)
+		}
+	}
+	for _, name := range []string{"plugins", "cache", "logs", "handoffs", "backups", "supervisor"} {
+		if exempt[name] {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Join(cfg, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if !pathIsSecret(filepath.Join(cfg, name, "anything.json")) {
+			t.Errorf("the gate exempts <configDir>/%s, which the fixture does not list", name)
+		}
+	}
+	if !pathIsSecret(filepath.Join(cfg, "remote-token")) {
+		t.Error("remote-token is not refused — the gate is not running at all")
+	}
+}
+
 // userHome / realpathOf feed the two out-of-sandbox tokens. The RESOLVED form
 // matters: every other path in this loader is realpath'd, and on macOS /var ->
 // /private/var alone would make the comparison wrong.
@@ -587,7 +636,7 @@ func TestPathContainmentContractCases(t *testing.T) {
 
 			materializeTree(t, sandbox, c.Tree, c.NeedsSymlinks)
 
-			sub := strings.NewReplacer(
+			replacer := strings.NewReplacer(
 				"${SANDBOX}", sandbox,
 				"${ROOT}", root,
 				"${OUTSIDE}", outside,
@@ -595,15 +644,27 @@ func TestPathContainmentContractCases(t *testing.T) {
 				"${HOME}", home,
 				"${PROCESS_CWD}", processCwd,
 			)
+			// An UNRECOGNISED ${TOKEN} is passed through verbatim by every
+			// substituter in every loader, and the result is then a relative
+			// string that all three copies refuse for being non-absolute. So a
+			// one-character typo turns a deny case into a case that passes while
+			// exercising nothing — in all three languages at once. Fail on it.
+			sub := func(in string) string {
+				out := replacer.Replace(in)
+				if i := strings.Index(out, "${"); i >= 0 {
+					t.Fatalf("unsubstituted token in %q — the vocabulary is ${SANDBOX} ${ROOT} ${OUTSIDE} ${CONFIG} ${HOME} ${PROCESS_CWD}", out[i:])
+				}
+				return out
+			}
 			roots := make([]string, 0, len(c.Roots))
 			for _, r := range c.Roots {
-				cr, ok := canonicalizeRoot(sub.Replace(r))
+				cr, ok := canonicalizeRoot(sub(r))
 				if !ok {
 					continue // DISCARD: skip this root, never abort the check
 				}
 				roots = append(roots, cr)
 			}
-			target := sub.Replace(c.Target)
+			target := sub(c.Target)
 
 			// The fixture's verdict is allow/deny only: conn.authorize denies on
 			// ANY non-nil error (unresolvable path, or the secret sentinel), so
@@ -634,7 +695,7 @@ func TestPathContainmentContractCases(t *testing.T) {
 				if err != nil {
 					t.Fatalf("allow case %q: canonicalize(%q) failed: %v", c.Name, target, err)
 				}
-				if expect := filepath.FromSlash(sub.Replace(c.ResolvesTo)); ct != expect {
+				if expect := filepath.FromSlash(sub(c.ResolvesTo)); ct != expect {
 					t.Errorf("canonicalize(%q) = %q, want %q\ncase: %s\nwhy: %s", target, ct, expect, c.Name, c.Why)
 				}
 			}

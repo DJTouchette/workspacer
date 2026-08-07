@@ -49,11 +49,7 @@ pub fn load() -> Vec<Profile> {
 }
 
 fn read_file() -> Option<Vec<Profile>> {
-    let dirs = directories::BaseDirs::new()?;
-    let path = dirs
-        .config_dir()
-        .join("workspacer")
-        .join("claude-profiles.json");
+    let path = crate::config::config_dir()?.join("claude-profiles.json");
     let text = std::fs::read_to_string(path).ok()?;
     let parsed: ProfilesFile = serde_json::from_str(&text).ok()?;
     if parsed.profiles.is_empty() {

@@ -3,8 +3,10 @@ package bus
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -155,5 +157,181 @@ func TestRevokedPluginTokenCannotReconnect(t *testing.T) {
 	}
 	if !dialRejected(t, url, "pane-tok") {
 		t.Fatal("a revoked token was accepted on a fresh dial")
+	}
+}
+
+// The RACE, which is what makes revocation enforcing rather than nearly-always.
+//
+// The handshake resolves the presented token BEFORE websocket.Accept and only
+// registers the connection for revocation afterwards. UnregisterPluginToken
+// snapshots pluginConns under ptMu and closes exactly what it finds — so a dial
+// whose lookup ran before the delete and whose track runs after it is in NEITHER
+// set. It is never closed, never flagged, and conn.caps is a snapshot taken at
+// accept, so it keeps its full ${agentCwd} grants for the life of the process.
+//
+// Measured on the unfixed tree with 8 concurrent dials per round: 3/3 runs
+// leaked, in 2, 5 and 10 rounds, and a leaked socket went on answering fs.read
+// for as long as it was asked to. A plugin sidecar holding its .bus-token and
+// reconnecting in a loop wins this trivially, so the grant survives disable,
+// reload and uninstall.
+//
+// The fix serializes the two under the same mutex: trackPluginConn re-checks
+// that the token is still registered and the handshake revokes on the spot when
+// it is not, so either the delete lands first (track returns false) or the track
+// lands first (the delete finds the connection).
+func TestRevocationCannotRaceAnInFlightHandshake(t *testing.T) {
+	root := t.TempDir()
+	canon, err := canonicalize(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	url, srv := rpcServerWith(t)
+	srv.SetToken("host-secret")
+
+	// A trusted provider that answers every fs.read it is reached by. Reaching it
+	// AT ALL after revocation is the leak.
+	provider := dialClientToken(t, url, "host-secret")
+	provider.send(Frame{Op: "register", Methods: []string{"fs.read"}})
+	provider.readUntil("registered")
+	served := make(chan struct{}, 256)
+	go func() {
+		for {
+			f, ok := provider.tryReadUntil("call", "call", 30*time.Second)
+			if !ok || f.ID == "" {
+				return
+			}
+			served <- struct{}{}
+			if !provider.trySend(Frame{Op: "result", ID: f.ID, Result: json.RawMessage(`{"ok":true}`)}) {
+				return
+			}
+		}
+	}()
+
+	target := json.RawMessage(`{"path":` + jstr(filepath.Join(root, "a.txt")) + `}`)
+	wsURL := strings.Replace(url, "http://", "ws://", 1) + "/bus?token=pane-tok"
+
+	// The DETERMINISTIC half. The window is lookup -> Accept -> track, and
+	// whether a goroutine lands inside it is up to the scheduler, so the loop
+	// below is a probability, not a proof. This is the proof: it plays the losing
+	// interleaving by hand — the token is gone by the time the connection asks to
+	// be tracked — and trackPluginConn has to say so. Both operations take ptMu,
+	// so there is no third ordering to test.
+	srv.RegisterPluginToken("pane-tok", "test.plugin", []capspec.Grant{
+		{Method: "fs.read", FSRoots: []string{canon}},
+	}, capspec.EventGrants{})
+	late := &conn{caps: map[string]capGrant{"fs.read": {fsRoots: []string{canon}}}}
+	if !srv.trackPluginConn("pane-tok", late) {
+		t.Fatal("floor: tracking a LIVE token must succeed, or the check below proves nothing")
+	}
+	srv.untrackPluginConn("pane-tok", late)
+	srv.UnregisterPluginToken("pane-tok")
+	if srv.trackPluginConn("pane-tok", late) {
+		t.Fatal("trackPluginConn accepted a connection for a token UnregisterPluginToken had already dropped — that connection is in neither set: never closed, never flagged, and conn.caps is a snapshot, so it keeps its ${agentCwd} grants for the life of the process")
+	}
+
+	for round := 0; round < 12; round++ {
+		srv.RegisterPluginToken("pane-tok", "test.plugin", []capspec.Grant{
+			{Method: "fs.read", FSRoots: []string{canon}},
+		}, capspec.EventGrants{})
+
+		const dials = 8
+		var wg sync.WaitGroup
+		conns := make(chan *websocket.Conn, dials)
+		start := make(chan struct{})
+		for i := 0; i < dials; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				c, _, err := websocket.Dial(ctx, wsURL, nil)
+				if err == nil {
+					conns <- c
+				}
+			}()
+		}
+		close(start)
+		// Revoke WHILE the dials are in flight. No sleep: the point is to land
+		// inside the lookup→accept→track window, and the scheduler decides.
+		srv.UnregisterPluginToken("pane-tok")
+		wg.Wait()
+		close(conns)
+
+		// Drain anything the provider was reached by before revocation; only
+		// post-revocation reachability counts.
+		for {
+			select {
+			case <-served:
+				continue
+			default:
+			}
+			break
+		}
+
+		leaked := 0
+		for c := range conns {
+			cl := &client{ws: c}
+			if !cl.trySend(Frame{Op: "call", ID: "after", Method: "fs.read", Params: target}) {
+				c.CloseNow()
+				continue // socket already gone: revocation closed it, which is the point
+			}
+			f, ok := cl.tryReadUntil("result", "error", 1500*time.Millisecond)
+			if ok && f.Op == "result" {
+				leaked++
+			}
+			c.CloseNow()
+		}
+		if leaked > 0 {
+			t.Fatalf("REVOCATION RACE: after %d rounds, %d socket(s) were served fs.read on a token UnregisterPluginToken had already dropped — they were accepted after the lookup and tracked after the delete, so neither set contained them", round+1, leaked)
+		}
+		select {
+		case <-served:
+			t.Fatalf("round %d: the provider was reached by a revoked token's call", round+1)
+		default:
+		}
+	}
+}
+
+// The `revoked` flag on its own. UnregisterPluginToken's own comment says both
+// halves are needed — "revoked is what makes the NEXT call on an in-flight
+// connection fail even before the close lands, and CloseNow is what stops the
+// connection from sitting there consuming events" — and only the CloseNow half
+// was pinned: deleting the `if cn.revoked.Load() { return false }` branch from
+// mayCall left the whole tree green, 20 runs of the e2e test above included,
+// because that test's `if !caller.trySend(...) { return }` takes the
+// early-return branch every time (CloseNow is synchronous). This asserts the
+// flag directly, with no socket in the way.
+func TestARevokedConnectionMayCallNothing(t *testing.T) {
+	root := t.TempDir()
+	canon, err := canonicalize(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cn := &conn{
+		caps: map[string]capGrant{"fs.read": {fsRoots: []string{canon}}},
+	}
+	if !cn.mayCall("fs.read") {
+		t.Fatal("floor: a live connection with the grant must be allowed to call it")
+	}
+	cn.revoked.Store(true)
+	if cn.mayCall("fs.read") {
+		t.Fatal("a REVOKED connection was still allowed to call fs.read — the flag is the half that denies a call already read off the wire, before the close lands")
+	}
+	// Revocation outranks TRUSTED too. A trusted conn never carries a plugin
+	// token today, so this arm is fail-closed by construction rather than
+	// reachable — but the ordering is the claim ("a revoked credential authorizes
+	// nothing, whatever it used to authorize"), and moving the check below the
+	// trusted short-circuit is the obvious refactor that would silently undo it.
+	cn2 := &conn{trusted: true}
+	if !cn2.mayCall("fs.read") {
+		t.Fatal("floor: a trusted connection may call anything")
+	}
+	cn2.revoked.Store(true)
+	if cn2.mayCall("fs.read") {
+		t.Fatal("the revoked check is below the trusted short-circuit — revocation must come first")
 	}
 }
