@@ -96,10 +96,18 @@ func resolveRoots(paths []string, bindings map[string]string) []string {
 // "" so it grants nothing.
 //
 // A scope that tries to climb out of what it names is dropped rather than
-// expanded. Validate refuses such a manifest at install/load time; this second
-// check is what holds if one is loaded any other way, because the join below
-// Cleans ".." away and the escape would otherwise be invisible by the time the
-// bus canonicalizes the root.
+// expanded, by the validateScope call on the first line — hasDotDotSegment
+// splits the WHOLE scope string on both '/' and '\\' and rejects any ".."
+// segment, which is asserted directly (sandbox_test.go drives a manifest
+// declaring "${pluginDir}/../..").
+//
+// The withinRoot() call in the token branch below is therefore UNREACHABLE as
+// this function is reached today, and it is kept deliberately rather than
+// trimmed: filepath.Join Cleans ".." away, so if validateScope is ever relaxed
+// — or a second entry point appears — the escape becomes invisible by the time
+// the bus canonicalizes the root, and this is the only thing left standing. A
+// mutation on it survives by construction; that is what a redundant fail-closed
+// check looks like, not a gap. Do not "simplify" it away to raise a score.
 func expandScope(p string, bindings map[string]string) string {
 	if validateScope(p) != nil {
 		return ""

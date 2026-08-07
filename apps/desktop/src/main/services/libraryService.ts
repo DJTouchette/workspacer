@@ -25,6 +25,7 @@ import * as yaml from 'js-yaml';
 import type { BrowserWindow } from 'electron';
 import { getConfigDir } from './configService';
 import { slugLibrary } from '../lib/fileUtils';
+import { byteCompare, trimSuffixFold } from '../lib/providerParity';
 import { publishToHub } from './hubClient';
 
 export type LibraryScope = 'global' | 'project' | 'claude';
@@ -198,7 +199,7 @@ function readDir(dir: string, scope: LibraryScope, guard: LibraryFileGuard): Lib
     try {
       const raw = fs.readFileSync(full, 'utf-8');
       const { data, body } = parseFrontmatter(raw);
-      const id = slug(name.replace(/\.md$/i, ''));
+      const id = slug(trimSuffixFold(name, '.md'));
       const kind: LibraryKind =
         data.kind === 'skill' || data.kind === 'agent' || data.kind === 'mcp'
           ? data.kind
@@ -364,9 +365,22 @@ class LibraryService {
     if (cwd) {
       for (const it of readDir(projectDir(cwd), 'project', guard)) byId.set(it.id, it);
       for (const it of readClaudeItems(cwd, guard)) byId.set(`claude:${it.kind}:${it.id}`, it);
-      this.ensureProjectWatch(cwd);
+      // createIfMissing: false. list() is READ-ONLY by contract — it is given the
+      // BROWSE roots (the whole home tree) for exactly that reason — and
+      // ensureProjectWatch's default branch ran fs.mkdirSync(projectDir(cwd)),
+      // composed after the cwd check and never resolved. So the one capability
+      // deliberately handed the widest root set performed an unguarded derived
+      // write, and a symlinked `.workspacer` component put that directory
+      // outside every allowed root, in a process where fs.write to the same
+      // location is refused. The Go twin (listLibrary) is ReadDir-only.
+      this.ensureProjectWatch(cwd, false, false);
     }
-    return Array.from(byId.values()).sort((a, b) => a.title.localeCompare(b.title));
+    // Byte-wise, not localeCompare: the Go twin sorts `out[i].Title < out[j].Title`
+    // (raw bytes), so localeCompare made library.list come back in a different
+    // order depending on which provider answered — every uppercase title before
+    // every lowercase one on one side, case-insensitively interleaved on the
+    // other. The ordering is what the picker shows and what "first" means in it.
+    return Array.from(byId.values()).sort((a, b) => byteCompare(a.title, b.title));
   }
 
   save(
@@ -514,7 +528,7 @@ class LibraryService {
 
   // ── watching ──────────────────────────────────────────────────────────────
 
-  private ensureProjectWatch(cwd: string, force = false): void {
+  private ensureProjectWatch(cwd: string, force = false, mayCreate = true): void {
     if (cwd === this.watchedProjectCwd && !force) return;
     if (cwd !== this.watchedProjectCwd) {
       // Drop the old project's watchers (keep the global one).
@@ -532,7 +546,7 @@ class LibraryService {
       }
       this.watchedProjectCwd = cwd;
     }
-    this.watch(projectDir(cwd));
+    this.watch(projectDir(cwd), { createIfMissing: mayCreate });
     // Claude dirs: watch only if they exist — don't litter repos with empty
     // .claude/skills dirs. list()/save() re-call this, so a dir created later
     // gets picked up. Skills need recursive (SKILL.md is one level down).

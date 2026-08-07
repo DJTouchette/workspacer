@@ -16,6 +16,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -167,6 +168,26 @@ func (c *configService) reload() map[string]any {
 // Settings write goes through configService.ts in-process and is unaffected.
 var hostTrustedSections = []string{"updates"}
 
+// hostTrustedPaths are the same rule at SUB-KEY granularity, dotted from the
+// root. A section-level drop is the wrong tool for these: they live inside
+// sections a bus client legitimately edits, so dropping the whole section would
+// break ordinary settings while keeping the section would leave these writable.
+//
+//   - agents.binaries is the launcher path this brain hands to claudemon as
+//     argv[0] for EVERY spawned agent (resolveSpawnBin → spawnReq.Bin →
+//     Command::new). config.save is not in capspec.PathParam and its name is not
+//     path-bearing, so neither classification detector could see it — while
+//     fs.write of config.yaml is refused by the secret gate in all three
+//     containment copies, config.save rewrote the same file by design. Combined
+//     with an fs.write over an existing executable inside the caller's own agent
+//     cwd (os.WriteFile preserves the 0755 mode), that was arbitrary host code
+//     execution on the next spawn.
+//   - claude.profiles carries configDir (which becomes CLAUDE_CONFIG_DIR, i.e.
+//     the settings.json supplying permissions.allow and hooks) and extraArgs
+//     (--dangerously-skip-permissions). A bus caller planting one there is
+//     persistent, and the desktop's LOCAL spawn path does not scrub it.
+var hostTrustedPaths = []string{"agents.binaries", "claude.profiles"}
+
 // dropHostTrusted returns partial without any host-trusted section, leaving the
 // on-disk values alone. It copies rather than deletes in place: the caller still
 // owns the map it passed us.
@@ -177,16 +198,45 @@ func dropHostTrusted(partial map[string]any) map[string]any {
 			found = append(found, k)
 		}
 	}
-	if len(found) == 0 {
+	type nested struct{ section, key string }
+	var foundPaths []nested
+	for _, dotted := range hostTrustedPaths {
+		section, key, ok := strings.Cut(dotted, ".")
+		if !ok {
+			continue
+		}
+		sub, ok := partial[section].(map[string]any)
+		if !ok {
+			continue // absent, or not an object — nothing to strip
+		}
+		if _, ok := sub[key]; ok {
+			foundPaths = append(foundPaths, nested{section, key})
+		}
+	}
+	if len(found) == 0 && len(foundPaths) == 0 {
 		return partial
 	}
-	log.Printf("brain: config.save: ignoring host-trusted section(s) %v from a bus client", found)
+	if len(found) > 0 {
+		log.Printf("brain: config.save: ignoring host-trusted section(s) %v from a bus client", found)
+	}
 	out := make(map[string]any, len(partial))
 	for k, v := range partial {
 		out[k] = v
 	}
 	for _, k := range found {
 		delete(out, k)
+	}
+	for _, n := range foundPaths {
+		log.Printf("brain: config.save: ignoring host-trusted key %s.%s from a bus client", n.section, n.key)
+		// Copy the section too: the caller still owns the map it passed us, and
+		// the nested map is shared with it.
+		sub := out[n.section].(map[string]any)
+		cp := make(map[string]any, len(sub))
+		for k, v := range sub {
+			cp[k] = v
+		}
+		delete(cp, n.key)
+		out[n.section] = cp
 	}
 	return out
 }

@@ -1,0 +1,101 @@
+{
+  "_comment": [
+    "Two providers answer the same bus methods — the Go brain by default under",
+    "DELEGATE_CATALOG_TO_BRAIN, the desktop's main process when delegation is off.",
+    "Path CONTAINMENT has contracts/path-containment-cases.json. This fixture pins the",
+    "other half of 'the same call must give the same answer': the ORDER a list comes",
+    "back in, and how each side reads a scalar that is not the type it expected.",
+    "",
+    "Every block below replaced a JavaScript idiom whose Go twin behaves differently,",
+    "and each divergence was live and reachable:",
+    "",
+    "  order        — Go sorts strings by raw bytes (sort.Strings, `a < b`); the",
+    "                 desktop used localeCompare, which is case-insensitive-ish and",
+    "                 locale-dependent. library.list, fs.listDir and fs.listEntries",
+    "                 came back in stably different orders depending on which provider",
+    "                 answered. The order is what the picker shows and what 'first'",
+    "                 means in it.",
+    "  scalar       — Go coerces a non-string YAML scalar with str() (-> \"\"); the",
+    "                 desktop called .localeCompare on it. `createdAt: 5`, or an",
+    "                 unquoted ISO date (js-yaml 4 parses that to a Date), threw inside",
+    "                 the comparator as soon as V8's sort put that row in the `b`",
+    "                 position — and the function-level catch turned the throw into an",
+    "                 EMPTY LIST, so every well-formed layout/session vanished with it",
+    "                 while the brain listed them all. <configDir>/layouts and",
+    "                 <configDir>/sessions are configStoreRoots, so writing that file",
+    "                 is an ordinary permitted fs.write.",
+    "  suffix       — Go uses strings.TrimSuffix; the desktop used String#replace,",
+    "                 which removes the FIRST occurrence ANYWHERE. 'a.jsonl.b.jsonl'",
+    "                 became 'a.b.jsonl' on one side and 'a.jsonl.b' on the other — two",
+    "                 different resume ids for one transcript — and '.jsonlagent-x.jsonl'",
+    "                 became 'agent-x.jsonl', which then matched the subagent filter and",
+    "                 dropped a row the other provider listed. The FOLDING variant is",
+    "                 the library-item id: the entry filter is case-insensitive, so",
+    "                 'readme.Md' is listed, and trimming only '.md'/'.MD' left '.Md' on.",
+    "",
+    "Owners: apps/desktop/src/main/lib/providerParity.ts (+ its call sites) and",
+    "services/hub/cmd/brain (stores.go, library.go, fsops.go, discovery.go)."
+  ],
+  "order": [
+    {
+      "name": "uppercase sorts before lowercase, byte-wise",
+      "input": ["cherry", "Banana", "Date", "apple"],
+      "expected": ["Banana", "Date", "apple", "cherry"],
+      "why": "The whole divergence in one case: localeCompare gives apple/Banana/cherry/Date, raw bytes give this. Neither is wrong on its own; having both at once is."
+    },
+    {
+      "name": "digits and punctuation sort by code unit, not by collation",
+      "input": ["item-10", "item-2", "_x", "Item-1"],
+      "expected": ["Item-1", "_x", "item-10", "item-2"],
+      "why": "localeCompare puts item-2 before item-10 (numeric-ish collation in several locales) and ignores the leading underscore; byte order does neither. A locale-dependent comparison also means the SAME provider can reorder itself on a different machine."
+    },
+    {
+      "name": "an empty string sorts first",
+      "input": ["b", "", "a"],
+      "expected": ["", "a", "b"],
+      "why": "The coerced value of a non-string scalar is \"\", so where empties land decides where an odd row lands — which is the difference between 'mis-sorted' and 'the list is empty'."
+    }
+  ],
+  "scalar": [
+    { "name": "a string is itself", "value": "2026-01-01T00:00:00.000Z", "expected": "2026-01-01T00:00:00.000Z" },
+    { "name": "an empty string stays empty", "value": "", "expected": "" },
+    { "name": "a number is not a string", "value": 5, "expected": "" },
+    { "name": "a boolean is not a string", "value": true, "expected": "" },
+    { "name": "null is not a string", "value": null, "expected": "" },
+    { "name": "a list is not a string", "value": [], "expected": "" },
+    { "name": "a map is not a string", "value": {}, "expected": "" }
+  ],
+  "suffix": [
+    { "name": "an ordinary suffix", "value": "session.yaml", "suffix": ".yaml", "fold": false, "expected": "session" },
+    {
+      "name": "only the SUFFIX, never the first occurrence",
+      "value": "a.jsonl.b.jsonl",
+      "suffix": ".jsonl",
+      "fold": false,
+      "expected": "a.jsonl.b",
+      "why": "String#replace removes the first match anywhere and gives 'a.b.jsonl' — a different resume id for the same transcript."
+    },
+    {
+      "name": "a leading occurrence is not a suffix",
+      "value": ".jsonlagent-x.jsonl",
+      "suffix": ".jsonl",
+      "fold": false,
+      "expected": ".jsonlagent-x",
+      "why": "replace() gives 'agent-x.jsonl', which then matches the startsWith('agent-') subagent filter and drops a row the other provider lists."
+    },
+    { "name": "no suffix, no change", "value": "notes.txt", "suffix": ".yaml", "fold": false, "expected": "notes.txt" },
+    { "name": "the whole string is the suffix", "value": ".md", "suffix": ".md", "fold": true, "expected": "" },
+    { "name": "folded: lowercase", "value": "readme.md", "suffix": ".md", "fold": true, "expected": "readme" },
+    {
+      "name": "folded: mixed case",
+      "value": "readme.Md",
+      "suffix": ".md",
+      "fold": true,
+      "expected": "readme",
+      "why": "The entry filter that admits the file is already case-insensitive, so this file IS listed; trimming only '.md' and '.MD' left '.Md' on and minted id 'readme-md' on one side and 'readme' on the other."
+    },
+    { "name": "folded: uppercase", "value": "SPEC.MD", "suffix": ".md", "fold": true, "expected": "SPEC" },
+    { "name": "folded: the other mixed spelling", "value": "guide.mD", "suffix": ".md", "fold": true, "expected": "guide" },
+    { "name": "folded: not a suffix at all", "value": "mdfile", "suffix": ".md", "fold": true, "expected": "mdfile" }
+  ]
+}

@@ -284,6 +284,16 @@ func CanonicalizeRoot(root string) (string, bool) { return canonicalizeRoot(root
 // root) — the SAME predicate with the arguments the other way round. Keep each
 // file's local order; align only the behaviour.
 func within(root, target string) bool {
+	// An empty root grants NOTHING. Without this it is a WILDCARD: the branch
+	// below falls through to HasPrefix(target, "/"), which is true for every
+	// absolute path on the system. canonicalizeRoot is supposed to discard a root
+	// it cannot resolve and canonRoots is supposed to drop it from the grant, but
+	// "the last line of defence is itself the widest possible grant" is not a
+	// posture — one slip anywhere upstream promoted a scoped plugin token to
+	// whole-filesystem access.
+	if root == "" {
+		return false
+	}
 	if target == root {
 		return true
 	}
@@ -298,6 +308,40 @@ func within(root, target string) bool {
 		return strings.HasPrefix(target, root)
 	}
 	return strings.HasPrefix(target, root+sep)
+}
+
+// asciiLower folds A-Z only. Deliberately not strings.ToLower: the three copies
+// have to fold IDENTICALLY, and Go's Unicode folding and JavaScript's
+// toLowerCase disagree (U+0130 'İ' already bit the filename slugs).
+func asciiLower(s string) string {
+	var b []byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			if b == nil {
+				b = []byte(s)
+			}
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	if b == nil {
+		return s
+	}
+	return string(b)
+}
+
+// withinFolded is within() with ASCII case folded away. It is used ONLY by the
+// secret gate, and only in the direction where folding DENIES more: deciding
+// that a target is inside the config dir, never that it is inside a carve-out.
+//
+// Containment for GRANTS stays byte-exact, because there folding would widen an
+// allow-list. The secret gate is the mirror image: macOS (APFS) and Windows
+// (NTFS) open <configDir>/remote-token when handed <configHome>/WORKSPACER/
+// remote-token, and the per-component walk cannot see it — lstat succeeds on the
+// caller's spelling and the walk appends the caller's spelling, so a byte-exact
+// gate answers for the STRING rather than for the file.
+func withinFolded(root, target string) bool {
+	return within(asciiLower(root), asciiLower(target))
 }
 
 // --- secret gate (spec 6, BINDING DECISION 4) --------------------------------
@@ -334,8 +378,9 @@ var configStoreSubdirs = []string{"library", "layouts", "sessions"}
 // TWIN: brain fsguard.go pathIsSecret / desktop pathConfinement.ts isSecretPath.
 func pathIsSecret(canonicalTarget string) bool {
 	// Basename first and unconditionally, so a credential name planted inside a
-	// store carve-out is still refused (spec 6.3).
-	if secretBasenames[lastComponent(canonicalTarget)] {
+	// store carve-out is still refused (spec 6.3). Folded: ".BUS-TOKEN" opens
+	// .bus-token on macOS and Windows — see withinFolded.
+	if secretBasenames[asciiLower(lastComponent(canonicalTarget))] {
 		return true
 	}
 	// Read the environment at call time — a test points this at a sandbox.
@@ -343,12 +388,22 @@ func pathIsSecret(canonicalTarget string) bool {
 	if !ok {
 		return true // unverifiable config dir → cannot prove we are outside it
 	}
-	if !within(cfg, canonicalTarget) {
+	if !withinFolded(cfg, canonicalTarget) {
 		return false // nothing outside the config dir is secret by location
 	}
 	for _, store := range configStoreSubdirs {
 		sr, ok := canonicalizeRoot(appendComponent(cfg, store))
 		if !ok {
+			continue
+		}
+		// A carve-out only ever NARROWS the gate, so this arm stays byte-exact
+		// (folding would exempt <configDir>/LIBRARY) and the resolved carve-out
+		// must still be STRICTLY inside the resolved config dir. Without that a
+		// symlink at <configDir>/library aimed at its own parent — the one
+		// directory a remote caller can fs.write into — resolved the carve-out
+		// to the config dir itself, which contains everything in it: one symlink
+		// disarmed the whole gate and handed out remote-token.
+		if sr == cfg || !within(cfg, sr) {
 			continue
 		}
 		if within(sr, canonicalTarget) {

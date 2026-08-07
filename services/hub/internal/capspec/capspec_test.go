@@ -234,6 +234,21 @@ var pathishParams = map[string]bool{
 	// resolve+startsWith in TypeScript that read and unlinked through a symlink)
 	// with both suites green.
 	"filename": true,
+	// Two more names that are process/filesystem identifiers rather than
+	// "path"-shaped, and were invisible for the same reason `filename` was:
+	//
+	//   `shell`     — terminals.create's argv[0], handed straight to
+	//                 Command::new / claudemonSessionClient.spawn with no
+	//                 existence check, no PATH resolution and no containment. The
+	//                 capability's unscopedByDecision reason named `cwd` and only
+	//                 `cwd`, so the record was incomplete in exactly the way
+	//                 sessions.*'s silence was.
+	//   `configDir` — claude.profiles.add/update's persisted CLAUDE_CONFIG_DIR:
+	//                 the directory supplying claude's settings.json, i.e.
+	//                 permissions.allow and hooks. `dir` was in this list and
+	//                 `configDir` was not, and the scan matches names exactly.
+	"shell":     true,
+	"configDir": true,
 }
 
 // paramsDestructureRe pulls the `const { … } = (params` destructuring out of a

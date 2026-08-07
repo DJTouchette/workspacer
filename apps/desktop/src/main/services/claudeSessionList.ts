@@ -6,6 +6,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
+import { trimSuffix } from '../lib/providerParity';
+
 export interface ClaudeSessionSummary {
   sessionId: string;
   timestamp: string;
@@ -62,7 +64,12 @@ export function listClaudeSessionsForDir(cwd: string): ClaudeSessionSummary[] {
   const sessions: ClaudeSessionSummary[] = [];
 
   for (const file of files) {
-    const sessionId = file.replace('.jsonl', '');
+    // TrimSuffix, not replace(): replace removes the FIRST occurrence anywhere,
+    // so 'a.jsonl.b.jsonl' became 'a.b.jsonl' here and 'a.jsonl.b' in the Go twin
+    // (discovery.go strings.TrimSuffix) — two different resume ids for one
+    // transcript. Worse, '.jsonlagent-x.jsonl' became 'agent-x.jsonl', which then
+    // matched the subagent filter below and dropped a row the brain listed.
+    const sessionId = trimSuffix(file, '.jsonl');
     // Skip subagent sessions
     if (sessionId.startsWith('agent-')) continue;
 

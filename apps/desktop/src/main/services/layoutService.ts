@@ -9,6 +9,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
+import { asString, byteCompare } from '../lib/providerParity';
 import { getConfigDir } from './configService';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { slugLayout } from '../lib/fileUtils';
@@ -86,24 +87,34 @@ class LayoutService {
   list(): Layout[] {
     this.ensureDir();
     try {
-      return fs
-        .readdirSync(layoutsDir())
-        .filter((f) => f.endsWith('.yaml'))
-        .map((f) => {
-          // A symlink named like a layout is a legal directory entry, and the
-          // layouts dir is one of the few a bus caller can write into — so the
-          // entry is confined before it is read, and the canonical path is what
-          // gets opened. Twin: cmd/brain/stores.go storeEntryPath.
-          const full = resolveStoreEntry(layoutsDir(), f);
-          if (full === null) return null;
-          try {
-            return yaml.load(fs.readFileSync(full, 'utf-8')) as Layout;
-          } catch {
-            return null;
-          }
-        })
-        .filter((l): l is Layout => !!l && Array.isArray(l.agents))
-        .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      return (
+        fs
+          .readdirSync(layoutsDir())
+          .filter((f) => f.endsWith('.yaml'))
+          .map((f) => {
+            // A symlink named like a layout is a legal directory entry, and the
+            // layouts dir is one of the few a bus caller can write into — so the
+            // entry is confined before it is read, and the canonical path is what
+            // gets opened. Twin: cmd/brain/stores.go storeEntryPath.
+            const full = resolveStoreEntry(layoutsDir(), f);
+            if (full === null) return null;
+            try {
+              return yaml.load(fs.readFileSync(full, 'utf-8')) as Layout;
+            } catch {
+              return null;
+            }
+          })
+          .filter((l): l is Layout => !!l && Array.isArray(l.agents))
+          // Byte-wise over a COERCED scalar, matching the Go twin's
+          // `str(out[i]["createdAt"]) > str(out[j]["createdAt"])`. localeCompare is
+          // a method, so `createdAt: 5` — or an unquoted ISO date, which js-yaml 4
+          // parses to a Date — threw inside the comparator as soon as V8's sort put
+          // that row in the `b` position, and the catch below turned the throw into
+          // an EMPTY LIST: every well-formed layout vanished with it, while the
+          // brain listed them all. <configDir>/layouts is a configStoreRoot, so
+          // writing that file is an ordinary permitted fs.write.
+          .sort((a, b) => byteCompare(asString(b.createdAt), asString(a.createdAt)))
+      );
     } catch {
       return [];
     }

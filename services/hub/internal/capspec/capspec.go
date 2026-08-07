@@ -46,8 +46,17 @@ var PathParam = map[string]string{
 // decision on the record, not an oversight; [MissingSpec] treats it as
 // classified rather than missing.
 var unscopedByDecision = map[string]string{
-	"agents.spawn":         "starting an agent is a separate authorization decision — the cwd picks where a process runs, and confining it would need the spawn paths to learn root containment first (see cmd/brain's TestSpawnStaysDeliberatelyUnscoped)",
-	"terminals.create":     "same as agents.spawn: cwd is a process working directory, and holding the capability at all is the gate",
+	"agents.spawn": "starting an agent is a separate authorization decision — the cwd picks where a process runs, and confining it would need the spawn paths to learn root containment first (see cmd/brain's TestSpawnStaysDeliberatelyUnscoped)",
+	// The reason used to stop at `cwd`, and that was the whole record for a
+	// capability taking TWO process identifiers: `shell` is argv[0], handed
+	// straight to Command::new / claudemonSessionClient.spawn with no existence
+	// check, no PATH resolution and no containment. Combined with a
+	// mode-preserving fs.write over an existing executable in the caller's own
+	// agent cwd, terminals.create alone was arbitrary host code execution. It is
+	// now an ALLOWLIST (the host's login shells) rather than a path scope, because
+	// there is no subtree we could confine argv[0] to that the same caller cannot
+	// also fill in — see cmd/brain/shellallow.go and lib/shellAllowlist.ts.
+	"terminals.create":     "cwd is a process working directory and holding the capability at all is the gate (as agents.spawn); the OTHER caller string, `shell`, is argv[0] and is confined by an ALLOWLIST of the host's login shells rather than by fsRoots — resolveTerminalShell in both providers",
 	"sessions.transcript":  "cwd only selects which historical session to resolve under ~/.claude/projects; the transcript path is derived by the provider, never taken from the caller",
 	"providers.listModels": "cwd picks which project's provider config to read; the provider resolves the file itself",
 	// The sentence used to stop at "never opened as a path", and it was false:
@@ -91,6 +100,31 @@ var unscopedByDecision = map[string]string{
 	"sessions.load":   "filename is a bare basename resolved and confined to <configDir>/sessions by both providers (sessionFilePath / resolveWithinSessionsDir); pinned by the corpus's sessionFilenames block",
 	"sessions.save":   "same as sessions.load: the filename is derived from the session name by the provider's slug and re-checked by the same resolver",
 	"sessions.delete": "same as sessions.load",
+	// layouts.* are the sessions.* shape exactly: a caller string that selects a
+	// file inside a config store a bus caller can also fs.write into. They were
+	// classified nowhere — `id` is not in the params scanner's path-ish set and
+	// layouts.* is not a path-bearing prefix — which is the same silence that let
+	// sessions.* ship as an unpinned fourth copy of path containment. Their
+	// resolver (layoutFilePath) was the FIFTH copy and the only purely lexical
+	// one; it now canonicalizes and re-contains like sessionFilePath.
+	"layouts.save":   "id is a bare name slugged into <configDir>/layouts/<slug>.yaml and re-contained there by both providers (layoutFilePath / layoutService), never a caller-chosen directory",
+	"layouts.delete": "same as layouts.save",
+	// config.save writes <configDir>/config.yaml — the file fs.write is refused
+	// on by the secret gate in all three containment copies. It takes no path at
+	// all; what it needs is not confinement but a HOST-TRUSTED key list, because
+	// two of its keys are process identifiers rather than settings:
+	// agents.binaries (argv[0] of every spawned agent) and claude.profiles
+	// (configDir → CLAUDE_CONFIG_DIR, extraArgs → --dangerously-skip-permissions).
+	// Both are stripped from a bus write by dropHostTrusted, pinned by
+	// contracts/host-trusted-config-cases.json.
+	"config.save": "takes no path; the config file is the provider's own and the dangerous KEYS (agents.binaries, claude.profiles) are stripped from a bus write by dropHostTrusted — see contracts/host-trusted-config-cases.json",
+	// claude.profiles.* persist a `configDir` that becomes CLAUDE_CONFIG_DIR (the
+	// settings.json supplying permissions.allow and hooks) and `extraArgs`. Not
+	// confined to roots — there is no subtree we could allow that the same caller
+	// cannot fill in with fs.write — but SCRUBBED at write time on both bus
+	// providers, so a bus caller cannot plant one for the local user to pick.
+	"claude.profiles.add":    "configDir/extraArgs are scrubbed at write time on both bus providers (scrubBypassProfile), so nothing a bus caller persists can carry a CLAUDE_CONFIG_DIR or a permission bypass into a later LOCAL spawn",
+	"claude.profiles.update": "same as claude.profiles.add",
 }
 
 // IsPathScoped reports whether method operates on a filesystem path and, if so,

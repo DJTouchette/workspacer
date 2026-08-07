@@ -13,10 +13,11 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import * as path from 'path';
-import { dropHostTrusted, HOST_TRUSTED_SECTIONS } from './hostTrustedConfig';
+import { dropHostTrusted, HOST_TRUSTED_PATHS, HOST_TRUSTED_SECTIONS } from './hostTrustedConfig';
 
 interface Fixture {
   sections: string[];
+  paths: string[];
   cases: { name: string; partial: Record<string, unknown>; expected: Record<string, unknown> }[];
 }
 
@@ -30,6 +31,13 @@ const fixture: Fixture = JSON.parse(
 describe('dropHostTrusted — cross-language contract', () => {
   it('guards exactly the sections the fixture names', () => {
     expect([...HOST_TRUSTED_SECTIONS].sort()).toEqual([...fixture.sections].sort());
+  });
+
+  // The sub-key list too, or agents.binaries (argv[0] for every spawned agent)
+  // can be dropped from the guard with every case still green — the cases only
+  // see the drop, not the list that drives it.
+  it('guards exactly the sub-keys the fixture names', () => {
+    expect([...HOST_TRUSTED_PATHS].sort()).toEqual([...fixture.paths].sort());
   });
 
   for (const c of fixture.cases) {

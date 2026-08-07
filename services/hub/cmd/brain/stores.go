@@ -102,15 +102,25 @@ func listLayouts() []map[string]any {
 // quietly repointed at some other file; everything else is slugged, which is
 // also what removeLayout has always done (save and remove disagreed on the
 // filename for any id that wasn't already a slug).
+// It is also the FIFTH copy of path containment, and the only one that was
+// purely lexical: comparing filepath.Dir(full) to filepath.Clean(layoutsDir())
+// is a textual answer, so it could not see a SYMLINK entry in the store the way
+// sessionFilePath and storeEntryPath both can. That left one store with two
+// different opinions about what a legal entry is — the read path resolved and
+// contained, the write/delete path did not — which is exactly the drift the
+// sessions copy was converted to close. Same two rules, same order.
 func layoutFilePath(id string) (string, error) {
 	if strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") {
 		return "", fmt.Errorf("layout id must not contain a path separator")
 	}
-	full := filepath.Join(layoutsDir(), slugLayout(id)+".yaml")
-	if filepath.Dir(full) != filepath.Clean(layoutsDir()) {
+	canonical, err := canonicalizePath(filepath.Join(layoutsDir(), slugLayout(id)+".yaml"))
+	if err != nil {
 		return "", fmt.Errorf("layout id resolves outside the layouts directory")
 	}
-	return full, nil
+	if !isWithin(canonical, layoutsDir()) {
+		return "", fmt.Errorf("layout id resolves outside the layouts directory")
+	}
+	return canonical, nil
 }
 
 // saveLayout writes one layout file, mirroring layoutService.save: id defaults to
@@ -227,14 +237,45 @@ func quarantineUnreadable(path string, data []byte) {
 	backup := path + ".broken-" + time.Now().UTC().Format("2006-01-02T15-04-05.000")
 	// Only the first sighting writes a copy; a list call happens often and each
 	// one must not mint another backup of the same bad file.
-	if matches, _ := filepath.Glob(path + ".broken-*"); len(matches) > 0 {
+	//
+	// NOT filepath.Glob: the pattern is built from a CALLER-CHOSEN filename (the
+	// store dirs are configStoreRoots, so `fs.write` of "loot[.yaml" is an
+	// ordinary allowed write) and Glob interprets it. A '[' makes the pattern
+	// ErrBadPattern — no matches, so every single list call mints another
+	// timestamped full copy, i.e. unbounded disk growth driven by a UI poll. A
+	// '*' makes it match a DIFFERENT file's backup, so the corrupt file is never
+	// backed up at all — exactly the data loss this function exists to prevent.
+	// A literal prefix scan of the directory has neither behaviour.
+	if quarantineExists(path) {
 		return
 	}
-	if err := os.WriteFile(backup, data, 0o644); err != nil {
+	// 0o600, not 0o644: this is a byte-for-byte copy of a file whose own mode we
+	// did not inspect, minted by a read-only capability.
+	if err := os.WriteFile(backup, data, 0o600); err != nil {
 		log.Printf("brain: could not quarantine unreadable %s: %v", path, err)
 		return
 	}
 	log.Printf("brain: %s could not be parsed; copied to %s and skipped", path, backup)
+}
+
+// quarantineExists reports whether `path` already has a .broken-* sibling, by a
+// LITERAL prefix scan of the containing directory. See quarantineUnreadable for
+// why this is not filepath.Glob.
+func quarantineExists(path string) bool {
+	dir, base := filepath.Dir(path), filepath.Base(path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		// Unreadable directory: assume nothing is there and let the write decide.
+		// (Erring the other way would silently skip the backup this exists for.)
+		return false
+	}
+	prefix := base + ".broken-"
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func listSavedSessions() []sessionListEntry {

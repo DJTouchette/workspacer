@@ -19,6 +19,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+import { canonicalRoot, canonicalizePath, isWithin } from '../lib/pathConfinement';
+
 /** One file-mutating tool call from the transcript, as the replay UI sends it. */
 export interface ReplayOp {
   name: string; // Write | Edit | MultiEdit (others are skipped)
@@ -122,6 +124,32 @@ function looksBinary(buf: Buffer): boolean {
   return buf.subarray(0, 8000).includes(0);
 }
 
+/** The worktree root in canonical form. /tmp is a symlink on macOS and the
+ *  comparison below has to be canonical-to-canonical. */
+function canonicalWorktree(dir: string): string {
+  const c = canonicalRoot(dir);
+  if (c === null) throw new Error('path is outside the replay worktree');
+  return c;
+}
+
+/**
+ * Resolve `abs` per component and require the RESULT to sit inside the replay
+ * worktree, returning that result — the string the caller must then open.
+ *
+ * This is the fix for the only containment replay.* has. A lexical
+ * path.relative/path.resolve pair cannot see a symlink, and the worktree is cut
+ * from a real repository with `git worktree add`, so any symlink COMMITTED to
+ * that repo is materialized inside it verbatim.
+ */
+function containInWorktree(dir: string, abs: string): string {
+  const root = canonicalWorktree(dir);
+  const canonical = canonicalizePath(abs);
+  if (!isWithin(canonical, root)) {
+    throw new Error('path is outside the replay worktree');
+  }
+  return canonical;
+}
+
 class TimelineReplayService {
   private entries = new Map<string, ReplayEntry>();
 
@@ -217,7 +245,18 @@ class TimelineReplayService {
         skip('outside the repository');
         continue;
       }
-      const target = path.join(dir, rel);
+      // Same rule as resolveInside: resolve per component and write the RESULT.
+      // A committed symlink in the worktree made this join and the write below
+      // two different files, and the Write op then overwrote whatever it pointed
+      // at with caller-supplied bytes — reporting changedFiles: 0, because
+      // `git status` inside the worktree cannot see a write that landed outside.
+      let target: string;
+      try {
+        target = containInWorktree(dir, path.join(dir, rel));
+      } catch {
+        skip('outside the replay worktree');
+        continue;
+      }
 
       try {
         if (op.name === 'Write') {
@@ -283,10 +322,17 @@ class TimelineReplayService {
     if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
       throw new Error('path is outside the replay worktree');
     }
-    const abs = path.resolve(entry.dir, rel);
-    // Re-check after resolution: `a/../../b` normalizes to an escape that the
-    // string test above cannot see.
-    const back = path.relative(entry.dir, abs);
+    // Resolved PER COMPONENT, not merely normalized. The two lexical tests here
+    // (this one and the `back` one below) cannot see a symlink, and the worktree
+    // is cut with `git worktree add` from a real repository — git materializes a
+    // COMMITTED symlink inside it verbatim, so `vendor -> ~/.config/workspacer`
+    // made the checked path and the opened path two different files and
+    // replay.read handed a bus caller remote-token. capspec's reason for leaving
+    // replay.* unscoped is this function; it has to actually be true.
+    const abs = containInWorktree(entry.dir, path.resolve(entry.dir, rel));
+    // `rel` is recomputed from the CANONICAL path, so what goes back to the
+    // caller names the file that was actually opened (BINDING DECISION 2).
+    const back = path.relative(canonicalWorktree(entry.dir), abs);
     if (!back || back.startsWith('..') || path.isAbsolute(back)) {
       throw new Error('path is outside the replay worktree');
     }

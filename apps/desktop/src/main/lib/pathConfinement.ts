@@ -184,7 +184,17 @@ export function canonicalRoot(root: string): string | null {
 }
 
 /** Containment between two ALREADY-canonical paths. */
-function containsCanonical(canonicalRootPath: string, canonicalTarget: string): boolean {
+// Exported so the empty-root arm can be asserted DIRECTLY, the way the brain's
+// twin (containsPath) is. Reaching it through isWithin/pathWithinRoots is not
+// enough: canonicalRoot('') already fails, so those two answer false for their
+// own reason and the comparison below is never asked the question.
+export function containsCanonical(canonicalRootPath: string, canonicalTarget: string): boolean {
+  // An empty root grants NOTHING. Without this it is a WILDCARD: neither branch
+  // below sees a trailing separator, so it falls through to
+  // `startsWith('/')` — true for every absolute path. canonicalRoot discards a
+  // root it cannot resolve, but the last line of defence must not itself be the
+  // widest possible grant.
+  if (canonicalRootPath === '') return false;
   if (canonicalTarget === canonicalRootPath) return true;
   // A root that canonicalized to a volume prefix ('/', 'C:\', '\\srv\share\')
   // already ends in a separator and contains everything below it. Appending a
@@ -193,6 +203,35 @@ function containsCanonical(canonicalRootPath: string, canonicalTarget: string): 
   if (canonicalRootPath.endsWith(path.sep)) return canonicalTarget.startsWith(canonicalRootPath);
   // The separator is mandatory: without it, root '/srv/fo' contains '/srv/foo'.
   return canonicalTarget.startsWith(canonicalRootPath + path.sep);
+}
+
+/** Fold A-Z only. Deliberately not `toLowerCase()`: the three copies have to fold
+ *  IDENTICALLY, and JavaScript's Unicode lowering and Go's disagree (U+0130 'İ'
+ *  already bit the filename slugs). */
+function asciiLower(s: string): string {
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    out += c >= 65 && c <= 90 ? String.fromCharCode(c + 32) : s[i];
+  }
+  return out;
+}
+
+/**
+ * `containsCanonical` with ASCII case folded away. Used ONLY by the secret gate,
+ * and only in the direction where folding DENIES more: deciding a target is
+ * inside the config dir, never that it is inside a store carve-out.
+ *
+ * Containment for ROOTS stays byte-exact, because there folding would widen an
+ * allow-list. The secret gate is the mirror image: macOS (APFS, case-insensitive
+ * by default) and Windows (NTFS) both open `<configDir>/remote-token` when
+ * handed `<configHome>/WORKSPACER/remote-token`, and the per-component walk
+ * cannot see it — `lstatSync` succeeds on the caller's spelling and the walk
+ * appends the caller's spelling, so a byte-exact gate answers for the STRING
+ * rather than for the file. Folding is fail-closed on every platform.
+ */
+function containsCanonicalFolded(canonicalRootPath: string, canonicalTarget: string): boolean {
+  return containsCanonical(asciiLower(canonicalRootPath), asciiLower(canonicalTarget));
 }
 
 /** True when an already-canonicalized `canonicalTarget` sits at or inside `root`.
@@ -268,14 +307,25 @@ function canonicalBasename(canonicalTarget: string): string {
  * credential name inside a store carve-out is still refused.
  */
 export function isSecretPath(canonicalTarget: string): boolean {
-  if (SECRET_BASENAMES.has(canonicalBasename(canonicalTarget))) return true;
+  // Folded: '.BUS-TOKEN' opens .bus-token on macOS and Windows, and the walk
+  // hands this gate the caller's spelling. See containsCanonicalFolded.
+  if (SECRET_BASENAMES.has(asciiLower(canonicalBasename(canonicalTarget)))) return true;
   const cfg = canonicalRoot(getConfigDir());
   // An unverifiable config dir means we cannot prove the target is outside it.
   if (cfg === null) return true;
-  if (!containsCanonical(cfg, canonicalTarget)) return false;
+  if (!containsCanonicalFolded(cfg, canonicalTarget)) return false;
   for (const store of configStoreRoots()) {
     const sr = canonicalRoot(store);
-    if (sr !== null && containsCanonical(sr, canonicalTarget)) return false;
+    if (sr === null) continue;
+    // A carve-out only ever NARROWS the gate, so this arm stays byte-exact
+    // (folding would exempt <configDir>/LIBRARY) and the resolved carve-out must
+    // still be STRICTLY inside the resolved config dir. Without that, a symlink
+    // at <configDir>/library aimed at its own parent — and that is the one
+    // directory a remote caller can fs.write into — resolved the carve-out to
+    // the config dir itself, which contains everything in it: one symlink
+    // disarmed the whole gate and handed out remote-token.
+    if (sr === cfg || !containsCanonical(cfg, sr)) continue;
+    if (containsCanonical(sr, canonicalTarget)) return false;
   }
   return true;
 }

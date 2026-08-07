@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/capspec"
 )
@@ -568,6 +569,49 @@ func TestSecretGateConstantsMatchTheFixture(t *testing.T) {
 	}
 }
 
+// TestEveryCorpusCaseBelongsToAGroupSOMEBODYOwns closes the complement of the
+// `owned == 0` floors.
+//
+// Every loader guards against running ZERO cases for a group it owns. Nothing
+// guarded the other direction: that every case in the corpus belongs to a group
+// somebody owns. Both Go loaders filter with `if !groups[c.Group] { continue }`,
+// so a ONE-CHARACTER TYPO in a case's `group` ("containmnet") drops it silently
+// from the brain — the copy that actually answers fs.*/library.* under the
+// default catalog delegation — and from the bus, leaving only a t.Logf behind.
+// The TypeScript loader does not filter by group at all and keeps running it, so
+// the three copies quietly stop being held to the same corpus, which is the one
+// thing this fixture exists to prevent.
+func TestEveryCorpusCaseBelongsToAGroupSOMEBODYOwns(t *testing.T) {
+	fx := loadContractFixture(t)
+	owned := map[string]bool{}
+	for _, groups := range fx.Owners {
+		for _, g := range groups {
+			owned[g] = true
+		}
+	}
+	if len(owned) == 0 {
+		t.Fatal("the fixture's owners map lists no groups at all")
+	}
+	counts := map[string]int{}
+	for _, c := range fx.Cases {
+		if c.Group == "" {
+			t.Errorf("case %q has no group, so no loader will run it", c.Name)
+			continue
+		}
+		if !owned[c.Group] {
+			t.Errorf("case %q is in group %q, which appears in NO owner's list — every Go loader skips it silently and the copies stop being held to the same corpus",
+				c.Name, c.Group)
+		}
+		counts[c.Group]++
+	}
+	for g := range owned {
+		if counts[g] == 0 {
+			t.Errorf("group %q is owned by somebody but has no cases", g)
+		}
+	}
+	t.Logf("corpus groups: %v", counts)
+}
+
 func loadContractFixture(t *testing.T) contractFixture {
 	t.Helper()
 	raw, err := os.ReadFile(contractFixtureRel)
@@ -738,6 +782,30 @@ func underHome(target string) bool {
 	return target == home || strings.HasPrefix(target, home+string(filepath.Separator))
 }
 
+// withDeadline runs one guard call and fails the test rather than hanging on it.
+// A goroutine that spins on a symlink cycle cannot be cancelled, so it is left to
+// leak — the test binary is going down with a failure anyway.
+func withDeadline[T any](t *testing.T, fn func() (T, error)) (T, error) {
+	t.Helper()
+	type result struct {
+		val T
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		v, err := fn()
+		done <- result{v, err}
+	}()
+	select {
+	case r := <-done:
+		return r.val, r.err
+	case <-time.After(10 * time.Second):
+		var zero T
+		t.Fatalf("the guard did not return within 10s — a symlink cycle spun the walk (the hop counter is the only ELOOP bound this code has)")
+		return zero, nil
+	}
+}
+
 func substituted(sub func(string) string, in []string) []string {
 	out := make([]string, 0, len(in))
 	for _, s := range in {
@@ -776,7 +844,15 @@ func TestPathContainmentContractCases(t *testing.T) {
 			roots := substituted(sub, c.Roots)
 			target := sub(c.Target)
 
-			canonical, err := assertPathAllowed("contract", target, roots)
+			// WATCHDOG. The walk is hand-rolled and never reaches the platform's
+			// ELOOP, so the only thing between a symlink cycle and a spin is the
+			// hop counter — and the two cycle cases that DO exercise the
+			// relative-link arm would otherwise fail by hanging until the whole
+			// package's 10-minute timeout, which is a red build nobody can read.
+			// Bound it here so a counter regression is a fast, named failure.
+			canonical, err := withDeadline(t, func() (string, error) {
+				return assertPathAllowed("contract", target, roots)
+			})
 			allowed := err == nil
 			want := c.Expect == "allow"
 			if allowed != want {
@@ -938,6 +1014,7 @@ func TestEveryPathBearingBrainMethodIsConfined(t *testing.T) {
 // would mask a missing guard.
 func assertMethodRejectsCorpus(t *testing.T, fx contractFixture, groups map[string]bool, m contractMethod) {
 	t.Helper()
+	ran := 0
 	for _, c := range fx.Cases {
 		if !groups[c.Group] || c.Expect != "deny" {
 			continue
@@ -955,23 +1032,53 @@ func assertMethodRejectsCorpus(t *testing.T, fx contractFixture, groups map[stri
 			continue
 		}
 		t.Run(c.Name, func(t *testing.T) {
+			// RELOCATE $HOME before the sandbox is built, not after. A
+			// browse-rootSet method also allows the whole home tree, so a target
+			// under $HOME is refused by no root — and t.TempDir() lands under
+			// $HOME whenever TMPDIR does (TMPDIR=~/tmp is an ordinary setup, and
+			// the loader's own comment names it). The previous shape skipped
+			// those cases instead, which on such a machine disarmed the probe
+			// completely and SILENTLY: fs.listDir skipped 45 of its 45 deny
+			// cases, library.list 44 of 45, and the package still printed ok,
+			// because the only count assertion was over the method list and each
+			// method's hand-written floor subtest still passed. That is the
+			// self-disarming oracle this file's header says it was rewritten to
+			// eliminate, re-introduced by a skip instead of a sandbox — so do
+			// what the sibling sweep (TestPathBearingMethodRootSetsMatchTheCorpus)
+			// already does and give the case a home of its own, a SIBLING of the
+			// sandbox rather than an ancestor of it.
+			//
+			// The ${HOME} token still resolves to whatever is set here, so the
+			// cases that deliberately probe the home tree keep working — they
+			// just probe a home that contains no sandbox.
+			fakeHome, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HOME", fakeHome)
+			t.Setenv("USERPROFILE", fakeHome)
+
 			sandbox, sub := caseSandbox(t, c)
+			// The relocation only works if the sandbox is a SIBLING of the fake
+			// home rather than a child of it. If that ever stops holding, every
+			// browse case goes back to skipping and the sweep goes quiet, so
+			// assert it rather than discover it in a hunter's report.
+			if underHome(sandbox) {
+				t.Fatalf("the case sandbox %s is inside the relocated $HOME %s — the browse skip below would swallow every case", sandbox, fakeHome)
+			}
 			target := sub(c.Target)
 			if why := blankTargetIsAnsweredBeforeTheGuard(m, target); why != "" {
 				t.Skip(why)
 			}
-			// A browse-rootSet method also allows the whole home tree, so a
-			// TARGET under $HOME is refused by no root and the deny case would
-			// fail for a legitimate reason. Two ways that happens: a sandbox
-			// living under $HOME (TMPDIR=~/tmp), and the ${HOME}/${PROCESS_CWD}
-			// cases, whose whole point is to place the probe outside the
-			// sandbox. Keying the skip off the RESOLVED TARGET covers both, and
-			// covers only the cases that need it rather than exempting every
-			// case whenever TMPDIR happens to be homely.
+			// What remains after the relocation: the handful of cases that AIM at
+			// the home tree on purpose (${HOME}, and ${PROCESS_CWD} when the
+			// daemon runs from inside it). A browse-rootSet method legitimately
+			// browses those, so they cannot be deny cases for it. This skip now
+			// covers only them.
 			if m.RootSet == "browse" && underHome(target) {
 				t.Skipf("target %s is inside $HOME, which %s legitimately browses", target, m.Method)
 			}
-			_ = sandbox
+			ran++
 
 			roots := substituted(sub, c.Roots)
 			reg := registryWithCwds(t, roots...)
@@ -1023,6 +1130,11 @@ func assertMethodRejectsCorpus(t *testing.T, fx contractFixture, groups map[stri
 					m.Method, m.Field, target, err, c.Why)
 			}
 		})
+	}
+	// The per-method floor. TestEveryPathBearingBrainMethodIsConfined counts
+	// METHODS, not cases, so a method that contributed zero cases was invisible.
+	if ran == 0 {
+		t.Fatalf("%s ran ZERO corpus deny cases — this subtest asserted nothing", m.Method)
 	}
 
 	// The floor. Every assertion above is a denial, and a handler that refuses

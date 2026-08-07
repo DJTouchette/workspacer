@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	yaml "gopkg.in/yaml.v3"
 )
@@ -282,52 +284,106 @@ func TestSaveSavedSessionSkipsAnUnparseableFile(t *testing.T) {
 // Both listers skip a file they cannot parse, so a corrupt default.yaml simply
 // vanishes from the list and the next autosave writes over it. The copy aside is
 // the backstop.
+// backupsOf counts the .broken-* siblings of `path` by a LITERAL prefix scan.
+// Deliberately not filepath.Glob — the names below contain glob metacharacters
+// on purpose, and an oracle built out of the same primitive as the code under
+// test cannot see the bug in it.
+func backupsOf(t *testing.T, path string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		return nil
+	}
+	prefix := filepath.Base(path) + ".broken-"
+	var out []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), prefix) {
+			out = append(out, filepath.Join(filepath.Dir(path), e.Name()))
+		}
+	}
+	return out
+}
+
+// The once-guard, over names a CALLER can choose. <configDir>/sessions and
+// <configDir>/layouts are configStoreRoots, so `fs.write` of a file called
+// "loot[.yaml" is an ordinary permitted write — and the guard used to be
+// filepath.Glob(path + ".broken-*"), which INTERPRETS that name:
+//
+//	'[' → ErrBadPattern, no matches, so every list call mints another full copy
+//	      of the file. A UI that polls sessions.list fills the disk.
+//	'*' → the pattern matches some OTHER file's backup, so the corrupt file is
+//	      never backed up at all — the data loss the function exists to prevent.
+//
+// The sleeps matter too: the backup name has millisecond resolution, so three
+// back-to-back list calls used to collide on one filename and the guard looked
+// like it was working even when it had been deleted outright.
 func TestListingQuarantinesAnUnparseableFileOnce(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	if err := os.MkdirAll(sessionsDir(), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	bad := filepath.Join(sessionsDir(), "default.yaml")
-	if err := os.WriteFile(bad, []byte("{{{ not yaml"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	for _, name := range []string{"default.yaml", "loot[.yaml", "a*.yaml", "q?.yaml"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("XDG_CONFIG_HOME", dir)
+			if err := os.MkdirAll(sessionsDir(), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			// A decoy backup belonging to a DIFFERENT file, so a pattern with a
+			// '*' in it has something wrong to match.
+			if err := os.WriteFile(filepath.Join(sessionsDir(), "zzz.yaml.broken-2020-01-01T00-00-00.000"), []byte("decoy"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			bad := filepath.Join(sessionsDir(), name)
+			if err := os.WriteFile(bad, []byte("{{{ not yaml"), 0o644); err != nil {
+				t.Fatal(err)
+			}
 
-	if got := listSavedSessions(); len(got) != 0 {
-		t.Fatalf("expected the bad file to be skipped, got %v", got)
-	}
-	matches, _ := filepath.Glob(bad + ".broken-*")
-	if len(matches) != 1 {
-		t.Fatalf("expected exactly one quarantine copy, got %d", len(matches))
-	}
-	content, _ := os.ReadFile(matches[0])
-	if string(content) != "{{{ not yaml" {
-		t.Errorf("quarantine copy lost the original bytes: %q", content)
-	}
+			if got := listSavedSessions(); len(got) != 0 {
+				t.Fatalf("expected the bad file to be skipped, got %v", got)
+			}
+			matches := backupsOf(t, bad)
+			if len(matches) != 1 {
+				t.Fatalf("expected exactly one quarantine copy of %q, got %d %v", name, len(matches), matches)
+			}
+			content, _ := os.ReadFile(matches[0])
+			if string(content) != "{{{ not yaml" {
+				t.Errorf("quarantine copy lost the original bytes: %q", content)
+			}
 
-	// Listing again must not mint a second backup — this runs on every poll.
-	listSavedSessions()
-	listSavedSessions()
-	matches, _ = filepath.Glob(bad + ".broken-*")
-	if len(matches) != 1 {
-		t.Errorf("repeat listing minted %d backups, want 1", len(matches))
+			// Listing again must not mint a second backup — this runs on every
+			// poll. The sleep is what makes the assertion real: without it the
+			// millisecond-resolution names collide and a deleted guard passes.
+			for i := 0; i < 4; i++ {
+				time.Sleep(2 * time.Millisecond)
+				listSavedSessions()
+			}
+			if matches := backupsOf(t, bad); len(matches) != 1 {
+				t.Errorf("repeat listing minted %d backups of %q, want 1: %v", len(matches), name, matches)
+			}
+		})
 	}
 }
 
 func TestListLayoutsQuarantinesToo(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	if err := os.MkdirAll(layoutsDir(), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	bad := filepath.Join(layoutsDir(), "broken.yaml")
-	if err := os.WriteFile(bad, []byte("{{{ not yaml"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	for _, name := range []string{"broken.yaml", "b[roken.yaml"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("XDG_CONFIG_HOME", dir)
+			if err := os.MkdirAll(layoutsDir(), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			bad := filepath.Join(layoutsDir(), name)
+			if err := os.WriteFile(bad, []byte("{{{ not yaml"), 0o644); err != nil {
+				t.Fatal(err)
+			}
 
-	listLayouts()
-	if matches, _ := filepath.Glob(bad + ".broken-*"); len(matches) != 1 {
-		t.Errorf("layouts got no quarantine copy (%d)", len(matches))
+			listLayouts()
+			if matches := backupsOf(t, bad); len(matches) != 1 {
+				t.Errorf("layouts got %d quarantine copies of %q, want 1", len(matches), name)
+			}
+			time.Sleep(2 * time.Millisecond)
+			listLayouts()
+			if matches := backupsOf(t, bad); len(matches) != 1 {
+				t.Errorf("repeat listing minted %d backups of %q, want 1", len(matches), name)
+			}
+		})
 	}
 }
 
@@ -512,48 +568,187 @@ func TestStoreListersDoNotReadThroughASymlinkOutOfTheStore(t *testing.T) {
 		{"layouts.list", layoutsDir, func() { listLayouts() }},
 		{"sessions.list", sessionsDir, func() { listSavedSessions() }},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := t.TempDir()
-			t.Setenv("XDG_CONFIG_HOME", cfg)
-			if err := os.MkdirAll(tc.dir(), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			token := filepath.Join(configDir(), "remote-token")
-			if err := os.WriteFile(token, []byte(secret), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			link := filepath.Join(tc.dir(), "pwn.yaml")
-			if err := os.Symlink(token, link); err != nil {
-				t.Skipf("symlinks unavailable: %v", err)
-			}
-
-			tc.list()
-
-			// The control: fs.read of the symlink itself is refused, and the
-			// quarantine copy must not be a way around that.
-			reg := registryWithCwds(t)
-			if _, err := reg.handle(context.Background(), "fs.read",
-				json.RawMessage(`{"path":`+jsonStr(link)+`}`)); err == nil {
-				t.Fatal("fs.read of the planted symlink should be denied")
-			}
-
-			matches, _ := filepath.Glob(link + ".broken-*")
-			for _, m := range matches {
-				body, _ := os.ReadFile(m)
-				if strings.Contains(string(body), secret) {
-					t.Fatalf("%s minted %s holding the credential — fs.read of it is allowed "+
-						"(a plain file in a store carve-out), so this launders remote-token", tc.name, filepath.Base(m))
+		for _, victim := range []struct {
+			label string
+			// rel is where the victim file lives, relative to the config dir.
+			rel string
+		}{
+			// The credential itself, one directory up from the store.
+			{"the config dir's own remote-token", "remote-token"},
+			// A PREFIX COLLISION with the store's name. The secret gate denies
+			// <configDir>/sessions-backup one layer up (the corpus has that
+			// case), but storeEntryPath's containment is a separate comparison
+			// with no case of its own: `strings.HasPrefix(canonical, dir)` — no
+			// separator boundary — reads straight through this one.
+			{"a config-dir sibling whose name starts with the store's", "STORE-backup/loot.yaml"},
+		} {
+			t.Run(tc.name+"/"+victim.label, func(t *testing.T) {
+				cfg := t.TempDir()
+				t.Setenv("XDG_CONFIG_HOME", cfg)
+				if err := os.MkdirAll(tc.dir(), 0o755); err != nil {
+					t.Fatal(err)
 				}
-			}
-			if len(matches) != 0 {
-				t.Errorf("%s quarantined an entry that resolves outside the store (%v); it should be skipped", tc.name, matches)
-			}
-			// And the credential itself is untouched: a lister must not rewrite
-			// what it refuses to read.
-			if body, err := os.ReadFile(token); err != nil || string(body) != secret {
-				t.Fatalf("remote-token was disturbed: %q %v", body, err)
-			}
-		})
+				rel := strings.ReplaceAll(victim.rel, "STORE", filepath.Base(tc.dir()))
+				token := filepath.Join(configDir(), filepath.FromSlash(rel))
+				if err := os.MkdirAll(filepath.Dir(token), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(token, []byte(secret), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				link := filepath.Join(tc.dir(), "pwn.yaml")
+				if err := os.Symlink(token, link); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+
+				before := treeSnapshot(t, cfg)
+				tc.list()
+				after := treeSnapshot(t, cfg)
+
+				// The control: fs.read of the symlink itself is refused, and no
+				// derived artefact may be a way around that.
+				reg := registryWithCwds(t)
+				if _, err := reg.handle(context.Background(), "fs.read",
+					json.RawMessage(`{"path":`+jsonStr(link)+`}`)); err == nil {
+					t.Fatal("fs.read of the planted symlink should be denied")
+				}
+
+				// WHEREVER it landed. The earlier version of this test globbed
+				// `link + ".broken-*"` — beside the SYMLINK, which is where an
+				// uncanonicalized lister would put the copy. A lister that
+				// canonicalizes but does not CONTAIN lands it beside the file the
+				// link resolved to, in a directory that glob never looked at, so
+				// deleting storeEntryPath's isWithin left the whole suite green
+				// while sessions.list wrote a byte-for-byte copy of any
+				// unparseable file next to the victim. Diff the whole tree.
+				for path, body := range after {
+					if _, existed := before[path]; existed {
+						continue
+					}
+					t.Errorf("%s created %s (%d bytes) — a read-only capability must not write anything",
+						tc.name, path, len(body))
+					if strings.Contains(body, secret) {
+						t.Errorf("  …and it holds the credential verbatim: this launders %s into a readable file", rel)
+					}
+				}
+				// And the victim itself is untouched: a lister must not rewrite
+				// what it refuses to read.
+				if body, err := os.ReadFile(token); err != nil || string(body) != secret {
+					t.Fatalf("%s was disturbed: %q %v", rel, body, err)
+				}
+			})
+		}
+	}
+}
+
+// treeSnapshot maps every regular file under root to its contents. Symlinks are
+// recorded by their link body rather than followed, so a planted link does not
+// make the snapshot itself read the victim.
+func treeSnapshot(t *testing.T, root string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil //nolint:nilerr // an unreadable subtree is simply not in the snapshot
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			dest, _ := os.Readlink(path)
+			out[path] = "-> " + dest
+			return nil
+		}
+		body, _ := os.ReadFile(path)
+		out[path] = string(body)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("snapshot %s: %v", root, err)
+	}
+	return out
+}
+
+// The write and delete legs of the same containment. sessionFilePath is shared by
+// load/save/delete, but only the READ legs had cases: saveSavedSession could drop
+// back to a bare filepath.Join and deleteSavedSession to a lexical prefix compare
+// with the whole suite green. Both of those unlink or overwrite through a planted
+// symlink; the store dir is one a bus caller can fs.write into.
+func TestSessionWriteAndDeleteRefuseAnEntryThatResolvesOutOfTheStore(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	if err := os.MkdirAll(sessionsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A prefix collision, so a HasPrefix-without-separator containment reads it
+	// as "inside the sessions dir".
+	victimDir := filepath.Join(configDir(), "sessions-backup")
+	if err := os.MkdirAll(victimDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(victimDir, "loot.yaml")
+	if err := os.WriteFile(victim, []byte("name: precious\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(sessionsDir(), "precious.yaml")
+	if err := os.Symlink(victim, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if got := loadSavedSession("precious.yaml"); got != nil {
+		t.Errorf("sessions.load read through the symlink: %v", got)
+	}
+
+	// saveSavedSession picks its own filename via resolveSessionFilename, which
+	// re-reads the store; the name "precious" slugs onto the planted link. The
+	// WRITE leg has to reach the same verdict as the two read legs — its own
+	// comment says "the three paths can never disagree about what a legal session
+	// file is" — so it must refuse rather than quietly land somewhere.
+	if got, err := saveSavedSession("precious", map[string]any{"name": "precious"}); err == nil {
+		t.Errorf("sessions.save accepted an entry that resolves out of the store, writing %q", got)
+	}
+	// writeFileAtomic renames over its destination, so an unguarded write does
+	// not corrupt the victim — it REPLACES the planted link with a real file, and
+	// that is the observable difference. (The victim is checked too: a
+	// non-atomic writer, or an os.Remove first, would go straight through.)
+	if st, err := os.Lstat(link); err != nil || st.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("sessions.save wrote to the planted entry (it is no longer a symlink): %v %v", st, err)
+	}
+	if body, err := os.ReadFile(victim); err != nil || string(body) != "name: precious\n" {
+		t.Errorf("sessions.save wrote through the symlink: %q %v", body, err)
+	}
+
+	deleteSavedSession("precious.yaml")
+	if _, err := os.Stat(victim); err != nil {
+		t.Errorf("sessions.delete unlinked the file outside the store: %v", err)
+	}
+}
+
+// The layout store's resolver is the FIFTH copy of this predicate and the only
+// one that never canonicalized: layoutFilePath compared filepath.Dir(full) to
+// Clean(layoutsDir()), which is a purely lexical answer and cannot see a symlink
+// entry — so the read path (storeEntryPath) and the write/delete path disagreed
+// about what a legal entry is, inside one store.
+func TestLayoutWriteAndDeleteRefuseAnEntryThatResolvesOutOfTheStore(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	if err := os.MkdirAll(layoutsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(configDir(), "config.yaml")
+	if err := os.WriteFile(victim, []byte("ui: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(layoutsDir(), "pwn.yaml")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := saveLayout(map[string]any{"id": "pwn", "agents": []any{}}); err == nil {
+		t.Error("layouts.save through an entry that resolves out of the store should be refused")
+	}
+	if body, _ := os.ReadFile(victim); string(body) != "ui: {}\n" {
+		t.Errorf("layouts.save clobbered %s through the symlink: %q", victim, body)
+	}
+	removeLayout("pwn")
+	if _, err := os.Stat(victim); err != nil {
+		t.Errorf("layouts.delete unlinked the file outside the store: %v", err)
 	}
 }
 

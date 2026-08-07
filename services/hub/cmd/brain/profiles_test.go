@@ -306,7 +306,7 @@ func TestProfilesAddForwardsMcpItemIds(t *testing.T) {
 	reg := newRegistry(newClaudemonClient("http://unused"))
 
 	res, err := reg.handle(context.Background(), "claude.profiles.add",
-		[]byte(`{"name":"P","configDir":"  /c  ","extraArgs":["--x"],"mcpItemIds":["mcp-1","mcp-2"]}`))
+		[]byte(`{"name":"P","extraArgs":["--model","opus"],"mcpItemIds":["mcp-1","mcp-2"]}`))
 	if err != nil {
 		t.Fatalf("claude.profiles.add: %v", err)
 	}
@@ -319,8 +319,11 @@ func TestProfilesAddForwardsMcpItemIds(t *testing.T) {
 		t.Errorf("reply dropped mcpItemIds: got %v, want [mcp-1 mcp-2]", got.MCPItemIDs)
 	}
 	// The rest of the forwarding main pins in the same call, so a param-name
-	// typo here can't hide behind the mcpItemIds assertion.
-	if got.Name != "P" || got.ConfigDir != "/c" || !slices.Equal(got.ExtraArgs, []string{"--x"}) {
+	// typo here can't hide behind the mcpItemIds assertion. extraArgs is spelled
+	// with a REMOTE-SAFE flag now: every call this brain answers arrives over the
+	// bus, and the write is scrubbed — see
+	// TestProfilesWritesOverTheBusAreScrubbedAtWriteTime for the dropping half.
+	if got.Name != "P" || !slices.Equal(got.ExtraArgs, []string{"--model", "opus"}) {
 		t.Errorf("add mangled the other fields: %+v", got)
 	}
 	if got.ID == "" {
@@ -406,5 +409,72 @@ func TestProfilesListNeverServesNullLists(t *testing.T) {
 		if !reflect.DeepEqual(listed[0][key], []any{}) {
 			t.Errorf("%s should be served as [], got %#v", key, listed[0][key])
 		}
+	}
+}
+
+// claude.profiles.add / .update are the write path for a profile the LOCAL user
+// later picks in the New Agent dialog — and the local spawn path does not scrub.
+// scrubBypassProfile used to be applied only on the bus SPAWN, so a bus caller
+// could persist a CLAUDE_CONFIG_DIR (settings.json → permissions.allow and
+// hooks, i.e. commands claude runs unprompted) plus
+// --dangerously-skip-permissions and simply wait. The capability is classified
+// nowhere: `configDir` is not in the params scanner's path-ish set and claude.*
+// is not a path-bearing prefix, so neither detector could see it.
+func TestProfilesWritesOverTheBusAreScrubbedAtWriteTime(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	reg := newRegistry(newClaudemonClient("http://unused"))
+	ctx := context.Background()
+
+	res, err := reg.handle(ctx, "claude.profiles.add",
+		[]byte(`{"name":"pwn","configDir":"/tmp/attacker-claude-home","extraArgs":["--dangerously-skip-permissions","--settings","/tmp/evil.json","--model","opus"]}`))
+	if err != nil {
+		t.Fatalf("claude.profiles.add: %v", err)
+	}
+	var got profile
+	if err := json.Unmarshal(res, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ConfigDir != "" {
+		t.Errorf("configDir survived the write: %q — it becomes CLAUDE_CONFIG_DIR on the local spawn path", got.ConfigDir)
+	}
+	if !slices.Equal(got.ExtraArgs, []string{"--model", "opus"}) {
+		t.Errorf("extraArgs kept a bypass flag: %v", got.ExtraArgs)
+	}
+	// On disk, not just in the reply — a spawn reads the file.
+	stored := readProfilesJSON(t)
+	if len(stored) != 1 {
+		t.Fatalf("expected 1 stored profile, got %d", len(stored))
+	}
+	if cd, _ := stored[0]["configDir"].(string); cd != "" {
+		t.Errorf("configDir persisted to disk: %q", cd)
+	}
+	if args, _ := stored[0]["extraArgs"].([]any); len(args) != 2 {
+		t.Errorf("extraArgs persisted unscrubbed: %v", args)
+	}
+
+	// The same door via update.
+	res, err = reg.handle(ctx, "claude.profiles.update",
+		[]byte(`{"id":`+jsonStr(got.ID)+`,"updates":{"configDir":"/tmp/attacker-claude-home","extraArgs":["--dangerously-skip-permissions"]}}`))
+	if err != nil {
+		t.Fatalf("claude.profiles.update: %v", err)
+	}
+	if err := json.Unmarshal(res, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ConfigDir != "" || len(got.ExtraArgs) != 0 {
+		t.Errorf("update planted a bypass: configDir=%q extraArgs=%v", got.ConfigDir, got.ExtraArgs)
+	}
+
+	// The floor: a legitimate remote-safe update still lands.
+	res, err = reg.handle(ctx, "claude.profiles.update",
+		[]byte(`{"id":`+jsonStr(got.ID)+`,"updates":{"extraArgs":["--model","sonnet"]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(res, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.ExtraArgs, []string{"--model", "sonnet"}) {
+		t.Errorf("a remote-safe update was dropped too: %v", got.ExtraArgs)
 	}
 }

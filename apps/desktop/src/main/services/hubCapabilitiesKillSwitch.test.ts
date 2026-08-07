@@ -64,6 +64,7 @@ const clientMock = {
   setModel: vi.fn(async () => ({ ok: true })),
   handoffBrief: vi.fn(async () => ({ path: '/brief.md' })),
   listProviderModels: vi.fn(async () => ['m1', 'm2']),
+  spawn: vi.fn(async () => 'terminal-session-id'),
 };
 vi.mock('./claudemonSessionClient', () => ({ claudemonSessionClient: clientMock }));
 
@@ -150,6 +151,7 @@ vi.mock('./fileService', () => ({
   listDir: vi.fn(() => ({ path: '', entries: [] })),
 }));
 vi.mock('./fileWatchService', () => ({ startWatch: vi.fn(), stopWatch: vi.fn() }));
+vi.mock('./imagePreview', () => ({ readImagePreview: vi.fn(() => ({ dataUrl: '', bytes: 0 })) }));
 vi.mock('./searchService', () => ({
   searchProject: vi.fn(() => ({ results: [], truncated: false })),
 }));
@@ -173,6 +175,9 @@ vi.mock('./supervisorSkill', () => ({ ensureSupervisorHome: vi.fn(() => '/home/s
 
 const { registerHubCapabilities } = await import('./hubCapabilities');
 const { readTextFile, writeTextFile, listDir } = await import('./fileService');
+const { shellConfig } = await import('../lib/shellAllowlist');
+const { startWatch, stopWatch } = await import('./fileWatchService');
+const { readImagePreview } = await import('./imagePreview');
 const { searchProject } = await import('./searchService');
 
 /** Invoke a registered capability by method name. */
@@ -282,6 +287,30 @@ describe('fs.* path confinement', () => {
       expect(searchProject).toHaveBeenCalledWith(
         expect.objectContaining({ cwd: agentCwd, query: 'needle' }),
       );
+    });
+
+    // The three capabilities the DESKTOP is the only provider of. The corpus's
+    // checkUse block names them among pathConfinement.ts's ten call sites, and
+    // this describe covered five — so for exactly the three with no Go twin to
+    // fall back on, nothing asserted which string reached the service. That is
+    // not cosmetic: startWatch/stopWatch still run `path.resolve(filePath)` on
+    // whatever they are handed — a second, whole-path opinion of the same kind
+    // that shipped as the brain's trailing-space escape — so re-passing the raw
+    // param re-creates a check-path/opened-path split rather than merely an
+    // untested one.
+    it('fs.readImage', () => {
+      call('fs.readImage', { path: via('shot.png') });
+      expect(readImagePreview).toHaveBeenCalledWith(path.join(agentCwd, 'shot.png'));
+    });
+
+    it('fs.watch', () => {
+      call('fs.watch', { path: via('watched.txt') });
+      expect(vi.mocked(startWatch).mock.calls[0]![0]).toBe(path.join(agentCwd, 'watched.txt'));
+    });
+
+    it('fs.unwatch', () => {
+      call('fs.unwatch', { path: via('watched.txt') });
+      expect(vi.mocked(stopWatch).mock.calls[0]![0]).toBe(path.join(agentCwd, 'watched.txt'));
     });
   });
 });
@@ -647,4 +676,54 @@ describe('fixture-driven guard coverage — kill-switch-only path capabilities',
       expect(guard(inStore)).toBe(inStore);
     });
   }
+});
+
+/**
+ * terminals.create's `shell` is argv[0] of a process spawned on the host, taken
+ * verbatim from a bus caller. capspec leaves the capability unscoped and its
+ * recorded reason named ONE param (`cwd`); nothing checked the other one in
+ * either provider. Pair it with an fs.write over an existing executable inside
+ * the caller's own agent cwd — writeFileSync preserves the 0755 — and
+ * terminals.create alone was arbitrary host code execution.
+ *
+ * TWIN: TestTerminalsCreateRefusesAShellThatIsNotOne in the Go brain.
+ */
+describe('terminals.create — shell is an allowlist, not a passthrough', () => {
+  const realEtcShells = shellConfig.etcShellsPath;
+  const realShell = process.env.SHELL;
+  let sandbox: string;
+
+  beforeEach(() => {
+    sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-term-')));
+    shellConfig.etcShellsPath = path.join(sandbox, 'shells');
+    fs.writeFileSync(shellConfig.etcShellsPath, '/bin/bash\n');
+    process.env.SHELL = '/bin/zsh';
+    clientMock.spawn.mockClear();
+  });
+  afterEach(() => {
+    shellConfig.etcShellsPath = realEtcShells;
+    if (realShell === undefined) delete process.env.SHELL;
+    else process.env.SHELL = realShell;
+    fs.rmSync(sandbox, { recursive: true, force: true });
+  });
+
+  it('refuses an arbitrary executable, before any spawn is attempted', async () => {
+    const planted = path.join(sandbox, 'node_modules', '.bin', 'tsc');
+    fs.mkdirSync(path.dirname(planted), { recursive: true });
+    fs.writeFileSync(planted, '#!/bin/sh\nid > /tmp/pwned\n', { mode: 0o755 });
+
+    await expect(
+      call('terminals.create', { shell: planted, cwd: sandbox }) as Promise<unknown>,
+    ).rejects.toThrow(/login shells/);
+    expect(clientMock.spawn).not.toHaveBeenCalled();
+  });
+
+  it('still spawns a real login shell, and defaults when none is named', async () => {
+    await call('terminals.create', { shell: '/bin/zsh', cwd: sandbox });
+    expect(clientMock.spawn).toHaveBeenCalledWith(expect.objectContaining({ argv: ['/bin/zsh'] }));
+
+    clientMock.spawn.mockClear();
+    await call('terminals.create', { cwd: sandbox });
+    expect(clientMock.spawn).toHaveBeenCalledWith(expect.objectContaining({ argv: ['/bin/zsh'] }));
+  });
 });

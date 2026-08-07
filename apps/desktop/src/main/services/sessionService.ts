@@ -5,6 +5,7 @@ import { claudemonSessionClient } from './claudemonSessionClient';
 import { getConfigDir } from './configService';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { slugSession } from '../lib/fileUtils';
+import { asString, byteCompare, trimSuffix } from '../lib/providerParity';
 import { canonicalizePath, isWithin, resolveStoreEntry } from '../lib/pathConfinement';
 import { SESSION_SCHEMA_VERSION } from '../shared/sessionSchema';
 
@@ -154,9 +155,12 @@ class SessionService {
                 session.panes?.length ??
                 0);
           entries.push({
-            name: session.name || file.replace('.yaml', ''),
+            // Coerced, and TrimSuffix rather than replace(): `str()` and
+            // `strings.TrimSuffix` are what the Go twin uses, and `replace`
+            // removes the FIRST occurrence anywhere in the name.
+            name: asString(session.name) || trimSuffix(file, '.yaml'),
             filename: file,
-            timestamp: session.timestamp || '',
+            timestamp: asString(session.timestamp),
             paneCount,
             agentCount: agents.filter((a) => !a.global).length,
           });
@@ -165,8 +169,14 @@ class SessionService {
         }
       }
 
-      // Sort by timestamp descending (most recent first)
-      entries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      // Sort by timestamp descending (most recent first), byte-wise over an
+      // already-coerced string — matching `out[i].Timestamp > out[j].Timestamp`
+      // in cmd/brain/stores.go. localeCompare is a method, so a non-string YAML
+      // scalar threw inside the comparator and the catch below returned an EMPTY
+      // LIST, taking every well-formed session with it while the brain listed
+      // them all. <configDir>/sessions is a configStoreRoot, so writing that file
+      // is an ordinary permitted fs.write.
+      entries.sort((a, b) => byteCompare(b.timestamp, a.timestamp));
       return entries;
     } catch {
       return [];
@@ -187,15 +197,23 @@ class SessionService {
 
   saveSession(data: SessionData): string {
     this.ensureDir();
-    const dir = getSessionsDir();
     const base = sanitizeFilename(data.name);
     // Two distinct session names can slug to the same file (e.g. 'Feature: Auth'
     // and 'Feature Auth' both -> feature-auth.yaml). Writing blindly would let the
     // second session clobber the first (silent data loss). Reuse the file only
     // when it already holds THIS session (same name) — which keeps autosaves
     // stable — otherwise pick the next free numeric suffix.
+    // Through the SAME resolver as load and delete. This leg used to be a bare
+    // path.join, which is the third of three paths that must agree about what a
+    // legal session file is — capspec's own record says so ("re-checked by the
+    // same resolver") and the Go twin honours it literally (stores.go
+    // saveSavedSession → sessionFilePath). Two consequences of the join:
+    // the collision loop's readFileSync followed a symlinked entry OUT of the
+    // store, and the returned filename then depended on that file's `name` field
+    // (my-session.yaml vs my-session-2.yaml) — a bus-visible content oracle on a
+    // file sessions.load refuses outright; and the write then replaced the entry.
     let filename = base + '.yaml';
-    let filePath = path.join(dir, filename);
+    let filePath = resolveWithinSessionsDir(filename);
     for (let i = 2; fs.existsSync(filePath); i++) {
       let existingName: string | undefined;
       try {
@@ -205,7 +223,7 @@ class SessionService {
       }
       if (existingName === data.name) break;
       filename = `${base}-${i}.yaml`;
-      filePath = path.join(dir, filename);
+      filePath = resolveWithinSessionsDir(filename);
     }
     // Stamp the format version so a future build can tell "I don't understand
     // this" from "this is empty" — see contracts/session-schema.json.

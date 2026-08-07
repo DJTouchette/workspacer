@@ -10,9 +10,34 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/capspec"
 )
+
+// withDeadline runs one guard call and fails the test rather than hanging on it.
+// A goroutine spinning on a symlink cycle cannot be cancelled, so it is left to
+// leak — the test binary is going down with a failure anyway.
+func withDeadline[T any](t *testing.T, fn func() (T, error)) (T, error) {
+	t.Helper()
+	type result struct {
+		val T
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		v, err := fn()
+		done <- result{v, err}
+	}()
+	select {
+	case r := <-done:
+		return r.val, r.err
+	case <-time.After(10 * time.Second):
+		var zero T
+		t.Fatalf("the walk did not return within 10s — a symlink cycle spun it (the hop counter is the only ELOOP bound this code has)")
+		return zero, nil
+	}
+}
 
 // mustCanon canonicalizes a root the way grant registration does, so tests
 // compare canonical-to-canonical exactly like the live path.
@@ -321,6 +346,44 @@ func realpathOf(p string) string {
 	return p
 }
 
+// TestEveryCorpusCaseBelongsToAGroupSOMEBODYOwns closes the complement of the
+// `seen[g] == 0` floor below: every loader guards against running ZERO cases for
+// a group it owns, and nothing guarded that every case belongs to a group
+// somebody owns. Both Go loaders filter with `if !groups[c.Group] { continue }`,
+// so a one-character typo in a case's `group` drops it from this copy and from
+// the brain — the one that actually answers fs.*/library.* — with every suite
+// green, while the TypeScript loader keeps running it. Twin of the brain's test
+// of the same name.
+func TestEveryCorpusCaseBelongsToAGroupSOMEBODYOwns(t *testing.T) {
+	fx := loadContainmentFixture(t)
+	owned := map[string]bool{}
+	for _, groups := range fx.Owners {
+		for _, g := range groups {
+			owned[g] = true
+		}
+	}
+	if len(owned) == 0 {
+		t.Fatal("the fixture's owners map lists no groups at all")
+	}
+	counts := map[string]int{}
+	for _, c := range fx.Cases {
+		if c.Group == "" {
+			t.Errorf("case %q has no group, so no loader will run it", c.Name)
+			continue
+		}
+		if !owned[c.Group] {
+			t.Errorf("case %q is in group %q, which appears in NO owner's list — every Go loader skips it silently", c.Name, c.Group)
+		}
+		counts[c.Group]++
+	}
+	for g := range owned {
+		if counts[g] == 0 {
+			t.Errorf("group %q is owned by somebody but has no cases", g)
+		}
+	}
+	t.Logf("corpus groups: %v", counts)
+}
+
 func loadContainmentFixture(t *testing.T) containmentFixture {
 	t.Helper()
 	path := filepath.Join("..", "..", "..", "..", "contracts", "path-containment-cases.json")
@@ -510,7 +573,11 @@ func TestPathContainmentContractCases(t *testing.T) {
 			// ANY non-nil error (unresolvable path, or the secret sentinel), so
 			// `ok` is the whole of the shared contract. The error is inspected
 			// below purely for the bus-local question the fixture cannot ask.
-			ok, err := pathWithinRoots(roots, target)
+			// WATCHDOG: the walk is hand-rolled and never reaches the platform's
+			// ELOOP, so a hop-counter regression hangs rather than fails. The two
+			// relative-cycle cases would otherwise take down the whole package on
+			// the 10-minute test timeout instead of naming themselves.
+			ok, err := withDeadline(t, func() (bool, error) { return pathWithinRoots(roots, target) })
 			want := c.Expect == "allow"
 			if ok != want {
 				t.Errorf("pathWithinRoots(%v, %q) = %v, want %v\ncase: %s\nwhy: %s",

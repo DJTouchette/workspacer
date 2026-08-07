@@ -259,3 +259,224 @@ describe('libraryService — save confines the path it actually opens', () => {
     expect(fs.readFileSync(item.path, 'utf-8')).toContain('hello');
   });
 });
+
+/**
+ * The guard legs the file above never reached.
+ *
+ * libraryService's per-file guard is THREADED through list/save/remove, and only
+ * `save` had a test that made the guard refuse — so `readDir`, `claudeItem` and
+ * `remove` could all drop it and the whole main suite stayed green.
+ * hubCapabilitiesKillSwitch.test.ts mocks './libraryService' and asserts only the
+ * guard FUNCTION it hands over, so the service never applies it there either.
+ *
+ * Everything below drives the REAL service with the REAL production guard.
+ */
+describe('libraryService — every leg applies the guard it was handed', () => {
+  const prodGuard =
+    (cap: string, ...roots: string[]) =>
+    (p: string): string | null => {
+      try {
+        return assertPathAllowed(cap, p, roots);
+      } catch {
+        return null;
+      }
+    };
+
+  // The two directories a library item may live in, which is what the bus
+  // handler passes (libraryItemRoots in the Go twin).
+  const itemGuard = (cap: string, root: string) =>
+    prodGuard(cap, path.join(fs.realpathSync(h.configDir), 'library'), root);
+
+  const legs = [
+    {
+      name: 'global store',
+      plant: () => path.join(fs.realpathSync(h.configDir), 'library', 'pwn.md'),
+      real: () => path.join(fs.realpathSync(h.configDir), 'library', 'ok.md'),
+      title: 'GlobalFloor',
+    },
+    {
+      name: 'project store',
+      plant: (root: string) => path.join(root, '.workspacer', 'library', 'pwn.md'),
+      real: (root: string) => path.join(root, '.workspacer', 'library', 'ok.md'),
+      title: 'ProjectFloor',
+    },
+    {
+      name: 'claude skills',
+      plant: (root: string) => path.join(root, '.claude', 'skills', 'pwn', 'SKILL.md'),
+      real: (root: string) => path.join(root, '.claude', 'skills', 'okskill', 'SKILL.md'),
+      title: 'okskill',
+    },
+    {
+      name: 'claude agents',
+      plant: (root: string) => path.join(root, '.claude', 'agents', 'pwn.md'),
+      real: (root: string) => path.join(root, '.claude', 'agents', 'okagent.md'),
+      title: 'okagent',
+    },
+    {
+      name: 'claude commands',
+      plant: (root: string) => path.join(root, '.claude', 'commands', 'pwn.md'),
+      real: (root: string) => path.join(root, '.claude', 'commands', 'okcmd.md'),
+      title: 'okcmd',
+    },
+  ];
+
+  for (const leg of legs) {
+    it(`list() does not read through a symlink planted in the ${leg.name}`, () => {
+      const root = fs.realpathSync(cwd);
+      const cfg = fs.realpathSync(h.configDir);
+      const token = path.join(cfg, 'remote-token');
+      fs.writeFileSync(token, 'SUPERSECRET-REMOTE-TOKEN');
+
+      const plant = leg.plant(root);
+      fs.mkdirSync(path.dirname(plant), { recursive: true });
+      fs.symlinkSync(token, plant);
+
+      const real = leg.real(root);
+      fs.mkdirSync(path.dirname(real), { recursive: true });
+      fs.writeFileSync(real, `---\ntitle: ${leg.title}\nname: ${leg.title}\n---\n\nbody\n`);
+
+      const items = libraryService.list(root, itemGuard('library.list', root));
+      expect(JSON.stringify(items)).not.toContain('SUPERSECRET-REMOTE-TOKEN');
+      // The floor for the same leg: a guard that refuses everything must not
+      // satisfy the assertion above.
+      expect(items.map((i) => i.title)).toContain(leg.title);
+    });
+  }
+
+  it('remove() unlinks only what the guard returned', () => {
+    const root = fs.realpathSync(cwd);
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-victim-'));
+    fs.mkdirSync(path.join(outside, 'precious'), { recursive: true });
+    fs.writeFileSync(path.join(outside, 'precious', 'keep.txt'), 'precious');
+    fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+    // An ordinary permitted fs.write inside the allowed project.
+    fs.symlinkSync(outside, path.join(root, '.claude', 'skills'));
+
+    libraryService.remove('claude', 'precious', root, 'skill', itemGuard('library.remove', root));
+    expect(fs.existsSync(path.join(outside, 'precious', 'keep.txt'))).toBe(true);
+
+    // The floor: a real skill inside the project is still removable.
+    const clean = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-clean-')));
+    const skill = path.join(clean, '.claude', 'skills', 'keeper');
+    fs.mkdirSync(skill, { recursive: true });
+    fs.writeFileSync(path.join(skill, 'SKILL.md'), 'x');
+    libraryService.remove('claude', 'keeper', clean, 'skill', itemGuard('library.remove', clean));
+    expect(fs.existsSync(skill)).toBe(false);
+    fs.rmSync(outside, { recursive: true, force: true });
+    fs.rmSync(clean, { recursive: true, force: true });
+  });
+
+  // list() is READ-ONLY by contract, which is why it is given the BROWSE roots
+  // (the whole home tree). ensureProjectWatch's default branch ran
+  // fs.mkdirSync(<cwd>/.workspacer/library) after the cwd check and without
+  // resolving it — a derived write from the one capability with the widest root
+  // set, following a symlinked `.workspacer` out of every allowed root.
+  it('list() creates nothing, even for a project that has no library dir', () => {
+    const root = fs.realpathSync(cwd);
+    libraryService.list(root, itemGuard('library.list', root));
+    expect(fs.existsSync(path.join(root, '.workspacer'))).toBe(false);
+
+    // …and does not follow a symlinked `.workspacer` component either.
+    const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-out-')));
+    fs.symlinkSync(outside, path.join(root, '.workspacer'));
+    libraryService.list(root, itemGuard('library.list', root));
+    expect(fs.existsSync(path.join(outside, 'library'))).toBe(false);
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+});
+
+/**
+ * The two id gates on the non-claude scopes, which had no injection test at all:
+ * `slug(id)` is the ONLY thing confining a project/global write or delete to
+ * .workspacer/library/, and the path guard cannot help — `<cwd>/.workspacer/
+ * library/../../CLAUDE.md` canonicalizes to `<cwd>/CLAUDE.md`, which is INSIDE
+ * the allowed agent cwd. Writing a project's CLAUDE.md is prompt injection into
+ * every agent that opens the repo; deleting it is destructive.
+ *
+ * And the `.`/`..` half of assertPlainBasename, which the existing block cannot
+ * see because every id it tries also contains a separator.
+ */
+describe('libraryService — a caller-supplied id cannot escape its directory', () => {
+  const anyGuard = (p: string): string => p;
+
+  it('project/global save slugs the id rather than concatenating it', () => {
+    const root = fs.realpathSync(cwd);
+    fs.writeFileSync(path.join(root, 'CLAUDE.md'), 'ORIGINAL PROJECT INSTRUCTIONS\n');
+    const item = libraryService.save(
+      {
+        scope: 'project',
+        id: '../../CLAUDE',
+        title: 'x',
+        kind: 'prompt',
+        body: 'OWNED',
+        cwd: root,
+      },
+      anyGuard,
+    );
+    expect(item.path.startsWith(path.join(root, '.workspacer', 'library'))).toBe(true);
+    expect(fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf-8')).toBe(
+      'ORIGINAL PROJECT INSTRUCTIONS\n',
+    );
+  });
+
+  it('project/global remove slugs the id rather than concatenating it', () => {
+    const root = fs.realpathSync(cwd);
+    fs.writeFileSync(path.join(root, 'CLAUDE.md'), 'ORIGINAL PROJECT INSTRUCTIONS\n');
+    libraryService.remove('project', '../../CLAUDE', root, undefined, anyGuard);
+    expect(fs.existsSync(path.join(root, 'CLAUDE.md'))).toBe(true);
+  });
+
+  it("a claude id of '..' does not rm -rf <cwd>/.claude", () => {
+    const root = fs.realpathSync(cwd);
+    const settings = path.join(root, '.claude', 'settings.json');
+    fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+    fs.writeFileSync(settings, '{"hooks":{}}');
+    // `<cwd>/.claude/skills/..` = `<cwd>/.claude`, which is INSIDE the allowed
+    // cwd — so assertPathAllowed allows it and this string check is the only
+    // thing between a bus caller and a recursive force rmSync of settings.json,
+    // hooks, agents and commands.
+    expect(() => libraryService.remove('claude', '..', root, 'skill', anyGuard)).toThrow(
+      /invalid library item id/,
+    );
+    expect(fs.existsSync(settings)).toBe(true);
+    expect(() => libraryService.remove('claude', '.', root, 'skill', anyGuard)).toThrow(
+      /invalid library item id/,
+    );
+    expect(fs.existsSync(settings)).toBe(true);
+    expect(() =>
+      libraryService.save(
+        { scope: 'claude', id: '..', title: 'x', kind: 'skill', body: 'y', cwd: root },
+        anyGuard,
+      ),
+    ).toThrow(/invalid library item id/);
+  });
+});
+
+// The ORDER a list comes back in is part of the same bus answer. Go sorts
+// `out[i].Title < out[j].Title` (raw bytes) and this side used localeCompare, so
+// library.list came back in a stably different order depending on which provider
+// ran — and the order is what the picker shows and what "first" means in it.
+// Fixture: contracts/provider-parity-cases.json. Twin:
+// TestListersUseTheFixtureOrdering in the Go brain.
+describe('libraryService — list ordering matches the Go provider', () => {
+  it('sorts titles byte-wise, not by locale', () => {
+    const fixture = JSON.parse(
+      fs.readFileSync(
+        path.resolve(__dirname, '../../../../../contracts/provider-parity-cases.json'),
+        'utf-8',
+      ),
+    ) as { order: { input: string[]; expected: string[] }[] };
+    const c = fixture.order[0];
+
+    const dir = path.join(fs.realpathSync(h.configDir), 'library');
+    fs.mkdirSync(dir, { recursive: true });
+    c.input.forEach((title, i) => {
+      fs.writeFileSync(
+        path.join(dir, `${String.fromCharCode(97 + i)}.md`),
+        `---\ntitle: ${title}\n---\n\nx\n`,
+      );
+    });
+
+    expect(libraryService.list().map((i) => i.title)).toEqual(c.expected);
+  });
+});

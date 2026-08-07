@@ -20,8 +20,9 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { handlers, addProfile } = vi.hoisted(() => ({
+const { handlers, addProfile, updateProfile } = vi.hoisted(() => ({
   handlers: new Map<string, (params: unknown) => unknown>(),
+  updateProfile: vi.fn((id: string, updates: unknown) => ({ id, ...(updates as object) })),
   addProfile: vi.fn(
     (name: string, configDir: string, extraArgs: string[], mcpItemIds: string[] = []) => ({
       id: 'p1',
@@ -40,7 +41,17 @@ vi.mock('../../src/main/services/hubClient', () => ({
     handlers.set(name, handler);
   },
 }));
-vi.mock('../../src/main/services/claudeProfiles', () => ({ claudeProfiles: { addProfile } }));
+// The REAL scrubBypassProfile, not a stub: the bus handler now scrubs at WRITE
+// time (a bus caller must not be able to persist a CLAUDE_CONFIG_DIR or a
+// permission bypass for the local user to pick up later), and stubbing it would
+// make the assertions below assert nothing about that.
+vi.mock('../../src/main/services/claudeProfiles', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/services/claudeProfiles')>();
+  return {
+    claudeProfiles: { addProfile, updateProfile },
+    scrubBypassProfile: actual.scrubBypassProfile,
+  };
+});
 
 // Catalog capabilities (incl. claude.profiles.add) are registered by main only
 // when catalog isn't delegated to the brain. Force the non-delegated path so
@@ -86,12 +97,57 @@ describe('claude.profiles.add capability', () => {
   it('forwards mcpItemIds to addProfile', () => {
     const handler = handlers.get('claude.profiles.add')!;
     expect(handler).toBeTypeOf('function');
-    handler({ name: 'P', configDir: '/c', extraArgs: ['--x'], mcpItemIds: ['mcp-1', 'mcp-2'] });
-    expect(addProfile).toHaveBeenCalledWith('P', '/c', ['--x'], ['mcp-1', 'mcp-2']);
+    // extraArgs spelled with a REMOTE-SAFE flag: this is a bus entry point and
+    // the write is scrubbed (see the next test for the dropping half).
+    handler({ name: 'P', extraArgs: ['--model', 'opus'], mcpItemIds: ['mcp-1', 'mcp-2'] });
+    expect(addProfile).toHaveBeenCalledWith('P', '', ['--model', 'opus'], ['mcp-1', 'mcp-2']);
   });
 
   it('defaults mcpItemIds to [] when absent', () => {
     handlers.get('claude.profiles.add')!({ name: 'P' });
     expect(addProfile).toHaveBeenCalledWith('P', '', [], []);
+  });
+
+  // Everything registered with cat() is a BUS entry point; the local Settings
+  // write is a separate in-process IPC path (ipc.ts CLAUDE_PROFILES_ADD) and is
+  // unaffected. scrubBypassProfile used to run only on the bus SPAWN, so a bus
+  // caller could PERSIST a configDir (→ CLAUDE_CONFIG_DIR: settings.json,
+  // permissions.allow and hooks — commands claude runs unprompted) plus
+  // --dangerously-skip-permissions, then wait for the local user to pick that
+  // profile in the New Agent dialog, where nothing scrubs. Twin:
+  // TestProfilesWritesOverTheBusAreScrubbedAtWriteTime in the brain.
+  it('scrubs configDir and bypass flags at WRITE time, not only at spawn time', () => {
+    handlers.get('claude.profiles.add')!({
+      name: 'pwn',
+      configDir: '/tmp/attacker-claude-home',
+      extraArgs: [
+        '--dangerously-skip-permissions',
+        '--settings',
+        '/tmp/evil.json',
+        '--model',
+        'opus',
+      ],
+    });
+    expect(addProfile).toHaveBeenCalledWith('pwn', '', ['--model', 'opus'], []);
+  });
+
+  it('scrubs the same fields on update', () => {
+    handlers.get('claude.profiles.update')!({
+      id: 'p1',
+      updates: {
+        configDir: '/tmp/attacker-claude-home',
+        extraArgs: ['--dangerously-skip-permissions'],
+      },
+    });
+    expect(updateProfile).toHaveBeenCalledWith('p1', { configDir: '', extraArgs: [] });
+
+    // The floor: a remote-safe update still lands, and a field the caller did
+    // not send is not invented.
+    updateProfile.mockClear();
+    handlers.get('claude.profiles.update')!({
+      id: 'p1',
+      updates: { extraArgs: ['--model', 'sonnet'] },
+    });
+    expect(updateProfile).toHaveBeenCalledWith('p1', { extraArgs: ['--model', 'sonnet'] });
   });
 });

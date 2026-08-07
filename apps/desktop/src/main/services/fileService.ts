@@ -14,6 +14,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 
+import { byteCompare } from '../lib/providerParity';
+
 /** Largest file the editor will open. Bigger files are refused, not truncated. */
 const MAX_READ_BYTES = 5 * 1024 * 1024;
 
@@ -90,8 +92,10 @@ export function listDir(dirPath: string): ListDirResult {
       }
       return { name: e.name, path: full, isDir };
     })
-    // Directories first, then alphabetical (locale-aware).
-    .sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
+    // Directories first, then byte-wise by name — `entries[i].Name <
+    // entries[j].Name` in the Go twin (cmd/brain/fsops.go). localeCompare put
+    // every list in a different order depending on which provider answered.
+    .sort((a, b) => (a.isDir === b.isDir ? byteCompare(a.name, b.name) : a.isDir ? -1 : 1));
 
   return { path: resolved, entries };
 }

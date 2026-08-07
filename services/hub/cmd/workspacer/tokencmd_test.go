@@ -92,3 +92,65 @@ func TestTokenRevokeUnknown(t *testing.T) {
 		t.Error("revoke with no argument must fail")
 	}
 }
+
+// authtoken mints with base64.RawURLEncoding, whose alphabet includes '-', so
+// roughly one token in 64 starts with one — and `flag` reads a bare
+// "-QWGMC1Ib9FK" as an unknown flag. With flag.ExitOnError that took the whole
+// process down (inside `go test`, the test binary) and revoked nothing, which
+// means the only documented way to invalidate a leaked bus credential did not
+// work for exactly the credentials whose spelling made it matter. The existing
+// round-trip test passes tok[:12] positionally, so it flaked at that rate too.
+//
+// Deterministic: mint until one comes out with a leading dash rather than hoping.
+func TestTokenRevokeAcceptsATokenThatStartsWithADash(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tokens.json")
+
+	// mintDashed returns a freshly minted token whose spelling starts with '-',
+	// or "" if 2000 tries did not produce one (astronomically unlikely at 1/64).
+	mintDashed := func() string {
+		for i := 0; i < 2000; i++ {
+			rec, err := authtoken.Mint(path, authtoken.ScopeView, "probe")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.HasPrefix(rec.Token, "-") {
+				return rec.Token
+			}
+		}
+		return ""
+	}
+
+	// Both the full token and the >=8-char prefix `workspacer token list` prints,
+	// and both spellings of the one flag this command declares.
+	for _, form := range []struct {
+		name string
+		args func(tok string) []string
+	}{
+		{"full token", func(tok string) []string { return []string{"--tokens-file", path, tok} }},
+		{"listed prefix", func(tok string) []string { return []string{"--tokens-file", path, tok[:12]} }},
+		{"--flag=value form", func(tok string) []string { return []string{"--tokens-file=" + path, tok} }},
+		// (No "token before the flag" form: Go's flag package stops parsing at
+		// the first non-flag argument, so flags-after-positionals never worked
+		// for any subcommand here and is not what this fix is about.)
+	} {
+		t.Run(form.name, func(t *testing.T) {
+			tok := mintDashed()
+			if tok == "" {
+				t.Skip("no dash-leading token in 2000 mints")
+			}
+			before, _ := authtoken.Load(path)
+			if code := runTokenRevoke(form.args(tok)); code != 0 {
+				t.Fatalf("revoke exited %d for %q; a bus token is not a flag just because base64url gave it a leading '-'", code, tok)
+			}
+			after, _ := authtoken.Load(path)
+			if len(after) != len(before)-1 {
+				t.Fatalf("revoke removed %d records, want exactly 1", len(before)-len(after))
+			}
+			for _, r := range after {
+				if r.Token == tok {
+					t.Fatalf("%q is still live after being revoked", tok)
+				}
+			}
+		})
+	}
+}

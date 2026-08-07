@@ -497,6 +497,7 @@ func TestHostTrustedContractCases(t *testing.T) {
 	}
 	var fixture struct {
 		Sections []string `json:"sections"`
+		Paths    []string `json:"paths"`
 		Cases    []struct {
 			Name     string         `json:"name"`
 			Partial  map[string]any `json:"partial"`
@@ -514,6 +515,12 @@ func TestHostTrustedContractCases(t *testing.T) {
 	// Go side leaves the desktop's bus handler accepting it.
 	if !reflect.DeepEqual(fixture.Sections, hostTrustedSections) {
 		t.Errorf("hostTrustedSections = %v, fixture says %v", hostTrustedSections, fixture.Sections)
+	}
+	// The sub-key list too, or agents.binaries (argv[0] for every spawn) can be
+	// dropped from the guard with every case still green — the cases only see
+	// the drop, not the list that drives it.
+	if !reflect.DeepEqual(fixture.Paths, hostTrustedPaths) {
+		t.Errorf("hostTrustedPaths = %v, fixture says %v", hostTrustedPaths, fixture.Paths)
 	}
 
 	for _, c := range fixture.Cases {

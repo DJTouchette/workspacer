@@ -25,7 +25,14 @@ import * as path from 'path';
 const state = vi.hoisted(() => ({ configDir: '' }));
 vi.mock('../services/configService', () => ({ getConfigDir: () => state.configDir }));
 
-import { assertPathAllowed, SECRET_BASENAMES, configStoreRoots } from './pathConfinement';
+import {
+  assertPathAllowed,
+  configStoreRoots,
+  containsCanonical,
+  isWithin,
+  pathWithinRoots,
+  SECRET_BASENAMES,
+} from './pathConfinement';
 
 interface Case {
   name: string;
@@ -373,5 +380,35 @@ describe('the canonical path assertPathAllowed returns', () => {
     const root = path.join(sandbox, 'root');
     const canonical = assertPathAllowed('contract', path.join(root, 'a', 'b', 'new.txt'), [root]);
     expect(canonical).toBe(path.join(root, 'a', 'b', 'new.txt'));
+  });
+});
+
+/**
+ * The empty-root arm. `canonicalRoot` discards a root it cannot resolve, so ''
+ * should never reach `containsCanonical` — but the LAST LINE OF DEFENCE must not
+ * itself be the widest possible grant. Without the explicit test neither branch
+ * sees a trailing separator and the comparison falls through to
+ * `startsWith('/')`, which is true for every absolute path on the system: one
+ * un-canonicalizable root anywhere upstream silently promotes a scoped grant to
+ * whole-filesystem reach.
+ *
+ * Twins: the brain's TestAnEmptyRootContainsNothing and the bus's
+ * TestCanonRootsDiscardsWhatItCannotResolve.
+ */
+describe('an empty root contains nothing', () => {
+  it('does not behave as a wildcard', () => {
+    for (const target of ['/etc/passwd', '/root/.ssh/id_rsa', path.sep, '/tmp/x/notes.txt']) {
+      // Directly, the way the brain's twin asserts containsPath: reaching this
+      // through isWithin/pathWithinRoots is not enough, because canonicalRoot('')
+      // already fails and those two then answer false for their own reason.
+      expect(containsCanonical('', target)).toBe(false);
+      expect(pathWithinRoots([''], target)).toBe(false);
+      expect(isWithin(target, '')).toBe(false);
+    }
+  });
+
+  it('but the FILESYSTEM root still contains everything (BINDING DECISION 3)', () => {
+    expect(containsCanonical(path.sep, '/etc/passwd')).toBe(true);
+    expect(pathWithinRoots([path.sep], '/etc/passwd')).toBe(true);
   });
 });

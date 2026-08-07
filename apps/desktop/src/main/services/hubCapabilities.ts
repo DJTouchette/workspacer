@@ -15,7 +15,9 @@ import { agentHandoffBrief } from './agentHandoff';
 import { spawnManagedAgent } from './managedSpawn';
 import { spawnClaudeAgent } from './claudeSpawn';
 import { resolveAgentBinary, checkAllProviders, type AgentProvider } from './agentProviders';
-import { claudeProfiles } from './claudeProfiles';
+import { byteCompare } from '../lib/providerParity';
+import { resolveTerminalShell } from '../lib/shellAllowlist';
+import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
 import { registerCapability, callHub } from './hubClient';
 import { agentNotifier } from './agentNotifier';
 import { appIconPath } from '../lib/appIcon';
@@ -349,7 +351,12 @@ export function registerHubCapabilities(): void {
       cols?: number;
       rows?: number;
     };
-    const resolvedShell = shell || detectDefaultShell();
+    // `shell` is argv[0] of a host process, taken from a bus caller. An
+    // allowlist, not containment — see lib/shellAllowlist.ts.
+    const resolvedShell = resolveTerminalShell(shell);
+    if (resolvedShell === null) {
+      throw new Error(`terminals.create: ${shell} is not one of this host's login shells`);
+    }
     const resolvedCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
     const id = await claudemonSessionClient.spawn({
       argv: [resolvedShell],
@@ -854,15 +861,36 @@ export function registerHubCapabilities(): void {
       mcpItemIds?: string[];
     };
     if (!name) throw new Error('claude.profiles.add requires { name }');
+    // SCRUB AT WRITE TIME, not only at spawn time. Everything registered with
+    // cat() is a BUS entry point (the local Settings write is a separate
+    // in-process IPC path, ipc.ts CLAUDE_PROFILES_ADD, and is unaffected), and
+    // scrubBypassProfile used to run only on the bus SPAWN — so a bus caller
+    // could persist a `configDir` (which becomes CLAUDE_CONFIG_DIR: settings.json,
+    // permissions.allow and hooks, i.e. commands claude runs unprompted) plus
+    // --dangerously-skip-permissions, and wait for the LOCAL user to pick that
+    // profile in the New Agent dialog, where nothing scrubs. Twin of the brain's
+    // registry.profilesAdd.
+    const safe = scrubBypassProfile({ configDir: configDir ?? '', extraArgs: extraArgs ?? [] })!;
     // Forward mcpItemIds — the web/remote client sends the user's selected MCP
     // servers here (matching the desktop IPC path); dropping it silently lost
     // them, so profiles created remotely had no MCP servers.
-    return claudeProfiles.addProfile(name, configDir ?? '', extraArgs ?? [], mcpItemIds ?? []);
+    return claudeProfiles.addProfile(name, safe.configDir, safe.extraArgs, mcpItemIds ?? []);
   });
   cat('claude.profiles.update', (params: unknown) => {
     const { id, updates } = (params ?? {}) as { id?: string; updates?: ProfileUpdate };
     if (!id) throw new Error('claude.profiles.update requires { id, updates }');
-    return claudeProfiles.updateProfile(id, updates ?? ({} as ProfileUpdate));
+    // Same scrub as add: update is the other way to plant a CLAUDE_CONFIG_DIR or
+    // a bypass flag on a profile the local user then picks.
+    const u = { ...(updates ?? ({} as ProfileUpdate)) };
+    if (u.configDir !== undefined || u.extraArgs !== undefined) {
+      const scrubbed = scrubBypassProfile({
+        configDir: u.configDir ?? '',
+        extraArgs: u.extraArgs ?? [],
+      })!;
+      if (u.configDir !== undefined) u.configDir = scrubbed.configDir;
+      if (u.extraArgs !== undefined) u.extraArgs = scrubbed.extraArgs;
+    }
+    return claudeProfiles.updateProfile(id, u);
   });
   cat('claude.profiles.remove', (params: unknown) => {
     const { id } = (params ?? {}) as { id?: string };
@@ -1022,7 +1050,8 @@ export function registerHubCapabilities(): void {
         .readdirSync(resolved, { withFileTypes: true })
         .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
         .map((e) => e.name)
-        .sort((a, b) => a.localeCompare(b));
+        // Byte-wise: `sort.Strings(dirs)` in the Go twin (cmd/brain/fsops.go).
+        .sort(byteCompare);
     } catch (err) {
       throw new Error(`cannot read ${resolved}: ${(err as Error).message}`);
     }

@@ -254,7 +254,7 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		// the project aimed at ~/.ssh/id_rsa canonicalizes inside $HOME, which
 		// the browse roots contain and the two directories library items
 		// actually live in do not.
-		return jsonResult(listLibrary(cwd, libraryFileGuardFor("library.list", libraryItemRoots(cwd))))
+		return jsonResult(listLibrary(cwd, libraryFileGuardFor("library.list", cwd)))
 	case "library.save":
 		var in libraryInput
 		if err := unmarshal(params, &in); err != nil {
@@ -292,7 +292,7 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		// `.claude/skills` symlink inside the (allowed) cwd pointed os.RemoveAll
 		// at the config dir, and a link aimed at a SECOND allowed root would
 		// otherwise still delete out of the project the caller named.
-		removeLibrary(p.Scope, p.ID, cwd, p.Kind, libraryFileGuardFor("library.remove", libraryItemRoots(cwd)))
+		removeLibrary(p.Scope, p.ID, cwd, p.Kind, libraryFileGuardFor("library.remove", cwd))
 		return okResult()
 	case "claude.sessionsForDir":
 		var p struct {
@@ -766,11 +766,11 @@ func (r *registry) terminalsCreate(ctx context.Context, raw json.RawMessage) (js
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
-	shell := p.Shell
-	if shell == "" {
-		if shell = os.Getenv("SHELL"); shell == "" {
-			shell = "/bin/sh"
-		}
+	// `shell` is argv[0] of a process spawned on the host, taken from a bus
+	// caller. See shellallow.go for why this is an allowlist and not containment.
+	shell, ok := resolveTerminalShell(p.Shell)
+	if !ok {
+		return nil, fmt.Errorf("terminals.create: %q is not one of this host's login shells", p.Shell)
 	}
 	cwd := normalizeCwd(p.Cwd)
 	if cwd == "" {
@@ -844,7 +844,18 @@ func (r *registry) profilesAdd(raw json.RawMessage) (json.RawMessage, error) {
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
-	prof, err := addProfile(p.Name, p.ConfigDir, p.ExtraArgs, p.MCPItemIDs)
+	// SCRUB AT WRITE TIME, not only at spawn time. Every call this brain answers
+	// arrives over the bus (the desktop's local Settings write is a separate
+	// in-process IPC path, ipc.ts CLAUDE_PROFILES_ADD, and is unaffected), and
+	// scrubBypassProfile was applied only on the BUS spawn path — so a bus caller
+	// could persist `configDir` (which becomes CLAUDE_CONFIG_DIR: settings.json,
+	// permissions.allow and hooks, i.e. commands claude runs unprompted) plus
+	// `--dangerously-skip-permissions`, and wait for the LOCAL user to pick that
+	// profile in the New Agent dialog, where nothing scrubs. The capability is
+	// classified nowhere — `configDir` is not in the params scanner's path-ish
+	// set and claude.* is not a path-bearing prefix — so neither detector saw it.
+	safe := scrubBypassProfile(&profile{ConfigDir: p.ConfigDir, ExtraArgs: p.ExtraArgs})
+	prof, err := addProfile(p.Name, safe.ConfigDir, safe.ExtraArgs, p.MCPItemIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -861,6 +872,21 @@ func (r *registry) profilesUpdate(raw json.RawMessage) (json.RawMessage, error) 
 	}
 	if p.ID == "" {
 		return nil, fmt.Errorf("claude.profiles.update requires { id, updates }")
+	}
+	// Same scrub as claude.profiles.add: update is the other way to plant a
+	// CLAUDE_CONFIG_DIR or a bypass flag on a profile the local user then picks.
+	if p.Updates.ConfigDir != nil || p.Updates.ExtraArgs != nil {
+		cur := ""
+		if p.Updates.ConfigDir != nil {
+			cur = *p.Updates.ConfigDir
+		}
+		safe := scrubBypassProfile(&profile{ConfigDir: cur, ExtraArgs: p.Updates.ExtraArgs})
+		if p.Updates.ConfigDir != nil {
+			p.Updates.ConfigDir = &safe.ConfigDir
+		}
+		if p.Updates.ExtraArgs != nil {
+			p.Updates.ExtraArgs = safe.ExtraArgs
+		}
 	}
 	prof, err := updateProfile(p.ID, p.Updates)
 	if err != nil {

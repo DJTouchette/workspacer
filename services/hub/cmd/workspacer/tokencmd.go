@@ -14,6 +14,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 )
@@ -62,6 +63,44 @@ func runToken(args []string) int {
 func tokensPathFlag(fs *flag.FlagSet) *string {
 	return fs.String("tokens-file", authtoken.DefaultPath(),
 		"tokens file (default: <config>/workspacer/tokens.json, the one the hub reads)")
+}
+
+// firstPositional returns the index of the first argument that is not one of the
+// flags this command DECLARES, or -1 when there is none.
+//
+// It matches against the declared names rather than against a leading "-",
+// because the positional argument here is a bus token and authtoken mints with
+// base64.RawURLEncoding — whose alphabet includes '-'. "Starts with a dash" and
+// "is a flag" are not the same question for this command.
+//
+// valueFlags names the flags that consume the NEXT argument; boolean flags do
+// not, and `--name=value` carries its own.
+func firstPositional(args []string, valueFlags map[string]bool) int {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			return -1 // the caller already separated them
+		}
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			return i
+		}
+		name := strings.TrimLeft(a, "-")
+		inline := false
+		if k, _, ok := strings.Cut(name, "="); ok {
+			name, inline = k, true
+		}
+		switch {
+		case name == "h" || name == "help":
+			// a declared boolean; consumes nothing
+		case valueFlags[name]:
+			if !inline {
+				i++ // its value is the next argument
+			}
+		default:
+			return i // not a flag this command knows: it is the token
+		}
+	}
+	return -1
 }
 
 func runTokenCreate(args []string) int {
@@ -113,9 +152,21 @@ func runTokenList(args []string) int {
 }
 
 func runTokenRevoke(args []string) int {
-	fs := flag.NewFlagSet("workspacer token revoke", flag.ExitOnError)
+	fs := flag.NewFlagSet("workspacer token revoke", flag.ContinueOnError)
 	path := tokensPathFlag(fs)
-	_ = fs.Parse(args)
+	// authtoken mints with base64.RawURLEncoding, whose alphabet includes '-',
+	// so roughly one token in 64 STARTS with one — and a bare "-QWGMC1Ib9FK"
+	// argument is read by the flag package as an unknown flag. With ExitOnError
+	// that killed the process (and, inside `go test`, the test binary) instead of
+	// revoking anything, which made revoking a leaked credential impossible for
+	// exactly the tokens that need it. Everything after "--" is positional by
+	// convention, so insert it before the first non-flag argument.
+	if i := firstPositional(args, map[string]bool{"tokens-file": true}); i >= 0 {
+		args = append(append(append([]string{}, args[:i]...), "--"), args[i:]...)
+	}
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 
 	if fs.NArg() != 1 {
 		fmt.Fprintln(os.Stderr, "workspacer token revoke: give exactly one token (or a unique ≥8-char prefix from `workspacer token list`)")

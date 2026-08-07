@@ -1,36 +1,78 @@
 {
   "_comment": [
-    "Config sections only the HOST process may write, and what dropping them does.",
+    "Config keys only the HOST process may write, and what dropping them does.",
     "",
     "Every config.save that arrives over the hub bus — a remote/web client, a plugin,",
     "or an agent through the MCP facade — is by definition not from the host, so these",
-    "sections are stripped before the merge. `updates` earns its place: updates.channel",
-    "is concatenated into the electron-updater feed URL the desktop then downloads and",
+    "are stripped before the merge. `updates` earns its place: updates.channel is",
+    "concatenated into the electron-updater feed URL the desktop then downloads and",
     "installs from, so one '../' in a channel relocates the updater to somebody else's",
     "repo — persistent code execution laundered through the app's own update dialog.",
     "",
+    "TWO shapes, because two different things need protecting:",
+    "  `sections` — a whole top-level key goes or stays (updates).",
+    "  `paths`    — a dotted SUB-key goes, and its siblings stay. agents.binaries is",
+    "               the launcher path handed to claudemon's Command::new for every",
+    "               spawned agent, i.e. argv[0]. It sits inside `agents`, which also",
+    "               carries ordinary user settings a bus client legitimately edits, so",
+    "               a section-level drop is the wrong granularity: it would either",
+    "               leave argv[0] writable (the shipped state) or break every other",
+    "               agents.* setting over the bus. Pair it with an fs.write over an",
+    "               existing executable in the caller's own agent cwd — os.WriteFile",
+    "               and writeFileSync both preserve the 0755 mode — and config.save",
+    "               alone was arbitrary host code execution on the next spawn.",
+    "",
     "Both bus entry points must agree: the Go brain (dropHostTrusted, the default under",
     "DELEGATE_CATALOG_TO_BRAIN) and the desktop's own bus handler (hubCapabilities.ts).",
-    "The desktop's in-process Settings write does NOT go through either and is unaffected.",
-    "",
-    "Drop is by top-level section: a whole section goes or stays, never a sub-key."
+    "The desktop's in-process Settings write does NOT go through either and is unaffected."
   ],
-  "sections": ["updates"],
+  "sections": [
+    "updates"
+  ],
   "cases": [
     {
       "name": "a host-trusted section is dropped, the rest is kept",
-      "partial": { "updates": { "channel": "nightly" }, "ui": { "theme": "dark" } },
-      "expected": { "ui": { "theme": "dark" } }
+      "partial": {
+        "updates": {
+          "channel": "nightly"
+        },
+        "ui": {
+          "theme": "dark"
+        }
+      },
+      "expected": {
+        "ui": {
+          "theme": "dark"
+        }
+      }
     },
     {
       "name": "the traversal payload this exists to stop",
-      "partial": { "updates": { "channel": "../../evil/repo" } },
+      "partial": {
+        "updates": {
+          "channel": "../../evil/repo"
+        }
+      },
       "expected": {}
     },
     {
       "name": "a partial with nothing host-trusted passes through untouched",
-      "partial": { "ui": { "theme": "dark" }, "panes": { "viewLevel": "fleet" } },
-      "expected": { "ui": { "theme": "dark" }, "panes": { "viewLevel": "fleet" } }
+      "partial": {
+        "ui": {
+          "theme": "dark"
+        },
+        "panes": {
+          "viewLevel": "fleet"
+        }
+      },
+      "expected": {
+        "ui": {
+          "theme": "dark"
+        },
+        "panes": {
+          "viewLevel": "fleet"
+        }
+      }
     },
     {
       "name": "an empty partial stays empty",
@@ -39,13 +81,154 @@
     },
     {
       "name": "the whole section goes even when it carries innocuous keys too",
-      "partial": { "updates": { "autoDownload": false }, "ui": { "theme": "dark" } },
-      "expected": { "ui": { "theme": "dark" } }
+      "partial": {
+        "updates": {
+          "autoDownload": false
+        },
+        "ui": {
+          "theme": "dark"
+        }
+      },
+      "expected": {
+        "ui": {
+          "theme": "dark"
+        }
+      }
     },
     {
       "name": "a null-valued host-trusted section is still a write attempt",
-      "partial": { "updates": null, "ui": { "theme": "dark" } },
-      "expected": { "ui": { "theme": "dark" } }
+      "partial": {
+        "updates": null,
+        "ui": {
+          "theme": "dark"
+        }
+      },
+      "expected": {
+        "ui": {
+          "theme": "dark"
+        }
+      }
+    },
+    {
+      "name": "a host-trusted PATH is dropped and its siblings survive",
+      "partial": {
+        "agents": {
+          "binaries": {
+            "claude": "/tmp/pwned-launcher"
+          },
+          "defaultProvider": "codex"
+        }
+      },
+      "expected": {
+        "agents": {
+          "defaultProvider": "codex"
+        }
+      }
+    },
+    {
+      "name": "dropping the last key of a section leaves an empty section, not a deletion",
+      "partial": {
+        "agents": {
+          "binaries": {
+            "claude": "/tmp/pwned-launcher"
+          }
+        }
+      },
+      "expected": {
+        "agents": {}
+      }
+    },
+    {
+      "name": "a host-trusted path with a non-object parent is left alone",
+      "partial": {
+        "agents": "not-an-object",
+        "ui": {
+          "theme": "dark"
+        }
+      },
+      "expected": {
+        "agents": "not-an-object",
+        "ui": {
+          "theme": "dark"
+        }
+      }
+    },
+    {
+      "name": "a null-valued host-trusted path is still a write attempt",
+      "partial": {
+        "agents": {
+          "binaries": null,
+          "defaultProvider": "claude"
+        }
+      },
+      "expected": {
+        "agents": {
+          "defaultProvider": "claude"
+        }
+      }
+    },
+    {
+      "name": "the claude profile list is host-trusted too",
+      "partial": {
+        "claude": {
+          "profiles": [
+            {
+              "name": "pwn",
+              "configDir": "/tmp/attacker-claude-home"
+            }
+          ],
+          "transport": "stream"
+        }
+      },
+      "expected": {
+        "claude": {
+          "transport": "stream"
+        }
+      }
+    },
+    {
+      "name": "a section drop and a path drop compose",
+      "partial": {
+        "updates": {
+          "channel": "nightly"
+        },
+        "agents": {
+          "binaries": {
+            "codex": "/tmp/x"
+          },
+          "defaultProvider": "codex"
+        },
+        "ui": {
+          "theme": "dark"
+        }
+      },
+      "expected": {
+        "agents": {
+          "defaultProvider": "codex"
+        },
+        "ui": {
+          "theme": "dark"
+        }
+      }
+    },
+    {
+      "name": "an ordinary agents write is untouched",
+      "partial": {
+        "agents": {
+          "defaultProvider": "claude",
+          "keepWarm": true
+        }
+      },
+      "expected": {
+        "agents": {
+          "defaultProvider": "claude",
+          "keepWarm": true
+        }
+      }
     }
+  ],
+  "paths": [
+    "agents.binaries",
+    "claude.profiles"
   ]
 }

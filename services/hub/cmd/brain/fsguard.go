@@ -252,6 +252,29 @@ func canonicalRoot(root string) (string, bool) {
 	return cr, true
 }
 
+// asciiLower folds A-Z only. Deliberately not strings.ToLower: the three copies
+// have to fold IDENTICALLY, and Go's Unicode folding and JavaScript's
+// toLowerCase disagree (U+0130 'İ' is the one that already bit the filename
+// slugs). Every name this is used on — the two credential basenames and the
+// config dir's own path components — is ASCII in practice, so restricting the
+// fold to ASCII costs nothing and removes a whole class of drift.
+func asciiLower(s string) string {
+	var b []byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			if b == nil {
+				b = []byte(s)
+			}
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	if b == nil {
+		return s
+	}
+	return string(b)
+}
+
 // containsPath is the containment comparison itself, over two ALREADY canonical
 // paths. Byte-exact, no case folding on any platform.
 //
@@ -262,6 +285,14 @@ func canonicalRoot(root string) (string, bool) {
 // containment. Otherwise the separator is mandatory: without it root "/srv/fo"
 // contains "/srv/foo".
 func containsPath(canonRoot, canonTarget string) bool {
+	// An empty root grants NOTHING. Without this it is a WILDCARD: neither branch
+	// below sees a trailing separator, so it falls through to
+	// HasPrefix(canonTarget, "/") — true for every absolute path. canonicalRoot
+	// discards a root it cannot resolve, but the last line of defence must not
+	// itself be the widest possible grant.
+	if canonRoot == "" {
+		return false
+	}
 	if canonTarget == canonRoot {
 		return true
 	}
@@ -269,6 +300,25 @@ func containsPath(canonRoot, canonTarget string) bool {
 		return strings.HasPrefix(canonTarget, canonRoot)
 	}
 	return strings.HasPrefix(canonTarget, canonRoot+string(filepath.Separator))
+}
+
+// containsPathFolded is containsPath with ASCII case folded away. It is used
+// ONLY by the secret gate, and only in the directions where folding DENIES more:
+// deciding that a target is inside the config dir, never deciding it is inside a
+// store carve-out.
+//
+// The roots comparison stays byte-exact (containsPath above) because there
+// folding would WIDEN an allow-list. The secret gate is the mirror image: macOS
+// (APFS, case-insensitive by default) and Windows (NTFS) both open
+// <configDir>/remote-token when handed <configHome>/WORKSPACER/remote-token, and
+// the per-component walk cannot see it — os.Lstat succeeds on the caller's
+// spelling and the walk appends the caller's spelling, so the canonical form
+// carries the attacker's case and a byte-exact gate answers for the STRING
+// rather than for the file. Folding here is fail-closed on every platform: on a
+// case-sensitive filesystem it can only refuse a path that names a different
+// (and in practice non-existent) file.
+func containsPathFolded(canonRoot, canonTarget string) bool {
+	return containsPath(asciiLower(canonRoot), asciiLower(canonTarget))
 }
 
 // isWithin reports whether an ALREADY canonicalized target sits at or inside
@@ -310,7 +360,17 @@ func pathWithinRoots(roots []string, target string) bool {
 // them means an HTTP round trip to claudemon. A short TTL keeps an interactive
 // file tree from paying that per entry while still picking up a new agent's cwd
 // almost immediately. Deny decisions are never cached — only the root list is.
-const cwdCacheTTL = 2 * time.Second
+// A var, not a const, so TestStoppedAgentCwdLeavesTheAllowList can shrink it and
+// assert the EXPIRY rather than only the shipped number. Both halves are
+// necessary: without the behavioural test the direction of the expiry is free,
+// and without the bound on the shipped value the TTL can be raised to an hour
+// with the behavioural test still green.
+var cwdCacheTTL = 2 * time.Second
+
+// cwdCacheTTLCeiling is the contract on the shipped value: this cache is the only
+// thing that ever REVOKES a root, so however it is tuned, a stopped agent's
+// directory must leave the allow-list promptly.
+const cwdCacheTTLCeiling = 5 * time.Second
 
 var (
 	cwdCacheMu   sync.Mutex
@@ -439,18 +499,35 @@ func pathIsSecret(target string) bool {
 // the one directory a remote caller can write to) is still refused. Returning
 // "allowed" as soon as a carve-out matches would re-open that hole.
 func pathIsSecretCanonical(canonicalTarget string) bool {
-	if secretBasenames[canonicalBase(canonicalTarget)] {
+	// Folded: ".BUS-TOKEN" opens .bus-token on macOS and Windows, and the walk
+	// hands this gate the caller's spelling (see containsPathFolded).
+	if secretBasenames[asciiLower(canonicalBase(canonicalTarget))] {
 		return true
 	}
 	cfg, ok := canonicalRoot(configDir())
 	if !ok {
 		return true // unverifiable config dir → cannot prove the target is outside it
 	}
-	if !containsPath(cfg, canonicalTarget) {
+	if !containsPathFolded(cfg, canonicalTarget) {
 		return false // nothing outside the config dir is secret by location
 	}
 	for _, store := range configStoreRoots() {
-		if sr, ok := canonicalRoot(store); ok && containsPath(sr, canonicalTarget) {
+		sr, ok := canonicalRoot(store)
+		if !ok {
+			continue
+		}
+		// A carve-out only ever NARROWS the gate, so everything about this arm
+		// is fail-closed: byte-exact (folding here would exempt <configDir>/
+		// LIBRARY), and the resolved carve-out must still be STRICTLY inside the
+		// resolved config dir. Without that last test a symlink at
+		// <configDir>/library aimed at its own parent — and <configDir>/library
+		// is the one directory a remote caller can fs.write into — resolved the
+		// carve-out to the config dir itself, which contains everything in it:
+		// one symlink disarmed the entire gate and handed out remote-token.
+		if sr == cfg || !containsPath(cfg, sr) {
+			continue
+		}
+		if containsPath(sr, canonicalTarget) {
 			return false
 		}
 	}

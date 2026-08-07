@@ -153,13 +153,65 @@ func assertPlainBasename(id string) (string, bool) {
 	return id, true
 }
 
-// libraryFileGuardFor builds the real guard: the same assertPathAllowed the fs.*
-// handlers use, over the roots the derived files are allowed to live in.
+// libraryItemDirs are the directories a library item file may actually LIVE in,
+// composed from the canonical cwd and compared LEXICALLY (containsPath, not
+// isWithin) against the already-canonical derived path.
+//
+// This is the second half of the derived-path gate and it exists because
+// libraryItemRoots alone is only as narrow as the cwd the caller named. The cwd
+// for library.list is checked against the BROWSE roots, so a caller may name
+// $HOME itself — and then "the project the caller named" IS the whole home tree
+// and the narrowing evaporates: a `$HOME/.workspacer/library/a.md ->
+// $HOME/.ssh/id_rsa` symlink (the ordinary form, since git stores symlinks
+// verbatim and a clone carries them) resolves inside the root and comes back as
+// an item Body, while fs.read of the identical path is refused. Requiring the
+// RESOLVED file to sit in a library directory says the thing the roots test was
+// only approximating: a library item lives in a library directory.
+//
+// Lexical on purpose. Canonicalizing these would resolve a
+// `<cwd>/.workspacer/library -> <projB>` link and hand the escape back.
+func libraryItemDirs(canonicalCwd string) []string {
+	dirs := []string{}
+	// The global store is the one entry that must be RESOLVED: configDir()
+	// itself is routinely a symlinked path (XDG_CONFIG_HOME on a linked volume,
+	// /var -> /private/var on macOS), so a lexical comparison against it would
+	// reject every global item.
+	if gr, ok := canonicalRoot(libraryGlobalDir()); ok {
+		dirs = append(dirs, gr)
+	}
+	if canonicalCwd != "" {
+		dirs = append(dirs,
+			libraryProjectDir(canonicalCwd),
+			filepath.Join(canonicalCwd, ".claude"),
+		)
+	}
+	return dirs
+}
+
+// assertLibraryItemPath is the whole derived-path gate for a library file: the
+// same assertPathAllowed the fs.* handlers use, over libraryItemRoots, and then
+// the item-directory requirement above. Returns the canonical path to open
+// (BINDING DECISION 2).
+func assertLibraryItemPath(capability, full, canonicalCwd string) (string, error) {
+	canonical, err := assertPathAllowed(capability, full, libraryItemRoots(canonicalCwd))
+	if err != nil {
+		return "", err
+	}
+	for _, dir := range libraryItemDirs(canonicalCwd) {
+		if containsPath(dir, canonical) {
+			return canonical, nil
+		}
+	}
+	// Same non-echoing message as every other refusal on this surface.
+	return "", fmt.Errorf("%s: path is outside the allowed workspace (agent cwds + config stores)", capability)
+}
+
+// libraryFileGuardFor builds the real guard around assertLibraryItemPath.
 // A refusal skips that one item rather than failing the whole call — a project
 // with one poisoned symlink still lists its other prompts.
-func libraryFileGuardFor(capability string, roots []string) libraryFileGuard {
+func libraryFileGuardFor(capability, canonicalCwd string) libraryFileGuard {
 	return func(path string) (string, bool) {
-		canonical, err := assertPathAllowed(capability, path, roots)
+		canonical, err := assertLibraryItemPath(capability, path, canonicalCwd)
 		if err != nil {
 			return "", false
 		}
@@ -305,7 +357,13 @@ func readLibraryDir(dir, scope string, guard libraryFileGuard) []libraryItem {
 			continue
 		}
 		data, body := parseFrontmatter(string(raw))
-		id := slugLibrary(strings.TrimSuffix(strings.TrimSuffix(name, ".md"), ".MD"))
+		// trimMDSuffix, not TrimSuffix(".md")/TrimSuffix(".MD"): the ENTRY
+		// FILTER above is already case-insensitive, so "readme.Md" is listed —
+		// and the two spelled-out suffixes left ".Md" on, minting id "readme-md"
+		// here where the desktop's /\.md$/i mints "readme". Two ids for one file,
+		// and on the desktop side the collision with a plain readme.md silently
+		// dropped one item out of the list. Same helper readClaudeItems uses.
+		id := slugLibrary(trimMDSuffix(name))
 		kind := validKind(data["kind"])
 		it := libraryItem{
 			ID:          id,
@@ -482,7 +540,7 @@ func (r *registry) saveLibrary(ctx context.Context, in libraryInput) (*libraryIt
 	// The ITEM roots, not the workspace roots: where a library item may
 	// legitimately live is the global store plus the project the caller named,
 	// and nothing else — see libraryItemRoots.
-	canonical, err := assertPathAllowed("library.save", full, libraryItemRoots(canonicalCwd))
+	canonical, err := assertLibraryItemPath("library.save", full, canonicalCwd)
 	if err != nil {
 		return nil, err
 	}
@@ -543,7 +601,7 @@ func (r *registry) saveLibraryClaude(ctx context.Context, in libraryInput) (*lib
 	default:
 		full = filepath.Join(claudeAgentsDir(cwd), id+".md")
 	}
-	canonical, err := assertPathAllowed("library.save", full, libraryItemRoots(canonicalCwd))
+	canonical, err := assertLibraryItemPath("library.save", full, canonicalCwd)
 	if err != nil {
 		return nil, err
 	}
@@ -731,9 +789,17 @@ func mustCwd() string {
 	return cwd
 }
 
+// firstNonEmpty returns the first value that holds something other than
+// whitespace. The TRIM is load-bearing and not cosmetic: this backs the library
+// title/name fallbacks, whose desktop twin is
+// `typeof t === 'string' && t.trim() ? t : id`. Without it a frontmatter
+// `title: "   "` served three spaces here and "wsp" there — a blank row in the
+// library picker under the default catalog delegation and a named row without
+// it. It is also the cwd fallback (`firstNonEmpty(in.Cwd, mustCwd())`), where a
+// whitespace-only cwd is refused by the guard either way.
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
-		if v != "" {
+		if strings.TrimSpace(v) != "" {
 			return v
 		}
 	}

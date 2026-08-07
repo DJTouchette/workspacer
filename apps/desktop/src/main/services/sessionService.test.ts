@@ -248,3 +248,53 @@ describe('listSessions — derived entries stay inside the sessions dir', () => 
     expect(sessionService.listSessions()).toHaveLength(2);
   });
 });
+
+/**
+ * saveSession is the THIRD path through the sessions store, and the only one that
+ * did not go through resolveWithinSessionsDir — it composed
+ * `path.join(getSessionsDir(), filename)` directly. capspec's own record says the
+ * filename is "re-checked by the same resolver", and the Go twin honours that
+ * literally (stores.go saveSavedSession → sessionFilePath). Two consequences of
+ * the bare join, both through an ordinary permitted fs.write into
+ * <configDir>/sessions (a configStoreRoot):
+ *
+ *  1. an out-of-store CONTENT ORACLE — the collision loop readFileSync'd through
+ *     the planted symlink, so the returned filename depended on whether that
+ *     file's YAML `name` matched the caller's (my-session.yaml vs
+ *     my-session-2.yaml). That is a bus-visible read of a file sessions.load
+ *     refuses outright.
+ *  2. the entry was silently replaced.
+ */
+describe('saveSession — containment (the write leg of the same resolver)', () => {
+  it('refuses an entry that resolves out of the sessions dir, and does not read it', () => {
+    fs.writeFileSync(secretOutside, 'name: my-session\n');
+    const link = path.join(sessionsDir, 'my-session.yaml');
+    try {
+      fs.symlinkSync(secretOutside, link);
+    } catch {
+      return; // no symlink support
+    }
+
+    // The control: load refuses the identical entry.
+    expect(() => sessionService.loadSession('my-session.yaml')).toThrow(/escapes/);
+
+    expect(() => sessionService.saveSession({ name: 'my-session' } as never)).toThrow(/escapes/);
+    // Untouched: still a symlink, and the file it points at is unchanged.
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(secretOutside, 'utf-8')).toBe('name: my-session\n');
+
+    // The ORACLE, which is the part a "did it write" assertion cannot see: the
+    // returned filename must not depend on the bytes of a file outside the store.
+    fs.writeFileSync(secretOutside, 'name: something-else\n');
+    expect(() => sessionService.saveSession({ name: 'my-session' } as never)).toThrow(/escapes/);
+  });
+
+  it('still saves an ordinary session, and still picks the next free suffix', () => {
+    const first = sessionService.saveSession({ name: 'Feature: Auth' } as never);
+    const second = sessionService.saveSession({ name: 'Feature Auth' } as never);
+    expect(first).toBe('feature-auth.yaml');
+    expect(second).toBe('feature-auth-2.yaml');
+    // Re-saving the SAME name reuses its file rather than minting another.
+    expect(sessionService.saveSession({ name: 'Feature: Auth' } as never)).toBe(first);
+  });
+});
