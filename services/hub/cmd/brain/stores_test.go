@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 	yaml "gopkg.in/yaml.v3"
 )
 
@@ -472,8 +473,23 @@ func TestSessionFilenameContractCases(t *testing.T) {
 		t.Fatalf("%s decoded to zero sessionFilenames cases — a silently empty corpus guards nothing", contractFixtureRel)
 	}
 
+	// len(cases) is what the fixture CARRIES; the tally is what this loop
+	// executed. A needsSymlinks case skips itself below, and on a host without
+	// symlink privilege that silently turns the sessions-store oracle into zero
+	// assertions inside a green package.
+	var tally sweepguard.Tally
+
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
+			t.Cleanup(func() {
+				if t.Skipped() {
+					if c.NeedsSymlinks {
+						tally.Skip("needsSymlinks")
+					} else {
+						tally.Skip("unexplained (the case declares no host requirement)")
+					}
+				}
+			})
 			sandbox, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
 				t.Fatal(err)
@@ -514,6 +530,9 @@ func TestSessionFilenameContractCases(t *testing.T) {
 				}
 			}
 
+			// Past the only skip gate (the symlink leg of the tree above).
+			tally.Ran(c.Expect)
+
 			got, ok := sessionFilePath(c.Filename)
 			want := c.Expect == "accept"
 			if ok != want {
@@ -543,6 +562,15 @@ func TestSessionFilenameContractCases(t *testing.T) {
 			}
 		})
 	}
+
+	// Accepts and refuses counted apart: a sessionFilePath that returned ok=false
+	// unconditionally satisfies every refuse case in this block, and one that
+	// returned ok=true satisfies every accept case. Only running both classes
+	// says anything.
+	if err := tally.RequireBoth("the sessionFilenames corpus"); err != nil {
+		t.Fatal(err)
+	}
+	t.Log(tally.String())
 }
 
 // A store lister builds its own paths — `<storeDir>/<readdir entry>` — and those

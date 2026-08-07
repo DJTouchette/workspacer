@@ -33,11 +33,10 @@ type spawnCwdCase struct {
 
 func loadSpawnCwdCases(t *testing.T) []spawnCwdCase {
 	t.Helper()
-	path := filepath.Join("..", "..", "..", "..", "contracts", "path-containment-cases.json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Skipf("contract fixture not reachable from this checkout: %v", err)
-	}
+	path := filepath.Join("contracts", "path-containment-cases.json")
+	// The fixture is the test. Skipping when it is unreadable is a green PASS
+	// over zero cases — see mustReadRepoFile.
+	raw := mustReadRepoFile(t, "contracts", "path-containment-cases.json")
 	var fx struct {
 		SpawnCwds struct {
 			Cases []spawnCwdCase `json:"cases"`

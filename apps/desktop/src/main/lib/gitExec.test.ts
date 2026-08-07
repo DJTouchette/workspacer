@@ -14,6 +14,7 @@
 // listDir, and a static sweep so the next `execFile('git', …)` cannot forget.
 
 import { describe, it, expect } from 'vitest';
+import { itRanEveryGatedTest, gatedIt } from '../../../tests/support/sweepTally';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -59,6 +60,11 @@ const HAS_GIT = (() => {
 })();
 
 describe('git invocations carry the no-exec config prefix', () => {
+  // The four tests below are the only ones that RUN git; the rest read source
+  // text. Without the floor at the bottom, a machine with no git on PATH runs
+  // this file as a green pass over zero executions of the thing under test.
+  const gitGate = { ran: 0 };
+  const itGit = gatedIt(HAS_GIT, gitGate);
   it('prefixes the subcommand, because -c outranks every config file', () => {
     expect(GIT_NO_EXEC_CONFIG).toContain('core.fsmonitor=');
     expect(gitArgs(['status'])).toEqual([...GIT_NO_EXEC_CONFIG, 'status']);
@@ -95,7 +101,7 @@ describe('git invocations carry the no-exec config prefix', () => {
   // An EMPTY value has to be the "no program" spelling for every key in the list,
   // or the prefix breaks git instead of hardening it — which is exactly what
   // `diff.external=` did (two timelineReplay tests went to an empty patch).
-  (HAS_GIT ? it : it.skip)('every neutralized key leaves an ordinary diff intact', () => {
+  itGit('every neutralized key leaves an ordinary diff intact', () => {
     const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-gitexec-keys-')));
     const repo = plantRepo(sandbox, '', true);
     const out = execFileSync('git', gitArgs(['diff']), { cwd: repo, encoding: 'utf-8' });
@@ -105,7 +111,7 @@ describe('git invocations carry the no-exec config prefix', () => {
     fs.rmSync(sandbox, { recursive: true, force: true });
   });
 
-  (HAS_GIT ? it : it.skip)('listDir does not execute .git/config core.fsmonitor', () => {
+  itGit('listDir does not execute .git/config core.fsmonitor', () => {
     const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-gitexec-')));
     const repo = path.join(sandbox, 'store');
     const marker = path.join(sandbox, 'PWNED');
@@ -130,7 +136,7 @@ describe('git invocations carry the no-exec config prefix', () => {
   // diff.external is the second key that actually fires, and it fires on the
   // subcommand git.diff runs. Both this and the filter probe below were live
   // against the shipped `-c core.fsmonitor=` prefix.
-  (HAS_GIT ? it : it.skip)('git.diff does not execute .git/config diff.external', async () => {
+  itGit('git.diff does not execute .git/config diff.external', async () => {
     const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-gitexec-ext-')));
     const marker = path.join(sandbox, 'PWNED_DIFF');
     const repo = plantRepo(sandbox, `[diff]\n\texternal = "sh -c 'touch ${marker}' #"\n`, true);
@@ -147,7 +153,7 @@ describe('git invocations carry the no-exec config prefix', () => {
   // is therefore closed on the WRITE side, and this test states both halves so
   // neither can be quietly dropped: the driver definition has to live under
   // `.git`, and every caller-supplied path that traverses `.git` is refused.
-  (HAS_GIT ? it : it.skip)('the filter.clean chain is closed on the write side', async () => {
+  itGit('the filter.clean chain is closed on the write side', async () => {
     const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-gitexec-flt-')));
     const marker = path.join(sandbox, 'PWN_CLEAN');
     const repo = plantRepo(sandbox, '', true);
@@ -212,4 +218,6 @@ describe('git invocations carry the no-exec config prefix', () => {
     ).toBeGreaterThan(0);
     expect(offenders, 'git invoked without gitArgs()').toEqual([]);
   });
+
+  itRanEveryGatedTest(gitGate, 'the tests that actually execute git', 4);
 });

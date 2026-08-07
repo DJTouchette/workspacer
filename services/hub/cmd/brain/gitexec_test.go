@@ -147,10 +147,10 @@ func TestWritingIntoAGitDirectoryIsRefused(t *testing.T) {
 // methods, so a key neutralized on one side and not the other is a capability
 // that executes commands depending on who happened to answer.
 func TestGitNoExecKeysMatchTheDesktopTwin(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "apps", "desktop", "src", "main", "lib", "gitExec.ts"))
-	if err != nil {
-		t.Skipf("desktop twin not present in this checkout: %v", err)
-	}
+	// A missing twin FAILS; only an absent checkout skips (mustReadRepoFile).
+	// The two providers answer the same bus methods, so losing this comparison
+	// silently is losing the only thing that keeps the key lists together.
+	src := mustReadRepoFile(t, "apps", "desktop", "src", "main", "lib", "gitExec.ts")
 	ts := map[string]bool{}
 	for _, line := range strings.Split(string(src), "\n") {
 		line = strings.TrimSpace(strings.Trim(strings.TrimSpace(line), ","))

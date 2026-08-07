@@ -5,6 +5,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  SweepTally,
+  itSweptBothVerdicts,
+  itRanEveryGatedTest,
+  gatedIt,
+} from '../../../tests/support/sweepTally';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -160,6 +166,10 @@ const CAN_SYMLINK_SESSIONS = (() => {
 
 describe('session filenames — cross-language contract', () => {
   const cases = sessionFixture.sessionFilenames?.cases ?? [];
+  // What this sweep EXECUTED, as opposed to what the fixture carries. A
+  // needsSymlinks case skips itself on a host without the privilege, and
+  // `cases.length > 0` below cannot tell the difference.
+  const tally = new SweepTally();
 
   it('the fixture block loads', () => {
     expect(cases.length, 'sessionFilenames.cases must not be empty').toBeGreaterThan(0);
@@ -168,7 +178,10 @@ describe('session filenames — cross-language contract', () => {
   for (const c of cases) {
     const skipped = c.needsSymlinks && !CAN_SYMLINK_SESSIONS;
     const run = skipped ? it.skip : it;
+    if (skipped) tally.skip('needsSymlinks');
     run(`${c.name}${skipped ? ' (skipped: needsSymlinks)' : ''}`, () => {
+      // Counted in the BODY: an enumerated case that skipped asserted nothing.
+      tally.ran(c.expect);
       // A sandbox of its own: the shared beforeEach configDir is a different
       // shape (no config/workspacer nesting) and these cases place files
       // OUTSIDE the config dir on purpose.
@@ -230,6 +243,11 @@ describe('session filenames — cross-language contract', () => {
       }
     });
   }
+
+  // Declared last so it runs after every case above. Accepts and refuses
+  // separately: a resolver that refused everything satisfies every refuse case
+  // in this block, and one that accepted everything satisfies every accept case.
+  itSweptBothVerdicts(tally, 'the sessionFilenames corpus');
 });
 
 // listSessions derives `<sessionsDir>/<readdir entry>` itself, so it needs the
@@ -238,6 +256,8 @@ describe('session filenames — cross-language contract', () => {
 // its `name:` field would come back in the listing. Twin: cmd/brain/stores.go
 // listSavedSessions.
 describe('listSessions — derived entries stay inside the sessions dir', () => {
+  const listGate = { ran: 0 };
+  const itLinks = gatedIt(CAN_SYMLINK_SESSIONS, listGate);
   // (CAN_SYMLINK_SESSIONS ? it : it.skip), not `try { symlink } catch { return }`.
   // The swallowing form reports a PASS on a host that cannot create symlinks —
   // Windows without developer mode, some container and CI mounts — while
@@ -248,7 +268,7 @@ describe('listSessions — derived entries stay inside the sessions dir', () => 
   // listSessions made this file 24 passed / 3 skipped on such a host. The
   // file's own comment on CAN_SYMLINK_SESSIONS already states the rule: a missing
   // privilege is "reported as a skip, never as a pass".
-  (CAN_SYMLINK_SESSIONS ? it : it.skip)(
+  itLinks(
     'skips an entry that resolves out of the sessions dir',
     () => {
       fs.symlinkSync(secretOutside, path.join(sessionsDir, 'pwn.yaml'));
@@ -256,7 +276,7 @@ describe('listSessions — derived entries stay inside the sessions dir', () => 
     },
   );
 
-  (CAN_SYMLINK_SESSIONS ? it : it.skip)(
+  itLinks(
     'still lists a symlink that stays inside the sessions dir',
     () => {
       fs.symlinkSync(path.join(sessionsDir, 'real.yaml'), path.join(sessionsDir, 'alias.yaml'));
@@ -268,7 +288,7 @@ describe('listSessions — derived entries stay inside the sessions dir', () => 
   // collision the Go twin covers for both listers and this side did not. The
   // case above plants its victim at <configDir>/secret.yaml, so a containment
   // that drops the separator boundary (`canonical.startsWith(dir)`) passes it.
-  (CAN_SYMLINK_SESSIONS ? it : it.skip)(
+  itLinks(
     "skips an entry resolving into a sibling whose name starts with the store's",
     () => {
       const sibling = path.join(configDir, 'sessions-backup');
@@ -281,6 +301,14 @@ describe('listSessions — derived entries stay inside the sessions dir', () => 
       );
     },
   );
+
+  // These three are the ENTIRE oracle for derived-entry containment: the
+  // fixture's sessionFilenames block only ever covers a caller-supplied
+  // `filename`, never a name that came back from readdir. A host that cannot
+  // create symlinks must therefore be RED, not a green run whose skip count
+  // nobody reads — deleting the containment from listSessions once left this
+  // file at 24 passed / 3 skipped.
+  itRanEveryGatedTest(listGate, 'listSessions derived-entry containment', 3);
 });
 
 /**
@@ -300,7 +328,9 @@ describe('listSessions — derived entries stay inside the sessions dir', () => 
  *  2. the entry was silently replaced.
  */
 describe('saveSession — containment (the write leg of the same resolver)', () => {
-  (CAN_SYMLINK_SESSIONS ? it : it.skip)(
+  const saveGate = { ran: 0 };
+  const itLinks = gatedIt(CAN_SYMLINK_SESSIONS, saveGate);
+  itLinks(
     'refuses an entry that resolves out of the sessions dir, and does not read it',
     () => {
       fs.writeFileSync(secretOutside, 'name: my-session\n');
@@ -329,7 +359,7 @@ describe('saveSession — containment (the write leg of the same resolver)', () 
   // bare path.join left the whole suite green while sessions.save read through a
   // symlinked `<base>-2.yaml` and leaked that file's `name` field as the RETURN
   // VALUE.
-  (CAN_SYMLINK_SESSIONS ? it : it.skip)(
+  itLinks(
     'refuses a collision-suffix entry that resolves out of the store, and does not read it',
     () => {
       // The base name must be OCCUPIED by a real file, or the loop never runs.
@@ -353,6 +383,10 @@ describe('saveSession — containment (the write leg of the same resolver)', () 
     // Re-saving the SAME name reuses its file rather than minting another.
     expect(sessionService.saveSession({ name: 'Feature: Auth' } as never)).toBe(first);
   });
+
+  // The base-name leg and the collision-suffix leg. Nothing else covers the
+  // save path's containment, so an all-skipped group must fail.
+  itRanEveryGatedTest(saveGate, 'the saveSession write leg', 2);
 });
 
 /**
@@ -368,7 +402,9 @@ describe('saveSession — containment (the write leg of the same resolver)', () 
  * different files destroyed depending on which provider answered.
  */
 describe('sessions.load / sessions.delete open the resolver ANSWER', () => {
-  (CAN_SYMLINK_SESSIONS ? it : it.skip)(
+  const answerGate = { ran: 0 };
+  const itLinks = gatedIt(CAN_SYMLINK_SESSIONS, answerGate);
+  itLinks(
     'deleteSession removes what the entry RESOLVES to, not the link',
     () => {
       const target = path.join(sessionsDir, 'target.yaml');
@@ -386,12 +422,14 @@ describe('sessions.load / sessions.delete open the resolver ANSWER', () => {
     },
   );
 
-  (CAN_SYMLINK_SESSIONS ? it : it.skip)('loadSession reads through to the resolved file', () => {
+  itLinks('loadSession reads through to the resolved file', () => {
     const target = path.join(sessionsDir, 'target.yaml');
     fs.writeFileSync(target, 'name: RESOLVED\nagents: []\n');
     fs.symlinkSync(target, path.join(sessionsDir, 'alias.yaml'));
     expect(sessionService.loadSession('alias.yaml')?.name).toBe('RESOLVED');
   });
+
+  itRanEveryGatedTest(answerGate, 'the load/delete resolver-answer tests', 2);
 });
 
 /**
@@ -404,7 +442,9 @@ describe('sessions.load / sessions.delete open the resolver ANSWER', () => {
  * fail OPEN was 1213/1213 green.
  */
 describe('resolveWithinSessionsDir on an unverifiable entry', () => {
-  (CAN_SYMLINK_SESSIONS ? it : it.skip)('denies an ELOOP symlink cycle', () => {
+  const unverifiableGate = { ran: 0 };
+  const itLinks = gatedIt(CAN_SYMLINK_SESSIONS, unverifiableGate);
+  itLinks('denies an ELOOP symlink cycle', () => {
     // a -> b -> a. canonicalizePath's hop counter throws; the catch must refuse.
     fs.symlinkSync(path.join(sessionsDir, 'b.yaml'), path.join(sessionsDir, 'a.yaml'));
     fs.symlinkSync(path.join(sessionsDir, 'a.yaml'), path.join(sessionsDir, 'b.yaml'));
@@ -430,4 +470,8 @@ describe('resolveWithinSessionsDir on an unverifiable entry', () => {
   it('still resolves an ordinary entry (the floor)', () => {
     expect(resolveWithinSessionsDir('real.yaml')).toBe(path.join(sessionsDir, 'real.yaml'));
   });
+
+  // The ELOOP case is the only executor of the catch arm; flipping that arm to
+  // fail OPEN was once 1213/1213 green, so a host that skips it must be red.
+  itRanEveryGatedTest(unverifiableGate, 'the unverifiable-entry (ELOOP) test', 1);
 });

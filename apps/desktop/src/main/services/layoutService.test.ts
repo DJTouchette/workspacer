@@ -6,6 +6,7 @@
  * unlinked a different filename — so the layout could never be removed.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { itRanEveryGatedTest, gatedIt } from '../../../tests/support/sweepTally';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -102,7 +103,9 @@ const CAN_SYMLINK_LAYOUTS = (() => {
 })();
 
 describe('layoutService.list — derived entries stay inside the store', () => {
-  (CAN_SYMLINK_LAYOUTS ? it : it.skip)(
+  const listGate = { ran: 0 };
+  const itLinks = gatedIt(CAN_SYMLINK_LAYOUTS, listGate);
+  itLinks(
     'skips an entry that resolves out of the layouts dir',
     () => {
       const layoutsDir = path.join(h.dir, 'layouts');
@@ -114,7 +117,7 @@ describe('layoutService.list — derived entries stay inside the store', () => {
     },
   );
 
-  (CAN_SYMLINK_LAYOUTS ? it : it.skip)(
+  itLinks(
     'still lists a symlink that stays inside the layouts dir',
     () => {
       const real = layoutService.save({ name: 'Real', agents: [] });
@@ -129,7 +132,7 @@ describe('layoutService.list — derived entries stay inside the store', () => {
   // covers and this side did not. Both existing cases plant their victim at
   // <configDir>/stolen.yaml, so a containment that drops the separator boundary
   // (`canonical.startsWith(dir)`) passes them both.
-  (CAN_SYMLINK_LAYOUTS ? it : it.skip)(
+  itLinks(
     "skips an entry that resolves into a config-dir sibling whose name starts with the store's",
     () => {
       const layoutsDir = path.join(h.dir, 'layouts');
@@ -146,6 +149,11 @@ describe('layoutService.list — derived entries stay inside the store', () => {
       expect(layoutService.list().map((l) => l.name)).not.toContain('LOOT-OUTSIDE-THE-STORE');
     },
   );
+
+  // These three are the only oracle for the layouts store's derived-entry
+  // containment; a host without symlink privilege must be RED, not a green run
+  // with three skips.
+  itRanEveryGatedTest(listGate, 'layoutService.list derived-entry containment', 3);
 });
 
 // The WRITE and DELETE legs of the same store. list() has always resolved and
@@ -156,6 +164,8 @@ describe('layoutService.list — derived entries stay inside the store', () => {
 // resolved by whichever provider a delegation flag happened to pick.
 // Twin: TestLayoutWriteAndDeleteRefuseAnEntryThatResolvesOutOfTheStore.
 describe('layoutService save/remove — a store entry that resolves out is refused', () => {
+  const writeGate = { ran: 0 };
+  const itLinks = gatedIt(CAN_SYMLINK_LAYOUTS, writeGate);
   const plant = (name: string): string => {
     const layoutsDir = path.join(h.dir, 'layouts');
     fs.mkdirSync(layoutsDir, { recursive: true });
@@ -165,7 +175,7 @@ describe('layoutService save/remove — a store entry that resolves out is refus
     return victim;
   };
 
-  (CAN_SYMLINK_LAYOUTS ? it : it.skip)(
+  itLinks(
     'save refuses a layout id whose store entry is a symlink out of the store',
     () => {
       const victim = plant('evil');
@@ -177,7 +187,7 @@ describe('layoutService save/remove — a store entry that resolves out is refus
     },
   );
 
-  (CAN_SYMLINK_LAYOUTS ? it : it.skip)(
+  itLinks(
     'remove refuses the same entry rather than unlinking it',
     () => {
       const victim = plant('evil');
@@ -194,4 +204,8 @@ describe('layoutService save/remove — a store entry that resolves out is refus
     layoutService.remove('ordinary');
     expect(fs.existsSync(path.join(h.dir, 'layouts', 'ordinary.yaml'))).toBe(false);
   });
+
+  // The ordinary-id test above passes with the guard deleted, so the two
+  // symlink tests are the whole oracle for the write and delete legs.
+  itRanEveryGatedTest(writeGate, 'the layouts save/remove legs', 2);
 });

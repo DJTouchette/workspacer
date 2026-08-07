@@ -3,6 +3,7 @@ package bus
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,7 +14,29 @@ import (
 	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/capspec"
+	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 )
+
+// containmentSkipReason names the host requirement that made a corpus case skip
+// itself, so an empty sweep names the privilege that emptied it. Order matches
+// the gates at the top of the subtest below.
+func containmentSkipReason(c containmentCase) string {
+	switch {
+	case c.PosixOnly && runtime.GOOS == "windows":
+		return "posixOnly"
+	case c.NeedsSymlinks && runtime.GOOS == "windows":
+		return "needsSymlinks"
+	case c.NeedsUnreadableDir:
+		return "needsUnreadableDir"
+	case c.NeedsHome:
+		return "needsHome"
+	case c.ConfigDirVia != "":
+		return "configDirVia (needs symlinks)"
+	case c.NeedsSymlinks:
+		return "needsSymlinks (materializeTree could not create one)"
+	}
+	return "unexplained (the case declares no host requirement — a skip here is a bug in the loader, not a host limitation)"
+}
 
 // withDeadline runs one guard call and fails the test rather than hanging on it.
 // A goroutine spinning on a symlink cycle cannot be cancelled, so it is left to
@@ -237,6 +260,14 @@ type containmentCase struct {
 	Roots        []string `json:"roots"`
 	Target       string   `json:"target"`
 	Expect       string   `json:"expect"`
+	// DeniedBy is the RIGHT-REASON half of a deny, named from the fixture's
+	// `vocabulary.denyReasons`. `expect: deny` alone is satisfied by a refusal
+	// for ANY reason, including "the token did not substitute, so the target was
+	// a relative literal" — so every deny case says which of the four outcomes
+	// it exercises and containmentDenyReason has to land on it. This is the
+	// SHARED, declared version of the bus-local discriminator below, and it is
+	// deliberately not derived from `group`.
+	DeniedBy string `json:"deniedBy"`
 	// ResolvesTo is the token-substituted path canonicalize() must produce on an
 	// allow. The bus never opens it (authorize only decides), but it computes
 	// the same walk, and a copy whose ANSWER drifts is a copy whose verdict will
@@ -277,14 +308,24 @@ type asciiFoldBlock struct {
 	Cases []asciiFoldCase `json:"cases"`
 }
 
+// containmentVocabulary is the fixture's declared vocabulary: the token names a
+// loader may substitute, the `group` names a case may belong to, and the reasons
+// a deny may be denied for. All three used to be validated by nothing.
+type containmentVocabulary struct {
+	Tokens      map[string]string `json:"tokens"`
+	Groups      map[string]string `json:"groups"`
+	DenyReasons map[string]string `json:"denyReasons"`
+}
+
 type containmentFixture struct {
-	Owners             map[string][]string `json:"owners"`
-	SecretBasenames    []string            `json:"secretBasenames"`
-	ConfigStoreSubdirs []string            `json:"configStoreSubdirs"`
-	AsciiFold          asciiFoldBlock      `json:"asciiFold"`
-	Cases              []containmentCase   `json:"cases"`
-	Methods            []methodCase        `json:"methods"`
-	ParamShapes        []paramShapeCase    `json:"paramShapes"`
+	Vocabulary         containmentVocabulary `json:"vocabulary"`
+	Owners             map[string][]string   `json:"owners"`
+	SecretBasenames    []string              `json:"secretBasenames"`
+	ConfigStoreSubdirs []string              `json:"configStoreSubdirs"`
+	AsciiFold          asciiFoldBlock        `json:"asciiFold"`
+	Cases              []containmentCase     `json:"cases"`
+	Methods            []methodCase          `json:"methods"`
+	ParamShapes        []paramShapeCase      `json:"paramShapes"`
 }
 
 // TestAsciiFoldMatchesTheFixture pins the bus copy of asciiLower against the
@@ -469,10 +510,246 @@ func TestEveryCorpusCaseBelongsToAGroupSOMEBODYOwns(t *testing.T) {
 	t.Logf("corpus groups: %v", counts)
 }
 
+// containmentTokenTable is this loader's substitution table, and the ONE place
+// the token names it understands are written down. The case runner substitutes
+// out of it and TestFixtureVocabularyIsClosed compares its key set against the
+// fixture's `vocabulary.tokens`, in both directions — so legalizing a typo'd
+// token by declaring it in the fixture fails here (and in the other two
+// loaders) because nothing substitutes it.
+func containmentTokenTable(sandbox, config, home, processCwd string) map[string]string {
+	return map[string]string{
+		"SANDBOX":     sandbox,
+		"ROOT":        filepath.Join(sandbox, "root"),
+		"OUTSIDE":     filepath.Join(sandbox, "outside"),
+		"CONFIG":      config,
+		"HOME":        home,
+		"PROCESS_CWD": processCwd,
+	}
+}
+
+// containmentDenyReasonNames is containmentDenyReason's declared range, pinned
+// against the fixture's `vocabulary.denyReasons`.
+var containmentDenyReasonNames = []string{"not-absolute", "unresolvable", "outside-roots", "secret"}
+
+// containmentDenyReason classifies a refusal out of pathWithinRoots's own four
+// documented outcomes, in the order the gates run. "allowed" is deliberately NOT
+// a declared reason, so a deny case reaching it fails with the mismatch named.
+//
+// `roots` are already canonicalized here, exactly as the bus passes them.
+func containmentDenyReason(roots []string, target string) string {
+	ok, err := pathWithinRoots(roots, target)
+	switch {
+	case errors.Is(err, errSecretPath):
+		return "secret"
+	case errors.Is(err, errNotAbsolute):
+		return "not-absolute"
+	case err != nil:
+		return "unresolvable"
+	case !ok:
+		return "outside-roots"
+	}
+	return "allowed"
+}
+
+// containmentTokenRefs collects every token reference in a string.
+// `unterminated` reports a "${" with no closing brace, which the substituter
+// leaves verbatim exactly like a mis-spelled name does.
+func containmentTokenRefs(s string) (names []string, unterminated bool) {
+	for i := 0; i < len(s); {
+		j := strings.Index(s[i:], "${")
+		if j < 0 {
+			break
+		}
+		start := i + j + 2
+		end := strings.IndexByte(s[start:], '}')
+		if end < 0 {
+			return names, true
+		}
+		names = append(names, s[start:start+end])
+		i = start + end + 1
+	}
+	return names, false
+}
+
+// walkContainmentStrings visits every string in the decoded fixture — map VALUES
+// and map KEYS, prose `_comment` blocks included. Comments are in scope on
+// purpose: a mis-spelling in the prose is how a mis-spelling in a case gets
+// written.
+func walkContainmentStrings(v any, where string, visit func(where, s string)) {
+	switch t := v.(type) {
+	case string:
+		visit(where, t)
+	case []any:
+		for i, e := range t {
+			walkContainmentStrings(e, fmt.Sprintf("%s[%d]", where, i), visit)
+		}
+	case map[string]any:
+		for k, e := range t {
+			visit(where+"."+k+" (key)", k)
+			walkContainmentStrings(e, where+"."+k, visit)
+		}
+	}
+}
+
+// TestFixtureVocabularyIsClosed is the bus's copy of the guard for the defect
+// that made every deny case in this corpus individually unfalsifiable.
+//
+// A one-character typo in a ${TOKEN} name defangs a deny case in ALL THREE
+// loaders in silence: the name does not substitute, the target becomes a
+// relative literal, every copy refuses it for not being absolute, and the case
+// passes while exercising nothing. The sibling defect is a typo in a `group`,
+// which drops the case from this loader and from the brain — both filter with
+// `if !owned[c.Group] { continue }` — while TypeScript, which does not filter,
+// keeps running it.
+//
+// The runner's own unsubstituted-token check is not enough: it only fires for
+// cases that actually RUN, so a typo in a case this platform skips, or in one a
+// `group` typo already dropped, is never seen. This test is static and holds
+// whether or not a single case executes.
+//
+// TWINS: cmd/brain/fsguard_test.go and main/lib/pathConfinement.test.ts run the
+// same checks. A check only ONE loader runs is how secretBasenames drifted.
+func TestFixtureVocabularyIsClosed(t *testing.T) {
+	fx := loadContainmentFixture(t)
+	vocab := fx.Vocabulary
+	if len(vocab.Tokens) == 0 || len(vocab.Groups) == 0 || len(vocab.DenyReasons) == 0 {
+		t.Fatalf("the fixture must declare vocabulary.tokens, .groups and .denyReasons; got %d/%d/%d — an empty vocabulary makes every check below vacuous",
+			len(vocab.Tokens), len(vocab.Groups), len(vocab.DenyReasons))
+	}
+
+	// 1. The declaration and this loader's substitution table are one list.
+	table := containmentTokenTable("/sandbox", "/sandbox/config/workspacer", "/home/u", "/wd")
+	for name := range vocab.Tokens {
+		if _, ok := table[name]; !ok {
+			t.Errorf("the fixture declares token %q but this loader's substitution table has no entry for it — every case using it would silently test a literal", name)
+		}
+	}
+	for name := range table {
+		if _, ok := vocab.Tokens[name]; !ok {
+			t.Errorf("this loader substitutes token %q, which the fixture does not declare — vocabulary.tokens is supposed to be the whole set", name)
+		}
+	}
+
+	// 2. Every token reference in the WHOLE document names a declared token.
+	raw, err := os.ReadFile(containmentFixturePath())
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var doc any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+	walkContainmentStrings(doc, "", func(where, s string) {
+		names, unterminated := containmentTokenRefs(s)
+		if unterminated {
+			t.Errorf(`%s: a "${" with no closing "}" in %q — the substituter leaves it verbatim, exactly like a mis-spelled name`, where, s)
+		}
+		for _, name := range names {
+			if _, ok := vocab.Tokens[name]; !ok {
+				t.Errorf("%s: %q is not a declared token (vocabulary.tokens has %v) — it passes through verbatim and silently defangs whatever uses it\n  in: %q",
+					where, "${"+name+"}", sortedVocabKeys(vocab.Tokens), s)
+			}
+		}
+	})
+
+	// 3. Every declared token is USED by a case field, not merely mentioned in
+	// prose — otherwise declaring a typo is enough to legalize it.
+	used := map[string]bool{}
+	for _, c := range fx.Cases {
+		for _, s := range append(append([]string{}, c.Roots...), c.Target, c.ResolvesTo) {
+			names, _ := containmentTokenRefs(s)
+			for _, name := range names {
+				used[name] = true
+			}
+		}
+	}
+	for name := range vocab.Tokens {
+		if !used[name] {
+			t.Errorf("token %q is declared but no case's roots/target/resolvesTo uses it — nothing proves any loader substitutes it", name)
+		}
+	}
+
+	// 4. Groups: every case's, and every layer any owner claims.
+	caseCount := map[string]int{}
+	for _, c := range fx.Cases {
+		if _, ok := vocab.Groups[c.Group]; !ok {
+			t.Errorf("case %q is in group %q, which vocabulary.groups does not declare — both Go loaders skip it silently and the three copies stop being held to the same corpus",
+				c.Name, c.Group)
+			continue
+		}
+		caseCount[c.Group]++
+	}
+	ownedGroups := map[string]bool{}
+	for owner, layers := range fx.Owners {
+		for _, g := range layers {
+			if _, ok := vocab.Groups[g]; !ok {
+				t.Errorf("owner %s claims group %q, which vocabulary.groups does not declare", owner, g)
+			}
+			ownedGroups[g] = true
+		}
+	}
+	for g := range vocab.Groups {
+		if caseCount[g] == 0 {
+			t.Errorf("group %q is declared but no case belongs to it", g)
+		}
+		if !ownedGroups[g] {
+			t.Errorf("group %q is declared but no owner implements it, so every loader skips its cases", g)
+		}
+	}
+
+	// 5. deniedBy: present, declared, and exhaustive in both directions.
+	reasonCount := map[string]int{}
+	for _, c := range fx.Cases {
+		switch c.Expect {
+		case "deny":
+			if c.DeniedBy == "" {
+				t.Errorf("deny case %q names no deniedBy — `expect: deny` alone is satisfied by a refusal for ANY reason, which is exactly how a defanged case keeps passing", c.Name)
+				continue
+			}
+			if _, ok := vocab.DenyReasons[c.DeniedBy]; !ok {
+				t.Errorf("deny case %q claims reason %q, which vocabulary.denyReasons does not declare", c.Name, c.DeniedBy)
+				continue
+			}
+			reasonCount[c.DeniedBy]++
+		case "allow":
+			if c.DeniedBy != "" {
+				t.Errorf("allow case %q carries deniedBy %q; an allow is pinned by resolvesTo instead", c.Name, c.DeniedBy)
+			}
+		default:
+			t.Errorf("case %q has expect %q, which is neither \"allow\" nor \"deny\"", c.Name, c.Expect)
+		}
+	}
+	for r := range vocab.DenyReasons {
+		if reasonCount[r] == 0 {
+			t.Errorf("deny reason %q is declared but no case names it — an unexercised classification arm is one nothing holds to the other copies", r)
+		}
+	}
+
+	// 6. The classifier's range is exactly the declared set.
+	declared := sortedVocabKeys(vocab.DenyReasons)
+	classifier := append([]string(nil), containmentDenyReasonNames...)
+	sort.Strings(classifier)
+	if strings.Join(declared, ",") != strings.Join(classifier, ",") {
+		t.Errorf("containmentDenyReason's range drifted from vocabulary.denyReasons\n  classifier: %v\n  fixture:    %v", classifier, declared)
+	}
+}
+
+func sortedVocabKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func containmentFixturePath() string {
+	return filepath.Join("..", "..", "..", "..", "contracts", "path-containment-cases.json")
+}
+
 func loadContainmentFixture(t *testing.T) containmentFixture {
 	t.Helper()
-	path := filepath.Join("..", "..", "..", "..", "contracts", "path-containment-cases.json")
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(containmentFixturePath())
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
@@ -570,13 +847,23 @@ func TestPathContainmentContractCases(t *testing.T) {
 		}
 	}
 
+	// `seen` counts cases this loop REGISTERS; the tally counts the ones that
+	// reach an assertion. Every case can still skip itself on the host gates
+	// below, so without the floor at the bottom a machine with no symlink
+	// privilege runs this suite as a green PASS over zero executed cases.
 	seen := map[string]int{}
+	var tally sweepguard.Tally
 	for _, c := range fx.Cases {
 		if !owned[c.Group] {
 			continue
 		}
 		seen[c.Group]++
 		t.Run(c.Group+"/"+c.Name, func(t *testing.T) {
+			t.Cleanup(func() {
+				if t.Skipped() {
+					tally.Skip(containmentSkipReason(c))
+				}
+			})
 			if c.PosixOnly && runtime.GOOS == "windows" {
 				t.Skip("posixOnly: the '/' filesystem-root branch has no portable spelling")
 			}
@@ -635,24 +922,34 @@ func TestPathContainmentContractCases(t *testing.T) {
 			}
 
 			materializeTree(t, sandbox, c.Tree, c.NeedsSymlinks)
+			// Past every skip gate (materializeTree is the last one): this case
+			// is going to assert.
+			tally.Ran(c.Expect)
 
-			replacer := strings.NewReplacer(
-				"${SANDBOX}", sandbox,
-				"${ROOT}", root,
-				"${OUTSIDE}", outside,
-				"${CONFIG}", config,
-				"${HOME}", home,
-				"${PROCESS_CWD}", processCwd,
-			)
+			// Driven by the ONE table, so the set of names this loader can expand
+			// is a value TestFixtureVocabularyIsClosed can compare against the
+			// fixture's declaration instead of a literal list nothing reads.
+			// Sorted for determinism only: no token's VALUE contains a token.
+			table := containmentTokenTable(sandbox, config, home, processCwd)
+			names := make([]string, 0, len(table))
+			for name := range table {
+				names = append(names, name)
+			}
+			sort.Strings(names)
 			// An UNRECOGNISED ${TOKEN} is passed through verbatim by every
 			// substituter in every loader, and the result is then a relative
 			// string that all three copies refuse for being non-absolute. So a
 			// one-character typo turns a deny case into a case that passes while
 			// exercising nothing — in all three languages at once. Fail on it.
+			// (TestFixtureVocabularyIsClosed catches it statically, including in
+			// cases this platform skips; this stays as the runtime backstop.)
 			sub := func(in string) string {
-				out := replacer.Replace(in)
+				out := in
+				for _, name := range names {
+					out = strings.ReplaceAll(out, "${"+name+"}", table[name])
+				}
 				if i := strings.Index(out, "${"); i >= 0 {
-					t.Fatalf("unsubstituted token in %q — the vocabulary is ${SANDBOX} ${ROOT} ${OUTSIDE} ${CONFIG} ${HOME} ${PROCESS_CWD}", out[i:])
+					t.Fatalf("unsubstituted token in %q — the token set is DECLARED in the fixture's `vocabulary.tokens` block", out[i:])
 				}
 				return out
 			}
@@ -714,6 +1011,18 @@ func TestPathContainmentContractCases(t *testing.T) {
 			// resolves clean OUT of the only granted root, so on the bus it is
 			// refused by containment before the gate is ever consulted.
 			if !want {
+				// THE RIGHT REASON, from the fixture rather than from a second
+				// look at the same verdict. A deny that happens for the wrong
+				// reason tests nothing while reporting green: a mangled
+				// ${TOKEN} makes the target a relative literal that this copy
+				// refuses for not being absolute, with the case's name still
+				// claiming a symlink escape. The arm below derives which
+				// REFUSAL the bus should carry; this asserts which GATE fired,
+				// and the fixture states it independently for all three copies.
+				if got := containmentDenyReason(roots, target); got != c.DeniedBy {
+					t.Errorf("denied for the WRONG REASON: got %q, the fixture says %q\n  target: %q\n  roots:  %q\n  case: %s\n  why: %s",
+						got, c.DeniedBy, target, roots, c.Name, c.Why)
+				}
 				ct, cerr := canonicalize(target)
 				switch {
 				case cerr != nil:
@@ -740,6 +1049,13 @@ func TestPathContainmentContractCases(t *testing.T) {
 			t.Errorf("fixture contributed no cases for owned group %q", g)
 		}
 	}
+	// The floor `seen` cannot provide: it counts registrations, and a registered
+	// case that skipped asserted nothing. Both verdict classes, separately — an
+	// allow-only sweep says the predicate lets things through and nothing else.
+	if err := tally.RequireBoth("the bus containment corpus"); err != nil {
+		t.Fatal(err)
+	}
+	t.Log(tally.String())
 }
 
 // TestFixtureMethodsMatchCapspec is the guard the fixture's header says exists:

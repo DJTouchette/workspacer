@@ -9,9 +9,26 @@
  *    delete unlinked a path that didn't exist (no-op).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { itRanEveryGatedTest, gatedIt } from '../../../tests/support/sweepTally';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+
+/** Can this process create symlinks? (Windows without developer mode cannot.)
+ *  Every test below that plants one is gated on this and COUNTED, because the
+ *  form it replaces — `try { fs.symlinkSync(...) } catch { return }` — reports a
+ *  PASS while asserting nothing at all. */
+const CAN_SYMLINK_LIB = (() => {
+  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-libsym-'));
+  try {
+    fs.symlinkSync(probe, path.join(probe, 'l'));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    fs.rmSync(probe, { recursive: true, force: true });
+  }
+})();
 
 // Seed a real temp configDir at hoist time: the libraryService singleton runs
 // seedGlobalIfEmpty() in its constructor at import, before beforeEach, so an
@@ -552,6 +569,10 @@ describe('libraryService — list ordering matches the Go provider', () => {
 // when remote-token, tokens.json and config.yaml are written. The skills watch
 // is recursive, so on macOS one link covers a whole subtree.
 describe('libraryService — the derived watch paths go through the same guard', () => {
+  // `try { symlink } catch { return }` used to stand in for a skip here: it
+  // REPORTS A PASS on a host with no symlink privilege while asserting nothing.
+  const watchGate = { ran: 0 };
+  const itLinks = gatedIt(CAN_SYMLINK_LIB, watchGate);
   const itemGuard = (root: string) => {
     const roots = [path.join(fs.realpathSync(h.configDir), 'library'), root];
     return (p: string): string | null => {
@@ -565,17 +586,12 @@ describe('libraryService — the derived watch paths go through the same guard',
 
   const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 400));
 
-  it('does not turn an out-of-root directory into a library.changed oracle', async () => {
+  itLinks('does not turn an out-of-root directory into a library.changed oracle', async () => {
     const realCwd = fs.realpathSync(cwd);
     const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-outside-')));
-    try {
-      // An ordinary permitted write inside the allowed root: a symlinked
-      // component of the DERIVED path.
-      fs.symlinkSync(outside, path.join(realCwd, '.claude'));
-    } catch {
-      fs.rmSync(outside, { recursive: true, force: true });
-      return; // no symlink privilege here; the Go twin covers the same axis
-    }
+    // An ordinary permitted write inside the allowed root: a symlinked
+    // component of the DERIVED path.
+    fs.symlinkSync(outside, path.join(realCwd, '.claude'));
     fs.mkdirSync(path.join(outside, 'agents'), { recursive: true });
 
     libraryService.list(realCwd, itemGuard(realCwd));
@@ -608,6 +624,8 @@ describe('libraryService — the derived watch paths go through the same guard',
     // The floor: without this the test above is satisfied by watching nothing.
     expect(busEvents).toContainEqual({ type: 'library.changed' });
   });
+
+  itRanEveryGatedTest(watchGate, 'the derived-watch containment test', 1);
 });
 
 /**
@@ -628,6 +646,8 @@ describe('libraryService — the derived watch paths go through the same guard',
  * path a bus caller can plant symlinks in.
  */
 describe('libraryService — every leg opens the path the guard RESOLVED', () => {
+  const resolvedGate = { ran: 0 };
+  const itLinks = gatedIt(CAN_SYMLINK_LIB, resolvedGate);
   const itemGuard = (root: string) => {
     const roots = [path.join(fs.realpathSync(h.configDir), 'library'), root];
     return (p: string): string | null => {
@@ -639,18 +659,14 @@ describe('libraryService — every leg opens the path the guard RESOLVED', () =>
     };
   };
 
-  it('remove deletes what the entry resolves to (parity with the brain)', () => {
+  itLinks('remove deletes what the entry resolves to (parity with the brain)', () => {
     const root = fs.realpathSync(cwd);
     const real = path.join(root, 'real-skill-dir');
     fs.mkdirSync(real, { recursive: true });
     fs.writeFileSync(path.join(real, 'SKILL.md'), '---\nname: x\n---\n\nb\n');
     fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
     const link = path.join(root, '.claude', 'skills', 'aliased');
-    try {
-      fs.symlinkSync(real, link);
-    } catch {
-      return; // no symlink privilege here
-    }
+    fs.symlinkSync(real, link);
 
     libraryService.remove('claude', 'aliased', root, 'skill', itemGuard(root));
 
@@ -660,18 +676,14 @@ describe('libraryService — every leg opens the path the guard RESOLVED', () =>
     ).toBe(false);
   });
 
-  it('save writes through an in-root symlink rather than replacing it', () => {
+  itLinks('save writes through an in-root symlink rather than replacing it', () => {
     const root = fs.realpathSync(cwd);
     const dir = path.join(root, '.workspacer', 'library');
     fs.mkdirSync(dir, { recursive: true });
     const target = path.join(root, 'target.md');
     fs.writeFileSync(target, 'old');
     const link = path.join(dir, 'note.md');
-    try {
-      fs.symlinkSync(target, link);
-    } catch {
-      return;
-    }
+    fs.symlinkSync(target, link);
 
     libraryService.save(
       { scope: 'project', id: 'note', title: 'Note', kind: 'prompt', body: 'NEW', cwd: root },
@@ -684,17 +696,13 @@ describe('libraryService — every leg opens the path the guard RESOLVED', () =>
     expect(fs.readFileSync(target, 'utf-8')).toContain('NEW');
   });
 
-  it('list reads through an in-root symlink to the resolved file', () => {
+  itLinks('list reads through an in-root symlink to the resolved file', () => {
     const root = fs.realpathSync(cwd);
     const dir = path.join(root, '.workspacer', 'library');
     fs.mkdirSync(dir, { recursive: true });
     const target = path.join(root, 'target.md');
     fs.writeFileSync(target, '---\ntitle: RESOLVED\nkind: prompt\n---\n\nbody\n');
-    try {
-      fs.symlinkSync(target, path.join(dir, 'alias.md'));
-    } catch {
-      return;
-    }
+    fs.symlinkSync(target, path.join(dir, 'alias.md'));
     const items = libraryService.list(root, itemGuard(root));
     const item = items.find((i) => i.title === 'RESOLVED');
     expect(item).toBeDefined();
@@ -706,17 +714,13 @@ describe('libraryService — every leg opens the path the guard RESOLVED', () =>
     expect(item!.path).toBe(target);
   });
 
-  it('a claude item reports the resolved path too', () => {
+  itLinks('a claude item reports the resolved path too', () => {
     const root = fs.realpathSync(cwd);
     const skills = path.join(root, '.claude', 'skills', 'aliased');
     fs.mkdirSync(skills, { recursive: true });
     const target = path.join(root, 'realskill.md');
     fs.writeFileSync(target, '---\nname: aliased\ndescription: d\n---\n\nbody\n');
-    try {
-      fs.symlinkSync(target, path.join(skills, 'SKILL.md'));
-    } catch {
-      return;
-    }
+    fs.symlinkSync(target, path.join(skills, 'SKILL.md'));
     const item = libraryService.list(root, itemGuard(root)).find((i) => i.id === 'aliased');
     expect(item).toBeDefined();
     expect(item!.path).toBe(target);

@@ -29,9 +29,25 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { itRanEveryGatedTest, gatedIt } from '../../../tests/support/sweepTally';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
+
+/** Can this process create symlinks? (Windows without developer mode cannot.)
+ *  A test that needs them is SKIPPED and then COUNTED — reported as a skip,
+ *  never as a pass, and never as a silent zero. */
+const CAN_SYMLINK_HERE = (() => {
+  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-capsym-'));
+  try {
+    fs.symlinkSync(probe, path.join(probe, 'l'));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    fs.rmSync(probe, { recursive: true, force: true });
+  }
+})();
 
 // Capture every registered capability handler so tests can invoke them directly.
 const registered = new Map<string, (params: unknown) => unknown>();
@@ -363,6 +379,8 @@ describe('fixture-driven guard coverage — path capabilities main owns in produ
   // from the repo at `cwd` and replay.read/replay.diff then read files out of
   // it — bytes fs.read would refuse — so the claim gets a behavioural test too.
   describe('replay.open (bus-unscoped by decision; the provider is the whole guard)', () => {
+    const replayGate = { ran: 0 };
+    const itLinks = gatedIt(CAN_SYMLINK_HERE, replayGate);
     it('denies a cwd outside the workspace roots', async () => {
       const msg = await attempt('replay.open', { cwd: outside, sessionId: 's1' });
       expect(msg).toMatch(/outside the allowed workspace/);
@@ -383,13 +401,14 @@ describe('fixture-driven guard coverage — path capabilities main owns in produ
     // fs.watch/fs.unwatch/fs.listDir/search.project/library.list IS killed;
     // replay.open was the one left. It cuts a git worktree from the string it is
     // handed, and replay.read/replay.diff then serve files out of that worktree.
-    it('cuts the worktree from the CANONICAL cwd, not the callerstring', async () => {
+    // `(CAN_SYMLINK ? it : it.skip)`, not `try { symlink } catch { return }`.
+    // The swallowing form REPORTS A PASS on a host with no symlink privilege
+    // while asserting nothing, and this is the only test of replay.open's
+    // check-path/use-path identity. The floor below then makes an all-skipped
+    // group red rather than green.
+    itLinks('cuts the worktree from the CANONICAL cwd, not the callerstring', async () => {
       const link = path.join(path.dirname(agentCwd), `${path.basename(agentCwd)}-link`);
-      try {
-        fs.symlinkSync(agentCwd, link);
-      } catch {
-        return; // no symlink privilege here
-      }
+      fs.symlinkSync(agentCwd, link);
       replayOpenCalls.length = 0;
       const msg = await attempt('replay.open', { cwd: link, sessionId: 's1' });
       fs.rmSync(link, { force: true });
@@ -399,6 +418,8 @@ describe('fixture-driven guard coverage — path capabilities main owns in produ
         'replay.open handed the replay service the string it was given rather than the one the guard validated',
       ).toEqual([agentCwd]);
     });
+
+    itRanEveryGatedTest(replayGate, "replay.open's canonical-cwd test", 1);
   });
 
   // The mirror image. These are `cat`-door methods: with delegation on the Go

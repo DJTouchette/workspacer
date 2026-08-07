@@ -13,6 +13,12 @@
 // strings pass or fail for the wrong reason.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  SweepTally,
+  itSweptBothVerdicts,
+  itRanEveryGatedTest,
+  gatedIt,
+} from '../../../tests/support/sweepTally';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -27,6 +33,7 @@ vi.mock('../services/configService', () => ({ getConfigDir: () => state.configDi
 
 import {
   assertPathAllowed,
+  canonicalizePath,
   configStoreRoots,
   containsCanonical,
   isWithin,
@@ -58,6 +65,13 @@ interface Case {
   roots: string[];
   target: string;
   expect: 'allow' | 'deny';
+  /** The RIGHT-REASON half of a deny, named from the fixture's
+   *  `vocabulary.denyReasons`. `expect: 'deny'` on its own is satisfied by a
+   *  refusal for ANY reason — including "the token did not substitute, so the
+   *  target was a relative literal" — so every deny case says which of the four
+   *  outcomes it exercises and `denyReason()` has to land on it. Mandatory on a
+   *  deny, forbidden on an allow (which carries resolvesTo instead). */
+  deniedBy?: string;
   /** The token-substituted path assertPathAllowed must RETURN on an allow — the
    *  string every call site then hands to the filesystem (BINDING DECISION 2).
    *  Mandatory on every allow case; a deny returns no path. */
@@ -69,7 +83,17 @@ interface Case {
   needsHome?: boolean;
 }
 
+/** The fixture's declared vocabulary: the token names a loader may substitute,
+ *  the `group` names a case may belong to, and the reasons a deny may be denied
+ *  for. Every one of the three used to be validated by nothing at all. */
+interface Vocabulary {
+  tokens: Record<string, string>;
+  groups: Record<string, string>;
+  denyReasons: Record<string, string>;
+}
+
 interface Fixture {
+  vocabulary: Vocabulary;
   owners: Record<string, string[]>;
   secretBasenames: string[];
   configStoreSubdirs: string[];
@@ -249,28 +273,106 @@ function canonicalShapeProblem(p: string): string | null {
  *  target fails `resolvesTo`), so this throw is the negative half's only
  *  protection. */
 function subst(s: string): string {
-  const out = s
-    .split('${SANDBOX}')
-    .join(sandbox)
-    .split('${ROOT}')
-    .join(path.join(sandbox, 'root'))
-    .split('${OUTSIDE}')
-    .join(path.join(sandbox, 'outside'))
-    .split('${CONFIG}')
-    .join(path.join(sandbox, 'config', 'workspacer'))
-    .split('${HOME}')
-    .join(REAL_HOME)
-    .split('${PROCESS_CWD}')
-    .join(PROCESS_CWD);
+  const table = tokenTable();
+  // Sorted for determinism only: no token's VALUE can contain another token.
+  let out = s;
+  for (const name of Object.keys(table).sort()) out = out.split(`\${${name}}`).join(table[name]);
   const residual = /\$\{[^}]*\}?/.exec(out);
   if (residual) {
     throw new Error(
-      `unsubstituted token ${residual[0]} in ${JSON.stringify(out)} — the fixture's token ` +
-        'vocabulary is ${SANDBOX} ${ROOT} ${OUTSIDE} ${CONFIG} ${HOME} ${PROCESS_CWD}; an ' +
-        'unknown one passes through verbatim and silently defangs the case',
+      `unsubstituted token ${residual[0]} in ${JSON.stringify(out)} — the token set is ` +
+        "DECLARED in the fixture's `vocabulary.tokens` block and closed by 'the fixture " +
+        "vocabulary is closed'; an undeclared one passes through verbatim and silently " +
+        'defangs the case',
     );
   }
   return out;
+}
+
+/** This loader's substitution table, and the ONE place the token names it
+ *  understands are written down. `subst` expands out of it and the vocabulary
+ *  suite compares its key set against the fixture's `vocabulary.tokens` in BOTH
+ *  directions — which is what makes the declaration binding: legalizing a
+ *  mis-spelled token by adding it to the fixture fails in all three loaders,
+ *  because not one of them substitutes it. */
+function tokenTable(): Record<string, string> {
+  return {
+    SANDBOX: sandbox,
+    ROOT: path.join(sandbox, 'root'),
+    OUTSIDE: path.join(sandbox, 'outside'),
+    CONFIG: path.join(sandbox, 'config', 'workspacer'),
+    HOME: REAL_HOME,
+    PROCESS_CWD,
+  };
+}
+
+/** `denyReason`'s declared range, pinned against `vocabulary.denyReasons` so a
+ *  reason can neither be declared without a classifier arm nor classified
+ *  without being declared. */
+const DENY_REASON_NAMES = ['not-absolute', 'unresolvable', 'outside-roots', 'secret'];
+
+/** Classify a refusal by re-running assertPathAllowed's own three gates in
+ *  assertPathAllowed's own order. The guard collapses all of them into one
+ *  message (7.5), so the reason has to be recomputed rather than parsed out.
+ *
+ *  'allowed' is deliberately NOT a declared reason: a deny case that reaches it
+ *  fails with the mismatch spelled out. */
+function denyReason(target: string, roots: string[]): string {
+  let canonical: string;
+  try {
+    canonical = canonicalizePath(target);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // The two pre-syscall refusals canonicalizePath raises by hand.
+    if (message === 'path is empty' || message === 'path is not absolute') return 'not-absolute';
+    // Anything else came out of the WALK (ENOTDIR, EACCES, the hop limit) — but
+    // only if it came out of canonicalizePath at all. A TypeError is the
+    // classifier itself being broken (a missing import answered 'unresolvable'
+    // for all 63 deny cases while this test was being written), and a classifier
+    // that fails soft is exactly the vacuous guard this whole file is closing.
+    if (err instanceof TypeError) throw err;
+    return 'unresolvable';
+  }
+  if (!pathWithinRoots(roots, canonical)) return 'outside-roots';
+  if (isSecretPath(canonical)) return 'secret';
+  return 'allowed';
+}
+
+/** Every token reference in a string. `unterminated` reports a '${' with no
+ *  closing brace, which the substituter leaves verbatim exactly like a
+ *  mis-spelled name does. */
+function tokenRefs(s: string): { names: string[]; unterminated: boolean } {
+  const names: string[] = [];
+  let i = 0;
+  for (;;) {
+    const j = s.indexOf('${', i);
+    if (j < 0) return { names, unterminated: false };
+    const end = s.indexOf('}', j + 2);
+    if (end < 0) return { names, unterminated: true };
+    names.push(s.slice(j + 2, end));
+    i = end + 1;
+  }
+}
+
+/** Visit every string in the decoded fixture — object VALUES and object KEYS,
+ *  prose `_comment` blocks included. Comments are in scope on purpose: a
+ *  mis-spelling in the prose is how a mis-spelling in a case gets written, and
+ *  the fixture's own vocabulary block says so. */
+function walkStrings(v: unknown, where: string, visit: (where: string, s: string) => void): void {
+  if (typeof v === 'string') {
+    visit(where, v);
+    return;
+  }
+  if (Array.isArray(v)) {
+    v.forEach((e, i) => walkStrings(e, `${where}[${i}]`, visit));
+    return;
+  }
+  if (v && typeof v === 'object') {
+    for (const [k, e] of Object.entries(v as Record<string, unknown>)) {
+      visit(`${where}.${k} (key)`, k);
+      walkStrings(e, `${where}.${k}`, visit);
+    }
+  }
 }
 
 /** The fixture spells `resolvesTo` with '/' separators; the tokens inside it
@@ -280,7 +382,169 @@ function nativeSep(s: string): string {
   return WIN32 ? s.split('/').join(path.sep) : s;
 }
 
+/**
+ * The guard for the class of defect that made every deny case in this corpus
+ * individually unfalsifiable.
+ *
+ * A one-character typo in a `${TOKEN}` name defangs a deny case in ALL THREE
+ * loaders at once and in silence: the name does not substitute, the target
+ * becomes a relative literal, every copy refuses it for not being absolute, and
+ * the case passes while exercising nothing. Applying that to all 64 deny targets
+ * left all three suites green. The sibling defect is a typo in a case's `group`:
+ * both Go loaders filter with `if !groups[c.Group] { continue }`, so the case
+ * silently stops running there while THIS loader, which does not filter, keeps
+ * running it — the three copies quietly stop being held to the same corpus,
+ * which is the one thing the fixture exists to prevent.
+ *
+ * `subst`'s residual check is not enough on its own: it only fires for cases
+ * that actually RUN, so a typo in a case this platform skips (needsSymlinks,
+ * needsUnreadableDir, needsHome), or in one a `group` typo already dropped from
+ * the Go loaders, is never seen there. Everything below is STATIC and holds
+ * whether or not a single case executes.
+ *
+ * TWINS: cmd/brain/fsguard_test.go and internal/bus/policy_test.go both run
+ * TestFixtureVocabularyIsClosed. A check only ONE loader runs is how
+ * secretBasenames drifted.
+ */
+describe('the fixture vocabulary is closed', () => {
+  const vocab = fixture.vocabulary;
+
+  it('declares tokens, groups and deny reasons at all', () => {
+    expect(
+      [
+        Object.keys(vocab?.tokens ?? {}).length,
+        Object.keys(vocab?.groups ?? {}).length,
+        Object.keys(vocab?.denyReasons ?? {}).length,
+      ].every((n) => n > 0),
+      'an empty vocabulary block makes every check below vacuous',
+    ).toBe(true);
+  });
+
+  it('declares exactly the tokens this loader substitutes', () => {
+    // Both directions. A token the fixture declares and this loader cannot
+    // expand makes every case using it test a literal; a token this loader
+    // expands that the fixture does not declare is drift in the other
+    // direction, and is also the obvious way to legalize a typo.
+    expect(Object.keys(tokenTable()).sort()).toEqual(Object.keys(vocab.tokens).sort());
+  });
+
+  it('uses no undeclared token ANYWHERE in the document, prose included', () => {
+    const declared = new Set(Object.keys(vocab.tokens));
+    const problems: string[] = [];
+    walkStrings(fixture, '', (where, s) => {
+      const { names, unterminated } = tokenRefs(s);
+      if (unterminated) {
+        problems.push(`${where}: a '\${' with no closing '}' in ${JSON.stringify(s)}`);
+      }
+      for (const name of names) {
+        if (!declared.has(name)) {
+          problems.push(
+            `${where}: '\${${name}}' is not a declared token — it passes through verbatim ` +
+              `and silently defangs whatever uses it, in ${JSON.stringify(s)}`,
+          );
+        }
+      }
+    });
+    expect(problems).toEqual([]);
+  });
+
+  it('declares no token that no case actually uses', () => {
+    // A token only prose mentions is a token no loader is proved to substitute
+    // — and declaring a mis-spelling is the cheapest way to smuggle one in.
+    const used = new Set<string>();
+    for (const c of fixture.cases) {
+      for (const s of [...c.roots, c.target, c.resolvesTo ?? '']) {
+        for (const name of tokenRefs(s).names) used.add(name);
+      }
+    }
+    expect([...used].sort()).toEqual(Object.keys(vocab.tokens).sort());
+  });
+
+  it('puts every case, and every owner layer, in a declared group', () => {
+    const problems: string[] = [];
+    const caseCount: Record<string, number> = {};
+    for (const c of fixture.cases) {
+      if (!(c.group in vocab.groups)) {
+        problems.push(
+          `case "${c.name}" is in group "${c.group}", which vocabulary.groups does not ` +
+            'declare — both Go loaders skip it silently and the three copies stop being ' +
+            'held to the same corpus',
+        );
+        continue;
+      }
+      caseCount[c.group] = (caseCount[c.group] ?? 0) + 1;
+    }
+    const ownedGroups = new Set<string>();
+    for (const [owner, layers] of Object.entries(fixture.owners)) {
+      for (const g of layers) {
+        if (!(g in vocab.groups)) {
+          problems.push(
+            `owner ${owner} claims group "${g}", which vocabulary.groups does not declare`,
+          );
+        }
+        ownedGroups.add(g);
+      }
+    }
+    for (const g of Object.keys(vocab.groups)) {
+      if (!caseCount[g]) problems.push(`group "${g}" is declared but no case belongs to it`);
+      if (!ownedGroups.has(g)) {
+        problems.push(
+          `group "${g}" is declared but no owner implements it, so every loader skips its cases`,
+        );
+      }
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it('makes every deny case name the reason it is denied FOR', () => {
+    const problems: string[] = [];
+    const reasonCount: Record<string, number> = {};
+    for (const c of fixture.cases) {
+      if (c.expect === 'deny') {
+        if (!c.deniedBy) {
+          problems.push(
+            `deny case "${c.name}" names no deniedBy — expect: 'deny' alone is satisfied by ` +
+              'a refusal for ANY reason, which is exactly how a defanged case keeps passing',
+          );
+          continue;
+        }
+        if (!(c.deniedBy in vocab.denyReasons)) {
+          problems.push(
+            `deny case "${c.name}" claims reason "${c.deniedBy}", which vocabulary.denyReasons does not declare`,
+          );
+          continue;
+        }
+        reasonCount[c.deniedBy] = (reasonCount[c.deniedBy] ?? 0) + 1;
+      } else if (c.expect === 'allow') {
+        if (c.deniedBy) {
+          problems.push(
+            `allow case "${c.name}" carries deniedBy "${c.deniedBy}"; an allow is pinned by resolvesTo instead`,
+          );
+        }
+      } else {
+        problems.push(`case "${c.name}" has expect "${c.expect}", which is neither allow nor deny`);
+      }
+    }
+    for (const r of Object.keys(vocab.denyReasons)) {
+      if (!reasonCount[r]) {
+        problems.push(
+          `deny reason "${r}" is declared but no case names it — an unexercised ` +
+            'classification arm is one nothing holds to the other copies',
+        );
+      }
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it("declares exactly the reasons this loader's classifier can return", () => {
+    expect([...DENY_REASON_NAMES].sort()).toEqual(Object.keys(vocab.denyReasons).sort());
+  });
+});
+
 describe('path containment — cross-language contract', () => {
+  // What the sweep below actually EXECUTED, as opposed to what it enumerated.
+  const corpusTally = new SweepTally();
+
   it('the fixture loads and has cases for this owner', () => {
     // Renaming this file without updating the fixture has to FAIL, not silently
     // stop testing anything.
@@ -387,7 +651,13 @@ describe('path containment — cross-language contract', () => {
   for (const c of fixture.cases) {
     const reason = skipReason(c);
     const run = reason ? it.skip : it;
+    if (reason) corpusTally.skip(reason);
     run(`[${c.group}] ${c.name}${reason ? ` (skipped: ${reason})` : ''}`, () => {
+      // Counted HERE, not at registration: the loop above enumerates the
+      // fixture, and an enumerated case that skipped asserted nothing. The
+      // floor below is what turns a host with no symlink privilege from a green
+      // run with a skip count into a red one.
+      corpusTally.ran(c.expect);
       // Before the tree, because the config dir has to be repointed through the
       // link while ${CONFIG} keeps substituting to the real path.
       if (c.configDirVia) {
@@ -406,6 +676,18 @@ describe('path containment — cross-language contract', () => {
         // case, so this catches an echo the equality above would too — it is
         // here so a future rewording cannot quietly reintroduce one.
         expect(message, 'the refusal must not echo the path it denied').not.toContain(sandbox);
+        // THE RIGHT REASON. A deny that happens for the wrong reason is a case
+        // that tests nothing while reporting green — a mangled `${TOKEN}` makes
+        // the target a relative literal that every copy refuses for not being
+        // absolute, with the case's name still claiming a symlink escape.
+        // deniedBy is the fixture's independent statement of which gate must
+        // fire, and it is NOT derivable from `group`: 'a symlink out of an
+        // allowed root into the config dir' is a secrets case whose target
+        // resolves clean out of the only granted root, so containment refuses
+        // it before the secret gate is ever consulted.
+        expect(denyReason(target, roots), `${c.name}: denied for the wrong reason — ${c.why}`).toBe(
+          c.deniedBy,
+        );
       } else {
         // An allow returns the CANONICAL path — the string every call site must
         // then hand to the filesystem operation (checkUse in the fixture).
@@ -427,6 +709,11 @@ describe('path containment — cross-language contract', () => {
       }
     });
   }
+
+  // Declared last so it runs after every case above. Both classes, separately:
+  // an allow-only sweep says the guard lets things through and nothing else,
+  // and a deny-only sweep is satisfied by a guard that refuses everything.
+  itSweptBothVerdicts(corpusTally, 'the desktop containment corpus');
 });
 
 describe('the canonical path assertPathAllowed returns', () => {
@@ -434,7 +721,8 @@ describe('the canonical path assertPathAllowed returns', () => {
   // gets opened, so it has to be the RESOLVED path and not the caller's string.
   // Reported as a skip, never as a pass: `if (!CAN_SYMLINK) return` inside the
   // body would count as green on a Windows box that cannot make symlinks.
-  const itLinks = CAN_SYMLINK ? it : it.skip;
+  const linkGate = { ran: 0 };
+  const itLinks = gatedIt(CAN_SYMLINK, linkGate);
 
   itLinks('is the resolved path when the target reaches the root through a symlink', () => {
     const real = path.join(sandbox, 'root', 'real');
@@ -470,6 +758,11 @@ describe('the canonical path assertPathAllowed returns', () => {
     const canonical = assertPathAllowed('contract', path.join(root, 'a', 'b', 'new.txt'), [root]);
     expect(canonical).toBe(path.join(root, 'a', 'b', 'new.txt'));
   });
+
+  // The two symlink tests are the only executors of checkUse — the corpus above
+  // pins the VERDICT, these pin the ANSWER — so a host that cannot make
+  // symlinks has to be red rather than green-with-two-skips.
+  itRanEveryGatedTest(linkGate, 'the checkUse (canonical-answer) tests', 2);
 });
 
 /**

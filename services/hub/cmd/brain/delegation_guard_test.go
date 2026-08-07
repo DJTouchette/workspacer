@@ -17,8 +17,6 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -31,13 +29,10 @@ var (
 
 func readDesktopCapabilities(t *testing.T) string {
 	t.Helper()
-	// cmd/brain → repo root is four levels up (services/hub/cmd/brain).
-	src := filepath.Join("..", "..", "..", "..", "apps", "desktop", "src", "main", "services", "hubCapabilities.ts")
-	data, err := os.ReadFile(src)
-	if err != nil {
-		t.Skipf("hubCapabilities.ts not reachable (%v); skipping cross-repo cross-check", err)
-	}
-	return string(data)
+	// A missing twin is a FAILURE, not a skip — see mustReadRepoFile. Skipping
+	// on any read error is how a renamed hubCapabilities.ts turns this
+	// delegation guard off while the package still prints `ok`.
+	return string(mustReadRepoFile(t, "apps", "desktop", "src", "main", "services", "hubCapabilities.ts"))
 }
 
 func names(re *regexp.Regexp, body string) []string {

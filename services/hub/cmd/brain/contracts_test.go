@@ -24,8 +24,8 @@ import (
 //
 // Placement in cmd/brain is arbitrary; it is where the other cross-repo readers
 // already live (config_test.go, configlock_test.go, stores_test.go,
-// fsguard_test.go all reach four levels up for contracts/), so it inherits the
-// same path idiom and the same skip-if-unreachable posture.
+// fsguard_test.go all reach four levels up for contracts/). It does NOT inherit
+// their old skip-if-unreachable posture: see mustReadRepoFile.
 
 // repoRootRel is relative to this package dir (services/hub/cmd/brain).
 const repoRootRel = "../../../.."
@@ -58,7 +58,7 @@ var contractSkipDirs = map[string]bool{
 }
 
 func TestEveryContractFixtureHasAtLeastTwoLoaders(t *testing.T) {
-	repoRoot, contractsDir := contractsDirOrSkip(t)
+	repoRoot, contractsDir := contractsDir(t)
 
 	fixtures := contractFixtureNames(t, contractsDir)
 	if len(fixtures) == 0 {
@@ -136,14 +136,18 @@ func TestEveryContractFixtureHasAtLeastTwoLoaders(t *testing.T) {
 	})
 }
 
-func contractsDirOrSkip(t *testing.T) (repoRoot, contractsDir string) {
+// contractsDir locates contracts/ from the monorepo root. It FAILS when the
+// directory is missing inside a real checkout and skips only when there is no
+// checkout at all: "the package can be vendored" was the rationale for skipping
+// on any error, and it made the enumeration below — the guard that notices a
+// fixture nobody loads — vanish silently the moment the relative prefix or the
+// directory name drifted.
+func contractsDir(t *testing.T) (repoRoot, contractsDir string) {
 	t.Helper()
-	repoRoot = filepath.FromSlash(repoRootRel)
+	repoRoot = mustRepoPath(t)
 	contractsDir = filepath.Join(repoRoot, "contracts")
 	if _, err := os.Stat(contractsDir); err != nil {
-		// Matches the posture of the other cross-repo readers: the package can be
-		// vendored or tested outside the monorepo checkout.
-		t.Skipf("contracts dir unreachable from %s: %v", repoRootRel, err)
+		t.Fatalf("the monorepo checkout is at %s but %s is not there (%v) — every contract fixture in this repo lives in it, so this is a deletion or a rename, not a vendored checkout", repoRoot, contractsDir, err)
 	}
 	return repoRoot, contractsDir
 }
@@ -152,7 +156,7 @@ func contractFixtureNames(t *testing.T, contractsDir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(contractsDir)
 	if err != nil {
-		t.Skipf("read contracts dir: %v", err)
+		t.Fatalf("read contracts dir %s: %v — an unreadable corpus directory is a broken guard, not a reason to pass", contractsDir, err)
 	}
 	var names []string
 	for _, e := range entries {
@@ -309,11 +313,10 @@ func sortedKeys(m map[string]bool) []string {
 // windows-latest job that runs `go test` and a vitest invocation naming the
 // containment suites), not the exact YAML, so the job can be reorganised.
 func TestCorpusRunsOnWindowsInCI(t *testing.T) {
-	path := filepath.Join(repoRootRel, ".github", "workflows", "ci.yml")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Skipf("ci.yml unreachable from %s: %v", repoRootRel, err)
-	}
+	// FAILS if ci.yml moved: this test is the ONLY thing keeping the
+	// windows-latest job alive, and the Windows job is the only execution the
+	// three volume-prefix parsers ever get.
+	raw := mustReadRepoFile(t, ".github", "workflows", "ci.yml")
 	var wf struct {
 		Jobs map[string]struct {
 			RunsOn string `yaml:"runs-on"`

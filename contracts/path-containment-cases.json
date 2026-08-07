@@ -69,6 +69,8 @@
     "mocking getConfigDir to return ${CONFIG} verbatim. Substitution is plain string",
     "replacement and applies to `roots`, `target` and nothing else; a root written",
     "without a token (\"/\", \"\", \"~\", \"root\") is passed through literally on purpose.",
+    "The token set is CLOSED and declared in the `vocabulary` block below, together",
+    "with the `group` names and the deny reasons; read it before adding either.",
     "",
     "RESOLVESTO IS MANDATORY ON EVERY `allow` CASE, and the loaders fail an allow",
     "case that omits it. It is the token-substituted path the guard must RETURN —",
@@ -212,6 +214,80 @@
     "every PathParam method a Go provider answers. Both the bus and the brain's own",
     "params decoder now refuse the shape."
   ],
+  "vocabulary": {
+    "_comment": [
+      "TOKEN, GROUP AND DENY-REASON VOCABULARY — the part of this fixture that",
+      "nothing validated.",
+      "",
+      "A one-character typo in a token NAME silently defangs a deny case in ALL",
+      "THREE loaders at once: the name fails to substitute, the target becomes a",
+      "literal relative string, every copy refuses it for not being absolute, and",
+      "the case passes while exercising nothing it claims to. Applying that to every",
+      "deny target at once left all three suites green. A one-character typo in a",
+      "case's `group` is the sibling defect: both Go loaders filter with",
+      "`if !groups[c.Group] { continue }`, so the case vanishes from the brain — the",
+      "copy that actually answers fs.*/library.* under the default catalog",
+      "delegation — and from the bus, leaving nothing behind but a t.Logf.",
+      "",
+      "(This paragraph deliberately never spells a token reference that is not a",
+      "real one. The scan below reads every string in this file, comments included,",
+      "because a mis-spelling in a comment is how a mis-spelling in a case gets",
+      "copied. Name tokens bare — SANDBOX, ROOT — when writing prose about them.)",
+      "",
+      "So the vocabulary is DECLARED here and closed by every loader, statically,",
+      "before a single case runs:",
+      "",
+      "  1. Every token reference in every string in this file must name a token",
+      "     declared in `tokens`.",
+      "  2. Each loader's own substitution table must hold EXACTLY these token",
+      "     names. That is what closes the obvious defeat: legalizing a typo by",
+      "     adding it here fails in all three loaders, because not one of them",
+      "     substitutes it.",
+      "  3. Every declared token must be USED by some case's `roots`, `target` or",
+      "     `resolvesTo`. A token that only prose mentions is a token no loader is",
+      "     proved to substitute.",
+      "  4. Every case `group`, and every layer named in `owners`, must be declared",
+      "     in `groups`; every declared group must have at least one case and at",
+      "     least one owner.",
+      "",
+      "DENY REASONS. `expect: deny` on its own is satisfied by a refusal for ANY",
+      "reason, which is precisely how a defanged case keeps passing — the copies",
+      "refuse the mangled literal for not being absolute while the case's name says",
+      "it is testing a symlink escape. So every deny case names the reason it is",
+      "denied FOR, and each loader recomputes that reason from its own copy's four",
+      "outcomes (refused before any syscall / the walk failed / outside every root /",
+      "inside a root but refused by the secret gate) and must land on the one named",
+      "here. All three copies apply the gates in that order, so the classification",
+      "is shared rather than per-copy.",
+      "",
+      "`deniedBy` is NOT derivable from `group`, and must never be back-filled from",
+      "it: 'a symlink out of an allowed root into the config dir' is a `secrets`",
+      "case whose target resolves clean OUT of the only granted root, so containment",
+      "refuses it before the secret gate is ever consulted. The bus loader had",
+      "worked that out locally, for itself; this states it once for all three.",
+      "",
+      "Allow cases carry no `deniedBy`. They carry `resolvesTo`, which is the same",
+      "obligation pointed the other way."
+    ],
+    "tokens": {
+      "SANDBOX": "The per-case sandbox: one fresh temp dir, realpath'd. Every `tree` path is relative to it.",
+      "ROOT": "${SANDBOX}/root — the directory nearly every case grants.",
+      "OUTSIDE": "${SANDBOX}/outside — a sibling of ${ROOT} that no case ever grants.",
+      "CONFIG": "The implementation's own config dir, ${SANDBOX}/config/workspacer. A case may point the implementation at it through a symlink (`configDirVia`) while this token keeps naming the real path.",
+      "HOME": "The process's home directory, resolved. Deliberately OUTSIDE the sandbox: it is where a re-introduced tilde expansion would actually land, and a case that kept it inside the sandbox would deny anyway and prove nothing.",
+      "PROCESS_CWD": "The test process's working directory, resolved. Deliberately OUTSIDE the sandbox: it is where an empty or relative root resolved against the process cwd would actually land."
+    },
+    "groups": {
+      "containment": "The shared core: split the target into components, resolve each against the already-resolved prefix, then require the result to sit at or inside a root with a separator-terminated prefix.",
+      "secrets": "The second gate: credential basenames anywhere, `.git` anywhere, and the whole config dir except the stores named in configStoreSubdirs."
+    },
+    "denyReasons": {
+      "not-absolute": "Refused before any syscall: the target is empty, whitespace-only, or not absolute. A '~' is relative by that rule and nothing expands it (BINDING DECISION 1).",
+      "unresolvable": "The component walk itself failed — ENOTDIR, EACCES, or the symlink hop limit. Never ENOENT, which is the one error that keeps the walk going.",
+      "outside-roots": "The target canonicalized cleanly and landed at or inside NO granted root. The secret gate is never reached.",
+      "secret": "The target canonicalized INSIDE a granted root, and the secret gate refused it."
+    }
+  },
   "owners": {
     "apps/desktop/src/main/lib/pathConfinement.ts": [
       "containment",
@@ -466,6 +542,7 @@
       ],
       "target": "${ROOT}/../outside/x",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "The classic escape the guard exists for. Each copy pins one case like this by hand today, with nothing keeping the wording in agreement."
     },
     {
@@ -485,6 +562,7 @@
       ],
       "target": "${ROOT}/a/../../outside/x",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "One '..' per level is not the interesting case; a copy that pops only once, or that scans for a single leading '../', still escapes here."
     },
     {
@@ -539,6 +617,7 @@
       ],
       "target": "${ROOT}/..",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "The parent of a root is never inside it, and this is the shortest path to the directory that holds every sibling project."
     },
     {
@@ -554,6 +633,7 @@
       ],
       "target": "${ROOT}/../../../../../../../../../../../../etc",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "Popping at the volume root must be a no-op. A copy that underflows into an empty prefix would then treat every absolute path as a suffix match."
     },
     {
@@ -590,6 +670,7 @@
       ],
       "target": "${SANDBOX}/root-evil/x",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "Containment is `target == root || target starts with root + separator`. Dropping the separator makes /srv/fo contain /srv/foo, and it is exactly the line a 'simplification' refactor deletes."
     },
     {
@@ -606,6 +687,7 @@
       ],
       "target": "${SANDBOX}/rootx",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "The equality arm has the same hazard as the prefix arm: `rootx` is not `root` and must not be reached by comparing without the separator."
     },
     {
@@ -625,6 +707,7 @@
       ],
       "target": "${ROOT}/notes.txt",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "A shorter target and a longer root is the mirror mistake, and a startsWith written the wrong way round only fails one of the two."
     },
     {
@@ -673,6 +756,7 @@
       ],
       "target": "${OUTSIDE}/sub/new.txt",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "The missing-parent walk must not become a hole: 'I could not resolve it' has to stay a denial, not a shrug."
     },
     {
@@ -688,6 +772,7 @@
       ],
       "target": "${SANDBOX}/nope/a/b/c",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "Walking to the volume root without ever finding an existing ancestor is a real branch in all three copies, and it must produce the lexical path, not an empty one."
     },
     {
@@ -726,6 +811,7 @@
       ],
       "target": "${ROOT}/newdir/../../outside/x",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "The mirror of the case above. Aiming a write through an intermediate that does not exist yet is the cheapest way to test whether the walk is lexical all the way down."
     },
     {
@@ -749,6 +835,7 @@
       ],
       "target": "${ROOT}/link/token",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "The whole reason the rule is canonicalize-then-contain rather than a textual prefix check. A symlink planted in a project (node_modules, a pnpm store, a vendored link) must not become a door out of it."
     },
     {
@@ -772,6 +859,7 @@
       ],
       "target": "${ROOT}/file.txt",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "A file symlink is resolved by the same walk as a directory symlink; a copy that only follows links on intermediate components misses the simplest exfiltration of all."
     },
     {
@@ -792,6 +880,7 @@
       ],
       "target": "${ROOT}/link/notyet.txt",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "Combines the two hard branches: the missing-tail walk must still have resolved the symlink on the existing prefix, or fs.write plants a file outside the workspace."
     },
     {
@@ -858,6 +947,7 @@
       ],
       "target": "${ROOT}/link/../token",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "The check-path/opened-path split. filepath.Abs, path.resolve and filepath.Clean all collapse 'link/..' to '' before a single symlink is read, so the guard saw ${ROOT}/token and allowed it while the handler opened ${OUTSIDE}/token. One directory symlink inside any allowed root was the entire prerequisite."
     },
     {
@@ -881,6 +971,7 @@
       ],
       "target": "${ROOT}/a/link/../../x",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "Resolves to ${SANDBOX}/x. A copy that special-cased a single 'link/..' pair rather than resolving component by component is still open here."
     },
     {
@@ -951,6 +1042,7 @@
       ],
       "target": "${ROOT}/notes.txt",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "The `else` arm of the symlink walk — the one that takes a link value that is NOT absolute and resolves it against the directory holding the link. Every other symlink case here is absolutized by the loaders, so that arm ran zero times in all three copies: a mutation that treated a relative link as an ordinary file passed the whole corpus AND both full suites, while `ln -s ../cfg/workspacer/remote-token notes.txt` — the ordinary real-world form, and the one git stores verbatim in a clone — read the credential straight out through fs.read."
     },
     {
@@ -1015,6 +1107,7 @@
       ],
       "target": "${ROOT}/file.txt/child",
       "expect": "deny",
+      "deniedBy": "unresolvable",
       "why": "ENOTDIR mid-walk. Every copy branches on 'is this error ENOENT'; if one ever widens that to 'any error means keep walking', an unreadable ancestor becomes an escape instead of a refusal."
     },
     {
@@ -1034,6 +1127,7 @@
       ],
       "target": "${ROOT}/loop/x",
       "expect": "deny",
+      "deniedBy": "unresolvable",
       "why": "ELOOP must terminate the walk with a denial and not spin. A hop counter is mandatory precisely because the walk is hand-rolled rather than delegated to the platform realpath."
     },
     {
@@ -1054,6 +1148,7 @@
       ],
       "target": "${ROOT}/loopa",
       "expect": "deny",
+      "deniedBy": "unresolvable",
       "why": "A self-link is caught by a naive 'did the path repeat' check; a cycle of two is not, and the target here is the link itself rather than a child of it."
     },
     {
@@ -1073,6 +1168,7 @@
       ],
       "target": "${ROOT}/locked/x",
       "expect": "deny",
+      "deniedBy": "unresolvable",
       "why": "EACCES is the one error where 'fail closed' costs a legitimate caller something, which is why a copy is tempted to swallow it. Swallowing it into 'contained' is an escape; swallowing it into 'not contained, keep looking' turns the guard into an existence oracle for a remote caller."
     },
     {
@@ -1089,6 +1185,7 @@
       "roots": [],
       "target": "${ROOT}/notes.txt",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "An empty allow-list is the state a failed session-store read leaves behind, and it must mean 'nothing', never 'no restriction'."
     },
     {
@@ -1107,6 +1204,7 @@
       ],
       "target": "${ROOT}/notes.txt",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "filepath.Abs(\"\") and path.resolve('') both return the PROCESS working directory, which would silently make the daemon's own cwd an allowed root. The brain guards this; the bus's canonRoots does not, and keeps it."
     },
     {
@@ -1145,6 +1243,7 @@
       ],
       "target": "${ROOT}/notes.txt",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "Same hazard as the empty root, one space away from it, and trimming is the only thing that tells them apart."
     },
     {
@@ -1163,6 +1262,7 @@
       ],
       "target": "${ROOT}/notes.txt",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "A relative root resolves against wherever the daemon happens to have been started. It must confine nothing rather than confine something arbitrary."
     },
     {
@@ -1178,6 +1278,7 @@
       ],
       "target": "${PROCESS_CWD}",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "The three cases above name the hazard ('filepath.Abs(\"\") and path.resolve('') both return the PROCESS working directory') and then fail to place a probe where it is observable: their target is inside the sandbox, so a root that widened to the daemon's cwd still contained nothing and the deny was unchanged. All three copies survived having their bad-root guard replaced by exactly that fallback. Here the target IS the process cwd, so a copy that resolves an empty root instead of discarding it allows a path it must never have heard of."
     },
     {
@@ -1193,6 +1294,7 @@
       ],
       "target": "${PROCESS_CWD}",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "The trimmed-empty twin of the case above — but NOT its equal, and the original `why` here claimed otherwise. filepath.Abs(\"   \") is <cwd>/\"   \" and path.resolve('   ') is <cwd>/'   ', neither of which is <cwd>: three spaces do not absolutize to the daemon's cwd the way the empty string does. So this target can never sit inside the widened root and this case kills zero mutants on its own. It is kept as the shallow floor (a copy that somehow mapped a whitespace root onto the cwd itself is still caught) and the case below is where the widening is actually observable."
     },
     {
@@ -1208,6 +1310,7 @@
       ],
       "target": "${PROCESS_CWD}/   ",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "THE probe for the whitespace-root widening, and the reason the ${PROCESS_CWD} token exists. A guard that discards \"\" but resolves any other non-absolute root (filepath.Abs / path.resolve / os.Getwd-prepend) turns the root \"   \" into <cwd>/\"   \" — a real, nameable directory — so this is the one target that lands inside it. Nothing is created on disk: the walk appends a component that does not exist, which is exactly what makes the comparison, not the filesystem, decide the verdict. All three copies survived having their whitespace guard replaced by that fallback with the case above green; this one fails."
     },
     {
@@ -1223,6 +1326,7 @@
       ],
       "target": "${PROCESS_CWD}/root",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "A relative root resolves against wherever the daemon happens to have been started, and 'root' is a name that exists in plenty of trees. This is where filepath.Abs(\"root\") / path.resolve('root') actually lands, so it is the only place the widening shows."
     },
     {
@@ -1238,6 +1342,7 @@
       ],
       "target": "",
       "expect": "deny",
+      "deniedBy": "not-absolute",
       "why": "The empty string absolutizes to the process cwd on every platform. The bus rejects it in paramString; the brain's fs.listDir does not, and hands \"\" to a lister that defaults to $HOME."
     },
     {
@@ -1253,6 +1358,7 @@
       ],
       "target": "   ",
       "expect": "deny",
+      "deniedBy": "not-absolute",
       "why": "paramString's `s != \"\"` lets three spaces through today. Trim first, then treat empty as unverifiable."
     },
     {
@@ -1271,6 +1377,7 @@
       ],
       "target": "notes.txt",
       "expect": "deny",
+      "deniedBy": "not-absolute",
       "why": "Bus callers send absolute paths. A relative one resolves against the daemon's cwd, which is not a root, and must not become one by accident."
     },
     {
@@ -1286,6 +1393,7 @@
       ],
       "target": "~",
       "expect": "deny",
+      "deniedBy": "not-absolute",
       "why": "BINDING DECISION 1. The brain used to expandTilde() every guarded path while TypeScript did not, so the same string was allowed by one provider and denied by the other. Nobody expands now."
     },
     {
@@ -1301,6 +1409,7 @@
       ],
       "target": "~/notes.txt",
       "expect": "deny",
+      "deniedBy": "not-absolute",
       "why": "This is the fork made concrete: the brain resolved it to $HOME/notes.txt and allowed it whenever an agent ran anywhere under home; main resolved it to <electron cwd>/~/notes.txt and denied it. Deny is now the answer everywhere."
     },
     {
@@ -1377,6 +1486,7 @@
       ],
       "target": "${ROOT}/link",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "The honest form of the case above: without the space the component IS the symlink, it resolves to ${OUTSIDE}, and it is outside the only root. Keeping both spellings in the corpus is what makes the pair meaningful — one deny alone would be satisfied by a copy that denied both."
     },
     {
@@ -1395,6 +1505,7 @@
       ],
       "target": "${ROOT}/notes.txt",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "Roots come from session snapshots and plugin manifests, both of which can carry a '~'. An unexpanded '~' root is a relative path and is discarded; it must never silently mean the whole home tree."
     },
     {
@@ -1411,6 +1522,7 @@
       ],
       "target": "~/.ssh/id_rsa",
       "expect": "deny",
+      "deniedBy": "not-absolute",
       "why": "The two tilde cases above are vacuous and all three copies proved it: their root is a sandbox under /tmp, so a target-side '~' that expanded to $HOME landed outside the root and the deny verdict never moved — a copy with expandTilde() put back at the top of canonicalizePath passed the entire corpus. The expansion is only observable when the home tree is the root, which is the shipping configuration whenever an agent runs anywhere under $HOME. Deny here means '~/...' was refused as the non-absolute string it is, not resolved and then contained."
     },
     {
@@ -1427,6 +1539,7 @@
       ],
       "target": "${HOME}/.ssh/id_rsa",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "The root-side mirror, and the more dangerous of the two: a session cwd or a manifest scope spelled '~' would silently become a grant over the whole home tree. Same vacuity as above — with the target under /tmp an expanded '~' root still contained nothing — so the target has to sit where the expansion would land."
     },
     {
@@ -1482,6 +1595,7 @@
       ],
       "target": "${ROOT}/.bus-token",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "`workspacer plugin dev <dir>` drops a .bus-token inside an ordinary project. A bus token is a bus token wherever it sits, so it is denied by name and not only by location."
     },
     {
@@ -1500,6 +1614,7 @@
       ],
       "target": "${ROOT}/sub/.settings.json",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "Plugin settings hold secrets in plaintext (the hub redacts them on the bus, and this file is how you would read around that)."
     },
     {
@@ -1518,6 +1633,7 @@
       ],
       "target": "${CONFIG}/config.yaml",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "An agent cwd is a root, so spawning an agent in $HOME puts the config dir back inside an allowed root. config.yaml carries updates.channel, which is concatenated into the electron-updater feed URL — code execution laundered through the update dialog."
     },
     {
@@ -1536,6 +1652,7 @@
       ],
       "target": "${CONFIG}/remote-token",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "remote-token promotes a connection to TRUSTED, which drops per-plugin scoping and unlocks /plugins/install, i.e. arbitrary commands. This is the escalation the whole second gate exists for."
     },
     {
@@ -1554,6 +1671,7 @@
       ],
       "target": "${CONFIG}/tokens.json",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "Named credentials were the earlier, narrower shape of this gate; they still have to be denied by the wider rule that replaced it."
     },
     {
@@ -1572,6 +1690,7 @@
       ],
       "target": "${CONFIG}/plugins/p/.bus-token",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "Denied twice over — by basename and by living in the config dir outside the three stores. Both arms have to be present for the other cases in this group to mean anything."
     },
     {
@@ -1587,6 +1706,7 @@
       ],
       "target": "${CONFIG}/new-credential.json",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "The gate runs on the canonical path, which for a missing file is the lexical continuation. A copy that only checked existing files would let fs.write create anything it liked in there."
     },
     {
@@ -1602,6 +1722,7 @@
       ],
       "target": "${CONFIG}",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "isWithin is at-or-inside, so the dir is inside itself and inside none of the three stores. Listing it enumerates every credential name even without reading one."
     },
     {
@@ -1712,6 +1833,7 @@
       ],
       "target": "${CONFIG}/library/.bus-token",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "Order matters: basename first, then location. A copy that returns 'allowed' as soon as a store matches re-opens the hole inside the one directory a remote caller can write to."
     },
     {
@@ -1731,6 +1853,7 @@
       ],
       "target": "${CONFIG}/sessions-backup/loot.txt",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "The prefix-collision bug, on the comparison NOBODY was covering. The roots comparison spends three cases on exactly this mistake ('a sibling whose name shares the root's prefix' and friends) and containsPath's own comment says the separator is mandatory — but the secret gate makes the SAME comparison twice more, against the config dir and against each store carve-out, and neither had a single case. Replacing the carve-out's containment with a bare string prefix in all three copies at once left the entire corpus and both full suites green while <configDir>/sessions-backup, /library.old and /layoutsX became readable and writable by any caller holding a root that re-admits the config dir."
     },
     {
@@ -1750,6 +1873,7 @@
       ],
       "target": "${CONFIG}/library.old/loot.txt",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "The same collision with '.' instead of '-' as the next byte, because a copy could plausibly be 'fixed' by special-casing one separator. library.old is also the name a backup script actually produces next to the directory a remote caller can write to."
     },
     {
@@ -1813,6 +1937,7 @@
       ],
       "target": "${ROOT}/cfglink/remote-token",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "The two gates have to compose: containment alone would deny this, but a plugin whose manifest declares an absolute scope covering the link's target would pass containment and needs the secret gate to stop it — the exact escalation plugin/manager.go's `if filepath.IsAbs(p) { return p }` leaves standing on install-time consent alone."
     },
     {
@@ -1832,6 +1957,7 @@
       ],
       "target": "${CONFIG}/remote-token",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "BINDING DECISION 3 widens containment; this case pins that it widens containment ONLY. A manifest declaring fs.read on '/' now resolves cleanly and is still refused the credential."
     },
     {
@@ -1855,6 +1981,7 @@
       ],
       "target": "${ROOT}/notes.txt",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "The relative-link arm again, this time with the SECRET gate as the only thing that can refuse: the target resolves inside the granted root, so containment passes and the gate has to see the resolved location. A copy that does not follow a relative link never learns the target is the credential."
     },
     {
@@ -1876,6 +2003,7 @@
       ],
       "target": "${CONFIG}/remote-token",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "The gate compares a canonical TARGET against the config dir, and every case built ${CONFIG} as a real directory — so the OTHER side of that comparison was never resolved by anything. Replacing canonicalRoot(configDir()) with a lexical clean in all three copies passed the entire corpus and both full suites while handing out remote-token. `configDirVia` points the implementation's config home at a symlink (a $HOME on a symlinked volume, an XDG_CONFIG_HOME that is a link, /var on macOS) while ${CONFIG} stays the real path the target resolves to: the two only meet if the implementation resolves its own config dir."
     },
     {
@@ -1921,6 +2049,7 @@
       ],
       "target": "${ROOT}/notes.txt",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "`if !ok { return true }` — the posture that holds when the daemon has no resolvable HOME/XDG_CONFIG_HOME (systemd/launchd units, containers), when an ancestor of the config dir is unreadable, or when a component of it is not a directory. Flipped to fail-OPEN it passed the entire corpus and both full suites, because every case supplied a resolvable ${CONFIG}; with it flipped, NOTHING in the config dir is secret by location any more, so remote-token and config.yaml become reachable through any root that contains them. Note this case denies an ordinary file in an ordinary root: that is the point — an unverifiable config dir cannot be proven not to contain the target, so the whole gate closes."
     },
     {
@@ -1944,6 +2073,7 @@
       ],
       "target": "${CONFIG}/remote-token",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "<configDir>/library is the ONE directory a remote caller can fs.write into, so it is the one carve-out an attacker can replace with a symlink. Resolving the carve-out and then trusting the result made that symlink an exemption for its own target: pointed at the config dir itself, `within(carveOut, target)` matched every file in it and the whole gate went quiet — remote-token readable, config.yaml writable, on all three copies at once. A carve-out only ever narrows, so its resolved form must still be STRICTLY inside the resolved config dir."
     },
     {
@@ -1967,6 +2097,7 @@
       ],
       "target": "${CONFIG}/remote-token",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "The sibling of the case above, and the half of the same clause that nothing reached. The carve-out check is `sr == cfg || !contains(cfg, sr)`, and only the FIRST disjunct was exercised: a <configDir>/library symlink aimed at the config dir ITSELF is caught by `sr == cfg`, but one aimed at any OTHER ancestor (here XDG_CONFIG_HOME, the config dir's parent) has sr != cfg, so deleting the `!contains(cfg, sr)` disjunct left the whole Go suite green while fs.read handed back remote-token. A carve-out that resolves to a directory CONTAINING the config dir is not a carve-out."
     },
     {
@@ -1991,6 +2122,7 @@
       ],
       "target": "${CONFIG}/tokens.json",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "The other direction of the same mistake, and the one a `containsPath(cfg, sr)` test alone would miss if it were written as a bare prefix: a carve-out aimed anywhere outside the config dir must simply drop out of the loop rather than shift the exemption somewhere else. Keeping the sibling cases honest — the gate still has to refuse tokens.json while <configDir>/sessions is unusable."
     },
     {
@@ -2034,6 +2166,7 @@
       ],
       "target": "${ROOT}/plugin/.BUS-TOKEN",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "macOS (APFS, case-insensitive by default) and Windows (NTFS) open .bus-token when handed .BUS-TOKEN, and the per-component walk cannot tell: lstat succeeds on the caller's spelling and the walk APPENDS the caller's spelling, so the canonical path carries the attacker's case and a byte-exact basename set answers for the string rather than for the file. The gate folds ASCII case; containment does not, because there folding would widen an allow-list instead of narrowing an exemption. On a case-sensitive filesystem this denies a file that is merely named oddly, which is the fail-closed direction."
     },
     {
@@ -2052,6 +2185,7 @@
       ],
       "target": "${SANDBOX}/config/WORKSPACER/remote-token",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "Same hazard one level up: on a case-insensitive volume <configHome>/WORKSPACER/remote-token IS <configDir>/remote-token — the credential that promotes a bus connection to TRUSTED and unlocks /plugins/install. The location half of the gate folds ASCII case too. The corpus can only spell this on a case-SENSITIVE filesystem, where the variant names a different (non-existent) file and denying it costs nothing; that is precisely why no case existed and the property was enforced by nothing in any copy."
     },
     {
@@ -2070,6 +2204,7 @@
       ],
       "target": "${CONFIG}/LIBRARY/loot.txt",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "The asymmetry is the whole design: folding in the config-dir test DENIES more, folding in the carve-out test would EXEMPT more. <configDir>/LIBRARY is inside the config dir either way, but it is NOT the carve-out — on a case-sensitive volume it is an ordinary attacker-named directory, and on a case-insensitive one the byte-exact carve-out test simply keeps the exemption to the spelling the daemon itself composed. A copy that folded both comparisons turns any case-variant spelling of library/, layouts/ or sessions/ into a writable hole in the config dir."
     },
     {
@@ -2089,6 +2224,7 @@
       ],
       "target": "${ROOT}/PROJ/secret.txt",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "containsPath's own header calls byte-exactness a property of the shared algorithm, and nothing enforced it: lowercasing both arguments passed all 85 cases in every copy. On a case-sensitive filesystem these are two different directories and the second is somebody else's; on a case-insensitive one they are the same directory, and the byte-exact answer is the NARROW one, which is the safe direction for an allow-list. The secret gate is the mirror image and folds on purpose — see the two case-variant secrets cases."
     },
     {
@@ -2112,6 +2248,7 @@
       ],
       "target": "${SANDBOX}/decoy/loot.txt",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "BINDING DECISION 2 applied to the ROOT instead of the target. Every symlink case in the corpus planted its link in the target, so root canonicalization was pinned only in the NARROWING direction ('a root reached through a symlink contains what it resolves to'); nothing forbade a 'canonical, else fall back to lexical for robustness' comparison. Here the lexical Clean of the root is ${SANDBOX}/decoy and its canonical form is ${SANDBOX}/real — a lexical fallback arm hands out a file that has nothing to do with the grant. Agent cwds are caller-supplied at spawn time, so the root string is attacker-influenced."
     },
     {
@@ -2155,6 +2292,7 @@
       ],
       "target": "${ROOT}/self",
       "expect": "deny",
+      "deniedBy": "unresolvable",
       "why": "The hop counter is the ONLY thing between a symlink cycle and a spin — the walk is hand-rolled and never reaches the platform's ELOOP. Both existing cycle cases live under `symlinks`, which every loader ABSOLUTIZES, so the bound had zero coverage on the relative arm: a guard that declined to count relative hops passed the whole corpus and hung a brain handler goroutine forever on one `ln -s a a` inside an allowed root."
     },
     {
@@ -2175,6 +2313,7 @@
       ],
       "target": "${ROOT}/a",
       "expect": "deny",
+      "deniedBy": "unresolvable",
       "why": "The mutual form, because a counter can be placed so that it catches self-reference (the link's own name reappears) and still misses a two-step cycle. Same relative arm, same reason it was uncovered."
     },
     {
@@ -2194,6 +2333,7 @@
       ],
       "target": "${OUTSIDE}/x\\..\\..\\root/loot.txt",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "BINDING DECISION on the separator SET, which no case reached. On POSIX a backslash is an ordinary byte in a filename, so `x\\..\\..\\root` is ONE literal component; only Windows adds '\\\\' to the splitting alphabet. Widening the splitting set unconditionally (dropping the runtime/platform qualifier in isSep / isSepChar / SEP_RE) left every copy's own suite 100% green while pathWithinRoots answered for a collapsed path the filesystem never names: a plugin granted fs.write on ${ROOT} could hand in a target that lives under ${OUTSIDE}, and vice versa. Both directions are here because the widening flips the verdict each way."
     },
     {
@@ -2229,6 +2369,7 @@
       ],
       "target": "${SANDBOX}/backup${ROOT}/id_rsa",
       "expect": "deny",
+      "deniedBy": "outside-roots",
       "why": "Containment is `starts with`, not `contains`, and nothing pinned the ANCHOR. Replacing HasPrefix with strings.Contains in containsPath (brain) and within (bus) — and startsWith with includes in the desktop — passed all 99 cases and both full suites, while granting every path that repeats an allowed root anywhere inside it. That is the exact layout of an `rsync -aR` / `tar -P` mirror, a Timeshift or btrfs snapshot of the whole filesystem, a Time Machine volume, and a container overlay upperdir: /mnt/backup<agentCwd>/id_rsa is a real file with real contents and it is outside every root. The three existing prefix-collision cases only vary the BYTE after the root, so they are all satisfied by an unanchored compare."
     },
     {
@@ -2247,6 +2388,7 @@
       ],
       "target": "${ROOT}/proj/.git/config",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "A .git directory is not data, it is a program. git discovers the repository at whatever cwd fs.listEntries / git.diff / git.stage / replay.open is handed and then executes what .git/config tells it to, as the desktop user, with no agent approval and no plugin sandbox. The `-c` prefix in gitExec.ts / fsops.go neutralizes the exec-valued keys that have a FIXED name (core.fsmonitor, diff.external, credential.helper, ...), but it structurally cannot cover the namespaced ones — filter.<drv>.clean, which `git add` runs for git.stage, plus diff.<drv>.command/textconv, merge.<drv>.driver and trailer.<t>.command — because the driver name belongs to whoever wrote the file. Those definitions can only live in a config file under .git, so the WRITE is refused here. Every directory these commands run in is an agent cwd or a config store, and both are fs.write-able."
     },
     {
@@ -2262,6 +2404,7 @@
       ],
       "target": "${ROOT}/proj/.git/hooks/pre-commit",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "The rule is the whole .git subtree, not the config file: hooks are executables git runs on the next commit, and .git/info/attributes is the other half of the filter-driver chain. Denying only the basename `config` would leave both."
     },
     {
@@ -2277,6 +2420,7 @@
       ],
       "target": "${ROOT}/proj/.git",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "`gitdir: /elsewhere` in a FILE named .git is how worktrees and submodules point at their real repository, so writing one redirects git at a config the caller controls. The final component has to count, not just the interior ones."
     },
     {
@@ -2292,6 +2436,7 @@
       ],
       "target": "${ROOT}/proj/.GIT/config",
       "expect": "deny",
+      "deniedBy": "secret",
       "why": "Same reasoning as the credential basenames: APFS and NTFS open .git when handed .GIT, and the per-component walk appends the CALLER's spelling, so a byte-exact test answers for the string rather than for the file. Folding here is fail-closed on every platform."
     },
     {

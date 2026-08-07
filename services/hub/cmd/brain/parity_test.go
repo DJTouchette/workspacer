@@ -391,12 +391,8 @@ var desktopSpawnParamRe = regexp.MustCompile(`(?m)^\s*(\w+)\?:`)
 // counterpart of capspec_guard_test's method-name cross-check. Skips (not
 // fails) when the TS source isn't reachable (e.g. a hub-only checkout).
 func TestSpawnParamSurfaceMatchesDesktop(t *testing.T) {
-	// cmd/brain → repo root is four levels up (services/hub/cmd/brain).
-	src := filepath.Join("..", "..", "..", "..", "apps", "desktop", "src", "main", "services", "hubCapabilities.ts")
-	data, err := os.ReadFile(src)
-	if err != nil {
-		t.Skipf("hubCapabilities.ts not reachable (%v); skipping cross-repo cross-check", err)
-	}
+	// A missing twin FAILS; only an absent checkout skips (mustReadRepoFile).
+	data := mustReadRepoFile(t, "apps", "desktop", "src", "main", "services", "hubCapabilities.ts")
 	text := string(data)
 	// Isolate the agents.spawn registration's destructure type literal.
 	start := strings.Index(text, "registerCapability('agents.spawn'")
@@ -477,13 +473,10 @@ var snapshotFieldsDeclined = map[string]string{
 
 // TestCompatSnapshotCoversMobileFields cross-checks the field names the mobile
 // client reads against the compat overlay — the wire-shape counterpart of the
-// spawn-param guard above. Skips when mobile.html isn't reachable.
+// spawn-param guard above. FAILS (never skips) when mobile.html has moved.
 func TestCompatSnapshotCoversMobileFields(t *testing.T) {
-	src := filepath.Join("..", "hub", "mobile.html")
-	data, err := os.ReadFile(src)
-	if err != nil {
-		t.Skipf("mobile.html not reachable (%v); skipping cross-check", err)
-	}
+	// A missing twin FAILS; only an absent checkout skips (mustReadRepoFile).
+	data := mustReadRepoFile(t, "services", "hub", "cmd", "hub", "mobile.html")
 	mobile := string(data)
 
 	// A representative claudemon row exercising every mapped branch.

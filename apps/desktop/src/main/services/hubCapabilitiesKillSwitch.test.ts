@@ -731,7 +731,18 @@ describe('fixture-driven guard coverage — kill-switch-only path capabilities',
   // project and into <configDir>/sessions there and was refused here. This pins
   // the side that was already right, so the two cannot re-diverge in either
   // direction. The Go half is TestLibraryDerivedRootSetIsTheItemRoots.
-  for (const entry of killSwitchOnly.filter((m) => m.derivedRootSet === 'item')) {
+  // The filter is a place this sweep can silently become zero tests: a fixture
+  // that renamed `derivedRootSet` or its value would register nothing here and
+  // the file would still be green. Assert the selection before using it.
+  const derivedItemMethods = killSwitchOnly.filter((m) => m.derivedRootSet === 'item');
+  it('[floor] the fixture still names methods whose derived guard uses the item roots', () => {
+    expect(
+      derivedItemMethods.map((m) => m.method),
+      "no methods carry derivedRootSet 'item' — this sweep just became zero tests",
+    ).not.toEqual([]);
+  });
+
+  for (const entry of derivedItemMethods) {
     it(`${entry.method}'s per-file guard uses the item roots, not the ${entry.rootSet} roots`, () => {
       const secondAgentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-projB-')));
       getAllSnapshots.mockReturnValue([{ cwd: agentCwd }, { cwd: secondAgentCwd }] as never);
