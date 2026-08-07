@@ -731,6 +731,27 @@ describe('git.* cwd confinement', () => {
       expect(gitMock.diff).not.toHaveBeenCalled();
     });
 
+    // The `untracked` leg is a different capability wearing the same name.
+    // `git diff --no-index -- /dev/null <path>` renders ANY readable file as an
+    // all-added diff — gitignored, untracked and tracked-but-unmodified alike —
+    // none of which a path-less diff shows. So the "confining to the repo
+    // concedes nothing" argument does not cover it, and the work-tree root is a
+    // DERIVED directory nothing ever checked against the allow-list: an agent
+    // cwd of <repo>/apps/desktop read <repo>/services/hub/.env this way, a file
+    // fs.read and fs.watch refuse for the same caller.
+    it('refuses an untracked read of a sibling subtree the tracked pathspec allows', async () => {
+      await expect(
+        call('git.diff', { cwd: agentCwd, path: 'services/hub/.env', untracked: true }),
+      ).rejects.toThrow(/outside the allowed workspace/);
+      expect(gitMock.diff).not.toHaveBeenCalled();
+    });
+
+    it('still allows an untracked path INSIDE the agent cwd', async () => {
+      const rel = path.relative(repoRoot, path.join(agentCwd, 'src', 'new.ts'));
+      await call('git.diff', { cwd: agentCwd, path: rel, untracked: true });
+      expect(gitMock.diff).toHaveBeenCalledWith(agentCwd, rel, undefined, true);
+    });
+
     it('still allows a root-relative path in a sibling subtree (what git.status hands back)', async () => {
       // git.status prints repo-root-relative paths for the WHOLE repo, and the
       // review pane feeds them straight back; refusing them because they sit

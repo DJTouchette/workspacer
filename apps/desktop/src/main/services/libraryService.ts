@@ -469,7 +469,16 @@ class LibraryService {
       serializeClaude(existing, input.title, input.description, input.body),
       'utf-8',
     );
-    this.ensureProjectWatch(cwd, true);
+    // mayCreate: false — the same reason list() passes it, and the leg the fix
+    // for list() missed. saveClaude writes into `.claude/…` and nothing else, so
+    // it has no business mkdir'ing `<cwd>/.workspacer/library`: that path is
+    // DERIVED after the guard and never resolved, so a symlinked `.workspacer`
+    // component (an ordinary permitted fs.write inside the allowed cwd) put the
+    // created directory — and the fs.watch installed on it, a `library:changed`
+    // activity oracle — outside every allowed root, in a process where fs.write
+    // to the same location is refused. The Go twin (saveLibraryClaude) creates
+    // no watch directory at all.
+    this.ensureProjectWatch(cwd, true, false);
     return {
       id,
       scope: 'claude',

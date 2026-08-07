@@ -450,8 +450,14 @@ func TestListModelsReadsConfigDefault(t *testing.T) {
 	if len(res.Seen) != 1 || res.Seen[0] != "sonnet" {
 		t.Errorf("seen = %v, want [sonnet]", res.Seen)
 	}
-	if len(res.Aliases) != 4 {
-		t.Errorf("expected 4 aliases, got %d", len(res.Aliases))
+	// The alias SET is the contract shared with claudeModels.ts and is pinned by
+	// contracts/claude-model-catalog-cases.json (models_contract_test.go); this
+	// test only asserts that the wiring reaches it. It used to assert 4, which
+	// was the drifted number: the desktop has always returned 6, including the
+	// 1M-context opus[1m] / sonnet[1m] rows.
+	if len(res.Aliases) != len(buildListModels("", false, "", nil, nil).Aliases) {
+		t.Errorf("listModels returned %d aliases, want the contract's %d",
+			len(res.Aliases), len(buildListModels("", false, "", nil, nil).Aliases))
 	}
 }
 

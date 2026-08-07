@@ -137,3 +137,49 @@ func TestProvidersListModelsSoftFailsToEmpty(t *testing.T) {
 		t.Fatalf("expected an empty array on provider failure, got %s (err %v)", res, err)
 	}
 }
+
+// A DIRECTORY named like a provider binary on PATH.
+//
+// providers.go's header calls this file "a faithful Go port of
+// agentProviders.ts", and this is where the two came apart: `fs.existsSync` in
+// TypeScript said yes to a directory and `os.Stat(...).IsDir()` here said no, so
+// the same PATH produced a different argv[0] and a different detection dot on
+// the two providers of providers.checkAll. Twin: agentProviders.test.ts.
+func TestFindOnPathSkipsADirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH binary-name probing is unix-shaped in this test")
+	}
+	sandbox := t.TempDir()
+	bin1 := filepath.Join(sandbox, "bin1")
+	bin2 := filepath.Join(sandbox, "bin2")
+	if err := os.MkdirAll(filepath.Join(bin1, "codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(bin2, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(bin2, "codex")
+	if err := os.WriteFile(real, []byte("#!/bin/sh\necho real\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin1+string(os.PathListSeparator)+bin2)
+
+	if got := resolveAgentBinary("codex", ""); got != real {
+		t.Errorf("resolveAgentBinary(codex) = %q, want the real binary %q — a directory is not a launcher", got, real)
+	}
+	byName := map[string]providerStatus{}
+	for _, s := range checkAllProviders(map[string]string{}) {
+		byName[s.Provider] = s
+	}
+	if c := byName["codex"]; !c.Found || c.ResolvedPath == nil || *c.ResolvedPath != real {
+		t.Errorf("checkAll codex = %+v, want found at %s", c, real)
+	}
+
+	// The same rule on the configured override.
+	dir := filepath.Join(bin1, "codex")
+	for _, s := range checkAllProviders(map[string]string{"codex": dir}) {
+		if s.Provider == "codex" && (s.Found || s.ResolvedPath != nil) {
+			t.Errorf("checkAll with a DIRECTORY as codex's binary override = %+v, want found:false", s)
+		}
+	}
+}

@@ -69,23 +69,51 @@ func profilesPath() string {
 	return filepath.Join(configDir(), "claude-profiles.json")
 }
 
-// loadProfiles reads the configured profiles, always returning at least a
-// synthetic "Default" so spawns never fail for lack of a profile (mirrors the
-// TUI's load()). The default is ordered first.
+// loadProfiles reads the configured profiles, MATERIALIZING the "Default"
+// profile when the file has none — the same thing claudeProfiles.ts's
+// constructor does, and the reason this used to be a divergence.
+//
+// It used to PREPEND a synthetic {id:"default"} whenever no profile carried
+// isDefault, without ever writing it. Three consequences, all live on
+// claude.profiles.*, which the brain answers by default:
+//
+//   - list returned TWO profiles where the desktop returned one, for the same
+//     file. The extra row is not on disk and is not the desktop's "Default".
+//   - the brain listed an id its own update REFUSED: updateProfile reads the
+//     raw file, so claude.profiles.update("default", ...) answered
+//     `profile "default" not found` for a profile claude.profiles.list had just
+//     handed the caller.
+//   - claude.profiles.add on a fresh config dir minted isDefault:TRUE here and
+//     isDefault:FALSE on the desktop, because the desktop's constructor had
+//     already persisted the real "default" row and the brain's synthetic one
+//     was never on disk for len(ps)==0 to see. That method carries `configDir`,
+//     which becomes CLAUDE_CONFIG_DIR.
+//
+// Materializing makes the listed set, the on-disk set and the set update/remove
+// operate on ONE set, on both providers. Pinned by
+// contracts/claude-profiles-cases.json.
 func loadProfiles() []profile {
 	out := readProfilesFile()
-	hasDefault := false
-	for _, p := range out {
-		if p.IsDefault {
-			hasDefault = true
-			break
-		}
-	}
-	if !hasDefault {
-		out = append([]profile{{ID: "default", Name: "Default", IsDefault: true}}, out...)
-	}
 	normalizeProfiles(out)
+	if len(out) == 0 {
+		out = []profile{defaultProfile()}
+		// Best effort: a read-only config dir must still yield a usable list.
+		_ = saveProfiles(out)
+	}
 	return out
+}
+
+// defaultProfile is the row claudeProfiles.ts's constructor writes when the
+// file is empty. Both copies mint exactly this.
+func defaultProfile() profile {
+	return profile{
+		ID:         "default",
+		Name:       "Default",
+		ConfigDir:  "",
+		ExtraArgs:  []string{},
+		MCPItemIDs: []string{},
+		IsDefault:  true,
+	}
 }
 
 // normalizeProfiles replaces nil list fields with empty arrays, in place.
@@ -137,7 +165,10 @@ func addProfile(name, configDirVal string, extraArgs, mcpItemIDs []string) (*pro
 	if name == "" {
 		return nil, fmt.Errorf("claude.profiles.add requires { name }")
 	}
-	ps := readProfilesFile() // the raw file (no synthetic default), matching the app
+	// loadProfiles, not readProfilesFile: the set a caller can see is the set a
+	// caller can extend, and it is the same set claudeProfiles.ts's constructor
+	// has already materialized on the desktop side.
+	ps := loadProfiles()
 	id, err := newSessionID()
 	if err != nil {
 		return nil, err
@@ -175,7 +206,7 @@ type profileUpdate struct {
 }
 
 func updateProfile(id string, u profileUpdate) (*profile, error) {
-	ps := readProfilesFile()
+	ps := loadProfiles() // every LISTED id must be updatable
 	idx := -1
 	for i := range ps {
 		if ps[i].ID == id {
@@ -215,7 +246,7 @@ func removeProfile(id string) error {
 	if id == "default" {
 		return nil
 	}
-	ps := readProfilesFile()
+	ps := loadProfiles()
 	out := ps[:0]
 	for _, p := range ps {
 		if p.ID != id {

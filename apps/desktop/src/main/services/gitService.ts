@@ -16,6 +16,7 @@
  */
 
 import { execFile } from 'child_process';
+import { gitArgs } from '../lib/gitExec';
 
 /** One changed file as reported by `git status --porcelain`. `staged` and
  *  `unstaged` are the porcelain XY codes (e.g. "M", "A", "D", "?", " "). */
@@ -69,7 +70,10 @@ function runGit(
   return new Promise((resolve, reject) => {
     execFile(
       'git',
-      args,
+      // The no-exec prefix goes on EVERY invocation: `cwd` here is an agent work
+      // tree, which a bus caller can fs.write into, and .git/config's
+      // core.fsmonitor is a command git runs. See lib/gitExec.ts.
+      gitArgs(args),
       { cwd, maxBuffer: MAX_BUFFER, windowsHide: true },
       (err, stdout, stderr) => {
         if (err && (err as NodeJS.ErrnoException).code === 'ENOENT') {

@@ -268,8 +268,12 @@ func TestProfilesCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if added.ID == "" || !added.IsDefault {
-		t.Fatalf("first profile should be default with an id, got %+v", added)
+	// NOT default: loadProfiles materializes the "Default" row first, exactly as
+	// claudeProfiles.ts's constructor does, so the added profile is the second.
+	// The brain used to prepend that row synthetically without writing it, which
+	// made this same call mint isDefault:true here and isDefault:false there.
+	if added.ID == "" || added.IsDefault {
+		t.Fatalf("an added profile is not the default once Default exists, got %+v", added)
 	}
 
 	// Persisted to claude-profiles.json in the shape the app expects.
@@ -280,8 +284,9 @@ func TestProfilesCRUD(t *testing.T) {
 	var file struct {
 		Profiles []profile `json:"profiles"`
 	}
-	if err := json.Unmarshal(raw, &file); err != nil || len(file.Profiles) != 1 {
-		t.Fatalf("expected one persisted profile, got %s (err %v)", raw, err)
+	if err := json.Unmarshal(raw, &file); err != nil || len(file.Profiles) != 2 ||
+		file.Profiles[0].ID != "default" || !file.Profiles[0].IsDefault {
+		t.Fatalf("expected [Default, Work] persisted, got %s (err %v)", raw, err)
 	}
 
 	// Update name; isDefault stays.
@@ -297,13 +302,23 @@ func TestProfilesCRUD(t *testing.T) {
 		t.Fatalf("second profile should not be default: %+v err %v", second, err)
 	}
 
-	// Removing the default promotes the remaining profile.
+	// Removing a non-default leaves the Default in place.
 	if err := removeProfile(added.ID); err != nil {
 		t.Fatal(err)
 	}
 	left := readProfilesFile()
-	if len(left) != 1 || left[0].ID != second.ID || !left[0].IsDefault {
-		t.Fatalf("after removing default, the survivor should become default: %+v", left)
+	if len(left) != 2 || left[0].ID != "default" || left[1].ID != second.ID {
+		t.Fatalf("after removing Work, [Default, Play] should remain: %+v", left)
+	}
+
+	// And removing the DEFAULT is refused on both providers (claudeProfiles.ts:
+	// `if (id === 'default') return`), so a caller cannot leave the store with no
+	// default at all.
+	if err := removeProfile("default"); err != nil {
+		t.Fatal(err)
+	}
+	if left := readProfilesFile(); len(left) != 2 {
+		t.Fatalf("removing the Default profile must be a no-op: %+v", left)
 	}
 }
 

@@ -13,6 +13,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
+import { gitArgs } from '../lib/gitExec';
 
 import { byteCompare } from '../lib/providerParity';
 
@@ -60,7 +61,10 @@ export function listDir(dirPath: string): ListDirResult {
       // and the ignore filter silently misses unicode-named files).
       const out = execFileSync(
         'git',
-        ['-c', 'core.quotePath=false', 'check-ignore', '-z', '--stdin'],
+        // GIT_NO_EXEC_CONFIG first: .git/config in the listed directory is
+        // caller-written data on this surface, and core.fsmonitor in it is a
+        // command git RUNS. See lib/gitExec.ts.
+        gitArgs(['-c', 'core.quotePath=false', 'check-ignore', '-z', '--stdin']),
         {
           cwd: resolved,
           input: names,

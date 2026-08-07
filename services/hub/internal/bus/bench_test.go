@@ -3,7 +3,9 @@ package bus
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -165,7 +167,80 @@ func TestSnapshotLatencyDistribution(t *testing.T) {
 	p99 := lat[len(lat)*99/100]
 	t.Logf("snapshot (%d turns, %d bytes) propagation over hub: p50=%v p99=%v",
 		200, len(payload), p50, p99)
-	if p99 > 5*time.Millisecond {
-		t.Errorf("p99 %v exceeds 5ms localhost budget", p99)
+
+	// The budget is a claim about the HUB's share of the round trip, and a bare
+	// wall-clock assertion is not that claim: this test failed 4/4 runs with 16
+	// busy loops on the box (p99 ~10ms) and 0/12 idle. That is worse than noise
+	// in the package that owns grant confinement — during a mutation sweep it
+	// turned two genuinely SURVIVING mutations into recorded KILLs, i.e. it
+	// converts "nothing covers this" into "something covers this" in exactly the
+	// analysis this suite exists to support.
+	//
+	// So measure the floor: the same payload, the same websocket, over loopback
+	// with no hub in the path. On an idle machine that is ~0.7ms p99 and the
+	// budget below is meaningful. Under load it was 8.4ms on its own — the
+	// environment cannot measure a 5ms budget at all, and the honest answer is a
+	// SKIP, not a red package. (The -race arm above is the same judgement.)
+	floor := loopbackRoundTripP99(t, len(payload))
+	t.Logf("bare loopback websocket floor for the same payload: p99=%v", floor)
+	if floor > snapshotP99Budget/2 {
+		t.Skipf("machine cannot measure this budget: the hub-free loopback floor is already p99=%v (budget %v)",
+			floor, snapshotP99Budget)
 	}
+	if p99 > snapshotP99Budget {
+		t.Errorf("p99 %v exceeds %v localhost budget (loopback floor was %v)", p99, snapshotP99Budget, floor)
+	}
+}
+
+// snapshotP99Budget is the hub's propagation budget for one mature snapshot.
+const snapshotP99Budget = 5 * time.Millisecond
+
+// loopbackRoundTripP99 measures the same write/read round trip against a bare
+// echo server: same websocket library, same payload size, same loopback, no
+// broker, no router, no policy. It is the part of the measurement the hub does
+// not control, and comparing against it is what makes the assertion above a
+// statement about this code rather than about the runner.
+func loopbackRoundTripP99(t *testing.T, payloadBytes int) time.Duration {
+	t.Helper()
+	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		c.SetReadLimit(8 << 20)
+		for {
+			typ, data, err := c.Read(r.Context())
+			if err != nil {
+				return
+			}
+			if err := c.Write(r.Context(), typ, data); err != nil {
+				return
+			}
+		}
+	}))
+	defer hs.Close()
+
+	ctx := context.Background()
+	cl, _, err := websocket.Dial(ctx, "ws"+hs.URL[len("http"):], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cl.CloseNow()
+	cl.SetReadLimit(8 << 20)
+
+	payload := make([]byte, payloadBytes)
+	const n = 500
+	lat := make([]time.Duration, 0, n)
+	for i := 0; i < n; i++ {
+		start := time.Now()
+		if err := cl.Write(ctx, websocket.MessageText, payload); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := cl.Read(ctx); err != nil {
+			t.Fatal(err)
+		}
+		lat = append(lat, time.Since(start))
+	}
+	sort.Slice(lat, func(i, j int) bool { return lat[i] < lat[j] })
+	return lat[len(lat)*99/100]
 }

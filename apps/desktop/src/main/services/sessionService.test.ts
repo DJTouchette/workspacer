@@ -19,7 +19,7 @@ vi.mock('./claudemonSessionClient', () => ({
   claudemonSessionClient: { getCwd: () => undefined },
 }));
 
-const { sessionService } = await import('./sessionService');
+const { sessionService, resolveWithinSessionsDir } = await import('./sessionService');
 
 let sessionsDir: string;
 let secretOutside: string;
@@ -206,6 +206,14 @@ describe('session filenames — cross-language contract', () => {
 
         expect(c.resolvesTo, 'an accept case must pin `resolvesTo`').toBeTruthy();
         const resolved = abs(c.resolvesTo as string);
+        // The PATH the resolver returns, which is the string every call site
+        // then hands to the filesystem (BINDING DECISION 2) — and the assertion
+        // this loader was missing. Content alone cannot see the difference: the
+        // one accept case with a symlink resolves to a file whose content is
+        // identical, and the case with nothing on disk asserts only toBeNull(),
+        // which any wrong-but-nonexistent path also satisfies. The Go twin has
+        // always compared the path.
+        expect(resolveWithinSessionsDir(c.filename), c.why).toBe(resolved);
         // loadSession returns the parsed file, so the strongest observable of
         // "which path did it open" is the content of the file resolvesTo names.
         if (fs.existsSync(resolved)) {
@@ -246,6 +254,25 @@ describe('listSessions — derived entries stay inside the sessions dir', () => 
       return;
     }
     expect(sessionService.listSessions()).toHaveLength(2);
+  });
+
+  // A config-dir sibling whose NAME starts with the store's — the prefix
+  // collision the Go twin covers for both listers and this side did not. The
+  // case above plants its victim at <configDir>/secret.yaml, so a containment
+  // that drops the separator boundary (`canonical.startsWith(dir)`) passes it.
+  it("skips an entry resolving into a sibling whose name starts with the store's", () => {
+    const sibling = path.join(configDir, 'sessions-backup');
+    fs.mkdirSync(sibling, { recursive: true });
+    const loot = path.join(sibling, 'loot.yaml');
+    fs.writeFileSync(loot, 'name: LOOT-OUTSIDE-THE-SESSIONS-DIR\nagents: []\n', 'utf-8');
+    try {
+      fs.symlinkSync(loot, path.join(sessionsDir, 'pwn.yaml'));
+    } catch {
+      return;
+    }
+    expect(sessionService.listSessions().map((s) => s.name)).not.toContain(
+      'LOOT-OUTSIDE-THE-SESSIONS-DIR',
+    );
   });
 });
 

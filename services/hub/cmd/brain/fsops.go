@@ -171,6 +171,33 @@ func listEntries(dirPath string) (listEntriesResult, error) {
 	return listEntriesResult{Path: resolved, Entries: entries}, nil
 }
 
+// gitNoExecConfig is the argument prefix EVERY `git` invocation on a
+// caller-influenced directory must carry. It has to come before the subcommand;
+// `-c` on the command line outranks every config file, which is the whole point.
+//
+// `.git/config` is data, and on this surface it is CALLER-WRITTEN data:
+// `<configDir>/library` is a configStoreRoot, so a bus client with nothing but
+// fs.write can mint `<configDir>/library/.git/config` (writeHostFile MkdirAll's
+// the parents, so it does not even need a real repo to exist first) and then ask
+// for a directory listing. git discovers the repository at cmd.Dir, reads
+// `core.fsmonitor` out of that file and EXECUTES it — as the daemon user, with
+// no agent approval and no plugin sandbox. The path guard is irrelevant: the
+// whole chain lives inside an allowed root. The command it runs then reads
+// ~/.config/workspacer/remote-token (a TRUSTED bus promotion, which unlocks
+// /plugins/install) and rewrites config.yaml — the two prizes the secret gate
+// exists to protect, reached without ever asking the guard for them.
+//
+// core.fsmonitor is the only key that execs during check-ignore (every other
+// exec-valued key — core.pager, diff.external, core.sshCommand,
+// core.alternateRefsCommand, credential.helper — was probed and does not fire),
+// but the list is a list because the answer is per-subcommand and this prefix is
+// shared with the git.* capabilities. GIT_CONFIG_GLOBAL is deliberately NOT
+// neutralized: core.excludesFile in the user's own ~/.gitconfig is a legitimate
+// part of the ignore answer, and the user's home config is not the attacker's.
+func gitNoExecConfig() []string {
+	return []string{"-c", "core.fsmonitor="}
+}
+
 // gitIgnored asks git which of `names` are ignored in `dir`. Empty when `dir`
 // isn't a repo or git is missing (exit 128) — i.e. no filtering, like the app.
 //
@@ -185,12 +212,14 @@ func listEntries(dirPath string) (listEntriesResult, error) {
 //     cannot contain.
 //   - `core.quotePath=false` keeps non-ASCII names unquoted, so `é.log` comes
 //     back as itself rather than as `"\303\251.log"`.
+//   - `core.fsmonitor=` (gitNoExecConfig) is not cosmetic: see below.
 func gitIgnored(dir string, names []string) map[string]bool {
 	ignored := map[string]bool{}
 	if len(names) == 0 {
 		return ignored
 	}
-	cmd := exec.Command("git", "-c", "core.quotePath=false", "check-ignore", "-z", "--stdin")
+	args := append(gitNoExecConfig(), "-c", "core.quotePath=false", "check-ignore", "-z", "--stdin")
+	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(strings.Join(names, "\x00"))
 	out, err := cmd.Output()

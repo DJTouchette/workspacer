@@ -1193,6 +1193,19 @@ export function registerHubCapabilities(): void {
           ? root + filePath
           : root + path.sep + filePath;
       const canonicalFile = assertPathAllowed('git.diff', anchored, [root]);
+      // …but the "concedes nothing a path-less git.diff doesn't already hand
+      // over" argument is only true for a TRACKED pathspec. With `untracked`,
+      // git.diff runs `git diff --no-index -- /dev/null <path>`, which renders
+      // ANY readable file as an all-added diff — gitignored, untracked, and
+      // tracked-but-unmodified files alike, none of which appear in a path-less
+      // diff (verified: it returns ""). That turns the derived work-tree root —
+      // a directory nothing ever checked against the allow-list, since it comes
+      // out of `rev-parse --show-toplevel` AFTER the cwd guard — into an
+      // arbitrary reader: an agent cwd of <repo>/frontend read <repo>/backend/
+      // .env, and a $HOME that happens to be a dotfiles repo read ~/.ssh/id_rsa,
+      // both of which fs.read and fs.watch refuse for the same caller. So this
+      // one leg is held to the ordinary workspace roots as well.
+      if (untracked) assertPathAllowed('git.diff', anchored, workspaceRoots());
       // git runs from the work-tree root, so it receives the validated path
       // expressed from that root: the operand is a function of the CANONICAL
       // path, never of the caller's string. (Root-relative is what git wants for

@@ -25,9 +25,26 @@
  *                          then matched the subagent filter and dropped a row.
  */
 
-/** Compare by UTF-16 code unit — the JavaScript spelling of Go's `a < b`. */
+/**
+ * Compare by UTF-8 BYTE — the JavaScript spelling of Go's `a < b`.
+ *
+ * `a < b` on JavaScript strings is UTF-16 CODE UNIT order, which is not the same
+ * relation. A code point above U+FFFF is a surrogate pair (0xD800-0xDBFF lead),
+ * so it sorts BELOW every character in 0xE000-0xFFFF under `<` — while its UTF-8
+ * encoding starts 0xF0-0xF4 and sorts ABOVE the 0xE0-0xEF of the BMP. One real
+ * directory is enough to see it: for the entries `a`, U+1F600 + "-notes",
+ * U+FDFD + "-x" and U+FF04 + "-budget", Go puts the emoji LAST and `<` puts it
+ * SECOND. That hits fs.listDir, fs.listEntries, library.list titles,
+ * layouts.list and sessions.list — every list whose ORDER is what the picker
+ * shows and what "first" means in it.
+ *
+ * Comparing the UTF-8 encodings directly is the definition, not an
+ * approximation (it is equivalent to comparing by code point); the buffers are
+ * used because they are literally what Go compares.
+ */
 export function byteCompare(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
+  if (a === b) return 0;
+  return Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
 }
 
 /** Go's `str(v any) string`: a string stays, anything else (number, Date, null,

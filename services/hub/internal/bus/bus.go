@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -136,6 +137,16 @@ type Server struct {
 	// trusted (full access). Registered by the plugin manager.
 	ptMu         sync.RWMutex
 	pluginTokens map[string]pluginIdent
+	// Live connections that presented each plugin token. UnregisterPluginToken
+	// only ever removed the token from the map above, which decides the
+	// HANDSHAKE — conn.caps is a snapshot taken once at accept time and nothing
+	// re-consulted it, so revocation was a no-op on a socket that was already
+	// open. A pane token is the only way a plugin gets ${agentCwd} roots (the
+	// static token deliberately gets none), so a plugin that held one pane socket
+	// open kept fs.read/fs.write inside that agent's cwd after the pane closed,
+	// after it was disabled, and after it was removed. The manager calls that
+	// state "an unrevocable grant leak"; this map is what makes revoking real.
+	pluginConns map[string]map[*conn]struct{}
 }
 
 // SetScopedTokenLookup installs the resolver for capability-scoped user tokens.
@@ -157,7 +168,11 @@ func (s *Server) lookupScoped(token string) (ScopedIdent, bool) {
 
 // NewServer wraps a broker.
 func NewServer(b *broker.Broker) *Server {
-	return &Server{broker: b, router: newRouter(), extra: map[string]http.HandlerFunc{}, pluginTokens: map[string]pluginIdent{}}
+	return &Server{
+		broker: b, router: newRouter(), extra: map[string]http.HandlerFunc{},
+		pluginTokens: map[string]pluginIdent{},
+		pluginConns:  map[string]map[*conn]struct{}{},
+	}
 }
 
 // RegisterPluginToken maps a per-plugin bus token to the plugin's id and the
@@ -216,14 +231,57 @@ func canonRoots(roots []string, pluginID, method string) []string {
 	return out
 }
 
-// UnregisterPluginToken drops a plugin token (on unload/replace).
+// UnregisterPluginToken drops a plugin token (on unload/replace) AND revokes it
+// on every connection that already presented it.
+//
+// Dropping it from pluginTokens alone governs the next handshake and nothing
+// else: conn.caps is a snapshot taken at accept time, so a socket opened one
+// millisecond earlier kept its grants for as long as it stayed open. That made
+// every caller of this function — plugin unload, plugin removal, and
+// Manager.revokePaneTokensFor, whose own comment says it exists "so a closed
+// plugin's panes can't keep calling" — advisory rather than enforcing.
+//
+// Both halves are needed. `revoked` is what makes the NEXT call on an in-flight
+// connection fail even before the close lands, and CloseNow is what stops the
+// connection from sitting there consuming events.
 func (s *Server) UnregisterPluginToken(token string) {
 	if token == "" {
 		return
 	}
 	s.ptMu.Lock()
 	delete(s.pluginTokens, token)
+	conns := s.pluginConns[token]
+	delete(s.pluginConns, token)
 	s.ptMu.Unlock()
+	for cn := range conns {
+		cn.revoked.Store(true)
+		_ = cn.ws.CloseNow()
+	}
+}
+
+// trackPluginConn registers a live plugin connection under the token it
+// presented, so UnregisterPluginToken can reach it.
+func (s *Server) trackPluginConn(token string, cn *conn) {
+	s.ptMu.Lock()
+	defer s.ptMu.Unlock()
+	set := s.pluginConns[token]
+	if set == nil {
+		set = map[*conn]struct{}{}
+		s.pluginConns[token] = set
+	}
+	set[cn] = struct{}{}
+}
+
+// untrackPluginConn removes a connection when it goes away on its own.
+func (s *Server) untrackPluginConn(token string, cn *conn) {
+	s.ptMu.Lock()
+	defer s.ptMu.Unlock()
+	if set := s.pluginConns[token]; set != nil {
+		delete(set, cn)
+		if len(set) == 0 {
+			delete(s.pluginConns, token)
+		}
+	}
 }
 
 func (s *Server) lookupPluginToken(token string) (pluginIdent, bool) {
@@ -463,6 +521,13 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 		scope: scope, scopeMethods: scopeMethods, tokenID: TokenFingerprint(tok),
 	}
 	s.router.addConn(cn)
+	if pluginID != "" {
+		// Tracked under the raw token so revocation can find it. The token itself
+		// is not stored on the conn (tokenID is a fingerprint, deliberately);
+		// only this map holds it, and only for the life of the socket.
+		s.trackPluginConn(tok, cn)
+		defer s.untrackPluginConn(tok, cn)
+	}
 	defer cn.ws.CloseNow()
 
 	sub := s.broker.Subscribe(nil)
@@ -609,6 +674,10 @@ type conn struct {
 	// handlers that persist something on its behalf (see [CallerIdentity]). Never
 	// the token itself: nothing downstream should be able to replay it.
 	tokenID string
+	// Set by UnregisterPluginToken when the credential this connection presented
+	// is revoked. Checked by mayCall, so the very next frame on an already-open
+	// socket is refused rather than answered from the handshake-time snapshot.
+	revoked atomic.Bool
 
 	// Frames this connection asked the hub to deliver to OTHER connections,
 	// drained in order by one goroutine started on first use — see [conn.forward].
@@ -736,6 +805,12 @@ func (cn *conn) mayProvide(method string) bool {
 // patterns; a plugin may call only the capabilities it was granted. Argument
 // scoping (which paths) is a separate step — see authorize.
 func (cn *conn) mayCall(method string) bool {
+	// Revocation first, and before the trusted short-circuit is irrelevant here
+	// only because a trusted conn never carries a plugin token: a revoked
+	// credential authorizes nothing, whatever it used to authorize.
+	if cn.revoked.Load() {
+		return false
+	}
 	if cn.trusted {
 		return true
 	}
@@ -775,12 +850,21 @@ func (cn *conn) authorize(method string, params json.RawMessage) error {
 	}
 	field, scoped := capspec.IsPathScoped(method)
 	if !scoped {
-		// Defense in depth: RegisterPluginToken already refuses to grant a method
-		// that looks path-bearing but was never classified, so mayCall should have
-		// denied it before we got here. If one slips through anyway, deny rather
-		// than let an unscoped filesystem method run with no containment. The test
-		// is MissingSpec, not LooksPathBearing — a method capspec deliberately
-		// leaves unconfined (with its reason on the record) is allowed through.
+		// REDUNDANT BY CONSTRUCTION, and deliberately kept. RegisterPluginToken
+		// `continue`s on capspec.MissingSpec, so such a method never lands in
+		// cn.caps, so mayCall denies it before this function is entered — and the
+		// two earlier arms (trusted, scoped) return above. There is no path that
+		// reaches this line, which is why a mutation deleting it survives the whole
+		// tree: that is what a redundant fail-closed check looks like, not a gap
+		// (plugin/manager.go expandScope's withinRoot carries the same note). It
+		// stays because the invariant it depends on lives in a DIFFERENT function,
+		// and the day someone populates caps from anywhere else this is the line
+		// that keeps an unspecced filesystem method from running unconfined.
+		// TestRegisterRefusesUnspeccedPathCapability pins the invariant itself.
+		//
+		// The test is MissingSpec, not LooksPathBearing — a method capspec
+		// deliberately leaves unconfined (with its reason on the record) is allowed
+		// through.
 		if capspec.MissingSpec(method) {
 			return fmt.Errorf("%s: named like a filesystem capability but has no capspec entry; denied to avoid running unconfined", method)
 		}

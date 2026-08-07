@@ -235,6 +235,72 @@
     "layouts",
     "sessions"
   ],
+  "asciiFold": {
+    "_comment": [
+      "The ASCII-ONLY case fold the secret gate runs on every guarded path — on the",
+      "credential BASENAME and on the config-dir containment comparison. All three",
+      "copies spell it out (asciiLower in fsguard.go and policy.go, asciiLower in",
+      "pathConfinement.ts) and all three say the same thing in a comment: it is",
+      "deliberately NOT strings.ToLower / toLowerCase, because Go's Unicode lowering",
+      "and JavaScript's disagree (U+0130 'Iu0307' already bit the filename slugs) and",
+      "the three copies have to fold IDENTICALLY.",
+      "",
+      "Nothing pinned that. Replacing the whole body with `return s.toLowerCase()`",
+      "(or strings.ToLower) kept 105/105 contract cases and both full suites green,",
+      "because every case-variant case in `cases` uses pure A-Z spellings, which both",
+      "folds handle the same way. The vectors below are chosen so a Unicode fold gives",
+      "a DIFFERENT answer for each one: U+212A KELVIN SIGN folds to 'k' under both",
+      "Unicode folds, U+0130 folds to 'i' in Go and to 'i'+U+0307 in JavaScript (the",
+      "two Unicode folds do not even agree with EACH OTHER), and U+00C4/U+0399 fold in",
+      "both. An ASCII-only fold leaves all four untouched.",
+      "",
+      "This is a fold VECTOR, not a containment verdict: it pins the primitive without",
+      "blessing an answer for any particular path, which matters because the fold is",
+      "used in the deny-more direction only."
+    ],
+    "cases": [
+      {
+        "in": "ABC",
+        "out": "abc"
+      },
+      {
+        "in": ".BUS-TOKEN",
+        "out": ".bus-token"
+      },
+      {
+        "in": "/Some/Path/To/WORKSPACER",
+        "out": "/some/path/to/workspacer"
+      },
+      {
+        "in": "already-lower_0123",
+        "out": "already-lower_0123"
+      },
+      {
+        "in": "",
+        "out": ""
+      },
+      {
+        "in": ".bus-toKen",
+        "out": ".bus-toKen"
+      },
+      {
+        "in": "İstanbul",
+        "out": "İstanbul"
+      },
+      {
+        "in": "ÄÖÜ",
+        "out": "ÄÖÜ"
+      },
+      {
+        "in": "ΙΣ",
+        "out": "ΙΣ"
+      },
+      {
+        "in": "MiXeD-Ä-K",
+        "out": "mixed-Ä-k"
+      }
+    ]
+  },
   "checkUse": [
     {
       "owner": "services/hub/cmd/brain/fsguard.go",
@@ -1881,6 +1947,29 @@
       "why": "<configDir>/library is the ONE directory a remote caller can fs.write into, so it is the one carve-out an attacker can replace with a symlink. Resolving the carve-out and then trusting the result made that symlink an exemption for its own target: pointed at the config dir itself, `within(carveOut, target)` matched every file in it and the whole gate went quiet — remote-token readable, config.yaml writable, on all three copies at once. A carve-out only ever narrows, so its resolved form must still be STRICTLY inside the resolved config dir."
     },
     {
+      "name": "a store carve-out that resolves onto an ANCESTOR of the config dir exempts nothing",
+      "group": "secrets",
+      "needsSymlinks": true,
+      "tree": {
+        "dirs": [
+          "root",
+          "config/workspacer"
+        ],
+        "files": {
+          "config/workspacer/remote-token": "tok"
+        },
+        "symlinks": {
+          "config/workspacer/library": "config"
+        }
+      },
+      "roots": [
+        "${SANDBOX}"
+      ],
+      "target": "${CONFIG}/remote-token",
+      "expect": "deny",
+      "why": "The sibling of the case above, and the half of the same clause that nothing reached. The carve-out check is `sr == cfg || !contains(cfg, sr)`, and only the FIRST disjunct was exercised: a <configDir>/library symlink aimed at the config dir ITSELF is caught by `sr == cfg`, but one aimed at any OTHER ancestor (here XDG_CONFIG_HOME, the config dir's parent) has sr != cfg, so deleting the `!contains(cfg, sr)` disjunct left the whole Go suite green while fs.read handed back remote-token. A carve-out that resolves to a directory CONTAINING the config dir is not a carve-out."
+    },
+    {
       "name": "a store carve-out that resolves OUT of the config dir exempts nothing",
       "group": "secrets",
       "needsSymlinks": true,
@@ -2087,6 +2176,45 @@
       "target": "${ROOT}/a",
       "expect": "deny",
       "why": "The mutual form, because a counter can be placed so that it catches self-reference (the link's own name reappears) and still misses a two-step cycle. Same relative arm, same reason it was uncovered."
+    },
+    {
+      "name": "a backslash is an ordinary filename byte, not a separator (deny direction)",
+      "group": "containment",
+      "posixOnly": true,
+      "tree": {
+        "dirs": [
+          "root"
+        ],
+        "files": {
+          "outside/x\\..\\..\\root/loot.txt": "loot"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${OUTSIDE}/x\\..\\..\\root/loot.txt",
+      "expect": "deny",
+      "why": "BINDING DECISION on the separator SET, which no case reached. On POSIX a backslash is an ordinary byte in a filename, so `x\\..\\..\\root` is ONE literal component; only Windows adds '\\\\' to the splitting alphabet. Widening the splitting set unconditionally (dropping the runtime/platform qualifier in isSep / isSepChar / SEP_RE) left every copy's own suite 100% green while pathWithinRoots answered for a collapsed path the filesystem never names: a plugin granted fs.write on ${ROOT} could hand in a target that lives under ${OUTSIDE}, and vice versa. Both directions are here because the widening flips the verdict each way."
+    },
+    {
+      "name": "a backslash is an ordinary filename byte, not a separator (allow direction)",
+      "group": "containment",
+      "posixOnly": true,
+      "tree": {
+        "dirs": [
+          "root"
+        ],
+        "files": {
+          "outside/x\\..\\..\\root/loot.txt": "loot"
+        }
+      },
+      "roots": [
+        "${OUTSIDE}"
+      ],
+      "target": "${OUTSIDE}/x\\..\\..\\root/loot.txt",
+      "expect": "allow",
+      "resolvesTo": "${OUTSIDE}/x\\..\\..\\root/loot.txt",
+      "why": "The other half: the target IS inside ${OUTSIDE} and must stay there, and resolvesTo pins the ANSWER — a copy that treats '\\\\' as a separator returns ${ROOT}/loot.txt, a path in a different root entirely."
     }
   ],
   "methods": [

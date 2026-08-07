@@ -106,4 +106,76 @@ describe('layoutService.list — derived entries stay inside the store', () => {
     }
     expect(layoutService.list()).toHaveLength(2);
   });
+
+  // A sibling of the store whose NAME starts with the store's — the prefix
+  // collision the Go twin's TestStoreListersDoNotReadThroughASymlinkOutOfTheStore
+  // covers and this side did not. Both existing cases plant their victim at
+  // <configDir>/stolen.yaml, so a containment that drops the separator boundary
+  // (`canonical.startsWith(dir)`) passes them both.
+  it("skips an entry that resolves into a config-dir sibling whose name starts with the store's", () => {
+    const layoutsDir = path.join(h.dir, 'layouts');
+    const sibling = path.join(h.dir, 'layouts-backup');
+    fs.mkdirSync(layoutsDir, { recursive: true });
+    fs.mkdirSync(sibling, { recursive: true });
+    const loot = path.join(sibling, 'loot.yaml');
+    fs.writeFileSync(
+      loot,
+      'id: x\nname: LOOT-OUTSIDE-THE-STORE\ncreatedAt: z\nagents: []\n',
+      'utf-8',
+    );
+    try {
+      fs.symlinkSync(loot, path.join(layoutsDir, 'pwn.yaml'));
+    } catch {
+      return;
+    }
+    expect(layoutService.list().map((l) => l.name)).not.toContain('LOOT-OUTSIDE-THE-STORE');
+  });
+});
+
+// The WRITE and DELETE legs of the same store. list() has always resolved and
+// contained (resolveStoreEntry); layoutFilePath was purely LEXICAL —
+// `path.dirname(path.resolve(full)) !== path.resolve(layoutsDir())` is a textual
+// answer that cannot see a symlink entry — while its Go twin canonicalizes. Same
+// bus method, same store, two different opinions about what a legal entry is,
+// resolved by whichever provider a delegation flag happened to pick.
+// Twin: TestLayoutWriteAndDeleteRefuseAnEntryThatResolvesOutOfTheStore.
+describe('layoutService save/remove — a store entry that resolves out is refused', () => {
+  const plant = (name: string): string | null => {
+    const layoutsDir = path.join(h.dir, 'layouts');
+    fs.mkdirSync(layoutsDir, { recursive: true });
+    const victim = path.join(h.dir, 'config.yaml');
+    fs.writeFileSync(victim, 'ui: {}\n', 'utf-8');
+    try {
+      fs.symlinkSync(victim, path.join(layoutsDir, `${name}.yaml`));
+    } catch {
+      return null; // no symlink privilege here
+    }
+    return victim;
+  };
+
+  it('save refuses a layout id whose store entry is a symlink out of the store', () => {
+    const victim = plant('evil');
+    if (!victim) return;
+    expect(() => layoutService.save({ id: 'evil', name: 'x', agents: [] })).toThrow(
+      /outside the layouts directory/,
+    );
+    expect(fs.readFileSync(victim, 'utf-8')).toBe('ui: {}\n');
+    expect(fs.lstatSync(path.join(h.dir, 'layouts', 'evil.yaml')).isSymbolicLink()).toBe(true);
+  });
+
+  it('remove refuses the same entry rather than unlinking it', () => {
+    const victim = plant('evil');
+    if (!victim) return;
+    layoutService.remove('evil');
+    expect(fs.existsSync(path.join(h.dir, 'layouts', 'evil.yaml'))).toBe(true);
+    expect(fs.existsSync(victim)).toBe(true);
+  });
+
+  it('the floor: an ordinary id still saves and removes', () => {
+    const l = layoutService.save({ id: 'ordinary', name: 'Ordinary', agents: [] });
+    expect(l.id).toBe('ordinary');
+    expect(fs.existsSync(path.join(h.dir, 'layouts', 'ordinary.yaml'))).toBe(true);
+    layoutService.remove('ordinary');
+    expect(fs.existsSync(path.join(h.dir, 'layouts', 'ordinary.yaml'))).toBe(false);
+  });
 });

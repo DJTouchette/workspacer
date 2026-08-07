@@ -1,27 +1,150 @@
 package main
 
-// claude.listModels — the model-picker data. The aliases resolve to the latest
-// model of each family (so they track Claude Code updates with zero
-// maintenance); the config-derived fields and the live `seen` list now come
-// from the same sources the app uses: config.yaml plus the models observed in
-// claudemon's live sessions. Mirrors claudeModels.ts.
+// claude.listModels — the model-picker data, and a PARITY surface.
+//
+// claude.listModels is in catalogMethods(), so the brain is the DEFAULT answerer
+// for every web / mobile / remote client while the desktop IPC path serves its
+// own copy. The two used to answer a different contract: four aliases here
+// versus six there (the 1M-context `opus[1m]` / `sonnet[1m]` ids were simply
+// unreachable from the web picker), "Opus — latest" versus a version-stamped
+// "Opus 4.5" plus a context badge, no defaultPermissionMode at all (so the
+// remembered permission mode was lost on that path), and a `seen` list that
+// still offered Claude Code's internal `<synthetic>` placeholder as a selectable
+// model id. Both suites asserted their own answer and both were green.
+//
+// contracts/claude-model-catalog-cases.json is the fixture both are held to now.
+// Mirrors claudeModels.ts rule for rule.
 
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"sort"
+	"strconv"
+	"strings"
 )
 
 type modelAlias struct {
 	Value string `json:"value"`
 	Label string `json:"label"`
+	// Context-window badge, e.g. "200K" | "1M".
+	Context string `json:"context,omitempty"`
 }
 
 type listModelsResult struct {
-	DefaultModel           string       `json:"defaultModel"`
-	SkipPermissionsDefault bool         `json:"skipPermissionsDefault"`
-	Aliases                []modelAlias `json:"aliases"`
-	Seen                   []string     `json:"seen"`
+	DefaultModel           string `json:"defaultModel"`
+	SkipPermissionsDefault bool   `json:"skipPermissionsDefault"`
+	// Permission mode remembered from the last spawn ("" = provider default).
+	DefaultPermissionMode string       `json:"defaultPermissionMode"`
+	Aliases               []modelAlias `json:"aliases"`
+	Seen                  []string     `json:"seen"`
+}
+
+// concreteModelID is claudeModels.ts's parseConcreteId regex, verbatim.
+var concreteModelID = regexp.MustCompile(`^claude-([a-z]+)-(\d+(?:-\d+)*?)(?:-\d{6,})?$`)
+
+// parseConcreteID splits a concrete model id into family + dotted version, e.g.
+// "claude-opus-4-5-20251101" -> ("opus", "4.5"). ok false when it is not one.
+func parseConcreteID(id string) (family, version string, ok bool) {
+	m := concreteModelID.FindStringSubmatch(strings.ReplaceAll(id, "[1m]", ""))
+	if m == nil {
+		return "", "", false
+	}
+	return m[1], strings.ReplaceAll(m[2], "-", "."), true
+}
+
+// newerVersion reports a > b over dotted numeric versions, padding the shorter.
+func newerVersion(a, b string) bool {
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	n := len(pa)
+	if len(pb) > n {
+		n = len(pb)
+	}
+	at := func(parts []string, i int) int {
+		if i >= len(parts) {
+			return 0
+		}
+		v, _ := strconv.Atoi(parts[i])
+		return v
+	}
+	for i := 0; i < n; i++ {
+		if d := at(pa, i) - at(pb, i); d != 0 {
+			return d > 0
+		}
+	}
+	return false
+}
+
+// buildListModels is the pure half, so the contract fixture can drive it without
+// a config store or a claudemon.
+func buildListModels(defaultModel string, skip bool, defaultPermissionMode string, persisted, live []string) listModelsResult {
+	uniq := map[string]struct{}{}
+	seenAll := []string{}
+	for _, m := range append(append([]string{}, persisted...), live...) {
+		if m == "" {
+			continue
+		}
+		// "<synthetic>" is Claude Code's placeholder model id on synthetic
+		// transcript messages — telemetry noise, not a launchable model.
+		if strings.HasPrefix(m, "<") {
+			continue
+		}
+		if _, dup := uniq[m]; dup {
+			continue
+		}
+		uniq[m] = struct{}{}
+		seenAll = append(seenAll, m)
+	}
+	sort.Strings(seenAll)
+
+	// Newest concrete version observed per family, used to version-label the
+	// alias rows below.
+	newest := map[string]string{}
+	for _, id := range seenAll {
+		family, version, ok := parseConcreteID(id)
+		if !ok {
+			continue
+		}
+		if cur, have := newest[family]; !have || newerVersion(version, cur) {
+			newest[family] = version
+		}
+	}
+
+	// An alias already stands for the newest model of its family, so a seen id at
+	// that same version would render as a duplicate row — absorb it into the
+	// alias (which carries its version in the label) and keep only older ids.
+	seen := make([]string, 0, len(seenAll))
+	for _, id := range seenAll {
+		family, version, ok := parseConcreteID(id)
+		if ok && newest[family] == version {
+			continue
+		}
+		seen = append(seen, id)
+	}
+
+	label := func(family, base string) string {
+		if v, ok := newest[family]; ok {
+			return base + " " + v
+		}
+		return base
+	}
+
+	return listModelsResult{
+		DefaultModel:           defaultModel,
+		SkipPermissionsDefault: skip,
+		DefaultPermissionMode:  defaultPermissionMode,
+		Aliases: []modelAlias{
+			// Fable's 1M window is both its maximum AND its default — there is no
+			// 200K mode to select, so it has no separate `[1m]` row.
+			{Value: "fable", Label: label("fable", "Fable"), Context: "1M"},
+			{Value: "opus", Label: label("opus", "Opus"), Context: "200K"},
+			{Value: "opus[1m]", Label: label("opus", "Opus"), Context: "1M"},
+			{Value: "sonnet", Label: label("sonnet", "Sonnet"), Context: "200K"},
+			{Value: "sonnet[1m]", Label: label("sonnet", "Sonnet"), Context: "1M"},
+			{Value: "haiku", Label: label("haiku", "Haiku"), Context: "200K"},
+		},
+		Seen: seen,
+	}
 }
 
 func (r *registry) listModels(ctx context.Context) listModelsResult {
@@ -30,31 +153,9 @@ func (r *registry) listModels(ctx context.Context) listModelsResult {
 
 	defaultModel, _ := claude["defaultModel"].(string)
 	skip, _ := claude["skipPermissionsDefault"].(bool)
+	mode, _ := claude["defaultPermissionMode"].(string)
 
-	seen := map[string]struct{}{}
-	for _, m := range toStringSlice(claude["seenModels"]) {
-		seen[m] = struct{}{}
-	}
-	for _, m := range r.liveModels(ctx) {
-		seen[m] = struct{}{}
-	}
-	out := make([]string, 0, len(seen))
-	for m := range seen {
-		out = append(out, m)
-	}
-	sort.Strings(out)
-
-	return listModelsResult{
-		DefaultModel:           defaultModel,
-		SkipPermissionsDefault: skip,
-		Aliases: []modelAlias{
-			{Value: "fable", Label: "Fable — latest"},
-			{Value: "opus", Label: "Opus — latest"},
-			{Value: "sonnet", Label: "Sonnet — latest"},
-			{Value: "haiku", Label: "Haiku — latest"},
-		},
-		Seen: out,
-	}
+	return buildListModels(defaultModel, skip, mode, toStringSlice(claude["seenModels"]), r.liveModels(ctx))
 }
 
 // liveModels pulls the concrete model ids out of claudemon's live sessions

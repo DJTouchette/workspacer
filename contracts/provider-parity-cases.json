@@ -39,34 +39,112 @@
   "order": [
     {
       "name": "uppercase sorts before lowercase, byte-wise",
-      "input": ["cherry", "Banana", "Date", "apple"],
-      "expected": ["Banana", "Date", "apple", "cherry"],
+      "input": [
+        "cherry",
+        "Banana",
+        "Date",
+        "apple"
+      ],
+      "expected": [
+        "Banana",
+        "Date",
+        "apple",
+        "cherry"
+      ],
       "why": "The whole divergence in one case: localeCompare gives apple/Banana/cherry/Date, raw bytes give this. Neither is wrong on its own; having both at once is."
     },
     {
       "name": "digits and punctuation sort by code unit, not by collation",
-      "input": ["item-10", "item-2", "_x", "Item-1"],
-      "expected": ["Item-1", "_x", "item-10", "item-2"],
+      "input": [
+        "item-10",
+        "item-2",
+        "_x",
+        "Item-1"
+      ],
+      "expected": [
+        "Item-1",
+        "_x",
+        "item-10",
+        "item-2"
+      ],
       "why": "localeCompare puts item-2 before item-10 (numeric-ish collation in several locales) and ignores the leading underscore; byte order does neither. A locale-dependent comparison also means the SAME provider can reorder itself on a different machine."
     },
     {
       "name": "an empty string sorts first",
-      "input": ["b", "", "a"],
-      "expected": ["", "a", "b"],
+      "input": [
+        "b",
+        "",
+        "a"
+      ],
+      "expected": [
+        "",
+        "a",
+        "b"
+      ],
       "why": "The coerced value of a non-string scalar is \"\", so where empties land decides where an odd row lands — which is the difference between 'mis-sorted' and 'the list is empty'."
+    },
+    {
+      "name": "an astral code point sorts by UTF-8 byte, not by UTF-16 code unit",
+      "input": [
+        "a",
+        "😀-notes",
+        "﷽-x",
+        "＄-budget"
+      ],
+      "expected": [
+        "a",
+        "﷽-x",
+        "＄-budget",
+        "😀-notes"
+      ],
+      "why": "Every case above is pure ASCII, so the fixture could not see the one place `a < b` in JavaScript is NOT Go's `a < b`. A code point above U+FFFF is a UTF-16 surrogate pair whose lead unit is 0xD800-0xDBFF, so `<` sorts it BELOW everything in 0xE000-0xFFFF, while its UTF-8 encoding starts 0xF0-0xF4 and Go sorts it ABOVE the 0xE0-0xEF of the BMP. Same directory, opposite placement of the emoji entry, on fs.listDir / fs.listEntries / library.list / layouts.list / sessions.list."
     }
   ],
   "scalar": [
-    { "name": "a string is itself", "value": "2026-01-01T00:00:00.000Z", "expected": "2026-01-01T00:00:00.000Z" },
-    { "name": "an empty string stays empty", "value": "", "expected": "" },
-    { "name": "a number is not a string", "value": 5, "expected": "" },
-    { "name": "a boolean is not a string", "value": true, "expected": "" },
-    { "name": "null is not a string", "value": null, "expected": "" },
-    { "name": "a list is not a string", "value": [], "expected": "" },
-    { "name": "a map is not a string", "value": {}, "expected": "" }
+    {
+      "name": "a string is itself",
+      "value": "2026-01-01T00:00:00.000Z",
+      "expected": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "an empty string stays empty",
+      "value": "",
+      "expected": ""
+    },
+    {
+      "name": "a number is not a string",
+      "value": 5,
+      "expected": ""
+    },
+    {
+      "name": "a boolean is not a string",
+      "value": true,
+      "expected": ""
+    },
+    {
+      "name": "null is not a string",
+      "value": null,
+      "expected": ""
+    },
+    {
+      "name": "a list is not a string",
+      "value": [],
+      "expected": ""
+    },
+    {
+      "name": "a map is not a string",
+      "value": {},
+      "expected": ""
+    }
   ],
   "suffix": [
-    { "name": "an ordinary suffix", "value": "session.yaml", "suffix": ".yaml", "fold": false, "expected": "session" },
+    {
+      "name": "an ordinary suffix",
+      "value": "session.yaml",
+      "suffix": ".yaml",
+      "fold": false,
+      "expected": "session"
+    },
     {
       "name": "only the SUFFIX, never the first occurrence",
       "value": "a.jsonl.b.jsonl",
@@ -83,9 +161,27 @@
       "expected": ".jsonlagent-x",
       "why": "replace() gives 'agent-x.jsonl', which then matches the startsWith('agent-') subagent filter and drops a row the other provider lists."
     },
-    { "name": "no suffix, no change", "value": "notes.txt", "suffix": ".yaml", "fold": false, "expected": "notes.txt" },
-    { "name": "the whole string is the suffix", "value": ".md", "suffix": ".md", "fold": true, "expected": "" },
-    { "name": "folded: lowercase", "value": "readme.md", "suffix": ".md", "fold": true, "expected": "readme" },
+    {
+      "name": "no suffix, no change",
+      "value": "notes.txt",
+      "suffix": ".yaml",
+      "fold": false,
+      "expected": "notes.txt"
+    },
+    {
+      "name": "the whole string is the suffix",
+      "value": ".md",
+      "suffix": ".md",
+      "fold": true,
+      "expected": ""
+    },
+    {
+      "name": "folded: lowercase",
+      "value": "readme.md",
+      "suffix": ".md",
+      "fold": true,
+      "expected": "readme"
+    },
     {
       "name": "folded: mixed case",
       "value": "readme.Md",
@@ -94,8 +190,26 @@
       "expected": "readme",
       "why": "The entry filter that admits the file is already case-insensitive, so this file IS listed; trimming only '.md' and '.MD' left '.Md' on and minted id 'readme-md' on one side and 'readme' on the other."
     },
-    { "name": "folded: uppercase", "value": "SPEC.MD", "suffix": ".md", "fold": true, "expected": "SPEC" },
-    { "name": "folded: the other mixed spelling", "value": "guide.mD", "suffix": ".md", "fold": true, "expected": "guide" },
-    { "name": "folded: not a suffix at all", "value": "mdfile", "suffix": ".md", "fold": true, "expected": "mdfile" }
+    {
+      "name": "folded: uppercase",
+      "value": "SPEC.MD",
+      "suffix": ".md",
+      "fold": true,
+      "expected": "SPEC"
+    },
+    {
+      "name": "folded: the other mixed spelling",
+      "value": "guide.mD",
+      "suffix": ".md",
+      "fold": true,
+      "expected": "guide"
+    },
+    {
+      "name": "folded: not a suffix at all",
+      "value": "mdfile",
+      "suffix": ".md",
+      "fold": true,
+      "expected": "mdfile"
+    }
   ]
 }

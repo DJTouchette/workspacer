@@ -498,12 +498,67 @@ func (m contractMethod) providedByBrain() bool {
 	return false
 }
 
+// asciiFoldCase is one in/out vector of the fixture's `asciiFold` block: the
+// ASCII-ONLY fold the secret gate runs, pinned as a primitive rather than
+// through a containment verdict.
+type asciiFoldCase struct {
+	In  string `json:"in"`
+	Out string `json:"out"`
+}
+
+type asciiFoldBlock struct {
+	Cases []asciiFoldCase `json:"cases"`
+}
+
 type contractFixture struct {
 	Owners             map[string][]string `json:"owners"`
 	SecretBasenames    []string            `json:"secretBasenames"`
 	ConfigStoreSubdirs []string            `json:"configStoreSubdirs"`
+	AsciiFold          asciiFoldBlock      `json:"asciiFold"`
+	CheckUse           []contractCheckUse  `json:"checkUse"`
 	Cases              []contractCase      `json:"cases"`
 	Methods            []contractMethod    `json:"methods"`
+}
+
+// contractCheckUse is one owner's record of BINDING DECISION 2's second half:
+// the canonical path the guard returned is what the call site opens. `callSites`
+// names every place that has to be true, and until this struct existed neither
+// Go loader read the block at all.
+type contractCheckUse struct {
+	Owner       string   `json:"owner"`
+	Requirement string   `json:"requirement"`
+	CallSites   []string `json:"callSites"`
+}
+
+// TestAsciiFoldMatchesTheFixture pins asciiLower itself.
+//
+// All three copies carry the same comment — "deliberately not strings.ToLower /
+// toLowerCase, because the three copies have to fold IDENTICALLY" — and nothing
+// enforced it: replacing the body with strings.ToLower (or, on the desktop,
+// s.toLowerCase()) kept the entire corpus and both full suites green, because
+// every case-variant CASE in the corpus uses pure A-Z spellings that both folds
+// agree on. The vectors carry code points where the folds disagree, including
+// U+0130, where Go's Unicode fold and JavaScript's do not even agree with each
+// other.
+func TestAsciiFoldMatchesTheFixture(t *testing.T) {
+	fx := loadContractFixture(t)
+	if len(fx.AsciiFold.Cases) == 0 {
+		t.Fatal("the fixture must carry asciiFold vectors, or this guard guards nothing")
+	}
+	sawNonASCII := false
+	for _, c := range fx.AsciiFold.Cases {
+		for _, r := range c.In {
+			if r > 127 {
+				sawNonASCII = true
+			}
+		}
+		if got := asciiLower(c.In); got != c.Out {
+			t.Errorf("asciiLower(%q) = %q, want %q", c.In, got, c.Out)
+		}
+	}
+	if !sawNonASCII {
+		t.Fatal("every asciiFold vector is pure ASCII, so strings.ToLower would pass them all — the block distinguishes nothing")
+	}
 }
 
 // ownedGroups is the set of case groups fsguard.go is on the hook for. A copy
@@ -1331,6 +1386,27 @@ func TestPathBearingMethodRootSetsMatchTheCorpus(t *testing.T) {
 			_, err = reg.handle(context.Background(), m.Method, json.RawMessage(body))
 			refused := err != nil && strings.Contains(err.Error(), refusalText)
 
+			// The UPPER boundary of `browse`, which nothing probed. browse is
+			// "the home tree plus the workspace roots"; the deny probes are all
+			// outside $HOME's PARENT as well, so widening browseRoots to
+			// filepath.Dir(home) — every other user's home directory — changed no
+			// assertion anywhere. A sibling of $HOME is inside the widened set and
+			// outside the real one, so it must be refused whatever the rootSet is.
+			sibling := filepath.Join(filepath.Dir(home), "wks-contract-probe-sibling-of-home")
+			if _, err := os.Lstat(sibling); err == nil {
+				t.Fatalf("%s already exists — the sandbox is not fresh and this probe proves nothing", sibling)
+			}
+			sibParams := map[string]any{}
+			for k, v := range m.Params {
+				sibParams[k] = v
+			}
+			sibParams[m.Field] = sibling
+			sibBody, _ := json.Marshal(sibParams)
+			if _, sibErr := reg.handle(context.Background(), m.Method, json.RawMessage(sibBody)); sibErr == nil ||
+				!strings.Contains(sibErr.Error(), refusalText) {
+				t.Fatalf("%s accepted a SIBLING of $HOME (%s) — neither root set reaches outside the home tree (err=%v)", m.Method, sibling, sibErr)
+			}
+
 			switch m.RootSet {
 			case "browse":
 				if refused {
@@ -1406,7 +1482,18 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 		return filepath.Join(dir, "sub", "link") + "/../nope/../" + name
 	}
 
-	t.Run("fs.read", func(t *testing.T) {
+	// Every subtest is named for the exact `callSites` entry it covers, and the
+	// set is compared against the fixture at the end. The fixture's checkUse
+	// block used to be read by NO Go loader at all — neither Go fixture struct
+	// even declared the field — so its nine call sites were a comment, and the
+	// hand-maintained table here silently covered six of them.
+	covered := map[string]bool{}
+	run := func(site string, fn func(t *testing.T)) {
+		covered[site] = true
+		t.Run(site, fn)
+	}
+
+	run("handlers.go fs.read -> readTextFile", func(t *testing.T) {
 		reg := registryWithCwd(t, dir)
 		raw, err := reg.handle(context.Background(), "fs.read",
 			json.RawMessage(`{"path":`+jsonStr(via("notes.txt"))+`}`))
@@ -1429,7 +1516,7 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 		}
 	})
 
-	t.Run("fs.write", func(t *testing.T) {
+	run("handlers.go fs.write -> writeHostFile", func(t *testing.T) {
 		reg := registryWithCwd(t, dir)
 		if _, err := reg.handle(context.Background(), "fs.write",
 			json.RawMessage(`{"path":`+jsonStr(via("out.txt"))+`,"contents":"written"}`)); err != nil {
@@ -1451,7 +1538,7 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 
 	// The two directory listers get `<dir>/other`, an EXISTING directory the
 	// cleaned form (`<dir>/sub/other`) does not name.
-	t.Run("fs.listEntries", func(t *testing.T) {
+	run("handlers.go fs.listEntries -> listEntries", func(t *testing.T) {
 		reg := registryWithCwd(t, dir)
 		raw, err := reg.handle(context.Background(), "fs.listEntries",
 			json.RawMessage(`{"path":`+jsonStr(via("other"))+`}`))
@@ -1467,7 +1554,7 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 		}
 	})
 
-	t.Run("fs.listDir", func(t *testing.T) {
+	run("handlers.go fs.listDir -> listHostDir", func(t *testing.T) {
 		reg := registryWithCwd(t, dir)
 		raw, err := reg.handle(context.Background(), "fs.listDir",
 			json.RawMessage(`{"path":`+jsonStr(via("other"))+`}`))
@@ -1483,7 +1570,7 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 		}
 	})
 
-	t.Run("search.project", func(t *testing.T) {
+	run("handlers.go search.project -> searchProject(opts.Cwd)", func(t *testing.T) {
 		reg := registryWithCwd(t, dir)
 		raw, err := reg.handle(context.Background(), "search.project",
 			json.RawMessage(`{"cwd":`+jsonStr(filepath.Join(dir, "sub", "link")+"/../nope/..")+`,"query":"hello"}`))
@@ -1496,7 +1583,7 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 		}
 	})
 
-	t.Run("library.save", func(t *testing.T) {
+	run("library.go saveLibrary -> writeFileAtomic", func(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 		reg := registryWithCwd(t, dir)
 		raw, err := reg.handle(context.Background(), "library.save",
@@ -1517,6 +1604,97 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 			t.Errorf("library.save did not land on the canonical path: %v", err)
 		}
 	})
+
+	// The claude scope is a SECOND write leg with its own destination, its own
+	// guard call and its own derived path.
+	run("library.go saveLibraryClaude -> writeFileAtomic", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		reg := registryWithCwd(t, dir)
+		raw, err := reg.handle(context.Background(), "library.save",
+			json.RawMessage(`{"scope":"claude","id":"s","title":"S","kind":"skill","body":"b","cwd":`+
+				jsonStr(filepath.Join(dir, "sub", "link")+"/../nope/..")+`}`))
+		if err != nil {
+			t.Fatalf("library.save(claude) must write under the path the guard returned: %v", err)
+		}
+		var item libraryItem
+		if err := json.Unmarshal(raw, &item); err != nil {
+			t.Fatal(err)
+		}
+		want := filepath.Join(dir, ".claude", "skills", "s", "SKILL.md")
+		if item.Path != want {
+			t.Errorf("library.save(claude) reported %q, want %q", item.Path, want)
+		}
+		if _, err := os.Stat(want); err != nil {
+			t.Errorf("library.save(claude) did not land on the canonical path: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "sub", ".claude")); err == nil {
+			t.Error("library.save(claude) used the TEXTUALLY CLEANED cwd <dir>/sub")
+		}
+	})
+
+	run("handlers.go library.list -> listLibrary", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		item := filepath.Join(dir, ".workspacer", "library", "listed.md")
+		if err := os.MkdirAll(filepath.Dir(item), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(item, []byte("---\ntitle: ListedFromCanonical\n---\n\nb\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		reg := registryWithCwd(t, dir)
+		raw, err := reg.handle(context.Background(), "library.list",
+			json.RawMessage(`{"cwd":`+jsonStr(filepath.Join(dir, "sub", "link")+"/../nope/..")+`}`))
+		if err != nil {
+			t.Fatalf("library.list must list under the path the guard returned: %v", err)
+		}
+		// The cleaned cwd is <dir>/sub, which has no library at all.
+		if !strings.Contains(string(raw), "ListedFromCanonical") {
+			t.Errorf("library.list read from a different directory than the one the guard validated: %s", raw)
+		}
+	})
+
+	run("handlers.go library.remove -> removeLibrary", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		victim := filepath.Join(dir, ".workspacer", "library", "gone.md")
+		if err := os.MkdirAll(filepath.Dir(victim), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(victim, []byte("---\ntitle: Gone\n---\n\nb\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		reg := registryWithCwd(t, dir)
+		if _, err := reg.handle(context.Background(), "library.remove",
+			json.RawMessage(`{"scope":"project","id":"gone","cwd":`+
+				jsonStr(filepath.Join(dir, "sub", "link")+"/../nope/..")+`}`)); err != nil {
+			t.Fatalf("library.remove must unlink under the path the guard returned: %v", err)
+		}
+		if _, err := os.Stat(victim); err == nil {
+			t.Error("library.remove did not unlink the item under the CANONICAL cwd")
+		}
+	})
+
+	// The fixture's checkUse list is the contract; this table is the proof. If
+	// they disagree in either direction, one of them is lying about what is
+	// covered.
+	fx := loadContractFixture(t)
+	var want []string
+	for _, e := range fx.CheckUse {
+		if e.Owner == fsguardOwnerKey {
+			want = append(want, e.CallSites...)
+		}
+	}
+	if len(want) == 0 {
+		t.Fatalf("the fixture carries no checkUse callSites for %s — BINDING DECISION 2's record has gone missing", fsguardOwnerKey)
+	}
+	got := make([]string, 0, len(covered))
+	for site := range covered {
+		got = append(got, site)
+	}
+	sort.Strings(got)
+	sort.Strings(want)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("the checkUse call sites and the subtests here have drifted\n  covered: %v\n  fixture: %v", got, want)
+	}
 }
 
 // TestGuardedHandlersDoNotRenormalizeTheCanonicalPath is the other direction of

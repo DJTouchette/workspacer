@@ -383,6 +383,29 @@ describe('libraryService — every leg applies the guard it was handed', () => {
     expect(fs.existsSync(path.join(outside, 'library'))).toBe(false);
     fs.rmSync(outside, { recursive: true, force: true });
   });
+
+  // The WRITE leg of the identical defect. The fix above landed on list() only;
+  // saveClaude ended with `ensureProjectWatch(cwd, true)` — two arguments, so
+  // mayCreate defaulted to true — which mkdir'd `<cwd>/.workspacer/library`, a
+  // path derived after the guard and never resolved. saveClaude writes into
+  // `.claude/…` and has no reason to touch the project library dir at all; the
+  // Go twin (saveLibraryClaude) creates no watch directory.
+  it('save({scope:claude}) creates nothing through a symlinked .workspacer', () => {
+    const root = fs.realpathSync(cwd);
+    const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-save-out-')));
+    fs.symlinkSync(outside, path.join(root, '.workspacer'));
+
+    const item = libraryService.save(
+      { scope: 'claude', id: 'my-skill', title: 'My Skill', kind: 'skill', body: 'b', cwd: root },
+      itemGuard('library.save', root),
+    );
+
+    // The floor: the claude item itself is still written, inside the project.
+    expect(item.path).toBe(path.join(root, '.claude', 'skills', 'my-skill', 'SKILL.md'));
+    expect(fs.existsSync(item.path)).toBe(true);
+    expect(fs.existsSync(path.join(outside, 'library'))).toBe(false);
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
 });
 
 /**
@@ -424,6 +447,38 @@ describe('libraryService — a caller-supplied id cannot escape its directory', 
     fs.writeFileSync(path.join(root, 'CLAUDE.md'), 'ORIGINAL PROJECT INSTRUCTIONS\n');
     libraryService.remove('project', '../../CLAUDE', root, undefined, anyGuard);
     expect(fs.existsSync(path.join(root, 'CLAUDE.md'))).toBe(true);
+  });
+
+  // The CREATE leg — the only one a caller can reach without already knowing an
+  // existing item id, and the one every test in this block skipped by always
+  // supplying `id`. On both legs the fallback is the caller's TITLE, and on both
+  // legs slug() is then the whole defence: the path guard is structurally
+  // incapable of helping, because `<cwd>/.workspacer/library/../../CLAUDE.md`
+  // canonicalizes to `<cwd>/CLAUDE.md`, which is INSIDE the allowed agent cwd.
+  it('slugs the TITLE too when no id is supplied (project scope)', () => {
+    const root = fs.realpathSync(cwd);
+    fs.writeFileSync(path.join(root, 'CLAUDE.md'), 'ORIGINAL PROJECT INSTRUCTIONS\n');
+    const item = libraryService.save(
+      { scope: 'project', title: '../../CLAUDE', kind: 'prompt', body: 'OWNED', cwd: root },
+      anyGuard,
+    );
+    expect(item.path.startsWith(path.join(root, '.workspacer', 'library'))).toBe(true);
+    expect(fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf-8')).toBe(
+      'ORIGINAL PROJECT INSTRUCTIONS\n',
+    );
+  });
+
+  it('slugs the TITLE too when no id is supplied (claude scope)', () => {
+    const root = fs.realpathSync(cwd);
+    fs.writeFileSync(path.join(root, 'CLAUDE.md'), 'ORIGINAL PROJECT INSTRUCTIONS\n');
+    const item = libraryService.save(
+      { scope: 'claude', title: '../../CLAUDE', kind: 'agent', body: 'OWNED', cwd: root },
+      anyGuard,
+    );
+    expect(item.path.startsWith(path.join(root, '.claude'))).toBe(true);
+    expect(fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf-8')).toBe(
+      'ORIGINAL PROJECT INSTRUCTIONS\n',
+    );
   });
 
   it("a claude id of '..' does not rm -rf <cwd>/.claude", () => {

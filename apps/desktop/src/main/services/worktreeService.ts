@@ -13,6 +13,7 @@
  */
 
 import { execFile } from 'child_process';
+import { gitArgs } from '../lib/gitExec';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -40,7 +41,8 @@ function git(
   cwd: string,
 ): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    execFile('git', args, { cwd, timeout: 15_000 }, (err, stdout, stderr) => {
+    // gitArgs: see lib/gitExec.ts — .git/config is caller-writable data here.
+    execFile('git', gitArgs(args), { cwd, timeout: 15_000 }, (err, stdout, stderr) => {
       resolve({ ok: !err, stdout: (stdout ?? '').trim(), stderr: (stderr ?? '').trim() });
     });
   });

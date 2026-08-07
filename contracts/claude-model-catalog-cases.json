@@ -1,0 +1,398 @@
+{
+  "_comment": [
+    "claude.listModels is a CATALOG method: it is in the brain's catalogMethods()",
+    "and the desktop registers it through cat(), which is a no-op under the default",
+    "DELEGATE_CATALOG_TO_BRAIN. So the brain answers it for every web, mobile,",
+    "remote and MCP client while the desktop IPC path serves its own copy — and the",
+    "two answered a DIFFERENT CONTRACT, each pinned by its own suite:",
+    "",
+    "  aliases                4 rows here, 6 there. opus[1m] and sonnet[1m] — the",
+    "                         million-token-context ids — were simply unreachable",
+    "                         from the web picker.",
+    "  labels                 'Opus — latest' vs the version-stamped 'Opus 4.5'.",
+    "  context                absent entirely on one side; it is the 200K/1M badge.",
+    "  defaultPermissionMode  absent entirely on one side, so the mode remembered",
+    "                         from the last spawn was lost on that path.",
+    "  seen                   one side offered Claude Code's internal '<synthetic>'",
+    "                         placeholder as a selectable model id, and neither",
+    "                         absorbed the newest-per-family duplicate.",
+    "",
+    "`config` is the config.yaml `claude` section; `live` is the model ids observed",
+    "in claudemon's live sessions (session.usage.model), which both copies merge in.",
+    "`expected` is the whole reply, field for field and in order."
+  ],
+  "cases": [
+    {
+      "name": "no models seen at all: bare alias labels, empty seen",
+      "config": {
+        "defaultModel": "",
+        "skipPermissionsDefault": false,
+        "defaultPermissionMode": "",
+        "seenModels": []
+      },
+      "live": [],
+      "expected": {
+        "defaultModel": "",
+        "skipPermissionsDefault": false,
+        "defaultPermissionMode": "",
+        "aliases": [
+          {
+            "value": "fable",
+            "label": "Fable",
+            "context": "1M"
+          },
+          {
+            "value": "opus",
+            "label": "Opus",
+            "context": "200K"
+          },
+          {
+            "value": "opus[1m]",
+            "label": "Opus",
+            "context": "1M"
+          },
+          {
+            "value": "sonnet",
+            "label": "Sonnet",
+            "context": "200K"
+          },
+          {
+            "value": "sonnet[1m]",
+            "label": "Sonnet",
+            "context": "1M"
+          },
+          {
+            "value": "haiku",
+            "label": "Haiku",
+            "context": "200K"
+          }
+        ],
+        "seen": []
+      },
+      "why": "The floor, and the shape: SIX alias rows, each with a context badge. The Go copy shipped four rows labelled 'Opus — latest' and no context field at all, so the 1M-context ids opus[1m] and sonnet[1m] were unreachable from every web/mobile/remote picker — and the brain is the DEFAULT answerer for this method."
+    },
+    {
+      "name": "config fields round-trip, including the remembered permission mode",
+      "config": {
+        "defaultModel": "opus",
+        "skipPermissionsDefault": true,
+        "defaultPermissionMode": "bypassPermissions",
+        "seenModels": []
+      },
+      "live": [],
+      "expected": {
+        "defaultModel": "opus",
+        "skipPermissionsDefault": true,
+        "defaultPermissionMode": "bypassPermissions",
+        "aliases": [
+          {
+            "value": "fable",
+            "label": "Fable",
+            "context": "1M"
+          },
+          {
+            "value": "opus",
+            "label": "Opus",
+            "context": "200K"
+          },
+          {
+            "value": "opus[1m]",
+            "label": "Opus",
+            "context": "1M"
+          },
+          {
+            "value": "sonnet",
+            "label": "Sonnet",
+            "context": "200K"
+          },
+          {
+            "value": "sonnet[1m]",
+            "label": "Sonnet",
+            "context": "1M"
+          },
+          {
+            "value": "haiku",
+            "label": "Haiku",
+            "context": "200K"
+          }
+        ],
+        "seen": []
+      },
+      "why": "defaultPermissionMode was absent from the Go result entirely, so the mode a user picked on their last spawn silently reverted to the provider default on every non-desktop client."
+    },
+    {
+      "name": "the newest concrete version per family stamps the alias label and is absorbed out of seen",
+      "config": {
+        "defaultModel": "opus",
+        "skipPermissionsDefault": false,
+        "defaultPermissionMode": "",
+        "seenModels": [
+          "claude-opus-4-5-20251101",
+          "claude-opus-4-1-20250805",
+          "claude-haiku-3-5-20241022"
+        ]
+      },
+      "live": [],
+      "expected": {
+        "defaultModel": "opus",
+        "skipPermissionsDefault": false,
+        "defaultPermissionMode": "",
+        "aliases": [
+          {
+            "value": "fable",
+            "label": "Fable",
+            "context": "1M"
+          },
+          {
+            "value": "opus",
+            "label": "Opus 4.5",
+            "context": "200K"
+          },
+          {
+            "value": "opus[1m]",
+            "label": "Opus 4.5",
+            "context": "1M"
+          },
+          {
+            "value": "sonnet",
+            "label": "Sonnet",
+            "context": "200K"
+          },
+          {
+            "value": "sonnet[1m]",
+            "label": "Sonnet",
+            "context": "1M"
+          },
+          {
+            "value": "haiku",
+            "label": "Haiku 3.5",
+            "context": "200K"
+          }
+        ],
+        "seen": [
+          "claude-opus-4-1-20250805"
+        ]
+      },
+      "why": "An alias already STANDS FOR the newest model of its family, so listing that id again is a duplicate row; the older 4.1 stays. Version comparison is numeric per segment, not lexical — 4.10 must beat 4.9."
+    },
+    {
+      "name": "4.10 is newer than 4.9 (numeric, not lexical)",
+      "config": {
+        "defaultModel": "",
+        "skipPermissionsDefault": false,
+        "defaultPermissionMode": "",
+        "seenModels": [
+          "claude-sonnet-4-9-20250101",
+          "claude-sonnet-4-10-20250601"
+        ]
+      },
+      "live": [],
+      "expected": {
+        "defaultModel": "",
+        "skipPermissionsDefault": false,
+        "defaultPermissionMode": "",
+        "aliases": [
+          {
+            "value": "fable",
+            "label": "Fable",
+            "context": "1M"
+          },
+          {
+            "value": "opus",
+            "label": "Opus",
+            "context": "200K"
+          },
+          {
+            "value": "opus[1m]",
+            "label": "Opus",
+            "context": "1M"
+          },
+          {
+            "value": "sonnet",
+            "label": "Sonnet 4.10",
+            "context": "200K"
+          },
+          {
+            "value": "sonnet[1m]",
+            "label": "Sonnet 4.10",
+            "context": "1M"
+          },
+          {
+            "value": "haiku",
+            "label": "Haiku",
+            "context": "200K"
+          }
+        ],
+        "seen": [
+          "claude-sonnet-4-9-20250101"
+        ]
+      },
+      "why": "The one case a string comparison gets wrong in both directions at once: it would label the alias 4.9 and absorb the wrong id out of seen."
+    },
+    {
+      "name": "live session models merge with the persisted list, deduplicated and sorted",
+      "config": {
+        "defaultModel": "",
+        "skipPermissionsDefault": false,
+        "defaultPermissionMode": "",
+        "seenModels": [
+          "claude-opus-4-1-20250805",
+          "zeta-custom"
+        ]
+      },
+      "live": [
+        "claude-opus-4-1-20250805",
+        "claude-opus-4-5-20251101",
+        "alpha-custom"
+      ],
+      "expected": {
+        "defaultModel": "",
+        "skipPermissionsDefault": false,
+        "defaultPermissionMode": "",
+        "aliases": [
+          {
+            "value": "fable",
+            "label": "Fable",
+            "context": "1M"
+          },
+          {
+            "value": "opus",
+            "label": "Opus 4.5",
+            "context": "200K"
+          },
+          {
+            "value": "opus[1m]",
+            "label": "Opus 4.5",
+            "context": "1M"
+          },
+          {
+            "value": "sonnet",
+            "label": "Sonnet",
+            "context": "200K"
+          },
+          {
+            "value": "sonnet[1m]",
+            "label": "Sonnet",
+            "context": "1M"
+          },
+          {
+            "value": "haiku",
+            "label": "Haiku",
+            "context": "200K"
+          }
+        ],
+        "seen": [
+          "alpha-custom",
+          "claude-opus-4-1-20250805",
+          "zeta-custom"
+        ]
+      },
+      "why": "Order is byte-wise sort over the merged set, and an id that does not parse as a concrete Claude model is kept verbatim."
+    },
+    {
+      "name": "Claude Code's <synthetic> placeholder is never offered as a model",
+      "config": {
+        "defaultModel": "",
+        "skipPermissionsDefault": false,
+        "defaultPermissionMode": "",
+        "seenModels": [
+          "<synthetic>",
+          "claude-haiku-3-5-20241022"
+        ]
+      },
+      "live": [
+        "<synthetic>"
+      ],
+      "expected": {
+        "defaultModel": "",
+        "skipPermissionsDefault": false,
+        "defaultPermissionMode": "",
+        "aliases": [
+          {
+            "value": "fable",
+            "label": "Fable",
+            "context": "1M"
+          },
+          {
+            "value": "opus",
+            "label": "Opus",
+            "context": "200K"
+          },
+          {
+            "value": "opus[1m]",
+            "label": "Opus",
+            "context": "1M"
+          },
+          {
+            "value": "sonnet",
+            "label": "Sonnet",
+            "context": "200K"
+          },
+          {
+            "value": "sonnet[1m]",
+            "label": "Sonnet",
+            "context": "1M"
+          },
+          {
+            "value": "haiku",
+            "label": "Haiku 3.5",
+            "context": "200K"
+          }
+        ],
+        "seen": []
+      },
+      "why": "`<synthetic>` is the model id Claude Code stamps on synthetic transcript messages. The Go copy listed it as a selectable model; picking it spawns an agent with a model id no API accepts."
+    },
+    {
+      "name": "a [1m] suffix on a seen id is the same model as its 200K sibling",
+      "config": {
+        "defaultModel": "",
+        "skipPermissionsDefault": false,
+        "defaultPermissionMode": "",
+        "seenModels": [
+          "claude-opus-4-5-20251101[1m]"
+        ]
+      },
+      "live": [],
+      "expected": {
+        "defaultModel": "",
+        "skipPermissionsDefault": false,
+        "defaultPermissionMode": "",
+        "aliases": [
+          {
+            "value": "fable",
+            "label": "Fable",
+            "context": "1M"
+          },
+          {
+            "value": "opus",
+            "label": "Opus 4.5",
+            "context": "200K"
+          },
+          {
+            "value": "opus[1m]",
+            "label": "Opus 4.5",
+            "context": "1M"
+          },
+          {
+            "value": "sonnet",
+            "label": "Sonnet",
+            "context": "200K"
+          },
+          {
+            "value": "sonnet[1m]",
+            "label": "Sonnet",
+            "context": "1M"
+          },
+          {
+            "value": "haiku",
+            "label": "Haiku",
+            "context": "200K"
+          }
+        ],
+        "seen": []
+      },
+      "why": "The context-window marker is stripped before the id is parsed, so the 1M spelling versions the same family and is absorbed by the same alias."
+    }
+  ]
+}

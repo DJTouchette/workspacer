@@ -32,6 +32,7 @@ import {
   isWithin,
   pathWithinRoots,
   SECRET_BASENAMES,
+  asciiLower,
 } from './pathConfinement';
 
 interface Case {
@@ -70,6 +71,7 @@ interface Fixture {
   secretBasenames: string[];
   configStoreSubdirs: string[];
   checkUse: { owner: string; requirement: string; callSites?: string[] }[];
+  asciiFold: { cases: { in: string; out: string }[] };
   cases: Case[];
 }
 
@@ -284,6 +286,23 @@ describe('path containment — cross-language contract', () => {
   // section list the same way.
   it('denies exactly the credential basenames the fixture names', () => {
     expect([...SECRET_BASENAMES].sort()).toEqual([...fixture.secretBasenames].sort());
+  });
+
+  // asciiLower is the fold the secret gate runs on every guarded path, and all
+  // three copies say in a comment that it is deliberately NOT toLowerCase /
+  // strings.ToLower because they have to fold IDENTICALLY. Nothing pinned it:
+  // `return s.toLowerCase()` passed the whole corpus and all 1170 desktop tests,
+  // because every case-variant CASE uses pure A-Z spellings that both folds
+  // agree on. These vectors carry code points where they do not.
+  it('folds ASCII only, exactly as the fixture vectors say', () => {
+    expect(fixture.asciiFold.cases.length).toBeGreaterThan(0);
+    expect(
+      fixture.asciiFold.cases.some((v) => [...v.in].some((ch) => ch.codePointAt(0)! > 127)),
+      'every asciiFold vector is pure ASCII, so toLowerCase() would pass them all',
+    ).toBe(true);
+    for (const v of fixture.asciiFold.cases) {
+      expect(asciiLower(v.in), `asciiLower(${JSON.stringify(v.in)})`).toBe(v.out);
+    }
   });
 
   it('carves out exactly the config stores the fixture names, in that order', () => {

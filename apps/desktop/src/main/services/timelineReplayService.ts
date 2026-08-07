@@ -15,6 +15,7 @@
  */
 
 import { execFile } from 'child_process';
+import { gitArgs } from '../lib/gitExec';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -82,6 +83,24 @@ interface ReplayEntry {
   /** The disposable worktree this service created. */
   dir: string;
   baseCommit: string;
+  /**
+   * The repo-relative offset of the CWD replay.open was guarded on, '' when the
+   * guarded cwd IS the repo root. Every path replay.* resolves is confined to
+   * this subtree of the worktree, not merely to the worktree.
+   *
+   * The worktree is cut from `rev-parse --show-toplevel`, a root DERIVED from
+   * the guarded cwd and never itself checked against the allow-list — so with an
+   * agent cwd of <repo>/frontend the checkout was the WHOLE repository and
+   * replay.read handed back the committed content of <repo>/backend/prod-key.pem,
+   * a file in no agent cwd and no config store that fs.read and fs.watch refuse
+   * for the same caller. capspec.unscopedByDecision grants replay.read/replay.diff
+   * to a plugin with NO fsRoots on the stated grounds that "the path is a
+   * repo-relative coordinate inside a worktree the replay service itself
+   * created … containment is structural". The containment was real, but it was
+   * measured against a namespace strictly larger than the one the guard
+   * approved; this narrows it back to that one.
+   */
+  scope: string;
 }
 
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -99,7 +118,9 @@ function runGit(
   return new Promise((resolve, reject) => {
     execFile(
       'git',
-      args,
+      // gitArgs: see lib/gitExec.ts — the repo this runs in is an agent work
+      // tree a bus caller can fs.write into.
+      gitArgs(args),
       { cwd, maxBuffer: MAX_BUFFER, windowsHide: true },
       (err, stdout, stderr) => {
         if (err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -141,13 +162,28 @@ function canonicalWorktree(dir: string): string {
  * from a real repository with `git worktree add`, so any symlink COMMITTED to
  * that repo is materialized inside it verbatim.
  */
-function containInWorktree(dir: string, abs: string): string {
-  const root = canonicalWorktree(dir);
+function containInWorktree(dir: string, scope: string, abs: string): string {
+  // The boundary is the SCOPE subtree, not the whole checkout — see
+  // ReplayEntry.scope. With scope '' the two are the same directory.
+  const root = scopedWorktreeRoot(dir, scope);
   const canonical = canonicalizePath(abs);
   if (!isWithin(canonical, root)) {
     throw new Error('path is outside the replay worktree');
   }
   return canonical;
+}
+
+/** The canonical directory inside the worktree that corresponds to the guarded
+ *  cwd. Resolved per component like everything else here: the worktree is a real
+ *  checkout and a committed symlink on the way down is materialized verbatim. */
+function scopedWorktreeRoot(dir: string, scope: string): string {
+  const root = canonicalWorktree(dir);
+  if (!scope) return root;
+  const c = canonicalRoot(path.join(root, scope));
+  if (c === null || !isWithin(c, root)) {
+    throw new Error('path is outside the replay worktree');
+  }
+  return c;
 }
 
 class TimelineReplayService {
@@ -185,9 +221,30 @@ class TimelineReplayService {
       base = r.stdout.trim();
     }
 
+    // The offset of the GUARDED cwd inside the repo. Everything replay.* then
+    // resolves is confined to this subtree of the checkout rather than to the
+    // whole repository — see ReplayEntry.scope. Both sides are canonicalized
+    // first: `rev-parse` prints the repo's own spelling of its root, and on
+    // macOS /tmp and /private/tmp are the same directory under two names.
+    const canonicalRepoRoot = canonicalRoot(root) ?? root;
+    const canonicalCwd = canonicalRoot(cwd) ?? cwd;
+    const offset = path.relative(canonicalRepoRoot, canonicalCwd);
+    if (offset.startsWith('..') || path.isAbsolute(offset)) {
+      // The cwd is not inside the root git just named — refuse rather than fall
+      // back to the whole repository.
+      throw new Error('replay cwd is outside the repository work tree');
+    }
+    const scope = offset;
+
     const dir = path.join(this.replayRoot(), sessionId);
     const existing = this.entries.get(sessionId);
-    if (existing && existing.root === root && existing.baseCommit === base && fs.existsSync(dir)) {
+    if (
+      existing &&
+      existing.root === root &&
+      existing.baseCommit === base &&
+      existing.scope === scope &&
+      fs.existsSync(dir)
+    ) {
       return { dir, baseCommit: base };
     }
 
@@ -199,7 +256,7 @@ class TimelineReplayService {
     const add = await runGit(root, ['worktree', 'add', '--detach', dir, base]);
     if (!add.ok) throw new Error(`worktree add failed: ${add.stderr.trim() || 'unknown error'}`);
 
-    this.entries.set(sessionId, { root, dir, baseCommit: base });
+    this.entries.set(sessionId, { root, dir, baseCommit: base, scope });
     return { dir, baseCommit: base };
   }
 
@@ -252,7 +309,7 @@ class TimelineReplayService {
       // `git status` inside the worktree cannot see a write that landed outside.
       let target: string;
       try {
-        target = containInWorktree(dir, path.join(dir, rel));
+        target = containInWorktree(dir, entry.scope, path.join(dir, rel));
       } catch {
         skip('outside the replay worktree');
         continue;
@@ -329,9 +386,11 @@ class TimelineReplayService {
     // made the checked path and the opened path two different files and
     // replay.read handed a bus caller remote-token. capspec's reason for leaving
     // replay.* unscoped is this function; it has to actually be true.
-    const abs = containInWorktree(entry.dir, path.resolve(entry.dir, rel));
+    const abs = containInWorktree(entry.dir, entry.scope, path.resolve(entry.dir, rel));
     // `rel` is recomputed from the CANONICAL path, so what goes back to the
-    // caller names the file that was actually opened (BINDING DECISION 2).
+    // caller names the file that was actually opened (BINDING DECISION 2). It
+    // stays WORKTREE-relative (not scope-relative) because it is handed straight
+    // to `git -- <path>`, which git resolves from the worktree root.
     const back = path.relative(canonicalWorktree(entry.dir), abs);
     if (!back || back.startsWith('..') || path.isAbsolute(back)) {
       throw new Error('path is outside the replay worktree');

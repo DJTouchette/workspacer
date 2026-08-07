@@ -160,8 +160,9 @@ vi.mock('./searchService', () => ({
 // caller's cwd — is what a `path` is resolved against. Default it to the cwd
 // (repo root == agent cwd); the nested-cwd test overrides it.
 const workRootFor = vi.fn(async (cwd: string): Promise<string | null> => cwd);
+const gitStatus = vi.fn(async () => ({ branch: 'main', files: [] }));
 vi.mock('./gitService', () => ({
-  status: vi.fn(async () => ({ branch: 'main', files: [] })),
+  status: (cwd: string) => gitStatus(cwd),
   workRoot: (cwd: string) => workRootFor(cwd),
   diff: vi.fn(async () => ''),
   numstat: vi.fn(async () => []),
@@ -260,29 +261,40 @@ describe('fs.* path confinement', () => {
   describe('the guarded handlers pass the CANONICAL path on, not the caller string', () => {
     const via = (name: string): string => `${path.join(agentCwd, 'nope')}/../${name}`;
 
-    it('fs.read', () => {
+    // Every case below is named for the exact `callSites` entry it covers, and
+    // the set is compared against the fixture at the end of the block. checkUse
+    // used to be read only for the presence of this owner's KEY — never the
+    // requirement text and never the call-site list — so a hand-maintained table
+    // that covered eight of ten entries looked complete.
+    const covered = new Set<string>();
+    const site = (name: string, fn: () => void | Promise<void>): void => {
+      covered.add(name);
+      it(name, fn);
+    };
+
+    site('fs.read -> readTextFile', () => {
       call('fs.read', { path: via('notes.txt') });
       expect(readTextFile).toHaveBeenCalledWith(path.join(agentCwd, 'notes.txt'));
     });
 
-    it('fs.write', () => {
+    site('fs.write -> writeTextFile', () => {
       call('fs.write', { path: via('out.txt'), contents: 'x' });
       expect(writeTextFile).toHaveBeenCalledWith(path.join(agentCwd, 'out.txt'), 'x');
     });
 
-    it('fs.listEntries', () => {
+    site('fs.listEntries -> listDir', () => {
       call('fs.listEntries', { path: `${path.join(agentCwd, 'nope')}/..` });
       expect(listDir).toHaveBeenCalledWith(agentCwd);
     });
 
-    it('fs.listDir', () => {
+    site('fs.listDir -> readdirSync', () => {
       const res = call('fs.listDir', { path: `${path.join(agentCwd, 'nope')}/..` }) as {
         path: string;
       };
       expect(res.path).toBe(agentCwd);
     });
 
-    it('search.project', () => {
+    site('search.project -> searchProject', () => {
       call('search.project', { cwd: `${path.join(agentCwd, 'nope')}/..`, query: 'needle' });
       expect(searchProject).toHaveBeenCalledWith(
         expect.objectContaining({ cwd: agentCwd, query: 'needle' }),
@@ -298,19 +310,59 @@ describe('fs.* path confinement', () => {
     // that shipped as the brain's trailing-space escape — so re-passing the raw
     // param re-creates a check-path/opened-path split rather than merely an
     // untested one.
-    it('fs.readImage', () => {
+    site('fs.readImage -> readImagePreview', () => {
       call('fs.readImage', { path: via('shot.png') });
       expect(readImagePreview).toHaveBeenCalledWith(path.join(agentCwd, 'shot.png'));
     });
 
-    it('fs.watch', () => {
+    site('fs.watch -> startWatch', () => {
       call('fs.watch', { path: via('watched.txt') });
       expect(vi.mocked(startWatch).mock.calls[0]![0]).toBe(path.join(agentCwd, 'watched.txt'));
     });
 
-    it('fs.unwatch', () => {
+    site('fs.unwatch -> stopWatch', () => {
       call('fs.unwatch', { path: via('watched.txt') });
       expect(vi.mocked(stopWatch).mock.calls[0]![0]).toBe(path.join(agentCwd, 'watched.txt'));
+    });
+
+    // The last two entries in the owner's list, which nothing reached. Both
+    // handlers guard a `cwd` and then hand it to a service that composes many
+    // more paths out of it, so re-passing the caller's string here is the widest
+    // version of the split.
+    site('library.list/save/remove -> libraryService', () => {
+      const canonical = agentCwd;
+      call('library.list', { cwd: `${path.join(agentCwd, 'nope')}/..` });
+      expect(libraryMock.list.mock.calls[0]![0]).toBe(canonical);
+      call('library.save', {
+        scope: 'project',
+        cwd: `${path.join(agentCwd, 'nope')}/..`,
+        title: 't',
+        kind: 'prompt',
+        body: 'b',
+      });
+      expect((libraryMock.save.mock.calls[0]![0] as { cwd: string }).cwd).toBe(canonical);
+      call('library.remove', {
+        scope: 'project',
+        id: 'x',
+        cwd: `${path.join(agentCwd, 'nope')}/..`,
+      });
+      expect(libraryMock.remove.mock.calls[0]![2]).toBe(canonical);
+    });
+
+    site('git.* -> gitService', async () => {
+      await call('git.status', { cwd: `${path.join(agentCwd, 'nope')}/..` });
+      expect(gitStatus.mock.calls[0]![0]).toBe(agentCwd);
+    });
+
+    it('covers exactly the call sites the fixture names for this owner', () => {
+      const entry = fixture.checkUse.find(
+        (e: { owner: string }) => e.owner === 'apps/desktop/src/main/lib/pathConfinement.ts',
+      );
+      expect(
+        entry?.callSites?.length,
+        'the fixture must record this owner call sites',
+      ).toBeTruthy();
+      expect([...covered].sort()).toEqual([...(entry!.callSites as string[])].sort());
     });
   });
 });
@@ -537,7 +589,10 @@ interface MethodEntry {
 }
 
 // src/main/services/ → five levels below the repo root, where contracts/ sits.
-const fixture: { methods: MethodEntry[] } = JSON.parse(
+const fixture: {
+  methods: MethodEntry[];
+  checkUse: { owner: string; requirement: string; callSites?: string[] }[];
+} = JSON.parse(
   fs.readFileSync(
     path.join(__dirname, '../../../../../contracts/path-containment-cases.json'),
     'utf-8',
@@ -595,6 +650,15 @@ describe('fixture-driven guard coverage — kill-switch-only path capabilities',
     return probe;
   }
 
+  /** A SIBLING of the sandbox home: inside `dirname($HOME)`, outside `$HOME`,
+   *  nobody's cwd and no config store. The upper boundary probe for `browse`. */
+  function homeSiblingProbe(): string {
+    expect(os.homedir()).toBe(sandboxHome);
+    const probe = path.join(path.dirname(sandboxHome), 'wks-contract-probe-sibling-of-home');
+    expect(fs.existsSync(probe)).toBe(false);
+    return probe;
+  }
+
   /** Run a capability and return the error message it produced, or '' for none.
    *  Handlers guard both synchronously and inside an async body, so both shapes
    *  have to be collapsed before the message can be matched. */
@@ -625,6 +689,19 @@ describe('fixture-driven guard coverage — kill-switch-only path capabilities',
         const target = entry.rootSet === 'browse' ? '/etc' : outside;
         const msg = await attempt(entry.method, { ...entry.params, [entry.field]: target });
         expect(msg).toMatch(/outside the allowed workspace/);
+
+        // The UPPER boundary of `browse`, which nothing probed. Both deny values
+        // above are outside $HOME's PARENT too, so widening browseRoots() to
+        // `path.dirname(os.homedir())` — every other user's home — changed no
+        // assertion in either sweep while fs.listDir enumerated a stranger's
+        // home and library.list handed back the bodies of its library items.
+        const sibMsg = await attempt(entry.method, {
+          ...entry.params,
+          [entry.field]: homeSiblingProbe(),
+        });
+        expect(sibMsg, 'neither root set reaches outside the home tree').toMatch(
+          /outside the allowed workspace/,
+        );
       });
 
       it(`allows a ${entry.field} inside a live agent cwd`, async () => {

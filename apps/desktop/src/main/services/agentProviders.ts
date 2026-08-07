@@ -24,17 +24,28 @@ export interface ProviderStatus {
   customBin: string;
 }
 
+/** True when `p` names something that could actually be exec'd: it exists and is
+ *  not a DIRECTORY. `existsSync` alone accepted a directory, and the Go twin
+ *  (cmd/brain/providers.go findOnPath: `os.Stat(full); err == nil && !st.IsDir()`)
+ *  did not — so with a directory named `codex` earlier on PATH than the real
+ *  binary, the brain skipped it and kept scanning while this side returned the
+ *  DIRECTORY as argv[0] of every codex spawn, and the Spawn dialog showed a green
+ *  detection dot for a provider that cannot launch. */
+function isExecutableCandidate(p: string): boolean {
+  try {
+    return !fs.statSync(p).isDirectory();
+  } catch {
+    return false; // missing, dangling symlink, unreadable — all "not a binary"
+  }
+}
+
 /** First existing absolute path for any of `names` across PATH, else null. */
 function findOnPath(names: string[]): string | null {
   const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
   for (const dir of dirs) {
     for (const name of names) {
       const full = path.join(dir, name);
-      try {
-        if (fs.existsSync(full)) return full;
-      } catch {
-        /* unreadable PATH entry — skip */
-      }
+      if (isExecutableCandidate(full)) return full;
     }
   }
   return null;
@@ -63,13 +74,7 @@ export function resolveAgentBinary(provider: AgentProvider, customBin?: string):
  * so a just-installed CLI is detected without a restart.
  */
 export function isAgentBinaryInstalled(provider: AgentProvider, customBin?: string): boolean {
-  if (customBin?.trim()) {
-    try {
-      return fs.existsSync(customBin.trim());
-    } catch {
-      return false;
-    }
-  }
+  if (customBin?.trim()) return isExecutableCandidate(customBin.trim());
   return findOnPath(binNames(provider)) !== null;
 }
 
@@ -82,10 +87,7 @@ export function checkAllProviders(
   return all.map((provider) => {
     const customBin = (binaries[provider] ?? '').trim();
     if (customBin) {
-      let found = false;
-      try {
-        found = fs.existsSync(customBin);
-      } catch {}
+      const found = isExecutableCandidate(customBin);
       return { provider, found, resolvedPath: found ? customBin : null, customBin };
     }
     const resolvedPath = findOnPath(binNames(provider));

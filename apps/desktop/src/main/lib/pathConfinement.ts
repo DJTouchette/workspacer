@@ -207,8 +207,15 @@ export function containsCanonical(canonicalRootPath: string, canonicalTarget: st
 
 /** Fold A-Z only. Deliberately not `toLowerCase()`: the three copies have to fold
  *  IDENTICALLY, and JavaScript's Unicode lowering and Go's disagree (U+0130 'İ'
- *  already bit the filename slugs). */
-function asciiLower(s: string): string {
+ *  already bit the filename slugs — and Go's ToLower and JS's toLowerCase do not
+ *  even agree with EACH OTHER on it: 'i' vs 'i'+U+0307).
+ *
+ *  Exported so the fixture's `asciiFold` vectors can pin the primitive directly,
+ *  the way the two Go twins are. Reaching it through a containment verdict is not
+ *  enough: every case-variant case in the corpus uses pure A-Z spellings, which
+ *  both folds handle identically, so `return s.toLowerCase()` passed the whole
+ *  corpus and both full suites. */
+export function asciiLower(s: string): string {
   let out = '';
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);

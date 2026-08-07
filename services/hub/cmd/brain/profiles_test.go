@@ -331,12 +331,12 @@ func TestProfilesAddForwardsMcpItemIds(t *testing.T) {
 	}
 
 	// Forwarded to the caller AND to disk — a spawn reads the file, not the reply.
-	stored := readProfilesJSON(t)
-	if len(stored) != 1 {
-		t.Fatalf("expected 1 stored profile, got %d", len(stored))
-	}
-	if !reflect.DeepEqual(stored[0]["mcpItemIds"], []any{"mcp-1", "mcp-2"}) {
-		t.Errorf("stored profile lost mcpItemIds: %v", stored[0]["mcpItemIds"])
+	// Two rows: the materialized "Default" (which claudeProfiles.ts's constructor
+	// writes on the desktop side, and which the brain used to only PRETEND was
+	// there) plus the one just added.
+	stored := lastStoredProfile(t)
+	if !reflect.DeepEqual(stored["mcpItemIds"], []any{"mcp-1", "mcp-2"}) {
+		t.Errorf("stored profile lost mcpItemIds: %v", stored["mcpItemIds"])
 	}
 }
 
@@ -370,11 +370,11 @@ func TestProfilesAddDefaultsMcpItemIds(t *testing.T) {
 			reply["configDir"], reply["extraArgs"])
 	}
 
-	stored := readProfilesJSON(t)
-	if len(stored) != 1 {
-		t.Fatalf("expected 1 stored profile, got %d", len(stored))
-	}
-	if v, ok := stored[0]["mcpItemIds"]; !ok || !reflect.DeepEqual(v, []any{}) {
+	// Two rows: the materialized "Default" (which claudeProfiles.ts's constructor
+	// writes on the desktop side, and which the brain used to only PRETEND was
+	// there) plus the one just added.
+	stored := lastStoredProfile(t)
+	if v, ok := stored["mcpItemIds"]; !ok || !reflect.DeepEqual(v, []any{}) {
 		t.Errorf("stored profile should carry mcpItemIds: [], got %#v (present=%v)", v, ok)
 	}
 }
@@ -441,14 +441,14 @@ func TestProfilesWritesOverTheBusAreScrubbedAtWriteTime(t *testing.T) {
 		t.Errorf("extraArgs kept a bypass flag: %v", got.ExtraArgs)
 	}
 	// On disk, not just in the reply — a spawn reads the file.
-	stored := readProfilesJSON(t)
-	if len(stored) != 1 {
-		t.Fatalf("expected 1 stored profile, got %d", len(stored))
-	}
-	if cd, _ := stored[0]["configDir"].(string); cd != "" {
+	// Two rows: the materialized "Default" (which claudeProfiles.ts's constructor
+	// writes on the desktop side, and which the brain used to only PRETEND was
+	// there) plus the one just added.
+	stored := lastStoredProfile(t)
+	if cd, _ := stored["configDir"].(string); cd != "" {
 		t.Errorf("configDir persisted to disk: %q", cd)
 	}
-	if args, _ := stored[0]["extraArgs"].([]any); len(args) != 2 {
+	if args, _ := stored["extraArgs"].([]any); len(args) != 2 {
 		t.Errorf("extraArgs persisted unscrubbed: %v", args)
 	}
 
@@ -477,4 +477,20 @@ func TestProfilesWritesOverTheBusAreScrubbedAtWriteTime(t *testing.T) {
 	if !slices.Equal(got.ExtraArgs, []string{"--model", "sonnet"}) {
 		t.Errorf("a remote-safe update was dropped too: %v", got.ExtraArgs)
 	}
+}
+
+// lastStoredProfile returns the profile most recently appended to
+// claude-profiles.json. The file now always begins with the materialized
+// "Default" row — the same one claudeProfiles.ts's constructor writes — so a
+// test that just added a profile wants the last entry, not the only one.
+func lastStoredProfile(t *testing.T) map[string]any {
+	t.Helper()
+	stored := readProfilesJSON(t)
+	if len(stored) < 2 {
+		t.Fatalf("expected the materialized Default plus the added profile, got %d: %v", len(stored), stored)
+	}
+	if id, _ := stored[0]["id"].(string); id != "default" {
+		t.Fatalf("the first stored profile should be the materialized Default, got %v", stored[0])
+	}
+	return stored[len(stored)-1]
 }

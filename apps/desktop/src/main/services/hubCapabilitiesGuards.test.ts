@@ -263,6 +263,18 @@ function homeProbe(): string {
   return probe;
 }
 
+/**
+ * A directory that is a SIBLING of the sandbox home: inside `dirname($HOME)`,
+ * outside `$HOME`, not a live agent cwd and not a config store. It exists so the
+ * `browse` root set has an upper boundary probe at all — see the deny case.
+ */
+function homeSiblingProbe(): string {
+  expect(os.homedir()).toBe(sandboxHome);
+  const probe = path.join(path.dirname(sandboxHome), 'wks-contract-probe-sibling-of-home');
+  expect(fs.existsSync(probe)).toBe(false);
+  return probe;
+}
+
 describe('fixture-driven guard coverage — path capabilities main owns in production', () => {
   it('the fixture lists methods this owner serves', () => {
     // A fixture that stopped naming 'main' would silently turn every assertion
@@ -285,6 +297,22 @@ describe('fixture-driven guard coverage — path capabilities main owns in produ
         const target = entry.rootSet === 'browse' ? '/etc' : outside;
         const msg = await attempt(entry.method, { ...entry.params, [entry.field]: target });
         expect(msg).toMatch(/outside the allowed workspace/);
+
+        // The UPPER boundary of `browse`, which nothing probed. browse is "the
+        // home tree plus the workspace roots", and BOTH deny probes above sit
+        // outside $HOME's PARENT as well — so widening browseRoots() to
+        // `path.dirname(os.homedir())` (every other user's home) changed no
+        // assertion in either sweep, while fs.listDir then enumerated a
+        // stranger's home and library.list handed back the BODIES of its
+        // .workspacer/library items. A SIBLING of $HOME is inside the widened
+        // set and outside the real one, so it must be refused for either rootSet.
+        const sibMsg = await attempt(entry.method, {
+          ...entry.params,
+          [entry.field]: homeSiblingProbe(),
+        });
+        expect(sibMsg, 'neither root set reaches outside the home tree').toMatch(
+          /outside the allowed workspace/,
+        );
       });
 
       it(`allows a ${entry.field} inside a live agent cwd`, async () => {

@@ -13,7 +13,7 @@ import { asString, byteCompare } from '../lib/providerParity';
 import { getConfigDir } from './configService';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { slugLayout } from '../lib/fileUtils';
-import { resolveStoreEntry } from '../lib/pathConfinement';
+import { canonicalizePath, isWithin, resolveStoreEntry } from '../lib/pathConfinement';
 
 export interface LayoutPane {
   type: string;
@@ -69,11 +69,18 @@ function layoutFilePath(id: string): string {
   if (/[\\/]/.test(id) || id.includes('..')) {
     throw new Error('layout id must not contain a path separator');
   }
-  const full = path.join(layoutsDir(), `${slug(id)}.yaml`);
-  // Belt and braces: the reject above plus slugging already strip separators,
-  // but re-assert the joined path really is a direct child of the layouts dir so
-  // a future change to the slug charset can't quietly reopen the escape.
-  if (path.dirname(path.resolve(full)) !== path.resolve(layoutsDir())) {
+  // CANONICAL, not lexical, and it returns what it checked (BINDING DECISION 2).
+  // `path.dirname(path.resolve(full)) !== path.resolve(layoutsDir())` is a
+  // TEXTUAL answer: it cannot see a SYMLINK entry in the store, and
+  // <configDir>/layouts is one of the three directories a bus caller may write
+  // into. So `layouts/evil.yaml -> <configDir>/config.yaml` was refused by the
+  // brain (which canonicalizes) and accepted here — the same layouts.save
+  // succeeding or failing depending on a delegation flag, which is precisely
+  // what the docstring above says must not happen. list() has always used the
+  // canonical resolveStoreEntry; the write/delete leg had no containment that
+  // could see a link at all.
+  const full = canonicalizePath(path.join(layoutsDir(), `${slug(id)}.yaml`));
+  if (!isWithin(full, layoutsDir())) {
     throw new Error('layout id resolves outside the layouts directory');
   }
   return full;

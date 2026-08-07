@@ -85,20 +85,28 @@ func TestEveryContractFixtureHasAtLeastTwoLoaders(t *testing.T) {
 
 	for _, fixture := range fixtures {
 		t.Run(fixture, func(t *testing.T) {
-			var loaders []string
+			// A LOADER is a test. An implementation file that names the fixture
+			// in a comment documents it; it does not hold anything to it.
+			var loaders, mentions []string
 			langs := map[string]bool{}
 			needle := []byte(fixture)
 			for _, s := range sources {
-				if bytes.Contains(s.content, needle) {
-					loaders = append(loaders, s.rel)
-					langs[s.lang] = true
+				if !bytes.Contains(s.content, needle) {
+					continue
 				}
+				if !s.isTest {
+					mentions = append(mentions, s.rel)
+					continue
+				}
+				loaders = append(loaders, s.rel)
+				langs[s.lang] = true
 			}
 			sort.Strings(loaders)
+			sort.Strings(mentions)
 
 			if len(loaders) < 2 {
-				t.Errorf("contracts/%s is referenced by %d source file(s) %v — a fixture with fewer than two loaders is a dead contract: it pins nothing and one side can drift freely. Either add the missing loader or delete the fixture.",
-					fixture, len(loaders), loaders)
+				t.Errorf("contracts/%s is loaded by %d TEST file(s) %v (non-test mentions: %v) — a fixture with fewer than two loaders is a dead contract: it pins nothing and one side can drift freely. Either add the missing loader or delete the fixture.",
+					fixture, len(loaders), loaders, mentions)
 			}
 			if len(langs) < 2 {
 				t.Errorf("contracts/%s is loaded only from %v (%v) — the point of a contract is that two LANGUAGES agree; same-language loaders share the implementation they are supposed to be checking.",
@@ -192,6 +200,31 @@ type contractSource struct {
 	rel     string // repo-relative, slash-separated, for readable failures
 	lang    string
 	content []byte
+	// isTest marks a file that can actually LOAD a fixture: a Go _test.go, a
+	// *.test.ts / *.spec.ts, or a Rust file carrying a #[cfg(test)] module.
+	// Without this the guard counted any file whose CONTENT mentioned the
+	// fixture basename — including the implementations that merely cite it in a
+	// doc comment. Two such comments, in two languages, satisfied both the
+	// "fewer than two loaders" and the "fewer than two languages" arms, so a
+	// fixture NO TEST LOADS passed; and every real loader of
+	// path-containment-cases.json could have been deleted while eight
+	// implementation files kept it looking covered.
+	isTest bool
+}
+
+// isContractTestFile classifies a source file as a test by the convention its
+// language uses. Rust is the odd one: its unit tests live inside the
+// implementation file behind #[cfg(test)], so the name cannot decide it.
+func isContractTestFile(name, lang string, content []byte) bool {
+	switch lang {
+	case "go":
+		return strings.HasSuffix(name, "_test.go")
+	case "ts":
+		return strings.Contains(name, ".test.") || strings.Contains(name, ".spec.")
+	case "rust":
+		return bytes.Contains(content, []byte("#[cfg(test)]"))
+	}
+	return false
 }
 
 // contractSourceFiles walks the repo once and returns every source file in a
@@ -229,7 +262,10 @@ func contractSourceFiles(t *testing.T, repoRoot string) []contractSource {
 		if relErr != nil {
 			rel = path
 		}
-		out = append(out, contractSource{rel: filepath.ToSlash(rel), lang: lang, content: content})
+		out = append(out, contractSource{
+			rel: filepath.ToSlash(rel), lang: lang, content: content,
+			isTest: isContractTestFile(d.Name(), lang, content),
+		})
 		return nil
 	})
 	if err != nil {

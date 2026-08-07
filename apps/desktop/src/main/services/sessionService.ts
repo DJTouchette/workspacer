@@ -93,8 +93,18 @@ function getSessionsDir(): string {
  *
  * The contract corpus pins both sides: contracts/path-containment-cases.json
  * `sessionFilenames`, loaded here and by cmd/brain/stores_test.go.
+ *
+ * EXPORTED so the loader can assert the value it RETURNS, which is the whole
+ * point of the block's `resolvesTo` field and the half only the Go twin was
+ * enforcing. Reaching this through loadSession's content pins the verdict and
+ * not the answer: the one accept case that could tell "returned the link" from
+ * "returned the target" apart resolves to a file with identical content, so
+ * `return path.join(dir, filename)` — the check-path/opened-path split BINDING
+ * DECISION 2 exists to close — kept all 12 cases and the whole desktop suite
+ * green while sessions.delete unlinked the SYMLINK here and the TARGET in the
+ * brain.
  */
-function resolveWithinSessionsDir(filename: string): string {
+export function resolveWithinSessionsDir(filename: string): string {
   const dir = getSessionsDir();
   const refuse = (): never => {
     throw new Error(`session filename escapes the sessions directory: ${filename}`);

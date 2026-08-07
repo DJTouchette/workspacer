@@ -267,13 +267,49 @@ type methodCase struct {
 	Providers []string `json:"providers"`
 }
 
+// asciiFoldCase is one in/out vector of the fixture's `asciiFold` block.
+type asciiFoldCase struct {
+	In  string `json:"in"`
+	Out string `json:"out"`
+}
+
+type asciiFoldBlock struct {
+	Cases []asciiFoldCase `json:"cases"`
+}
+
 type containmentFixture struct {
 	Owners             map[string][]string `json:"owners"`
 	SecretBasenames    []string            `json:"secretBasenames"`
 	ConfigStoreSubdirs []string            `json:"configStoreSubdirs"`
+	AsciiFold          asciiFoldBlock      `json:"asciiFold"`
 	Cases              []containmentCase   `json:"cases"`
 	Methods            []methodCase        `json:"methods"`
 	ParamShapes        []paramShapeCase    `json:"paramShapes"`
+}
+
+// TestAsciiFoldMatchesTheFixture pins the bus copy of asciiLower against the
+// same vectors the brain and the desktop are held to. The function's whole
+// reason to exist is that the three copies fold IDENTICALLY, and until this
+// block nothing distinguished it from strings.ToLower.
+func TestAsciiFoldMatchesTheFixture(t *testing.T) {
+	fx := loadContainmentFixture(t)
+	if len(fx.AsciiFold.Cases) == 0 {
+		t.Fatal("the fixture must carry asciiFold vectors, or this guard guards nothing")
+	}
+	sawNonASCII := false
+	for _, c := range fx.AsciiFold.Cases {
+		for _, r := range c.In {
+			if r > 127 {
+				sawNonASCII = true
+			}
+		}
+		if got := asciiLower(c.In); got != c.Out {
+			t.Errorf("asciiLower(%q) = %q, want %q", c.In, got, c.Out)
+		}
+	}
+	if !sawNonASCII {
+		t.Fatal("every asciiFold vector is pure ASCII, so strings.ToLower would pass them all — the block distinguishes nothing")
+	}
 }
 
 // thisOwner is the key this file answers to in the fixture's `owners` block.

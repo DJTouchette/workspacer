@@ -108,20 +108,49 @@ export function scrubBypassProfile<T extends { extraArgs?: string[]; configDir?:
 
 const profilesFile = path.join(getConfigDir(), 'claude-profiles.json');
 
+/** The row both providers write when the file has none. */
+export const DEFAULT_PROFILE = (): ClaudeProfile => ({
+  id: 'default',
+  name: 'Default',
+  configDir: '',
+  extraArgs: [],
+  mcpItemIds: [],
+  isDefault: true,
+});
+
+/**
+ * Fill the list fields the Go twin's normalizeProfiles fills.
+ *
+ * The brain has always served `extraArgs: []` / `mcpItemIds: []` rather than a
+ * missing key (its own comment: "the same method answering with two different
+ * shapes depending on which provider ran"), while this side returned the file
+ * verbatim — so a profile written by hand, or by an older build, came back with
+ * no `mcpItemIds` key at all here and with `[]` there.
+ */
+export function normalizeProfile(p: ClaudeProfile): ClaudeProfile {
+  return {
+    ...p,
+    configDir: p.configDir ?? '',
+    extraArgs: p.extraArgs ?? [],
+    mcpItemIds: p.mcpItemIds ?? [],
+    isDefault: p.isDefault === true,
+  };
+}
+
 class ClaudeProfileService {
   private profiles: ClaudeProfile[] = [];
 
   constructor() {
     this.load();
-    // Ensure there's always a default profile
+    // Ensure there's always a default profile. The Go twin (cmd/brain
+    // profiles.go loadProfiles) now MATERIALIZES the same row rather than
+    // prepending a synthetic one it never wrote — that divergence made
+    // claude.profiles.list return two profiles there and one here for the same
+    // file, made the brain list an id its own update refused, and made
+    // claude.profiles.add mint isDefault:true on one provider and false on the
+    // other for the same call. Pinned by contracts/claude-profiles-cases.json.
     if (this.profiles.length === 0) {
-      this.profiles.push({
-        id: 'default',
-        name: 'Default',
-        configDir: '',
-        extraArgs: [],
-        isDefault: true,
-      });
+      this.profiles.push(DEFAULT_PROFILE());
       this.save();
     }
   }
@@ -144,14 +173,14 @@ class ClaudeProfileService {
     extraArgs: string[],
     mcpItemIds: string[] = [],
   ): ClaudeProfile {
-    const profile: ClaudeProfile = {
+    const profile: ClaudeProfile = normalizeProfile({
       id: crypto.randomUUID(),
       name,
       configDir: configDir.trim(),
       extraArgs,
       mcpItemIds,
       isDefault: this.profiles.length === 0,
-    };
+    });
     this.profiles.push(profile);
     this.save();
     return profile;
@@ -186,7 +215,7 @@ class ClaudeProfileService {
     try {
       if (fs.existsSync(profilesFile)) {
         const data = JSON.parse(fs.readFileSync(profilesFile, 'utf-8'));
-        this.profiles = data.profiles ?? [];
+        this.profiles = (data.profiles ?? []).map(normalizeProfile);
       }
     } catch {}
   }
