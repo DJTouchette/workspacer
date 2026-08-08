@@ -732,6 +732,11 @@ func CompositionUnconsidered() []string {
 // excluded by capspec's own definition ("carry NO caller value which becomes
 // something the host acts on"), which is the same predicate a composition needs
 // on at least one side.
+// CompositionActorsForTest exposes compositionActors to the package's own tests,
+// which need it to tell a dispatch switch from a handler. Not part of the public
+// surface beyond that.
+func CompositionActorsForTest() []string { return compositionActors() }
+
 func compositionActors() []string {
 	seen := map[string]bool{}
 	for m := range PathParam {

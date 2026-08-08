@@ -3,6 +3,7 @@ package capspec
 import (
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -175,6 +176,28 @@ func callsSymbol(body, symbol string) bool {
 // guard actually REACHES a named capability, in source, rather than merely
 // existing. `partners` is the set of capabilities this bearing is allowed to be
 // about — a composition's two halves, or the one method an inert claim covers.
+// otherActorsNamedIn reports which composition actors OTHER than `on` appear as
+// string literals in a function body. A non-empty result means the body routes
+// rather than answers, so naming `on` there is a coincidence of dispatch.
+//
+// It reads capspec's own actor list rather than a hand-kept roster of dispatchers,
+// so a new dispatch switch is caught the day it is written and a shrinking actor
+// list cannot quietly re-open the door (TestCompositionRecordNamesOnlyRegistered-
+// Capabilities holds that list to the registrations).
+func otherActorsNamedIn(body, on string) []string {
+	var out []string
+	for _, m := range CompositionActorsForTest() {
+		if m == on {
+			continue
+		}
+		if regexp.MustCompile(`["'` + "`" + `]` + regexp.QuoteMeta(m) + `\b`).MatchString(body) {
+			out = append(out, m)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func verifyBearing(t *testing.T, cache map[string]string, where string, b Bearing, partners []string) {
 	t.Helper()
 	if strings.TrimSpace(b.Symbol) == "" || strings.TrimSpace(b.On) == "" {
@@ -215,6 +238,22 @@ func verifyBearing(t *testing.T, cache map[string]string, where string, b Bearin
 			named := regexp.MustCompile(`["'` + "`" + `]` + regexp.QuoteMeta(b.On) + `\b`)
 			if !named.MatchString(body) {
 				t.Errorf("%s: the chain is entered at %s in %s, but that function's body never names %q — nothing ties this guard to this capability", where, b.Entry.Symbol, entryFile, b.On)
+				return
+			}
+			// …but naming it is only evidence if the site is ABOUT it. This form
+			// was a skeleton key: cmd/brain/handlers.go's `handle` is a 192-line
+			// dispatch switch naming 50 of capspec's methods, so a bearing entered
+			// there "proved" a guard reached almost any capability — which re-mints
+			// the fabricated exemption the Bearing type exists to refuse, and a
+			// WitnessGuarded for claude.signal, whose own reason says no guard
+			// names it.
+			//
+			// A dispatcher names every method it routes; a handler names the one it
+			// answers. Counting is what tells them apart, and it needs no
+			// allow-list of "known dispatchers" that would itself rot.
+			if others := otherActorsNamedIn(body, b.On); len(others) > 0 {
+				t.Errorf("%s: the chain is entered at %s in %s, but that function also names %d other capabilities (%v…) — it is a dispatcher, not a proof about %q. Enter the chain at the handler that answers %q alone, or use the ByArg form where the guard is called with the capability's own name.",
+					where, b.Entry.Symbol, entryFile, len(others), others[:min(3, len(others))], b.On, b.On)
 				return
 			}
 		}
