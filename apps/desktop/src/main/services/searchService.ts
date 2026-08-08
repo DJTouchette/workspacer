@@ -21,6 +21,9 @@ import * as fs from 'fs';
 // SURROGATE, which JSON.stringify emits as a bare \ud83d that Go's
 // json.Unmarshal turns into U+FFFD and a strict reader rejects outright.
 import { clip } from './claudeSessionList';
+// The read-set invariant: a capability that returns file CONTENT may not return
+// bytes fs.read would refuse. See isSecretResultPath.
+import { isSecretResultPath } from '../lib/pathConfinement';
 
 /**
  * Resolve @vscode/ripgrep's prebuilt binary path.
@@ -179,6 +182,8 @@ export async function searchProject(opts: SearchProjectOpts): Promise<SearchProj
   // Group matches by file, capping total matches. Once the cap is hit we stop
   // parsing further lines and flag the result as truncated.
   const byFile = new Map<string, SearchFileResult>();
+  /** Per-path memo of the secret gate's verdict — one walk per file, not per match. */
+  const secretDecisions = new Map<string, boolean>();
   let total = 0;
   let truncated = false;
 
@@ -207,6 +212,19 @@ export async function searchProject(opts: SearchProjectOpts): Promise<SearchProj
     if (!rel) continue;
     // rg reports paths relative to cwd; the contract wants absolute paths.
     const abs = path.resolve(cwd, rel);
+    // PER-FILE, and not only per-cwd. The caller's only coordinate here is the
+    // directory; WHICH files inside it get opened is decided by ripgrep's
+    // hidden/ignore walker, and that walker's policy is a file inside the
+    // searched directory. `<cwd>/.ignore` containing "!*" is an ordinary dotfile
+    // to every guard we have — not a credential basename, no `.git` component,
+    // inside the root — so fs.write accepts it, and the next search.project then
+    // returns matching lines out of `.git/config` and `.settings.json`. Two
+    // correctly-confined calls; the bytes of the first are the read policy of the
+    // second. The invariant is that this method's read set may not exceed
+    // fs.read's, so ask fs.read's own predicate. Cached per file, because a
+    // repository yields many matches per path and each ask walks the path.
+    if (!secretDecisions.has(abs)) secretDecisions.set(abs, isSecretResultPath(abs));
+    if (secretDecisions.get(abs)) continue;
     const rawText = data.lines.text ?? '';
     const text = clip(rawText.replace(/\r?\n$/, '').replace(TEXT_TRIM, ''), MAX_TEXT_LEN);
 

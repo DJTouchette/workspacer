@@ -29,6 +29,20 @@ var PathParam = map[string]string{
 	"fs.watch":       "path",
 	"fs.unwatch":     "path",
 	"search.project": "cwd",
+	// providers.listModels RUNS a provider CLI in the caller's cwd. Its excuse
+	// used to live in unscopedByDecision and read "cwd picks which project's
+	// provider config to READ; the provider resolves the file itself" — one
+	// wrong word carrying the whole boundary. opencode does not merely read that
+	// directory: it loads and RUNS every `<cwd>/.opencode/plugin/*.js` at
+	// startup, before it prints a model list, with no manifest and no other file
+	// required. A cwd that only selects data needs no confinement; a cwd that
+	// selects an interpreter's plugin directory needs the same containment
+	// git.*/replay.open got.
+	//
+	// `browse`, not `workspace`, for library.list's reason: the Spawn dialog
+	// lists a provider's models for the directory the user is ABOUT to spawn in,
+	// which by definition is not yet a live agent cwd.
+	"providers.listModels": "cwd",
 	// Library items (reusable prompts/skills) live in a directory derived from
 	// the caller's cwd: `list` walks it, `save` writes a .md file into it, and
 	// `remove` deletes one. That is filesystem reach by any other name, and it
@@ -61,9 +75,8 @@ var unscopedByDecision = map[string]string{
 	// now an ALLOWLIST (the host's login shells) rather than a path scope, because
 	// there is no subtree we could confine argv[0] to that the same caller cannot
 	// also fill in — see cmd/brain/shellallow.go and lib/shellAllowlist.ts.
-	"terminals.create":     "cwd is a process working directory and holding the capability at all is the gate (as agents.spawn); the OTHER caller string, `shell`, is argv[0] and is confined by an ALLOWLIST of the host's login shells rather than by fsRoots — resolveTerminalShell in both providers",
-	"sessions.transcript":  "cwd only selects which historical session to resolve under ~/.claude/projects; the transcript path is derived by the provider, never taken from the caller",
-	"providers.listModels": "cwd picks which project's provider config to read; the provider resolves the file itself",
+	"terminals.create":    "cwd is a process working directory and holding the capability at all is the gate (as agents.spawn); the OTHER caller string, `shell`, is argv[0] and is confined by an ALLOWLIST of the host's login shells rather than by fsRoots — resolveTerminalShell in both providers",
+	"sessions.transcript": "cwd only selects which historical session to resolve under ~/.claude/projects; the transcript path is derived by the provider, never taken from the caller",
 	// The sentence used to stop at "never opened as a path", and it was false:
 	// the encoder maps only '/', '\' and ':' to '-', so a cwd of ".." survived
 	// verbatim, became a real path COMPONENT, and joined to ~/.claude — one
@@ -73,15 +86,26 @@ var unscopedByDecision = map[string]string{
 	// is true rather than aspirational.
 	"claude.sessionsForDir": "cwd is encoded into a ~/.claude/projects slug by the provider (claudeProjectDirName, which refuses '', '.' and '..' so the slug is always ONE plain component); the caller's string is never opened as a path",
 	"replay.open":           "confined by the provider to the same workspace roots git.* uses (assertPathAllowed in hubCapabilities.ts), because it cuts a worktree from the repo at cwd",
-	"replay.read":           "the path is a repo-relative coordinate inside a worktree the replay service itself created and keyed by sessionId; containment is structural (resolveInside), and fsRoots would be scoping the wrong namespace",
-	"replay.diff":           "same as replay.read — a coordinate inside a service-owned worktree, not a host path",
+	// The sentence used to stop at "containment is structural", and the structure
+	// was standing on a grant nobody re-consulted. sessionId is not an ownership
+	// token: it is CALLER-CHOSEN at open, the entries map is process-global, its
+	// only eviction is an explicit replay.close, and replay.* sits outside the
+	// bus's per-plugin fsRoots scoping. So a worktree cut while a session was
+	// live went on serving that repository's bytes AFTER the session stopped —
+	// at which point fs.read on the same directory is refused and a fresh
+	// replay.open on it is refused — to any caller that knew the id, and
+	// agents.list / sessions.snapshots hand ids out while classified inert. The
+	// bus handlers now re-run replay.open's own containment on the entry's
+	// recorded ORIGIN cwd before every read/diff/seek (guardReplaySession).
+	"replay.read": "the path is a repo-relative coordinate inside a worktree the replay service itself created and keyed by sessionId; containment is structural (resolveInside), and fsRoots would be scoping the wrong namespace — but the WORKTREE's own authorization is re-checked per call, because the grant that authorized replay.open is not a grant that lasts: guardReplaySession re-runs assertPathAllowed on the recorded origin cwd (timelineReplayService.originCwd)",
+	"replay.diff": "same as replay.read — a coordinate inside a service-owned worktree, not a host path, with the same per-call re-check of the origin cwd's grant",
 	// replay.seek is the WRITE leg of the block above and the only one of the
 	// four that had no entry at all. `ops` is not a path-shaped name, its file
 	// path lives a level deeper (ops[].input.file_path) behind a NAMED type, and
 	// replay.* is not a path-bearing prefix — so nothing on either side could
 	// reach it, and "decided and safe" was indistinguishable from "nobody
 	// looked" for the one leg that puts caller-supplied bytes on disk.
-	"replay.seek": "the ops carry a file_path and content, but both are re-anchored inside the service-owned worktree by containInWorktree (timelineReplayService), which resolves per component and writes the RESULT — the escape it closed was a committed symlink that made the join and the write two different files",
+	"replay.seek": "the ops carry a file_path and content, but both are re-anchored inside the service-owned worktree by containInWorktree (timelineReplayService), which resolves per component and writes the RESULT — the escape it closed was a committed symlink that made the join and the write two different files. Like replay.read/diff it also re-checks the origin cwd's grant per call (guardReplaySession), because the worktree outlives the session that authorized cutting it",
 	// The claude.* CONTROL family. None of these carries a path, which is why
 	// LooksPathBearing is false for all of them and MissingSpec never asked —
 	// and until `mode`, `effort`, `text`, `answers` and `option` entered the
@@ -92,7 +116,17 @@ var unscopedByDecision = map[string]string{
 	"claude.setEffort":         "effort reaches a live claude session as the message `/effort <level>` (applyLiveEffort), i.e. exactly the reach agents.sendMessage already has and no more; there is no path and nothing to confine, so holding the capability is the gate",
 	"claude.setModel":          "same shape as claude.setEffort: `model` names a model the daemon resolves and `effort` rides the same live-switch endpoint; neither becomes a path or an argv element the caller controls",
 	"claude.answer":            "types the answer into the session's PTY, which is sessions.terminalInput's primitive under another name — see the per-param decisions, which say so rather than implying this method is narrower than it is",
-	"agents.sendMessage":       "text is a prompt for an agent that is already running; the agent's own tool approvals are the gate, and there is no path to confine. Recorded because the value IS bytes into a live process and the silence around that class is what left claude.answer unexamined",
+	// The excuse names a gate, and the gate is a capability. "The agent's own
+	// tool approvals are the gate" is true of a caller that cannot RESOLVE those
+	// approvals — and the triage tier, the credential minted for a phone, holds
+	// claude.approve. So for that tier the bound this sentence names is not a
+	// bound: inject the instruction, then approve the prompt it raises, with
+	// decision:"always" persisting a standing allow. claude.gate is not needed
+	// (gate only ADDS parking). That pair is a deliberate product decision and is
+	// on the record in Compositions() as the one AcceptedIn entry, with a test
+	// that fails if any tier acquires both halves of a pair it was not accepted
+	// for — which is the guarantee this sentence could not give by itself.
+	"agents.sendMessage": "text is a prompt for an agent that is already running; there is no path to confine, so holding the capability is the gate. The older wording — 'the agent's own tool approvals are the gate' — named a bound that only holds for a caller which cannot also RESOLVE those approvals, and the triage tier holds claude.approve. See Compositions(): agents.sendMessage + claude.approve is recorded, accepted for triage, and machine-checked against every other tier",
 	// The rest of git.*: every one takes a mandatory absolute `cwd` and the
 	// desktop provider already contains it to the workspace roots (guardGitCwd).
 	// Per-plugin root confinement is the right end state, but two shipped
@@ -190,7 +224,20 @@ var unscopedByDecision = map[string]string{
 	"claude.handoffBrief":      "writes a deterministic brief the PROVIDER composes into ~/.workspacer/handoffs/<generated>.md — the caller supplies a session id, never the filename and never the directory — so there is no caller path to confine",
 	"claude.handoffAgentBrief": "same as claude.handoffBrief, plus it injects the resulting read-this instruction into a live agent; that half is the agents.sendMessage primitive and is bounded the same way",
 	"sessions.attachTerminal":  "binds a PTY stream to the caller's connection. No path and no subtree: what it grants is the OUTPUT side of sessions.terminalInput, so holding it is the gate at the same level",
-	"sessions.terminalInput":   "writes raw bytes into an existing session's PTY: there is no path and no subtree to confine, so holding the capability is the gate, exactly as for terminals.create. NOTE that this makes terminals.create's shell allowlist a boundary only against callers that do not ALSO hold this method — allowlisted /bin/bash plus typed bytes is full argv[0] freedom — and that the sessionId is not ownership-checked on either provider, so it reaches the local user's own agent PTY too",
+	// ── HUB-NATIVE capabilities ───────────────────────────────────────────
+	// The three registries are not two. cmd/hub registers seven capabilities of
+	// its own with RegisterLocal, and NOTHING looked at them: they are absent
+	// from both providers' method lists, so TestBrainMethodsAllClassified and
+	// TestDesktopCapabilitiesAllClassified never asked; they carry no
+	// fs./search./library./git./providers. prefix, so MissingSpec was false; and
+	// with Classified false, RegisterPluginToken did not refuse them and no
+	// CAP_LABELS row warned about them. layout.set was one of them, and it is a
+	// second door onto every clamp agents.spawn applies.
+	"layout.set":             "the shared workspace document, which the hub deliberately does not interpret — except for the four per-agent fields that stop being DESCRIPTION and become ARGUMENTS TO A SPAWN when the desktop adopts the document on its next launch (skipPermissions, permissionMode, profileId, mcpItemIds; App.tsx adoptSharedLayout → reconcileAgents{respawnStopped} → respawnFromRecord → the LOCAL spawnClaude IPC, which scrubs nothing). Those four are stripped from a NON-TRUSTED write by layout.scrubAdoptedSpawnFields, exactly as agents.spawn strips them from a bus spawn; everything else round-trips byte for byte. There is no path to confine — the document names cwds but never opens one",
+	"push.subscribe":         "the endpoint is a URL the hub itself POSTs to, so it is a request the host makes on the caller's behalf rather than a path or an argv. Bounded by the Web Push protocol (the payload is encrypted to the subscription's own keys, so the endpoint learns nothing it did not supply) and by RPCSubscribeAs recording WHICH credential asked, so revoking a phone's token revokes its notifications",
+	"push.unsubscribe":       "the endpoint selects a stored subscription row to delete — the narrowing direction, and never joined into a path",
+	"push.revoke":            "deletes a stored subscription by id. Operator-only by construction (absent from both scoped tiers), and narrowing",
+	"sessions.terminalInput": "writes raw bytes into an existing session's PTY: there is no path and no subtree to confine, so holding the capability is the gate, exactly as for terminals.create. NOTE that this makes terminals.create's shell allowlist a boundary only against callers that do not ALSO hold this method — allowlisted /bin/bash plus typed bytes is full argv[0] freedom — and that the sessionId is not ownership-checked on either provider, so it reaches the local user's own agent PTY too",
 }
 
 // inertMethods are the capabilities that carry NO caller value which becomes
@@ -242,8 +289,19 @@ var inertMethods = map[string]string{
 	"sessions.terminalKeepalive": "sessionId only; it refreshes an idle timer and moves no bytes",
 	"sessions.terminalResize":    "sessionId plus cols/rows, both coerced to integers before they reach the PTY ioctl; there is no string the host acts on",
 	"replay.close":               "an opaque handle the provider minted; closing it releases the provider's own reader",
-	"notify.post":                "title/body are display text the host renders, never argv and never a path; the clickable destination lives on notifications.post's `url`, which carries its own decision",
-	"agents.kill":                "sessionId selects an existing session to stop — the narrowing direction, and the same authorization question agents.spawn answers in the other direction",
+	"layout.get":                 "no params; returns the shared workspace document the hub already holds. A disclosure decision rather than a confinement one, like config.get: the document names agent cwds and pane URLs, and the one credential that ever rode in it (a plugin pane's busToken) is redacted on the way in and out",
+	"push.key":                   "no params; returns the VAPID PUBLIC key, which every subscriber needs and which discloses nothing",
+	"push.list":                  "no params; lists stored subscriptions. Operator-only by construction — it appears in neither scoped tier",
+	// NOT here, deliberately: "notify.post" and "agents.kill". Both appear in the
+	// renderer's plugin-consent list (pluginPermissions.ts) and are registered by
+	// NO provider — not the brain's registry, not hubCapabilities.ts through either
+	// door, not cmd/hub's RegisterLocal. An inert record on a name nobody serves is
+	// worse than no record: MissingSpec reports it specced, so the day somebody
+	// implements it the bus grants it unconfined and no guard fires.
+	// TestInertMethodsAreActuallyRegistered keeps them out.
+	// The consent list advertising them is a separate, real drift — the user is
+	// asked to grant "Terminate agents" for a capability that does not exist — and
+	// belongs to whoever owns that surface, not to this table.
 }
 
 // Classified reports whether SOMEBODY has decided what this method is: the bus
@@ -755,12 +813,26 @@ var unscopedParams = map[string]map[string]ParamDecision{
 		"cwd":   {KindPath, "a process working directory, as agents.spawn's — holding the capability is the gate"},
 		"shell": {KindExecutable, "argv[0] of a host process, taken from a bus caller. There is no subtree to confine it to that the same caller cannot also fill in with fs.write, so it is an ALLOWLIST of the host's login shells instead: resolveTerminalShell in both providers (cmd/brain/shellallow.go, lib/shellAllowlist.ts)"},
 	},
+	// Hub-native. Neither params scan reaches cmd/hub — they read the two
+	// PROVIDERS' handler sources — so these are written by hand, which is
+	// precisely why the method-level guard over cmd/hub's registrations exists.
+	"layout.set": {
+		"data": {KindPermission, "the shared workspace document. Opaque to the hub except for four per-agent fields that become arguments to a LOCAL spawn when the desktop adopts it — skipPermissions, permissionMode, profileId, mcpItemIds — which layout.scrubAdoptedSpawnFields strips from a non-trusted write, matching agents.spawn's own clamps. The document's cwds and URLs are description: the hub never opens one"},
+	},
+	"push.subscribe": {
+		"endpoint": {KindURL, "a push-service URL the HOST posts to on the caller's behalf. The payload is encrypted to the subscription's own keys, so the endpoint learns nothing it did not supply, and RPCSubscribeAs records which credential asked so a revoked token stops being notified"},
+	},
+	"push.unsubscribe": {
+		"endpoint": {KindID, "selects a stored subscription row to delete — narrowing, and never joined into a path"},
+	},
+	"push.revoke": {
+		"id": {KindID, "selects a stored subscription row to delete. Operator-only by construction: push.revoke is in neither scoped tier"},
+	},
 	"sessions.transcript": {
 		"cwd": {KindPath, "selects which historical session to resolve under ~/.claude/projects; the transcript path is derived by the provider, never taken from the caller"},
 	},
-	"providers.listModels": {
-		"cwd": {KindPath, "picks which project's provider config to read; the provider resolves the file itself"},
-	},
+	// providers.listModels' `cwd` moved to PathParam — it is CONFINED now, not
+	// excused — so it must not also carry an unscoped decision. See PathParam.
 	"claude.sessionsForDir": {
 		"cwd": {KindPath, "encoded into a ~/.claude/projects slug by claudeProjectDirName, which refuses '', '.' and '..' so the slug is always ONE plain component; the caller's string is never opened as a path"},
 	},
@@ -1006,7 +1078,13 @@ func IsPathScoped(method string) (field string, ok bool) {
 // search. historically; every namespace added since had methods that reached
 // the filesystem for years without anyone noticing, which is the argument for
 // keeping it wide.
-var pathVerbPrefixes = []string{"fs.", "search.", "library.", "git."}
+// providers.* joined the list when providers.listModels' `cwd` turned out not to
+// be read but EXECUTED IN — claudemon runs the provider CLI with
+// current_dir(cwd) and opencode loads `<cwd>/.opencode/plugin/*.js` from there.
+// The namespace is on the list for the reason the sentence above gives: every
+// prefix added since fs./search. had methods reaching the filesystem for years
+// with nobody noticing.
+var pathVerbPrefixes = []string{"fs.", "search.", "library.", "git.", "providers."}
 
 // LooksPathBearing reports whether method's name sits under a known filesystem
 // namespace (fs.*, search.*, library.*, git.*) and is therefore expected to
@@ -1035,6 +1113,19 @@ func MissingSpec(method string) bool {
 		return false
 	}
 	if _, ok := unscopedByDecision[method]; ok {
+		return false
+	}
+	// inertMethods counts as a classification here too, and has to: adding
+	// "providers." to pathVerbPrefixes made providers.checkAll — a method with no
+	// params at all, already on the inert record with its reason — look
+	// path-bearing by NAME. "Nobody classified it" is the condition this
+	// function names; a written inert reason is somebody classifying it.
+	//
+	// The door that opens (file a real path method as inert and it is grantable
+	// unconfined) is the same door unscopedByDecision already is, and it is
+	// closed from the other side by TestInertPathBearingMethodsTakeNoParams:
+	// an inert method under a path-verb prefix may carry no caller params at all.
+	if _, ok := inertMethods[method]; ok {
 		return false
 	}
 	return LooksPathBearing(method)
@@ -1066,4 +1157,71 @@ type EventGrants struct {
 	Emits    []string
 	Consumes []string
 	Provides []string
+}
+
+// eventTopicGuards maps an event TOPIC pattern to the capability method whose
+// output that topic carries.
+//
+// The two authorization planes were separate systems answering the same
+// question. The CAPABILITY plane (Scope.Methods, mayCall) refuses
+// sessions.attachTerminal to a `view` token — it is sensitive:true in CAP_LABELS
+// and in neither scoped tier's allowlist. The EVENT plane (bus.mayConsume) read
+//
+//	return cn.trusted || cn.scopeMethods != nil || MatchesAny(cn.consumes, typ)
+//
+// where the middle clause waves EVERY topic through for ANY scoped user token,
+// without consulting the method allowlist that just denied the call. So a view
+// token subscribed to `pty.bytes.<id>` and received the session's raw PTY bytes:
+// the whole screen, including the ring-buffer replay attachTerminal deliberately
+// restarts the stream for. Neither half is wrong alone — the attach is correctly
+// refused, and event subscriptions are deliberately part of even the view tier —
+// but composed, the sensitive capability's entire OUTPUT was delivered to the
+// credential that was refused it. terminals.* is in neither scoped tier at all,
+// so this was the only door onto a terminal's screen, and it was open.
+//
+// The rule this table encodes: an event topic that carries a capability's output
+// requires that capability. Everything not listed stays open to every tier,
+// which is what keeps /m's fleet feed working on a view token.
+//
+// Plugins are NOT affected and are deliberately not covered here: a plugin's
+// event reach is its manifest's `consumes`, declared at install and shown in the
+// consent dialog, which is a real answer to the same question. Scoped user
+// tokens have no manifest — their allowlist IS the method list.
+var eventTopicGuards = map[string]string{
+	// The OUTPUT side of the PTY, as the capability's own capspec reason says:
+	// "what it grants is the OUTPUT side of sessions.terminalInput".
+	"pty.bytes.*": "sessions.attachTerminal",
+	// A change feed on a path, republished to every subscriber rather than to
+	// the caller that asked for it — an activity oracle on files whose contents
+	// may still be unreadable. fs.watch is what installs the watcher.
+	"fs.changed": "fs.watch",
+}
+
+// EventTopicCapability returns the capability method an event topic's payload is
+// the output of, and whether the topic is guarded at all. `pattern` uses the
+// same trailing-'*' form as manifest consume patterns.
+//
+// Matching is spelled out here rather than delegated, because internal/event
+// would be an import cycle away and the rule is two lines: exact match, or a
+// trailing '*' matching a prefix.
+func EventTopicCapability(topic string) (method string, guarded bool) {
+	for pattern, m := range eventTopicGuards {
+		if pattern == topic {
+			return m, true
+		}
+		if strings.HasSuffix(pattern, "*") && strings.HasPrefix(topic, strings.TrimSuffix(pattern, "*")) {
+			return m, true
+		}
+	}
+	return "", false
+}
+
+// EventTopicGuards returns a copy of the topic→capability table, for tests that
+// must assert every guarded topic names a method that is itself classified.
+func EventTopicGuards() map[string]string {
+	out := make(map[string]string, len(eventTopicGuards))
+	for k, v := range eventTopicGuards {
+		out[k] = v
+	}
+	return out
 }

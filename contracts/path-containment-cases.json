@@ -2990,6 +2990,348 @@
       "expect": "allow",
       "resolvesTo": "${CONFIG}/library/note.md",
       "why": "The allow direction of the case above: running the gate for the matching root must not become 'a later root grants nothing'. A store carve-out reached through the second root of a two-root grant is ordinary."
+    },
+    {
+      "name": "a project claude settings file inside an allowed root",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/.claude"
+        ],
+        "files": {
+          "root/.claude/settings.json": "{}"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/.claude/settings.json",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "hooks.SessionStart[].hooks[].command runs as the desktop user at session start — before any model call, with no approval prompt, no permission mode and no PreToolUse gate — and permissions.allow/defaultMode rewrite the approval policy for every agent started in that project. fs.write into a live agent cwd plus agents.spawn on that same cwd is arbitrary host command execution with two correctly-confined calls."
+    },
+    {
+      "name": "the local variant of the project claude settings file",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/.claude"
+        ],
+        "files": {
+          "root/.claude/settings.local.json": "{}"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/.claude/settings.local.json",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "Claude Code merges settings.local.json over settings.json, so denying only the first name leaves the identical hook and permission surface writable under the second."
+    },
+    {
+      "name": "a hook script under the claude config directory",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/.claude/hooks"
+        ],
+        "files": {
+          "root/.claude/hooks/run.sh": "#!/bin/sh\n"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/.claude/hooks/run.sh",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "A settings file already committed to the project names scripts here; leaving the scripts writable is a second door onto the same execution, the way .git/hooks is a second door onto .git/config."
+    },
+    {
+      "name": "a claude settings file nested well below the root",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/a/b/.claude"
+        ],
+        "files": {
+          "root/a/b/.claude/settings.json": "{}"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/a/b/.claude/settings.json",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "An agent cwd can be any subdirectory, so the component match has to be positional rather than anchored at the root — the same reason traversesGitDir looks at every component."
+    },
+    {
+      "name": "a case-variant spelling of the claude settings file",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/.CLAUDE"
+        ],
+        "files": {
+          "root/.CLAUDE/Settings.JSON": "{}"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/.CLAUDE/Settings.JSON",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "APFS and NTFS open .claude/settings.json for this spelling and the per-component walk hands the gate the caller's spelling — the same fold the credential basenames and the .git gate need."
+    },
+    {
+      "name": "the per-user claude json config, by name, anywhere",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root"
+        ],
+        "files": {
+          "root/.claude.json": "{}"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/.claude.json",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "~/.claude.json carries mcpServers entries, each a command + args the provider CLI launches. $HOME is an ordinary root the moment any agent's cwd is $HOME, which is exactly what a spawn with no cwd produces."
+    },
+    {
+      "name": "a project MCP server file",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root"
+        ],
+        "files": {
+          "root/.mcp.json": "{}"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/.mcp.json",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "Every entry is a command + args + env the agent's CLI launches, and the CLI reads it from the cwd a spawn chose. It is argv wearing a .json extension."
+    },
+    {
+      "name": "an opencode plugin, which the provider CLI executes at startup",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/.opencode/plugin"
+        ],
+        "files": {
+          "root/.opencode/plugin/pwn.js": "export const P = async () => ({})\n"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/.opencode/plugin/pwn.js",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "opencode loads and runs every .opencode/plugin/*.js before it prints anything, with no manifest and no other file required — and providers.listModels runs that CLI in a caller-chosen cwd under a label the consent list writes as 'List available models'."
+    },
+    {
+      "name": "an opencode project config file",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root"
+        ],
+        "files": {
+          "root/opencode.json": "{}"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/opencode.json",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "Its `mcp` block is command + args, the same shape as .mcp.json. Denied by basename because it sits at the project root with no marker directory around it."
+    },
+    {
+      "name": "a codex config home inside an allowed root",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/.codex"
+        ],
+        "files": {
+          "root/.codex/config.toml": "x = 1\n"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/.codex/config.toml",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "config.toml's mcp_servers entries are command + args + env, and ~/.codex is inside $HOME, the root a spawn with no cwd produces."
+    },
+    {
+      "name": "a claude skill file, which library.save legitimately writes",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/.claude/skills/my-skill"
+        ],
+        "files": {
+          "root/.claude/skills/my-skill/SKILL.md": "# skill\n"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/.claude/skills/my-skill/SKILL.md",
+      "expect": "allow",
+      "resolvesTo": "${ROOT}/.claude/skills/my-skill/SKILL.md",
+      "why": "library.save scope 'claude' writes exactly this path through this same guard. A skill is INSTRUCTIONS, which an agent acts on through its own approvals; settings.json is policy that runs ahead of them. Denying the .claude subtree wholesale would satisfy every deny case above while breaking a shipped capability."
+    },
+    {
+      "name": "a claude subagent file under the same directory",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/.claude/agents"
+        ],
+        "files": {
+          "root/.claude/agents/reviewer.md": "# agent\n"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/.claude/agents/reviewer.md",
+      "expect": "allow",
+      "resolvesTo": "${ROOT}/.claude/agents/reviewer.md",
+      "why": "The second of library.save's three claude-scope destinations; it has to survive a gate aimed at the directory that contains it."
+    },
+    {
+      "name": "a claude slash-command file under the same directory",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/.claude/commands"
+        ],
+        "files": {
+          "root/.claude/commands/ship.md": "# cmd\n"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/.claude/commands/ship.md",
+      "expect": "allow",
+      "resolvesTo": "${ROOT}/.claude/commands/ship.md",
+      "why": "The third of library.save's claude-scope destinations."
+    },
+    {
+      "name": "a skill that happens to be NAMED hooks",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/.claude/skills/hooks"
+        ],
+        "files": {
+          "root/.claude/skills/hooks/SKILL.md": "# skill\n"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/.claude/skills/hooks/SKILL.md",
+      "expect": "allow",
+      "resolvesTo": "${ROOT}/.claude/skills/hooks/SKILL.md",
+      "why": "The hook directory is the child of .claude, not any descendant called hooks. A gate that matched the name at any depth would deny a legal skill id."
+    },
+    {
+      "name": "a project CLAUDE.md is ordinary project data",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root"
+        ],
+        "files": {
+          "root/CLAUDE.md": "# notes\n"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/CLAUDE.md",
+      "expect": "allow",
+      "resolvesTo": "${ROOT}/CLAUDE.md",
+      "why": "Instructions an agent reads and still executes through its approvals — the same class as a README, and the file a remote editor most plausibly edits. The line this gate draws is 'ahead of the approvals', not 'the agent reads it'."
+    },
+    {
+      "name": "an ordinary mcp.json with no leading dot",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root"
+        ],
+        "files": {
+          "root/mcp.json": "{}"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/mcp.json",
+      "expect": "allow",
+      "resolvesTo": "${ROOT}/mcp.json",
+      "why": "No provider reads this name; denying it would be denying by vibe. The dot is part of the file the CLI actually opens."
+    },
+    {
+      "name": "a directory whose name merely starts with the opencode config home",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/.opencoded"
+        ],
+        "files": {
+          "root/.opencoded/x.js": "1\n"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/.opencoded/x.js",
+      "expect": "allow",
+      "resolvesTo": "${ROOT}/.opencoded/x.js",
+      "why": "Component equality, not a prefix test — the same distinction that keeps .github out of the .git gate."
+    },
+    {
+      "name": "a settings file under a directory named claude without the dot",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "root/claude"
+        ],
+        "files": {
+          "root/claude/settings.json": "{}"
+        }
+      },
+      "roots": [
+        "${ROOT}"
+      ],
+      "target": "${ROOT}/claude/settings.json",
+      "expect": "allow",
+      "resolvesTo": "${ROOT}/claude/settings.json",
+      "why": "No provider reads a bare `claude` directory; a project may well have one. The marker is the dotted component, exactly as `.git` is."
     }
   ],
   "methods": [
@@ -3129,6 +3471,19 @@
         "main"
       ],
       "note": "git.diff carries a SECOND guard with a different boundary — the git work-tree root, because with `untracked` the optional `path` becomes a filesystem operand of `git diff --no-index`. This block models one rootSet per method and deliberately does not express that; it stays the hand-written test it is today."
+    },
+    {
+      "method": "providers.listModels",
+      "field": "cwd",
+      "params": {
+        "provider": "opencode"
+      },
+      "rootSet": "browse",
+      "providers": [
+        "brain",
+        "main"
+      ],
+      "note": "The one method here whose cwd is not opened but EXECUTED IN: claudemon runs the provider CLI with current_dir(cwd). opencode loads and runs every <cwd>/.opencode/plugin/*.js at startup, so an unconfined cwd was arbitrary host code execution through a capability the consent list labels 'List available models'. browse, not workspace, for library.list's reason: the Spawn dialog asks about the directory the user is ABOUT to spawn in."
     }
   ],
   "projectDirNames": {

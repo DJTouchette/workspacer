@@ -216,6 +216,49 @@ describe('CAP_LABELS drift guard', () => {
     ).toEqual([]);
   });
 
+  // THE THIRD REGISTRY. The guard above reads hubCapabilities.ts, and the Go
+  // half reads cmd/brain's method lists; between them they cover the 73 methods
+  // a PROVIDER answers. cmd/hub registers seven of its own with
+  // RegisterLocal/RegisterLocalIdent, and they are in neither provider's list —
+  // so no guard on either side of the language boundary had ever enumerated
+  // them, and none of the seven had a row here. `layout.set` is what that cost:
+  // the shared document it writes is adopted and respawned verbatim by the
+  // desktop on its next launch, so its per-agent fields are arguments to a LOCAL
+  // spawn, and a plugin manifest declaring the method displayed no line at all.
+  //
+  // TWIN: capspec's TestHubNativeCapabilitiesAllClassified, which holds the same
+  // registrations to the machine-enforced record.
+  it('labels every capability the hub itself registers', () => {
+    const source = readFileSync(
+      path.join(__dirname, '../../../../../services/hub/cmd/hub/main.go'),
+      'utf-8',
+    );
+    // BOTH doors: layout.set moved from RegisterLocal to RegisterLocalIdent the
+    // day it learned to scrub a non-trusted write, so a regex matching only the
+    // first would have lost the method this test exists for — the same defect the
+    // guard above had with cat().
+    const registered = [
+      ...source.matchAll(/RegisterLocal(?:Ident)?\(\s*'?"([a-zA-Z][\w.]*)"/g),
+    ].map((m) => m[1]);
+    // A RATCHET, not a canary: a scan that finds nothing asserts nothing, and
+    // "nothing looked at this file" is exactly the state layout.set shipped in.
+    expect(
+      new Set(registered).size,
+      'the hub-native registry regex found fewer methods than the hub registers — has RegisterLocal been renamed or the registrations moved?',
+    ).toBeGreaterThanOrEqual(7);
+    for (const must of ['layout.get', 'layout.set']) {
+      expect(
+        registered,
+        'the floor is met by other methods while the one this guard exists for went unscanned',
+      ).toContain(must);
+    }
+    const missing = registered.filter((m) => !(m in CAP_LABELS));
+    expect(
+      missing,
+      'these hub-native capabilities have no plain-English label, so consent shows a raw method id',
+    ).toEqual([]);
+  });
+
   it('treats an unlabelled capability as sensitive, not normal', () => {
     // Failing closed is what makes the guard above a warning rather than a hole:
     // the worst a stale list can do is over-warn.

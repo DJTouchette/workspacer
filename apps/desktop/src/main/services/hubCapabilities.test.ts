@@ -407,11 +407,50 @@ describe('agents.spawn — SECURITY: remote callers cannot auto-bypass approvals
 });
 
 describe('providers discovery', () => {
+  // A REAL directory registered as a live agent cwd: providers.listModels' `cwd`
+  // is confined to browseRoots now (claudemon runs the provider CLI in it, and
+  // opencode executes <cwd>/.opencode/plugin/*.js from there), and the guard
+  // canonicalizes through the filesystem, so '/proj' no longer resolves to
+  // anything a root contains.
+  let providerCwd: string;
+  beforeEach(() => {
+    providerCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-prov-')));
+    getAllSnapshots.mockReturnValue([{ cwd: providerCwd }] as never);
+  });
+  afterEach(() => {
+    getAllSnapshots.mockReturnValue([] as never);
+    fs.rmSync(providerCwd, { recursive: true, force: true });
+  });
+
   it('providers.listModels resolves the binary and queries claudemon for the provider', async () => {
-    const res = await call('providers.listModels', { provider: 'codex', cwd: '/proj' });
+    const res = await call('providers.listModels', { provider: 'codex', cwd: providerCwd });
     expect(resolveAgentBinary).toHaveBeenCalledWith('codex', '/custom/codex');
-    expect(clientMock.listProviderModels).toHaveBeenCalledWith('codex', '/proj', '/bin/codex');
+    expect(clientMock.listProviderModels).toHaveBeenCalledWith('codex', providerCwd, '/bin/codex');
     expect(res).toEqual(['m1', 'm2']);
+  });
+
+  // The cwd is not read, it is EXECUTED IN. capspec's old excuse said it merely
+  // "picks which project's provider config to read"; opencode loads and RUNS
+  // every <cwd>/.opencode/plugin/*.js at startup, so an unconfined cwd made a
+  // capability the consent list labels "List available models" the shortest path
+  // to host code execution on the whole surface.
+  it('providers.listModels refuses a cwd outside the browse roots', async () => {
+    clientMock.listProviderModels.mockClear();
+    await expect(
+      async () => await call('providers.listModels', { provider: 'opencode', cwd: '/etc' }),
+    ).rejects.toThrow(/outside the allowed workspace/);
+    expect(clientMock.listProviderModels).not.toHaveBeenCalled();
+  });
+
+  // An absent cwd is indistinguishable from '' on the Go side, and '' is the
+  // value that absolutizes to the process working directory. Refusing it here is
+  // what keeps the two providers answering the same question.
+  it('providers.listModels refuses an absent cwd rather than letting the daemon pick', async () => {
+    clientMock.listProviderModels.mockClear();
+    await expect(
+      async () => await call('providers.listModels', { provider: 'codex' }),
+    ).rejects.toThrow(/outside the allowed workspace/);
+    expect(clientMock.listProviderModels).not.toHaveBeenCalled();
   });
 
   it('providers.listModels rejects an unknown provider', async () => {

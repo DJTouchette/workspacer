@@ -308,6 +308,109 @@ function canonicalBasename(canonicalTarget: string): string {
 /** The one directory name that turns an ordinary write into command execution. */
 export const GIT_METADATA_DIR = '.git';
 
+/** Provider CONFIG-HOME directory names. Everything at or under one of these is
+ *  refused: the whole directory is the provider's own configuration namespace,
+ *  and every one of them has at least one file in it that is a command line.
+ *
+ *  `.opencode` holds `plugin/*.js`, which opencode LOADS AND RUNS at startup —
+ *  before it prints anything, with no manifest and no other file required. That
+ *  is reachable from `providers.listModels`, a capability the consent list calls
+ *  "List available models". `.codex` holds `config.toml`, whose `mcp_servers`
+ *  entries are `command` + `args` + `env`.
+ *
+ *  TWIN: agentConfigDirs in cmd/brain/fsguard.go and internal/bus/policy.go. */
+export const AGENT_CONFIG_DIRS = new Set(['.opencode', '.codex']);
+
+/** Provider config FILES, denied by basename wherever they resolve.
+ *
+ *  `.mcp.json` is Claude Code's project MCP-server file: each entry is a
+ *  `command` + `args` the agent's CLI launches. `.claude.json` is the per-user
+ *  twin of the same thing. `opencode.json`/`opencode.jsonc` carry opencode's
+ *  `mcp` block, same shape.
+ *
+ *  TWIN: agentConfigBasenames in cmd/brain/fsguard.go and internal/bus/policy.go. */
+export const AGENT_CONFIG_BASENAMES = new Set([
+  '.mcp.json',
+  '.claude.json',
+  'opencode.json',
+  'opencode.jsonc',
+]);
+
+/** The `.claude` subtree is NOT denied wholesale — `library.save` legitimately
+ *  writes `.claude/skills/<id>/SKILL.md`, `.claude/agents/<id>.md` and
+ *  `.claude/commands/<id>.md` through this very guard, and those are
+ *  INSTRUCTIONS, which an agent still executes only through its own approvals.
+ *  These three children are the different kind: they are read as POLICY and as
+ *  ARGV, ahead of the approvals rather than through them.
+ *
+ *  TWIN: claudeConfigChildren in cmd/brain/fsguard.go and internal/bus/policy.go. */
+export const CLAUDE_CONFIG_CHILDREN = new Set(['settings.json', 'settings.local.json', 'hooks']);
+
+/** The provider config-home component `CLAUDE_CONFIG_CHILDREN` hangs off. */
+export const CLAUDE_CONFIG_DIR_NAME = '.claude';
+
+/**
+ * True when an ALREADY-canonical path is agent-interpreted configuration: a file
+ * a provider CLI reads as hooks, permissions, or an MCP command line rather than
+ * as project data.
+ *
+ * This is the `.git` argument applied to the OTHER programs this host runs. A
+ * `.git/config` is refused because git "discovers the repository at whatever cwd
+ * it is handed and then executes whatever `.git/config` tells it to"; a
+ * `<cwd>/.claude/settings.json` is the same sentence with `claude` in it. Its
+ * `hooks.SessionStart[].hooks[].command` runs as the desktop user at session
+ * start — before any model call, with no approval prompt, no permission mode and
+ * no PreToolUse gate — and its `permissions.allow` / `permissions.defaultMode`
+ * silently rewrite the approval policy for every agent started in that project,
+ * including one the LOCAL user starts.
+ *
+ * Every guard treated these as ordinary project DATA: inside a root, not a
+ * credential basename, no `.git` component. The composition that made that fatal
+ * takes two calls that are each correctly confined —
+ *
+ *     fs.write   <agentCwd>/.claude/settings.json   (inside a live agent cwd)
+ *     agents.spawn { cwd: <agentCwd> }              (unconfined BY DECISION)
+ *
+ * — and needs nothing else. `agents.spawn({})` with no cwd normalizes to $HOME
+ * (spawnCwd.ts), which makes the home tree a root and puts `~/.claude/settings.json`
+ * in reach: the same two calls then plant a hook that fires for EVERY claude
+ * session on the host, in any project, until the file is removed.
+ *
+ * The codebase had already made this exact argument twice and stopped short of
+ * the write gate both times. claudeProfiles.ts drops `configDir` from a
+ * bus-written profile because "that directory supplies claude's settings.json —
+ * permissions.allow and hooks, i.e. commands claude runs unprompted … there is no
+ * subtree we could allow that the same caller can't also fill in", and
+ * plugin/manager.go drops a plugin path scope that resolves to `/` because it
+ * "granted the plugin fs.write on ~/.claude/settings.json (hooks are arbitrary
+ * commands)". Both closed one door onto the file. This closes the file.
+ *
+ * Refused for READS as well as writes, on the `.git/config` footing: a
+ * settings.json carries `apiKeyHelper`, `awsAuthRefresh` and env blocks, and a
+ * `.mcp.json` carries server credentials in `env`.
+ *
+ * TWIN: pathIsAgentInterpretedConfig in cmd/brain/fsguard.go and
+ * internal/bus/policy.go.
+ */
+export function isAgentInterpretedConfigPath(canonicalTarget: string): boolean {
+  const comps = canonicalTarget.split(path.sep).map(asciiLower);
+  if (AGENT_CONFIG_BASENAMES.has(comps[comps.length - 1] ?? '')) return true;
+  for (let i = 0; i < comps.length; i++) {
+    if (AGENT_CONFIG_DIRS.has(comps[i])) return true;
+    // `.claude/<child>` and everything under it. The child is matched at i+1
+    // only: `.claude/skills/hooks/…` is a skill named `hooks`, not the hook
+    // directory, and denying it would take a legitimate library.save target out.
+    if (
+      comps[i] === CLAUDE_CONFIG_DIR_NAME &&
+      i + 1 < comps.length &&
+      CLAUDE_CONFIG_CHILDREN.has(comps[i + 1])
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * True when any component of an ALREADY-canonical path is the repository
  * metadata directory.
@@ -449,6 +552,9 @@ export function isSecretPath(canonicalTarget: string): boolean {
   if (SECRET_BASENAMES.has(asciiLower(canonicalBasename(canonicalTarget)))) return true;
   if (traversesGitDir(canonicalTarget)) return true;
   if (isGitGlobalConfigPath(canonicalTarget)) return true;
+  // The same unconditional reach, for the same reason, aimed at the other
+  // programs this host runs: a provider CLI's hooks/permissions/MCP files.
+  if (isAgentInterpretedConfigPath(canonicalTarget)) return true;
   const cfg = canonicalRoot(getConfigDir());
   // An unverifiable config dir means we cannot prove the target is outside it.
   if (cfg === null) return true;
@@ -467,6 +573,47 @@ export function isSecretPath(canonicalTarget: string): boolean {
     if (containsCanonical(sr, canonicalTarget)) return false;
   }
   return true;
+}
+
+/**
+ * True when a path a capability is ABOUT TO RETURN BYTES FROM must be dropped,
+ * because `fs.read` would refuse it.
+ *
+ * `assertPathAllowed` answers about a path the CALLER named. This answers about
+ * a path the HOST discovered while serving a call whose only caller-supplied
+ * coordinate was a directory — `search.project`, which hands its cwd to ripgrep
+ * and returns matching lines out of whatever the walker chose to open.
+ *
+ * That distinction is the whole composition. search.project applies
+ * assertPathAllowed to its cwd and to nothing else, and delegates per-file
+ * exclusion to ripgrep's hidden/ignore walker — whose policy is A FILE INSIDE
+ * THE SEARCHED DIRECTORY. `.ignore` is an ordinary dotfile: not a credential
+ * basename, no `.git` component, inside the root, so `fs.write` accepts it. Two
+ * calls, each correctly confined:
+ *
+ *     fs.write       <root>/.ignore   with "!*\n!**\/*\n"
+ *     search.project { cwd: <root> }
+ *
+ * and the second returns matching lines out of `<root>/.git/config` and
+ * `<root>/.settings.json` — the two files the secret gate exists to refuse.
+ * Bytes written as DATA by one confined call became the READ POLICY of the next.
+ *
+ * The durable invariant is not "make ripgrep ignore `.ignore`" (its walker has
+ * several such files and their precedence is its business): it is that the set
+ * of files a capability can return CONTENT from may not exceed `fs.read`'s. So
+ * the gate is applied per result path, here, by the same predicate.
+ *
+ * Unverifiable → drop, the same posture as the guard: a path we cannot resolve
+ * is a path we cannot prove is allowed.
+ *
+ * TWIN: resultPathIsSecret in cmd/brain/search.go.
+ */
+export function isSecretResultPath(target: string): boolean {
+  try {
+    return isSecretPath(canonicalizePath(target));
+  } catch {
+    return true;
+  }
 }
 
 /**

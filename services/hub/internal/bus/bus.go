@@ -814,12 +814,37 @@ func (cn *conn) mayPublish(typ string) bool {
 }
 
 // mayConsume reports whether an event of the given type may be delivered to this
-// connection. Trusted conns receive everything they subscribed to; a scoped
-// user token likewise (event/stream subscriptions are part of even the view
-// tier); a plugin only receives types matched by its manifest's `consumes`, so
-// a broad `subscribe` can never widen its reach past what it declared.
+// connection. Trusted conns receive everything they subscribed to; a scoped user
+// token likewise (event/stream subscriptions are part of even the view tier)
+// EXCEPT for topics that carry a capability's output, which require that
+// capability; a plugin only receives types matched by its manifest's `consumes`,
+// so a broad `subscribe` can never widen its reach past what it declared.
+//
+// The middle clause used to be unconditional, and that made the two
+// authorization planes disagree about the same credential. The capability plane
+// refuses `sessions.attachTerminal` to a `view` token — sensitive:true, in
+// neither scoped tier — while this function delivered `pty.bytes.<id>` to it
+// anyway: the session's raw PTY bytes, ring-buffer replay included, i.e. exactly
+// what the refused method produces. terminals.* is in neither scoped tier at
+// all, so the event plane was the ONLY door onto a terminal's screen and it was
+// open. Neither half was wrong alone; the composition was.
+//
+// capspec.EventTopicCapability owns the table, next to the classification of the
+// methods it names. Plugins are deliberately not covered by it: their event
+// reach is the manifest `consumes` list, declared at install and shown in the
+// consent dialog, which is a real answer to the same question. A scoped user
+// token has no manifest — its method allowlist IS the answer.
 func (cn *conn) mayConsume(typ string) bool {
-	return cn.trusted || cn.scopeMethods != nil || event.MatchesAny(cn.consumes, typ)
+	if cn.trusted {
+		return true
+	}
+	if cn.scopeMethods != nil {
+		if method, guarded := capspec.EventTopicCapability(typ); guarded {
+			return event.MatchesAny(cn.scopeMethods, method)
+		}
+		return true
+	}
+	return event.MatchesAny(cn.consumes, typ)
 }
 
 // mayProvide reports whether this connection may register as the provider of a

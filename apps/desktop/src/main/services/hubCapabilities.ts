@@ -645,9 +645,37 @@ export function registerHubCapabilities(): void {
       beforeTs,
     );
   });
+  /**
+   * Re-run replay.open's containment on the session's ORIGIN cwd.
+   *
+   * The grant that authorized the open is not a grant that lasts. The entries
+   * map is process-global and keyed by a CALLER-CHOSEN sessionId, its only
+   * eviction is an explicit replay.close, and replay.* sits outside the bus's
+   * per-plugin fsRoots scoping (policy.go names fs.read/fs.write/search.project,
+   * not replay.*). So a worktree cut while a session was live went on serving
+   * that repository's bytes after the session stopped — at which point fs.read
+   * on the same directory is refused and a fresh replay.open on it is refused —
+   * to any caller that knew the id, and agents.list / sessions.snapshots hand
+   * ids out while being classified inert and labelled non-sensitive.
+   *
+   * capspec's excuse for leaving replay.read/diff/seek out of PathParam is that
+   * containment here is STRUCTURAL. It is; this is the sentence that makes the
+   * structure stand on a grant that is still true.
+   *
+   * An unknown sessionId falls through: the service's own entryOrThrow owns that
+   * message, and answering it here would turn this into an existence oracle for
+   * other callers' session ids.
+   */
+  const guardReplaySession = (cap: string, sessionId: string): void => {
+    const origin = timelineReplay.originCwd(sessionId);
+    if (origin === undefined) return;
+    assertPathAllowed(cap, origin, workspaceRoots());
+  };
+
   registerCapability('replay.seek', async (params: unknown) => {
     const { sessionId, ops } = (params ?? {}) as { sessionId?: string; ops?: ReplayOp[] };
     if (!sessionId) throw new Error('replay.seek requires { sessionId, ops }');
+    guardReplaySession('replay.seek', sessionId);
     return timelineReplay.seek(sessionId, Array.isArray(ops) ? ops : []);
   });
   registerCapability('replay.close', async (params: unknown) => {
@@ -669,11 +697,13 @@ export function registerHubCapabilities(): void {
   registerCapability('replay.read', async (params: unknown) => {
     const { sessionId, path: p } = (params ?? {}) as { sessionId?: string; path?: string };
     if (!sessionId || !p) throw new Error('replay.read requires { sessionId, path }');
+    guardReplaySession('replay.read', sessionId);
     return timelineReplay.read(sessionId, p);
   });
   registerCapability('replay.diff', async (params: unknown) => {
     const { sessionId, path: p } = (params ?? {}) as { sessionId?: string; path?: string };
     if (!sessionId) throw new Error('replay.diff requires { sessionId }');
+    guardReplaySession('replay.diff', sessionId);
     return timelineReplay.diff(sessionId, p);
   });
 
@@ -844,10 +874,26 @@ export function registerHubCapabilities(): void {
     if (provider !== 'codex' && provider !== 'opencode' && provider !== 'pi') {
       throw new Error("providers.listModels requires { provider: 'codex'|'opencode'|'pi' }");
     }
+    // `cwd` is not read here, it is EXECUTED IN: claudemon runs the provider CLI
+    // with current_dir(cwd), and opencode loads and runs every
+    // <cwd>/.opencode/plugin/*.js at startup — before it prints a model list,
+    // with no manifest and no other file required. Unconfined, that made this
+    // capability (labelled "List available models" in the consent dialog) the
+    // shortest path to arbitrary host execution on the whole surface. Confined
+    // to browseRoots rather than workspaceRoots because the Spawn dialog asks
+    // about a directory that is not yet any agent's cwd — library.list's reason.
+    //
+    // MANDATORY here, unlike the local IPC twin: an absent cwd used to mean
+    // "let claudemon pick", and absent is indistinguishable from '' — the value
+    // the containment corpus refuses on every path-bearing method because it
+    // absolutizes to the process cwd. The web Spawn dialog already `.catch`es
+    // into free-text model entry, so the cost is a dropdown that stays free-text
+    // until a directory is chosen.
+    const canonicalCwd = assertPathAllowed('providers.listModels', cwd ?? '', browseRoots());
     const customBin = configService.getConfig().agents?.binaries?.[provider] ?? '';
     return claudemonSessionClient.listProviderModels(
       provider,
-      cwd,
+      canonicalCwd,
       resolveAgentBinary(provider, customBin),
     );
   });

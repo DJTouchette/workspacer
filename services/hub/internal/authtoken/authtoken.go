@@ -77,7 +77,30 @@ var viewMethods = []string{
 // the asks an agent is blocked on, talking to it, interrupting it, and the Web
 // Push subscription the /m PWA uses to hear about those asks in the
 // background. Deliberately absent: agents.spawn (the /m spawn tab is operator
-// surface), terminals.*, git.*, fs.*, config.save, plugin/config admin.
+// surface), terminals.*, git.*, fs.*, config.save, layout.set, plugin/config
+// admin.
+//
+// AND THE PARAGRAPH ABOVE IS NOT THE WHOLE TRUTH ON ITS OWN. Every one of those
+// absences is real and enforced per call — a triage token cannot run a shell,
+// write a file, commit, spawn, or change settings. But two of the methods it
+// DOES hold compose past all of them: `agents.sendMessage` injects an arbitrary
+// prompt into an agent already running as the desktop user, and `claude.approve`
+// resolves the permission prompt that agent then raises (with
+// decision:"always" persisting a standing allow, so later calls of that tool are
+// not parked at all). capspec excuses agents.sendMessage on the grounds that
+// "the agent's own tool approvals are the gate", and this tier holds the
+// resolver of exactly those approvals; claude.approve's own entry already
+// concedes it is "the RESOLVER of the approvals agents.sendMessage's own excuse
+// rests on".
+//
+// That is a deliberate product decision — the phone's whole job is replying to
+// an agent and answering what it asks — so it is ON THE RECORD as
+// capspec.Compositions()'s only AcceptedIn entry rather than pretended away, and
+// composition_test.go fails if any tier acquires both halves of a pair it was
+// not accepted for. `claude.gate` is deliberately NOT here: gate only ADDS
+// parking, so the pair never needed it, and its absence is pinned so that
+// "the phone should be able to arm the gate" lands in a test rather than
+// quietly changing what a phone token is.
 var triageMethods = []string{
 	"claude.approve",     // permission prompts — yes / no / always (/m, /remote)
 	"claude.answer",      // AskUserQuestion pickers (/m, /remote)

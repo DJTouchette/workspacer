@@ -80,6 +80,23 @@ export interface ReplayReadResult {
 interface ReplayEntry {
   /** The real repository's work-tree root (where `worktree add` runs). */
   root: string;
+  /**
+   * The CANONICAL cwd `replay.open` was guarded on — the string
+   * assertPathAllowed returned, not the one the caller sent.
+   *
+   * Kept so the grant can be RE-CHECKED, because a grant is a fact about the
+   * present and this entry outlives the one that created it. replay.open is
+   * confined to workspaceRoots(); the entries map is process-global, keyed by a
+   * CALLER-CHOSEN sessionId, and its only eviction is an explicit replay.close.
+   * So once a session stopped — snapshotGrantsFsRoot then refuses it, fs.read on
+   * the repo is refused, a fresh replay.open on the same cwd is refused —
+   * replay.read went on serving that repository's bytes to anyone who knew the
+   * id, and agents.list/sessions.snapshots (both classified inert, both
+   * sensitive:false) hand the ids out. capspec's excuse for leaving replay.read
+   * unconfined calls the containment "structural"; it was, but it was structure
+   * built on a grant nobody re-consulted.
+   */
+  originCwd: string;
   /** The disposable worktree this service created. */
   dir: string;
   baseCommit: string;
@@ -243,6 +260,7 @@ class TimelineReplayService {
       existing.root === root &&
       existing.baseCommit === base &&
       existing.scope === scope &&
+      existing.originCwd === canonicalCwd &&
       fs.existsSync(dir)
     ) {
       return { dir, baseCommit: base };
@@ -256,7 +274,7 @@ class TimelineReplayService {
     const add = await runGit(root, ['worktree', 'add', '--detach', dir, base]);
     if (!add.ok) throw new Error(`worktree add failed: ${add.stderr.trim() || 'unknown error'}`);
 
-    this.entries.set(sessionId, { root, dir, baseCommit: base, scope });
+    this.entries.set(sessionId, { root, dir, baseCommit: base, scope, originCwd: canonicalCwd });
     return { dir, baseCommit: base };
   }
 
@@ -396,6 +414,20 @@ class TimelineReplayService {
       throw new Error('path is outside the replay worktree');
     }
     return { abs, rel: back.split(path.sep).join('/') };
+  }
+
+  /**
+   * The canonical cwd `replay.open` was guarded on for this session, or
+   * undefined when nothing is open under that id.
+   *
+   * Exported so the BUS handlers can re-run the same containment check on every
+   * replay.read/diff/seek — the grant that authorized the open is not a grant
+   * that lasts. The service deliberately does not consult workspaceRoots itself:
+   * the local desktop IPC path is the trusted user replaying their own repo, and
+   * only the bus door needs the re-check.
+   */
+  originCwd(sessionId: string): string | undefined {
+    return this.entries.get(sessionId)?.originCwd;
   }
 
   private entryOrThrow(sessionId: string): ReplayEntry {

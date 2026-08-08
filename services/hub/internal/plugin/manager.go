@@ -128,6 +128,35 @@ func expandScope(p string, bindings map[string]string) string {
 		}
 		rest := strings.TrimPrefix(p[end+1:], "/")
 		if rest == "" {
+			// A BARE token expands to its binding verbatim, and this is the one
+			// branch with no narrowing step to check — the subpath branch below
+			// canonicalizes and re-contains, this one used to return whatever it
+			// was handed.
+			//
+			// `${agentCwd}` is bound by the trusted host from the pane it is
+			// opening, and that pane is read out of the SHARED LAYOUT DOCUMENT,
+			// which a non-trusted bus caller may write (layout.set). So the
+			// document decided the plugin sandbox's own boundary: an agent with
+			// `cwd: "/"` and a plugin pane produced a token whose fsRoots were
+			// ["/"], and — since a volume root contains everything below it
+			// (BINDING DECISION 3) — the bus's per-plugin path confinement, the
+			// ONE guard that is per-caller rather than per-host, then admitted
+			// every path on the machine. The sibling branch already refuses
+			// exactly this shape (`${pluginDir}/all` with `all -> /`); a bare
+			// token got there without a symlink.
+			//
+			// Resolved, not lexical, for the same reason the sibling is: the
+			// binding may be a symlink to the root. Unresolvable → grant nothing,
+			// matching canonRoots' discard.
+			cb, ok := bus.CanonicalizeRoot(base)
+			if !ok {
+				log.Printf("SECURITY: dropping path scope %q — its binding %q does not resolve, so the root the bus would store is unknown", p, base)
+				return ""
+			}
+			if isVolumeRoot(cb) {
+				log.Printf("SECURITY: dropping path scope %q — its binding resolves to the volume root %q, which contains every path on the host; that is not a scope", p, cb)
+				return ""
+			}
 			return base
 		}
 		full := filepath.Join(base, filepath.FromSlash(rest))
@@ -211,6 +240,20 @@ func withinRoot(base, path string) bool {
 		prefix += string(filepath.Separator)
 	}
 	return strings.HasPrefix(path, prefix)
+}
+
+// isVolumeRoot reports whether an ALREADY-canonical path is a filesystem root —
+// "/" on POSIX, `C:\` or `\\server\share\` on Windows.
+//
+// A root is the one value for which "confined to this subtree" and "not confined
+// at all" are the same sentence, so it can never be an honest scope. Detected by
+// SHAPE (the path is its own parent) rather than by comparing to a literal, so
+// the Windows volume forms are covered without spelling each of them out.
+func isVolumeRoot(canonical string) bool {
+	if canonical == "" {
+		return false
+	}
+	return filepath.Dir(canonical) == canonical
 }
 
 // Publisher is the slice of the broker the manager needs.

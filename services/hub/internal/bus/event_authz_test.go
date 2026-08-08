@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -127,5 +128,115 @@ func TestRegisterDeniedWithoutProvides(t *testing.T) {
 	plug.send(Frame{Op: "register", Methods: []string{"recon.overview"}})
 	if ack := plug.readUntil("registered"); len(ack.Methods) != 0 {
 		t.Fatalf("registered = %v, want none (no provides grant)", ack.Methods)
+	}
+}
+
+// ── The event plane and the capability plane must agree ─────────────────────
+
+// TestScopedTokenCannotReceivePtyBytesItMayNotAttachTo is the composition test
+// for two authorization planes that answered the same question differently.
+//
+// The CAPABILITY plane refuses `sessions.attachTerminal` to a view token: it is
+// sensitive:true in CAP_LABELS and in neither viewMethods nor triageMethods. The
+// EVENT plane read `cn.trusted || cn.scopeMethods != nil || MatchesAny(...)`,
+// whose middle clause waved EVERY topic through for ANY scoped user token
+// without consulting the allowlist that had just denied the call.
+//
+// So the view token subscribed to `pty.bytes.<id>` and received the session's
+// raw PTY bytes — the whole screen, ring-buffer replay included, since attaching
+// deliberately restarts the stream. terminals.* is absent from both scoped tiers
+// entirely, so no view or triage METHOD reaches a terminal's screen: the event
+// plane was the only door, and it was open.
+//
+// Neither half is wrong alone. The attach is correctly refused; event
+// subscriptions are deliberately part of even the view tier. What was missing
+// was that a topic carrying a capability's OUTPUT requires that capability.
+func TestScopedTokenCannotReceivePtyBytesItMayNotAttachTo(t *testing.T) {
+	url, _ := scopedServer(t)
+
+	view := dialClientToken(t, url, "tok-view")
+	hello := view.hello
+	if hello.Scope != "view" {
+		t.Fatalf("hello scope = %q, want view — the harness is not minting the tier this test is about", hello.Scope)
+	}
+
+	// STEP 1 — the capability plane says no. Asserted, not assumed: if a future
+	// tier admitted the method, the delivery below would be legitimate and this
+	// test would be pinning the wrong thing.
+	view.send(Frame{Op: "call", ID: "att", Method: "sessions.attachTerminal",
+		Params: json.RawMessage(`{"sessionId":"s1"}`)})
+	if e := view.readUntil("error"); !strings.Contains(e.Error, "outside this token's") {
+		t.Fatalf("sessions.attachTerminal error = %q, want the scope refusal", e.Error)
+	}
+
+	// STEP 2 — the event plane. "*" is the widest ask a client can make.
+	view.send(Frame{Op: "subscribe", Topics: []string{"*"}})
+	view.readUntil("subscribed")
+
+	host := dialClientToken(t, url, "host-secret")
+	host.send(Frame{Op: "publish", Event: &event.Envelope{Type: "pty.bytes.s1",
+		Data: json.RawMessage(`{"data":"c3NoLWtleXNjYW4gc2VjcmV0"}`)}})
+	// A topic that is NOT the output of any capability, published after it, so
+	// the read below cannot block forever and so the FLOOR is asserted in the
+	// same run: the fleet feed a view token exists to receive must still arrive.
+	host.send(Frame{Op: "publish", Event: &event.Envelope{Type: "agent.state_changed"}})
+
+	got := view.readUntil("event")
+	if got.Event == nil {
+		t.Fatal("no event delivered at all")
+	}
+	if strings.HasPrefix(got.Event.Type, "pty.bytes.") {
+		t.Fatalf("a %q token received %s — the capability plane refused sessions.attachTerminal to this exact credential and the event plane delivered its entire output anyway",
+			hello.Scope, got.Event.Type)
+	}
+	if got.Event.Type != "agent.state_changed" {
+		t.Fatalf("first delivered event = %q, want agent.state_changed", got.Event.Type)
+	}
+}
+
+// The mirror image, and the reason the guard is a TABLE rather than a blanket
+// refusal: a tier that DOES hold the capability must still receive its output,
+// or the fix silently breaks the remote terminal view for the operator.
+func TestOperatorTokenStillReceivesPtyBytes(t *testing.T) {
+	url, _ := scopedServer(t)
+
+	op := dialClientToken(t, url, "tok-operator")
+	op.send(Frame{Op: "subscribe", Topics: []string{"pty.bytes.*"}})
+	op.readUntil("subscribed")
+
+	host := dialClientToken(t, url, "host-secret")
+	host.send(Frame{Op: "publish", Event: &event.Envelope{Type: "pty.bytes.s1"}})
+
+	if got := op.readUntil("event"); got.Event == nil || got.Event.Type != "pty.bytes.s1" {
+		t.Fatalf("an operator token did not receive pty.bytes: %+v", got.Event)
+	}
+}
+
+// Every guarded topic must name a method capspec has classified, and every
+// guarded method must be one a scoped tier could plausibly be denied — a table
+// naming a method nobody registers guards nothing, and would be indistinguishable
+// from a typo.
+func TestEventTopicGuardsNameClassifiedMethods(t *testing.T) {
+	guards := capspec.EventTopicGuards()
+	if len(guards) == 0 {
+		t.Fatal("the topic guard table is empty — mayConsume's scoped arm is unconditional again")
+	}
+	for topic, method := range guards {
+		if capspec.MissingClassification(method) {
+			t.Errorf("topic %q is guarded by %q, which capspec says nothing about — a guard pointing at an unclassified method cannot be reasoned about", topic, method)
+		}
+		// The lookup must match the pattern's own shape: a trailing '*' matches
+		// any suffix, a bare topic matches itself exactly.
+		probe := topic
+		if strings.HasSuffix(topic, "*") {
+			probe = strings.TrimSuffix(topic, "*") + "anything"
+		}
+		if m, ok := capspec.EventTopicCapability(probe); !ok || m != method {
+			t.Errorf("EventTopicCapability(%q) = (%q,%v), want (%q,true) — the table does not match its own pattern %q", probe, m, ok, method, topic)
+		}
+	}
+	// An ordinary topic must NOT be guarded, or every tier loses every feed.
+	if _, guarded := capspec.EventTopicCapability("agent.state_changed"); guarded {
+		t.Error("agent.state_changed is guarded — the table is matching everything, which takes the fleet feed away from the view tier it exists for")
 	}
 }

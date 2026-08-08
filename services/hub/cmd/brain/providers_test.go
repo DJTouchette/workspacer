@@ -94,9 +94,18 @@ func TestProvidersListModelsRelaysAndUnwraps(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
-	reg := newRegistry(newClaudemonClient(srv.URL))
+	// A LIVE agent cwd, because providers.listModels' cwd is now confined to the
+	// browse roots: claudemon runs the provider CLI in it, and opencode executes
+	// <cwd>/.opencode/plugin/*.js from there.
+	cwd, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := registryWithCwds(t, cwd)
+	reg.cm = newClaudemonClient(srv.URL)
 
-	res, err := reg.handle(context.Background(), "providers.listModels", []byte(`{"provider":"codex","cwd":"/tmp"}`))
+	res, err := reg.handle(context.Background(), "providers.listModels",
+		[]byte(`{"provider":"codex","cwd":`+jsonStr(cwd)+`}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,9 +135,15 @@ func TestProvidersListModelsSoftFailsToEmpty(t *testing.T) {
 		w.WriteHeader(http.StatusBadGateway)
 	}))
 	defer srv.Close()
-	reg := newRegistry(newClaudemonClient(srv.URL))
+	cwd, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := registryWithCwds(t, cwd)
+	reg.cm = newClaudemonClient(srv.URL)
 
-	res, err := reg.handle(context.Background(), "providers.listModels", []byte(`{"provider":"opencode"}`))
+	res, err := reg.handle(context.Background(), "providers.listModels",
+		[]byte(`{"provider":"opencode","cwd":`+jsonStr(cwd)+`}`))
 	if err != nil {
 		t.Fatalf("a failing provider CLI must not error the call: %v", err)
 	}

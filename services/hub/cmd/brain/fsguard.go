@@ -528,6 +528,11 @@ func pathIsSecretCanonical(canonicalTarget string) bool {
 	if pathIsGitGlobalConfig(canonicalTarget) {
 		return true
 	}
+	// The same unconditional reach, for the same reason, aimed at the other
+	// programs this host runs: a provider CLI's hooks/permissions/MCP files.
+	if pathIsAgentInterpretedConfig(canonicalTarget) {
+		return true
+	}
 	cfg, ok := canonicalRoot(configDir())
 	if !ok {
 		return true // unverifiable config dir → cannot prove the target is outside it
@@ -594,6 +599,111 @@ const gitMetadataDir = ".git"
 func traversesGitDir(canonicalTarget string) bool {
 	for _, comp := range strings.Split(canonicalTarget, string(filepath.Separator)) {
 		if asciiLower(comp) == gitMetadataDir {
+			return true
+		}
+	}
+	return false
+}
+
+// agentConfigDirs are provider CONFIG-HOME directory names. Everything at or
+// under one is refused: the whole directory is that provider's configuration
+// namespace and every one of them holds at least one file that is a command
+// line. `.opencode` holds plugin/*.js, which opencode LOADS AND RUNS at startup
+// with no manifest and no other file required — reachable from
+// providers.listModels, which the consent list labels "List available models".
+// `.codex` holds config.toml, whose mcp_servers entries are command+args+env.
+//
+// TWIN: AGENT_CONFIG_DIRS in pathConfinement.ts, agentConfigDirs in
+// internal/bus/policy.go.
+var agentConfigDirs = map[string]bool{".opencode": true, ".codex": true}
+
+// agentConfigBasenames are provider config FILES, denied by name wherever they
+// resolve. `.mcp.json` is Claude Code's project MCP-server file (each entry is a
+// command + args the CLI launches) and `.claude.json` is its per-user twin;
+// opencode.json/.jsonc carry opencode's `mcp` block, same shape.
+//
+// TWIN: AGENT_CONFIG_BASENAMES in pathConfinement.ts, agentConfigBasenames in
+// internal/bus/policy.go.
+var agentConfigBasenames = map[string]bool{
+	".mcp.json":      true,
+	".claude.json":   true,
+	"opencode.json":  true,
+	"opencode.jsonc": true,
+}
+
+// claudeConfigChildren are the children of a `.claude` directory that are read
+// as POLICY and ARGV rather than as instructions. The `.claude` subtree is NOT
+// denied wholesale: library.save legitimately writes .claude/skills/<id>/SKILL.md,
+// .claude/agents/<id>.md and .claude/commands/<id>.md through this same guard,
+// and those are INSTRUCTIONS an agent still acts on through its own approvals.
+// These three sit AHEAD of the approvals instead of behind them.
+//
+// TWIN: CLAUDE_CONFIG_CHILDREN in pathConfinement.ts and internal/bus/policy.go.
+var claudeConfigChildren = map[string]bool{
+	"settings.json":       true,
+	"settings.local.json": true,
+	"hooks":               true,
+}
+
+// claudeConfigDirName is the component claudeConfigChildren hang off.
+const claudeConfigDirName = ".claude"
+
+// pathIsAgentInterpretedConfig reports whether an ALREADY canonical path is
+// agent-interpreted configuration: a file a provider CLI reads as hooks,
+// permissions, or an MCP command line rather than as project data.
+//
+// This is traversesGitDir's argument aimed at the OTHER programs this host runs.
+// `.git/config` is refused because git "discovers the repository at whatever cwd
+// it is handed and then executes what `.git/config` tells it to";
+// `<cwd>/.claude/settings.json` is that sentence with `claude` in it. Its
+// hooks.SessionStart[].hooks[].command runs as the desktop user at session start
+// — before any model call, with no approval prompt, no permission mode and no
+// PreToolUse gate — and its permissions.allow / permissions.defaultMode rewrite
+// the approval policy for every agent started in that project, the LOCAL user's
+// included.
+//
+// Every guard treated these as ordinary project DATA: inside a root, not a
+// credential basename, no `.git` component. The composition that made that fatal
+// is two calls each of which is correctly confined —
+//
+//	fs.write     <agentCwd>/.claude/settings.json   (inside a live agent cwd)
+//	agents.spawn { cwd: <agentCwd> }                (unconfined BY DECISION)
+//
+// — and needs nothing else. agents.spawn with no cwd normalizes to $HOME
+// (normalizeCwd), which makes the home tree a root and puts
+// ~/.claude/settings.json in reach: the same two calls then plant a hook that
+// fires for EVERY claude session on the host, in any project, permanently.
+//
+// The codebase had made this argument twice already and stopped short of the
+// write gate both times — claudeProfiles.ts drops a bus-written profile's
+// configDir because "that directory supplies claude's settings.json —
+// permissions.allow and hooks, i.e. commands claude runs unprompted", and
+// plugin/manager.go drops a path scope resolving to "/" because it "granted the
+// plugin fs.write on ~/.claude/settings.json (hooks are arbitrary commands)".
+// Both closed one door onto the file; this closes the file.
+//
+// Reads are refused with writes, on the `.git/config` footing: a settings.json
+// carries apiKeyHelper/awsAuthRefresh and env blocks, and a .mcp.json carries
+// server credentials in `env`.
+//
+// TWIN: isAgentInterpretedConfigPath in pathConfinement.ts,
+// pathIsAgentInterpretedConfig in internal/bus/policy.go.
+func pathIsAgentInterpretedConfig(canonicalTarget string) bool {
+	comps := strings.Split(canonicalTarget, string(filepath.Separator))
+	for i := range comps {
+		comps[i] = asciiLower(comps[i])
+	}
+	if len(comps) > 0 && agentConfigBasenames[comps[len(comps)-1]] {
+		return true
+	}
+	for i, c := range comps {
+		if agentConfigDirs[c] {
+			return true
+		}
+		// The child is matched at i+1 ONLY: `.claude/skills/hooks/…` is a skill
+		// named `hooks`, not the hook directory, and denying it would take a
+		// legitimate library.save target out.
+		if c == claudeConfigDirName && i+1 < len(comps) && claudeConfigChildren[comps[i+1]] {
 			return true
 		}
 	}

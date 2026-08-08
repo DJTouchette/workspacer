@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -116,5 +117,76 @@ func TestParseRipgrepJSONTruncatesBySubmatch(t *testing.T) {
 	}
 	if n := len(res.Results[0].Matches); n != 2 {
 		t.Fatalf("expected 2 matches under the cap, got %d", n)
+	}
+}
+
+// TestSearchDropsFilesFsReadWouldRefuse pins the read-set invariant: the set of
+// files search.project may return CONTENT from cannot exceed fs.read's.
+//
+// The composition it closes takes two calls that are each correctly confined.
+// search.project applies assertPathAllowed to its CWD and to nothing else, and
+// delegates per-file exclusion to ripgrep's hidden/ignore walker — whose policy
+// is a file INSIDE the searched directory. `<cwd>/.ignore` holding "!*" is an
+// ordinary dotfile to every guard here: not a credential basename, no `.git`
+// component, inside the root. So:
+//
+//	fs.write       <root>/.ignore   "!*\n!**/*\n"     -> allowed
+//	search.project { cwd: <root> }                    -> allowed
+//
+// and the second returned matching lines out of `<root>/.git/config` and
+// `<root>/.settings.json` — the two files the secret gate exists to refuse.
+// Bytes written as DATA by the first call became the READ POLICY of the second.
+//
+// Driven at the collector rather than through `rg`, because the walker's policy
+// is precisely what must stop mattering: this asserts the outcome for any walker
+// that hands those paths back, including a future ripgrep whose ignore
+// precedence differs.
+//
+// TWIN: searchService.readSet.test.ts.
+func TestSearchDropsFilesFsReadWouldRefuse(t *testing.T) {
+	sandboxHome(t)
+	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := map[string]string{
+		filepath.Join(root, "readme.md"):                "ordinary CHAIN_SECRET_TOKEN placeholder\n",
+		filepath.Join(root, ".git", "config"):           "url = https://x:CHAIN_SECRET_TOKEN@github.com/a/b.git\n",
+		filepath.Join(root, ".settings.json"):           "{\"apiKey\":\"CHAIN_SECRET_TOKEN\"}\n",
+		filepath.Join(root, ".claude", "settings.json"): "{\"hooks\":{}}\n",
+		filepath.Join(root, ".mcp.json"):                "{}\n",
+	}
+	for p, body := range seed {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var lines []string
+	rel := []string{"readme.md", ".git/config", ".settings.json", ".claude/settings.json", ".mcp.json"}
+	for _, r := range rel {
+		lines = append(lines, `{"type":"match","data":{"path":{"text":`+jsonStr(r)+
+			`},"lines":{"text":"CHAIN_SECRET_TOKEN\n"},"line_number":1,"submatches":[{"start":0}]}}`)
+	}
+	res := parseRipgrepJSON([]byte(strings.Join(lines, "\n")), root, 500)
+
+	got := map[string]bool{}
+	for _, f := range res.Results {
+		got[f.File] = true
+	}
+	for _, r := range rel[1:] {
+		p := filepath.Join(root, filepath.FromSlash(r))
+		if got[p] {
+			t.Errorf("search.project returned bytes from %s — fs.read refuses that path, so a caller who plants an ignore file reads around the secret gate with two correctly-confined calls", p)
+		}
+	}
+	// THE FLOOR. Without it a gate that drops every result passes the loop above
+	// and the capability silently returns nothing at all.
+	if !got[filepath.Join(root, "readme.md")] {
+		t.Fatal("search.project dropped an ORDINARY file too — the per-file gate is refusing everything, which passes the deny loop above while breaking the capability")
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -454,6 +455,99 @@ func TestBrainParamsAreClassified(t *testing.T) {
 // record — decisions (whose keys are then held to the host-trusted corpus by
 // capspec's TestConfigSaveDecisionsMatchTheHostTrustedContract) or a PathParam
 // entry. Silence is what a fail-open looks like.
+// TestInertPathBearingMethodsBindNothing is the STRUCTURAL half of the door
+// MissingSpec opened when it learned to treat an inert record as a
+// classification.
+//
+// MissingSpec is the bus's fail-closed test: RegisterPluginToken continues on it
+// and authorize() denies on it, so a method it calls "specced" is grantable with
+// NO filesystem confinement. It consults inertMethods because providers.checkAll
+// takes no params at all yet looks path-bearing by name. The cost is a third map
+// somebody can file a real path method into.
+//
+// capspec's own TestInertPathBearingMethodsTakeNoParams guards that door by
+// requiring the recorded reason to contain "no params" — and a reason is prose.
+// Verified: filing `fs.exfiltrate` as inert with the reason "no params; it
+// returns the provider's own already-loaded index …" satisfies that check while
+// being false, and MissingSpec then reports the method specced, so the bus grants
+// it unconfined with every package green. A guard defeated by writing the right
+// sentence is not a guard.
+//
+// So this asserts the claim against the SCANNER instead of against the prose: an
+// inert method under a path-verb prefix must bind nothing from the caller, as
+// observed by the same AST walk that drives every other classification test.
+// providers.checkAll passes because it genuinely binds nothing; the injected
+// fs.exfiltrate would fail the moment it bound a single field.
+func TestInertPathBearingMethodsBindNothing(t *testing.T) {
+	ps := parseBrain(t)
+	byMethod := ps.brainMethodParams(t)
+
+	checked := 0
+	for _, method := range capspec.InertMethods() {
+		if !capspec.LooksPathBearing(method) {
+			continue
+		}
+		checked++
+		bound := byMethod[method]
+		if len(bound.keys) > 0 {
+			reason, _ := capspec.InertReason(method)
+			t.Errorf("%q is on the inert record under a path-verb prefix, so MissingSpec reports it specced and the bus would grant it with NO path confinement — but the brain's handler binds %v from caller params. Its recorded reason (%q) is prose and cannot be checked; this can. Give it a PathParam entry, or stop binding caller values.",
+				method, sortedKeys(bound.keys), reason)
+		}
+		if bound.opaque {
+			t.Errorf("%q is inert under a path-verb prefix but unmarshals the caller's ENTIRE payload, so no scan can see what it carries. Inert cannot be claimed for a handler nobody can inspect.", method)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no inert method sits under a path-verb prefix — either pathVerbPrefixes or inertMethods changed and this guard now guards nothing (it exists because providers.checkAll is exactly that shape)")
+	}
+}
+
+// TestInertMethodsAreActuallyRegistered closes the OTHER half of the same door.
+//
+// The scanner check above can only speak about a method some provider actually
+// serves. A PHANTOM inert entry — a name no provider registers — binds nothing,
+// so it passes every param scan while still making MissingSpec report it specced.
+// That is exactly the injection that survived: `fs.exfiltrate` filed as inert with
+// a plausible reason, no handler anywhere, and the bus grants it unconfined the
+// day somebody implements it. The hole is opened by the entry and collected later.
+//
+// So an inert record may only name a capability that exists NOW, on some provider.
+// There are THREE registration doors, and the first draft of this test knew two:
+// it failed on notify.post, push.key and push.list, which are real capabilities
+// registered by cmd/hub itself via RegisterLocal/RegisterLocalIdent. That is worth
+// recording — the hub's own in-process registry is invisible to both the brain's
+// registry and to any scan of hubCapabilities.ts, so it is the door a completeness
+// check is most likely to forget.
+var hubLocalRe = regexp.MustCompile(`(?m)\bRegisterLocal(?:Ident)?\(\s*"([a-zA-Z][\w.]*)"`)
+
+func TestInertMethodsAreActuallyRegistered(t *testing.T) {
+	registered := brainMethodSet()
+	body := readDesktopCapabilities(t)
+	for _, m := range names(catRe, body) {
+		registered[m] = true
+	}
+	for _, m := range names(regRe, body) {
+		registered[m] = true
+	}
+	hubMain := mustReadRepoFile(t, "services", "hub", "cmd", "hub", "main.go")
+	hubLocal := names(hubLocalRe, string(hubMain))
+	if len(hubLocal) == 0 {
+		t.Fatal("no RegisterLocal capability found in cmd/hub/main.go — the hub's in-process registry moved or was renamed, and this guard would now silently under-count the registered set (which is a FALSE FAILURE direction, but it means the third door is unwatched)")
+	}
+	for _, m := range hubLocal {
+		registered[m] = true
+	}
+
+	for _, m := range capspec.InertMethods() {
+		if !registered[m] {
+			reason, _ := capspec.InertReason(m)
+			t.Errorf("capspec files %q as inert (%q) but NO provider registers it — not the brain's registry, not hubCapabilities.ts by cat() or registerCapability(). An inert record on a name nobody serves still makes MissingSpec report it specced, so the bus would grant it with no confinement the moment it is implemented. Remove the entry, or classify the capability that actually exists.",
+				m, reason)
+		}
+	}
+}
+
 func TestBrainOpaquePayloadHandlersAreClassified(t *testing.T) {
 	ps := parseBrain(t)
 	byMethod := ps.brainMethodParams(t)

@@ -642,6 +642,40 @@ func TestNoMethodIsClassifiedTwoWays(t *testing.T) {
 	}
 }
 
+// TestInertPathBearingMethodsTakeNoParams closes the door MissingSpec opened
+// when it learned to treat an inert classification as a classification.
+//
+// MissingSpec is the bus's fail-closed test: RegisterPluginToken `continue`s on
+// it and authorize() denies on it, so a method it calls "specced" is grantable
+// with no filesystem confinement. It consults inertMethods because adding
+// "providers." to pathVerbPrefixes made providers.checkAll — no params at all,
+// already on the inert record — look path-bearing by NAME. The cost of that is
+// a third map somebody could file a real path method into.
+//
+// So an inert method under a path-verb prefix must carry NOTHING from the
+// caller: no PathParam field (TestNoMethodIsClassifiedTwoWays), no per-param
+// decision (same test), and — the part only this test asserts — its recorded
+// reason must actually say it takes no params. A future `fs.listRoots` filed as
+// inert with a paragraph about how safe it is fails here, which is the point:
+// the inert bar is "no caller value reaches a sink", and under a path-verb
+// prefix the only provable form of that is no caller value at all.
+func TestInertPathBearingMethodsTakeNoParams(t *testing.T) {
+	checked := 0
+	for _, m := range InertMethods() {
+		if !LooksPathBearing(m) {
+			continue
+		}
+		checked++
+		reason, _ := InertReason(m)
+		if !strings.Contains(reason, "no params") {
+			t.Errorf("%q is inert AND under a path-verb prefix, so MissingSpec reports it specced and the bus would grant it unconfined. Its reason (%q) must state that it takes no params — under these prefixes that is the only inert claim a reader can check.", m, reason)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no inert method sits under a path-verb prefix — either pathVerbPrefixes or inertMethods changed and this guard now guards nothing (it existed because providers.checkAll is exactly that shape)")
+	}
+}
+
 // guardCallRe matches a confinement call that names `method` as a string
 // literal: either assertPathAllowed('fs.read', …) directly, or one of the
 // small guardXxx wrappers that pass the capability name through to it

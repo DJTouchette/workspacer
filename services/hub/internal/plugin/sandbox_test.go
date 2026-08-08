@@ -171,6 +171,69 @@ func TestExpandScope(t *testing.T) {
 	}
 }
 
+// TestBareTokenBoundToAVolumeRootGrantsNothing covers the branch that had no
+// narrowing step: a BARE `${name}` used to return its binding verbatim.
+//
+// `${agentCwd}` is bound by the trusted host from the pane it is opening, and
+// that pane comes out of the SHARED LAYOUT DOCUMENT — which a non-trusted bus
+// caller may write with layout.set. So the document decided the plugin sandbox's
+// own boundary. One agent with cwd "/" and one plugin pane minted a token whose
+// fsRoots were ["/"], and since a volume root contains everything below it
+// (BINDING DECISION 3), the bus's per-plugin path confinement — the ONE guard
+// that is per-caller rather than per-host — then admitted every path on the
+// machine. Neither call is wrong alone: layout.set writes an opaque document and
+// PaneToken faithfully binds what the trusted host hands it.
+//
+// The SUBPATH branch already refused this exact shape (`${pluginDir}/all` with
+// `all -> /`, in the test below); a bare token reached it without a symlink.
+func TestBareTokenBoundToAVolumeRootGrantsNothing(t *testing.T) {
+	root := filepath.VolumeName(mustAbs(t)) + string(filepath.Separator)
+	if got := expandScope("${agentCwd}", map[string]string{"agentCwd": root}); got != "" {
+		t.Errorf("expandScope(${agentCwd}) with the binding at the volume root %q = %q, want \"\" — a root is the one value for which \"confined to this subtree\" and \"not confined at all\" are the same sentence", root, got)
+	}
+	// THE FLOOR: an ordinary directory must still expand, or the guard above is
+	// satisfied by a function that grants nothing at all.
+	ordinary, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := expandScope("${agentCwd}", map[string]string{"agentCwd": ordinary}); got != ordinary {
+		t.Fatalf("expandScope(${agentCwd}) with an ordinary binding = %q, want %q — the refusal above is refusing everything", got, ordinary)
+	}
+	// And a SYMLINK to the root is refused too: the check resolves rather than
+	// comparing strings, for the reason the subpath branch resolves.
+	if !canSymlink(t) {
+		return
+	}
+	link := filepath.Join(t.TempDir(), "toroot")
+	if err := os.Symlink(root, link); err != nil {
+		t.Skipf("cannot create a symlink here: %v", err)
+	}
+	if got := expandScope("${agentCwd}", map[string]string{"agentCwd": link}); got != "" {
+		t.Errorf("expandScope(${agentCwd}) with a binding SYMLINKED to %q = %q, want \"\" — the check must resolve, not compare spellings", root, got)
+	}
+}
+
+// mustAbs returns an absolute path on this platform, used only to recover the
+// volume name ("" on POSIX, "C:" on Windows).
+func mustAbs(t *testing.T) string {
+	t.Helper()
+	p, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func canSymlink(t *testing.T) bool {
+	t.Helper()
+	d := t.TempDir()
+	if err := os.Symlink(d, filepath.Join(d, "probe")); err != nil {
+		return false
+	}
+	return true
+}
+
 func TestWithinRoot(t *testing.T) {
 	root := filepath.FromSlash("/plugins/acme")
 	cases := []struct {

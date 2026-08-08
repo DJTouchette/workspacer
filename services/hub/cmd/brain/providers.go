@@ -147,8 +147,33 @@ func (r *registry) providersListModels(ctx context.Context, raw json.RawMessage)
 	if p.Provider != "codex" && p.Provider != "opencode" && p.Provider != "pi" {
 		return nil, fmt.Errorf("providers.listModels requires { provider: 'codex'|'opencode'|'pi' }")
 	}
+	// `cwd` is not read here, it is EXECUTED IN: claudemon runs the provider CLI
+	// with current_dir(cwd), and opencode loads and runs every
+	// <cwd>/.opencode/plugin/*.js at startup, before it prints a model list and
+	// with no manifest required. capspec's old excuse for leaving this
+	// unconfined — "cwd picks which project's provider config to READ; the
+	// provider resolves the file itself" — was wrong on the one word that
+	// carried it. Confined to browseRoots rather than workspaceRoots for
+	// library.list's reason: the Spawn dialog asks about the directory the user
+	// is ABOUT to spawn in, which is not yet a live agent cwd.
+	//
+	// The REFUSAL is returned as an error rather than soft-failing to an empty
+	// list like the claudemon leg below: a denied call must say it was denied,
+	// and the guard sweep matches on that text.
+	// A MANDATORY cwd, unlike the desktop's local IPC twin. An absent one used
+	// to mean "let claudemon pick", and an absent one is indistinguishable from
+	// "" here — which is the value the corpus refuses on every path-bearing
+	// method because it absolutizes to the process cwd. The web Spawn dialog's
+	// caller already `.catch`es into free-text model entry, so the cost of
+	// requiring it is a model dropdown that stays free-text until a directory is
+	// chosen; the cost of not requiring it is a guard with a hole shaped exactly
+	// like the default.
+	cwd, err := assertPathAllowed("providers.listModels", p.Cwd, r.browseRoots(ctx))
+	if err != nil {
+		return nil, err
+	}
 	bin := resolveAgentBinary(p.Provider, r.providerBinaries()[p.Provider])
-	body, err := r.cm.providerModels(ctx, p.Provider, p.Cwd, bin)
+	body, err := r.cm.providerModels(ctx, p.Provider, cwd, bin)
 	if err != nil {
 		return jsonResult([]any{})
 	}

@@ -86,13 +86,36 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   'app.supervisorHome': { label: 'See the supervisor folder' },
   'analytics.recent': { label: 'Read usage history' },
   'analytics.summary': { label: 'Read usage history' },
-  'providers.listModels': { label: 'List available models' },
+  // NOT read-only, whatever the label says: this RUNS the provider CLI in a
+  // directory the caller names, and opencode loads and executes every
+  // `<cwd>/.opencode/plugin/*.js` at startup before printing anything. The cwd
+  // is confined to the browse roots now (capspec.PathParam), but "a program runs"
+  // is a consent question on its own — a `sensitive: false` on a method that
+  // executes something is the one way this list can under-warn, since capLine()
+  // only fails closed for methods it has never heard of.
+  'providers.listModels': { label: 'Run a provider CLI to list its models', sensitive: true },
   'providers.checkAll': { label: 'Detect installed agent providers' },
   'replay.open': { label: 'Replay a session timeline' },
   'replay.read': { label: 'Replay a session timeline' },
   'replay.seek': { label: 'Replay a session timeline' },
   'replay.diff': { label: 'Replay a session timeline' },
   'replay.close': { label: 'Replay a session timeline' },
+
+  // The HUB-NATIVE capabilities. There are THREE capability registries, not two:
+  // the desktop's hubCapabilities.ts, the brain's handlers.go, and cmd/hub's own
+  // RegisterLocal/RegisterLocalIdent calls. These seven belong to the third, so
+  // they appeared in NEITHER provider's method list — which is why the drift
+  // guard below (which reads hubCapabilities.ts) could never have named them,
+  // and why they had no row here at all. `layout.set` is the one that matters:
+  // the shared document it writes is respawned verbatim by the desktop on its
+  // next launch, so its per-agent fields are arguments to a LOCAL spawn.
+  'layout.get': { label: 'Read the shared workspace layout' },
+  'layout.set': { label: 'Change the shared workspace layout', sensitive: true },
+  'push.key': { label: 'Read the push notification public key' },
+  'push.subscribe': { label: 'Send push notifications to a device', sensitive: true },
+  'push.unsubscribe': { label: 'Stop push notifications to a device' },
+  'push.list': { label: 'See subscribed push devices' },
+  'push.revoke': { label: 'Remove a push subscription', sensitive: true },
 
   // The CATALOG capabilities. hubCapabilities.ts registers through TWO helpers —
   // registerCapability() and the delegation-aware alias cat() — and the drift

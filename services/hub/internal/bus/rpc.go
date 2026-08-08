@@ -36,6 +36,13 @@ type CallerIdentity struct {
 	TokenID string
 }
 
+// IsTrusted reports whether the caller holds host authority — the host token, or
+// an operator-tier token, which is promoted to the same authority at the
+// handshake. Exposed as a METHOD so a package that must ask the question can
+// depend on a one-method interface instead of importing the bus (internal/layout
+// does exactly that).
+func (c CallerIdentity) IsTrusted() bool { return c.Trusted }
+
 // LocalIdentHandler is a [LocalHandler] that also receives the calling
 // connection's identity. Register with [Server.RegisterLocalIdent].
 type LocalIdentHandler func(caller CallerIdentity, params json.RawMessage) (any, error)

@@ -270,7 +270,14 @@ func main() {
 	// capabilities (layout.get / layout.set); changes broadcast as layout.changed.
 	lay := layout.New(b, *layoutFile)
 	srv.RegisterLocal("layout.get", lay.Get)
-	srv.RegisterLocal("layout.set", lay.Set)
+	// Ident, not plain: the document's per-agent skipPermissions / permissionMode
+	// / profileId / mcpItemIds are DESCRIPTION when the desktop writes its own
+	// state and ARGUMENTS TO A SPAWN when the desktop next adopts the document,
+	// and the bus's agents.spawn refuses exactly those four from a bus caller.
+	// See layout.spawnEscalationKeys.
+	srv.RegisterLocalIdent("layout.set", func(c bus.CallerIdentity, p json.RawMessage) (any, error) {
+		return lay.SetAs(c, p)
+	})
 	if *layoutFile != "" {
 		log.Printf("layout document persisted at %s", *layoutFile)
 	}

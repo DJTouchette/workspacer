@@ -389,6 +389,11 @@ func pathIsSecret(canonicalTarget string) bool {
 	if pathIsGitGlobalConfig(canonicalTarget) {
 		return true
 	}
+	// The same unconditional reach, for the same reason, aimed at the other
+	// programs this host runs: a provider CLI's hooks/permissions/MCP files.
+	if pathIsAgentInterpretedConfig(canonicalTarget) {
+		return true
+	}
 	// Read the environment at call time — a test points this at a sandbox.
 	cfg, ok := canonicalizeRoot(authtoken.ConfigDir())
 	if !ok {
@@ -449,6 +454,76 @@ const gitMetadataDir = ".git"
 func traversesGitDir(canonicalTarget string) bool {
 	for _, comp := range strings.Split(canonicalTarget, canonicalSep()) {
 		if asciiLower(comp) == gitMetadataDir {
+			return true
+		}
+	}
+	return false
+}
+
+// agentConfigDirs are provider CONFIG-HOME directory names — everything at or
+// under one is refused. `.opencode` holds plugin/*.js, which opencode LOADS AND
+// RUNS at startup; `.codex` holds config.toml, whose mcp_servers entries are
+// command+args+env.
+//
+// TWIN: cmd/brain/fsguard.go agentConfigDirs, pathConfinement.ts AGENT_CONFIG_DIRS.
+var agentConfigDirs = map[string]bool{".opencode": true, ".codex": true}
+
+// agentConfigBasenames are provider config FILES denied by name wherever they
+// resolve: Claude Code's project `.mcp.json` and per-user `.claude.json` (each
+// entry a command + args the CLI launches), and opencode's json/jsonc config.
+//
+// TWIN: cmd/brain/fsguard.go agentConfigBasenames, pathConfinement.ts
+// AGENT_CONFIG_BASENAMES.
+var agentConfigBasenames = map[string]bool{
+	".mcp.json":      true,
+	".claude.json":   true,
+	"opencode.json":  true,
+	"opencode.jsonc": true,
+}
+
+// claudeConfigChildren are the children of a `.claude` directory read as POLICY
+// and ARGV rather than as instructions. The subtree is not denied wholesale
+// because library.save legitimately writes .claude/skills|agents|commands
+// through the same guard.
+//
+// TWIN: cmd/brain/fsguard.go claudeConfigChildren, pathConfinement.ts
+// CLAUDE_CONFIG_CHILDREN.
+var claudeConfigChildren = map[string]bool{
+	"settings.json":       true,
+	"settings.local.json": true,
+	"hooks":               true,
+}
+
+const claudeConfigDirName = ".claude"
+
+// pathIsAgentInterpretedConfig reports whether an ALREADY canonical path is
+// agent-interpreted configuration — a file a provider CLI reads as hooks,
+// permissions, or an MCP command line rather than as project data.
+//
+// traversesGitDir's argument, aimed at the other programs this host runs: a
+// `<cwd>/.claude/settings.json` hook runs as the desktop user at session start
+// with no approval prompt and no permission mode, and its permissions.allow
+// rewrites the approval policy for every agent started in that project. The
+// composition it closes is `fs.write` (correctly confined to a live agent cwd)
+// then `agents.spawn` (unconfined by decision) — two calls, neither wrong alone.
+//
+// TWIN: cmd/brain/fsguard.go pathIsAgentInterpretedConfig, pathConfinement.ts
+// isAgentInterpretedConfigPath.
+func pathIsAgentInterpretedConfig(canonicalTarget string) bool {
+	comps := strings.Split(canonicalTarget, canonicalSep())
+	for i := range comps {
+		comps[i] = asciiLower(comps[i])
+	}
+	if len(comps) > 0 && agentConfigBasenames[comps[len(comps)-1]] {
+		return true
+	}
+	for i, c := range comps {
+		if agentConfigDirs[c] {
+			return true
+		}
+		// i+1 ONLY: `.claude/skills/hooks/…` is a skill named `hooks`, not the
+		// hook directory, and denying it would take a library.save target out.
+		if c == claudeConfigDirName && i+1 < len(comps) && claudeConfigChildren[comps[i+1]] {
 			return true
 		}
 	}
