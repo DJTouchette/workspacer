@@ -251,43 +251,122 @@ function isBroad(pattern: string): boolean {
   return pattern === '*' || pattern.startsWith('command.');
 }
 
-/**
- * Event topics that carry a CAPABILITY'S OUTPUT, and the capability each one
- * requires — the renderer's copy of capspec's event-topic registry
- * (services/hub/internal/capspec/eventtopics.go, TopicGuardedBy rows). Held
- * equal to it by TestConsentDialogFlagsEveryGuardedTopic, so a topic that
- * becomes guarded cannot keep rendering as ordinary here.
- *
- * The consent dialog was the stated justification for plugins being exempt from
- * that registry — "a plugin's event reach is its manifest's `consumes`, declared
- * at install and shown in the consent dialog, which is a real answer to the same
- * question" — and it marked a consume line `sensitive` only when the pattern was
- * exactly `*`. So `consumes: ["pty.bytes.*", "fs.changed"]` rendered at
- * severity=normal with hasSensitivePermission() === false, while the SAME reach
- * spelled as `capabilities: ["sessions.attachTerminal", "fs.watch"]` rendered
- * sensitive on both lines. The exemption is gone (the bus now requires the
- * capability for a guarded topic on the plugin arm too), but a dialog that
- * describes a terminal-stream subscription as ordinary is still lying about
- * what is being asked for.
- */
-const GUARDED_TOPICS: Record<string, string> = {
-  'pty.bytes.*': 'sessions.attachTerminal',
-  'pty.exit': 'sessions.attachTerminal',
-  'pty.desync': 'sessions.attachTerminal',
-  'fs.changed': 'fs.watch',
-  'agent.statusline': 'sessions.snapshot',
-};
+/** How the hub answers "may a non-trusted credential receive this topic" —
+ *  capspec.EventTopicDisposition, spelled the same on both sides of the wire. */
+export type TopicDisposition = 'guarded-by-capability' | 'host-only' | 'open-by-decision';
 
-/** The capability a consume pattern's topic requires, if any. Matches the bus's
- *  own rule: exact, or a trailing '*' over a prefix — in both directions, since
- *  a manifest may declare `pty.*` and mean the guarded family. */
+export interface EventTopicRule {
+  pattern: string;
+  disposition: TopicDisposition;
+  /** Set only on `guarded-by-capability` rows: the capability that owns the payload. */
+  method?: string;
+}
+
+/**
+ * THE EVENT-TOPIC REGISTRY, renderer copy.
+ *
+ * The enforcing copy is services/hub/internal/capspec/eventtopics.go (mayConsume
+ * and mayPublish read it); this is the DISCLOSING copy, and
+ * `contracts/event-topic-consent-cases.json` pins the two together — each side
+ * has a test that fails if it drifts from the fixture, so neither can move
+ * alone. The `reason` field of each row is deliberately NOT duplicated here: the
+ * argument for a classification belongs with the code that enforces it.
+ *
+ * WHAT THIS REPLACES, and why the shape changed. This was a hand-copied table of
+ * the five `guarded-by-capability` rows and nothing else. Every `host-only` row
+ * was missing, so `consumes: ["plugin.log", "sidecar.*"]` rendered as two
+ * ORDINARY lines with hasSensitivePermission() === false — plugin.log being one
+ * verbatim, unredacted line of a sidecar's stdout/stderr (whose environment
+ * carries WKS_SETTINGS with secret plugin settings in plaintext) and
+ * plugin.loaded the whole Manifest: install argv, the sidecar's server command,
+ * and every declared filesystem scope, i.e. a map of what each sidecar may
+ * reach. A partial copy of a security table is worse than no copy, because it
+ * looks like an answer.
+ *
+ * The consent dialog was also the stated justification for plugins being exempt
+ * from the registry at all — "a plugin's event reach is its manifest's
+ * `consumes`, declared at install and shown in the consent dialog, which is a
+ * real answer to the same question". The exemption is gone (the bus consults the
+ * registry on the plugin arm too), but a dialog that describes a terminal-stream
+ * subscription, or a request for the host's sidecar logs, as ordinary is still
+ * lying about what is being asked for.
+ */
+export const EVENT_TOPIC_RULES: EventTopicRule[] = [
+  { pattern: 'agent.snapshot', disposition: 'open-by-decision' },
+  { pattern: 'agent.state_changed', disposition: 'open-by-decision' },
+  {
+    pattern: 'agent.statusline',
+    disposition: 'guarded-by-capability',
+    method: 'sessions.snapshot',
+  },
+  { pattern: 'fs.changed', disposition: 'guarded-by-capability', method: 'fs.watch' },
+  { pattern: 'layout.changed', disposition: 'open-by-decision' },
+  { pattern: 'library.changed', disposition: 'open-by-decision' },
+  { pattern: 'plugin.install.progress', disposition: 'host-only' },
+  { pattern: 'plugin.loaded', disposition: 'host-only' },
+  { pattern: 'plugin.log', disposition: 'host-only' },
+  { pattern: 'plugin.sandbox.refused', disposition: 'host-only' },
+  { pattern: 'plugin.sandboxed', disposition: 'host-only' },
+  { pattern: 'plugin.settings.changed', disposition: 'host-only' },
+  { pattern: 'plugin.unloaded', disposition: 'host-only' },
+  { pattern: 'plugin.unsandboxed', disposition: 'host-only' },
+  {
+    pattern: 'pty.bytes.*',
+    disposition: 'guarded-by-capability',
+    method: 'sessions.attachTerminal',
+  },
+  {
+    pattern: 'pty.desync',
+    disposition: 'guarded-by-capability',
+    method: 'sessions.attachTerminal',
+  },
+  { pattern: 'pty.exit', disposition: 'guarded-by-capability', method: 'sessions.attachTerminal' },
+  { pattern: 'sidecar.*', disposition: 'host-only' },
+  { pattern: 'workflow.agent.finished', disposition: 'open-by-decision' },
+  { pattern: 'workflow.completed', disposition: 'open-by-decision' },
+  { pattern: 'workflow.failed', disposition: 'open-by-decision' },
+  { pattern: 'workflow.started', disposition: 'open-by-decision' },
+];
+
+/** Does a manifest's consume PATTERN reach a registry ROW? The bus's own rule —
+ *  exact, or a trailing '*' over a prefix — applied in both directions, since a
+ *  manifest may declare `pty.*` (or `plugin.*`) and mean the whole family. */
+function reaches(pattern: string, rule: EventTopicRule): boolean {
+  if (rule.pattern === pattern) return true;
+  const rulePrefix = rule.pattern.endsWith('*') ? rule.pattern.slice(0, -1) : undefined;
+  const askPrefix = pattern.endsWith('*') ? pattern.slice(0, -1) : undefined;
+  if (rulePrefix !== undefined && pattern.startsWith(rulePrefix)) return true;
+  if (askPrefix !== undefined && rule.pattern.startsWith(askPrefix)) return true;
+  return false;
+}
+
+/**
+ * The registry row a consume pattern reaches, if any.
+ *
+ * A wildcard can span several rows (`agent.*` covers the guarded
+ * agent.statusline AND the open agent.snapshot), and disclosure takes the LOUDER
+ * one: an exact row first, then a capability-guarded one, then host-only, and
+ * only an all-open span reads as ordinary. Picking the first match in table
+ * order would make a security label depend on where somebody inserted a row.
+ */
+export function topicRuleFor(pattern: string): EventTopicRule | undefined {
+  const hits = EVENT_TOPIC_RULES.filter((r) => reaches(pattern, r));
+  return (
+    hits.find((r) => r.pattern === pattern) ??
+    hits.find((r) => r.disposition === 'guarded-by-capability') ??
+    hits.find((r) => r.disposition === 'host-only') ??
+    hits[0]
+  );
+}
+
+/** The capability a consume pattern's topic requires, if any. Only
+ *  `guarded-by-capability` rows have one — a host-only topic is refused outright
+ *  and no capability unlocks it, so a caller asking this question must not read
+ *  `undefined` as "ordinary". */
 export function capabilityBehindTopic(pattern: string): string | undefined {
-  for (const [topic, method] of Object.entries(GUARDED_TOPICS)) {
-    if (topic === pattern) return method;
-    const topicPrefix = topic.endsWith('*') ? topic.slice(0, -1) : undefined;
-    const askPrefix = pattern.endsWith('*') ? pattern.slice(0, -1) : undefined;
-    if (topicPrefix !== undefined && pattern.startsWith(topicPrefix)) return method;
-    if (askPrefix !== undefined && topic.startsWith(askPrefix)) return method;
+  for (const rule of EVENT_TOPIC_RULES) {
+    if (rule.disposition !== 'guarded-by-capability') continue;
+    if (reaches(pattern, rule)) return rule.method;
   }
   return undefined;
 }
@@ -323,12 +402,26 @@ export function pluginPermissions(m: PluginManifest): PermissionGroup[] {
       key: 'receive',
       title: 'Receives events',
       lines: consumes.map((c) => {
-        const method = capabilityBehindTopic(c);
         if (c === '*') return { label: c, detail: 'all bus activity', severity: 'sensitive' };
-        if (method)
+        const rule = topicRuleFor(c);
+        if (rule?.disposition === 'guarded-by-capability' && rule.method)
           return {
             label: c,
-            detail: `the output of ${CAP_LABELS[method]?.label ?? method} — requires that capability`,
+            detail: `the output of ${CAP_LABELS[rule.method]?.label ?? rule.method} — requires that capability`,
+            severity: 'sensitive',
+          };
+        // HOST-ONLY. No capability returns these payloads, so there is no
+        // capability to name and the old table had no row for them at all —
+        // which is how a request for a sidecar's unredacted stderr, or for the
+        // Manifest listing every filesystem scope each sidecar holds, rendered
+        // as an ordinary line. The hub refuses the topic to a plugin, and that
+        // is not a reason to describe the ASK as ordinary: a manifest that wants
+        // the host's process/confinement plane is telling the user something
+        // about itself.
+        if (rule?.disposition === 'host-only')
+          return {
+            label: c,
+            detail: 'host-internal state — only the app itself receives this',
             severity: 'sensitive',
           };
         return { label: c, detail: undefined, severity: 'normal' };

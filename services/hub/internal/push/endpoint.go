@@ -68,23 +68,31 @@ func validatePushEndpoint(endpoint string) error {
 	return nil
 }
 
-// isPublicIP reports whether ip is routable on the public internet. Link-local
-// covers 169.254.169.254, the cloud metadata address, which is the reason this
-// function is not just IsLoopback||IsPrivate.
+// isPublicIP reports whether ip is routable on the public internet.
+//
+// Five predicates, each carrying its own case and none of them redundant —
+// TestIsPublicIPRefusesEveryNonRoutableFamily gives each one an address that
+// ONLY it catches, so deleting any single clause fails by name:
+//
+//   - IsLoopback     127.0.0.1, ::1 — the hub's own admin surface
+//   - IsPrivate      10/8, 172.16/12, 192.168/16 AND IPv6 unique-local fc00::/7.
+//     Go's IsPrivate already implements the ULA range (ip[0]&0xfe == 0xfc), so
+//     there is no separate fc00 clause to write; fd00::1 and fc00::1 land here.
+//   - IsUnspecified  0.0.0.0 / :: — routes to "this host" on connect
+//   - IsLinkLocal…   169.254.169.254, the cloud metadata address, and fe80::/10.
+//     This is the reason the function is not just IsLoopback||IsPrivate.
+//   - IsMulticast    224.0.0.0/4 and ff00::/8, including the link-local and
+//     interface-local scopes: IsLinkLocalMulticast and
+//     IsInterfaceLocalMulticast are strict SUBSETS of it, so naming them too
+//     added two clauses no address could reach on its own.
+//
+// There is deliberately no IPv4-mapped-IPv6 recursion. ::ffff:127.0.0.1 is
+// caught by IsLoopback directly — every predicate above resolves To4() first,
+// and net.IP.Equal treats the two notations as one address — so the branch that
+// re-judged the mapped form was unreachable, and reachability is what the test
+// asserts (the mapped spellings are refused, by these clauses, with no
+// recursion in the way).
 func isPublicIP(ip net.IP) bool {
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
-		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() {
-		return false
-	}
-	// IPv4-mapped IPv6 (::ffff:127.0.0.1) must be judged as the v4 address it
-	// carries, or every check above is one notation away from being bypassed.
-	if v4 := ip.To4(); v4 != nil && !v4.Equal(ip) {
-		return isPublicIP(v4)
-	}
-	// Unique-local IPv6 (fc00::/7) has no Go stdlib predicate.
-	if v6 := ip.To16(); v6 != nil && ip.To4() == nil && v6[0]&0xfe == 0xfc {
-		return false
-	}
-	return true
+	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
+		ip.IsLinkLocalUnicast() || ip.IsMulticast())
 }

@@ -647,41 +647,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	// Writer goroutine: pump matched events to this client. Blocking here (a
 	// slow TCP client) only backs up this subscriber's buffer — the broker
 	// drops past capacity, so other clients and publishers are unaffected.
-	go func() {
-		for ev := range sub.C {
-			ev := ev
-			// Enforce the consume grant even when the plugin subscribed more
-			// broadly (e.g. "*") — the manifest's `consumes` is the ceiling on
-			// what it can ever receive, not just what it asked for.
-			if !cn.mayConsume(ev.Type) {
-				continue
-			}
-			if err := cn.send(Frame{Op: "event", Event: &ev}); err != nil {
-				return
-			}
-			// The broker drops past this subscriber's capacity. For a discrete
-			// event that is the design; for a PTY byte stream the dropped chunk
-			// silently corrupts the client's terminal — xterm renders garbage
-			// and neither side knows. Tell it, so it re-attaches and takes a
-			// fresh screen replay.
-			for _, topic := range sub.TakeDesyncs() {
-				sid := strings.TrimPrefix(topic, broker.StreamTopicPrefix)
-				data, _ := json.Marshal(map[string]string{"sessionId": sid})
-				desync := event.Envelope{
-					Type:   "pty.desync",
-					Source: "hub",
-					Time:   time.Now(),
-					Data:   data,
-				}
-				if !cn.mayConsume(desync.Type) {
-					continue
-				}
-				if err := cn.send(Frame{Op: "event", Event: &desync}); err != nil {
-					return
-				}
-			}
-		}
-	}()
+	go cn.pumpEvents(sub, cn.send)
 
 	_ = cn.send(cn.helloFrame())
 
@@ -751,6 +717,66 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 // rather than guess why its subscription didn't take.
 func tooManyTopics(op string, n int) string {
 	return fmt.Sprintf("%s carries %d topics, over the %d limit for one frame", op, n, maxFrameTopics)
+}
+
+// pumpEvents drains sub onto this connection until the subscription closes or
+// the socket fails. `send` is a parameter, not cn.send inlined, because the two
+// authorization checks below are the LAST layer and a test has to be able to
+// watch what they let through — see delivery_layers_test.go.
+//
+// THE SECOND LAYER, kept deliberately. Since SubscribeFiltered, mayConsume is
+// already applied at ENQUEUE (bus.go's `sub := s.broker.SubscribeFiltered(nil,
+// cn.mayConsume)`), which is what stops a refused topic costing this connection
+// a buffer slot and leaving a drop record to leak. That makes the two checks
+// here redundant on the happy path — and they stay anyway, for one reason that
+// is not a slogan: the admission filter is a snapshot of an authorization that
+// CHANGES UNDER A LIVE SUBSCRIPTION. `revoked` is set on an already-open socket
+// (UnregisterPluginToken), and an event admitted microseconds before that flag
+// landed is sitting in sub.C when it does. The enqueue filter cannot un-admit
+// it; this check refuses to write it.
+//
+// The desync check is the same argument with a sharper edge, because the desync
+// frame is SYNTHESISED HERE and so was never offered to the admission filter at
+// all. sub.TakeDesyncs() reports drops by stream topic; turning that into a
+// pty.desync naming the sessionId is a fresh publish to this connection, and
+// pty.desync is a guarded topic in its own right. Without this check the drop
+// bookkeeping of a stream is delivered to a connection that may not consume the
+// stream — which is exactly the leak SubscribeFiltered was added to close,
+// re-entering through the door on the other side of it.
+func (cn *conn) pumpEvents(sub *broker.Subscription, send func(Frame) error) {
+	for ev := range sub.C {
+		ev := ev
+		// Enforce the consume grant even when the plugin subscribed more
+		// broadly (e.g. "*") — the manifest's `consumes` is the ceiling on
+		// what it can ever receive, not just what it asked for.
+		if !cn.mayConsume(ev.Type) {
+			continue
+		}
+		if err := send(Frame{Op: "event", Event: &ev}); err != nil {
+			return
+		}
+		// The broker drops past this subscriber's capacity. For a discrete
+		// event that is the design; for a PTY byte stream the dropped chunk
+		// silently corrupts the client's terminal — xterm renders garbage
+		// and neither side knows. Tell it, so it re-attaches and takes a
+		// fresh screen replay.
+		for _, topic := range sub.TakeDesyncs() {
+			sid := strings.TrimPrefix(topic, broker.StreamTopicPrefix)
+			data, _ := json.Marshal(map[string]string{"sessionId": sid})
+			desync := event.Envelope{
+				Type:   "pty.desync",
+				Source: "hub",
+				Time:   time.Now(),
+				Data:   data,
+			}
+			if !cn.mayConsume(desync.Type) {
+				continue
+			}
+			if err := send(Frame{Op: "event", Event: &desync}); err != nil {
+				return
+			}
+		}
+	}
 }
 
 // conn serializes writes; coder/websocket forbids concurrent writers, and the

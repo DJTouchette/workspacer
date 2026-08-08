@@ -68,6 +68,14 @@ func runSessionStore(ctx context.Context, cm *claudemonClient, store *sessionSto
 	}
 }
 
+// fleetVisibility is the shared fleet rule as this publisher consumes it.
+// *visibility satisfies it; the interface exists so a test can hand the
+// publisher a rule that says YES to everything and watch what the publisher
+// refuses on its own.
+type fleetVisibility interface {
+	visible(ctx context.Context, snap json.RawMessage) bool
+}
+
 // visibleStatusLinePublisher builds runStatusLines' publish callback with the
 // SAME fleet-visibility rule every other fleet read already goes through.
 //
@@ -83,20 +91,43 @@ func runSessionStore(ctx context.Context, cm *claudemonClient, store *sessionSto
 // model and rate-limit state — and sessions.snapshot(id) is view-callable and
 // unfiltered by id, so the leaked id completed the read.
 //
-// Fail-closed on an unknown session, deliberately: updateStatusLine already
-// skips a session it has no snapshot for ("nothing to merge into yet"), so
-// publishing its id would announce a session the store itself does not admit to
-// having. The topic is also guarded on the event plane now (it carries
+// TWO INDEPENDENT QUESTIONS, and the store one is not delegable.
+//
+// "Does the store admit to having this session?" and "does the fleet rule show
+// it?" are different questions with different failure modes, and the second
+// cannot answer the first. A session the store has never seen has no snapshot to
+// evaluate, so what reached the fleet rule was `nil` — and it came back false
+// only because snapshotVisible's json.Unmarshal happens to error on empty
+// input. That is an accident in another file, one byte away from not holding:
+// the literal `null` decodes CLEANLY into the zero struct, whose mode is "" and
+// whose status is not "ended", which snapshotVisible reads as LIVE and therefore
+// visible. Relying on it made the arm survive deletion while the leak it stops —
+// announcing the id, model, cost and rate-limit state of a session, with
+// sessions.snapshot(id) view-callable and unfiltered by id — stayed one refactor
+// away. So it is checked here, first, on its own terms; updateStatusLine already
+// skips a session it has no snapshot for ("nothing to merge into yet"), and this
+// keeps the bus agreeing with it.
+//
+// vis is taken as an interface so the composition above is testable: a rule that
+// admits everything it is shown must still not get an unknown session published.
+// A nil rule fails CLOSED — a publisher with no visibility filter is the exact
+// state this function was written to end, and publishing everything would be a
+// worse answer than publishing nothing.
+//
+// The topic is also guarded on the event plane now (it carries
 // sessions.snapshot's output), but a guard on WHO receives it is not a
 // substitute for a filter on WHAT is published: the two protect against
 // different mistakes, and the desktop's twin publisher makes the same choice.
-func visibleStatusLinePublisher(store *sessionStore, vis *visibility, publish func(string, json.RawMessage)) func(string, json.RawMessage) {
+func visibleStatusLinePublisher(store *sessionStore, vis fleetVisibility, publish func(string, json.RawMessage)) func(string, json.RawMessage) {
 	return func(id string, sl json.RawMessage) {
+		if vis == nil {
+			return
+		}
 		snap, ok := store.get(id)
 		if !ok {
 			return
 		}
-		if vis != nil && !vis.visible(context.Background(), snap) {
+		if !vis.visible(context.Background(), snap) {
 			return
 		}
 		payload, err := json.Marshal(map[string]any{"sessionId": id, "statusLine": sl})

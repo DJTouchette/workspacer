@@ -7,7 +7,10 @@ import {
   CAP_LABELS,
   capLine,
   capabilityBehindTopic,
+  topicRuleFor,
+  EVENT_TOPIC_RULES,
 } from '../src/lib/pluginPermissions';
+import type { PermissionLine, PermissionSeverity } from '../src/lib/pluginPermissions';
 import type { PluginManifest } from '../src/types/plugin';
 
 function mf(partial: Partial<PluginManifest>): PluginManifest {
@@ -312,5 +315,106 @@ describe('consumes lines for capability-guarded topics', () => {
     expect(capabilityBehindTopic('pty.*')).toBe('sessions.attachTerminal');
     expect(capabilityBehindTopic('pty.bytes.s1')).toBe('sessions.attachTerminal');
     expect(capabilityBehindTopic('agent.snapshot')).toBeUndefined();
+  });
+});
+
+// THE CROSS-LANGUAGE CONTRACT for the event-topic registry.
+//
+// contracts/event-topic-consent-cases.json is the shared fixture; the Go half
+// (capspec's TestEventTopicRegistryMatchesTheConsentFixture) holds
+// eventtopics.go to the same file. The hub ENFORCES the table and this module
+// DISCLOSES it, and a partial copy of the table is what shipped: the renderer
+// carried only the five `guarded-by-capability` rows, so every `host-only` row
+// was absent and a manifest declaring `consumes: ["plugin.log", "sidecar.*"]`
+// rendered as two ordinary lines at severity NORMAL. plugin.log is one verbatim,
+// unredacted line of a sidecar's stdout/stderr — whose environment carries
+// WKS_SETTINGS with secret plugin settings in plaintext — and plugin.loaded is
+// the whole Manifest: install argv, the sidecar's server command, and every
+// declared filesystem scope.
+interface TopicFixture {
+  severityByDisposition: Record<string, PermissionSeverity>;
+  topics: { pattern: string; disposition: string; method?: string }[];
+  cases: {
+    name: string;
+    consumes: string[];
+    expect: { pattern: string; severity: PermissionSeverity; detailIncludes?: string }[];
+  }[];
+}
+
+const topicFixture: TopicFixture = JSON.parse(
+  readFileSync(
+    path.join(__dirname, '../../../../../contracts/event-topic-consent-cases.json'),
+    'utf-8',
+  ),
+);
+
+function receiveLines(consumes: string[]): PermissionLine[] {
+  return pluginPermissions(mf({ consumes })).find((g) => g.key === 'receive')!.lines;
+}
+
+describe('event-topic registry — cross-language contract', () => {
+  it('classifies exactly the topics the fixture classifies, with the same method', () => {
+    const norm = (rs: { pattern: string; disposition: string; method?: string }[]) =>
+      [...rs]
+        .map((r) => ({ pattern: r.pattern, disposition: r.disposition, method: r.method ?? null }))
+        .sort((a, b) => (a.pattern < b.pattern ? -1 : 1));
+    expect(
+      norm(EVENT_TOPIC_RULES),
+      'the renderer table has drifted from contracts/event-topic-consent-cases.json — a topic the hub refuses (or now guards) is being described to the user as something else',
+    ).toEqual(norm(topicFixture.topics));
+    // RATCHET: a fixture that emptied would make the comparison above vacuous,
+    // and an empty table renders every consume line as ordinary.
+    expect(topicFixture.topics.length).toBeGreaterThanOrEqual(22);
+    for (const d of ['guarded-by-capability', 'host-only', 'open-by-decision']) {
+      expect(
+        topicFixture.topics.some((r) => r.disposition === d),
+        `no ${d} row — the table has collapsed to a rule that cannot express every topic`,
+      ).toBe(true);
+    }
+  });
+
+  // The SWEEP: every row, not just the ones a case happens to name. This is what
+  // the old GUARDED_TOPICS table could never satisfy — it held 5 of the
+  // registry's 22 rows, and the 9 host-only ones among the missing 17 are the
+  // ones that rendered ordinary while asking for the host's own state.
+  it('renders every classified topic at the severity its disposition demands', () => {
+    for (const row of topicFixture.topics) {
+      const want = topicFixture.severityByDisposition[row.disposition];
+      expect(want, `the fixture has no severity for disposition ${row.disposition}`).toBeTruthy();
+      const [line] = receiveLines([row.pattern]);
+      expect(
+        line.severity,
+        `consumes: ["${row.pattern}"] (${row.disposition}) rendered as ${line.severity}`,
+      ).toBe(want);
+      if (want === 'sensitive') {
+        expect(line.detail, `${row.pattern} is flagged with no explanation`).toBeTruthy();
+        expect(
+          hasSensitivePermission(mf({ consumes: [row.pattern] })),
+          `a manifest asking only for ${row.pattern} shows no heads-up`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it.each(topicFixture.cases)('$name', (kase) => {
+    const lines = receiveLines(kase.consumes);
+    for (const want of kase.expect) {
+      const line = lines.find((l) => l.label === want.pattern);
+      expect(line, `no consent line for ${want.pattern}`).toBeTruthy();
+      expect(line!.severity, `${want.pattern} rendered as ${line!.severity}`).toBe(want.severity);
+      if (want.detailIncludes) {
+        expect(line!.detail ?? '', `${want.pattern} detail`).toContain(want.detailIncludes);
+      }
+    }
+  });
+
+  // A wildcard that spans rows of different dispositions must take the LOUDER
+  // one, or `agent.*` (which reaches the guarded agent.statusline) would read as
+  // ordinary because agent.snapshot is open — a severity decided by table order.
+  it('takes the loudest row a wildcard spans', () => {
+    expect(topicRuleFor('agent.*')?.disposition).toBe('guarded-by-capability');
+    expect(topicRuleFor('plugin.*')?.disposition).toBe('host-only');
+    expect(topicRuleFor('workflow.*')?.disposition).toBe('open-by-decision');
+    expect(topicRuleFor('myplugin.tick')).toBeUndefined();
   });
 });

@@ -252,3 +252,74 @@ func TestAnAbsoluteVolumeRootIsNotAScope(t *testing.T) {
 		t.Errorf("expandScope(%q) = %q, want it unchanged — the fix must not refuse every absolute scope", ordinary, got)
 	}
 }
+
+// narrowToPin's DROP-WHOLE arm: a path-scoped capability whose every declared
+// scope is new keeps nothing, so the capability itself is removed rather than
+// registered with an empty root list.
+//
+// It survived deletion, which is why it is here. The difference the branch makes
+// is not "granted vs not granted" today — bus.go's authorize refuses a
+// filesystem-scoped capability with no roots outright ("granted with no roots")
+// — it is what the REGISTERED grant says the plugin holds. Without the branch
+// the token is registered carrying fs.read with zero roots, and every reader of
+// that list (the bus's grant map, a consent/inspection UI, the next person who
+// adds a default root for an empty scope) sees a capability the user never
+// consented to, held with a scope that reads as "unspecified" rather than
+// "refused". A dropped capability says the true thing: it was added after
+// consent and it is gone.
+func TestACapabilityWhoseEveryScopeIsNewIsDroppedWhole(t *testing.T) {
+	plugins := t.TempDir()
+	dir := filepath.Join(plugins, "notes")
+	elsewhere := t.TempDir() // resolvable, absolute, and NOT what was consented
+
+	mf := writePluginJSON(t, dir, `{"apiVersion":"1","id":"notes","name":"Notes","version":"1.0.0",
+	  "server":{"command":"/bin/true"},
+	  "capabilities":[{"method":"fs.read","paths":["${pluginDir}"]}]}`)
+	reg := newPinRegistrar()
+	RebaselineGrantPin(mf) // the consent moment
+	NewManager(&recorder{}, reg).Add(mf)
+	if got := reg.methods("notes"); len(got) != 1 || got[0] != "fs.read" {
+		t.Fatalf("floor: the consented grant = %v, want just fs.read", got)
+	}
+
+	// The sidecar rewrites plugin.json inside its own sandbox write root, moving
+	// fs.read off the consented scope entirely. Both are legal, resolvable
+	// scopes — the pin is the only thing that distinguishes them.
+	rewritten := writePluginJSON(t, dir, `{"apiVersion":"1","id":"notes","name":"Notes","version":"1.0.0",
+	  "server":{"command":"/bin/true"},
+	  "capabilities":[{"method":"fs.read","paths":[`+jsonString(elsewhere)+`]}]}`)
+	NewManager(&recorder{}, reg).Add(rewritten)
+
+	if got := reg.methods("notes"); len(got) != 0 {
+		t.Errorf("grant after the rewrite = %v with roots %v — every declared scope was new, so nothing was consented and the capability must not appear in the registered authority at all",
+			got, reg.rootsFor("notes", "fs.read"))
+	}
+
+	// FLOOR: narrowing is per-scope, not all-or-nothing. A manifest that keeps
+	// the consented scope AND adds a new one keeps the capability, minus the
+	// addition — otherwise this branch would be a way to delete a live grant by
+	// appending to plugin.json.
+	partial := writePluginJSON(t, dir, `{"apiVersion":"1","id":"notes","name":"Notes","version":"1.0.0",
+	  "server":{"command":"/bin/true"},
+	  "capabilities":[{"method":"fs.read","paths":["${pluginDir}",`+jsonString(elsewhere)+`]}]}`)
+	NewManager(&recorder{}, reg).Add(partial)
+	got := reg.methods("notes")
+	if len(got) != 1 || got[0] != "fs.read" {
+		t.Fatalf("a manifest that still declares the consented scope lost the capability: %v", got)
+	}
+	roots := reg.rootsFor("notes", "fs.read")
+	if len(roots) != 1 || roots[0] != dir {
+		t.Fatalf("kept roots = %v, want just the consented %s", roots, dir)
+	}
+}
+
+// jsonString quotes a filesystem path for embedding in the manifest literals
+// above; a Windows path is full of backslashes and json.Marshal is the only
+// correct escaper.
+func jsonString(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
