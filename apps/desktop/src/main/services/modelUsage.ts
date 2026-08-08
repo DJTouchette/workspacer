@@ -150,8 +150,14 @@ function ratesFor(model: string | null | undefined): ModelRates {
         // turn_cost_usd) reads the same field, so dropping it here diverges the
         // two costing paths for the same model-rates.json.
         cachedInput: typeof ov.cached_input === 'number' ? ov.cached_input : undefined,
+        // A window is a token COUNT: accept it only as a non-negative integer,
+        // matching the Rust reader's `as_u64` (pricing.rs parse_one_override).
+        // A fractional or negative value is treated as absent so both costing
+        // paths inherit the same matched/default window for the same file.
         contextLimit:
-          typeof ov.context_limit === 'number'
+          typeof ov.context_limit === 'number' &&
+          Number.isInteger(ov.context_limit) &&
+          ov.context_limit >= 0
             ? ov.context_limit
             : (best?.contextLimit ?? DEFAULT_RATES.contextLimit),
       };

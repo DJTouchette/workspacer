@@ -152,16 +152,38 @@ fn parse_overrides(path: &Path, s: &str) -> HashMap<String, ModelRates> {
     };
     let mut table = HashMap::with_capacity(raw.len());
     for (key, value) in raw {
-        match serde_json::from_value::<ModelRates>(value) {
-            Ok(rates) => {
+        match parse_one_override(&value) {
+            Some(rates) => {
                 table.insert(key, rates);
             }
-            Err(err) => {
-                tracing::warn!(path = %path.display(), key = %key, %err, "model-rates.json entry is not a valid rate; skipping it");
+            None => {
+                tracing::warn!(path = %path.display(), key = %key, "model-rates.json entry has no numeric input/output; skipping it");
             }
         }
     }
     table
+}
+
+/// Reads one override entry the SAME per-field way modelUsage.ts's `ratesFor`
+/// does, so the shared ~/.workspacer/model-rates.json prices a turn identically
+/// in this daemon and in the desktop. An entry applies iff `input` and `output`
+/// are both numbers; `cached_input` is used iff it is a number (else the
+/// provider default) and `context_limit` iff it is a non-negative integer (else
+/// the matched window is inherited). The earlier `from_value::<ModelRates>`
+/// dropped the WHOLE entry when an OPTIONAL field was wrong-typed (a fractional
+/// `context_limit`, a string `cached_input`), so the daemon fell back to the
+/// built-in rate while the desktop still applied the override — a silent
+/// per-turn cost divergence on the same file.
+fn parse_one_override(value: &serde_json::Value) -> Option<ModelRates> {
+    let obj = value.as_object()?;
+    let input = obj.get("input").and_then(serde_json::Value::as_f64)?;
+    let output = obj.get("output").and_then(serde_json::Value::as_f64)?;
+    Some(ModelRates {
+        input,
+        output,
+        cached_input: obj.get("cached_input").and_then(serde_json::Value::as_f64),
+        context_limit: obj.get("context_limit").and_then(serde_json::Value::as_u64),
+    })
 }
 
 /// Longest-prefix match over built-ins + user overrides (overrides win ties).
@@ -299,6 +321,37 @@ mod tests {
             rates_for_in("gpt-5-codex", BUILTIN, &table).expect("gpt-5-codex must resolve");
         assert_eq!(priced.input, 9.0, "override must win over built-in");
         assert_eq!(priced.output, 90.0);
+    }
+
+    #[test]
+    fn wrongtyped_optional_field_still_applies_the_override() {
+        // The shared model-rates.json is read by BOTH engines. modelUsage.ts
+        // validates PER FIELD: an entry with numeric input+output applies even
+        // when an OPTIONAL field (cached_input, context_limit) is wrong-typed —
+        // the bad optional is just treated as absent. Rust used to deserialize
+        // the whole entry with `from_value::<ModelRates>`, so a fractional
+        // context_limit or a string cached_input dropped the ENTIRE entry and
+        // the daemon fell back to the built-in $3 sonnet rate while the desktop
+        // applied the override's $5. Same file, 40% cost divergence.
+        for json in [
+            r#"{"claude-sonnet":{"input":5,"output":25,"context_limit":1000000.5}}"#,
+            r#"{"claude-sonnet":{"input":5,"output":25,"cached_input":"oops"}}"#,
+            r#"{"claude-sonnet":{"input":5,"output":25,"context_limit":-1}}"#,
+        ] {
+            let table = parse_overrides(std::path::Path::new("model-rates.json"), json);
+            let r = rates_for_in("claude-sonnet-4-6", BUILTIN, &table)
+                .expect("sonnet must resolve");
+            assert_eq!(
+                r.input, 5.0,
+                "override input must apply despite the wrong-typed optional field ({json})"
+            );
+            assert_eq!(r.output, 25.0);
+            // The wrong-typed optional field is treated as absent, so the window
+            // is inherited from the matched built-in (sonnet carries None here,
+            // which usage.rs floors like the desktop's default) — never the
+            // fractional/negative value, which the desktop now also rejects.
+            assert_eq!(r.context_limit, None, "bad window discarded, inherited from builtin ({json})");
+        }
     }
 
     #[test]

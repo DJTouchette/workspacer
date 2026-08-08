@@ -43,7 +43,7 @@ func TestDeepMergeContractCases(t *testing.T) {
 	// deepMergeFloor is the corpus's size today: "not zero" is met by a fixture
 	// that lost every case but one, and this corpus is the only thing holding
 	// the Go merge to the TypeScript one.
-	const deepMergeFloor = 9
+	const deepMergeFloor = 10
 	var tally sweepguard.Tally
 	for _, c := range fixture.Cases {
 		t.Run(c.Name, func(t *testing.T) {

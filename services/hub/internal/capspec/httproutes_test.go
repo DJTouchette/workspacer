@@ -91,6 +91,18 @@ func TestEveryHTTPRouteIsClassified(t *testing.T) {
 			t.Errorf("%s:%d wraps %s %q in a credential check, and the registry classifies it %q. A row that understates the code is how a guard gets deleted without anyone noticing the row still says 'public'.",
 				s.file, s.line, s.server, s.pattern, row.Disposition)
 		}
+		// The IN-HANDLER form understates in exactly the same direction. /bus is
+		// the whole reason handlerGuarded exists — its credential check is the
+		// handshake inside handleBus, not a wrapper — and it is the route that
+		// classifies every presented token into its tier. Relabelling it away from
+		// RouteGuarded (to public/tiered) would read as "no credential needed"
+		// while the code still refuses with 401, and then the deletion of that 401
+		// would ALSO pass, because line 94 won't fire once the row already reads
+		// non-guarded. Pinning the handler form closes that two-step.
+		if s.handlerGuarded && row.Disposition != RouteGuarded {
+			t.Errorf("%s:%d registers %s %q with a handler that refuses unauthenticated callers (a 401 in its own body), and the registry classifies it %q. A route the code guards in-handler must stay RouteGuarded — understating it is how the guard, and then the 401 itself, get removed with the row still reading non-guarded.",
+				s.file, s.line, s.server, s.pattern, row.Disposition)
+		}
 		if !s.wrapperGuarded && !s.handlerGuarded && row.Disposition == RouteGuarded {
 			t.Errorf("%s:%d registers %s %q with no credential check the scanner can see — neither a guard()/requireBearer() wrapper nor a 401 in the handler it names — and the registry records it as %q. The classification says a credential is required and the code hands the bytes to anybody.",
 				s.file, s.line, s.server, s.pattern, RouteGuarded)

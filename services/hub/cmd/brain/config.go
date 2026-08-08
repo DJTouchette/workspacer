@@ -56,6 +56,19 @@ func deepMerge(target, source map[string]any) map[string]any {
 		if sv == nil {
 			continue
 		}
+		// Never persist a "__proto__" key. The TS twin (configService.ts
+		// deepMerge) drops it structurally — `result["__proto__"] = …` reassigns
+		// the object's prototype in JS rather than adding an own key, so it never
+		// reaches config.yaml — while a Go map keeps "__proto__" as an ordinary
+		// key and yaml.Marshal would write it. That divergence let a caller who
+		// saves config through the brain plant an attacker-named key the desktop
+		// silently strips on the next read: same input, different file on disk.
+		// Dropping it here is the safe direction (the key is never anything the
+		// schema reads) and makes the two writers agree. Pinned by
+		// contracts/deepmerge-cases.json.
+		if k == "__proto__" {
+			continue
+		}
 		if svMap, ok := sv.(map[string]any); ok {
 			if tvMap, ok := result[k].(map[string]any); ok {
 				result[k] = deepMerge(tvMap, svMap)

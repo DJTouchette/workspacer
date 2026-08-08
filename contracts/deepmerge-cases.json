@@ -185,6 +185,27 @@
           }
         }
       }
+    },
+    {
+      "name": "a __proto__ source key is dropped, never persisted",
+      "target": {
+        "updates": {
+          "channel": "stable"
+        }
+      },
+      "source": {
+        "__proto__": {
+          "channel": "evil"
+        },
+        "updates": {
+          "channel": "latest"
+        }
+      },
+      "expected": {
+        "updates": {
+          "channel": "latest"
+        }
+      }
     }
   ]
 }

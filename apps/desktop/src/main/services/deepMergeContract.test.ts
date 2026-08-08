@@ -74,5 +74,5 @@ describe('deepMerge contract (shared with Go config.go)', () => {
       expect(deepMerge(target, source)).toEqual(c.expected);
     });
   }
-  itSweptTheWholeCorpus(tally, 'the deepMerge corpus', 9, { allow: 0, deny: 0 });
+  itSweptTheWholeCorpus(tally, 'the deepMerge corpus', 10, { allow: 0, deny: 0 });
 });

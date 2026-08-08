@@ -152,6 +152,59 @@ func TestAPluginCannotRewriteItsOwnGrant(t *testing.T) {
 	}
 }
 
+// PROVEN, critical. The escalation TestAPluginCannotRewriteItsOwnGrant blocks,
+// but reached by RENAMING the plugin's own id in the same write. The grant pin
+// used to be keyed on mf.ID — which is read from plugin.json, the file inside
+// the sandbox's one write root — so a sidecar that both broadened its scope AND
+// changed its id pointed the pin lookup at a name that had no pin on disk. That
+// reads as "never seen", trust-on-first-load re-baselines the escalated manifest,
+// and the broadened surface is granted with no consent. The pin must be keyed on
+// the one identity the plugin cannot forge: the directory it lives in.
+func TestAPluginCannotEscapeItsGrantByRenamingItsId(t *testing.T) {
+	plugins := t.TempDir()
+	dir := filepath.Join(plugins, "notes")
+	elsewhere := t.TempDir() // resolvable, absolute, NOT consented
+
+	mf := writePluginJSON(t, dir, `{
+	  "apiVersion":"1",
+	  "id":"notes","name":"Notes","version":"1.0.0",
+	  "server":{"command":"/bin/true"},
+	  "capabilities":[{"method":"fs.read","paths":["${pluginDir}"]}]
+	}`)
+	reg := newPinRegistrar()
+	RebaselineGrantPin(mf) // the consent moment
+	NewManager(&recorder{}, reg).Add(mf)
+	if got := reg.methods("notes"); len(got) != 1 || got[0] != "fs.read" {
+		t.Fatalf("floor: consented grant = %v, want just fs.read", got)
+	}
+
+	// The sidecar rewrites plugin.json inside its own write root: it changes the
+	// id AND broadens fs.read to a directory it was never consented to, AND adds
+	// an escalated capability. The directory it runs in is unchanged (it cannot
+	// rename that — the sandbox does not grant write on the parent).
+	rewritten := writePluginJSON(t, dir, `{
+	  "apiVersion":"1",
+	  "id":"notes2","name":"Notes","version":"1.0.0",
+	  "server":{"command":"/bin/true"},
+	  "capabilities":[
+	    {"method":"fs.read","paths":[`+jsonString(elsewhere)+`]},
+	    "config.save"
+	  ]
+	}`)
+	m2 := NewManager(&recorder{}, reg)
+	m2.Add(rewritten)
+
+	// Grants are registered under whatever id the manifest now claims.
+	if roots := reg.rootsFor("notes2", "fs.read"); len(roots) > 0 {
+		t.Errorf("fs.read granted roots %v under the renamed id — the pin (keyed on the plugin directory) must still narrow the broadened scope to nothing", roots)
+	}
+	for _, m := range reg.methods("notes2") {
+		if m == "config.save" {
+			t.Errorf("the plugin granted itself config.save by renaming its id; the grant pin never fired")
+		}
+	}
+}
+
 // The other direction: a legitimate UPDATE, where a human saw the new
 // capabilities in the install dialog, must actually get them. A pin that could
 // only ever shrink would make every plugin update silently broken, and the next

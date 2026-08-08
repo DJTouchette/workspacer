@@ -92,6 +92,29 @@ describe('model rate overrides', () => {
     );
   });
 
+  it('a wrong-typed OPTIONAL field does not discard the whole override (parity with pricing.rs)', () => {
+    // The shared ~/.workspacer/model-rates.json is read by BOTH this engine and
+    // claudemon's pricing.rs. An entry with numeric input+output must APPLY even
+    // when an optional field is wrong-typed — the bad optional is treated as
+    // absent, not as grounds to drop the whole entry. pricing.rs used to
+    // deserialize the entry as a unit and fell back to the built-in $3 sonnet
+    // rate on a fractional context_limit / string cached_input while this side
+    // applied the $5 override: same file, 40% per-turn cost divergence.
+    for (const bad of [
+      { input: 5, output: 25, context_limit: 1_000_000.5 },
+      { input: 5, output: 25, context_limit: -1 },
+      { input: 5, output: 25, cached_input: 'oops' },
+    ]) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      writeModelRateOverrides({ 'claude-sonnet': bad as any });
+      expect(turnCostUSD('claude-sonnet-4-6', { input_tokens: 1_000_000 })).toBe(5);
+      expect(turnCostUSD('claude-sonnet-4-6', { output_tokens: 1_000_000 })).toBe(25);
+      // The wrong-typed window is discarded, inheriting the built-in sonnet 200k
+      // rather than the fractional/negative value the Rust reader also rejects.
+      expect(contextLimitFor('claude-sonnet-4-6', 0)).toBe(200_000);
+    }
+  });
+
   it('reset (empty map) reverts to built-ins', () => {
     writeModelRateOverrides({ 'claude-fable': { input: 1, output: 2 } });
     expect(turnCostUSD('claude-fable-5', { input_tokens: 1_000_000 })).toBe(1);

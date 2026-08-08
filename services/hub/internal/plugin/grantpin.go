@@ -67,10 +67,23 @@ type grantPin struct {
 }
 
 func grantPinPath(mf Manifest) string {
-	if mf.Dir == "" || mf.ID == "" {
+	if mf.Dir == "" {
 		return ""
 	}
-	return filepath.Join(filepath.Dir(mf.Dir), grantPinDirName, mf.ID+".json")
+	// Key the pin on the DIRECTORY the plugin lives in, not mf.ID. mf.ID is read
+	// from plugin.json, which sits inside the sandbox's one write root, so a
+	// sidecar can rename its own id — and a pin keyed on the id would then point
+	// at a file that does not exist, which reads as "never seen before" and
+	// trust-on-first-load re-baselines the (now escalated) manifest. The
+	// directory basename is the identity install created (dir = sanitizeName(id))
+	// and the sidecar cannot change it: renaming a directory needs write access
+	// to the PARENT, which the sandbox does not grant. So it is the one stable
+	// name the plugin cannot forge.
+	base := filepath.Base(mf.Dir)
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(mf.Dir), grantPinDirName, base+".json")
 }
 
 // RebaselineGrantPin records the manifest's declared authority as consented.
