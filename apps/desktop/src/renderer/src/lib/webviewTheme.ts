@@ -38,10 +38,24 @@ import { cssVarsOf, isLightTheme } from '../themes';
  * Every legitimate token value is a hex/rgb(a) color, a `NNpx` length, or a
  * box-shadow list — none of which contain any of these characters, so a value
  * that does is not a color the theme editor could have produced and is dropped.
+ *
+ * CSS_BREAKOUT alone is NOT enough: a value that stays inside the `:root{}`
+ * declaration but names an image-fetching function still fires an outbound
+ * request when a `--wks-*` token is consumed as a background (the `:where(html,
+ * body){ background: var(--wks-bg-base) }` rule below does exactly that). E.g.
+ * `url(https://evil/beacon.png)` or `image-set("https://evil/x" 1x)` contain no
+ * breakout character, so they would survive and beacon on guest render — the
+ * "url() beacon" this comment already named as in-scope. CSS_FETCH drops any
+ * value naming url()/image()/image-set()/cross-fade() (case-insensitive, and
+ * vendor-prefixed forms via substring); a legitimate color/length/box-shadow
+ * value contains none of them, while color functions (rgb/rgba/hsl/var/calc)
+ * are untouched. Escape tricks like `\75rl(` are already caught by the
+ * backslash in CSS_BREAKOUT.
  */
 const CSS_BREAKOUT = /[{}<>;@\\]|\/\*|\*\//;
+const CSS_FETCH = /(?:url|image|image-set|cross-fade)\s*\(/i;
 export function isSafeThemeTokenValue(value: string): boolean {
-  return typeof value === 'string' && !CSS_BREAKOUT.test(value);
+  return typeof value === 'string' && !CSS_BREAKOUT.test(value) && !CSS_FETCH.test(value);
 }
 
 export function webviewThemeCSS(theme: Theme): string {

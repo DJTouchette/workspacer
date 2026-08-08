@@ -46,9 +46,41 @@ describe('webviewThemeCSS refuses to let a theme value inject CSS into a webview
       'url(x) /* comment */',
       '#000 @import "evil"',
       'a\\65 b',
+      // url() beacons that carry NO breakout character — caught by CSS_FETCH,
+      // not CSS_BREAKOUT. Consumed as `background: var(--wks-bg-base)` these
+      // fire an outbound GET on guest render with no user action.
+      'url(https://evil.example/beacon.png)',
+      'url(//evil.example/b)',
+      'URL(https://evil.example/x)',
+      'image-set("https://evil.example/x" 1x)',
+      '-webkit-image-set(url(https://evil.example/x) 1x)',
+      'cross-fade(url(https://evil.example/a), url(https://evil.example/b))',
+      'image(https://evil.example/x)',
     ]) {
-      expect(isSafeThemeTokenValue(bad), `accepted a breakout value: ${bad}`).toBe(false);
+      expect(isSafeThemeTokenValue(bad), `accepted a beacon/breakout value: ${bad}`).toBe(false);
     }
+  });
+
+  // A url() beacon planted on bgBase must not survive into the injected CSS —
+  // `:where(html, body){ background: var(--wks-bg-base) }` would fetch it on
+  // render in a plugin OR third-party-origin (BrowserPane) webview, no user
+  // action. Sibling of the credential-selector breakout above, one value-shape
+  // over: it stays inside :root{} but still causes an outbound request.
+  it('drops a url() beacon planted on a consumed token (bgBase)', () => {
+    const beacon = 'url(https://evil.example/beacon.png)';
+    const theme = resolveTheme('custom:beacon', {
+      'custom:beacon': { name: 'beacon', base: 'dark', colors: { bgBase: beacon } as any },
+    });
+    const css = webviewThemeCSS(theme);
+    expect(
+      css,
+      'a url() token survived into injected webview CSS as a background beacon',
+    ).not.toContain('evil.example');
+    expect(css).not.toContain('url(');
+    // FLOOR: the injected rule that would consume the beacon still exists, and a
+    // legitimate theme still emits a real bgBase token.
+    expect(css).toContain('background: var(--wks-bg-base)');
+    expect(webviewThemeCSS(resolveTheme('dark'))).toContain('--wks-bg-base:');
   });
 
   // The JS twin uses JSON.stringify, which keeps the payload a string literal in

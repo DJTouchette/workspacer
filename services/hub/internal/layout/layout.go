@@ -158,16 +158,19 @@ func (s *Service) Get(_ json.RawMessage) (any, error) {
 var spawnEscalationKeys = []string{"skipPermissions", "permissionMode", "profileId", "mcpItemIds"}
 
 // paneEscalationKeys are the per-PANE fields that become host command execution
-// on the desktop's next launch — one level below spawnEscalationKeys, inside
-// agents[].tabs[].panes[]. A restored terminal pane's `shell` is argv[0] of the
-// LOCAL terminal:create door (which allowlists nothing, unlike the bus's
-// terminals.create); its `initialCommand` is typed into the ready PTY with a
-// trailing CR, i.e. arbitrary shell text auto-run on restore. Same "description
-// becomes an argument one launch later" hazard as the agent-level keys, reached
-// through a pane instead of the agent record. Held equal to cmd/brain's
-// paneEscalationKeys and bootDocumentScrub.ts's PANE_ESCALATION_KEYS by
-// TestBootDocumentWritersScrubTheSameFields.
-var paneEscalationKeys = []string{"shell", "initialCommand"}
+// or a credential leak on the desktop's next launch — one level below
+// spawnEscalationKeys, inside agents[].tabs[].panes[]. A restored terminal
+// pane's `shell` is argv[0] of the LOCAL terminal:create door (which allowlists
+// nothing, unlike the bus's terminals.create); its `initialCommand` is typed
+// into the ready PTY with a trailing CR, i.e. arbitrary shell text auto-run on
+// restore. A restored `plugin` pane's `pluginId` makes PluginPane MINT a live
+// plugin-scoped bus token and splice it onto the pane's `url`, so a bus writer
+// could have the host hand a fresh capability to an attacker origin. Same
+// "description becomes an argument one launch later" hazard as the agent-level
+// keys, reached through a pane instead of the agent record. Held equal to
+// cmd/brain's paneEscalationKeys and bootDocumentScrub.ts's PANE_ESCALATION_KEYS
+// by TestBootDocumentWritersScrubTheSameFields.
+var paneEscalationKeys = []string{"shell", "initialCommand", "pluginId"}
 
 // scrubAdoptedSpawnFields removes spawnEscalationKeys from every entry of the
 // document's `agents` array, returning the (re-encoded) data and the keys it

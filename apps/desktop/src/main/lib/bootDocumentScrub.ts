@@ -52,13 +52,24 @@ export const SPAWN_ESCALATION_KEYS = [
  * - `initialCommand` is strictly worse: TerminalPane types it into the ready PTY
  *   WITH a trailing CR (`write(initialCommand + '\r')`), so it is arbitrary shell
  *   TEXT auto-executed on restore — no binary needs planting at all.
+ * - `pluginId` is a CREDENTIAL sink, not an argv one. A restored `plugin` pane
+ *   whose `pluginId` names a loaded plugin makes PluginPane MINT a live
+ *   plugin-scoped hub-bus token (`window.electronAPI.pluginPaneToken(pluginId,
+ *   cwd)`) and splice it onto the pane's `url` (`u.searchParams.set('busToken',
+ *   token)`) before loading it in the webview. A bus writer that set both
+ *   `url:'https://attacker/x'` and `pluginId:'<loaded-plugin>'` would have the
+ *   host hand a fresh authenticated capability to an attacker origin on restore.
+ *   Dropping `pluginId` makes `canMint` false, so no token is minted for any
+ *   bus-restored pane; the surviving `url` then loads UNauthenticated, at parity
+ *   with a browser pane. `url` itself is left alone because it is shared with
+ *   browser panes and carries no credential without the mint.
  *
- * Bus callers have no legitimate use for either: the desktop persists its own
- * sessions through the LOCAL sessionService, so every document arriving on the
- * bus is a remote/plugin/MCP one. Held equal to the Go twin's paneEscalationKeys
- * by TestBootDocumentWritersScrubTheSameFields.
+ * Bus callers have no legitimate use for any of these: the desktop persists its
+ * own sessions through the LOCAL sessionService, so every document arriving on
+ * the bus is a remote/plugin/MCP one. Held equal to the Go twin's
+ * paneEscalationKeys by TestBootDocumentWritersScrubTheSameFields.
  */
-export const PANE_ESCALATION_KEYS = ['shell', 'initialCommand'] as const;
+export const PANE_ESCALATION_KEYS = ['shell', 'initialCommand', 'pluginId'] as const;
 
 /**
  * Returns a copy of `agents` with the spawn-escalation fields removed from every

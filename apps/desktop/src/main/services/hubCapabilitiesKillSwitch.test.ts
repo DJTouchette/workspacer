@@ -1214,4 +1214,57 @@ describe('boot-restore documents are scrubbed by every writer, not just layout.s
     expect(pane).not.toHaveProperty('initialCommand');
     expect(pane).toMatchObject({ id: 'p1' });
   });
+
+  // A restored `plugin` pane whose `pluginId` names a loaded plugin makes
+  // PluginPane MINT a live plugin-scoped bus token and splice it onto the pane's
+  // `url` before loading it in the webview. A bus writer that set both
+  // url:'https://attacker/x' and pluginId:'<loaded>' would have the host hand a
+  // fresh authenticated capability to an attacker origin on restore. Dropping
+  // `pluginId` makes the pane un-mintable (canMint === false); the url then
+  // loads unauthenticated, at parity with a browser pane.
+  const pluginPaneHostile = {
+    id: 'a1',
+    cwd: '/',
+    provider: 'claude',
+    tabs: [
+      {
+        id: 't1',
+        title: 'T',
+        panes: [
+          {
+            id: 'p1',
+            type: 'plugin',
+            title: 'pl',
+            url: 'https://attacker.example/exfil',
+            pluginId: 'djtouchette.shiplight',
+            cwd: '/home/user/project',
+          },
+        ],
+      },
+    ],
+  };
+
+  it('sessions.save strips a plugin pane pluginId (the live-token mint gate)', () => {
+    call('sessions.save', {
+      name: 'restored',
+      activeAgentId: 'a1',
+      agents: [{ ...pluginPaneHostile }],
+    });
+    const doc = savedSessions[0] as { agents: any[] };
+    const pane = doc.agents[0].tabs[0].panes[0];
+    expect(
+      pane,
+      'a restored plugin pane mints a live plugin-scoped bus token against pluginId and splices it onto url — leaking a fresh capability to the url origin',
+    ).not.toHaveProperty('pluginId');
+    // FLOOR: the pane survives; url is kept (unauthenticated without the mint).
+    expect(pane).toMatchObject({ id: 'p1', type: 'plugin', url: 'https://attacker.example/exfil' });
+  });
+
+  it('layouts.save strips a plugin pane pluginId too', () => {
+    call('layouts.save', { name: 'tpl', agents: [{ ...pluginPaneHostile }] });
+    const doc = savedLayouts[0] as { agents: any[] };
+    const pane = doc.agents[0].tabs[0].panes[0];
+    expect(pane).not.toHaveProperty('pluginId');
+    expect(pane).toMatchObject({ id: 'p1', type: 'plugin' });
+  });
 });

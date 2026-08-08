@@ -105,7 +105,10 @@ func scrubBootDocumentAgents(method string, doc map[string]any) []string {
 var spawnEscalationKeys = []string{"skipPermissions", "permissionMode", "profileId", "mcpItemIds"}
 
 // paneEscalationKeys is the per-pane twin of PANE_ESCALATION_KEYS in
-// bootDocumentScrub.ts — the terminal-pane fields that become host command
-// execution on the desktop's next launch. Held equal to the TS copy by
-// TestBootDocumentWritersScrubTheSameFields.
-var paneEscalationKeys = []string{"shell", "initialCommand"}
+// bootDocumentScrub.ts — the pane fields that become host command execution or a
+// credential leak on the desktop's next launch. `shell`/`initialCommand` are a
+// terminal pane's argv/PTY sinks; `pluginId` makes a restored `plugin` pane MINT
+// a live plugin-scoped bus token and splice it onto the pane's `url`, so a bus
+// writer could have the host hand a fresh capability to an attacker origin.
+// Held equal to the TS copy by TestBootDocumentWritersScrubTheSameFields.
+var paneEscalationKeys = []string{"shell", "initialCommand", "pluginId"}

@@ -183,7 +183,7 @@ pub fn from_transcript(tx: &Transcript) -> Option<Usage> {
     // is smaller (e.g. after auto-compaction). Track the high-water mark, matching
     // the TS reference's `session.peakContext`.
     let mut peak_context: u64 = 0;
-    let any = fold_transcript(tx, &mut usage, &mut seen, &mut peak_context);
+    let any = fold_transcript(tx, &mut usage, &mut seen, &mut peak_context, false);
     any.then_some(usage)
 }
 
@@ -195,11 +195,22 @@ pub fn from_transcript(tx: &Transcript) -> Option<Usage> {
 /// that appears both inline (isSidechain) in the main file and in its own
 /// sidechain file is billed once — parity with desktop
 /// `analyticsBackfill.recomputeSession`, which threads a single Set.
+///
+/// `force_sidechain` treats EVERY row of `tx` as a sub-agent turn regardless of
+/// its own `isSidechain` flag — used for the per-agent `subagents/*.jsonl`
+/// files, whose rows all belong to a sub-agent's run and often carry NO
+/// `isSidechain` key at all (a sub-agent's own transcript does not know it is a
+/// side thread of a parent). Without this, such a row folds as a main-thread
+/// turn and clobbers the session's context gauge and reported model with the
+/// sub-agent's — exact parity with the TS twin `foldTranscriptFile`, which
+/// passes `forceSidechain=true` for every subagent file and computes
+/// `sidechain = forceSidechain || row.isSidechain === true`.
 fn fold_transcript(
     tx: &Transcript,
     usage: &mut Usage,
     seen: &mut HashSet<String>,
     peak_context: &mut u64,
+    force_sidechain: bool,
 ) -> bool {
     let mut any = false;
     for m in &tx.messages {
@@ -213,11 +224,11 @@ fn fold_transcript(
         let Some(u) = msg.get("usage") else { continue };
         any = true;
 
-        let sidechain = m
-            .raw
-            .get("isSidechain")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+        let sidechain = force_sidechain
+            || m.raw
+                .get("isSidechain")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
         // Neutralize Claude's `<synthetic>` placeholder (and any `<...>` marker):
         // it is not a real model, so it must not clobber the reported model nor
         // force default pricing — synthetic turns inherit the thread model.
@@ -353,11 +364,16 @@ pub fn usage_for_path(transcript_path: Option<&str>) -> Usage {
     let mut seen: HashSet<String> = HashSet::new();
     let mut peak_context: u64 = 0;
     if let Ok(tx) = super::transcript::read_at(path) {
-        fold_transcript(&tx, &mut usage, &mut seen, &mut peak_context);
+        fold_transcript(&tx, &mut usage, &mut seen, &mut peak_context, false);
     }
+    // Every `subagents/*.jsonl` file is a sub-agent's own transcript — force
+    // sidechain so its turns count toward cost but never move the session's
+    // context gauge or reported model, even when the file's rows carry no
+    // `isSidechain` key (parity with TS `recomputeSession`, which folds these
+    // with `forceSidechain=true`).
     for (p, _, _) in inputs.iter().skip(1) {
         if let Ok(tx) = super::transcript::read_at(p) {
-            fold_transcript(&tx, &mut usage, &mut seen, &mut peak_context);
+            fold_transcript(&tx, &mut usage, &mut seen, &mut peak_context, true);
         }
     }
 
@@ -830,6 +846,89 @@ mod tests {
             (u.cost_usd - 25.0).abs() < 1e-9,
             "subagent turn echoed into main double-counted: cost={} (expected $25)",
             u.cost_usd
+        );
+    }
+
+    /// A `subagents/*.jsonl` file is a sub-agent's OWN transcript and its rows
+    /// carry no `isSidechain` key (the sub-agent doesn't know it is a side
+    /// thread of a parent). Folding such a file must still keep those turns off
+    /// the session's context gauge and reported model — otherwise the last
+    /// sub-agent turn clobbers both. Parity with the TS twin
+    /// `analyticsBackfill.recomputeSession`, which folds every subagent file
+    /// with `forceSidechain=true`. Regression: the Rust fold honored the missing
+    /// per-row flag as `false` and treated the subagent turn as main-thread.
+    #[test]
+    fn subagent_file_without_sidechain_flag_does_not_clobber_context() {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!(
+            "wks-usage-subforce-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        super::super::transcript::allow_root(&dir);
+
+        // Main transcript: sonnet (200k-native), small context.
+        let main_row = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "id": "main-1",
+                "model": "claude-sonnet-4-6",
+                "usage": {
+                    "input_tokens": 1_000,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "output_tokens": 10
+                }
+            }
+        });
+        // Subagent's OWN file — big context, different model, NO isSidechain key.
+        let sub_row = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "id": "sub-1",
+                "model": "claude-haiku-4-5",
+                "usage": {
+                    "input_tokens": 500_000,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "output_tokens": 10
+                }
+            }
+        });
+
+        let main_path = dir.join("session.jsonl");
+        std::fs::write(
+            &main_path,
+            format!("{}\n", serde_json::to_string(&main_row).unwrap()),
+        )
+        .unwrap();
+        let sub_dir = dir.join("session").join("subagents");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+        std::fs::write(
+            sub_dir.join("agent1.jsonl"),
+            format!("{}\n", serde_json::to_string(&sub_row).unwrap()),
+        )
+        .unwrap();
+
+        let u = usage_for_path(Some(main_path.to_str().unwrap()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(
+            u.context_tokens, 1_000,
+            "subagent file turn clobbered the context gauge (expected main-thread 1000)"
+        );
+        assert_eq!(
+            u.model.as_deref(),
+            Some("claude-sonnet-4-6"),
+            "subagent file turn clobbered the reported model"
+        );
+        assert_eq!(
+            u.context_limit, 200_000,
+            "subagent file's 500k context wrongly promoted the window to 1M"
         );
     }
 
