@@ -92,7 +92,40 @@ func validatePushEndpoint(endpoint string) error {
 // re-judged the mapped form was unreachable, and reachability is what the test
 // asserts (the mapped spellings are refused, by these clauses, with no
 // recursion in the way).
+// There IS a sixth clause, and it is the IPv4-COMPATIBLE form ::a.b.c.d —
+// distinct from the v4-mapped ::ffff:a.b.c.d above. Go resolves To4() for the
+// mapped spelling and not for the compatible one, so ::127.0.0.1 parses to
+// ::7f00:1, answers false to every predicate here, and was judged PUBLIC:
+// validatePushEndpoint accepted https://[::127.0.0.1]/… and https://[::169.254.169.254]/….
+//
+// Measured honestly, that is a classification error and not a live escape: a
+// dial to [::127.0.0.1] TIMES OUT, because the kernel does not route the
+// deprecated IPv4-compatible form to the v4 loopback (only the mapped form
+// routes, and that one is already refused). It is fixed anyway, on the rule this
+// function is written to: refusing it costs no real deployment anything, and a
+// predicate that says "public" about an address nobody can reach is a wrong
+// answer waiting for a platform that resolves it differently.
 func isPublicIP(ip net.IP) bool {
 	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
-		ip.IsLinkLocalUnicast() || ip.IsMulticast())
+		ip.IsLinkLocalUnicast() || ip.IsMulticast() || isIPv4Compatible(ip))
+}
+
+// isIPv4Compatible reports whether ip is the deprecated IPv4-compatible IPv6
+// form: 96 zero bits followed by an IPv4 address (RFC 4291 §2.5.5.1, deprecated
+// by RFC 4291 itself). :: and ::1 also match the bit pattern and are caught by
+// IsUnspecified / IsLoopback; naming them here too would cost nothing and is not
+// the point of the clause.
+func isIPv4Compatible(ip net.IP) bool {
+	ip16 := ip.To16()
+	if ip16 == nil || ip.To4() != nil {
+		// Not IPv6 at all, or the v4-mapped spelling, which To4() resolves and
+		// the clauses above already judge on its embedded v4 address.
+		return false
+	}
+	for _, b := range ip16[:12] {
+		if b != 0 {
+			return false
+		}
+	}
+	return true
 }

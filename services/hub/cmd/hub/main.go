@@ -51,7 +51,11 @@ type uiDirResolver interface {
 // settingsFor, when non-nil, returns a plugin's merged setting values to seed
 // window.__WKS_SETTINGS__ on first paint; a nil result (or a nil settingsFor)
 // leaves it unset so workspacer.settings stays {} until the first settings event.
-func pluginUIHandler(res uiDirResolver, settingsFor func(id string) map[string]any) http.HandlerFunc {
+// It takes the REQUEST, not just the id, because the values are not public: the
+// caller has to prove it is the host or this plugin (see AuthorizedForPlugin),
+// and a settings block in an anonymously-readable document is the same
+// disclosure the guard()ed /plugins/settings refuses.
+func pluginUIHandler(res uiDirResolver, settingsFor func(r *http.Request, id string) map[string]any) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/plugins/ui/")
 		id, sub, _ := strings.Cut(rest, "/")
@@ -89,7 +93,7 @@ func pluginUIHandler(res uiDirResolver, settingsFor func(id string) map[string]a
 		}
 		var settings map[string]any
 		if settingsFor != nil {
-			settings = settingsFor(id)
+			settings = settingsFor(r, id)
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(injectPluginSDK(doc, id, settings))
@@ -353,10 +357,12 @@ func main() {
 	if *pluginsStreamLogs {
 		mgr.SetStreamSidecarLogs(true)
 	}
-	srv.AddRoute("/plugins", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(mgr.List())
-	})
+	// Installed plugins. Two fidelities, one route — see manifestListHandler:
+	// the trusted host gets the whole Manifest, an unauthenticated caller gets
+	// the public projection (id/name/version + pane, widget and hotkey
+	// contributions), because the same bytes' event twin, plugin.loaded, is
+	// classified TopicHostOnly and refused to every scoped tier.
+	srv.AddRoute("/plugins", manifestListHandler(mgr.List, srv.Authorized))
 	// Per-plugin bus tokens, keyed by plugin id. Token-guarded: only the trusted
 	// host may read them (it injects each into the matching plugin's webview URL).
 	// Never exposed on the public /plugins endpoint.
@@ -451,13 +457,15 @@ func main() {
 	// own loopback UI servers — the real boundary is /bus, which is token-scoped.
 	// http.Dir confines reads to the ui directory (no `..` escape), and only that
 	// subdir is served, so the plugin's manifest / .bus-token stay private.
-	srv.AddRoute("/plugins/ui/", pluginUIHandler(mgr, func(id string) map[string]any {
-		values, err := mgr.GetSettings(id)
-		if err != nil {
-			return nil
-		}
-		return values
-	}))
+	//
+	// The injected window.__WKS_SETTINGS__ is gated on the CALLER, not on the
+	// route: only a request carrying the host token or this plugin's own bus /
+	// pane token (?busToken=, which is what the host puts in the webview URL)
+	// gets the values. An anonymous GET gets the document with no settings
+	// block, because the identical read — GET /plugins/settings — is guard()ed
+	// and the identical broadcast — plugin.settings.changed — is TopicHostOnly.
+	srv.AddRoute("/plugins/ui/", pluginUIHandler(mgr,
+		pluginSettingsForRequest(srv.AuthorizedForPlugin, mgr.GetSettings)))
 	// Host-owned plugin SDK: defines window.workspacer (bus call/publish/subscribe
 	// + reconnect + settings), auto-injected into every plugin webview by the
 	// handler above. Public library code — <script> tags can't carry the bus
@@ -680,16 +688,19 @@ func main() {
 		log.Printf("plugin %s enabled=%v", body.ID, body.Enabled)
 		_ = json.NewEncoder(w).Encode(m)
 	}))
-	// Catalog of bundled example plugins the user can add (read-only). Unguarded
-	// like /plugins: it only lists manifests that ship inside the app.
-	srv.AddRoute("/plugins/examples", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		manifests := []plugin.Manifest{}
-		if *examplesDir != "" {
-			manifests, _ = plugin.LoadDir(*examplesDir)
+	// Catalog of bundled example plugins the user can add (read-only). Same
+	// two-fidelity rule as /plugins, and for the same reason: the payload TYPE
+	// is the un-redacted Manifest (server command/args, ports, capabilities,
+	// install argv), which is what plugin.loaded is host-only for. The content
+	// ships inside the app rather than describing this host, which makes it
+	// weaker, not different — and "weaker" is not a disposition this plane has.
+	srv.AddRoute("/plugins/examples", manifestListHandler(func() []plugin.Manifest {
+		if *examplesDir == "" {
+			return nil
 		}
-		_ = json.NewEncoder(w).Encode(manifests)
-	})
+		manifests, _ := plugin.LoadDir(*examplesDir)
+		return manifests
+	}, srv.Authorized))
 	// Add one bundled example by manifest id: copy it from the examples dir into
 	// the writable plugins dir, run its install step, and supervise it. No
 	// network — the source ships in the app. Token-guarded like /plugins/install.

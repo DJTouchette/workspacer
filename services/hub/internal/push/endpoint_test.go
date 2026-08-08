@@ -97,6 +97,13 @@ func TestIsPublicIPRefusesEveryNonRoutableFamily(t *testing.T) {
 		{"IsMulticast", "ff02::1", "link-local scope"},
 		{"IsMulticast", "ff01::1", "interface-local scope"},
 		{"IsMulticast", "ff0e::1", "GLOBAL scope — caught by IsMulticast and by nothing else, which is why the two narrower multicast predicates were redundant"},
+		// The IPv4-COMPATIBLE spellings. Sole witness for isIPv4Compatible:
+		// To4() does not resolve ::a.b.c.d, so every clause above answers false
+		// and the address was judged public. Not the same notation as the
+		// v4-mapped ::ffff:a.b.c.d cases, which the other clauses catch.
+		{"isIPv4Compatible", "::127.0.0.1", "IPv4-compatible loopback — parses to ::7f00:1, which no other clause recognizes"},
+		{"isIPv4Compatible", "::169.254.169.254", "IPv4-compatible cloud metadata, the address the link-local clause exists for, in the one spelling that clause misses"},
+		{"isIPv4Compatible", "::10.0.0.5", "IPv4-compatible RFC1918"},
 	}
 	for _, c := range cases {
 		ip := net.ParseIP(c.ip)

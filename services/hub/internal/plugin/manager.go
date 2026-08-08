@@ -557,11 +557,21 @@ func (m *Manager) Tokens() map[string]string {
 // UIDir returns the absolute directory of a webview-only plugin's hub-served
 // static assets, or ok=false if the plugin isn't loaded or declares no ui. The
 // hub's /plugins/ui route reads from here.
+//
+// The `ui` value is re-validated here, not merely at load: this is the function
+// that computes the SERVED ROOT, and filepath.Join Cleans a ".." away, so a
+// manifest that reached the manager without going through Validate (a direct
+// Add, a future loader) would silently relocate an unauthenticated file server
+// outside the plugin tree. Same shape, same reason, as expandScope re-checking
+// what validateScope already refused.
 func (m *Manager) UIDir(id string) (string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l, ok := m.plugins[id]
 	if !ok || l.manifest.UI == "" {
+		return "", false
+	}
+	if err := ValidateUIDir(l.manifest.UI); err != nil {
 		return "", false
 	}
 	return filepath.Join(l.manifest.Dir, filepath.FromSlash(l.manifest.UI)), true

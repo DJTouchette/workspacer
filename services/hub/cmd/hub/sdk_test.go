@@ -45,7 +45,7 @@ func TestPluginUIHandlerInjectionAndPassthrough(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	settingsFor := func(id string) map[string]any {
+	settingsFor := func(_ *http.Request, id string) map[string]any {
 		if id == "acme.editor" {
 			return map[string]any{"theme": "dark", "size": float64(12)}
 		}

@@ -312,11 +312,7 @@ mod tests {
 
     /// Mirror of api.rs's test_state: a throwaway on-disk db + fresh stores.
     fn test_state() -> ApiState {
-        let mut db_path = std::env::temp_dir();
-        db_path.push(format!(
-            "claudemon-mcp-ask-test-{}.db",
-            uuid::Uuid::new_v4()
-        ));
+        let db_path = crate::testtmp::db_path("mcp-ask-test");
         ApiState {
             store: SessionStore::new(),
             db: Db::open(&db_path).expect("open test db"),

@@ -293,7 +293,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       // All hub fetches carry a timeout: a wedged hub (socket open, no reply —
       // seen mid plugin-install on Windows) must never hang an IPC promise the
       // renderer is awaiting; the catch paths already degrade gracefully.
-      const res = await fetch(`${HUB_HTTP_URL}/plugins`, { signal: AbortSignal.timeout(5000) });
+      // Authenticated: /plugins now answers at two fidelities. An
+      // unauthenticated caller gets the public projection (id/name/version +
+      // pane/widget/hotkey contributions) because the same bytes' event twin
+      // plugin.loaded is host-only; the trusted host presents its token and gets
+      // the whole manifest, which the settings and consent UIs are built from.
+      const res = await fetch(`${HUB_HTTP_URL}/plugins`, {
+        headers: hubAuthHeaders(),
+        signal: AbortSignal.timeout(5000),
+      });
       if (!res.ok) return null;
       const plugins = (await res.json()) as Array<{ id: string; [k: string]: unknown }>;
       // Merge each plugin's per-plugin bus token (served only on the token-guarded
@@ -612,7 +620,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // cross-references the installed list to show an "Added" state.
   ipcMain.handle(IPC.HUB_LIST_EXAMPLES, async () => {
     try {
+      // Authenticated for the same reason as /plugins: the catalog card shows
+      // each example's runtime requirement and declared capabilities, which are
+      // in the full manifest and withheld from an unauthenticated read.
       const res = await fetch(`${HUB_HTTP_URL}/plugins/examples`, {
+        headers: hubAuthHeaders(),
         signal: AbortSignal.timeout(5000),
       });
       if (!res.ok) return [];

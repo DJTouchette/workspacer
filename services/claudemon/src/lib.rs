@@ -11,5 +11,8 @@ pub mod protocol;
 pub mod providers;
 pub mod session;
 pub mod store;
+/// Test-only scratch paths (see the module docs): one pruned directory for
+/// every throwaway sqlite file the suites create, instead of loose /tmp debris.
+pub mod testtmp;
 pub mod tui;
 pub mod wrapper;

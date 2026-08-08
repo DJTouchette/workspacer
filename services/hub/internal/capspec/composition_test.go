@@ -591,10 +591,74 @@ or add it here deliberately and say why nothing can check it.`, method)
 	}
 }
 
+// inverseVerbs is the closed table WitnessNarrows is checked against: the
+// widening verb, and the narrowing verbs that may claim to undo it. A claim of
+// "this only removes what that adds" has to be a claim about a real pair of
+// operations on the same namespace, or "narrowing" becomes the excuse anything
+// can wear.
+//
+// IT LIVES HERE, IN THE TEST, and that is round 8's correction to round 7. It
+// used to sit in production composition.go, where the author called it bounded
+// and the verifier showed it was not: a narrowing witness was one added verb
+// pair away, and adding a pair to a production var is an ordinary-looking
+// change. Now it is exactly the shape unwitnessedInertClaims already has — an
+// exemption vocabulary that can only be widened inside the file whose job is to
+// refuse exemptions, next to the test that fails when the widening is unused.
+//
+// What that does and does NOT buy, plainly: it does not make the table
+// unwidenable — a determined change can still add a pair here and a matching
+// narrows() claim in composition.go. It makes the widening cost two files, one
+// of which is a test named for the fact that it is an exemption list, and it
+// makes an UNUSED pair fail (TestEveryInverseVerbPairIsUsed), so a pair cannot
+// be pre-seeded and cashed later.
+var inverseVerbs = map[string][]string{
+	"save": {"delete", "remove"},
+	// "add" licenses only "remove": (add → delete) was in the table and used by
+	// nothing, which is exactly the pre-seeded license the test below refuses.
+	"add":       {"remove"},
+	"subscribe": {"unsubscribe", "revoke"},
+	"watch":     {"unwatch"},
+	"stage":     {"unstage"},
+	"approve":   {"gate"},
+}
+
+// TestEveryInverseVerbPairIsUsed closes the pre-seeding move: a pair nobody
+// leans on is a license waiting for a claimant, and it is the cheapest way to
+// widen the table without anyone noticing — the diff adds one line to a table of
+// verbs and no claim changes at all.
+func TestEveryInverseVerbPairIsUsed(t *testing.T) {
+	used := map[string]bool{}
+	for method, claim := range compositionInert {
+		for _, w := range claim.Witnesses {
+			if w.Kind != WitnessNarrows {
+				continue
+			}
+			used[verbOf(w.Widens)+"→"+verbOf(method)] = true
+		}
+	}
+	for widen, undos := range inverseVerbs {
+		for _, undo := range undos {
+			if !used[widen+"→"+undo] {
+				t.Errorf("inverseVerbs licenses (%s → %s) and no inert claim uses it. An unused pair is an exemption with no claimant: remove it, or the next method to want a narrowing witness finds the permission already granted and the diff that grants it already merged.", widen, undo)
+			}
+		}
+	}
+	if len(used) == 0 {
+		t.Fatal("no claim uses a narrowing witness at all — this guard is checking an empty set")
+	}
+}
+
+func verbOf(method string) string {
+	if i := strings.LastIndex(method, "."); i >= 0 {
+		return method[i+1:]
+	}
+	return method
+}
+
 // verifyNarrows checks a "this only undoes that" claim structurally: same
-// namespace, a verb pair from the closed table in composition.go, and a twin
-// that has itself been considered. Without this, "it can only remove things" is
-// a sentence any method can wear.
+// namespace, a verb pair from the closed table above, and a twin that has itself
+// been considered. Without this, "it can only remove things" is a sentence any
+// method can wear.
 func verifyNarrows(t *testing.T, method string, claim InertClaim, widens string, halves map[string]bool) {
 	t.Helper()
 	if widens == "" {

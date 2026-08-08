@@ -37,6 +37,11 @@ pub fn router_with_host(store: SessionStore, bind_host: Option<String>) -> Route
         // Cap hook/statusline payloads: they're cloned, broadcast to every
         // subscriber, and persisted to SQLite, so an unbounded body is a DoS seam.
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024))
+        // A cross-site page cannot be allowed to POST forged hook events any
+        // more than it can be allowed to rebind: same policy, same router, see
+        // `api::origin_guard`. This port has no CORS layer at all, which makes
+        // the request-side check the only one there is.
+        .layer(axum::middleware::from_fn(crate::daemon::api::origin_guard))
         .layer(axum::middleware::from_fn_with_state(
             allowed_hosts,
             crate::daemon::api::host_guard,
@@ -209,6 +214,26 @@ mod tests {
             .await
             .expect("collect body");
         (status, bytes.to_vec())
+    }
+
+    /// The hook port forges `agent.state_changed` / `agent.snapshot` for free —
+    /// on the bus, `mayPublish` refuses a non-trusted connection those exact
+    /// topics (they are host-owned). A cross-site page must not be the exception
+    /// that walks in through the ingress port, so the same origin door is on
+    /// this router too, and this test is what notices if the layer is dropped.
+    #[tokio::test]
+    async fn cross_site_origin_is_refused() {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/hook")
+            .header(header::ORIGIN, "http://evil.example.com")
+            .header(header::HOST, "127.0.0.1:7890")
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        let (status, body) = request(req).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body, b"origin not allowed");
     }
 
     #[tokio::test]

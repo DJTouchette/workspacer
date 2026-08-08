@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -341,7 +342,62 @@ func (m *Manifest) Validate() error {
 			return err
 		}
 	}
+	if err := ValidateUIDir(m.UI); err != nil {
+		return err
+	}
 	return nil
+}
+
+// ValidateUIDir confines the manifest's `ui` field to a real SUBDIRECTORY of the
+// plugin's own directory. It is the same rule validateScope applies to a
+// capability path scope, one field over — and it was missing.
+//
+// `ui` is not decoration: the hub serves it, unauthenticated, at
+// /plugins/ui/<id>/… out of filepath.Join(dir, ui). filepath.Join Cleans, so a
+// declared "../../../.." silently relocates the served ROOT outside the plugin
+// tree and every URL under it is then a plain, confined read of somewhere else
+// entirely — /etc/passwd, ~/.ssh, tokens.json. The URL-level traversal defense
+// (http.Dir cleaning the request path) never fires, because the escape is in the
+// root rather than the path.
+//
+// "." is the other half and is worse than it looks: it makes the served root the
+// plugin dir itself, which holds .bus-token — that plugin's own bus bearer
+// token. An anonymous GET that reads it can then dial /bus AS THAT PLUGIN, with
+// every capability the plugin declared. The whole point of serving only a
+// subdir, stated in the UI field's own doc comment ("the plugin's manifest and
+// .bus-token are not"), depended on a check nobody had written.
+//
+// Absolute paths are refused too. filepath.Join treats an absolute second
+// element as relative, so today they are contained by accident; a manifest that
+// asks for /etc is stating an intent this loader should not silently reinterpret.
+func ValidateUIDir(ui string) error {
+	if ui == "" {
+		return nil
+	}
+	// A manifest is portable JSON: an author (or an attacker) may write either
+	// separator, so normalize before every structural test.
+	slashed := strings.ReplaceAll(ui, "\\", "/")
+	if hasDotDotSegment(ui) {
+		return fmt.Errorf("ui %q must not contain a %q segment: the path join that serves it Cleans the %q away, relocating the served root outside the plugin directory", ui, "..", "..")
+	}
+	if strings.HasPrefix(slashed, "/") || filepath.IsAbs(ui) || hasWindowsDrive(slashed) {
+		return fmt.Errorf("ui %q must be a path relative to the plugin directory, not an absolute one", ui)
+	}
+	if clean := path.Clean(slashed); clean == "." || clean == "/" {
+		return fmt.Errorf("ui %q resolves to the plugin directory itself, which holds .bus-token (the plugin's own bus credential) and plugin.json; name a subdirectory that contains only what should be served", ui)
+	}
+	return nil
+}
+
+// hasWindowsDrive reports whether a slash-normalized path begins with a drive
+// letter ("C:/…" or "C:…"). filepath.IsAbs answers this only when running ON
+// Windows, and a manifest travels between platforms.
+func hasWindowsDrive(p string) bool {
+	if len(p) < 2 || p[1] != ':' {
+		return false
+	}
+	c := p[0]
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
 // validateProvides confines the provider side of the capability model to the

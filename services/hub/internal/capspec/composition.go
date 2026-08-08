@@ -752,17 +752,3 @@ func compositionActors() []string {
 	sort.Strings(out)
 	return out
 }
-
-// inverseVerbs is the closed table WitnessNarrows is checked against: the
-// widening verb, and the narrowing verbs that may claim to undo it. A claim of
-// "this only removes what that adds" has to be a claim about a real pair of
-// operations on the same namespace, or "narrowing" becomes the excuse anything
-// can wear.
-var inverseVerbs = map[string][]string{
-	"save":      {"delete", "remove"},
-	"add":       {"remove", "delete"},
-	"subscribe": {"unsubscribe", "revoke"},
-	"watch":     {"unwatch"},
-	"stage":     {"unstage"},
-	"approve":   {"gate"},
-}

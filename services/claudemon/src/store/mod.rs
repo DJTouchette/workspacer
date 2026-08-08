@@ -339,9 +339,7 @@ mod tests {
     }
 
     fn tempfile_path() -> PathBuf {
-        let mut p = std::env::temp_dir();
-        p.push(format!("claudemon-test-{}.db", uuid::Uuid::new_v4()));
-        p
+        crate::testtmp::db_path("store-test")
     }
 
     #[test]

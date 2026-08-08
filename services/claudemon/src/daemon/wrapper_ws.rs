@@ -43,65 +43,11 @@ pub async fn upgrade(
         .into_response()
 }
 
-/// Same-origin policy for `/wrapper/:id`, a port of the hub bus's
-/// `originAllowed` (services/hub/internal/bus/bus.go) so the two WebSocket
-/// ingresses agree:
-///
-///   - No `Origin` → allow. Wrappers are native clients (`claudemon wrap`,
-///     tokio-tungstenite) and send none; only a browser's same-origin policy is
-///     being enforced here.
-///   - Loopback origin, any port → allow. A local dev renderer served on another
-///     localhost port is legitimate; an attacker's page is never served from the
-///     victim's own loopback.
-///   - Origin host == the `Host` the client dialed → allow (same origin).
-///   - Anything else is a cross-site browser origin: refused before the upgrade,
-///     so no socket, no Register, no work.
-fn origin_allowed(headers: &HeaderMap) -> bool {
-    let Some(origin) = headers.get(header::ORIGIN) else {
-        return true;
-    };
-    let Ok(origin) = origin.to_str() else {
-        return false;
-    };
-    // Malformed or opaque ("null", sandboxed iframes) origins fail closed.
-    let Some(rest) = origin
-        .strip_prefix("http://")
-        .or_else(|| origin.strip_prefix("https://"))
-    else {
-        return false;
-    };
-    let authority = rest.split('/').next().unwrap_or("");
-    if authority.is_empty() {
-        return false;
-    }
-    if host_is_loopback(host_without_port(authority)) {
-        return true;
-    }
-    headers
-        .get(header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .is_some_and(|host| host.eq_ignore_ascii_case(authority))
-}
-
-/// Strip a trailing `:port` from an authority, handling bracketed IPv6
-/// (`[::1]:7891` → `::1`). Mirrors the API router's helper of the same name.
-fn host_without_port(authority: &str) -> &str {
-    if let Some(rest) = authority.strip_prefix('[') {
-        return rest.split(']').next().unwrap_or(authority);
-    }
-    authority
-        .rsplit_once(':')
-        .map(|(host, _)| host)
-        .unwrap_or(authority)
-}
-
-fn host_is_loopback(host: &str) -> bool {
-    host == "localhost"
-        || host
-            .parse::<std::net::IpAddr>()
-            .map(|ip| ip.is_loopback())
-            .unwrap_or(false)
-}
+// The same-origin policy lives in ONE place — `api::origin_allowed`, which the
+// whole API and hook routers now apply as request middleware (`origin_guard`).
+// This route calls it directly as well, because a WebSocket upgrade is the case
+// CORS can never cover and the check must happen before `on_upgrade`.
+use crate::daemon::api::origin_allowed;
 
 async fn handle(socket: WebSocket, id_from_path: String, store: SessionStore) {
     let (mut sink, mut stream): (SplitSink<WebSocket, Message>, SplitStream<WebSocket>) =

@@ -342,6 +342,40 @@ func (s *Server) Authorized(r *http.Request) bool {
 	return false
 }
 
+// AuthorizedForPlugin reports whether a request may see ONE plugin's own
+// non-public state: true for a fully-authorized caller (the host / an operator
+// token, per Authorized), and true for a caller presenting that plugin's own bus
+// credential — its per-plugin token or a pane token minted for it, which is what
+// the host injects into that plugin's webview URL as ?busToken=.
+//
+// It exists because /plugins/ui/<id>/ serves a plugin's HTML with
+// window.__WKS_SETTINGS__ = that plugin's merged setting values inlined, and the
+// route is unguarded by design (a <script>/webview URL cannot carry the host
+// token). Secrets are already redacted there, but the NON-secret half —
+// endpoints, org/repo names, absolute paths — is exactly what
+// plugin.settings.changed is TopicHostOnly for, and what the guard()ed GET
+// /plugins/settings refuses; an anonymous GET with any Host header was reading
+// it out of an HTML document. A plugin's own settings are the plugin's own
+// business (its sidecar receives them in plaintext in WKS_SETTINGS), so the
+// credential that identifies the plugin is the right key, and nothing weaker is.
+//
+// Always true when no token is configured — the loopback-only default, where
+// Authorized already says the same thing.
+func (s *Server) AuthorizedForPlugin(r *http.Request, pluginID string) bool {
+	if s.Authorized(r) {
+		return true
+	}
+	if pluginID == "" {
+		return false
+	}
+	for _, tok := range presentedPluginTokens(r) {
+		if pi, ok := s.lookupPluginToken(tok); ok && pi.id == pluginID {
+			return true
+		}
+	}
+	return false
+}
+
 // presentedToken extracts the caller's token from an Authorization: Bearer
 // header or a ?token= query param (WebSocket handshakes can't set headers from
 // a browser, so webview clients use the query form).
@@ -350,6 +384,20 @@ func presentedToken(r *http.Request) string {
 		return strings.TrimPrefix(h, "Bearer ")
 	}
 	return r.URL.Query().Get("token")
+}
+
+// presentedPluginTokens lists the credentials a plugin webview can be carrying.
+// The host injects the per-plugin (or pane) token as ?busToken=; sdk.js then
+// re-presents the same value to /bus as ?token=, so both spellings are read.
+func presentedPluginTokens(r *http.Request) []string {
+	q := r.URL.Query()
+	out := make([]string, 0, 3)
+	for _, tok := range []string{presentedToken(r), q.Get("busToken")} {
+		if tok != "" {
+			out = append(out, tok)
+		}
+	}
+	return out
 }
 
 // RegisterLocal installs an in-process capability handler so the hub itself can
@@ -387,7 +435,8 @@ func (s *Server) AddRoute(path string, h http.HandlerFunc) {
 	s.extra[path] = h
 }
 
-// Handler returns the routed HTTP handler (/bus WebSocket, /health JSON, extras).
+// Handler returns the routed HTTP handler (/bus WebSocket, /health JSON, extras),
+// wrapped in the Host pin — see requireHost.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/bus", s.handleBus)
@@ -395,7 +444,109 @@ func (s *Server) Handler() http.Handler {
 	for path, h := range s.extra {
 		mux.HandleFunc(path, h)
 	}
-	return mux
+	return requireHost(mux)
+}
+
+// requireHost refuses the DNS-REBINDING SHAPE on every route the hub serves: a
+// non-loopback Host header on a request whose socket terminated at loopback.
+//
+// This is the hub's copy of a rule that had two copies and an absentee.
+// claudemon pins Host on both of its routers (AllowedHosts::permits, api.rs);
+// the MCP facade wraps requireHost around its whole mux and names claudemon's
+// guard as its TWIN. The hub — the one server that is deliberately reachable
+// beyond loopback — had no Host pin at all: only /bus was rebinding-aware,
+// inside originAllowed, and that left every other route (the plugin manifest
+// list, the plugin UI documents, /m, the static assets) readable same-origin by
+// a page whose own name resolves to 127.0.0.1. Measured before this existed:
+// `Host: evil.example.com` got 403 from /bus and 200 + the full manifest from
+// /plugins on the same hub. Rebinding is the one browser path where the absence
+// of CORS headers stops protecting the bytes, because after the rebind there is
+// no cross-origin read to block.
+//
+// The rule is SHAPED, not an allowlist, and it has to be: the hub's whole point
+// under remote sharing is to be reached by a name this process never learns —
+// a Tailscale MagicDNS name, a LAN hostname, whatever the operator typed. So
+// instead of enumerating hosts, it refuses the one combination that cannot
+// legitimately occur: a public/foreign Host arriving on the loopback listener.
+// That is precisely the predicate originAllowed already applies to same-origin
+// WebSocket upgrades, lifted to the whole mux.
+//
+//   - No Host at all → allow. HTTP/1.0 and some local probes omit it, and it is
+//     not a header an attacker gains by dropping. Both twins do the same.
+//   - Loopback Host (localhost / 127.0.0.0/8 / ::1) → allow.
+//   - Host equal to the address the socket actually landed on → allow (an
+//     operator dialing the tailnet IP directly).
+//   - Anything else → allowed only if the socket did NOT land on loopback. A
+//     shared bind reached by its own name is the supported deployment; the same
+//     name arriving on 127.0.0.1 is a rebind.
+//
+// RESIDUAL, recorded rather than papered over: on a deliberately shared bind
+// (remote-share, 0.0.0.0), a foreign Host on a NON-loopback socket is still
+// allowed, because refusing it would mean enumerating the names this hub may be
+// called by — which it cannot know. An attacker who rebinds a name to the
+// victim's tailnet address, having first learned that address, is not closed by
+// this. /bus's originAllowed makes the same trade for the same reason.
+func requireHost(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !hostAllowed(r) {
+			http.Error(w, "host not allowed", http.StatusForbidden)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// hostAllowed is requireHost's predicate, split out so the test can drive it
+// directly with a synthesized local address.
+func hostAllowed(r *http.Request) bool {
+	if r.Host == "" {
+		return true
+	}
+	name := hostWithoutPort(r.Host)
+	if isLoopbackHost(name) {
+		return true
+	}
+	local, known := localAddrOf(r)
+	if !known {
+		// Nothing to compare against (an in-process handler call, a test
+		// recorder): the rebinding shape is defined by the socket, and with no
+		// socket there is no shape to refuse.
+		return true
+	}
+	if name == local.String() {
+		return true
+	}
+	return !local.IsLoopback()
+}
+
+// localAddrOf reports the IP the request's connection actually terminated at.
+func localAddrOf(r *http.Request) (net.IP, bool) {
+	la, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if !ok || la == nil {
+		return nil, false
+	}
+	host, _, err := net.SplitHostPort(la.String())
+	if err != nil {
+		host = la.String()
+	}
+	ip := net.ParseIP(host)
+	return ip, ip != nil
+}
+
+// hostWithoutPort strips a trailing `:port` from a Host/authority, handling
+// bracketed IPv6 (`[::1]:7895` → `::1`). Mirrors cmd/mcp's helper of the same
+// name and claudemon's `host_without_port`.
+func hostWithoutPort(h string) string {
+	if rest, ok := strings.CutPrefix(h, "["); ok {
+		if name, _, found := strings.Cut(rest, "]"); found {
+			return name
+		}
+		return h
+	}
+	if name, _, found := strings.Cut(h, ":"); found {
+		return name
+	}
+	return h
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

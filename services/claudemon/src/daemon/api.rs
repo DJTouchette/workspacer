@@ -2,7 +2,7 @@ use std::{convert::Infallible, time::Duration};
 
 use axum::{
     extract::{FromRef, Path, Query, Request, State},
-    http::{header, HeaderValue, Method, StatusCode},
+    http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
     response::{
         sse::{Event, KeepAlive, Sse},
@@ -145,6 +145,75 @@ fn cors_layer() -> CorsLayer {
         .allow_credentials(false)
 }
 
+/// Same-origin policy for the daemon's HTTP surface, and the ONE copy of it:
+/// `/wrapper/:id` calls this too (CORS never applies to a WebSocket upgrade).
+///
+///   - No `Origin` → allow. Every legitimate client of this daemon is a native
+///     one (Electron main, wks-tui, hub, brain, the wrapper) and sends none;
+///     only a browser's same-origin policy is being enforced here.
+///   - Loopback origin, any port → allow. A local dev renderer served on another
+///     localhost port is legitimate; an attacker's page is never served from the
+///     victim's own loopback.
+///   - Origin authority == the `Host` the client dialed → allow (same origin).
+///   - Anything else is a cross-site browser origin.
+pub(crate) fn origin_allowed(headers: &HeaderMap) -> bool {
+    let Some(origin) = headers.get(header::ORIGIN) else {
+        return true;
+    };
+    let Ok(origin) = origin.to_str() else {
+        return false;
+    };
+    // Malformed or opaque ("null", sandboxed iframes) origins fail closed.
+    let Some(rest) = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let authority = rest.split('/').next().unwrap_or("");
+    if authority.is_empty() {
+        return false;
+    }
+    if host_is_loopback(host_without_port(authority)) {
+        return true;
+    }
+    headers
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .is_some_and(|host| host.eq_ignore_ascii_case(authority))
+}
+
+/// Refuse a request carrying a CROSS-SITE `Origin`, before it reaches a handler.
+///
+/// CORS was already the policy here — `cors_layer` reflects loopback origins
+/// only — but CORS withholds the RESPONSE from a foreign page; it does not stop
+/// the request. For a "simple request" (a GET, or a POST with a simple
+/// content-type) no preflight fires at all, so the handler runs and its SIDE
+/// EFFECTS happen while the attacker merely cannot read the reply. That is not a
+/// theoretical gap: a real cross-site page (origin http://192.168.1.66:18080,
+/// driven through Chromium) issued
+/// `fetch('http://127.0.0.1:PORT/providers/opencode/models?cwd=…', {mode:'no-cors'})`
+/// and the daemon forked the resolved provider CLI with the attacker's chosen
+/// working directory. The response was opaque; the process still ran.
+///
+/// So the class is closed at the door rather than at each route: every route on
+/// both routers refuses a foreign Origin, which is the same answer
+/// `/wrapper/:id` has enforced by hand since CORS proved inapplicable to
+/// upgrades. Native clients send no Origin and are unaffected; the browser
+/// contexts that legitimately reach this daemon are loopback-origin ones, which
+/// is exactly what `cors_layer` already restricted itself to.
+pub(crate) async fn origin_guard(req: Request, next: Next) -> Response {
+    if !origin_allowed(req.headers()) {
+        tracing::warn!(
+            origin = ?req.headers().get(header::ORIGIN),
+            path = %req.uri().path(),
+            "refused cross-site request"
+        );
+        return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
+    }
+    next.run(req).await
+}
+
 /// Reject requests whose `Host` header is neither loopback nor the configured
 /// bind host. CORS alone can't stop a DNS-rebinding attack (after rebinding,
 /// the malicious page and the daemon share an origin, so no preflight fires);
@@ -237,6 +306,10 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
         // Loopback-only CORS (see `cors_layer`) replaces the previous
         // `CorsLayer::permissive()`, which let any website drive the daemon.
         .layer(cors_layer())
+        // …and the same policy enforced on the REQUEST, not just the response:
+        // CORS withholds the reply from a cross-site page but never stops a
+        // simple GET/POST from executing its side effect. See `origin_guard`.
+        .layer(middleware::from_fn(origin_guard))
         // Host-header guard runs outermost (added last), so a DNS-rebinding
         // request is refused before it can reach a handler or the CORS layer.
         .layer(middleware::from_fn_with_state(allowed_hosts, host_guard))
@@ -1307,8 +1380,7 @@ mod tests {
     /// the handler reads (sessions, conversation) on `state.store`/`state.conv`
     /// before dispatching a request.
     fn test_state() -> ApiState {
-        let mut db_path = std::env::temp_dir();
-        db_path.push(format!("claudemon-api-test-{}.db", uuid::Uuid::new_v4()));
+        let db_path = crate::testtmp::db_path("api-test");
         ApiState {
             store: SessionStore::new(),
             db: Db::open(&db_path).expect("open test db"),
@@ -2293,6 +2365,85 @@ mod tests {
             .headers()
             .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
             .is_none());
+    }
+
+    /// THE SIMPLE-REQUEST GAP. CORS decides what a foreign page may READ; it
+    /// never decided whether the handler RUNS. A GET is a simple request, so no
+    /// preflight fires, and `/providers/:provider/models` forks the resolved
+    /// provider CLI with a caller-supplied `?cwd=`. A real cross-site Chromium
+    /// page did exactly that and the marker file appeared in the attacker's cwd.
+    /// The guard has to refuse the REQUEST, which is what origin_guard does.
+    #[tokio::test]
+    async fn cross_site_simple_get_is_refused_before_the_handler_runs() {
+        let req = Request::builder()
+            .method("GET")
+            .uri("/providers/opencode/models?cwd=%2Ftmp")
+            .header(header::ORIGIN, "http://192.168.1.66:18080")
+            .header(header::HOST, "127.0.0.1:7891")
+            .body(Body::empty())
+            .unwrap();
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "cross-site GET reached a handler that spawns a process"
+        );
+        assert_eq!(body, b"origin not allowed");
+    }
+
+    /// The same door, every route: a foreign origin is refused on reads and on
+    /// side-effecting POSTs alike, so the policy is a property of the router
+    /// rather than a decision re-made per handler.
+    #[tokio::test]
+    async fn cross_site_origin_is_refused_on_every_route() {
+        for (method, uri) in [
+            ("GET", "/sessions"),
+            ("GET", "/usage"),
+            ("GET", "/events"),
+            ("POST", "/sessions/spawn"),
+            ("POST", "/sessions/sess-1/gate"),
+            ("POST", "/oneshot"),
+        ] {
+            let req = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header(header::ORIGIN, "http://evil.example.com")
+                .header(header::HOST, "127.0.0.1:7891")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap();
+            let (status, _) = request(test_state(), req).await;
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "{method} {uri} accepted a cross-site origin"
+            );
+        }
+    }
+
+    /// …and the loopback browser contexts that legitimately exist keep working,
+    /// or the guard is a feature deletion rather than a boundary.
+    #[tokio::test]
+    async fn loopback_origin_still_reaches_the_handler() {
+        for origin in ["http://localhost:5173", "http://127.0.0.1:7891"] {
+            let req = Request::builder()
+                .uri("/health")
+                .header(header::ORIGIN, origin)
+                .header(header::HOST, "127.0.0.1:7891")
+                .body(Body::empty())
+                .unwrap();
+            let (status, body) = request(test_state(), req).await;
+            assert_eq!(status, StatusCode::OK, "origin {origin} was refused");
+            assert_eq!(body, b"ok");
+        }
+        // A native client (no Origin at all) is unaffected.
+        let req = Request::builder()
+            .uri("/health")
+            .header(header::HOST, "127.0.0.1:7891")
+            .body(Body::empty())
+            .unwrap();
+        let (status, _) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::OK);
     }
 
     #[tokio::test]

@@ -593,3 +593,117 @@ func TestConsentDialogNamesEveryClassifiedTopic(t *testing.T) {
 		t.Fatalf("checked %d guarded and %d host-only rows — the registry lost rows and this cross-check went vacuous", checked[TopicGuardedBy], checked[TopicHostOnly])
 	}
 }
+
+// THE THIRD CHECK, AND WHY IT IS NOT A FOURTH TABLE.
+//
+// Round 7 shipped the event plane with two tables that check each other:
+// eventtopics.go (enforcing) and contracts/event-topic-consent-cases.json
+// (disclosing), plus pluginPermissions.ts reading the fixture. Its own verifier
+// named the residual precisely — the answer key is HAND-WRITTEN, so a
+// coordinated three-place edit passes every check. Restating that limitation
+// would be worth nothing, and deriving one table from the other would be worth
+// less: three copies of one opinion agree even faster than two.
+//
+// So this check does not read a table at all. It reads WHERE THE CODE PUBLISHES
+// the topic, and holds the disposition to that:
+//
+//	a topic published only from the sidecar/plugin control plane —
+//	internal/plugin, internal/supervisor, internal/sandbox — is host-only.
+//
+// That rule is not a restatement, it is a different kind of evidence. Those
+// packages exist to start, confine and configure sidecar processes; everything
+// they broadcast is a fact about how this HOST runs programs (a manifest, an
+// argv, a confinement mechanism, a process id, one verbatim line of a sidecar's
+// stderr), and no capability at any tier returns any of it. Downgrading
+// plugin.loaded to open-by-decision in all three tables now still fails here,
+// because the third witness is manager.go's own package path — a place the
+// downgrade would have to MOVE the publisher to, not merely edit.
+//
+// It covers eight of the nine host-only rows (plugin.install.progress is
+// published from cmd/hub and is out of scope; its own row explains why it is
+// host-only). Coverage is asserted below rather than assumed, so the rule
+// cannot quietly stop matching anything.
+var hostControlPlanePackages = []string{
+	"hub/internal/plugin/",
+	"hub/internal/supervisor/",
+	"hub/internal/sandbox/",
+}
+
+func TestHostOnlyIsDerivedFromWhereTheCodePublishes(t *testing.T) {
+	root := mustRepoRoot(t)
+	sites := publishSitesByTopic(t, root)
+
+	covered := 0
+	for topic, files := range sites {
+		if len(files) == 0 {
+			continue
+		}
+		fromControlPlaneOnly := true
+		for _, f := range files {
+			inControlPlane := false
+			for _, pkg := range hostControlPlanePackages {
+				if strings.Contains(f, pkg) {
+					inControlPlane = true
+					break
+				}
+			}
+			if !inControlPlane {
+				fromControlPlaneOnly = false
+				break
+			}
+		}
+		if !fromControlPlaneOnly {
+			continue
+		}
+		covered++
+		spec, ok := EventTopicSpec(topic)
+		if !ok {
+			continue // the completeness guard above already fails on this
+		}
+		if spec.Disposition != TopicHostOnly {
+			t.Errorf("%q is published only from the sidecar control plane (%v) and is classified %q. Everything those packages broadcast is a fact about how this host starts, confines and configures programs, and no capability at any tier returns it — so %q is the only disposition available, whatever the registry, the contracts fixture and the renderer table agree on between themselves.",
+				topic, files, spec.Disposition, TopicHostOnly)
+		}
+	}
+	// The rule must still MATCH something, or a moved file turns this into a
+	// loop over nothing that reports PASS — the failure mode every scan-based
+	// guard in this repo has had at least once.
+	if covered < 8 {
+		t.Fatalf("the control-plane rule matched only %d topics (want >= 8: the plugin.* family plus sidecar.*). Either those publishers moved, or the scan stopped resolving them, and this independent check is now checking nothing", covered)
+	}
+}
+
+// publishSitesByTopic maps each literal Go topic to every file that publishes
+// it. The existing scan keeps one file per topic (it only needs a name for the
+// error message); this needs all of them, because "published ONLY from" is the
+// whole claim.
+func publishSitesByTopic(t *testing.T, root string) map[string][]string {
+	t.Helper()
+	out := map[string][]string{}
+	files := walkFiles(t, filepath.Join(root, "services", "hub"), func(name string) bool {
+		return strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
+	})
+	add := func(topic, rel string) {
+		for _, seen := range out[topic] {
+			if seen == rel {
+				return
+			}
+		}
+		out[topic] = append(out[topic], rel)
+	}
+	for _, f := range files {
+		for _, m := range goEventNewRe.FindAllStringSubmatch(f.body, -1) {
+			if m[1] != "" {
+				topic := m[1]
+				if strings.TrimSpace(m[2]) == "+" {
+					topic += "*" // a prefix site: `sidecar.` + state
+				}
+				add(topic, f.rel)
+			}
+		}
+		for _, m := range goEnvelopeRe.FindAllStringSubmatch(f.body, -1) {
+			add(m[1], f.rel)
+		}
+	}
+	return out
+}
