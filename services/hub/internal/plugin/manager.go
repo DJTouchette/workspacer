@@ -574,7 +574,25 @@ func (m *Manager) UIDir(id string) (string, bool) {
 	if err := ValidateUIDir(l.manifest.UI); err != nil {
 		return "", false
 	}
-	return filepath.Join(l.manifest.Dir, filepath.FromSlash(l.manifest.UI)), true
+	full := filepath.Join(l.manifest.Dir, filepath.FromSlash(l.manifest.UI))
+	// ValidateUIDir judges the manifest STRING — "..", ".", absolute, drive
+	// letter. A symlink is not a string, so `ui: "assets"` with assets -> /
+	// satisfies every one of those tests and then serves the filesystem, and
+	// /plugins/ui/ is unauthenticated. Same distinction as expandScope's subpath
+	// branch above, which is why the same primitive answers it: narrow has to
+	// mean where the path LANDS, not how it is spelled.
+	//
+	// Resolved here rather than in ValidateUIDir because that runs at manifest
+	// parse time, when the directory need not exist yet; this is the single
+	// place the served root is actually derived. An unresolvable side denies,
+	// matching canonRoots' discard.
+	cb, okBase := bus.CanonicalizeRoot(l.manifest.Dir)
+	cf, okFull := bus.CanonicalizeRoot(full)
+	if !okBase || !okFull || !withinRoot(cb, cf) {
+		log.Printf("SECURITY: refusing to serve plugin %q ui %q — it resolves to %q, outside the plugin directory %q it names", id, l.manifest.UI, cf, l.manifest.Dir)
+		return "", false
+	}
+	return full, true
 }
 
 // Add registers a plugin: starts its sidecar (if any) and emits plugin.loaded.

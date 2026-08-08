@@ -116,3 +116,44 @@ func TestLoadDirRejectsAPluginWhoseUIEscapes(t *testing.T) {
 		t.Error("LoadDir reported no error for a plugin whose ui escapes its directory")
 	}
 }
+
+// TestUIDirRefusesASymlinkOutOfThePluginDirectory is the resolved half of the
+// escape ValidateUIDir cannot see.
+//
+// ValidateUIDir judges the manifest STRING: "..", ".", absolute, drive letter.
+// A plugin shipping `ui: "assets"` with assets -> / passes every one of those
+// tests, and /plugins/ui/<id>/ is unauthenticated — so the round that added the
+// string check closed the spelling and left the filesystem open. This drives the
+// single place the served root is derived.
+func TestUIDirRefusesASymlinkOutOfThePluginDirectory(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "loot"), []byte("SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "assets")); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
+	}
+
+	m := NewManager(nil, nil)
+	m.plugins["p"] = &loaded{manifest: Manifest{ID: "p", Dir: dir, UI: "assets"}}
+
+	// The control: the string itself is impeccable, which is the whole point.
+	if err := ValidateUIDir("assets"); err != nil {
+		t.Fatalf("precondition: ValidateUIDir rejected %q on its own (%v) — this test would then prove nothing about the resolved check", "assets", err)
+	}
+
+	if got, ok := m.UIDir("p"); ok {
+		t.Errorf("UIDir served %q for a `ui` that resolves to %q, outside the plugin directory %q. /plugins/ui/ is unauthenticated, so this is the filesystem behind an anonymous GET.", got, outside, dir)
+	}
+
+	// Floor: an ordinary subdirectory must still be served, or the fix is a
+	// refusal rather than a confinement.
+	if err := os.MkdirAll(filepath.Join(dir, "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m.plugins["q"] = &loaded{manifest: Manifest{ID: "q", Dir: dir, UI: "real"}}
+	if _, ok := m.UIDir("q"); !ok {
+		t.Error("UIDir refused an ordinary in-directory ui subdir — the containment check is denying everything, which passes the case above for the wrong reason")
+	}
+}
