@@ -63,3 +63,10 @@ git show 4fd1c8f:SECURITY.md
 
 Findings from here on are handled as advisories and fixed in the normal commit
 history, where the reasoning belongs next to the code anyway.
+
+A later adversarial pass — sixteen commits, roughly 250 findings — is written up
+in [`docs/adversarial-hardening.md`](docs/adversarial-hardening.md). That file is
+an index rather than a register: the findings themselves live in the commit
+messages, and most of its value is the METHOD, which is reusable and worth reading
+before attacking this codebase. It also lists what is still open, and the traps in
+the guard machinery itself.
