@@ -157,6 +157,13 @@ func TestTriageDeliberateAbsencesAreStillAbsent(t *testing.T) {
 		"terminals.create",
 		"sessions.terminalInput",
 		"sessions.attachTerminal",
+		// claude.answer's PTY path types `text + "\r"` into r.cm.input — the
+		// byte-for-byte sink sessions.terminalInput uses — with no
+		// pending-question gate and no ownership check, so a session id naming a
+		// terminals.create shell turns it into raw keystrokes onto /bin/bash.
+		// Excluding sessions.terminalInput while granting its twin would defeat
+		// the exclusion; both are absent from every scoped tier.
+		"claude.answer",
 		"fs.write",
 		"fs.read",
 		"git.commit",

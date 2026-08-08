@@ -33,10 +33,10 @@ const (
 	// ScopeView is read-only: lists, snapshots, transcripts, event/stream
 	// subscriptions, and getCwd-style introspection. Nothing that changes state.
 	ScopeView Scope = "view"
-	// ScopeTriage is view plus acting on attention: approve/deny, answer,
-	// send a message, interrupt, and the Web Push subscription methods the /m
-	// PWA needs. NOT spawn, NOT terminals, NOT git mutations, NOT plugin or
-	// config admin.
+	// ScopeTriage is view plus acting on attention: approve/deny, send a
+	// message, interrupt, and the Web Push subscription methods the /m PWA
+	// needs. NOT spawn, NOT terminals, NOT git mutations, NOT plugin or config
+	// admin, and NOT claude.answer (a raw-PTY-write twin of terminalInput).
 	ScopeTriage Scope = "triage"
 	// ScopeOperator is everything — equivalent to the host remote-token.
 	ScopeOperator Scope = "operator"
@@ -78,7 +78,16 @@ var viewMethods = []string{
 // Push subscription the /m PWA uses to hear about those asks in the
 // background. Deliberately absent: agents.spawn (the /m spawn tab is operator
 // surface), terminals.*, git.*, fs.*, config.save, layout.set, plugin/config
-// admin.
+// admin — and claude.answer, whose PTY path types `text + "\r"` into the
+// session's PTY through the SAME r.cm.input sink sessions.terminalInput uses,
+// with no pending-question requirement and no ownership check on the sessionId
+// (capspec classifies its text/answers/option as KindShell for exactly this
+// reason). A session id can name a terminals.create shell as readily as an
+// agent, so granting it would hand a phone token raw host keystrokes onto
+// /bin/bash — the very primitive sessions.terminalInput is excluded to withhold.
+// The /m AskUserQuestion picker therefore stays operator surface; a phone
+// answers by talking to the agent (sendMessage) or resolving its permission
+// prompt (approve), never by a raw PTY write.
 //
 // AND THE PARAGRAPH ABOVE IS NOT THE WHOLE TRUTH ON ITS OWN. Every one of those
 // absences is real and enforced per call — a triage token cannot run a shell,
@@ -103,7 +112,6 @@ var viewMethods = []string{
 // quietly changing what a phone token is.
 var triageMethods = []string{
 	"claude.approve",     // permission prompts — yes / no / always (/m, /remote)
-	"claude.answer",      // AskUserQuestion pickers (/m, /remote)
 	"agents.sendMessage", // send a prompt / reply to an agent (/m chat)
 	"claude.signal",      // interrupt a runaway agent (/m + /remote SIGINT button)
 	"push.subscribe",     // /m PWA background notifications

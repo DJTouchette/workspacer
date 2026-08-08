@@ -1075,7 +1075,13 @@ func (r *registry) fsListDir(ctx context.Context, raw json.RawMessage) (json.Raw
 	// refuses it, so the substitution has to happen while there is still a
 	// decision to make.
 	target := p.Path
-	if strings.TrimSpace(target) == "" {
+	// Blank means ASCII-blank, not strings.TrimSpace-blank: TrimSpace strips
+	// U+0085 (NEL) but not U+FEFF (BOM), while the desktop twin's `.trim()` does
+	// the opposite, so a path of a lone BOM defaulted to $HOME on one provider
+	// and refused as non-absolute on the other. Both copies use the shared
+	// asciiWhitespace set (normalizeCwd's TRIM SET note) so a BOM/NEL path is a
+	// filename the guard refuses on BOTH, not a silent $HOME rewrite on one.
+	if strings.Trim(target, asciiWhitespace) == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil, err

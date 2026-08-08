@@ -368,6 +368,25 @@ func TestListDirWithNoPathOpensTheHomeDirectory(t *testing.T) {
 	}
 }
 
+// The blank-default must trim the SAME whitespace set as the desktop twin
+// (hubCapabilities.ts fs.listDir, `p && !isAsciiBlank(p) ? p : home`). Go's
+// strings.TrimSpace strips U+0085 (NEL) but not U+FEFF (BOM); JS `.trim()` does
+// the opposite. A path that is a lone BOM or NEL is a (nonexistent, non-absolute)
+// filename the guard must REFUSE — not a silent $HOME rewrite on whichever
+// provider's built-in happens to swallow that code point. Both now trim only the
+// shared asciiWhitespace set, so each refuses both. The NEL leg is the killer:
+// under the old strings.TrimSpace the brain opened $HOME for it.
+func TestListDirBlankDefaultTrimsASCIIWhitespaceOnly(t *testing.T) {
+	sandboxHome(t)
+	reg := registryWithCwds(t)
+		for _, p := range []string{"\u0085", "\ufeff"} {
+		params := `{"path":` + jsonStr(p) + `}`
+		if _, err := reg.handle(context.Background(), "fs.listDir", json.RawMessage(params)); err == nil {
+			t.Errorf("fs.listDir %s was answered; a lone BOM/NEL path is a filename the guard must refuse, not default to $HOME", params)
+		}
+	}
+}
+
 // ── fs.listEntries: a symlinked directory is a directory ─────────────────────
 
 // fileService.ts does exactly this (`if (!isDir && e.isSymbolicLink()) isDir =

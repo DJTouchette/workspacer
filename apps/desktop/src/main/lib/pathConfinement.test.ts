@@ -751,7 +751,7 @@ describe('path containment — cross-language contract', () => {
   // count is host-independent, so this number means the same thing on a machine
   // that skips most of the sweep. TWINS: cmd/brain/fsguard_test.go's
   // containmentCorpusFloor and internal/bus's busContainmentCorpusFloor.
-  itSweptTheWholeCorpus(corpusTally, 'the desktop containment corpus', 112);
+  itSweptTheWholeCorpus(corpusTally, 'the desktop containment corpus', 137);
 });
 
 describe('the canonical path assertPathAllowed returns', () => {

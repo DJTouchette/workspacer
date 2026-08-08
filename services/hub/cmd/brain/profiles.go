@@ -497,8 +497,8 @@ func expandTilde(p string) string {
 // asciiWhitespace is the whitespace every caller-string trim on this seam
 // strips: space, tab, and the four ASCII vertical/form controls. Spelled as a
 // literal set because neither language's built-in trim is portable — see
-// normalizeCwd's TRIM SET note. Twins: searchService.ts TEXT_TRIM and
-// spawnCwd.ts TRIM_SET.
+// normalizeCwd's TRIM SET note. Twins: asciiWhitespace.ts (isAsciiBlank /
+// hasNonBlankText), searchService.ts TEXT_TRIM and spawnCwd.ts TRIM_SET.
 const asciiWhitespace = " \t\n\v\f\r"
 
 // normalizeCwd is the ONE normalization a caller-supplied spawn/terminal cwd

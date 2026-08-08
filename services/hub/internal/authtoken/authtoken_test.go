@@ -63,7 +63,9 @@ func TestScopeMethods(t *testing.T) {
 		{"push.key", true, true, true},
 		// acting on attention
 		{"claude.approve", false, true, true},
-		{"claude.answer", false, true, true},
+		// claude.answer is a raw-PTY-write twin of sessions.terminalInput and
+		// is NOT granted to any scoped tier — operator (the wildcard) only.
+		{"claude.answer", false, false, true},
 		{"agents.sendMessage", false, true, true},
 		{"claude.signal", false, true, true},
 		{"push.subscribe", false, true, true},

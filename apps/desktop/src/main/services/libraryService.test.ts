@@ -72,6 +72,30 @@ describe('libraryService — claude items with slug-colliding on-disk names', ()
   });
 });
 
+describe('libraryService — title fallback trims the shared ASCII-whitespace set', () => {
+  // A frontmatter name of a lone U+FEFF (BOM) is NOT blank: `.trim()` strips the
+  // BOM and used to drop the title to the id here, while the Go brain
+  // (firstNonEmpty) kept it — a different picker row label and byteCompare sort
+  // slot depending on DELEGATE_CATALOG_TO_BRAIN. Both now use the shared
+  // asciiWhitespace predicate. Reverting this call site to `data.name.trim()`
+  // turns this red. TWIN: cmd/brain TestLibraryItemFieldsMatchTheDesktop.
+  it('keeps a BOM-only claude name as the title instead of falling back to the id', () => {
+    const BOM = '\uFEFF';
+    const dir = path.join(cwd, '.claude', 'skills', 'bomskill');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'SKILL.md'),
+      `---\nname: "${BOM}"\ndescription: d\n---\n\nbody\n`,
+      'utf-8',
+    );
+    const item = libraryService
+      .list(cwd)
+      .find((it) => it.scope === 'claude' && it.kind === 'skill' && it.id === 'bomskill');
+    expect(item).toBeDefined();
+    expect(item!.title).toBe(BOM);
+  });
+});
+
 describe('libraryService — saveClaude/remove target the real on-disk path', () => {
   it('editing a skill whose dir name is not slug-stable updates it in place (no duplicate)', () => {
     writeSkill('MySkill', 'MySkill', 'old');

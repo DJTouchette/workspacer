@@ -714,7 +714,7 @@ const (
 	// implementation owns. Checked against ENUMERATED cases (executed +
 	// skipped), so it is the same number on a host that can make symlinks and
 	// one that cannot.
-	containmentCorpusFloor = 112
+	containmentCorpusFloor = 137
 	// brainMethodFloor is how many of capspec.PathParam's path-bearing methods
 	// this brain both provides and dispatches. Checked against EXECUTED
 	// subtests: nothing here is host-gated, so a shortfall is drift between

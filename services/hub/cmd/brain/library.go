@@ -792,14 +792,20 @@ func mustCwd() string {
 // firstNonEmpty returns the first value that holds something other than
 // whitespace. The TRIM is load-bearing and not cosmetic: this backs the library
 // title/name fallbacks, whose desktop twin is
-// `typeof t === 'string' && t.trim() ? t : id`. Without it a frontmatter
+// `typeof t === 'string' && hasNonBlankText(t) ? t : id` (libraryService.ts,
+// where hasNonBlankText trims the same asciiWhitespace set). Without it a frontmatter
 // `title: "   "` served three spaces here and "wsp" there — a blank row in the
 // library picker under the default catalog delegation and a named row without
 // it. It is also the cwd fallback (`firstNonEmpty(in.Cwd, mustCwd())`), where a
 // whitespace-only cwd is refused by the guard either way.
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
-		if strings.TrimSpace(v) != "" {
+		// ASCII-blank, not TrimSpace-blank: a pure-BOM (U+FEFF) title is kept by
+		// TrimSpace but dropped by the desktop twin's `.trim()`, and a pure-NEL
+		// (U+0085) title the other way. Both copies use the shared asciiWhitespace
+		// set so the SAME title survives the fallback on both providers (and thus
+		// sorts to the same byteCompare slot in the library picker).
+		if strings.Trim(v, asciiWhitespace) != "" {
 			return v
 		}
 	}

@@ -9,6 +9,30 @@ import (
 	"testing"
 )
 
+// firstNonEmpty backs the library title/name fallback and must trim the SAME
+// whitespace set as the desktop twin (libraryService.ts hasNonBlankText). Go's
+// strings.TrimSpace strips U+0085 (NEL) but not U+FEFF (BOM); JS `.trim()` does
+// the opposite, so a title that is a lone NEL or BOM must resolve to the SAME
+// string on both providers (or the library picker shows a different row label
+// AND a different byteCompare sort slot depending on DELEGATE_CATALOG_TO_BRAIN).
+// The NEL case is the killer: reverting to strings.TrimSpace drops it to the id.
+func TestFirstNonEmptyTrimsASCIIWhitespaceOnly(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+	}{
+		{"ascii spaces fall back to id", "   ", "id"},
+		{"tab/newline/cr fall back to id", "\t\n\v\f\r ", "id"},
+		{"NEL-only title is kept (TrimSpace would drop it)", "\u0085", "\u0085"},
+		{"BOM-only title is kept", "\ufeff", "\ufeff"},
+		{"real title is kept", "Notes", "Notes"},
+	}
+	for _, c := range cases {
+		if got := firstNonEmpty(c.in, "id"); got != c.want {
+			t.Errorf("%s: firstNonEmpty(%q, \"id\") = %q, want %q", c.name, c.in, got, c.want)
+		}
+	}
+}
+
 func TestSlugLibrary(t *testing.T) {
 	cases := map[string]string{
 		"My Prompt!!":  "my-prompt",

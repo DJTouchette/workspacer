@@ -61,7 +61,8 @@ func (c *client) tryRead(op string) (Frame, bool) {
 func TestScopedTokenAuthorizationMatrix(t *testing.T) {
 	methods := []string{
 		"agents.list", "sessions.snapshots", "sessions.transcript", // view surface
-		"claude.approve", "claude.answer", "agents.sendMessage", "push.subscribe", // triage surface
+		"claude.approve", "agents.sendMessage", "push.subscribe", // triage surface
+		"claude.answer", // registered but NOT triage-granted (raw-PTY-write twin of terminalInput); the deny must come from scope, not "no provider"
 		"agents.spawn", "terminals.create", "git.push", "config.save", // operator surface
 		"future.unknownMethod", // registered on purpose: a deny must come from scope, not "no provider"
 	}
@@ -86,7 +87,12 @@ func TestScopedTokenAuthorizationMatrix(t *testing.T) {
 		// triage: view + acting on attention, still no spawn/terminals/git/admin
 		{"tok-triage", "triage", "agents.list", true},
 		{"tok-triage", "triage", "claude.approve", true},
-		{"tok-triage", "triage", "claude.answer", true},
+		// claude.answer is a raw-PTY-write twin of sessions.terminalInput (it
+		// types `text + "\r"` into the same r.cm.input sink with no
+		// pending-question gate and no ownership check, reaching a
+		// terminals.create shell); it is refused for triage on the real routing
+		// path, not just the tier table.
+		{"tok-triage", "triage", "claude.answer", false},
 		{"tok-triage", "triage", "agents.sendMessage", true},
 		{"tok-triage", "triage", "push.subscribe", true},
 		{"tok-triage", "triage", "agents.spawn", false},

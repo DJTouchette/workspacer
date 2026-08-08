@@ -520,7 +520,7 @@ func TestEveryCorpusCaseBelongsToAGroupSOMEBODYOwns(t *testing.T) {
 // busContainmentCorpusFloor is how many `cases` entries this implementation
 // owns today. See the twin in cmd/brain/fsguard_test.go: enumerated, not
 // executed, so it holds on every host.
-const busContainmentCorpusFloor = 112
+const busContainmentCorpusFloor = 137
 
 // containmentTokenTable is this loader's substitution table, and the ONE place
 // the token names it understands are written down. The case runner substitutes

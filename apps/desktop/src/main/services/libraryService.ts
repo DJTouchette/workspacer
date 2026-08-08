@@ -26,6 +26,7 @@ import type { BrowserWindow } from 'electron';
 import { getConfigDir } from './configService';
 import { slugLibrary } from '../lib/fileUtils';
 import { byteCompare, trimSuffixFold } from '../lib/providerParity';
+import { hasNonBlankText } from '../lib/asciiWhitespace';
 import { publishToHub } from './hubClient';
 
 export type LibraryScope = 'global' | 'project' | 'claude';
@@ -215,7 +216,7 @@ function readDir(dir: string, scope: LibraryScope, guard: LibraryFileGuard): Lib
       items.push({
         id,
         scope,
-        title: typeof data.title === 'string' && data.title.trim() ? data.title : id,
+        title: typeof data.title === 'string' && hasNonBlankText(data.title) ? data.title : id,
         kind,
         description: typeof data.description === 'string' ? data.description : undefined,
         tags: Array.isArray(data.tags) ? data.tags.map(String) : undefined,
@@ -248,7 +249,7 @@ function claudeItem(
     return {
       id,
       scope: 'claude',
-      title: typeof data.name === 'string' && data.name.trim() ? data.name : id,
+      title: typeof data.name === 'string' && hasNonBlankText(data.name) ? data.name : id,
       kind,
       description: typeof data.description === 'string' ? data.description : undefined,
       body: body.replace(/^\s*\n/, ''),

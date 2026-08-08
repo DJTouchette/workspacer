@@ -46,6 +46,7 @@ import { IPC } from '../shared/ipcChannels';
 import type { SessionData, LayoutInput, ProfileUpdate } from '../shared/ipcTypes';
 import { ensureSupervisorHome } from './supervisorSkill';
 import { scrubBootDocumentAgents } from '../lib/bootDocumentScrub';
+import { isAsciiBlank } from '../lib/asciiWhitespace';
 
 // Mirror of ipc.ts's shell detection so a capability-spawned terminal picks the
 // same default shell a UI-spawned one would. Kept local to avoid importing the
@@ -1172,7 +1173,7 @@ export function registerHubCapabilities(): void {
     // is tilde expansion: '~' is an ordinary filename to every layer that handles
     // a caller-supplied path (the brain used to expand it and this side did not,
     // so the same string was allowed by one provider and denied by the other).
-    const requested = p && p.trim() ? p : home;
+    const requested = p && !isAsciiBlank(p) ? p : home;
     // Browsing is limited to the home tree + live agent cwds so a remote client
     // can pick a project dir but can't enumerate /etc, /root, or other users' homes.
     // readdir gets the CANONICAL path the guard validated, never the raw request.
