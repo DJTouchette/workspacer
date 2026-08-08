@@ -23,6 +23,7 @@ import { RefreshCw } from '../components/icons';
 import { PanelRight, ArrowRightLeft, Clock } from 'lucide-react';
 import { HandoffDialog, type HandoffSettings } from '../components/claude/HandoffDialog';
 import { requestHandoff } from '../lib/watchBus';
+import { bracketedPasteSubmit } from '../lib/bracketedPaste';
 import { quoteFontFamily, isTermVisible, refitAndRepaint } from '../lib/terminalUtils';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { clearMdCache, MarkdownFileCwdProvider } from '../components/markdown';
@@ -1046,8 +1047,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       // Bracketed paste + a separate Enter, in one frame. Writing raw `text\r`
       // makes the TUI fold the CR into the "paste" (a newline in the composer)
       // instead of submitting; the CR after the ESC[201~ end marker is a real
-      // Enter that submits. Mirrors the daemon's send_message_now.
-      write('\x1b[200~' + fullMessage.replace(/[\r\n]+$/, '') + '\x1b[201~\r');
+      // Enter that submits. Mirrors the daemon's send_message_now. The helper
+      // neutralizes any ESC in the body so it cannot forge its own end marker.
+      write(bracketedPasteSubmit(fullMessage));
       releaseDelivered();
     };
 

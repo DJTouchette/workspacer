@@ -11,6 +11,8 @@
  * ClaudePane remains the source of truth; keep these in sync if it changes.
  */
 
+import { bracketedPasteSubmit } from './bracketedPaste';
+
 /**
  * Approve or deny a pending tool-permission request.
  *
@@ -105,9 +107,6 @@ export function resolveReply(sessionId: string, text: string): void {
       }
     })
     .catch(() => {
-      window.electronAPI.claudeWrite(
-        sessionId,
-        '\x1b[200~' + text.replace(/[\r\n]+$/, '') + '\x1b[201~\r',
-      );
+      window.electronAPI.claudeWrite(sessionId, bracketedPasteSubmit(text));
     });
 }

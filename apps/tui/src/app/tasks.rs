@@ -112,10 +112,23 @@ pub(super) async fn fetch_git_diff(
 
 /// Wrap text in bracketed-paste markers so a multi-line prompt is inserted into
 /// Claude's input as one paste (newlines stay newlines instead of submitting).
+///
+/// The body is neutralized first. A bracketed paste is only inert if its own
+/// content cannot forge the end marker: an embedded ESC[201~ (which a library /
+/// skill / agent body can carry verbatim — the text is raw file content after
+/// frontmatter) would close paste mode early, and the bytes after it — a
+/// trailing CR submits — land as live keystrokes against the focused PTY. That
+/// turns an "insert for review" into arbitrary command execution against a shell
+/// tab, and defeats the no-submit review gate against a Claude PTY. We replace
+/// every ESC (\x1b) with its visible glyph U+241B before wrapping — the same
+/// neutralization xterm's bracketTextForPaste applies (the desktop twin) — so
+/// the frame we emit is the only paste boundary and no injected control sequence
+/// (paste marker or otherwise) survives.
 pub(super) fn bracketed_paste(text: &str) -> Vec<u8> {
-    let mut v = Vec::with_capacity(text.len() + 12);
+    let sanitized = text.replace('\x1b', "\u{241b}");
+    let mut v = Vec::with_capacity(sanitized.len() + 12);
     v.extend_from_slice(b"\x1b[200~");
-    v.extend_from_slice(text.as_bytes());
+    v.extend_from_slice(sanitized.as_bytes());
     v.extend_from_slice(b"\x1b[201~");
     v
 }
@@ -238,6 +251,34 @@ mod tests {
             completions: Vec::new(),
             initial_prompt: None,
         }
+    }
+
+    #[test]
+    fn bracketed_paste_neutralizes_embedded_end_marker() {
+        // A library/skill body that forges its own ESC[201~ end marker (followed
+        // by a CR + command) must not break out of paste mode: the only paste
+        // boundary is the frame we add, so no embedded marker may survive in the
+        // body and no live ESC may reach the PTY.
+        let body = "hello\x1b[201~\rrm -rf ~\r";
+        let out = bracketed_paste(body);
+        // Exactly one opening and one closing marker — ours, at the ends.
+        assert!(out.starts_with(b"\x1b[200~"), "must open with a paste marker");
+        assert!(out.ends_with(b"\x1b[201~"), "must close with a paste marker");
+        let inner = &out[6..out.len() - 6];
+        // No raw ESC survives inside the body, so no forged paste marker (which
+        // must begin with ESC) can exist there either.
+        assert!(
+            !inner.contains(&0x1b),
+            "raw ESC survived in body, a paste marker could be forged: {:?}",
+            String::from_utf8_lossy(inner)
+        );
+        // The neutralized ESC is present as the visible glyph, so the CR after it
+        // can no longer submit a live command.
+        assert!(
+            String::from_utf8_lossy(inner).contains('\u{241b}'),
+            "ESC should be neutralized to U+241B, got {:?}",
+            String::from_utf8_lossy(inner)
+        );
     }
 
     #[test]
