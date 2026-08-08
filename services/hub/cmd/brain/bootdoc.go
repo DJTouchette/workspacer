@@ -60,6 +60,38 @@ func scrubBootDocumentAgents(method string, doc map[string]any) []string {
 				dropped = append(dropped, k)
 			}
 		}
+		// Recurse into tabs[].panes[]: a restored terminal pane's `shell` /
+		// `initialCommand` are host-execution sinks the agent-level scrub can't
+		// see. `shell` is argv[0] of the LOCAL terminal:create (which allowlists
+		// nothing); `initialCommand` is typed into the ready PTY with a trailing
+		// CR, i.e. arbitrary shell text auto-executed on restore. Both fire on
+		// the desktop's next launch, one level below the spawn-escalation keys.
+		tabs, ok := entry["tabs"].([]any)
+		if !ok {
+			continue
+		}
+		for _, t := range tabs {
+			tab, ok := t.(map[string]any)
+			if !ok {
+				continue
+			}
+			panes, ok := tab["panes"].([]any)
+			if !ok {
+				continue
+			}
+			for _, p := range panes {
+				pane, ok := p.(map[string]any)
+				if !ok {
+					continue
+				}
+				for _, k := range paneEscalationKeys {
+					if _, present := pane[k]; present {
+						delete(pane, k)
+						dropped = append(dropped, "pane."+k)
+					}
+				}
+			}
+		}
 	}
 	if len(dropped) > 0 {
 		log.Printf("SECURITY: %s: dropping spawn-escalation field(s) %v from a bus client — the desktop respawns this document's agents through the LOCAL IPC spawn door on its next launch, which scrubs nothing", method, dropped)
@@ -71,3 +103,9 @@ func scrubBootDocumentAgents(method string, doc map[string]any) []string {
 // because cmd/brain must not import the hub's internal packages. The two are
 // held equal by TestBootDocumentWritersScrubTheSameFields.
 var spawnEscalationKeys = []string{"skipPermissions", "permissionMode", "profileId", "mcpItemIds"}
+
+// paneEscalationKeys is the per-pane twin of PANE_ESCALATION_KEYS in
+// bootDocumentScrub.ts — the terminal-pane fields that become host command
+// execution on the desktop's next launch. Held equal to the TS copy by
+// TestBootDocumentWritersScrubTheSameFields.
+var paneEscalationKeys = []string{"shell", "initialCommand"}

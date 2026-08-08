@@ -622,6 +622,13 @@ pub(crate) fn codex_home_test_lock() -> std::sync::MutexGuard<'static, ()> {
     LOCK.lock().unwrap_or_else(|p| p.into_inner())
 }
 
+/// The real `~/.workspacer/codex-threads` dir, exposed for the spawn-route
+/// traversal test so it can locate the escape target a `..` id would clobber.
+#[cfg(test)]
+pub(crate) fn threads_dir_for_test() -> Option<PathBuf> {
+    threads_dir()
+}
+
 /// Remove a test-recorded session→thread sidecar. `record_thread` has no path
 /// seam (it always writes the real `~/.workspacer/codex-threads`), so tests
 /// use throwaway uuid session ids and clean up after themselves.

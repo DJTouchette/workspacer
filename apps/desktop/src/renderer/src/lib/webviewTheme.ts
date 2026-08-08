@@ -21,8 +21,34 @@
 import type { Theme } from '../themes';
 import { cssVarsOf, isLightTheme } from '../themes';
 
+/**
+ * A theme token value is safe to concatenate into a `prop: value;` declaration
+ * only if it cannot terminate that declaration or open a new selector/rule.
+ *
+ * The other injection path — `applyTheme` — hands each value to
+ * `CSSStyleDeclaration.setProperty`, which is browser-validated and silently
+ * drops a value that breaks out. This function builds a raw CSS *string* for
+ * `<webview>.insertCSS`, which has no such validation, so it must do that check
+ * itself. A custom theme's colors come from `config.ui.customThemes`, which a
+ * non-host bus caller (plugin / remote / web / MCP facade) can write; without
+ * this a color like `#fff; } input[type=password] { … }` closes `:root{}` and
+ * injects an attacker rule into the guest document — including a third-party
+ * origin loaded in a BrowserPane (credential-selector exfil, url() beacon).
+ *
+ * Every legitimate token value is a hex/rgb(a) color, a `NNpx` length, or a
+ * box-shadow list — none of which contain any of these characters, so a value
+ * that does is not a color the theme editor could have produced and is dropped.
+ */
+const CSS_BREAKOUT = /[{}<>;@\\]|\/\*|\*\//;
+export function isSafeThemeTokenValue(value: string): boolean {
+  return typeof value === 'string' && !CSS_BREAKOUT.test(value);
+}
+
 export function webviewThemeCSS(theme: Theme): string {
   const vars = Object.entries(cssVarsOf(theme))
+    // Drop any value that could break out of the :root{} declaration block —
+    // insertCSS does not validate the string the way setProperty does.
+    .filter(([, value]) => isSafeThemeTokenValue(value))
     .map(([prop, value]) => `  ${prop}: ${value};`)
     .join('\n');
   return [

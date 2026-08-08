@@ -290,6 +290,14 @@ pub async fn handle_managed(
         .session_id
         .or_else(|| payload.resume.clone())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
+    // A caller-pinned id (or a resume id) becomes a filesystem sink downstream:
+    // the codex-thread sidecar filename, pi's `-e` extension temp file, the
+    // `mcp/ask/<id>` url, and the `--session-id` argv. Gate it with the exact
+    // containment the read routes enforce, so a `..` id can't escape those roots
+    // or forge argv/urls. A freshly minted UUID always passes.
+    if !crate::daemon::api::valid_session_id(&session_id) {
+        return (StatusCode::BAD_REQUEST, "invalid session_id").into_response();
+    }
     let bin = payload.bin.unwrap_or_else(|| payload.provider.clone());
     // Same as the PTY path: a profile config dir relocates the transcript root.
     crate::session::transcript::allow_spawn_env(&payload.env);
@@ -587,6 +595,53 @@ mod tests {
             "the caller-supplied binary must never be executed"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The finding: a caller-pinned `session_id` was spliced verbatim into
+    /// provider filesystem sinks (the codex-thread sidecar filename, pi's `-e`
+    /// extension temp file, the `mcp/ask/<id>` url, the `--session-id` argv). A
+    /// `..` id escaped its root — `record_thread` wrote one directory *outside*
+    /// `~/.workspacer/codex-threads`. `handle_managed` must gate the id with the
+    /// same containment the read routes enforce, refusing before any spawn/write.
+    #[tokio::test]
+    async fn spawn_managed_rejects_a_traversal_session_id() {
+        use crate::session::{ConversationStore, SessionStore};
+
+        let marker = Uuid::new_v4();
+        // The escape target `record_thread` would clobber for a `..` id: one
+        // directory above the codex-threads dir.
+        let escaped = crate::providers::codex_rollout::threads_dir_for_test()
+            .and_then(|d| d.parent().map(|p| p.join(format!("wks-managed-escape-{marker}.json"))));
+
+        let payload: SpawnManagedPayload = serde_json::from_value(json!({
+            "provider": "codex",
+            "cwd": std::env::temp_dir().to_string_lossy(),
+            "session_id": format!("../wks-managed-escape-{marker}"),
+        }))
+        .unwrap();
+
+        let resp = handle_managed(
+            State(SessionStore::new()),
+            State(ConversationStore::new()),
+            Json(payload),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "a `..` session_id must be refused before any provider spawn"
+        );
+        if let Some(escaped) = escaped {
+            let leaked = escaped.exists();
+            let _ = std::fs::remove_file(&escaped);
+            assert!(
+                !leaked,
+                "traversal session_id escaped the codex-threads root: {}",
+                escaped.display()
+            );
+        }
     }
 
     #[tokio::test]

@@ -157,6 +157,18 @@ func (s *Service) Get(_ json.RawMessage) (any, error) {
 // writer can't reintroduce the leak".
 var spawnEscalationKeys = []string{"skipPermissions", "permissionMode", "profileId", "mcpItemIds"}
 
+// paneEscalationKeys are the per-PANE fields that become host command execution
+// on the desktop's next launch — one level below spawnEscalationKeys, inside
+// agents[].tabs[].panes[]. A restored terminal pane's `shell` is argv[0] of the
+// LOCAL terminal:create door (which allowlists nothing, unlike the bus's
+// terminals.create); its `initialCommand` is typed into the ready PTY with a
+// trailing CR, i.e. arbitrary shell text auto-run on restore. Same "description
+// becomes an argument one launch later" hazard as the agent-level keys, reached
+// through a pane instead of the agent record. Held equal to cmd/brain's
+// paneEscalationKeys and bootDocumentScrub.ts's PANE_ESCALATION_KEYS by
+// TestBootDocumentWritersScrubTheSameFields.
+var paneEscalationKeys = []string{"shell", "initialCommand"}
+
 // scrubAdoptedSpawnFields removes spawnEscalationKeys from every entry of the
 // document's `agents` array, returning the (re-encoded) data and the keys it
 // dropped.
@@ -190,6 +202,15 @@ func scrubAdoptedSpawnFields(data json.RawMessage) (json.RawMessage, []string) {
 				dropped = append(dropped, k)
 			}
 		}
+		// Recurse into tabs[].panes[]. Structural, at a known depth, and — like
+		// the agent level — anything that does not decode as the expected shape
+		// is left untouched: the hub does not interpret this document.
+		if scrubbed, n := scrubPaneEscalation(a["tabs"]); n > 0 {
+			a["tabs"] = scrubbed
+			for i := 0; i < n; i++ {
+				dropped = append(dropped, "pane")
+			}
+		}
 	}
 	if len(dropped) == 0 {
 		return data, nil
@@ -204,6 +225,55 @@ func scrubAdoptedSpawnFields(data json.RawMessage) (json.RawMessage, []string) {
 		return data, nil
 	}
 	return out, dropped
+}
+
+// scrubPaneEscalation removes paneEscalationKeys from every entry of an agent's
+// `tabs[].panes[]`. Returns the re-encoded `tabs` value and how many keys were
+// dropped; a zero count means "leave the original alone" (nothing to strip, or
+// a shape it cannot parse — same untouched-on-unparseable contract as the agent
+// level). `rawTabs` may be nil (agent has no tabs), which is a no-op.
+func scrubPaneEscalation(rawTabs json.RawMessage) (json.RawMessage, int) {
+	if len(rawTabs) == 0 {
+		return nil, 0
+	}
+	var tabs []map[string]json.RawMessage
+	if err := json.Unmarshal(rawTabs, &tabs); err != nil {
+		return nil, 0
+	}
+	dropped := 0
+	for _, tab := range tabs {
+		rawPanes, ok := tab["panes"]
+		if !ok {
+			continue
+		}
+		var panes []map[string]json.RawMessage
+		if err := json.Unmarshal(rawPanes, &panes); err != nil {
+			continue
+		}
+		changed := false
+		for _, pane := range panes {
+			for _, k := range paneEscalationKeys {
+				if _, present := pane[k]; present {
+					delete(pane, k)
+					dropped++
+					changed = true
+				}
+			}
+		}
+		if changed {
+			if rePanes, err := json.Marshal(panes); err == nil {
+				tab["panes"] = rePanes
+			}
+		}
+	}
+	if dropped == 0 {
+		return nil, 0
+	}
+	reTabs, err := json.Marshal(tabs)
+	if err != nil {
+		return nil, 0
+	}
+	return reTabs, dropped
 }
 
 // Set replaces the document with the caller's `data`, bumps the version,

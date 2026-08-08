@@ -286,17 +286,30 @@ func RegisteredGates() []*GateCounter {
 // meant to execute a subset and a floor over one would be noise, and when the
 // suite already failed, since a cascade of gate failures buries the real error.
 func RunGates(m interface{ Run() int }) int {
-	code := m.Run()
+	// Thin wrapper: all enforcement lives in `enforceGates`, which is exercised
+	// directly by TestRunGatesEnforcesTheFloor. Without that seam the floor's own
+	// body had no mutation-killing test — a refactor that returned early (or a
+	// dropped os.Exit) defeated every host gate while CI stayed green, because the
+	// only oracle for "the gates were checked" was TestMain running in production.
 	if verbose() {
 		for _, g := range RegisteredGates() {
 			fmt.Fprintf(os.Stderr, "gate: %s\n", g)
 		}
 	}
-	if code != 0 || filtered() {
+	return enforceGates(m.Run(), filtered(), RegisteredGates())
+}
+
+// enforceGates is the decision core of RunGates, factored out so the floor can be
+// mutation-tested with a controlled gate set instead of process-global state.
+// Returns the exit code: the suite's own `code` when it already failed, was
+// filtered to a subset, or every gate ran; otherwise 1, having printed which
+// gate groups did not run.
+func enforceGates(code int, filtered bool, gates []*GateCounter) int {
+	if code != 0 || filtered {
 		return code
 	}
 	var problems []string
-	for _, g := range RegisteredGates() {
+	for _, g := range gates {
 		if err := g.Require(); err != nil {
 			problems = append(problems, err.Error())
 		}

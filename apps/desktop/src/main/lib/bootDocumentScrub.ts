@@ -39,6 +39,28 @@ export const SPAWN_ESCALATION_KEYS = [
 ] as const;
 
 /**
+ * Per-PANE host-execution fields, dropped from every `tabs[].panes[]` entry of a
+ * bus-written boot document. Both are argv/command sinks that fire on the LOCAL
+ * desktop's next launch, NOT via spawnClaude but via the terminal restore path:
+ *
+ * - `shell` is argv[0] of the restored terminal. TerminalPane feeds
+ *   `shell || termCfg.shell` to `IPC.TERMINAL_CREATE`, which spawns `argv:[shell]`
+ *   through the LOCAL terminal door — the one that calls `resolveTerminalShell`
+ *   NOWHERE (lib/shellAllowlist.ts guards only the bus `terminals.create`). A
+ *   planted `/tmp/x` executable then runs on restore. The agent-LEVEL scrub above
+ *   never reached this, because it lives one level down inside a pane.
+ * - `initialCommand` is strictly worse: TerminalPane types it into the ready PTY
+ *   WITH a trailing CR (`write(initialCommand + '\r')`), so it is arbitrary shell
+ *   TEXT auto-executed on restore — no binary needs planting at all.
+ *
+ * Bus callers have no legitimate use for either: the desktop persists its own
+ * sessions through the LOCAL sessionService, so every document arriving on the
+ * bus is a remote/plugin/MCP one. Held equal to the Go twin's paneEscalationKeys
+ * by TestBootDocumentWritersScrubTheSameFields.
+ */
+export const PANE_ESCALATION_KEYS = ['shell', 'initialCommand'] as const;
+
+/**
  * Returns a copy of `agents` with the spawn-escalation fields removed from every
  * entry, and the list of keys that were actually dropped (for logging).
  *
@@ -58,6 +80,28 @@ export function scrubBootDocumentAgents<T>(agents: T): { agents: T; dropped: str
         delete copy[key];
         dropped.push(key);
       }
+    }
+    // Recurse into tabs[].panes[]: a restored terminal pane's `shell` /
+    // `initialCommand` are host-execution sinks the agent-level scrub can't see.
+    if (Array.isArray(copy.tabs)) {
+      copy.tabs = copy.tabs.map((tab) => {
+        if (!tab || typeof tab !== 'object' || Array.isArray(tab)) return tab;
+        const tabCopy = { ...(tab as Record<string, unknown>) };
+        if (Array.isArray(tabCopy.panes)) {
+          tabCopy.panes = tabCopy.panes.map((pane) => {
+            if (!pane || typeof pane !== 'object' || Array.isArray(pane)) return pane;
+            const paneCopy = { ...(pane as Record<string, unknown>) };
+            for (const key of PANE_ESCALATION_KEYS) {
+              if (key in paneCopy) {
+                delete paneCopy[key];
+                dropped.push(`pane.${key}`);
+              }
+            }
+            return paneCopy;
+          });
+        }
+        return tabCopy;
+      });
     }
     return copy;
   });

@@ -2,6 +2,7 @@ package sweepguard
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,4 +131,52 @@ func mustWD(t *testing.T) string {
 		t.Fatalf("getwd: %v", err)
 	}
 	return wd
+}
+
+// gate builds an unregistered GateCounter for enforceGates, so the floor's own
+// decision core is tested against a controlled set instead of the process-global
+// registry. `ran` distinct tests are recorded as executed.
+func gateWith(name string, expected, ran int) *GateCounter {
+	g := &GateCounter{name: name, expected: expected, ran: map[string]bool{}, skipped: map[string]string{}}
+	for i := 0; i < ran; i++ {
+		g.Ran(fmt.Sprintf("T%d", i))
+	}
+	return g
+}
+
+// The floor's own mutation-killer. RunGates is the ONLY thing that fails a
+// package when a group of host-gated tests skips itself out of existence, and it
+// runs from TestMain in production — so a refactor that returned early, or a
+// dropped os.Exit, defeated every host gate while `go test ./...` stayed green
+// (the meta-test only checks RunGates is CALLED, not that it ENFORCES). This
+// pins the enforcement itself.
+func TestRunGatesEnforcesTheFloor(t *testing.T) {
+	full := gateWith("symlink-gated", 3, 3)
+	starved := gateWith("symlink-gated", 3, 0)
+
+	// The core failure: the suite passed, was not filtered, and a gate did not
+	// fully run — the package MUST go red (exit 1), not report the suite's 0.
+	if got := enforceGates(0, false, []*GateCounter{starved}); got != 1 {
+		t.Fatalf("a gate that ran 0 of 3 while the suite passed must fail the package; enforceGates=%d, want 1", got)
+	}
+	// One starved gate among healthy ones is still a failure.
+	if got := enforceGates(0, false, []*GateCounter{full, starved}); got != 1 {
+		t.Fatalf("one starved gate must fail the package even beside a full one; enforceGates=%d, want 1", got)
+	}
+	// Every gate ran: nothing to add, pass through the suite's own code.
+	if got := enforceGates(0, false, []*GateCounter{full}); got != 0 {
+		t.Fatalf("all gates full must pass; enforceGates=%d, want 0", got)
+	}
+	if got := enforceGates(0, false, nil); got != 0 {
+		t.Fatalf("no gates registered must pass; enforceGates=%d, want 0", got)
+	}
+	// Stands down when the run was narrowed with -run/-bench: a subset is the
+	// point of the invocation, so a starved gate is expected, not a failure.
+	if got := enforceGates(0, true, []*GateCounter{starved}); got != 0 {
+		t.Fatalf("a filtered run must stand down even with a starved gate; enforceGates=%d, want 0", got)
+	}
+	// Never masks a real suite failure with its own exit code.
+	if got := enforceGates(2, false, []*GateCounter{starved}); got != 2 {
+		t.Fatalf("a suite that already failed must keep its own non-zero code; enforceGates=%d, want 2", got)
+	}
 }

@@ -242,7 +242,12 @@ pub(crate) async fn host_guard(
 /// Anything with a path separator, a `..` segment, or other bytes is a traversal
 /// attempt (`../../etc/passwd`) and is refused before it reaches the filesystem.
 /// axum percent-decodes the path segment first, so `%2e%2e%2f` is caught here too.
-fn valid_session_id(id: &str) -> bool {
+///
+/// `pub(crate)` because the spawn routes must gate a caller-pinned id *before*
+/// it flows into a filesystem sink (codex-thread sidecar filename, pi `-e`
+/// extension temp file, `mcp/ask/<id>` url, `--session-id` argv) — the write
+/// side of the same containment the read routes enforce.
+pub(crate) fn valid_session_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128
         && !id.contains("..")
