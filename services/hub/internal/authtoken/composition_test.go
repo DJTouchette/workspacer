@@ -44,7 +44,7 @@ func TestScopedTiersDoNotSilentlyAcquireAComposition(t *testing.T) {
 	}
 	sort.Strings(tierNames)
 
-	checkedPairs := 0
+	checkedPairs, closedPairsHeld := 0, 0
 	for _, tierName := range tierNames {
 		held := map[string]bool{}
 		for _, m := range scopedTiers[tierName].Methods() {
@@ -55,6 +55,24 @@ func TestScopedTiersDoNotSilentlyAcquireAComposition(t *testing.T) {
 		}
 		for _, c := range comps {
 			if !held[c.A] || !held[c.B] {
+				continue
+			}
+			// A pair marked ClosedBy is, by the record's own definition, "no
+			// stronger than its halves" — the named mechanism makes the
+			// composition add nothing, and TestClosedCompositionsNameALiveMechanism
+			// holds that mechanism to being a symbol that still exists. Holding
+			// both halves of such a pair is therefore not an acquisition, and
+			// demanding an AcceptedIn for it would force the record to say two
+			// contradictory things about the same pair (the well-formedness test
+			// forbids being both closed and accepted, for exactly the reason that
+			// a reader cannot act on both).
+			//
+			// This is the only relaxation in this file, and it is bounded by the
+			// floor below: pairs that are OPEN — accepted, or neither closed nor
+			// accepted — are still every one of them evaluated, and at least one
+			// must be.
+			if strings.TrimSpace(c.ClosedBy) != "" {
+				closedPairsHeld++
 				continue
 			}
 			checkedPairs++
@@ -85,6 +103,11 @@ made, not a method that arrived next to another one.`,
 	// and today exactly one is: agents.sendMessage + claude.approve in triage.
 	if checkedPairs == 0 {
 		t.Fatal("no scoped tier holds both halves of any recorded composition, so this guard evaluated nothing. Either the tiers narrowed (delete this floor and say so) or the record stopped naming methods the tiers grant.")
+	}
+	// And the relaxation must not become the whole story: if EVERY held pair is
+	// a closed one, this guard has skipped its way to a pass.
+	if closedPairsHeld > 0 && checkedPairs == 0 {
+		t.Fatalf("every composition a scoped tier holds (%d) was skipped as closed", closedPairsHeld)
 	}
 }
 

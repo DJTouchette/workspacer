@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 	"github.com/djtouchette/workspacer-hub/internal/capspec"
 	"github.com/djtouchette/workspacer-hub/internal/event"
 )
@@ -19,17 +18,7 @@ func scopedServer(t *testing.T, methods ...string) (url string, srv *Server) {
 	t.Helper()
 	url, srv = rpcServerWith(t)
 	srv.SetToken("host-secret")
-	srv.SetScopedTokenLookup(func(tok string) (ScopedIdent, bool) {
-		switch tok {
-		case "tok-view":
-			return ScopedIdent{Scope: "view", Methods: authtoken.ScopeView.Methods()}, true
-		case "tok-triage":
-			return ScopedIdent{Scope: "triage", Methods: authtoken.ScopeTriage.Methods()}, true
-		case "tok-operator":
-			return ScopedIdent{Scope: "operator", Methods: authtoken.ScopeOperator.Methods()}, true
-		}
-		return ScopedIdent{}, false
-	})
+	installScopedTiers(srv)
 	if len(methods) > 0 {
 		provider := dialClientToken(t, url, "host-secret")
 		provider.send(Frame{Op: "register", Methods: methods})

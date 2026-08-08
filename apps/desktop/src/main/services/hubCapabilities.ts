@@ -45,6 +45,7 @@ import * as terminalShare from './terminalShare';
 import { IPC } from '../shared/ipcChannels';
 import type { SessionData, LayoutInput, ProfileUpdate } from '../shared/ipcTypes';
 import { ensureSupervisorHome } from './supervisorSkill';
+import { scrubBootDocumentAgents } from '../lib/bootDocumentScrub';
 
 // Mirror of ipc.ts's shell detection so a capability-spawned terminal picks the
 // same default shell a UI-spawned one would. Kept local to avoid importing the
@@ -915,11 +916,20 @@ export function registerHubCapabilities(): void {
     const data = (params ?? {}) as SessionData;
     const ptyMapping = data.ptyMapping || {};
     if (Array.isArray(data.agents)) {
+      // This document is what the desktop respawns on its next launch, through
+      // the LOCAL IPC spawn door that scrubs nothing — the same crossing
+      // layout.set is scrubbed for. See lib/bootDocumentScrub.ts.
+      const { agents, dropped } = scrubBootDocumentAgents(data.agents as any[]);
+      if (dropped.length) {
+        console.warn(
+          `[security] sessions.save: dropping spawn-escalation field(s) ${dropped.join(', ')} from a bus client — the desktop respawns this document's agents verbatim on its next launch`,
+        );
+      }
       return sessionService.saveSession({
         name: data.name,
         timestamp: new Date().toISOString(),
         activeAgentId: data.activeAgentId,
-        agents: sessionService.enrichAgentsWithCwd(data.agents as any, ptyMapping),
+        agents: sessionService.enrichAgentsWithCwd(agents as any, ptyMapping),
       });
     }
     const enrichedTabs = (data.tabs || []).map((tab: any) => ({
@@ -942,7 +952,21 @@ export function registerHubCapabilities(): void {
 
   // ── Layout templates ───────────────────────────────────────────────────
   cat('layouts.list', () => layoutService.list());
-  cat('layouts.save', (params: unknown) => layoutService.save((params ?? {}) as LayoutInput));
+  cat('layouts.save', (params: unknown) => {
+    // The third copy of the boot-restore shape: a saved layout's `agents` array
+    // is restored from the Layouts menu into the same respawn path.
+    const input = { ...((params ?? {}) as LayoutInput) } as LayoutInput & { agents?: unknown };
+    if (Array.isArray(input.agents)) {
+      const { agents, dropped } = scrubBootDocumentAgents(input.agents as any[]);
+      input.agents = agents;
+      if (dropped.length) {
+        console.warn(
+          `[security] layouts.save: dropping spawn-escalation field(s) ${dropped.join(', ')} from a bus client`,
+        );
+      }
+    }
+    return layoutService.save(input as LayoutInput);
+  });
   cat('layouts.delete', (params: unknown) => {
     const { id } = (params ?? {}) as { id?: string };
     if (!id) throw new Error('layouts.delete requires { id }');

@@ -191,6 +191,10 @@ func pluginReloadHandler(add pluginAdder) http.HandlerFunc {
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
+		// An explicit, operator-guarded reload of a directory the caller named is
+		// a human act on this manifest — `workspacer plugin dev` is the caller —
+		// so it re-baselines the consented authority. A BOOT load does not.
+		plugin.RebaselineGrantPin(m)
 		add.Add(m)
 		log.Printf("reloaded plugin %s from %s", m.ID, body.Dir)
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": m.ID})
@@ -614,6 +618,10 @@ func main() {
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
+		// The install dialog put this manifest's capabilities in front of a
+		// human, so this is the moment its authority is (re)consented — see
+		// plugin.RebaselineGrantPin. Every OTHER load may only narrow.
+		plugin.RebaselineGrantPin(m)
 		mgr.Add(m)
 		log.Printf("installed plugin %s from %s", m.ID, body.URL)
 		_ = json.NewEncoder(w).Encode(m)
@@ -718,6 +726,7 @@ func main() {
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
+		plugin.RebaselineGrantPin(m)
 		mgr.Add(m)
 		log.Printf("added example plugin %s", m.ID)
 		_ = json.NewEncoder(w).Encode(m)

@@ -9,15 +9,12 @@ use crate::config::Config;
 use crate::types::Agent;
 
 pub(super) fn test_app() -> App {
-    // Redirect the config dir to a per-process temp dir: harpoon/rename/notes
-    // dispatch persists to disk, and tests must never touch the real files.
+    // Redirect the config dir: harpoon/rename/notes dispatch persists to disk,
+    // and tests must never touch the real files. It used to be a pid-named
+    // directory under /tmp that nothing ever removed — see crate::testenv.
     use std::sync::Once;
     static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        let dir = std::env::temp_dir().join(format!("wks-tui-input-test-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        std::env::set_var("XDG_CONFIG_HOME", &dir);
-    });
+    ONCE.call_once(|| crate::testenv::isolate_config_home("input"));
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let (ptx, _prx) = tokio::sync::mpsc::unbounded_channel();
     // An unused port: the background stream tasks fail and retry harmlessly.

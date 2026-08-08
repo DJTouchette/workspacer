@@ -5,17 +5,13 @@
 
 use super::*;
 
-/// Redirect the config dir to a per-process temp dir so tests never read or
-/// write the real ~/.config/workspacer (pins/names/notes). Without this,
-/// pin/note tests pollute the user's files and leak state across runs.
+/// Redirect the config dir away from the real ~/.config/workspacer (pins /
+/// names / notes) so tests neither read nor write it. It used to be a pid-named
+/// directory under /tmp that nothing ever removed — see crate::testenv.
 fn isolate_config() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        let dir = std::env::temp_dir().join(format!("wks-tui-test-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        std::env::set_var("XDG_CONFIG_HOME", &dir);
-    });
+    ONCE.call_once(|| crate::testenv::isolate_config_home("app"));
 }
 
 /// A docked pane takes the keys when it opens and hands them back on Ctrl-w,

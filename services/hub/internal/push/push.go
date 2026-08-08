@@ -206,6 +206,11 @@ func (m *Manager) RPCSubscribeAs(who Subscriber, params json.RawMessage) (any, e
 	if s.Endpoint == "" || s.Keys.P256dh == "" || s.Keys.Auth == "" {
 		return nil, errors.New("push.subscribe requires { endpoint, keys:{p256dh, auth} }")
 	}
+	// The endpoint is a NETWORK SINK the host is later made to POST to, on a
+	// trigger the triage tier can pull at will. See endpoint.go.
+	if err := validatePushEndpoint(s.Endpoint); err != nil {
+		return nil, err
+	}
 	m.mu.Lock()
 	m.subs[s.Endpoint] = storedSub{
 		Subscription: s,

@@ -46,6 +46,10 @@ type Subscription struct {
 	topics   []string
 	topicSet map[string]struct{} // membership index for topics; guarded by mu
 	dropped  atomic.Uint64
+	// admit, when set, is the authorization filter applied at ENQUEUE time —
+	// see [Broker.SubscribeFiltered]. A pointer so it can be installed
+	// atomically alongside a live fan-out.
+	admit atomic.Pointer[func(string) bool]
 	// Stream topics that lost at least one event since the consumer last
 	// checked. Guarded by mu.
 	desynced map[string]struct{}
@@ -164,6 +168,14 @@ func (s *Subscription) matches(typ string) bool {
 	return event.MatchesAny(s.topics, typ)
 }
 
+// admits reports whether this subscriber is allowed to be handed typ at all.
+// Checked before the channel send AND before noteDrop, so a refused topic
+// neither occupies a slot nor leaves a trace to report.
+func (s *Subscription) admits(typ string) bool {
+	fn := s.admit.Load()
+	return fn == nil || (*fn)(typ)
+}
+
 // Broker fans events out to matching subscribers.
 type Broker struct {
 	mu     sync.RWMutex
@@ -190,12 +202,38 @@ func NewWithBuffer(buffer int) *Broker {
 // Subscribe registers a consumer for the given topic patterns (may be nil and
 // added later via AddTopics).
 func (b *Broker) Subscribe(topics []string) *Subscription {
+	return b.SubscribeFiltered(topics, nil)
+}
+
+// SubscribeFiltered is Subscribe plus an ADMISSION filter: a nil filter admits
+// everything, otherwise only types it accepts are ever enqueued for this
+// subscriber.
+//
+// The filter is installed BEFORE the subscription becomes visible to publishers,
+// which is the whole reason this is a constructor argument rather than a setter.
+// A setter would leave a window in which the authorization the filter carries is
+// not yet in force, and that window is a race a reconnecting client wins as often
+// as it likes.
+//
+// It exists because authorization applied AFTER the fan-out is not the same
+// thing as authorization. The bus checked its consume grant in the writer
+// goroutine, so a denied topic had already been matched, enqueued into the
+// denied subscriber's channel, and — when that channel was full — recorded as a
+// DROP against it. For a pty.bytes.<id> stream that bookkeeping was then
+// published back to the very connection that may not consume the stream, as a
+// pty.desync event naming the sessionId: the guarded topic's own drop record
+// escaping as a side channel. Filtering here means an event a subscriber may not
+// receive costs it no buffer slot and generates no bookkeeping to leak.
+func (b *Broker) SubscribeFiltered(topics []string, admit func(string) bool) *Subscription {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.nextID++
 	sub := &Subscription{
 		C:  make(chan event.Envelope, b.buffer),
 		id: b.nextID,
+	}
+	if admit != nil {
+		sub.admit.Store(&admit)
 	}
 	sub.addLocked(topics) // not yet published, so no other goroutine can see it
 	b.subs[sub.id] = sub
@@ -226,7 +264,7 @@ func (b *Broker) Publish(ev event.Envelope) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for _, sub := range b.subs {
-		if !sub.matches(ev.Type) {
+		if !sub.matches(ev.Type) || !sub.admits(ev.Type) {
 			continue
 		}
 		select {
@@ -235,6 +273,21 @@ func (b *Broker) Publish(ev event.Envelope) {
 			sub.noteDrop(ev.Type)
 		}
 	}
+}
+
+// DroppedTotal is how many events every live subscription has discarded for
+// lack of buffer, summed. It exists so a caller can assert the NEGATIVE — that
+// an unauthorized topic cost a subscriber nothing — which is not observable from
+// the outside any other way: a refused event that was never enqueued and one
+// that was enqueued and then discarded by the writer look identical on the wire.
+func (b *Broker) DroppedTotal() uint64 {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	var n uint64
+	for _, sub := range b.subs {
+		n += sub.Dropped()
+	}
+	return n
 }
 
 // SubscriberCount returns the number of active subscriptions.

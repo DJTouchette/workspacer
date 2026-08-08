@@ -234,7 +234,7 @@ var unscopedByDecision = map[string]string{
 	// CAP_LABELS row warned about them. layout.set was one of them, and it is a
 	// second door onto every clamp agents.spawn applies.
 	"layout.set":             "the shared workspace document, which the hub deliberately does not interpret — except for the four per-agent fields that stop being DESCRIPTION and become ARGUMENTS TO A SPAWN when the desktop adopts the document on its next launch (skipPermissions, permissionMode, profileId, mcpItemIds; App.tsx adoptSharedLayout → reconcileAgents{respawnStopped} → respawnFromRecord → the LOCAL spawnClaude IPC, which scrubs nothing). Those four are stripped from a NON-TRUSTED write by layout.scrubAdoptedSpawnFields, exactly as agents.spawn strips them from a bus spawn; everything else round-trips byte for byte. There is no path to confine — the document names cwds but never opens one",
-	"push.subscribe":         "the endpoint is a URL the hub itself POSTs to, so it is a request the host makes on the caller's behalf rather than a path or an argv. Bounded by the Web Push protocol (the payload is encrypted to the subscription's own keys, so the endpoint learns nothing it did not supply) and by RPCSubscribeAs recording WHICH credential asked, so revoking a phone's token revokes its notifications",
+	"push.subscribe":         "the endpoint is a URL the hub itself POSTs to, so it is a request the host makes on the caller's behalf rather than a path or an argv. This reason used to stop at what the ENDPOINT learns (the payload is encrypted to the subscription's own keys) and said nothing about what the HOST is made to DO — and the host's network position is Tailscale-reachable, loopback-reachable and cloud-metadata-reachable, for a TRIAGE tier holding no fetch, no exec, no fs and no config capability, on a trigger that same tier can pull at will. Bounded now by validatePushEndpoint (https only, no loopback/private/link-local/unique-local host: the shape a browser PushManager actually produces), plus RPCSubscribeAs recording WHICH credential asked so revoking a phone's token revokes its notifications",
 	"push.unsubscribe":       "the endpoint selects a stored subscription row to delete — the narrowing direction, and never joined into a path",
 	"push.revoke":            "deletes a stored subscription by id. Operator-only by construction (absent from both scoped tiers), and narrowing",
 	"sessions.terminalInput": "writes raw bytes into an existing session's PTY: there is no path and no subtree to confine, so holding the capability is the gate, exactly as for terminals.create. NOTE that this makes terminals.create's shell allowlist a boundary only against callers that do not ALSO hold this method — allowlisted /bin/bash plus typed bytes is full argv[0] freedom — and that the sessionId is not ownership-checked on either provider, so it reaches the local user's own agent PTY too",
@@ -820,7 +820,7 @@ var unscopedParams = map[string]map[string]ParamDecision{
 		"data": {KindPermission, "the shared workspace document. Opaque to the hub except for four per-agent fields that become arguments to a LOCAL spawn when the desktop adopts it — skipPermissions, permissionMode, profileId, mcpItemIds — which layout.scrubAdoptedSpawnFields strips from a non-trusted write, matching agents.spawn's own clamps. The document's cwds and URLs are description: the hub never opens one"},
 	},
 	"push.subscribe": {
-		"endpoint": {KindURL, "a push-service URL the HOST posts to on the caller's behalf. The payload is encrypted to the subscription's own keys, so the endpoint learns nothing it did not supply, and RPCSubscribeAs records which credential asked so a revoked token stops being notified"},
+		"endpoint": {KindURL, "a push-service URL the HOST posts to on the caller's behalf — a NETWORK SINK, not a string, and stored by one call for a different subsystem (push.Watch) to use later. Constrained by validatePushEndpoint to https at a non-private host; the payload is encrypted to the subscription's own keys, and RPCSubscribeAs records which credential asked so a revoked token stops being notified"},
 	},
 	"push.unsubscribe": {
 		"endpoint": {KindID, "selects a stored subscription row to delete — narrowing, and never joined into a path"},
@@ -1159,69 +1159,7 @@ type EventGrants struct {
 	Provides []string
 }
 
-// eventTopicGuards maps an event TOPIC pattern to the capability method whose
-// output that topic carries.
-//
-// The two authorization planes were separate systems answering the same
-// question. The CAPABILITY plane (Scope.Methods, mayCall) refuses
-// sessions.attachTerminal to a `view` token — it is sensitive:true in CAP_LABELS
-// and in neither scoped tier's allowlist. The EVENT plane (bus.mayConsume) read
-//
-//	return cn.trusted || cn.scopeMethods != nil || MatchesAny(cn.consumes, typ)
-//
-// where the middle clause waves EVERY topic through for ANY scoped user token,
-// without consulting the method allowlist that just denied the call. So a view
-// token subscribed to `pty.bytes.<id>` and received the session's raw PTY bytes:
-// the whole screen, including the ring-buffer replay attachTerminal deliberately
-// restarts the stream for. Neither half is wrong alone — the attach is correctly
-// refused, and event subscriptions are deliberately part of even the view tier —
-// but composed, the sensitive capability's entire OUTPUT was delivered to the
-// credential that was refused it. terminals.* is in neither scoped tier at all,
-// so this was the only door onto a terminal's screen, and it was open.
-//
-// The rule this table encodes: an event topic that carries a capability's output
-// requires that capability. Everything not listed stays open to every tier,
-// which is what keeps /m's fleet feed working on a view token.
-//
-// Plugins are NOT affected and are deliberately not covered here: a plugin's
-// event reach is its manifest's `consumes`, declared at install and shown in the
-// consent dialog, which is a real answer to the same question. Scoped user
-// tokens have no manifest — their allowlist IS the method list.
-var eventTopicGuards = map[string]string{
-	// The OUTPUT side of the PTY, as the capability's own capspec reason says:
-	// "what it grants is the OUTPUT side of sessions.terminalInput".
-	"pty.bytes.*": "sessions.attachTerminal",
-	// A change feed on a path, republished to every subscriber rather than to
-	// the caller that asked for it — an activity oracle on files whose contents
-	// may still be unreadable. fs.watch is what installs the watcher.
-	"fs.changed": "fs.watch",
-}
-
-// EventTopicCapability returns the capability method an event topic's payload is
-// the output of, and whether the topic is guarded at all. `pattern` uses the
-// same trailing-'*' form as manifest consume patterns.
-//
-// Matching is spelled out here rather than delegated, because internal/event
-// would be an import cycle away and the rule is two lines: exact match, or a
-// trailing '*' matching a prefix.
-func EventTopicCapability(topic string) (method string, guarded bool) {
-	for pattern, m := range eventTopicGuards {
-		if pattern == topic {
-			return m, true
-		}
-		if strings.HasSuffix(pattern, "*") && strings.HasPrefix(topic, strings.TrimSuffix(pattern, "*")) {
-			return m, true
-		}
-	}
-	return "", false
-}
-
-// EventTopicGuards returns a copy of the topic→capability table, for tests that
-// must assert every guarded topic names a method that is itself classified.
-func EventTopicGuards() map[string]string {
-	out := make(map[string]string, len(eventTopicGuards))
-	for k, v := range eventTopicGuards {
-		out[k] = v
-	}
-	return out
-}
+// The event plane's topic registry lives in eventtopics.go — EventTopicSpec,
+// EventTopicCapability, EventTopicHostOnly, EventTopicIsHostOwned. It is next to
+// this file rather than in it because it answers a different verb (SUBSCRIBE and
+// PUBLISH, not CALL) and because it needs three dispositions, not one table.

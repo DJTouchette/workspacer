@@ -21,6 +21,8 @@ mod profiles;
 mod render;
 mod runs;
 mod terminal;
+#[cfg(test)]
+mod testenv;
 mod theme;
 mod types;
 mod ui;

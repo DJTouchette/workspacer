@@ -921,6 +921,10 @@ func (r *registry) layoutsSave(raw json.RawMessage) (json.RawMessage, error) {
 	if str(input["name"]) == "" && str(input["id"]) == "" {
 		return nil, fmt.Errorf("layouts.save requires { name }")
 	}
+	// The third copy of the boot-restore shape: restored from the Layouts menu
+	// into the same loadAgentsFromSession -> reconcileAgents -> respawnFromRecord
+	// path. See bootdoc.go.
+	scrubBootDocumentAgents("layouts.save", input)
 	layout, err := saveLayout(input)
 	if err != nil {
 		return nil, err
@@ -975,6 +979,9 @@ func (r *registry) savedSessionSave(raw json.RawMessage) (json.RawMessage, error
 			data["activeAgentId"] = p["activeAgentId"]
 		}
 		data["agents"] = agents
+		// This document is respawned by the desktop's next launch — see
+		// bootdoc.go. layout.set's writer is scrubbed; this one was not.
+		scrubBootDocumentAgents("sessions.save", data)
 	} else {
 		if p["activeTabId"] != nil {
 			data["activeTabId"] = p["activeTabId"]

@@ -68,6 +68,45 @@ func runSessionStore(ctx context.Context, cm *claudemonClient, store *sessionSto
 	}
 }
 
+// visibleStatusLinePublisher builds runStatusLines' publish callback with the
+// SAME fleet-visibility rule every other fleet read already goes through.
+//
+// It did not have one, and that was a disclosure the capability plane refuses.
+// agents.list and sessions.snapshots run through registry.visibleSnapshots, and
+// every agent.snapshot publish through vis.visible — because a stopped session
+// the shared layout does not curate is deliberately not part of the fleet. This
+// publish ran unconditionally: with a layout curating nothing, sessions.snapshots
+// returned zero snapshots and vis.visible(HIDDEN-1) was false while
+// agent.statusline published {"sessionId":"HIDDEN-1","statusLine":{model_display,
+// cost_usd:41.72, context_used_pct:88.1, five_hour_pct:93.0}} to every
+// subscriber. That leaks the EXISTENCE and id of a hidden session plus its cost,
+// model and rate-limit state — and sessions.snapshot(id) is view-callable and
+// unfiltered by id, so the leaked id completed the read.
+//
+// Fail-closed on an unknown session, deliberately: updateStatusLine already
+// skips a session it has no snapshot for ("nothing to merge into yet"), so
+// publishing its id would announce a session the store itself does not admit to
+// having. The topic is also guarded on the event plane now (it carries
+// sessions.snapshot's output), but a guard on WHO receives it is not a
+// substitute for a filter on WHAT is published: the two protect against
+// different mistakes, and the desktop's twin publisher makes the same choice.
+func visibleStatusLinePublisher(store *sessionStore, vis *visibility, publish func(string, json.RawMessage)) func(string, json.RawMessage) {
+	return func(id string, sl json.RawMessage) {
+		snap, ok := store.get(id)
+		if !ok {
+			return
+		}
+		if vis != nil && !vis.visible(context.Background(), snap) {
+			return
+		}
+		payload, err := json.Marshal(map[string]any{"sessionId": id, "statusLine": sl})
+		if err != nil {
+			return
+		}
+		publish("agent.statusline", payload)
+	}
+}
+
 // runStatusLines follows claudemon's high-frequency /statusline/stream, merging
 // each tick into the store (silently) and handing it to publish for the light
 // `agent.statusline` event. Reconnects with backoff.

@@ -77,12 +77,7 @@ func main() {
 		go runSessionStore(ctx, cm, store)
 		// Live cost/context: follow the high-frequency statusline stream and push
 		// a light `agent.statusline` event (sessionId + the status line) per tick.
-		go runStatusLines(ctx, cm, store, func(id string, sl json.RawMessage) {
-			payload, err := json.Marshal(map[string]any{"sessionId": id, "statusLine": sl})
-			if err == nil {
-				bus.publish("agent.statusline", payload)
-			}
-		})
+		go runStatusLines(ctx, cm, store, visibleStatusLinePublisher(store, vis, bus.publish))
 		// PTY-over-bus: lease-gated terminal forwarders republishing claudemon's
 		// byte stream as pty.bytes.<sessionId> events.
 		term := newTerminalHub(cm, bus.publish)

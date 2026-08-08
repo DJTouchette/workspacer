@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -345,5 +346,54 @@ func TestAgentCwdLivenessContractCases(t *testing.T) {
 	}
 	if !sawLive || !sawDead {
 		t.Fatal("the block must carry both verdicts, or a copy that answers one constant passes it")
+	}
+}
+
+// PROVEN LEAK, kept as a test. agent.statusline was the ONE fleet publish with
+// no visibility filter. agents.list and sessions.snapshots go through
+// registry.visibleSnapshots and every agent.snapshot publish through
+// vis.visible; runStatusLines published unconditionally, so a layout curating
+// nothing produced zero snapshots from every read while the statusline stream
+// announced the hidden session's id, model, cost and rate-limit state — and
+// sessions.snapshot(id) is view-callable and unfiltered by id, so the leaked id
+// completed the read.
+func TestStatusLinePublishHonoursFleetVisibility(t *testing.T) {
+	store := newSessionStore()
+	store.seed(map[string]json.RawMessage{
+		"HIDDEN-1": json.RawMessage(`{"session_id":"HIDDEN-1","mode":"stopped","updated_at":"2020-01-01T00:00:00Z"}`),
+		"SHOWN-1":  json.RawMessage(`{"session_id":"SHOWN-1","mode":"running"}`),
+	})
+	// A layout that curates nothing: hasLayout is true, so the 24h fallback for
+	// headless installs does not apply and only live sessions are fleet members.
+	vis := newVisibility(func(context.Context) (json.RawMessage, error) {
+		return json.RawMessage(`{"version":1,"data":{"agents":[]}}`), nil
+	}, time.Hour)
+
+	var published []string
+	pub := visibleStatusLinePublisher(store, vis, func(topic string, payload json.RawMessage) {
+		published = append(published, topic+" "+string(payload))
+	})
+
+	// Precondition, asserted rather than assumed.
+	if vis.visible(context.Background(), json.RawMessage(`{"session_id":"HIDDEN-1","mode":"stopped","updated_at":"2020-01-01T00:00:00Z"}`)) {
+		t.Fatal("precondition: HIDDEN-1 must be invisible to the fleet rule")
+	}
+
+	sl := json.RawMessage(`{"model_display":"opus","cost_usd":41.72,"context_used_pct":88.1,"five_hour_pct":93.0}`)
+	pub("HIDDEN-1", sl)
+	pub("UNKNOWN-TO-THE-STORE", sl)
+	pub("SHOWN-1", sl)
+
+	for _, got := range published {
+		if strings.Contains(got, "HIDDEN-1") {
+			t.Errorf("agent.statusline published for a session the fleet rule hides: %s\nIt discloses the id, and sessions.snapshot(id) is view-callable and unfiltered by id, so the id completes the read.", got)
+		}
+		if strings.Contains(got, "UNKNOWN-TO-THE-STORE") {
+			t.Errorf("agent.statusline published for a session the store has no snapshot for: %s\nupdateStatusLine skips those, so publishing announces a session the store does not admit to having.", got)
+		}
+	}
+	// FLOOR: the filter must not have muted the feed.
+	if len(published) != 1 || !strings.Contains(published[0], "SHOWN-1") || !strings.Contains(published[0], "cost_usd") {
+		t.Fatalf("the live session's statusline did not publish; got %v", published)
 	}
 }

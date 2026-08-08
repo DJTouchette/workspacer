@@ -31,6 +31,13 @@ func grantsFor(mf Manifest) []capspec.Grant {
 // plugin's directory plus any extra bindings the caller supplies (e.g.
 // {"agentCwd": "/path"} when minting a token for an agent-scoped pane).
 func grantsWithBindings(mf Manifest, extra map[string]string) []capspec.Grant {
+	// The manifest is NOT the authority. plugin.json lives inside the sandbox's
+	// only write root, so the sidecar can rewrite its own capability list and the
+	// hub would re-derive a larger grant on the SAME persisted token. Narrow to
+	// the consented surface recorded outside the plugin dir — see grantpin.go.
+	// Every token-minting path (static, pane, settings re-Add) funnels through
+	// here and eventGrantsFor, so this is the one place it has to happen.
+	mf = consentedManifest(mf)
 	bindings := map[string]string{"pluginDir": mf.Dir}
 	for k, v := range extra {
 		bindings[k] = v
@@ -51,6 +58,9 @@ func grantsWithBindings(mf Manifest, extra map[string]string) []capspec.Grant {
 // of (provides). Verbatim from the manifest — the patterns are matched at the
 // bus with the same syntax as subscription topics.
 func eventGrantsFor(mf Manifest) capspec.EventGrants {
+	// Same reason as grantsWithBindings: emits/consumes/provides are declared in
+	// the file the plugin itself can write.
+	mf = consentedManifest(mf)
 	// Provides is re-checked here, not just in Validate: a plugin already on
 	// disk from before this rule, or one added through a path that skipped
 	// validation, must still not be able to claim a core method. Offending
@@ -218,6 +228,13 @@ func expandScope(p string, bindings map[string]string) string {
 		}
 		if bus.PathIsSecret(canon) {
 			log.Printf("SECURITY: dropping absolute path scope %q — it names a credential file or lands in the config dir outside library/ layouts/ sessions/", p)
+			return ""
+		}
+		// The same predicate the ${…} branch above already asks. One rule, two
+		// callers, and only one of them was asking: a manifest declaring fs.write
+		// on "/" passed through here unexamined on install-time consent alone.
+		if isVolumeRoot(canon) {
+			log.Printf("SECURITY: dropping absolute path scope %q — it resolves to the volume root %q, which contains every path on the host; that is not a scope", p, canon)
 			return ""
 		}
 		return p
@@ -561,6 +578,10 @@ func (m *Manager) Add(mf Manifest) {
 	// host). A webview-only plugin has no sidecar but still needs a token, and a
 	// widget-only plugin (ui + widgets, no panes) needs one just as much.
 	if !mf.Disabled && m.reg != nil && (mf.Server != nil || len(mf.Panes) > 0 || len(mf.Widgets) > 0) {
+		// Trust on first load: a plugin the hub has never seen gets its declared
+		// surface recorded as consented. Done HERE and not inside the grant
+		// derivation, so deriving a grant stays side-effect free.
+		ensureGrantPin(mf)
 		l.token = loadOrCreatePluginToken(mf.Dir)
 		if l.token != "" {
 			m.reg.RegisterPluginToken(l.token, mf.ID, grantsFor(mf), eventGrantsFor(mf))

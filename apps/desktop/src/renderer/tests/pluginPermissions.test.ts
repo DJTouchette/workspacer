@@ -6,6 +6,7 @@ import {
   hasSensitivePermission,
   CAP_LABELS,
   capLine,
+  capabilityBehindTopic,
 } from '../src/lib/pluginPermissions';
 import type { PluginManifest } from '../src/types/plugin';
 
@@ -155,8 +156,13 @@ describe('pluginPermissions', () => {
   it('flags a blanket * consume as seeing all bus activity', () => {
     const [recv] = pluginPermissions(mf({ consumes: ['*'] }));
     expect(recv.lines[0]).toMatchObject({ severity: 'sensitive', detail: 'all bus activity' });
-    const [scoped] = pluginPermissions(mf({ consumes: ['agent.*'] }));
+    const [scoped] = pluginPermissions(mf({ consumes: ['workflow.*'] }));
     expect(scoped.lines[0].severity).toBe('normal');
+    // `agent.*` SPANS agent.statusline, which carries sessions.snapshot's
+    // output, so it is no longer an ordinary scoped pattern — a wildcard that
+    // reaches a guarded topic is asking for that topic.
+    const [spanning] = pluginPermissions(mf({ consumes: ['agent.*'] }));
+    expect(spanning.lines[0].severity).toBe('sensitive');
   });
 
   // Answering a capability call puts the plugin in the path of something the
@@ -264,5 +270,47 @@ describe('CAP_LABELS drift guard', () => {
     // the worst a stale list can do is over-warn.
     const line = capLine({ method: 'some.brand.new.capability' } as never);
     expect(line.severity).toBe('sensitive');
+  });
+});
+
+// PROVEN, and the half that survives the bus fix. eventTopicGuards was consulted
+// on ONE arm of mayConsume and skipped on the other: a plugin with ZERO
+// capabilities and `consumes: ["pty.bytes.*", "fs.changed"]` was refused
+// sessions.attachTerminal and fs.watch on the call plane and handed both
+// capabilities' entire output on the event plane. The stated justification for
+// that exemption was THIS dialog — "declared at install and shown in the consent
+// dialog, which is a real answer to the same question" — and it rendered both
+// lines at severity=normal with hasSensitivePermission() === false, while the
+// same reach spelled as capabilities rendered sensitive on both.
+describe('consumes lines for capability-guarded topics', () => {
+  it('flags a terminal-stream subscription the way the capability is flagged', () => {
+    const asCapability = mf({ capabilities: ['sessions.attachTerminal', 'fs.watch'] });
+    expect(hasSensitivePermission(asCapability)).toBe(true);
+
+    const asEvents = mf({ consumes: ['pty.bytes.*', 'fs.changed'] });
+    expect(
+      hasSensitivePermission(asEvents),
+      'the two manifests ask for the same reach — the raw PTY stream and the fs change feed — and only one of them warned',
+    ).toBe(true);
+    const lines = pluginPermissions(asEvents).find((g) => g.key === 'receive')!.lines;
+    for (const line of lines) {
+      expect(line.severity, `${line.label} rendered as ordinary`).toBe('sensitive');
+      expect(line.detail, `${line.label} has no explanation`).toBeTruthy();
+    }
+  });
+
+  it('leaves an ordinary topic ordinary, so the flag still means something', () => {
+    const manifest = mf({ consumes: ['agent.state_changed', 'myplugin.tick'] });
+    const groups = pluginPermissions(manifest);
+    expect(hasSensitivePermission(manifest)).toBe(false);
+    for (const line of groups.find((g) => g.key === 'receive')!.lines) {
+      expect(line.severity).toBe('normal');
+    }
+  });
+
+  it('catches a wildcard that SPANS a guarded family', () => {
+    expect(capabilityBehindTopic('pty.*')).toBe('sessions.attachTerminal');
+    expect(capabilityBehindTopic('pty.bytes.s1')).toBe('sessions.attachTerminal');
+    expect(capabilityBehindTopic('agent.snapshot')).toBeUndefined();
   });
 });

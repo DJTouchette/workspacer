@@ -481,6 +481,68 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
+// scopedRevalidateInterval is how often a live scoped-token connection
+// re-presents its credential to the store. Small enough that a stolen phone is
+// cut off in seconds; large enough that the cost is one mtime-gated map lookup
+// per connection per tick (authtoken.Store only re-reads the file when it
+// changed).
+var scopedRevalidateInterval = 5 * time.Second
+
+// revalidateScoped re-checks a live connection's scoped token against the store
+// and CLOSES the socket when it stops resolving, or resolves to a different
+// tier.
+//
+// Revocation was a control-plane act the event plane never heard about.
+// `workspacer token revoke` rewrites tokens.json and the store re-reads it, so a
+// NEW dial with that token is correctly 401'd — the code's own comment says
+// revoking "takes effect on the next connection". The socket already open was
+// untouched: handshake classification happens once (scopeMethods is a snapshot),
+// nothing re-consulted the store, nothing set revoked, nothing closed the
+// socket. A revoked phone kept receiving the whole event firehose and kept
+// making capability calls for the life of the hub process — and an
+// operator-scoped token is promoted to `trusted` at handshake, so a revoked
+// operator socket kept FULL host authority.
+//
+// This is exactly the hole that was already found and fixed for PLUGIN tokens
+// (UnregisterPluginToken sets revoked AND calls CloseNow, pinned by
+// TestRevocationClosesTheConnectionAndStopsEventDelivery). Scoped user tokens —
+// the phone / web-remote tier, the one credential a user is actually expected to
+// revoke — never got the same treatment, which left revocation advisory for the
+// only credential class it exists for.
+//
+// Polling rather than a push from the store, deliberately: the store is a
+// read-through cache over a FILE that any process may rewrite (the CLI does,
+// out-of-process), so there is no event to subscribe to. internal/push made the
+// same call for the same reason — it re-checks HasFingerprint on every
+// notification because a subscription outlives the connection that made it.
+func (s *Server) revalidateScoped(ctx context.Context, cn *conn, tok, authScope string) {
+	t := time.NewTicker(scopedRevalidateInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			si, ok := s.lookupScoped(tok)
+			if ok && si.Scope == authScope {
+				continue
+			}
+			// Both halves, exactly as UnregisterPluginToken applies them: the
+			// flag so anything already read off the wire is denied even before
+			// the close lands, and the close so the socket does not sit there
+			// consuming events.
+			cn.revoked.Store(true)
+			_ = cn.ws.CloseNow()
+			if ok {
+				log.Printf("[bus] scoped token %s: tier changed %q -> %q while connected; connection closed", cn.tokenID, authScope, si.Scope)
+			} else {
+				log.Printf("[bus] scoped token %s revoked; connection closed", cn.tokenID)
+			}
+			return
+		}
+	}
+}
+
 func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	// Reject cross-site browser origins before doing any auth work. A non-browser
 	// client (Electron main, mobile native, brain/MCP busclient) sends no Origin
@@ -502,11 +564,18 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	var events capspec.EventGrants
 	var scope string
 	var scopeMethods []string
+	// viaScoped marks a connection authenticated from tokens.json, so its
+	// credential can be RE-checked while the socket is open — see
+	// revalidateScoped. authScope is the tier it presented, so a downgrade is a
+	// revocation too.
+	var viaScoped bool
+	var authScope string
 	if pi, ok := s.lookupPluginToken(tok); ok {
 		caps, pluginID, events = pi.caps, pi.id, pi.events
 	} else if s.token == "" || tok == s.token {
 		trusted = true
 	} else if si, ok := s.lookupScoped(tok); ok {
+		viaScoped, authScope = true, si.Scope
 		if si.operator() {
 			trusted = true
 		} else {
@@ -558,9 +627,20 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 		}
 		defer s.untrackPluginConn(tok, cn)
 	}
+	if viaScoped {
+		go s.revalidateScoped(ctx, cn, tok, authScope)
+	}
 	defer cn.ws.CloseNow()
 
-	sub := s.broker.Subscribe(nil)
+	// Filtered at ENQUEUE, not at write. See broker.SubscribeFiltered: checking
+	// the consume grant in the writer goroutine below meant a denied topic was
+	// still matched, still took a slot in this connection's channel, and — when
+	// that channel filled — was still recorded as a drop against it, which the
+	// desync path then reported back naming the sessionId of a stream this
+	// connection may not consume. The writer-side check stays as well: topics can
+	// change under a live subscription, and two cheap checks are worth less than
+	// one authorization applied in only one place.
+	sub := s.broker.SubscribeFiltered(nil, cn.mayConsume)
 	defer s.broker.Unsubscribe(sub)
 	defer s.router.dropConn(cn) // unregister provider + fail outstanding calls
 
@@ -808,9 +888,44 @@ func (cn *conn) helloFrame() Frame {
 
 // mayPublish reports whether this connection may publish an event of the given
 // type. Trusted conns publish anything; a plugin may publish only types matched
-// by its manifest's `emits`.
+// by its manifest's `emits`, and NOBODY but a trusted conn may publish a topic
+// capspec classifies — those are host state.
+//
+// The manifest used to be the whole answer, and a manifest is a statement about
+// what a plugin WANTS to emit, not about who OWNS the topic. Two proven chains
+// came through that gap, both from a plugin holding zero capabilities:
+//
+//   - `emits: ["layout.changed"]` publishes a layout document carrying
+//     skipPermissions, permissionMode, profileId and mcpItemIds — the exact four
+//     fields layout.SetAs scrubs from a non-trusted writer because "they stop
+//     being description on the desktop's next launch and become arguments to a
+//     spawn". The scrub lives on the CALL; every client adopts the BROADCAST.
+//     Publishing the document directly skips the service that scrubs it, and a
+//     publisher-chosen `version: 999999` also wins every later comparison, so
+//     genuine layout.set broadcasts are ignored from then on.
+//   - `emits: ["agent.snapshot"]` drives internal/push: the Manager consumes
+//     that topic in-process and fires the phone's "needs you" Web Push on the
+//     un-blocked→blocked edge, titled from the payload's own liveCwd. A forged
+//     snapshot puts attacker-authored text on the lock screen deep-linked to a
+//     REAL session, and the same write moves push's state machine past the edge,
+//     so the GENUINE approval prompt for that session is never notified.
+//
+// Both are "a trusted in-hub component treats this topic as authoritative
+// input". Ownership is not a per-consumer question, so it is not enforced
+// per-consumer. Plugin-defined topics (example.clock.tick, the rules engine's
+// command.*) are unclassified and stay manifest-gated: nothing in the hub reads
+// them as host state.
 func (cn *conn) mayPublish(typ string) bool {
-	return cn.trusted || event.MatchesAny(cn.emits, typ)
+	if cn.revoked.Load() {
+		return false
+	}
+	if cn.trusted {
+		return true
+	}
+	if capspec.EventTopicIsHostOwned(typ) {
+		return false
+	}
+	return event.MatchesAny(cn.emits, typ)
 }
 
 // mayConsume reports whether an event of the given type may be delivered to this
@@ -829,22 +944,67 @@ func (cn *conn) mayPublish(typ string) bool {
 // all, so the event plane was the ONLY door onto a terminal's screen and it was
 // open. Neither half was wrong alone; the composition was.
 //
-// capspec.EventTopicCapability owns the table, next to the classification of the
-// methods it names. Plugins are deliberately not covered by it: their event
-// reach is the manifest `consumes` list, declared at install and shown in the
-// consent dialog, which is a real answer to the same question. A scoped user
-// token has no manifest — its method allowlist IS the answer.
+// capspec.EventTopicSpec owns the registry, next to the classification of the
+// methods it names, and its DEFAULT IS CLOSED. The scoped arm used to end in
+// `return true`, which made the table a two-row denylist governing a
+// twenty-five-topic plane: a matrix run against the real bus with the real tiers
+// delivered 23 of 25 topics to a `view` token, including pty.desync and pty.exit
+// (siblings of the guarded pty.bytes.* stream), agent.statusline for a session
+// fleet visibility was hiding, and plugin.log — a verbatim line of sidecar
+// stderr, whose environment carries plugin secrets in plaintext.
+//
+// PLUGINS are no longer exempt for topics the registry names. Their manifest
+// `consumes` is a real answer for a topic nobody classified — a plugin-defined
+// topic is not host state — but it was NOT an answer for pty.bytes.*: a plugin
+// with ZERO capabilities and `consumes: ["pty.bytes.*","fs.changed"]` was
+// refused sessions.attachTerminal and fs.watch on the call plane and handed both
+// capabilities' whole output here, while the install-consent dialog rendered
+// those two lines at severity=normal and hasSensitivePermission() returned
+// false. So for a classified topic the manifest is a FILTER, not a grant: a
+// guarded topic additionally requires the capability, and a host-only topic is
+// refused outright.
 func (cn *conn) mayConsume(typ string) bool {
+	// Revocation FIRST, before the trusted short-circuit, because an
+	// operator-scoped token is promoted to trusted at handshake: a revoked
+	// operator socket that kept consuming everything would be the worst case of
+	// the very hole this check exists for.
+	if cn.revoked.Load() {
+		return false
+	}
 	if cn.trusted {
 		return true
 	}
+	spec, classified := capspec.EventTopicSpec(typ)
 	if cn.scopeMethods != nil {
-		if method, guarded := capspec.EventTopicCapability(typ); guarded {
-			return event.MatchesAny(cn.scopeMethods, method)
+		if !classified {
+			// Fail closed. An unclassified topic reaching a scoped user token is
+			// the state this whole registry exists to end.
+			return false
 		}
+		switch spec.Disposition {
+		case capspec.TopicGuardedBy:
+			return event.MatchesAny(cn.scopeMethods, spec.Method)
+		case capspec.TopicHostOnly:
+			return false
+		default:
+			return true
+		}
+	}
+	if !event.MatchesAny(cn.consumes, typ) {
+		return false
+	}
+	if !classified {
 		return true
 	}
-	return event.MatchesAny(cn.consumes, typ)
+	switch spec.Disposition {
+	case capspec.TopicGuardedBy:
+		_, held := cn.caps[spec.Method]
+		return held
+	case capspec.TopicHostOnly:
+		return false
+	default:
+		return true
+	}
 }
 
 // mayProvide reports whether this connection may register as the provider of a

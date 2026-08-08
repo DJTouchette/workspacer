@@ -251,6 +251,47 @@ function isBroad(pattern: string): boolean {
   return pattern === '*' || pattern.startsWith('command.');
 }
 
+/**
+ * Event topics that carry a CAPABILITY'S OUTPUT, and the capability each one
+ * requires — the renderer's copy of capspec's event-topic registry
+ * (services/hub/internal/capspec/eventtopics.go, TopicGuardedBy rows). Held
+ * equal to it by TestConsentDialogFlagsEveryGuardedTopic, so a topic that
+ * becomes guarded cannot keep rendering as ordinary here.
+ *
+ * The consent dialog was the stated justification for plugins being exempt from
+ * that registry — "a plugin's event reach is its manifest's `consumes`, declared
+ * at install and shown in the consent dialog, which is a real answer to the same
+ * question" — and it marked a consume line `sensitive` only when the pattern was
+ * exactly `*`. So `consumes: ["pty.bytes.*", "fs.changed"]` rendered at
+ * severity=normal with hasSensitivePermission() === false, while the SAME reach
+ * spelled as `capabilities: ["sessions.attachTerminal", "fs.watch"]` rendered
+ * sensitive on both lines. The exemption is gone (the bus now requires the
+ * capability for a guarded topic on the plugin arm too), but a dialog that
+ * describes a terminal-stream subscription as ordinary is still lying about
+ * what is being asked for.
+ */
+const GUARDED_TOPICS: Record<string, string> = {
+  'pty.bytes.*': 'sessions.attachTerminal',
+  'pty.exit': 'sessions.attachTerminal',
+  'pty.desync': 'sessions.attachTerminal',
+  'fs.changed': 'fs.watch',
+  'agent.statusline': 'sessions.snapshot',
+};
+
+/** The capability a consume pattern's topic requires, if any. Matches the bus's
+ *  own rule: exact, or a trailing '*' over a prefix — in both directions, since
+ *  a manifest may declare `pty.*` and mean the guarded family. */
+export function capabilityBehindTopic(pattern: string): string | undefined {
+  for (const [topic, method] of Object.entries(GUARDED_TOPICS)) {
+    if (topic === pattern) return method;
+    const topicPrefix = topic.endsWith('*') ? topic.slice(0, -1) : undefined;
+    const askPrefix = pattern.endsWith('*') ? pattern.slice(0, -1) : undefined;
+    if (topicPrefix !== undefined && pattern.startsWith(topicPrefix)) return method;
+    if (askPrefix !== undefined && topic.startsWith(askPrefix)) return method;
+  }
+  return undefined;
+}
+
 export function pluginPermissions(m: PluginManifest): PermissionGroup[] {
   const groups: PermissionGroup[] = [];
 
@@ -281,11 +322,17 @@ export function pluginPermissions(m: PluginManifest): PermissionGroup[] {
     groups.push({
       key: 'receive',
       title: 'Receives events',
-      lines: consumes.map((c) => ({
-        label: c,
-        detail: c === '*' ? 'all bus activity' : undefined,
-        severity: c === '*' ? 'sensitive' : 'normal',
-      })),
+      lines: consumes.map((c) => {
+        const method = capabilityBehindTopic(c);
+        if (c === '*') return { label: c, detail: 'all bus activity', severity: 'sensitive' };
+        if (method)
+          return {
+            label: c,
+            detail: `the output of ${CAP_LABELS[method]?.label ?? method} — requires that capability`,
+            severity: 'sensitive',
+          };
+        return { label: c, detail: undefined, severity: 'normal' };
+      }),
     });
   }
 
