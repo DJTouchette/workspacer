@@ -189,6 +189,117 @@ func TestTriageDeliberateAbsencesAreStillAbsent(t *testing.T) {
 	}
 }
 
+// tierActors pins the EXACT set of capspec ACTORS (methods that carry a caller
+// value the host acts on — PathParam ∪ unscopedByDecision, capspec's own
+// compositionActors population) that each scoped tier is allowed to grant. Every
+// OTHER method a tier grants must be capspec-INERT: it carries nothing the host
+// acts on.
+//
+// This is the forcing function TestScopedTiersDoNotSilentlyAcquireAComposition is
+// NOT. That guard fires only when a tier holds BOTH halves of a RECORDED pair, so
+// a LONE state-changing method that composes with nothing else the tier holds —
+// sessions.save (KindFilename, a write into <configDir>/sessions) or
+// claude.setPermissionMode (KindPermission, flipping a running agent's approval
+// policy) — can be dropped into viewMethods with the whole module green: capspec
+// classifies it dangerous, and until now nothing consumed that classification at
+// the tier boundary. Here every acting method a tier grants must be named below,
+// so adding one fails at the line that adds it, unless it is acknowledged as a
+// deliberate actor for that tier — the same open-decision idiom as
+// TestTriageDeliberateAbsencesAreStillAbsent, but derived from capspec's
+// classification instead of a hand-picked denylist, so a NEW dangerous method
+// (one no denylist names yet) is caught too.
+var tierActors = map[string]map[string]bool{
+	"view": {
+		// The ONLY acting method the read-only tier grants. capspec's
+		// sessions.transcript decision: `cwd` selects which historical session to
+		// resolve under ~/.claude/projects and is never opened as a caller path — a
+		// READ selector. A method that writes a file or flips an approval mode is
+		// not a read selector and has no entry here.
+		"sessions.transcript": true,
+	},
+	"triage": {
+		// Triage's Methods() is viewMethods ++ triageMethods, so it inherits
+		// view's one read actor and must acknowledge it here too.
+		"sessions.transcript": true,
+		// The acting surface triage adds on top of view. Every one is already on
+		// capspec's composition record: claude.approve + agents.sendMessage as the
+		// AcceptedIn pair, the other three as recorded halves / inert claims. A NEW
+		// actor added to triageMethods lands here rather than passing silently.
+		"claude.approve":     true,
+		"agents.sendMessage": true,
+		"claude.signal":      true,
+		"push.subscribe":     true,
+		"push.unsubscribe":   true,
+	},
+}
+
+// TestScopedTiersGrantOnlyAcknowledgedActors gates tier membership by capspec's
+// danger classification: a method that carries a caller value the host acts on
+// may sit in a scoped tier only if it is written down as a deliberate actor for
+// that tier. See tierActors for why the composition-pair guard alone is not enough.
+func TestScopedTiersGrantOnlyAcknowledgedActors(t *testing.T) {
+	actors := map[string]bool{}
+	for _, m := range capspec.CompositionActorsForTest() {
+		actors[m] = true
+	}
+	// The population is capspec's own; if it collapsed, this guard would wave
+	// everything through as "not an actor".
+	if len(actors) < 50 {
+		t.Fatalf("capspec's actor population is %d (<50) — it collapsed and this guard is comparing against nothing", len(actors))
+	}
+
+	for _, tierName := range sortedScopedTierNames() {
+		allowed := tierActors[tierName]
+		if allowed == nil {
+			t.Fatalf("tier %q has no tierActors entry — a scoped tier with no acknowledged-actor set cannot be checked; add one (empty means 'grants no actors')", tierName)
+		}
+		granted := map[string]bool{}
+		checkedActors := 0
+		for _, m := range scopedTiers[tierName].Methods() {
+			granted[m] = true
+			if !actors[m] {
+				continue // inert — carries nothing the host acts on
+			}
+			checkedActors++
+			if !allowed[m] {
+				t.Errorf(`the %q tier grants %q, which capspec classifies as an ACTOR (it carries a caller value the host acts on) and which is NOT an acknowledged actor for this tier.
+
+A read-only/attention tier must not silently acquire a method that writes a file,
+spawns a process, reads a secret, or flips an approval policy. If it is a
+deliberate product decision, add %q to tierActors[%q] with the reason it is safe
+in that tier; otherwise drop it from the allowlist.`,
+					tierName, m, m, tierName)
+			}
+		}
+		// No rot in either direction: an acknowledged actor the tier no longer
+		// grants is a stale exemption the next dangerous method can move into, and
+		// one capspec no longer classifies as an actor is a meaningless pin.
+		for m := range allowed {
+			if !granted[m] {
+				t.Errorf("tierActors[%q] acknowledges %q, but the tier no longer grants it — remove the stale entry, or it is an exemption waiting for a claimant", tierName, m)
+			}
+			if !actors[m] {
+				t.Errorf("tierActors[%q] acknowledges %q, but capspec no longer classifies it as an actor — the acknowledgement misleads the next reader", tierName, m)
+			}
+		}
+		// The floor: `view` holds exactly one actor today and `triage` several, so
+		// a tier whose actors all vanished (or whose Methods() emptied) must not
+		// pass in silence.
+		if tierName == "triage" && checkedActors == 0 {
+			t.Fatalf("the %q tier grants no actors at all — Scope.Methods changed and this guard evaluated nothing", tierName)
+		}
+	}
+}
+
+func sortedScopedTierNames() []string {
+	names := make([]string, 0, len(scopedTiers))
+	for n := range scopedTiers {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func scopedTierNames() string {
 	names := make([]string, 0, len(scopedTiers))
 	for n := range scopedTiers {

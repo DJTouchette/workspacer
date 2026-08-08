@@ -244,8 +244,21 @@ func TestConfigDirResolvesWithoutHOME(t *testing.T) {
 	os.Unsetenv("HOME")
 
 	got := configDirFor("linux")
-	if got == "" {
+
+	// Whether this host HAS a passwd home decides the RIGHT answer, and it is
+	// computed independently of `got` — because the regression this test exists to
+	// catch (dropping the passwd fallback Go's os.UserHomeDir lacks and Node's
+	// os.homedir() has) makes `got` go EMPTY, and the old skip guard `if got == ""`
+	// could not tell that apart from "this host genuinely has no home". So it
+	// self-skipped GREEN on the very break it guards. Only a host with no passwd
+	// home may skip; a host that has one and answers "" has regressed.
+	u, err := user.Current()
+	if err != nil || u.HomeDir == "" {
 		t.Skip("this host has no passwd home for the effective uid either — nothing to compare")
+	}
+
+	if got == "" {
+		t.Fatalf("with no HOME the brain's config dir is empty, but the host's passwd home is %q — the passwd-entry fallback (the one Node's os.homedir() has and Go's os.UserHomeDir lacks) is gone, reintroducing the config split-brain: a headless `workspacer serve` would read config/profiles/token store from a different directory than the desktop and TUI", u.HomeDir)
 	}
 	if !filepath.IsAbs(got) {
 		t.Fatalf("with no HOME the brain's config dir is %q — a RELATIVE path resolved against the daemon's cwd, not a config directory", got)
@@ -255,10 +268,6 @@ func TestConfigDirResolvesWithoutHOME(t *testing.T) {
 	}
 	// And the value is the passwd home, i.e. what Node's os.homedir() answers —
 	// the behaviour the desktop copy has had all along.
-	u, err := user.Current()
-	if err != nil || u.HomeDir == "" {
-		t.Skip("no passwd entry to compare against")
-	}
 	if want := filepath.Join(u.HomeDir, ".config", "workspacer"); got != want {
 		t.Fatalf("config dir = %q, want the passwd home's %q (what os.homedir() gives the desktop)", got, want)
 	}

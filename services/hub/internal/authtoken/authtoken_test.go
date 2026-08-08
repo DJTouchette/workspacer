@@ -34,6 +34,35 @@ func TestParseScope(t *testing.T) {
 	}
 }
 
+// TestParseScopeTrimsASCIIWhitespaceOnly pins ParseScope to the exact trim set
+// its desktop twin (remoteTokens.ts normalizeScope) must agree with. strings.Trim
+// over the ASCII set — not strings.TrimSpace — is the fix: TrimSpace strips U+0085
+// (NEL) but not U+FEFF (BOM), and JS .trim() does the reverse, so the two stacks
+// used to disagree on whether a BOM- or NEL-wrapped scope was operator or garbage.
+// A reverted fix (TrimSpace) re-accepts the NEL-wrapped scope and turns this red.
+// (The odd code points are \u escapes: a raw BOM is illegal in Go source.)
+func TestParseScopeTrimsASCIIWhitespaceOnly(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		wantErr bool
+	}{
+		{"ascii space wrapper is trimmed", " operator ", false},
+		{"tab/newline wrapper is trimmed", "\t\noperator\n\t", false},
+		{"leading BOM is NOT trimmed (JS .trim would)", "\uFEFFoperator", true},
+		{"trailing BOM is NOT trimmed", "operator\uFEFF", true},
+		{"leading NEL is NOT trimmed (TrimSpace would)", "\u0085operator", true},
+		{"trailing NEL is NOT trimmed", "operator\u0085", true},
+		{"NBSP wrapper is NOT trimmed", "\u00a0operator", true},
+	}
+	for _, c := range cases {
+		_, err := ParseScope(c.in)
+		if (err != nil) != c.wantErr {
+			t.Errorf("%s: ParseScope(%q) err=%v, wantErr=%v — the trim set diverged from the desktop twin's ASCII-only rule", c.name, c.in, err, c.wantErr)
+		}
+	}
+}
+
 // TestScopeMethods pins the tier policy itself: which representative methods
 // each tier admits, and that anything unlisted — including methods invented
 // after this table — fails closed for view/triage.

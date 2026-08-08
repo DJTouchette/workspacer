@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getConfigDir } from './configService';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
+import { trimAsciiWhitespace } from '../lib/asciiWhitespace';
 import type { RemoteTokenRecord, RemoteTokenScope } from '../shared/ipcTypes';
 
 const VALID_SCOPES = new Set<RemoteTokenScope>(['view', 'triage', 'operator']);
@@ -12,7 +13,12 @@ function tokensPath(): string {
 }
 
 function normalizeScope(scope: string): RemoteTokenScope {
-  const s = scope.trim().toLowerCase() as RemoteTokenScope;
+  // trimAsciiWhitespace, NOT String.prototype.trim: `.trim()` strips U+FEFF (BOM)
+  // and Go's authtoken.ParseScope twin does not, while Go's strips U+0085 (NEL)
+  // and `.trim()` does not — so a BOM/NEL-wrapped scope minted a grant on one
+  // stack and was refused on the other. Trimming the ASCII set on both makes them
+  // agree (fail closed) on every non-ASCII wrapper.
+  const s = trimAsciiWhitespace(scope).toLowerCase() as RemoteTokenScope;
   if (!VALID_SCOPES.has(s)) {
     throw new Error(`unknown remote token scope "${scope}"`);
   }

@@ -58,6 +58,23 @@ describe('remoteTokens', () => {
     expect(fs.existsSync(tokensFile())).toBe(false);
   });
 
+  it('trims only ASCII whitespace from a scope, agreeing with the Go ParseScope twin', () => {
+    // ASCII wrappers are trimmed on both stacks.
+    expect(getOrCreateRemoteToken('  operator  ', 'spaced').scope).toBe('operator');
+    expect(getOrCreateRemoteToken('\t\nview\n\t', 'whitespaced').scope).toBe('view');
+
+    // BOM (U+FEFF) and NEL (U+0085) are the two code points String.prototype.trim
+    // and Go's strings.TrimSpace disagree on. A BOM-wrapped scope must be REJECTED
+    // here just as authtoken.ParseScope rejects it — a plain `.trim()` would strip
+    // the BOM and silently mint an operator token the Go twin refuses.
+    expect(() => getOrCreateRemoteToken('﻿operator', 'bom')).toThrow(/unknown remote token scope/);
+    expect(() => getOrCreateRemoteToken('operator﻿', 'bom-trail')).toThrow(
+      /unknown remote token scope/,
+    );
+    expect(() => getOrCreateRemoteToken('operator', 'nel')).toThrow(/unknown remote token scope/);
+    expect(() => getOrCreateRemoteToken(' operator', 'nbsp')).toThrow(/unknown remote token scope/);
+  });
+
   it('revokes a token from the shared hub token file', () => {
     const keep = getOrCreateRemoteToken('view', 'Dashboard');
     const remove = getOrCreateRemoteToken('triage', 'Phone pairing');

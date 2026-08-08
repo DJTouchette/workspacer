@@ -20,6 +20,13 @@
 // TEXT_TRIM, factored here so the title/path blank checks share one predicate.
 const NON_ASCII_WHITESPACE = /[^ \t\n\v\f\r]/;
 
+// Leading/trailing ASCII-whitespace run, same set — the trim form of the check
+// above, for callers that must AGREE with Go's `strings.Trim(s, asciiWhitespace)`
+// twin (e.g. remoteTokens.ts normalizeScope vs authtoken.ParseScope). Delegating
+// to `String.prototype.trim` reintroduces the exact BOM/NEL split this module
+// exists to erase. Same spelling as spawnCwd.ts TRIM_SET.
+const ASCII_WHITESPACE_EDGES = /^[ \t\n\v\f\r]+|[ \t\n\v\f\r]+$/g;
+
 /** True when `s` is empty or contains only ASCII whitespace (see the set above). */
 export function isAsciiBlank(s: string): boolean {
   return !NON_ASCII_WHITESPACE.test(s);
@@ -28,4 +35,13 @@ export function isAsciiBlank(s: string): boolean {
 /** True when `s` holds at least one non-ASCII-whitespace character. */
 export function hasNonBlankText(s: string): boolean {
   return NON_ASCII_WHITESPACE.test(s);
+}
+
+/**
+ * Strip surrounding ASCII whitespace ONLY — never U+FEFF (BOM) or U+0085 (NEL),
+ * which `String.prototype.trim` and Go's `strings.TrimSpace` disagree on. Use
+ * this wherever a trimmed value must match a Go twin byte-for-byte.
+ */
+export function trimAsciiWhitespace(s: string): string {
+  return s.replace(ASCII_WHITESPACE_EDGES, '');
 }

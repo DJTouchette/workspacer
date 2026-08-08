@@ -1172,6 +1172,15 @@ async fn get_conversation(
     Path(id): Path<String>,
     Query(q): Query<ConversationQuery>,
 ) -> impl IntoResponse {
+    // The disk-fallback below joins `id` into the codex-threads root
+    // (codex_rollout::thread_for → threads_dir()/{id}.json, then read_to_string),
+    // so a traversal-shaped id (`../../../../etc`) escapes that root and reaches
+    // the filesystem. Gate it up front, exactly as the id-bearing, fs-touching
+    // siblings get_transcript and post_handoff do — an empty snapshot is not a
+    // license to skip the check the twin routes enforce.
+    if !valid_session_id(&id) {
+        return (StatusCode::BAD_REQUEST, "invalid session id").into_response();
+    }
     let (seq, first_seq, items) = conv.snapshot_windowed(&id).unwrap_or((0, 0, Vec::new()));
     // Codex restart durability: the ws adapter's conversation lives in daemon
     // memory, so a restarted daemon serves Stopped codex rows empty — but the
@@ -1199,6 +1208,7 @@ async fn get_conversation(
     // `first_seq` rides along so a client can place the window without
     // reconstructing it from the item count — which coalescing makes wrong.
     Json(json!({ "session_id": id, "seq": seq, "first_seq": first_seq, "items": items }))
+        .into_response()
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1593,6 +1603,22 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let v = serde_json::from_slice::<Value>(&body).unwrap();
         assert!(v.is_object(), "transcript is a JSON object");
+    }
+
+    #[tokio::test]
+    async fn get_conversation_with_dotdot_segment_id_is_400() {
+        // Sibling of get_transcript_traversal_id_with_cwd_is_rejected /
+        // post_handoff_with_dotdot_segment_id_is_400: an unknown-session
+        // conversation read falls through to codex_rollout::thread_for(&id), which
+        // joins the id into ~/.workspacer/codex-threads/{id}.json and reads it — so
+        // a traversal id escapes that root. The guard must reject it before any
+        // filesystem work, not serve a 200 "empty snapshot".
+        let (status, _) = request(
+            test_state(),
+            get("/sessions/..%2F..%2F..%2F..%2Fetc/conversation"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

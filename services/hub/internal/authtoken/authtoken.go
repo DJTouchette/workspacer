@@ -42,9 +42,23 @@ const (
 	ScopeOperator Scope = "operator"
 )
 
+// asciiWhitespace is the surrounding-whitespace set ParseScope trims, spelled as
+// a literal rather than delegated to strings.TrimSpace — because TrimSpace
+// (unicode.IsSpace) and JS String.prototype.trim, which the desktop's
+// normalizeScope twin uses, are NOT the same function and disagree on exactly two
+// code points that reach a caller-supplied scope: U+FEFF (BOM — trimmed by JS,
+// not by Go) and U+0085 (NEL — trimmed by Go, not by JS). Left to the built-ins,
+// a BOM-wrapped "operator" parsed to operator on the desktop and was refused
+// here, while a NEL-wrapped one did the opposite: the SAME scope string minting
+// grants depending on which stack answered. Trimming the ASCII set on both sides
+// makes every non-ASCII wrapper fail closed identically.
+// TWIN: apps/desktop/src/main/lib/asciiWhitespace.ts (trimAsciiWhitespace, used
+// by remoteTokens.ts normalizeScope); same set as cmd/brain/profiles.go.
+const asciiWhitespace = " \t\n\v\f\r"
+
 // ParseScope validates a user-supplied scope name.
 func ParseScope(s string) (Scope, error) {
-	switch Scope(strings.ToLower(strings.TrimSpace(s))) {
+	switch Scope(strings.ToLower(strings.Trim(s, asciiWhitespace))) {
 	case ScopeView:
 		return ScopeView, nil
 	case ScopeTriage:

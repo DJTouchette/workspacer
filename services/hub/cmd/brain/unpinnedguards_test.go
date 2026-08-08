@@ -340,6 +340,43 @@ func TestStoreWriteAndDeleteLegsUseTheGuardsAnswer(t *testing.T) {
 	})
 }
 
+// TestStoreEntryPathReadLegReturnsTheResolvedFile pins BINDING DECISION 2 on the
+// READ leg — storeEntryPath — the one derived-path resolver whose return-canonical
+// invariant no test asserted, while its write/delete twins (layoutFilePath and
+// sessionFilePath above, assertLibraryItemPath below) are all pinned. storeEntryPath's
+// result is handed to os.ReadFile and to quarantineUnreadable; if it returned the
+// raw filepath.Join(dir, name) instead of the canonicalized path, those would act
+// on the SYMLINK (re-followed at open time) rather than the file the isWithin gate
+// validated — check-path and opened-path become two strings again, which is the
+// hazard the decision closes. Unlike os.Remove/os.Rename on the write legs, the
+// difference is not observable through the caller's bytes here (both spellings
+// reach the same in-store target), so the mutation `return filepath.Join(dir,
+// name), true` survived the whole package. The invariant is therefore pinned
+// directly on the returned path: it must be the resolved file, never the link.
+func TestStoreEntryPathReadLegReturnsTheResolvedFile(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.yaml")
+	if err := os.WriteFile(target, []byte("id: t\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "alias.yaml")
+	gateSymlink(t, target, link)
+
+	got, ok := storeEntryPath(dir, "alias.yaml")
+	if !ok {
+		t.Fatal("storeEntryPath refused an in-store symlink that resolves inside the dir")
+	}
+	// The mutant returns the link path; os.Lstat reports it a symlink. The shipped
+	// code returns the canonicalized target, which os.Lstat reports a regular file.
+	fi, err := os.Lstat(got)
+	if err != nil {
+		t.Fatalf("Lstat(%q): %v", got, err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Errorf("storeEntryPath returned the raw link %q, not the file it resolved to — the read leg's check-path and opened-path are two different strings (BINDING DECISION 2)", got)
+	}
+}
+
 // ── fs.listDir: the picker's opening call ────────────────────────────────────
 
 // The empty-path -> $HOME default is the call every web/remote/TUI client makes
