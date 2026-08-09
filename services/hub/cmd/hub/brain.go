@@ -13,6 +13,7 @@ package main
 //	                       (run this when the desktop app owns the live agent caps)
 
 import (
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,8 +50,45 @@ func resolveBrainBin(flagVal string) string {
 // on bus URL, auth, claudemon, and scope.
 func brainArgs(addr, claudemonURL, scope string) []string {
 	return []string{
-		"--hub", "ws://" + addr + "/bus",
+		"--hub", "ws://" + busDialAddr(addr) + "/bus",
 		"--claudemon", claudemonURL,
 		"--scope", scope,
 	}
+}
+
+// busDialAddr turns the hub's BIND address into one its own child can dial.
+//
+// A bind address may name a wildcard — "0.0.0.0:7895", "[::]:7895", ":7895" —
+// which is not an address at all: it means "every interface". Handing that
+// straight to a dialer used to work by accident (connect(0.0.0.0) lands on
+// loopback), and the URL doubles as the child's `Host` header, which is where it
+// stopped working: requireHost refuses a Host that is neither loopback nor the
+// address the socket landed on, so `Host: 0.0.0.0:7895` is a 403.
+//
+// The failure was silent and total. The brain's output is discarded (its Spec
+// sets no LogLines), so it reconnected into that 403 for ever with nothing in
+// any log, while every capability it is the sole provider for — config.get /
+// config.save, library.*, layouts.*, sessions.list/load/save/delete,
+// claude.profiles.*, claude.listModels, fs.* — answered "no provider" on the
+// bus. The desktop renderer runs in bus mode by default, so that reached the
+// user as settings which silently refuse to persist (a pinned widget board
+// vanishing on the next read was how it was found), and only when remote
+// sharing was on, because only then is the bind a wildcard.
+//
+// The child is always on this machine, so loopback is both dialable and the one
+// Host the pin accepts unconditionally.
+func busDialAddr(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		// Not host:port (a bare name, or already malformed). Nothing safe to
+		// rewrite — hand it back and let the dial report the real problem.
+		return addr
+	}
+	switch host {
+	case "", "0.0.0.0":
+		host = "127.0.0.1"
+	case "::":
+		host = "::1"
+	}
+	return net.JoinHostPort(host, port)
 }

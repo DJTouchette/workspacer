@@ -58,6 +58,17 @@ type Spec struct {
 	// event. Off by default so production `serve` never streams sidecar output;
 	// `plugin dev` turns it on so a developer can see their sidecar's logs.
 	LogLines bool
+
+	// InheritOutput sends the child's stdout/stderr to OUR stdout/stderr rather
+	// than discarding them (Go's default for a nil cmd.Stdout).
+	//
+	// Opt-in, and deliberately not the default: a plugin sidecar is untrusted
+	// code whose output would land in the host's log file verbatim. It exists
+	// for the children that are OURS, where silence is worse than noise — the
+	// brain spent a whole session reconnecting into a 403 with every catalog
+	// capability dead on the bus, and the only reason it took a user report
+	// rather than one grep is that its diagnosis was written to /dev/null.
+	InheritOutput bool
 }
 
 func (s Spec) healthPeriod() time.Duration {
@@ -252,6 +263,9 @@ func (s *Supervisor) run(ctx context.Context) {
 			errw = newLogWriter(s, "stderr")
 			cmd.Stdout = outw
 			cmd.Stderr = errw
+		} else if s.spec.InheritOutput {
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
 		}
 		// Graceful stop: terminate() on cancel (SIGTERM on Unix; Kill on Windows,
 		// where Signal(SIGTERM) is unsupported and would error — leaving the

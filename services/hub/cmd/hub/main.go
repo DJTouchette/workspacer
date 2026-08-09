@@ -769,6 +769,12 @@ func main() {
 				Command: bin,
 				Args:    brainArgs(*addr, *claudemonURL, *brainScope),
 				Env:     env,
+				// Our own child, and the sole provider of every file-backed
+				// capability: when it cannot connect, the bus answers "no
+				// provider" for config.*, library.*, layouts.* and sessions.*
+				// and the app's settings stop persisting. Discarding the one
+				// process that can say why is not a trade worth making.
+				InheritOutput: true,
 			}, b)
 			brainSup.Start()
 			defer brainSup.Stop()
