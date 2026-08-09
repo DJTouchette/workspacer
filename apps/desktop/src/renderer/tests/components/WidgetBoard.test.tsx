@@ -57,7 +57,9 @@ describe('WidgetBoard placement', () => {
 
     expect(save).toHaveBeenCalledTimes(1);
     // Backslashes normalized, so a repo's board and its `scripts` share a key.
-    expect(save.mock.calls[0][0]).toEqual({ widgets: { [KEY]: [{ widget: 'git', size: 'small' }] } });
+    expect(save.mock.calls[0][0]).toEqual({
+      widgets: { [KEY]: [{ widget: 'git', size: 'small' }] },
+    });
   });
 
   it('adds a plugin widget namespaced by its plugin id', () => {
@@ -102,7 +104,9 @@ describe('WidgetBoard placement', () => {
   it('resizes to a class the widget declared', () => {
     const { save } = renderBoard({ placements: [{ widget: 'git', size: 'small' }] });
     fireEvent.click(screen.getByText('Edit'));
-    fireEvent.click(screen.getByTitle(`large (${WIDGET_SPANS.large.cols}×${WIDGET_SPANS.large.rows})`));
+    fireEvent.click(
+      screen.getByTitle(`large (${WIDGET_SPANS.large.cols}×${WIDGET_SPANS.large.rows})`),
+    );
     expect(save.mock.calls[0][0].widgets[KEY]).toEqual([{ widget: 'git', size: 'large' }]);
   });
 });
@@ -121,6 +125,29 @@ describe('WidgetBoard resilience', () => {
   it('explains an unknown host widget', () => {
     renderBoard({ placements: [{ widget: 'no-such-widget', size: 'small' }] });
     expect(screen.getByText('Unknown widget')).toBeTruthy();
+  });
+
+  // A tile is not a window: the host draws no title over a widget, because the
+  // widget's own content is what identifies it and a header ate a fifth of a
+  // 148px square to restate it. The name has to survive somewhere though, so
+  // both halves are pinned — gone while reading, present while editing.
+  it('draws no title over a widget, and names it in edit mode', () => {
+    renderBoard({
+      placements: [{ plugin: 'djtouchette.shiplight', widget: 'lamp', size: 'small' }],
+      available: [
+        {
+          pluginId: 'djtouchette.shiplight',
+          pluginName: 'Shiplight',
+          id: 'lamp',
+          title: 'Ship status',
+          url: 'http://127.0.0.1:9211/widget/lamp',
+          sizes: ['small'],
+        },
+      ],
+    });
+    expect(screen.queryByText('Ship status')).toBeNull();
+    fireEvent.click(screen.getByText('Edit'));
+    expect(screen.getByText('Ship status')).toBeTruthy();
   });
 
   it('clamps a size the widget no longer supports down to one it does', () => {

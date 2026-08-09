@@ -7,6 +7,7 @@ import {
   WIDGET_CELL,
   WIDGET_COLUMNS,
   WIDGET_GAP,
+  WIDGET_INSET,
   WIDGET_PAD,
   WIDGET_SIZES,
   WIDGET_SPANS,
@@ -14,6 +15,7 @@ import {
   widgetKey,
 } from '../../types/widget';
 import { claudeColors as colors } from '../claude-shared';
+import { Surface } from '../Surface';
 import { useWidgetBoard } from '../../hooks/useWidgetBoard';
 import { usePluginWebview } from '../../hooks/usePluginWebview';
 import { HOST_WIDGETS, hostWidget } from './hostWidgets';
@@ -24,6 +26,9 @@ import { HOST_WIDGETS, hostWidget } from './hostWidgets';
  * Two columns, three closed size classes (see types/widget.ts). Rows are locked
  * to WIDGET_CELL so a medium is always exactly as tall as the small beside it;
  * columns are fluid so the board survives a rail that gains a resize handle.
+ *
+ * Tiles carry no title bar — see {@link WidgetCell} for why, and for where a
+ * widget's name went instead.
  *
  * Scope: the board belongs to the *cwd*, not the session. It renders as a
  * sibling of InspectorCard rather than a sixth tab inside it, because that card
@@ -66,7 +71,18 @@ export const WidgetBoard: React.FC<{
           flexShrink: 0,
         }}
       >
-        <span style={{ fontSize: 10, color: colors.mutedDim, letterSpacing: 0.4 }}>
+        {/* The board's one label. It names the DIRECTORY, which is the thing a
+            tile can't say for itself and the thing the board is scoped to. */}
+        <span
+          style={{
+            fontSize: '0.6rem',
+            color: colors.mutedDim,
+            letterSpacing: 0.4,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
           {projectLabel(cwd).toUpperCase()}
         </span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 2 }}>
@@ -76,7 +92,11 @@ export const WidgetBoard: React.FC<{
               onClick={() => setEditing((v) => !v)}
               active={editing}
             >
-              {editing ? <Check size={13} strokeWidth={2} /> : <span style={{ fontSize: 11 }}>Edit</span>}
+              {editing ? (
+                <Check size={13} strokeWidth={2} />
+              ) : (
+                <span style={{ fontSize: '0.66rem' }}>Edit</span>
+              )}
             </ChromeButton>
           )}
           <ChromeButton title="Add a widget" onClick={() => setPicking((v) => !v)} active={picking}>
@@ -133,7 +153,22 @@ export const WidgetBoard: React.FC<{
 
 // ---------------------------------------------------------------------------
 
-/** One placed widget: chrome plus either an inline host view or a plugin guest. */
+/**
+ * One placed widget: a tile, and either an inline host view or a plugin guest
+ * filling it edge to edge.
+ *
+ * NO TITLE BAR, deliberately. An iPhone widget is not a window: it has no
+ * chrome, and its identity comes from what it draws — the lamp IS the ship
+ * status, the branch name IS git. A host-drawn "SHIP STATUS" header above a
+ * widget whose whole job is to be read in one glance spent a fifth of a 148px
+ * tile restating what the tile already said, and pushed the content it was
+ * labelling into the top-left corner with dead space under it.
+ *
+ * The name doesn't disappear — it moves to where it's actually needed: the
+ * picker names every widget, edit mode labels each tile (that is when you're
+ * identifying rather than reading them), and a placement whose widget is gone
+ * names it in the tile, since there is nothing else left to identify it by.
+ */
 const WidgetCell: React.FC<{
   placement: WidgetPlacement;
   cwd: string;
@@ -152,54 +187,42 @@ const WidgetCell: React.FC<{
   const span = WIDGET_SPANS[size];
 
   const missing = !host && !plugin;
+  const title = host?.title ?? plugin?.title ?? placement.widget;
 
   return (
-    <div
+    // raised: fill + lighting, no border. The tile sits directly on the rail,
+    // so it is an outermost surface — the old border+fill was the exact pair
+    // Surface exists to prevent (see DESIGN_LANGUAGE §5).
+    <Surface
+      elevation="raised"
+      radius="lg"
       style={{
         gridColumn: `span ${span.cols}`,
         gridRow: `span ${span.rows}`,
         position: 'relative',
         display: 'flex',
-        flexDirection: 'column',
-        borderRadius: 14,
-        border: `1px solid ${colors.border}`,
-        background: 'rgba(255,255,255,0.022)',
+        padding: WIDGET_INSET,
         overflow: 'hidden',
         minWidth: 0,
       }}
     >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 5,
-          padding: '7px 9px 3px',
-          color: colors.mutedDim,
-          flexShrink: 0,
-        }}
-      >
-        <span style={{ display: 'flex', flexShrink: 0 }}>{host?.icon ?? plugin?.icon ?? '🔌'}</span>
-        <span
-          style={{
-            fontSize: 10,
-            letterSpacing: 0.3,
-            textTransform: 'uppercase',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {host?.title ?? plugin?.title ?? placement.widget}
-        </span>
-      </div>
-
-      <div style={{ flex: 1, minHeight: 0, padding: '0 9px 9px', display: 'flex' }}>
+      <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}>
         {missing ? (
           // The plugin was uninstalled or disabled but its placement remains.
           // Say so rather than rendering an empty tile — and leave the placement
-          // alone, so re-enabling the plugin brings the widget back.
-          <div style={{ fontSize: 11, color: colors.mutedDim, margin: 'auto', textAlign: 'center' }}>
-            {placement.plugin ? 'Plugin unavailable' : 'Unknown widget'}
+          // alone, so re-enabling the plugin brings the widget back. This is the
+          // one case that must name itself: nothing is drawing the widget.
+          <div
+            style={{
+              margin: 'auto',
+              textAlign: 'center',
+              fontSize: '0.66rem',
+              color: colors.mutedDim,
+              minWidth: 0,
+            }}
+          >
+            <div style={{ color: colors.muted }}>{title}</div>
+            <div>{placement.plugin ? 'Plugin unavailable' : 'Unknown widget'}</div>
           </div>
         ) : host ? (
           <host.Render cwd={cwd} size={size} snapshot={snapshot} />
@@ -213,14 +236,29 @@ const WidgetCell: React.FC<{
           style={{
             position: 'absolute',
             inset: 0,
-            background: 'rgba(0,0,0,0.62)',
+            background: 'var(--wks-overlay)',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
             gap: 8,
+            padding: WIDGET_INSET,
           }}
         >
+          {/* Edit mode is when a tile needs a name: you're picking one out to
+              resize or remove, not reading it. */}
+          <div
+            style={{
+              fontSize: '0.66rem',
+              color: colors.text,
+              maxWidth: '100%',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {title}
+          </div>
           <div style={{ display: 'flex', gap: 4 }}>
             {WIDGET_SIZES.filter((s) => supported.includes(s)).map((s) => (
               <button
@@ -229,11 +267,11 @@ const WidgetCell: React.FC<{
                 title={`${s} (${WIDGET_SPANS[s].cols}×${WIDGET_SPANS[s].rows})`}
                 style={{
                   border: `1px solid ${s === size ? colors.text : colors.border}`,
-                  background: s === size ? 'rgba(255,255,255,0.10)' : 'transparent',
+                  background: s === size ? 'var(--wks-bg-selected)' : 'transparent',
                   color: s === size ? colors.text : colors.mutedDim,
-                  borderRadius: 6,
-                  fontSize: 10,
-                  padding: '3px 7px',
+                  borderRadius: 'var(--wks-radius-sm)',
+                  fontSize: '0.6rem',
+                  padding: '4px 8px',
                   cursor: 'pointer',
                 }}
               >
@@ -246,10 +284,10 @@ const WidgetCell: React.FC<{
             style={{
               border: `1px solid ${colors.border}`,
               background: 'transparent',
-              color: '#e5534b',
-              borderRadius: 6,
-              fontSize: 11,
-              padding: '3px 9px',
+              color: colors.error,
+              borderRadius: 'var(--wks-radius-sm)',
+              fontSize: '0.66rem',
+              padding: '4px 10px',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
@@ -260,7 +298,7 @@ const WidgetCell: React.FC<{
           </button>
         </div>
       )}
-    </div>
+    </Surface>
   );
 };
 

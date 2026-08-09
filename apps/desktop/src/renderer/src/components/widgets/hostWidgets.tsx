@@ -36,6 +36,30 @@ export interface HostWidgetDef {
 
 // --- shared bits -----------------------------------------------------------
 
+/**
+ * The tile's own layout. A small tile is one glanceable fact, so it centres —
+ * the tile has no title bar to balance against (see WidgetCell), and content
+ * pinned to the top-left of a 148px square just leaves a hole under it. Medium
+ * and large carry a list, which has to start at the top to be readable.
+ */
+const Tile: React.FC<{ size: WidgetSize; children: React.ReactNode }> = ({ size, children }) => (
+  <div
+    style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+      width: '100%',
+      minWidth: 0,
+      gap: 6,
+      justifyContent: size === 'small' ? 'center' : 'flex-start',
+      alignItems: size === 'small' ? 'center' : 'stretch',
+      textAlign: size === 'small' ? 'center' : 'left',
+    }}
+  >
+    {children}
+  </div>
+);
+
 /** The big number every small widget leads with. */
 const Stat: React.FC<{ value: React.ReactNode; label: string; tone?: string }> = ({
   value,
@@ -45,10 +69,13 @@ const Stat: React.FC<{ value: React.ReactNode; label: string; tone?: string }> =
   <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
     <div
       style={{
-        fontSize: 26,
+        // A display number, not chrome text: off the type scale on purpose, and
+        // the same step the plugin widgets lead with so a board of host and
+        // third-party tiles reads as one system.
+        fontSize: '1.55rem',
         lineHeight: 1.05,
         fontWeight: 600,
-        color: tone ?? colors.text,
+        color: tone ?? colors.textBright,
         fontVariantNumeric: 'tabular-nums',
         overflow: 'hidden',
         textOverflow: 'ellipsis',
@@ -59,7 +86,7 @@ const Stat: React.FC<{ value: React.ReactNode; label: string; tone?: string }> =
     </div>
     <div
       style={{
-        fontSize: 10,
+        fontSize: '0.6rem',
         color: colors.mutedDim,
         textTransform: 'uppercase',
         letterSpacing: 0.4,
@@ -126,41 +153,21 @@ const GitWidget: React.FC<HostWidgetProps> = ({ cwd, size }) => {
   const behind = status.behind ?? 0;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 6 }}>
+    <Tile size={size}>
       <Stat
         value={dirty === 0 ? 'Clean' : dirty}
         label={dirty === 0 ? 'working tree' : dirty === 1 ? 'changed file' : 'changed files'}
-        tone={dirty === 0 ? colors.mutedDim : undefined}
+        tone={dirty === 0 ? colors.muted : undefined}
       />
-      <div
-        style={{
-          marginTop: 'auto',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          fontSize: 11,
-          color: colors.mutedDim,
-          minWidth: 0,
-        }}
-      >
-        <GitBranch size={11} strokeWidth={2} style={{ flexShrink: 0 }} />
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {status.branch ?? 'detached'}
-        </span>
-        {(ahead > 0 || behind > 0) && (
-          <span style={{ flexShrink: 0, color: colors.text }}>
-            {ahead > 0 && `↑${ahead}`}
-            {behind > 0 && `↓${behind}`}
-          </span>
-        )}
-      </div>
+      {/* The changed files, between the stat and the branch — the branch is the
+          tile's footer and stays last, whatever is above it. */}
       {size !== 'small' && dirty > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2, overflow: 'hidden' }}>
           {status.files.slice(0, size === 'large' ? 8 : 2).map((f) => (
             <div
               key={f.path}
               style={{
-                fontSize: 11,
+                fontSize: '0.66rem',
                 color: colors.mutedDim,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -174,7 +181,34 @@ const GitWidget: React.FC<HostWidgetProps> = ({ cwd, size }) => {
           ))}
         </div>
       )}
-    </div>
+      <div
+        style={{
+          // A small tile is centred as a block, so nothing inside it may claim
+          // the leftover space — `auto` there would push the branch back to the
+          // bottom edge and undo the centring.
+          marginTop: size === 'small' ? undefined : 'auto',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: size === 'small' ? 'center' : 'flex-start',
+          gap: 6,
+          fontSize: '0.66rem',
+          color: colors.mutedDim,
+          minWidth: 0,
+          maxWidth: '100%',
+        }}
+      >
+        <GitBranch size={11} strokeWidth={2} style={{ flexShrink: 0 }} />
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {status.branch ?? 'detached'}
+        </span>
+        {(ahead > 0 || behind > 0) && (
+          <span style={{ flexShrink: 0, color: colors.text }}>
+            {ahead > 0 && `↑${ahead}`}
+            {behind > 0 && `↓${behind}`}
+          </span>
+        )}
+      </div>
+    </Tile>
   );
 };
 
@@ -194,27 +228,32 @@ const UsageWidget: React.FC<HostWidgetProps> = ({ size, snapshot }) => {
   const tone = pct === null ? undefined : pct >= 90 ? '#e5534b' : pct >= 70 ? '#d29922' : undefined;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 6 }}>
+    <Tile size={size}>
       <Stat value={pct === null ? '—' : `${pct}%`} label="context used" tone={tone} />
       {pct !== null && (
         <div
           style={{
+            width: '100%',
             height: 3,
-            borderRadius: 2,
-            background: 'rgba(255,255,255,0.08)',
+            borderRadius: 'var(--wks-radius-pill)',
+            background: 'var(--wks-bg-hover)',
             overflow: 'hidden',
           }}
         >
-          <div
-            style={{ width: `${pct}%`, height: '100%', background: tone ?? colors.mutedDim }}
-          />
+          <div style={{ width: `${pct}%`, height: '100%', background: tone ?? colors.muted }} />
         </div>
       )}
-      <div style={{ marginTop: 'auto', fontSize: 11, color: colors.mutedDim }}>
+      <div
+        style={{
+          marginTop: size === 'small' ? undefined : 'auto',
+          fontSize: '0.66rem',
+          color: colors.mutedDim,
+        }}
+      >
         ${usage.costUSD.toFixed(2)}
         {size !== 'small' && usage.model ? ` · ${usage.model}` : ''}
       </div>
-    </div>
+    </Tile>
   );
 };
 

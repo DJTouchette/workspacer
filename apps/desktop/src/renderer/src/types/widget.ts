@@ -52,6 +52,13 @@ export const WIDGET_GAP = 12;
 export const WIDGET_PAD = 12;
 
 /**
+ * Padding between a tile's edge and the widget inside it. One number, applied
+ * on all four sides, because a widget with no title bar owns its whole canvas
+ * and any asymmetry would read as the content having slipped.
+ */
+export const WIDGET_INSET = 10;
+
+/**
  * The rail width that makes a small widget square. InspectorRail derives its
  * width from this rather than hardcoding one, so the two can't drift.
  */
