@@ -15,6 +15,7 @@ import { markUiEvent } from './lib/longTaskMonitor';
 import PluginInstallDialog from './components/PluginInstallDialog';
 import { usePluginsContext } from './contexts/PluginsContext';
 import { useUiEventBus } from './hooks/useUiEventBus';
+import { useWhatsNew } from './hooks/useWhatsNew';
 import { REVIEW_REQUEST_FILE_EVENT, openReviewFile, type ReviewFileTarget } from './lib/reviewBus';
 import {
   AGENT_WATCH_EVENT,
@@ -336,6 +337,8 @@ function App() {
   const [showWelcome, setShowWelcome] = useState(false);
   // In-app update status (main pushes transitions; 'unsupported' in dev/web).
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  // One notice per version, the first time this install runs a new one.
+  useWhatsNew(updateStatus?.current ?? '');
   useEffect(() => {
     let cancelled = false;
     window.electronAPI

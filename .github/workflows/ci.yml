@@ -63,6 +63,17 @@ jobs:
             src/renderer/src/hooks/configDefaults.generated.ts \
           || { echo "::error::configDefaults.generated.ts is stale — run 'npm run gen:config-defaults' and commit the result"; exit 1; }
 
+      # The same freshness rule for the release notes: changelog.generated.ts is
+      # what the app renders (a packaged build has no CHANGELOG.md to read), so a
+      # commit that edits the markdown without regenerating ships stale notes.
+      # changelog.test.ts also compares the two, so this is belt-and-braces for a
+      # checkout nobody rebuilt.
+      - name: Changelog is freshly generated
+        run: |
+          npm run gen:changelog
+          git diff --exit-code -- src/renderer/src/lib/changelog.generated.ts \
+          || { echo "::error::changelog.generated.ts is stale — run 'npm run gen:changelog' and commit the result"; exit 1; }
+
       # Prettier gate. `.prettierrc` pins the codebase style (singleQuote, semi,
       # printWidth 100); --check fails if any tracked TS/TSX is unformatted.
       - name: Format check

@@ -7,6 +7,75 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- **Widgets.** A project's widget board lives in the inspector rail's Project
+  tab: small (1x1), medium (2x1) and large (2x2) tiles pinned to a *directory*
+  rather than to a session, so every agent working in that repo sees the same
+  board. Built-in git and usage tiles ship with it, and plugins can contribute
+  their own — a widget is declared separately from a pane, because a pane may own
+  a PTY or a 1.2MB editor bundle and none of that reads at 150px.
+- **Release notes in the app.** Settings → Updates lists every release, newest
+  first, with the running version marked. A one-time notice appears the first
+  time an install runs a new version. Both read the same `CHANGELOG.md` the
+  GitHub release page is cut from, so they cannot disagree.
+- **Spawn an agent from the command palette.** It already could, under a name
+  nobody would search for.
+
+### Changed
+- **A widget tile has no title bar.** The host used to draw the widget's name
+  above it, which spent a fifth of a 148px square restating what the tile already
+  said and pushed the content into a corner. Tiles now own their whole square and
+  small ones centre; the name moved to the picker and to Edit mode, which is when
+  you are identifying a tile rather than reading it.
+- **Shiplight's pipeline widget shows a stopwatch, not an age.** A running
+  pipeline gets a live `m:ss` clock and a finished one shows how long it took —
+  "4m" looks identical whether a run is alive or wedged.
+
+### Fixed
+- **Settings that would not stick.** With remote sharing on, the hub handed the
+  brain its own wildcard bind address as a *dial* URL, which the DNS-rebinding
+  guard correctly refused — so the brain reconnected into a 403 forever with its
+  output going to `/dev/null`, and every capability it is the sole provider for
+  (config, library, saved layouts, sessions, profiles) answered "no provider" on
+  the bus. The app runs on that bus by default, so every settings write failed
+  silently. It reached people as a widget board that would not persist.
+- **HTTPS via Tailscale returned 403 on every route.** The Remote Share dialog's
+  one-tap toggle fronts a loopback hub with `tailscale serve`, which forwards a
+  public `Host` to a loopback socket — indistinguishable from the rebinding shape
+  the hub refuses. It was the only path to the secure context the phone client
+  and Web Push need.
+- **Writes that reported success without reaching disk.** The desktop config
+  writer adopted and then served a value it had failed to write; the hub's layout
+  document reported a version bump for a document that never landed; the
+  quit-save handshake said "saved" on failure; the web Settings pane printed a
+  green "Saved" for a pricing write that was a no-op stub. The TUI said "Renamed"
+  into a directory it never created, so on a TUI-only machine every rename, pin
+  and note had been failing silently since the feature shipped.
+- **The live-agent view could go permanently empty under `workspacer serve`.** A
+  non-2xx from the daemon was read as a clean end-of-stream and both callers
+  discarded even that, so a permanent failure produced no log line anywhere.
+- **A same-millisecond write by the other process was invisible to both config
+  writers**, and was silently reverted through the lock with both sides reporting
+  success.
+
+### Security
+- **Path containment on Windows.** Two escapes, neither reachable on Linux and
+  both found the first time the guards were executed on Windows at all. A path
+  *through a regular file* was allowed, because Windows reports that as
+  not-exist where POSIX says ENOTDIR. And a trailing space made `..` a literal
+  child name to the guard while Win32 read it as a parent traversal — enough to
+  list the config directory, which holds the token that promotes a bus connection
+  to trusted. All three copies of the containment rule carried both.
+- **The git per-user-config gate was off on Windows**, so a dotfiles-symlinked
+  `~/.gitconfig` was an ordinary writable file — and `filter.<drv>.clean` is
+  command execution one write away.
+- **Seven rounds of adversarial hardening** across the capability plane: plugin
+  grants, boot-document restore, the event and HTTP planes, provider adapters,
+  session lifecycle, and the twins that implement each rule more than once. The
+  method and the findings are written up in `docs/adversarial-hardening.md`.
+
 ## [0.148.0] - 2026-07-29
 
 ### Added

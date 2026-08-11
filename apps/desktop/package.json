@@ -13,7 +13,7 @@
     "dev:main": "npm run build:hub && npm run build:mcp && npm run build:cli && npm run build:claudemon && npm run build:main && npm run ensure:web && wait-on http://localhost:5173 && cross-env ELECTRON_DEV=1 electron .",
     "build:main": "tsc -p tsconfig.main.json && npm run bundle:preload",
     "gen:config-defaults": "node scripts/gen-config-defaults.mjs",
-    "prebuild:main": "node scripts/gen-config-defaults.mjs",
+    "prebuild:main": "node scripts/gen-config-defaults.mjs && node scripts/gen-changelog.mjs",
     "bundle:preload": "esbuild src/main/preload.ts --bundle --platform=node --format=cjs --external:electron --target=node18 --outfile=dist/main/preload.js",
     "build:hub": "cd ../../services/hub && go build -o . ./cmd/hub && go build -o . ./cmd/brain",
     "build:mcp": "cd ../../services/hub && go build -o . ./cmd/mcp",
@@ -38,7 +38,8 @@
     "shoot": "unshare -Urn --map-root-user bash -c 'ip link set lo up; WKS_SHOOT_NETNS=1 node scripts/shoot.mjs'",
     "test:watch": "vitest",
     "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\" \"*.ts\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\" \"*.ts\""
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\" \"*.ts\"",
+    "gen:changelog": "node scripts/gen-changelog.mjs"
   },
   "dependencies": {
     "@vscode/ripgrep": "^1.18.0",

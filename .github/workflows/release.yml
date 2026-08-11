@@ -281,12 +281,32 @@ jobs:
             apps/desktop/release/workspacer-server-*
           if-no-files-found: error
 
+      # The release body comes from CHANGELOG.md, cut by scripts/changelog-section.mjs.
+      # That script EXITS NONZERO when the tagged version has no section, so tagging a
+      # release nobody wrote notes for fails the build rather than publishing an empty
+      # release page. The app renders the same markdown in Settings → Updates (via
+      # changelog.generated.ts), so the two cannot drift.
+      - name: Release notes from CHANGELOG.md
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          body="$(node scripts/changelog-section.mjs "$version")"
+          {
+            echo 'body<<CHANGELOG_EOF'
+            echo "$body"
+            echo 'CHANGELOG_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       # Only on a version tag: attach this OS's installers to the GitHub Release
       # for the tag (each matrix leg appends its own files to the same release).
       - name: Attach to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          body: ${{ steps.notes.outputs.body }}
           # Attach the update metadata (latest*.yml) + .blockmap alongside the
           # installers so electron-updater can read the release as an update
           # feed, and the standalone headless-server bundle.
