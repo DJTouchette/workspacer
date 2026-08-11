@@ -1581,7 +1581,8 @@
       "target": "${PROCESS_CWD}/   ",
       "expect": "deny",
       "deniedBy": "outside-roots",
-      "why": "THE probe for the whitespace-root widening, and the reason the ${PROCESS_CWD} token exists. A guard that discards \"\" but resolves any other non-absolute root (filepath.Abs / path.resolve / os.Getwd-prepend) turns the root \"   \" into <cwd>/\"   \" — a real, nameable directory — so this is the one target that lands inside it. Nothing is created on disk: the walk appends a component that does not exist, which is exactly what makes the comparison, not the filesystem, decide the verdict. All three copies survived having their whitespace guard replaced by that fallback with the case above green; this one fails."
+      "why": "THE probe for the whitespace-root widening, and the reason the ${PROCESS_CWD} token exists. A guard that discards \"\" but resolves any other non-absolute root (filepath.Abs / path.resolve / os.Getwd-prepend) turns the root \"   \" into <cwd>/\"   \" — a real, nameable directory — so this is the one target that lands inside it. Nothing is created on disk: the walk appends a component that does not exist, which is exactly what makes the comparison, not the filesystem, decide the verdict. All three copies survived having their whitespace guard replaced by that fallback with the case above green; this one fails. POSIX-ONLY: the target is <cwd>/\"   \", a component of nothing but spaces. Win32 trims trailing spaces off every component before the filesystem sees it, so that component names no file there at all and winCanonComponent fails it CLOSED — still a deny, but as \"unresolvable\" rather than the \"outside-roots\" this case pins. The widening it probes (resolving a relative root against the daemon's cwd) is a POSIX shape; on Windows the probe cannot even be spelled.",
+      "posixOnly": true
     },
     {
       "name": "a relative root does not grant the directory it names below the daemon's cwd",
