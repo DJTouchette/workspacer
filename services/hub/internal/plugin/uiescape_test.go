@@ -83,13 +83,13 @@ func TestManifestRefusesAUIPathThatEscapesThePluginDir(t *testing.T) {
 func TestUIDirRefusesAnEscapingUIEvenWhenTheManifestWasNeverValidated(t *testing.T) {
 	reg := newFakeRegistrar()
 	for _, ui := range []string{"..", "../../../..", "."} {
-		m := loadedManager(t, reg, Manifest{ID: "acme.esc", Dir: "/plugins/acme", UI: ui})
+		m := loadedManager(t, reg, Manifest{ID: "acme.esc", Dir: absTestPath("plugins", "acme"), UI: ui})
 		if dir, ok := m.UIDir("acme.esc"); ok {
 			t.Errorf("UIDir served root %q for ui=%q — the escape was refused at load and granted at use", dir, ui)
 		}
 	}
 	// The legitimate case still resolves.
-	ok := loadedManager(t, reg, Manifest{ID: "acme.ok", Dir: "/plugins/acme", UI: "dist"})
+	ok := loadedManager(t, reg, Manifest{ID: "acme.ok", Dir: absTestPath("plugins", "acme"), UI: "dist"})
 	if dir, got := ok.UIDir("acme.ok"); !got || dir != absTestPath("plugins", "acme", "dist") {
 		t.Errorf("UIDir = (%q, %v), want (/plugins/acme/dist, true)", dir, got)
 	}

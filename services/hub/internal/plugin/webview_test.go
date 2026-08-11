@@ -47,9 +47,9 @@ func TestExampleEditorIsSandboxed(t *testing.T) {
 		}
 	}
 	// A pane token bound to an agent cwd → fs.* confined to that project.
-	for _, g := range grantsWithBindings(mf, map[string]string{"agentCwd": "/work/proj"}) {
+	for _, g := range grantsWithBindings(mf, map[string]string{"agentCwd": absTestPath("work", "proj")}) {
 		if _, scoped := capspec.IsPathScoped(g.Method); scoped {
-			if len(g.FSRoots) != 1 || g.FSRoots[0] != "/work/proj" {
+			if len(g.FSRoots) != 1 || g.FSRoots[0] != absTestPath("work", "proj") {
 				t.Errorf("pane grant for %q = %v, want [/work/proj]", g.Method, g.FSRoots)
 			}
 		}
@@ -86,7 +86,7 @@ func TestValidate_PanesNeedServerOrUI(t *testing.T) {
 
 func TestUIDir(t *testing.T) {
 	reg := newFakeRegistrar()
-	mf := Manifest{ID: "acme.editor", Dir: "/plugins/acme", UI: "dist",
+	mf := Manifest{ID: "acme.editor", Dir: absTestPath("plugins", "acme"), UI: "dist",
 		Panes: []PaneContribution{{Type: "acme.editor", Title: "Editor"}}}
 	m := loadedManager(t, reg, mf)
 

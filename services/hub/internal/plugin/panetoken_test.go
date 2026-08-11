@@ -134,7 +134,7 @@ func TestPaneTokenResolvesAgentCwd(t *testing.T) {
 	reg := newFakeRegistrar()
 	mf := Manifest{
 		ID:  "acme.editor",
-		Dir: "/plugins/acme",
+		Dir: absTestPath("plugins", "acme"),
 		Capabilities: []Capability{
 			{Method: "fs.read", Paths: []string{"${agentCwd}"}},
 			{Method: "agents.list"},
@@ -142,7 +142,7 @@ func TestPaneTokenResolvesAgentCwd(t *testing.T) {
 	}
 	m := loadedManager(t, reg, mf)
 
-	tok, err := m.PaneToken("acme.editor", map[string]string{"agentCwd": "/work/project"})
+	tok, err := m.PaneToken("acme.editor", map[string]string{"agentCwd": absTestPath("work", "project")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestPaneTokenResolvesAgentCwd(t *testing.T) {
 	}
 	// fs.read should now be scoped to the resolved agent cwd.
 	roots := rootsOf(grants, "fs.read")
-	if len(roots) != 1 || roots[0] != "/work/project" {
+	if len(roots) != 1 || roots[0] != absTestPath("work", "project") {
 		t.Fatalf("fs.read roots = %v, want [/work/project]", roots)
 	}
 	// The verb-only capability is still present, with no roots.
@@ -166,7 +166,7 @@ func TestStaticTokenHasNoAgentCwdReach(t *testing.T) {
 	// the persistent per-plugin token can't touch the filesystem at all.
 	mf := Manifest{
 		ID:           "acme.editor",
-		Dir:          "/plugins/acme",
+		Dir:          absTestPath("plugins", "acme"),
 		Capabilities: []Capability{{Method: "fs.read", Paths: []string{"${agentCwd}"}}},
 	}
 	grants := grantsFor(mf)
@@ -177,11 +177,11 @@ func TestStaticTokenHasNoAgentCwdReach(t *testing.T) {
 
 func TestRevokePaneToken(t *testing.T) {
 	reg := newFakeRegistrar()
-	mf := Manifest{ID: "acme.editor", Dir: "/plugins/acme",
+	mf := Manifest{ID: "acme.editor", Dir: absTestPath("plugins", "acme"),
 		Capabilities: []Capability{{Method: "fs.read", Paths: []string{"${agentCwd}"}}}}
 	m := loadedManager(t, reg, mf)
 
-	tok, err := m.PaneToken("acme.editor", map[string]string{"agentCwd": "/work/p"})
+	tok, err := m.PaneToken("acme.editor", map[string]string{"agentCwd": absTestPath("work", "p")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestRevokePaneToken(t *testing.T) {
 
 func TestRemoveSweepsPaneTokens(t *testing.T) {
 	reg := newFakeRegistrar()
-	mf := Manifest{ID: "acme.editor", Dir: "/plugins/acme",
+	mf := Manifest{ID: "acme.editor", Dir: absTestPath("plugins", "acme"),
 		Capabilities: []Capability{{Method: "fs.read", Paths: []string{"${agentCwd}"}}}}
 	m := loadedManager(t, reg, mf)
 
@@ -265,13 +265,13 @@ func TestReloadSweepsPaneTokens(t *testing.T) {
 
 func TestPaneTokenUnknownPluginAndNoEnforcement(t *testing.T) {
 	reg := newFakeRegistrar()
-	m := loadedManager(t, reg, Manifest{ID: "acme.editor", Dir: "/plugins/acme"})
+	m := loadedManager(t, reg, Manifest{ID: "acme.editor", Dir: absTestPath("plugins", "acme")})
 	if _, err := m.PaneToken("nope", nil); err == nil {
 		t.Fatal("expected error for unknown plugin")
 	}
 
 	// With enforcement off (nil registrar) pane tokens are unavailable.
-	off := loadedManager(t, nil, Manifest{ID: "acme.editor", Dir: "/plugins/acme"})
+	off := loadedManager(t, nil, Manifest{ID: "acme.editor", Dir: absTestPath("plugins", "acme")})
 	if _, err := off.PaneToken("acme.editor", nil); err == nil {
 		t.Fatal("expected error when capability enforcement is off")
 	}

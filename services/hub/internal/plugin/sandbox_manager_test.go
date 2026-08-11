@@ -38,7 +38,7 @@ func (r *recorder) count() int {
 }
 
 func sidecarManifest() Manifest {
-	return Manifest{ID: "p", Dir: "/plugins/p", Server: &ServerSpec{Command: "/bin/srv", Args: []string{"--port", "9"}}}
+	return Manifest{ID: "p", Dir: absTestPath("plugins", "p"), Server: &ServerSpec{Command: "/bin/srv", Args: []string{"--port", "9"}}}
 }
 
 func TestSandboxSidecar_Off(t *testing.T) {

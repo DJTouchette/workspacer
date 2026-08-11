@@ -364,7 +364,16 @@ func TestExpandScope_SymlinkInsideThePluginDirCannotWidenItsOwnGrant(t *testing.
 			t.Fatal(err)
 		}
 	}
-	if err := os.Symlink(string(filepath.Separator), filepath.Join(pluginDir, "all")); err != nil {
+	// The link has to point at the VOLUME ROOT, which is the widest thing a
+	// scope could resolve to. A bare separator is that on POSIX; on Windows "\\"
+	// is DRIVE-RELATIVE (it resolves against whatever drive the process is on),
+	// so the link would name something else entirely and the widening this case
+	// exists to catch would never be set up.
+	fsRoot := string(filepath.Separator)
+	if v := filepath.VolumeName(sandbox); v != "" {
+		fsRoot = v + string(filepath.Separator)
+	}
+	if err := os.Symlink(fsRoot, filepath.Join(pluginDir, "all")); err != nil {
 		t.Skipf("cannot create symlinks here: %v", err)
 	}
 	if err := os.Symlink(victim, filepath.Join(pluginDir, "data")); err != nil {

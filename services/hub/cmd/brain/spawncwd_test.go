@@ -105,7 +105,12 @@ func TestNoCallerCwdPathExpandsATilde(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := string(src)
+	// CRLF-normalized: this guard delimits the function TEXTUALLY ("\n}\n"), and
+	// GitHub's Windows runners check the repo out with CRLF, where that needle
+	// never matches — the guard then failed with "could not delimit normalizeCwd"
+	// rather than checking anything. How the checkout spells a newline is not
+	// what this test is about.
+	body := strings.ReplaceAll(string(src), "\r\n", "\n")
 	i := strings.Index(body, "func normalizeCwd(")
 	if i < 0 {
 		t.Fatal("normalizeCwd is gone — this guard has stopped guarding anything")

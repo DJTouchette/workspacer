@@ -1,6 +1,7 @@
 package capspec
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
@@ -20,7 +21,16 @@ func mustReadRepoFile(t *testing.T, parts ...string) []byte {
 	t.Helper()
 	data, err := sweepguard.ReadRepoFile(parts...)
 	if err == nil {
-		return data
+		// Normalize line endings. Every scanner in this package delimits source
+		// TEXTUALLY — a function body ends at "\n}\n", a handler's extent is
+		// found by searching for it — and GitHub's Windows runners check the repo
+		// out with CRLF, where none of those needles match. The measured
+		// consequence was not a clean failure: the delimiter silently ran to EOF,
+		// so /health's handler "body" swallowed a LATER function's 401 and the
+		// route was classified guarded on Windows and unguarded on Linux, from
+		// the same source. A scanner that reads code has no business caring how
+		// the checkout spells a newline.
+		return bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
 	}
 	if errors.Is(err, sweepguard.ErrNoCheckout) {
 		t.Skipf("not a monorepo checkout, so this cross-repo cross-check has nothing to read: %v", err)
