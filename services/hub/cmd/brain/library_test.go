@@ -49,7 +49,7 @@ func TestSlugLibrary(t *testing.T) {
 }
 
 func TestLibrarySeedAndList(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 
 	items := listLibrary("", allowAnyLibraryFile)
 	if len(items) != 4 {
@@ -72,7 +72,7 @@ func TestLibrarySeedAndList(t *testing.T) {
 }
 
 func TestLibraryProjectOverridesGlobal(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	cwd := t.TempDir()
 
 	// A global item suppresses seeding and gives us a known id.
@@ -92,7 +92,7 @@ func TestLibraryProjectOverridesGlobal(t *testing.T) {
 }
 
 func TestLibraryClaudeAssets(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	cwd := t.TempDir()
 	writeFile(t, filepath.Join(libraryGlobalDir(), "x.md"), "---\ntitle: X\n---\n\nx\n") // suppress seed
 	writeFile(t, filepath.Join(claudeSkillsDir(cwd), "MySkill", "SKILL.md"), "---\nname: My Skill\ndescription: d\n---\n\nskill body\n")
@@ -122,7 +122,7 @@ func TestLibraryClaudeAssets(t *testing.T) {
 }
 
 func TestLibraryClaudeCommands(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	cwd := t.TempDir()
 	writeFile(t, filepath.Join(libraryGlobalDir(), "x.md"), "---\ntitle: X\n---\n\nx\n") // suppress seed
 	// Claude command frontmatter carries no `name`; the filename is the command.
@@ -159,7 +159,7 @@ func TestLibraryClaudeCommands(t *testing.T) {
 }
 
 func TestLibrarySaveAndRemoveGlobal(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 
 	reg := registryWithCwd(t, t.TempDir())
 	it, err := reg.saveLibrary(context.Background(), libraryInput{Scope: "global", Title: "My Prompt", Kind: "prompt", Body: "hello {{x}}"})
@@ -196,7 +196,7 @@ func TestLibrarySaveAndRemoveGlobal(t *testing.T) {
 //	                                      which is how the skill leg erases a
 //	                                      whole directory tree.
 func TestClaudeAgentRemoveUnlinksOneFileInTheAgentsDirectory(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	cwd := t.TempDir()
 	agent := filepath.Join(claudeAgentsDir(cwd), "reviewer.md")
 	command := filepath.Join(claudeCommandsDir(cwd), "reviewer.md")
@@ -230,7 +230,7 @@ func TestClaudeAgentRemoveUnlinksOneFileInTheAgentsDirectory(t *testing.T) {
 }
 
 func TestLibrarySaveClaudePreservesUnmodeledFrontmatter(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	cwd := t.TempDir()
 	skillFile := filepath.Join(claudeSkillsDir(cwd), "foo", "SKILL.md")
 	writeFile(t, skillFile, "---\nname: Old\ndescription: old\ntools:\n  - Read\nmodel: opus\n---\n\nold body\n")
@@ -254,7 +254,7 @@ func TestLibrarySaveClaudePreservesUnmodeledFrontmatter(t *testing.T) {
 // next to the guarded one — the exact drift that left the brain's fs.* handlers
 // unconfined while the desktop twin looked fixed.
 func TestLibrarySaveIsConfinedToTheWorkspace(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	agentCwd := t.TempDir()
 	elsewhere := t.TempDir() // no agent runs here
 	reg := registryWithCwd(t, agentCwd)
@@ -341,7 +341,7 @@ func TestLibraryListAndRemoveRejectAnEscapingCwd(t *testing.T) {
 func TestLibraryListDoesNotReadOutsideTheProjectItNamed(t *testing.T) {
 	home := tempHome(t)
 	t.Setenv("USERPROFILE", home)
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 
 	const secret = "-----BEGIN OPENSSH PRIVATE KEY-----\nSTOLEN\n"
 	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {

@@ -61,7 +61,7 @@ func loadProfilesContract(t *testing.T) profilesContract {
 // seedProfiles points the config dir at a fresh sandbox and writes `file`.
 func seedProfiles(t *testing.T, file *[]profile) {
 	t.Helper()
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	t.Setenv("APPDATA", t.TempDir())
 	if file == nil {
 		return

@@ -22,7 +22,7 @@ import (
 // managed bins resolve to the bare provider name).
 func newSpawnTestRegistry(t *testing.T, srvURL string) *registry {
 	t.Helper()
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	t.Setenv("PATH", "")
 	t.Setenv("WKS_CLAUDE_BIN", "")
 	return newRegistry(newClaudemonClient(srvURL))

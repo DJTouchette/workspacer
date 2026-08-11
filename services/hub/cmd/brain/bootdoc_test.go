@@ -19,7 +19,7 @@ import (
 // skipPermissions:true, mcpItemIds:["evil-mcp"], resumeSessionId:"dead-session-id"}).
 // agents.spawn refuses all four from a bus caller; this door handed them over.
 func TestSessionsSaveStripsSpawnEscalationFields(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	r := &registry{}
 
 	params := json.RawMessage(`{
@@ -56,7 +56,7 @@ func TestSessionsSaveStripsSpawnEscalationFields(t *testing.T) {
 // menu into the same loadAgentsFromSession -> reconcileAgents -> respawnFromRecord
 // path.
 func TestLayoutsSaveStripsSpawnEscalationFields(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	r := &registry{}
 
 	raw, err := r.layoutsSave(json.RawMessage(`{
@@ -85,7 +85,7 @@ func TestLayoutsSaveStripsSpawnEscalationFields(t *testing.T) {
 // trailing CR — arbitrary shell text auto-run on the desktop's next launch. A
 // bus-written sessions.save carried both verbatim; now both are dropped.
 func TestSessionsSaveStripsPaneEscalationFields(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	r := &registry{}
 
 	params := json.RawMessage(`{
@@ -126,7 +126,7 @@ func TestSessionsSaveStripsPaneEscalationFields(t *testing.T) {
 // its next launch. Dropping `pluginId` makes the pane un-mintable; the url then
 // loads unauthenticated (parity with a browser pane).
 func TestSessionsSaveStripsPluginPaneToken(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	r := &registry{}
 
 	params := json.RawMessage(`{

@@ -547,7 +547,7 @@ func TestLibraryRemoveEveryLegStaysInsideTheRoots(t *testing.T) {
 		},
 	} {
 		t.Run(leg.name, func(t *testing.T) {
-			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			tempConfigHome(t)
 			cwd := t.TempDir()
 			outside := t.TempDir()
 			victim := filepath.Join(outside, leg.victim)
@@ -967,7 +967,7 @@ func TestSecretGateConstantsMatchTheFixture(t *testing.T) {
 	// configStoreRoots() is the same three names joined onto the config dir, in
 	// the same order — the desktop twin asserts the identical shape, and the bus
 	// asserts the bare list.
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	wantRoots := make([]string, 0, len(fx.ConfigStoreSubdirs))
 	for _, store := range fx.ConfigStoreSubdirs {
 		wantRoots = append(wantRoots, filepath.Join(configDir(), store))
@@ -1512,7 +1512,23 @@ func underHome(target string) bool {
 	if home == "" || !filepath.IsAbs(target) {
 		return false
 	}
-	return target == home || strings.HasPrefix(target, home+string(filepath.Separator))
+	// Compare on a normalized spelling, not the raw strings. The corpus writes
+	// its targets with '/' — "${HOME}/.ssh/id_rsa" — which Windows accepts as a
+	// separator but which filepath.Separator is not, so a raw HasPrefix against
+	// home+"\\" matched NONE of them there and this skip quietly stopped firing:
+	// the browse cases it exists to exclude then ran, reached the handler, and
+	// failed on an open() error instead. NTFS is case-insensitive as well, and
+	// `home` comes from a different API than the target, so fold there too.
+	// Both transformations are no-ops on POSIX.
+	norm := func(p string) string {
+		p = strings.ReplaceAll(p, "/", string(filepath.Separator))
+		if runtime.GOOS == "windows" {
+			p = strings.ToLower(p)
+		}
+		return p
+	}
+	t2, h2 := norm(target), norm(home)
+	return t2 == h2 || strings.HasPrefix(t2, h2+string(filepath.Separator))
 }
 
 // withDeadline runs one guard call and fails the test rather than hanging on it.
@@ -1955,7 +1971,7 @@ func assertMethodRejectsCorpus(t *testing.T, fx contractFixture, groups map[stri
 	// reasons: fs.read of a directory, library.remove of an absent item. Those
 	// are not this test's business.)
 	t.Run("a path inside a live agent cwd is not refused", func(t *testing.T) {
-		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		tempConfigHome(t)
 		dir, err := filepath.EvalSymlinks(t.TempDir())
 		if err != nil {
 			t.Fatal(err)
@@ -2117,7 +2133,7 @@ func TestPathBearingMethodRootSetsMatchTheCorpus(t *testing.T) {
 			})
 			// A config dir of its own, so the config stores cannot be what
 			// admits (or refuses) the probe.
-			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			tempConfigHome(t)
 			// A home of its own, for the reasons in the header. USERPROFILE is
 			// what os.UserHomeDir reads on Windows, HOME everywhere else; set
 			// both so the sandbox holds on either.
@@ -2367,7 +2383,7 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 	})
 
 	run("library.go saveLibrary -> writeFileAtomic", func(t *testing.T) {
-		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		tempConfigHome(t)
 		reg := registryWithCwd(t, dir)
 		raw, err := reg.handle(context.Background(), "library.save",
 			json.RawMessage(`{"scope":"project","id":"n","title":"N","kind":"prompt","body":"b","cwd":`+
@@ -2391,7 +2407,7 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 	// The claude scope is a SECOND write leg with its own destination, its own
 	// guard call and its own derived path.
 	run("library.go saveLibraryClaude -> writeFileAtomic", func(t *testing.T) {
-		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		tempConfigHome(t)
 		reg := registryWithCwd(t, dir)
 		raw, err := reg.handle(context.Background(), "library.save",
 			json.RawMessage(`{"scope":"claude","id":"s","title":"S","kind":"skill","body":"b","cwd":`+
@@ -2416,7 +2432,7 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 	})
 
 	run("handlers.go library.list -> listLibrary", func(t *testing.T) {
-		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		tempConfigHome(t)
 		item := filepath.Join(dir, ".workspacer", "library", "listed.md")
 		if err := os.MkdirAll(filepath.Dir(item), 0o755); err != nil {
 			t.Fatal(err)
@@ -2437,7 +2453,7 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 	})
 
 	run("handlers.go library.remove -> removeLibrary", func(t *testing.T) {
-		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		tempConfigHome(t)
 		victim := filepath.Join(dir, ".workspacer", "library", "gone.md")
 		if err := os.MkdirAll(filepath.Dir(victim), 0o755); err != nil {
 			t.Fatal(err)
@@ -2502,7 +2518,7 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 	}
 
 	run("library.go readLibraryDir -> os.ReadFile (per-file guard)", func(t *testing.T) {
-		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		tempConfigHome(t)
 		full, link := perFileTree(t, filepath.Join(".workspacer", "library"), "ptarget.md", "palias.md")
 		reg := registryWithCwd(t, dir)
 		raw, err := reg.handle(context.Background(), "library.list",
@@ -2520,7 +2536,7 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 	})
 
 	run("library.go readClaudeItem -> os.ReadFile (per-file guard)", func(t *testing.T) {
-		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		tempConfigHome(t)
 		full, link := perFileTree(t, filepath.Join(".claude", "agents"), "ctarget.md", "calias.md")
 		reg := registryWithCwd(t, dir)
 		raw, err := reg.handle(context.Background(), "library.list",
@@ -2538,7 +2554,7 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 	})
 
 	run("library.go removeLibrary remove() -> os.Remove/os.RemoveAll (per-file guard)", func(t *testing.T) {
-		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		tempConfigHome(t)
 		full, link := perFileTree(t, filepath.Join(".claude", "agents"), "rtarget.md", "ralias.md")
 		reg := registryWithCwd(t, dir)
 		if _, err := reg.handle(context.Background(), "library.remove",

@@ -378,7 +378,7 @@ func readProfilesJSON(t *testing.T) []map[string]any {
 // that profile, where nothing scrubs" escalation scrubBypassProfile exists to
 // close, through the one field it did not cover.
 func TestProfilesAddScrubsMcpItemIdsAtWriteTime(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	reg := newRegistry(newClaudemonClient("http://unused"))
 
 	res, err := reg.handle(context.Background(), "claude.profiles.add",
@@ -426,7 +426,7 @@ func TestProfilesAddScrubsMcpItemIdsAtWriteTime(t *testing.T) {
 }
 
 func TestProfilesAddDefaultsMcpItemIds(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	reg := newRegistry(newClaudemonClient("http://unused"))
 
 	res, err := reg.handle(context.Background(), "claude.profiles.add", []byte(`{"name":"P"}`))
@@ -469,7 +469,7 @@ func TestProfilesAddDefaultsMcpItemIds(t *testing.T) {
 // the brain's own guarantee is the array, and a JSON null is what a nil slice
 // marshals to.
 func TestProfilesListNeverServesNullLists(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	if err := os.MkdirAll(configDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -506,7 +506,7 @@ func TestProfilesListNeverServesNullLists(t *testing.T) {
 // nowhere: `configDir` is not in the params scanner's path-ish set and claude.*
 // is not a path-bearing prefix, so neither detector could see it.
 func TestProfilesWritesOverTheBusAreScrubbedAtWriteTime(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	reg := newRegistry(newClaudemonClient("http://unused"))
 	ctx := context.Background()
 

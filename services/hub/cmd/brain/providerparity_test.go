@@ -282,7 +282,7 @@ func TestLibraryDerivedRootSetIsTheItemRoots(t *testing.T) {
 // disk. The trigger is any uppercase letter, dot or space in a skill name, not
 // an exotic codepoint.
 func TestClaudeScopeIdsAreRealBasenames(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	tempConfigHome(t)
 	cwd, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
