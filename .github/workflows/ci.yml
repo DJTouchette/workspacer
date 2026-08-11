@@ -240,6 +240,17 @@ jobs:
       # the linux `hub` job: the cached go-build directory plus a cache key that
       # ignores out-of-module inputs is how a cross-repo guard reports green on
       # a tree it never read.
+      # internal/bus's symlink-gated tests are the ONLY oracle for what they
+      # cover, and sweepguard.Gate deliberately makes a host that cannot run them
+      # RED rather than green-with-a-skip-count. An unelevated process on Windows
+      # cannot create a symlink unless Developer Mode is on, so turn it on —
+      # same call as installing ripgrep below: give the runner the capability the
+      # test needs instead of teaching the test to skip.
+      - name: Enable Developer Mode (unprivileged symlink creation)
+        run: |
+          reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" /t REG_DWORD /f /v "AllowDevelopmentWithoutDevLicense" /d "1"
+        shell: cmd
+
       # Same reason as the hub job: search.project shells out to ripgrep, and the
       # guard case that proves it searches the path the guard RETURNED has to run
       # the search to see where it looked. The Windows runner has no rg either.
