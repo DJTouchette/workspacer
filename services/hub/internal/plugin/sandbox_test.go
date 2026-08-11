@@ -73,7 +73,7 @@ func TestValidate_RejectsEscapingPathScope(t *testing.T) {
 		"${pluginDir}/..",
 		"${pluginDir}/data/../../..",
 		"${agentCwd}/..",
-		filepath.FromSlash("/plugins/acme/../.."),
+		absTestPath("plugins", "acme", "..", ".."),
 		"${pluginDir}\\..\\..",
 	}
 	for _, p := range escapes {
@@ -94,7 +94,7 @@ func TestValidate_RejectsEscapingPathScope(t *testing.T) {
 	// Scopes that only ever narrow still validate — including a dotfile subpath,
 	// which is not a ".." segment.
 	ok := Manifest{ID: "x", APIVersion: APIVersion, Capabilities: []Capability{
-		{Method: "fs.read", Paths: []string{"${pluginDir}", "${pluginDir}/data", "${agentCwd}/src", filepath.FromSlash("/abs/path"), "${pluginDir}/.cache"}},
+		{Method: "fs.read", Paths: []string{"${pluginDir}", "${pluginDir}/data", "${agentCwd}/src", absTestPath("abs", "path"), "${pluginDir}/.cache"}},
 	}}
 	if err := ok.Validate(); err != nil {
 		t.Fatalf("narrowing scopes should validate, got %v", err)
@@ -121,7 +121,7 @@ func TestLoad_RejectsEscapingPathScope(t *testing.T) {
 // no root for the escaping scope, and a grant with no roots denies every call.
 func TestGrantsFor_DropsEscapingScope(t *testing.T) {
 	mf := Manifest{
-		Dir: filepath.FromSlash("/plugins/acme"),
+		Dir: absTestPath("plugins", "acme"),
 		Capabilities: []Capability{
 			{Method: "fs.read", Paths: []string{"${pluginDir}/../.."}},
 		},
@@ -136,8 +136,8 @@ func TestGrantsFor_DropsEscapingScope(t *testing.T) {
 }
 
 func TestExpandScope(t *testing.T) {
-	dir := filepath.FromSlash("/plugins/acme")
-	cwd := filepath.FromSlash("/work/project")
+	dir := absTestPath("plugins", "acme")
+	cwd := absTestPath("work", "project")
 	bindings := map[string]string{"pluginDir": dir, "agentCwd": cwd}
 	cases := []struct {
 		in   string
@@ -147,7 +147,7 @@ func TestExpandScope(t *testing.T) {
 		{"${pluginDir}/data", filepath.Join(dir, "data")},
 		{"${agentCwd}", cwd},                           // bound dynamic scope resolves
 		{"${agentCwd}/src", filepath.Join(cwd, "src")}, // …with a subpath
-		{filepath.FromSlash("/abs/path"), filepath.FromSlash("/abs/path")},
+		{absTestPath("abs", "path"), absTestPath("abs", "path")},
 		{"relative/path", ""}, // relative → dropped
 		{"${unknown}/x", ""},  // no such binding → dropped
 		{"${malformed", ""},   // no closing brace → dropped
@@ -157,7 +157,7 @@ func TestExpandScope(t *testing.T) {
 		{"${pluginDir}/..", ""},
 		{"${agentCwd}/../../etc", ""},
 		{"${pluginDir}/data/../../other", ""}, // climbing back in is still refused
-		{filepath.FromSlash("/plugins/acme/../.."), ""},
+		{absTestPath("plugins", "acme", "..", ".."), ""},
 		{"${pluginDir}\\..\\..", ""}, // the other separator is no way around it
 	}
 	for _, c := range cases {
@@ -235,7 +235,7 @@ func canSymlink(t *testing.T) bool {
 }
 
 func TestWithinRoot(t *testing.T) {
-	root := filepath.FromSlash("/plugins/acme")
+	root := absTestPath("plugins", "acme")
 	cases := []struct {
 		base, path string
 		want       bool
@@ -243,9 +243,9 @@ func TestWithinRoot(t *testing.T) {
 		{root, root, true},
 		{root, filepath.Join(root, "data"), true},
 		{root + string(filepath.Separator), filepath.Join(root, "data"), true}, // trailing separator on the binding
-		{root, filepath.FromSlash("/plugins"), false},
-		{root, filepath.FromSlash("/plugins/acme-evil"), false}, // sibling with the root as a name prefix
-		{filepath.FromSlash("/"), filepath.FromSlash("/etc"), true},
+		{root, absTestPath("plugins"), false},
+		{root, absTestPath("plugins", "acme-evil"), false}, // sibling with the root as a name prefix
+		{absTestPath(), absTestPath("etc"), true},
 	}
 	for _, c := range cases {
 		if got := withinRoot(c.base, c.path); got != c.want {
@@ -255,7 +255,7 @@ func TestWithinRoot(t *testing.T) {
 }
 
 func TestGrantsFor(t *testing.T) {
-	dir := filepath.FromSlash("/plugins/acme")
+	dir := absTestPath("plugins", "acme")
 	mf := Manifest{
 		Dir: dir,
 		Capabilities: []Capability{

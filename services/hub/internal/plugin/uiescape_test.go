@@ -90,7 +90,7 @@ func TestUIDirRefusesAnEscapingUIEvenWhenTheManifestWasNeverValidated(t *testing
 	}
 	// The legitimate case still resolves.
 	ok := loadedManager(t, reg, Manifest{ID: "acme.ok", Dir: "/plugins/acme", UI: "dist"})
-	if dir, got := ok.UIDir("acme.ok"); !got || dir != filepath.FromSlash("/plugins/acme/dist") {
+	if dir, got := ok.UIDir("acme.ok"); !got || dir != absTestPath("plugins", "acme", "dist") {
 		t.Errorf("UIDir = (%q, %v), want (/plugins/acme/dist, true)", dir, got)
 	}
 }

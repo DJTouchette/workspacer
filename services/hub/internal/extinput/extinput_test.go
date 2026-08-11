@@ -289,7 +289,13 @@ func write(t *testing.T, path, content string) {
 // is the recursion, and a walk that silently visited only the top level would
 // pin only the top level while looking like it pinned the tree.
 func TestWalkDirTraversesAndPrunes(t *testing.T) {
-	root := t.TempDir()
+	// INSIDE the module, not os.TempDir(). extinput maps every path it pins to a
+	// module-relative name, and on the Windows CI runner the checkout is on D:
+	// while TEMP is on C: — filepath.Rel across volumes fails, which the
+	// production code correctly reports rather than papering over. The test has
+	// to hand it a path it can express; the cache property under test is
+	// unaffected by where the tree lives.
+	root := moduleTempDir(t)
 	for _, rel := range []string{
 		filepath.Join("a.txt"),
 		filepath.Join("sub", "b.txt"),
@@ -341,4 +347,20 @@ func TestWalkDirTraversesAndPrunes(t *testing.T) {
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("WalkDir swallowed a visit error from depth 2: %v", err)
 	}
+}
+
+// moduleTempDir makes a scratch tree inside the module and removes it after the
+// test. See TestWalkDirTraversesAndPrunes for why os.TempDir() will not do.
+func moduleTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp(".", "walkdir-")
+	if err != nil {
+		t.Fatalf("temp dir inside the module: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatalf("abs: %v", err)
+	}
+	return abs
 }

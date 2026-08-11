@@ -1715,7 +1715,8 @@
       "target": "${ROOT}/.. ",
       "expect": "allow",
       "resolvesTo": "${ROOT}/.. ",
-      "why": "'.. ' is not '..'. It is a legal (here non-existent) directory name INSIDE the root, so the verdict is allow and — this is the load-bearing half — the canonical path must come back with the space still on it. The brain's fs.listDir call site TrimSpace'd the guard's answer and then filepath.Abs'd it, which turned this exact string back into '<root>/..' and listed the root's PARENT: `$HOME/.. ` enumerated /home, and '<configDir>/layouts/.. ' enumerated the config dir itself, both reported as allowed. No symlink and no preconditions — a bare trailing space was the whole exploit, and only `resolvesTo` can see it, because the DECISION was correct all along."
+      "why": "'.. ' is not '..'. It is a legal (here non-existent) directory name INSIDE the root, so the verdict is allow and — this is the load-bearing half — the canonical path must come back with the space still on it. The brain's fs.listDir call site TrimSpace'd the guard's answer and then filepath.Abs'd it, which turned this exact string back into '<root>/..' and listed the root's PARENT: `$HOME/.. ` enumerated /home, and '<configDir>/layouts/.. ' enumerated the config dir itself, both reported as allowed. No symlink and no preconditions — a bare trailing space was the whole exploit, and only `resolvesTo` can see it, because the DECISION was correct all along. POSIX-ONLY: Win32 strips trailing spaces and dots before the filesystem sees a component, so '.. ' IS '..' there — a parent traversal, not a child name. The guards now trim to match (winCanonComponent), which flips this case's verdict from allow to deny on Windows; the POSIX premise (a space is an ordinary filename character) is what it pins.",
+      "posixOnly": true
     },
     {
       "name": "a trailing space names a different file than the symlink beside it",

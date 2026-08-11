@@ -91,7 +91,7 @@ func TestUIDir(t *testing.T) {
 	m := loadedManager(t, reg, mf)
 
 	dir, ok := m.UIDir("acme.editor")
-	if !ok || dir != filepath.FromSlash("/plugins/acme/dist") {
+	if !ok || dir != absTestPath("plugins", "acme", "dist") {
 		t.Fatalf("UIDir = (%q, %v), want (/plugins/acme/dist, true)", dir, ok)
 	}
 

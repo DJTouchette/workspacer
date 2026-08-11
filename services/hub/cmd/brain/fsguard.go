@@ -46,6 +46,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -175,6 +176,42 @@ func parentPath(base, volume string) string {
 // EACCES, ELOOP and anything unrecognised fail the whole call rather than
 // becoming "not contained, keep looking" (which would make the guard an
 // existence oracle) or "contained" (which would make it an escape).
+// errUnnameable marks a component the Win32 path layer cannot name at all
+// (one made only of dots and spaces, e.g. "..." or "   ", which it trims to
+// nothing). A path we cannot name is never "probably fine".
+var errUnnameable = errors.New("path component names nothing")
+
+// winCanonComponent applies what the Win32 path layer does to EVERY component
+// before it reaches the filesystem: trailing spaces and dots are stripped. It is
+// the identity on POSIX, where those characters are ordinary.
+//
+// This is the check-path/opened-path invariant, and Windows breaks it silently.
+// "x " opens x. ".. " opens .. — a PARENT TRAVERSAL, where POSIX gives a literal
+// child name. Measured on the Windows runner before this existed: fs.listDir on
+// "<root>/workspacer/layouts/.. " was ALLOWED as a child of the root and listed
+// the CONFIG DIR, which is where remote-token lives — the credential that
+// promotes a bus connection to trusted. The guard was not wrong by its own
+// rules; its canonical string simply stopped naming the file the handler opens.
+//
+// "." and ".." have to be recognised BEFORE the trim, because trimming dots
+// would erase them too.
+func winCanonComponent(c string) (string, bool) {
+	if runtime.GOOS != "windows" {
+		return c, true
+	}
+	if t := strings.TrimRight(c, " ."); t != "" {
+		return t, true
+	}
+	// Dots and spaces only. "." and ".." keep their meaning (a trailing space
+	// does not change which directory ".." means); anything else — "...",
+	// "   ", ".. ." — trims to nothing and names no file Win32 can open.
+	switch s := strings.TrimRight(c, " "); s {
+	case ".", "..":
+		return s, true
+	}
+	return "", false
+}
+
 // parentIsWalkable reports whether a MISSING component may be walked through,
 // by asking the question POSIX answers with its errno and Windows does not.
 //
@@ -217,6 +254,17 @@ func canonicalizePath(target string) (string, error) {
 	for len(queue) > 0 {
 		c := queue[0]
 		queue = queue[1:]
+
+		// Win32 strips trailing spaces/dots before the filesystem ever sees the
+		// name, so the walk has to do it too or its answer describes a different
+		// file than the handler opens. Identity on POSIX.
+		c, ok := winCanonComponent(c)
+		if !ok {
+			return "", errUnnameable
+		}
+		if c == "." {
+			continue // ". " normalizes to "." on Windows; splitComponents only drops the bare form
+		}
 
 		if c == ".." {
 			resolved = parentPath(resolved, volume)

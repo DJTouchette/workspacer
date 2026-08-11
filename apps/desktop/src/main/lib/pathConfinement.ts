@@ -132,6 +132,30 @@ function parentOf(base: string, volume: string): string {
 }
 
 /**
+ * What Win32 does to every component before the filesystem sees it: trailing
+ * spaces and dots are stripped. The identity on POSIX, where both are ordinary
+ * filename characters.
+ *
+ * Returns null for a component made ONLY of dots and spaces ('...', '   '),
+ * which Win32 trims to nothing — a component that names no file is never
+ * "probably fine". '.' and '..' are recognised before the trim, because
+ * trimming dots would erase them.
+ *
+ * Twin of winCanonComponent in services/hub/cmd/brain/fsguard.go and
+ * services/hub/internal/bus/policy.go. The escape it closes was measured on the
+ * Windows runner: the guard allowed '<root>/layouts/.. ' as a literal child, and
+ * the handler — going through Win32, which reads it as '..' — listed the config
+ * dir instead.
+ */
+function winCanonComponent(c: string): string | null {
+  if (!WIN32) return c;
+  const trimmed = c.replace(/[ .]+$/, '');
+  if (trimmed !== '') return trimmed;
+  const spaceOnly = c.replace(/ +$/, '');
+  return spaceOnly === '.' || spaceOnly === '..' ? spaceOnly : null;
+}
+
+/**
  * Canonicalize `target`: absolute, with '.', '..' and symlinks resolved by
  * walking one component at a time against the already-resolved prefix.
  *
@@ -155,7 +179,13 @@ export function canonicalizePath(target: string): string {
   let hops = 0;
 
   while (queue.length > 0) {
-    const c = queue.shift() as string;
+    const raw = queue.shift() as string;
+    // Win32 strips trailing spaces/dots before the filesystem sees the name, so
+    // the walk must too — otherwise its answer names a different file than the
+    // caller then opens. Identity on POSIX.
+    const c = winCanonComponent(raw);
+    if (c === null) throw new Error('path component names nothing');
+    if (c === '.') continue; // '. ' normalizes to '.' on Windows
     if (c === '..') {
       resolved = parentOf(resolved, volume);
       continue;

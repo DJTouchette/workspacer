@@ -2613,23 +2613,57 @@ func TestGuardedHandlersDoNotRenormalizeTheCanonicalPath(t *testing.T) {
 	// Each probe is an ALLOWED path (it resolves inside the agent cwd) that
 	// names nothing on disk. The handler must therefore fail with ENOENT — the
 	// one thing it must never do is trim the space and succeed.
+	// The invariant is one thing on both platforms — the path the guard checked
+	// is the path the handler opens — but the two sides of it swap over.
+	//
+	// POSIX: a trailing space is an ordinary filename character, so the GUARD
+	// must not trim (the string is an allowed path naming nothing) and the
+	// HANDLER must then fail to open it.
+	//
+	// WINDOWS: Win32 strips trailing spaces and dots before the filesystem sees
+	// the name, so the guard is the side that has to trim (winCanonComponent),
+	// and its verdict must be about the TRIMMED path. Where the trim escapes the
+	// root the guard must refuse — that is the measured escape this closes:
+	// "<store>/.. " listed the config dir, which holds remote-token.
 	for _, tc := range []struct {
 		method string
 		params string
 		note   string
+		// winRefused: on Windows the trimmed path leaves the root (or names a
+		// denied symlink), so the guard must refuse it outright. When false, the
+		// trimmed path is a real file INSIDE the root and the call SUCCEEDS
+		// there — harmless, and the only thing Win32 can do.
+		winRefused bool
 	}{
 		{"fs.listDir", `{"path":` + jsonStr(dir+"/.. ") + `}`,
-			"trimming makes this the parent of the only allowed root"},
+			"trimming makes this the parent of the only allowed root", true},
 		{"fs.listDir", `{"path":` + jsonStr(dir+"/link ") + `}`,
-			"trimming makes this the symlink out of the root, which the guard denies by name"},
+			"trimming makes this the symlink out of the root, which the guard denies by name", true},
 		{"fs.listEntries", `{"path":` + jsonStr(dir+"/link ") + `}`,
-			"same trim, other lister"},
+			"same trim, other lister", true},
 		{"fs.read", `{"path":` + jsonStr(dir+"/notes.txt ") + `}`,
-			"trimming makes this an existing file the caller did not name"},
+			"trimming makes this an existing file the caller did not name", false},
 	} {
 		t.Run(tc.method+" "+tc.note, func(t *testing.T) {
 			reg := registryWithCwd(t, dir)
 			raw, err := reg.handle(context.Background(), tc.method, json.RawMessage(tc.params))
+
+			if onWindows {
+				if !tc.winRefused {
+					if err != nil {
+						t.Fatalf("%s: the trimmed name is a real file inside the root, so Win32 must open it: %v", tc.method, err)
+					}
+					return
+				}
+				if err == nil {
+					t.Fatalf("%s: the trimmed path leaves the root and the guard allowed it anyway — the guard's answer no longer names the file Win32 opens: %s", tc.method, raw)
+				}
+				if !strings.Contains(err.Error(), refusalText) {
+					t.Fatalf("%s: refused, but not BY THE GUARD (%v). On Windows the guard must trim like Win32 does, so the refusal has to come from containment, not from a failed open", tc.method, err)
+				}
+				return
+			}
+
 			if err == nil {
 				t.Fatalf("%s succeeded on a path that does not exist — the handler re-normalized the guard's answer and opened something else: %s", tc.method, raw)
 			}
@@ -2641,6 +2675,14 @@ func TestGuardedHandlersDoNotRenormalizeTheCanonicalPath(t *testing.T) {
 
 	// fs.write is the one that must SUCCEED, on the literal name with the space.
 	t.Run("fs.write keeps the trailing space instead of clobbering the neighbour", func(t *testing.T) {
+		if onWindows {
+			// Not a defect to pin here: Win32 cannot create a file whose name
+			// ends in a space at all, so "w.txt " and "w.txt" ARE one file and
+			// the neighbour it would "clobber" is itself. Both are inside the
+			// root, so containment is unaffected — the escape that the trim
+			// bought is pinned by the config-dir case below, which runs on both.
+			t.Skip("Win32 strips the trailing space: the two names are the same file")
+		}
 		reg := registryWithCwd(t, dir)
 		if _, err := reg.handle(context.Background(), "fs.write",
 			json.RawMessage(`{"path":`+jsonStr(dir+"/w.txt ")+`,"contents":"spaced"}`)); err != nil {

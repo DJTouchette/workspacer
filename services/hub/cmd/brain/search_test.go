@@ -17,12 +17,12 @@ func TestParseRipgrepJSONMultipleSubmatchesPerLine(t *testing.T) {
 {"type":"match","data":{"path":{"text":"a.txt"},"lines":{"text":"foo foo foo\n"},"line_number":7,"submatches":[{"start":0},{"start":4},{"start":8}]}}
 {"type":"end","data":{"path":{"text":"a.txt"}}}`
 
-	res := parseRipgrepJSON([]byte(out), "/proj", 500)
+	res := parseRipgrepJSON([]byte(out), absTestPath("proj"), 500)
 	if len(res.Results) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(res.Results))
 	}
 	got := res.Results[0]
-	if got.File != filepath.Join("/proj", "a.txt") {
+	if got.File != filepath.Join(absTestPath("proj"), "a.txt") {
 		t.Errorf("file = %q", got.File)
 	}
 	if len(got.Matches) != 3 {
@@ -71,7 +71,7 @@ func TestParseRipgrepJSONClipsCodePointsAndTrimsAsciiOnly(t *testing.T) {
 		`{"type":"match","data":{"path":{"text":"bom.txt"},"lines":{"text":` + jsonStr(bom+"\n") + `},"line_number":1,"submatches":[{"start":0}]}}`,
 	}, "\n")
 
-	res := parseRipgrepJSON([]byte(out), "/proj", 500)
+	res := parseRipgrepJSON([]byte(out), absTestPath("proj"), 500)
 	byFile := map[string]string{}
 	for _, f := range res.Results {
 		byFile[filepath.Base(f.File)] = f.Matches[0].Text
@@ -111,7 +111,7 @@ func TestEffectiveMaxResultsTreatsNonPositiveAsUnset(t *testing.T) {
 // Truncation must count individual submatches, not lines.
 func TestParseRipgrepJSONTruncatesBySubmatch(t *testing.T) {
 	out := `{"type":"match","data":{"path":{"text":"a.txt"},"lines":{"text":"x x x\n"},"line_number":1,"submatches":[{"start":0},{"start":2},{"start":4}]}}`
-	res := parseRipgrepJSON([]byte(out), "/proj", 2)
+	res := parseRipgrepJSON([]byte(out), absTestPath("proj"), 2)
 	if !res.Truncated {
 		t.Error("expected Truncated when submatches exceed maxResults")
 	}

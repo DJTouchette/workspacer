@@ -206,6 +206,17 @@ func canonicalize(path string) (string, error) {
 		c := queue[0]
 		queue = queue[1:]
 
+		// Win32 strips trailing spaces/dots before the filesystem sees the name,
+		// so the walk must too or its answer describes a different file than the
+		// caller's operation opens. Identity on POSIX.
+		c, ok := winCanonComponent(c)
+		if !ok {
+			return "", errUnnameable
+		}
+		if c == "." {
+			continue // ". " normalizes to "." on Windows
+		}
+
 		if c == ".." {
 			// No filesystem access: `resolved` is by construction already fully
 			// symlink-resolved, so its textual parent IS its real parent.
@@ -674,6 +685,29 @@ func paramString(params json.RawMessage, field string) (value string, ok bool) {
 		return "", false
 	}
 	return s, true
+}
+
+// errUnnameable marks a component the Win32 path layer cannot name at all — one
+// made only of dots and spaces ("...", "   "), which it trims to nothing.
+var errUnnameable = errors.New("path component names nothing")
+
+// winCanonComponent applies what Win32 does to every component before the
+// filesystem sees it: trailing spaces and dots are stripped. Identity on POSIX.
+// Twin of winCanonComponent in cmd/brain/fsguard.go — see there for the measured
+// escape this closes (".. " is a PARENT TRAVERSAL on Windows, not a child name,
+// so the guard's canonical string stopped naming the file the handler opened).
+func winCanonComponent(c string) (string, bool) {
+	if runtime.GOOS != "windows" {
+		return c, true
+	}
+	if t := strings.TrimRight(c, " ."); t != "" {
+		return t, true
+	}
+	switch s := strings.TrimRight(c, " "); s {
+	case ".", "..":
+		return s, true
+	}
+	return "", false
 }
 
 // parentIsWalkable reports whether a MISSING component may be walked through.

@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"runtime"
+	"strings"
+	"testing"
+)
 
 // Redirecting the process's notion of "home" and "config dir" in a test, on
 // EVERY platform.
@@ -45,4 +49,21 @@ func setHome(t *testing.T, dir string) {
 	t.Helper()
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
+}
+
+// absTestPath builds a path that is ABSOLUTE on the platform running the test.
+//
+// A bare "/proj" is not absolute on Windows — it is DRIVE-relative, resolving
+// against whatever drive the process is on — so a guard or a path join that is
+// correct will refuse or mangle it, and the case fails for a reason unrelated to
+// what it tests. Nothing on disk is touched; these are synthetic roots.
+//
+// Deliberately not filepath.Join: Join Cleans, and some callers pass ".."
+// segments that the case is about.
+func absTestPath(parts ...string) string {
+	root, sep := "/", "/"
+	if runtime.GOOS == "windows" {
+		root, sep = `C:\`, `\`
+	}
+	return root + strings.Join(parts, sep)
 }
