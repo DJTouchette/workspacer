@@ -60,9 +60,15 @@ func TestParamStringReturnsTheCallersStringVerbatim(t *testing.T) {
 // <root>/link is a directory symlink to <outside>. Cleaning ANYWHERE between the
 // JSON and canonicalize() authorizes a path that opens <outside>/token.
 func TestAuthorizeRefusesASymlinkTraversalOutOfTheGrantedRoot(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink semantics differ on Windows")
-	}
+	// This used to skip on Windows with "symlink semantics differ" — a claim, not
+	// a measurement, written before this package had ever run there. What differs
+	// on Windows is what the WIN32 PATH LAYER does with "link/..", and this walk
+	// deliberately never delegates to it: canonicalize() reads each symlink with
+	// Lstat/Readlink and pops ".." against the already-resolved prefix, which is
+	// the whole reason the traversal is caught. So the property is
+	// platform-independent and the oracle should run. If symlink creation itself
+	// is unavailable, gateSymlink records THAT, with the real error — an
+	// unrunnable oracle named out loud beats a blanket skip nobody re-examines.
 	base := t.TempDir()
 	root := filepath.Join(base, "root")
 	outside := filepath.Join(base, "outside")
@@ -114,10 +120,12 @@ func TestAuthorizeDeniesEveryTargetItCannotResolve(t *testing.T) {
 	// so a host without symlink privilege dropped it and nothing said so. The
 	// gate does not skip the test (the other targets are still worth running);
 	// it makes the missing coverage a named failure instead of an absence.
-	if runtime.GOOS != "windows" {
-		if gateSymlinkOptional(t, filepath.Join(root, "loop"), filepath.Join(root, "loop")) {
-			targets = append(targets, filepath.Join(root, "loop", "x"))
-		}
+	// Not gated on GOOS either: a self-referential link is resolved by this
+	// walk's own hop counter, not by the platform, so the arm it reaches is the
+	// same one everywhere. gateSymlinkOptional reports it if the host cannot make
+	// the link.
+	if gateSymlinkOptional(t, filepath.Join(root, "loop"), filepath.Join(root, "loop")) {
+		targets = append(targets, filepath.Join(root, "loop", "x"))
 	}
 	if err := os.WriteFile(filepath.Join(root, "afile"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
