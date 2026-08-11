@@ -272,6 +272,7 @@ var inertMethods = map[string]string{
 	"analytics.recent":           "the only params are a row limit and a time window, both coerced to numbers before they reach the store; nothing composes a path, an argv or a query the host runs",
 	"analytics.summary":          "same as analytics.recent — numeric window only",
 	"app.getCwd":                 "no params; returns the provider's own working directory",
+	"brain.info":                 "no params; returns only the brain's own registration scope. It exists so `workspacer status` can ask whether a brain is on the bus at all — a question the previous probe (app.getCwd, which the DESKTOP registers) answered wrong whenever the desktop was running",
 	"app.supervisorHome":         "no params. It DOES create ~/.workspacer and a README there, but both are fixed literals the provider composes — no part of the location comes from the caller",
 	"claude.listModels":          "no params; the answer is the provider's own model catalog",
 	"claude.profiles.list":       "no params; the mutating siblings (add/update/remove) carry their own decisions",

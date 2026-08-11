@@ -610,8 +610,10 @@ mod tests {
         let marker = Uuid::new_v4();
         // The escape target `record_thread` would clobber for a `..` id: one
         // directory above the codex-threads dir.
-        let escaped = crate::providers::codex_rollout::threads_dir_for_test()
-            .and_then(|d| d.parent().map(|p| p.join(format!("wks-managed-escape-{marker}.json"))));
+        let escaped = crate::providers::codex_rollout::threads_dir_for_test().and_then(|d| {
+            d.parent()
+                .map(|p| p.join(format!("wks-managed-escape-{marker}.json")))
+        });
 
         let payload: SpawnManagedPayload = serde_json::from_value(json!({
             "provider": "codex",

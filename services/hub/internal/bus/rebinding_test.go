@@ -24,7 +24,7 @@ func TestOriginAllowedRejectsDNSRebinding(t *testing.T) {
 		&net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7895})
 	r = r.WithContext(ctx)
 
-	if originAllowed(r) {
+	if (&Server{}).originAllowed(r) {
 		t.Fatal("DNS-rebinding page (public Origin==Host, loopback socket) must be rejected")
 	}
 
@@ -34,7 +34,7 @@ func TestOriginAllowedRejectsDNSRebinding(t *testing.T) {
 	ctx = context.WithValue(r.Context(), http.LocalAddrContextKey,
 		&net.TCPAddr{IP: net.IPv4(100, 64, 0, 5), Port: 7895})
 	r = r.WithContext(ctx)
-	if !originAllowed(r) {
+	if !(&Server{}).originAllowed(r) {
 		t.Fatal("genuine non-loopback same-origin connection must be allowed")
 	}
 }

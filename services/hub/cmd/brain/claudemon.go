@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -209,6 +210,17 @@ func (c *claudemonClient) streamSSE(ctx context.Context, path string, emit func(
 		return err
 	}
 	defer resp.Body.Close()
+	// A non-2xx answer is NOT a stream. Handing the error body to parseSSE finds
+	// no frames and returns nil — "the stream ended normally" — so a PERMANENT
+	// failure (claudemon's host_guard 403, a 404 after a route rename, any 5xx)
+	// looked identical to a clean disconnect and reconnected forever with the
+	// live-agent plane empty and nothing said anywhere. Both sibling copies
+	// already check: internal/claudemon/bridge.go and the desktop's
+	// lib/sseConsumer.ts (`if (!res.ok) throw new Error(HTTP ${res.status})`).
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("claudemon %s: HTTP %d: %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 	return parseSSE(ctx, resp.Body, emit)
 }
 

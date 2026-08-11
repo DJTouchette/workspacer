@@ -6,6 +6,7 @@ import type { Config } from '../hooks/useConfig';
 // "useConfig must be used inside <ConfigProvider>".
 import { DEFAULT_CONFIG } from '../hooks/configDefaults';
 import { minimalConfigPatch } from '../lib/configPatch';
+import { postNotification } from '../lib/notificationBus';
 
 // ---------------------------------------------------------------------------
 // Context shape — mirrors the useConfig return value exactly.
@@ -38,8 +39,21 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
         setConfig(cfg as Config);
         setLoaded(true);
       })
-      .catch(() => {
+      .catch((err) => {
+        // The app still has to render, so we go on with DEFAULT_CONFIG — but
+        // silently doing that made a failed load indistinguishable from a real
+        // config: every setting appeared reset, and the user's only clue was
+        // that the app "looked different today". Say it out loud.
         setLoaded(true);
+        console.error('[Config] failed to load config:', err);
+        postNotification({
+          title: 'Settings could not be loaded',
+          body:
+            `Running on built-in defaults for this session — what you see in Settings is NOT your saved ` +
+            `configuration. (${err instanceof Error ? err.message : String(err)})`,
+          level: 'warn',
+          source: 'config',
+        });
       });
   }, []);
 
@@ -71,10 +85,26 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
       partial,
     );
     if (Object.keys(patch).length === 0) return Promise.resolve(configRef.current);
-    return window.electronAPI.saveConfig(patch).then((cfg) => {
-      setConfig(cfg as Config);
-      return cfg as Config;
-    });
+    return window.electronAPI.saveConfig(patch).then(
+      (cfg) => {
+        setConfig(cfg as Config);
+        return cfg as Config;
+      },
+      (err) => {
+        // An UNHANDLED rejection here meant a refused save left the UI showing
+        // the value the user picked, as if it had been applied — until the next
+        // read reverted it. Keep the previous snapshot (so nothing paints a
+        // phantom) and tell them.
+        console.error('[Config] save failed:', err);
+        postNotification({
+          title: 'Setting not saved',
+          body: `Your change could not be written: ${err instanceof Error ? err.message : String(err)}`,
+          level: 'warn',
+          source: 'config',
+        });
+        return configRef.current;
+      },
+    );
   }, []);
 
   const value: ConfigContextValue = { config, loaded, reload, save };

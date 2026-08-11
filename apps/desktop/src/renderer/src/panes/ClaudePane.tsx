@@ -2464,9 +2464,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
           usage) plus this project's widget board. Sibling of the content area,
           so it persists in both GUI and Terminal mode. effectiveCwd is what the
           board is keyed by, so it works before a session attaches. */}
-        {railOpen && (
-          <InspectorRail session={session} cwd={effectiveCwd} onClose={toggleRail} />
-        )}
+        {railOpen && <InspectorRail session={session} cwd={effectiveCwd} onClose={toggleRail} />}
       </div>
     </div>
   );

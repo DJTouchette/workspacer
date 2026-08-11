@@ -28,6 +28,7 @@ import { slugLibrary } from '../lib/fileUtils';
 import { byteCompare, trimSuffixFold } from '../lib/providerParity';
 import { hasNonBlankText } from '../lib/asciiWhitespace';
 import { publishToHub } from './hubClient';
+import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 
 export type LibraryScope = 'global' | 'project' | 'claude';
 export type LibraryKind = 'prompt' | 'skill' | 'agent' | 'mcp' | 'command';
@@ -412,7 +413,12 @@ class LibraryService {
       ),
     );
     fs.mkdirSync(path.dirname(full), { recursive: true });
-    fs.writeFileSync(full, serialize(input), 'utf-8');
+    // Atomic (temp file in the same dir + rename), like every other file-backed
+    // store here and like the Go twin (cmd/brain/library.go writeFileAtomic).
+    // A plain writeFileSync opens the EXISTING target with O_TRUNC, so a write
+    // that dies partway — ENOSPC/EDQUOT in the field — leaves the user's saved
+    // prompt truncated with the original bytes already destroyed.
+    atomicWriteFileSync(full, serialize(input));
     return {
       id,
       scope: input.scope,
@@ -465,10 +471,12 @@ class LibraryService {
     } catch {
       /* new file */
     }
-    fs.writeFileSync(
+    // Atomic for the same reason as save() above — and it matters more here:
+    // these are the user's OWN `.claude/` agents and skills, files Workspacer
+    // did not author.
+    atomicWriteFileSync(
       full,
       serializeClaude(existing, input.title, input.description, input.body),
-      'utf-8',
     );
     // mayCreate: false — the same reason list() passes it, and the leg the fix
     // for list() missed. saveClaude writes into `.claude/…` and nothing else, so

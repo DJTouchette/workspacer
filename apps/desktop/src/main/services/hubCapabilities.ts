@@ -162,17 +162,31 @@ export async function openExternalUrl(url: string): Promise<{ ok: boolean; error
 
 export function registerHubCapabilities(): void {
   // Adopted-hub note (adopt-don't-kill, see hubDaemon.ts): when the app adopts
-  // a `workspacer serve` hub, its full-scope brain already provides most of
+  // a `workspacer serve` hub, its FULL-scope brain already provides most of
   // this surface. We still register everything below UNCHANGED, on purpose:
   // the hub router is first-registration-wins (services/hub internal/bus/
-  // rpc.go), so brain-owned methods are simply withheld from us while the
-  // methods the brain doesn't provide headlessly (analytics.*, fs.watch/
-  // unwatch, OS notifications.post, terminal share) register fine — partial
-  // registration is native to the bus, no pre-negotiation needed. Whichever
-  // side owns a method serves it against the same claudemon, so the overlap
-  // is harmless; hubClient logs the withheld set from the `registered` ack.
-  // (Known minor degradation: an adopted brain owns notifications.post and
-  // only logs it — plugin notifications won't raise OS toasts in that mode.)
+  // rpc.go), so brain-owned methods are simply withheld from us — partial
+  // registration is native to the bus, no pre-negotiation needed.
+  //
+  // For most of the overlap that really is harmless: both sides proxy the SAME
+  // claudemon, so whichever owns agents.*/sessions.*/claude.* answers
+  // identically. THREE METHODS ARE NOT, and in the adopted configuration the
+  // user loses them:
+  //
+  //   ADOPTED-DEGRADED: notifications.post — the brain only LOGS it; no OS
+  //     toast is raised.
+  //   ADOPTED-DEGRADED: analytics.summary — the brain answers an all-zero stub
+  //     carrying `unavailable: "headless"`. It is NOT true that the brain
+  //     "doesn't provide analytics headlessly": it does, it wins the race, and
+  //     main's real SQLite session-history store is never asked.
+  //   ADOPTED-DEGRADED: analytics.recent — same stub, an empty row list.
+  //
+  // The full classification (every overlapping method, equivalent vs degraded,
+  // with the reason) is enumerated and enforced by
+  // services/hub/cmd/brain/delegation_guard_test.go
+  // TestMainOwnedCapabilitiesDoNotCollideWithTheBrain, which fails if a new
+  // overlap appears undeclared — or if a degraded one stops being named here.
+  // hubClient warns with the withheld set from the `registered` ack.
 
   // `cat` registers a file-backed "catalog" capability — but no-ops when we
   // delegate the catalog to the headless brain provider (the hub spawns it with

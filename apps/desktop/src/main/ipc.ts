@@ -48,11 +48,12 @@ import { startWatch, stopWatch, setEmitSink } from './services/fileWatchService'
 import { searchProject } from './services/searchService';
 import * as git from './services/gitService';
 import {
-  HUB_HTTP_URL,
+  hubHttpUrl,
   HUB_PORT,
   getHubToken,
   getRemoteShareInfo,
   setRemoteShare,
+  setHubTrustedHosts,
 } from './services/hubDaemon';
 import {
   getOrCreateRemoteToken,
@@ -298,7 +299,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       // pane/widget/hotkey contributions) because the same bytes' event twin
       // plugin.loaded is host-only; the trusted host presents its token and gets
       // the whole manifest, which the settings and consent UIs are built from.
-      const res = await fetch(`${HUB_HTTP_URL}/plugins`, {
+      const res = await fetch(`${hubHttpUrl()}/plugins`, {
         headers: hubAuthHeaders(),
         signal: AbortSignal.timeout(5000),
       });
@@ -309,7 +310,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       // into that plugin's webview URL. Best-effort: no tokens → webviews can't
       // call capabilities, but the list still renders.
       try {
-        const tokRes = await fetch(`${HUB_HTTP_URL}/plugins/tokens`, {
+        const tokRes = await fetch(`${hubHttpUrl()}/plugins/tokens`, {
           headers: hubAuthHeaders(),
           signal: AbortSignal.timeout(5000),
         });
@@ -325,7 +326,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       // Tell the renderer where to load webview-only plugins' static UI from
       // (it serves at <hub>/plugins/ui/<id>/). main knows the hub address.
       for (const p of plugins) {
-        if ((p as { ui?: string }).ui) (p as { uiBase?: string }).uiBase = HUB_HTTP_URL;
+        if ((p as { ui?: string }).ui) (p as { uiBase?: string }).uiBase = hubHttpUrl();
       }
       return plugins;
     } catch {
@@ -400,9 +401,24 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.UPDATES_INSTALL, () => updateService.installNow());
 
   ipcMain.handle(IPC.TAILSCALE_GET_INFO, () => getTailscaleInfo(HUB_PORT));
-  ipcMain.handle(IPC.TAILSCALE_SET_SERVE, (_event, enable: boolean) =>
-    setTailscaleServe(HUB_PORT, !!enable),
-  );
+  ipcMain.handle(IPC.TAILSCALE_SET_SERVE, async (_event, enable: boolean) => {
+    const result = await setTailscaleServe(HUB_PORT, !!enable);
+    if (!result.ok) return result;
+    // `tailscale serve` terminates TLS for <node>.ts.net and forwards to the
+    // hub's LOOPBACK socket — a non-loopback Host on a loopback connection,
+    // which is exactly the DNS-rebinding shape the hub's Host and Origin pins
+    // refuse. Without declaring the proxy's name, turning this toggle ON makes
+    // every route behind it answer 403 (the phone sees a bare error page; the
+    // desktop, which dials loopback, sees nothing wrong at all). Restarting the
+    // hub is what applies it.
+    try {
+      const info = await getTailscaleInfo(HUB_PORT);
+      await setHubTrustedHosts(enable && info.magicName ? [info.magicName] : []);
+    } catch (err) {
+      console.error('[tailscale] failed to apply the trusted-host list:', err);
+    }
+    return result;
+  });
   ipcMain.handle(IPC.LOGS_OPEN_FOLDER, async () => {
     const dir = logsDir();
     try {
@@ -445,7 +461,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     try {
       // Short timeout: PluginPane holds its webview blank until this resolves,
       // and the fallback (static-token URL) is fine.
-      const res = await fetch(`${HUB_HTTP_URL}/plugins/pane-token`, {
+      const res = await fetch(`${hubHttpUrl()}/plugins/pane-token`, {
         method: 'POST',
         headers: hubAuthHeaders(),
         body: JSON.stringify({ pluginId, agentCwd: agentCwd ?? '' }),
@@ -465,7 +481,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   const hubGetPluginSettings = async (pluginId: string): Promise<Record<string, unknown>> => {
     try {
       const res = await fetch(
-        `${HUB_HTTP_URL}/plugins/settings?pluginId=${encodeURIComponent(pluginId)}`,
+        `${hubHttpUrl()}/plugins/settings?pluginId=${encodeURIComponent(pluginId)}`,
         {
           headers: hubAuthHeaders(),
           signal: AbortSignal.timeout(5000),
@@ -483,7 +499,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     values: Record<string, unknown>,
   ): Promise<Record<string, unknown> | null> => {
     try {
-      const res = await fetch(`${HUB_HTTP_URL}/plugins/settings`, {
+      const res = await fetch(`${hubHttpUrl()}/plugins/settings`, {
         method: 'POST',
         headers: hubAuthHeaders(),
         body: JSON.stringify({ pluginId, values }),
@@ -512,7 +528,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     IPC.HUB_PLUGIN_SETTINGS_SET,
     async (_event, pluginId: string, values: Record<string, unknown>) => {
       const merged = await hubSetPluginSettings(pluginId, values);
-      if (merged === null) return {};
+      // `null`, not `{}`: an empty map is a legitimate settings document, so
+      // returning it for a REFUSED write made a failed save byte-identical to a
+      // successful one and the toggle stayed visibly flipped until the plugin
+      // was reopened and reverted.
+      if (merged === null) return null;
       // Tell any open pane of this plugin to re-apply live (the bridge listens).
       // Remote-origin writes reach the renderer via the plugin.settings.changed
       // bus event (bridged in hubClient); this is the fast path for local writes.
@@ -522,7 +542,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   );
   ipcMain.handle(IPC.HUB_PLUGIN_PANE_TOKEN_REVOKE, async (_event, token: string) => {
     try {
-      await fetch(`${HUB_HTTP_URL}/plugins/pane-token/revoke`, {
+      await fetch(`${hubHttpUrl()}/plugins/pane-token/revoke`, {
         method: 'POST',
         headers: hubAuthHeaders(),
         body: JSON.stringify({ token }),
@@ -535,7 +555,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.HUB_INSTALL_PLUGIN, async (_event, url: string) => {
     // Download (60s hub-side) + optional build step (5 min cap).
     const post = (extra: Record<string, unknown> = {}) =>
-      fetch(`${HUB_HTTP_URL}/plugins/install`, {
+      fetch(`${hubHttpUrl()}/plugins/install`, {
         method: 'POST',
         headers: hubAuthHeaders(),
         body: JSON.stringify({ url, ...extra }),
@@ -583,7 +603,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // install dialog can show what it is and what it requires up front. No install.
   ipcMain.handle(IPC.HUB_INSPECT_PLUGIN, async (_event, url: string) => {
     try {
-      const res = await fetch(`${HUB_HTTP_URL}/plugins/inspect`, {
+      const res = await fetch(`${hubHttpUrl()}/plugins/inspect`, {
         method: 'POST',
         headers: hubAuthHeaders(),
         body: JSON.stringify({ url }),
@@ -603,7 +623,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // array; on failure the renderer just keeps showing "Reinstall".
   ipcMain.handle(IPC.HUB_CHECK_PLUGIN_UPDATES, async () => {
     try {
-      const res = await fetch(`${HUB_HTTP_URL}/plugins/updates`, {
+      const res = await fetch(`${hubHttpUrl()}/plugins/updates`, {
         method: 'POST',
         headers: hubAuthHeaders(),
         signal: AbortSignal.timeout(90000),
@@ -623,7 +643,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       // Authenticated for the same reason as /plugins: the catalog card shows
       // each example's runtime requirement and declared capabilities, which are
       // in the full manifest and withheld from an unauthenticated read.
-      const res = await fetch(`${HUB_HTTP_URL}/plugins/examples`, {
+      const res = await fetch(`${hubHttpUrl()}/plugins/examples`, {
         headers: hubAuthHeaders(),
         signal: AbortSignal.timeout(5000),
       });
@@ -637,7 +657,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // dir into the writable plugins dir and supervises it — no network).
   ipcMain.handle(IPC.HUB_INSTALL_EXAMPLE, async (_event, id: string) => {
     try {
-      const res = await fetch(`${HUB_HTTP_URL}/plugins/examples/install`, {
+      const res = await fetch(`${hubHttpUrl()}/plugins/examples/install`, {
         method: 'POST',
         headers: hubAuthHeaders(),
         body: JSON.stringify({ id }),
@@ -658,7 +678,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       // refetch with nothing logged anywhere. The timeout matches the sibling
       // handlers — a wedged hub with the socket still open never settles fetch,
       // and the renderer would await forever.
-      const res = await fetch(`${HUB_HTTP_URL}/plugins/remove`, {
+      const res = await fetch(`${hubHttpUrl()}/plugins/remove`, {
         method: 'POST',
         headers: hubAuthHeaders(),
         body: JSON.stringify({ id }),
@@ -677,7 +697,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     IPC.HUB_SET_PLUGIN_ENABLED,
     async (_event, args: { id: string; enabled: boolean }) => {
       try {
-        const res = await fetch(`${HUB_HTTP_URL}/plugins/setEnabled`, {
+        const res = await fetch(`${hubHttpUrl()}/plugins/setEnabled`, {
           method: 'POST',
           headers: hubAuthHeaders(),
           body: JSON.stringify(args),

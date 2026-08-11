@@ -339,8 +339,8 @@ mod tests {
             r#"{"claude-sonnet":{"input":5,"output":25,"context_limit":-1}}"#,
         ] {
             let table = parse_overrides(std::path::Path::new("model-rates.json"), json);
-            let r = rates_for_in("claude-sonnet-4-6", BUILTIN, &table)
-                .expect("sonnet must resolve");
+            let r =
+                rates_for_in("claude-sonnet-4-6", BUILTIN, &table).expect("sonnet must resolve");
             assert_eq!(
                 r.input, 5.0,
                 "override input must apply despite the wrong-typed optional field ({json})"
@@ -350,7 +350,10 @@ mod tests {
             // is inherited from the matched built-in (sonnet carries None here,
             // which usage.rs floors like the desktop's default) — never the
             // fractional/negative value, which the desktop now also rejects.
-            assert_eq!(r.context_limit, None, "bad window discarded, inherited from builtin ({json})");
+            assert_eq!(
+                r.context_limit, None,
+                "bad window discarded, inherited from builtin ({json})"
+            );
         }
     }
 

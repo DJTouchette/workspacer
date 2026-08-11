@@ -48,6 +48,7 @@ import ShortcutOverlay from './components/ShortcutOverlay';
 import ChordHint from './components/ChordHint';
 import CommandPalette from './components/CommandPalette';
 import LayoutsDialog from './components/LayoutsDialog';
+import { saveLayoutTemplate } from './lib/saveLayoutTemplate';
 import LibraryHost from './components/LibraryHost';
 import LibrarySidePanel from './components/LibrarySidePanel';
 import BottomTerminalPanel from './components/BottomTerminalPanel';
@@ -1049,12 +1050,10 @@ function App() {
       }));
   }, [agents]);
 
+  // Returns the promise (and lets it REJECT) so the dialog can tell a saved
+  // template from a lost one — see saveLayoutTemplate.
   const handleSaveLayout = useCallback(
-    (name: string) => {
-      window.electronAPI.layoutsSave({ name, agents: captureLayout() }).catch((err: any) => {
-        console.error('[Layout] save failed:', err);
-      });
-    },
+    (name: string): Promise<void> => saveLayoutTemplate(name, captureLayout()),
     [captureLayout],
   );
 

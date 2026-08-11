@@ -124,14 +124,17 @@ export function useSessionLifecycle({
     });
   }, []);
 
+  /** One "workspace not saved" notice per run, not one per failed autosave. */
+  const saveFailureReportedRef = useRef(false);
+
   const saveCurrentSession = useCallback(
-    (force?: boolean): Promise<void> => {
-      if (sessionPhase !== 'active') return Promise.resolve();
+    (force?: boolean): Promise<boolean> => {
+      if (sessionPhase !== 'active') return Promise.resolve(true);
       // A restore that failed leaves an empty roster in memory that is NOT the
       // user's layout. Writing it back is how a workspace gets erased — the
       // debounced autosave below fires a second after boot, long before anyone
       // could notice the agents are missing. Stay read-only for the run.
-      if (restoreFailedRef.current) return Promise.resolve();
+      if (restoreFailedRef.current) return Promise.resolve(true);
       const payload = {
         name: sessionName,
         activeAgentId,
@@ -147,7 +150,7 @@ export function useSessionLifecycle({
       // saves for edits confined to those fields until a forced quit-save, so a
       // crash/kill in the debounce window lost them.
       const hash = JSON.stringify(payload);
-      if (!force && hash === lastSaveHashRef.current) return Promise.resolve();
+      if (!force && hash === lastSaveHashRef.current) return Promise.resolve(true);
       // Claim the hash up front so two saves racing in the same tick don't both
       // write — but give it back if the write fails. Committing it permanently
       // meant a failed save was remembered as done: the next attempt deduped
@@ -156,10 +159,25 @@ export function useSessionLifecycle({
       const previous = lastSaveHashRef.current;
       lastSaveHashRef.current = hash;
       return window.electronAPI.saveSession(payload).then(
-        () => undefined,
+        () => true,
         (err: any) => {
           if (lastSaveHashRef.current === hash) lastSaveHashRef.current = previous;
           console.error('[Session] save failed:', err);
+          // console.error has no consumer in a packaged app. A workspace that
+          // silently stops persisting is the same class of loss as a restore
+          // that silently failed, and that case has used this channel since it
+          // was found — use it here too, once per run so a flapping disk does
+          // not spam the tray.
+          if (!saveFailureReportedRef.current) {
+            saveFailureReportedRef.current = true;
+            postNotification({
+              title: 'Workspace not saved',
+              body: `Saving your agents and layout failed: ${err?.message ?? String(err)}. Changes since the last successful save will be lost if you quit.`,
+              level: 'warn',
+              source: 'session',
+            });
+          }
+          return false;
         },
       );
     },
@@ -191,12 +209,15 @@ export function useSessionLifecycle({
   }, [saveCurrentSession]);
 
   useEffect(() => {
-    // Quit handshake: main pauses teardown until we ack that the save landed
-    // (or errored — ack regardless, so a save failure can't hang the quit).
+    // Quit handshake: main pauses teardown until we ack. We ack even when the
+    // save FAILED, so a bad disk can't hang the quit — but the ack CARRIES the
+    // outcome, because acking unconditionally is what made a lost workspace
+    // indistinguishable from a saved one (main then reports the failure).
     const unsub = window.electronAPI.onBeforeQuit(() => {
-      saveCurrentSession(true).finally(() => {
-        window.electronAPI.notifyQuitSaved?.();
-      });
+      saveCurrentSession(true).then(
+        (ok) => window.electronAPI.notifyQuitSaved?.(ok),
+        () => window.electronAPI.notifyQuitSaved?.(false),
+      );
     });
     return unsub;
   }, [saveCurrentSession]);

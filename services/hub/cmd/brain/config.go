@@ -13,6 +13,7 @@ package main
 import (
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -88,30 +89,42 @@ func deepMerge(target, source map[string]any) map[string]any {
 type configService struct {
 	mu       sync.Mutex
 	current  map[string]any
-	loadedAt time.Time // mtime of config.yaml when `current` was loaded
+	loadedAt string // configStamp() of config.yaml when `current` was loaded
 	// persistBlocked is set when config.yaml exists but couldn't be loaded
 	// (unreadable or unparseable). While set, save() keeps changes in memory
 	// only and refuses to write, so one save never overwrites a recoverable
 	// user file with defaults+partial. Mirrors configService.persistBlocked.
 	persistBlocked bool
+	// lastBrokenBackup holds the raw bytes of the last config.yaml written out
+	// as a .broken-* backup, so re-reading an unchanged broken file does not
+	// mint a fresh backup each time.
+	lastBrokenBackup string
 }
 
 func newConfigService() *configService {
 	c := &configService{}
 	c.mu.Lock()
 	c.current = c.loadFromDisk()
-	c.loadedAt = configMtime()
+	c.loadedAt = configStamp()
 	c.mu.Unlock()
 	return c
 }
 
-// configMtime is the config file's modification time, or the zero time when it's
-// absent (so a missing file never looks "newer" than a loaded cache).
-func configMtime() time.Time {
-	if st, err := os.Stat(configPath()); err == nil {
-		return st.ModTime()
+// configStamp identifies the config file's current contents as "<mtime>:<size>",
+// or "" when it's absent (so a missing file never looks like a change against a
+// loaded cache).
+//
+// It carries the SIZE and is compared for INEQUALITY (rather than mtime.After)
+// because mtime alone, ordered, cannot see the other writer at all when its save
+// lands in the same filesystem timestamp tick — 1s granularity on ext4 with
+// 128-byte inodes, HFS+ and NFSv3, 2s on FAT/exFAT. Mirrors the TS twin
+// (apps/desktop/src/main/services/configService.ts configStamp).
+func configStamp() string {
+	st, err := os.Stat(configPath())
+	if err != nil {
+		return ""
 	}
-	return time.Time{}
+	return fmt.Sprintf("%d:%d", st.ModTime().UnixNano(), st.Size())
 }
 
 func (c *configService) loadFromDisk() map[string]any {
@@ -137,25 +150,41 @@ func (c *configService) loadFromDisk() map[string]any {
 		// nothing overwrites it, and run on defaults in memory. Mirrors the
 		// desktop configService.loadFromDisk.
 		c.persistBlocked = true
-		backupPath := configPath() + ".broken-" + time.Now().UTC().Format("2006-01-02T15-04-05.000")
-		_ = os.WriteFile(backupPath, data, 0o644)
+		// Only back up bytes we have not already backed up: saveLocked re-reads
+		// on every save, and a broken file would otherwise mint one .broken-*
+		// per save call.
+		if string(data) != c.lastBrokenBackup {
+			backupPath := configPath() + ".broken-" + time.Now().UTC().Format("2006-01-02T15-04-05.000")
+			if err := os.WriteFile(backupPath, data, 0o644); err == nil {
+				c.lastBrokenBackup = string(data)
+			}
+		}
 		return defaults
 	}
+	c.lastBrokenBackup = ""
 	return pruneRemovedShortcuts(migrateFlatChords(migrateKeybindings(deepMerge(defaults, parsed))))
 }
 
 func (c *configService) writeDefaults(defaults map[string]any) {
-	_ = writeConfigYAML(defaults)
+	_ = writeConfig(defaults)
 }
+
+// writeConfig is the config writer, indirected through a package variable so the
+// write-FAILURE branch of saveLocked is reachable from a test. Its real-world
+// triggers (ENOSPC, EIO, EDQUOT, a read-only remount) cannot be produced inside
+// a temp directory, and every filesystem trick that breaks the rename also
+// breaks the read that now precedes it — which turns the case into the
+// persistBlocked branch instead of the one under test.
+var writeConfig = writeConfigYAML
 
 func (c *configService) get() map[string]any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// Re-read when the file changed under us (e.g. the desktop app wrote a
 	// setting in its own process). mtime-gated, so the steady state is one stat.
-	if c.current == nil || configMtime().After(c.loadedAt) {
+	if st := configStamp(); c.current == nil || (st != "" && st != c.loadedAt) {
 		c.current = c.loadFromDisk()
-		c.loadedAt = configMtime()
+		c.loadedAt = configStamp()
 	}
 	return c.current
 }
@@ -164,7 +193,7 @@ func (c *configService) reload() map[string]any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.current = c.loadFromDisk()
-	c.loadedAt = configMtime()
+	c.loadedAt = configStamp()
 	return c.current
 }
 
@@ -322,12 +351,14 @@ func (c *configService) save(partial map[string]any) map[string]any {
 func (c *configService) saveLocked(partial map[string]any) map[string]any {
 	// Fold in any external write (e.g. the desktop app editing config.yaml in its
 	// own process) before merging our partial, so a stale cache doesn't clobber
-	// it. Mirrors the mtime gate in get(). Under the lock this is now a genuine
-	// read-modify-write rather than an optimistic one.
-	if c.current == nil || configMtime().After(c.loadedAt) {
-		c.current = c.loadFromDisk()
-		c.loadedAt = configMtime()
-	}
+	// it. UNCONDITIONALLY, not through the stamp gate: the gate is a cheap-read
+	// optimisation for get(), and a write we cannot see is the exact failure it
+	// would let through (the other writer's save landing in the same filesystem
+	// tick at the same length). Under the cross-process lock this is a genuine
+	// read-modify-write, and a save is rare enough to pay one read. Mirrors the
+	// TS twin (configService.ts saveConfigLocked).
+	c.current = c.loadFromDisk()
+	c.loadedAt = configStamp()
 	merged := deepMerge(c.current, dropHostTrusted(partial))
 	// ui.customThemes is a map of user-created entries: when the caller sends it,
 	// it is the whole truth. Deep-merge would resurrect deleted themes (it never
@@ -372,7 +403,7 @@ func (c *configService) saveLocked(partial map[string]any) map[string]any {
 		c.current = merged
 		return merged
 	}
-	if err := writeConfigYAML(merged); err != nil {
+	if err := writeConfig(merged); err != nil {
 		// Do not adopt a value that is not on disk — serving it would make the
 		// setting look applied until the next restart reverted it. Also does not
 		// latch persistBlocked: ENOSPC and EIO are transient, and the latch is
@@ -380,7 +411,7 @@ func (c *configService) saveLocked(partial map[string]any) map[string]any {
 		return c.current
 	}
 	c.current = merged
-	c.loadedAt = configMtime()
+	c.loadedAt = configStamp()
 	return merged
 }
 

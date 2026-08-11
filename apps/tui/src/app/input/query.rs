@@ -189,8 +189,12 @@ impl App {
                         self.set_toast("no working directory to name");
                     } else {
                         self.names.insert(cwd, arg.to_string());
-                        crate::names::save(&self.names);
-                        self.set_toast("Renamed");
+                        let msg = crate::store::save_toast(
+                            "Renamed",
+                            "rename",
+                            crate::names::save(&self.names),
+                        );
+                        self.set_toast(msg);
                     }
                 }
             }

@@ -19,6 +19,22 @@ function useSidecarStates(): Record<string, SidecarStatus> {
   const [states, setStates] = useState<Record<string, SidecarStatus>>({});
   useEffect(() => {
     const off = window.electronAPI.onHubEvent?.((ev) => {
+      // A REFUSED sidecar never gets a supervisor, so no sidecar.* event is
+      // ever emitted for it — and the fallback below is the optimistic
+      // "starting", i.e. an in-progress label for a process that will never be
+      // started. `plugin.sandbox.refused` is the only signal that exists for
+      // that outcome (WORKSPACER_PLUGIN_SANDBOX=enforce on a host with no
+      // confinement mechanism), and nothing consumed it.
+      if (ev.type === 'plugin.sandbox.refused') {
+        const d = ev.data as { id?: string; reason?: string } | undefined;
+        if (d?.id) {
+          setStates((prev) => ({
+            ...prev,
+            [d.id as string]: { state: 'refused', err: d.reason },
+          }));
+        }
+        return;
+      }
       if (!ev.type?.startsWith('sidecar.')) return;
       const d = ev.data as { name?: string; state?: string; err?: string } | undefined;
       if (d?.name && d?.state) {
@@ -41,6 +57,7 @@ function stateColor(s: string | undefined): string {
     case 'unhealthy':
       return 'var(--wks-warning)';
     case 'crashed':
+    case 'refused':
       return 'var(--wks-error)';
     case 'stopped':
     case 'disabled':
@@ -322,7 +339,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
               : 'no server';
           const busy = busyId === p.id;
           const req = pluginRequirement(p);
-          const crashErr = state === 'crashed' ? sc?.err : undefined;
+          const crashErr = state === 'crashed' || state === 'refused' ? sc?.err : undefined;
           const up = updates[p.id];
           return (
             <div

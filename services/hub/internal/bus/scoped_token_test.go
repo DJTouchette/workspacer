@@ -62,7 +62,7 @@ func TestScopedTokenAuthorizationMatrix(t *testing.T) {
 	methods := []string{
 		"agents.list", "sessions.snapshots", "sessions.transcript", // view surface
 		"claude.approve", "agents.sendMessage", "push.subscribe", // triage surface
-		"claude.answer", // registered but NOT triage-granted (raw-PTY-write twin of terminalInput); the deny must come from scope, not "no provider"
+		"claude.answer",                                               // registered but NOT triage-granted (raw-PTY-write twin of terminalInput); the deny must come from scope, not "no provider"
 		"agents.spawn", "terminals.create", "git.push", "config.save", // operator surface
 		"future.unknownMethod", // registered on purpose: a deny must come from scope, not "no provider"
 	}

@@ -23,6 +23,7 @@ type serveOptions struct {
 	PluginsDir    string // "" = hub runs without plugins
 	WebappDir     string // "" = hub falls back to $WORKSPACER_WEBAPP_DIR
 	AdvertiseHost string // host to print in client URLs (differs from Host when binding 0.0.0.0)
+	TrustedHosts  string // comma-separated reverse-proxy hostname(s) for the hub's --trusted-host
 	DevStreamLogs bool   // pass --plugins-stream-logs to the hub (plugin dev only)
 }
 
@@ -32,8 +33,11 @@ type servePlan struct {
 	Claudemon childSpec
 	Hub       childSpec
 
-	// Loopback health endpoints for the ready wait — always 127.0.0.1 even
-	// when the hub binds wider, because we're probing our own children.
+	// Health endpoints for the ready wait. claudemon is always on loopback (it
+	// is never bound wider), but the HUB is not: --host takes a concrete
+	// address, and a concretely-bound listener does NOT answer on 127.0.0.1.
+	// A hardcoded loopback probe here tore the whole stack down 20s after a
+	// perfectly healthy start and blamed the hub — see dialHost.
 	ClaudemonHealth string
 	HubHealth       string
 
@@ -99,6 +103,12 @@ func buildServePlan(opts serveOptions) servePlan {
 	if opts.DevStreamLogs {
 		hubArgs = append(hubArgs, "--plugins-stream-logs")
 	}
+	if opts.TrustedHosts != "" {
+		// A TLS front-end (tailscale serve, nginx, Caddy) terminates elsewhere
+		// and forwards to the hub, so it presents a Host the hub's rebinding
+		// pin refuses. Naming it is the operator's opt-in.
+		hubArgs = append(hubArgs, "--trusted-host", opts.TrustedHosts)
+	}
 	hub := childSpec{Name: "hub", Bin: opts.HubBin, Args: hubArgs}
 
 	adv := opts.AdvertiseHost
@@ -112,7 +122,7 @@ func buildServePlan(opts serveOptions) servePlan {
 		Claudemon:       claudemon,
 		Hub:             hub,
 		ClaudemonHealth: apiURL + "/health",
-		HubHealth:       fmt.Sprintf("http://127.0.0.1:%d/health", opts.HubPort),
+		HubHealth:       fmt.Sprintf("http://%s/health", net.JoinHostPort(dialHost(opts.Host), fmt.Sprintf("%d", opts.HubPort))),
 		Banner: bannerInfo{
 			BusURL:       "ws://" + hubHostPort + "/bus",
 			RemoteURL:    "http://" + hubHostPort + "/remote" + q,
@@ -122,6 +132,21 @@ func buildServePlan(opts serveOptions) servePlan {
 			Token:        opts.Token,
 		},
 	}
+}
+
+// dialHost is the host THIS process must dial to reach a child bound to
+// bindHost. A wildcard bind names no host, so dialing it is meaningless (that
+// is the bug that cost the brain its whole capability plane — see
+// cmd/hub/brain.go busDialAddr); loopback is the right probe for it. Any
+// CONCRETE host must be dialed as itself: `--host 100.86.79.73` (the tailnet
+// form this flag's own help recommends) does not answer on 127.0.0.1, so a
+// hardcoded loopback probe never reaches a hub that came up healthy.
+func dialHost(bindHost string) string {
+	switch bindHost {
+	case "", "0.0.0.0", "::", "[::]":
+		return "127.0.0.1"
+	}
+	return bindHost
 }
 
 // advertiseHost picks the host to print in client URLs. A concrete bind host

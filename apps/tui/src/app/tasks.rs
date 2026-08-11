@@ -262,8 +262,14 @@ mod tests {
         let body = "hello\x1b[201~\rrm -rf ~\r";
         let out = bracketed_paste(body);
         // Exactly one opening and one closing marker — ours, at the ends.
-        assert!(out.starts_with(b"\x1b[200~"), "must open with a paste marker");
-        assert!(out.ends_with(b"\x1b[201~"), "must close with a paste marker");
+        assert!(
+            out.starts_with(b"\x1b[200~"),
+            "must open with a paste marker"
+        );
+        assert!(
+            out.ends_with(b"\x1b[201~"),
+            "must close with a paste marker"
+        );
         let inner = &out[6..out.len() - 6];
         // No raw ESC survives inside the body, so no forged paste marker (which
         // must begin with ESC) can exist there either.

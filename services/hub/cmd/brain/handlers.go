@@ -25,6 +25,7 @@ type registry struct {
 	meta  *metaStore    // spawn metadata (label/parent/supervisor) for enrichment
 	term  *terminalHub  // PTY-over-bus forwarders (full scope only)
 	vis   *visibility   // shared desktop fleet-visibility rule; nil → show everything
+	scope string        // registration scope this brain was started with
 }
 
 // visibleSnapshots is the live store filtered by the shared desktop visibility
@@ -38,6 +39,17 @@ func (r *registry) visibleSnapshots(ctx context.Context) []json.RawMessage {
 	return r.vis.filter(ctx, snaps)
 }
 
+// brainProbeMethod is the ONE method only this brain ever provides, in EVERY
+// scope. `workspacer status` calls it to answer "is the brain registered?".
+//
+// It exists because the previous probe, app.getCwd, is not brain-provided under
+// delegation at all — it is in the desktop's registerCapability set and NOT in
+// catalogMethods() — so the brain line read "up — registered" whenever the
+// desktop was running, no matter what the brain was doing, and the 24 catalog
+// methods behind it could all be answering "no provider". Pinned by
+// TestBrainProbeMethodIsProvidedInEveryScopeAndOwnedOnlyByTheBrain.
+const brainProbeMethod = "brain.info"
+
 func newRegistry(cm *claudemonClient) *registry {
 	return &registry{cm: cm, cfg: newConfigService()}
 }
@@ -46,6 +58,7 @@ func newRegistry(cm *claudemonClient) *registry {
 // match the app's hubCapabilities.ts so callers see one identical surface.
 func (r *registry) methods() []string {
 	return []string{
+		brainProbeMethod,
 		// agents + sessions (claudemon-backed)
 		"agents.list",
 		"agents.spawn",
@@ -115,6 +128,7 @@ func (r *registry) methods() []string {
 // serves every method — scope only controls what's registered.
 func (r *registry) catalogMethods() []string {
 	return []string{
+		brainProbeMethod,
 		"config.get", "config.reload", "config.getPath", "config.save",
 		"claude.listModels",
 		"claude.profiles.list", "claude.profiles.add", "claude.profiles.update", "claude.profiles.remove",
@@ -138,6 +152,13 @@ func (r *registry) methodsForScope(scope string) []string {
 // handle dispatches one capability call.
 func (r *registry) handle(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
 	switch method {
+	case "brain.info":
+		// The brain's own liveness marker — see brainProbeMethod.
+		scope := r.scope
+		if scope == "" {
+			scope = "full"
+		}
+		return jsonResult(map[string]any{"scope": scope, "provider": "brain"})
 	case "agents.list":
 		if r.store != nil {
 			return jsonResult(r.visibleSnapshots(ctx))

@@ -517,3 +517,126 @@ describe('loadFromDisk fail-safe — broken or unreadable config.yaml', () => {
     expect(mockedFs.writeFileSync).toHaveBeenCalledTimes(1);
   });
 });
+
+// ─── the save FAILURE plane ──────────────────────────────────────────────────
+// What the caller is told when the bytes do not reach disk. Whatever saveConfig
+// returns is what IPC.CONFIG_SAVE hands back to ConfigContext.save, which does
+// setConfig(cfg) — so returning a value that is not on disk IS the success
+// report, and the Settings pane paints the setting as applied until the next
+// restart silently reverts it.
+//
+// Twinned with services/hub/cmd/brain/config_writefailure_test.go: the brain is
+// the provider of config.save in the shipped default (bus mode + catalog
+// delegation), this copy is the provider with WORKSPACER_NO_BRAIN=1 /
+// delegation off, and it is ALWAYS the writer for main's own saves
+// (usageAccumulator seenModels, budgets, keepWarm).
+
+describe('save failure plane — a write that never reached disk', () => {
+  beforeEach(() => {
+    mockedFs.readFileSync.mockReset().mockReturnValue('ui:\n  theme: everforest\n');
+    mockedFs.writeFileSync.mockReset();
+    mockedFs.renameSync.mockReset();
+    mockedFs.copyFileSync.mockReset();
+    vi.mocked(fsMock.openSync)
+      .mockReset()
+      .mockReturnValue(3 as any);
+    vi.mocked(fsMock.statSync)
+      .mockReset()
+      .mockReturnValue({ mtimeMs: 100, size: 26 } as any);
+    configService.reloadConfig();
+  });
+
+  afterEach(() => {
+    mockedFs.readFileSync.mockReset().mockImplementation(() => enoent());
+    vi.mocked(fsMock.statSync)
+      .mockReset()
+      .mockImplementation(() => enoent());
+    vi.mocked(fsMock.openSync)
+      .mockReset()
+      .mockReturnValue(3 as any);
+    configService.reloadConfig();
+  });
+
+  it('returns the OLD value — not the merged one — when the write throws ENOSPC', () => {
+    expect(configService.getConfig().ui.theme).toBe('everforest');
+    mockedFs.writeFileSync.mockImplementation(() => {
+      const err = new Error('ENOSPC: no space left on device') as NodeJS.ErrnoException;
+      err.code = 'ENOSPC';
+      throw err;
+    });
+
+    const returned = configService.saveConfig({ ui: { theme: 'nord' } as any });
+
+    expect(returned.ui.theme).toBe('everforest');
+  });
+
+  it('does not ADOPT the value it failed to write (getConfig keeps serving the old one)', () => {
+    mockedFs.writeFileSync.mockImplementation(() => {
+      const err = new Error('EIO') as NodeJS.ErrnoException;
+      err.code = 'EIO';
+      throw err;
+    });
+    configService.saveConfig({ ui: { theme: 'nord' } as any });
+
+    // The write failed, so the file (and its stamp) never moved: a phantom in
+    // the cache would be served for the life of the main process — to spawn
+    // defaults, notifications, budgets and keepWarm as well as Settings.
+    expect(configService.getConfig().ui.theme).toBe('everforest');
+  });
+
+  it('refuses the save AND reports the old value when the other writer holds the lock', () => {
+    // openSync EEXIST = the lock file is there; statSync gives it a fresh mtime
+    // so it is held-not-stale and cannot be stolen.
+    vi.mocked(fsMock.openSync).mockImplementation(() => {
+      const err = new Error('EEXIST: file already exists') as NodeJS.ErrnoException;
+      err.code = 'EEXIST';
+      throw err;
+    });
+    vi.mocked(fsMock.statSync).mockReturnValue({
+      mtimeMs: Date.now(),
+      size: 26,
+      mtime: new Date(),
+    } as any);
+    mockedFs.writeFileSync.mockClear();
+
+    const returned = configService.saveConfig({ ui: { theme: 'nord' } as any });
+
+    // Writing anyway is the data-loss bug the cross-process lock exists to
+    // prevent…
+    expect(mockedFs.writeFileSync).not.toHaveBeenCalled();
+    // …and reporting the caller its own value would make a refused save
+    // indistinguishable from an applied one.
+    expect(returned.ui.theme).toBe('everforest');
+  });
+
+  it('getConfig sees an external write that changed only the LENGTH, not the mtime', () => {
+    expect(configService.getConfig().ui.theme).toBe('everforest');
+    // The brain rewrites config.yaml in its own process and the write lands in
+    // the same filesystem timestamp tick (1s granularity on ext4 with 128-byte
+    // inodes, HFS+, NFSv3; 2s on FAT). An mtime-only gate is blind to it.
+    mockedFs.readFileSync.mockReturnValue('ui:\n  theme: nord\n');
+    vi.mocked(fsMock.statSync).mockReturnValue({ mtimeMs: 100, size: 19 } as any);
+
+    expect(configService.getConfig().ui.theme).toBe('nord');
+  });
+
+  it('saveConfig folds in an external write the stamp cannot see at all', () => {
+    // Same mtime AND same length as ours: no cheap stat can tell these apart,
+    // so the read-modify-write under the cross-process lock must re-read
+    // unconditionally rather than trusting the gate.
+    mockedFs.readFileSync.mockReturnValue('ui:\n  theme: dark\n');
+    vi.mocked(fsMock.statSync).mockReturnValue({ mtimeMs: 100, size: 19 } as any);
+    configService.reloadConfig();
+    configService.saveConfig({ claude: { seenModels: ['sonnet'] } as any });
+
+    mockedFs.readFileSync.mockReturnValue('ui:\n  theme: nord\n');
+    vi.mocked(fsMock.statSync).mockReturnValue({ mtimeMs: 100, size: 19 } as any);
+    mockedFs.writeFileSync.mockClear();
+
+    const cfg = configService.saveConfig({ claude: { seenModels: ['sonnet', 'opus'] } as any });
+
+    expect(cfg.ui.theme).toBe('nord');
+    const written = String(mockedFs.writeFileSync.mock.calls.at(-1)?.[1] ?? '');
+    expect(written).toContain('theme: nord');
+  });
+});

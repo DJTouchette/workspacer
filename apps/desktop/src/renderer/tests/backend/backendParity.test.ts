@@ -3,7 +3,12 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import * as path from 'path';
 import { createWebBackend } from '../../src/backend/webBackend';
-import { LOCAL_TERMINAL, HOST_ONLY } from '../../src/backend/bridgedBackend';
+import { LOCAL_TERMINAL, HOST_ONLY, createBridgedBackend } from '../../src/backend/bridgedBackend';
+
+/** `.bind(ipc)` produces a new function whose name is "bound <name>". */
+function isBound(fn: unknown): boolean {
+  return typeof fn === 'function' && (fn as { name?: string }).name?.startsWith('bound ') === true;
+}
 
 // ─── Backend parity guard ────────────────────────────────────────────────────
 // The whole renderer talks to one seam, `window.electronAPI` (typed by
@@ -152,6 +157,29 @@ function webBackendMethodKeys(): Set<string> {
   return new Set(Object.keys(api).filter((k) => typeof api[k] === 'function'));
 }
 
+/**
+ * The methods the PRELOAD exposes on window.electronAPI, parsed from
+ * preload.ts's contextBridge object.
+ *
+ * The guard has to know this set. Anchoring "is this bucket entry stale?"
+ * against the WEB backend alone meant a preload-only method was invisible to
+ * the whole file — it is never in `runtime`, so no untriaged check could
+ * mention it — AND declaring it in HOST_ONLY, the one place that would fix it,
+ * made it look stale and turned the test red. The defect was unreportable and
+ * the repair was rejected; eight remote-access methods were `undefined` in the
+ * default desktop configuration for a month.
+ */
+function preloadMethodKeys(): Set<string> {
+  const src = readFileSync(repoFile('..', '..', '..', 'main', 'preload.ts'), 'utf-8');
+  const start = src.indexOf("contextBridge.exposeInMainWorld('electronAPI', {");
+  if (start < 0) throw new Error('preload.ts: contextBridge.exposeInMainWorld not found');
+  const keys = new Set<string>();
+  for (const m of src.slice(start).matchAll(/^ {2}([A-Za-z_][A-Za-z0-9_]*)\s*:/gm)) keys.add(m[1]);
+  if (keys.size < 50)
+    throw new Error(`preload.ts: parsed only ${keys.size} methods — the shape changed`);
+  return keys;
+}
+
 function repoFile(...segments: string[]): string {
   const here = path.dirname(fileURLToPath(import.meta.url)); // …/renderer/tests/backend
   return path.resolve(here, ...segments);
@@ -188,13 +216,71 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
       `new/unclassified electronAPI method(s) — add each to a bucket in backendParity.test.ts: ${untriaged.join(', ')}`,
     ).toEqual([]);
 
-    // 3. No bucket entry is stale: every declared key must still exist at
-    //    runtime (keeps KNOWN_STUBS + the other lists honest as methods evolve).
-    const stale = [...triaged].filter((k) => !runtime.has(k)).sort();
+    // 3. No bucket entry is stale: every declared key must still exist SOMEWHERE
+    //    the bridged backend can get it from — the web backend (bus/stub) or the
+    //    preload (host-only overlay). Checking only the web backend is what made
+    //    the correct classification of a preload-only method fail.
+    const preload = preloadMethodKeys();
+    const stale = [...triaged].filter((k) => !runtime.has(k) && !preload.has(k)).sort();
     expect(
       stale,
-      `bucket entries that no longer exist on the web backend: ${stale.join(', ')}`,
+      `bucket entries that exist on neither the web backend nor the preload: ${stale.join(', ')}`,
     ).toEqual([]);
+  });
+
+  // THE CHECK THAT WAS MISSING. createBridgedBackend starts from the web backend
+  // and overlays LOCAL_TERMINAL + HOST_ONLY. A preload method in neither the web
+  // backend nor either overlay list is not "degraded" in the default desktop
+  // configuration — it is UNDEFINED, and every consumer feature-detects it, so
+  // the feature disappears from the UI with no error, no console warning, no bus
+  // event and no log.
+  it('no preload method vanishes in the default (bridged) desktop backend', () => {
+    const runtime = webBackendMethodKeys();
+    const overlaid = new Set<string>([...LOCAL_TERMINAL, ...HOST_ONLY]);
+    // `platform` is a VALUE, not a method; createBridgedBackend copies it
+    // explicitly (asserted below) rather than through the overlay loop.
+    const NON_METHOD = new Set(['platform']);
+    const lost = [...preloadMethodKeys()]
+      .filter((k) => !overlaid.has(k) && !runtime.has(k) && !NON_METHOD.has(k))
+      .sort();
+    expect(
+      lost,
+      'these preload methods are undefined on window.electronAPI in bus mode (the DEFAULT desktop launch). ' +
+        'Add each to HOST_ONLY in bridgedBackend.ts, or give the web backend a stub: ' +
+        lost.join(', '),
+    ).toEqual([]);
+  });
+
+  it('every bridged host-only method really comes from the preload, not the web stub', () => {
+    const preload = preloadMethodKeys();
+    const ipc = {
+      ...Object.fromEntries(
+        [...preload].map((k) => [
+          k,
+          Object.assign(
+            vi.fn(() => `ipc:${k}`),
+            { __ipc: k },
+          ),
+        ]),
+      ),
+      platform: 'linux',
+    } as unknown as Parameters<typeof createBridgedBackend>[0];
+    const api = createBridgedBackend(ipc, 'tok', 'ws://127.0.0.1:7895/bus') as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(api.platform, 'the genuine host platform must survive bus mode').toBe(
+      (ipc as unknown as Record<string, unknown>).platform,
+    );
+    const missing = [...LOCAL_TERMINAL, ...HOST_ONLY].filter((k) => typeof api[k] !== 'function');
+    expect(missing, `overlay produced no function for: ${missing.join(', ')}`).toEqual([]);
+    // And the overlay must have replaced the web stub, not kept it: the `if
+    // (typeof fn === 'function')` loop silently keeps the stub for a preload
+    // method that was renamed.
+    const notFromIpc = [...HOST_ONLY].filter(
+      (k) => (api[k] as { __ipc?: string })?.__ipc === undefined && !isBound(api[k]),
+    );
+    expect(notFromIpc, `still the web stub, not the preload: ${notFromIpc.join(', ')}`).toEqual([]);
   });
 
   it('KNOWN_STUBS entries all still exist (list stays honest)', () => {

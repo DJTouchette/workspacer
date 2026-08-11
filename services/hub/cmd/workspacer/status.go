@@ -136,19 +136,28 @@ func probeHub(ctx context.Context, base, token string) componentStatus {
 	return componentStatus{OK: true, Detail: fmt.Sprintf("healthy, %d capability method(s)", *h.Methods)}
 }
 
-// probeBrain asks the bus for a brain-provided capability. app.getCwd is the
-// cheapest one with no side effects; the hub answering "no provider" is the
-// definitive "no brain registered" signal (method counts can't distinguish
-// the hub's own local methods from a live brain).
+// brainProbeMethod is the ONE method only the brain ever provides, in every
+// scope (services/hub/cmd/brain/handlers.go). It must NOT be anything the
+// desktop also registers: the previous probe, app.getCwd, is in the desktop's
+// registerCapability set and in NO brain scope, so under delegation this line
+// read "up — registered" whenever the desktop was running, no matter what the
+// brain was doing — including while all 24 catalog methods behind it answered
+// "no provider".
+const brainProbeMethod = "brain.info"
+
+// probeBrain asks the bus for the brain's own liveness marker. The hub
+// answering "no provider" is the definitive "no brain registered" signal
+// (method counts can't distinguish the hub's own local methods from a live
+// brain).
 func probeBrain(ctx context.Context, busURL, token string) componentStatus {
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cli := busclient.New(busURL, token)
 	go cli.Run(cctx)
-	_, err := cli.Call(cctx, "app.getCwd", struct{}{})
+	_, err := cli.Call(cctx, brainProbeMethod, struct{}{})
 	switch {
 	case err == nil:
-		return componentStatus{OK: true, Detail: "registered (app.getCwd answered)"}
+		return componentStatus{OK: true, Detail: "registered (" + brainProbeMethod + " answered)"}
 	case strings.Contains(err.Error(), "no provider"):
 		return componentStatus{OK: false, Detail: "not registered (hub is up but no provider answered — is the brain running?)"}
 	case errors.Is(err, busclient.ErrNotConnected):

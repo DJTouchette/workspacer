@@ -15,6 +15,8 @@ import { useConfig } from '../src/hooks/useConfig';
  *     which it can be stale stays small.
  */
 
+vi.mock('../src/lib/notificationBus', () => ({ postNotification: vi.fn() }));
+
 const saveConfig = vi.fn();
 const getConfig = vi.fn();
 let pushConfig: ((cfg: unknown) => void) | undefined;
@@ -60,10 +62,29 @@ const mount = (patch: Record<string, unknown>) =>
     </ConfigProvider>,
   );
 
+/**
+ * Wait for the BOOT config to actually arrive.
+ *
+ * NOT on sidebarWidth: DEFAULT_CONFIG ships the same 296 (and the same
+ * 'everforest' theme), so `waitFor(width === '296')` is satisfied by the
+ * pre-load render and waits for nothing at all. Every test in this file turns
+ * on the difference between the defaults and the loaded config, so the wait has
+ * to be able to tell them apart — customThemes is the one field only the loaded
+ * config has.
+ *
+ * Observed, not theorised: with the width wait, a full-suite run had
+ * `getConfig()` still unresolved at click time, so the patch was computed
+ * against DEFAULT_CONFIG and carried customThemes — failing the first case
+ * intermittently and, worse, making the customThemes cases below pass on runs
+ * where they never exercised their own subject.
+ */
+const awaitBoot = () =>
+  waitFor(() => expect(screen.getByTestId('themes').textContent).toBe('custom:a'));
+
 describe('ConfigProvider.save', () => {
   it('sends only the leaf that changed, not the whole spread subtree', async () => {
     mount({ ui: { ...BOOT.ui, sidebarWidth: 340 } });
-    await waitFor(() => expect(screen.getByTestId('width').textContent).toBe('296'));
+    await awaitBoot();
     screen.getByText('save').click();
     await waitFor(() => expect(saveConfig).toHaveBeenCalled());
     expect(saveConfig).toHaveBeenCalledWith({ ui: { sidebarWidth: 340 } });
@@ -71,7 +92,7 @@ describe('ConfigProvider.save', () => {
 
   it('does not carry a stale customThemes along for the ride', async () => {
     mount({ ui: { ...BOOT.ui, sidebarWidth: 340 } });
-    await waitFor(() => expect(screen.getByTestId('width').textContent).toBe('296'));
+    await awaitBoot();
     screen.getByText('save').click();
     await waitFor(() => expect(saveConfig).toHaveBeenCalled());
     // This is the data loss: main treats a supplied customThemes as the whole
@@ -89,7 +110,7 @@ describe('ConfigProvider.save', () => {
 
   it('skips the IPC entirely when nothing changed', async () => {
     mount({ ui: { ...BOOT.ui } });
-    await waitFor(() => expect(screen.getByTestId('width').textContent).toBe('296'));
+    await awaitBoot();
     screen.getByText('save').click();
     await new Promise((r) => setTimeout(r, 10));
     expect(saveConfig).not.toHaveBeenCalled();
@@ -97,7 +118,7 @@ describe('ConfigProvider.save', () => {
 
   it('re-syncs from a main-process push, so the next save diffs against truth', async () => {
     mount({ ui: { ...BOOT.ui, sidebarWidth: 340 } });
-    await waitFor(() => expect(screen.getByTestId('width').textContent).toBe('296'));
+    await awaitBoot();
 
     // Main writes config behind our back — here, a theme created on the phone.
     act(() => {
@@ -107,5 +128,46 @@ describe('ConfigProvider.save', () => {
       });
     });
     await waitFor(() => expect(screen.getByTestId('themes').textContent).toBe('custom:a,custom:b'));
+  });
+});
+
+// ─── the failure plane ───────────────────────────────────────────────────────
+// The known specimen for "a catch that converts a failure into a default":
+// getConfig().catch() ran the whole app on DEFAULT_CONFIG with loaded=true, and
+// save()'s rejection was unhandled — so a refused save left the UI showing the
+// value the user picked, as if it had been applied, until the next read
+// reverted it.
+
+describe('ConfigProvider — failures are not silently converted to defaults', () => {
+  it('tells the user when the config could not be loaded at all', async () => {
+    const notify = vi.mocked((await import('../src/lib/notificationBus')).postNotification);
+    notify.mockClear();
+    getConfig.mockRejectedValue(new Error('bus: no provider for config.get'));
+
+    mount({});
+    await waitFor(() => expect(notify).toHaveBeenCalled());
+    const [n] = notify.mock.calls.at(-1)!;
+    expect(n.title).toBe('Settings could not be loaded');
+    expect(String(n.body)).toContain('no provider for config.get');
+    expect(n.level).toBe('warn');
+  });
+
+  it('keeps the previous snapshot and says so when a save is refused', async () => {
+    const notify = vi.mocked((await import('../src/lib/notificationBus')).postNotification);
+    notify.mockClear();
+    saveConfig.mockRejectedValue(new Error('config.yaml is locked by another process'));
+
+    mount({ ui: { ...BOOT.ui, sidebarWidth: 340 } });
+    await awaitBoot();
+    await act(async () => {
+      screen.getByText('save').click();
+    });
+
+    await waitFor(() => expect(notify).toHaveBeenCalled());
+    const [n] = notify.mock.calls.at(-1)!;
+    expect(n.title).toBe('Setting not saved');
+    expect(String(n.body)).toContain('locked by another process');
+    // …and nothing painted the refused value as applied.
+    expect(screen.getByTestId('width').textContent).toBe('296');
   });
 });

@@ -147,6 +147,50 @@ type Server struct {
 	// after it was disabled, and after it was removed. The manager calls that
 	// state "an unrevocable grant leak"; this map is what makes revoking real.
 	pluginConns map[string]map[*conn]struct{}
+
+	// trustedHosts are Host/Origin names this hub is deliberately reached by
+	// through a REVERSE PROXY that terminates elsewhere and forwards to our
+	// loopback socket. `tailscale serve` — the app's one-tap "HTTPS via
+	// Tailscale" toggle, and the only way the mobile PWA gets the secure
+	// context Web Push needs — is exactly that: it presents
+	// `Host: <node>.ts.net` on a connection that lands on 127.0.0.1, which is
+	// byte-for-byte the DNS-rebinding shape requireHost/originAllowed refuse.
+	// The guard is right and cannot tell the two apart from the request alone,
+	// so the operator names the proxy's hostname instead (hub --trusted-host,
+	// set by the desktop when it enables the toggle). Empty = no exemption,
+	// i.e. today's shape-only rule.
+	trustedHosts map[string]struct{}
+}
+
+// SetTrustedHosts declares the hostnames a reverse proxy in front of this hub
+// presents. Names are compared case-insensitively, without their port. Passing
+// none clears the list.
+//
+// This is a deliberate, operator-supplied exemption from the rebinding shape:
+// naming a host says "requests claiming to be this name, on any socket, are
+// mine". It must never be defaulted to anything, and in particular never to a
+// wildcard — a `*` here would re-open every route to any page that can resolve
+// a name to 127.0.0.1.
+func (s *Server) SetTrustedHosts(names []string) {
+	set := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		n = strings.ToLower(strings.TrimSpace(hostWithoutPort(n)))
+		if n == "" || n == "*" {
+			continue
+		}
+		set[n] = struct{}{}
+	}
+	s.trustedHosts = set
+}
+
+// isTrustedHost reports whether name (already port-stripped) was declared with
+// SetTrustedHosts.
+func (s *Server) isTrustedHost(name string) bool {
+	if len(s.trustedHosts) == 0 {
+		return false
+	}
+	_, ok := s.trustedHosts[strings.ToLower(name)]
+	return ok
 }
 
 // SetScopedTokenLookup installs the resolver for capability-scoped user tokens.
@@ -444,7 +488,7 @@ func (s *Server) Handler() http.Handler {
 	for path, h := range s.extra {
 		mux.HandleFunc(path, h)
 	}
-	return requireHost(mux)
+	return s.requireHost(mux)
 }
 
 // requireHost refuses the DNS-REBINDING SHAPE on every route the hub serves: a
@@ -486,9 +530,9 @@ func (s *Server) Handler() http.Handler {
 // called by — which it cannot know. An attacker who rebinds a name to the
 // victim's tailnet address, having first learned that address, is not closed by
 // this. /bus's originAllowed makes the same trade for the same reason.
-func requireHost(h http.Handler) http.Handler {
+func (s *Server) requireHost(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !hostAllowed(r) {
+		if !s.hostAllowed(r) {
 			http.Error(w, "host not allowed", http.StatusForbidden)
 			return
 		}
@@ -498,12 +542,18 @@ func requireHost(h http.Handler) http.Handler {
 
 // hostAllowed is requireHost's predicate, split out so the test can drive it
 // directly with a synthesized local address.
-func hostAllowed(r *http.Request) bool {
+func (s *Server) hostAllowed(r *http.Request) bool {
 	if r.Host == "" {
 		return true
 	}
 	name := hostWithoutPort(r.Host)
 	if isLoopbackHost(name) {
+		return true
+	}
+	// A proxy hostname the operator declared (see SetTrustedHosts). Checked
+	// before the socket shape, because the whole point is that the socket
+	// landed on loopback — the proxy is on this machine.
+	if s.isTrustedHost(name) {
 		return true
 	}
 	local, known := localAddrOf(r)
@@ -564,6 +614,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status":      "ok",
 		"subscribers": s.broker.SubscriberCount(),
 		"methods":     s.router.methodCount(),
+		// The NAMES, not just the count. A bare count cannot answer the only
+		// question a client or operator actually has — "is the plane I am about
+		// to call provided?" — so an entire capability plane could die with the
+		// count as the only trace, and nothing compares a count to anything.
+		"methodNames": s.router.providedMethods(),
 	})
 }
 
@@ -585,7 +640,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 //     never served from the victim's own loopback.
 //   - Anything else (a cross-site browser origin) → reject. This is the malicious-
 //     page / DNS-rebinding vector the finding flags.
-func originAllowed(r *http.Request) bool {
+func (s *Server) originAllowed(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		return true // non-browser client — no browser same-origin policy to enforce
@@ -602,6 +657,14 @@ func originAllowed(r *http.Request) bool {
 		// prove where the socket landed. A loopback Host is always safe (the
 		// attacker's page is never served from the victim's own loopback).
 		if isLoopbackHost(u.Hostname()) {
+			return true
+		}
+		// A declared reverse-proxy hostname (see SetTrustedHosts) is the one
+		// legitimate producer of the mismatch below: `tailscale serve`
+		// terminates TLS for <node>.ts.net and forwards to our loopback socket,
+		// so the page IS same-origin and the socket IS loopback. Without this,
+		// the app's own one-tap HTTPS toggle 403s its own /bus upgrade.
+		if s.isTrustedHost(u.Hostname()) {
 			return true
 		}
 		// Non-loopback same-origin: reject if the connection actually terminated at
@@ -637,7 +700,16 @@ func isLoopbackHost(host string) bool {
 // cut off in seconds; large enough that the cost is one mtime-gated map lookup
 // per connection per tick (authtoken.Store only re-reads the file when it
 // changed).
-var scopedRevalidateInterval = 5 * time.Second
+// Stored atomically: the test shortens it while revalidation goroutines from
+// EARLIER tests are still ticking, so a plain package var is a real data race
+// (`go test -race ./internal/bus` reported it on every full-package run).
+var scopedRevalidateNanos atomic.Int64
+
+func init() { scopedRevalidateNanos.Store(int64(5 * time.Second)) }
+
+func scopedRevalidateInterval() time.Duration {
+	return time.Duration(scopedRevalidateNanos.Load())
+}
 
 // revalidateScoped re-checks a live connection's scoped token against the store
 // and CLOSES the socket when it stops resolving, or resolves to a different
@@ -667,7 +739,7 @@ var scopedRevalidateInterval = 5 * time.Second
 // same call for the same reason — it re-checks HasFingerprint on every
 // notification because a subscription outlives the connection that made it.
 func (s *Server) revalidateScoped(ctx context.Context, cn *conn, tok, authScope string) {
-	t := time.NewTicker(scopedRevalidateInterval)
+	t := time.NewTicker(scopedRevalidateInterval())
 	defer t.Stop()
 	for {
 		select {
@@ -698,7 +770,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	// Reject cross-site browser origins before doing any auth work. A non-browser
 	// client (Electron main, mobile native, brain/MCP busclient) sends no Origin
 	// and passes; a page served by the hub itself is same-origin and passes.
-	if !originAllowed(r) {
+	if !s.originAllowed(r) {
 		http.Error(w, "forbidden origin", http.StatusForbidden)
 		return
 	}

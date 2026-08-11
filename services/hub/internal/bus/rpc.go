@@ -2,6 +2,8 @@ package bus
 
 import (
 	"encoding/json"
+	"log"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -69,6 +71,10 @@ type router struct {
 	localIdent map[string]LocalIdentHandler // same, for handlers that need the caller
 	pending    map[uint64]*pendingCall
 	timeout    time.Duration
+	// noProviderSeen remembers which methods have already been reported as
+	// unprovided, so the log line fires once per method rather than once per
+	// call. Cleared for a method the moment something registers it.
+	noProviderSeen map[string]struct{}
 }
 
 type pendingCall struct {
@@ -81,12 +87,13 @@ type pendingCall struct {
 
 func newRouter() *router {
 	return &router{
-		conns:      make(map[uint64]*conn),
-		providers:  make(map[string]uint64),
-		local:      make(map[string]LocalHandler),
-		localIdent: make(map[string]LocalIdentHandler),
-		pending:    make(map[uint64]*pendingCall),
-		timeout:    callTimeout,
+		conns:          make(map[uint64]*conn),
+		providers:      make(map[string]uint64),
+		local:          make(map[string]LocalHandler),
+		localIdent:     make(map[string]LocalIdentHandler),
+		pending:        make(map[uint64]*pendingCall),
+		timeout:        callTimeout,
+		noProviderSeen: make(map[string]struct{}),
 	}
 }
 
@@ -174,7 +181,21 @@ func (rt *router) register(cn *conn, methods []string) []string {
 				continue // owned by another live connection — refuse the hijack
 			}
 		}
+		// A hub-LOCAL handler shadows every remote provider (call() consults
+		// rt.local/rt.localIdent first), so accepting one here would assert an
+		// ownership the router will never honour. That matters beyond the hub:
+		// the desktop derives its ENTIRE drift report — the only place it can
+		// notice it lost a capability — from this ack (hubClient.ts), so a
+		// method the hub quietly took in-process would leave the desktop
+		// believing it provides something it does not.
+		if _, local := rt.local[m]; local {
+			continue
+		}
+		if _, local := rt.localIdent[m]; local {
+			continue
+		}
 		rt.providers[m] = cn.id
+		delete(rt.noProviderSeen, m) // say it again if this provider goes away
 		accepted = append(accepted, m)
 	}
 	rt.mu.Unlock()
@@ -231,7 +252,20 @@ func (rt *router) call(caller *conn, f Frame) {
 	provID, ok := rt.providers[f.Method]
 	provider := rt.conns[provID]
 	if !ok || provider == nil {
+		first := false
+		if _, seen := rt.noProviderSeen[f.Method]; !seen {
+			rt.noProviderSeen[f.Method] = struct{}{}
+			first = true
+		}
 		rt.mu.Unlock()
+		if first {
+			// ONCE per method, so a client in a retry loop cannot drown the log
+			// while a genuinely missing plane still gets said out loud. Until
+			// this existed, an entire capability plane could die and the only
+			// trace anywhere was a per-call error string the calling code
+			// usually swallows: no hub log line, no bus event, nothing.
+			log.Printf("bus: NO PROVIDER for %q — nothing on this bus answers it; the caller sees an error string and nobody else sees anything (this is logged once per method)", f.Method)
+		}
 		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: "no provider for " + f.Method})
 		return
 	}
@@ -320,6 +354,29 @@ func (rt *router) methodCount() int {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	return len(rt.providers) + len(rt.local) + len(rt.localIdent)
+}
+
+// providedMethods is the sorted union of every method this bus can currently
+// answer: remote providers plus the hub's own in-process handlers. A bare COUNT
+// (what /health used to expose alone) tells nobody whether the plane they need
+// is alive; a NAME LIST lets `workspacer status`, a client, or an operator ask
+// the one question that matters — "is what I am about to call actually
+// provided?" — before the call fails as a string.
+func (rt *router) providedMethods() []string {
+	rt.mu.Lock()
+	out := make([]string, 0, len(rt.providers)+len(rt.local)+len(rt.localIdent))
+	for m := range rt.providers {
+		out = append(out, m)
+	}
+	for m := range rt.local {
+		out = append(out, m)
+	}
+	for m := range rt.localIdent {
+		out = append(out, m)
+	}
+	rt.mu.Unlock()
+	sort.Strings(out)
+	return out
 }
 
 type sendTask struct {

@@ -26,7 +26,7 @@ func withLocalAddr(r *http.Request, addr string) *http.Request {
 
 func hostPinStatus(t *testing.T, host, localAddr string) int {
 	t.Helper()
-	h := requireHost(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	h := (&Server{}).requireHost(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot) // a status nothing else here returns
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/plugins", nil)

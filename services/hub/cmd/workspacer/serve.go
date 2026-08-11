@@ -70,6 +70,7 @@ func runServe(args []string) int {
 // byte-identical defaults and help text.
 type commonServeFlags struct {
 	host, token                    *string
+	trustedHost                    *string
 	hubPort, apiPort, hookPort     *int
 	claudemonBin, hubBin, brainBin *string
 }
@@ -84,6 +85,8 @@ func registerCommonServeFlags(fs *flag.FlagSet) *commonServeFlags {
 		claudemonBin: fs.String("claudemon-bin", "", "path to the claudemon binary (default: sibling of this binary, then PATH)"),
 		hubBin:       fs.String("hub-bin", "", "path to the hub binary (default: sibling of this binary, then PATH)"),
 		brainBin:     fs.String("brain-bin", "", "path to the brain binary the hub supervises (default: sibling of this binary, then the hub auto-detects its own sibling / PATH)"),
+		trustedHost: fs.String("trusted-host", os.Getenv("HUB_TRUSTED_HOSTS"),
+			"comma-separated hostname(s) a reverse proxy in front of the hub presents (e.g. the `tailscale serve` MagicDNS name). A TLS front-end terminates elsewhere and forwards to our loopback socket, which is the DNS-rebinding shape the hub's Host/Origin pins refuse, so it must be named or every route behind it answers 403"),
 		token: fs.String("token", os.Getenv("HUB_TOKEN"),
 			"bus auth token / pairing credential (default: $HUB_TOKEN, else the persisted <config>/workspacer/remote-token, minted on first run)"),
 	}
@@ -106,6 +109,7 @@ func (f *commonServeFlags) resolveOptions() (serveOptions, bool) {
 		HubBin:        resolveBin("hub", *f.hubBin, sib),
 		BrainBin:      resolveBin("brain", *f.brainBin, sib),
 		AdvertiseHost: advertiseHost(*f.host, localIPv4s()),
+		TrustedHosts:  *f.trustedHost,
 	}
 	if opts.ClaudemonBin == "" {
 		fmt.Fprintln(os.Stderr, "workspacer: claudemon binary not found next to this binary or on PATH (build it with `make build-claudemon`, or pass --claudemon-bin)")

@@ -128,7 +128,9 @@ impl App {
             self.pinned_cwds.push(cwd);
             self.set_toast(format!("Pinned #{}", self.pinned_cwds.len()));
         }
-        crate::pins::save(&self.pinned_cwds);
+        if let Err(e) = crate::pins::save(&self.pinned_cwds) {
+            self.set_toast(crate::store::save_toast("", "pins", Err(e)));
+        }
         self.rebuild_harpoon();
     }
 

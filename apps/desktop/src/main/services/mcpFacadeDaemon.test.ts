@@ -37,7 +37,7 @@ vi.mock('../lib/daemonUtils', () => ({
 
 const HUB_TOKEN = 'tok-abc123';
 vi.mock('./hubDaemon', () => ({
-  HUB_BUS_URL: 'ws://127.0.0.1:7895/bus',
+  hubBusUrl: () => 'ws://127.0.0.1:7895/bus',
   getHubToken: () => HUB_TOKEN,
 }));
 

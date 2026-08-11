@@ -71,12 +71,12 @@ func TestOriginAllowedTailscaleSameHost(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "http://myhost.tailnet.ts.net:7895/bus", nil)
 	r.Host = "myhost.tailnet.ts.net:7895"
 	r.Header.Set("Origin", "http://myhost.tailnet.ts.net:7895")
-	if !originAllowed(r) {
+	if !(&Server{}).originAllowed(r) {
 		t.Fatal("same-host Tailscale origin should be allowed")
 	}
 	// A different remote origin dialing that same host is a cross-site page.
 	r.Header.Set("Origin", "http://evil.tailnet.ts.net:7895")
-	if originAllowed(r) {
+	if (&Server{}).originAllowed(r) {
 		t.Fatal("cross-site origin against the Tailscale host should be rejected")
 	}
 }

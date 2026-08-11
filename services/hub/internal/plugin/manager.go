@@ -421,6 +421,14 @@ func (m *Manager) sandboxSidecar(mf Manifest) (command string, args []string, ru
 		m.pub.Publish(event.New("plugin.sandboxed", "hub", map[string]string{"id": mf.ID, "mechanism": res.Mechanism}))
 		return res.Path, res.Args, true
 	case sandbox.Refuse:
+		// The LOUDEST of the three outcomes and, until now, the only silent one:
+		// a refusal is permanent (no supervisor is ever constructed, so no
+		// sidecar.running / sidecar.crashed event is emitted either) and the
+		// Plugins pane, which derives its state from those events alone, shows
+		// the optimistic default "starting" forever — an in-progress label for a
+		// process that will never be started. The best-effort branch below
+		// prints a 300-byte warning for a situation that still runs.
+		log.Printf("[plugin] REFUSED to start sidecar %q: WORKSPACER_PLUGIN_SANDBOX=enforce and no confinement mechanism is available (%s). This plugin's server will NOT run; install bubblewrap (Linux) or set WORKSPACER_PLUGIN_SANDBOX=best-effort to run it unconfined.", mf.ID, res.Note)
 		m.pub.Publish(event.New("plugin.sandbox.refused", "hub", map[string]string{"id": mf.ID, "reason": res.Note}))
 		return "", nil, false
 	default: // RunUnsandboxed

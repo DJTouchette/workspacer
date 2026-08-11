@@ -65,6 +65,20 @@ describe('clampWidgetSize', () => {
     expect(clampWidgetSize('medium', ['large', 'small'])).toBe('small');
   });
 
+  // The ORDER of `supported` must not change the answer. A plugin.json is free
+  // to declare `"sizes": ["medium", "small"]` — a natural descending order —
+  // and without the sort that clamps 'large' down to 'small' (the SMALLEST
+  // candidate) instead of 'medium' (the largest that fits). Every other case
+  // here either hits the `supported.includes(want)` early return or has at most
+  // one candidate below `want`, so none of them can see the sort at all.
+  it('picks the largest fitting size however the supported list is ordered', () => {
+    expect(clampWidgetSize('large', ['medium', 'small'])).toBe('medium');
+    expect(clampWidgetSize('large', ['small', 'medium'])).toBe('medium');
+    expect(clampWidgetSize('large', ['small', 'medium'])).toBe(
+      clampWidgetSize('large', ['medium', 'small']),
+    );
+  });
+
   it('degrades to small rather than throwing on an empty list', () => {
     expect(clampWidgetSize('large', [])).toBe('small');
   });

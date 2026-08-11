@@ -957,3 +957,67 @@ describe('libraryService — every leg opens the path the guard RESOLVED', () =>
   // itRanEveryGatedTest reads what it wrote.
   itRanEveryGatedTest(resolvedGate, 'the every-leg-opens-the-resolved-path tests', 4);
 });
+
+// ─── the library writer must not destroy an existing item ────────────────────
+// Its Go twin (services/hub/cmd/brain/library.go) has used writeFileAtomic
+// since it was written, and every other file-backed store on this side
+// (layoutService, sessionService, configService) uses atomicWriteFileSync.
+// libraryService is the one that drifted: a bare fs.writeFileSync opens the
+// EXISTING target with O_TRUNC, so a write that dies partway (ENOSPC/EDQUOT in
+// the field) leaves the user's saved prompt truncated with the original bytes
+// already gone. An atomic write goes to a temp file in the same directory and
+// RENAMES over the target — observable here as a new inode.
+
+describe('libraryService writes atomically, like its Go twin', () => {
+  it('save() replaces the item by rename (new inode), never in place', () => {
+    const first = libraryService.save({
+      scope: 'global',
+      title: 'Atomic',
+      kind: 'prompt',
+      body: 'one',
+      cwd,
+    });
+    const file = path.join(h.configDir, 'library', `${first.id}.md`);
+    const before = fs.statSync(file).ino;
+
+    libraryService.save({
+      scope: 'global',
+      id: first.id,
+      title: 'Atomic',
+      kind: 'prompt',
+      body: 'two',
+      cwd,
+    });
+
+    expect(fs.readFileSync(file, 'utf-8')).toContain('two');
+    expect(
+      fs.statSync(file).ino,
+      'the item was rewritten IN PLACE — a write that dies partway destroys the original',
+    ).not.toBe(before);
+    expect(fs.readdirSync(path.dirname(file)).filter((f) => f.includes('.tmp-'))).toEqual([]);
+  });
+
+  it("saveClaude() replaces the user's own .claude file by rename too", () => {
+    writeSkill('MySkill', 'MySkill', 'one');
+    const item = libraryService
+      .list(cwd)
+      .find((it) => it.scope === 'claude' && it.kind === 'skill' && it.title === 'MySkill')!;
+    const file = path.join(cwd, '.claude', 'skills', 'MySkill', 'SKILL.md');
+    const before = fs.statSync(file).ino;
+
+    libraryService.save({
+      scope: 'claude',
+      id: item.id,
+      title: 'MySkill',
+      kind: 'skill',
+      body: 'two',
+      cwd,
+    });
+
+    expect(fs.readFileSync(file, 'utf-8')).toContain('two');
+    expect(
+      fs.statSync(file).ino,
+      'a partial write would truncate a file Workspacer did not author',
+    ).not.toBe(before);
+  });
+});

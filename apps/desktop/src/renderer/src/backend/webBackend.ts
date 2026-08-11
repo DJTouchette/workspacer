@@ -604,11 +604,14 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
           headers: { 'Content-Type': 'application/json', ...hubAuth },
           body: JSON.stringify({ pluginId, values }),
         });
-        if (!res.ok) return values;
+        // Returning the CALLER'S OWN values on a failure produced a response
+        // byte-identical to a success, so even a caller that checked could not
+        // tell. `null` is the failure signal.
+        if (!res.ok) return null;
         const body = (await res.json()) as { values?: Record<string, unknown> };
         return body?.values ?? values;
       } catch {
-        return values;
+        return null;
       }
     },
     onPluginSettingsChanged: (callback) =>
@@ -663,7 +666,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
 
     // ── Lifecycle / ambient ──────────────────────────────────────────────
     onBeforeQuit: () => () => {},
-    notifyQuitSaved: () => {}, // no quit handshake in the browser
+    notifyQuitSaved: (_ok?: boolean) => {}, // no quit handshake in the browser
     setActiveSession: () => {
       /* no ambient OS notifications on web */
     },

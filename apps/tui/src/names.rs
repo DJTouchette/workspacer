@@ -19,13 +19,34 @@ fn read() -> Option<HashMap<String, String>> {
     serde_json::from_str(&text).ok()
 }
 
-/// Persist the map, best-effort (a write failure is silent — the in-memory map
-/// still reflects the rename for this session).
-pub fn save(names: &HashMap<String, String>) {
-    let Some(path) = path() else { return };
-    if let Ok(text) = serde_json::to_string_pretty(names) {
-        let _ = std::fs::write(path, text);
-    }
+/// Persist the map. Returns `Err(message)` rather than swallowing the failure:
+/// `$XDG_CONFIG_HOME/workspacer/` is created by the Electron app, and a machine
+/// that only ever ran the standalone `wks-tui` has no such directory — so the
+/// write failed with ENOENT on EVERY save, forever, while the caller showed a
+/// success toast and the rename was gone on the next launch. Creating the
+/// directory here is the other half of the fix.
+pub fn save(names: &HashMap<String, String>) -> Result<(), String> {
+    let path = path().ok_or_else(|| "no config directory".to_string())?;
+    save_at(&path, names)
+}
+
+/// `save` with the destination given, so a test can exercise the real
+/// create-then-write without mutating the process's `XDG_CONFIG_HOME`.
+pub(crate) fn save_at(
+    path: &std::path::Path,
+    names: &HashMap<String, String>,
+) -> Result<(), String> {
+    crate::store::ensure_parent(path)?;
+    let text = serde_json::to_string_pretty(names).map_err(|e| e.to_string())?;
+    std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// `load` with the source given (test seam, mirroring [`save_at`]).
+pub(crate) fn load_at(path: &std::path::Path) -> HashMap<String, String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
 }
 
 fn path() -> Option<PathBuf> {

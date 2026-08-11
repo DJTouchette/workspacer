@@ -20,6 +20,7 @@ mod pins;
 mod profiles;
 mod render;
 mod runs;
+mod store;
 mod terminal;
 #[cfg(test)]
 mod testenv;

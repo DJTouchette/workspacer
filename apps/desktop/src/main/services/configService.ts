@@ -439,28 +439,37 @@ class ConfigService {
    *  would replace the user's (broken but recoverable) file with defaults.
    *  Cleared on the next successful load (reloadConfig / restart). */
   private persistBlocked = false;
-  /** mtime (ms) of config.yaml when `this.config` was last loaded. The desktop
-   *  app is NO LONGER the only writer: the headless brain (services/hub) serves
-   *  config.get/save over the hub bus for the web (/app), mobile (/m) and
-   *  desktop-bus clients, and writes the *same* config.yaml. Without an mtime
-   *  gate, a main-process save (e.g. usageAccumulator recording seenModels)
-   *  deep-merges onto this startup cache and clobbers whatever the brain
-   *  persisted after launch — user-visible as "settings getting reset". Mirrors
-   *  the brain's own mtime gate (services/hub/cmd/brain/config.go). */
-  private loadedAtMs = 0;
+  /** Identity of config.yaml when `this.config` was last loaded: `mtimeMs:size`.
+   *  The desktop app is NO LONGER the only writer: the headless brain
+   *  (services/hub) serves config.get/save over the hub bus for the web (/app),
+   *  mobile (/m) and desktop-bus clients, and writes the *same* config.yaml.
+   *  Without this gate, a main-process save (e.g. usageAccumulator recording
+   *  seenModels) deep-merges onto this startup cache and clobbers whatever the
+   *  brain persisted after launch — user-visible as "settings getting reset".
+   *  Mirrors the brain's own gate (services/hub/cmd/brain/config.go).
+   *
+   *  It carries the SIZE and is compared for INEQUALITY (not ">") because
+   *  mtime alone, ordered, cannot see the other writer at all when its save
+   *  lands in the same filesystem timestamp tick — 1s granularity on ext4 with
+   *  128-byte inodes, HFS+ and NFSv3, 2s on FAT/exFAT. */
+  private loadedStamp = '';
+  /** Raw bytes of the last config.yaml we backed up as `.broken-*`, so a save
+   *  that re-reads an unchanged broken file doesn't mint a backup per call. */
+  private lastBrokenBackup: string | null = null;
 
   constructor() {
     this.config = this.loadFromDisk();
-    this.loadedAtMs = this.configMtimeMs();
+    this.loadedStamp = this.configStamp();
   }
 
-  /** mtime of config.yaml in ms, or 0 when it's absent/unreadable (so a missing
-   *  file never looks newer than the loaded cache). */
-  private configMtimeMs(): number {
+  /** `mtimeMs:size` of config.yaml, or '' when it's absent/unreadable (so a
+   *  missing file never looks like a change against a loaded cache). */
+  private configStamp(): string {
     try {
-      return fs.statSync(getConfigFilePath()).mtimeMs;
+      const st = fs.statSync(getConfigFilePath());
+      return `${st.mtimeMs}:${st.size}`;
     } catch {
-      return 0;
+      return '';
     }
   }
 
@@ -468,10 +477,10 @@ class ConfigService {
    *  own process) wrote it since we last read. mtime-gated, so the steady state
    *  is a single stat with no re-parse. Mirrors configService (Go) get(). */
   private refreshIfChangedOnDisk(): void {
-    const m = this.configMtimeMs();
-    if (this.config == null || (m > 0 && m > this.loadedAtMs)) {
+    const s = this.configStamp();
+    if (this.config == null || (s !== '' && s !== this.loadedStamp)) {
       this.config = this.loadFromDisk();
-      this.loadedAtMs = this.configMtimeMs();
+      this.loadedStamp = this.configStamp();
     }
   }
 
@@ -509,6 +518,7 @@ class ConfigService {
       // config passes migrateKeybindings untouched and migrateFlatChords then
       // upgrades any stale nested-default chords in place. Finally, bindings for
       // actions that no longer exist are pruned.
+      this.lastBrokenBackup = null;
       return pruneRemovedShortcuts(migrateFlatChords(migrateKeybindings(merged)));
     } catch (err) {
       // Malformed YAML (e.g. a hand-edit left a syntax error). This must NOT
@@ -520,12 +530,15 @@ class ConfigService {
           'your config file was NOT modified and saves are disabled until it parses:',
         err,
       );
-      try {
-        const backupPath = `${configPath}.broken-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-        fs.copyFileSync(configPath, backupPath);
-        console.error(`[ConfigService] backed up the unparseable config to ${backupPath}`);
-      } catch (backupErr) {
-        console.error('[ConfigService] failed to back up the broken config:', backupErr);
+      if (this.lastBrokenBackup !== data) {
+        try {
+          const backupPath = `${configPath}.broken-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+          fs.copyFileSync(configPath, backupPath);
+          this.lastBrokenBackup = data;
+          console.error(`[ConfigService] backed up the unparseable config to ${backupPath}`);
+        } catch (backupErr) {
+          console.error('[ConfigService] failed to back up the broken config:', backupErr);
+        }
       }
       return defaults;
     }
@@ -550,7 +563,7 @@ class ConfigService {
 
   reloadConfig(): Config {
     this.config = this.loadFromDisk();
-    this.loadedAtMs = this.configMtimeMs();
+    this.loadedStamp = this.configStamp();
     return this.config;
   }
 
@@ -575,16 +588,23 @@ class ConfigService {
   private saveConfigLocked(partial: Partial<Config>): Config {
     // Fold in any external write (the brain editing config.yaml in its own
     // process) BEFORE merging our partial, so a stale in-memory cache can't
-    // clobber it — the whole point of the mtime gate (see loadedAtMs). Under the
-    // lock this is a genuine read-modify-write rather than an optimistic one.
-    this.refreshIfChangedOnDisk();
-    this.config = deepMerge(this.config, partial);
+    // clobber it. UNCONDITIONALLY, not through the stamp gate: the gate is a
+    // cheap-read optimisation for get(), and a write we cannot see is the exact
+    // failure it would let through (the other writer's save landing in the same
+    // filesystem tick at the same length). Under the cross-process lock this is
+    // a genuine read-modify-write, and a save is rare enough to pay one read.
+    // Mirrors the Go twin (services/hub/cmd/brain/config.go saveLocked).
+    this.config = this.loadFromDisk();
+    this.loadedStamp = this.configStamp();
+    // Merge into a LOCAL value, not into this.config. The cache is only adopted
+    // once the bytes are on disk — see the write branch below.
+    const merged = deepMerge(this.config, partial) as Config;
     // ui.customThemes is a map of user-created entries: when the caller sends
     // it, it is the whole truth. Deep-merge would resurrect deleted themes, so
     // replace it wholesale instead.
     const uiPartial = (partial as { ui?: { customThemes?: unknown } }).ui;
     if (uiPartial && 'customThemes' in uiPartial) {
-      this.config.ui.customThemes = (uiPartial.customThemes ?? {}) as NonNullable<
+      merged.ui.customThemes = (uiPartial.customThemes ?? {}) as NonNullable<
         Config['ui']['customThemes']
       >;
     }
@@ -594,7 +614,7 @@ class ConfigService {
     // like ui.customThemes above.
     const claudePartial = (partial as { claude?: { budgets?: unknown } }).claude;
     if (claudePartial && 'budgets' in claudePartial) {
-      this.config.claude.budgets = (claudePartial.budgets ?? {}) as Record<string, number>;
+      merged.claude.budgets = (claudePartial.budgets ?? {}) as Record<string, number>;
     }
     if (this.persistBlocked) {
       // The on-disk config failed to load (unreadable or unparseable): keep the
@@ -604,20 +624,28 @@ class ConfigService {
         '[ConfigService] config file failed to load — change kept in memory only, ' +
           'NOT saved to disk (fix or remove the broken config.yaml, then reload).',
       );
+      this.config = merged;
       return this.config;
     }
     try {
-      const data = yaml.dump(this.config, { lineWidth: -1 });
+      const data = yaml.dump(merged, { lineWidth: -1 });
       atomicWriteFileSync(getConfigFilePath(), data);
-      // Record our own write's mtime so the next gate check doesn't mistake it
-      // for an external change and pointlessly re-read.
-      this.loadedAtMs = this.configMtimeMs();
-      // Includes saves made by main itself (seen models, budgets) — the case
-      // the renderer could never see before.
-      this.emitChange();
     } catch (err) {
+      // Do NOT adopt a value that is not on disk — serving it would make the
+      // setting look applied until the next restart reverted it, and the caller
+      // (Settings, via IPC.CONFIG_SAVE → ConfigContext.setConfig) renders
+      // whatever we return as the applied value. Mirrors the Go twin's
+      // saveLocked, which returns c.current on a writeConfigYAML error.
       console.error('[ConfigService] failed to save config:', err);
+      return this.config;
     }
+    this.config = merged;
+    // Record our own write's stamp so the next gate check doesn't mistake it
+    // for an external change and pointlessly re-read.
+    this.loadedStamp = this.configStamp();
+    // Includes saves made by main itself (seen models, budgets) — the case
+    // the renderer could never see before.
+    this.emitChange();
     return this.config;
   }
 
@@ -662,11 +690,11 @@ class ConfigService {
         // Editors and atomic writes fire several events per save; settle first.
         if (this.watchTimer) clearTimeout(this.watchTimer);
         this.watchTimer = setTimeout(() => {
-          const m = this.configMtimeMs();
+          const st = this.configStamp();
           // Our own writes already emitted; only react to someone else's.
-          if (m === 0 || m <= this.loadedAtMs) return;
+          if (st === '' || st === this.loadedStamp) return;
           this.config = this.loadFromDisk();
-          this.loadedAtMs = m;
+          this.loadedStamp = st;
           this.emitChange();
         }, 150);
       });

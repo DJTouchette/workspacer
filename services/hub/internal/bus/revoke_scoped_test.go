@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -162,14 +163,17 @@ func TestDowngradingAScopedTokensTierClosesItsSocket(t *testing.T) {
 	restore := shortenScopedRevalidation(t)
 	defer restore()
 
-	tier := authtoken.ScopeOperator
+	// Read by the server's revalidation goroutine while this test writes it.
+	var tier atomic.Value
+	tier.Store(authtoken.ScopeOperator)
 	url, srv := rpcServerWith(t)
 	srv.SetToken("host-secret")
 	srv.SetScopedTokenLookup(func(tok string) (ScopedIdent, bool) {
 		if tok != "tok-mutable" {
 			return ScopedIdent{}, false
 		}
-		return ScopedIdent{Scope: string(tier), Methods: tier.Methods()}, true
+		cur := tier.Load().(authtoken.Scope)
+		return ScopedIdent{Scope: string(cur), Methods: cur.Methods()}, true
 	})
 
 	c := dialClientToken(t, url, "tok-mutable")
@@ -182,7 +186,7 @@ func TestDowngradingAScopedTokensTierClosesItsSocket(t *testing.T) {
 		t.Fatal("floor: an operator socket must receive pty.bytes")
 	}
 
-	tier = authtoken.ScopeView
+	tier.Store(authtoken.ScopeView)
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -200,7 +204,7 @@ func TestDowngradingAScopedTokensTierClosesItsSocket(t *testing.T) {
 // test that mocked the loop away would not be testing the loop.
 func shortenScopedRevalidation(t *testing.T) func() {
 	t.Helper()
-	prev := scopedRevalidateInterval
-	scopedRevalidateInterval = 20 * time.Millisecond
-	return func() { scopedRevalidateInterval = prev }
+	prev := scopedRevalidateNanos.Load()
+	scopedRevalidateNanos.Store(int64(20 * time.Millisecond))
+	return func() { scopedRevalidateNanos.Store(prev) }
 }

@@ -88,10 +88,18 @@ func (s *Service) load() {
 	}
 	raw, err := os.ReadFile(s.path)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			// The file is THERE and we could not read it. Starting at version 0
+			// is not "no prior state": the next Set overwrites the surviving
+			// document with a fresh one, so the user's whole arrangement is
+			// gone. Say so — this is the only moment anyone can act on it.
+			log.Printf("layout: FAILED TO READ %s — starting empty; the next layout.set will overwrite it: %v", s.path, err)
+		}
 		return // no prior state; start empty
 	}
 	var d Document
 	if err := json.Unmarshal(raw, &d); err != nil {
+		log.Printf("layout: FAILED TO PARSE %s — starting empty; the next layout.set will overwrite it: %v", s.path, err)
 		return
 	}
 	if len(d.Data) == 0 {
@@ -103,24 +111,33 @@ func (s *Service) load() {
 	s.doc = d
 }
 
-// persist atomically writes the document to disk (best-effort; persistence
-// failures must not break the live sync).
-func (s *Service) persist(d Document) {
+// persist atomically writes the document to disk. Best-effort by design — a
+// persistence failure must not break the live sync, which is what actually
+// drives the connected clients — but never SILENTLY best-effort: Set answers
+// with a bumped version and broadcasts layout.changed to every client whether
+// or not the bytes landed, so a failure here means the whole arrangement
+// reverts on the next hub start with nothing anywhere saying why. Returns the
+// error so the caller can log it once, with the version it lost.
+func (s *Service) persist(d Document) error {
 	if s.path == "" {
-		return
+		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return
+		return err
 	}
 	raw, err := json.Marshal(d)
 	if err != nil {
-		return
+		return err
 	}
 	tmp := s.path + ".tmp"
 	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
-		return
+		return err
 	}
-	_ = os.Rename(tmp, s.path)
+	if err := os.Rename(tmp, s.path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // Get returns the current document. Params are ignored.
@@ -333,8 +350,15 @@ func (s *Service) setScrubbed(params json.RawMessage, scrub bool) (any, error) {
 	// Persist while still holding the lock so writes are serialized: a higher
 	// version can never be overwritten on disk by a slower, older-version
 	// persist, and two goroutines can't clobber each other's shared .tmp file.
-	s.persist(d)
+	perr := s.persist(d)
 	s.mu.Unlock()
+
+	if perr != nil {
+		// The live sync below still runs (clients converge on the new document),
+		// but this version exists only in memory: on the next hub start every
+		// client silently reverts to the last document that did reach disk.
+		log.Printf("layout: FAILED TO PERSIST version %d to %s — the arrangement is live but will be LOST on the next hub start: %v", d.Version, s.path, perr)
+	}
 
 	s.b.Publish(event.New(ChangedTopic, "hub", d))
 	return d, nil

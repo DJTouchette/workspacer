@@ -39,7 +39,8 @@ const ModelPricingSection: React.FC = () => {
   const [overrides, setOverrides] = useState<Record<string, OverrideRate>>({});
   const [rows, setRows] = useState<Record<string, Editable>>({});
   const [open, setOpen] = useState(false); // collapsed by default
-  const [status, setStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+  const [saveError, setSaveError] = useState('');
 
   const load = useCallback(async () => {
     const res = await window.electronAPI.pricingGetRates?.();
@@ -75,6 +76,43 @@ const ModelPricingSection: React.FC = () => {
     setStatus('idle');
   };
 
+  /**
+   * Write the overrides and report whether they actually landed.
+   *
+   * The result's `ok` is not decoration: this Section is rendered
+   * unconditionally by SettingsPane (no platform gate), and on the web client
+   * `pricingSaveOverrides` is a stub that resolves `{ ok: false }` and writes
+   * nothing at all — while the section's own body text promises the edit is
+   * written to ~/.workspacer/model-rates.json. Ignoring `ok` printed the green
+   * "Saved" label for a call that went nowhere, and reopening Settings showed
+   * the old rates.
+   */
+  const persist = useCallback(async (next: Record<string, OverrideRate>): Promise<boolean> => {
+    const fn = window.electronAPI.pricingSaveOverrides;
+    if (!fn) {
+      setStatus('failed');
+      setSaveError('Rate overrides are not available on this client.');
+      return false;
+    }
+    try {
+      const res = await fn(next);
+      if (res && res.ok === false) {
+        setStatus('failed');
+        setSaveError(
+          res.error ||
+            'This client cannot write ~/.workspacer/model-rates.json — nothing was saved.',
+        );
+        return false;
+      }
+    } catch (err) {
+      setStatus('failed');
+      setSaveError(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+    setSaveError('');
+    return true;
+  }, []);
+
   const save = useCallback(async () => {
     setStatus('saving');
     const next: Record<string, OverrideRate> = {};
@@ -95,20 +133,20 @@ const ModelPricingSection: React.FC = () => {
       if (prevCached != null) entry.cached_input = prevCached;
       next[prefix] = entry;
     }
-    await window.electronAPI.pricingSaveOverrides?.(next);
+    if (!(await persist(next))) return;
     await load();
     setStatus('saved');
     setTimeout(() => setStatus('idle'), 1500);
-  }, [prefixes, rows, defaults, overrides, load]);
+  }, [prefixes, rows, defaults, overrides, load, persist]);
 
   const resetAll = useCallback(async () => {
     setStatus('saving');
-    await window.electronAPI.pricingSaveOverrides?.({});
+    if (!(await persist({}))) return;
     setRows({});
     await load();
     setStatus('saved');
     setTimeout(() => setStatus('idle'), 1500);
-  }, [load]);
+  }, [load, persist]);
 
   const cell: React.CSSProperties = { ...inputStyle, width: 92, textAlign: 'right' };
   const head: React.CSSProperties = {
@@ -241,6 +279,11 @@ const ModelPricingSection: React.FC = () => {
             <SmallButton label="Reset all to defaults" onClick={resetAll} />
             {status === 'saved' && (
               <span style={{ fontSize: '0.72rem', color: 'var(--wks-success)' }}>Saved</span>
+            )}
+            {status === 'failed' && (
+              <span style={{ fontSize: '0.72rem', color: 'var(--wks-danger)' }}>
+                Not saved — {saveError}
+              </span>
             )}
           </div>
         </div>

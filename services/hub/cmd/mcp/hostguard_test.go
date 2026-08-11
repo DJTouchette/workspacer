@@ -81,3 +81,50 @@ func TestHostGuardWildcardBindAddsNothing(t *testing.T) {
 		}
 	}
 }
+
+// COMPOSITION, not the predicate. Every case above builds its own guarded()
+// helper, which proves requireHost works and never that main() applies it — so
+// serving `mux` bare (the whole rebinding defense gone) passed the entire
+// package. servedHandler is the one thing main hands to http.Server, so this
+// exercises the same value.
+func TestTheHandlerTheFacadeServesIsHostPinned(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	})
+	h := servedHandler("127.0.0.1:7897", inner)
+
+	if got := status(t, h, "evil.example.com"); got != http.StatusForbidden {
+		t.Fatalf("the served handler let a foreign Host through (%d): on the loopback default this pin is the ONLY thing between a web page and the fleet", got)
+	}
+	if got := status(t, h, "127.0.0.1:7897"); got != http.StatusTeapot {
+		t.Fatalf("the served handler refused loopback (%d)", got)
+	}
+	// /health included, deliberately.
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.Host = "evil.example.com"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("/health is not behind the pin (%d)", rec.Code)
+	}
+}
+
+// The wildcard-normalisation branch, exercised with THE WILDCARD ITSELF as the
+// Host. Without those three rows the branch could be deleted and nothing went
+// red: "evil.example.com" is refused either way (it never equals extra) and
+// "127.0.0.1:7897" is allowed either way (loopback short-circuits first).
+// `http://0.0.0.0:<port>` is reachable from a browser on Linux and macOS and
+// resolves to loopback, so a widened allowlist is a live same-origin path in.
+func TestHostGuardWildcardBindDoesNotAllowTheWildcardItselfAsAHost(t *testing.T) {
+	cases := []struct{ bind, host string }{
+		{"0.0.0.0:7897", "0.0.0.0:7897"},
+		{"0.0.0.0:7897", "0.0.0.0"},
+		{"[::]:7897", "[::]:7897"},
+		{"[::]:7897", "::"},
+	}
+	for _, tc := range cases {
+		if got := status(t, guarded(tc.bind), tc.host); got != http.StatusForbidden {
+			t.Errorf("bind %q + Host %q: got %d, want 403 — the wildcard widened the allowlist to a name a page can dial", tc.bind, tc.host, got)
+		}
+	}
+}

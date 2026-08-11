@@ -12,7 +12,22 @@
 
 import WebSocket from 'ws';
 import { BrowserWindow } from 'electron';
-import { HUB_BUS_URL, getHubToken } from './hubDaemon';
+import { hubBusUrl, getHubToken } from './hubDaemon';
+import { notifySystem } from './systemNotice';
+
+/**
+ * Methods whose withholding is a real LOSS rather than a handover between two
+ * equivalent implementations. Kept in agreement with the `degraded` entries of
+ * services/hub/cmd/brain/delegation_guard_test.go's declaredOverlap.
+ */
+const DEGRADED_WHEN_WITHHELD = new Set([
+  'notifications.post',
+  'analytics.summary',
+  'analytics.recent',
+]);
+
+/** One notice per process, not one per reconnect. */
+let warnedDegraded = false;
 import { IPC } from '../shared/ipcChannels';
 
 const TOPICS = ['*'];
@@ -115,7 +130,8 @@ function connect(): void {
   // When remote auth is on the hub rejects /bus without the token; the local
   // client presents it too. No token configured → URL is unchanged.
   const token = getHubToken();
-  const url = token ? `${HUB_BUS_URL}?token=${encodeURIComponent(token)}` : HUB_BUS_URL;
+  const base = hubBusUrl();
+  const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
   ws = new WebSocket(url);
 
   ws.on('open', () => {
@@ -196,23 +212,36 @@ function connect(): void {
       case 'registered': {
         // The hub's router is first-registration-wins (a capability-hijack
         // guard — services/hub internal/bus/rpc.go): a method already owned by
-        // another LIVE connection is withheld from us, and the ack lists only
-        // what actually registered. That's exactly what makes registering our
-        // full surface against an ADOPTED `workspacer serve` hub safe: its
-        // full-scope brain registered first and keeps agents.*/sessions.*/…,
-        // while desktop-only extras (analytics.*, fs.watch/unwatch, real OS
-        // notifications.post, terminal share) land in the free slots. Both
-        // sides proxy the same claudemon, so whichever one owns a method
-        // serves it correctly — overlap is harmless by construction. We just
-        // log the split so an adopted-hub session shows who provides what.
+        // another LIVE connection, or answered by a hub-local handler, is
+        // withheld from us and the ack lists only what actually registered.
+        // That is what makes registering our full surface against an ADOPTED
+        // `workspacer serve` hub safe — but it is NOT free: for three methods
+        // the adopted full-scope brain is a degraded stand-in (see the
+        // adopted-hub note in hubCapabilities.ts), and this ack is the only
+        // moment either process can notice. A console.log has no consumer in a
+        // packaged app, so say it at warn level and raise ONE system notice for
+        // the degraded set.
         const requested = Array.from(handlers.keys());
         const accepted = new Set(frame.methods ?? []);
         const withheld = requested.filter((m) => !accepted.has(m));
         if (withheld.length > 0) {
-          console.log(
+          console.warn(
             `[hub-client] ${withheld.length}/${requested.length} capability method(s) withheld — ` +
               `already provided by another connection (adopted full-scope brain?): ${withheld.join(', ')}`,
           );
+          const degraded = withheld.filter((m) => DEGRADED_WHEN_WITHHELD.has(m));
+          if (degraded.length > 0 && !warnedDegraded) {
+            warnedDegraded = true;
+            notifySystem({
+              level: 'warn',
+              key: 'hub-caps-withheld',
+              title: 'Some capabilities are served by the external server',
+              detail:
+                `This app is attached to an external Workspacer server, which answers ` +
+                `${degraded.join(', ')} itself. Those are degraded there: ` +
+                `desktop notifications are only logged and usage analytics report zeros.`,
+            });
+          }
         }
         break;
       }

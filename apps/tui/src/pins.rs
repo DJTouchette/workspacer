@@ -19,13 +19,19 @@ fn read() -> Option<Vec<String>> {
     serde_json::from_str(&text).ok()
 }
 
-/// Persist the pinned cwds, best-effort (a write failure is silent — the
-/// in-memory pins still hold for this session).
-pub fn save(cwds: &[String]) {
-    let Some(path) = path() else { return };
-    if let Ok(text) = serde_json::to_string_pretty(cwds) {
-        let _ = std::fs::write(path, text);
-    }
+/// Persist the pinned cwds. Returns `Err(message)` on failure — see
+/// [`crate::names::save`] for why a silent write here lost every pin on a
+/// TUI-only machine.
+pub fn save(cwds: &[String]) -> Result<(), String> {
+    let path = path().ok_or_else(|| "no config directory".to_string())?;
+    save_at(&path, cwds)
+}
+
+/// Test seam — see [`crate::names::save_at`].
+pub(crate) fn save_at(path: &std::path::Path, cwds: &[String]) -> Result<(), String> {
+    crate::store::ensure_parent(path)?;
+    let text = serde_json::to_string_pretty(cwds).map_err(|e| e.to_string())?;
+    std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 fn path() -> Option<PathBuf> {

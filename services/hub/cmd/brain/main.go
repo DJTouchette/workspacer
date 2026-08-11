@@ -34,6 +34,7 @@ func main() {
 
 	cm := newClaudemonClient(*claudemonURL)
 	reg := newRegistry(cm)
+	reg.scope = *scope
 	methods := reg.methodsForScope(*scope)
 	bus := newBusClient(*hubURL, *token, methods, reg.handle)
 

@@ -36,7 +36,7 @@ import {
   daemonSpawnOptions,
   gracefulStop,
 } from '../lib/daemonUtils';
-import { HUB_BUS_URL, getHubToken } from './hubDaemon';
+import { hubBusUrl, getHubToken } from './hubDaemon';
 
 const PORT = PORTS.mcpFacade;
 const ADDR = `127.0.0.1:${PORT}`;
@@ -105,7 +105,7 @@ export function getMcpFacadeToken(): string {
 function launch(bin: string): Promise<void> {
   killStaleListener(PORT, 'mcp', bin);
 
-  const args = ['--addr', ADDR, '--hub', HUB_BUS_URL];
+  const args = ['--addr', ADDR, '--hub', hubBusUrl()];
   // The bus token rides the environment rather than argv: /proc/<pid>/cmdline is
   // world-readable, so a `--token <secret>` flag hands the secret to every local
   // user. The facade's --token flag already defaults to os.Getenv("HUB_TOKEN")
@@ -117,7 +117,7 @@ function launch(bin: string): Promise<void> {
   const token = getHubToken();
   const env = token ? { HUB_TOKEN: token } : undefined;
 
-  console.log(`[mcp] spawning ${bin} (addr ${ADDR}, hub ${HUB_BUS_URL})`);
+  console.log(`[mcp] spawning ${bin} (addr ${ADDR}, hub ${hubBusUrl()})`);
   backoff.markStarted();
   child = spawn(bin, args, daemonSpawnOptions(env));
 

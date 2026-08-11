@@ -126,6 +126,119 @@ function bindAddr(): string {
 }
 
 /**
+ * Split a `host:port` authority into its host, IPv6-safely.
+ *
+ * `addr.split(':')[0]` is not: on `[fd7a:115c:a1e0::cc3b:4f4a]:7895` — the
+ * shape WORKSPACER_REMOTE_ADDR takes when pinned to a tailnet IPv6, which this
+ * module's own docs recommend — it yields `[fd7a`, and every URL built from it
+ * (busUrl, the phone QR, the /app link) is unparseable while the transport
+ * selector still reports success. Mirrors the Go twin's net.SplitHostPort use
+ * in services/hub/cmd/workspacer/plan.go.
+ */
+export function splitHostPort(addr: string): { host: string; port: string } {
+  const bracketed = /^\[([^\]]+)\](?::(\d+))?$/.exec(addr);
+  if (bracketed) return { host: bracketed[1], port: bracketed[2] ?? '' };
+  const idx = addr.lastIndexOf(':');
+  // No colon, or several (a bare IPv6 literal written without brackets): there
+  // is no port to strip.
+  if (idx === -1 || addr.indexOf(':') !== idx) return { host: addr, port: '' };
+  return { host: addr.slice(0, idx), port: addr.slice(idx + 1) };
+}
+
+/** Wrap an IPv6 literal in brackets so it can go in a URL authority. */
+export function urlHost(host: string): string {
+  if (host.includes(':') && !host.startsWith('[')) return `[${host}]`;
+  return host;
+}
+
+/**
+ * The address THIS process must dial to reach the hub it just spawned.
+ *
+ * Never the bind address verbatim: a wildcard bind names no host (dialing
+ * `0.0.0.0` / `::` is what cost the brain its whole capability plane — see
+ * services/hub/cmd/hub/brain.go busDialAddr), and a CONCRETE non-loopback bind
+ * does NOT answer on loopback, so a hardcoded 127.0.0.1 probe never reaches a
+ * perfectly healthy hub. Wildcard → loopback; anything else → itself.
+ */
+export function dialAuthority(bind = bindAddr()): string {
+  const { host, port } = splitHostPort(bind);
+  const p = port || String(PORT);
+  if (host === '' || host === '0.0.0.0' || host === '::' || host === '[::]') {
+    return `127.0.0.1:${p}`;
+  }
+  return `${urlHost(host)}:${p}`;
+}
+
+/** Where the hub's HTTP/bus endpoints are for this process, right now. */
+export function hubHttpUrl(): string {
+  return `http://${dialAuthority()}`;
+}
+export function hubBusUrl(): string {
+  return `ws://${dialAuthority()}/bus`;
+}
+
+/**
+ * Hostnames a reverse proxy in front of the hub presents, persisted so the next
+ * hub launch passes them as --trusted-host.
+ *
+ * `tailscale serve` — the app's own one-tap "HTTPS via Tailscale" toggle, and
+ * the only way the /m PWA gets the secure context Web Push needs — terminates
+ * TLS for `<node>.ts.net` and forwards to the hub's LOOPBACK socket. That is
+ * byte-for-byte the DNS-rebinding shape the hub's Host/Origin pins refuse, so
+ * without this every route behind the toggle answers 403 and the desktop, which
+ * dials loopback, shows no problem at all.
+ */
+function trustedHostsFile(): string {
+  return path.join(getConfigDir(), 'hub-trusted-hosts');
+}
+
+function readTrustedHosts(): string[] {
+  try {
+    return fs
+      .readFileSync(trustedHostsFile(), 'utf-8')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Persist the reverse-proxy hostnames and, when they changed, restart the hub so
+ * the new list takes effect. Returns true when a restart was performed.
+ */
+export async function setHubTrustedHosts(names: string[]): Promise<boolean> {
+  const next = [...new Set(names.map((n) => n.trim()).filter(Boolean))].sort();
+  const prev = [...readTrustedHosts()].sort();
+  if (next.join(',') === prev.join(',')) return false;
+  const file = trustedHostsFile();
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    if (next.length) fs.writeFileSync(file, `${next.join('\n')}\n`, { mode: 0o600 });
+    else fs.rmSync(file, { force: true });
+  } catch (err) {
+    console.error('[hub] failed to persist trusted hosts:', err);
+    return false;
+  }
+  if (adopted) {
+    // Not ours to restart — whoever ran `workspacer serve` chose its flags.
+    console.warn(
+      '[hub] trusted hosts noted, but the hub is an adopted external server — ' +
+        'restart it with `workspacer serve --trusted-host <name>` or the proxy will keep getting 403',
+    );
+    return false;
+  }
+  await stopHub();
+  try {
+    await startHub();
+  } catch (err) {
+    console.error('[hub] restart after trusted-host change failed:', err);
+  }
+  return true;
+}
+
+/**
  * Load (or create + persist) the hub bus token. Always set now — even on the
  * localhost-only default — so the bus can distinguish the trusted host (this
  * token) from plugin sidecars/webviews (their own per-plugin tokens) and reject
@@ -159,10 +272,11 @@ function loadOrCreateToken(): string {
 
 const HUB_TOKEN = loadOrCreateToken();
 
-/** Best-effort: a tailnet/LAN IP to advertise in the remote URL. */
+/** Best-effort: a tailnet/LAN IP to advertise in the remote URL. Already
+ *  bracketed when it is an IPv6 literal, so it can be concatenated into a URL. */
 function advertiseHost(): string {
-  const [host] = bindAddr().split(':');
-  if (host && host !== '0.0.0.0' && host !== '::') return host;
+  const { host } = splitHostPort(bindAddr());
+  if (host && host !== '0.0.0.0' && host !== '::') return urlHost(host);
   // Prefer a Tailscale (100.64.0.0/10) address if present, else first non-internal IPv4.
   let fallback = '';
   for (const ifaces of Object.values(os.networkInterfaces())) {
@@ -387,6 +501,14 @@ function launch(bin: string): Promise<void> {
     '--sidecar-node',
     process.execPath,
   ];
+  // Reverse-proxy hostnames (tailscale serve). Without these the hub's Host and
+  // Origin pins 403 every route reached through the proxy — including the /m
+  // PWA and the /bus upgrade — while the desktop, which dials loopback, sees
+  // nothing wrong at all.
+  const trusted = readTrustedHosts();
+  if (trusted.length > 0) {
+    hubArgs.push('--trusted-host', trusted.join(','));
+  }
   // Serve the full web app (real renderer) at /app/ when remote sharing is on
   // and a web build exists. The lightweight /remote client works regardless.
   const webDir = webappDir();
@@ -425,7 +547,7 @@ function launch(bin: string): Promise<void> {
   });
 
   readyPromise = waitForHealthShared(
-    `http://127.0.0.1:${PORT}/health`,
+    `http://${dialAuthority(addr)}/health`,
     HEALTH_TIMEOUT_MS,
     'hub',
     healthAbort.signal,
@@ -504,5 +626,3 @@ export function stopHub(): Promise<void> {
 }
 
 export const HUB_PORT = PORT;
-export const HUB_BUS_URL = `ws://127.0.0.1:${PORT}/bus`;
-export const HUB_HTTP_URL = `http://127.0.0.1:${PORT}`;

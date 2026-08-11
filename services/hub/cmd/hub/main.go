@@ -241,11 +241,15 @@ func main() {
 	brainScope := flag.String("brain-scope", "off", "supervise the brain capability provider: off | full (whole surface, headless) | catalog (file-backed subset, when the desktop app owns the live caps)")
 	brainBin := flag.String("brain-bin", "", "path to the brain binary to supervise; empty = auto-detect (sibling of the hub binary, then PATH)")
 	claudemonURL := flag.String("claudemon", "http://127.0.0.1:7891", "claudemon API base URL the supervised brain talks to")
+	trustedHosts := flag.String("trusted-host", os.Getenv("HUB_TRUSTED_HOSTS"), "comma-separated hostname(s) a reverse proxy in front of this hub presents (e.g. the `tailscale serve` MagicDNS name). Required for any TLS front-end: it terminates elsewhere and forwards to our loopback socket, which is the DNS-rebinding shape the Host/Origin pins refuse. Empty = no exemption")
 	flag.Parse()
 
 	b := broker.New()
 	srv := bus.NewServer(b)
 	srv.SetToken(*token)
+	if hosts := configureTrustedHosts(srv, *trustedHosts); len(hosts) > 0 {
+		log.Printf("bus: trusting reverse-proxy host(s) %v (Host/Origin pins exempt these names)", hosts)
+	}
 	if *token != "" {
 		log.Printf("bus auth enabled (token required on /bus, /remote, /plugins/install, /plugins/remove)")
 	}
@@ -764,18 +768,7 @@ func main() {
 			if *token != "" {
 				env = append(env, "HUB_TOKEN="+*token)
 			}
-			brainSup := supervisor.New(supervisor.Spec{
-				Name:    "brain",
-				Command: bin,
-				Args:    brainArgs(*addr, *claudemonURL, *brainScope),
-				Env:     env,
-				// Our own child, and the sole provider of every file-backed
-				// capability: when it cannot connect, the bus answers "no
-				// provider" for config.*, library.*, layouts.* and sessions.*
-				// and the app's settings stop persisting. Discarding the one
-				// process that can say why is not a trade worth making.
-				InheritOutput: true,
-			}, b)
+			brainSup := supervisor.New(brainSpec(bin, *addr, *claudemonURL, *brainScope, env), b)
 			brainSup.Start()
 			defer brainSup.Stop()
 			log.Printf("supervising brain (scope=%s) from %s", *brainScope, bin)
@@ -831,4 +824,43 @@ func pushTokenValidator(hostToken string, store *authtoken.Store) func(string) b
 		}
 		return store != nil && store.HasFingerprint(tokenID, bus.TokenFingerprint)
 	}
+}
+
+// configureTrustedHosts parses --trusted-host and installs it on the server.
+// Named (rather than inlined into main) so a test can drive the same two steps
+// main does: a split that works and a Set that is never called is the shape
+// that leaves a shipped feature 403ing with a green suite.
+func configureTrustedHosts(srv *bus.Server, raw string) []string {
+	hosts := splitTrustedHosts(raw)
+	srv.SetTrustedHosts(hosts)
+	return hosts
+}
+
+// brainSpec is the supervised brain's process spec. Named (rather than inlined
+// into main) so a test can assert the one field that made today's outage
+// invisible: the brain is OUR child and the sole provider of every file-backed
+// capability, so when it cannot connect the bus answers "no provider" for
+// config.*, library.*, layouts.* and sessions.* and the app's settings stop
+// persisting. Discarding the one process that can say why is not a trade worth
+// making.
+func brainSpec(bin, addr, claudemonURL, scope string, env []string) supervisor.Spec {
+	return supervisor.Spec{
+		Name:          "brain",
+		Command:       bin,
+		Args:          brainArgs(addr, claudemonURL, scope),
+		Env:           env,
+		InheritOutput: true,
+	}
+}
+
+// splitTrustedHosts parses the --trusted-host list. Comma-separated, whitespace
+// tolerated, empties dropped.
+func splitTrustedHosts(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

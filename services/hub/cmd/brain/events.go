@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"strings"
 	"time"
 )
@@ -36,7 +37,7 @@ func runSessionStore(ctx context.Context, cm *claudemonClient, store *sessionSto
 			return
 		}
 		start := time.Now()
-		_ = cm.streamEvents(ctx, func(name string, data []byte) {
+		err := cm.streamEvents(ctx, func(name string, data []byte) {
 			// claudemon names its frames "session.update" (some emit no name).
 			if name != "session.update" && name != "" {
 				return
@@ -57,6 +58,13 @@ func runSessionStore(ctx context.Context, cm *claudemonClient, store *sessionSto
 			return
 		}
 		backoff = backoffAfterConn(backoff, time.Since(start))
+		if err != nil {
+			// The hub inherits this process's stdout (supervisor InheritOutput),
+			// so this is the one line that can explain an empty fleet. Matches
+			// internal/claudemon/bridge.go, whose own comment names discarding
+			// it as the bug that made a silent bridge unexplainable.
+			log.Printf("brain: claudemon /events stream ended: %v (retry in %s)", err, backoff)
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -148,7 +156,7 @@ func runStatusLines(ctx context.Context, cm *claudemonClient, store *sessionStor
 			return
 		}
 		start := time.Now()
-		_ = cm.streamStatusLines(ctx, func(name string, data []byte) {
+		err := cm.streamStatusLines(ctx, func(name string, data []byte) {
 			if name != "statusline" && name != "" {
 				return
 			}
@@ -168,6 +176,9 @@ func runStatusLines(ctx context.Context, cm *claudemonClient, store *sessionStor
 			return
 		}
 		backoff = backoffAfterConn(backoff, time.Since(start))
+		if err != nil {
+			log.Printf("brain: claudemon /statusline/stream ended: %v (retry in %s)", err, backoff)
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -182,6 +193,9 @@ func runStatusLines(ctx context.Context, cm *claudemonClient, store *sessionStor
 func seedStore(ctx context.Context, cm *claudemonClient, store *sessionStore) {
 	raw, err := cm.listSessions(ctx)
 	if err != nil {
+		// The fleet starts empty and every agent.snapshot publish is missing its
+		// seed. Silent, this is indistinguishable from "no agents are running".
+		log.Printf("brain: could not seed the session store from claudemon: %v", err)
 		return
 	}
 	var arr []json.RawMessage

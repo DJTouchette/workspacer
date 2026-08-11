@@ -369,11 +369,13 @@ export interface ElectronAPI {
   revokePluginPaneToken?: (token: string) => Promise<void>;
   /** Saved values for a plugin's declared settings (defaults applied by the plugin). */
   getPluginSettings?: (pluginId: string) => Promise<Record<string, unknown>>;
-  /** Persist (merge) plugin settings; returns the merged values. */
+  /** Persist (merge) plugin settings. Resolves the merged values on success and
+   *  `null` when the write was refused or failed — an empty map is a legitimate
+   *  settings document, so it cannot double as the failure signal. */
   setPluginSettings?: (
     pluginId: string,
     values: Record<string, unknown>,
-  ) => Promise<Record<string, unknown>>;
+  ) => Promise<Record<string, unknown> | null>;
   /** Fired when a plugin's settings change, so open panes re-apply them live. */
   onPluginSettingsChanged?: (
     callback: (pluginId: string, values: Record<string, unknown>) => void,
@@ -485,7 +487,10 @@ export interface ElectronAPI {
   // App lifecycle
   onBeforeQuit: (callback: () => void) => () => void;
   /** Ack that the quit-time session save finished — main holds teardown for it. */
-  notifyQuitSaved?: () => void;
+  /** Ack the quit-save handshake. `ok=false` means the final save FAILED, which
+   *  main reports to the user — acking unconditionally made a lost workspace
+   *  indistinguishable from a saved one. */
+  notifyQuitSaved?: (ok?: boolean) => void;
 
   // Notifications / ambient awareness
   setActiveSession: (sessionId: string | null) => void;
@@ -524,7 +529,7 @@ export interface ElectronAPI {
       string,
       { input: number; output: number; cached_input?: number; context_limit?: number }
     >,
-  ) => Promise<{ ok: boolean }>;
+  ) => Promise<{ ok: boolean; error?: string }>;
 }
 
 declare global {

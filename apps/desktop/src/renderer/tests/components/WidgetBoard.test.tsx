@@ -122,9 +122,26 @@ describe('WidgetBoard resilience', () => {
     expect(screen.getByText('Plugin unavailable')).toBeTruthy();
   });
 
+  // The tile that must NAME ITSELF: nothing is drawing the widget, so the
+  // placement's own name is the only thing left to identify it by. A board with
+  // two disabled plugins otherwise degrades to two identical unlabelled tiles.
+  it('names the widget that vanished, not just "unavailable"', () => {
+    renderBoard({
+      placements: [
+        { plugin: 'gone.plugin', widget: 'lamp', size: 'small' },
+        { plugin: 'other.plugin', widget: 'radar', size: 'small' },
+      ],
+      available: [],
+    });
+    expect(screen.getAllByText('Plugin unavailable')).toHaveLength(2);
+    expect(screen.getByText('lamp')).toBeTruthy();
+    expect(screen.getByText('radar')).toBeTruthy();
+  });
+
   it('explains an unknown host widget', () => {
     renderBoard({ placements: [{ widget: 'no-such-widget', size: 'small' }] });
     expect(screen.getByText('Unknown widget')).toBeTruthy();
+    expect(screen.getByText('no-such-widget')).toBeTruthy();
   });
 
   // A tile is not a window: the host draws no title over a widget, because the

@@ -617,12 +617,37 @@ async function gracefulShutdown(): Promise<void> {
   // terminated agents from a stale yaml on the next boot). Capped so a hung
   // renderer can never block the quit.
   if (mainWindow && !mainWindow.isDestroyed()) {
+    let saved: boolean | null = null;
     const ack = new Promise<void>((resolve) => {
-      ipcMain.once(IPC.APP_QUIT_SAVED, () => resolve());
+      ipcMain.once(IPC.APP_QUIT_SAVED, (_e, ok?: boolean) => {
+        saved = ok !== false;
+        resolve();
+      });
     });
     mainWindow.webContents.send(IPC.APP_BEFORE_QUIT);
     await Promise.race([ack, new Promise<void>((r) => setTimeout(r, 1500))]);
     ipcMain.removeAllListeners(IPC.APP_QUIT_SAVED);
+    // The ack carries WHETHER the save landed. It used to be a bare signal, so
+    // a rejected saveSession acked exactly like a successful one and the whole
+    // roster/layout change was lost with nothing said anywhere — on the next
+    // boot the pre-failure file restored and looked normal.
+    if (saved === false) {
+      console.error(
+        "[quit] the final workspace save FAILED — this session's layout was not persisted",
+      );
+      notifySystem({
+        level: 'warn',
+        key: 'quit-save-failed',
+        title: 'Workspace not saved',
+        detail:
+          "The final save before quitting failed, so this session's agents and layout were not persisted. " +
+          'The previous saved workspace will be restored next time.',
+      });
+    } else if (saved === null) {
+      console.warn(
+        '[quit] no save ack from the renderer within 1.5s — the workspace may not have been persisted',
+      );
+    }
   }
   updateService.stop();
   keepWarmService.stop();

@@ -5,7 +5,8 @@ import type { Layout } from '../types/layout';
 interface Props {
   /** Number of (non-global) agents that would be captured by "Save current". */
   agentCount: number;
-  onSaveCurrent: (name: string) => void;
+  /** May reject: a rejection is a save that did NOT land, and the dialog says so. */
+  onSaveCurrent: (name: string) => void | Promise<void>;
   onRestore: (layout: Layout) => void;
   onClose: () => void;
 }
@@ -17,6 +18,7 @@ interface Props {
 const LayoutsDialog: React.FC<Props> = ({ agentCount, onSaveCurrent, onRestore, onClose }) => {
   const [layouts, setLayouts] = useState<Layout[]>([]);
   const [name, setName] = useState('');
+  const [error, setError] = useState('');
 
   const reload = () => {
     window.electronAPI
@@ -42,24 +44,35 @@ const LayoutsDialog: React.FC<Props> = ({ agentCount, onSaveCurrent, onRestore, 
   const save = () => {
     const n = name.trim();
     if (!n) return;
-    // onSaveCurrent is typed void but may return a Promise at runtime; await it
-    // so we only reload after the write completes. If it doesn't return a
-    // Promise (void), we fall back to a 500 ms delay — wider than 150 ms to
-    // tolerate slow IPC without a race.
+    setError('');
+    // onSaveCurrent may return a Promise; await it so we only reload after the
+    // write completes. If it doesn't (void), fall back to a 500 ms delay —
+    // wider than 150 ms to tolerate slow IPC without a race.
     const result = onSaveCurrent(n) as unknown;
-    setName('');
     if (result instanceof Promise) {
-      result.then(reload).catch(() => {});
+      result.then(
+        () => {
+          setName('');
+          reload();
+        },
+        (err: unknown) => {
+          // Keep the typed name — the user's input is the only copy of it — and
+          // say what happened. Clearing the field and reloading a list that
+          // simply lacks the entry IS the success animation.
+          setError(`Not saved — ${err instanceof Error ? err.message : String(err)}`);
+        },
+      );
     } else {
+      setName('');
       setTimeout(reload, 500);
     }
   };
 
   const del = (id: string) => {
-    window.electronAPI
-      .layoutsDelete(id)
-      .then(reload)
-      .catch(() => {});
+    setError('');
+    window.electronAPI.layoutsDelete(id).then(reload, (err: unknown) => {
+      setError(`Not deleted — ${err instanceof Error ? err.message : String(err)}`);
+    });
   };
 
   return (
@@ -100,6 +113,19 @@ const LayoutsDialog: React.FC<Props> = ({ agentCount, onSaveCurrent, onRestore, 
             Save current
           </button>
         </div>
+
+        {error && (
+          <div
+            style={{
+              fontSize: '0.72rem',
+              color: 'var(--wks-danger)',
+              marginTop: -8,
+              marginBottom: 12,
+            }}
+          >
+            {error}
+          </div>
+        )}
 
         {/* Saved layouts */}
         <div

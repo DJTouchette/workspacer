@@ -104,7 +104,7 @@ vi.mock('./services/fileWatchService', () => ({
 vi.mock('./services/searchService', () => ({ searchProject: vi.fn() }));
 vi.mock('./services/gitService', () => ({}));
 vi.mock('./services/hubDaemon', () => ({
-  HUB_HTTP_URL: 'http://127.0.0.1:0',
+  hubHttpUrl: () => 'http://127.0.0.1:0',
   HUB_PORT: 0,
   getHubToken: vi.fn(),
   getRemoteShareInfo: vi.fn(),

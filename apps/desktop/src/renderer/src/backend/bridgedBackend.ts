@@ -101,6 +101,23 @@ export const HOST_ONLY = [
   'updatesCheck',
   'updatesInstall',
   'onUpdateStatus',
+  // The remote-access control plane. All of these live ONLY in the preload (the
+  // web backend has no stub for them), so leaving them out of this list did not
+  // degrade them — it deleted them: `window.electronAPI.<x>` was `undefined` in
+  // the DEFAULT desktop configuration, every consumer feature-detects, and the
+  // feature simply vanished from the UI with no error, no console warning, no
+  // bus event and no log. That silently disabled scoped pairing tokens (so the
+  // phone QR fell back to the legacy full-control token), the one-tap Tailscale
+  // HTTPS toggle (the prerequisite for the /m PWA + Web Push), the
+  // connect-to-another-server section, and notification click-through.
+  'remoteTokenGetOrCreate', // mints scoped pairing tokens on the host
+  'remoteTokensList',
+  'remoteTokenRevoke',
+  'tailscaleGetInfo', // shells out to the host's tailscale CLI
+  'tailscaleSetServe',
+  'setRemoteServer', // rewrites this desktop's own server target, then relaunches
+  'appRelaunch', // Electron app lifecycle
+  'openExternalUrl', // hands a URL to the host's default browser
 ] as const satisfies readonly (keyof ElectronAPI)[];
 
 /**

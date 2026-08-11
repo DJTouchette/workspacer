@@ -49,8 +49,11 @@ impl App {
         } else {
             self.names.insert(form.cwd.clone(), name);
         }
-        crate::names::save(&self.names);
-        self.set_toast("Renamed");
+        // The toast must report what actually happened: a success message for a
+        // write that returned ENOENT is how every rename on a TUI-only machine
+        // vanished on the next launch without a word.
+        let msg = crate::store::save_toast("Renamed", "rename", crate::names::save(&self.names));
+        self.set_toast(msg);
     }
 
     // ── notes scratchpad ────────────────────────────────────────────────────
@@ -141,7 +144,9 @@ impl App {
         } else {
             self.notes.insert(cwd, text);
         }
-        crate::notes::save(&self.notes);
+        if let Err(e) = crate::notes::save(&self.notes) {
+            self.set_toast(crate::store::save_toast("", "note", Err(e)));
+        }
     }
 
     pub(in crate::app) fn handle_spawn_key(&mut self, key: KeyEvent) {

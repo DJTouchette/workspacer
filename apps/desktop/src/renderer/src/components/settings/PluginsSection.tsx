@@ -59,6 +59,7 @@ const SecretInput: React.FC<{ stored: boolean; onCommit: (value: string) => void
  *  on the plugin-settings-changed channel and update the controls live. */
 const PluginSettingsControls: React.FC<{ plugin: PluginManifest }> = ({ plugin }) => {
   const [values, setValues] = useState<Record<string, unknown>>({});
+  const [writeError, setWriteError] = useState('');
 
   useEffect(() => {
     let alive = true;
@@ -74,9 +75,36 @@ const PluginSettingsControls: React.FC<{ plugin: PluginManifest }> = ({ plugin }
     };
   }, [plugin.id]);
 
+  /**
+   * Optimistic write, RECONCILED. Firing and forgetting left a refused write
+   * looking exactly like an accepted one: the control stayed on its new value
+   * until the plugin was reopened, re-read from the hub and reverted, with
+   * nothing in the DOM and nothing but a console line to say so.
+   */
   const update = (key: string, value: unknown) => {
+    const previous = values;
     setValues((prev) => ({ ...prev, [key]: value }));
-    window.electronAPI.setPluginSettings?.(plugin.id, { [key]: value });
+    setWriteError('');
+    const fn = window.electronAPI.setPluginSettings;
+    if (!fn) {
+      setValues(previous);
+      setWriteError('This client cannot change plugin settings.');
+      return;
+    }
+    fn(plugin.id, { [key]: value }).then(
+      (merged) => {
+        if (merged == null) {
+          setValues(previous);
+          setWriteError('Not saved — the hub refused the write.');
+          return;
+        }
+        setValues(merged);
+      },
+      (err: unknown) => {
+        setValues(previous);
+        setWriteError(`Not saved — ${err instanceof Error ? err.message : String(err)}`);
+      },
+    );
   };
   const valueFor = (s: PluginSettingDef) => (s.key in values ? values[s.key] : s.default);
 
@@ -156,6 +184,11 @@ const PluginSettingsControls: React.FC<{ plugin: PluginManifest }> = ({ plugin }
           )}
         </React.Fragment>
       ))}
+      {writeError && (
+        <div style={{ fontSize: '0.72rem', color: 'var(--wks-danger)', marginBottom: 2 }}>
+          {writeError}
+        </div>
+      )}
     </>
   );
 };

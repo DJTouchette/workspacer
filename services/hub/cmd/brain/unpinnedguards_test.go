@@ -416,7 +416,7 @@ func TestListDirWithNoPathOpensTheHomeDirectory(t *testing.T) {
 func TestListDirBlankDefaultTrimsASCIIWhitespaceOnly(t *testing.T) {
 	sandboxHome(t)
 	reg := registryWithCwds(t)
-		for _, p := range []string{"\u0085", "\ufeff"} {
+	for _, p := range []string{"\u0085", "\ufeff"} {
 		params := `{"path":` + jsonStr(p) + `}`
 		if _, err := reg.handle(context.Background(), "fs.listDir", json.RawMessage(params)); err == nil {
 			t.Errorf("fs.listDir %s was answered; a lone BOM/NEL path is a filename the guard must refuse, not default to $HOME", params)

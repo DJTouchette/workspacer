@@ -1253,3 +1253,50 @@ fn transport_reads_the_session_and_respawn_falls_back_to_config() {
     app.transport = Transport::Pty;
     assert_eq!(app.respawn_transport("s-never-seen"), Transport::Pty);
 }
+
+/// The rename toast must report what actually happened.
+///
+/// `$XDG_CONFIG_HOME/workspacer/` is created by the Electron app; a machine that
+/// only ever installed the standalone `wks-tui` has no such directory, so every
+/// `names::save` failed with ENOENT — permanently — while this path toasted
+/// "Renamed" and the rename was gone on the next launch. The test harness
+/// creates only `$XDG_CONFIG_HOME`, exactly like that machine, so the whole
+/// suite already ran in the broken state and could not see it.
+#[tokio::test]
+async fn a_rename_reaches_disk_and_the_toast_says_so() {
+    isolate_config();
+    let cfg = crate::config::config_dir().expect("config_dir");
+    let file = cfg.join("tui-names.json");
+    let _ = std::fs::remove_file(&file);
+
+    let mut app = test_app();
+    app.set_agents(vec![agent_cwd("s1", "/work/renamed-repo", "input")]);
+    app.selected = 1;
+    app.open_rename();
+    for ch in "backend".chars() {
+        app.handle_rename_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Char(ch),
+        ));
+    }
+    app.handle_rename_key(crossterm::event::KeyEvent::from(
+        crossterm::event::KeyCode::Enter,
+    ));
+
+    assert_eq!(
+        app.toast(),
+        Some("Renamed"),
+        "the toast must not claim success for a write that failed"
+    );
+    assert!(
+        file.is_file(),
+        "names::save never created {} — the rename lives only in memory and is gone on the next launch",
+        file.display()
+    );
+    assert_eq!(
+        crate::names::load()
+            .get("/work/renamed-repo")
+            .map(String::as_str),
+        Some("backend"),
+        "the rename did not survive a reload"
+    );
+}

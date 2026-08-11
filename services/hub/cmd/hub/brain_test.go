@@ -119,3 +119,16 @@ func statusVia(t *testing.T, dial, host string) int {
 	defer resp.Body.Close()
 	return resp.StatusCode
 }
+
+// The brain's diagnosis must reach somewhere. Its Spec discarding stdout is
+// exactly why a whole session of 403 reconnects — with every file-backed
+// capability dead on the bus — produced not one line anywhere.
+func TestBrainSpecInheritsItsOutput(t *testing.T) {
+	spec := brainSpec("/opt/wks/brain", "0.0.0.0:7895", "http://127.0.0.1:7891", "catalog", nil)
+	if !spec.InheritOutput {
+		t.Fatal("the supervised brain's stdout/stderr are DISCARDED: a permanent failure (the 403 reconnect loop) writes its diagnosis to nowhere")
+	}
+	if spec.Command != "/opt/wks/brain" || spec.Name != "brain" {
+		t.Fatalf("brainSpec mis-wired: %+v", spec)
+	}
+}

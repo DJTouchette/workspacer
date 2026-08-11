@@ -69,8 +69,7 @@ func main() {
 	}
 	mux := newMux(server, client, *mcpToken)
 
-	// The Host pin wraps everything the facade serves — see requireHost.
-	httpSrv := &http.Server{Addr: *addr, Handler: requireHost(*addr, mux)}
+	httpSrv := &http.Server{Addr: *addr, Handler: servedHandler(*addr, mux)}
 	go func() {
 		log.Printf("mcp facade listening on %s (streamable: http://%s/mcp, sse: http://%s/sse)", *addr, *addr, *addr)
 		log.Printf("bridging to hub %s", *hubURL)
@@ -104,6 +103,16 @@ func newMux(server *mcp.Server, client *busclient.Client, mcpToken string) *http
 		})
 	})
 	return mux
+}
+
+// servedHandler is what the facade actually serves: the mux with the Host pin
+// wrapped around ALL of it. Named (rather than composed inline in main) so a
+// test can assert the composition rather than only the predicate — every
+// hostguard case builds its own guarded() helper, so the whole DNS-rebinding
+// defense could be deleted from main with a green suite. The hub twin pins the
+// same thing via bus.Server.Handler().
+func servedHandler(bindAddr string, mux http.Handler) http.Handler {
+	return requireHost(bindAddr, mux)
 }
 
 // requireHost rejects a request whose `Host` header is neither loopback nor the
