@@ -169,6 +169,17 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # search.project shells out to ripgrep, and the guard test that proves it
+      # searches the path the guard RETURNED (rather than re-deriving one) has to
+      # actually run the search to see where it looked. Without rg on PATH that
+      # case fails on the runner while passing on every developer machine that
+      # has ripgrep installed — which is what happened: it was invisible for as
+      # long as this job stopped at the format check. Installing it is the fix;
+      # skipping the case when rg is absent would leave a containment test
+      # silently not running, which is the one thing this suite exists to stop.
+      - name: Install ripgrep (search.project's engine)
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
       # -race -count=1 matches the Makefile's `make test-hub` target, and the
       # -count=1 is load-bearing HERE in particular: actions/setup-go restores
       # ~/.cache/go-build, which is where the test result cache lives, so a run

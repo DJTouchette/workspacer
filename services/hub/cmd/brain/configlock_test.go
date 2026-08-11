@@ -115,8 +115,7 @@ func TestConfigLockMatchesContract(t *testing.T) {
 // because saveLocked's persistBlocked branch returns before writeConfigYAML and
 // so can never clear the flag it set.
 func TestSaveRecoversAfterALockTimeout(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	tempConfigHome(t)
 	resetCwdCacheForTest()
 	t.Cleanup(resetCwdCacheForTest)
 

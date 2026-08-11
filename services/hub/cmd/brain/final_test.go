@@ -24,8 +24,7 @@ func TestEncodeDirName(t *testing.T) {
 }
 
 func TestSessionsForDir(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := tempHome(t)
 	cwd := "/home/u/proj"
 	dir := filepath.Join(home, ".claude", "projects", encodeDirName(cwd))
 	writeFile(t, filepath.Join(dir, "11111111-1111-1111-1111-111111111111.jsonl"),
@@ -102,8 +101,7 @@ func TestReadTextFileGuards(t *testing.T) {
 }
 
 func TestSupervisorHome(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := tempHome(t)
 	got := supervisorHome()
 	want := filepath.Join(home, ".workspacer")
 	if got != want {

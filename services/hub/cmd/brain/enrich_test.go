@@ -23,8 +23,7 @@ func TestEnrichSnapshotSpawnMeta(t *testing.T) {
 }
 
 func TestEnrichSnapshotCwdName(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir := tempConfigHome(t)
 	writeFile(t, filepath.Join(dir, "workspacer", "tui-names.json"), `{"/proj":"Renamed"}`)
 
 	out := enrichSnapshot(json.RawMessage(`{"session_id":"s1","cwd":"/proj"}`), newMetaStore())
@@ -36,8 +35,7 @@ func TestEnrichSnapshotCwdName(t *testing.T) {
 }
 
 func TestEnrichSpawnLabelWinsOverCwdName(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir := tempConfigHome(t)
 	writeFile(t, filepath.Join(dir, "workspacer", "tui-names.json"), `{"/proj":"FromFile"}`)
 	meta := newMetaStore()
 	meta.set("s1", spawnMeta{Label: "FromSpawn"})

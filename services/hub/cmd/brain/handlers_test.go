@@ -206,8 +206,7 @@ func TestSpawnClaudeTransportConfigDefault(t *testing.T) {
 	rec := newRecorder()
 	srv := rec.server()
 	defer srv.Close()
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir := tempConfigHome(t)
 	t.Setenv("PATH", "")
 	t.Setenv("WKS_CLAUDE_BIN", "")
 	if err := os.MkdirAll(filepath.Join(dir, "workspacer"), 0o755); err != nil {

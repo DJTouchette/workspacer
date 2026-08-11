@@ -35,8 +35,7 @@ func TestSlugs(t *testing.T) {
 }
 
 func TestLayoutsSaveListDelete(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir := tempConfigHome(t)
 
 	saved, err := saveLayout(map[string]any{
 		"name":   "My Layout",
@@ -68,8 +67,7 @@ func TestLayoutsSaveListDelete(t *testing.T) {
 }
 
 func TestLayoutListSortsNewestFirst(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir := tempConfigHome(t)
 	ldir := filepath.Join(dir, "workspacer", "layouts")
 	_ = os.MkdirAll(ldir, 0o755)
 	_ = os.WriteFile(filepath.Join(ldir, "old.yaml"), []byte("id: old\ncreatedAt: \"2020-01-01T00:00:00.000Z\"\nagents: []\n"), 0o644)
@@ -82,8 +80,7 @@ func TestLayoutListSortsNewestFirst(t *testing.T) {
 }
 
 func TestSavedSessionsRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	tempConfigHome(t)
 	reg := newRegistry(newClaudemonClient("http://unused"))
 	ctx := context.Background()
 
@@ -155,8 +152,7 @@ func TestPaneCountLegacyAndFlat(t *testing.T) {
 // file outside the sessions directory (filepath.Join runs Clean, which collapses
 // ".." rather than blocking it). Covers idx 14.
 func TestSavedSessionPathContainment(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir := tempConfigHome(t)
 
 	if err := os.MkdirAll(sessionsDir(), 0o755); err != nil {
 		t.Fatal(err)
@@ -189,8 +185,7 @@ func TestSavedSessionPathContainment(t *testing.T) {
 // silently, because the clobbered file still parses as YAML, so loadFromDisk
 // takes it as the user's config rather than backing it up as .broken-*.
 func TestLayoutSavePathContainment(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	tempConfigHome(t)
 
 	// The real config.yaml, one directory above layouts/.
 	if err := os.MkdirAll(layoutsDir(), 0o755); err != nil {
@@ -230,8 +225,7 @@ func TestLayoutSavePathContainment(t *testing.T) {
 // brain — the DEFAULT writer under DELEGATE_CATALOG_TO_BRAIN — did not, so the
 // guarded copy was the one that never ran.
 func TestSaveSavedSessionDoesNotClobberADifferentSession(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	tempConfigHome(t)
 
 	first, err := saveSavedSession("Feature: Auth", map[string]any{"name": "Feature: Auth"})
 	if err != nil {
@@ -272,8 +266,7 @@ func TestSaveSavedSessionDoesNotClobberADifferentSession(t *testing.T) {
 // configStoreRoot, so planting feature-auth-2.yaml as a symlink out of the store
 // is an ordinary permitted fs.write.
 func TestARejectedSessionSlotDoesNotFallBackOntoAnotherSessionsFile(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	tempConfigHome(t)
 	outside := t.TempDir()
 	if err := os.MkdirAll(sessionsDir(), 0o755); err != nil {
 		t.Fatal(err)
@@ -306,8 +299,7 @@ func TestARejectedSessionSlotDoesNotFallBackOntoAnotherSessionsFile(t *testing.T
 // A file we cannot parse is not a file we may overwrite — we cannot tell whose
 // it is.
 func TestSaveSavedSessionSkipsAnUnparseableFile(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	tempConfigHome(t)
 	if err := os.MkdirAll(sessionsDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -368,8 +360,7 @@ func backupsOf(t *testing.T, path string) []string {
 func TestListingQuarantinesAnUnparseableFileOnce(t *testing.T) {
 	for _, name := range []string{"default.yaml", "loot[.yaml", "a*.yaml", "q?.yaml"} {
 		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			t.Setenv("XDG_CONFIG_HOME", dir)
+			tempConfigHome(t)
 			if err := os.MkdirAll(sessionsDir(), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -412,8 +403,7 @@ func TestListingQuarantinesAnUnparseableFileOnce(t *testing.T) {
 func TestListLayoutsQuarantinesToo(t *testing.T) {
 	for _, name := range []string{"broken.yaml", "b[roken.yaml"} {
 		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			t.Setenv("XDG_CONFIG_HOME", dir)
+			tempConfigHome(t)
 			if err := os.MkdirAll(layoutsDir(), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -453,8 +443,7 @@ func TestSessionSchemaVersionMatchesContract(t *testing.T) {
 }
 
 func TestSaveSavedSessionStampsTheVersion(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	tempConfigHome(t)
 	name, err := saveSavedSession("Default", map[string]any{"name": "Default"})
 	if err != nil {
 		t.Fatalf("save: %v", err)
@@ -552,7 +541,7 @@ func TestSessionFilenameContractCases(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			t.Setenv("XDG_CONFIG_HOME", configHome)
+			setConfigHome(t, configHome)
 			t.Setenv("APPDATA", configHome)
 
 			for _, d := range c.Tree.Dirs {
@@ -695,8 +684,7 @@ func TestStoreListersDoNotReadThroughASymlinkOutOfTheStore(t *testing.T) {
 			{"a config-dir sibling whose name starts with the store's", "STORE-backup/loot.yaml"},
 		} {
 			t.Run(tc.name+"/"+victim.label, func(t *testing.T) {
-				cfg := t.TempDir()
-				t.Setenv("XDG_CONFIG_HOME", cfg)
+				cfg := tempConfigHome(t)
 				if err := os.MkdirAll(tc.dir(), 0o755); err != nil {
 					t.Fatal(err)
 				}
@@ -782,8 +770,7 @@ func treeSnapshot(t *testing.T, root string) map[string]string {
 // with the whole suite green. Both of those unlink or overwrite through a planted
 // symlink; the store dir is one a bus caller can fs.write into.
 func TestSessionWriteAndDeleteRefuseAnEntryThatResolvesOutOfTheStore(t *testing.T) {
-	cfg := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", cfg)
+	tempConfigHome(t)
 	if err := os.MkdirAll(sessionsDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -835,8 +822,7 @@ func TestSessionWriteAndDeleteRefuseAnEntryThatResolvesOutOfTheStore(t *testing.
 // entry — so the read path (storeEntryPath) and the write/delete path disagreed
 // about what a legal entry is, inside one store.
 func TestLayoutWriteAndDeleteRefuseAnEntryThatResolvesOutOfTheStore(t *testing.T) {
-	cfg := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", cfg)
+	tempConfigHome(t)
 	if err := os.MkdirAll(layoutsDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -872,8 +858,7 @@ func TestLayoutWriteAndDeleteRefuseAnEntryThatResolvesOutOfTheStore(t *testing.T
 // maxLinkHops rather than any filesystem verdict, so the assertion does not
 // depend on which errno this platform reports.
 func TestStoreGuardsRefuseAnEntryTheyCannotResolve(t *testing.T) {
-	cfg := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", cfg)
+	tempConfigHome(t)
 	for _, d := range []string{sessionsDir(), layoutsDir()} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
@@ -906,8 +891,7 @@ func TestStoreGuardsRefuseAnEntryTheyCannotResolve(t *testing.T) {
 // The floor: a symlink that stays INSIDE the store is an ordinary entry and must
 // still be listed. Refusing every symlink would satisfy the test above.
 func TestStoreListersFollowASymlinkThatStaysInsideTheStore(t *testing.T) {
-	cfg := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", cfg)
+	tempConfigHome(t)
 	if err := os.MkdirAll(layoutsDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}

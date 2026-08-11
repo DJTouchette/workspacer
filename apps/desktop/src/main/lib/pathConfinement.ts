@@ -47,6 +47,29 @@ import { getConfigDir } from '../services/configService';
  *  guard can read it. */
 export const MAX_LINK_HOPS = 40;
 
+/**
+ * Whether a MISSING component may be walked through.
+ *
+ * The walk continues past a component that does not exist (a file `fs.write` is
+ * about to create), but "does not exist" has two meanings and only POSIX
+ * distinguishes them: a genuinely missing name is ENOENT, a name under a
+ * REGULAR FILE is ENOTDIR. Windows reports both as ERROR_PATH_NOT_FOUND, which
+ * Node surfaces as ENOENT — so without this the guard walks through files on
+ * Windows and returns contained where POSIX returns an error. A parent that
+ * does not exist is the ordinary missing-tail case; only an existing
+ * non-directory stops the walk.
+ *
+ * Twin of parentIsWalkable in services/hub/cmd/brain/fsguard.go and
+ * services/hub/internal/bus/policy.go.
+ */
+function parentIsWalkable(parent: string): boolean {
+  try {
+    return fs.lstatSync(parent).isDirectory();
+  } catch {
+    return true; // missing tail: deeper components are missing too
+  }
+}
+
 const WIN32 = process.platform === 'win32';
 /** Splitting alphabet. Windows accepts both slashes; POSIX only '/'. */
 const SEP_RE = WIN32 ? /[\\/]+/ : /\/+/;
@@ -146,7 +169,15 @@ export function canonicalizePath(target: string): string {
       // ELOOP, ENAMETOOLONG and anything unrecognised fail the whole call:
       // swallowing them into "contained" is an escape, and swallowing them into
       // "not contained, keep looking" turns the guard into an existence oracle.
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      //
+      // ENOENT is not self-sufficient on Windows. There, a path THROUGH a
+      // regular file raises ERROR_PATH_NOT_FOUND, which Node reports as ENOENT
+      // and Go maps to not-exist — the same code a genuinely missing name gets,
+      // where POSIX separates them with ENOTDIR. So the walk asks the question
+      // directly instead of inheriting the platform's opinion of it. Twin of
+      // parentIsWalkable in services/hub/cmd/brain/fsguard.go and
+      // services/hub/internal/bus/policy.go; all three collapsed identically.
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT' && parentIsWalkable(resolved)) {
         resolved = next;
         continue;
       }

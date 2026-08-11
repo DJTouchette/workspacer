@@ -175,6 +175,32 @@ func parentPath(base, volume string) string {
 // EACCES, ELOOP and anything unrecognised fail the whole call rather than
 // becoming "not contained, keep looking" (which would make the guard an
 // existence oracle) or "contained" (which would make it an escape).
+// parentIsWalkable reports whether a MISSING component may be walked through,
+// by asking the question POSIX answers with its errno and Windows does not.
+//
+// The walk continues on "does not exist" because a target that has yet to be
+// created still has to canonicalize. POSIX distinguishes the two ways a
+// component can be absent: a genuinely missing name is ENOENT, while a name
+// UNDER a regular file is ENOTDIR, which fails closed. Windows collapses both
+// into ERROR_PATH_NOT_FOUND, which Go maps to not-exist and Node reports as
+// ENOENT — so on Windows all three copies of this predicate walked straight
+// through a regular file and returned allow where POSIX returns deny. Measured:
+// the `a path through a regular file` contract case is the one that failed on
+// the Windows runner the first time this module ever compiled there.
+//
+// Asking directly makes both platforms answer the same question instead of
+// inheriting their libc's opinion. A parent that does not exist is the ordinary
+// missing-tail case and keeps walking; only an existing NON-directory stops it.
+// On POSIX this is unreachable — Lstat already returned ENOTDIR — which is why
+// the case that proves it can only go red on Windows.
+func parentIsWalkable(parent string) bool {
+	st, err := os.Lstat(parent)
+	if err != nil {
+		return true // missing tail: deeper components are missing too, not misrooted
+	}
+	return st.IsDir()
+}
+
 func canonicalizePath(target string) (string, error) {
 	if strings.TrimSpace(target) == "" {
 		return "", errEmptyPath
@@ -200,7 +226,7 @@ func canonicalizePath(target string) (string, error) {
 		next := appendPath(resolved, c)
 		st, err := os.Lstat(next)
 		if err != nil {
-			if os.IsNotExist(err) {
+			if os.IsNotExist(err) && parentIsWalkable(resolved) {
 				resolved = next
 				continue
 			}

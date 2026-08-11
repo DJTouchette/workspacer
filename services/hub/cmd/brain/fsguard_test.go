@@ -209,8 +209,7 @@ func TestFsListDirAllowsTheHomeTreeAndNothingElse(t *testing.T) {
 // Now: only the three store subtrees are roots, and everything else in the
 // config dir is refused by pathIsSecret even when another root re-admits it.
 func TestConfigStoresAreTheOnlyConfigDirRoots(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	tempConfigHome(t)
 	resetCwdCacheForTest()
 	t.Cleanup(resetCwdCacheForTest)
 
@@ -244,8 +243,7 @@ func TestConfigStoresAreTheOnlyConfigDirRoots(t *testing.T) {
 // makes the roots check say yes to everything below and leaves pathIsSecret as
 // the only thing that can refuse.
 func TestConfigDirIsRefusedEvenWhenAnAgentCwdReadmitsIt(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir := tempConfigHome(t)
 	if err := os.MkdirAll(configDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -313,8 +311,7 @@ func TestConfigDirIsRefusedEvenWhenAnAgentCwdReadmitsIt(t *testing.T) {
 // carve-outs it CAN resolve, or one broken store silently locks the UI out of
 // the other two.
 func TestAnUnresolvableStoreCarveOutDoesNotDisarmTheSecretGate(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir := tempConfigHome(t)
 	cfg := configDir()
 	for _, sub := range []string{"", "sessions", "layouts"} {
 		if err := os.MkdirAll(filepath.Join(cfg, sub), 0o755); err != nil {
@@ -1004,7 +1001,7 @@ func TestTheSecretGateCarvesOutExactlyTheFixturesStores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_CONFIG_HOME", sandbox)
+	setConfigHome(t, sandbox)
 	t.Setenv("APPDATA", sandbox)
 	cfg := configDir()
 	if err := os.MkdirAll(cfg, 0o755); err != nil {
@@ -1380,7 +1377,7 @@ func caseSandbox(t *testing.T, c contractCase) (string, func(string) string) {
 		if err := os.MkdirAll(home, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		t.Setenv("HOME", home)
+		setHome(t, home)
 		t.Setenv("USERPROFILE", home)
 	}
 	configHome := filepath.Join(sandbox, "config")
@@ -1403,7 +1400,7 @@ func caseSandbox(t *testing.T, c contractCase) (string, func(string) string) {
 	}
 	// Read at call time by configDir(), so this redirects the secret gate's
 	// config dir to ${CONFIG} = ${SANDBOX}/config/workspacer.
-	t.Setenv("XDG_CONFIG_HOME", configEnv)
+	setConfigHome(t, configEnv)
 	t.Setenv("APPDATA", configEnv)
 
 	// ${HOME} and ${PROCESS_CWD} deliberately leave the sandbox: they are the two
@@ -1855,7 +1852,7 @@ func assertMethodRejectsCorpus(t *testing.T, fx contractFixture, groups map[stri
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Setenv("HOME", fakeHome)
+			setHome(t, fakeHome)
 			t.Setenv("USERPROFILE", fakeHome)
 
 			sandbox, sub := caseSandbox(t, c)
@@ -2128,7 +2125,7 @@ func TestPathBearingMethodRootSetsMatchTheCorpus(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Setenv("HOME", fakeHome)
+			setHome(t, fakeHome)
 			t.Setenv("USERPROFILE", fakeHome)
 			home, err := os.UserHomeDir()
 			if err != nil || home == "" {
@@ -2660,8 +2657,7 @@ func TestGuardedHandlersDoNotRenormalizeTheCanonicalPath(t *testing.T) {
 	// The escalation the trim actually bought: fs.listDir runs on browseRoots, so
 	// "<store>/.. " is the config dir — which is denied when it is named directly.
 	t.Run("fs.listDir cannot reach the config dir through a store", func(t *testing.T) {
-		cfgHome := t.TempDir()
-		t.Setenv("XDG_CONFIG_HOME", cfgHome)
+		cfgHome := tempConfigHome(t)
 		t.Setenv("APPDATA", cfgHome)
 		cfg := configDir()
 		if err := os.MkdirAll(filepath.Join(cfg, "layouts"), 0o755); err != nil {
@@ -2788,11 +2784,11 @@ func TestARelativeXdgConfigHomeFallsBackToTheHomeConfigDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", real)
+	setHome(t, real)
 	t.Setenv("USERPROFILE", real)
 	for _, xdg := range []string{"", "relative/config", ".", "~/config"} {
 		t.Run("XDG_CONFIG_HOME="+xdg, func(t *testing.T) {
-			t.Setenv("XDG_CONFIG_HOME", xdg)
+			setConfigHome(t, xdg)
 			target := filepath.Join(real, ".config", "git", "config")
 			if !pathIsGitGlobalConfig(target) {
 				t.Errorf("%s is git's per-user config on this host, and the gate missed it — a non-absolute XDG_CONFIG_HOME must fall back to $HOME/.config, not disable the clause", target)

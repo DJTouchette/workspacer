@@ -28,9 +28,9 @@ func sandboxHome(t *testing.T) (home, cfgHome string) {
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	t.Setenv("USERPROFILE", home)
-	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	setConfigHome(t, cfgHome)
 	t.Setenv("APPDATA", cfgHome)
 	resetCwdCacheForTest()
 	return home, cfgHome
@@ -180,7 +180,7 @@ func TestGlobalLibraryItemsSurviveASymlinkedConfigDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	gateSymlink(t, real, link)
-	t.Setenv("XDG_CONFIG_HOME", link)
+	setConfigHome(t, link)
 	t.Setenv("APPDATA", link)
 	t.Setenv("HOME", filepath.Join(sandbox, "home"))
 	t.Setenv("USERPROFILE", filepath.Join(sandbox, "home"))

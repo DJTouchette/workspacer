@@ -158,8 +158,7 @@ func TestClaudeProjectDirNameContractCases(t *testing.T) {
 // machine, ~/.claude/history.jsonl, the user's entire prompt history — returning
 // its name, mtime and up to 100 characters of extracted content.
 func TestSessionsForDirCannotClimbOutOfTheProjectsDir(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := tempHome(t)
 	t.Setenv("USERPROFILE", home)
 	// One level ABOVE the transcript sandbox, which is where ~/.claude's own
 	// history.jsonl lives.
@@ -219,8 +218,7 @@ func TestLibraryDerivedRootSetIsTheItemRoots(t *testing.T) {
 		}
 	}
 
-	cfg := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", cfg)
+	cfg := tempConfigHome(t)
 	projA, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

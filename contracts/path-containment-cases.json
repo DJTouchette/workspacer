@@ -1736,7 +1736,8 @@
       "target": "${ROOT}/link ",
       "expect": "allow",
       "resolvesTo": "${ROOT}/link ",
-      "why": "Paired with the deny below, which is the same path without the space. 'link ' does not exist, so it resolves inside the root and is allowed; 'link' is a symlink out of the root and is refused. A call site that trims its argument collapses the pair, handing the filesystem the very string the guard just denied — which is what the brain's listHostDir did."
+      "why": "Paired with the deny below, which is the same path without the space. 'link ' does not exist, so it resolves inside the root and is allowed; 'link' is a symlink out of the root and is refused. A call site that trims its argument collapses the pair, handing the filesystem the very string the guard just denied — which is what the brain's listHostDir did. POSIX-ONLY: Windows strips trailing spaces from a filename, so 'link ' and 'link' name the SAME file there and the verdict flips from allow to deny. The POSIX premise (they are two different names) is what the case is about.",
+      "posixOnly": true
     },
     {
       "name": "the symlink itself, named without the trailing space, still escapes",
@@ -2640,7 +2641,8 @@
       "target": "${SANDBOX}/backup${ROOT}/id_rsa",
       "expect": "deny",
       "deniedBy": "outside-roots",
-      "why": "Containment is `starts with`, not `contains`, and nothing pinned the ANCHOR. Replacing HasPrefix with strings.Contains in containsPath (brain) and within (bus) — and startsWith with includes in the desktop — passed all 99 cases and both full suites, while granting every path that repeats an allowed root anywhere inside it. That is the exact layout of an `rsync -aR` / `tar -P` mirror, a Timeshift or btrfs snapshot of the whole filesystem, a Time Machine volume, and a container overlay upperdir: /mnt/backup<agentCwd>/id_rsa is a real file with real contents and it is outside every root. The three existing prefix-collision cases only vary the BYTE after the root, so they are all satisfied by an unanchored compare."
+      "why": "Containment is `starts with`, not `contains`, and nothing pinned the ANCHOR. Replacing HasPrefix with strings.Contains in containsPath (brain) and within (bus) — and startsWith with includes in the desktop — passed all 99 cases and both full suites, while granting every path that repeats an allowed root anywhere inside it. That is the exact layout of an `rsync -aR` / `tar -P` mirror, a Timeshift or btrfs snapshot of the whole filesystem, a Time Machine volume, and a container overlay upperdir: /mnt/backup<agentCwd>/id_rsa is a real file with real contents and it is outside every root. The three existing prefix-collision cases only vary the BYTE after the root, so they are all satisfied by an unanchored compare. POSIX-ONLY: The target embeds ${ROOT} as an interior component. On Windows ${ROOT} carries a drive letter, so the spliced path contains a colon mid-path and is unresolvable rather than outside-roots — the case denies for a different reason than the one it pins.",
+      "posixOnly": true
     },
     {
       "name": "a repository config inside an allowed root is refused",

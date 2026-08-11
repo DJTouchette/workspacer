@@ -17,8 +17,7 @@ import (
 // inode. So a differing inode across two writes is the fingerprint of the
 // crash-safe path — the guarantee the desktop's atomicWriteFileSync gives.
 func TestWriteConfigYAMLIsAtomic(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir := tempConfigHome(t)
 
 	writeConfigYAML(map[string]any{"ui": map[string]any{"theme": "one"}})
 	p := configPath()
@@ -58,8 +57,7 @@ func TestWriteConfigYAMLIsAtomic(t *testing.T) {
 // the one that never runs. A layout or saved session truncated in place by a
 // kill mid-write comes back as unparseable YAML, and list() just skips it.
 func TestFileBackedStoresWriteAtomically(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	tempConfigHome(t)
 
 	ino := func(t *testing.T, path string) uint64 {
 		t.Helper()

@@ -71,8 +71,7 @@ func TestDeepMergeContractCases(t *testing.T) {
 }
 
 func TestConfigGetReloadsOnExternalChange(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir := tempConfigHome(t)
 
 	c := newConfigService()
 	if ui := c.get()["ui"].(map[string]any); ui["theme"] != "everforest" {
@@ -103,8 +102,7 @@ func TestConfigGetReloadsOnExternalChange(t *testing.T) {
 // instead of clobbering that change with a stale in-memory cache. get() is
 // mtime-gated for exactly this reason; save() must honour the same gate.
 func TestConfigSaveFoldsInExternalChange(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir := tempConfigHome(t)
 
 	c := newConfigService()
 	// Prime the in-memory cache — theme defaults to everforest.
@@ -180,8 +178,7 @@ func TestDeepMergePreservesDefaultsAndSkipsNull(t *testing.T) {
 }
 
 func TestConfigSaveReloadRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir := tempConfigHome(t)
 
 	c := newConfigService()
 	c.save(map[string]any{"ui": map[string]any{"theme": "nord"}})
@@ -211,8 +208,7 @@ func TestConfigSaveReloadRoundTrip(t *testing.T) {
 // app's own update dialog. The rest of the same save must still apply, or a
 // client that happens to echo the whole config back loses every setting.
 func TestConfigSaveIgnoresUpdatesFromTheBus(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	tempConfigHome(t)
 
 	reg := newRegistry(newClaudemonClient("http://127.0.0.1:1"))
 	params := `{"ui":{"theme":"nord"},"updates":{"channel":"../../attacker/repo","enabled":false}}`
@@ -266,8 +262,7 @@ func TestMigrateKeybindingsLegacyVim(t *testing.T) {
 // actually remove it. A plain deep-merge would resurrect the omitted key from
 // the cached/on-disk map. Covers the customThemes-resurrection bug (idx 7/23).
 func TestConfigSaveReplacesCustomThemesWholesale(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	tempConfigHome(t)
 
 	c := newConfigService()
 	// Seed two user-created custom themes.
@@ -308,8 +303,7 @@ func TestConfigSaveReplacesCustomThemesWholesale(t *testing.T) {
 // cached/on-disk map, silently undoing the clear for every web/mobile/remote
 // client routed through the hub bus. Covers idx 7/16/24.
 func TestConfigSaveReplacesBudgetsWholesale(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	tempConfigHome(t)
 
 	c := newConfigService()
 	// Seed two per-session budgets.
@@ -356,8 +350,7 @@ func TestConfigSaveReplacesBudgetsWholesale(t *testing.T) {
 // chord flattening keeps 'prefix t w' for close-pane; the brain must rewrite it
 // to the current flat 'prefix w'. Covers idx 8.
 func TestLoadFromDiskMigratesStaleNestedChords(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir := tempConfigHome(t)
 
 	p := filepath.Join(dir, "workspacer", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -386,8 +379,7 @@ func TestLoadFromDiskMigratesStaleNestedChords(t *testing.T) {
 // an existing config.yaml with defaults when the file is present but unreadable
 // (EACCES). Only ENOENT may seed defaults. Covers idx 21 (data loss).
 func TestConfigDoesNotClobberUnreadableFile(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir := tempConfigHome(t)
 
 	p := filepath.Join(dir, "workspacer", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -421,8 +413,7 @@ func TestConfigDoesNotClobberUnreadableFile(t *testing.T) {
 // config.yaml is unparseable does NOT overwrite the user's file with
 // defaults+partial. Mirrors the desktop persistBlocked guard. Covers idx 22.
 func TestConfigSaveDoesNotClobberUnparseableFile(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir := tempConfigHome(t)
 
 	p := filepath.Join(dir, "workspacer", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -446,8 +437,7 @@ func TestConfigSaveDoesNotClobberUnparseableFile(t *testing.T) {
 }
 
 func TestListModelsReadsConfigDefault(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	tempConfigHome(t)
 	// Seed a config with a default model + a persisted seen model.
 	newConfigService().save(map[string]any{
 		"claude": map[string]any{"defaultModel": "opus", "seenModels": []any{"sonnet"}},

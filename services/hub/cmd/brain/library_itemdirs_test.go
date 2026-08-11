@@ -44,7 +44,7 @@ func itemDirSandbox(t *testing.T) (sandbox, home string) {
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(sandbox, "config"))
 	t.Setenv("APPDATA", filepath.Join(sandbox, "config"))

@@ -216,7 +216,14 @@ func canonicalize(path string) (string, error) {
 		next := appendComponent(resolved, c)
 		st, err := os.Lstat(next)
 		if err != nil {
-			if os.IsNotExist(err) {
+			// IsNotExist alone is not enough: Windows reports a path THROUGH a
+			// regular file as ERROR_PATH_NOT_FOUND, which Go maps to not-exist,
+			// so this branch used to walk through files there while POSIX failed
+			// closed on ENOTDIR. parentIsWalkable asks the question directly.
+			// Twin of canonicalizePath in cmd/brain/fsguard.go and of the walk in
+			// apps/desktop/src/main/lib/pathConfinement.ts — all three collapsed
+			// the same way, so all three carry the same check.
+			if os.IsNotExist(err) && parentIsWalkable(resolved) {
 				resolved = next
 				continue // keep resolving; a later ".." can land on real ground again
 			}
@@ -667,4 +674,17 @@ func paramString(params json.RawMessage, field string) (value string, ok bool) {
 		return "", false
 	}
 	return s, true
+}
+
+// parentIsWalkable reports whether a MISSING component may be walked through.
+// See the twin in cmd/brain/fsguard.go for the full reasoning: POSIX says
+// ENOTDIR for a name under a regular file and ENOENT for a genuinely missing
+// one, Windows collapses both into not-exist, so the distinction has to be
+// asked for rather than inherited from the errno.
+func parentIsWalkable(parent string) bool {
+	st, err := os.Lstat(parent)
+	if err != nil {
+		return true // missing tail: deeper components are missing too
+	}
+	return st.IsDir()
 }

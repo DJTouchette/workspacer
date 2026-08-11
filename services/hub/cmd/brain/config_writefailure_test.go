@@ -20,21 +20,6 @@ import (
 	"time"
 )
 
-// tempConfigHome points configDir() at a fresh temp dir on EVERY platform.
-//
-// configDir() reads APPDATA on Windows and XDG_CONFIG_HOME everywhere else, so
-// a test that sets only XDG_CONFIG_HOME does not redirect anything on Windows —
-// it runs against the machine's real config dir, which either does not exist
-// (the failures this fixes) or, worse, is the developer's own. Setting both is
-// platform-agnostic and costs nothing on either.
-func tempConfigHome(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("APPDATA", dir)
-	return dir
-}
-
 func seedConfig(t *testing.T, yamlText string) string {
 	t.Helper()
 	dir := tempConfigHome(t)

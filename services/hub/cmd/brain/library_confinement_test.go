@@ -134,7 +134,7 @@ func TestLibraryListWithHomeAsTheCwdIsNotAnArbitraryHomeReader(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(sandbox, "config"))
 	t.Setenv("APPDATA", filepath.Join(sandbox, "config"))

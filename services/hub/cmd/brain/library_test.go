@@ -339,8 +339,7 @@ func TestLibraryListAndRemoveRejectAnEscapingCwd(t *testing.T) {
 // A library item lives in the project the caller named or in the global store.
 // Nowhere else, whatever the cwd was allowed against.
 func TestLibraryListDoesNotReadOutsideTheProjectItNamed(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := tempHome(t)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 

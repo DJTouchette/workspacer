@@ -187,8 +187,7 @@ func TestListersUseTheFixtureOrdering(t *testing.T) {
 // with the odd one. Both sides now coerce and sort byte-wise, so the odd row
 // sorts last and everything else still lists.
 func TestStoreListersSurviveANonStringScalar(t *testing.T) {
-	sandbox := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", sandbox)
+	sandbox := tempConfigHome(t)
 	t.Setenv("APPDATA", sandbox)
 	if err := os.MkdirAll(layoutsDir(), 0o755); err != nil {
 		t.Fatal(err)

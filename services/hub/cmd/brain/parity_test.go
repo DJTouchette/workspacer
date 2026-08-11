@@ -261,8 +261,7 @@ func TestTerminalResizeForwards(t *testing.T) {
 // ── profiles CRUD round-trips through the same file the app reads ────────────
 
 func TestProfilesCRUD(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir := tempConfigHome(t)
 
 	added, err := addProfile("Work", "~/work-cfg", []string{"--foo"}, []string{"mcp-1"})
 	if err != nil {
