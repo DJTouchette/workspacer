@@ -360,6 +360,15 @@ func backupsOf(t *testing.T, path string) []string {
 func TestListingQuarantinesAnUnparseableFileOnce(t *testing.T) {
 	for _, name := range []string{"default.yaml", "loot[.yaml", "a*.yaml", "q?.yaml"} {
 		t.Run(name, func(t *testing.T) {
+			// '*' and '?' are RESERVED characters in a Win32 filename, not merely
+			// awkward ones: the file cannot be created there at all, so the
+			// premise of the case — a hostile name already sitting in the store —
+			// cannot be set up. The glob-injection property it pins is exercised
+			// on POSIX and by "loot[.yaml", which Win32 does allow and which runs
+			// on both.
+			if onWindows && strings.ContainsAny(name, `*?`) {
+				t.Skip("Win32 cannot create a filename containing * or ?")
+			}
 			tempConfigHome(t)
 			if err := os.MkdirAll(sessionsDir(), 0o755); err != nil {
 				t.Fatal(err)

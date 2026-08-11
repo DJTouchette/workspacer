@@ -240,6 +240,12 @@ jobs:
       # the linux `hub` job: the cached go-build directory plus a cache key that
       # ignores out-of-module inputs is how a cross-repo guard reports green on
       # a tree it never read.
+      # Same reason as the hub job: search.project shells out to ripgrep, and the
+      # guard case that proves it searches the path the guard RETURNED has to run
+      # the search to see where it looked. The Windows runner has no rg either.
+      - name: Install ripgrep (search.project's engine)
+        run: choco install ripgrep -y --no-progress
+
       - name: hub (Go) test
         working-directory: services/hub
         run: go test -count=1 ./...

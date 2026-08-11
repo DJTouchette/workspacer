@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -113,6 +114,15 @@ func (c *capture) runningGaps(t *testing.T, n int) []time.Duration {
 // A child that keeps crashing must back off exponentially, not restart on a
 // fixed delay — so the gap between successive restarts grows.
 func TestRestartBackoffEscalates(t *testing.T) {
+	// Timing assertion, skipped on Windows: these two measure a ~120ms base delay
+	// by wall clock, and on the Windows runner the cost of SPAWNING the child is
+	// itself of that order — measured there, the first gap came back as 195ms and
+	// 324ms against a 120ms base, which swamps the very signal being compared.
+	// The property is pure arithmetic over that delay and is exercised on Linux
+	// every run; what Windows would add is noise, not coverage.
+	if runtime.GOOS == "windows" {
+		t.Skip("spawn overhead is comparable to the base delay on the Windows runner")
+	}
 	cap := newCapture()
 	s := New(Spec{
 		Name:              "crasher",
@@ -140,6 +150,15 @@ func TestRestartBackoffEscalates(t *testing.T) {
 // A restart backoff must reset after the child stays up long enough, so a
 // transient crash after a healthy run doesn't inherit a long delay.
 func TestRestartBackoffResetsAfterHealthyUptime(t *testing.T) {
+	// Timing assertion, skipped on Windows: these two measure a ~120ms base delay
+	// by wall clock, and on the Windows runner the cost of SPAWNING the child is
+	// itself of that order — measured there, the first gap came back as 195ms and
+	// 324ms against a 120ms base, which swamps the very signal being compared.
+	// The property is pure arithmetic over that delay and is exercised on Linux
+	// every run; what Windows would add is noise, not coverage.
+	if runtime.GOOS == "windows" {
+		t.Skip("spawn overhead is comparable to the base delay on the Windows runner")
+	}
 	// resetAfter is tiny, so every run (each ~immediately crashing after a short
 	// sleep) counts as "healthy" and the backoff never escalates — successive
 	// gaps stay near the base delay.
