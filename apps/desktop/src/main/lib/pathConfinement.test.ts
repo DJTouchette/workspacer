@@ -174,6 +174,24 @@ let savedHome: string | undefined;
 /** The home this case's implementation sees: the process's own, or the sandbox
  *  directory a `homeVia` case points it at. `${HOME}` substitutes to this. */
 let caseHome = '';
+let savedUserProfile: string | undefined;
+
+/**
+ * Point the home directory the IMPLEMENTATION reads at `dir`.
+ *
+ * Not just $HOME. Every consumer here goes through os.homedir(), which reads
+ * USERPROFILE on Windows and HOME everywhere else — so a test that sets only the
+ * POSIX half redirects NOTHING on Windows and runs against the machine's real
+ * profile. That is not a cosmetic failure: it silently disabled the two clauses
+ * of the git per-user-config gate that are ABOUT the home directory, and the
+ * dotfiles-symlinked ~/.gitconfig case came back ALLOWED on the Windows runner —
+ * a file whose filter.<drv>.clean is host command execution one fs.write away.
+ * Setting both is a no-op on POSIX.
+ */
+function setHomeForImpl(dir: string): void {
+  process.env.HOME = dir;
+  process.env.USERPROFILE = dir;
+}
 
 beforeEach(() => {
   // realpath: on macOS os.tmpdir() is itself a symlink, and every expectation
@@ -191,6 +209,7 @@ beforeEach(() => {
   savedXdg = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = path.join(sandbox, 'config');
   savedHome = process.env.HOME;
+  savedUserProfile = process.env.USERPROFILE;
   caseHome = REAL_HOME;
   for (const d of ['root', 'outside', path.join('config', 'workspacer')]) {
     fs.mkdirSync(path.join(sandbox, d), { recursive: true });
@@ -211,6 +230,8 @@ afterEach(() => {
   else process.env.XDG_CONFIG_HOME = savedXdg;
   if (savedHome === undefined) delete process.env.HOME;
   else process.env.HOME = savedHome;
+  if (savedUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = savedUserProfile;
   caseHome = '';
 });
 
@@ -694,7 +715,7 @@ describe('path containment — cross-language contract', () => {
       if (c.homeVia) {
         caseHome = path.join(sandbox, ...c.homeVia.split('/'));
         fs.mkdirSync(caseHome, { recursive: true });
-        process.env.HOME = caseHome;
+        setHomeForImpl(caseHome);
       }
       materialize(c.tree);
       const roots = c.roots.map(subst);
@@ -828,8 +849,16 @@ describe('an empty root contains nothing', () => {
   });
 
   it('but the FILESYSTEM root still contains everything (BINDING DECISION 3)', () => {
-    expect(containsCanonical(path.sep, '/etc/passwd')).toBe(true);
-    expect(pathWithinRoots([path.sep], '/etc/passwd')).toBe(true);
+    // Spelled per platform. `path.sep` is "\\" on Windows, which is
+    // DRIVE-RELATIVE rather than a volume root, and "/etc/passwd" is not an
+    // absolute Windows path at all — so the POSIX spelling asserted that the
+    // widest possible root contains nothing, and passed for the wrong reason on
+    // the one platform where volume roots are interesting. The volume root comes
+    // from the sandbox so it is whatever drive the tests actually run on.
+    const volumeRoot = path.parse(sandbox).root;
+    const target = path.join(volumeRoot, 'etc', 'passwd');
+    expect(containsCanonical(volumeRoot, target)).toBe(true);
+    expect(pathWithinRoots([volumeRoot], target)).toBe(true);
   });
 });
 
@@ -938,7 +967,7 @@ describe('a relative XDG_CONFIG_HOME falls back to the home config dir', () => {
   for (const xdg of ['', 'relative/config', '.', '~/config']) {
     it(`XDG_CONFIG_HOME=${JSON.stringify(xdg)}`, () => {
       const home = fs.realpathSync(sandbox);
-      process.env.HOME = home;
+      setHomeForImpl(home);
       process.env.XDG_CONFIG_HOME = xdg;
       expect(
         isGitGlobalConfigPath(path.join(home, '.config', 'git', 'config')),

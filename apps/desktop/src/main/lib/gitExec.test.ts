@@ -193,8 +193,12 @@ describe('git invocations carry the no-exec config prefix', () => {
     const repo = plantRepo(sandbox, '', true);
 
     const savedHome = process.env.HOME;
+    const savedUserProfile = process.env.USERPROFILE;
     const savedXdg = process.env.XDG_CONFIG_HOME;
+    // Both halves: os.homedir() reads HOME on POSIX and USERPROFILE on Windows,
+    // and this test is entirely about what git reads out of the home it is given.
     process.env.HOME = home;
+    process.env.USERPROFILE = home;
     process.env.XDG_CONFIG_HOME = path.join(home, '.config');
     try {
       // Half one: with $HOME itself granted — an agent spawned there — neither
@@ -228,6 +232,8 @@ describe('git invocations carry the no-exec config prefix', () => {
     } finally {
       if (savedHome === undefined) delete process.env.HOME;
       else process.env.HOME = savedHome;
+      if (savedUserProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = savedUserProfile;
       if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME;
       else process.env.XDG_CONFIG_HOME = savedXdg;
     }

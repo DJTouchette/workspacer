@@ -11,12 +11,21 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-// os.homedir() reads process.env.HOME on POSIX; point it at a temp dir so the
-// test never touches the real ~/.claude. (ESM forbids spying on os.homedir.)
+// os.homedir() reads process.env.HOME on POSIX and %USERPROFILE% on Windows, so
+// both are redirected: setting only the POSIX half does not fail on Windows, it
+// silently points the test at the developer's REAL ~/.claude. (ESM forbids
+// spying on os.homedir.)
 const realHome = process.env.HOME;
+const realUserProfile = process.env.USERPROFILE;
+function useHome(dir: string): void {
+  process.env.HOME = dir;
+  process.env.USERPROFILE = dir;
+}
 afterEach(() => {
   if (realHome === undefined) delete process.env.HOME;
   else process.env.HOME = realHome;
+  if (realUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = realUserProfile;
 });
 
 function seedSession(home: string, encodedDir: string, sessionId: string) {
@@ -31,7 +40,7 @@ function seedSession(home: string, encodedDir: string, sessionId: string) {
 describe('listClaudeSessionsForDir — project folder encoding', () => {
   it('finds sessions stored under the leading-dash encoded unix cwd', async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-home-'));
-    process.env.HOME = home;
+    useHome(home);
     // Claude stores '/home/user/myproject' under '-home-user-myproject'.
     seedSession(home, '-home-user-myproject', 'sess-1');
 
@@ -42,7 +51,7 @@ describe('listClaudeSessionsForDir — project folder encoding', () => {
 
   it('encodes a colon (windows drive) without dropping characters', async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-home-'));
-    process.env.HOME = home;
+    useHome(home);
     // 'C:\\Users\\me\\proj' -> 'C--Users-me-proj'
     seedSession(home, 'C--Users-me-proj', 'sess-win');
 
@@ -109,7 +118,7 @@ describe('claudeProjectDirName — contracts/path-containment-cases.json project
 
   it('does not enumerate ~/.claude when the cwd is ".."', async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-home-'));
-    process.env.HOME = home;
+    useHome(home);
     fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
     fs.writeFileSync(
       path.join(home, '.claude', 'LEAK.jsonl'),
