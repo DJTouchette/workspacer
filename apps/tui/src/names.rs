@@ -42,6 +42,11 @@ pub(crate) fn save_at(
 }
 
 /// `load` with the source given (test seam, mirroring [`save_at`]).
+///
+/// Test-only, and marked so: `save_at` has a production caller (`save`), this
+/// does not, and `clippy --all-targets -D warnings` fails the bin build on the
+/// dead code rather than the test build that uses it.
+#[cfg(test)]
 pub(crate) fn load_at(path: &std::path::Path) -> HashMap<String, String> {
     std::fs::read_to_string(path)
         .ok()

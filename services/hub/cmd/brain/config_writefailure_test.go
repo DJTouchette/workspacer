@@ -14,15 +14,30 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
-func seedConfig(t *testing.T, yamlText string) string {
+// tempConfigHome points configDir() at a fresh temp dir on EVERY platform.
+//
+// configDir() reads APPDATA on Windows and XDG_CONFIG_HOME everywhere else, so
+// a test that sets only XDG_CONFIG_HOME does not redirect anything on Windows —
+// it runs against the machine's real config dir, which either does not exist
+// (the failures this fixes) or, worse, is the developer's own. Setting both is
+// platform-agnostic and costs nothing on either.
+func tempConfigHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("APPDATA", dir)
+	return dir
+}
+
+func seedConfig(t *testing.T, yamlText string) string {
+	t.Helper()
+	dir := tempConfigHome(t)
 	p := filepath.Join(dir, "workspacer", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
@@ -67,8 +82,15 @@ func TestSaveWhoseWriteFailsReportsTheOldValueAndDoesNotAdoptIt(t *testing.T) {
 // writeConfigYAML must RETURN its write error rather than logging it away: it is
 // the only thing that tells saveLocked the bytes did not land.
 func TestWriteConfigYAMLReturnsTheWriteError(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	// POSIX-only, and skipped rather than tagged so the rest of this file still
+	// runs on Windows: the unwritable directory is made with a 0500 mode, which
+	// Windows does not enforce for the owner, so the write would SUCCEED there
+	// and the test would fail claiming the error was swallowed. Same reason
+	// config_atomic_test.go carries //go:build !windows for its inode check.
+	if runtime.GOOS == "windows" {
+		t.Skip("a 0500 directory is still writable on Windows; the premise does not hold")
+	}
+	dir := tempConfigHome(t)
 	// The config dir exists but is not writable: the temp file cannot be made.
 	if err := os.MkdirAll(filepath.Join(dir, "workspacer"), 0o500); err != nil {
 		t.Fatal(err)
