@@ -171,6 +171,40 @@
       return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
 
+    // ── paths ───────────────────────────────────────────────────────────────────
+    // cwd and file arrive from the host as NATIVE paths, so on Windows they are
+    // backslash-separated. Splitting on '/' alone makes baseOf return the whole
+    // path as the "name" there, so every separator decision goes through these.
+    // None of this is a security boundary — the bus token's scope is. These only
+    // decide what the tree shows.
+    const isSep = (ch) => ch === '/' || ch === '\\';
+    const baseOf = (p) => { const parts = String(p).split(/[\\/]/); return parts[parts.length - 1] || String(p); };
+    const dirOf = (p) => String(p).replace(/[\\/][^\\/]*$/, '');
+    /** Is `p` the root itself or something under it? Compares on a separator
+        boundary, so `/repo-old/x` is not read as living under `/repo`. */
+    function isWithin(root, p) {
+      const raw = String(root), s = String(p);
+      const r = raw.replace(/[\\/]+$/, '');
+      // Stripping the trailing separator empties a filesystem root ('/'), and
+      // treating that as "no root" silently disables every reveal under it.
+      if (!r) return isSep(raw[0] || '') && isSep(s[0] || '');
+      return s === r || (s.length > r.length && s.startsWith(r) && isSep(s[r.length]));
+    }
+    /** Every directory between `root` and `filePath`, shallowest first. */
+    function ancestorDirs(root, filePath) {
+      const dirs = [];
+      let d = dirOf(filePath);
+      // Bounded as well as conditioned: a path shape that stops shrinking would
+      // otherwise spin here, and this runs on the UI thread.
+      for (let i = 0; i < 64 && d && isWithin(root, d) && !isWithin(d, root); i++) {
+        dirs.unshift(d);
+        const parent = dirOf(d);
+        if (parent === d) break;
+        d = parent;
+      }
+      return dirs;
+    }
+
     // ── icons (Lucide, matching the built-in editor pane) ───────────────────────
     const ICON = {
       "folder": "<path d=\"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z\" />",
@@ -397,6 +431,46 @@
       if (!cwd) { treeEl.innerHTML = '<div class="empty">No project directory.</div>'; return; }
       try { await renderLevel(cwd, 0, treeEl); }
       catch (e) { treeEl.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
+      // A render destroys every row element, and the open file's highlight with
+      // it. Re-applying here rather than at each call site means Refresh and an
+      // fs.changed redraw cannot silently lose track of what is open.
+      if (current) markActiveRow(current.path);
+    }
+
+    /** Highlight the row for `path` (if it is currently rendered) and scroll to it. */
+    function markActiveRow(path) {
+      let found = null;
+      for (const row of treeEl.querySelectorAll('.row')) {
+        // Compared as data, not built into a selector: a path may contain
+        // quotes or backslashes, and CSS.escape is the wrong tool here anyway.
+        if (row.dataset.path === path) found = row;
+        else row.classList.remove('active');
+      }
+      if (found && !found.classList.contains('active')) {
+        found.classList.add('active');
+        found.scrollIntoView({ block: 'nearest' });
+      }
+      return found;
+    }
+
+    /**
+     * Expand the tree down to `path` and highlight it.
+     *
+     * Opening a file does not necessarily go through the tree — the `?file=`
+     * param (right-click → Open in editor), a search result, and a freshly
+     * created file all arrive with no row to mark. Without this the file loads
+     * into the editor while the sidebar still shows wherever it was, which
+     * reads as the tree being broken.
+     */
+    async function revealInTree(path) {
+      if (!cwd || !path || !isWithin(cwd, path)) return;
+      let opened = false;
+      for (const d of ancestorDirs(cwd, path)) {
+        if (!expanded.has(d)) { expanded.add(d); opened = true; }
+      }
+      // Already-expanded ancestors mean the row exists; skip the rebuild.
+      if (opened) await renderTree();
+      else markActiveRow(path);
     }
     const FOLDER_TINT = 'var(--wks-accent, #9cdcfe)';
     function fileIconHTML(name) { const [ic, col] = iconForFile(name); return svg(ic, col); }
@@ -407,6 +481,8 @@
         // anything gitignored, which covers the actual noise.
         const row = document.createElement('div');
         row.className = 'row';
+        // What lets markActiveRow find a row it did not create.
+        row.dataset.path = e.path;
         row.style.paddingLeft = (8 + depth * 14) + 'px';
         const isOpen = expanded.has(e.path);
         const twist = e.isDir ? svg('chevron-right') : '';
@@ -416,7 +492,10 @@
         if (e.isDir) {
           const child = document.createElement('div');
           container.appendChild(child);
-          if (isOpen) renderLevel(e.path, depth + 1, child).catch(() => {});
+          // Awaited, not fire-and-forget: renderTree's callers (and revealInTree
+          // in particular) need the whole subtree to exist when it resolves, or
+          // the row they are about to look for has not been created yet.
+          if (isOpen) await renderLevel(e.path, depth + 1, child).catch(() => {});
           row.onclick = async () => {
             const twistEl = row.querySelector('.twist'), ficonEl = row.querySelector('.ficon');
             if (expanded.has(e.path)) {
@@ -443,7 +522,7 @@
     async function openFile(path, name, row, line) {
       try {
         const res = await call('fs.read', { path });
-        current = { path, name: name || path.split('/').pop() };
+        current = { path, name: name || baseOf(path) };
         saved = (res && res.contents) || '';
         view.dispatch({
           changes: { from: 0, to: view.state.doc.length, insert: saved },
@@ -451,8 +530,15 @@
         });
         nameEl.textContent = current.name;
         bannerEl.classList.remove('show');
-        document.querySelectorAll('.row.active').forEach((r) => r.classList.remove('active'));
-        if (row) row.classList.add('active');
+        if (row) {
+          // Clicked in the tree: the row is already visible, so skip the rebuild.
+          document.querySelectorAll('.row.active').forEach((r) => r.classList.remove('active'));
+          row.classList.add('active');
+        } else {
+          // Opened from somewhere else (?file=, a search hit, a new file) — move
+          // the tree to it rather than leaving the sidebar where it was.
+          void revealInTree(path);
+        }
         markDirty();
         if (line) gotoLine(line); else view.focus();
         setStatus(`Opened ${path} (${(res && res.size) || 0} bytes)`, 'ok');
@@ -512,7 +598,7 @@
         await call('fs.write', { path, contents: '' });
         setStatus('Created ' + path, 'ok');
         expanded.clear(); await renderTree();
-        openFile(path, name.split('/').pop());
+        openFile(path, baseOf(name));
       } catch (e) { setStatus('Create denied: ' + e.message, 'bad'); }
     };
     $('refresh').onclick = () => renderTree();
@@ -548,15 +634,17 @@
       for (const r of results) {
         const fileEl = document.createElement('div');
         fileEl.className = 'sfile';
-        const rel = r.file.replace(cwd.replace(/\/$/, '') + '/', '');
-        fileEl.innerHTML = fileIconHTML(r.file.split('/').pop()) + `<span class="lbl">${escapeHtml(rel)}</span>`;
-        fileEl.onclick = () => openFile(r.file, r.file.split('/').pop());
+        const rel = isWithin(cwd, r.file)
+          ? r.file.slice(cwd.replace(/[\\/]+$/, '').length + 1)
+          : r.file;
+        fileEl.innerHTML = fileIconHTML(baseOf(r.file)) + `<span class="lbl">${escapeHtml(rel)}</span>`;
+        fileEl.onclick = () => openFile(r.file, baseOf(r.file));
         resultsEl.appendChild(fileEl);
         for (const m of (r.matches || []).slice(0, 50)) {
           const mEl = document.createElement('div');
           mEl.className = 'smatch';
           mEl.innerHTML = `<span class="ln">${m.line}</span>${escapeHtml((m.text || '').trim()).slice(0, 200)}`;
-          mEl.onclick = () => openFile(r.file, r.file.split('/').pop(), null, m.line);
+          mEl.onclick = () => openFile(r.file, baseOf(r.file), null, m.line);
           resultsEl.appendChild(mEl);
         }
       }
@@ -575,12 +663,15 @@
     });
 
     // ── lifecycle ─────────────────────────────────────────────────────────────
-    ws.onopen = () => {
+    ws.onopen = async () => {
       connEl.textContent = 'connected';
       subscribe('fs.changed');
-      renderTree();
+      // Awaited before opening the file: openFile reveals by re-rendering the
+      // tree, and letting that race the initial render interleaves two builds
+      // into the same container.
+      await renderTree();
       // Opened on a specific file (e.g. from a "reveal in editor" link).
-      if (fileParam) openFile(fileParam, fileParam.split('/').pop());
+      if (fileParam) openFile(fileParam, baseOf(fileParam));
     };
     ws.onclose = () => { connEl.textContent = 'disconnected'; };
   </script>

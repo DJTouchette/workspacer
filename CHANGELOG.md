@@ -39,6 +39,13 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   "4m" looks identical whether a run is alive or wedged.
 
 ### Fixed
+- **The editor's file tree did not follow the file you opened.** Opening a file
+  from outside the tree — right-click → Open in editor, a search hit, or a file
+  you just created — loaded it into the editor while the sidebar stayed wherever
+  it was, with nothing selected. The tree now expands to the file, highlights it
+  and scrolls it into view, and keeps that highlight across a Refresh or an
+  on-disk change. The plugin also read paths as POSIX-only, so on Windows every
+  file was titled with its whole path instead of its name.
 - **Settings that would not stick.** With remote sharing on, the hub handed the
   brain its own wildcard bind address as a *dial* URL, which the DNS-rebinding
   guard correctly refused — so the brain reconnected into a 403 forever with its
