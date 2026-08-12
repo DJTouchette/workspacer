@@ -17,6 +17,7 @@
  */
 import { publishToHub } from './hubClient';
 import { isRemoteShareEnabled } from './hubDaemon';
+import { compactClaudeSnapshotForBackground } from '../shared/compactClaudeSnapshot';
 import type { WorkflowRunInfo } from './workflowWatcher';
 import type { ClaudeSessionSnapshot } from './claudeSessionStore';
 
@@ -34,7 +35,16 @@ export function publishSnapshot(makeSnapshot: () => ClaudeSessionSnapshot): void
   // the gate meant every flush of every session paid for it whether or not
   // anything was listening.
   if (!isRemoteShareEnabled()) return;
-  publishToHub({ type: 'agent.snapshot', data: makeSnapshot() });
+  // Bounded, not whole. This fires on every flush of every session (~60/s while
+  // one streams), and it used to carry the entire transcript each time — so a
+  // fleet of long-running sessions pushed megabytes per second at every bus
+  // client. The window carries `conversationOffset`, the absolute index of its
+  // first turn, which is what lets a client holding full history splice it in
+  // (mergeConversationWindow) instead of the host resending everything.
+  publishToHub({
+    type: 'agent.snapshot',
+    data: compactClaudeSnapshotForBackground(makeSnapshot()),
+  });
 }
 
 interface SessionMeta {

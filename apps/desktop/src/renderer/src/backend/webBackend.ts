@@ -27,6 +27,7 @@ import type {
   RecentAgentSession,
 } from '../../../main/shared/ipcTypes';
 import { HubBusClient, type HubEventEnvelope } from './hubBusClient';
+import { mergeConversationWindow } from '../../../main/shared/mergeConversationWindow';
 
 /** Decode a base64 PTY chunk into a binary string (1 char = 1 byte), matching
  *  the MessagePort contract the desktop's onTerminalOutput delivers. */
@@ -68,6 +69,81 @@ type PtyStream = {
  * session out from under the others — that is a shared resource with a
  * refcount, not a per-viewer one.
  */
+/**
+ * Snapshot folding for the bus: sparse-row overlay and conversation-window
+ * splicing, with the per-session cache both need.
+ *
+ * Two things arrive on `agent.snapshot` and neither is a complete session:
+ *
+ *  - **Sparse rows** from the headless brain (`sparse: true`) carry status only
+ *    and must overlay the last rich row rather than clobber it.
+ *  - **Rich rows** from the desktop carry a BOUNDED conversation — hubTelemetry
+ *    publishes the newest turns, not the whole transcript, because this fires
+ *    on every flush of every session (~60/s while one streams) and used to push
+ *    megabytes a second at every bus client. Each window is anchored by
+ *    `conversationOffset`, the absolute index of its first turn, so a client
+ *    holding full history splices it in instead of replacing history with 12
+ *    turns.
+ *
+ * Exported for tests, like createPtyStreams: the failure mode here is a wrong
+ * transcript on the session the user is actively watching, which is invisible
+ * until someone scrolls up.
+ */
+export function createSnapshotFold(client: Pick<HubBusClient, 'call'>) {
+  const richSnaps = new Map<string, ClaudeSessionSnapshot>();
+  const refetching = new Set<string>();
+
+  /** Remember a full snapshot (from the singular `sessions.snapshot`) as the
+   *  history that later windows splice onto. */
+  const seedFull = (snap: ClaudeSessionSnapshot): ClaudeSessionSnapshot => {
+    richSnaps.set(snap.sessionId, snap);
+    return snap;
+  };
+
+  const foldSparse = (
+    snap: ClaudeSessionSnapshot & { sparse?: boolean },
+  ): ClaudeSessionSnapshot => {
+    const prev = richSnaps.get(snap.sessionId);
+    const merged = snap.sparse && prev ? { ...prev, ...snap } : snap;
+    if (!snap.sparse) richSnaps.set(snap.sessionId, snap);
+    if (merged.status === 'ended') richSnaps.delete(snap.sessionId);
+    return merged;
+  };
+
+  /** Returns null when the push must NOT reach the UI (stale, or a gap whose
+   *  refetch is now in flight). */
+  const foldConversation = (snap: ClaudeSessionSnapshot): ClaudeSessionSnapshot | null => {
+    const prev = richSnaps.get(snap.sessionId);
+    const outcome = mergeConversationWindow(prev ?? null, snap);
+    if (outcome.kind === 'stale') return null; // keep what the user can already see
+    if (outcome.kind === 'gap') {
+      // Turns never reached us. Refetch the full snapshot rather than render a
+      // transcript that never happened; one refetch in flight per session.
+      if (!refetching.has(snap.sessionId)) {
+        refetching.add(snap.sessionId);
+        client
+          .call<ClaudeSessionSnapshot | null>('sessions.snapshot', { sessionId: snap.sessionId })
+          .then((full) => {
+            if (full) richSnaps.set(full.sessionId, full);
+          })
+          .catch(() => {})
+          .finally(() => refetching.delete(snap.sessionId));
+      }
+      return null;
+    }
+    const next = {
+      ...snap,
+      conversation: outcome.conversation,
+      conversationOffset: outcome.conversationOffset,
+    } as ClaudeSessionSnapshot;
+    if (next.status === 'ended') richSnaps.delete(next.sessionId);
+    else richSnaps.set(next.sessionId, next);
+    return next;
+  };
+
+  return { foldSparse, foldConversation, seedFull };
+}
+
 export function createPtyStreams(client: HubBusClient) {
   const streams = new Map<string, PtyStream>();
 
@@ -213,16 +289,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
   // mid-render — remember the last rich snapshot per session and overlay
   // sparse updates onto it. Ended sessions are dropped from the cache so it
   // stays bounded by the live fleet.
-  const richSnaps = new Map<string, ClaudeSessionSnapshot>();
-  const foldSparse = (
-    snap: ClaudeSessionSnapshot & { sparse?: boolean },
-  ): ClaudeSessionSnapshot => {
-    const prev = richSnaps.get(snap.sessionId);
-    const merged = snap.sparse && prev ? { ...prev, ...snap } : snap;
-    if (!snap.sparse) richSnaps.set(snap.sessionId, snap);
-    if (merged.status === 'ended') richSnaps.delete(snap.sessionId);
-    return merged;
-  };
+  const { foldSparse, foldConversation, seedFull } = createSnapshotFold(client);
 
   const api: ElectronAPI = {
     platform: 'web' as unknown as NodeJS.Platform,
@@ -455,10 +522,13 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
       client.call<ClaudeProfile>('claude.profiles.update', { id, updates }),
     claudeProfilesRemove: (id) =>
       client.call<void>('claude.profiles.remove', { id }).then(() => {}),
+    // The SINGULAR call is the full snapshot — it is what seeds the history
+    // that later bounded windows splice onto, so it must not go through the
+    // sparse overlay.
     getClaudeSession: (sessionId) =>
       client
         .call<ClaudeSessionSnapshot | null>('sessions.snapshot', { sessionId })
-        .then((s) => (s ? foldSparse(s) : s)),
+        .then((s) => (s ? seedFull(s) : s)),
     getAllClaudeSessions: () =>
       client
         .call<ClaudeSessionSnapshot[]>('sessions.snapshots', {})
@@ -473,11 +543,18 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     listLiveClaudeSessionIds: () => Promise.resolve(null),
     onClaudeSessionUpdate: (callback) =>
       client.subscribe('agent.snapshot', (ev) => {
-        const snap = ev.data as ClaudeSessionSnapshot | undefined;
-        if (snap?.sessionId) {
+        const snap = ev.data as (ClaudeSessionSnapshot & { sparse?: boolean }) | undefined;
+        if (!snap?.sessionId) return;
+        // Sparse rows carry no conversation of their own — they overlay the
+        // last rich one — so they go through foldSparse only. A rich push is a
+        // bounded window and gets spliced onto the retained history.
+        if (snap.sparse) {
           const merged = foldSparse(snap);
           callback(merged.sessionId, merged);
+          return;
         }
+        const merged = foldConversation(snap);
+        if (merged) callback(merged.sessionId, merged);
       }),
 
     // ── Hub plumbing ─────────────────────────────────────────────────────
