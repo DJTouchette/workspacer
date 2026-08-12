@@ -13,7 +13,10 @@ import { EventEmitter } from 'events';
 // ─── electron mock ───────────────────────────────────────────────────────────
 // `app.isPackaged` is mutated per-test to exercise the dev / packaged branches.
 const electronApp = { isPackaged: true, getVersion: () => '0.0.0-test' };
-const showMessageBox = vi.fn(async () => ({ response: 1 }));
+// Default to "Later" (index 2). It must NOT default to the "What's new" index:
+// that button re-prompts by design, so a test that emits update-downloaded
+// without setting a response would loop forever rather than fail.
+const showMessageBox = vi.fn(async () => ({ response: 2 }));
 vi.mock('electron', () => ({
   app: electronApp,
   dialog: { showMessageBox: (...a: unknown[]) => showMessageBox(...(a as [])) },
@@ -42,6 +45,15 @@ vi.mock('electron-updater', () => ({
 let configValue: any = { updates: { enabled: true, channel: 'latest' } };
 vi.mock('./configService', () => ({
   configService: { getConfig: () => configValue },
+}));
+
+// ─── external-URL mock ───────────────────────────────────────────────────────
+// The real openExternalUrl (hubCapabilities) is the shared scheme-checked
+// opener; here we only care THAT the notes button routes through it and with
+// which URL. Mocked as a module so the rest of that file's graph stays out.
+const openExternalUrl = vi.fn(async (_url: string) => ({ ok: true }) as any);
+vi.mock('./hubCapabilities', () => ({
+  openExternalUrl: (url: string) => openExternalUrl(url),
 }));
 
 // A fake window that looks alive to the service.
@@ -287,7 +299,7 @@ describe('updateService – behaviour', () => {
   });
 
   it('does not install when the user defers the update', async () => {
-    showMessageBox.mockResolvedValueOnce({ response: 1 }); // "Later"
+    showMessageBox.mockResolvedValueOnce({ response: 2 }); // "Later"
     const svc = await loadService();
     svc.start(fakeWindow());
 
@@ -297,5 +309,141 @@ describe('updateService – behaviour', () => {
     expect(showMessageBox).toHaveBeenCalledTimes(1);
     expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
     svc.stop();
+  });
+});
+
+// The one moment the user decides whether to take a build is the install
+// prompt, and the running app cannot show them what is in it: changelog.
+// generated.ts is baked at build time and predates the release being offered.
+// So the prompt links out to the release page, which is cut from the same
+// CHANGELOG.md by scripts/changelog-section.mjs.
+describe('updateService – the "What\'s new" button', () => {
+  it('offers reading the notes as a THIRD option, not in place of either answer', async () => {
+    const svc = await loadService();
+    svc.start(fakeWindow());
+
+    autoUpdater.emit('update-downloaded', { version: '1.2.3' });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const opts = showMessageBox.mock.calls[0][1] as any;
+    expect(opts.buttons).toEqual(['Restart now', "What's new", 'Later']);
+    // Enter still restarts and Esc still defers — reading is neither.
+    expect(opts.buttons[opts.defaultId]).toBe('Restart now');
+    expect(opts.buttons[opts.cancelId]).toBe('Later');
+    svc.stop();
+  });
+
+  it('opens the notes and RE-ASKS, so reading is not silently a deferral', async () => {
+    showMessageBox
+      .mockResolvedValueOnce({ response: 1 }) // "What's new"
+      .mockResolvedValueOnce({ response: 0 }); // then "Restart now"
+    const svc = await loadService();
+    svc.start(fakeWindow());
+
+    autoUpdater.emit('update-downloaded', { version: '1.2.3' });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(openExternalUrl).toHaveBeenCalledWith(
+      'https://github.com/DJTouchette/workspacer/releases/tag/v1.2.3',
+    );
+    expect(showMessageBox).toHaveBeenCalledTimes(2); // asked again
+    expect(autoUpdater.quitAndInstall).toHaveBeenCalledTimes(1);
+    svc.stop();
+  });
+
+  it('reading the notes and then deferring installs nothing', async () => {
+    showMessageBox
+      .mockResolvedValueOnce({ response: 1 }) // "What's new"
+      .mockResolvedValueOnce({ response: 2 }); // then "Later"
+    const svc = await loadService();
+    svc.start(fakeWindow());
+
+    autoUpdater.emit('update-downloaded', { version: '1.2.3' });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(showMessageBox).toHaveBeenCalledTimes(2);
+    expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    svc.stop();
+  });
+
+  it('a browser that will not open does not wedge the prompt', async () => {
+    openExternalUrl.mockResolvedValueOnce({ ok: false, error: 'no handler' });
+    showMessageBox
+      .mockResolvedValueOnce({ response: 1 }) // "What's new"
+      .mockResolvedValueOnce({ response: 0 }); // then "Restart now"
+    const svc = await loadService();
+    svc.start(fakeWindow());
+
+    autoUpdater.emit('update-downloaded', { version: '1.2.3' });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(autoUpdater.quitAndInstall).toHaveBeenCalledTimes(1);
+    svc.stop();
+  });
+
+  // The loop's only exit that is not a user click. Without it, a window that
+  // dies mid-read leaves showMessageBox answering into nothing forever.
+  //
+  // The bail-out at 5 is the instrument, not the behaviour: the loop only ever
+  // awaits already-resolved promises, so an unguarded version starves the
+  // macrotask queue and this test would HANG rather than fail. Capped, the
+  // mutant surfaces as a plain "called 6 times, expected 1".
+  it('stops re-prompting if the window goes away mid-read', async () => {
+    let alive = true;
+    const win = { isDestroyed: () => !alive } as any;
+    showMessageBox.mockImplementation(async () => {
+      alive = false; // the window dies while the notes are open
+      return { response: showMessageBox.mock.calls.length >= 5 ? 2 : 1 };
+    });
+    const svc = await loadService();
+    svc.start(win);
+
+    autoUpdater.emit('update-downloaded', { version: '1.2.3' });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(showMessageBox).toHaveBeenCalledTimes(1); // did not spin
+    expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    showMessageBox.mockReset();
+    showMessageBox.mockImplementation(async () => ({ response: 2 }));
+    svc.stop();
+  });
+});
+
+describe('releaseNotesUrl', () => {
+  it('links a stable release at its own tag', async () => {
+    const { releaseNotesUrl } = await import('./updateService');
+    expect(releaseNotesUrl('0.149.0')).toBe(
+      'https://github.com/DJTouchette/workspacer/releases/tag/v0.149.0',
+    );
+  });
+
+  // A nightly's vX.Y.Z tag is the last STABLE release — not the build being
+  // offered. The rolling prerelease is the one that describes it.
+  it('links a nightly at the rolling nightly prerelease, not at vX.Y.Z', async () => {
+    const { releaseNotesUrl } = await import('./updateService');
+    expect(releaseNotesUrl('0.149.0-nightly.20260811.abc1234')).toBe(
+      'https://github.com/DJTouchette/workspacer/releases/tag/nightly',
+    );
+  });
+
+  // The version comes from the update FEED, and `new URL()` collapses `..`
+  // before the browser ever sees it — so an unchecked version relocates the
+  // link to another repo's page, reached through our own trusted dialog.
+  it('refuses to build a tag URL from anything but a bare version', async () => {
+    const { releaseNotesUrl } = await import('./updateService');
+    const index = 'https://github.com/DJTouchette/workspacer/releases';
+    for (const hostile of [
+      '../../attacker/workspacer/releases/tag/v1.0.0',
+      '1.2.3/../../../attacker/repo',
+      '1.2.3#not-really',
+      '1.2.3?x=y',
+      'https://evil.example.com',
+      '',
+      'latest',
+      undefined,
+      { version: '1.2.3' },
+    ]) {
+      expect(releaseNotesUrl(hostile as unknown), String(hostile)).toBe(index);
+    }
   });
 });

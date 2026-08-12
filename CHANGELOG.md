@@ -20,6 +20,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   first, with the running version marked. A one-time notice appears the first
   time an install runs a new version. Both read the same `CHANGELOG.md` the
   GitHub release page is cut from, so they cannot disagree.
+- **See what's new before you restart.** The "Update ready" prompt has a third
+  button that opens the release notes for the build it is offering. It then asks
+  again rather than treating "I read them" as an answer. The notes open on the
+  release page because a running build cannot contain them — its copy of the
+  changelog was baked before that release existed.
 - **Spawn an agent from the command palette.** It already could, under a name
   nobody would search for.
 

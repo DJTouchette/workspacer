@@ -32,6 +32,7 @@ export const CHANGELOG: readonly ChangelogRelease[] = [
         items: [
           "**Widgets.** A project's widget board lives in the inspector rail's Project tab: small (1x1), medium (2x1) and large (2x2) tiles pinned to a *directory* rather than to a session, so every agent working in that repo sees the same board. Built-in git and usage tiles ship with it, and plugins can contribute their own — a widget is declared separately from a pane, because a pane may own a PTY or a 1.2MB editor bundle and none of that reads at 150px.",
           '**Release notes in the app.** Settings → Updates lists every release, newest first, with the running version marked. A one-time notice appears the first time an install runs a new version. Both read the same `CHANGELOG.md` the GitHub release page is cut from, so they cannot disagree.',
+          '**See what\'s new before you restart.** The "Update ready" prompt has a third button that opens the release notes for the build it is offering. It then asks again rather than treating "I read them" as an answer. The notes open on the release page because a running build cannot contain them — its copy of the changelog was baked before that release existed.',
           '**Spawn an agent from the command palette.** It already could, under a name nobody would search for.',
         ],
       },

@@ -23,10 +23,49 @@
 import { app, BrowserWindow, dialog } from 'electron';
 import { autoUpdater, type UpdateInfo } from 'electron-updater';
 import { configService } from './configService';
+import { openExternalUrl } from './hubCapabilities';
 import { IPC } from '../shared/ipcChannels';
 
 /** How often to re-check the release feed after the startup check. */
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+/**
+ * This app's releases page. Owner/repo mirror electron-builder.yml's publish
+ * block; the nightly feed and the "What's new" link are both cut from it, so
+ * there is one literal to change if the repo ever moves.
+ */
+const RELEASES_URL = 'https://github.com/DJTouchette/workspacer/releases';
+
+/**
+ * A plain semver, optionally with a prerelease tail (`0.149.0`,
+ * `0.149.0-nightly.20260811.abc1234`). Nothing else — see releaseNotesUrl.
+ */
+const VERSION_RE = /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?$/;
+
+/**
+ * The release page for a version offered by the update feed.
+ *
+ * `info.version` is a value the FEED supplies, and it is string-concatenated
+ * into a URL we then hand to the OS browser. `new URL()` collapses `..`
+ * segments, so an unchecked version of the form `v../../someone/else` resolves
+ * to a different repository's page entirely — the user clicks "What's new" in
+ * our own trusted dialog and lands on release notes an attacker wrote for the
+ * build they are about to install. Anything that is not a bare version falls
+ * back to the releases index, which is never wrong, only less specific.
+ *
+ * A nightly's notes are the rolling `nightly` prerelease, not a `vX.Y.Z` tag —
+ * that tag holds the last STABLE release, which is not what is being installed.
+ */
+export function releaseNotesUrl(version: unknown): string {
+  if (typeof version !== 'string' || !VERSION_RE.test(version)) {
+    console.warn(
+      `[updateService] unexpected version ${JSON.stringify(version)} — linking the releases index`,
+    );
+    return RELEASES_URL;
+  }
+  if (version.includes('-nightly')) return `${RELEASES_URL}/tag/nightly`;
+  return `${RELEASES_URL}/tag/v${version}`;
+}
 
 /** Renderer-visible update state (pushed on UPDATES_STATUS; see ipcChannels). */
 export interface UpdateStatus {
@@ -196,8 +235,7 @@ class UpdateService {
     if (isNightly) {
       autoUpdater.setFeedURL({
         provider: 'generic',
-        // Owner/repo mirror electron-builder.yml's publish block.
-        url: 'https://github.com/DJTouchette/workspacer/releases/download/nightly',
+        url: `${RELEASES_URL}/download/nightly`,
         // GitHub's release CDN 501s multipart Range requests; single-range
         // gets a 206, which keeps blockmap differential downloads working
         // (electron-updater's own GitHub provider forces this too).
@@ -259,24 +297,44 @@ class UpdateService {
 
   /** A newer build is on disk — ask the user whether to restart into it now. */
   private async onDownloaded(info: UpdateInfo): Promise<void> {
-    const win = this.win;
-    if (!win || win.isDestroyed()) return;
+    if (!this.win || this.win.isDestroyed()) return;
     if (this.promptOpen) return;
     this.promptOpen = true;
 
     try {
-      const { response } = await dialog.showMessageBox(win, {
-        type: 'info',
-        buttons: ['Restart now', 'Later'],
-        defaultId: 0,
-        cancelId: 1,
-        title: 'Update ready',
-        message: `Workspacer ${info.version} is ready to install.`,
-        detail: 'Restart to apply the update. Your session is saved on quit.',
-      });
-      if (response === 0) {
-        // Let the normal quit path save the session, then swap in the update.
-        autoUpdater.quitAndInstall();
+      // A loop, not one question: "What's new" is not an ANSWER to "restart
+      // now?". Opening the notes and treating that as a decision would silently
+      // count reading as declining, and the running build cannot show the notes
+      // itself — changelog.generated.ts is baked at ITS build time and predates
+      // the release being offered, so the notes have to come from the release
+      // page. Each turn of the loop is a fresh user click; the destroyed-window
+      // check is what stops it spinning if the window goes away underneath.
+      for (;;) {
+        const win = this.win;
+        if (!win || win.isDestroyed()) return;
+
+        const { response } = await dialog.showMessageBox(win, {
+          type: 'info',
+          buttons: ['Restart now', "What's new", 'Later'],
+          defaultId: 0,
+          cancelId: 2,
+          title: 'Update ready',
+          message: `Workspacer ${info.version} is ready to install.`,
+          detail: 'Restart to apply the update. Your session is saved on quit.',
+        });
+
+        if (response === 1) {
+          const opened = await openExternalUrl(releaseNotesUrl(info.version));
+          if (!opened.ok) {
+            console.warn(`[updateService] could not open the release notes: ${opened.error}`);
+          }
+          continue; // back to the same choice
+        }
+        if (response === 0) {
+          // Let the normal quit path save the session, then swap in the update.
+          autoUpdater.quitAndInstall();
+        }
+        return;
       }
     } catch (err) {
       console.warn(`[updateService] install prompt failed: ${(err as Error)?.message ?? err}`);
