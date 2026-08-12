@@ -97,6 +97,33 @@ describe('createSnapshotFold — conversation windows', () => {
   });
 });
 
+// sessions.snapshots is compacted now, and getAllClaudeSessions runs every row
+// through foldSparse — which writes the history cache. OverviewPane refreshes
+// that list up to 1/s while an agent streams, so a list row that replaced the
+// cache would collapse the watched pane's transcript to twelve turns, once a
+// second, forever.
+describe('createSnapshotFold — a background list row must not shorten history', () => {
+  const long = Array.from({ length: 40 }, (_, i) => `t${i}`);
+
+  it('keeps the seeded full history when a compacted list row arrives', () => {
+    const f = fold();
+    f.seedFull(snap(long) as never);
+    f.foldSparse(snap(long.slice(28), 28) as never); // the compacted list row
+
+    // The next push must still splice onto all 40 turns, not onto 12.
+    const out = f.foldConversation(snap(['t39', 't40'], 39) as never) as Snap;
+    expect(out.conversation).toHaveLength(41);
+    expect(out.conversation[0]).toBe('t0');
+  });
+
+  it('still adopts a list row when there is no history to protect', () => {
+    const f = fold();
+    f.foldSparse(snap(long.slice(28), 28) as never);
+    const out = f.foldConversation(snap(['t39', 't40'], 39) as never) as Snap;
+    expect(out.conversation).toEqual([...long.slice(28), 't40']);
+  });
+});
+
 describe('createSnapshotFold — sparse rows still overlay', () => {
   it('overlays a sparse row onto the retained rich one without losing conversation', () => {
     const f = fold();

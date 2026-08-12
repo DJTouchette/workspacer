@@ -105,7 +105,22 @@ export function createSnapshotFold(client: Pick<HubBusClient, 'call'>) {
   ): ClaudeSessionSnapshot => {
     const prev = richSnaps.get(snap.sessionId);
     const merged = snap.sparse && prev ? { ...prev, ...snap } : snap;
-    if (!snap.sparse) richSnaps.set(snap.sessionId, snap);
+    if (!snap.sparse) {
+      // A rich row from the LIST call is a bounded window too — sessions.snapshots
+      // is compacted now — and OverviewPane refetches that list up to 1/s while an
+      // agent streams. Writing it straight into the cache would replace the
+      // history the watched pane is rendering with twelve turns, once a second.
+      // Merge it like any other window and keep whichever reaches further back.
+      const outcome = mergeConversationWindow(prev ?? null, snap);
+      if (outcome.kind === 'merged' || outcome.kind === 'adopt') {
+        richSnaps.set(snap.sessionId, {
+          ...snap,
+          conversation: outcome.conversation,
+          conversationOffset: outcome.conversationOffset,
+        } as ClaudeSessionSnapshot);
+      }
+      // 'stale' / 'gap': what we already hold reaches further back — keep it.
+    }
     if (merged.status === 'ended') richSnaps.delete(snap.sessionId);
     return merged;
   };
