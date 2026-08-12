@@ -25,12 +25,20 @@ const HTML = path.resolve(
   '../../../../../services/hub/examples/editor/ui/index.html',
 );
 
-/** A fake project: three levels, so a reveal has real ancestors to open. */
+/**
+ * A fake project with both shapes that matter: a branching path (`src`, which
+ * must render one row per level) and a single-child chain (`chain/a/b`, which
+ * must compress into one row).
+ */
 const FS: Record<string, Array<{ name: string; path: string; isDir: boolean }>> = {
   '/repo': [
+    { name: 'chain', path: '/repo/chain', isDir: true },
     { name: 'src', path: '/repo/src', isDir: true },
     { name: 'README.md', path: '/repo/README.md', isDir: false },
   ],
+  '/repo/chain': [{ name: 'a', path: '/repo/chain/a', isDir: true }],
+  '/repo/chain/a': [{ name: 'b', path: '/repo/chain/a/b', isDir: true }],
+  '/repo/chain/a/b': [{ name: 'leaf.ts', path: '/repo/chain/a/b/leaf.ts', isDir: false }],
   '/repo/src': [
     { name: 'deep', path: '/repo/src/deep', isDir: true },
     { name: 'index.ts', path: '/repo/src/index.ts', isDir: false },
@@ -116,6 +124,8 @@ function loadTree(): TreeApi {
 let t: TreeApi;
 const rows = () =>
   [...t.treeEl.querySelectorAll('.row')].map((r) => (r as HTMLElement).dataset.path);
+const labels = () =>
+  [...t.treeEl.querySelectorAll('.row')].map((r) => r.querySelector('.lbl')?.textContent);
 const active = () =>
   [...t.treeEl.querySelectorAll('.row.active')].map((r) => (r as HTMLElement).dataset.path);
 
@@ -159,10 +169,40 @@ describe('editor plugin – path helpers', () => {
   });
 });
 
+// Single-child chains collapse into one row, the same rule the review pane's
+// tree uses. A chain is invisible from outside, so this costs a listing per
+// directory shown — which is what the per-render cache is for.
+describe('editor plugin – folder chain compression', () => {
+  it('renders a single-child chain as one row, addressed by its deepest dir', async () => {
+    await t.renderTree();
+    expect(labels()).toEqual(['chain/a/b', 'src', 'README.md']);
+    // The row's identity is the deepest directory — the one whose children it
+    // expands to, and the one revealInTree puts in `expanded` on its way down.
+    expect(rows()).toEqual(['/repo/chain/a/b', '/repo/src', '/repo/README.md']);
+  });
+
+  it('does not compress a directory that branches', async () => {
+    await t.renderTree();
+    await t.revealInTree('/repo/src/deep/buried.ts');
+    // `src` holds a dir AND a file, so it stays its own row.
+    expect(labels()).toContain('src');
+    expect(labels()).toContain('deep');
+  });
+
+  it('lists each directory once per render, not once per probe', async () => {
+    const before = t.listCalls();
+    await t.renderTree();
+    const listed = t.listCalls() - before;
+    // /repo + the three chain levels + /repo/src. compressChain probes the same
+    // directories renderLevel then renders; without the cache these double.
+    expect(listed).toBe(5);
+  });
+});
+
 describe('editor plugin – revealing an externally-opened file', () => {
   it('starts collapsed, showing only the top level', async () => {
     await t.renderTree();
-    expect(rows()).toEqual(['/repo/src', '/repo/README.md']);
+    expect(rows()).toEqual(['/repo/chain/a/b', '/repo/src', '/repo/README.md']);
     expect(active()).toEqual([]);
   });
 
@@ -173,6 +213,7 @@ describe('editor plugin – revealing an externally-opened file', () => {
     await t.revealInTree('/repo/src/deep/buried.ts');
 
     expect(rows()).toEqual([
+      '/repo/chain/a/b',
       '/repo/src',
       '/repo/src/deep',
       '/repo/src/deep/buried.ts',
@@ -181,6 +222,22 @@ describe('editor plugin – revealing an externally-opened file', () => {
     ]);
     expect(active()).toEqual(['/repo/src/deep/buried.ts']);
     expect(t.scrolled).toEqual(['/repo/src/deep/buried.ts']);
+  });
+
+  // Compression and reveal have to agree on what a directory row IS. They meet
+  // here: ancestorDirs walks every level, the chain row answers to the deepest.
+  it('reveals a file that lives inside a compressed chain', async () => {
+    await t.renderTree();
+    t.setCurrent({ path: '/repo/chain/a/b/leaf.ts', name: 'leaf.ts' });
+    await t.revealInTree('/repo/chain/a/b/leaf.ts');
+
+    expect(rows()).toEqual([
+      '/repo/chain/a/b',
+      '/repo/chain/a/b/leaf.ts',
+      '/repo/src',
+      '/repo/README.md',
+    ]);
+    expect(active()).toEqual(['/repo/chain/a/b/leaf.ts']);
   });
 
   // Refresh and the fs.changed redraw both rebuild from scratch, which destroys

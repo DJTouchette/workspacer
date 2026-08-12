@@ -40,6 +40,7 @@ export const CHANGELOG: readonly ChangelogRelease[] = [
         title: 'Changed',
         items: [
           "**A widget tile has no title bar.** The host used to draw the widget's name above it, which spent a fifth of a 148px square restating what the tile already said and pushed the content into a corner. Tiles now own their whole square and small ones centre; the name moved to the picker and to Edit mode, which is when you are identifying a tile rather than reading it.",
+          "**The editor's file tree reads like the rest of the app.** It picked up the review pane's tree language: inset rounded rows, a tinted accent selection instead of a solid fill, and single-child folder chains collapsed into one row (`apps/desktop/src` rather than three). The sidebar is on the app's sans now — it is chrome, not code — while the file bar and status bar stay mono.",
           '**Shiplight\'s pipeline widget shows a stopwatch, not an age.** A running pipeline gets a live `m:ss` clock and a finished one shows how long it took — "4m" looks identical whether a run is alive or wedged.',
         ],
       },

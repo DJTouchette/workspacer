@@ -16,7 +16,12 @@
       background: var(--wks-bg-base, #1e1e1e); color: var(--wks-text-primary, #d4d4d4);
     }
     .main { flex: 1; display: flex; min-height: 0; }
-    .side { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--wks-bg-surface, #1b1b1b); }
+    /* The body is mono because the body is mostly an editor. The sidebar is
+       chrome, not code, so it takes the app's sans the way every other tree in
+       the app does — the file bar and status bar stay mono, they are status. */
+    .side { width: 280px; flex-shrink: 0; display: flex; flex-direction: column;
+            background: var(--wks-bg-surface, #1b1b1b);
+            font-family: var(--wks-font-sans, ui-sans-serif, system-ui, sans-serif); }
     .side.collapsed { display: none; }
     /* Drag handle between the sidebar and the editor. */
     .resizer { flex: none; width: 4px; cursor: col-resize; background: var(--wks-border, #333); }
@@ -31,12 +36,27 @@
     .toolbar button { background: var(--wks-bg-raised, #2d2d2d); border-color: var(--wks-border, #3c3c3c); color: var(--wks-text-primary, #d4d4d4); padding: 1px 8px; }
     .pane { flex: 1; overflow: auto; }
     #tree, #searchResults { padding: 6px 0; user-select: none; }
-    .row { display: flex; align-items: center; gap: 4px; padding: 2px 8px; cursor: pointer; white-space: nowrap; overflow: hidden; }
+    /* Row shape mirrors the review pane's tree: inset rounded rows, a tinted
+       accent selection rather than a solid fill, and 80ms hovers. Fallback
+       literals stay in this file — a plugin webview is not the renderer, the
+       host injects --wks-* AFTER first paint, and an unstyled flash without
+       them is worse than a value that drifts. */
+    .row { display: flex; align-items: center; gap: 7px; height: 26px; margin: 0 4px;
+           border-radius: var(--wks-radius-sm, 5px); padding: 0 8px; cursor: pointer;
+           white-space: nowrap; overflow: hidden; font-size: 0.72rem;
+           transition: background 80ms ease, color 80ms ease; }
+    .row.dir { height: 24px; }
+    .row.dir .lbl { font-weight: 600; }
     .row:hover { background: var(--wks-bg-hover, #2a2d2e); }
-    .row.active { background: var(--wks-bg-selected, #094771); }
-    .row .twist { flex: none; width: 14px; height: 14px; display: inline-flex; color: var(--wks-text-muted, #888); transition: transform .12s; }
+    .row.active { background: color-mix(in srgb, var(--wks-accent-text, #4a9eff) 12%, transparent);
+                  color: var(--wks-accent-text, #4a9eff); }
+    .row .twist { flex: none; width: 11px; height: 11px; display: inline-flex;
+                  color: var(--wks-text-faint, #666); transition: transform 120ms ease; }
     .row .twist.open { transform: rotate(90deg); }
-    .row .ficon { flex: none; display: inline-flex; }
+    .row .ficon { flex: none; display: inline-flex; opacity: 0.85; }
+    /* svg() emits a fixed 14px icon; the tree wants the review pane's 11/13. */
+    .row .twist .icon { width: 11px; height: 11px; }
+    .row .ficon .icon { width: 13px; height: 13px; }
     .row .lbl { overflow: hidden; text-overflow: ellipsis; }
     .icon { display: block; }
     /* Themed scrollbars (Chromium/Electron). */
@@ -46,13 +66,31 @@
     ::-webkit-scrollbar-thumb:hover { background: var(--wks-scrollbar-hover, #4f4f4f); border: 2px solid transparent; background-clip: padding-box; }
     ::-webkit-scrollbar-corner { background: transparent; }
     #search { padding: 6px; border-bottom: 1px solid var(--wks-border-subtle, #2a2a2a); }
-    #search input { width: 100%; font: inherit; background: var(--wks-bg-input, #3c3c3c); color: var(--wks-text-primary, #fff); border: 1px solid var(--wks-border-input, #555); border-radius: var(--wks-radius-sm, 4px); padding: 4px 6px; }
-    .sfile { display: flex; align-items: center; gap: 4px; padding: 3px 8px; color: var(--wks-accent, #9cdcfe); cursor: pointer; }
+    #search input { width: 100%; font: inherit; background: var(--wks-bg-input, #3c3c3c); color: var(--wks-text-primary, #fff); border: 1px solid var(--wks-border-input, #555); border-radius: var(--wks-radius-sm, 5px); padding: 4px 6px;
+                    transition: border-color 100ms ease, box-shadow 100ms ease; }
+    /* The browser's default focus ring is a hard white outline; the app's is an
+       accent border with a soft ring (cf. .wks-review-commit-input). */
+    #search input:focus { outline: none; border-color: var(--wks-accent-text, #4a9eff);
+                          box-shadow: 0 0 0 2px color-mix(in srgb, var(--wks-accent-text, #4a9eff) 22%, transparent); }
+    /* Search hits are the same row vocabulary, so they get the same shape. */
+    .sfile { display: flex; align-items: center; gap: 7px; height: 24px; margin: 6px 4px 0;
+             border-radius: var(--wks-radius-sm, 5px); padding: 0 8px; cursor: pointer;
+             font-size: 0.72rem; font-weight: 600; color: var(--wks-text-secondary, #bbb);
+             white-space: nowrap; overflow: hidden; transition: background 80ms ease; }
+    .sfile .icon { width: 13px; height: 13px; flex: none; }
+    .sfile .lbl { overflow: hidden; text-overflow: ellipsis; }
     .toolbar button { display: inline-flex; align-items: center; gap: 4px; }
     .sfile:hover { background: var(--wks-bg-hover, #2a2d2e); }
-    .smatch { padding: 1px 8px 1px 22px; cursor: pointer; color: var(--wks-text-secondary, #bbb); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .smatch { height: 22px; display: flex; align-items: center; gap: 8px; margin: 0 4px;
+              border-radius: var(--wks-radius-sm, 5px); padding: 0 8px 0 26px; cursor: pointer;
+              color: var(--wks-text-tertiary, #999); font-size: 0.72rem;
+              white-space: nowrap; overflow: hidden; transition: background 80ms ease; }
     .smatch:hover { background: var(--wks-bg-hover, #2a2d2e); }
-    .smatch .ln { color: var(--wks-text-faint, #666); margin-right: 8px; }
+    .smatch .ln { flex: none; color: var(--wks-text-faint, #666);
+                  font-family: var(--wks-font-mono, monospace); font-variant-numeric: tabular-nums; }
+    /* text-overflow does not apply to a flex container's own text, so the line
+       needs its own block to ellipsize in — without this it clips mid-word. */
+    .smatch .mtxt { overflow: hidden; text-overflow: ellipsis; }
     .editor { flex: 1; display: flex; flex-direction: column; min-width: 0; }
     .filebar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--wks-border, #333); background: var(--wks-bg-header, #252526); font-size: 12px; }
     .filebar .name { color: var(--wks-text-primary, #d4d4d4); }
@@ -420,10 +458,12 @@
     window.addEventListener('wks-settings', (e) => applySettings(e.detail));
 
     // ── file tree (lazy) ────────────────────────────────────────────────────────
-    async function listDir(path) {
+    async function listDir(path, cache) {
+      if (cache && cache.has(path)) return cache.get(path);
       const res = await call('fs.listEntries', { path });
       const entries = (res && res.entries) || [];
       entries.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
+      if (cache) cache.set(path, entries);
       return entries;
     }
     async function renderTree() {
@@ -474,40 +514,87 @@
     }
     const FOLDER_TINT = 'var(--wks-accent, #9cdcfe)';
     function fileIconHTML(name) { const [ic, col] = iconForFile(name); return svg(ic, col); }
-    async function renderLevel(dirPath, depth, container) {
-      const entries = await listDir(dirPath);
+    /** Per-row indent, matching the review pane's tree. */
+    const INDENT = 13;
+
+    /**
+     * Collapse a single-child directory chain into one row, GitHub-style and
+     * the same rule the review pane's tree uses: `src` holding only `renderer`
+     * holding only `src` renders as one `src/renderer/src` row.
+     *
+     * This costs a listing for every directory shown, including collapsed ones
+     * — the chain cannot be seen without looking inside it. The `cache` makes
+     * that one listing per directory per render rather than two (probe, then
+     * render), and it is per-render on purpose: a cache that outlived the pass
+     * would make Refresh stop refreshing.
+     */
+    async function compressChain(entry, cache) {
+      let path = entry.path, label = entry.name;
+      let entries = await listDir(path, cache);
+      // Bounded as well as conditioned — a symlink loop is a directory chain
+      // that never ends, and this runs on the UI thread.
+      for (let i = 0; i < 32; i++) {
+        if (entries.length !== 1 || !entries[0].isDir) break;
+        const only = entries[0];
+        path = only.path;
+        label += '/' + only.name;
+        entries = await listDir(path, cache);
+      }
+      return { path, label, entries };
+    }
+
+    async function renderLevel(dirPath, depth, container, cache = new Map()) {
+      const entries = await listDir(dirPath, cache);
       for (const e of entries) {
         // Dotfiles stay visible — fs.listEntries already hides .git and
         // anything gitignored, which covers the actual noise.
         const row = document.createElement('div');
-        row.className = 'row';
-        // What lets markActiveRow find a row it did not create.
-        row.dataset.path = e.path;
-        row.style.paddingLeft = (8 + depth * 14) + 'px';
-        const isOpen = expanded.has(e.path);
-        const twist = e.isDir ? svg('chevron-right') : '';
-        const ficon = e.isDir ? svg(isOpen ? 'folder-open' : 'folder', FOLDER_TINT) : fileIconHTML(e.name);
-        row.innerHTML = `<span class="twist${isOpen ? ' open' : ''}">${twist}</span><span class="ficon">${ficon}</span><span class="lbl">${escapeHtml(e.name)}</span>`;
-        container.appendChild(row);
+        row.className = e.isDir ? 'row dir' : 'row';
+        // Files are inset by exactly the chevron a directory row carries (11px
+        // + the 7px row gap), so both icons land in one column. The review pane
+        // uses 14 here and is 4px out; matching its LOOK does not mean copying
+        // that.
+        row.style.paddingLeft = (8 + depth * INDENT + (e.isDir ? 0 : 18)) + 'px';
+
         if (e.isDir) {
+          // A compressed chain is addressed by its DEEPEST directory: that is
+          // the one whose children the row expands to, and the one revealInTree
+          // will have put in `expanded` on its way down to a file.
+          let chain;
+          try { chain = await compressChain(e, cache); }
+          catch { chain = { path: e.path, label: e.name, entries: null }; }
+          row.dataset.path = chain.path;
+          const isOpen = expanded.has(chain.path);
+          row.innerHTML = `<span class="twist${isOpen ? ' open' : ''}">${svg('chevron-right')}</span>`
+            + `<span class="ficon">${svg(isOpen ? 'folder-open' : 'folder', FOLDER_TINT)}</span>`
+            + `<span class="lbl">${escapeHtml(chain.label)}</span>`;
+          container.appendChild(row);
+
           const child = document.createElement('div');
           container.appendChild(child);
           // Awaited, not fire-and-forget: renderTree's callers (and revealInTree
           // in particular) need the whole subtree to exist when it resolves, or
           // the row they are about to look for has not been created yet.
-          if (isOpen) await renderLevel(e.path, depth + 1, child).catch(() => {});
+          if (isOpen) await renderLevel(chain.path, depth + 1, child, cache).catch(() => {});
           row.onclick = async () => {
             const twistEl = row.querySelector('.twist'), ficonEl = row.querySelector('.ficon');
-            if (expanded.has(e.path)) {
-              expanded.delete(e.path); child.innerHTML = '';
+            if (expanded.has(chain.path)) {
+              expanded.delete(chain.path); child.innerHTML = '';
               twistEl.classList.remove('open'); ficonEl.innerHTML = svg('folder', FOLDER_TINT);
             } else {
-              expanded.add(e.path); child.innerHTML = '';
+              expanded.add(chain.path); child.innerHTML = '';
               twistEl.classList.add('open'); ficonEl.innerHTML = svg('folder-open', FOLDER_TINT);
-              try { await renderLevel(e.path, depth + 1, child); } catch (err) { setStatus(err.message, 'bad'); }
+              // A fresh cache: expanding is the one moment the user is asking
+              // to see what is there NOW.
+              try { await renderLevel(chain.path, depth + 1, child, new Map()); }
+              catch (err) { setStatus(err.message, 'bad'); }
             }
           };
         } else {
+          row.dataset.path = e.path;
+          row.innerHTML = `<span class="ficon">${fileIconHTML(e.name)}</span>`
+            + `<span class="lbl">${escapeHtml(e.name)}</span>`;
+          container.appendChild(row);
           row.onclick = () => openFile(e.path, e.name, row);
         }
       }
@@ -643,7 +730,7 @@
         for (const m of (r.matches || []).slice(0, 50)) {
           const mEl = document.createElement('div');
           mEl.className = 'smatch';
-          mEl.innerHTML = `<span class="ln">${m.line}</span>${escapeHtml((m.text || '').trim()).slice(0, 200)}`;
+          mEl.innerHTML = `<span class="ln">${m.line}</span><span class="mtxt">${escapeHtml((m.text || '').trim()).slice(0, 200)}</span>`;
           mEl.onclick = () => openFile(r.file, baseOf(r.file), null, m.line);
           resultsEl.appendChild(mEl);
         }
