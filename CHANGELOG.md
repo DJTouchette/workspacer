@@ -39,11 +39,27 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   instead of a solid fill, and single-child folder chains collapsed into one row
   (`apps/desktop/src` rather than three). The sidebar is on the app's sans now —
   it is chrome, not code — while the file bar and status bar stay mono.
+- **The plugin docs now say `agent.snapshot` carries a conversation *window*.**
+  It always described a "full per-agent snapshot"; nothing told an author the
+  transcript on it is bounded, so the first plugin to read `data.conversation`
+  would have got twelve turns with no way to know that was by design. The note
+  points at `sessions.conversation` (`sinceSeq`) for anyone who needs real
+  history, and at the wake-up-and-re-query pattern for anyone who does not.
 - **Shiplight's pipeline widget shows a stopwatch, not an age.** A running
   pipeline gets a live `m:ss` clock and a finished one shows how long it took —
   "4m" looks identical whether a run is alive or wedged.
 
 ### Fixed
+- **Connecting a web or remote client took far longer than it should have.** The
+  hub published every session's entire transcript on every flush of every
+  session — for a 500-turn agent that is 2.73 MB per push, so a fleet of fifteen
+  cost 41 MB before the window rendered anything and a single streaming agent
+  pushed ~27 MB/s at every connected client. Snapshots now carry a bounded
+  window of the newest turns (2.73 MB → 160 KB, 94% smaller; connect 41 MB →
+  2.3 MB), anchored so a client holding full history splices it in rather than
+  losing scrollback. This applied to the desktop too, not just browsers, any
+  time remote sharing was on. Plugins that read `agent.snapshot` should treat
+  the conversation as a window — see the note in the plugin docs.
 - **The editor's file tree did not follow the file you opened.** Opening a file
   from outside the tree — right-click → Open in editor, a search hit, or a file
   you just created — loaded it into the editor while the sidebar stayed wherever
