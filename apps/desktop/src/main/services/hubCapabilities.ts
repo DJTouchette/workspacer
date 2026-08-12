@@ -44,6 +44,7 @@ import * as git from './gitService';
 import * as terminalShare from './terminalShare';
 import { IPC } from '../shared/ipcChannels';
 import type { SessionData, LayoutInput, ProfileUpdate } from '../shared/ipcTypes';
+import { compactClaudeSnapshotForBackground } from '../shared/compactClaudeSnapshot';
 import { ensureSupervisorHome } from './supervisorSkill';
 import { scrubBootDocumentAgents } from '../lib/bootDocumentScrub';
 import { isAsciiBlank } from '../lib/asciiWhitespace';
@@ -801,8 +802,18 @@ export function registerHubCapabilities(): void {
   // list a bus client renders (/m fleet) appends minimal `sparse` stopped rows
   // synthesized from the hub's layout document — the same rows the brain
   // serves when it owns this method, keeping the two providers interchangeable.
+  //
+  // Compacted before it leaves the process. Every consumer of the PLURAL call
+  // already treats these as background rows — promoteSessionSnapshots and
+  // useSessionSnapshots both run compactClaudeSnapshotForBackground on arrival,
+  // and OverviewPane never reads `conversation` at all — so serializing the
+  // full transcript here only ever paid to have it thrown away. Over IPC that
+  // is a wasted structured clone; over the bus it is every session's whole
+  // transcript as JSON on a WebSocket, on connect and on every OverviewPane
+  // refresh (up to 1/s while streaming). The ACTIVE pane is unaffected: it
+  // reads `sessions.snapshot`, singular, which stays full.
   registerCapability('sessions.snapshots', async () => {
-    const live = claudeSessionStore.getAllSnapshots();
+    const live = claudeSessionStore.getAllSnapshots().map(compactClaudeSnapshotForBackground);
     const liveIds = new Set(live.map((s) => s.sessionId));
     type LayoutAgentRef = {
       global?: boolean;

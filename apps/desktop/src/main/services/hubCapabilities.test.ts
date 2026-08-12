@@ -67,11 +67,12 @@ vi.mock('./claudemonSessionClient', () => ({ claudemonSessionClient: clientMock 
 
 const notePermissionMode = vi.fn();
 const getAllSnapshots = vi.fn(() => [] as unknown[]);
+const getSnapshot = vi.fn(() => null as unknown);
 vi.mock('./claudeSessionStore', () => ({
   claudeSessionStore: {
     notePermissionMode: (...a: unknown[]) => notePermissionMode(...a),
     getAllSnapshots: (...a: unknown[]) => getAllSnapshots(...a),
-    getSnapshot: vi.fn(),
+    getSnapshot: (...a: unknown[]) => getSnapshot(...a),
   },
 }));
 
@@ -223,6 +224,58 @@ describe('registerHubCapabilities — registration', () => {
       { sessionId: 's1', provider: 'claude' },
     ]);
     expect(listRecentSessions).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The plural call is a BACKGROUND feed: every consumer (promoteSessionSnapshots,
+// useSessionSnapshots) compacts it on arrival and OverviewPane never reads
+// `conversation` at all. Serializing the full transcript here paid to have it
+// thrown away — over the bus that is every session's whole transcript as JSON
+// on a WebSocket, on connect and on every OverviewPane refresh.
+describe('sessions.snapshots — compacted before it leaves the process', () => {
+  const bigSession = () => ({
+    sessionId: 's1',
+    cwd: '/proj',
+    conversation: Array.from({ length: 50 }, (_, i) => ({
+      role: i % 2 === 0 ? 'user' : 'assistant',
+      content: 'x'.repeat(9000),
+    })),
+    completedToolCalls: Array.from({ length: 40 }, (_, i) => ({
+      id: `t${i}`,
+      status: 'complete',
+      completedAt: i,
+      input: { blob: 'y'.repeat(9000) },
+    })),
+  });
+
+  it('trims the conversation tail and banks the dropped turns', async () => {
+    getAllSnapshots.mockReturnValue([bigSession()] as never);
+    const out = (await call('sessions.snapshots')) as Array<Record<string, any>>;
+
+    expect(out).toHaveLength(1);
+    expect(out[0].conversation).toHaveLength(12);
+    // Absolute turn indices must survive the trim: 50 - 12 = 38 dropped, and
+    // half of those were user sends. ClaudePane anchors on both.
+    expect(out[0].conversationOffset).toBe(38);
+    expect(out[0].conversationUserOffset).toBe(19);
+    expect(out[0].completedToolCalls).toHaveLength(20);
+  });
+
+  it('truncates the payloads it does keep', async () => {
+    getAllSnapshots.mockReturnValue([bigSession()] as never);
+    const out = (await call('sessions.snapshots')) as Array<Record<string, any>>;
+    // 9000 chars in, MAX_TEXT_CHARS out — the point is that the wire never
+    // carries the untruncated body.
+    expect(out[0].conversation[0].content.length).toBeLessThan(9000);
+    expect(JSON.stringify(out[0]).length).toBeLessThan(200_000);
+  });
+
+  // The active pane reads the SINGULAR call and needs every turn; compacting it
+  // would silently cut scrollback for the session the user is looking at.
+  it('leaves sessions.snapshot (singular) full', async () => {
+    getSnapshot.mockReturnValue(bigSession() as never);
+    const out = (await call('sessions.snapshot', { sessionId: 's1' })) as Record<string, any>;
+    expect(out.conversation).toHaveLength(50);
   });
 });
 

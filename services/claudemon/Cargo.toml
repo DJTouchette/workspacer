@@ -3,13 +3,17 @@ name = "claudemon"
 version = "0.1.0"
 edition = "2021"
 description = "Observability and remote-control daemon for Claude Code sessions"
-license = "BUSL-1.1"
+license = "MIT"
 
 [[bin]]
 name = "claudemon"
 path = "src/main.rs"
 
 [dependencies]
+# Default glibc malloc retains freed memory in per-thread arenas: measured 106 MB
+# resident against <10 MB of live data after 10h, driven by repeated multi-MB
+# JSON serializations of the conversation. mimalloc returns it.
+mimalloc = { version = "0.1", default-features = false }
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.7", features = ["ws"] }
 tower = "0.5"
