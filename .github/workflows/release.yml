@@ -347,6 +347,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Only for CHANGELOG.md + scripts/changelog-section.mjs: the notes below
+      # are cut from the same file the app's Settings → Updates and every tagged
+      # release page read, so a nightly cannot describe itself differently from
+      # the release it becomes.
+      - uses: actions/checkout@v5
+
       - uses: actions/download-artifact@v4
         with:
           pattern: workspacer-*
@@ -387,9 +393,21 @@ jobs:
             gh api -X DELETE "repos/$REPO/releases/$id"
           done
 
-          notes="Rolling nightly build of master (${{ github.sha }}). Unsigned.
-
-          Nightly installs auto-update onto the next nightly from this feed and never onto stable — to return to stable, install a release build from the releases page."
+          # The body is the [Unreleased] section — which is exactly what a
+          # nightly IS: master since the last tagged release. Same file, same
+          # cutter as a tagged release page and the app's Settings → Updates, so
+          # the three cannot drift. An empty section is NOT fatal here (unlike
+          # tagging a release with no notes): a nightly must still ship the day
+          # someone lands a change nobody wrote a line for.
+          notes_file="$RUNNER_TEMP/nightly-notes.md"
+          {
+            printf 'Rolling nightly build of master (%s). Unsigned.\n\n' "${{ github.sha }}"
+            printf 'Nightly installs auto-update onto the next nightly from this feed and never onto stable — to return to stable, install a release build from the releases page.\n\n'
+            printf -- '---\n\n'
+            printf '## Unreleased — what has landed since the last stable release\n\n'
+            node "$GITHUB_WORKSPACE/scripts/changelog-section.mjs" Unreleased \
+              || printf '_Nothing recorded in CHANGELOG.md yet._\n'
+          } > "$notes_file"
           shopt -s nullglob
           assets=( *.exe *.AppImage *.dmg latest*.yml *.blockmap workspacer-server-* )
           shopt -u nullglob
@@ -399,7 +417,7 @@ jobs:
             --prerelease \
             --draft \
             --target "${{ github.sha }}" \
-            --notes "$notes" \
+            --notes-file "$notes_file" \
             "${assets[@]}"
           draft_id=$(gh api "repos/$REPO/releases" --paginate \
                        -q '[.[] | select(.draft and .tag_name=="nightly")][0].id')
