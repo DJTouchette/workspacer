@@ -82,6 +82,10 @@ const (
 	KindNeeds    Kind = "needs"    // an agent is blocked on you
 	KindFinished Kind = "finished" // a long run went idle
 	KindEnded    Kind = "ended"    // the session exited
+	// KindTest is a notification you asked for by hand. It deliberately has no
+	// entry in Prefs.wants, whose default is "yes": a test that a muted setting
+	// could silence would be useless for answering "is push reaching me at all".
+	KindTest Kind = "test"
 )
 
 // DefaultFinishedAfter is how long a run must have been working before going
@@ -292,6 +296,20 @@ func (m *Manager) RPCSubscribeAs(who Subscriber, params json.RawMessage) (any, e
 	m.mu.Unlock()
 	log.Printf("push: subscription added (%d total)", n)
 	return map[string]any{"ok": true}, nil
+}
+
+// RPCTest sends one notification to every registered device, right now.
+//
+// This exists because the alternative was a scavenger hunt: with no way to
+// provoke a push, "I got nothing" could mean the trigger never fired, the
+// delivery was filtered, the endpoint was stale, or the phone never registered
+// — and telling those apart meant reading hub logs. It bypasses per-kind
+// preferences by design (see KindTest) and reports how many devices it went to,
+// so a zero is itself the answer: nothing is subscribed.
+func (m *Manager) RPCTest(_ json.RawMessage) (any, error) {
+	n := len(m.recipients(KindTest, 0))
+	m.notify(KindTest, "Workspacer", "Test notification — push is working", "", 0)
+	return map[string]any{"ok": true, "devices": n}, nil
 }
 
 // RPCUnsubscribe drops a subscription by endpoint, gated by proof-of-possession.

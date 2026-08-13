@@ -25,6 +25,15 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   again rather than treating "I read them" as an answer. The notes open on the
   release page because a running build cannot contain them — its copy of the
   changelog was baked before that release existed.
+- **"Send me a test notification", and settings you can actually reach.** The
+  phone can now provoke a push on demand and reports how many devices it went
+  to, so "I got nothing" stops being a scavenger hunt across trigger, delivery,
+  subscription and permission — it deliberately ignores the per-kind switches,
+  since a test something could silence cannot tell muted from broken. The More
+  sheet also opens without an agent selected (it used to be a dead button on the
+  screen the app lands on), and the notification banner now explains itself when
+  push is unavailable — "Add to Home Screen" or "needs an HTTPS address" —
+  instead of rendering nothing at all, which is what made this invisible.
 - **More kinds of phone notification, and per-device control of them.** The
   phone used to buzz for one thing: an agent blocked on you. It now also
   notifies when a run *finishes* and when a session *ends* — and because every

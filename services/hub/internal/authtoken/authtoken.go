@@ -130,6 +130,7 @@ var triageMethods = []string{
 	"claude.signal",      // interrupt a runaway agent (/m + /remote SIGINT button)
 	"push.subscribe",     // /m PWA background notifications
 	"push.unsubscribe",   // symmetric teardown of the same subscription
+	"push.test",          // "is push reaching me?" — the tier that subscribes must be able to check
 }
 
 // Methods returns the method patterns a scope may call. Operator is the single

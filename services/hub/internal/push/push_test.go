@@ -671,3 +671,38 @@ func TestSubscribeStoresPrefsFromTheWire(t *testing.T) {
 		t.Fatalf("prefs lost across reload: %v", e)
 	}
 }
+
+// The test push is the affordance that answers "is push reaching me at all",
+// so it must ignore the per-kind mutes — a test a setting could silence cannot
+// distinguish "muted" from "broken", which is the whole reason it exists.
+func TestTestPushIgnoresMutedKinds(t *testing.T) {
+	m, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.subs["https://push.example/silent"] = storedSub{
+		Subscription: webpush.Subscription{Endpoint: "https://push.example/silent"},
+		Prefs:        Prefs{Needs: boolp(false), Finished: boolp(false), Ended: boolp(false)},
+	}
+	var got []Kind
+	m.notify = func(k Kind, _, _, _ string, _ time.Duration) { got = append(got, k) }
+
+	res, err := m.RPCTest(nil)
+	if err != nil {
+		t.Fatalf("RPCTest: %v", err)
+	}
+	if len(got) != 1 || got[0] != KindTest {
+		t.Fatalf("expected one test notification, got %v", got)
+	}
+	// It reports the device count so a zero is itself the diagnosis.
+	if d := res.(map[string]any)["devices"]; d != 1 {
+		t.Fatalf("a device with every kind muted must still count for the test: %v", d)
+	}
+	if e := endpoints(m.recipients(KindTest, 0)); len(e) != 1 {
+		t.Fatalf("test push must reach a fully-muted device, got %v", e)
+	}
+	// And the mutes it ignores are still honoured for real notifications.
+	if e := endpoints(m.recipients(KindNeeds, 0)); len(e) != 0 {
+		t.Fatalf("needs-you must still be muted for that device, got %v", e)
+	}
+}

@@ -312,6 +312,7 @@ func main() {
 			return pushMgr.RPCSubscribeAs(push.Subscriber{TokenID: c.TokenID, Scope: c.Scope}, p)
 		})
 		srv.RegisterLocal("push.unsubscribe", pushMgr.RPCUnsubscribe)
+		srv.RegisterLocal("push.test", pushMgr.RPCTest)
 		pushMgr.SetTokenValidator(pushTokenValidator(*token, tokenStore))
 		// Operator-only by construction: neither method appears in the view or
 		// triage allowlists, so a scoped token cannot reach them.

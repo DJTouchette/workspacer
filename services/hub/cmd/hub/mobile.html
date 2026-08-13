@@ -1358,7 +1358,10 @@
   // ══ fleet ═════════════════════════════════════════════════════════════════
   function renderFleet() {
     const list = fleetList().filter((s) => matchesFilter(s, S.filter));
-    const parts = [];
+    // Fleet is where the app LANDS, and the push banner used to live only on
+    // Needs You — so the one affordance for turning notifications on sat on a
+    // tab you had no reason to open until you already had a notification.
+    const parts = [pushBannerHtml()];
     if (!list.length) {
       parts.push(emptyHtml('▦', C.dim, sessions.size ? 'Nothing here' : 'No agents yet',
         sessions.size ? 'Try another filter.' : 'Spawn one from the New tab, or from the desktop.'));
@@ -1476,6 +1479,11 @@
   }
 
   function bindAgentCards(root) {
+    // The push banner renders on Fleet AND Needs You, so its button is wired
+    // here rather than in either screen's own binder — a banner with a dead
+    // Enable button is worse than no banner.
+    const pb = root.querySelector('[data-push]');
+    if (pb) pb.onclick = () => ensurePush(false);
     for (const b of root.querySelectorAll('[data-open]')) b.onclick = (e) => { e.stopPropagation(); openChat(b.dataset.open); };
     for (const b of root.querySelectorAll('[data-approve]')) b.onclick = (e) => { e.stopPropagation(); approve(b.dataset.approve, b.dataset.d); };
     for (const b of root.querySelectorAll('[data-decline]')) b.onclick = (e) => { e.stopPropagation(); declineQuestion(b.dataset.decline); };
@@ -1581,10 +1589,21 @@
     for (const b of root.querySelectorAll('[data-submit]')) b.onclick = () => submitAnswers(b.dataset.submit);
     for (const b of root.querySelectorAll('[data-dismiss]')) b.onclick = () => { dismissed.add(b.dataset.dismiss); afterData(); toast('Dismissed'); };
     for (const b of root.querySelectorAll('[data-snooze]')) b.onclick = () => { snoozed.set(b.dataset.snooze, Date.now() + SNOOZE_MS); afterData(); toast('Snoozed 30m'); };
-    const pb = root.querySelector('[data-push]'); if (pb) pb.onclick = () => ensurePush(false);
   }
   function pushBannerHtml() {
-    if (!pushOk || Notification.permission === 'granted') return '';
+    if (window.Notification && Notification.permission === 'granted') return '';
+    // When push isn't AVAILABLE this used to render nothing at all — no banner,
+    // no button, no reason. On an iPhone that is the whole experience of trying
+    // to turn notifications on: iOS only exposes PushManager to a PWA launched
+    // from the Home Screen, so in a Safari tab the feature simply appears not to
+    // exist. Say which of the two things is missing instead.
+    if (!pushOk) {
+      const insecure = !window.isSecureContext;
+      const why = insecure
+        ? 'Notifications need an HTTPS address — open this over your tailnet HTTPS URL, not a raw IP.'
+        : 'Notifications need the app installed: Share → Add to Home Screen, then open it from the icon.';
+      return `<div class="pushrow"><span class="t">${why}</span></div>`;
+    }
     const denied = Notification.permission === 'denied';
     return `<div class="pushrow">
       <span class="t">${denied ? 'Notifications are blocked for this site — turn them back on in browser settings.' : 'Get a push when an agent needs you, even with the app closed.'}</span>
@@ -1913,15 +1932,19 @@
 
   function openMoreSheet() {
     const s = sessions.get(S.sessionId);
-    if (!s) return;
-    const rows = [
-      { label: 'Open inspector', run: () => { S.seg = 'flows'; go('flows'); } },
-      { label: 'Insert saved prompt', run: () => openLibrarySheet() },
-      { label: 'Notification settings', run: () => openNotifySheet() },
-    ];
-    if (isWorking(s)) rows.unshift({ label: 'Interrupt this turn', run: () => interrupt(s.sessionId) });
-    rows.push({ label: 'Copy working directory', run: () => copyText(agentPath(s)) });
-    showSheet('AGENT', rows);
+    // Notification settings are an APP setting, not an agent one, and this
+    // sheet used to return early with no agent selected — so the button was a
+    // dead no-op on the screen the app actually opens on, and the only route to
+    // the settings ran through picking an agent first.
+    const rows = [];
+    if (s) {
+      if (isWorking(s)) rows.push({ label: 'Interrupt this turn', run: () => interrupt(s.sessionId) });
+      rows.push({ label: 'Open inspector', run: () => { S.seg = 'flows'; go('flows'); } });
+      rows.push({ label: 'Insert saved prompt', run: () => openLibrarySheet() });
+      rows.push({ label: 'Copy working directory', run: () => copyText(agentPath(s)) });
+    }
+    rows.push({ label: 'Notification settings', run: () => openNotifySheet() });
+    showSheet(s ? 'AGENT' : 'WORKSPACER', rows);
   }
   async function openLibrarySheet() {
     if (!can('library.list')) { toast('Prompt library needs an operator token'); return; }
@@ -2426,6 +2449,16 @@
     const check = (on) => (on ? '✓ ' : '   ');
     const after = FINISHED_CHOICES.find((c) => c.sec === finishedAfter()) || FINISHED_CHOICES[1];
     const rows = [
+      {
+        label: 'Send me a test notification',
+        run: async () => {
+          try {
+            const r = await call('push.test', {});
+            const n = (r && r.devices) || 0;
+            toast(n ? `Sent to ${n} device${n === 1 ? '' : 's'}` : 'No devices subscribed yet');
+          } catch (e) { toast('Test failed: ' + errText(e)); }
+        },
+      },
       {
         label: check(prefOn('needs')) + 'An agent needs you',
         run: () => { savePushPrefs({ ...pushPrefs, needs: !prefOn('needs') }); openNotifySheet(); },
