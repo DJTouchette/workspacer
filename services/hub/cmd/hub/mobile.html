@@ -2446,6 +2446,10 @@
     if (Notification.permission === 'granted') ensurePush(true);
   }
   const prefOn = (k) => pushPrefs[k] !== false;
+  // Checkpoints are the one kind that defaults OFF (see the hub's Prefs.wants):
+  // absent must read as off here too, or the client would show a switch that
+  // disagrees with what the hub actually does.
+  const checkpointsOn = () => pushPrefs.checkpoints === true;
   const finishedAfter = () =>
     typeof pushPrefs.finishedAfterSec === 'number' ? pushPrefs.finishedAfterSec : 60;
 
@@ -2492,6 +2496,14 @@
         },
       },
       {
+        label: check(prefOn('preview')) + 'Show message contents',
+        run: () => { savePushPrefs({ ...pushPrefs, preview: !prefOn('preview') }); openNotifySheet(); },
+      },
+      {
+        label: check(checkpointsOn()) + 'Ping while still running (10m, 30m)',
+        run: () => { savePushPrefs({ ...pushPrefs, checkpoints: !checkpointsOn() }); openNotifySheet(); },
+      },
+      {
         label: check(prefOn('ended')) + 'A session ends',
         run: () => { savePushPrefs({ ...pushPrefs, ended: !prefOn('ended') }); openNotifySheet(); },
       },
@@ -2525,6 +2537,8 @@
           finished: prefOn('finished'),
           ended: prefOn('ended'),
           finishedAfterSec: finishedAfter(),
+          preview: prefOn('preview'),
+          checkpoints: checkpointsOn(),
         },
       }));
       if (!silent) toast('Notifications on');

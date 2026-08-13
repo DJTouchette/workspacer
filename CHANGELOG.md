@@ -25,6 +25,14 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   again rather than treating "I read them" as an answer. The notes open on the
   release page because a running build cannot contain them — its copy of the
   changelog was baked before that release existed.
+- **Notifications say what the agent actually said.** They used to name the
+  event and nothing else — "Approve a tool use" told you an agent was blocked
+  but not on what. They now carry the tool and its argument (`Bash rm -rf
+  build/`), the text of the question being asked, or the tail of the reply that
+  just finished. It is per device and switchable, because that text lands on a
+  lock screen: **Show message contents**, on by default. There is also an opt-in
+  **Ping while still running**, at 10 and 30 minutes into a single run, for when
+  you have walked away from something long.
 - **"Send me a test notification", and settings you can actually reach.** The
   phone can now provoke a push on demand and reports how many devices it went
   to, so "I got nothing" stops being a scavenger hunt across trigger, delivery,
