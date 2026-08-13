@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -69,6 +70,58 @@ type storedSub struct {
 	TokenID string    `json:"tokenId,omitempty"`
 	Scope   string    `json:"scope,omitempty"`
 	Created time.Time `json:"created,omitempty"`
+	Prefs   Prefs     `json:"prefs,omitempty"`
+}
+
+// Kind is what happened. Each is separately switchable per device, because the
+// right answer differs by person and by phone: "needs you" is the one nobody
+// wants to miss, "finished" is the one that turns into noise fastest.
+type Kind string
+
+const (
+	KindNeeds    Kind = "needs"    // an agent is blocked on you
+	KindFinished Kind = "finished" // a long run went idle
+	KindEnded    Kind = "ended"    // the session exited
+)
+
+// DefaultFinishedAfter is how long a run must have been working before going
+// idle earns a push. Every turn ends, so an unconditional "finished" fires on
+// the twenty-second exchange you are already watching; the threshold is what
+// makes it mean "the thing you walked away from is done".
+const DefaultFinishedAfter = 60 * time.Second
+
+// Prefs is one device's notification settings. Every field is a POINTER so that
+// absent means "unset, use the default" rather than the zero value — a
+// subscription persisted before prefs existed, or one from a client that has
+// not been taught about a newly added Kind, must keep receiving rather than
+// silently go quiet.
+type Prefs struct {
+	Needs            *bool `json:"needs,omitempty"`
+	Finished         *bool `json:"finished,omitempty"`
+	Ended            *bool `json:"ended,omitempty"`
+	FinishedAfterSec *int  `json:"finishedAfterSec,omitempty"`
+}
+
+// wants reports whether this device should receive `k`. Unset = yes.
+func (p Prefs) wants(k Kind) bool {
+	switch k {
+	case KindNeeds:
+		return p.Needs == nil || *p.Needs
+	case KindFinished:
+		return p.Finished == nil || *p.Finished
+	case KindEnded:
+		return p.Ended == nil || *p.Ended
+	}
+	return true
+}
+
+// finishedAfter is this device's threshold; unset or negative uses the default,
+// and zero means "as soon as it goes idle, however short the run".
+func (p Prefs) finishedAfter() time.Duration {
+	if p.FinishedAfterSec == nil || *p.FinishedAfterSec < 0 {
+		return DefaultFinishedAfter
+	}
+	return time.Duration(*p.FinishedAfterSec) * time.Second
 }
 
 // Manager is safe for concurrent use. The snapshot watcher runs on one
@@ -86,11 +139,17 @@ type Manager struct {
 	// behaviour that existed before revocation was wired.
 	tokenValid func(tokenID string) bool
 
-	states map[string]string // sessionId -> last ambientState (watcher goroutine only)
+	states map[string]sessionState // sessionId -> last seen (watcher goroutine only)
 
-	// notify is called on the un-blocked → blocked edge. Defaults to sendAll;
-	// overridden in tests to observe the transition logic without the network.
-	notify func(title, body, sessionID string)
+	// notify is called on a notifiable edge. Defaults to sendAll; overridden in
+	// tests to observe the transition logic without the network. `ranFor` is
+	// meaningful only for KindFinished — devices set their own threshold, so the
+	// duration travels to the recipients rather than being judged here.
+	notify func(k Kind, title, body, sessionID string, ranFor time.Duration)
+
+	// now is time.Now, indirected so the finished-threshold logic is testable
+	// without sleeping.
+	now func() time.Time
 }
 
 // SetTokenValidator installs the revocation authority: given the token identity a
@@ -114,7 +173,7 @@ func New(dir string) (*Manager, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	m := &Manager{dir: dir, subs: map[string]storedSub{}, states: map[string]string{}}
+	m := &Manager{dir: dir, subs: map[string]storedSub{}, states: map[string]sessionState{}, now: time.Now}
 	m.notify = m.sendAll
 	if err := m.loadVAPID(); err != nil {
 		return nil, err
@@ -206,6 +265,15 @@ func (m *Manager) RPCSubscribeAs(who Subscriber, params json.RawMessage) (any, e
 	if s.Endpoint == "" || s.Keys.P256dh == "" || s.Keys.Auth == "" {
 		return nil, errors.New("push.subscribe requires { endpoint, keys:{p256dh, auth} }")
 	}
+	// Per-device notification settings ride along on the same call the client
+	// already makes on every connect, so the device stays the source of truth
+	// for them without a second bus method (and a second thing to classify).
+	// Absent `prefs` leaves every field unset, which reads as "all kinds, default
+	// threshold" — the behaviour a client that predates this sees.
+	var withPrefs struct {
+		Prefs Prefs `json:"prefs"`
+	}
+	_ = json.Unmarshal(params, &withPrefs)
 	// The endpoint is a NETWORK SINK the host is later made to POST to, on a
 	// trigger the triage tier can pull at will. See endpoint.go.
 	if err := validatePushEndpoint(s.Endpoint); err != nil {
@@ -217,6 +285,7 @@ func (m *Manager) RPCSubscribeAs(who Subscriber, params json.RawMessage) (any, e
 		TokenID:      who.TokenID,
 		Scope:        who.Scope,
 		Created:      time.Now().UTC().Truncate(time.Second),
+		Prefs:        withPrefs.Prefs,
 	}
 	m.persistSubs()
 	n := len(m.subs)
@@ -361,9 +430,25 @@ func (m *Manager) Watch(ctx context.Context, b *broker.Broker) {
 	}
 }
 
+// sessionState is what the watcher remembers between snapshots.
+type sessionState struct {
+	ambient string
+	// workingSince is when this session most recently started working. Zero
+	// when it is not (and has not been) working, which is what distinguishes a
+	// genuine run from a session that was idle all along.
+	workingSince time.Time
+}
+
 // blockedState reports whether an ambientState means "needs you".
 func blockedState(s string) bool {
 	return s == "waiting_approval" || s == "waiting_input"
+}
+
+// workingState reports whether an ambientState means the agent is doing
+// something. `background` counts: the turn has ended but spawned subagents or a
+// workflow are still running, so the work is not finished until that clears.
+func workingState(s string) bool {
+	return s == "thinking" || s == "streaming" || s == "background"
 }
 
 func (m *Manager) onSnapshot(data json.RawMessage) {
@@ -379,28 +464,73 @@ func (m *Manager) onSnapshot(data json.RawMessage) {
 	if json.Unmarshal(data, &s) != nil || s.SessionID == "" {
 		return
 	}
+	name := dirName(s.LiveCwd)
+	if name == "" {
+		name = dirName(s.Cwd)
+	}
+	if name == "" {
+		name = "Agent"
+	}
+
+	prev, seen := m.states[s.SessionID]
+
 	if s.Status == "ended" {
 		delete(m.states, s.SessionID)
+		// Only for a session we were actually tracking: the snapshot list
+		// carries ended rows for sessions that ended long ago (and the desktop
+		// re-publishes them), so notifying on any ended row would ring the phone
+		// for history every time a client reconnects.
+		if seen {
+			m.notify(KindEnded, name, "Session ended", s.SessionID, 0)
+		}
 		return
 	}
-	prev := m.states[s.SessionID]
-	m.states[s.SessionID] = s.AmbientState
-	if blockedState(s.AmbientState) && !blockedState(prev) {
-		name := dirName(s.LiveCwd)
-		if name == "" {
-			name = dirName(s.Cwd)
+
+	next := sessionState{ambient: s.AmbientState, workingSince: prev.workingSince}
+	if workingState(s.AmbientState) {
+		if !workingState(prev.ambient) || prev.workingSince.IsZero() {
+			next.workingSince = m.now() // a run just started
 		}
-		if name == "" {
-			name = "Agent"
-		}
+	}
+	m.states[s.SessionID] = next
+
+	if blockedState(s.AmbientState) && !blockedState(prev.ambient) {
 		body := "Waiting for you"
 		if s.AmbientState == "waiting_approval" {
 			body = "Approve a tool use"
 		} else if s.AmbientState == "waiting_input" {
 			body = "Answer a question"
 		}
-		m.notify(name+" needs you", body, s.SessionID)
+		m.notify(KindNeeds, name+" needs you", body, s.SessionID, 0)
+		return
 	}
+
+	// Finished: a run that was working (or parked waiting on you mid-run) has
+	// gone idle. Blocked counts as still-in-the-run, so approving a tool and
+	// walking away still earns the finish push.
+	wasRunning := workingState(prev.ambient) || blockedState(prev.ambient)
+	if s.AmbientState == "idle" && wasRunning && !prev.workingSince.IsZero() {
+		ran := m.now().Sub(prev.workingSince)
+		m.states[s.SessionID] = sessionState{ambient: s.AmbientState} // run is over
+		m.notify(KindFinished, name+" finished", "Ran for "+humanDur(ran), s.SessionID, ran)
+	}
+}
+
+// humanDur renders a run length the way a notification should read it —
+// "40s", "4m", "1h12m" — not 2m3.004s.
+func humanDur(d time.Duration) string {
+	if d < time.Minute {
+		return strconv.Itoa(int(d.Round(time.Second)/time.Second)) + "s"
+	}
+	if d < time.Hour {
+		return strconv.Itoa(int(d.Round(time.Minute)/time.Minute)) + "m"
+	}
+	h := int(d / time.Hour)
+	mins := int((d % time.Hour).Round(time.Minute) / time.Minute)
+	if mins == 0 {
+		return strconv.Itoa(h) + "h"
+	}
+	return strconv.Itoa(h) + "h" + strconv.Itoa(mins) + "m"
 }
 
 func dirName(p string) string {
@@ -428,29 +558,46 @@ func dirName(p string) string {
 // A multi-user deployment would leak one operator's agent activity to another's
 // devices; supporting that would mean filtering on the subscriber identity
 // recorded here rather than only checking that it is still valid.
-func (m *Manager) sendAll(title, body, sessionID string) {
-	payload, _ := json.Marshal(map[string]string{"title": title, "body": body, "sessionId": sessionID})
-	for _, s := range m.recipients() {
+func (m *Manager) sendAll(k Kind, title, body, sessionID string, ranFor time.Duration) {
+	payload, _ := json.Marshal(map[string]string{
+		"title": title, "body": body, "sessionId": sessionID, "kind": string(k),
+	})
+	for _, s := range m.recipients(k, ranFor) {
 		go m.sendOne(s, payload)
 	}
 }
 
-// recipients is the authorized subset of the stored subscriptions — the
-// revocation filter itself, split out so it can be asserted on without a
-// network.
-func (m *Manager) recipients() []webpush.Subscription {
+// recipients is the authorized subset of the stored subscriptions that also
+// WANT this kind — the revocation and preference filters, split out so they can
+// be asserted on without a network.
+//
+// The threshold check lives here rather than at the trigger because it is a
+// per-device setting: one phone can ask for every finish and another only for
+// runs over five minutes, from the same edge.
+func (m *Manager) recipients(k Kind, ranFor time.Duration) []webpush.Subscription {
 	stored, valid := m.snapshot()
 	subs := make([]webpush.Subscription, 0, len(stored))
-	skipped := 0
+	skipped, muted := 0, 0
 	for _, s := range stored {
 		if s.TokenID != "" && valid != nil && !valid(s.TokenID) {
 			skipped++
+			continue
+		}
+		if !s.Prefs.wants(k) {
+			muted++
+			continue
+		}
+		if k == KindFinished && ranFor < s.Prefs.finishedAfter() {
+			muted++
 			continue
 		}
 		subs = append(subs, s.Subscription)
 	}
 	if skipped > 0 {
 		log.Printf("push: skipped %d subscription(s) whose token has been revoked", skipped)
+	}
+	if muted > 0 {
+		log.Printf("push: %d subscription(s) have %q turned off or below threshold", muted, k)
 	}
 	return subs
 }

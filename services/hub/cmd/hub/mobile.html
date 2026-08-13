@@ -1917,6 +1917,7 @@
     const rows = [
       { label: 'Open inspector', run: () => { S.seg = 'flows'; go('flows'); } },
       { label: 'Insert saved prompt', run: () => openLibrarySheet() },
+      { label: 'Notification settings', run: () => openNotifySheet() },
     ];
     if (isWorking(s)) rows.unshift({ label: 'Interrupt this turn', run: () => interrupt(s.sessionId) });
     rows.push({ label: 'Copy working directory', run: () => copyText(agentPath(s)) });
@@ -2388,6 +2389,72 @@
     if (swReg) return swReg;
     try { swReg = await navigator.serviceWorker.register('/sw.js'); return swReg; } catch { return null; }
   }
+  // ── notification settings ────────────────────────────────────────────────
+  // The DEVICE owns these; the hub only stores them to filter delivery. They
+  // ride on push.subscribe, which the client already sends on every connect —
+  // no second bus method to add, classify and keep in sync. Absent fields mean
+  // "default", so a hub or client that predates a kind keeps notifying rather
+  // than silently going quiet.
+  const PUSH_PREF_KEY = 'pushPrefs';
+  const FINISHED_CHOICES = [
+    { sec: 0, label: 'Any length' },
+    { sec: 60, label: 'Over 1 min' },
+    { sec: 300, label: 'Over 5 min' },
+    { sec: 900, label: 'Over 15 min' },
+  ];
+  function loadPushPrefs() {
+    try { return JSON.parse(localStorage.getItem(PUSH_PREF_KEY)) || {}; } catch { return {}; }
+  }
+  let pushPrefs = loadPushPrefs();
+  function savePushPrefs(next) {
+    pushPrefs = next;
+    try { localStorage.setItem(PUSH_PREF_KEY, JSON.stringify(next)); } catch {}
+    // Re-send immediately so a toggle takes effect now rather than on the next
+    // reconnect — the whole point is turning off a notification that is
+    // annoying you at this moment.
+    if (Notification.permission === 'granted') ensurePush(true);
+  }
+  const prefOn = (k) => pushPrefs[k] !== false;
+  const finishedAfter = () =>
+    typeof pushPrefs.finishedAfterSec === 'number' ? pushPrefs.finishedAfterSec : 60;
+
+  function openNotifySheet() {
+    if (!pushOk) {
+      showSheet('NOTIFICATIONS', [{ label: 'Add to Home Screen first', disabled: true }]);
+      return;
+    }
+    const check = (on) => (on ? '✓ ' : '   ');
+    const after = FINISHED_CHOICES.find((c) => c.sec === finishedAfter()) || FINISHED_CHOICES[1];
+    const rows = [
+      {
+        label: check(prefOn('needs')) + 'An agent needs you',
+        run: () => { savePushPrefs({ ...pushPrefs, needs: !prefOn('needs') }); openNotifySheet(); },
+      },
+      {
+        label: check(prefOn('finished')) + 'A run finishes',
+        run: () => { savePushPrefs({ ...pushPrefs, finished: !prefOn('finished') }); openNotifySheet(); },
+      },
+      {
+        label: '     …only when it ran: ' + after.label,
+        disabled: !prefOn('finished'),
+        run: () => {
+          const i = FINISHED_CHOICES.findIndex((c) => c.sec === after.sec);
+          const next = FINISHED_CHOICES[(i + 1) % FINISHED_CHOICES.length];
+          savePushPrefs({ ...pushPrefs, finishedAfterSec: next.sec });
+          openNotifySheet();
+        },
+      },
+      {
+        label: check(prefOn('ended')) + 'A session ends',
+        run: () => { savePushPrefs({ ...pushPrefs, ended: !prefOn('ended') }); openNotifySheet(); },
+      },
+    ];
+    if (Notification.permission !== 'granted') {
+      rows.unshift({ label: 'Enable notifications first', run: () => ensurePush(false) });
+    }
+    showSheet('NOTIFICATIONS', rows);
+  }
+
   async function ensurePush(silent) {
     if (!pushOk) { if (!silent) toast('Push not supported here'); return; }
     if (Notification.permission === 'denied') { if (!silent) toast('Notifications are blocked in settings'); return; }
@@ -2403,7 +2470,16 @@
         if (!r || !r.publicKey) return;
         sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8(r.publicKey) });
       }
-      await call('push.subscribe', sub.toJSON());
+      // Prefs ride along: same call, no extra bus surface. The hub treats
+      // absent fields as defaults, so an older hub simply ignores them.
+      await call('push.subscribe', Object.assign(sub.toJSON(), {
+        prefs: {
+          needs: prefOn('needs'),
+          finished: prefOn('finished'),
+          ended: prefOn('ended'),
+          finishedAfterSec: finishedAfter(),
+        },
+      }));
       if (!silent) toast('Notifications on');
       render();
     } catch (e) { if (!silent) toast("Couldn't enable: " + errText(e)); }

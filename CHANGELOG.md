@@ -25,6 +25,14 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   again rather than treating "I read them" as an answer. The notes open on the
   release page because a running build cannot contain them — its copy of the
   changelog was baked before that release existed.
+- **More kinds of phone notification, and per-device control of them.** The
+  phone used to buzz for one thing: an agent blocked on you. It now also
+  notifies when a run *finishes* and when a session *ends* — and because every
+  turn ends, "finished" only fires for runs longer than a threshold, so the
+  twenty-second exchange you are watching stays silent while the thing you
+  walked away from tells you it is done. Each kind is switchable per device
+  (More → Notification settings), with the length threshold picked from Any /
+  1m / 5m / 15m, so a phone and a tablet need not agree.
 - **Spawn an agent from the command palette.** It already could, under a name
   nobody would search for.
 

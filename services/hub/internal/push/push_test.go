@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func newTestManager(t *testing.T) (*Manager, *[]string) {
 		t.Fatalf("New: %v", err)
 	}
 	var fired []string
-	m.notify = func(title, body, sessionID string) {
+	m.notify = func(_ Kind, title, body, sessionID string, _ time.Duration) {
 		fired = append(fired, sessionID+":"+title+":"+body)
 	}
 	return m, &fired
@@ -177,13 +178,13 @@ func TestRevokedTokenStopsReceivingPushes(t *testing.T) {
 	live := map[string]bool{"id-phone": true, "id-tablet": true}
 	m.SetTokenValidator(func(id string) bool { return live[id] })
 
-	if got := endpoints(m.recipients()); len(got) != 2 {
+	if got := endpoints(m.recipients(KindNeeds, 0)); len(got) != 2 {
 		t.Fatalf("recipients before revocation = %v, want both devices", got)
 	}
 
 	// `workspacer token revoke` drops the tablet's token from the store.
 	delete(live, "id-tablet")
-	got := endpoints(m.recipients())
+	got := endpoints(m.recipients(KindNeeds, 0))
 	if len(got) != 1 || got[0] != "https://push.example/phone" {
 		t.Fatalf("recipients after revoking the tablet = %v, want only the phone", got)
 	}
@@ -205,7 +206,7 @@ func TestRevokedTokenStopsReceivingPushes(t *testing.T) {
 		t.Fatalf("New (reopen): %v", err)
 	}
 	reopened.SetTokenValidator(func(id string) bool { return live[id] })
-	if got := endpoints(reopened.recipients()); len(got) != 1 || got[0] != "https://push.example/phone" {
+	if got := endpoints(reopened.recipients(KindNeeds, 0)); len(got) != 1 || got[0] != "https://push.example/phone" {
 		t.Fatalf("recipients after restart = %v, want only the phone", got)
 	}
 }
@@ -224,20 +225,20 @@ func TestUnattributedSubscriptionsStillReceive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if got := endpoints(m.recipients()); len(got) != 1 || got[0] != "https://push.example/legacy" {
+	if got := endpoints(m.recipients(KindNeeds, 0)); len(got) != 1 || got[0] != "https://push.example/legacy" {
 		t.Fatalf("pre-identity subscription did not load: %v", got)
 	}
 	// A validator that rejects everything must not affect it — it has no
 	// recorded credential to check.
 	m.SetTokenValidator(func(string) bool { return false })
-	if got := endpoints(m.recipients()); len(got) != 1 {
+	if got := endpoints(m.recipients(KindNeeds, 0)); len(got) != 1 {
 		t.Fatalf("recipients = %v, want the unattributed subscription kept", got)
 	}
 	// And with no validator at all (no token store wired), an attributed
 	// subscription is delivered to as before.
 	subscribeAs(t, m, "https://push.example/new", "id-new", "operator")
 	m.SetTokenValidator(nil)
-	if got := endpoints(m.recipients()); len(got) != 2 {
+	if got := endpoints(m.recipients(KindNeeds, 0)); len(got) != 2 {
 		t.Fatalf("recipients with no validator = %v, want both", got)
 	}
 }
@@ -344,8 +345,21 @@ func TestEndedSessionResetsSoItCanRefire(t *testing.T) {
 	m.onSnapshot(snap("s2", "/x/y", "waiting_approval", "active"))
 	m.onSnapshot(snap("s2", "/x/y", "waiting_approval", "ended"))  // ended clears state
 	m.onSnapshot(snap("s2", "/x/y", "waiting_approval", "active")) // fresh edge → fires again
-	if len(*fired) != 2 {
-		t.Fatalf("expected 2 notifications across the ended reset, got %v", *fired)
+	// Three now, not two: the ended row is itself notifiable. The point of this
+	// test is unchanged — the needs-you edge must be able to fire AGAIN after an
+	// ended reset — so assert the two blocked notifications specifically rather
+	// than a bare count that the new kind would satisfy by accident.
+	var needs []string
+	for _, f := range *fired {
+		if strings.Contains(f, "needs you") {
+			needs = append(needs, f)
+		}
+	}
+	if len(needs) != 2 {
+		t.Fatalf("expected 2 needs-you notifications across the ended reset, got %v", *fired)
+	}
+	if len(*fired) != 3 || !strings.Contains((*fired)[1], "Session ended") {
+		t.Fatalf("expected the ended row to notify between them, got %v", *fired)
 	}
 }
 
@@ -430,5 +444,230 @@ func TestSendOneGivesUpOnAServerThatNeverResponds(t *testing.T) {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("sendOne did not return — the send is unbounded")
+	}
+}
+
+// ── finished / ended kinds ───────────────────────────────────────────────────
+
+// fires captures (kind, body, ranFor) so the threshold logic can be asserted
+// without a clock or a network.
+func newKindManager(t *testing.T) (*Manager, *[]struct {
+	Kind Kind
+	Body string
+	Ran  time.Duration
+}) {
+	t.Helper()
+	m, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var fired []struct {
+		Kind Kind
+		Body string
+		Ran  time.Duration
+	}
+	m.notify = func(k Kind, _, body, _ string, ran time.Duration) {
+		fired = append(fired, struct {
+			Kind Kind
+			Body string
+			Ran  time.Duration
+		}{k, body, ran})
+	}
+	return m, &fired
+}
+
+// A run that goes idle is "finished"; the duration travels with it so each
+// device can apply its own threshold.
+func TestFinishedFiresOnWorkingToIdleWithDuration(t *testing.T) {
+	m, fired := newKindManager(t)
+	now := time.Unix(1_700_000_000, 0)
+	m.now = func() time.Time { return now }
+
+	m.onSnapshot(snap("s1", "/x/proj", "streaming", "active"))
+	now = now.Add(4 * time.Minute)
+	m.onSnapshot(snap("s1", "/x/proj", "idle", "active"))
+
+	if len(*fired) != 1 || (*fired)[0].Kind != KindFinished {
+		t.Fatalf("expected one finished notification, got %+v", *fired)
+	}
+	if got := (*fired)[0].Ran; got != 4*time.Minute {
+		t.Fatalf("run length: want 4m, got %v", got)
+	}
+	if got := (*fired)[0].Body; got != "Ran for 4m" {
+		t.Fatalf("body: %q", got)
+	}
+}
+
+// `background` means the turn ended but spawned work is still running — the run
+// is not over, so no finish fires until it actually clears.
+func TestBackgroundIsStillRunning(t *testing.T) {
+	m, fired := newKindManager(t)
+	now := time.Unix(1_700_000_000, 0)
+	m.now = func() time.Time { return now }
+
+	m.onSnapshot(snap("s1", "/x/proj", "streaming", "active"))
+	now = now.Add(30 * time.Second)
+	m.onSnapshot(snap("s1", "/x/proj", "background", "active"))
+	if len(*fired) != 0 {
+		t.Fatalf("background must not read as finished, got %+v", *fired)
+	}
+	now = now.Add(90 * time.Second)
+	m.onSnapshot(snap("s1", "/x/proj", "idle", "active"))
+	if len(*fired) != 1 || (*fired)[0].Ran != 2*time.Minute {
+		t.Fatalf("expected one finish spanning the whole run, got %+v", *fired)
+	}
+}
+
+// Being blocked on you mid-run is part of the run: approving a tool and walking
+// away must still earn the finish push, timed from when the work started.
+func TestBlockedMidRunStillFinishes(t *testing.T) {
+	m, fired := newKindManager(t)
+	now := time.Unix(1_700_000_000, 0)
+	m.now = func() time.Time { return now }
+
+	m.onSnapshot(snap("s1", "/x/proj", "streaming", "active"))
+	now = now.Add(1 * time.Minute)
+	m.onSnapshot(snap("s1", "/x/proj", "waiting_approval", "active")) // needs-you
+	now = now.Add(2 * time.Minute)
+	m.onSnapshot(snap("s1", "/x/proj", "idle", "active"))
+
+	if len(*fired) != 2 || (*fired)[0].Kind != KindNeeds || (*fired)[1].Kind != KindFinished {
+		t.Fatalf("expected needs then finished, got %+v", *fired)
+	}
+	if got := (*fired)[1].Ran; got != 3*time.Minute {
+		t.Fatalf("run should span the approval wait: want 3m, got %v", got)
+	}
+}
+
+// A session that was idle all along has no run behind it, so going idle again
+// is not a finish.
+func TestIdleWithoutARunNeverFinishes(t *testing.T) {
+	m, fired := newKindManager(t)
+	m.now = func() time.Time { return time.Unix(1_700_000_000, 0) }
+	m.onSnapshot(snap("s1", "/x/proj", "idle", "active"))
+	m.onSnapshot(snap("s1", "/x/proj", "idle", "active"))
+	if len(*fired) != 0 {
+		t.Fatalf("idle→idle must not notify, got %+v", *fired)
+	}
+}
+
+// The ended rows the desktop republishes for long-dead sessions must not ring
+// the phone every time a client reconnects — only a session we were tracking.
+func TestEndedOnlyNotifiesForATrackedSession(t *testing.T) {
+	m, fired := newKindManager(t)
+	m.now = func() time.Time { return time.Unix(1_700_000_000, 0) }
+
+	m.onSnapshot(snap("ghost", "/x/old", "idle", "ended")) // never seen before
+	if len(*fired) != 0 {
+		t.Fatalf("an untracked ended row must be silent, got %+v", *fired)
+	}
+	m.onSnapshot(snap("s1", "/x/proj", "streaming", "active"))
+	m.onSnapshot(snap("s1", "/x/proj", "idle", "ended"))
+	if len(*fired) != 1 || (*fired)[0].Kind != KindEnded {
+		t.Fatalf("expected one ended notification, got %+v", *fired)
+	}
+}
+
+func boolp(b bool) *bool { return &b }
+func intp(i int) *int    { return &i }
+
+// Per-device filtering: the same edge reaches one phone and not another.
+func TestRecipientsRespectPerDevicePrefs(t *testing.T) {
+	m, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	add := func(name string, p Prefs) {
+		m.subs["https://push.example/"+name] = storedSub{
+			Subscription: webpush.Subscription{Endpoint: "https://push.example/" + name},
+			Prefs:        p,
+		}
+	}
+	add("all", Prefs{})                                // unset = everything
+	add("quiet", Prefs{Finished: boolp(false)})        // no finish pushes
+	add("patient", Prefs{FinishedAfterSec: intp(300)}) // only runs over 5m
+	add("eager", Prefs{FinishedAfterSec: intp(0)})     // any finish at all
+
+	got := func(k Kind, ran time.Duration) []string {
+		out := endpoints(m.recipients(k, ran))
+		sort.Strings(out)
+		return out
+	}
+
+	// A 90s run: over the 60s default, under "patient"'s 5m.
+	if e := got(KindFinished, 90*time.Second); len(e) != 2 ||
+		e[0] != "https://push.example/all" || e[1] != "https://push.example/eager" {
+		t.Fatalf("90s finish went to %v", e)
+	}
+	// A 10m run reaches everyone who wants finishes.
+	if e := got(KindFinished, 10*time.Minute); len(e) != 3 {
+		t.Fatalf("10m finish went to %v", e)
+	}
+	// A 5s run is under every threshold except the eager one's zero.
+	if e := got(KindFinished, 5*time.Second); len(e) != 1 || e[0] != "https://push.example/eager" {
+		t.Fatalf("5s finish went to %v", e)
+	}
+	// needs-you is untouched by any of the finish settings.
+	if e := got(KindNeeds, 0); len(e) != 4 {
+		t.Fatalf("needs-you must reach every device, got %v", e)
+	}
+}
+
+// A subscription stored before prefs existed decodes to all-unset, which must
+// read as "send me everything" — not as a silently muted device.
+func TestLegacySubscriptionKeepsReceiving(t *testing.T) {
+	var p Prefs
+	if err := json.Unmarshal([]byte(`{}`), &p); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []Kind{KindNeeds, KindFinished, KindEnded} {
+		if !p.wants(k) {
+			t.Fatalf("unset prefs must want %q", k)
+		}
+	}
+	if p.finishedAfter() != DefaultFinishedAfter {
+		t.Fatalf("unset threshold: want default, got %v", p.finishedAfter())
+	}
+}
+
+// The wire contract with the phone: mobile.html sends prefs alongside the
+// browser's PushSubscription on the SAME push.subscribe call. If this shape
+// drifts, prefs silently revert to defaults and every toggle stops working
+// with nothing to show for it.
+func TestSubscribeStoresPrefsFromTheWire(t *testing.T) {
+	m, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	// Exactly what the client sends: PushSubscription.toJSON() + prefs.
+	params := []byte(`{
+	  "endpoint": "https://push.example/phone",
+	  "keys": { "p256dh": "k", "auth": "a" },
+	  "prefs": { "needs": true, "finished": false, "ended": true, "finishedAfterSec": 300 }
+	}`)
+	if _, err := m.RPCSubscribeAs(Subscriber{}, params); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	got := m.subs["https://push.example/phone"].Prefs
+	if got.Finished == nil || *got.Finished {
+		t.Fatalf("finished should be stored as false, got %+v", got.Finished)
+	}
+	if got.FinishedAfterSec == nil || *got.FinishedAfterSec != 300 {
+		t.Fatalf("threshold not stored: %+v", got.FinishedAfterSec)
+	}
+	// And it actually filters: this device wants no finishes at all.
+	if e := endpoints(m.recipients(KindFinished, time.Hour)); len(e) != 0 {
+		t.Fatalf("a device with finished:false still got one: %v", e)
+	}
+	if e := endpoints(m.recipients(KindNeeds, 0)); len(e) != 1 {
+		t.Fatalf("needs-you must still reach it, got %v", e)
+	}
+	// Survives a reload — prefs are part of the persisted record.
+	reopened, err := New(m.dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if e := endpoints(reopened.recipients(KindFinished, time.Hour)); len(e) != 0 {
+		t.Fatalf("prefs lost across reload: %v", e)
 	}
 }
