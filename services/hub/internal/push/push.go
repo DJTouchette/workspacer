@@ -652,18 +652,26 @@ func (m *Manager) sendAll(k Kind, title, body, sessionID string, ranFor time.Dur
 func (m *Manager) recipients(k Kind, ranFor time.Duration) []webpush.Subscription {
 	stored, valid := m.snapshot()
 	subs := make([]webpush.Subscription, 0, len(stored))
-	skipped, muted := 0, 0
+	skipped, off := 0, 0
+	// Below-threshold is counted with the LONGEST threshold that rejected it, so
+	// the log can say what a device is actually waiting for. "turned off or
+	// below threshold" told you a notification was withheld and left you to
+	// guess which of two unrelated settings did it.
+	short, longestWanted := 0, time.Duration(0)
 	for _, s := range stored {
 		if s.TokenID != "" && valid != nil && !valid(s.TokenID) {
 			skipped++
 			continue
 		}
 		if !s.Prefs.wants(k) {
-			muted++
+			off++
 			continue
 		}
 		if k == KindFinished && ranFor < s.Prefs.finishedAfter() {
-			muted++
+			short++
+			if want := s.Prefs.finishedAfter(); want > longestWanted {
+				longestWanted = want
+			}
 			continue
 		}
 		subs = append(subs, s.Subscription)
@@ -671,8 +679,12 @@ func (m *Manager) recipients(k Kind, ranFor time.Duration) []webpush.Subscriptio
 	if skipped > 0 {
 		log.Printf("push: skipped %d subscription(s) whose token has been revoked", skipped)
 	}
-	if muted > 0 {
-		log.Printf("push: %d subscription(s) have %q turned off or below threshold", muted, k)
+	if off > 0 {
+		log.Printf("push: %d subscription(s) have %q switched off", off, k)
+	}
+	if short > 0 {
+		log.Printf("push: %d subscription(s) want finishes longer than %s; this run was %s",
+			short, humanDur(longestWanted), humanDur(ranFor))
 	}
 	return subs
 }
