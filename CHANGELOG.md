@@ -50,6 +50,13 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   "4m" looks identical whether a run is alive or wedged.
 
 ### Fixed
+- **Your newest message stopped riding the top of the viewport.** Sending
+  scrolled the transcript so your message sat at the top with the reply growing
+  into the space below it; since 0.148.0 the message was landing at the bottom
+  instead, with the blank space stranded below the fold. The spacer was being
+  built correctly and never scrolled into: the scroll the pin itself issued was
+  being read as *you* scrolling away, which unstuck the pin a few milliseconds
+  after it armed.
 - **Connecting a web or remote client took far longer than it should have.** The
   hub published every session's entire transcript on every flush of every
   session — for a 500-turn agent that is 2.73 MB per push, so a fleet of fifteen

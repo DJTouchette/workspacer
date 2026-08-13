@@ -706,6 +706,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // scroll-to-bottom button) the view stops following, and it resumes when
   // they return. A ref, not state — read from the ResizeObserver below.
   const stickToBottomRef = useRef(true);
+  /** True while a scroll WE issued is in flight, so its scroll event isn't
+   *  mistaken for the user scrolling away. See followTail / handleScroll. */
+  const programmaticScrollRef = useRef(false);
 
   // Tail spacer: dead space below the transcript that lets the newest user
   // message sit at the TOP of the viewport, so the reply streams into the empty
@@ -740,6 +743,17 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       tailPad: tailPadRef.current,
     });
     setShowScrollBtn(contentDist > 150);
+    // Only a USER scroll may unstick. followTail's own scroll lands before the
+    // tail spacer it just asked for has been laid out, so this handler would
+    // measure the new scrollHeight against the old scrollTop, see a full
+    // spacer's worth of raw distance, and unstick the pin that had just armed
+    // — stranding the sent message at the BOTTOM of the viewport, short by
+    // exactly tailPad, permanently. Neither distance can tell the two apart;
+    // only the origin of the scroll can.
+    if (programmaticScrollRef.current) {
+      programmaticScrollRef.current = false;
+      return;
+    }
     stickToBottomRef.current = rawDist <= 150;
   }, []);
 
@@ -1583,7 +1597,16 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     if (!container) return;
     measureTailPad();
     if (!stickToBottomRef.current) return;
+    // Flag before the write: the scroll event this queues must not be read as
+    // the user scrolling away (see handleScroll). Cleared by that handler, with
+    // a macrotask backstop for the case where scrollTop doesn't actually move
+    // and no scroll event ever fires — otherwise a stale flag would swallow the
+    // user's next real scroll.
+    programmaticScrollRef.current = true;
     container.scrollTop = container.scrollHeight;
+    setTimeout(() => {
+      programmaticScrollRef.current = false;
+    }, 0);
   }, [measureTailPad]);
 
   useEffect(() => {
