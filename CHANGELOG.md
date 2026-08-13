@@ -67,6 +67,17 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   "4m" looks identical whether a run is alive or wedged.
 
 ### Fixed
+- **Web Push never worked on iPhone at all.** Every notification to
+  `web.push.apple.com` came back `403` and always had: the VAPID `sub` claim was
+  `mailto:workspacer@localhost`, and Apple requires a real domain or an `https:`
+  URL. Chrome and Android accept it, so the one push service that refused it was
+  the one the feature was built for — and the send path discarded its error
+  without a log, so the refusal was invisible from the moment it shipped. Send
+  failures are now logged with the push service and status code, and the phone's
+  test button reports what was actually delivered rather than how many
+  subscriptions it tried (it said "sent to 4 devices" while four of them were
+  being refused). Existing subscriptions keep working; the subject is a claim
+  inside the signed JWT, not part of the keypair.
 - **The phone client could sit on "Offline" far longer than it needed to.** Its
   handshake watchdog gave every connection attempt a flat 4.5 seconds — but the
   case it exists for is a sleeping host or a cold tailnet link, which takes far

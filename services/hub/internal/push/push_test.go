@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -684,19 +685,25 @@ func TestTestPushIgnoresMutedKinds(t *testing.T) {
 		Subscription: webpush.Subscription{Endpoint: "https://push.example/silent"},
 		Prefs:        Prefs{Needs: boolp(false), Finished: boolp(false), Ended: boolp(false)},
 	}
-	var got []Kind
-	m.notify = func(k Kind, _, _, _ string, _ time.Duration) { got = append(got, k) }
+	var sent []string
+	m.send = func(sub webpush.Subscription, _ []byte) (int, error) {
+		sent = append(sent, sub.Endpoint)
+		return 201, nil
+	}
 
 	res, err := m.RPCTest(nil)
 	if err != nil {
 		t.Fatalf("RPCTest: %v", err)
 	}
-	if len(got) != 1 || got[0] != KindTest {
-		t.Fatalf("expected one test notification, got %v", got)
+	if len(sent) != 1 || sent[0] != "https://push.example/silent" {
+		t.Fatalf("expected one send to the muted device, got %v", sent)
 	}
-	// It reports the device count so a zero is itself the diagnosis.
-	if d := res.(map[string]any)["devices"]; d != 1 {
-		t.Fatalf("a device with every kind muted must still count for the test: %v", d)
+	// It reports what actually HAPPENED, not what it attempted — the first
+	// version returned len(recipients) before any send completed, so it said
+	// "sent to 4 devices" while four dead endpoints were about to 410.
+	got := res.(map[string]any)
+	if got["delivered"] != 1 || got["gone"] != 0 || got["failed"] != 0 {
+		t.Fatalf("counts should reflect the real outcome: %v", got)
 	}
 	if e := endpoints(m.recipients(KindTest, 0)); len(e) != 1 {
 		t.Fatalf("test push must reach a fully-muted device, got %v", e)
@@ -704,5 +711,75 @@ func TestTestPushIgnoresMutedKinds(t *testing.T) {
 	// And the mutes it ignores are still honoured for real notifications.
 	if e := endpoints(m.recipients(KindNeeds, 0)); len(e) != 0 {
 		t.Fatalf("needs-you must still be muted for that device, got %v", e)
+	}
+}
+
+// The reported bug: "Sent to 4 devices" while nothing arrived. The count was
+// len(recipients), taken before any delivery completed, so stale endpoints read
+// as success. This is that exact fleet — one live phone, two dead endpoints and
+// one refusal — and the numbers must tell them apart.
+func TestTestPushReportsOutcomesNotAttempts(t *testing.T) {
+	m, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	for _, e := range []string{"live", "gone1", "gone2", "refused"} {
+		m.subs["https://push.example/"+e] = storedSub{
+			Subscription: webpush.Subscription{Endpoint: "https://push.example/" + e},
+		}
+	}
+	m.send = func(sub webpush.Subscription, _ []byte) (int, error) {
+		switch {
+		case strings.HasSuffix(sub.Endpoint, "/live"):
+			return 201, nil
+		case strings.Contains(sub.Endpoint, "/gone"):
+			return 410, nil
+		default:
+			return 400, nil
+		}
+	}
+
+	res, err := m.RPCTest(nil)
+	if err != nil {
+		t.Fatalf("RPCTest: %v", err)
+	}
+	got := res.(map[string]any)
+	if got["devices"] != 4 {
+		t.Fatalf("devices should be everything it tried: %v", got)
+	}
+	if got["delivered"] != 1 {
+		t.Fatalf("exactly one endpoint accepted it; delivered=%v (if this equals devices, the count is of ATTEMPTS again)", got["delivered"])
+	}
+	if got["gone"] != 2 {
+		t.Fatalf("two endpoints were 410; gone=%v", got["gone"])
+	}
+	if got["failed"] != 1 {
+		t.Fatalf("one endpoint refused; failed=%v", got["failed"])
+	}
+}
+
+// Apple refuses a VAPID JWT whose `sub` is not a mailto: with a real domain or
+// an https: URL. It was "mailto:workspacer@localhost" — which FCM accepts, so
+// Chrome and Android worked while web.push.apple.com returned 403 on every
+// notification, forever. The one platform that refused it was the one the
+// feature exists for.
+func TestVAPIDSubjectIsAcceptableToApple(t *testing.T) {
+	u, err := url.Parse(vapidSubject)
+	if err != nil {
+		t.Fatalf("vapidSubject %q does not parse: %v", vapidSubject, err)
+	}
+	switch u.Scheme {
+	case "https":
+		if u.Host == "" || !strings.Contains(u.Host, ".") {
+			t.Fatalf("https subject needs a real host, got %q", vapidSubject)
+		}
+	case "mailto":
+		// url.Parse puts the address in Opaque for mailto:.
+		at := strings.LastIndex(u.Opaque, "@")
+		if at < 0 || !strings.Contains(u.Opaque[at+1:], ".") {
+			t.Fatalf("mailto subject needs a real domain (this is exactly what @localhost failed), got %q", vapidSubject)
+		}
+	default:
+		t.Fatalf("VAPID sub must be mailto: or https:, got %q", vapidSubject)
 	}
 }

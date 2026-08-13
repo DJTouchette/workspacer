@@ -88,6 +88,12 @@
   #statusPill { flex:none; display:flex; align-items:center; gap:7px; padding:6px 11px 6px 9px;
     border-radius:999px; border:1px solid var(--line5); background:var(--raised); }
   #statusPill:active { background:var(--active); }
+  /* App-level settings. In the header because the header is the only chrome on
+     EVERY screen — the composer's + button only exists once you have opened an
+     agent's chat, which is no place to keep a setting about the app. */
+  .gear { width:30px; height:30px; margin-right:-4px; flex:none; display:flex; align-items:center;
+    justify-content:center; border-radius:8px; color:var(--muted); font-size:16px; }
+  .gear:active { background:var(--active); }
   #statusPill .lbl { font-size:12.5px; font-weight:600; letter-spacing:-.01em; }
 
   .dot { width:9px; height:9px; border-radius:999px; flex:none; display:block; }
@@ -487,6 +493,7 @@
         <div class="sub rtl" id="sub"></div>
       </div>
       <button id="statusPill"><span class="dot" id="statusDot"></span><span class="lbl" id="statusLabel">—</span></button>
+      <button class="gear" id="gearBtn" aria-label="Notification settings">⚙</button>
     </div>
     <div id="filters" hidden></div>
     <div id="segments" hidden></div>
@@ -523,6 +530,7 @@
   const $ = (id) => document.getElementById(id);
   const hdr = $('hdr'), titleEl = $('title'), titleMetaEl = $('titleMeta'), subEl = $('sub');
   const statusPill = $('statusPill'), statusDot = $('statusDot'), statusLabel = $('statusLabel');
+  const gearBtn = $('gearBtn');
   const filtersEl = $('filters'), segmentsEl = $('segments'), main = $('main');
   const composer = $('composer'), askDock = $('askDock'), chipsEl = $('chips');
   const msgEl = $('msg'), sendBtn = $('send'), moreBtn = $('moreBtn'), backBtn = $('backBtn');
@@ -2453,9 +2461,15 @@
         label: 'Send me a test notification',
         run: async () => {
           try {
-            const r = await call('push.test', {});
-            const n = (r && r.devices) || 0;
-            toast(n ? `Sent to ${n} device${n === 1 ? '' : 's'}` : 'No devices subscribed yet');
+            const r = (await call('push.test', {})) || {};
+            const d = r.delivered || 0, gone = r.gone || 0, failed = r.failed || 0;
+            // Report what HAPPENED. "Sent to 4 devices" was the count of stored
+            // rows, printed before a single delivery had completed — four dead
+            // endpoints read as success.
+            if (!r.devices) toast('No devices subscribed yet');
+            else if (d) toast(`Delivered to ${d}${gone ? ` · ${gone} stale removed` : ''}${failed ? ` · ${failed} failed` : ''}`);
+            else if (gone) toast(`All ${gone} subscriptions were stale — removed. Re-enable notifications.`);
+            else toast(`Push service refused all ${failed} — see the hub log`);
           } catch (e) { toast('Test failed: ' + errText(e)); }
         },
       },
@@ -2653,6 +2667,7 @@
   }
   backBtn.onclick = () => go(S.screen === 'flows' ? 'chat' : 'fleet');
   statusPill.onclick = pillTap;
+  gearBtn.onclick = openNotifySheet;
   sendBtn.onclick = sendMessage;
   moreBtn.onclick = openMoreSheet;
   scrim.onclick = hideSheet;

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -32,9 +33,19 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/broker"
 )
 
-// VAPID `sub` claim. Push services want a contact (mailto: or https URL); this
-// is a stable placeholder — no mail is ever sent to it.
-const vapidSubject = "mailto:workspacer@localhost"
+// VAPID `sub` claim: who to contact about this push sender.
+//
+// Must be a mailto: with a REAL domain or an https: URL. This was
+// "mailto:workspacer@localhost", which FCM accepts and Apple does not —
+// localhost is not a valid email domain, so web.push.apple.com rejected the
+// JWT with 403 on every single notification. Chrome and Android worked
+// throughout, which is why it survived: the one platform that refused it was
+// the one platform the feature was built for.
+//
+// An https: URL avoids inventing an address nobody reads. Changing the subject
+// does NOT invalidate existing subscriptions — it is a claim inside the signed
+// JWT, not part of the keypair the browser subscribed against.
+const vapidSubject = "https://github.com/DJTouchette/workspacer"
 
 type vapidKeys struct {
 	PublicKey  string `json:"publicKey"`
@@ -154,6 +165,11 @@ type Manager struct {
 	// now is time.Now, indirected so the finished-threshold logic is testable
 	// without sleeping.
 	now func() time.Time
+
+	// send is one delivery attempt, indirected so RPCTest's synchronous
+	// accounting can be asserted without a network (and without waiting out
+	// pushTimeout against a fake endpoint). Defaults to sendOneResult.
+	send func(webpush.Subscription, []byte) (int, error)
 }
 
 // SetTokenValidator installs the revocation authority: given the token identity a
@@ -179,6 +195,7 @@ func New(dir string) (*Manager, error) {
 	}
 	m := &Manager{dir: dir, subs: map[string]storedSub{}, states: map[string]sessionState{}, now: time.Now}
 	m.notify = m.sendAll
+	m.send = m.sendOneResult
 	if err := m.loadVAPID(); err != nil {
 		return nil, err
 	}
@@ -307,9 +324,49 @@ func (m *Manager) RPCSubscribeAs(who Subscriber, params json.RawMessage) (any, e
 // preferences by design (see KindTest) and reports how many devices it went to,
 // so a zero is itself the answer: nothing is subscribed.
 func (m *Manager) RPCTest(_ json.RawMessage) (any, error) {
-	n := len(m.recipients(KindTest, 0))
-	m.notify(KindTest, "Workspacer", "Test notification — push is working", "", 0)
-	return map[string]any{"ok": true, "devices": n}, nil
+	subs := m.recipients(KindTest, 0)
+	payload, _ := json.Marshal(map[string]string{
+		"title": "Workspacer", "body": "Test notification — push is working",
+		"sessionId": "", "kind": string(KindTest),
+	})
+
+	// SYNCHRONOUS, unlike every other send. The first version reported
+	// len(recipients) and fired goroutines, so it answered "how many rows are
+	// stored" while appearing to answer "how many phones buzzed" — it said
+	// "sent to 4 devices" while four dead endpoints were about to 410. The only
+	// number worth returning is the one you get by waiting for it.
+	statuses := make([]int, len(subs))
+	var wg sync.WaitGroup
+	for i, sub := range subs {
+		wg.Add(1)
+		go func(i int, sub webpush.Subscription) {
+			defer wg.Done()
+			status, err := m.send(sub, payload)
+			if err != nil {
+				status = 0
+			}
+			statuses[i] = status
+		}(i, sub)
+	}
+	wg.Wait()
+
+	delivered, gone, failed := 0, 0, 0
+	for _, st := range statuses {
+		switch {
+		case st >= 200 && st <= 299:
+			delivered++
+		case st == 404 || st == 410:
+			gone++
+		default:
+			failed++
+		}
+	}
+	log.Printf("push: test — %d delivered, %d gone (pruned), %d failed, of %d stored",
+		delivered, gone, failed, len(subs))
+	return map[string]any{
+		"ok": true, "devices": len(subs),
+		"delivered": delivered, "gone": gone, "failed": failed,
+	}, nil
 }
 
 // RPCUnsubscribe drops a subscription by endpoint, gated by proof-of-possession.
@@ -634,6 +691,19 @@ const pushTimeout = 10 * time.Second
 var pushClient = &http.Client{Timeout: pushTimeout}
 
 func (m *Manager) sendOne(s webpush.Subscription, payload []byte) {
+	_, _ = m.sendOneResult(s, payload)
+}
+
+// sendOneResult is sendOne with the outcome kept. Split out because the
+// broadcast path genuinely does not care (it is fire-and-forget from a bus
+// event) while the on-demand test does: "did it arrive" is the only question
+// that one exists to answer.
+//
+// It also LOGS failures, which nothing did before. A push that never left the
+// host was indistinguishable from one the phone ignored — the error was
+// discarded on the line below and a non-2xx was silent unless it happened to be
+// a 410. That silence is most of why "I got nothing" was unanswerable.
+func (m *Manager) sendOneResult(s webpush.Subscription, payload []byte) (int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), pushTimeout)
 	defer cancel()
 	resp, err := webpush.SendNotificationWithContext(ctx, payload, &s, &webpush.Options{
@@ -645,12 +715,28 @@ func (m *Manager) sendOne(s webpush.Subscription, payload []byte) {
 		Urgency:         webpush.UrgencyHigh,
 	})
 	if err != nil {
-		return
+		log.Printf("push: send to %s failed: %v", endpointHost(s.Endpoint), err)
+		return 0, err
 	}
 	defer resp.Body.Close()
 	// The push service reports a dead subscription as Gone/Not Found — prune it
 	// so we don't keep trying (and the store doesn't grow unbounded).
 	if resp.StatusCode == 404 || resp.StatusCode == 410 {
+		log.Printf("push: %s reports the subscription gone (%d) — pruning", endpointHost(s.Endpoint), resp.StatusCode)
 		m.removeEndpoint(s.Endpoint)
+		return resp.StatusCode, nil
 	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		log.Printf("push: %s refused the notification (%d)", endpointHost(s.Endpoint), resp.StatusCode)
+	}
+	return resp.StatusCode, nil
+}
+
+// endpointHost is the push service's host, for logs. The full endpoint embeds a
+// per-device token, so it does not belong in a log line.
+func endpointHost(endpoint string) string {
+	if u, err := url.Parse(endpoint); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return "push service"
 }
