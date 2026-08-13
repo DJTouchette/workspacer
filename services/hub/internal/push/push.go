@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -97,7 +98,33 @@ const (
 	// entry in Prefs.wants, whose default is "yes": a test that a muted setting
 	// could silence would be useless for answering "is push reaching me at all".
 	KindTest Kind = "test"
+	// KindCheckpoint is "this is still running", on a timer. Opt-in.
+	KindCheckpoint Kind = "checkpoint"
 )
+
+// checkpointsAt are the elapsed marks a still-running session pings at. Two, far
+// apart: the value is "you walked away and it is still going", which a third
+// reminder does not add to.
+var checkpointsAt = []time.Duration{10 * time.Minute, 30 * time.Minute}
+
+// Event is one notifiable thing that happened. A struct rather than positional
+// arguments because both of the last two fields are decided PER DEVICE at
+// delivery — the threshold against RanFor, and whether Detail may be shown —
+// so they have to survive the trip from trigger to recipient intact.
+type Event struct {
+	Kind      Kind
+	Title     string
+	Body      string // always safe to show: what happened, never what was said
+	Detail    string // the agent's own words; only for devices that opted in
+	SessionID string
+	RanFor    time.Duration // meaningful for KindFinished
+}
+
+// MaxDetailChars bounds the preview. A lock screen truncates anyway; the point
+// of clipping here is that the payload is encrypted per-subscription and sent
+// once per device, so a 4KB tool result would be paid for N times to display
+// two lines.
+const MaxDetailChars = 140
 
 // DefaultFinishedAfter is how long a run must have been working before going
 // idle earns a push. Every turn ends, so an unconditional "finished" fires on
@@ -115,6 +142,16 @@ type Prefs struct {
 	Finished         *bool `json:"finished,omitempty"`
 	Ended            *bool `json:"ended,omitempty"`
 	FinishedAfterSec *int  `json:"finishedAfterSec,omitempty"`
+	// Preview shows the agent's own text — the question it asked, the command it
+	// wants to run, the tail of its reply. Defaults ON: a notification that will
+	// not say what it wants is half a notification. Off is for anyone who
+	// screen-shares or leaves the phone face-up on a desk.
+	Preview *bool `json:"preview,omitempty"`
+	// Checkpoints pings while a long run is STILL going. Defaults OFF, unlike
+	// everything else here: it is the only kind that fires on a timer rather
+	// than because something happened, and unrequested scheduled noise is how a
+	// notification feature gets switched off wholesale.
+	Checkpoints *bool `json:"checkpoints,omitempty"`
 }
 
 // wants reports whether this device should receive `k`. Unset = yes.
@@ -126,9 +163,14 @@ func (p Prefs) wants(k Kind) bool {
 		return p.Finished == nil || *p.Finished
 	case KindEnded:
 		return p.Ended == nil || *p.Ended
+	case KindCheckpoint:
+		return p.Checkpoints != nil && *p.Checkpoints // opt-in
 	}
 	return true
 }
+
+// wantsPreview reports whether this device may see the agent's own text.
+func (p Prefs) wantsPreview() bool { return p.Preview == nil || *p.Preview }
 
 // finishedAfter is this device's threshold; unset or negative uses the default,
 // and zero means "as soon as it goes idle, however short the run".
@@ -157,10 +199,8 @@ type Manager struct {
 	states map[string]sessionState // sessionId -> last seen (watcher goroutine only)
 
 	// notify is called on a notifiable edge. Defaults to sendAll; overridden in
-	// tests to observe the transition logic without the network. `ranFor` is
-	// meaningful only for KindFinished — devices set their own threshold, so the
-	// duration travels to the recipients rather than being judged here.
-	notify func(k Kind, title, body, sessionID string, ranFor time.Duration)
+	// tests to observe the transition logic without the network.
+	notify func(Event)
 
 	// now is time.Now, indirected so the finished-threshold logic is testable
 	// without sleeping.
@@ -508,6 +548,10 @@ func (m *Manager) Watch(ctx context.Context, b *broker.Broker) {
 // sessionState is what the watcher remembers between snapshots.
 type sessionState struct {
 	ambient string
+	// checkpointsSent is how many of checkpointsAt have already fired for the
+	// CURRENT run. Reset whenever a new run starts, so a long day of short runs
+	// never inherits a previous run's marks.
+	checkpointsSent int
 	// workingSince is when this session most recently started working. Zero
 	// when it is not (and has not been) working, which is what distinguishes a
 	// genuine run from a session that was idle all along.
@@ -533,6 +577,23 @@ func (m *Manager) onSnapshot(data json.RawMessage) {
 		LiveCwd      string `json:"liveCwd"`
 		AmbientState string `json:"ambientState"`
 		Status       string `json:"status"`
+		// Content for the preview. All of it already rides on the snapshot the
+		// watcher receives; this used to decode the five scalars above and throw
+		// the rest away, which is why every notification read "Approve a tool
+		// use" instead of saying which one.
+		PendingApproval *struct {
+			ToolName  string          `json:"toolName"`
+			ToolInput json.RawMessage `json:"toolInput"`
+		} `json:"pendingApproval"`
+		PendingQuestions *struct {
+			Questions []struct {
+				Question string `json:"question"`
+			} `json:"questions"`
+		} `json:"pendingQuestions"`
+		Conversation []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"conversation"`
 	}
 	// ambientState is only present on the desktop-enriched snapshot (camelCase);
 	// a brain/claudemon-backed raw snapshot lacks it and simply never fires.
@@ -556,27 +617,59 @@ func (m *Manager) onSnapshot(data json.RawMessage) {
 		// re-publishes them), so notifying on any ended row would ring the phone
 		// for history every time a client reconnects.
 		if seen {
-			m.notify(KindEnded, name, "Session ended", s.SessionID, 0)
+			m.notify(Event{Kind: KindEnded, Title: name, Body: "Session ended", SessionID: s.SessionID})
 		}
 		return
 	}
 
-	next := sessionState{ambient: s.AmbientState, workingSince: prev.workingSince}
+	next := sessionState{
+		ambient:         s.AmbientState,
+		workingSince:    prev.workingSince,
+		checkpointsSent: prev.checkpointsSent,
+	}
 	if workingState(s.AmbientState) {
 		if !workingState(prev.ambient) || prev.workingSince.IsZero() {
 			next.workingSince = m.now() // a run just started
+			next.checkpointsSent = 0
 		}
 	}
 	m.states[s.SessionID] = next
 
+	// Still-running checkpoint. Fires from the snapshot stream rather than a
+	// timer: a session that has stopped publishing has nothing to report, and a
+	// timer would keep pinging about a run the host can no longer see.
+	if workingState(s.AmbientState) && !next.workingSince.IsZero() {
+		elapsed := m.now().Sub(next.workingSince)
+		// Ranged over the marks, NOT a while-loop on a counter this body mutates.
+		// The counter form spun forever the moment the increment went missing —
+		// notify was called until the process took the machine's memory with it.
+		// Bounded by len(checkpointsAt) no matter what the body does.
+		for i := next.checkpointsSent; i < len(checkpointsAt); i++ {
+			if elapsed < checkpointsAt[i] {
+				break
+			}
+			next.checkpointsSent = i + 1
+			m.states[s.SessionID] = next
+			m.notify(Event{Kind: KindCheckpoint, Title: name + " still working",
+				Body: humanDur(elapsed) + " so far", SessionID: s.SessionID})
+		}
+	}
+
 	if blockedState(s.AmbientState) && !blockedState(prev.ambient) {
-		body := "Waiting for you"
+		body, detail := "Waiting for you", ""
 		if s.AmbientState == "waiting_approval" {
 			body = "Approve a tool use"
+			if s.PendingApproval != nil {
+				detail = strings.TrimSpace(s.PendingApproval.ToolName + " " + summarizeInput(s.PendingApproval.ToolInput))
+			}
 		} else if s.AmbientState == "waiting_input" {
 			body = "Answer a question"
+			if s.PendingQuestions != nil && len(s.PendingQuestions.Questions) > 0 {
+				detail = s.PendingQuestions.Questions[0].Question
+			}
 		}
-		m.notify(KindNeeds, name+" needs you", body, s.SessionID, 0)
+		m.notify(Event{Kind: KindNeeds, Title: name + " needs you", Body: body,
+			Detail: clip(detail), SessionID: s.SessionID})
 		return
 	}
 
@@ -587,8 +680,56 @@ func (m *Manager) onSnapshot(data json.RawMessage) {
 	if s.AmbientState == "idle" && wasRunning && !prev.workingSince.IsZero() {
 		ran := m.now().Sub(prev.workingSince)
 		m.states[s.SessionID] = sessionState{ambient: s.AmbientState} // run is over
-		m.notify(KindFinished, name+" finished", "Ran for "+humanDur(ran), s.SessionID, ran)
+		m.notify(Event{Kind: KindFinished, Title: name + " finished",
+			Body: "Ran for " + humanDur(ran), Detail: clip(lastAssistantText(s.Conversation)),
+			SessionID: s.SessionID, RanFor: ran})
 	}
+}
+
+// clip trims a preview to something a lock screen can show, on a rune boundary
+// so a multi-byte character is never cut in half.
+func clip(text string) string {
+	text = strings.Join(strings.Fields(text), " ") // collapse newlines/indentation
+	r := []rune(text)
+	if len(r) <= MaxDetailChars {
+		return text
+	}
+	return strings.TrimSpace(string(r[:MaxDetailChars])) + "…"
+}
+
+// summarizeInput turns a tool's input into the one thing worth reading on a
+// lock screen. Bash is the case that matters — "Approve a tool use" is useless
+// next to "rm -rf build/" — so the well-known argument names are preferred and
+// anything else falls back to the raw JSON.
+func summarizeInput(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var obj map[string]any
+	if json.Unmarshal(raw, &obj) != nil {
+		return ""
+	}
+	for _, key := range []string{"command", "file_path", "path", "pattern", "url", "description"} {
+		if v, ok := obj[key].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// lastAssistantText is the tail of the reply, for a finish preview. The
+// conversation on the snapshot is the COMPACTED window, so this is already a
+// truncation of a truncation — fine for two lines, but it is not the raw text.
+func lastAssistantText(turns []struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}) string {
+	for i := len(turns) - 1; i >= 0; i-- {
+		if turns[i].Role == "assistant" && strings.TrimSpace(turns[i].Content) != "" {
+			return turns[i].Content
+		}
+	}
+	return ""
 }
 
 // humanDur renders a run length the way a notification should read it —
@@ -633,12 +774,23 @@ func dirName(p string) string {
 // A multi-user deployment would leak one operator's agent activity to another's
 // devices; supporting that would mean filtering on the subscriber identity
 // recorded here rather than only checking that it is still valid.
-func (m *Manager) sendAll(k Kind, title, body, sessionID string, ranFor time.Duration) {
-	payload, _ := json.Marshal(map[string]string{
-		"title": title, "body": body, "sessionId": sessionID, "kind": string(k),
-	})
-	for _, s := range m.recipients(k, ranFor) {
-		go m.sendOne(s, payload)
+func (m *Manager) sendAll(ev Event) {
+	// One payload per DEVICE, not one per event: whether the agent's own words
+	// may appear is a per-subscription setting, and the payload is encrypted to
+	// each subscription's keys anyway, so there was never a shared buffer to
+	// reuse. A device with preview off gets a body that says what happened and
+	// never what was said.
+	for _, s := range m.recipientsFor(ev) {
+		body := ev.Body
+		if ev.Detail != "" && s.Prefs.wantsPreview() {
+			body = ev.Body + " — " + ev.Detail
+		}
+		payload, _ := json.Marshal(map[string]string{
+			"title": ev.Title, "body": body, "sessionId": ev.SessionID, "kind": string(ev.Kind),
+		})
+		// Through the same seam RPCTest uses, so delivery is observable in a
+		// test without a network — and so there is one send path, not two.
+		go func(sub webpush.Subscription, payload []byte) { _, _ = m.send(sub, payload) }(s.Subscription, payload)
 	}
 }
 
@@ -650,8 +802,19 @@ func (m *Manager) sendAll(k Kind, title, body, sessionID string, ranFor time.Dur
 // per-device setting: one phone can ask for every finish and another only for
 // runs over five minutes, from the same edge.
 func (m *Manager) recipients(k Kind, ranFor time.Duration) []webpush.Subscription {
+	out := make([]webpush.Subscription, 0)
+	for _, s := range m.recipientsFor(Event{Kind: k, RanFor: ranFor}) {
+		out = append(out, s.Subscription)
+	}
+	return out
+}
+
+// recipientsFor is recipients with the stored row kept, so the caller can read
+// each device's preview setting.
+func (m *Manager) recipientsFor(ev Event) []storedSub {
 	stored, valid := m.snapshot()
-	subs := make([]webpush.Subscription, 0, len(stored))
+	k, ranFor := ev.Kind, ev.RanFor
+	subs := make([]storedSub, 0, len(stored))
 	skipped, off := 0, 0
 	// Below-threshold is counted with the LONGEST threshold that rejected it, so
 	// the log can say what a device is actually waiting for. "turned off or
@@ -674,7 +837,7 @@ func (m *Manager) recipients(k Kind, ranFor time.Duration) []webpush.Subscriptio
 			}
 			continue
 		}
-		subs = append(subs, s.Subscription)
+		subs = append(subs, s)
 	}
 	if skipped > 0 {
 		log.Printf("push: skipped %d subscription(s) whose token has been revoked", skipped)

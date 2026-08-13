@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 )
@@ -27,8 +28,8 @@ func newTestManager(t *testing.T) (*Manager, *[]string) {
 		t.Fatalf("New: %v", err)
 	}
 	var fired []string
-	m.notify = func(_ Kind, title, body, sessionID string, _ time.Duration) {
-		fired = append(fired, sessionID+":"+title+":"+body)
+	m.notify = func(ev Event) {
+		fired = append(fired, ev.SessionID+":"+ev.Title+":"+ev.Body)
 	}
 	return m, &fired
 }
@@ -467,12 +468,12 @@ func newKindManager(t *testing.T) (*Manager, *[]struct {
 		Body string
 		Ran  time.Duration
 	}
-	m.notify = func(k Kind, _, body, _ string, ran time.Duration) {
+	m.notify = func(ev Event) {
 		fired = append(fired, struct {
 			Kind Kind
 			Body string
 			Ran  time.Duration
-		}{k, body, ran})
+		}{ev.Kind, ev.Body, ev.RanFor})
 	}
 	return m, &fired
 }
@@ -781,5 +782,150 @@ func TestVAPIDSubjectIsAcceptableToApple(t *testing.T) {
 		}
 	default:
 		t.Fatalf("VAPID sub must be mailto: or https:, got %q", vapidSubject)
+	}
+}
+
+// ── preview + checkpoints ────────────────────────────────────────────────────
+
+func snapRich(sessionID, cwd, ambient string, extra map[string]any) json.RawMessage {
+	m := map[string]any{"sessionId": sessionID, "cwd": cwd, "ambientState": ambient, "status": "active"}
+	for k, v := range extra {
+		m[k] = v
+	}
+	b, _ := json.Marshal(m)
+	return b
+}
+
+// "Approve a tool use" is useless next to "Bash rm -rf build/". The content was
+// on the snapshot the whole time; onSnapshot decoded five scalars and dropped it.
+func TestApprovalPreviewNamesTheCommand(t *testing.T) {
+	m, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Event
+	m.notify = func(ev Event) { got = ev }
+	m.onSnapshot(snapRich("s1", "/x/proj", "waiting_approval", map[string]any{
+		"pendingApproval": map[string]any{
+			"toolName":  "Bash",
+			"toolInput": map[string]any{"command": "rm -rf build/"},
+		},
+	}))
+	if got.Kind != KindNeeds {
+		t.Fatalf("kind: %v", got.Kind)
+	}
+	if got.Body != "Approve a tool use" {
+		t.Fatalf("body should stay content-free: %q", got.Body)
+	}
+	if got.Detail != "Bash rm -rf build/" {
+		t.Fatalf("detail: %q", got.Detail)
+	}
+}
+
+func TestQuestionPreviewCarriesTheQuestion(t *testing.T) {
+	m, _ := New(t.TempDir())
+	var got Event
+	m.notify = func(ev Event) { got = ev }
+	m.onSnapshot(snapRich("s1", "/x/proj", "waiting_input", map[string]any{
+		"pendingQuestions": map[string]any{
+			"questions": []map[string]any{{"question": "Which database should I target?"}},
+		},
+	}))
+	if got.Detail != "Which database should I target?" {
+		t.Fatalf("detail: %q", got.Detail)
+	}
+}
+
+// The preview is per-device, so it has to be applied at DELIVERY. A device that
+// turned it off must get the body and never the agent's words.
+func TestPreviewIsPerDeviceAtDelivery(t *testing.T) {
+	m, _ := New(t.TempDir())
+	no := false
+	m.subs["https://push.example/open"] = storedSub{
+		Subscription: webpush.Subscription{Endpoint: "https://push.example/open"},
+	}
+	m.subs["https://push.example/private"] = storedSub{
+		Subscription: webpush.Subscription{Endpoint: "https://push.example/private"},
+		Prefs:        Prefs{Preview: &no},
+	}
+	bodies := map[string]string{}
+	m.send = func(sub webpush.Subscription, payload []byte) (int, error) {
+		var p map[string]string
+		_ = json.Unmarshal(payload, &p)
+		bodies[sub.Endpoint] = p["body"]
+		return 201, nil
+	}
+	// sendAll spawns goroutines; drive it through the synchronous test path
+	// instead by calling it and waiting on the sends we recorded.
+	m.sendAll(Event{Kind: KindNeeds, Title: "proj needs you", Body: "Approve a tool use",
+		Detail: "Bash rm -rf build/", SessionID: "s1"})
+	deadline := time.Now().Add(2 * time.Second)
+	for len(bodies) < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := bodies["https://push.example/open"]; got != "Approve a tool use — Bash rm -rf build/" {
+		t.Fatalf("preview device body: %q", got)
+	}
+	if got := bodies["https://push.example/private"]; got != "Approve a tool use" {
+		t.Fatalf("a device with preview OFF must not receive the agent's words, got %q", got)
+	}
+}
+
+func TestClipCutsOnRuneBoundaries(t *testing.T) {
+	long := strings.Repeat("é", MaxDetailChars+40)
+	out := clip(long)
+	if !strings.HasSuffix(out, "…") {
+		t.Fatalf("expected an ellipsis, got %q", out[len(out)-8:])
+	}
+	if r := []rune(out); len(r) != MaxDetailChars+1 {
+		t.Fatalf("clipped to %d runes, want %d", len(r), MaxDetailChars+1)
+	}
+	if !utf8.ValidString(out) {
+		t.Fatal("clip produced invalid UTF-8 — a rune was cut in half")
+	}
+}
+
+// Checkpoints fire while a run is STILL going, once per mark, and are opt-in.
+func TestCheckpointsFireOncePerMarkAndAreOptIn(t *testing.T) {
+	m, _ := New(t.TempDir())
+	now := time.Unix(1_700_000_000, 0)
+	m.now = func() time.Time { return now }
+	var kinds []Kind
+	m.notify = func(ev Event) { kinds = append(kinds, ev.Kind) }
+
+	m.onSnapshot(snap("s1", "/x/proj", "streaming", "active"))
+	now = now.Add(11 * time.Minute)
+	m.onSnapshot(snap("s1", "/x/proj", "streaming", "active")) // crosses 10m
+	now = now.Add(1 * time.Minute)
+	m.onSnapshot(snap("s1", "/x/proj", "streaming", "active")) // still past 10m, must not repeat
+	if len(kinds) != 1 || kinds[0] != KindCheckpoint {
+		t.Fatalf("expected exactly one 10m checkpoint, got %v", kinds)
+	}
+	now = now.Add(20 * time.Minute)
+	m.onSnapshot(snap("s1", "/x/proj", "streaming", "active")) // crosses 30m
+	if len(kinds) != 2 {
+		t.Fatalf("expected the 30m checkpoint too, got %v", kinds)
+	}
+
+	// A new run resets the marks.
+	now = now.Add(1 * time.Minute)
+	m.onSnapshot(snap("s1", "/x/proj", "idle", "active")) // finishes
+	now = now.Add(1 * time.Minute)
+	m.onSnapshot(snap("s1", "/x/proj", "streaming", "active")) // new run
+	now = now.Add(11 * time.Minute)
+	m.onSnapshot(snap("s1", "/x/proj", "streaming", "active"))
+	last := kinds[len(kinds)-1]
+	if last != KindCheckpoint {
+		t.Fatalf("a new run should checkpoint again, got %v", kinds)
+	}
+
+	// Opt-in: unset prefs must NOT receive them, unlike every other kind.
+	var p Prefs
+	if p.wants(KindCheckpoint) {
+		t.Fatal("checkpoints must be off by default — they fire on a timer, not on an event")
+	}
+	yes := true
+	if !(Prefs{Checkpoints: &yes}).wants(KindCheckpoint) {
+		t.Fatal("enabling checkpoints must turn them on")
 	}
 }
