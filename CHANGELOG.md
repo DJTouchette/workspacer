@@ -50,6 +50,14 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   "4m" looks identical whether a run is alive or wedged.
 
 ### Fixed
+- **The phone client could sit on "Offline" far longer than it needed to.** Its
+  handshake watchdog gave every connection attempt a flat 4.5 seconds — but the
+  case it exists for is a sleeping host or a cold tailnet link, which takes far
+  longer than that. So it killed the very attempt it was written to survive,
+  over and over, and only recovered once repeated tries had warmed the route.
+  The budget now grows with the retry backoff (4.5s → 9s → 20s), and tapping
+  the status pill while it reads "Offline" retries immediately instead of
+  waiting out the backoff.
 - **Your newest message stopped riding the top of the viewport.** Sending
   scrolled the transcript so your message sat at the top with the reply growing
   into the space below it; since 0.148.0 the message was landing at the bottom

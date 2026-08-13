@@ -637,6 +637,10 @@
   let watchdog = null, lastActivity = 0;
   const calls = new Map();
   const STALE_MS = 30000;
+  /** How long to let a handshake run, by consecutive failed attempt. Reset on
+   *  any successful open and on wake() — see connect(). */
+  const HANDSHAKE_BUDGETS_MS = [4500, 9000, 20000];
+  let attempt = 0;
 
   function call(method, params) {
     return new Promise((resolve, reject) => {
@@ -2421,12 +2425,23 @@
     // Phones routinely hand us a socket whose handshake hangs — the host or the
     // tailnet link was asleep, so it neither opens nor errors and the OS won't
     // give up for 30–75s. Abandon it early and retry.
+    //
+    // But the budget has to GROW. It used to be a flat 4.5s on every attempt,
+    // with the retry backoff capped at 5s — so a cold path was killed at 4.5s,
+    // forever, and could only connect if it happened to come up inside that
+    // window. That is the same wake the comment above describes taking 30–75s:
+    // the client was aborting the very case it was written for, over and over,
+    // and only recovered because the repeated attempts eventually warmed the
+    // route. Stay impatient for the first couple (a real blip reconnects in
+    // milliseconds), then give a genuinely cold tailnet leg room to finish.
+    const budget = HANDSHAKE_BUDGETS_MS[Math.min(attempt, HANDSHAKE_BUDGETS_MS.length - 1)];
+    attempt++;
     watchdog = setTimeout(() => {
       if (sock.readyState !== WebSocket.OPEN) { killSocket(sock); if (ws === sock) ws = null; scheduleReconnect(); }
-    }, 4500);
+    }, budget);
     sock.onopen = () => {
       clearTimeout(watchdog);
-      backoff = 500; lastActivity = Date.now(); connected = true;
+      backoff = 500; attempt = 0; lastActivity = Date.now(); connected = true;
       sock.send(JSON.stringify({ op: 'subscribe', topics: ['agent.snapshot', 'workflow.*'] }));
       // Everything else waits for `hello` — see onDiscover. Firing the optional
       // lookups here would run their can() guards before we know our scope,
@@ -2490,13 +2505,28 @@
     if (!token || document.visibilityState === 'hidden') return;
     const live = ws && ws.readyState === WebSocket.OPEN && Date.now() - lastActivity < STALE_MS;
     if (live) return;
-    backoff = 500; clearTimeout(watchdog);
+    // Coming back to the foreground is a fresh start, not attempt N of a losing
+    // streak: reset the handshake budget with the backoff.
+    backoff = 500; attempt = 0; clearTimeout(watchdog);
     killSocket(ws); ws = null; connect();
   }
   document.addEventListener('visibilitychange', wake);
   window.addEventListener('online', wake);
   window.addEventListener('focus', wake);
   window.addEventListener('pageshow', wake);   // iOS Safari bfcache restore
+
+  /** Tapping the lamp while it reads "Offline" retries NOW rather than waiting
+   *  out the backoff — if the delay is the tailnet or the host waking, the
+   *  person holding the phone knows before any timer does. Connected, it keeps
+   *  its existing job: the pill is the inbox affordance. */
+  function pillTap() {
+    if (connected) return go('inbox');
+    backoff = 500; attempt = 0;
+    killSocket(ws); ws = null;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    toast('Reconnecting…');
+    connect();
+  }
 
   // ══ wiring ════════════════════════════════════════════════════════════════
   for (const b of nav.querySelectorAll('button')) {
@@ -2513,7 +2543,7 @@
     };
   }
   backBtn.onclick = () => go(S.screen === 'flows' ? 'chat' : 'fleet');
-  statusPill.onclick = () => go('inbox');
+  statusPill.onclick = pillTap;
   sendBtn.onclick = sendMessage;
   moreBtn.onclick = openMoreSheet;
   scrim.onclick = hideSheet;
