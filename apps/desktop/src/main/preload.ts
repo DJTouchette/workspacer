@@ -557,6 +557,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener(IPC.HUB_PLUGIN_SETTINGS_CHANGED, handler);
   },
 
+  downloadProjectIcon: (
+    url: string,
+  ): Promise<{ ok: true; file: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.PROJECT_DOWNLOAD_ICON, url),
+
   // ── Library (reusable prompts + skills) ──
   libraryList: (cwd?: string): Promise<unknown[]> => ipcRenderer.invoke(IPC.LIBRARY_LIST, cwd),
   librarySave: (input: unknown): Promise<unknown> => ipcRenderer.invoke(IPC.LIBRARY_SAVE, input),

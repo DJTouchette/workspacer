@@ -71,6 +71,7 @@ export const HOST_ONLY = [
   'toolsStatus', // external-tool PATH scan runs on the host
   'installUiFont', // native font-file dialog + host ~/.workspacer/fonts install
   'listUiFonts', // installed custom fonts live on the host filesystem
+  'downloadProjectIcon', // fetches and writes into the host's config dir
   'listHubPlugins', // plugin registry lives in main
   'installPlugin',
   'inspectPlugin', // pre-install manifest preview via the hub's guarded route

@@ -8,6 +8,7 @@
  */
 export const IPC = {
   // ── Library ──
+  PROJECT_DOWNLOAD_ICON: 'project:downloadIcon',
   LIBRARY_LIST: 'library:list',
   LIBRARY_SAVE: 'library:save',
   LIBRARY_REMOVE: 'library:remove',

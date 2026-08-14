@@ -29,7 +29,7 @@ export const ProjectMark: React.FC<{
   const p = resolveProject(cwd, projects);
   if (!p) return null;
 
-  const showFavicon = Boolean(p.favicon) && !broken;
+  const showFavicon = Boolean(p.iconSrc) && !broken;
   // An emoji carries its own colour and needs no tinted plate behind it; a
   // letter mark does. Detected by "not ASCII", which is what an emoji is here.
   const isEmoji = Boolean(p.icon) && !/^[\x20-\x7e]+$/.test(p.icon ?? '');
@@ -37,7 +37,7 @@ export const ProjectMark: React.FC<{
 
   const mark = showFavicon ? (
     <img
-      src={p.favicon}
+      src={p.iconSrc}
       width={size}
       height={size}
       onError={() => setBroken(true)}

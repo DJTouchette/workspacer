@@ -24,8 +24,10 @@ export interface ResolvedProject {
   color: string;
   /** A configured emoji / short string, if any. */
   icon?: string;
-  /** A configured http(s) icon URL, if any. */
+  /** A configured http(s) icon URL, if any — provenance, not what renders. */
   favicon?: string;
+  /** The renderable source for a downloaded icon, if one is cached. */
+  iconSrc?: string;
 }
 
 /**
@@ -109,5 +111,12 @@ export function resolveProject(
     color: (entry.color || '').trim() || PALETTE[hash(key) % PALETTE.length],
     icon: (entry.icon || '').trim() || undefined,
     favicon: (entry.favicon || '').trim() || undefined,
+    // A downloaded icon is served over the app's own protocol, which behaves
+    // identically in dev (http origin) and prod (file origin) — a raw file://
+    // subresource does not. An entry with a `favicon` URL but no cached file
+    // yet still renders the URL, so an older config keeps working.
+    iconSrc: (entry.iconFile || '').trim()
+      ? `workspacer-icon://${encodeURIComponent((entry.iconFile || '').trim())}`
+      : (entry.favicon || '').trim() || undefined,
   };
 }

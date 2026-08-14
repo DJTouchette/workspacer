@@ -86,6 +86,26 @@ describe('resolveProject', () => {
     expect(p.color).toMatch(/^#[0-9a-f]{6}$/i);
   });
 
+  it('renders a DOWNLOADED icon over the source URL', () => {
+    // The URL is provenance; the cached file is what draws, so the mark keeps
+    // working offline and never re-requests on render.
+    const p = resolveProject('/w/repo', {
+      '/w/repo': { favicon: 'https://x/icon.png', iconFile: 'abc123.png' },
+    })!;
+    expect(p.iconSrc).toBe('workspacer-icon://abc123.png');
+    expect(p.favicon).toBe('https://x/icon.png');
+  });
+
+  it('still renders a bare URL, so a config written before caching keeps working', () => {
+    const p = resolveProject('/w/repo', { '/w/repo': { favicon: 'https://x/icon.png' } })!;
+    expect(p.iconSrc).toBe('https://x/icon.png');
+  });
+
+  it('encodes the cached filename into the protocol URL', () => {
+    const p = resolveProject('/w/repo', { '/w/repo': { iconFile: 'a b.png' } })!;
+    expect(p.iconSrc).toBe('workspacer-icon://a%20b.png');
+  });
+
   it('returns null without a directory', () => {
     expect(resolveProject(undefined)).toBeNull();
     expect(resolveProject('')).toBeNull();

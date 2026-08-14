@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { registerIpcHandlers } from './ipc';
 import { getConfigDir } from './services/configService';
+import { resolveProjectIcon, mimeForIcon } from './services/projectIcons';
 import { claudeSessionStore } from './services/claudeSessionStore';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
@@ -158,6 +159,14 @@ let mainWindow: BrowserWindow | null = null;
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'workspacer-font',
+    privileges: { standard: false, supportFetchAPI: true, corsEnabled: true, bypassCSP: true },
+  },
+  // Downloaded project icons. A local file cannot simply be `file://`d from the
+  // renderer: its origin is http://localhost:5173 in dev and file:// in prod, so
+  // a file:// subresource is blocked in one and allowed in the other. One scheme
+  // behaves the same in both.
+  {
+    scheme: 'workspacer-icon',
     privileges: { standard: false, supportFetchAPI: true, corsEnabled: true, bypassCSP: true },
   },
 ]);
@@ -503,6 +512,23 @@ app.whenReady().then(() => {
       });
     }
     return new Response('Not found', { status: 404 });
+  });
+
+  // Serve downloaded project icons. The filename comes from config, so it is
+  // caller data — resolveProjectIcon confines it to the icons directory.
+  protocol.handle('workspacer-icon', (request) => {
+    const file = decodeURIComponent(request.url.replace('workspacer-icon://', ''));
+    const full = resolveProjectIcon(file);
+    if (!full) return new Response('Not found', { status: 404 });
+    return new Response(fs.readFileSync(full), {
+      headers: {
+        'Content-Type': mimeForIcon(full),
+        'Access-Control-Allow-Origin': '*',
+        // Content-addressed filenames never change contents, so this is safe to
+        // cache hard — and the mark should not re-read the disk on every paint.
+        'Cache-Control': 'public, max-age=31536000, immutable',
+      },
+    });
   });
 
   // Also apply the Chrome UA at the session level — `app.userAgentFallback`

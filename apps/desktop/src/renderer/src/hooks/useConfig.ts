@@ -138,6 +138,13 @@ export interface ProjectIdentity {
   color?: string;
   icon?: string;
   favicon?: string;
+  /**
+   * The DOWNLOADED icon's filename under `<configDir>/project-icons/`, served
+   * to the renderer as `workspacer-icon://<iconFile>`. This is what actually
+   * renders; `favicon` is kept as the source it came from, so the field can
+   * show what you pasted and the icon can be re-fetched.
+   */
+  iconFile?: string;
 }
 
 export interface Config {

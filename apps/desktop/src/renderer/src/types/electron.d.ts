@@ -381,6 +381,11 @@ export interface ElectronAPI {
     callback: (pluginId: string, values: Record<string, unknown>) => void,
   ) => () => void;
 
+  /** Download a project icon and cache it locally; resolves to its filename. */
+  downloadProjectIcon?: (
+    url: string,
+  ) => Promise<{ ok: true; file: string } | { ok: false; error: string }>;
+
   // Library (reusable prompts + skills)
   libraryList: (cwd?: string) => Promise<LibraryItem[]>;
   librarySave: (input: LibrarySaveInput) => Promise<LibraryItem>;

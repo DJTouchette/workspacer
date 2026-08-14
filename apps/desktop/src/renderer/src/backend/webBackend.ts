@@ -619,6 +619,14 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // open the native dialog nor serve workspacer-font:// — bundled fonts only.
     installUiFont: () => Promise.resolve(null),
     listUiFonts: () => Promise.resolve([]),
+    // Host-only: the download writes into the desktop's config dir, and the
+    // workspacer-icon:// protocol that serves it only exists there. The web
+    // client still renders a derived mark, so nothing is missing visually.
+    downloadProjectIcon: () =>
+      Promise.resolve({
+        ok: false as const,
+        error: 'Icons can only be downloaded in the desktop app',
+      }),
     listHubPlugins: () => {
       warnOnce('listHubPlugins');
       return Promise.resolve([]);

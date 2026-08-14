@@ -5,6 +5,7 @@ import { pathToFileURL } from 'url';
 import { configService } from './services/configService';
 import { CLAUDEMON_API_URL } from './services/claudemonDaemon';
 import { libraryService, type ClaudeOrigin } from './services/libraryService';
+import { downloadProjectIcon } from './services/projectIcons';
 import { sessionService } from './services/sessionService';
 import {
   peekLegacyPluginSettings,
@@ -117,6 +118,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // channels registered after it's installed.
   instrumentIpcHandlers();
   startEventLoopLagMonitor();
+
+  // Download a project icon once and keep it on disk, rather than hot-linking
+  // the URL from an <img> on every render. Returns the stored filename; the
+  // renderer references it as workspacer-icon://<file>.
+  ipcMain.handle(IPC.PROJECT_DOWNLOAD_ICON, async (_event, url: string) => {
+    try {
+      return { ok: true as const, ...(await downloadProjectIcon(url)) };
+    } catch (err: any) {
+      // The message is shown to the user beside the field, so it has to say
+      // which of "bad URL / unreachable / not an image" actually happened.
+      return { ok: false as const, error: String(err?.message ?? err) };
+    }
+  });
 
   // ── Library (reusable prompts + skills) ──
   ipcMain.handle(IPC.LIBRARY_LIST, (_event, cwd?: string) => libraryService.list(cwd));
