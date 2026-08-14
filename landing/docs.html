@@ -334,7 +334,7 @@
 <ul>
 <li><strong>A rate-limit card</strong>: your account-wide 5h and 7d usage windows (percent used + reset time), scanned across all live session snapshots (they're account-global, so it picks the worst one).</li>
 <li>Cross-agent stats and plugin status (the same <code>sidecar.*</code> health colors as the Plugins Manager).</li>
-<li><strong>Favourite and recent directories</strong> to spawn into. Star a dir to favourite it; clicking one publishes a <code>command.spawn_agent</code> on the hub bus to start a new agent there. Favourites/recents live in <code>config.directories</code>.</li>
+<li><strong>Favourite and recent projects</strong> to spawn into. Star one to pin it; clicking it publishes a <code>command.spawn_agent</code> on the hub bus to start a new agent there. Both are properties of the project — <code>favourite</code> and <code>lastOpened</code> under <code>config.projects</code>. (The older <code>config.directories.recent</code>/<code>favourites</code> arrays are still read, so nothing is lost on upgrade; they are simply no longer written.)</li>
 </ul>
 <h3>agents / agent watch</h3>
 <p>Fleet-monitoring panes. The <strong>Agents</strong> pane is a live timeline of a session's subagents. Clicking a running subagent or workflow in the inspector opens a dedicated <strong>watch pane</strong> that follows just that run — its status, tools, and tokens — while the parent keeps working. There's also a standalone <strong>inspector</strong> pane: the same card as the inspector rail, pinnable as a tab (it's what a Fleet Deck card expands into, too).</p>
@@ -645,7 +645,8 @@ workspacer token revoke &lt;token-or-prefix&gt;</code></pre>
 <li><strong>supervisor</strong>: <code>model: ''</code> (app default), <code>summarizerModel: sonnet</code>, <code>pollSeconds: 45</code>.</li>
 <li><strong>editor</strong>: <code>engine: codemirror</code> (<code>codemirror</code> | <code>terminal</code>), <code>terminalCommand: nvim</code> (the file path is appended as the last arg), optional <code>vim: true</code> for CodeMirror.</li>
 <li><strong>updates</strong>: <code>enabled</code> / <code>channel</code> for the app's update check (Settings ▸ Updates).</li>
-<li><strong>directories</strong>: <code>recent</code> / <code>favourites</code> lists surfaced in the Overview pane.</li>
+<li><strong>projects</strong>: per-directory project identity and state, keyed by normalized cwd exactly as <code>scripts</code> and <code>widgets</code> are — <code>label</code>, <code>color</code>, <code>icon</code> (an emoji), <code>favicon</code>/<code>iconFile</code> (a pasted icon URL, downloaded once into <code>project-icons/</code> and served over <code>workspacer-icon://</code>), plus <code>favourite</code>, <code>lastOpened</code>, and <code>plugins</code> (per-project settings namespaced by plugin id). Everything is optional: a project with no entry still gets initials from its name and a colour derived from its path, so the fleet is legible before anything is configured.</li>
+<li><strong>directories</strong>: the legacy <code>recent</code> / <code>favourites</code> arrays. Still read for backwards compatibility, superseded by <code>projects</code>.</li>
 <li><strong>scripts</strong>: per-directory script buttons keyed by normalized cwd.</li>
 <li><strong>apps</strong>: your custom external app/site launcher entries (<code>name</code>, <code>url</code>, <code>icon</code>).</li>
 </ul>

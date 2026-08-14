@@ -446,6 +446,15 @@ Declare typed `settings` in the manifest and the host renders them in Settings f
 
 **Secrets.** Add `"secret": true` to a string setting that holds a PAT/API key. The host renders a masked, write-only input (set/replace/clear — never displayed), and the stored value never leaves the hub on any read surface: settings reads, the `plugin.settings.changed` broadcast, and the webview `window.__WKS_SETTINGS__` injection all report the sentinel `"__WKS_SECRET__"` instead. The plaintext is delivered ONLY in the sidecar's `WKS_SETTINGS` env — so a secret is for sidecar code, never webview code. Storage is a `0600` file in the plugin's directory. A secret must not declare a non-empty `default` (the manifest listing is public). Writing the sentinel back is ignored ("unchanged"), writing `""` clears. Older hosts ignore the flag and fall back to a plain string input, so adding it is backward-compatible.
 
+**Per-project settings.** Add `"scope": "project"` to a setting whose value belongs to a *directory* rather than to the plugin — which Jira project a repo maps to, which GitHub repo it ships from. The host stores it under `config.projects[<dir>].plugins[<your-id>]` and renders it on the **Projects** settings page, beside that project's name and icon, so a user configures a project in one place instead of once per plugin. Read it by declaring the `config.get` capability and looking up your own id for the pane's `cwd`:
+
+```js
+const cfg = await wks.call('config.get', {});
+const mine = cfg?.projects?.[cwd]?.plugins?.['you.my-plugin'] ?? {};
+```
+
+A project setting **cannot be secret** — the manifest is rejected at load if you try. Project values live in `config.yaml`, which holds no credentials (that is exactly why `config.get` is readable at all), so the split is: the project setting names *which* thing, and a global `"secret": true` setting holds the key to it.
+
 Values are delivered to a **webview** as `window.__WKS_SETTINGS__` (secrets redacted) and re-delivered live on every change via a `wks-settings` event, so a webview updates without reloading:
 
 ```js
