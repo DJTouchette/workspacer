@@ -290,6 +290,11 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         id: notes
         shell: bash
+        # The job builds from apps/desktop, but the script and the CHANGELOG.md
+        # it reads are at the repo root. This step only fires on a v* tag, so it
+        # had never actually run — it shipped broken with the feature and failed
+        # the first release that tried to use it.
+        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
