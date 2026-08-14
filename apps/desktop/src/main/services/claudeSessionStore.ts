@@ -242,8 +242,13 @@ export interface ContextItemInfo {
   path?: string;
   /** MCP server connection status ("connected" / "pending" / "failed"). */
   status?: string;
-  /** Origin — a plugin's marketplace source, or a memory entry's kind. */
+  /** Origin — a plugin's marketplace source, or a memory entry's kind. For a
+   *  skill or agent, which root it resolved in: 'project', 'user', a plugin
+   *  name, or 'built-in' for the ones compiled into the CLI (which have no file
+   *  and so never carry a path or size). */
   source?: string;
+  /** One-line `description:` from the item's frontmatter. Absent for built-ins. */
+  description?: string;
   bytes?: number;
   estTokens?: number;
 }

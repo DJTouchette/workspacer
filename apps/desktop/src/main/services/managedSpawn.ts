@@ -178,8 +178,11 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   }
   if (isClaudeStream && !wantsFacade && opts.mcpItemIds && opts.mcpItemIds.length) {
     const wanted = new Set(opts.mcpItemIds);
+    // listWithSecrets, not list(): the config written below is what the CLI
+    // actually authenticates with, and list() masks MCP env/headers. The real
+    // values never leave main — the renderer sent only `mcpItemIds`.
     const servers = libraryService
-      .list(opts.cwd)
+      .listWithSecrets(opts.cwd)
       .filter((it) => it.kind === 'mcp' && it.mcp && wanted.has(it.id))
       .map((it) => ({ id: it.id, mcp: it.mcp! }));
     const userMcp = buildSessionMcpConfig(managedId, servers);

@@ -1,5 +1,5 @@
 import type { PluginManifest, PluginUpdateStatus } from './plugin';
-import type { LibraryItem, LibrarySaveInput, LibraryKind } from './library';
+import type { ClaudeOrigin, LibraryItem, LibrarySaveInput, LibraryKind } from './library';
 import type { AnalyticsSummary, SessionHistoryRecord } from './analytics';
 import type { Layout, LayoutAgent } from './layout';
 import type {
@@ -389,6 +389,8 @@ export interface ElectronAPI {
     id: string,
     cwd?: string,
     kind?: LibraryKind,
+    /** Claude scope: which root to unlink from. 'plugin:…' is refused. */
+    origin?: ClaudeOrigin,
   ) => Promise<void>;
   onLibraryChanged: (callback: () => void) => () => void;
 

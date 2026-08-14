@@ -203,6 +203,13 @@ export function formatToolSummary(tc: ToolCall): { call: string; result: string 
       const desc = tc.input?.description ?? 'subagent';
       return { call: `Agent(${desc})`, result: '' };
     }
+    // A skill call's input is `{ skill, args }`; the default branch below reads
+    // "the first string value", which picked `args` whenever one was passed and
+    // rendered `Skill(the user's argument text)`.
+    case 'Skill': {
+      const name = tc.input?.skill ?? tc.input?.name ?? tc.input?.command ?? 'skill';
+      return { call: `Skill(${name})`, result: '' };
+    }
     case 'Workflow': {
       // input.script starts with `export const meta = { name: '...', ... }`
       const name =

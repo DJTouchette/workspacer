@@ -6,6 +6,7 @@ import { DiffView, PatchDiffView, hasDiff, ReadView, hasRead } from './DiffView'
 import { SubagentRow } from './SubagentRow';
 import { WorkflowRunCard } from './WorkflowRunCard';
 import { AgentSpinner } from './WorkflowAgentRow';
+import { SkillCard, isSkillCall } from './SkillCard';
 import { FileLink } from './FileLink';
 import { patchLineCounts } from '../../lib/turnChanges';
 
@@ -31,6 +32,7 @@ export function summarizeWork(calls: ToolCall[]): WorkSummary {
     searches = 0,
     agents = 0,
     workflows = 0,
+    skills = 0,
     other = 0;
   let added = 0,
     removed = 0,
@@ -74,6 +76,9 @@ export function summarizeWork(calls: ToolCall[]): WorkSummary {
     else if (SEARCH_TOOLS.has(tc.name)) searches++;
     else if (tc.name === 'Agent') agents++;
     else if (tc.name === 'Workflow') workflows++;
+    // A skill invocation used to land in "other", which is where a summary puts
+    // things it has nothing to say about — the opposite of true here.
+    else if (isSkillCall(tc)) skills++;
     else other++;
   }
 
@@ -85,6 +90,7 @@ export function summarizeWork(calls: ToolCall[]): WorkSummary {
   if (searches > 0) parts.push(`${searches} search${searches !== 1 ? 'es' : ''}`);
   if (workflows > 0) parts.push(`${workflows} workflow${workflows !== 1 ? 's' : ''}`);
   if (agents > 0) parts.push(`${agents} agent${agents !== 1 ? 's' : ''}`);
+  if (skills > 0) parts.push(`${skills} skill${skills !== 1 ? 's' : ''}`);
   if (other > 0) parts.push(`${other} other`);
 
   return { text: parts.join(' · '), added, removed, failed, editedFiles: [...editedFiles] };
@@ -349,6 +355,10 @@ const WorkCardInner: React.FC<{
             if (wf) return <WorkflowRunCard key={tc.id} run={wf} />;
             const sub = subagentByToolId?.get(tc.id);
             if (sub) return <SubagentRow key={tc.id} sub={sub} />;
+            // A skill invocation is the one tool call that changes how the
+            // agent works for the rest of the turn; it gets a card that names
+            // it rather than an anonymous "Skill(dataviz)" row.
+            if (isSkillCall(tc)) return <SkillCard key={tc.id} tc={tc} cwd={cwd} />;
             return (
               <React.Fragment key={tc.id}>
                 <WorkLogEntry tc={tc} />

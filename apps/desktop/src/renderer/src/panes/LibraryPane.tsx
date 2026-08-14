@@ -4,6 +4,7 @@ import { runLibraryItem } from '../lib/libraryBus';
 import MarkdownEditor from '../components/MarkdownEditor';
 import { Zap, ArrowLeft } from '../components/icons';
 import type {
+  ClaudeOrigin,
   LibraryItem,
   LibraryKind,
   LibraryScope,
@@ -23,6 +24,9 @@ type McpTransport = 'stdio' | 'http' | 'sse';
 type Draft = {
   original?: LibraryItem;
   scope: LibraryScope;
+  /** Claude scope: which root to write into. Never 'plugin:…' — those are
+   *  read-only, and "Copy to project" opens a draft rooted here instead. */
+  origin: 'project' | 'user';
   title: string;
   kind: LibraryKind;
   description: string;
@@ -40,6 +44,7 @@ type Draft = {
 
 const blankDraft = (): Draft => ({
   scope: 'global',
+  origin: 'project',
   title: '',
   kind: 'prompt',
   description: '',
@@ -103,11 +108,18 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
     );
   }, [items, query, scopeFilter]);
 
-  const startEdit = (it: LibraryItem) => {
+  /**
+   * Open `it` in the editor. `asCopy` drops the link back to the original file
+   * and roots the draft in the project — the only thing on offer for a plugin's
+   * assets, which are owned by the installed package and would be overwritten
+   * by its next update.
+   */
+  const startEdit = (it: LibraryItem, asCopy = false) => {
     const m = it.mcp ?? {};
     setDraft({
-      original: it,
+      original: asCopy ? undefined : it,
       scope: it.scope,
+      origin: !asCopy && it.origin === 'user' ? 'user' : 'project',
       title: it.title,
       kind: it.kind,
       description: it.description ?? '',
@@ -146,17 +158,26 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
             .filter(Boolean),
       action: isClaude || isMcp ? undefined : draft.action,
       mcp: isMcp ? draftToMcp(draft) : undefined,
+      origin: isClaude ? draft.origin : undefined,
       body: draft.body,
       cwd,
     };
-    // If the storage location changed (scope, or kind within claude scope —
-    // skills and agents live in different dirs), remove the old file first.
+    // If the storage location changed, remove the old file first — scope, or
+    // within claude scope the kind (skills/agents/commands are different dirs)
+    // or the ORIGIN (the project's `.claude` vs the user's), which without this
+    // left the moved item duplicated in both roots.
     if (
       draft.original &&
       (draft.original.scope !== draft.scope ||
-        (draft.scope === 'claude' && draft.original.kind !== draft.kind))
+        (draft.scope === 'claude' &&
+          (draft.original.kind !== draft.kind || draft.original.origin !== draft.origin)))
     ) {
-      await remove(draft.original.scope, draft.original.id, draft.original.kind);
+      await remove(
+        draft.original.scope,
+        draft.original.id,
+        draft.original.kind,
+        draft.original.origin,
+      );
     }
     await save(input);
     setDraft(null);
@@ -190,8 +211,9 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns:
-                draft.scope === 'claude' || draft.kind === 'mcp' ? '1fr 1fr' : '1fr 1fr 1fr',
+              // Three fields in every case except MCP (Kind + Scope only):
+              // claude scope trades "Default action" for "Where".
+              gridTemplateColumns: draft.kind === 'mcp' ? '1fr 1fr' : '1fr 1fr 1fr',
               gap: 10,
             }}
           >
@@ -229,6 +251,20 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
                 <option value="claude">claude (.claude/)</option>
               </select>
             </Field>
+            {draft.scope === 'claude' && (
+              <Field label="Where">
+                <select
+                  value={draft.origin}
+                  onChange={(e) =>
+                    setDraft({ ...draft, origin: e.target.value as 'project' | 'user' })
+                  }
+                  style={inputStyle}
+                >
+                  <option value="project">this project (.claude/)</option>
+                  <option value="user">all projects (~/.claude/)</option>
+                </select>
+              </Field>
+            )}
             {draft.scope !== 'claude' && draft.kind !== 'mcp' && (
               <Field label="Default action">
                 <select
@@ -291,12 +327,12 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
           {draft.scope === 'claude' && (
             <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', marginTop: 4 }}>
               Saves to{' '}
-              <code>{`${cwd ?? '.'}/${
+              <code>{`${draft.origin === 'user' ? '~/.claude' : `${cwd ?? '.'}/.claude`}/${
                 draft.kind === 'agent'
-                  ? '.claude/agents/<id>.md'
+                  ? 'agents/<id>.md'
                   : draft.kind === 'command'
-                    ? '.claude/commands/<id>.md'
-                    : '.claude/skills/<id>/SKILL.md'
+                    ? 'commands/<id>.md'
+                    : 'skills/<id>/SKILL.md'
               }`}</code>{' '}
               in Claude Code's native format — extra frontmatter (tools, model, ...) is preserved.
             </div>
@@ -366,7 +402,9 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
           </div>
         )}
         {filtered.map((it) => (
-          <div key={`${it.scope}:${it.id}`} style={cardStyle}>
+          // scope+id is not unique: within claude scope a skill and a command
+          // can share an id, and the same id can exist per origin.
+          <div key={`${it.scope}:${it.origin ?? ''}:${it.kind}:${it.id}`} style={cardStyle}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span
                 style={{ fontWeight: 600, fontSize: '0.8rem', color: 'var(--wks-text-primary)' }}
@@ -375,6 +413,7 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
               </span>
               <span style={kindBadge(it.kind)}>{it.kind}</span>
               <span style={scopeBadge(it.scope)}>{it.scope}</span>
+              {it.origin && <span style={originBadge}>{originLabel(it.origin)}</span>}
               <div style={{ flex: 1 }} />
               {it.kind !== 'mcp' && (
                 <>
@@ -401,21 +440,37 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
                   </button>
                 </>
               )}
-              <button onClick={() => startEdit(it)} style={miniBtn}>
-                Edit
-              </button>
-              <button
-                onClick={() => {
-                  const warning =
-                    it.scope === 'claude' && it.kind === 'skill'
-                      ? `Delete “${it.title}”? This removes the whole .claude/skills/${it.id}/ folder (including any resource files).`
-                      : `Delete “${it.title}”?`;
-                  if (confirm(warning)) remove(it.scope, it.id, it.kind);
-                }}
-                style={{ ...miniBtn, color: 'var(--wks-error)' }}
-              >
-                Delete
-              </button>
+              {it.editable === false ? (
+                // A plugin's file. Editing it in place is undone by the next
+                // plugin update and deleting it corrupts the install, so the
+                // only offer is a project-rooted copy the user does own.
+                <button
+                  onClick={() => startEdit(it, true)}
+                  style={miniBtn}
+                  title={`Read-only — owned by ${originLabel(it.origin)}. Opens a copy in this project.`}
+                >
+                  Copy to project
+                </button>
+              ) : (
+                <>
+                  <button onClick={() => startEdit(it)} style={miniBtn}>
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => {
+                      const root = it.origin === 'user' ? '~/.claude' : '.claude';
+                      const warning =
+                        it.scope === 'claude' && it.kind === 'skill'
+                          ? `Delete “${it.title}”? This removes the whole ${root}/skills/${it.id}/ folder (including any resource files).`
+                          : `Delete “${it.title}”?`;
+                      if (confirm(warning)) remove(it.scope, it.id, it.kind, it.origin);
+                    }}
+                    style={{ ...miniBtn, color: 'var(--wks-error)' }}
+                  >
+                    Delete
+                  </button>
+                </>
+              )}
             </div>
             {it.description && (
               <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-secondary)', marginTop: 3 }}>
@@ -527,6 +582,7 @@ const McpFields: React.FC<{ draft: Draft; setDraft: (d: Draft) => void }> = ({
               placeholder={'Authorization: Bearer abc123'}
               spellCheck={false}
             />
+            <SecretHint />
           </Field>
         </>
       ) : (
@@ -559,6 +615,7 @@ const McpFields: React.FC<{ draft: Draft; setDraft: (d: Draft) => void }> = ({
               placeholder={'API_KEY=...'}
               spellCheck={false}
             />
+            <SecretHint />
           </Field>
         </>
       )}
@@ -710,6 +767,37 @@ function kindBadge(kind: LibraryKind): React.CSSProperties {
     color: fg,
   };
 }
+/**
+ * Values in these two fields are credentials, so a stored one reads back as
+ * `__WKS_SECRET__` — the same masking plugin settings use. Leaving the mask in
+ * place keeps what is stored; typing over it replaces it. Says so out loud,
+ * because a textarea showing `Authorization: __WKS_SECRET__` otherwise looks
+ * like corrupted data worth "fixing".
+ */
+const SecretHint: React.FC = () => (
+  <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', marginTop: 3 }}>
+    Stored values are masked as <code>__WKS_SECRET__</code>. Leave the mask to keep the saved
+    secret; type over it to replace.
+  </div>
+);
+
+/** Which root a claude item came from, in the user's words rather than ours. */
+function originLabel(origin?: ClaudeOrigin): string {
+  if (!origin) return '';
+  if (origin === 'project') return 'this project';
+  if (origin === 'user') return '~/.claude';
+  return origin.slice('plugin:'.length);
+}
+/** Quieter than the kind/scope badges — origin is the third badge on the row
+ *  and reads as provenance, not classification. */
+const originBadge: React.CSSProperties = {
+  fontSize: '0.6rem',
+  padding: '1px 6px',
+  borderRadius: 'var(--wks-radius-pill)',
+  fontWeight: 600,
+  border: '1px solid var(--wks-border-subtle)',
+  color: 'var(--wks-text-faint)',
+};
 function scopeBadge(scope: LibraryScope): React.CSSProperties {
   // claude-scoped items get a distinct tint — they live in .claude/, not the library dirs
   if (scope === 'claude') {

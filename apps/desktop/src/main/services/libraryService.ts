@@ -5,14 +5,23 @@
  *   Global:  <configDir>/library/*.md          (e.g. ~/.config/workspacer/library)
  *   Project: <cwd>/.workspacer/library/*.md     (per repo, committable)
  *
- * It ALSO surfaces the project's Claude Code assets (scope 'claude') so they
- * can be browsed/edited from the same pane, in their native on-disk format:
+ * It ALSO surfaces Claude Code's own assets (scope 'claude') so they can be
+ * browsed/edited from the same pane, in their native on-disk format:
  *
- *   Skills: <cwd>/.claude/skills/<id>/SKILL.md  (frontmatter: name, description, ...)
- *   Agents: <cwd>/.claude/agents/<id>.md        (frontmatter: name, description, tools, model, ...)
+ *   Skills: <root>/skills/<id>/SKILL.md  (frontmatter: name, description, ...)
+ *   Agents: <root>/agents/<id>.md        (frontmatter: name, description, tools, model, ...)
+ *   Commands: <root>/commands/<id>.md
+ *
+ * …for each <root> in ORIGIN order (see CLAUDE_ORIGINS), which is where the
+ * bug was: only `<cwd>/.claude` was ever read. A repo with no `.claude/skills`
+ * of its own therefore showed ZERO Claude items while the session had a full
+ * complement of them, because the user's are in `~/.claude` and plugins ship
+ * their own — none of which this ever looked at.
  *
  * Edits to claude-scoped items write back in place, preserving any frontmatter
- * keys we don't model (tools, model, metadata, ...).
+ * keys we don't model (tools, model, metadata, ...). A plugin's assets are
+ * read-only: they belong to the installed package, and rewriting one is undone
+ * by the next plugin update.
  *
  * Items are merged with PROJECT WINNING over global on id collision (id = the
  * filename slug); claude items are namespaced separately and never collide.
@@ -20,6 +29,7 @@
  * pushes a `library:changed` event to the renderer.
  */
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import type { BrowserWindow } from 'electron';
@@ -49,6 +59,15 @@ export interface McpServerConfig {
   headers?: Record<string, string>;
 }
 
+/**
+ * Which root a claude-scoped item lives under. Also the PRECEDENCE order Claude
+ * Code itself resolves a name in, so when the same skill name exists twice the
+ * library shows the copy that is actually live.
+ *
+ * 'plugin:<name>' items are read-only — see saveClaude/remove.
+ */
+export type ClaudeOrigin = 'project' | 'user' | `plugin:${string}`;
+
 export interface LibraryItem {
   id: string; // filename slug (no extension)
   scope: LibraryScope;
@@ -60,6 +79,10 @@ export interface LibraryItem {
   action?: LibraryAction;
   /** MCP server config — present only when kind === 'mcp'. */
   mcp?: McpServerConfig;
+  /** Which root a claude-scoped item came from. Absent for global/project. */
+  origin?: ClaudeOrigin;
+  /** False when the item's file belongs to something else (a plugin package). */
+  editable?: boolean;
   body: string; // the prompt/skill text (may contain {{templates}})
   path: string; // absolute file path
 }
@@ -126,6 +149,22 @@ function guardWriteTarget(guard: LibraryFileGuard, target: string): string {
  * backslash is only a separator on win32, but a Windows-shaped id is never a
  * legitimate item name on any platform).
  */
+/**
+ * Gate on the origin a WRITE (or delete) claims. A plugin's assets are owned by
+ * the installed package — editing one in place is silently reverted by the next
+ * plugin update, and deleting one corrupts the install rather than the user's
+ * library. Unknown origins fall back to 'project', which is where a brand-new
+ * item has always gone; only an explicit 'plugin:…' is refused.
+ */
+function assertWritableOrigin(origin?: ClaudeOrigin): 'project' | 'user' {
+  if (typeof origin === 'string' && origin.startsWith('plugin:')) {
+    throw new Error(
+      `library: ${origin} items are read-only — copy it into the project or your user skills to edit it`,
+    );
+  }
+  return origin === 'user' ? 'user' : 'project';
+}
+
 function assertPlainBasename(id: string): string {
   const name = String(id ?? '');
   if (!name || name === '.' || name === '..' || /[\\/]/.test(name) || path.isAbsolute(name)) {
@@ -140,14 +179,108 @@ function globalDir(): string {
 function projectDir(cwd: string): string {
   return path.join(cwd, '.workspacer', 'library');
 }
-function claudeSkillsDir(cwd: string): string {
-  return path.join(cwd, '.claude', 'skills');
+/** A root that holds Claude assets, in the `skills/ agents/ commands/` layout
+ *  shared by `.claude` directories and plugin packages. */
+interface ClaudeRoot {
+  origin: ClaudeOrigin;
+  dir: string;
+  /** Whether the pane may write into it. A plugin's files are the package's. */
+  editable: boolean;
 }
-function claudeAgentsDir(cwd: string): string {
-  return path.join(cwd, '.claude', 'agents');
+
+function claudeSkillsDir(root: string): string {
+  return path.join(root, 'skills');
 }
-function claudeCommandsDir(cwd: string): string {
-  return path.join(cwd, '.claude', 'commands');
+function claudeAgentsDir(root: string): string {
+  return path.join(root, 'agents');
+}
+function claudeCommandsDir(root: string): string {
+  return path.join(root, 'commands');
+}
+/** The project's own `.claude` — the one root every write goes to by default. */
+function projectClaudeDir(cwd: string): string {
+  return path.join(cwd, '.claude');
+}
+/**
+ * Claude Code's own config root. `CLAUDE_CONFIG_DIR` relocates it — the CLI
+ * honours that variable and so must we, or an install that sets it shows an
+ * empty user scope while the session has a full complement of skills. Resolved
+ * (not tilde-expanded: `~` is an ordinary filename, per the fs guards).
+ */
+function userClaudeDir(): string {
+  const override = process.env.CLAUDE_CONFIG_DIR;
+  return override && override.trim()
+    ? path.resolve(override.trim())
+    : path.join(os.homedir(), '.claude');
+}
+
+/** How many plugin directories to enumerate. A marketplace clone is a checkout
+ *  of arbitrary size and this runs on every list(). */
+const MAX_PLUGIN_ROOTS = 200;
+
+/** Immediate subdirectories of `dir`, sorted for a stable order. Unreadable or
+ *  missing reads as empty — root discovery is best-effort. */
+function subdirs(dir: string): string[] {
+  try {
+    return fs
+      .readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => path.join(dir, e.name))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Installed and marketplace plugin roots under `~/.claude/plugins`:
+ *
+ *   cache/<marketplace>/<plugin>/<version>/   (installed)
+ *   marketplaces/<mp>/plugins/<plugin>/       (the clone, whose commands are
+ *                                              live without being "installed")
+ *
+ * Mirrors `asset_roots` in claudemon's claude_stream.rs, which resolves the same
+ * layout for the Context pane — the two must agree or the same skill is
+ * "built-in" in one pane and a plugin file in the other.
+ */
+function pluginRoots(): ClaudeRoot[] {
+  const base = path.join(userClaudeDir(), 'plugins');
+  const out: ClaudeRoot[] = [];
+  const seen = new Set<string>();
+  const push = (name: string, dir: string): void => {
+    if (out.length >= MAX_PLUGIN_ROOTS || !name || seen.has(dir)) return;
+    seen.add(dir);
+    out.push({ origin: `plugin:${name}`, dir, editable: false });
+  };
+  for (const marketplace of subdirs(path.join(base, 'cache'))) {
+    for (const plugin of subdirs(marketplace)) {
+      // The VERSION directory is the root, not the plugin directory.
+      for (const version of subdirs(plugin)) push(path.basename(plugin), version);
+    }
+  }
+  for (const marketplace of subdirs(path.join(base, 'marketplaces'))) {
+    for (const plugin of subdirs(path.join(marketplace, 'plugins'))) {
+      push(path.basename(plugin), plugin);
+    }
+  }
+  return out;
+}
+
+/** Every root a claude-scoped item can live under, in precedence order. */
+function claudeRoots(cwd: string): ClaudeRoot[] {
+  const roots: ClaudeRoot[] = [{ origin: 'project', dir: projectClaudeDir(cwd), editable: true }];
+  const user = userClaudeDir();
+  // A cwd that IS the home directory would otherwise list every user asset
+  // twice, once per origin (a bare `agents.spawn({})` produces exactly that cwd).
+  if (path.resolve(user) !== path.resolve(projectClaudeDir(cwd))) {
+    roots.push({ origin: 'user', dir: user, editable: true });
+  }
+  return [...roots, ...pluginRoots()];
+}
+
+/** Where a NEW (or relocated) claude item of this origin gets written. */
+function writableRootDir(origin: ClaudeOrigin | undefined, cwd: string): string {
+  return origin === 'user' ? userClaudeDir() : projectClaudeDir(cwd);
 }
 
 /** Split a markdown file into its YAML frontmatter + body. */
@@ -173,6 +306,89 @@ function cleanMcp(cfg: McpServerConfig): McpServerConfig {
   if (cfg.url && cfg.url.trim()) out.url = cfg.url.trim();
   if (cfg.headers && Object.keys(cfg.headers).length) out.headers = cfg.headers;
   return out;
+}
+
+/**
+ * What a stored secret reads as once it leaves this process. Same literal as
+ * the plugin-settings placeholder (`SecretPlaceholder` in
+ * services/hub/internal/plugin/settings.go, `SECRET_PLACEHOLDER` in
+ * renderer/src/types/plugin.ts) so workspacer has ONE convention across both of
+ * its credential stores.
+ */
+export const SECRET_PLACEHOLDER = '__WKS_SECRET__';
+
+/**
+ * The MCP fields whose PURPOSE is credentials: `env` (a stdio server's
+ * `JIRA_API_TOKEN=…`) and `headers` (an http server's `Authorization: Bearer …`).
+ * Both are typed into the Library pane's MCP editor by hand and then written
+ * PLAINTEXT into markdown frontmatter — under `<cwd>/.workspacer/library/` for
+ * project scope, a directory this service's own header calls "per repo,
+ * committable". So the risk needs no attacker: `git add -A` is enough.
+ *
+ * `url` is deliberately NOT redacted — it is an endpoint, it is the only thing
+ * that identifies an http server in the list UI, and masking it would leave the
+ * user unable to tell two servers apart. A credential belongs in `headers`, not
+ * in a query string.
+ */
+function redactMcp(cfg: McpServerConfig): McpServerConfig {
+  const mask = (rec?: Record<string, string>): Record<string, string> | undefined => {
+    if (!rec) return rec;
+    const out: Record<string, string> = {};
+    // Keys stay visible — which variables a server needs is configuration, not
+    // a secret, and the UI has to render the row to let the user replace it.
+    for (const [k, v] of Object.entries(rec)) out[k] = v ? SECRET_PLACEHOLDER : v;
+    return out;
+  };
+  return { ...cfg, env: mask(cfg.env), headers: mask(cfg.headers) };
+}
+
+/** An item as it may leave the process: MCP credentials masked, rest verbatim. */
+function redactItem(item: LibraryItem): LibraryItem {
+  if (item.kind !== 'mcp' || !item.mcp) return item;
+  return { ...item, mcp: redactMcp(item.mcp) };
+}
+
+/**
+ * Put back the real value wherever the caller echoed the placeholder — the
+ * write half of the masked, write-only UI. Without this a round-trip through
+ * the Library pane (open an MCP item, change its title, save) would persist the
+ * literal `__WKS_SECRET__` as the token and silently break the server.
+ *
+ * A placeholder with nothing stored behind it is DROPPED rather than written,
+ * so a caller cannot inject the sentinel as a real value.
+ */
+function restoreSecrets(next: McpServerConfig, stored?: McpServerConfig): McpServerConfig {
+  const merge = (
+    incoming?: Record<string, string>,
+    prev?: Record<string, string>,
+  ): Record<string, string> | undefined => {
+    if (!incoming) return incoming;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(incoming)) {
+      if (v !== SECRET_PLACEHOLDER) {
+        out[k] = v;
+        continue;
+      }
+      const kept = prev?.[k];
+      if (kept !== undefined && kept !== SECRET_PLACEHOLDER) out[k] = kept;
+    }
+    return out;
+  };
+  return {
+    ...next,
+    env: merge(next.env, stored?.env),
+    headers: merge(next.headers, stored?.headers),
+  };
+}
+
+/** The stored MCP config at `full`, if that file exists and holds one. */
+function storedMcpAt(full: string): McpServerConfig | undefined {
+  try {
+    const { data } = parseFrontmatter(fs.readFileSync(full, 'utf-8'));
+    return data.mcp && typeof data.mcp === 'object' ? (data.mcp as McpServerConfig) : undefined;
+  } catch {
+    return undefined; // new file, or unreadable — nothing to preserve
+  }
 }
 
 function serialize(
@@ -240,6 +456,7 @@ function claudeItem(
   fullPath: string,
   id: string,
   kind: 'skill' | 'agent' | 'command',
+  root: ClaudeRoot,
   guard: LibraryFileGuard,
 ): LibraryItem | null {
   const full = guard(fullPath);
@@ -253,6 +470,8 @@ function claudeItem(
       title: typeof data.name === 'string' && hasNonBlankText(data.name) ? data.name : id,
       kind,
       description: typeof data.description === 'string' ? data.description : undefined,
+      origin: root.origin,
+      editable: root.editable,
       body: body.replace(/^\s*\n/, ''),
       path: full,
     };
@@ -261,7 +480,8 @@ function claudeItem(
   }
 }
 
-function readClaudeItems(cwd: string, guard: LibraryFileGuard): LibraryItem[] {
+/** The claude assets under ONE root. */
+function readClaudeRoot(root: ClaudeRoot, guard: LibraryFileGuard): LibraryItem[] {
   const items: LibraryItem[] = [];
 
   // The id for a claude item is its REAL on-disk basename (skill dir name, or
@@ -272,55 +492,82 @@ function readClaudeItems(cwd: string, guard: LibraryFileGuard): LibraryItem[] {
 
   // Skills: one directory per skill, content in SKILL.md
   try {
-    for (const e of fs.readdirSync(claudeSkillsDir(cwd), { withFileTypes: true })) {
+    for (const e of fs.readdirSync(claudeSkillsDir(root.dir), { withFileTypes: true })) {
       if (!e.isDirectory()) continue;
       const it = claudeItem(
-        path.join(claudeSkillsDir(cwd), e.name, 'SKILL.md'),
+        path.join(claudeSkillsDir(root.dir), e.name, 'SKILL.md'),
         e.name,
         'skill',
+        root,
         guard,
       );
       if (it) items.push(it);
     }
   } catch {
-    /* no .claude/skills */
+    /* no skills/ under this root */
   }
 
   // Agents: flat markdown files
   try {
-    for (const name of fs.readdirSync(claudeAgentsDir(cwd))) {
+    for (const name of fs.readdirSync(claudeAgentsDir(root.dir))) {
       if (!name.toLowerCase().endsWith('.md')) continue;
       const it = claudeItem(
-        path.join(claudeAgentsDir(cwd), name),
+        path.join(claudeAgentsDir(root.dir), name),
         name.replace(/\.md$/i, ''),
         'agent',
+        root,
         guard,
       );
       if (it) items.push(it);
     }
   } catch {
-    /* no .claude/agents */
+    /* no agents/ under this root */
   }
 
   // Custom slash commands: flat markdown files. Claude command frontmatter has
   // no `name` (the file's basename is the command), so claudeItem falls back to
   // the id for the title — which is exactly what the "/" picker shows after "/".
   try {
-    for (const name of fs.readdirSync(claudeCommandsDir(cwd))) {
+    for (const name of fs.readdirSync(claudeCommandsDir(root.dir))) {
       if (!name.toLowerCase().endsWith('.md')) continue;
       const it = claudeItem(
-        path.join(claudeCommandsDir(cwd), name),
+        path.join(claudeCommandsDir(root.dir), name),
         name.replace(/\.md$/i, ''),
         'command',
+        root,
         guard,
       );
       if (it) items.push(it);
     }
   } catch {
-    /* no .claude/commands */
+    /* no commands/ under this root */
   }
 
   return items;
+}
+
+/**
+ * Every claude asset visible to a session in `cwd`, deduped by kind+id with the
+ * FIRST root winning — [`claudeRoots`] is in precedence order, so the copy the
+ * library shows is the copy Claude Code would actually run.
+ *
+ * Only the project root is reachable from the hub bus: `guard` confines library
+ * files to the caller's project plus the global store (hubCapabilities'
+ * `libraryItemRoots`), so a remote caller's user and plugin items are skipped
+ * here rather than read. That divergence from the local desktop path is
+ * DELIBERATE — widening the item roots to `~/.claude` to close it would put
+ * `~/.claude/.credentials.json` one planted symlink away from `library.list`,
+ * which returns file bodies. The Go twin (cmd/brain library.go) is the same.
+ */
+function readClaudeItems(cwd: string, guard: LibraryFileGuard): LibraryItem[] {
+  const byKey = new Map<string, LibraryItem>();
+  for (const root of claudeRoots(cwd)) {
+    for (const it of readClaudeRoot(root, guard)) {
+      const key = `${it.kind}:${it.id}`;
+      if (!byKey.has(key)) byKey.set(key, it);
+    }
+  }
+  return Array.from(byKey.values());
 }
 
 /**
@@ -354,11 +601,34 @@ class LibraryService {
   setMainWindow(win: BrowserWindow): void {
     this.win = win;
     this.watch(globalDir());
+    this.watchUserClaude();
+  }
+
+  /**
+   * The merged item list AS IT MAY LEAVE THIS PROCESS — MCP `env`/`headers`
+   * values masked to [`SECRET_PLACEHOLDER`].
+   *
+   * Redaction is the DEFAULT, and `listWithSecrets` is the opt-in, because the
+   * failure directions are not symmetric: a reader that should have been
+   * redacted leaks a live API token, while a consumer that should have had
+   * secrets gets a visibly broken `__WKS_SECRET__` and a bug report. A new
+   * caller that thinks about neither lands on the safe one.
+   *
+   * Only the two spawn paths legitimately need the real values, and neither
+   * routes them through the renderer: `claudeSpawn`/`managedSpawn` receive
+   * `mcpItemIds` (names only) and resolve the configs here in main.
+   */
+  list(cwd?: string, guard: LibraryFileGuard = allowAnyLibraryFile): LibraryItem[] {
+    return this.listWithSecrets(cwd, guard).map(redactItem);
   }
 
   /** Merged item list, project winning over global on id collision.
-   *  Claude items (.claude/skills + .claude/agents) are namespaced separately. */
-  list(cwd?: string, guard: LibraryFileGuard = allowAnyLibraryFile): LibraryItem[] {
+   *  Claude items (.claude/skills + .claude/agents) are namespaced separately.
+   *
+   *  CREDENTIALS IN THE CLEAR — for the spawn paths, which write them into a
+   *  session's `--mcp-config` file. Never hand this to the renderer or the bus;
+   *  see `list()`. */
+  listWithSecrets(cwd?: string, guard: LibraryFileGuard = allowAnyLibraryFile): LibraryItem[] {
     const byId = new Map<string, LibraryItem>();
     // The GLOBAL dir is guarded too: <configDir>/library is the one directory a
     // remote caller can write into, so a symlink planted there aimed at the
@@ -386,7 +656,7 @@ class LibraryService {
   }
 
   save(
-    input: {
+    input0: {
       scope: LibraryScope;
       id?: string;
       title: string;
@@ -395,23 +665,31 @@ class LibraryService {
       tags?: string[];
       action?: LibraryAction;
       mcp?: McpServerConfig;
+      /** Claude scope only — which root to write into ('project' | 'user'). */
+      origin?: ClaudeOrigin;
       body: string;
       cwd?: string;
     },
     guard: LibraryFileGuard = allowAnyLibraryFile,
   ): LibraryItem {
-    if (input.scope === 'claude') return this.saveClaude(input, guard);
-    const id = slug(input.id || input.title);
+    if (input0.scope === 'claude') return this.saveClaude(input0, guard);
+    const id = slug(input0.id || input0.title);
     // Checked BEFORE mkdir, so a denied save leaves no directories behind, and
     // the directory is re-derived from the CANONICAL file or mkdir would
     // rebuild the unresolved one.
     const full = guardWriteTarget(
       guard,
       path.join(
-        input.scope === 'project' ? projectDir(input.cwd || process.cwd()) : globalDir(),
+        input0.scope === 'project' ? projectDir(input0.cwd || process.cwd()) : globalDir(),
         `${id}.md`,
       ),
     );
+    // Resolve echoed placeholders against what is already on disk BEFORE the
+    // mkdir/write, so a save that only touched the title keeps the token.
+    const input =
+      input0.kind === 'mcp' && input0.mcp
+        ? { ...input0, mcp: restoreSecrets(input0.mcp, storedMcpAt(full)) }
+        : input0;
     fs.mkdirSync(path.dirname(full), { recursive: true });
     // Atomic (temp file in the same dir + rename), like every other file-backed
     // store here and like the Go twin (cmd/brain/library.go writeFileAtomic).
@@ -419,7 +697,10 @@ class LibraryService {
     // that dies partway — ENOSPC/EDQUOT in the field — leaves the user's saved
     // prompt truncated with the original bytes already destroyed.
     atomicWriteFileSync(full, serialize(input));
-    return {
+    // Redacted on the way back out, like list(): save's return value goes
+    // straight to the renderer / the bus caller, so echoing the resolved token
+    // would undo the masking for anyone who just saved.
+    return redactItem({
       id,
       scope: input.scope,
       title: input.title,
@@ -430,7 +711,7 @@ class LibraryService {
       mcp: input.kind === 'mcp' && input.mcp ? cleanMcp(input.mcp) : undefined,
       body: input.body,
       path: full,
-    };
+    });
   }
 
   /** Write a claude-scoped item back in Claude Code's native format/location. */
@@ -440,6 +721,7 @@ class LibraryService {
       title: string;
       kind: LibraryKind;
       description?: string;
+      origin?: ClaudeOrigin;
       body: string;
       cwd?: string;
     },
@@ -448,19 +730,25 @@ class LibraryService {
     const cwd = input.cwd || process.cwd();
     const kind: 'skill' | 'agent' | 'command' =
       input.kind === 'agent' ? 'agent' : input.kind === 'command' ? 'command' : 'skill';
+    // A plugin's assets are the installed package's, and the next plugin update
+    // overwrites whatever we wrote. Refuse rather than write-and-lose; the pane
+    // offers "copy to project" instead. Checked before the id is even derived,
+    // so a plugin origin can never reach a write target.
+    const origin = assertWritableOrigin(input.origin);
     // An existing item's id IS its real on-disk basename (see readClaudeItems),
     // so edit it in place; only slug when minting a brand-new item from a title.
     // A supplied id is still caller data, so it must look like a basename.
     const id = input.id ? assertPlainBasename(input.id) : slug(input.title);
     // A `.claude/skills` DIRECTORY symlink inside the (allowed) cwd is the same
     // escape library.remove had to close, in the write direction.
+    const root = writableRootDir(origin, cwd);
     const full = guardWriteTarget(
       guard,
       kind === 'skill'
-        ? path.join(claudeSkillsDir(cwd), id, 'SKILL.md')
+        ? path.join(claudeSkillsDir(root), id, 'SKILL.md')
         : kind === 'command'
-          ? path.join(claudeCommandsDir(cwd), `${id}.md`)
-          : path.join(claudeAgentsDir(cwd), `${id}.md`),
+          ? path.join(claudeCommandsDir(root), `${id}.md`)
+          : path.join(claudeAgentsDir(root), `${id}.md`),
     );
     fs.mkdirSync(path.dirname(full), { recursive: true });
 
@@ -494,6 +782,8 @@ class LibraryService {
       title: input.title,
       kind,
       description: input.description,
+      origin,
+      editable: true,
       body: input.body,
       path: full,
     };
@@ -504,6 +794,10 @@ class LibraryService {
     id: string,
     cwd?: string,
     kind?: LibraryKind,
+    origin?: ClaudeOrigin,
+    // Last, like list()/save(): the guard-coverage sweeps read it positionally
+    // off the end of the call, and it is the argument every one of these legs
+    // has in common.
     guard: LibraryFileGuard = allowAnyLibraryFile,
   ): void {
     // The DELETE TARGET goes through the guard, not the cwd it was composed
@@ -524,7 +818,10 @@ class LibraryService {
       }
     };
     if (scope === 'claude') {
-      const root = cwd || process.cwd();
+      // Refused for a plugin origin before anything is derived — the skill
+      // branch below is a recursive, force rmSync, and a plugin's skill
+      // directory is part of an installed package, not the user's library.
+      const root = writableRootDir(assertWritableOrigin(origin), cwd || process.cwd());
       // The id is the item's real on-disk basename (from list()); use it verbatim
       // rather than re-slugging, or a non-slug-stable name unlinks nothing — but
       // verbatim means it must first be proven to BE a basename, because the
@@ -566,12 +863,13 @@ class LibraryService {
   ): void {
     if (cwd === this.watchedProjectCwd && !force) return;
     if (cwd !== this.watchedProjectCwd) {
-      // Drop the old project's watchers (keep the global one).
+      // Drop the old project's watchers (keep the global and user ones).
+      const old = projectClaudeDir(this.watchedProjectCwd);
       for (const dir of [
         projectDir(this.watchedProjectCwd),
-        claudeSkillsDir(this.watchedProjectCwd),
-        claudeAgentsDir(this.watchedProjectCwd),
-        claudeCommandsDir(this.watchedProjectCwd),
+        claudeSkillsDir(old),
+        claudeAgentsDir(old),
+        claudeCommandsDir(old),
       ]) {
         const w = this.watchers.get(dir);
         if (w && this.watchedProjectCwd) {
@@ -585,9 +883,24 @@ class LibraryService {
     // Claude dirs: watch only if they exist — don't litter repos with empty
     // .claude/skills dirs. list()/save() re-call this, so a dir created later
     // gets picked up. Skills need recursive (SKILL.md is one level down).
-    this.watch(claudeSkillsDir(cwd), { createIfMissing: false, recursive: true }, guard);
-    this.watch(claudeAgentsDir(cwd), { createIfMissing: false }, guard);
-    this.watch(claudeCommandsDir(cwd), { createIfMissing: false }, guard);
+    const claude = projectClaudeDir(cwd);
+    this.watch(claudeSkillsDir(claude), { createIfMissing: false, recursive: true }, guard);
+    this.watch(claudeAgentsDir(claude), { createIfMissing: false }, guard);
+    this.watch(claudeCommandsDir(claude), { createIfMissing: false }, guard);
+  }
+
+  /**
+   * Watch the USER's `~/.claude` assets. Installed once, never torn down: it is
+   * not derived from any caller's cwd (so it takes no guard and is no oracle),
+   * and it doesn't change when the active project does. Without it, editing
+   * `~/.claude/skills/foo/SKILL.md` outside the app left the pane stale — the
+   * failure mode the project watch already existed to prevent.
+   */
+  private watchUserClaude(): void {
+    const user = userClaudeDir();
+    this.watch(claudeSkillsDir(user), { createIfMissing: false, recursive: true });
+    this.watch(claudeAgentsDir(user), { createIfMissing: false });
+    this.watch(claudeCommandsDir(user), { createIfMissing: false });
   }
 
   private watch(

@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import { pathToFileURL } from 'url';
 import { configService } from './services/configService';
 import { CLAUDEMON_API_URL } from './services/claudemonDaemon';
-import { libraryService } from './services/libraryService';
+import { libraryService, type ClaudeOrigin } from './services/libraryService';
 import { sessionService } from './services/sessionService';
 import {
   peekLegacyPluginSettings,
@@ -129,7 +129,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       id: string,
       cwd?: string,
       kind?: 'prompt' | 'skill' | 'agent',
-    ) => libraryService.remove(scope, id, cwd, kind),
+      // The claude-scope origin decides WHICH root is unlinked (project vs the
+      // user's ~/.claude) and refuses a plugin's files outright.
+      origin?: ClaudeOrigin,
+    ) => libraryService.remove(scope, id, cwd, kind, origin),
   );
 
   // Renderer reports which agent session is currently on screen, so the

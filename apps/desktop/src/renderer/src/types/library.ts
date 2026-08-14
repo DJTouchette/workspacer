@@ -5,6 +5,11 @@ export type LibraryScope = 'global' | 'project' | 'claude';
 export type LibraryKind = 'prompt' | 'skill' | 'agent' | 'mcp' | 'command';
 export type LibraryAction = 'insert' | 'spawn' | 'copy';
 
+/** Which root a claude-scoped item lives under, in the precedence order Claude
+ *  Code itself resolves a name in. `plugin:<name>` items are read-only. Mirrors
+ *  the main process's libraryService.ClaudeOrigin. */
+export type ClaudeOrigin = 'project' | 'user' | `plugin:${string}`;
+
 /** An MCP server definition, in Claude Code's `mcpServers` shape. Mirrors the
  *  main process's libraryService.McpServerConfig. */
 export interface McpServerConfig {
@@ -28,6 +33,10 @@ export interface LibraryItem {
   action?: LibraryAction;
   /** MCP server config — present only when kind === 'mcp'. */
   mcp?: McpServerConfig;
+  /** Which root a claude-scoped item came from. Absent for global/project. */
+  origin?: ClaudeOrigin;
+  /** False when the file belongs to something else (an installed plugin). */
+  editable?: boolean;
   body: string;
   path: string;
 }
@@ -42,6 +51,8 @@ export interface LibrarySaveInput {
   tags?: string[];
   action?: LibraryAction;
   mcp?: McpServerConfig;
+  /** Claude scope only — which root to write into ('project' | 'user'). */
+  origin?: ClaudeOrigin;
   body: string;
   cwd?: string;
 }

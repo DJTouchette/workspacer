@@ -40,14 +40,36 @@ import { libraryService } from './libraryService';
 import { assertPathAllowed } from '../lib/pathConfinement';
 
 let cwd: string;
+// The USER claude root, pointed at a temp dir for the whole suite. list() now
+// reads it (and the plugin roots under it) as well as the project's `.claude`,
+// so without this every assertion below counts the DEVELOPER's own
+// ~/.claude/skills — which is how this landed: the slug-collision test went
+// from 2 items to 28. CLAUDE_CONFIG_DIR is Claude Code's own relocation
+// variable, not a test-only hook.
+let userClaude: string;
+let savedConfigDir: string | undefined;
 beforeEach(() => {
   h.configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-cfg-'));
   cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-cwd-'));
+  userClaude = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-user-'));
+  savedConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = userClaude;
 });
 afterEach(() => {
+  if (savedConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+  else process.env.CLAUDE_CONFIG_DIR = savedConfigDir;
   fs.rmSync(h.configDir, { recursive: true, force: true });
   fs.rmSync(cwd, { recursive: true, force: true });
+  fs.rmSync(userClaude, { recursive: true, force: true });
 });
+
+/** Write a claude asset under an arbitrary root (project `.claude`, the user
+ *  root, or a plugin package — they share one layout). */
+function writeClaudeAsset(root: string, rel: string, frontmatter: string, body = 'b'): void {
+  const full = path.join(root, rel);
+  fs.mkdirSync(path.dirname(full), { recursive: true });
+  fs.writeFileSync(full, `---\n${frontmatter}\n---\n\n${body}\n`, 'utf-8');
+}
 
 function writeSkill(dirName: string, name: string, body: string): void {
   const dir = path.join(cwd, '.claude', 'skills', dirName);
@@ -387,7 +409,7 @@ describe('libraryService — every leg applies the guard it was handed', () => {
     // An ordinary permitted fs.write inside the allowed project.
     fs.symlinkSync(outside, path.join(root, '.claude', 'skills'));
 
-    libraryService.remove('claude', 'precious', root, 'skill', itemGuard('library.remove', root));
+    libraryService.remove('claude', 'precious', root, 'skill', undefined, itemGuard('library.remove', root));
     expect(fs.existsSync(path.join(outside, 'precious', 'keep.txt'))).toBe(true);
 
     // The floor: a real skill inside the project is still removable.
@@ -395,7 +417,7 @@ describe('libraryService — every leg applies the guard it was handed', () => {
     const skill = path.join(clean, '.claude', 'skills', 'keeper');
     fs.mkdirSync(skill, { recursive: true });
     fs.writeFileSync(path.join(skill, 'SKILL.md'), 'x');
-    libraryService.remove('claude', 'keeper', clean, 'skill', itemGuard('library.remove', clean));
+    libraryService.remove('claude', 'keeper', clean, 'skill', undefined, itemGuard('library.remove', clean));
     expect(fs.existsSync(skill)).toBe(false);
     fs.rmSync(outside, { recursive: true, force: true });
     fs.rmSync(clean, { recursive: true, force: true });
@@ -508,7 +530,7 @@ describe('libraryService — a caller-supplied id cannot escape its directory', 
   it('project/global remove slugs the id rather than concatenating it', () => {
     const root = fs.realpathSync(cwd);
     fs.writeFileSync(path.join(root, 'CLAUDE.md'), 'ORIGINAL PROJECT INSTRUCTIONS\n');
-    libraryService.remove('project', '../../CLAUDE', root, undefined, anyGuard);
+    libraryService.remove('project', '../../CLAUDE', root, undefined, undefined, anyGuard);
     expect(fs.existsSync(path.join(root, 'CLAUDE.md'))).toBe(true);
   });
 
@@ -553,11 +575,11 @@ describe('libraryService — a caller-supplied id cannot escape its directory', 
     // cwd — so assertPathAllowed allows it and this string check is the only
     // thing between a bus caller and a recursive force rmSync of settings.json,
     // hooks, agents and commands.
-    expect(() => libraryService.remove('claude', '..', root, 'skill', anyGuard)).toThrow(
+    expect(() => libraryService.remove('claude', '..', root, 'skill', undefined, anyGuard)).toThrow(
       /invalid library item id/,
     );
     expect(fs.existsSync(settings)).toBe(true);
-    expect(() => libraryService.remove('claude', '.', root, 'skill', anyGuard)).toThrow(
+    expect(() => libraryService.remove('claude', '.', root, 'skill', undefined, anyGuard)).toThrow(
       /invalid library item id/,
     );
     expect(fs.existsSync(settings)).toBe(true);
@@ -578,7 +600,7 @@ describe('libraryService — a caller-supplied id cannot escape its directory', 
   it('a Windows-shaped id is refused on every platform', () => {
     const root = fs.realpathSync(cwd);
     for (const id of ['..\\..', 'a\\b', '\\\\server\\share', 'sub\\SKILL']) {
-      expect(() => libraryService.remove('claude', id, root, 'skill', anyGuard)).toThrow(
+      expect(() => libraryService.remove('claude', id, root, 'skill', undefined, anyGuard)).toThrow(
         /invalid library item id/,
       );
       expect(() =>
@@ -890,7 +912,7 @@ describe('libraryService — every leg opens the path the guard RESOLVED', () =>
     const link = path.join(root, '.claude', 'skills', 'aliased');
     fs.symlinkSync(real, link);
 
-    libraryService.remove('claude', 'aliased', root, 'skill', itemGuard(root));
+    libraryService.remove('claude', 'aliased', root, 'skill', undefined, itemGuard(root));
 
     expect(
       fs.existsSync(real),
@@ -1019,5 +1041,229 @@ describe('libraryService writes atomically, like its Go twin', () => {
       fs.statSync(file).ino,
       'a partial write would truncate a file Workspacer did not author',
     ).not.toBe(before);
+  });
+});
+
+/**
+ * The bug this file's first block never covered: list() only ever read
+ * `<cwd>/.claude`. A repo with no `.claude/skills` of its own — the normal case
+ * — therefore showed ZERO Claude items while the session had a full set of
+ * them, because the user's live in ~/.claude and plugins ship their own.
+ */
+describe('libraryService — claude items outside the project root', () => {
+  it('lists the user root and plugin packages, not just the project', () => {
+    writeSkill('proj-skill', 'Proj Skill', 'p');
+    writeClaudeAsset(userClaude, 'skills/user-skill/SKILL.md', 'name: User Skill\ndescription: u');
+    writeClaudeAsset(userClaude, 'agents/user-agent.md', 'name: User Agent');
+    writeClaudeAsset(
+      userClaude,
+      'plugins/marketplaces/official/plugins/pack/commands/pack-cmd.md',
+      'description: From a plugin',
+    );
+    writeClaudeAsset(
+      userClaude,
+      'plugins/cache/official/installed/1.0.0/skills/installed-skill/SKILL.md',
+      'name: Installed Skill',
+    );
+
+    const claude = libraryService.list(cwd).filter((it) => it.scope === 'claude');
+    const byTitle = new Map(claude.map((it) => [it.title, it]));
+
+    expect(byTitle.get('Proj Skill')?.origin).toBe('project');
+    expect(byTitle.get('User Skill')?.origin).toBe('user');
+    expect(byTitle.get('User Agent')?.origin).toBe('user');
+    expect(byTitle.get('pack-cmd')?.origin).toBe('plugin:pack');
+    expect(byTitle.get('Installed Skill')?.origin).toBe('plugin:installed');
+  });
+
+  it('lets the project shadow a user skill of the same name, once', () => {
+    // Claude Code resolves the project's copy, so that is the one the library
+    // must show — and it must show ONE row, not two identical-looking ones.
+    writeSkill('shared', 'Project copy', 'p');
+    writeClaudeAsset(userClaude, 'skills/shared/SKILL.md', 'name: User copy');
+
+    const shared = libraryService
+      .list(cwd)
+      .filter((it) => it.scope === 'claude' && it.kind === 'skill' && it.id === 'shared');
+    expect(shared).toHaveLength(1);
+    expect(shared[0].title).toBe('Project copy');
+    expect(shared[0].origin).toBe('project');
+  });
+
+  it('marks plugin items read-only and refuses to write or delete them', () => {
+    writeClaudeAsset(
+      userClaude,
+      'plugins/marketplaces/official/plugins/pack/skills/pack-skill/SKILL.md',
+      'name: Pack Skill',
+    );
+    const item = libraryService.list(cwd).find((it) => it.title === 'Pack Skill')!;
+    expect(item.editable).toBe(false);
+
+    // Editing in place is undone by the next plugin update; deleting corrupts
+    // the install. Both fail loudly rather than silently doing the wrong thing.
+    expect(() =>
+      libraryService.save({
+        scope: 'claude',
+        id: item.id,
+        title: 'Pack Skill',
+        kind: 'skill',
+        origin: item.origin,
+        body: 'hijacked',
+        cwd,
+      }),
+    ).toThrow(/read-only/);
+    expect(() =>
+      libraryService.remove('claude', item.id, cwd, 'skill', item.origin),
+    ).toThrow(/read-only/);
+
+    const file = path.join(
+      userClaude,
+      'plugins/marketplaces/official/plugins/pack/skills/pack-skill/SKILL.md',
+    );
+    expect(fs.existsSync(file), 'the plugin file survives both refusals').toBe(true);
+    expect(fs.readFileSync(file, 'utf-8')).not.toContain('hijacked');
+  });
+
+  it("saves and deletes a 'user' item in the user root, not the project", () => {
+    const saved = libraryService.save({
+      scope: 'claude',
+      title: 'Everywhere',
+      kind: 'skill',
+      origin: 'user',
+      body: 'mine',
+      cwd,
+    });
+    const file = path.join(userClaude, 'skills', 'everywhere', 'SKILL.md');
+    expect(saved.path).toBe(file);
+    expect(fs.existsSync(file)).toBe(true);
+    expect(
+      fs.existsSync(path.join(cwd, '.claude', 'skills', 'everywhere')),
+      'a user-scoped skill must not land in the project',
+    ).toBe(false);
+
+    // Without the origin the delete targets the project root and unlinks
+    // nothing, leaving the item on screen after a "successful" delete.
+    libraryService.remove('claude', 'everywhere', cwd, 'skill', 'user');
+    expect(fs.existsSync(file)).toBe(false);
+  });
+
+  it('honours CLAUDE_CONFIG_DIR for the user root', () => {
+    // The whole suite relies on this, so pin it: a relocated Claude install
+    // must resolve its skills there and nowhere else.
+    writeClaudeAsset(userClaude, 'skills/relocated/SKILL.md', 'name: Relocated');
+    expect(libraryService.list(cwd).some((it) => it.title === 'Relocated')).toBe(true);
+
+    process.env.CLAUDE_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-lib-elsewhere-'));
+    try {
+      expect(libraryService.list(cwd).some((it) => it.title === 'Relocated')).toBe(false);
+    } finally {
+      fs.rmSync(process.env.CLAUDE_CONFIG_DIR!, { recursive: true, force: true });
+      process.env.CLAUDE_CONFIG_DIR = userClaude;
+    }
+  });
+
+  it('skips the user and plugin roots for a guard that only allows the project', () => {
+    // The bus path: hubCapabilities confines library files to the project plus
+    // the global store, so a remote caller must not see the desktop user's own
+    // assets. A refused file is SKIPPED, not an error.
+    writeSkill('proj-skill', 'Proj Skill', 'p');
+    writeClaudeAsset(userClaude, 'skills/user-skill/SKILL.md', 'name: User Skill');
+
+    const projectOnly = libraryService.list(cwd, (p) =>
+      p.startsWith(path.resolve(cwd)) || p.startsWith(path.resolve(h.configDir)) ? p : null,
+    );
+    const titles = projectOnly.filter((it) => it.scope === 'claude').map((it) => it.title);
+    expect(titles).toContain('Proj Skill');
+    expect(titles).not.toContain('User Skill');
+  });
+});
+
+/**
+ * MCP credentials. The Library pane's MCP editor has an `Env` field
+ * ("one per line — KEY=value") and a `Headers` field ("Header: value") — the
+ * two places a user types a Jira/GitHub API token — and they are written
+ * PLAINTEXT into markdown frontmatter, including under
+ * `<cwd>/.workspacer/library/`, which this service's own header calls
+ * "per repo, committable". Plugin settings solved the same problem with
+ * `secret: true` + `__WKS_SECRET__`; the library had no equivalent.
+ */
+describe('libraryService — MCP secrets never leave the process in the clear', () => {
+  const saveJira = (extra: Partial<{ title: string }> = {}) =>
+    libraryService.save({
+      scope: 'global',
+      title: extra.title ?? 'Jira',
+      kind: 'mcp',
+      mcp: {
+        type: 'http',
+        url: 'https://example.atlassian.net/mcp',
+        headers: { Authorization: 'Bearer super-secret-token', 'X-Trace': '' },
+        env: { JIRA_API_TOKEN: 'another-secret' },
+      },
+      body: 'notes',
+    });
+
+  it('masks env/headers values out of list(), keeping keys and url visible', () => {
+    saveJira();
+    const item = libraryService.list().find((it) => it.title === 'Jira')!;
+
+    expect(item.mcp!.headers!.Authorization).toBe('__WKS_SECRET__');
+    expect(item.mcp!.env!.JIRA_API_TOKEN).toBe('__WKS_SECRET__');
+    // Keys and endpoint stay legible — the user has to recognise the row.
+    expect(Object.keys(item.mcp!.headers!).sort()).toEqual(['Authorization', 'X-Trace']);
+    expect(item.mcp!.url).toBe('https://example.atlassian.net/mcp');
+    // An empty value is not a secret; masking it would invent one.
+    expect(item.mcp!.headers!['X-Trace']).toBe('');
+    expect(JSON.stringify(item)).not.toContain('super-secret-token');
+  });
+
+  it('masks the item save() hands back, not just list()', () => {
+    const saved = saveJira();
+    expect(saved.mcp!.headers!.Authorization).toBe('__WKS_SECRET__');
+    expect(JSON.stringify(saved)).not.toContain('super-secret-token');
+  });
+
+  it('listWithSecrets() — the spawn path — still gets the real values', () => {
+    saveJira();
+    const item = libraryService.listWithSecrets().find((it) => it.title === 'Jira')!;
+    expect(item.mcp!.headers!.Authorization).toBe('Bearer super-secret-token');
+    expect(item.mcp!.env!.JIRA_API_TOKEN).toBe('another-secret');
+  });
+
+  it('a round-trip through the masked UI keeps the stored token', () => {
+    // Exactly what the Library pane does: list (masked) → edit the title →
+    // save. Without restoreSecrets this persists the literal placeholder and
+    // silently breaks the server.
+    saveJira();
+    const masked = libraryService.list().find((it) => it.title === 'Jira')!;
+    libraryService.save({
+      scope: 'global',
+      id: masked.id,
+      title: 'Jira (prod)',
+      kind: 'mcp',
+      mcp: masked.mcp,
+      body: masked.body,
+    });
+
+    const after = libraryService.listWithSecrets().find((it) => it.title === 'Jira (prod)')!;
+    expect(after.mcp!.headers!.Authorization).toBe('Bearer super-secret-token');
+    expect(after.mcp!.env!.JIRA_API_TOKEN).toBe('another-secret');
+    expect(fs.readFileSync(after.path, 'utf-8')).not.toContain('__WKS_SECRET__');
+  });
+
+  it('refuses to store the placeholder as a real value when nothing is behind it', () => {
+    // A caller sending the sentinel for a brand-new key must not have it
+    // written verbatim — that would be a token of literally "__WKS_SECRET__".
+    const saved = libraryService.save({
+      scope: 'global',
+      title: 'Sentinel',
+      kind: 'mcp',
+      mcp: { type: 'http', url: 'https://x', headers: { Authorization: '__WKS_SECRET__' } },
+      body: '',
+    });
+    const stored = libraryService.listWithSecrets().find((it) => it.title === 'Sentinel')!;
+    // Dropped, not written — and once the only key is gone cleanMcp drops the
+    // whole `headers` block, so assert on the key rather than through it.
+    expect(stored.mcp!.headers?.Authorization).toBeUndefined();
+    expect(fs.readFileSync(saved.path, 'utf-8')).not.toContain('__WKS_SECRET__');
   });
 });

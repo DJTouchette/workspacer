@@ -715,8 +715,8 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // ── Library ──────────────────────────────────────────────────────────
     libraryList: (cwd) => client.call('library.list', { cwd }),
     librarySave: (input) => client.call('library.save', input),
-    libraryRemove: (scope, id, cwd, kind) =>
-      client.call<void>('library.remove', { scope, id, cwd, kind }).then(() => {}),
+    libraryRemove: (scope, id, cwd, kind, origin) =>
+      client.call<void>('library.remove', { scope, id, cwd, kind, origin }).then(() => {}),
     // The desktop mirrors every library mutation (and external edit its watcher
     // catches) onto the bus as a flat `library.changed` event; subscribe so the
     // web client auto-refreshes its prompt/skill list just like the desktop.

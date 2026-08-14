@@ -288,10 +288,11 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		return jsonResult(item)
 	case "library.remove":
 		var p struct {
-			Scope string `json:"scope"`
-			ID    string `json:"id"`
-			Cwd   string `json:"cwd"`
-			Kind  string `json:"kind"`
+			Scope  string `json:"scope"`
+			ID     string `json:"id"`
+			Cwd    string `json:"cwd"`
+			Kind   string `json:"kind"`
+			Origin string `json:"origin"`
 		}
 		if err := unmarshal(params, &p); err != nil {
 			return nil, err
@@ -313,7 +314,11 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		// `.claude/skills` symlink inside the (allowed) cwd pointed os.RemoveAll
 		// at the config dir, and a link aimed at a SECOND allowed root would
 		// otherwise still delete out of the project the caller named.
-		removeLibrary(p.Scope, p.ID, cwd, p.Kind, libraryFileGuardFor("library.remove", cwd))
+		// A 'plugin:…' origin comes back as an error rather than a silent
+		// no-op — the desktop's library.remove refuses it the same way.
+		if err := removeLibrary(p.Scope, p.ID, cwd, p.Kind, p.Origin, libraryFileGuardFor("library.remove", cwd)); err != nil {
+			return nil, err
+		}
 		return okResult()
 	case "claude.sessionsForDir":
 		var p struct {

@@ -152,7 +152,7 @@ func TestLibraryClaudeCommands(t *testing.T) {
 		t.Fatalf("saved command not at .claude/commands/release.md: %v", err)
 	}
 	// …and remove deletes the command file, not a same-named skill dir.
-	removeLibrary("claude", "deploy", cwd, "command", allowAnyLibraryFile)
+	removeLibrary("claude", "deploy", cwd, "command", "project", allowAnyLibraryFile)
 	if _, err := os.Stat(filepath.Join(claudeCommandsDir(cwd), "deploy.md")); !os.IsNotExist(err) {
 		t.Fatal("command file should be removed")
 	}
@@ -174,7 +174,7 @@ func TestLibrarySaveAndRemoveGlobal(t *testing.T) {
 		t.Fatalf("serialized file missing expected content:\n%s", raw)
 	}
 
-	removeLibrary("global", "my-prompt", "", "", allowAnyLibraryFile)
+	removeLibrary("global", "my-prompt", "", "", "", allowAnyLibraryFile)
 	if _, err := os.Stat(filepath.Join(libraryGlobalDir(), "my-prompt.md")); !os.IsNotExist(err) {
 		t.Fatal("file should be removed")
 	}
@@ -400,5 +400,117 @@ func TestLibraryListDoesNotReadOutsideTheProjectItNamed(t *testing.T) {
 	if _, err := reg.handle(context.Background(), "fs.read",
 		json.RawMessage(`{"path":`+jsonStr(filepath.Join(libDir, "a.md"))+`}`)); err == nil {
 		t.Fatal("fs.read of the planted symlink must be denied (control)")
+	}
+}
+
+// MCP credentials. The Library pane's MCP editor takes `env` (KEY=value) and
+// `headers` (Header: value) by hand — where a Jira/GitHub API token goes — and
+// they are written PLAINTEXT into markdown frontmatter, including under
+// <cwd>/.workspacer/library/, a per-repo directory meant to be committed.
+// Plugin settings solved this with secret:true + __WKS_SECRET__; the library
+// had no equivalent on either provider.
+//
+// TWIN: libraryService.test.ts "MCP secrets never leave the process in the
+// clear". Both providers answer library.list/library.save, so a masking rule on
+// one side only means the same item comes back redacted or in the clear
+// depending on DELEGATE_CATALOG_TO_BRAIN.
+func TestLibraryMcpSecretsAreRedactedOnTheWayOut(t *testing.T) {
+	tempConfigHome(t)
+	reg := registryWithCwd(t, t.TempDir())
+
+	in := libraryInput{
+		Scope: "global", Title: "Jira", Kind: "mcp", Body: "notes",
+		Mcp: &mcpConfig{
+			Type:    "http",
+			URL:     "https://example.atlassian.net/mcp",
+			Headers: map[string]string{"Authorization": "Bearer super-secret-token", "X-Trace": ""},
+			Env:     map[string]string{"JIRA_API_TOKEN": "another-secret"},
+		},
+	}
+	saved, err := reg.saveLibrary(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// save()'s own return value goes straight to the bus caller.
+	if got := saved.Mcp.Headers["Authorization"]; got != secretPlaceholder {
+		t.Errorf("saveLibrary returned Authorization = %q, want %q", got, secretPlaceholder)
+	}
+
+	items := listLibrary("", allowAnyLibraryFile)
+	var jira *libraryItem
+	for i := range items {
+		if items[i].Title == "Jira" {
+			jira = &items[i]
+		}
+	}
+	if jira == nil {
+		t.Fatal("Jira item not listed")
+	}
+	if got := jira.Mcp.Headers["Authorization"]; got != secretPlaceholder {
+		t.Errorf("listed Authorization = %q, want %q", got, secretPlaceholder)
+	}
+	if got := jira.Mcp.Env["JIRA_API_TOKEN"]; got != secretPlaceholder {
+		t.Errorf("listed JIRA_API_TOKEN = %q, want %q", got, secretPlaceholder)
+	}
+	// Keys and endpoint stay legible; an empty value is not a secret.
+	if _, ok := jira.Mcp.Headers["X-Trace"]; !ok {
+		t.Error("header keys must stay visible so the user can replace them")
+	}
+	if jira.Mcp.Headers["X-Trace"] != "" {
+		t.Error("an empty value must not be masked into an invented secret")
+	}
+	if jira.Mcp.URL != "https://example.atlassian.net/mcp" {
+		t.Errorf("url must stay visible, got %q", jira.Mcp.URL)
+	}
+	if blob, _ := json.Marshal(items); strings.Contains(string(blob), "super-secret-token") {
+		t.Error("the real token reached the bus caller")
+	}
+
+	// The file on disk keeps the real value — masking is a boundary, not storage.
+	raw := readFile(t, filepath.Join(libraryGlobalDir(), "jira.md"))
+	if !strings.Contains(raw, "super-secret-token") {
+		t.Error("the stored file must keep the real token")
+	}
+}
+
+// The write half: a round-trip through the masked UI (list -> edit title ->
+// save) must keep the stored token rather than persist the sentinel.
+func TestLibrarySaveRestoresEchoedSecretPlaceholders(t *testing.T) {
+	tempConfigHome(t)
+	reg := registryWithCwd(t, t.TempDir())
+
+	if _, err := reg.saveLibrary(context.Background(), libraryInput{
+		Scope: "global", Title: "Jira", Kind: "mcp", Body: "notes",
+		Mcp: &mcpConfig{Type: "http", URL: "https://x", Headers: map[string]string{"Authorization": "Bearer real-token"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// What a client that listed (masked) and re-saved sends back.
+	if _, err := reg.saveLibrary(context.Background(), libraryInput{
+		Scope: "global", ID: "jira", Title: "Jira", Kind: "mcp", Body: "notes",
+		Mcp: &mcpConfig{Type: "http", URL: "https://x", Headers: map[string]string{"Authorization": secretPlaceholder}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := readFile(t, filepath.Join(libraryGlobalDir(), "jira.md"))
+	if !strings.Contains(raw, "Bearer real-token") {
+		t.Errorf("the round-trip lost the stored token:\n%s", raw)
+	}
+	if strings.Contains(raw, secretPlaceholder) {
+		t.Errorf("the placeholder was persisted as a real value:\n%s", raw)
+	}
+
+	// A placeholder with nothing behind it is dropped, never written verbatim —
+	// otherwise a caller could set a token of literally "__WKS_SECRET__".
+	if _, err := reg.saveLibrary(context.Background(), libraryInput{
+		Scope: "global", Title: "Sentinel", Kind: "mcp", Body: "",
+		Mcp: &mcpConfig{Type: "http", URL: "https://x", Headers: map[string]string{"Authorization": secretPlaceholder}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if raw := readFile(t, filepath.Join(libraryGlobalDir(), "sentinel.md")); strings.Contains(raw, secretPlaceholder) {
+		t.Errorf("the sentinel was stored as a real value:\n%s", raw)
 	}
 }

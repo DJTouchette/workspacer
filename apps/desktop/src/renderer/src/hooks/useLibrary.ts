@@ -1,5 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { LibraryItem, LibrarySaveInput, LibraryScope, LibraryKind } from '../types/library';
+import type {
+  ClaudeOrigin,
+  LibraryItem,
+  LibrarySaveInput,
+  LibraryScope,
+  LibraryKind,
+} from '../types/library';
 
 /**
  * Loads the merged library (global + project for `cwd`) and keeps it live by
@@ -43,8 +49,11 @@ export function useLibrary(cwd?: string) {
   );
 
   const remove = useCallback(
-    async (scope: LibraryScope, id: string, kind?: LibraryKind) => {
-      await window.electronAPI.libraryRemove(scope, id, cwd, kind);
+    // `origin` decides WHICH root a claude item is unlinked from: without it a
+    // delete of a `~/.claude` skill silently unlinked nothing, because the
+    // service defaulted to the project root the item never lived in.
+    async (scope: LibraryScope, id: string, kind?: LibraryKind, origin?: ClaudeOrigin) => {
+      await window.electronAPI.libraryRemove(scope, id, cwd, kind, origin);
       reload();
     },
     [cwd, reload],

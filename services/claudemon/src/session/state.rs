@@ -240,8 +240,20 @@ pub struct ContextItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     /// Plugin origin, e.g. "rust-analyzer-lsp@claude-plugins-official".
+    ///
+    /// For skills and agents this is the ORIGIN enrichment resolved them to —
+    /// "project", "user", a plugin name, or "built-in" for the ones compiled
+    /// into the CLI binary (deep-research, dataviz, verify, …), which have no
+    /// file anywhere and so can never carry a path or a size. Without it every
+    /// unresolved skill rendered as a bare word with no way to tell "shipped
+    /// inside claude" apart from "we failed to find its file".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// One-line description from the item's frontmatter (`description:` in a
+    /// SKILL.md / agent file). Absent for built-ins and for anything whose file
+    /// we couldn't read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

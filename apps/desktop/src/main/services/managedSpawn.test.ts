@@ -46,7 +46,10 @@ vi.mock('./claudeProfiles', () => ({
   claudeProfiles: { getProfile: (...a: unknown[]) => getProfile(...a) },
 }));
 
-vi.mock('./libraryService', () => ({ libraryService: { list: vi.fn(() => []) } }));
+// listWithSecrets only — see the same mock in claudeSpawn.test.ts: `list()`
+// masks MCP credentials, so a spawn path using it would authenticate with the
+// literal __WKS_SECRET__.
+vi.mock('./libraryService', () => ({ libraryService: { listWithSecrets: vi.fn(() => []) } }));
 
 vi.mock('./agentProviders', () => ({
   resolveAgentBinary: vi.fn((provider: string) => `/bin/${provider}`),

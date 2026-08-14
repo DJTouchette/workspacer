@@ -41,8 +41,37 @@ type libraryItem struct {
 	Tags        []string   `json:"tags,omitempty"`
 	Action      string     `json:"action,omitempty"`
 	Mcp         *mcpConfig `json:"mcp,omitempty"`
-	Body        string     `json:"body"`
-	Path        string     `json:"path"`
+	// Origin is which root a claude-scoped item came from. Over the bus this is
+	// always "project": libraryItemRoots confines every library file to the
+	// caller's project plus the global store, so the user's ~/.claude and the
+	// plugin roots the DESKTOP path also lists are unreachable here by
+	// construction. The field ships anyway because the renderer keys, badges and
+	// delete target all read it, and a claude item arriving without one would
+	// route a later save/remove at the wrong root.
+	Origin string `json:"origin,omitempty"`
+	// Editable is false only for a plugin's files, which this side never
+	// returns — see Origin. Emitted unconditionally so the shape matches
+	// libraryService.ts's LibraryItem rather than differing by absence.
+	Editable bool   `json:"editable"`
+	Body     string `json:"body"`
+	Path     string `json:"path"`
+}
+
+// claudeOriginProject is the only origin reachable over the bus (see
+// libraryItem.Origin).
+const claudeOriginProject = "project"
+
+// assertWritableOrigin gates the origin a claude-scope WRITE or DELETE claims,
+// the Go twin of libraryService.ts's function of the same name. A plugin's
+// assets belong to the installed package: editing one is reverted by the next
+// plugin update and deleting one corrupts the install, so it is refused rather
+// than attempted. "user" is refused a step later, by the item-path guard, since
+// ~/.claude is outside the roots this side may touch at all.
+func assertWritableOrigin(origin string) error {
+	if strings.HasPrefix(origin, "plugin:") {
+		return fmt.Errorf("library: %s items are read-only — copy it into the project to edit it", origin)
+	}
+	return nil
 }
 
 func libraryGlobalDir() string            { return filepath.Join(configDir(), "library") }
@@ -253,6 +282,104 @@ func cleanMcp(c *mcpConfig) *mcpConfig {
 	return out
 }
 
+// secretPlaceholder is what a stored MCP credential reads as once it leaves
+// this process. The same literal as plugin settings' SecretPlaceholder
+// (services/hub/internal/plugin/settings.go) and the desktop twin's
+// SECRET_PLACEHOLDER (libraryService.ts) — one convention, both credential
+// stores, both providers.
+const secretPlaceholder = "__WKS_SECRET__"
+
+// redactMcp masks the two MCP fields whose PURPOSE is credentials — `env` (a
+// stdio server's API token) and `headers` (an http server's Authorization) —
+// which are typed in by hand and written PLAINTEXT into markdown frontmatter,
+// including under `<cwd>/.workspacer/library/`, a per-repo directory meant to
+// be committed.
+//
+// Keys stay visible (which variables a server needs is configuration, and the
+// UI must render the row to let the user replace it); `url` is deliberately not
+// masked — it identifies the server in the list and a credential belongs in
+// `headers`. Twin of redactMcp in libraryService.ts; the two must agree or the
+// same item comes back masked from one provider and in the clear from the other.
+func redactMcp(c *mcpConfig) *mcpConfig {
+	if c == nil {
+		return nil
+	}
+	mask := func(in map[string]string) map[string]string {
+		if in == nil {
+			return nil
+		}
+		out := make(map[string]string, len(in))
+		for k, v := range in {
+			if v != "" {
+				out[k] = secretPlaceholder
+			} else {
+				out[k] = v
+			}
+		}
+		return out
+	}
+	cp := *c
+	cp.Env = mask(c.Env)
+	cp.Headers = mask(c.Headers)
+	return &cp
+}
+
+// redactItem is one item as it may leave the process.
+func redactItem(it libraryItem) libraryItem {
+	if it.Kind != "mcp" || it.Mcp == nil {
+		return it
+	}
+	it.Mcp = redactMcp(it.Mcp)
+	return it
+}
+
+// restoreSecrets puts the real value back wherever the caller echoed the
+// placeholder — the write half of the masked, write-only UI. Without it a
+// round-trip through the Library pane (open an MCP item, edit the title, save)
+// persists the literal placeholder as the token and breaks the server. A
+// placeholder with nothing stored behind it is DROPPED, so a caller cannot
+// inject the sentinel as a real value. Twin of restoreSecrets in libraryService.ts.
+func restoreSecrets(next *mcpConfig, stored *mcpConfig) *mcpConfig {
+	if next == nil {
+		return nil
+	}
+	merge := func(incoming, prev map[string]string) map[string]string {
+		if incoming == nil {
+			return nil
+		}
+		out := make(map[string]string, len(incoming))
+		for k, v := range incoming {
+			if v != secretPlaceholder {
+				out[k] = v
+				continue
+			}
+			if kept, ok := prev[k]; ok && kept != secretPlaceholder {
+				out[k] = kept
+			}
+		}
+		return out
+	}
+	cp := *next
+	if stored != nil {
+		cp.Env = merge(next.Env, stored.Env)
+		cp.Headers = merge(next.Headers, stored.Headers)
+	} else {
+		cp.Env = merge(next.Env, nil)
+		cp.Headers = merge(next.Headers, nil)
+	}
+	return &cp
+}
+
+// storedMcpAt returns the MCP config already written at `full`, if any.
+func storedMcpAt(full string) *mcpConfig {
+	raw, err := os.ReadFile(full)
+	if err != nil {
+		return nil // new file, or unreadable — nothing to preserve
+	}
+	data, _ := parseFrontmatter(string(raw))
+	return toMcp(data["mcp"])
+}
+
 func toMcp(v any) *mcpConfig {
 	m, ok := v.(map[string]any)
 	if !ok {
@@ -400,6 +527,8 @@ func readClaudeItem(full, id, kind string, guard libraryFileGuard) *libraryItem 
 		Title:       firstNonEmpty(str(data["name"]), id),
 		Kind:        kind,
 		Description: str(data["description"]),
+		Origin:      claudeOriginProject,
+		Editable:    true,
 		Body:        reLeadingBlank.ReplaceAllString(body, ""),
 		Path:        full,
 	}
@@ -484,9 +613,15 @@ func listLibrary(cwd string, guard libraryFileGuard) []libraryItem {
 			put("claude:"+it.Kind+":"+it.ID, it)
 		}
 	}
+	// Redacted on the way out. Unlike the desktop, this side has no
+	// listWithSecrets counterpart and needs none: the brain answers bus calls
+	// only, and the two consumers of real MCP credentials (claudeSpawn /
+	// managedSpawn) both live in the desktop main process and resolve the
+	// configs there from `mcpItemIds`. If a spawn path is ever added here, it
+	// must read the files directly rather than relaxing this.
 	out := make([]libraryItem, 0, len(byID))
 	for _, k := range order {
-		out = append(out, byID[k])
+		out = append(out, redactItem(byID[k]))
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Title < out[j].Title })
 	return out
@@ -502,6 +637,7 @@ type libraryInput struct {
 	Tags        []string   `json:"tags"`
 	Action      string     `json:"action"`
 	Mcp         *mcpConfig `json:"mcp"`
+	Origin      string     `json:"origin"`
 	Body        string     `json:"body"`
 	Cwd         string     `json:"cwd"`
 }
@@ -558,15 +694,26 @@ func (r *registry) saveLibrary(ctx context.Context, in libraryInput) (*libraryIt
 		Body: in.Body, Path: full,
 	}
 	if in.Kind == "mcp" {
-		it.Mcp = cleanMcp(in.Mcp)
+		// Echoed placeholders resolve against what is already on disk, so a save
+		// that only touched the title keeps the token.
+		it.Mcp = cleanMcp(restoreSecrets(in.Mcp, storedMcpAt(full)))
 	}
 	if err := writeFileAtomic(full, []byte(serializeItem(it)), 0o644); err != nil {
 		return nil, err
 	}
-	return it, nil
+	// Masked on the way back out, like listLibrary: this return value goes
+	// straight to the bus caller.
+	redacted := redactItem(*it)
+	return &redacted, nil
 }
 
 func (r *registry) saveLibraryClaude(ctx context.Context, in libraryInput) (*libraryItem, error) {
+	// Before the cwd is even resolved: a plugin's assets are never a write
+	// target, and saying so beats composing a path the item guard then refuses
+	// for an unrelated-sounding reason.
+	if err := assertWritableOrigin(in.Origin); err != nil {
+		return nil, err
+	}
 	canonicalCwd, err := assertPathAllowed("library.save", firstNonEmpty(in.Cwd, mustCwd()), r.workspaceRoots(ctx))
 	if err != nil {
 		return nil, err
@@ -618,7 +765,7 @@ func (r *registry) saveLibraryClaude(ctx context.Context, in libraryInput) (*lib
 	if err := writeFileAtomic(full, []byte(serializeClaude(existing, in.Title, in.Description, in.Body)), 0o644); err != nil {
 		return nil, err
 	}
-	return &libraryItem{ID: id, Scope: "claude", Title: in.Title, Kind: kind, Description: in.Description, Body: in.Body, Path: full}, nil
+	return &libraryItem{ID: id, Scope: "claude", Title: in.Title, Kind: kind, Description: in.Description, Origin: claudeOriginProject, Editable: true, Body: in.Body, Path: full}, nil
 }
 
 // removeLibrary deletes one item. The DELETE TARGET is guarded, not the cwd it
@@ -628,7 +775,17 @@ func (r *registry) saveLibraryClaude(ctx context.Context, in libraryInput) (*lib
 // — the cwd the guard saw was impeccable. os.RemoveAll in particular does not
 // follow the final symlink but DOES traverse symlinked parents, so the whole
 // derived path has to be canonical before anything is unlinked.
-func removeLibrary(scope, id, cwd, kind string, guard libraryFileGuard) {
+func removeLibrary(scope, id, cwd, kind, origin string, guard libraryFileGuard) error {
+	// Refused before anything is derived — the skill branch below is a
+	// recursive RemoveAll, and a plugin's skill directory is part of an
+	// installed package, not the caller's library. Loud, not silent: a caller
+	// asking to delete a plugin's skill needs to hear no, and the item guard
+	// would otherwise just drop it and report success.
+	if scope == "claude" {
+		if err := assertWritableOrigin(origin); err != nil {
+			return err
+		}
+	}
 	remove := func(path string, recursive bool) {
 		canonical, ok := guard(path)
 		if !ok {
@@ -650,7 +807,7 @@ func removeLibrary(scope, id, cwd, kind string, guard libraryFileGuard) {
 		// filepath.Join, so it must look like a basename first.
 		name, ok := assertPlainBasename(id)
 		if !ok {
-			return
+			return nil
 		}
 		switch kind {
 		case "agent":
@@ -660,13 +817,14 @@ func removeLibrary(scope, id, cwd, kind string, guard libraryFileGuard) {
 		default:
 			remove(filepath.Join(claudeSkillsDir(root), name), true)
 		}
-		return
+		return nil
 	}
 	dir := libraryGlobalDir()
 	if scope == "project" {
 		dir = libraryProjectDir(firstNonEmpty(cwd, mustCwd()))
 	}
 	remove(filepath.Join(dir, slugLibrary(id)+".md"), false)
+	return nil
 }
 
 // seedLibraryIfEmpty writes starter items to the global dir on first use, the

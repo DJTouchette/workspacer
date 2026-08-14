@@ -36,6 +36,24 @@ const fmtTokens = (n?: number): string =>
 const fmtBytes = (n?: number): string =>
   n === undefined ? '' : n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`;
 
+/** The origin label claudemon stamps on a skill or agent it could not resolve
+ *  to any file — the ones compiled into the CLI binary. Mirrors
+ *  `BUILTIN_SOURCE` in claude_stream.rs. */
+export const BUILTIN_SOURCE = 'built-in';
+
+/** Where a skill/agent resolved, ranked. Anything we don't recognise is a
+ *  plugin name, which sits between the user's own assets and the built-ins. */
+const ORIGIN_RANK: Record<string, number> = { project: 0, user: 1 };
+
+/** Order skills/agents by origin, then name. The frame's own order is the CLI's
+ *  load order, which buries the two assets a user actually owns and edits in
+ *  the middle of sixteen built-ins they can't. */
+export const byOrigin = (a: ContextItemInfo, b: ContextItemInfo): number => {
+  const rank = (i: ContextItemInfo): number =>
+    i.source === BUILTIN_SOURCE ? 3 : (ORIGIN_RANK[i.source ?? ''] ?? 2);
+  return rank(a) - rank(b) || a.name.localeCompare(b.name);
+};
+
 /** Subtotal of the known token estimates in a list (undefined if none known). */
 const subtotal = (items: ContextItemInfo[]): number | undefined => {
   const known = items.filter((i) => i.estTokens !== undefined);
@@ -76,73 +94,100 @@ const ItemRow: React.FC<{ item: ContextItemInfo; cwd?: string; maxTokens: number
   cwd,
   maxTokens,
 }) => (
-  <div
-    style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: 10,
-      padding: '5px 0',
-      fontSize: '0.74rem',
-    }}
-  >
-    {item.status && (
-      <span
-        aria-hidden
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: '50%',
-          flexShrink: 0,
-          background: item.status === 'connected' ? colors.success : colors.warning,
-        }}
-      />
-    )}
-    <span style={{ color: colors.text, minWidth: 0, overflowWrap: 'anywhere' }}>
-      {item.path ? (
-        <FileLink path={item.path} cwd={cwd} style={{ color: colors.text }}>
-          {item.name}
-        </FileLink>
-      ) : (
-        item.name
-      )}
-    </span>
-    {item.status && (
-      <span style={{ fontSize: '0.67rem', color: colors.muted, flexShrink: 0 }}>{item.status}</span>
-    )}
-    {item.source && (
-      <span
-        style={{
-          fontSize: '0.66rem',
-          color: colors.mutedDim,
-          flexShrink: 0,
-          border: `1px solid ${colors.borderSubtle}`,
-          borderRadius: 'var(--wks-radius-pill)',
-          padding: '0 6px',
-          lineHeight: 1.6,
-        }}
-      >
-        {item.source}
-      </span>
-    )}
-    <span style={{ flex: 1 }} />
-    {item.estTokens !== undefined && (
-      <>
-        <ShareBar value={item.estTokens} max={maxTokens} />
+  <div style={{ padding: '6px 0', fontSize: '0.74rem' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      {item.status && (
         <span
-          title={fmtBytes(item.bytes)}
+          aria-hidden
           style={{
-            color: colors.muted,
-            fontVariantNumeric: 'tabular-nums',
-            whiteSpace: 'nowrap',
-            width: 74,
-            textAlign: 'right',
+            width: 6,
+            height: 6,
+            borderRadius: '50%',
             flexShrink: 0,
-            fontSize: '0.7rem',
+            background: item.status === 'connected' ? colors.success : colors.warning,
+          }}
+        />
+      )}
+      <span style={{ color: colors.text, minWidth: 0, overflowWrap: 'anywhere' }}>
+        {item.path ? (
+          <FileLink path={item.path} cwd={cwd} style={{ color: colors.text }}>
+            {item.name}
+          </FileLink>
+        ) : (
+          item.name
+        )}
+      </span>
+      {item.status && (
+        <span style={{ fontSize: '0.67rem', color: colors.muted, flexShrink: 0 }}>
+          {item.status}
+        </span>
+      )}
+      {item.source && (
+        <span
+          // A built-in has no file by definition, so it reads as a statement of
+          // fact rather than a missing lookup: same pill, dimmer, no border
+          // fighting the resolved items for attention.
+          title={
+            item.source === BUILTIN_SOURCE
+              ? 'Shipped inside the Claude Code binary — no file on disk'
+              : `Loaded from ${item.source}`
+          }
+          style={{
+            fontSize: '0.66rem',
+            color: item.source === BUILTIN_SOURCE ? colors.mutedDim : colors.muted,
+            flexShrink: 0,
+            border: `1px solid ${
+              item.source === BUILTIN_SOURCE ? 'transparent' : colors.borderSubtle
+            }`,
+            background: item.source === BUILTIN_SOURCE ? 'rgba(255,255,255,0.04)' : 'transparent',
+            borderRadius: 'var(--wks-radius-pill)',
+            padding: '0 6px',
+            lineHeight: 1.6,
           }}
         >
-          {fmtTokens(item.estTokens)}
+          {item.source}
         </span>
-      </>
+      )}
+      <span style={{ flex: 1 }} />
+      {item.estTokens !== undefined && (
+        <>
+          <ShareBar value={item.estTokens} max={maxTokens} />
+          <span
+            title={fmtBytes(item.bytes)}
+            style={{
+              color: colors.muted,
+              fontVariantNumeric: 'tabular-nums',
+              whiteSpace: 'nowrap',
+              width: 74,
+              textAlign: 'right',
+              flexShrink: 0,
+              fontSize: '0.7rem',
+            }}
+          >
+            {fmtTokens(item.estTokens)}
+          </span>
+        </>
+      )}
+    </div>
+    {item.description && (
+      // A skill's description is the ONLY part of it that is always in context,
+      // so it belongs on the row that claims to itemize the context window.
+      // Clamped to two lines — these run to several hundred words.
+      <div
+        title={item.description}
+        style={{
+          marginTop: 2,
+          fontSize: '0.69rem',
+          lineHeight: 1.45,
+          color: colors.mutedDim,
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+        }}
+      >
+        {item.description}
+      </div>
     )}
   </div>
 );
@@ -462,23 +507,23 @@ const ContextPane: React.FC<ContextPaneProps> = ({
             <Section
               id="skills"
               title="Skills"
-              note="Only a skill's name and description load up front; the body loads when invoked."
+              note="Only a skill's name and description load up front; the body loads when invoked. “built-in” ones ship inside the Claude Code binary, so there is no file to open or size."
               count={inv.skills.length}
               tokens={subtotal(inv.skills)}
               focusRef={sectionRefs.current.skills}
             >
-              <ItemList items={inv.skills} cwd={cwd} />
+              <ItemList items={[...inv.skills].sort(byOrigin)} cwd={cwd} />
             </Section>
 
             <Section
               id="agents"
               title="Agents"
-              note="Unsized entries are builtin agent types with no file behind them."
+              note="“built-in” entries are agent types shipped inside the CLI, with no file behind them."
               count={inv.agents.length}
               tokens={subtotal(inv.agents)}
               focusRef={sectionRefs.current.agents}
             >
-              <ItemList items={inv.agents} cwd={cwd} />
+              <ItemList items={[...inv.agents].sort(byOrigin)} cwd={cwd} />
             </Section>
 
             <Section

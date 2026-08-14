@@ -45,6 +45,7 @@ import {
 import { Composer } from '../components/claude/Composer';
 import { WorkCard } from '../components/claude/WorkCard';
 import { ToolTraceCard } from '../components/claude/ToolTraceCard';
+import { SkillInventoryProvider } from '../contexts/SkillInventoryContext';
 import { ChangedFilesCard } from '../components/claude/ChangedFilesCard';
 import {
   collectEditedFiles,
@@ -381,11 +382,28 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     }
     return m;
   }, [libraryItems, sessionCommands]);
+  // What each session command DOES, by name. The frame lists ~50 command names
+  // and nothing else, so the picker was fifty unlabelled words; a name like
+  // "batch" or "verify" says nothing on its own. Two sources, neither new: the
+  // skill inventory (claudemon resolves each skill's file and reads its
+  // `description:` frontmatter) and the library, which reads the same files for
+  // the project, the user root and plugins.
+  const inventorySkills = session?.statusLine?.capabilities?.inventory?.skills;
+  const commandHints = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const it of libraryItems) {
+      if (it.description) m.set(it.title.toLowerCase(), it.description);
+    }
+    for (const s of inventorySkills ?? []) {
+      if (s.description) m.set(s.name.toLowerCase(), s.description);
+    }
+    return m;
+  }, [libraryItems, inventorySkills]);
   const slashItems: SlashItem[] = useMemo(() => {
     const run: SlashItem[] = (sessionCommands ?? []).map((name) => ({
       id: `run:${name}`,
       label: name,
-      hint: 'Run in this session',
+      hint: commandHints.get(name.toLowerCase()) ?? 'Run in this session',
       kind: 'run',
     }));
     const insert: SlashItem[] = Array.from(slashLookup, ([key, it]) => ({
@@ -395,7 +413,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       kind: it.kind,
     }));
     return [...run, ...insert];
-  }, [slashLookup, sessionCommands]);
+  }, [slashLookup, sessionCommands, commandHints]);
   const handleSlashPick = useCallback(
     (key: string) => {
       // A session command: leave "/name " in the composer — the user appends
@@ -1840,220 +1858,265 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   ]);
 
   return (
-    <div
-      ref={paneRootRef}
-      style={{
-        width: '100%',
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        backgroundColor: colors.bg,
-        color: colors.text,
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      }}
-    >
-      {/* Content + inspector rail row — the rail is a sibling of the content
+    // The session's skill inventory, provided once for the whole pane: a Skill
+    // tool call carries only a name, and every card that renders one looks the
+    // rest up here (description, origin, file) instead of re-deriving it.
+    <SkillInventoryProvider skills={session?.statusLine?.capabilities?.inventory?.skills}>
+      <div
+        ref={paneRootRef}
+        style={{
+          width: '100%',
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          backgroundColor: colors.bg,
+          color: colors.text,
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        }}
+      >
+        {/* Content + inspector rail row — the rail is a sibling of the content
           area (not nested in the GUI view) so it stays put across GUI/Term. */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
-        <div
-          ref={contentAreaRef}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            overflow: 'hidden',
-            position: 'relative',
-            // A real column: the term/GUI viewport fills the top, the status
-            // bar takes its own row below. As a plain block (with the GUI view
-            // at height:100%) the bar rendered past the clipped edge and was
-            // invisible.
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-          {isDragOver && <DropOverlay />}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
+          <div
+            ref={contentAreaRef}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              overflow: 'hidden',
+              position: 'relative',
+              // A real column: the term/GUI viewport fills the top, the status
+              // bar takes its own row below. As a plain block (with the GUI view
+              // at height:100%) the bar rendered past the clipped edge and was
+              // invisible.
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            {isDragOver && <DropOverlay />}
 
-          {/* Term/GUI viewport — both views fill this box; the status bar is
+            {/* Term/GUI viewport — both views fill this box; the status bar is
               its in-flow sibling below, inside the same content column. */}
-          <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
-            {/* Terminal view (always mounted, visibility toggled) */}
-            <div
-              ref={termContainerRef}
-              style={{
-                position: 'absolute',
-                inset: 0,
-                display: viewMode === 'terminal' ? 'block' : 'none',
-              }}
-            />
-
-            {/* GUI view — always mounted; visibility toggled via CSS so scroll
-            position, visibleCount, and optimisticMessages survive GUI↔Term. */}
-            <div
-              style={
-                {
-                  height: '100%',
-                  display: viewMode === 'gui' ? 'flex' : 'none',
-                  flexDirection: 'column',
-                  overflow: 'hidden',
-                  // Drives the conversation/markdown font scaling (see ConversationMessage
-                  // + markdown.tsx). Defaults to 1 elsewhere, so the shared markdown
-                  // renderer (Library, etc.) is unaffected.
-                  ['--claude-gui-font-scale' as string]: config.ui.guiFontScale ?? 1.15,
-                } as React.CSSProperties
-              }
-            >
-              {/* Conversation scroll area */}
+            <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
+              {/* Terminal view (always mounted, visibility toggled) */}
               <div
-                ref={scrollContainerRef}
-                onScroll={handleScroll}
+                ref={termContainerRef}
                 style={{
-                  flex: 1,
-                  overflowY: 'auto',
-                  padding: '12px 16px',
-                  position: 'relative',
-                  // Promote to its own compositor layer so streaming/markdown
-                  // repaints don't corrupt the backdrop-filter snapshots of the
-                  // surrounding glass (transient garble that cleared on repaint).
-                  transform: 'translateZ(0)',
-                  contain: 'paint',
+                  position: 'absolute',
+                  inset: 0,
+                  display: viewMode === 'terminal' ? 'block' : 'none',
                 }}
+              />
+
+              {/* GUI view — always mounted; visibility toggled via CSS so scroll
+            position, visibleCount, and optimisticMessages survive GUI↔Term. */}
+              <div
+                style={
+                  {
+                    height: '100%',
+                    display: viewMode === 'gui' ? 'flex' : 'none',
+                    flexDirection: 'column',
+                    overflow: 'hidden',
+                    // Drives the conversation/markdown font scaling (see ConversationMessage
+                    // + markdown.tsx). Defaults to 1 elsewhere, so the shared markdown
+                    // renderer (Library, etc.) is unaffected.
+                    ['--claude-gui-font-scale' as string]: config.ui.guiFontScale ?? 1.15,
+                  } as React.CSSProperties
+                }
               >
-                {/* Centered content container — the shared chat measure
-                    (--wks-chat-width), same as the composer and the docks. */}
+                {/* Conversation scroll area */}
                 <div
+                  ref={scrollContainerRef}
+                  onScroll={handleScroll}
                   style={{
-                    maxWidth: 'var(--wks-chat-width)',
-                    margin: '0 auto',
+                    flex: 1,
+                    overflowY: 'auto',
+                    padding: '12px 16px',
+                    position: 'relative',
+                    // Promote to its own compositor layer so streaming/markdown
+                    // repaints don't corrupt the backdrop-filter snapshots of the
+                    // surrounding glass (transient garble that cleared on repaint).
+                    transform: 'translateZ(0)',
+                    contain: 'paint',
                   }}
                 >
-                  {/* Empty states */}
-                  {conversation.length === 0 && !session && spawnError && (
-                    <div
-                      style={{
-                        position: 'relative',
-                        textAlign: 'center',
-                        marginTop: 48,
-                        color: colors.mutedDim,
-                        animation: 'claudeFadeIn 0.2s ease-out',
-                      }}
-                    >
-                      <AgentHero
-                        provider={provider ?? 'claude'}
-                        dimLogo
-                        title={`Couldn’t start ${agentName}`}
-                        titleColor={colors.error}
-                      />
+                  {/* Centered content container — the shared chat measure
+                    (--wks-chat-width), same as the composer and the docks. */}
+                  <div
+                    style={{
+                      maxWidth: 'var(--wks-chat-width)',
+                      margin: '0 auto',
+                    }}
+                  >
+                    {/* Empty states */}
+                    {conversation.length === 0 && !session && spawnError && (
                       <div
                         style={{
                           position: 'relative',
-                          fontSize: '0.72rem',
-                          margin: '8px auto 0',
-                          maxWidth: 420,
-                          lineHeight: 1.5,
+                          textAlign: 'center',
+                          marginTop: 48,
                           color: colors.mutedDim,
+                          animation: 'claudeFadeIn 0.2s ease-out',
                         }}
                       >
-                        {spawnError.message || `The ${agentName} session failed to start.`}
+                        <AgentHero
+                          provider={provider ?? 'claude'}
+                          dimLogo
+                          title={`Couldn’t start ${agentName}`}
+                          titleColor={colors.error}
+                        />
+                        <div
+                          style={{
+                            position: 'relative',
+                            fontSize: '0.72rem',
+                            margin: '8px auto 0',
+                            maxWidth: 420,
+                            lineHeight: 1.5,
+                            color: colors.mutedDim,
+                          }}
+                        >
+                          {spawnError.message || `The ${agentName} session failed to start.`}
+                        </div>
+                        <button
+                          onClick={retry}
+                          style={{
+                            position: 'relative',
+                            marginTop: 16,
+                            fontSize: '0.7rem',
+                            fontWeight: 600,
+                            padding: '4px 16px',
+                            borderRadius: 6,
+                            border: `1px solid ${colors.accent}`,
+                            backgroundColor: 'transparent',
+                            color: colors.accent,
+                            cursor: 'pointer',
+                            fontFamily: 'inherit',
+                          }}
+                        >
+                          Retry
+                        </button>
                       </div>
-                      <button
-                        onClick={retry}
-                        style={{
-                          position: 'relative',
-                          marginTop: 16,
-                          fontSize: '0.7rem',
-                          fontWeight: 600,
-                          padding: '4px 16px',
-                          borderRadius: 6,
-                          border: `1px solid ${colors.accent}`,
-                          backgroundColor: 'transparent',
-                          color: colors.accent,
-                          cursor: 'pointer',
-                          fontFamily: 'inherit',
-                        }}
-                      >
-                        Retry
-                      </button>
-                    </div>
-                  )}
+                    )}
 
-                  {/* The attach target is a dead session (stopped daemon row —
+                    {/* The attach target is a dead session (stopped daemon row —
                     typically after a machine reboot) and no snapshot will ever
                     arrive. Boot reconciliation usually auto-resumes it within
                     moments; this state covers the gap, and the button covers
                     the cases auto-resume can't (respawn failed, row gone). */}
-                  {conversation.length === 0 && !session && !spawnError && sessionExited && (
-                    <div
-                      style={{
-                        position: 'relative',
-                        textAlign: 'center',
-                        marginTop: 48,
-                        color: colors.mutedDim,
-                        animation: 'claudeFadeIn 0.2s ease-out',
-                      }}
-                    >
-                      <AgentHero
-                        provider={provider ?? 'claude'}
-                        title={<>Session stopped</>}
-                        dimLogo
-                      />
+                    {conversation.length === 0 && !session && !spawnError && sessionExited && (
                       <div
                         style={{
                           position: 'relative',
-                          fontSize: '0.72rem',
-                          margin: '14px auto 0',
-                          maxWidth: 420,
-                          lineHeight: 1.5,
+                          textAlign: 'center',
+                          marginTop: 48,
                           color: colors.mutedDim,
+                          animation: 'claudeFadeIn 0.2s ease-out',
                         }}
                       >
-                        This {agentName} session isn’t running — it was likely stopped by a reboot
-                        or shutdown. Resuming brings the conversation back where it left off.
+                        <AgentHero
+                          provider={provider ?? 'claude'}
+                          title={<>Session stopped</>}
+                          dimLogo
+                        />
+                        <div
+                          style={{
+                            position: 'relative',
+                            fontSize: '0.72rem',
+                            margin: '14px auto 0',
+                            maxWidth: 420,
+                            lineHeight: 1.5,
+                            color: colors.mutedDim,
+                          }}
+                        >
+                          This {agentName} session isn’t running — it was likely stopped by a reboot
+                          or shutdown. Resuming brings the conversation back where it left off.
+                        </div>
+                        <button
+                          onClick={() => handleRestartWith({})}
+                          style={{
+                            position: 'relative',
+                            marginTop: 16,
+                            fontSize: '0.7rem',
+                            fontWeight: 600,
+                            padding: '4px 16px',
+                            borderRadius: 6,
+                            border: `1px solid ${colors.accent}`,
+                            backgroundColor: 'transparent',
+                            color: colors.accent,
+                            cursor: 'pointer',
+                            fontFamily: 'inherit',
+                          }}
+                        >
+                          Resume session
+                        </button>
                       </div>
-                      <button
-                        onClick={() => handleRestartWith({})}
-                        style={{
-                          position: 'relative',
-                          marginTop: 16,
-                          fontSize: '0.7rem',
-                          fontWeight: 600,
-                          padding: '4px 16px',
-                          borderRadius: 6,
-                          border: `1px solid ${colors.accent}`,
-                          backgroundColor: 'transparent',
-                          color: colors.accent,
-                          cursor: 'pointer',
-                          fontFamily: 'inherit',
-                        }}
-                      >
-                        Resume session
-                      </button>
-                    </div>
-                  )}
+                    )}
 
-                  {conversation.length === 0 && !session && !spawnError && !sessionExited && (
-                    <div
-                      style={{
-                        position: 'relative',
-                        textAlign: 'center',
-                        marginTop: 48,
-                        color: colors.mutedDim,
-                        animation: 'claudeFadeIn 0.2s ease-out',
-                      }}
-                    >
-                      <AgentHero
-                        provider={provider ?? 'claude'}
-                        title={<>Connecting to {agentName}…</>}
-                      />
+                    {conversation.length === 0 && !session && !spawnError && !sessionExited && (
                       <div
                         style={{
                           position: 'relative',
-                          display: 'flex',
-                          justifyContent: 'center',
-                          marginTop: 18,
+                          textAlign: 'center',
+                          marginTop: 48,
+                          color: colors.mutedDim,
+                          animation: 'claudeFadeIn 0.2s ease-out',
                         }}
                       >
-                        <BrandSpinner size={20} />
+                        <AgentHero
+                          provider={provider ?? 'claude'}
+                          title={<>Connecting to {agentName}…</>}
+                        />
+                        <div
+                          style={{
+                            position: 'relative',
+                            display: 'flex',
+                            justifyContent: 'center',
+                            marginTop: 18,
+                          }}
+                        >
+                          <BrandSpinner size={20} />
+                        </div>
+                        {showHookHint && isClaude && (
+                          <div
+                            style={{
+                              position: 'relative',
+                              fontSize: '0.7rem',
+                              marginTop: 14,
+                              color: colors.mutedDim,
+                            }}
+                          >
+                            Still connecting — make sure hooks are configured in
+                            ~/.claude/settings.json
+                          </div>
+                        )}
                       </div>
-                      {showHookHint && isClaude && (
+                    )}
+
+                    {/* Session restore in flight — the transcript replay is coming.
+                    Same hero treatment as the "Connecting…" state above, so a
+                    restore reads as one continuous sequence (connecting →
+                    fetching → transcript) instead of the new-agent screen
+                    flashing and the history popping into existence. */}
+                    {conversation.length === 0 && session && historyPending && (
+                      <div
+                        style={{
+                          position: 'relative',
+                          textAlign: 'center',
+                          marginTop: 48,
+                          color: colors.mutedDim,
+                          animation: 'claudeFadeIn 0.2s ease-out',
+                        }}
+                      >
+                        <AgentHero provider={provider ?? 'claude'} title={<>Fetching session…</>} />
+                        <div
+                          style={{
+                            position: 'relative',
+                            display: 'flex',
+                            justifyContent: 'center',
+                            marginTop: 18,
+                          }}
+                        >
+                          <BrandSpinner size={20} />
+                        </div>
                         <div
                           style={{
                             position: 'relative',
@@ -2062,176 +2125,188 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                             color: colors.mutedDim,
                           }}
                         >
-                          Still connecting — make sure hooks are configured in
-                          ~/.claude/settings.json
+                          Restoring your conversation history
                         </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Session restore in flight — the transcript replay is coming.
-                    Same hero treatment as the "Connecting…" state above, so a
-                    restore reads as one continuous sequence (connecting →
-                    fetching → transcript) instead of the new-agent screen
-                    flashing and the history popping into existence. */}
-                  {conversation.length === 0 && session && historyPending && (
-                    <div
-                      style={{
-                        position: 'relative',
-                        textAlign: 'center',
-                        marginTop: 48,
-                        color: colors.mutedDim,
-                        animation: 'claudeFadeIn 0.2s ease-out',
-                      }}
-                    >
-                      <AgentHero provider={provider ?? 'claude'} title={<>Fetching session…</>} />
-                      <div
-                        style={{
-                          position: 'relative',
-                          display: 'flex',
-                          justifyContent: 'center',
-                          marginTop: 18,
-                        }}
-                      >
-                        <BrandSpinner size={20} />
                       </div>
-                      <div
-                        style={{
-                          position: 'relative',
-                          fontSize: '0.7rem',
-                          marginTop: 14,
-                          color: colors.mutedDim,
+                    )}
+
+                    {conversation.length === 0 && session && !historyPending && (
+                      <ConversationEmptyState
+                        agentName={agentName}
+                        provider={provider ?? 'claude'}
+                        model={session.statusLine?.modelDisplay ?? session.settings?.model}
+                        permissionMode={permissionModeLabel(
+                          provider,
+                          session.livePermissionMode ?? session.settings?.permissionMode,
+                        )}
+                        transport={claudeTransport}
+                        cwd={session.liveCwd || session.cwd || cwd}
+                        initialPrompt={initialPrompt}
+                        onPick={(prompt) => {
+                          setInputValue(prompt);
+                          requestAnimationFrame(() => inputRef.current?.focus());
                         }}
-                      >
-                        Restoring your conversation history
+                      />
+                    )}
+
+                    {/* Load older messages */}
+                    {hasOlderMessages && (
+                      <div style={{ textAlign: 'center', padding: '8px 0 12px 0' }}>
+                        <button
+                          onClick={loadOlderMessages}
+                          style={{
+                            fontSize: '0.68rem',
+                            fontWeight: 500,
+                            padding: '4px 16px',
+                            borderRadius: 'var(--wks-radius-lg)',
+                            border: `1px solid ${colors.border}`,
+                            backgroundColor: 'rgba(255,255,255,0.03)',
+                            color: colors.muted,
+                            cursor: 'pointer',
+                            fontFamily: 'inherit',
+                          }}
+                        >
+                          Load{' '}
+                          {Math.min(CONVERSATION_PAGE_SIZE, conversation.length - visibleCount)}{' '}
+                          earlier messages ({conversation.length - visibleCount} hidden)
+                        </button>
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                  {conversation.length === 0 && session && !historyPending && (
-                    <ConversationEmptyState
-                      agentName={agentName}
-                      provider={provider ?? 'claude'}
-                      model={session.statusLine?.modelDisplay ?? session.settings?.model}
-                      permissionMode={permissionModeLabel(
-                        provider,
-                        session.livePermissionMode ?? session.settings?.permissionMode,
-                      )}
-                      transport={claudeTransport}
-                      cwd={session.liveCwd || session.cwd || cwd}
-                      initialPrompt={initialPrompt}
-                      onPick={(prompt) => {
-                        setInputValue(prompt);
-                        requestAnimationFrame(() => inputRef.current?.focus());
-                      }}
-                    />
-                  )}
-
-                  {/* Load older messages */}
-                  {hasOlderMessages && (
-                    <div style={{ textAlign: 'center', padding: '8px 0 12px 0' }}>
-                      <button
-                        onClick={loadOlderMessages}
-                        style={{
-                          fontSize: '0.68rem',
-                          fontWeight: 500,
-                          padding: '4px 16px',
-                          borderRadius: 'var(--wks-radius-lg)',
-                          border: `1px solid ${colors.border}`,
-                          backgroundColor: 'rgba(255,255,255,0.03)',
-                          color: colors.muted,
-                          cursor: 'pointer',
-                          fontFamily: 'inherit',
-                        }}
-                      >
-                        Load {Math.min(CONVERSATION_PAGE_SIZE, conversation.length - visibleCount)}{' '}
-                        earlier messages ({conversation.length - visibleCount} hidden)
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Rendered conversation messages with dividers. The cwd
+                    {/* Rendered conversation messages with dividers. The cwd
                       provider lets file paths mentioned in assistant prose /
                       command output resolve + open like tool-call FileLinks. */}
-                  <ErrorBoundary label="Conversation" resetKeys={[sessionId]}>
-                    <MarkdownFileCwdProvider value={effectiveCwd}>
-                      {renderedConversation}
-                    </MarkdownFileCwdProvider>
-                  </ErrorBoundary>
+                    <ErrorBoundary label="Conversation" resetKeys={[sessionId]}>
+                      <MarkdownFileCwdProvider value={effectiveCwd}>
+                        {renderedConversation}
+                      </MarkdownFileCwdProvider>
+                    </ErrorBoundary>
 
-                  {/* Live work not yet absorbed into the timeline: in-flight tool
+                    {/* Live work not yet absorbed into the timeline: in-flight tool
                     calls plus agents/workflows that hooks reported before the
                     transcript caught up. Anchored agents render in WorkCards. */}
-                  {(liveToolCalls.length > 0 ||
-                    liveSubagents.length > 0 ||
-                    liveWorkflows.length > 0) && (
-                    <InlineWorkLog
-                      toolCalls={liveToolCalls}
-                      subagents={liveSubagents}
-                      workflows={liveWorkflows}
-                    />
-                  )}
+                    {(liveToolCalls.length > 0 ||
+                      liveSubagents.length > 0 ||
+                      liveWorkflows.length > 0) && (
+                      <InlineWorkLog
+                        toolCalls={liveToolCalls}
+                        subagents={liveSubagents}
+                        workflows={liveWorkflows}
+                      />
+                    )}
 
-                  {/* Streaming indicator with cancel */}
-                  {isStreaming && (
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 10,
-                        padding: '8px 0 4px 0',
-                      }}
-                    >
-                      <BrandSpinner size={15} />
-                      {/* Elapsed run time. Stopping lives in the composer now —
+                    {/* Streaming indicator with cancel */}
+                    {isStreaming && (
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '8px 0 4px 0',
+                        }}
+                      >
+                        <BrandSpinner size={15} />
+                        {/* Elapsed run time. Stopping lives in the composer now —
                           one place for actions, and reachable without leaving
                           the box you're typing in. */}
-                      {workStartedAt !== null && <WorkingTimer since={workStartedAt} />}
-                    </div>
-                  )}
+                        {workStartedAt !== null && <WorkingTimer since={workStartedAt} />}
+                      </div>
+                    )}
 
-                  {/* Tail spacer — the room the newest user message is pinned
+                    {/* Tail spacer — the room the newest user message is pinned
                       above, filled in by the reply as it streams. */}
-                  {tailPad > 0 && <div data-tail-pad aria-hidden style={{ height: tailPad }} />}
+                    {tailPad > 0 && <div data-tail-pad aria-hidden style={{ height: tailPad }} />}
+                  </div>
                 </div>
-              </div>
 
-              {/* Scroll to bottom button */}
-              {showScrollBtn && <ScrollToBottomButton onClick={scrollToBottom} />}
+                {/* Scroll to bottom button */}
+                {showScrollBtn && <ScrollToBottomButton onClick={scrollToBottom} />}
 
-              {/* Task list — the agent's plan/tasks pinned above the composer,
+                {/* Task list — the agent's plan/tasks pinned above the composer,
                 view-only and dismissible (reappears when the tasks change). */}
-              {showTasksCard && plan && (
-                <TasksCard plan={plan} onDismiss={() => setDismissedPlanSig(planSig)} />
-              )}
+                {showTasksCard && plan && (
+                  <TasksCard plan={plan} onDismiss={() => setDismissedPlanSig(planSig)} />
+                )}
 
-              {/* Needs-you dock — approvals and questions pinned above the composer */}
-              <NeedsYouDock
-                approval={dockApproval}
-                questions={dockQuestions}
-                onApprove={handleApprovalRespond}
-                onAnswer={handleAnswer}
-                onDecline={handleDecline}
-              />
+                {/* Needs-you dock — approvals and questions pinned above the composer */}
+                <NeedsYouDock
+                  approval={dockApproval}
+                  questions={dockQuestions}
+                  onApprove={handleApprovalRespond}
+                  onAnswer={handleAnswer}
+                  onDecline={handleDecline}
+                />
 
-              {/* Composer / Input area — session pills live inside its bottom row */}
-              <Composer
-                value={inputValue}
-                onChange={setInputValue}
-                onSend={handleSend}
-                onPaste={handlePaste}
-                onPickFiles={openFilePicker}
-                attachedFiles={attachedFiles}
-                onRemoveFile={removeAttachedFile}
-                dimmed={!!(dockApproval || dockQuestions)}
-                inputRef={inputRef}
-                showSendButton={config.ui.showComposerSend !== false}
-                working={isStreaming}
-                onStop={cancelTask}
-                agentName={agentName}
-                slashItems={slashItems}
-                onSlashPick={handleSlashPick}
-                controls={
+                {/* Composer / Input area — session pills live inside its bottom row */}
+                <Composer
+                  value={inputValue}
+                  onChange={setInputValue}
+                  onSend={handleSend}
+                  onPaste={handlePaste}
+                  onPickFiles={openFilePicker}
+                  attachedFiles={attachedFiles}
+                  onRemoveFile={removeAttachedFile}
+                  dimmed={!!(dockApproval || dockQuestions)}
+                  inputRef={inputRef}
+                  showSendButton={config.ui.showComposerSend !== false}
+                  working={isStreaming}
+                  onStop={cancelTask}
+                  agentName={agentName}
+                  slashItems={slashItems}
+                  onSlashPick={handleSlashPick}
+                  controls={
+                    <ComposerControls
+                      provider={provider ?? 'claude'}
+                      sessionId={sessionId}
+                      snapshot={session}
+                      cwd={cwd}
+                      onRestartWith={handleRestartWith}
+                    />
+                  }
+                />
+              </div>
+            </div>
+            {/* Status / control bar — bottom of the CONTENT column (not the pane),
+            so it shares the composer's width and stays centered under it even
+            when the inspector rail is open; the rail runs full-height beside
+            it. IDE/CLI status-line style: chromeless in GUI mode (a quiet
+            footer under the floating composer); terminal mode keeps the solid
+            toolbar treatment so it reads as an edge against the xterm surface. */}
+            <div
+              style={{
+                padding: viewMode === 'gui' ? '2px 18px 8px' : '4px 12px',
+                backgroundColor: viewMode === 'gui' ? 'transparent' : colors.bgToolbar,
+                borderTop: viewMode === 'gui' ? 'none' : `1px solid ${colors.border}`,
+                minHeight: 28,
+                flexShrink: 0,
+              }}
+            >
+              {/* In GUI mode the row aligns to the composer's centered chat column
+            so the footer line sits flush under it; terminal mode stays
+            edge-to-edge like a toolbar. */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  minWidth: 0,
+                  minHeight: 24,
+                  ...(viewMode === 'gui'
+                    ? { maxWidth: 'var(--wks-chat-width)', margin: '0 auto' }
+                    : {}),
+                }}
+              >
+                <StatusBadge
+                  session={session}
+                  approvalDismissed={
+                    !!(pendingApproval && pendingApproval.timestamp <= approvalDismissedAt)
+                  }
+                />
+
+                {/* Session controls — model / effort / permission-mode pills. In GUI
+            mode these live inside the composer's bottom row (T3-style); keep
+            them here for terminal mode, which has no composer. */}
+                {viewMode === 'terminal' && (
                   <ComposerControls
                     provider={provider ?? 'claude'}
                     sessionId={sessionId}
@@ -2239,257 +2314,206 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                     cwd={cwd}
                     onRestartWith={handleRestartWith}
                   />
-                }
-              />
-            </div>
-          </div>
-          {/* Status / control bar — bottom of the CONTENT column (not the pane),
-            so it shares the composer's width and stays centered under it even
-            when the inspector rail is open; the rail runs full-height beside
-            it. IDE/CLI status-line style: chromeless in GUI mode (a quiet
-            footer under the floating composer); terminal mode keeps the solid
-            toolbar treatment so it reads as an edge against the xterm surface. */}
-          <div
-            style={{
-              padding: viewMode === 'gui' ? '2px 18px 8px' : '4px 12px',
-              backgroundColor: viewMode === 'gui' ? 'transparent' : colors.bgToolbar,
-              borderTop: viewMode === 'gui' ? 'none' : `1px solid ${colors.border}`,
-              minHeight: 28,
-              flexShrink: 0,
-            }}
-          >
-            {/* In GUI mode the row aligns to the composer's centered chat column
-            so the footer line sits flush under it; terminal mode stays
-            edge-to-edge like a toolbar. */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                minWidth: 0,
-                minHeight: 24,
-                ...(viewMode === 'gui'
-                  ? { maxWidth: 'var(--wks-chat-width)', margin: '0 auto' }
-                  : {}),
-              }}
-            >
-              <StatusBadge
-                session={session}
-                approvalDismissed={
-                  !!(pendingApproval && pendingApproval.timestamp <= approvalDismissedAt)
-                }
-              />
+                )}
 
-              {/* Session controls — model / effort / permission-mode pills. In GUI
-            mode these live inside the composer's bottom row (T3-style); keep
-            them here for terminal mode, which has no composer. */}
-              {viewMode === 'terminal' && (
-                <ComposerControls
-                  provider={provider ?? 'claude'}
-                  sessionId={sessionId}
-                  snapshot={session}
-                  cwd={cwd}
-                  onRestartWith={handleRestartWith}
-                />
-              )}
-
-              {/* In-app status line — telemetry only (dir/branch · plan · ctx ·
+                {/* In-app status line — telemetry only (dir/branch · plan · ctx ·
             tok/cost · quota meters). Controls (model/effort/permissions) live
             in the ComposerControls pills, never here. */}
-              <SessionStatusBar snapshot={session} cwd={cwd} />
+                <SessionStatusBar snapshot={session} cwd={cwd} />
 
-              {(() => {
-                const liveAgents =
-                  subagents.filter((s) => s?.status === 'running').length +
-                  // `w.agents` is typed as a required array, but a snapshot arriving
-                  // over the hub bus (web/remote) can omit it — flatMap would then
-                  // fold in `undefined` and the `.filter` below would throw, blanking
-                  // the whole pane. Default to [] so a lean bus payload can't crash it.
-                  workflows.flatMap((w) => w.agents ?? []).filter((a) => a?.status === 'running')
-                    .length;
-                return liveAgents > 0 ? (
+                {(() => {
+                  const liveAgents =
+                    subagents.filter((s) => s?.status === 'running').length +
+                    // `w.agents` is typed as a required array, but a snapshot arriving
+                    // over the hub bus (web/remote) can omit it — flatMap would then
+                    // fold in `undefined` and the `.filter` below would throw, blanking
+                    // the whole pane. Default to [] so a lean bus payload can't crash it.
+                    workflows.flatMap((w) => w.agents ?? []).filter((a) => a?.status === 'running')
+                      .length;
+                  return liveAgents > 0 ? (
+                    <span
+                      style={{
+                        fontSize: '0.66rem',
+                        fontWeight: 700,
+                        fontFamily: 'var(--wks-font-mono)',
+                        padding: '1px 7px',
+                        borderRadius: 'var(--wks-radius-pill)',
+                        letterSpacing: '0.03em',
+                        color: 'var(--wks-purple)',
+                        border: '1px solid color-mix(in srgb, var(--wks-purple) 40%, transparent)',
+                        background: 'color-mix(in srgb, var(--wks-purple) 10%, transparent)',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {liveAgents} subagent{liveAgents !== 1 ? 's' : ''}
+                    </span>
+                  ) : null;
+                })()}
+
+                {/* Attached-files readout — terminal mode only; in GUI the composer
+            already shows the attachments as chips, so this would duplicate. */}
+                {viewMode === 'terminal' && attachedFiles.length > 0 && (
                   <span
                     style={{
-                      fontSize: '0.66rem',
-                      fontWeight: 700,
+                      fontSize: '0.7rem',
                       fontFamily: 'var(--wks-font-mono)',
-                      padding: '1px 7px',
-                      borderRadius: 'var(--wks-radius-pill)',
-                      letterSpacing: '0.03em',
-                      color: 'var(--wks-purple)',
-                      border: '1px solid color-mix(in srgb, var(--wks-purple) 40%, transparent)',
-                      background: 'color-mix(in srgb, var(--wks-purple) 10%, transparent)',
+                      color: colors.accent,
                       whiteSpace: 'nowrap',
-                      flexShrink: 0,
                     }}
                   >
-                    {liveAgents} subagent{liveAgents !== 1 ? 's' : ''}
+                    {attachedFiles.length} file{attachedFiles.length !== 1 ? 's' : ''} attached
                   </span>
-                ) : null;
-              })()}
+                )}
 
-              {/* Attached-files readout — terminal mode only; in GUI the composer
-            already shows the attachments as chips, so this would duplicate. */}
-              {viewMode === 'terminal' && attachedFiles.length > 0 && (
-                <span
-                  style={{
-                    fontSize: '0.7rem',
-                    fontFamily: 'var(--wks-font-mono)',
-                    color: colors.accent,
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {attachedFiles.length} file{attachedFiles.length !== 1 ? 's' : ''} attached
-                </span>
-              )}
+                <div style={{ flex: 1 }} />
 
-              <div style={{ flex: 1 }} />
-
-              {/* Redraw — clears the rare backdrop-filter compositing garble */}
-              <button
-                onClick={forceRepaint}
-                title="Redraw pane (fixes occasional rendering glitches)"
-                className="wks-composer-icon-btn"
-                style={{
-                  ...toggleBtnStyle,
-                  display: 'flex',
-                  alignItems: 'center',
-                  backgroundColor: 'transparent',
-                  color: 'var(--wks-text-muted)',
-                }}
-              >
-                <RefreshCw size={13} strokeWidth={1.9} />
-              </button>
-
-              {/* Attach files — terminal mode only; the composer has its own + in GUI */}
-              {viewMode === 'terminal' && (
+                {/* Redraw — clears the rare backdrop-filter compositing garble */}
                 <button
-                  onClick={openFilePicker}
-                  title="Attach files"
+                  onClick={forceRepaint}
+                  title="Redraw pane (fixes occasional rendering glitches)"
                   className="wks-composer-icon-btn"
-                  style={{
-                    ...toggleBtnStyle,
-                    backgroundColor: 'transparent',
-                    color: 'var(--wks-text-muted)',
-                    fontSize: '0.8rem',
-                  }}
-                >
-                  +
-                </button>
-              )}
-
-              {/* Hand off to any provider (including the same one — fresh context,
-            same harness) — brief goes to ~/.workspacer/handoffs */}
-              <button
-                onClick={() => setHandoffOpen(true)}
-                title={
-                  handoffBusy === 'agent'
-                    ? 'Waiting for the agent to write its handoff brief…'
-                    : 'Hand off this session to a new agent — pick provider, model, effort and permissions (summarized brief, new session)'
-                }
-                className="wks-composer-icon-btn"
-                disabled={!!handoffBusy || !(sessionId ?? attachSessionId)}
-                style={{
-                  ...toggleBtnStyle,
-                  display: 'flex',
-                  alignItems: 'center',
-                  backgroundColor: 'transparent',
-                  color: handoffBusy ? colors.accent : 'var(--wks-text-muted)',
-                }}
-              >
-                <ArrowRightLeft size={13} strokeWidth={1.9} />
-              </button>
-              {handoffOpen && (
-                <HandoffDialog
-                  provider={provider ?? 'claude'}
-                  snapshot={session}
-                  cwd={cwd}
-                  busy={handoffBusy}
-                  onCancel={() => setHandoffOpen(false)}
-                  onConfirm={(settings) => void handleHandoff(settings)}
-                />
-              )}
-
-              {/* Timestamps toggle — GUI conversation only. Saved to config so it
-            persists and applies to every chat pane at once. */}
-              {viewMode === 'gui' && (
-                <button
-                  onClick={() =>
-                    save({ claude: { ...config.claude, showTimestamps: !showTimestamps } } as any)
-                  }
-                  title={showTimestamps ? 'Hide message timestamps' : 'Show message timestamps'}
-                  className={showTimestamps ? undefined : 'wks-composer-icon-btn'}
                   style={{
                     ...toggleBtnStyle,
                     display: 'flex',
                     alignItems: 'center',
-                    backgroundColor: showTimestamps ? 'var(--wks-accent-bg)' : 'transparent',
-                    color: showTimestamps ? colors.accent : 'var(--wks-text-muted)',
+                    backgroundColor: 'transparent',
+                    color: 'var(--wks-text-muted)',
                   }}
                 >
-                  <Clock size={13} strokeWidth={1.9} />
+                  <RefreshCw size={13} strokeWidth={1.9} />
                 </button>
-              )}
 
-              {/* Inspector rail toggle — available in both GUI and Terminal mode,
+                {/* Attach files — terminal mode only; the composer has its own + in GUI */}
+                {viewMode === 'terminal' && (
+                  <button
+                    onClick={openFilePicker}
+                    title="Attach files"
+                    className="wks-composer-icon-btn"
+                    style={{
+                      ...toggleBtnStyle,
+                      backgroundColor: 'transparent',
+                      color: 'var(--wks-text-muted)',
+                      fontSize: '0.8rem',
+                    }}
+                  >
+                    +
+                  </button>
+                )}
+
+                {/* Hand off to any provider (including the same one — fresh context,
+            same harness) — brief goes to ~/.workspacer/handoffs */}
+                <button
+                  onClick={() => setHandoffOpen(true)}
+                  title={
+                    handoffBusy === 'agent'
+                      ? 'Waiting for the agent to write its handoff brief…'
+                      : 'Hand off this session to a new agent — pick provider, model, effort and permissions (summarized brief, new session)'
+                  }
+                  className="wks-composer-icon-btn"
+                  disabled={!!handoffBusy || !(sessionId ?? attachSessionId)}
+                  style={{
+                    ...toggleBtnStyle,
+                    display: 'flex',
+                    alignItems: 'center',
+                    backgroundColor: 'transparent',
+                    color: handoffBusy ? colors.accent : 'var(--wks-text-muted)',
+                  }}
+                >
+                  <ArrowRightLeft size={13} strokeWidth={1.9} />
+                </button>
+                {handoffOpen && (
+                  <HandoffDialog
+                    provider={provider ?? 'claude'}
+                    snapshot={session}
+                    cwd={cwd}
+                    busy={handoffBusy}
+                    onCancel={() => setHandoffOpen(false)}
+                    onConfirm={(settings) => void handleHandoff(settings)}
+                  />
+                )}
+
+                {/* Timestamps toggle — GUI conversation only. Saved to config so it
+            persists and applies to every chat pane at once. */}
+                {viewMode === 'gui' && (
+                  <button
+                    onClick={() =>
+                      save({ claude: { ...config.claude, showTimestamps: !showTimestamps } } as any)
+                    }
+                    title={showTimestamps ? 'Hide message timestamps' : 'Show message timestamps'}
+                    className={showTimestamps ? undefined : 'wks-composer-icon-btn'}
+                    style={{
+                      ...toggleBtnStyle,
+                      display: 'flex',
+                      alignItems: 'center',
+                      backgroundColor: showTimestamps ? 'var(--wks-accent-bg)' : 'transparent',
+                      color: showTimestamps ? colors.accent : 'var(--wks-text-muted)',
+                    }}
+                  >
+                    <Clock size={13} strokeWidth={1.9} />
+                  </button>
+                )}
+
+                {/* Inspector rail toggle — available in both GUI and Terminal mode,
             and in both UI modes: per-agent depth is if anything MORE wanted when
             you're focused on one agent, so this is never mode-gated. */}
-              <button
-                onClick={toggleRail}
-                title={
-                  railOpen
-                    ? 'Hide inspector'
-                    : 'Show inspector (files / workflows / agents / usage)'
-                }
-                className={railOpen ? undefined : 'wks-composer-icon-btn'}
-                style={{
-                  ...toggleBtnStyle,
-                  display: 'flex',
-                  alignItems: 'center',
-                  backgroundColor: railOpen ? 'var(--wks-accent-bg)' : 'transparent',
-                  color: railOpen ? colors.accent : 'var(--wks-text-muted)',
-                }}
-              >
-                <PanelRight size={13} strokeWidth={1.9} />
-              </button>
+                <button
+                  onClick={toggleRail}
+                  title={
+                    railOpen
+                      ? 'Hide inspector'
+                      : 'Show inspector (files / workflows / agents / usage)'
+                  }
+                  className={railOpen ? undefined : 'wks-composer-icon-btn'}
+                  style={{
+                    ...toggleBtnStyle,
+                    display: 'flex',
+                    alignItems: 'center',
+                    backgroundColor: railOpen ? 'var(--wks-accent-bg)' : 'transparent',
+                    color: railOpen ? colors.accent : 'var(--wks-text-muted)',
+                  }}
+                >
+                  <PanelRight size={13} strokeWidth={1.9} />
+                </button>
 
-              {/* View mode toggle — only when the provider offers both surfaces (Claude). */}
-              <div style={{ display: showViewToggle ? 'flex' : 'none', gap: 2 }}>
-                <button
-                  onClick={() => setViewMode('gui')}
-                  className={viewMode === 'gui' ? undefined : 'wks-composer-icon-btn'}
-                  style={{
-                    ...toggleBtnStyle,
-                    backgroundColor: viewMode === 'gui' ? 'var(--wks-accent-bg)' : 'transparent',
-                    color: viewMode === 'gui' ? colors.accent : 'var(--wks-text-muted)',
-                  }}
-                >
-                  GUI
-                </button>
-                <button
-                  onClick={() => setViewMode('terminal')}
-                  className={viewMode === 'terminal' ? undefined : 'wks-composer-icon-btn'}
-                  style={{
-                    ...toggleBtnStyle,
-                    backgroundColor:
-                      viewMode === 'terminal' ? 'var(--wks-accent-bg)' : 'transparent',
-                    color: viewMode === 'terminal' ? colors.accent : 'var(--wks-text-muted)',
-                  }}
-                >
-                  Term
-                </button>
+                {/* View mode toggle — only when the provider offers both surfaces (Claude). */}
+                <div style={{ display: showViewToggle ? 'flex' : 'none', gap: 2 }}>
+                  <button
+                    onClick={() => setViewMode('gui')}
+                    className={viewMode === 'gui' ? undefined : 'wks-composer-icon-btn'}
+                    style={{
+                      ...toggleBtnStyle,
+                      backgroundColor: viewMode === 'gui' ? 'var(--wks-accent-bg)' : 'transparent',
+                      color: viewMode === 'gui' ? colors.accent : 'var(--wks-text-muted)',
+                    }}
+                  >
+                    GUI
+                  </button>
+                  <button
+                    onClick={() => setViewMode('terminal')}
+                    className={viewMode === 'terminal' ? undefined : 'wks-composer-icon-btn'}
+                    style={{
+                      ...toggleBtnStyle,
+                      backgroundColor:
+                        viewMode === 'terminal' ? 'var(--wks-accent-bg)' : 'transparent',
+                      color: viewMode === 'terminal' ? colors.accent : 'var(--wks-text-muted)',
+                    }}
+                  >
+                    Term
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Inspector rail — the session inspector (files / workflows / agents /
+          {/* Inspector rail — the session inspector (files / workflows / agents /
           usage) plus this project's widget board. Sibling of the content area,
           so it persists in both GUI and Terminal mode. effectiveCwd is what the
           board is keyed by, so it works before a session attaches. */}
-        {railOpen && <InspectorRail session={session} cwd={effectiveCwd} onClose={toggleRail} />}
+          {railOpen && <InspectorRail session={session} cwd={effectiveCwd} onClose={toggleRail} />}
+        </div>
       </div>
-    </div>
+    </SkillInventoryProvider>
   );
 };
 

@@ -31,6 +31,7 @@ function mapInventory(inv: any): import('./claudeSessionStore').ContextInventory
           path: i.path,
           status: i.status,
           source: i.source,
+          description: i.description,
           bytes: i.bytes,
           estTokens: i.est_tokens,
         }))

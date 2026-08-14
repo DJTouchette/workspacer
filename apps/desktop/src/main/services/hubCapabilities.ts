@@ -29,7 +29,7 @@ import { snapshotGrantsFsRoot } from '../lib/snapshotLiveness';
 import { DELEGATE_CATALOG_TO_BRAIN } from './brainDelegation';
 import { configService, getConfigDir } from './configService';
 import { listClaudeModels } from './claudeModels';
-import { libraryService, type LibraryFileGuard } from './libraryService';
+import { libraryService, type ClaudeOrigin, type LibraryFileGuard } from './libraryService';
 import { sessionService } from './sessionService';
 import { sessionHistory } from './sessionHistory';
 import { layoutService } from './layoutService';
@@ -1145,11 +1145,12 @@ export function registerHubCapabilities(): void {
     );
   });
   cat('library.remove', (params: unknown) => {
-    const { scope, id, cwd, kind } = (params ?? {}) as {
+    const { scope, id, cwd, kind, origin } = (params ?? {}) as {
       scope?: 'global' | 'project' | 'claude';
       id?: string;
       cwd?: string;
       kind?: 'prompt' | 'skill' | 'agent';
+      origin?: ClaudeOrigin;
     };
     if (!scope || !id) throw new Error('library.remove requires { scope, id }');
     const canonicalCwd = guardLibraryCwd('library.remove', cwd);
@@ -1158,6 +1159,12 @@ export function registerHubCapabilities(): void {
       id,
       canonicalCwd,
       kind,
+      // A 'plugin:…' origin is refused by the service. The item roots would
+      // refuse a plugin path anyway (they are the project plus the global
+      // store), but the origin check fails LOUD instead of silently unlinking
+      // nothing, which is what a caller asking to delete a plugin's skill needs
+      // to hear.
+      origin,
       guardLibraryFile('library.remove', libraryItemRoots(canonicalCwd)),
     );
     return { ok: true };

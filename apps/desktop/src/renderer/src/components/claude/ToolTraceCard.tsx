@@ -8,6 +8,7 @@ import { SubagentRow } from './SubagentRow';
 import { WorkflowRunCard } from './WorkflowRunCard';
 import { AgentSpinner } from './WorkflowAgentRow';
 import { summarizeWork } from './WorkCard';
+import { SkillCard, isSkillCall, skillCallName } from './SkillCard';
 import { useNowTicker } from './useNowTicker';
 import { FileLink } from './FileLink';
 
@@ -32,6 +33,7 @@ const CATEGORY_COLOR: Record<string, string> = {
   search: 'var(--wks-purple)',
   agent: 'var(--wks-purple)',
   web: '#38bdf8',
+  skill: 'var(--wks-purple)',
   other: 'var(--wks-text-muted)',
 };
 
@@ -43,6 +45,9 @@ function categoryOf(tc: ToolCall): keyof typeof CATEGORY_COLOR {
   if (n === 'Grep' || n === 'Glob' || n === 'LS') return 'search';
   if (n === 'Agent' || n === 'Workflow' || n === 'Task') return 'agent';
   if (n === 'WebFetch' || n === 'WebSearch') return 'web';
+  // Its own chip, not 'other': a skill invocation is the step that changes how
+  // every later step in the run behaves.
+  if (isSkillCall(tc)) return 'skill';
   return 'other';
 }
 
@@ -91,6 +96,10 @@ function callTarget(tc: ToolCall): string {
     case 'WebFetch':
     case 'WebSearch':
       return typeof (i.url ?? i.query) === 'string' ? (i.url ?? i.query) : '';
+    case 'Skill':
+      // The skill's name, not whatever string field happens to come first —
+      // the default branch below picked `args` on a call that had one.
+      return skillCallName(tc) || 'skill';
     default: {
       const first = Object.values(i).find((v) => typeof v === 'string') as string | undefined;
       return first ?? '';
@@ -305,7 +314,10 @@ const TraceRow: React.FC<{
             borderLeft: `2px solid ${color}`,
           }}
         >
-          <WorkLogEntry tc={tc} />
+          {/* A skill's card carries its description, origin and (when it has
+              one) an openable file — everything the raw-input dump below
+              cannot say, since the call input is just the skill's name. */}
+          {isSkillCall(tc) ? <SkillCard tc={tc} cwd={cwd} /> : <WorkLogEntry tc={tc} />}
           {hasDiff(tc) && (
             <DiffView
               oldStr={tc.input?.old_string ?? ''}

@@ -702,7 +702,7 @@ claudemon init --hook-port 8888 # match a non-default hook port</code></pre>
 </ul>
 <h3>library and analytics on disk</h3>
 <ul>
-<li><strong>Library</strong> items live as Markdown under <code>library/</code> in the config dir. The app also reads project-scoped items: <code>&lt;cwd&gt;/.workspacer/library</code>, and Claude's own <code>&lt;cwd&gt;/.claude/skills</code> and <code>&lt;cwd&gt;/.claude/agents</code>.</li>
+<li><strong>Library</strong> items live as Markdown under <code>library/</code> in the config dir. The app also reads project-scoped items: <code>&lt;cwd&gt;/.workspacer/library</code>, and Claude's own <code>skills/</code>, <code>agents/</code> and <code>commands/</code> from every root Claude Code resolves them in — the project's <code>.claude/</code>, your <code>~/.claude/</code> (or <code>CLAUDE_CONFIG_DIR</code>), and installed plugins. Project shadows user shadows plugin, as in Claude Code; a plugin's files are read-only and offer "Copy to project" instead of Edit. Skills compiled into the Claude Code binary have no file and appear only in the Context pane, labelled <code>built-in</code>.</li>
 <li><strong>Analytics</strong> history is a SQLite database at <code>workspacer.db</code> in the config dir, one upserted row per session (model, cost, tokens, tools, branch), powering the Analytics and Overview panes.</li>
 <li><strong>Workspace</strong> layouts are saved as <code>.yaml</code> files under <code>sessions/</code>; the most recent one is restored on launch.</li>
 </ul>

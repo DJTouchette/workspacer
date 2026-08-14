@@ -615,7 +615,9 @@ describe('library.* cwd confinement', () => {
 
   it('library.remove hands the service a per-file guard that confines delete targets', () => {
     call('library.remove', { scope: 'claude', id: 'x', cwd: agentCwd, kind: 'skill' });
-    const guard = libraryMock.remove.mock.calls[0][4] as (p: string) => string | null;
+    // remove(scope, id, cwd, kind, origin, guard) — the guard is last, like
+    // list()/save(), so read it off the end rather than by a fixed index.
+    const guard = libraryMock.remove.mock.calls[0].at(-1) as (p: string) => string | null;
     expect(guard(path.join(agentCwd, '.claude', 'skills', 'x'))).toBe(
       path.join(agentCwd, '.claude', 'skills', 'x'),
     );

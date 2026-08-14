@@ -35,9 +35,14 @@ vi.mock('./claudeProfiles', () => ({
   claudeProfiles: { getProfile: (...a: unknown[]) => getProfile(...a) },
 }));
 
+// ONLY listWithSecrets is mocked, deliberately: `list()` masks MCP env/headers
+// to __WKS_SECRET__, and a spawn that used it would write that literal into the
+// session's --mcp-config as the API token — a broken server, from a change that
+// reads like a simplification. Switching this call site back to `list()` throws
+// here instead of shipping.
 const libraryList = vi.fn(() => [] as unknown[]);
 vi.mock('./libraryService', () => ({
-  libraryService: { list: (...a: unknown[]) => libraryList(...a) },
+  libraryService: { listWithSecrets: (...a: unknown[]) => libraryList(...a) },
 }));
 
 vi.mock('./configService', () => ({

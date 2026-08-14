@@ -477,34 +477,268 @@ fn size_item(item: &mut ContextItem, path: &std::path::Path) {
     }
 }
 
+/// The origin stamped on a skill or agent that resolves to no file anywhere.
+/// The CLI ships a set of both compiled into its own binary — `skills` on a
+/// live init frame lists deep-research, dataviz, verify, debug, run, … and
+/// `agents` lists Explore, general-purpose, Plan — none of which exist on disk.
+/// "No file" is the correct answer for those, not a lookup failure, and only a
+/// label tells the two apart in the pane.
+const BUILTIN_SOURCE: &str = "built-in";
+
+/// One directory a Claude asset can live under, with the origin label stamped
+/// onto whatever resolves inside it. A root is either `.claude`-shaped (the
+/// project's or the user's) or a plugin directory; both lay out their assets as
+/// `skills/<name>/SKILL.md`, `agents/<name>.md` and `commands/<name>.md`.
+struct AssetRoot {
+    label: String,
+    dir: std::path::PathBuf,
+}
+
+/// How many plugin directories we're willing to scan for. Enumerating plugins
+/// is a directory walk on every init frame, and a marketplace clone is
+/// caller-controlled in size.
+const MAX_PLUGIN_ROOTS: usize = 200;
+
+/// Every root a skill or agent may live under, in PRECEDENCE order — the
+/// project's own `.claude`, then the user's, then plugins. First match wins,
+/// which is the order Claude Code resolves a name in.
+///
+/// The plugin roots are the leg that was missing: the frame's own `plugins`
+/// list only carries the INSTALLED ones, while a marketplace's plugins are
+/// active (and reported in `skills`) straight out of the marketplace clone —
+/// `code-review` is reported as a skill and lives at
+/// `plugins/marketplaces/<mp>/plugins/code-review/commands/code-review.md`.
+fn asset_roots(inv: &ContextInventory, cwd: Option<&str>) -> Vec<AssetRoot> {
+    let mut roots: Vec<AssetRoot> = Vec::new();
+    if let Some(cwd) = cwd {
+        roots.push(AssetRoot {
+            label: "project".to_string(),
+            dir: std::path::Path::new(cwd).join(".claude"),
+        });
+    }
+    for user in user_claude_dirs() {
+        roots.push(AssetRoot {
+            label: "user".to_string(),
+            dir: user,
+        });
+    }
+
+    // Plugins the frame already told us about, path included.
+    for plugin in &inv.plugins {
+        if let Some(path) = plugin.path.as_deref() {
+            roots.push(AssetRoot {
+                label: plugin.name.clone(),
+                dir: std::path::PathBuf::from(path),
+            });
+        }
+    }
+
+    // …plus the ones on disk it didn't. `cache/<marketplace>/<plugin>/<version>`
+    // for installed plugins, `marketplaces/<mp>/plugins/<plugin>` for the clone.
+    // (label, dir) pairs, collected before they touch `roots` so the dedupe can
+    // see the roots already there.
+    let mut discovered: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for user in user_claude_dirs() {
+        let plugins = user.join("plugins");
+        for marketplace in read_dirs(&plugins.join("cache")) {
+            for plugin in read_dirs(&marketplace) {
+                let label = dir_name(&plugin);
+                // The VERSION directory is the plugin root, not the plugin
+                // directory: `cache/<marketplace>/<plugin>/<version>/skills/…`.
+                for version in read_dirs(&plugin) {
+                    discovered.push((label.clone(), version));
+                }
+            }
+        }
+        for marketplace in read_dirs(&plugins.join("marketplaces")) {
+            for plugin in read_dirs(&marketplace.join("plugins")) {
+                discovered.push((dir_name(&plugin), plugin));
+            }
+        }
+    }
+    for (label, dir) in discovered {
+        if roots.len() >= MAX_PLUGIN_ROOTS {
+            break;
+        }
+        if label.is_empty() || roots.iter().any(|r| r.dir == dir) {
+            continue;
+        }
+        roots.push(AssetRoot { label, dir });
+    }
+    roots
+}
+
+/// A directory's own name, or "" when it has none (a root path).
+fn dir_name(dir: &std::path::Path) -> String {
+    dir.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// Claude Code's own config roots, where the user's skills, agents and plugins
+/// live. `CLAUDE_CONFIG_DIR` relocates it and the CLI honours that, so an
+/// install setting it would otherwise resolve none of the user's assets and
+/// report every one of them as "built-in".
+///
+/// BOTH are returned, not one: a Claude *profile* sets `CLAUDE_CONFIG_DIR` per
+/// spawn (claudeSpawn.ts / managedSpawn.ts), and that per-session value is not
+/// in this daemon's own environment. Trying the default `~/.claude` as well
+/// costs one stat and is the difference between resolving a profile user's
+/// skills and labelling all of them built-in. Precedence still favours the
+/// explicit override. Mirrors `userClaudeDir` in libraryService.ts, which runs
+/// in the desktop main process and reads only its own env for the same reason.
+fn user_claude_dirs() -> Vec<std::path::PathBuf> {
+    let mut out: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR") {
+        if !dir.trim().is_empty() {
+            out.push(std::path::PathBuf::from(dir.trim()));
+        }
+    }
+    if let Some(home) = directories::BaseDirs::new().map(|b| b.home_dir().join(".claude")) {
+        if !out.contains(&home) {
+            out.push(home);
+        }
+    }
+    out
+}
+
+/// Immediate subdirectories of `dir`, sorted for a stable precedence order.
+/// Missing/unreadable directories read as empty — this whole pass is
+/// best-effort.
+fn read_dirs(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    out.sort();
+    out
+}
+
+/// Resolve one named asset to its file, returning the origin label of the root
+/// it was found under. `candidates` are tried in order within each root before
+/// moving to the next root, so a project's own copy always beats a plugin's.
+fn resolve_asset(
+    roots: &[AssetRoot],
+    candidates: &[std::path::PathBuf],
+) -> Option<(std::path::PathBuf, String)> {
+    for root in roots {
+        for rel in candidates {
+            let full = root.dir.join(rel);
+            if full.is_file() {
+                return Some((full, root.label.clone()));
+            }
+        }
+    }
+    None
+}
+
+/// How much of a `description:` we keep. These ride the statusLine frame to
+/// every client on every tick, and a skill's description is a model-facing
+/// trigger list that runs to several hundred words; the pane renders one line.
+const MAX_DESCRIPTION_CHARS: usize = 300;
+
+/// Pull `description:` out of a markdown file's YAML frontmatter. Handles both
+/// shapes Claude Code writes: a scalar on one line, and a `>`/`|` block whose
+/// indented continuation lines fold into one. Deliberately not a YAML parse —
+/// this frontmatter is flat, and a malformed file should cost a description,
+/// not the inventory.
+fn frontmatter_description(path: &std::path::Path) -> Option<String> {
+    // Frontmatter is at the top; a skill can carry a large body (and bundled
+    // references) that there is no reason to read.
+    const MAX_FRONTMATTER_BYTES: usize = 16 * 1024;
+    let bytes = std::fs::read(path).ok()?;
+    let head = &bytes[..bytes.len().min(MAX_FRONTMATTER_BYTES)];
+    let text = String::from_utf8_lossy(head);
+    let mut lines = text.lines();
+    if lines.next()?.trim_end() != "---" {
+        return None;
+    }
+    while let Some(line) = lines.next() {
+        if line.trim_end() == "---" {
+            return None; // frontmatter ended without one
+        }
+        let Some(rest) = line.strip_prefix("description:") else {
+            continue;
+        };
+        let rest = rest.trim();
+        // A block scalar (`>`, `|`, `>-`, `|2`, …): the value is the indented
+        // lines that follow, folded into one.
+        if rest.is_empty() || rest.starts_with('>') || rest.starts_with('|') {
+            let mut parts: Vec<&str> = Vec::new();
+            for cont in lines {
+                if cont.trim().is_empty() {
+                    continue;
+                }
+                if !cont.starts_with(' ') && !cont.starts_with('\t') {
+                    break; // back to column 0 — the next key, or the closing ---
+                }
+                parts.push(cont.trim());
+            }
+            return clamp_description(&parts.join(" "));
+        }
+        let unquoted = rest
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| rest.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+            .unwrap_or(rest);
+        return clamp_description(unquoted);
+    }
+    None
+}
+
+/// Trim, drop empties, and cut to [`MAX_DESCRIPTION_CHARS`] on a CHAR boundary
+/// (a byte slice would panic mid-UTF-8 on the first non-ASCII description).
+fn clamp_description(s: &str) -> Option<String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if s.chars().count() <= MAX_DESCRIPTION_CHARS {
+        return Some(s.to_string());
+    }
+    let cut: String = s.chars().take(MAX_DESCRIPTION_CHARS).collect();
+    Some(format!("{}…", cut.trim_end()))
+}
+
 /// Best-effort disk enrichment of an inventory: resolve skills/agents to their
-/// well-known `.claude` file locations, expand memory directories into the
-/// files inside them, and stamp `bytes`/`est_tokens` on everything file-backed.
-/// Runs once per init frame (std::fs is fine — a handful of small files); items
-/// we can't resolve just keep their name.
+/// file in whichever root owns them (project, user, or a plugin), expand memory
+/// directories into the files inside them, and stamp `source`, `description`,
+/// `bytes` and `est_tokens` on everything file-backed. Runs once per init frame.
+/// Anything that resolves nowhere keeps its name and is labelled
+/// [`BUILTIN_SOURCE`], because that is what it is.
 fn enrich_inventory(caps: &mut Capabilities, cwd: Option<&str>) {
     let Some(inv) = caps.inventory.as_mut() else {
         return;
     };
-    let home = directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf());
-    let mut roots: Vec<std::path::PathBuf> = Vec::new();
-    if let Some(cwd) = cwd {
-        roots.push(std::path::Path::new(cwd).join(".claude"));
-    }
-    if let Some(home) = &home {
-        roots.push(home.join(".claude"));
-    }
+    let roots = asset_roots(inv, cwd);
 
-    // Skills live at <root>/skills/<name>/SKILL.md; agents at <root>/agents/<name>.md.
+    // Skills live at <root>/skills/<name>/SKILL.md — except a plugin's slash
+    // command, which the frame also reports in `skills` (verified live) and
+    // which lives at <root>/commands/<name>.md.
     for skill in &mut inv.skills {
         if skill.path.is_some() {
             continue;
         }
-        for root in &roots {
-            let candidate = root.join("skills").join(&skill.name).join("SKILL.md");
-            if candidate.is_file() {
-                size_item(skill, &candidate);
-                break;
+        let candidates = [
+            std::path::Path::new("skills")
+                .join(&skill.name)
+                .join("SKILL.md"),
+            std::path::Path::new("commands").join(format!("{}.md", skill.name)),
+        ];
+        match resolve_asset(&roots, &candidates) {
+            Some((path, label)) => {
+                size_item(skill, &path);
+                skill.source.get_or_insert(label);
+                skill.description = frontmatter_description(&path);
+            }
+            None => {
+                skill
+                    .source
+                    .get_or_insert_with(|| BUILTIN_SOURCE.to_string());
             }
         }
     }
@@ -512,11 +746,17 @@ fn enrich_inventory(caps: &mut Capabilities, cwd: Option<&str>) {
         if agent.path.is_some() {
             continue;
         }
-        for root in &roots {
-            let candidate = root.join("agents").join(format!("{}.md", agent.name));
-            if candidate.is_file() {
-                size_item(agent, &candidate);
-                break;
+        let candidates = [std::path::Path::new("agents").join(format!("{}.md", agent.name))];
+        match resolve_asset(&roots, &candidates) {
+            Some((path, label)) => {
+                size_item(agent, &path);
+                agent.source.get_or_insert(label);
+                agent.description = frontmatter_description(&path);
+            }
+            None => {
+                agent
+                    .source
+                    .get_or_insert_with(|| BUILTIN_SOURCE.to_string());
             }
         }
     }
@@ -1861,6 +2101,170 @@ mod tests {
         let nested = files.iter().find(|f| f.name.contains("fact.md")).unwrap();
         assert_eq!(nested.est_tokens, Some(11)); // ceil(41/4)
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A throwaway project root that cleans itself up — the suite shares a
+    /// quota'd /tmp with every other one, so a leaked mkdtemp is everyone's
+    /// problem.
+    struct TempProject(std::path::PathBuf);
+    impl TempProject {
+        fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "wks-skills-{}-{}-{:?}",
+                tag,
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+        /// Write a file, creating its parents. Path is relative to the root.
+        fn write(&self, rel: &str, contents: &str) {
+            let full = self.0.join(rel);
+            std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+            std::fs::write(full, contents).unwrap();
+        }
+        fn cwd(&self) -> &str {
+            self.0.to_str().unwrap()
+        }
+    }
+    impl Drop for TempProject {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn inventory_caps(inv: ContextInventory) -> Capabilities {
+        Capabilities {
+            inventory: Some(inv),
+            ..Default::default()
+        }
+    }
+
+    fn named(names: &[&str]) -> Vec<ContextItem> {
+        names
+            .iter()
+            .map(|n| ContextItem {
+                name: (*n).to_string(),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn enrich_resolves_project_skill_and_labels_the_rest_builtin() {
+        let p = TempProject::new("proj");
+        // The names are deliberately not real skill names: enrichment also walks
+        // the developer's own ~/.claude while this runs, and a name like
+        // "dataviz" would resolve there.
+        p.write(
+            ".claude/skills/wks-fixture-skill/SKILL.md",
+            "---\nname: wks-fixture-skill\ndescription: Fixture skill for the enrichment test.\n---\n\nbody\n",
+        );
+        // A plugin-style slash command, which the init frame reports in `skills`
+        // too — the leg that resolved nowhere before.
+        p.write(
+            ".claude/commands/wks-fixture-command.md",
+            "---\ndescription: Fixture command.\n---\n\nrun it\n",
+        );
+        p.write(
+            ".claude/agents/wks-fixture-agent.md",
+            "---\nname: wks-fixture-agent\ndescription: Fixture agent.\n---\n\nyou are\n",
+        );
+
+        let mut caps = inventory_caps(ContextInventory {
+            skills: named(&[
+                "wks-fixture-skill",
+                "wks-fixture-command",
+                "wks-fixture-absent",
+            ]),
+            agents: named(&["wks-fixture-agent", "wks-fixture-absent-agent"]),
+            ..Default::default()
+        });
+        enrich_inventory(&mut caps, Some(p.cwd()));
+        let inv = caps.inventory.unwrap();
+
+        let skill = &inv.skills[0];
+        assert!(skill.path.as_deref().unwrap().ends_with("SKILL.md"));
+        assert_eq!(skill.source.as_deref(), Some("project"));
+        assert_eq!(
+            skill.description.as_deref(),
+            Some("Fixture skill for the enrichment test.")
+        );
+        assert!(skill.est_tokens.is_some(), "a resolved skill is sized");
+
+        let command = &inv.skills[1];
+        assert!(
+            command
+                .path
+                .as_deref()
+                .unwrap()
+                .ends_with("wks-fixture-command.md"),
+            "a skill that is really a slash command still resolves"
+        );
+        assert_eq!(command.description.as_deref(), Some("Fixture command."));
+
+        // The whole point: "no file" is an ANSWER, not a blank row.
+        let builtin = &inv.skills[2];
+        assert_eq!(builtin.source.as_deref(), Some("built-in"));
+        assert!(builtin.path.is_none());
+        assert!(builtin.description.is_none());
+
+        assert_eq!(inv.agents[0].source.as_deref(), Some("project"));
+        assert_eq!(inv.agents[0].description.as_deref(), Some("Fixture agent."));
+        assert_eq!(inv.agents[1].source.as_deref(), Some("built-in"));
+    }
+
+    #[test]
+    fn frontmatter_description_reads_both_yaml_shapes() {
+        let p = TempProject::new("fm");
+
+        p.write(
+            "scalar.md",
+            "---\nname: a\ndescription: One line.\n---\nbody",
+        );
+        assert_eq!(
+            frontmatter_description(&p.0.join("scalar.md")).as_deref(),
+            Some("One line.")
+        );
+
+        // The folded-block shape ~/.claude/skills/omarchy/SKILL.md actually uses.
+        p.write(
+            "folded.md",
+            "---\nname: a\ndescription: >\n  First part of it.\n  Second part of it.\nmetadata: x\n---\nbody",
+        );
+        assert_eq!(
+            frontmatter_description(&p.0.join("folded.md")).as_deref(),
+            Some("First part of it. Second part of it."),
+            "continuation lines fold into one line, and the next key ends it"
+        );
+
+        p.write("quoted.md", "---\ndescription: \"Quoted.\"\n---\nbody");
+        assert_eq!(
+            frontmatter_description(&p.0.join("quoted.md")).as_deref(),
+            Some("Quoted.")
+        );
+
+        p.write("none.md", "---\nname: a\n---\nbody");
+        assert!(frontmatter_description(&p.0.join("none.md")).is_none());
+
+        p.write("nofm.md", "# Just a heading\ndescription: not frontmatter");
+        assert!(
+            frontmatter_description(&p.0.join("nofm.md")).is_none(),
+            "a body line that looks like a key is not frontmatter"
+        );
+    }
+
+    #[test]
+    fn long_description_is_clamped_on_a_char_boundary() {
+        // A multi-byte char straddling the cut is what a byte-slice truncation
+        // panics on; skill descriptions are prose and routinely contain them.
+        let long = "é".repeat(MAX_DESCRIPTION_CHARS + 50);
+        let out = clamp_description(&long).unwrap();
+        assert_eq!(out.chars().count(), MAX_DESCRIPTION_CHARS + 1); // + the ellipsis
+        assert!(out.ends_with('…'));
+        assert!(clamp_description("   ").is_none());
     }
 
     #[test]

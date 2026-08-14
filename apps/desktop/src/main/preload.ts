@@ -565,7 +565,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     id: string,
     cwd?: string,
     kind?: 'prompt' | 'skill' | 'agent',
-  ): Promise<void> => ipcRenderer.invoke(IPC.LIBRARY_REMOVE, scope, id, cwd, kind),
+    origin?: string,
+  ): Promise<void> => ipcRenderer.invoke(IPC.LIBRARY_REMOVE, scope, id, cwd, kind, origin),
   onLibraryChanged: (callback: () => void): (() => void) => {
     const handler = () => callback();
     ipcRenderer.on(IPC.LIBRARY_CHANGED, handler);
