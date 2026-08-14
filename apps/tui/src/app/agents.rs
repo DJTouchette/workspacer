@@ -173,6 +173,15 @@ impl App {
             .unwrap_or_else(|| a.short_cwd())
     }
 
+    /// The project mark for an agent — initials and a colour for its cwd.
+    ///
+    /// `None` only for a session with no cwd. Independent of [`Self::agent_name`]
+    /// on purpose: a renamed agent still belongs to a repo, and the mark is then
+    /// the only thing on the row that says which one.
+    pub fn project(&self, a: &Agent) -> Option<crate::projects::ResolvedProject> {
+        crate::projects::resolve_project(a.cwd_str(), &self.projects)
+    }
+
     pub fn selected_agent(&self) -> Option<&Agent> {
         if self.selected == 0 {
             None

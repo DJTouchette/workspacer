@@ -52,6 +52,7 @@ pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
         };
         let mut name_spans = vec![
             marker,
+            project_mark(app, a),
             Span::styled(
                 app.agent_name(a),
                 Style::default().add_modifier(Modifier::BOLD),
@@ -81,6 +82,24 @@ pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
     let mut state = ListState::default();
     state.select(Some(app.selected));
     f.render_stateful_widget(list, area, &mut state);
+}
+
+/// The project mark for an agent's row: the project's initials in the project's
+/// own colour, so a fleet spanning several repos is legible without reading
+/// paths. It sits before the name because the name is often a custom one (or a
+/// truncated cwd) that says nothing about which repo the agent is in.
+///
+/// A session with no cwd has no project, and gets the mark's three columns as
+/// blanks rather than nothing — every row in a list is the same shape, so the
+/// names stay in one column.
+pub(super) fn project_mark(app: &App, a: &Agent) -> Span<'static> {
+    match app.project(a) {
+        Some(p) => Span::styled(
+            p.mark(),
+            Style::default().fg(p.tint()).add_modifier(Modifier::BOLD),
+        ),
+        None => Span::raw("   "),
+    }
 }
 
 pub(super) fn meta_line(a: &Agent, stats: &DerivedStats) -> String {

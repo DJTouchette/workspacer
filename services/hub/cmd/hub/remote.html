@@ -47,6 +47,16 @@
   .row { display: flex; align-items: center; gap: 10px; padding: 13px 14px; }
   .cwd { font-weight: 600; word-break: break-all; }
   .meta { color: var(--dim); font-size: 12px; margin-top: 2px; }
+  /* Which project a row belongs to, at a glance — a fleet spanning several
+     repos is otherwise a wall of identical cards. Initials on a plate tinted by
+     the project's own colour, or its configured emoji (which carries its own
+     colour and gets no plate). See projectMarkHtml. */
+  .pmark {
+    flex: 0 0 auto; width: 26px; height: 26px; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; letter-spacing: -.02em; line-height: 1;
+  }
+  .pmark.emoji { background: none; font-size: 18px; }
   .badge {
     margin-left: auto; font-size: 11px; font-weight: 700; text-transform: uppercase;
     letter-spacing: .5px; padding: 4px 9px; border-radius: 999px; white-space: nowrap;
@@ -209,6 +219,7 @@
   let lastActivity = 0;            // ms of the last inbound frame; drives staleness check
   const STALE_MS = 30000;
   const sessions = new Map(); // sessionId -> {sessionId, cwd, state, pendingApproval, ...}
+  let cfg = null;             // config.get — project labels/colours/emoji (optional)
 
   // View state: list of agents, or the chat for one of them.
   let view = { name: 'list' };       // | { name: 'chat', sessionId }
@@ -299,6 +310,114 @@
     return s === 'thinking' || s === 'streaming' || s === 'running' || s === 'background';
   }
 
+  // ── project identity ───────────────────────────────────────────────────
+  // Every session belongs to a directory, and until now every card looked the
+  // same — a fleet spanning several repos was a wall of identical rows and the
+  // only way to tell them apart was to read the path.
+  //
+  // Ported from the desktop's lib/projectIdentity.ts + lib/projectKey.ts (and
+  // the same port lives in mobile.html). The palette, the FNV-1a hash and the
+  // initials rules are byte-identical on purpose: one directory must get the
+  // SAME mark in every client, or two views of one fleet stop agreeing.
+  //
+  // It works with NO configuration, which is the point — an unconfigured
+  // project still gets stable initials and a stable colour from its own path,
+  // so `config.projects` only adds the parts a human chose to override.
+  //
+  // Two deliberate divergences from the desktop, both forced by the browser: a
+  // downloaded icon is served as `workspacer-icon://<file>`, a protocol that
+  // exists only inside the Electron app, and a configured `favicon` is a
+  // third-party URL a client reaching the hub over a tailnet often has no route
+  // to — so neither is drawn here; the emoji, else the initials.
+  const PROJECT_PALETTE = ['#6b8afd', '#c084fc', '#f472b6', '#fb923c', '#2dd4bf', '#38bdf8', '#a3a3f5', '#e879a6'];
+
+  /** FNV-1a, 32-bit. Same path → same colour, in every client and across
+   *  restarts, which is the whole reason the colour is derived at all. */
+  function projHash(s) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return h >>> 0;
+  }
+
+  /** The config key for a directory — normalized the way `scripts`, `widgets`
+   *  and `projects` are all keyed, so one repo can't land under two spellings. */
+  const projectKey = (cwd) => String(cwd || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  const basenameOf = (cwd) => projectKey(cwd).split('/').pop() || '';
+
+  /** One or two characters for a name. Word initials rather than the first two
+   *  letters, so sibling repos sharing a prefix stay distinct: `api-gateway`
+   *  and `api-worker` read AG and AW, not both AP. */
+  function initialsOf(name) {
+    const words = String(name || '').split(/[\s._-]+/).filter(Boolean);
+    if (!words.length) return '?';
+    if (words.length === 1) {
+      // A camelCase single word still has a second word inside it.
+      const camel = words[0].match(/^([a-z]+)([A-Z][a-z]*)/);
+      return camel ? (camel[1][0] + camel[2][0]).toUpperCase() : words[0].slice(0, 2).toUpperCase();
+    }
+    return (words[0][0] + words[1][0]).toUpperCase();
+  }
+
+  /** The `config.projects` entry for a key, honouring one that differs only by
+   *  case. Windows spells a single directory several ways (`c:/users/me/repo`
+   *  vs `C:/Users/me/repo`) and its filesystem treats them as one; POSIX paths
+   *  that differ by case really are different directories, so the fallback is
+   *  limited to drive-lettered paths. Keyed off the PATH's shape rather than
+   *  navigator, because navigator describes THIS browser and the directory
+   *  belongs to whichever host the agents run on. */
+  function projectEntry(key) {
+    const map = (cfg && cfg.projects) || null;
+    if (!map || typeof map !== 'object') return {};
+    if (Object.prototype.hasOwnProperty.call(map, key)) return map[key] || {};
+    if (!/^[a-z]:\//i.test(key)) return {};
+    const lowered = key.toLowerCase();
+    for (const k of Object.keys(map)) if (k.toLowerCase() === lowered) return map[k] || {};
+    return {};
+  }
+
+  /** A configured colour, only if it is a plain hex or named colour. The
+   *  desktop hands its colours to React, which can't escape a style attribute;
+   *  here they are interpolated into one, so anything that could carry a quote
+   *  out of the attribute is treated as unset and falls back to the derived
+   *  colour rather than being pasted in. */
+  function safeColor(v) {
+    const c = String(v || '').trim();
+    return /^(#[0-9a-f]{3,8}|[a-z]+)$/i.test(c) ? c : '';
+  }
+
+  /** What to draw for a directory. A blank configured value counts as unset. */
+  function resolveProject(dir) {
+    if (!dir) return null;
+    const key = projectKey(dir);
+    const e = projectEntry(key);
+    const label = String(e.label || '').trim() || basenameOf(key);
+    return {
+      label,
+      // Initials follow the LABEL, so renaming a project renames its mark; the
+      // colour follows the KEY, so renaming one must not recolour it.
+      initials: initialsOf(label),
+      color: safeColor(e.color) || PROJECT_PALETTE[projHash(key) % PROJECT_PALETTE.length],
+      icon: String(e.icon || '').trim(),
+    };
+  }
+
+  function projectMarkHtml(dir) {
+    const p = resolveProject(dir);
+    if (!p) return '';
+    // An emoji carries its own colour and needs no tinted plate behind it;
+    // a letter mark does. "Not ASCII" is what an emoji is, here.
+    const emoji = !!p.icon && !/^[\x20-\x7e]+$/.test(p.icon);
+    const tint = emoji ? '' : `color:${p.color};background:color-mix(in srgb, ${p.color} 22%, transparent)`;
+    return `<span class="pmark${emoji ? ' emoji' : ''}" title="${esc(p.label)}" style="${tint}">${esc(p.icon || p.initials)}</span>`;
+  }
+
+  // Optional and best-effort: the marks are fully derived without it, so a hub
+  // that doesn't serve config.get (or a token that may not read it) costs the
+  // custom labels, colours and emoji — never the ability to tell rows apart.
+  async function loadConfig() {
+    try { cfg = await call('config.get', {}); render(); } catch { /* derived marks stand */ }
+  }
+
   // ── rendering ──────────────────────────────────────────────────────────
 
   function render() {
@@ -326,11 +445,16 @@
         ? `Wants to run <b>${esc(s.pendingApproval.toolName)}</b>`
         : (s.pendingQuestions && s.pendingQuestions.length
             ? esc(s.pendingQuestions[0].question) : '');
+      // The mark identifies the project; the label only earns its place when a
+      // human named the project something the path doesn't already say.
+      const proj = resolveProject(s.cwd);
+      const named = proj && proj.label !== basenameOf(s.cwd) ? esc(proj.label) + ' · ' : '';
       card.innerHTML = `
         <div class="row">
+          ${projectMarkHtml(s.cwd)}
           <div>
             <div class="cwd">${esc(shortCwd(s.cwd))}</div>
-            <div class="meta">${esc(s.model || 'claude')}${ctx}${cost}</div>
+            <div class="meta">${named}${esc(s.model || 'claude')}${ctx}${cost}</div>
           </div>
           <span class="badge ${badgeClass(s.state)}">${esc(stateLabel(s.state))}</span>
         </div>
@@ -820,6 +944,7 @@
       setConnected(true);
       ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.state_changed', 'workflow.*'] }));
       refresh();
+      if (!cfg) loadConfig();
       if (view.name === 'chat' && !termMode) loadTranscript();
       // Re-establish the PTY stream after a reconnect, and re-assert our size
       // (the shared PTY may have been resized by the desktop while we were out).

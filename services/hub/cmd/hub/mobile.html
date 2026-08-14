@@ -85,6 +85,20 @@
   /* Paths ellipsise at the START (the tail is what identifies a project). */
   .rtl { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; direction:rtl; text-align:left; }
 
+  /* ── project mark ─────────────────────────────────────────────────────────
+     Which repo a row belongs to, at a glance — a fleet spanning several
+     projects is otherwise a wall of identical rows. Initials on a plate tinted
+     by the project's own colour, or its configured emoji (which carries its own
+     colour and gets no plate). Always flex:none: on a phone the mark must never
+     be the thing that shrinks when a row runs out of width — see
+     projectMarkHtml. */
+  .pmark { flex:none; width:19px; height:19px; border-radius:6px; display:inline-flex;
+    align-items:center; justify-content:center; font-size:9px; font-weight:700;
+    letter-spacing:-.02em; line-height:1; }
+  .pmark.emoji { background:none; font-size:14px; }
+  .pmark.sm { width:16px; height:16px; border-radius:5px; font-size:8px; }
+  .pmark.sm.emoji { font-size:12px; }
+
   #statusPill { flex:none; display:flex; align-items:center; gap:7px; padding:6px 11px 6px 9px;
     border-radius:999px; border:1px solid var(--line5); background:var(--raised); }
   #statusPill:active { background:var(--active); }
@@ -238,6 +252,11 @@
     border-radius:999px; background:var(--card); border:1px solid var(--line4);
     font-size:12.5px; color:var(--text3); white-space:nowrap; }
   .pills button:active { background:var(--active); }
+  /* The project chip rides the same scrolling rail as the pills, but it is a
+     label rather than a control — no press state, no tap target. */
+  .pills .proj { flex:none; display:flex; align-items:center; gap:7px; padding:6px 12px 6px 7px;
+    border-radius:999px; background:var(--card); border:1px solid var(--line4);
+    font-size:12.5px; color:var(--text3); white-space:nowrap; }
   .pills .live { width:6px; height:6px; border-radius:999px; background:var(--blue);
     animation:wksPulse 1.6s infinite; }
 
@@ -639,6 +658,105 @@
     !scope.methods.length || scope.methods.some((p) => p === '*' || p === method ||
       (p.endsWith('.*') && method.startsWith(p.slice(0, -1))));
   const isOperator = () => !scope.name || scope.name === 'operator';
+
+  // ══ project identity ══════════════════════════════════════════════════════
+  // Every row on this phone belongs to a directory, and until now they all
+  // looked the same — a fleet spanning several repos was a wall of identical
+  // cards and the only way to tell them apart was to read the path. This
+  // resolves a directory to a small mark so that stops being true.
+  //
+  // Ported from the desktop's lib/projectIdentity.ts + lib/projectKey.ts. The
+  // palette, the FNV-1a hash and the initials rules are byte-identical on
+  // purpose: the same directory must get the SAME mark on the desktop and on
+  // the phone, or the two views of one fleet stop agreeing with each other.
+  //
+  // It works with NO configuration, which is the point — an unconfigured
+  // project still gets stable initials and a stable colour from its own path,
+  // so this needs `config.projects` to be an improvement, never a prerequisite.
+  // (`config.get` is in the bus's VIEW tier — internal/authtoken/authtoken.go —
+  // so a view-scoped phone token can read it; if a future tier drops it, cfg
+  // stays null and every mark falls back to the derived form.)
+  //
+  // Two deliberate divergences from the desktop, both forced by the browser:
+  //  · a downloaded icon is served as `workspacer-icon://<file>`, a protocol
+  //    that exists only inside the Electron app, and a configured `favicon` is
+  //    a third-party URL a phone reaching the hub over a tailnet often has no
+  //    route to. Neither is drawn here: the emoji, else the initials.
+  //  · the case-insensitive key fallback keys off the PATH's shape rather than
+  //    navigator, because navigator describes the PHONE and the directory
+  //    belongs to whichever host the agents run on.
+  const PROJECT_PALETTE = ['#6b8afd', '#c084fc', '#f472b6', '#fb923c', '#2dd4bf', '#38bdf8', '#a3a3f5', '#e879a6'];
+  /** FNV-1a, 32-bit. Same path → same colour, on every client and across
+   *  restarts, which is the whole reason the colour is derived at all. */
+  function projHash(s) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return h >>> 0;
+  }
+  /** The config key for a directory — normalized the way `scripts`, `widgets`
+   *  and `projects` are all keyed, so one repo can't land under two spellings. */
+  const projectKey = (cwd) => String(cwd || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  /** One or two characters for a name. Word initials rather than the first two
+   *  letters, so sibling repos sharing a prefix stay distinct: `api-gateway` and
+   *  `api-worker` read AG and AW, not both AP. */
+  function initialsOf(name) {
+    const words = String(name || '').split(/[\s._-]+/).filter(Boolean);
+    if (!words.length) return '?';
+    if (words.length === 1) {
+      // A camelCase single word still has a second word inside it.
+      const camel = words[0].match(/^([a-z]+)([A-Z][a-z]*)/);
+      return camel ? (camel[1][0] + camel[2][0]).toUpperCase() : words[0].slice(0, 2).toUpperCase();
+    }
+    return (words[0][0] + words[1][0]).toUpperCase();
+  }
+  /** The `config.projects` entry for a key, honouring one that differs only by
+   *  case. Windows spells a single directory several ways (`c:/users/me/repo`
+   *  vs `C:/Users/me/repo`) and its filesystem treats them as one; POSIX paths
+   *  that differ by case really are different directories, so the fallback is
+   *  limited to drive-lettered paths. */
+  function projectEntry(key) {
+    const map = (cfg && cfg.projects) || null;
+    if (!map || typeof map !== 'object') return {};
+    if (Object.prototype.hasOwnProperty.call(map, key)) return map[key] || {};
+    if (!/^[a-z]:\//i.test(key)) return {};
+    const lowered = key.toLowerCase();
+    for (const k of Object.keys(map)) if (k.toLowerCase() === lowered) return map[k] || {};
+    return {};
+  }
+  /** A configured colour, only if it is a plain hex or named colour. The
+   *  desktop hands its colours to React, which can't escape a style attribute;
+   *  here they are interpolated into one, so anything that could carry a quote
+   *  out of the attribute is treated as unset and falls back to the derived
+   *  colour rather than being pasted in. */
+  function safeColor(v) {
+    const c = String(v || '').trim();
+    return /^(#[0-9a-f]{3,8}|[a-z]+)$/i.test(c) ? c : '';
+  }
+  /** What to draw for a directory. A blank configured value counts as unset. */
+  function resolveProject(dir) {
+    if (!dir) return null;
+    const key = projectKey(dir);
+    const e = projectEntry(key);
+    const label = String(e.label || '').trim() || basename(key);
+    return {
+      label,
+      // Initials follow the LABEL, so renaming a project renames its mark; the
+      // colour follows the KEY, so renaming one must not recolour it.
+      initials: initialsOf(label),
+      color: safeColor(e.color) || PROJECT_PALETTE[projHash(key) % PROJECT_PALETTE.length],
+      icon: String(e.icon || '').trim(),
+    };
+  }
+  /** The mark. `cls` takes `sm` for the tighter rows. */
+  function projectMarkHtml(dir, cls) {
+    const p = resolveProject(dir);
+    if (!p) return '';
+    // An emoji carries its own colour and needs no tinted plate behind it;
+    // a letter mark does. "Not ASCII" is what an emoji is, here.
+    const emoji = !!p.icon && !/^[\x20-\x7e]+$/.test(p.icon);
+    const tint = emoji ? '' : `color:${p.color};background:color-mix(in srgb, ${p.color} 22%, transparent)`;
+    return `<span class="pmark${emoji ? ' emoji' : ''}${cls ? ' ' + cls : ''}" title="${esc(p.label)}" style="${tint}">${esc(p.icon || p.initials)}</span>`;
+  }
 
   // ══ transport ═════════════════════════════════════════════════════════════
   let ws = null, callSeq = 0, backoff = 500, reconnectTimer = null, reconcileTimer = null;
@@ -1382,6 +1500,7 @@
       parts.push(rec.map((r) => `
         <button class="recent" data-resume="${esc(r.sessionId)}">
           <span class="dot" style="${dotStyle(r.color)}"></span>
+          ${projectMarkHtml(r.cwd, 'sm')}
           <span class="t">${esc(r.title)}</span><span class="grow"></span>
           <span class="ago">${esc(relTime(r.updatedAt))}</span>
         </button>`).join(''));
@@ -1410,6 +1529,7 @@
       <button class="top" data-open="${sid}">
         <div class="hd">
           <span class="dot${meta.pulse ? ' pulse' : ''}" style="${dotStyle(meta.color)}"></span>
+          ${projectMarkHtml(agentPath(s))}
           <span class="nm">${esc(agentName(s))}</span>
           <span class="prov">${esc(providerOf(s))}</span>
           <span class="grow"></span>
@@ -1579,6 +1699,7 @@
     return `<div class="item" style="border-color:${k.edge}">
       <div class="ihd">
         <span class="glyph" style="color:${k.color};background:${k.bg};border:1px solid ${k.edge}">${k.mark}</span>
+        ${s ? projectMarkHtml(agentPath(s), 'sm') : ''}
         <span class="who">${esc(s ? agentName(s) : 'agent')}</span>
         <span class="grow"></span>
         <span class="ago">${esc(relTime(it.createdAt))}</span>
@@ -1645,7 +1766,14 @@
     if (t.costUSD) bits.push(fmtUSD(t.costUSD));
     if (t.ctxPct !== undefined) bits.push(`${t.ctxPct}% ctx`);
     pills.push(`<button data-seg="usage">${bits.length ? esc(bits.join(' · ')) : 'Usage'}</button>`);
-    return `<div class="pills">${pills.join('')}</div>`;
+    // The chat header can only fit a name and a path, so this is where the
+    // project gets to say its name in full — the pills rail scrolls, so a long
+    // label costs nothing that was already on screen.
+    const proj = resolveProject(agentPath(s));
+    const chip = proj
+      ? `<span class="proj">${projectMarkHtml(agentPath(s), 'sm')}${esc(proj.label)}</span>`
+      : '';
+    return `<div class="pills">${chip}${pills.join('')}</div>`;
   }
 
   function streamingHtml(s) {
@@ -2594,7 +2722,12 @@
     };
     // The optional, scope-dependent lookups, run once the tier is known.
     const onDiscover = () => {
-      if (!cfg && can('config.get')) call('config.get', {}).then((c) => { cfg = c; if (S.screen === 'new') render(); }).catch(() => {});
+      // Config feeds the spawn screen's defaults AND every project mark, which
+      // is on the screen you land on — so its arrival re-renders whatever is
+      // showing, not just the spawn tab. Failure is survivable: resolveProject
+      // falls back to the derived mark, so an older hub or a tier without
+      // config.get costs labels and custom colours, never legibility.
+      if (!cfg && can('config.get')) call('config.get', {}).then((c) => { cfg = c; render(); }).catch(() => {});
       if (can('sessions.recent')) call('sessions.recent', {}).then((r) => { recents = r || []; render(); }).catch(() => { recents = []; });
       loadSpawnExtras();
     };

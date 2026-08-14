@@ -18,6 +18,7 @@ mod names;
 mod notes;
 mod pins;
 mod profiles;
+mod projects;
 mod render;
 mod runs;
 mod store;
@@ -176,6 +177,10 @@ async fn run(
     if app.has_bus() {
         app.refresh();
     }
+    // Project identities are config, and the bus is the only way to reach it —
+    // the call queues until the socket is up. Off-bus this is a no-op and every
+    // mark is derived from its path, which is the design (see `projects.rs`).
+    app.refresh_projects();
 
     let mut keys = EventStream::new();
     // A steady tick so toasts expire and the "working…" indicator stays live

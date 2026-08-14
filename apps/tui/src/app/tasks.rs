@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::bus::BusClient;
 use crate::claudemon::Claudemon;
 use crate::profiles;
 use crate::types::{search_lines, turns_from_conversation};
@@ -23,6 +24,19 @@ pub(super) async fn fetch_agents(cm: &Claudemon, tx: &UnboundedSender<AppMsg>) {
     // deserializes it automatically.
     let Ok(list) = cm.list().await else { return };
     let _ = tx.send(AppMsg::Agents(list));
+}
+
+/// Read `config.projects` over the hub bus, for the per-agent project marks.
+///
+/// Sends nothing when the call fails: an unreachable config means "no
+/// overrides", which is exactly the state the app already holds, and clobbering
+/// a good map with an empty one on a transient bus hiccup would flicker every
+/// mark back to its derived form.
+pub(super) async fn fetch_projects(bus: &BusClient, tx: &UnboundedSender<AppMsg>) {
+    let Ok(doc) = bus.call("config.get", serde_json::Value::Null).await else {
+        return;
+    };
+    let _ = tx.send(AppMsg::Projects(crate::projects::from_config(&doc)));
 }
 
 /// Fetch a session's conversation snapshot, for the fold to adopt.

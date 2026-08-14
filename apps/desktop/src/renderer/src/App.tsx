@@ -2345,6 +2345,7 @@ function App() {
 
             {showSpawnDialog && (
               <SpawnAgentDialog
+                projects={config.projects}
                 defaultCwd={
                   spawnDialogCwd || config.agents?.defaultCwd?.trim() || appCwdRef.current
                 }

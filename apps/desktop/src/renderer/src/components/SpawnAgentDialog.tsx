@@ -1,3 +1,7 @@
+import { ProjectMark } from './ProjectMark';
+import { resolveProject } from '../lib/projectIdentity';
+import { projectKey } from '../lib/projectKey';
+import type { ProjectIdentity } from '../hooks/useConfig';
 import React, { useEffect, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { deriveAgentName } from '../hooks/useAgentManager';
@@ -30,6 +34,9 @@ interface SpawnProfile {
 
 interface SpawnAgentDialogProps {
   defaultCwd: string;
+  /** config.projects — the identity shown once the typed cwd resolves to a
+   *  project you already know. */
+  projects?: Record<string, ProjectIdentity>;
   /** Provider pre-selected in the picker (config.agents.defaultProvider). */
   defaultProvider?: AgentProvider;
   /** Claude transport pre-selected in the picker (config.claude.transport). */
@@ -107,6 +114,7 @@ interface ProviderModel {
  * then the remaining knobs in a collapsible "advanced" card of labeled rows.
  */
 const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
+  projects,
   defaultCwd,
   defaultProvider,
   defaultTransport,
@@ -481,7 +489,12 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     );
   };
 
-  const placeholderName = cwd.trim() ? deriveAgentName(cwd.trim()) : 'agent';
+  // A project you have NAMED should name its agents. deriveAgentName falls back
+  // to the directory basename, which is the same thing when nobody set a label
+  // — so this only differs where the user actually said what to call the place.
+  const placeholderName = cwd.trim()
+    ? (resolveProject(cwd.trim(), projects)?.label ?? deriveAgentName(cwd.trim()))
+    : 'agent';
   const providerLabel = PROVIDERS.find((p) => p.value === provider)?.label ?? provider;
   const bypassSelected = permissionMode === 'bypassPermissions' || permissionMode === 'yolo';
   // Shared by the advanced header button and its attached panel so the two
@@ -983,6 +996,39 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 Browse…
               </button>
             </div>
+
+            {/* Which project that path IS. A mistyped directory otherwise spawns
+                silently into the wrong place — or into a brand-new one — and
+                this is the last moment anyone would notice. The mark is the same
+                one the sidebar will draw for the agent, so the confirmation and
+                the result are visibly the same thing. */}
+            {cwd.trim() && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 7,
+                  marginTop: 8,
+                  fontSize: '0.72rem',
+                  color: 'var(--wks-text-muted)',
+                }}
+              >
+                <ProjectMark cwd={cwd.trim()} projects={projects} size={15} />
+                <span
+                  style={{
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {resolveProject(cwd.trim(), projects)?.label}
+                </span>
+                {!projects?.[projectKey(cwd.trim())] && (
+                  <span style={{ color: 'var(--wks-text-faint)' }}>· new project</span>
+                )}
+              </div>
+            )}
 
             {/* Optional name — a ghost input, not a form row */}
             <input

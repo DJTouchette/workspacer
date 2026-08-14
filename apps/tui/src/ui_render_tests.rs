@@ -436,6 +436,72 @@ fn modal_rect_gives_up_its_inset_before_its_size() {
     assert_eq!((r.y, squeezed.height), (0, 4), "height capped to the area");
 }
 
+/// The project mark, end to end through the real draw path.
+///
+/// The unit tests in `projects.rs` pin the resolver against its desktop twin;
+/// this pins that the sidebar actually *reaches* it — a mark that resolves
+/// correctly and never gets drawn (or gets drawn uncoloured) is the failure this
+/// feature exists to prevent. Two sibling repos sharing a prefix are the case
+/// that matters: they must differ in both channels, glyph and colour.
+#[test]
+fn the_sidebar_draws_each_agent_a_coloured_project_mark() {
+    let mut app = test_app();
+    let listed = |cwd: &str, id: &str| -> Agent {
+        serde_json::from_value(serde_json::json!({
+            "session_id": id, "mode": "input", "cwd": cwd, "provider": "claude",
+        }))
+        .expect("agent fixture")
+    };
+    app.agents = vec![listed("/w/api-gateway", "a"), listed("/w/api-worker", "b")];
+    app.all_agents = app.agents.clone();
+
+    let backend = TestBackend::new(W, H);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|f| super::render(f, &mut app)).unwrap();
+    let buffer = terminal.backend().buffer();
+
+    // Sidebar row 0 is the Dashboard (two lines), so the agents' name lines are
+    // the next two odd rows inside the border.
+    let mark_at = |y: u16| -> (String, ratatui::style::Color) {
+        let cells: Vec<_> = (3..5).map(|x| &buffer[(x, y)]).collect();
+        (
+            cells.iter().map(|c| c.symbol()).collect::<String>(),
+            cells[0].style().fg.expect("the mark is coloured"),
+        )
+    };
+    let (gateway, gateway_fg) = mark_at(4);
+    let (worker, worker_fg) = mark_at(6);
+
+    assert_eq!(gateway, "AG", "row 1 is api-gateway: {gateway:?}");
+    assert_eq!(worker, "AW", "row 2 is api-worker: {worker:?}");
+    assert_eq!(gateway_fg, ratatui::style::Color::Rgb(0xfb, 0x92, 0x3c));
+    assert_eq!(worker_fg, ratatui::style::Color::Rgb(0xc0, 0x84, 0xfc));
+    assert_ne!(
+        gateway_fg, worker_fg,
+        "sibling repos must differ in colour as well as in initials"
+    );
+
+    // A configured label renames the mark without recolouring it — the wiring
+    // reads `config.projects`, not just the path.
+    app.projects.insert(
+        "/w/api-gateway".to_string(),
+        crate::projects::ProjectIdentity {
+            label: Some("Public Edge".into()),
+            color: None,
+        },
+    );
+    let mut terminal = Terminal::new(TestBackend::new(W, H)).unwrap();
+    terminal.draw(|f| super::render(f, &mut app)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let renamed: String = (3..5).map(|x| buffer[(x, 4)].symbol()).collect();
+    assert_eq!(renamed, "PE", "the configured label drives the initials");
+    assert_eq!(
+        buffer[(3, 4)].style().fg,
+        Some(gateway_fg),
+        "renaming a project must not recolour it"
+    );
+}
+
 /// An empty fleet still draws its chrome — the first-run screen is a real
 /// state, not an error path.
 #[test]

@@ -12,6 +12,7 @@ import {
   Compass,
 } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { ProjectMark } from './ProjectMark';
 import type { AgentWorkspace } from '../types/pane';
 import type { ClaudeSessionSnapshot } from '../types/claudeSession';
 import { useAttention } from '../contexts/AttentionContext';
@@ -938,6 +939,12 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                             boxShadow: vis.glow ? `0 0 8px ${vis.color}` : 'none',
                           }}
                         />
+                        {/* The deck is the CROSS-AGENT view, so which repo a row
+                            belongs to is the fact it most needs and least had —
+                            every row was the same shape with the cwd in a
+                            tooltip. Status dot first: state is why you are
+                            looking, project is which one. */}
+                        <ProjectMark cwd={agent.cwd} projects={config.projects} size={13} />
                         <span
                           style={{
                             fontWeight: 600,

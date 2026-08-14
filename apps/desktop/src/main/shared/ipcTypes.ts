@@ -342,11 +342,31 @@ export interface AppConfig {
     summarizerModel: string;
     pollSeconds: number;
   };
+  /** Superseded by `projects` — still read for backwards compatibility, never
+   *  written. See renderer lib/projectRegistry. */
   directories: {
     recent: string[];
     favourites: string[];
   };
   scripts: Record<string, Array<{ name: string; command: string }>>;
+  /** Per-directory project identity and state, keyed by normalized cwd exactly
+   *  as `scripts` is. Declared here because this file is the main↔renderer
+   *  contract and is kept in sync BY HAND — a field that lives only in
+   *  configService's own `Config` is invisible to every consumer of AppConfig
+   *  (the web backend included), which is the drift this type exists to prevent. */
+  projects: Record<
+    string,
+    {
+      label?: string;
+      color?: string;
+      icon?: string;
+      favicon?: string;
+      iconFile?: string;
+      favourite?: boolean;
+      lastOpened?: number;
+      plugins?: Record<string, Record<string, unknown>>;
+    }
+  >;
   apps: Array<{ name: string; url: string; icon?: string }>;
   agents?: {
     defaultProvider?: string;

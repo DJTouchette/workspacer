@@ -85,6 +85,10 @@ pub enum AppMsg {
         session_id: String,
         provider: String,
     },
+    /// `config.projects` read off the hub bus — the human's overrides for each
+    /// project's mark. Never sent when there's no bus; every mark is derived
+    /// from its path until (and unless) this lands.
+    Projects(crate::projects::Projects),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -97,6 +97,7 @@ pub(super) fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         };
         let mut row = vec![
             marker,
+            project_mark(app, a),
             Span::styled(
                 format!("{:<28}", crate::types::truncate(&app.agent_name(a), 28)),
                 Style::default(),

@@ -24,7 +24,7 @@ use crate::theme::Theme;
 use crate::types::{Agent, FileStatus, StatusLine, Turn};
 use base64::Engine as _;
 
-use tasks::{fetch_agents, fetch_git_diff, fetch_git_status, fetch_transcript};
+use tasks::{fetch_agents, fetch_git_diff, fetch_git_status, fetch_projects, fetch_transcript};
 
 mod state;
 pub use state::*;
@@ -92,6 +92,11 @@ pub struct App {
     pub rename: Option<RenameForm>,
     /// Custom per-cwd display names (persisted); empty when none set.
     pub names: HashMap<String, String>,
+    /// `config.projects` — the human's overrides for each project's mark, read
+    /// off the hub bus. Empty is the normal, fully-supported state (no bus, or
+    /// nobody has configured a project): [`crate::projects::resolve_project`]
+    /// derives initials and a colour from the path either way.
+    pub projects: crate::projects::Projects,
     /// The notes scratchpad overlay, when open.
     pub notes_view: Option<NotesState>,
     /// Per-cwd scratchpad text (persisted).
@@ -254,6 +259,7 @@ impl App {
             review: None,
             rename: None,
             names: crate::names::load(),
+            projects: crate::projects::Projects::new(),
             notes_view: None,
             notes: crate::notes::load(),
             git_summary: HashMap::new(),
@@ -459,12 +465,17 @@ impl App {
             } => {
                 self.managed_providers.insert(session_id, provider);
             }
+            AppMsg::Projects(projects) => self.projects = projects,
         }
     }
 
     pub fn on_connected(&mut self) {
         self.connected = true;
         self.refresh();
+        // A daemon (re)connect is the one cheap, rare moment to re-read config:
+        // the bus publishes no config-changed event, so an edit made while the
+        // TUI is up is otherwise only picked up on the next launch.
+        self.refresh_projects();
         self.maybe_load_transcript();
     }
 
@@ -523,6 +534,19 @@ impl App {
         let tx = self.tx.clone();
         let cm = self.claudemon.clone();
         tokio::spawn(async move { fetch_agents(&cm, &tx).await });
+    }
+
+    /// Re-read `config.projects` over the hub bus.
+    ///
+    /// Config lives in `config.yaml`, which the TUI has no reader for; the hub's
+    /// `config.get` capability hands back the whole document and is the only
+    /// route to it from here. Off-bus (`--direct`, or an unreachable hub) this
+    /// does nothing at all and every project mark stays derived from its path,
+    /// which is deliberately most of the value — see [`crate::projects`].
+    pub fn refresh_projects(&self) {
+        let Some(bus) = self.bus.clone() else { return };
+        let tx = self.tx.clone();
+        tokio::spawn(async move { fetch_projects(&bus, &tx).await });
     }
 
     pub fn has_bus(&self) -> bool {

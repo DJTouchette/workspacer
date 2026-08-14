@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { RotateCcw, Check, AlertTriangle, Star } from 'lucide-react';
 import { Config, ProjectIdentity } from '../../hooks/useConfig';
 import { Section, SmallButton, inputStyle } from './primitives';
@@ -67,6 +67,66 @@ const ProjectsSection: React.FC<ProjectsSectionProps> = ({ config, save }) => {
   /** Per-row download state, so a paste reports back instead of silently
    *  doing nothing (or worse, appearing to work while the URL 404s). */
   const [status, setStatus] = useState<Record<string, 'loading' | 'ok' | string>>({});
+
+  /**
+   * Which listed directories no longer exist. A project entry outlives the
+   * directory it describes — a repo you deleted or moved keeps its row, its
+   * icon and its plugin settings forever — and nothing else would ever notice.
+   * Checked once on mount rather than on every render: it is one readDir per
+   * project, and a directory does not come and go while a settings page is open.
+   */
+  const [missing, setMissing] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    let cancelled = false;
+    // Optional-chained through electronAPI itself, not just readDir: the seam is
+    // assigned by the preload (desktop) or install.ts (web), and anything
+    // rendering this component outside both — a harness, a test, the instant
+    // before that assignment — has no object to reach through at all.
+    const probe = window.electronAPI?.readDir;
+    if (!probe) return; // web backend — no local filesystem to check against
+    void Promise.all(
+      dirs.map(async (d) => {
+        try {
+          await probe(d);
+          return null;
+        } catch {
+          return d;
+        }
+      }),
+    ).then((res) => {
+      if (!cancelled) setMissing(new Set(res.filter(Boolean) as string[]));
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Deliberately keyed on the JOINED list, not the array identity, so a
+    // re-render that produces an equal list does not re-probe the filesystem.
+  }, [dirs.join('\u0000')]);
+
+  /** Forget everything the app remembers about a directory that is gone. */
+  const forget = useCallback(
+    (dir: string) => {
+      const key = projectKey(dir);
+      const projectsNext = { ...(config.projects ?? {}) };
+      delete projectsNext[key];
+      const scripts = { ...(config.scripts ?? {}) };
+      delete scripts[key];
+      const widgets = { ...(config.widgets ?? {}) };
+      delete widgets[key];
+      // The legacy arrays too, or a forgotten directory reappears from them on
+      // the next render — this is the one place that still writes them.
+      void save({
+        projects: projectsNext,
+        scripts,
+        widgets,
+        directories: {
+          recent: (config.directories?.recent ?? []).filter((d) => projectKey(d) !== key),
+          favourites: (config.directories?.favourites ?? []).filter((d) => projectKey(d) !== key),
+        },
+      });
+    },
+    [config, save],
+  );
 
   /**
    * Fetch the pasted URL and store the file. The URL is kept alongside as
@@ -233,6 +293,21 @@ const ProjectsSection: React.FC<ProjectsSectionProps> = ({ config, save }) => {
                 <span style={{ width: 30, flex: 'none' }} aria-hidden />
               )}
             </div>
+            {missing.has(dir) && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '0 0 8px 32px',
+                  fontSize: '0.66rem',
+                  color: 'var(--wks-text-muted)',
+                }}
+              >
+                <span>This directory no longer exists.</span>
+                <SmallButton onClick={() => forget(dir)} label="Forget it" />
+              </div>
+            )}
             {/* What each plugin needs to know about THIS project. Rendered
                 under the identity row rather than in a separate page, because
                 "which Jira project is this repo" is a fact about the project,

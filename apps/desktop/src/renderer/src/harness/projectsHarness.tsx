@@ -67,6 +67,8 @@ const migrated: Partial<Config> = {
       iconFile: 'missing.png',
     },
     '/home/you/work/billing': { plugins: { 'djtouchette.jira': { prefix: 'BILL' } } },
+    // A repo that was deleted — its entry, icon and plugin settings outlive it.
+    '/home/you/work/deleted-repo': { label: 'Deleted Repo', icon: '👻' },
   },
   scripts: { '/home/you/work/only-scripts': [] },
 };
