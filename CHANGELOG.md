@@ -7,7 +7,7 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.149.0] - 2026-08-14
 
 ### Added
 - **Widgets.** A project's widget board lives in the inspector rail's Project
@@ -52,6 +52,38 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   1m / 5m / 15m, so a phone and a tablet need not agree.
 - **Spawn an agent from the command palette.** It already could, under a name
   nobody would search for.
+- **Projects have a face.** A fleet of a dozen agent cards had exactly one thing
+  saying which repo each belonged to: its cwd, in a tooltip. Every directory now
+  carries a mark — initials from its name, a colour from its path — shown on the
+  sidebar cards, the Fleet Deck, the spawn dialog, the overview, and the TUI's
+  sidebar and roster. The point is that it works with **no configuration**: the
+  fleet is legible the first time you look at it, and Settings → Projects is
+  where you override something you didn't like rather than a form you must fill
+  in before anything happens. Initials break on word boundaries, so `api-gateway`
+  and `api-worker` don't both read `AP`. Override with an emoji, a favicon, a
+  label or a colour; a project you have *named* names its agents too, instead of
+  every one of them being called after the folder it happened to start in.
+- **Per-project plugin settings.** A plugin marks a setting `"scope": "project"`
+  and it is stored against the directory and edited on the Projects page beside
+  that project's identity. Three plugins had already invented this privately —
+  shiplight's repo, ci-watcher's repo, jira's directory-to-prefix map — each with
+  its own storage and its own editor. A plugin reads the values through the
+  `config.get` it can already declare, so this needed no new capability. Project
+  scope names *which* thing; the plugin's own settings file still holds the key
+  to it, and "project-scoped **and** secret" is refused when the plugin loads.
+- **Forget a project.** A project entry outlived its directory: a repo you
+  deleted kept its row, its icon and its plugin settings forever. The Projects
+  page now marks the ones whose directory is gone and offers to forget them.
+- **Claude's built-in skills are visible.** The Library pane showed zero skills
+  in a repo with no `.claude/` of its own, and the Context pane showed eighteen
+  names with nothing behind sixteen of them — both only ever looked in
+  `<cwd>/.claude`. All the roots are read now (project, then user, then plugins),
+  including `CLAUDE_CONFIG_DIR` for the first time, which is what Claude profiles
+  set. Of eighteen skills a session reports, three are files; the other fifteen
+  are compiled into the `claude` binary, so those now say **built-in** rather
+  than leaving a blank row. A `Skill` tool call also gets a proper card — it was
+  falling through to "the first string value in the input", so any invocation
+  carrying arguments printed your argument text where the skill's name belongs.
 
 ### Changed
 - **A widget tile has no title bar.** The host used to draw the widget's name
@@ -73,6 +105,17 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 - **Shiplight's pipeline widget shows a stopwatch, not an age.** A running
   pipeline gets a live `m:ss` clock and a finished one shows how long it took —
   "4m" looks identical whether a run is alive or wedged.
+- **A pasted project icon is downloaded once, not hot-linked forever.** The URL
+  used to go straight into an `<img src>`, so the mark vanished offline, the
+  request repeated on every render, and the obvious way to get such a URL — a
+  third-party favicon service — was told every project domain you work on. It is
+  fetched once now and served from disk. `http(s)` only, 2 MB cap, 8s timeout,
+  and it has to actually be an image; the file extension comes from the
+  response's content type and never from the URL.
+- **Your recent projects are a timestamp, not a capped list.** Opening a project
+  used to shuffle a fixed-length array, so a project you had configured could
+  fall off it because you opened eight others. Pins and ordering from an older
+  config are read as they were, and never rewritten — downgrading loses nothing.
 
 ### Fixed
 - **Web Push never worked on iPhone at all.** Every notification to
@@ -143,8 +186,30 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 - **A same-millisecond write by the other process was invisible to both config
   writers**, and was silently reverted through the lock with both sides reporting
   success.
+- **Setting an icon on one project wiped every other project's identity.** Three
+  config maps are replaced outright on save rather than merged, because a merge
+  can only add keys — under one, an entry you just deleted would come straight
+  back. The renderer trims every save down to what actually changed, so it has to
+  leave those maps whole; both ends listed them and the lists drifted. The result
+  was that saving one project shipped a one-entry map that the writer took as the
+  whole truth, so every other project lost its icon, label, colour, pin and
+  per-project plugin settings and fell back to derived initials. There is one
+  list now, imported by both ends.
+- **`push.test` reached the consent dialog as a raw method id.** The capability
+  that provokes a test notification had no label, so the prompt asked you to
+  approve `push.test` instead of "Send a test push notification" — the guard that
+  catches exactly this had been failing, and was dismissed as pre-existing.
 
 ### Security
+- **The library's MCP editor wrote API tokens in the clear.** It invites you to
+  type a token into a server's `env` or `headers`, then wrote it as plain text
+  into markdown under `.workspacer/library` — which the service's own header
+  describes as per-repo and committable. No attacker was needed; `git add -A` was
+  enough. Both fields are now redacted on the way out, and an echoed placeholder
+  resolves back against what is stored so a round-trip through the masked editor
+  keeps the real token. Redaction is the default and the spawn paths opt in by
+  name: a missed redaction leaks a live credential, while a missed *un*-redaction
+  produces a visibly broken token and a bug report.
 - **Path containment on Windows.** Two escapes, neither reachable on Linux and
   both found the first time the guards were executed on Windows at all. A path
   *through a regular file* was allowed, because Windows reports that as
