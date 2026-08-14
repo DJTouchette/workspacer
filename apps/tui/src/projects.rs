@@ -316,7 +316,10 @@ mod tests {
         assert_eq!(fnv1a(""), 2_166_136_261, "the FNV offset basis");
         assert_eq!(fnv1a("/w/api-gateway"), 3_406_843_115);
         assert_eq!(fnv1a("/w/api-worker"), 3_548_312_177);
-        assert_eq!(fnv1a("/home/djtouchette/Work/worky/workspacer"), 445_766_688);
+        assert_eq!(fnv1a("/home/me/Work/worky/workspacer"), 3_482_890_993);
+        // A non-ASCII path is where hashing bytes instead of UTF-16 code units
+        // would agree with the twin on everything else and silently diverge.
+        assert_eq!(fnv1a("/w/café"), 896_000_941);
     }
 
     /// The colour follows the PATH and the initials follow the LABEL. That split
@@ -479,7 +482,10 @@ mod tests {
             "#112233"
         );
         // …and the skipped one still resolves, derived.
-        assert_eq!(resolve_project("/w/broken", &projects).unwrap().initials, "BR");
+        assert_eq!(
+            resolve_project("/w/broken", &projects).unwrap().initials,
+            "BR"
+        );
 
         // No projects key at all is the normal, unconfigured case.
         assert!(from_config(&serde_json::json!({ "ui": {} })).is_empty());

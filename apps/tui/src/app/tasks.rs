@@ -33,7 +33,9 @@ pub(super) async fn fetch_agents(cm: &Claudemon, tx: &UnboundedSender<AppMsg>) {
 /// a good map with an empty one on a transient bus hiccup would flicker every
 /// mark back to its derived form.
 pub(super) async fn fetch_projects(bus: &BusClient, tx: &UnboundedSender<AppMsg>) {
-    let Ok(doc) = bus.call("config.get", serde_json::Value::Null).await else {
+    // `{}` rather than null: `config.get` takes no params, and an empty object
+    // is what every other client on this bus sends for a no-param capability.
+    let Ok(doc) = bus.call("config.get", serde_json::json!({})).await else {
         return;
     };
     let _ = tx.send(AppMsg::Projects(crate::projects::from_config(&doc)));
