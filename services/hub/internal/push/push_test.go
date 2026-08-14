@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -848,21 +849,48 @@ func TestPreviewIsPerDeviceAtDelivery(t *testing.T) {
 		Subscription: webpush.Subscription{Endpoint: "https://push.example/private"},
 		Prefs:        Prefs{Preview: &no},
 	}
+	// sendAll fans out over one goroutine per subscription (push.go), so this
+	// hook runs on several at once while the test goroutine reads what they
+	// wrote. Both halves take the same lock: the map was previously
+	// unsynchronized and raced on every run — it passed on a fast dev machine
+	// and failed on the shared CI runner, which is the worst way for a test to
+	// be wrong, because the machine that would show you is the one you do not
+	// watch.
+	var mu sync.Mutex
 	bodies := map[string]string{}
+	both := make(chan struct{})
 	m.send = func(sub webpush.Subscription, payload []byte) (int, error) {
 		var p map[string]string
 		_ = json.Unmarshal(payload, &p)
+		mu.Lock()
+		defer mu.Unlock()
 		bodies[sub.Endpoint] = p["body"]
+		// Signalled on the exact count rather than polled for: a sleep-loop has
+		// to sample the map to know when to stop, which is the read that raced.
+		// Closing here means the wait below observes a map that is finished
+		// being written, with no timing assumption at all.
+		if len(bodies) == 2 {
+			close(both)
+		}
 		return 201, nil
 	}
-	// sendAll spawns goroutines; drive it through the synchronous test path
-	// instead by calling it and waiting on the sends we recorded.
 	m.sendAll(Event{Kind: KindNeeds, Title: "proj needs you", Body: "Approve a tool use",
 		Detail: "Bash rm -rf build/", SessionID: "s1"})
-	deadline := time.Now().Add(2 * time.Second)
-	for len(bodies) < 2 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+
+	select {
+	case <-both:
+	case <-time.After(5 * time.Second):
+		// Generous, because it is now only a deadlock backstop rather than the
+		// thing the assertions depend on: reaching it means a send never
+		// happened, which is a real failure and says so.
+		mu.Lock()
+		got := len(bodies)
+		mu.Unlock()
+		t.Fatalf("timed out: only %d of 2 devices were sent to", got)
 	}
+
+	mu.Lock()
+	defer mu.Unlock()
 	if got := bodies["https://push.example/open"]; got != "Approve a tool use — Bash rm -rf build/" {
 		t.Fatalf("preview device body: %q", got)
 	}
