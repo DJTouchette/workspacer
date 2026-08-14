@@ -19,12 +19,14 @@
 /**
  * Subtrees the main process replaces WHOLESALE instead of deep-merging: what
  * the caller sends is the entire truth, because that is the only way to delete
- * an entry (see the explicit handling in configService.saveConfig — keep these
- * two lists in step). Diffing into them would be wrong twice over: it would
+ * an entry. The list is shared with configService rather than restated here:
+ * when it WAS restated the two copies drifted, `projects` was trimmed on its
+ * way out of the renderer, and saving one project's icon wiped every other
+ * project's identity. See main/shared/configWholesale. Diffing into them would be wrong twice over: it would
  * strip entries the caller meant to re-send, and a pure deletion would produce
  * an empty diff, so the delete would never happen.
  */
-const WHOLESALE_PATHS = new Set(['ui.customThemes', 'claude.budgets']);
+import { WHOLESALE_CONFIG_PATHS as WHOLESALE_PATHS } from '../../../main/shared/configWholesale';
 
 /** Plain object — not null, not an array, not a Date/Map/class instance. */
 function isPlainObject(v: unknown): v is Record<string, unknown> {

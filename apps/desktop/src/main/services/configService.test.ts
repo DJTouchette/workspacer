@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { WHOLESALE_CONFIG_PATHS } from '../shared/configWholesale';
 
 // ─── isolate module per test ────────────────────────────────────────────────
 // We need to control process.platform and process.env before the module is
@@ -114,7 +115,7 @@ vi.mock('fs', () => ({
 // Import after the mock is registered so the ConfigService constructor sees it.
 // Because vitest hoists vi.mock, this import runs after the mock.
 import * as fsMock from 'fs';
-import { configService } from './configService';
+import { configService, deepMerge, applyWholesale } from './configService';
 
 const mockedFs = vi.mocked(fsMock);
 
@@ -638,5 +639,78 @@ describe('save failure plane — a write that never reached disk', () => {
     expect(cfg.ui.theme).toBe('nord');
     const written = String(mockedFs.writeFileSync.mock.calls.at(-1)?.[1] ?? '');
     expect(written).toContain('theme: nord');
+  });
+});
+
+// ─── wholesale paths ────────────────────────────────────────────────────────
+// The renderer trims a save down to what actually changed (lib/configPatch) and
+// must skip exactly the paths main replaces instead of merging. Those were two
+// hand-kept lists and they drifted: `projects` was wholesale here but trimmed
+// there, so saving an icon on one project shipped a one-entry map that main
+// took as the whole truth — every other project lost its identity. One shared
+// list now (main/shared/configWholesale); this pins every entry of it to the
+// behaviour that justifies being on it.
+//
+// Driven through the pure deepMerge + applyWholesale pair rather than
+// saveConfig: the fs mock above throws ENOENT on every read, so saveConfig
+// reloads pure defaults each call and cannot hold the prior state that the
+// resurrection hazard is about.
+describe('wholesale config paths — deletion survives the merge', () => {
+  const at = (obj: unknown, p: string): any =>
+    p.split('.').reduce<any>((o, k) => o?.[k], obj as any);
+  /** `{a: {b: v}}` from `'a.b'`. */
+  const nest = (p: string, v: unknown): any =>
+    p
+      .split('.')
+      .reverse()
+      .reduce<unknown>((acc, k) => ({ [k]: acc }), v);
+
+  // The it.each blocks below are driven BY the set, so dropping a path from it
+  // would silently drop its coverage rather than fail. Pin the membership.
+  it('covers every path main replaces wholesale', () => {
+    expect([...WHOLESALE_CONFIG_PATHS].sort()).toEqual([
+      'claude.budgets',
+      'projects',
+      'ui.customThemes',
+    ]);
+  });
+
+  it.each([...WHOLESALE_CONFIG_PATHS])('%s', (dotted) => {
+    const current = nest(dotted, { keep: { n: 1 }, drop: { n: 2 } });
+    // The caller re-sends the surviving map — the only way to express a delete.
+    const partial = nest(dotted, { keep: { n: 1 } });
+
+    const merged = deepMerge(current, partial);
+    // Deep merge alone resurrects `drop`: this is the hazard, not a typo.
+    expect(at(merged, dotted)).toEqual({ keep: { n: 1 }, drop: { n: 2 } });
+
+    applyWholesale(merged, partial, dotted);
+    expect(at(merged, dotted)).toEqual({ keep: { n: 1 } });
+  });
+
+  it.each([...WHOLESALE_CONFIG_PATHS])('%s survives a save that omits it', (dotted) => {
+    const current = nest(dotted, { keep: { n: 1 } });
+    // Absent from the partial means "not touching this map" — emptying it here
+    // would wipe the map on every unrelated setting change.
+    const partial = { ui: { theme: 'nord' } };
+    const merged = deepMerge(current, partial);
+    applyWholesale(merged, partial, dotted);
+    expect(at(merged, dotted)).toEqual({ keep: { n: 1 } });
+  });
+
+  it('empties the map when the caller sends an empty one', () => {
+    const merged = deepMerge({ projects: { '/w/a': { label: 'A' } } }, { projects: {} });
+    applyWholesale(merged, { projects: {} }, 'projects');
+    expect(merged.projects).toEqual({});
+  });
+
+  it('ignores a same-named key at a different depth', () => {
+    // supervisor.budgets is NOT claude.budgets and must merge normally.
+    const merged = deepMerge(
+      { supervisor: { budgets: { a: 1, b: 2 } } },
+      { supervisor: { budgets: { a: 9 } } },
+    );
+    applyWholesale(merged, { supervisor: { budgets: { a: 9 } } }, 'claude.budgets');
+    expect(merged.supervisor.budgets).toEqual({ a: 9, b: 2 });
   });
 });

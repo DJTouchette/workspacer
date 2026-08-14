@@ -52,6 +52,27 @@ describe('minimalConfigPatch', () => {
     });
   });
 
+  it('sends the whole projects map when one project changes', () => {
+    // The bug: `projects` was wholesale in main but not here, so setting an icon
+    // on one project shipped a one-entry map and main took it as the whole
+    // truth — every other project lost its identity and fell back to initials.
+    const current = {
+      projects: {
+        '/w/alpha': { iconFile: 'a.png', favicon: 'https://a/f.ico' },
+        '/w/beta': { label: 'Beta' },
+      },
+    };
+    const patch = minimalConfigPatch(current, {
+      projects: { ...current.projects, '/w/beta': { label: 'Beta', iconFile: 'b.png' } },
+    });
+    expect(patch).toEqual({
+      projects: {
+        '/w/alpha': { iconFile: 'a.png', favicon: 'https://a/f.ico' },
+        '/w/beta': { label: 'Beta', iconFile: 'b.png' },
+      },
+    });
+  });
+
   it('applies wholesale only at the real path, not to any key of that name', () => {
     // A nested `budgets` that is NOT claude.budgets still diffs normally.
     const current = { supervisor: { budgets: { a: 1, b: 2 } } };

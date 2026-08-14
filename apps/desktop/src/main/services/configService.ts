@@ -5,6 +5,7 @@ import * as yaml from 'js-yaml';
 import { CONFIG_DEFAULTS } from './configDefaults.generated';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { withConfigLock } from '../lib/configLock';
+import { WHOLESALE_CONFIG_PATHS } from '../shared/configWholesale';
 
 interface ShellOption {
   name: string;
@@ -355,6 +356,37 @@ function getConfigFilePath(): string {
   return path.join(getConfigDir(), 'config.yaml');
 }
 
+/**
+ * Undo the deep merge at one dotted path, so the caller's map replaces the
+ * merged one outright.
+ *
+ * A no-op unless the leaf key is actually PRESENT in `partial` — absence means
+ * "I'm not touching this map", which must leave the merged value alone. Present
+ * but null/undefined means "empty it", which is the deletion case deep-merge
+ * cannot express (it skips nullish values entirely).
+ */
+export function applyWholesale(
+  merged: Record<string, unknown>,
+  partial: unknown,
+  dottedPath: string,
+): void {
+  const keys = dottedPath.split('.');
+  const leaf = keys.pop() as string;
+  let src = partial as Record<string, unknown> | undefined;
+  let dst = merged;
+  for (const k of keys) {
+    src = src?.[k] as Record<string, unknown> | undefined;
+    if (!src || typeof src !== 'object') return;
+    // The merge already created every parent the partial has, but a partial
+    // whose parent is not an object in the target would leave dst undefined.
+    const nextDst = dst[k];
+    if (!nextDst || typeof nextDst !== 'object') return;
+    dst = nextDst as Record<string, unknown>;
+  }
+  if (!src || !Object.prototype.hasOwnProperty.call(src, leaf)) return;
+  dst[leaf] = src[leaf] ?? {};
+}
+
 // Deep merge source into target, preserving target defaults for missing keys.
 // Exported so the cross-language deepMerge contract test (contracts/
 // deepmerge-cases.json, also consumed by the Go config.go test) can exercise it
@@ -644,28 +676,14 @@ class ConfigService {
     // Merge into a LOCAL value, not into this.config. The cache is only adopted
     // once the bytes are on disk — see the write branch below.
     const merged = deepMerge(this.config, partial) as Config;
-    // ui.customThemes is a map of user-created entries: when the caller sends
-    // it, it is the whole truth. Deep-merge would resurrect deleted themes, so
-    // replace it wholesale instead.
-    const uiPartial = (partial as { ui?: { customThemes?: unknown } }).ui;
-    if (uiPartial && 'customThemes' in uiPartial) {
-      merged.ui.customThemes = (uiPartial.customThemes ?? {}) as NonNullable<
-        Config['ui']['customThemes']
-      >;
-    }
-    // `projects` is a user-owned map keyed by directory: when the caller sends
-    // it, it is the whole truth. Deep-merge would resurrect an identity the user
-    // just cleared — exactly the ui.customThemes hazard, one map along.
-    if ('projects' in (partial as Record<string, unknown>)) {
-      merged.projects = ((partial as { projects?: unknown }).projects ?? {}) as Config['projects'];
-    }
-    // claude.budgets is a user-owned map (Record<sessionId, number>): when the
-    // caller sends it, it is the whole truth. Deep-merge would resurrect a
-    // cleared budget (a deleted key), so replace it wholesale instead — exactly
-    // like ui.customThemes above.
-    const claudePartial = (partial as { claude?: { budgets?: unknown } }).claude;
-    if (claudePartial && 'budgets' in claudePartial) {
-      merged.claude.budgets = (claudePartial.budgets ?? {}) as Record<string, number>;
+    // The user-owned maps (themes, budgets, project identities) are sent whole
+    // or not at all: when the caller sends one, it IS the truth. Deep-merge can
+    // only add or overwrite keys, so under it an entry the user just deleted
+    // comes straight back. Undo the merge for those paths and take the caller's
+    // map verbatim. The renderer reads the same list to know not to trim them on
+    // the way out — see main/shared/configWholesale.
+    for (const path of WHOLESALE_CONFIG_PATHS) {
+      applyWholesale(merged as unknown as Record<string, unknown>, partial, path);
     }
     if (this.persistBlocked) {
       // The on-disk config failed to load (unreadable or unparseable): keep the

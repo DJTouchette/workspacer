@@ -14,6 +14,8 @@ import { createRoot } from 'react-dom/client';
 import '../App.css';
 import { ProjectMark } from '../components/ProjectMark';
 import { listProjects } from '../lib/projectRegistry';
+import { minimalConfigPatch } from '../lib/configPatch';
+import { WHOLESALE_CONFIG_PATHS } from '../../../main/shared/configWholesale';
 import type { Config } from '../hooks/useConfig';
 
 const { default: ProjectsSection } = await import('../components/settings/ProjectsSection');
@@ -99,12 +101,38 @@ const h: React.CSSProperties = {
   margin: '0 0 8px',
 };
 
+/**
+ * What configService.saveConfig does to a patch, minus the disk: deep-merge,
+ * except at the wholesale paths where the patch's map IS the new value.
+ *
+ * Restated here rather than imported because configService is a main-process
+ * module (fs, electron) that cannot be pulled into a renderer bundle. The list
+ * of paths is imported, so the part that actually drifted can't.
+ */
+function harnessMerge(target: unknown, patch: unknown, path = ''): unknown {
+  if (!isObj(target) || !isObj(patch)) return patch;
+  const out: Record<string, unknown> = { ...target };
+  for (const [k, v] of Object.entries(patch)) {
+    const here = path ? `${path}.${k}` : k;
+    out[k] = WHOLESALE_CONFIG_PATHS.has(here) ? v : harnessMerge(out[k], v, here);
+  }
+  return out;
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
 function Harness() {
   const [config, setConfig] = React.useState<Partial<Config>>(migrated);
-  // A real save round-trip, in memory — so pinning and editing in the section
-  // below actually behave, including the wholesale-replace semantics.
+  // A real save round-trip, in memory.
+  //
+  // This used to be `{...config, ...partial}`, which is a save that CANNOT lose
+  // data — so the harness was blind to the layer the icon-clobbering bug lived
+  // in. Both real steps now run: the renderer trims the patch to what changed
+  // (configPatch), then main merges it, replacing the wholesale paths outright.
   const save = async (partial: Partial<Config>) => {
-    const next = { ...config, ...partial } as Config;
+    const patch = minimalConfigPatch(config as Record<string, unknown>, partial);
+    const next = harnessMerge(config, patch) as Config;
     setConfig(next);
     return next;
   };

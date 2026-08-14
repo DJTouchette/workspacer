@@ -17,6 +17,19 @@ import type { ProjectIdentity } from '../hooks/useConfig';
  * back to the derived mark rather than leaving a hole — an icon host being down
  * must not cost you the ability to tell your projects apart.
  */
+
+/**
+ * How much bigger a favicon draws than the letter plate it replaces.
+ *
+ * Two letters are legible at 14px because they're glyphs at a size the type
+ * scale is built for; a logo at 14px is a smudge. So the icon gets the extra
+ * pixels and the plate doesn't.
+ *
+ * The BOX is scaled either way, and only the mark inside it changes size. A list
+ * mixing configured and unconfigured projects (the sidebar, always) would
+ * otherwise indent its labels by whether each project happened to have an icon.
+ */
+const FAVICON_SCALE = 1.45;
 export const ProjectMark: React.FC<{
   cwd?: string;
   projects?: Record<string, ProjectIdentity>;
@@ -34,12 +47,13 @@ export const ProjectMark: React.FC<{
   // letter mark does. Detected by "not ASCII", which is what an emoji is here.
   const isEmoji = Boolean(p.icon) && !/^[\x20-\x7e]+$/.test(p.icon ?? '');
   const glyph = p.icon ?? p.initials;
+  const box = Math.round(size * FAVICON_SCALE);
 
-  const mark = showFavicon ? (
+  const inner = showFavicon ? (
     <img
       src={p.iconSrc}
-      width={size}
-      height={size}
+      width={box}
+      height={box}
       onError={() => setBroken(true)}
       style={{ borderRadius: 'var(--wks-radius-sm)', objectFit: 'contain', flex: 'none' }}
       alt=""
@@ -48,8 +62,10 @@ export const ProjectMark: React.FC<{
     <span
       aria-hidden
       style={{
-        width: size,
-        height: size,
+        // An emoji is a picture like a favicon is, so it takes the full box; the
+        // letter plate is type and stays on the size the caller asked for.
+        width: isEmoji ? box : size,
+        height: isEmoji ? box : size,
         flex: 'none',
         display: 'grid',
         placeItems: 'center',
@@ -61,7 +77,7 @@ export const ProjectMark: React.FC<{
         color: p.color,
         // Initials are two characters in a ~14px box; the scale bottoms out at
         // 0.6rem, so this is a deliberate exception rather than drift.
-        fontSize: isEmoji ? size * 0.82 : Math.max(7, size * 0.46),
+        fontSize: isEmoji ? box * 0.82 : Math.max(7, size * 0.46),
         fontWeight: 700,
         lineHeight: 1,
         letterSpacing: isEmoji ? 0 : '-0.02em',
@@ -70,6 +86,21 @@ export const ProjectMark: React.FC<{
       }}
     >
       {glyph}
+    </span>
+  );
+
+  // The reserved box, identical whichever mark landed in it.
+  const mark = (
+    <span
+      style={{
+        width: box,
+        height: box,
+        flex: 'none',
+        display: 'grid',
+        placeItems: 'center',
+      }}
+    >
+      {inner}
     </span>
   );
 
