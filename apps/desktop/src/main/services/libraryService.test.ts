@@ -409,7 +409,14 @@ describe('libraryService — every leg applies the guard it was handed', () => {
     // An ordinary permitted fs.write inside the allowed project.
     fs.symlinkSync(outside, path.join(root, '.claude', 'skills'));
 
-    libraryService.remove('claude', 'precious', root, 'skill', undefined, itemGuard('library.remove', root));
+    libraryService.remove(
+      'claude',
+      'precious',
+      root,
+      'skill',
+      undefined,
+      itemGuard('library.remove', root),
+    );
     expect(fs.existsSync(path.join(outside, 'precious', 'keep.txt'))).toBe(true);
 
     // The floor: a real skill inside the project is still removable.
@@ -417,7 +424,14 @@ describe('libraryService — every leg applies the guard it was handed', () => {
     const skill = path.join(clean, '.claude', 'skills', 'keeper');
     fs.mkdirSync(skill, { recursive: true });
     fs.writeFileSync(path.join(skill, 'SKILL.md'), 'x');
-    libraryService.remove('claude', 'keeper', clean, 'skill', undefined, itemGuard('library.remove', clean));
+    libraryService.remove(
+      'claude',
+      'keeper',
+      clean,
+      'skill',
+      undefined,
+      itemGuard('library.remove', clean),
+    );
     expect(fs.existsSync(skill)).toBe(false);
     fs.rmSync(outside, { recursive: true, force: true });
     fs.rmSync(clean, { recursive: true, force: true });
@@ -1112,9 +1126,9 @@ describe('libraryService — claude items outside the project root', () => {
         cwd,
       }),
     ).toThrow(/read-only/);
-    expect(() =>
-      libraryService.remove('claude', item.id, cwd, 'skill', item.origin),
-    ).toThrow(/read-only/);
+    expect(() => libraryService.remove('claude', item.id, cwd, 'skill', item.origin)).toThrow(
+      /read-only/,
+    );
 
     const file = path.join(
       userClaude,
