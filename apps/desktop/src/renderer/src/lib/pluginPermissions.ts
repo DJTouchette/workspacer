@@ -116,6 +116,11 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   'push.unsubscribe': { label: 'Stop push notifications to a device' },
   'push.list': { label: 'See subscribed push devices' },
   'push.revoke': { label: 'Remove a push subscription', sensitive: true },
+  // A send TRIGGER, but nothing about the message is caller-supplied — title and
+  // body are literals in the hub's RPCTest — so it puts no attacker-chosen text
+  // on a lock screen. Not marked sensitive for that reason: the tier that may
+  // subscribe can already provoke real pushes by approving or answering.
+  'push.test': { label: 'Send a test push notification' },
 
   // The CATALOG capabilities. hubCapabilities.ts registers through TWO helpers —
   // registerCapability() and the delegation-aware alias cat() — and the drift
