@@ -63,6 +63,18 @@ export interface ProjectIdentity {
    * show what you pasted and the icon can be re-fetched.
    */
   iconFile?: string;
+  /** Pinned by the user. Absent falls back to the legacy `directories.favourites`. */
+  favourite?: boolean;
+  /** Epoch ms this project was last opened. Absent falls back to the legacy
+   *  `directories.recent` ordering. */
+  lastOpened?: number;
+  /**
+   * Per-project settings belonging to plugins, namespaced by plugin id. Only
+   * NON-SECRET values live here: config.yaml is credential-free by design, and
+   * `config.get` is an unguarded bus capability on exactly that basis (see its
+   * entry in capspec.go). A plugin's tokens stay in its own `.settings.json`.
+   */
+  plugins?: Record<string, Record<string, unknown>>;
 }
 
 interface Config {

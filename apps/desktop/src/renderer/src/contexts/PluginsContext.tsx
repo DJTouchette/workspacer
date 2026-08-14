@@ -33,7 +33,10 @@ export interface PluginsContextValue {
  */
 const EMPTY: PluginsContextValue = { plugins: [], panes: [], widgets: [], hotkeys: [] };
 
-const PluginsContext = createContext<PluginsContextValue>(EMPTY);
+// Exported so a test or a harness can provide a fabricated plugin set. The
+// PROVIDER owns the real fetch (usePlugins), so injecting through it is the
+// only way to render plugin-dependent UI without a live hub.
+export const PluginsContext = createContext<PluginsContextValue>(EMPTY);
 
 export function PluginsProvider({ children }: { children: React.ReactNode }) {
   const value = usePlugins();

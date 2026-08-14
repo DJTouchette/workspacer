@@ -65,6 +65,14 @@ export interface PluginSettingDef {
   /** Sensitive string (PAT/API key): masked write-only input, value never
    *  echoed to clients — reads report SECRET_PLACEHOLDER when set. */
   secret?: boolean;
+  /**
+   * 'project' = one value per directory, stored by the host under
+   * config.projects[<dir>].plugins[<pluginId>] and edited on the Projects
+   * settings page. Absent or 'global' = one value for the plugin, edited on its
+   * own settings page. A project setting can never be secret (the hub refuses
+   * the combination at manifest load) — config.yaml holds no credentials.
+   */
+  scope?: 'global' | 'project';
 }
 
 /** One capability entry in a manifest: a bus method the plugin may call, with

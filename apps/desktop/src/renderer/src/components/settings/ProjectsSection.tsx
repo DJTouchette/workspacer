@@ -1,10 +1,19 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { RotateCcw, Check, AlertTriangle } from 'lucide-react';
+import { RotateCcw, Check, AlertTriangle, Star } from 'lucide-react';
 import { Config, ProjectIdentity } from '../../hooks/useConfig';
 import { Section, SmallButton, inputStyle } from './primitives';
 import { ProjectMark } from '../ProjectMark';
 import { projectKey } from '../../lib/projectKey';
-import { basenameOf } from '../../lib/projectIdentity';
+import {
+  listProjects,
+  patchProject,
+  setFavourite,
+  projectPluginSettings,
+  setProjectPluginSettings,
+} from '../../lib/projectRegistry';
+import { usePluginsContext } from '../../contexts/PluginsContext';
+import type { PluginManifest, PluginSettingDef } from '../../types/plugin';
+import { basenameOf, resolveProject } from '../../lib/projectIdentity';
 
 interface ProjectsSectionProps {
   config: Config;
@@ -27,45 +36,32 @@ interface ProjectsSectionProps {
 const ProjectsSection: React.FC<ProjectsSectionProps> = ({ config, save }) => {
   const projects = useMemo(() => config.projects ?? {}, [config.projects]);
 
-  // Every directory the app already knows, in the order a person would expect
-  // to find them: the ones they pinned, then the ones they've touched, then the
-  // ones that are only known because they carry other per-directory config.
-  const dirs = useMemo(() => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    const push = (d?: string) => {
-      if (!d) return;
-      const k = projectKey(d);
-      if (!k || seen.has(k)) return;
-      seen.add(k);
-      out.push(k);
-    };
-    (config.directories?.favourites ?? []).forEach(push);
-    (config.directories?.recent ?? []).forEach(push);
-    Object.keys(config.scripts ?? {}).forEach(push);
-    Object.keys(config.widgets ?? {}).forEach(push);
-    // A configured project that has since dropped off every other list must
-    // still be editable — otherwise its customization is stranded.
-    Object.keys(projects).forEach(push);
-    return out;
-  }, [config.directories, config.scripts, config.widgets, projects]);
+  // One source of truth — the registry unions the projects map with the legacy
+  // directories arrays and orders them. This used to be a four-source union
+  // inlined here, which was the smell that motivated collapsing them.
+  const known = useMemo(() => listProjects(config), [config]);
+  // Plugins that declare per-project settings. Three plugins invented this
+  // privately before it existed here; now they declare it and the host stores
+  // it beside the project's identity, so one page answers everything about a
+  // project rather than one page per plugin.
+  const { plugins } = usePluginsContext();
+  const projectScoped = useMemo(
+    () =>
+      (plugins ?? [])
+        .map((p: PluginManifest) => ({
+          plugin: p,
+          defs: (p.settings ?? []).filter((d: PluginSettingDef) => d.scope === 'project'),
+        }))
+        .filter((e) => e.defs.length > 0),
+    [plugins],
+  );
+  const dirs = useMemo(() => known.map((p) => p.dir), [known]);
 
   const update = useCallback(
     (dir: string, patch: Partial<ProjectIdentity>) => {
-      const key = projectKey(dir);
-      const next: Record<string, ProjectIdentity> = { ...projects };
-      const merged = { ...(next[key] ?? {}), ...patch };
-      // Drop blanks so an entry never persists as "all defaults" — and when the
-      // last field is cleared, drop the entry itself. `projects` is replaced
-      // wholesale on save (configService), so a delete really deletes.
-      for (const k of Object.keys(merged) as (keyof ProjectIdentity)[]) {
-        if (!String(merged[k] ?? '').trim()) delete merged[k];
-      }
-      if (Object.keys(merged).length) next[key] = merged;
-      else delete next[key];
-      void save({ projects: next });
+      void save(patchProject(config, dir, patch));
     },
-    [projects, save],
+    [config, save],
   );
 
   /** Per-row download state, so a paste reports back instead of silently
@@ -129,7 +125,7 @@ const ProjectsSection: React.FC<ProjectsSectionProps> = ({ config, save }) => {
           No projects yet. Open an agent in a directory and it will appear here.
         </div>
       )}
-      {dirs.map((dir) => {
+      {dirs.map((dir, i) => {
         const entry = projects[dir] ?? {};
         const customized = Object.keys(entry).length > 0;
         const st = status[dir];
@@ -137,6 +133,27 @@ const ProjectsSection: React.FC<ProjectsSectionProps> = ({ config, save }) => {
         return (
           <div key={dir} style={{ borderTop: '1px solid var(--wks-border-subtle)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0' }}>
+              <button
+                onClick={() => void save(setFavourite(config, dir, !known[i].favourite))}
+                title={known[i].favourite ? 'Unpin from Overview' : 'Pin to Overview'}
+                aria-label={known[i].favourite ? 'Unpin from Overview' : 'Pin to Overview'}
+                style={{
+                  appearance: 'none',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  padding: 0,
+                  display: 'flex',
+                  flex: 'none',
+                  color: known[i].favourite ? 'var(--wks-warning)' : 'var(--wks-text-faint)',
+                }}
+              >
+                <Star
+                  size={13}
+                  strokeWidth={1.75}
+                  fill={known[i].favourite ? 'currentColor' : 'none'}
+                />
+              </button>
               <ProjectMark cwd={dir} projects={projects} size={22} />
               <div style={{ minWidth: 0, flex: 1 }}>
                 <input
@@ -175,7 +192,10 @@ const ProjectsSection: React.FC<ProjectsSectionProps> = ({ config, save }) => {
                 one control the OS already does well, and this is a colour. */}
               <input
                 type="color"
-                value={entry.color || '#6b8afd'}
+                // The RESOLVED colour, not a hardcoded default: an unconfigured
+                // project has a derived colour, and showing blue beside a teal
+                // mark tells the user something false about their own project.
+                value={resolveProject(dir, projects)?.color ?? '#6b8afd'}
                 title="Badge colour. Reset to fall back to the one derived from the path."
                 aria-label={`Colour for ${dir}`}
                 style={{
@@ -201,14 +221,78 @@ const ProjectsSection: React.FC<ProjectsSectionProps> = ({ config, save }) => {
               {/* Only when there is something to undo — a permanently-visible
                 disabled control on every row is noise. */}
               {customized ? (
-                <SmallButton
-                  onClick={() => reset(dir)}
-                  label={<RotateCcw size={12} strokeWidth={2} />}
-                />
+                <span
+                  style={{ width: 30, flex: 'none', display: 'flex', justifyContent: 'center' }}
+                >
+                  <SmallButton
+                    onClick={() => reset(dir)}
+                    label={<RotateCcw size={12} strokeWidth={2} />}
+                  />
+                </span>
               ) : (
-                <span style={{ width: 26, flex: 'none' }} aria-hidden />
+                <span style={{ width: 30, flex: 'none' }} aria-hidden />
               )}
             </div>
+            {/* What each plugin needs to know about THIS project. Rendered
+                under the identity row rather than in a separate page, because
+                "which Jira project is this repo" is a fact about the project,
+                not about Jira. */}
+            {projectScoped.map(({ plugin, defs }) => {
+              const values = projectPluginSettings(config, dir, plugin.id);
+              return (
+                <div
+                  key={plugin.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '0 0 8px 32px',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: '0.6rem',
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.06em',
+                      color: 'var(--wks-text-faint)',
+                    }}
+                  >
+                    {plugin.name}
+                  </span>
+                  {defs.map((d) => (
+                    <label
+                      key={d.key}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        fontSize: '0.66rem',
+                        color: 'var(--wks-text-muted)',
+                      }}
+                    >
+                      {d.label}
+                      <input
+                        style={{ ...inputStyle, width: 130 }}
+                        value={String(values[d.key] ?? '')}
+                        placeholder={String(d.default ?? '')}
+                        spellCheck={false}
+                        title={d.help}
+                        onChange={(e) =>
+                          void save(
+                            setProjectPluginSettings(config, dir, plugin.id, {
+                              ...values,
+                              [d.key]: e.target.value,
+                            }),
+                          )
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
+              );
+            })}
             {/* The reason, in words. An icon alone says "something" went wrong,
                 which is the least useful half of what we know. */}
             {failed && (

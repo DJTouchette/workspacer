@@ -4,6 +4,7 @@ import { useAttention } from '../contexts/AttentionContext';
 import { usePlugins } from '../hooks/usePlugins';
 import { Home, Star, Plus, RefreshCw } from '../components/icons';
 import { ProjectMark } from '../components/ProjectMark';
+import { favouriteProjects, recentProjects, setFavourite } from '../lib/projectRegistry';
 import type { ProjectIdentity } from '../hooks/useConfig';
 import { AgentLogo } from '../components/agentLogos';
 import type { AgentProvider } from '../types/pane';
@@ -448,10 +449,10 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
     };
   }, [refresh, throttledRefresh]);
 
-  const recent = config.directories?.recent ?? [];
-  const favourites = config.directories?.favourites ?? [];
-  const favSet = new Set(favourites);
-  const recentOnly = recent.filter((d) => !favSet.has(d));
+  // One source of truth for "what projects exist", reading both the projects map
+  // and the legacy directories arrays — see lib/projectRegistry.
+  const favourites = favouriteProjects(config).map((p) => p.dir);
+  const recentOnly = recentProjects(config).map((p) => p.dir);
 
   // Scope stats to workspacer's OWN agents — claudemon tracks every Claude
   // session on the machine (incl. ones run outside workspacer), so we filter
@@ -496,10 +497,7 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
     });
   };
   const toggleFav = (dir: string) => {
-    const set = new Set(favourites);
-    if (set.has(dir)) set.delete(dir);
-    else set.add(dir);
-    save({ directories: { recent, favourites: Array.from(set) } });
+    save(setFavourite(config, dir, !favourites.includes(dir)));
   };
 
   return (

@@ -89,7 +89,8 @@ import {
 
 // Per-directory config keys (scripts here, widget boards in the inspector rail)
 // share one normalization so a repo can't key differently between them.
-import { projectKey as scriptKey } from './lib/projectKey';
+import { projectKey as scriptKey, projectKey } from './lib/projectKey';
+import { touchProject } from './lib/projectRegistry';
 
 /**
  * Pure helper — normalizes a raw saved-session blob into a canonical
@@ -958,16 +959,21 @@ function App() {
     [agents, setActiveAgentId, respawnAgent, viewLevel, setViewLevel],
   );
 
-  // Record a directory at the front of the Overview's recent list (deduped, capped).
+  // Record that a project was opened. This used to shuffle a capped, deduped
+  // `directories.recent` array; it is now a timestamp on the project itself, so
+  // there is no ordering to maintain and no cap to drop entries at (a project
+  // you configured should not fall off a list because you opened eight others).
   const recordRecentDir = useCallback(
     (cwd?: string) => {
       if (!cwd) return;
-      const cur = config.directories?.recent ?? [];
-      if (cur[0] === cwd) return;
-      const recent = [cwd, ...cur.filter((d) => d !== cwd)].slice(0, 8);
-      saveConfig({ directories: { recent, favourites: config.directories?.favourites ?? [] } });
+      const key = projectKey(cwd);
+      const already = config.projects?.[key]?.lastOpened;
+      // Once a minute is plenty — this fires on every agent focus, and each
+      // write is a config.yaml round-trip.
+      if (already && Date.now() - already < 60_000) return;
+      saveConfig(touchProject(config, cwd));
     },
-    [config.directories, saveConfig],
+    [config, saveConfig],
   );
 
   const handleSpawnAgent = useCallback(

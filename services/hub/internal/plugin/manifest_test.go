@@ -3,6 +3,7 @@ package plugin
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -175,5 +176,40 @@ func TestEventGrantsDropUnownedProvides(t *testing.T) {
 	})
 	if len(g.Provides) != 1 || g.Provides[0] != "acme.refresh" {
 		t.Fatalf("expected only the own-namespace grant to survive, got %v", g.Provides)
+	}
+}
+
+// A project-scoped setting is stored in config.yaml, and `config.get` hands
+// that whole document to any caller holding the capability *because* the config
+// holds no credential (capspec.go says so in as many words). One secret project
+// setting would make that reasoning false for every plugin at once, so the
+// combination is refused at load rather than left to plugin authors to know.
+func TestProjectScopedSettingCannotBeSecret(t *testing.T) {
+	base := func(s SettingDef) *Manifest {
+		return &Manifest{ID: "a.b", Name: "B", APIVersion: APIVersion, Settings: []SettingDef{s}}
+	}
+
+	err := base(SettingDef{Key: "repo", Label: "Repo", Type: "string", Scope: ScopeProject, Secret: true}).Validate()
+	if err == nil {
+		t.Fatal("a secret project-scoped setting must be refused")
+	}
+	if !strings.Contains(err.Error(), "config.yaml") {
+		t.Errorf("the error must say WHY (config.yaml holds no credentials), got: %v", err)
+	}
+
+	// The two halves are each fine on their own — a global secret is the normal
+	// way to hold a token, and a non-secret project setting is the whole point.
+	if err := base(SettingDef{Key: "token", Label: "Token", Type: "string", Secret: true}).Validate(); err != nil {
+		t.Errorf("a global secret is legitimate: %v", err)
+	}
+	if err := base(SettingDef{Key: "repo", Label: "Repo", Type: "string", Scope: ScopeProject}).Validate(); err != nil {
+		t.Errorf("a non-secret project setting is the point: %v", err)
+	}
+	// Absent scope keeps meaning global, so every existing manifest still loads.
+	if err := base(SettingDef{Key: "x", Label: "X", Type: "string"}).Validate(); err != nil {
+		t.Errorf("an unscoped setting must still be valid: %v", err)
+	}
+	if err := base(SettingDef{Key: "x", Label: "X", Type: "string", Scope: "per-user"}).Validate(); err == nil {
+		t.Error("an unknown scope must be refused rather than silently treated as global")
 	}
 }

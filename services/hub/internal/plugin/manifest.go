@@ -130,8 +130,30 @@ func (c *Capability) UnmarshalJSON(data []byte) error {
 // a control for it in Settings, persists the value, and delivers the current
 // values into the plugin's webview (window.__WKS_SETTINGS__ + a wks-settings
 // event), so a plugin can be configured without shipping its own settings UI.
+// Setting scopes. A global setting has one value for the plugin; a project one
+// has a value per directory, stored by the host beside that project's identity.
+const (
+	ScopeGlobal  = "global"
+	ScopeProject = "project"
+)
+
 type SettingDef struct {
-	Key     string   `json:"key"`               // stable id, e.g. "vimMode"
+	Key string `json:"key"` // stable id, e.g. "vimMode"
+	// Scope: "" / "global" (one value for the plugin, the default) or "project"
+	// (one value PER DIRECTORY, stored by the host under
+	// config.projects[<dir>].plugins[<pluginId>]).
+	//
+	// Project scope exists because three plugins independently invented it —
+	// shiplight's `repo`, ci-watcher's `repo`, jira's directory→prefix map —
+	// each with its own storage and its own editor. A project-scoped setting is
+	// edited on the Projects settings page beside that project's identity, and
+	// the plugin reads it out of `config.get` for its pane's cwd.
+	//
+	// A project-scoped setting MUST NOT be secret: these live in config.yaml,
+	// which is credential-free by design and is why `config.get` is unguarded
+	// (see capspec.go). Secrets stay global, in the plugin's own .settings.json.
+	// Validate() rejects the combination rather than trusting authors to know.
+	Scope   string   `json:"scope,omitempty"`
 	Label   string   `json:"label"`             // human-readable label
 	Type    string   `json:"type"`              // boolean | number | string | select
 	Default any      `json:"default,omitempty"` // default value
@@ -296,6 +318,21 @@ func (m *Manifest) Validate() error {
 	for _, s := range m.Settings {
 		if s.Key == "" {
 			return fmt.Errorf("setting with empty key")
+		}
+		if s.Scope != "" && s.Scope != ScopeGlobal && s.Scope != ScopeProject {
+			return fmt.Errorf("setting %q has unknown scope %q (want %q or %q)",
+				s.Key, s.Scope, ScopeGlobal, ScopeProject)
+		}
+		// Refused at LOAD, not left to the author to get right. A project-scoped
+		// value is stored in config.yaml, and `config.get` hands that whole
+		// document to any caller holding the capability precisely because it
+		// contains no credential. One secret project setting would quietly make
+		// that reasoning false for every plugin at once.
+		if s.Scope == ScopeProject && s.Secret {
+			return fmt.Errorf(
+				"setting %q is both project-scoped and secret: project settings live in config.yaml, "+
+					"which holds no credentials — keep the secret global (.settings.json) and make the "+
+					"project setting name the thing, not the key to it", s.Key)
 		}
 		if keys[s.Key] {
 			return fmt.Errorf("duplicate setting key %q", s.Key)
