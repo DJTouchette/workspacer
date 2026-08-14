@@ -16,6 +16,7 @@ import SessionSection from '../components/settings/SessionSection';
 import BrowserSection from '../components/settings/BrowserSection';
 import EditorSection from '../components/settings/EditorSection';
 import AppsSection from '../components/settings/AppsSection';
+import ProjectsSection from '../components/settings/ProjectsSection';
 import ClaudeProfilesSection from '../components/settings/ClaudeProfilesSection';
 import SupervisorSection from '../components/settings/SupervisorSection';
 import ModelPricingSection from '../components/settings/ModelPricingSection';
@@ -120,6 +121,29 @@ const SECTIONS: SectionDef[] = [
     ],
   },
   // Workspace
+  {
+    key: 'projects',
+    label: 'Projects',
+    group: 'Workspace',
+    keywords: [
+      'project',
+      'projects',
+      'directory',
+      'folder',
+      'repo',
+      'repository',
+      'icon',
+      'emoji',
+      'favicon',
+      'colour',
+      'color',
+      'label',
+      'name',
+      'badge',
+      'mark',
+      'sidebar',
+    ],
+  },
   {
     key: 'appearance',
     label: 'Appearance',
@@ -476,6 +500,8 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
         return <BrowserSection config={config} save={save} />;
       case 'apps':
         return <AppsSection config={config} save={save} />;
+      case 'projects':
+        return <ProjectsSection config={config} save={save} />;
       case 'notifications':
         return <NotificationsSection config={config} save={save} />;
       case 'updates':

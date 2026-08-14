@@ -132,6 +132,7 @@
   "directories": { "recent": [], "favourites": [] },
   "scripts": {},
   "widgets": {},
+  "projects": {},
   "updates": { "enabled": true, "channel": "latest" },
   "apps": [
     { "name": "GitHub", "url": "https://github.com", "icon": "💻" },

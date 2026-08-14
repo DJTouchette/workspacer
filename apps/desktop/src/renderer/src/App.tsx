@@ -2033,6 +2033,7 @@ function App() {
               <ErrorBoundary label="Sidebar" variant="region">
                 <SideBar
                   agents={agents}
+                  projects={config.projects}
                   activeAgentId={activeAgentId}
                   statusBySession={statusBySession}
                   snapshotBySession={snapshotBySession}

@@ -206,6 +206,7 @@ export const CONFIG_DEFAULTS = {
   },
   scripts: {},
   widgets: {},
+  projects: {},
   updates: {
     enabled: true,
     channel: 'latest',

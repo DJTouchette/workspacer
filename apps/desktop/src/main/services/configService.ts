@@ -42,6 +42,22 @@ interface WidgetPlacementEntry {
   size: 'small' | 'medium' | 'large';
 }
 
+/**
+ * How one project should read at a glance. `favicon` wins when it loads,
+ * `icon` (an emoji or one or two letters) is next, and initials derived from
+ * the directory name are the floor — so there is always something to draw.
+ */
+export interface ProjectIdentity {
+  /** Display name. Defaults to the directory's basename. */
+  label?: string;
+  /** Badge tint (any CSS color). Derived from the path when unset. */
+  color?: string;
+  /** An emoji, or one or two letters. */
+  icon?: string;
+  /** http(s) URL of a real icon to fetch and cache. */
+  favicon?: string;
+}
+
 interface Config {
   ui: {
     animations: boolean;
@@ -213,6 +229,16 @@ interface Config {
    * several agents can share one cwd.
    */
   widgets: Record<string, WidgetPlacementEntry[]>;
+  /**
+   * Per-directory project identity, keyed by workspace root (normalized cwd)
+   * exactly as `scripts` and `widgets` are (renderer lib/projectKey).
+   *
+   * Every field is optional because the useful default is DERIVED, not
+   * configured: a project with no entry at all still gets a stable mark from
+   * its own path, so the fleet is legible before anyone opens a settings page.
+   * An entry only records the parts a human chose to override.
+   */
+  projects: Record<string, ProjectIdentity>;
   apps: AppEntry[];
   /** In-app auto-update (electron-updater over the GitHub Release feed). */
   updates: {
@@ -607,6 +633,12 @@ class ConfigService {
       merged.ui.customThemes = (uiPartial.customThemes ?? {}) as NonNullable<
         Config['ui']['customThemes']
       >;
+    }
+    // `projects` is a user-owned map keyed by directory: when the caller sends
+    // it, it is the whole truth. Deep-merge would resurrect an identity the user
+    // just cleared — exactly the ui.customThemes hazard, one map along.
+    if ('projects' in (partial as Record<string, unknown>)) {
+      merged.projects = ((partial as { projects?: unknown }).projects ?? {}) as Config['projects'];
     }
     // claude.budgets is a user-owned map (Record<sessionId, number>): when the
     // caller sends it, it is the whole truth. Deep-merge would resurrect a

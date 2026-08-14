@@ -20,6 +20,8 @@ import { collectRecentActivity, type ActivityLine } from '../lib/agentActivityLo
 import { shortModelLabel } from '../lib/modelLabel';
 import { agentAttentionScore } from '../lib/attentionRouter';
 import { AgentLogo } from './agentLogos';
+import { ProjectMark } from './ProjectMark';
+import type { ProjectIdentity } from '../hooks/useConfig';
 import { requestInspector } from '../lib/watchBus';
 import { useAttention } from '../contexts/AttentionContext';
 import { useUiMode } from '../hooks/useUiMode';
@@ -246,6 +248,10 @@ interface SideBarProps {
    * pane's status bar uses, so the two can never disagree.
    */
   snapshotBySession: Record<string, ClaudeSessionSnapshot>;
+  /** config.projects — per-directory identity for the card marks. Passed rather
+   *  than read from context so the sidebar harness can render without a
+   *  ConfigProvider, exactly as every other config-derived prop here is. */
+  projects?: Record<string, ProjectIdentity>;
   onSelectAgent: (id: string) => void;
   onSpawnAgent: () => void;
   onTerminateAgent: (id: string) => void;
@@ -278,6 +284,7 @@ interface SideBarProps {
 }
 
 const SideBar: React.FC<SideBarProps> = ({
+  projects,
   agents,
   activeAgentId,
   statusBySession,
@@ -1060,16 +1067,32 @@ const SideBar: React.FC<SideBarProps> = ({
                       style={{
                         flex: 1,
                         minWidth: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
                         fontSize: '0.8rem',
                         fontWeight: 600,
                         color: 'var(--wks-text-primary)',
                         overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
                         lineHeight: 1.3,
                       }}
                     >
-                      {agent.name}
+                      {/* Which project this agent belongs to, at a glance. Every
+                          card used to be the same shape, so telling one repo's
+                          agents from another's meant reading the cwd tooltip.
+                          Derived from the path when unconfigured, so this is
+                          useful without anyone setting anything up. */}
+                      <ProjectMark cwd={agent.cwd} projects={projects} size={14} />
+                      <span
+                        style={{
+                          minWidth: 0,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {agent.name}
+                      </span>
                     </span>
                   )}
                   {age && (

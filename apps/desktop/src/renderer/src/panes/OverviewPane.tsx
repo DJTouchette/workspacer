@@ -3,6 +3,8 @@ import { useConfig } from '../hooks/useConfig';
 import { useAttention } from '../contexts/AttentionContext';
 import { usePlugins } from '../hooks/usePlugins';
 import { Home, Star, Plus, RefreshCw } from '../components/icons';
+import { ProjectMark } from '../components/ProjectMark';
+import type { ProjectIdentity } from '../hooks/useConfig';
 import { AgentLogo } from '../components/agentLogos';
 import type { AgentProvider } from '../types/pane';
 import type { UpdateStatus } from '../types/electron';
@@ -317,9 +319,10 @@ const Stat: React.FC<{
 const DirRow: React.FC<{
   dir: string;
   fav: boolean;
+  projects?: Record<string, ProjectIdentity>;
   onSpawn: () => void;
   onToggleFav: () => void;
-}> = ({ dir, fav, onSpawn, onToggleFav }) => (
+}> = ({ dir, fav, projects, onSpawn, onToggleFav }) => (
   <div
     onClick={onSpawn}
     title={`New agent in ${dir}`}
@@ -358,6 +361,9 @@ const DirRow: React.FC<{
     >
       <Star size={14} strokeWidth={1.75} fill={fav ? 'currentColor' : 'none'} />
     </span>
+    {/* The same mark the sidebar draws, so a directory here and the agents it
+        spawns read as one project rather than two unrelated lists. */}
+    <ProjectMark cwd={dir} projects={projects} size={15} />
     <span
       style={{
         fontSize: '0.8rem',
@@ -799,6 +805,7 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
                   key={d}
                   dir={d}
                   fav
+                  projects={config.projects}
                   onSpawn={() => spawnIn(d)}
                   onToggleFav={() => toggleFav(d)}
                 />
@@ -817,6 +824,7 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
                   key={d}
                   dir={d}
                   fav={false}
+                  projects={config.projects}
                   onSpawn={() => spawnIn(d)}
                   onToggleFav={() => toggleFav(d)}
                 />

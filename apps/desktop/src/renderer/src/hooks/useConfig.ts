@@ -127,6 +127,19 @@ export interface ScriptEntry {
   command: string;
 }
 
+/**
+ * How one project should read at a glance. `favicon` wins when it loads, `icon`
+ * (an emoji or one or two letters) is next, and initials derived from the name
+ * are the floor — so there is always something to draw. Mirrors ProjectIdentity
+ * in main/services/configService.ts.
+ */
+export interface ProjectIdentity {
+  label?: string;
+  color?: string;
+  icon?: string;
+  favicon?: string;
+}
+
 export interface Config {
   ui: UIConfig;
   terminal: TerminalConfig;
@@ -140,6 +153,10 @@ export interface Config {
   /** Per-directory widget boards, keyed the same way as `scripts` (see
    *  lib/projectKey). Absent for a project with no board yet. */
   widgets?: Record<string, WidgetPlacement[]>;
+  /** Per-directory project identity (label / colour / icon / favicon), keyed by
+   *  normalized cwd exactly as `scripts` and `widgets` are — see lib/projectKey.
+   *  Absent for a project nobody has customized; the mark is derived instead. */
+  projects?: Record<string, ProjectIdentity>;
   apps: AppEntry[];
   /** Directories surfaced in the Overview pane for quick agent launching. */
   directories?: {
