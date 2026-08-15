@@ -228,17 +228,47 @@ async function ensureLang(lang: string): Promise<boolean> {
   }
 }
 
+// Module-level LRU over tokenizer RESULTS — the grammar was already cached, the
+// output was not, so the same snippet re-tokenized on every render that asked
+// for it. That is paid most heavily by a code fence still being streamed: the
+// text grows by a token, misses, and the whole prefix goes through the TextMate
+// engine again. codeToTokensBase is synchronous and blocking (a dense 300-line
+// block measures ~220ms), so those passes queue on the main thread rather than
+// coalescing. Bounded like mdCache, and for the same reason: an unbounded cache
+// on streaming text grows without limit.
+const TOKEN_CACHE_MAX = 300;
+const tokenCache = new Map<string, TokenSpan[][] | null>();
+
+/** Clear the module-level tokenizer cache (call on session switch). */
+export function clearTokenCache(): void {
+  tokenCache.clear();
+}
+
 /**
  * Tokenize a multi-line snippet, one TokenSpan[] per input line. Returns null
  * when the language is unknown/unloadable — caller renders plain text.
+ *
+ * Results are memoized on (theme, lang, code). `themeName` is fixed once the
+ * highlighter is created and never reassigned after, but it is in the key
+ * anyway — a cache that silently outlives the value it was computed from is
+ * the bug this function is being changed to avoid.
  */
 export async function tokenize(code: string, lang: string): Promise<TokenSpan[][] | null> {
   if (!(await ensureLang(lang))) return null;
   const hl = await getHighlighter();
+  const key = `${themeName} ${lang} ${code}`;
+  if (tokenCache.has(key)) return tokenCache.get(key) ?? null;
+  let result: TokenSpan[][] | null;
   try {
     const lines = hl.codeToTokensBase(code, { lang: lang as never, theme: themeName as never });
-    return lines.map((line) => line.map((t) => ({ text: t.content, color: t.color })));
+    result = lines.map((line) => line.map((t) => ({ text: t.content, color: t.color })));
   } catch {
-    return null;
+    result = null;
   }
+  if (tokenCache.size >= TOKEN_CACHE_MAX) {
+    // Evict oldest (Map iteration order = insertion order), as mdCache does.
+    tokenCache.delete(tokenCache.keys().next().value!);
+  }
+  tokenCache.set(key, result);
+  return result;
 }

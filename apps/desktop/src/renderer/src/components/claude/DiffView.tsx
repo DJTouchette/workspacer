@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { claudeColors as colors } from '../claude-shared';
 import { langForPath } from '../../lib/diff/highlight';
 import { useHighlight, renderLine } from './highlight';
@@ -46,7 +46,7 @@ const contentStyle: React.CSSProperties = {
  *  - inline:  LCS-interleaved unified diff (shared lines shown once)
  *  - split:   side-by-side, removed left / added right, aligned
  */
-export const DiffView: React.FC<{
+const DiffViewInner: React.FC<{
   oldStr: string;
   newStr: string;
   filePath?: string;
@@ -55,15 +55,23 @@ export const DiffView: React.FC<{
 }> = ({ oldStr, newStr, filePath, cwd }) => {
   const { config } = useConfig();
   const mode: DiffViewMode = config.ui.diffView ?? 'stacked';
-  const fileName = filePath?.split(/[/\\]/).pop() ?? '';
-  const oldLines = oldStr ? oldStr.split('\n') : [];
-  const newLines = newStr ? newStr.split('\n') : [];
+  // Split once per content change, not once per render. A work card re-renders
+  // on every snapshot flush while its agent streams, and every diff in the
+  // visible window re-rendered with it — including the settled ones.
+  const { fileName, oldLines, newLines, lang } = useMemo(
+    () => ({
+      fileName: filePath?.split(/[/\\]/).pop() ?? '',
+      oldLines: oldStr ? oldStr.split('\n') : [],
+      newLines: newStr ? newStr.split('\n') : [],
+      lang: langForPath(filePath ?? ''),
+    }),
+    [oldStr, newStr, filePath],
+  );
   const addedCount = newLines.length;
   const removedCount = oldLines.length;
   // Syntax tokens per side, indexed by original line number; backgrounds stay
   // our add/del tints, foreground comes from the grammar (falls back to the
   // diff color until tokens load).
-  const lang = langForPath(filePath ?? '');
   const oldTokens = useHighlight(oldStr, lang);
   const newTokens = useHighlight(newStr, lang);
 
@@ -135,6 +143,19 @@ export const DiffView: React.FC<{
   );
 };
 
+/**
+ * Memoized because a work card re-renders on every snapshot flush (~16ms) while
+ * its agent streams, and a collapsed card still renders a diff for every edit in
+ * the visible turn window — so every settled diff on screen was rebuilding its
+ * rows element-by-element for content that had not changed.
+ *
+ * The shallow compare is exact here rather than approximate: every prop is a
+ * primitive, so there is no callback or object identity that could go stale and
+ * freeze a card. That is why this one is safe and a hand-written comparator on a
+ * card carrying live tool state would not be.
+ */
+export const DiffView = React.memo(DiffViewInner);
+
 type Tokens = ReturnType<typeof useHighlight>;
 interface BodyProps {
   oldLines: string[];
@@ -143,8 +164,62 @@ interface BodyProps {
   newTokens: Tokens;
 }
 
+/**
+ * Rows rendered per side before the rest is folded behind a click.
+ *
+ * Deliberately high: a tool input is already capped at MAX_TOOL_INPUT_CHARS
+ * (~640 lines at the ceiling) and a real Edit is tens of lines, so this only
+ * ever bites a pathological diff. It is a DOM-size guard, not the per-frame
+ * fix — that is React.memo on this component.
+ */
+const DIFF_PREVIEW_MAX = 300;
+
 /** Original layout: all removed lines, then all added lines. */
-const StackedBody: React.FC<BodyProps> = ({ oldLines, newLines, oldTokens, newTokens }) => (
+const StackedBody: React.FC<BodyProps> = ({ oldLines, newLines, oldTokens, newTokens }) => {
+  const overflowing = oldLines.length > DIFF_PREVIEW_MAX || newLines.length > DIFF_PREVIEW_MAX;
+  // Folded lines leave the DOM, so find-in-page cannot match them — which is
+  // why this expands on click and does not summarize-and-discard the way
+  // ReadView does. A diff is the thing the user opened the card to read.
+  const [showAll, setShowAll] = useState(false);
+  const cap = showAll ? Infinity : DIFF_PREVIEW_MAX;
+  const oldShown = overflowing && !showAll ? oldLines.slice(0, cap) : oldLines;
+  const newShown = overflowing && !showAll ? newLines.slice(0, cap) : newLines;
+  const hidden = oldLines.length - oldShown.length + (newLines.length - newShown.length);
+
+  return (
+    <>
+      <StackedRows
+        oldLines={oldShown}
+        newLines={newShown}
+        oldTokens={oldTokens}
+        newTokens={newTokens}
+      />
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowAll(true)}
+          style={{
+            display: 'block',
+            width: '100%',
+            padding: '4px 12px',
+            background: 'none',
+            border: 'none',
+            borderTop: `1px solid ${colors.borderSubtle}`,
+            color: colors.muted,
+            font: 'inherit',
+            fontSize: '0.7rem',
+            textAlign: 'left',
+            cursor: 'pointer',
+          }}
+        >
+          Show {hidden} more line{hidden === 1 ? '' : 's'}
+        </button>
+      )}
+    </>
+  );
+};
+
+const StackedRows: React.FC<BodyProps> = ({ oldLines, newLines, oldTokens, newTokens }) => (
   <>
     {oldLines.map((line, i) => (
       <div
@@ -294,17 +369,31 @@ function classifyPatchLine(line: string): PatchLineKind {
  * DiffView's stacked layout. No per-side line numbers — a patch's hunks don't
  * map to one contiguous range.
  */
-export const PatchDiffView: React.FC<{
+const PatchDiffViewInner: React.FC<{
   patch: string;
   filePath?: string;
   /** Session cwd — resolves relative paths for the header FileLink. */
   cwd?: string;
 }> = ({ patch, filePath, cwd }) => {
-  const fileName = filePath?.split(/[/\\]/).pop() ?? '';
-  const lines = patch.split('\n');
-  if (lines.length && lines[lines.length - 1] === '') lines.pop();
-  const addedCount = lines.filter((l) => classifyPatchLine(l) === 'add').length;
-  const removedCount = lines.filter((l) => classifyPatchLine(l) === 'del').length;
+  // Split and classify once per patch, not once per render — the two counts
+  // were two more full scans of the patch on every snapshot flush.
+  const { fileName, lines, addedCount, removedCount } = useMemo(() => {
+    const split = patch.split('\n');
+    if (split.length && split[split.length - 1] === '') split.pop();
+    let added = 0;
+    let removed = 0;
+    for (const l of split) {
+      const kind = classifyPatchLine(l);
+      if (kind === 'add') added++;
+      else if (kind === 'del') removed++;
+    }
+    return {
+      fileName: filePath?.split(/[/\\]/).pop() ?? '',
+      lines: split,
+      addedCount: added,
+      removedCount: removed,
+    };
+  }, [patch, filePath]);
 
   return (
     <div
@@ -376,6 +465,10 @@ export const PatchDiffView: React.FC<{
     </div>
   );
 };
+
+/** Memoized for the same reason as DiffView, and safe for the same reason:
+ *  `patch`, `filePath` and `cwd` are all primitives. */
+export const PatchDiffView = React.memo(PatchDiffViewInner);
 
 /** Cap how many read lines we render inline; the rest is summarized. */
 const READ_PREVIEW_MAX = 200;

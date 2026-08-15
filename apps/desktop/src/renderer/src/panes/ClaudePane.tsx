@@ -27,6 +27,7 @@ import { bracketedPasteSubmit } from '../lib/bracketedPaste';
 import { quoteFontFamily, isTermVisible, refitAndRepaint } from '../lib/terminalUtils';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { clearMdCache, MarkdownFileCwdProvider } from '../components/markdown';
+import { clearTokenCache } from '../lib/diff/highlight';
 
 // ── Sub-components ──
 import { InlineWorkLog } from '../components/claude/InlineWorkLog';
@@ -480,10 +481,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     }
   }, [sessionId, paneId, onPtyReady]);
 
-  // Clear the module-level markdown cache on session switch so stale ReactNode
-  // trees from a previous session don't occupy memory or produce key collisions.
+  // Clear the module-level markdown and tokenizer caches on session switch so
+  // stale ReactNode trees and token arrays from a previous session don't occupy
+  // memory or produce key collisions.
   useEffect(() => {
     clearMdCache();
+    clearTokenCache();
   }, [sessionId]);
 
   // Library: receive a prompt/skill inserted from the library. Targeted by
