@@ -70,35 +70,101 @@ export function claudeProjectDirName(cwd: string): string | null {
   return name;
 }
 
-export function listClaudeSessionsForDir(cwd: string): ClaudeSessionSummary[] {
+/** Rows returned to the picker. */
+const LIST_LIMIT = 20;
+/** Transcripts whose headers we read, newest-by-mtime first. Provably enough:
+ *  every row's sort key IS its mtime (see the dead `entry.timestamp` branch
+ *  below, kept for twin parity), so the top LIST_LIMIT rows are always inside
+ *  the newest SCAN_CAP files — the cap changes cost, never results. */
+const SCAN_CAP = 100;
+/** Parallel header reads: enough to hide cold-disk latency, few enough not to
+ *  monopolize libuv's thread pool (default 4 threads) or the fd table. */
+const READ_CONCURRENCY = 8;
+
+/** Per-file header cache, validated by (mtimeMs, size). A transcript's first
+ *  8KB never changes once written unless the file itself changes, so a warm
+ *  open of a big project re-reads nothing. Bounded so a long-lived process
+ *  browsing many projects can't grow it without limit. */
+const headerCache = new Map<string, { mtimeMs: number; size: number; row: ClaudeSessionSummary }>();
+const HEADER_CACHE_MAX = 2000;
+
+/** Run tasks with at most `limit` in flight. Tiny local pLimit — not worth a
+ *  dependency for one call site. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+/**
+ * ASYNC on purpose — this runs in the Electron MAIN process, and the sync
+ * version froze the whole app: the first open of a project with hundreds of
+ * transcripts did hundreds of COLD `openSync`/`readSync` calls on the main
+ * thread (page-cache-warm re-runs are why measuring it after a repro showed
+ * nothing — the freeze only reproduces cold). All IO now rides fs.promises
+ * with bounded concurrency, and per-file results are cached by (mtime, size).
+ */
+export async function listClaudeSessionsForDir(cwd: string): Promise<ClaudeSessionSummary[]> {
   const claudeDir = path.join(os.homedir(), '.claude', 'projects');
   const encoded = claudeProjectDirName(cwd);
   if (encoded === null) return [];
   const projectDir = path.join(claudeDir, encoded);
 
-  if (!fs.existsSync(projectDir)) return [];
+  let files: string[];
+  try {
+    files = (await fs.promises.readdir(projectDir)).filter((f) => f.endsWith('.jsonl'));
+  } catch {
+    return []; // missing project dir = no sessions (same as the old existsSync gate)
+  }
 
-  const files = fs.readdirSync(projectDir).filter((f) => f.endsWith('.jsonl'));
-  const sessions: ClaudeSessionSummary[] = [];
-
-  for (const file of files) {
-    // TrimSuffix, not replace(): replace removes the FIRST occurrence anywhere,
-    // so 'a.jsonl.b.jsonl' became 'a.b.jsonl' here and 'a.jsonl.b' in the Go twin
-    // (discovery.go strings.TrimSuffix) — two different resume ids for one
-    // transcript. Worse, '.jsonlagent-x.jsonl' became 'agent-x.jsonl', which then
-    // matched the subagent filter below and dropped a row the brain listed.
-    const sessionId = trimSuffix(file, '.jsonl');
+  // TrimSuffix, not replace(): replace removes the FIRST occurrence anywhere,
+  // so 'a.jsonl.b.jsonl' became 'a.b.jsonl' here and 'a.jsonl.b' in the Go twin
+  // (discovery.go strings.TrimSuffix) — two different resume ids for one
+  // transcript. Worse, '.jsonlagent-x.jsonl' became 'agent-x.jsonl', which then
+  // matched the subagent filter below and dropped a row the brain listed.
+  const candidates = files
+    .map((file) => ({ file, sessionId: trimSuffix(file, '.jsonl') }))
     // Skip subagent sessions
-    if (sessionId.startsWith('agent-')) continue;
+    .filter((c) => !c.sessionId.startsWith('agent-'));
 
-    const filePath = path.join(projectDir, file);
+  // Stat everything (cheap even in the hundreds), then read headers from only
+  // the newest SCAN_CAP files.
+  const stats = await mapLimit(candidates, 16, async (c) => {
     try {
-      const stat = fs.statSync(filePath);
+      return { ...c, stat: await fs.promises.stat(path.join(projectDir, c.file)) };
+    } catch {
+      return null; // unreadable — skip, as before
+    }
+  });
+  const readable = stats
+    .filter((s): s is NonNullable<(typeof stats)[number]> => s !== null)
+    .sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs)
+    .slice(0, SCAN_CAP);
+
+  const rows = await mapLimit(readable, READ_CONCURRENCY, async ({ file, sessionId, stat }) => {
+    const filePath = path.join(projectDir, file);
+    const cached = headerCache.get(filePath);
+    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+      return cached.row;
+    }
+    try {
       // Read first ~8KB to extract metadata without loading the whole file
-      const fd = fs.openSync(filePath, 'r');
+      const fh = await fs.promises.open(filePath, 'r');
       const buf = Buffer.alloc(8192);
-      const bytesRead = fs.readSync(fd, buf, 0, 8192, 0);
-      fs.closeSync(fd);
+      let bytesRead = 0;
+      try {
+        bytesRead = (await fh.read(buf, 0, 8192, 0)).bytesRead;
+      } finally {
+        await fh.close();
+      }
 
       const chunk = buf.toString('utf-8', 0, bytesRead);
       const lines = chunk.split('\n').filter((l) => l.trim());
@@ -140,15 +206,28 @@ export function listClaudeSessionsForDir(cwd: string): ClaudeSessionSummary[] {
 
       if (!summary) summary = sessionId;
 
-      sessions.push({ sessionId, timestamp, summary });
+      const row: ClaudeSessionSummary = { sessionId, timestamp, summary };
+      if (headerCache.size >= HEADER_CACHE_MAX) {
+        // Bounded, coarse eviction: drop the oldest-inserted half. Insertion
+        // order approximates access recency well enough for a header cache.
+        let toDrop = HEADER_CACHE_MAX / 2;
+        for (const key of headerCache.keys()) {
+          if (toDrop-- <= 0) break;
+          headerCache.delete(key);
+        }
+      }
+      headerCache.set(filePath, { mtimeMs: stat.mtimeMs, size: stat.size, row });
+      return row;
     } catch {
-      // Skip unreadable files
+      return null; // Skip unreadable files
     }
-  }
+  });
+
+  const sessions = rows.filter((r): r is ClaudeSessionSummary => r !== null);
 
   // Sort by timestamp descending (most recent first)
   sessions.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
   // Return top 20
-  return sessions.slice(0, 20);
+  return sessions.slice(0, LIST_LIMIT);
 }

@@ -45,7 +45,7 @@ describe('listClaudeSessionsForDir — project folder encoding', () => {
     seedSession(home, '-home-user-myproject', 'sess-1');
 
     const { listClaudeSessionsForDir } = await import('./claudeSessionList');
-    const ids = listClaudeSessionsForDir('/home/user/myproject').map((s) => s.sessionId);
+    const ids = (await listClaudeSessionsForDir('/home/user/myproject')).map((s) => s.sessionId);
     expect(ids).toEqual(['sess-1']);
   });
 
@@ -56,7 +56,7 @@ describe('listClaudeSessionsForDir — project folder encoding', () => {
     seedSession(home, 'C--Users-me-proj', 'sess-win');
 
     const { listClaudeSessionsForDir } = await import('./claudeSessionList');
-    const ids = listClaudeSessionsForDir('C:\\Users\\me\\proj').map((s) => s.sessionId);
+    const ids = (await listClaudeSessionsForDir('C:\\Users\\me\\proj')).map((s) => s.sessionId);
     expect(ids).toEqual(['sess-win']);
   });
 });
@@ -89,7 +89,7 @@ const projectDirNameCases: ProjectDirNameCase[] = JSON.parse(
 ).projectDirNames.cases;
 
 describe('claudeProjectDirName — contracts/path-containment-cases.json projectDirNames', () => {
-  it('the corpus block is not empty', () => {
+  it('the corpus block is not empty', async () => {
     // A block that decoded to nothing would turn every case below into zero
     // assertions and still report green.
     expect(projectDirNameCases.length).toBeGreaterThan(0);
@@ -128,10 +128,10 @@ describe('claudeProjectDirName — contracts/path-containment-cases.json project
 
     const { listClaudeSessionsForDir } = await import('./claudeSessionList');
     for (const cwd of ['..', '.', '/proj/..']) {
-      expect(listClaudeSessionsForDir(cwd).map((s) => s.sessionId)).toEqual([]);
+      expect((await listClaudeSessionsForDir(cwd)).map((s) => s.sessionId)).toEqual([]);
     }
     // The floor: a legitimate lookup still resolves.
-    expect(listClaudeSessionsForDir('/proj').map((s) => s.sessionId)).toEqual(['sess-ok']);
+    expect((await listClaudeSessionsForDir('/proj')).map((s) => s.sessionId)).toEqual(['sess-ok']);
   });
 });
 
@@ -165,5 +165,40 @@ describe('summary clipping counts code points, not UTF-16 units', () => {
     const { clip } = await import('./claudeSessionList');
     expect(clip('hi', 100)).toBe('hi');
     expect(clip('a'.repeat(99) + '\u00e9', 100)).toBe('a'.repeat(99) + '\u00e9');
+  });
+});
+
+describe('listClaudeSessionsForDir — header cache', () => {
+  it('refreshes a cached summary when the transcript changes (mtime/size key)', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-home-'));
+    useHome(home);
+    const dir = path.join(home, '.claude', 'projects', '-proj');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'sess-cache.jsonl');
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ type: 'user', message: { role: 'user', content: 'first summary' } }) + '\n',
+    );
+
+    const { listClaudeSessionsForDir } = await import('./claudeSessionList');
+    const first = await listClaudeSessionsForDir('/proj');
+    expect(first[0]?.summary).toBe('first summary');
+
+    // Rewrite with different content AND a bumped mtime — the (mtimeMs, size)
+    // cache key must miss and the new summary must surface. utimesSync forces
+    // the mtime forward so a same-second rewrite can't false-hit the cache.
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ type: 'user', message: { role: 'user', content: 'second summary!' } }) + '\n',
+    );
+    const later = Date.now() / 1000 + 5;
+    fs.utimesSync(file, later, later);
+
+    const second = await listClaudeSessionsForDir('/proj');
+    expect(second[0]?.summary).toBe('second summary!');
+
+    // And an unchanged file keeps answering identically (cache hit path).
+    const third = await listClaudeSessionsForDir('/proj');
+    expect(third).toEqual(second);
   });
 });

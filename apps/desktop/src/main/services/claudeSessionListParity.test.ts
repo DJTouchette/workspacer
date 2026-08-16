@@ -39,20 +39,19 @@ afterEach(() => {
 });
 
 describe('claude.sessionsForDir id derivation', () => {
-  it('trims the .jsonl SUFFIX, not the first occurrence', () => {
+  it('trims the .jsonl SUFFIX, not the first occurrence', async () => {
     for (const name of ['plain.jsonl', 'a.jsonl.b.jsonl', '.jsonlagent-x.jsonl']) {
       fs.writeFileSync(path.join(projectDir, name), '{"type":"user"}\n');
     }
-    const ids = listClaudeSessionsForDir(CWD)
-      .map((s) => s.sessionId)
+    const ids = (await listClaudeSessionsForDir(CWD)).map((s) => s.sessionId)
       .sort();
     expect(ids).toEqual(['.jsonlagent-x', 'a.jsonl.b', 'plain']);
   });
 
-  it('still drops a real subagent transcript', () => {
+  it('still drops a real subagent transcript', async () => {
     for (const name of ['plain.jsonl', 'agent-sub.jsonl']) {
       fs.writeFileSync(path.join(projectDir, name), '{"type":"user"}\n');
     }
-    expect(listClaudeSessionsForDir(CWD).map((s) => s.sessionId)).toEqual(['plain']);
+    expect((await listClaudeSessionsForDir(CWD)).map((s) => s.sessionId)).toEqual(['plain']);
   });
 });
