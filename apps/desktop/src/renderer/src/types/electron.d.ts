@@ -134,6 +134,8 @@ export interface ElectronAPI {
     toolScope?: 'view' | 'triage' | 'operator';
     /** Plugin ids whose contributed facade tools the agent may use (needs toolScope). */
     pluginTools?: string[];
+    /** Federation: spawn on this peer hub instead of locally. */
+    targetHub?: string;
   }) => Promise<string>;
   /** One-shot conversation title from an agent's first exchange; null = keep
    *  the current name (feature off, or nothing worth titling). */
@@ -285,12 +287,18 @@ export interface ElectronAPI {
       id: string;
       type: string;
       source: string;
+      /** Federation stamp: the peer hub the event was republished from; absent = local. */
+      hub?: string;
       time: string;
       data?: unknown;
     }) => void,
   ) => () => void;
   onHubStatus: (callback: (status: { connected: boolean }) => void) => () => void;
   getHubStatus: () => Promise<{ connected: boolean }>;
+  /** Federation: peer hubs main has observed via hub.peer.* lifecycle events.
+   *  Live transitions arrive on onHubEvent (hub.peer.connected / .disconnected)
+   *  — re-invoke this on those rather than expecting a dedicated push channel. */
+  federationPeers: () => Promise<Array<{ name: string; connected: boolean; lastSeen?: number }>>;
 
   // Shared layout document (hub-owned; tmux-style mirror). Reads/writes the live
   // workspace layout so the desktop and the web remote mirror each other.

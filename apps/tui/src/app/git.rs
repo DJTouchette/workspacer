@@ -63,6 +63,13 @@ impl App {
     }
 
     pub(in crate::app) fn open_review(&mut self) {
+        // Git runs against the LOCAL filesystem; a remote agent's cwd names the
+        // peer's. Reviewing "its" work tree here would review the wrong repo —
+        // or worse, a same-named local one.
+        if self.target_agent().is_some_and(|a| a.is_remote()) {
+            self.set_toast("remote session — git review is local-only");
+            return;
+        }
         let Some(cwd) = self
             .target_agent()
             .and_then(|a| a.cwd.clone())

@@ -84,7 +84,11 @@ var viewMethods = []string{
 	"layout.get",            // shared workspace layout document (read side)
 	"config.get",            // /m reads UI config at boot (read-only twin of config.save)
 	"app.getCwd",            // getCwd-style introspection (MCP, webBackend)
-	"push.key",              // VAPID public key — needed before subscribing, discloses nothing
+	"federation.peers",      // peer-hub names + connected bit — the /m PWA and web
+	//                          renderer seed the federated fleet from it, and the
+	//                          names are already stamped on every agent.* event
+	//                          this same tier receives
+	"push.key", // VAPID public key — needed before subscribing, discloses nothing
 }
 
 // triageMethods is what "acting on attention" adds on top of view: resolving

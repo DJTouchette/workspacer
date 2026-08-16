@@ -173,6 +173,23 @@ pub struct Agent {
     /// Absent when the daemon hasn't computed it yet (no assistant turns).
     #[serde(default)]
     pub usage: Option<Usage>,
+    /// Peer hub this session lives on (federation). `None` — the overwhelmingly
+    /// common case, and everything claudemon returns — means local. Remote rows
+    /// are built from hub-stamped `agent.snapshot` events / `sessions.snapshots`
+    /// seeds (see `crate::federation`), never from claudemon, so this field
+    /// deserializes to `None` on every claudemon payload.
+    #[serde(default)]
+    pub hub: Option<String>,
+    /// True while this remote session's hub is unreachable: the row is kept as
+    /// a tombstone ("hub offline") with actions disabled, rather than silently
+    /// vanishing — which would read as "my agent died". Always false for local.
+    #[serde(default)]
+    pub hub_offline: bool,
+    /// The session's own display label, when its home hub assigned one (the
+    /// desktop snapshot's `label`). Used for remote rows, where the cwd names a
+    /// filesystem on another machine.
+    #[serde(default)]
+    pub label: Option<String>,
 }
 
 /// Whatever Claude is waiting on, tagged by `kind` (matches claudemon's enum).
@@ -253,6 +270,18 @@ impl Agent {
             self.mode,
             AgentMode::Input | AgentMode::Approval | AgentMode::Question
         )
+    }
+
+    /// True when this session belongs to a peer hub (federation) rather than
+    /// the local claudemon.
+    pub fn is_remote(&self) -> bool {
+        self.hub.is_some()
+    }
+
+    /// `is_waiting`, minus tombstones: a session whose hub is offline can't be
+    /// acted on, so it must not count toward "needs you" or be a `m`-jump stop.
+    pub fn needs_you(&self) -> bool {
+        self.is_waiting() && !self.hub_offline
     }
 
     /// True when the agent is actively producing a turn.

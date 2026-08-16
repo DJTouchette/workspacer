@@ -107,6 +107,11 @@ pub struct Config {
     pub theme: Theme,
     pub keymap: Keymap,
     pub transport: Transport,
+    /// Hub bus URL override (`hubUrl`). CLI `--bus`/`WKS_HUB_BUS` wins over it.
+    pub hub_url: Option<String>,
+    /// Hub bus auth token (`hubToken`). CLI `--bus-token`/`HUB_TOKEN` wins;
+    /// falls back to the desktop's persisted `remote-token` when absent.
+    pub hub_token: Option<String>,
 }
 
 /// The on-disk shape. All fields optional and defaulted so partial files (and
@@ -132,6 +137,12 @@ struct RawConfig {
     /// `"pty"`. Existing sessions always keep their own.
     #[serde(default)]
     transport: Option<String>,
+    /// Hub bus URL, e.g. `"ws://work-box:7895/bus"`. The CLI/env override wins.
+    #[serde(default, rename = "hubUrl")]
+    hub_url: Option<String>,
+    /// Hub bus auth token (appended as `?token=`). The CLI/env override wins.
+    #[serde(default, rename = "hubToken")]
+    hub_token: Option<String>,
 }
 
 impl RawConfig {
@@ -189,6 +200,8 @@ impl RawConfig {
             theme,
             keymap,
             transport,
+            hub_url: self.hub_url.filter(|s| !s.trim().is_empty()),
+            hub_token: self.hub_token.filter(|s| !s.trim().is_empty()),
         }
     }
 }

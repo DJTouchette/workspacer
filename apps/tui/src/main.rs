@@ -12,6 +12,7 @@ mod bus;
 mod claudemon;
 mod config;
 mod daemons;
+mod federation;
 mod keys;
 mod library;
 mod names;
@@ -67,8 +68,9 @@ struct Cli {
     /// Hub bus URL. By default the TUI is a thin client of the hub's brain
     /// provider — driving, the agent list, and terminals all flow over the bus
     /// (it auto-spawns the hub + brain for a loopback URL). This overrides the
-    /// address; pass `--direct` to bypass the bus entirely.
-    #[arg(long, env = "WKS_HUB_BUS", default_value = "ws://127.0.0.1:7895/bus")]
+    /// address (as does `hubUrl` in tui.json); pass `--direct` to bypass the
+    /// bus entirely.
+    #[arg(long, env = "WKS_HUB_BUS", default_value = DEFAULT_BUS_URL)]
     bus: String,
 
     /// Bypass the hub bus and talk to claudemon directly (the standalone path).
@@ -80,19 +82,39 @@ struct Cli {
     bus_token: Option<String>,
 }
 
+/// The built-in hub bus address. Also the sentinel for "the user didn't pass
+/// `--bus`": only then may tui.json's `hubUrl` take over.
+const DEFAULT_BUS_URL: &str = "ws://127.0.0.1:7895/bus";
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    // Config is loaded before the daemons come up because it can name the hub
+    // (`hubUrl` / `hubToken` in tui.json).
+    let config = config::load();
 
     // Bus by default; `--direct` opts back into talking to claudemon directly.
-    let mut bus_url = (!cli.direct).then(|| cli.bus.clone());
+    // Address precedence: --bus/WKS_HUB_BUS, then tui.json `hubUrl`, then the
+    // loopback default.
+    let mut bus_url = (!cli.direct).then(|| {
+        if cli.bus == DEFAULT_BUS_URL {
+            config.hub_url.clone().unwrap_or_else(|| cli.bus.clone())
+        } else {
+            cli.bus.clone()
+        }
+    });
 
     // When the desktop app is running it owns the hub and guards `/bus` with the
     // token it persists at `~/.config/workspacer/remote-token`. An explicit
-    // `--bus-token`/`HUB_TOKEN` wins; otherwise discover that token so the TUI
-    // can join a desktop-owned bus instead of being rejected with 401 and
-    // hanging in reconnect. Harmless against a token-less hub (it's ignored).
-    let bus_token = cli.bus_token.clone().or_else(config::hub_token);
+    // `--bus-token`/`HUB_TOKEN` wins, then tui.json `hubToken`; otherwise
+    // discover that token so the TUI can join a desktop-owned bus instead of
+    // being rejected with 401 and hanging in reconnect. Harmless against a
+    // token-less hub (it's ignored).
+    let bus_token = cli
+        .bus_token
+        .clone()
+        .or_else(|| config.hub_token.clone())
+        .or_else(config::hub_token);
 
     // Bring up claudemon (and, in bus mode, the hub + brain) if not already
     // running, before we take over the screen. The guard stops what we started.
@@ -114,7 +136,6 @@ async fn main() -> Result<()> {
     let claudemon = claudemon::Claudemon::new(cli.claudemon_url.clone());
     let profiles = profiles::load();
     let library = library::load();
-    let config = config::load();
 
     // In bus mode the TUI is a thin bus client: driving routes through the brain
     // and terminals stream over pty.bytes. The agent *list* stays claudemon-owned
@@ -128,6 +149,9 @@ async fn main() -> Result<()> {
                 "agent.snapshot".into(),
                 "agent.statusline".into(),
                 "pty.bytes.*".into(),
+                // Federation: peer hubs' lifecycle. Their agent.* events arrive
+                // on the subscriptions above, hub-stamped on the envelope.
+                "hub.peer.*".into(),
             ]);
             (Some(client), Some(events))
         }

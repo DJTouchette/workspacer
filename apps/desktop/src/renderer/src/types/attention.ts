@@ -29,6 +29,9 @@ export interface AttentionItem {
   agentName: string;
   sessionId: string;
   cwd?: string;
+  /** Federation: the peer hub the agent lives on (absent = local). Labels the
+   *  card and withholds local-only actions (respawn). */
+  hub?: string;
   kind: AttentionKind;
   /** Higher = more urgent. From {@link ../lib/attentionRouter.KIND_PRIORITY}. */
   priority: number;

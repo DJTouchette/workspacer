@@ -267,6 +267,14 @@ export interface ClaudeSessionSnapshot {
   /** Coding-agent backend ('claude' | 'codex' | 'opencode' | 'pi'). Set at spawn
    *  time; lets an adopted card render the right provider label/logo. */
   provider?: string;
+  /** Federation: the peer hub this session lives on. Absent = local session.
+   *  Remote sessions arrive through the same snapshot/update flow; the
+   *  renderer just tags their cards and withholds local cwd-bound surfaces. */
+  hub?: string;
+  /** Federation tombstone: the peer hub's link is down. The card stays (last
+   *  known snapshot) but shows "hub offline — last seen …" instead of a live
+   *  ambient state. Only meaningful alongside `hub`. */
+  hubOffline?: boolean;
   /** Claude sessions only: 'stream' when the session runs on the headless
    *  stream-json managed adapter — no PTY, so the pane is GUI-only and answers
    *  go through POST /answer instead of keystrokes. Absent/'pty' = classic

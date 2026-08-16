@@ -34,15 +34,32 @@ const TOPICS = ['*'];
 
 type CapabilityHandler = (params: unknown) => Promise<unknown> | unknown;
 
-interface HubEvent {
+export interface HubEvent {
   id: string;
   type: string;
   source: string;
+  /** Federation: the peer hub this event was republished from (stamped by the
+   *  local hub's federation link). Absent/empty = a local event. */
+  hub?: string;
   time: string;
   data?: unknown;
 }
 
 const handlers = new Map<string, CapabilityHandler>();
+
+// Main-process event subscribers (federationBridge etc). The renderer gets its
+// copy over hub:event; these listeners are how MAIN reacts to bus events.
+const eventListeners = new Set<(ev: HubEvent) => void>();
+
+/** Subscribe main-process code to bus events (every non-pty.* event, same gate
+ *  as the renderer forward). Returns an unsubscribe function. */
+export function subscribeHubEvents(listener: (ev: HubEvent) => void): () => void {
+  eventListeners.add(listener);
+  return () => {
+    eventListeners.delete(listener);
+  };
+}
+
 let ws: WebSocket | null = null;
 let mainWindow: BrowserWindow | null = null;
 let stopped = false;
@@ -185,6 +202,16 @@ function connect(): void {
             const d = frame.event.data as
               { id?: string; values?: Record<string, unknown> } | undefined;
             if (d?.id) forward(IPC.HUB_PLUGIN_SETTINGS_CHANGED, d.id, d.values ?? {});
+          }
+          // Main's own subscribers (federationBridge ingests hub-stamped
+          // agent.* events and hub.peer.* lifecycle here). A listener throwing
+          // must not kill the socket's message handler.
+          for (const listener of eventListeners) {
+            try {
+              listener(frame.event);
+            } catch (err) {
+              console.error('[hub-client] event listener failed:', err);
+            }
           }
         }
         break;

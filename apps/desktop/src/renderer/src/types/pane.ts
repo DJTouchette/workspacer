@@ -144,6 +144,11 @@ export interface AgentWorkspace {
   /** Coding-agent backend this workspace runs. undefined ⇒ 'claude' (back-compat
    *  for agents spawned before multi-provider support). */
   provider?: AgentProvider;
+  /** Federation: the peer hub this agent's session lives on (from its
+   *  snapshot at adoption). Absent = local. Remote agents keep chat/browser/
+   *  inspector but lose local cwd-bound panes and local respawn — see
+   *  lib/federation.ts. */
+  hub?: string;
   /** Claude only: which transport the agent was spawned on ('pty' classic TUI,
    *  'stream' headless stream-json). Re-passed on respawn. undefined = the
    *  config default at spawn time. */

@@ -43,7 +43,11 @@ pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
         Line::from(Span::styled("overview", Style::default().fg(t.dim))),
     ]));
     items.extend(app.agents.iter().map(|a| {
-        let marker = if a.is_waiting() {
+        let marker = if a.hub_offline {
+            // Tombstone: the session's hub is unreachable — visibly parked,
+            // not waiting and not busy.
+            Span::styled("○ ", Style::default().fg(t.dim))
+        } else if a.is_waiting() {
             Span::styled("● ", Style::default().fg(t.warn))
         } else if a.is_busy() {
             Span::styled("● ", Style::default().fg(t.accent))
@@ -58,6 +62,11 @@ pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
                 Style::default().add_modifier(Modifier::BOLD),
             ),
         ];
+        // Remote sessions carry their hub, so a fleet spanning machines stays
+        // legible: `[work]` in accent while live, dimmed when tombstoned.
+        if let Some(h) = &a.hub {
+            name_spans.push(hub_tag(t, h, a.hub_offline));
+        }
         // Harpoon pin badge: the 1-based slot, so `<leader>N` is discoverable.
         if let Some(slot) = app.harpoon.iter().position(|s| s == &a.session_id) {
             name_spans.push(Span::styled(
@@ -102,8 +111,22 @@ pub(super) fn project_mark(app: &App, a: &Agent) -> Span<'static> {
     }
 }
 
+/// The `[hub]` tag a remote session's row carries after its name.
+pub(super) fn hub_tag(t: &Theme, hub: &str, offline: bool) -> Span<'static> {
+    Span::styled(
+        format!(" [{hub}]"),
+        Style::default().fg(if offline { t.dim } else { t.accent }),
+    )
+}
+
 pub(super) fn meta_line(a: &Agent, stats: &DerivedStats) -> String {
-    let mut s = badge(a.state());
+    // A tombstone's last-known state is stale by definition — say what the
+    // row actually is instead.
+    let mut s = if a.hub_offline {
+        "hub offline".to_string()
+    } else {
+        badge(a.state())
+    };
     if let Some(m) = &stats.model {
         s.push_str(&format!("  {}", short_model(m)));
     }

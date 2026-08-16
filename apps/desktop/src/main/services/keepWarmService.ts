@@ -158,7 +158,9 @@ class KeepWarmService {
   private codexWindowFromSessions(nowMs: number): AccountUsageWire | null {
     let best: number | null = null;
     for (const snap of claudeSessionStore.getAllSnapshots()) {
-      if (snap.provider !== 'codex') continue;
+      // Federation: a remote session's rate-limit window belongs to the PEER
+      // machine's account — it must not drive the local keep-warm pinger.
+      if (snap.provider !== 'codex' || snap.hub) continue;
       const resets = snap.statusLine?.fiveHourResetsAt;
       if (resets != null && resets * 1000 > nowMs && (best == null || resets > best)) {
         best = resets;

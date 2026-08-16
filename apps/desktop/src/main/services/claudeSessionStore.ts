@@ -336,10 +336,33 @@ export interface ClaudeSessionState {
   compacting?: boolean;
   lastCompactAt?: number;
   compactionCount?: number;
+  /** Federation: the peer hub this session lives on; absent = local. Remote
+   *  sessions are fed by hub-stamped agent.snapshot events (federationBridge),
+   *  never by local hooks/deltas, and skip every local side effect (history,
+   *  eviction timers, facade tokens, notifier, supervisor nudges). */
+  hub?: string;
+  /** Federation: true while that peer's link is down (tombstone state). */
+  hubOffline?: boolean;
 }
 
 // Serialisable snapshot sent over IPC
 export type ClaudeSessionSnapshot = Omit<ClaudeSessionState, never>;
+
+/**
+ * The federated remote-session wire shape: a peer desktop's compacted
+ * ClaudeSessionSnapshot (compactClaudeSnapshotForBackground output), arriving
+ * either as a hub-stamped `agent.snapshot` event or a `hub:<peer>/
+ * sessions.snapshots` result row. Same field names as our own snapshot —
+ * both ends run the same publisher — plus the compaction bookkeeping fields
+ * and the `sparse` marker on layout-ghost stopped rows.
+ */
+export type RemoteSnapshotWire = Partial<ClaudeSessionSnapshot> & {
+  sessionId?: string;
+  /** Peer-synthesized stopped row from its layout document — not a live session. */
+  sparse?: boolean;
+  conversationOffset?: number;
+  conversationUserOffset?: number;
+};
 
 // ── Store ──
 
@@ -917,6 +940,135 @@ class ClaudeSessionStore {
     }
   }
 
+  // ── Federation: remote (peer-hub) sessions ──
+  //
+  // Fed by federationBridge from hub-stamped agent.* events and peer seeding.
+  // Remote sessions live in the same map so every read path (renderer getAll,
+  // agents.list, sessions.snapshots) sees one fleet, but they are driven ONLY
+  // by these methods: no hook events, deltas, statusLines or watcher updates
+  // ever carry a remote id, so none of the local side-effect machinery
+  // (history/analytics writes, eviction/Stop timers, facade tokens, notifier,
+  // supervisor nudges) can touch them. snapshotGrantsFsRoot refuses hub-set
+  // rows, so a remote cwd never becomes a local fs root.
+
+  /** Upsert one remote session from the peer's snapshot wire shape. */
+  upsertRemoteSession(hub: string, snap: RemoteSnapshotWire): void {
+    if (!hub) return;
+    const sessionId = snap?.sessionId;
+    if (!sessionId || typeof sessionId !== 'string') return;
+    // Layout-ghost stopped rows (`sparse`) aren't live sessions — skip them.
+    if (snap.sparse) return;
+    const existing = this.sessions.get(sessionId);
+    if (existing && (existing.hub ?? '') !== hub) {
+      // A peer must never overwrite a LOCAL session (or another peer's) that
+      // happens to share the id — refusing beats silently rebinding actions
+      // (approve/answer routing keys off the stored hub).
+      console.warn(
+        `[SessionStore] refusing remote upsert from hub "${hub}" over ` +
+          `${existing.hub ? `hub "${existing.hub}"` : 'a local'} session ${sessionId}`,
+      );
+      return;
+    }
+    const session: ClaudeSessionState = {
+      ...(existing ?? {}),
+      ...snap,
+      sessionId,
+      cwd: snap.cwd ?? existing?.cwd ?? '',
+      ptyId: snap.ptyId ?? sessionId,
+      // A remote transcript path names a file on the PEER machine; blank it so
+      // no local consumer (watchers, file links) treats it as openable here.
+      transcriptPath: '',
+      status: snap.status ?? existing?.status ?? 'active',
+      conversation: snap.conversation ?? existing?.conversation ?? [],
+      activeToolCalls: snap.activeToolCalls ?? [],
+      completedToolCalls: snap.completedToolCalls ?? [],
+      fileChanges: snap.fileChanges ?? [],
+      pendingApproval: snap.pendingApproval ?? null,
+      pendingQuestions: snap.pendingQuestions ?? null,
+      subagents: snap.subagents ?? [],
+      workflows: snap.workflows ?? [],
+      ambientState: snap.ambientState ?? existing?.ambientState ?? 'idle',
+      startedAt: snap.startedAt ?? existing?.startedAt ?? Date.now(),
+      lastActivity: snap.lastActivity ?? Date.now(),
+      totalToolCalls: snap.totalToolCalls ?? 0,
+      peakContext: snap.peakContext ?? 0,
+      usage: snap.usage ?? null,
+      hub,
+      hubOffline: false,
+    };
+    this.sessions.set(sessionId, session);
+    this.pushUpdate(session);
+  }
+
+  /** Peer link went down: tombstone its sessions (keep them, flag them). */
+  markHubPeerOffline(hub: string): void {
+    if (!hub) return;
+    for (const s of this.sessions.values()) {
+      if (s.hub === hub && !s.hubOffline) {
+        s.hubOffline = true;
+        this.pushUpdate(s);
+      }
+    }
+  }
+
+  /**
+   * Replace a peer's remote sessions wholesale (connect / reconnect seed).
+   * Sessions the peer no longer reports get one final 'ended' push — so the
+   * renderer clears the card instead of holding a stale tombstone — and are
+   * then dropped; the rest are upserted, which also clears `hubOffline`.
+   */
+  reseedRemoteSessions(hub: string, snaps: RemoteSnapshotWire[]): void {
+    if (!hub) return;
+    const keep = new Set<string>();
+    for (const snap of snaps) {
+      if (snap?.sessionId && !snap.sparse) keep.add(snap.sessionId);
+    }
+    for (const s of Array.from(this.sessions.values())) {
+      if (s.hub !== hub || keep.has(s.sessionId)) continue;
+      s.status = 'ended';
+      s.hubOffline = false;
+      this.pushUpdate(s);
+      // Flush synchronously: flushSession reads from the map, so the delete
+      // below would otherwise swallow the coalesced final update.
+      this.flushPending(s.sessionId);
+      this.sessions.delete(s.sessionId);
+    }
+    for (const snap of snaps) this.upsertRemoteSession(hub, snap);
+  }
+
+  /**
+   * Light-touch ambient update from a hub-stamped `agent.state_changed` (the
+   * peer hub's Go claudemon bridge emits these even when no desktop runs there
+   * to publish full snapshots). Deliberately NO agentNotifier / supervisorNudge
+   * here (v1): the peer's own desktop already notifies, and remote attention
+   * still surfaces through the snapshot fields on every consumer.
+   */
+  applyRemoteStateChange(hub: string, sessionId: string, mode: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.hub !== hub) return;
+    let next: SessionAmbientState;
+    switch (mode) {
+      case 'responding':
+        next = 'streaming';
+        break;
+      case 'approval':
+        next = 'waiting_approval';
+        break;
+      case 'question':
+        next = 'waiting_input';
+        break;
+      case 'input':
+        next = 'idle';
+        break;
+      default:
+        return; // 'unknown' / 'stopped' — leave as-is; the snapshot feed owns ends
+    }
+    if (session.ambientState === next) return;
+    session.ambientState = next;
+    session.lastActivity = Date.now();
+    this.pushUpdate(session);
+  }
+
   // ── Queries ──
 
   getSnapshot(sessionId: string): ClaudeSessionSnapshot | null {
@@ -1022,7 +1174,11 @@ class ClaudeSessionStore {
   private pushUpdate(session: ClaudeSessionState): void {
     if (!COALESCE_SNAPSHOT_UPDATES) {
       // Original immediate-send path (byte-for-byte identical behaviour).
-      publishSnapshot(() => ({ ...session }));
+      // Federation: never republish a REMOTE session onto the local bus — it
+      // arrived FROM a peer (hub-stamped envelope), and publishSnapshot would
+      // re-emit it as an unlabelled local agent.snapshot (a duplicate to every
+      // bus client, and an event-loop seed if this hub is itself a peer).
+      if (!session.hub) publishSnapshot(() => ({ ...session }));
       if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
       this.mainWindow.webContents.send('claude-session:update', session.sessionId, { ...session });
       return;
@@ -1044,8 +1200,9 @@ class ClaudeSessionStore {
     if (!session) return;
     // Mirror onto the hub bus for the web build (no-op when remote sharing is
     // off). Passed as a factory so the object spread is skipped entirely when
-    // the hub won't use it.
-    publishSnapshot(() => ({ ...session }));
+    // the hub won't use it. Federation: remote sessions are never republished
+    // (see the identical guard on the non-coalesced path above).
+    if (!session.hub) publishSnapshot(() => ({ ...session }));
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
     this.mainWindow.webContents.send('claude-session:update', session.sessionId, { ...session });
   }

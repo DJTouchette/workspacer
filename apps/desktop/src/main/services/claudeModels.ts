@@ -48,6 +48,9 @@ export function listClaudeModels(): ListModelsResult {
   const persisted: string[] = Array.isArray(cfg.claude?.seenModels) ? cfg.claude.seenModels : [];
   const live = claudeSessionStore
     .getAllSnapshots()
+    // Federation: remote sessions run on another machine's account/install —
+    // their model ids don't belong in the local picker's "seen" list.
+    .filter((s) => !s.hub)
     .map((s) => s.usage?.model)
     .filter((m): m is string => !!m);
   // `<synthetic>` is Claude Code's placeholder model id on synthetic transcript

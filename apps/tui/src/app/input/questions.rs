@@ -34,7 +34,12 @@ impl App {
             return;
         }
         let sid = agent.session_id.clone();
-        let drv = self.driver();
+        if self.blocked_by_offline_hub(&sid) {
+            return;
+        }
+        // `driver_for`: a remote session's approve goes hub-qualified
+        // (`hub:<peer>/claude.approve`) over the federation link.
+        let drv = self.driver_for(&sid);
         let decision = decision.to_string();
         self.dispatch(ok, async move { drv.approve(&sid, &decision, None).await });
     }
@@ -118,14 +123,20 @@ impl App {
             flow.idx = idx + 1;
             return;
         }
-        let answers: Vec<String> = flow
+        let mut answers: Vec<String> = flow
             .answers
             .iter()
             .map(|a| a.clone().unwrap_or_default())
             .collect();
         self.question_flow = None;
+        // Remote: there is no `claude.answer` across federation — the set goes
+        // down the message path, so digit picks must first be resolved to the
+        // option text they meant (a bare "2" in a chat message answers nothing).
+        if self.hub_of(sid).is_some() {
+            answers = remote_answers(qs, answers);
+        }
         let sid = sid.to_string();
-        let drv = self.driver();
+        let drv = self.driver_for(&sid);
         self.dispatch(
             "Answered",
             async move { drv.answer_all(&sid, answers).await },
@@ -169,8 +180,12 @@ impl App {
         }
         let raw = labels.join(", ");
         if n == 1 {
+            if self.blocked_by_offline_hub(&sid) {
+                return;
+            }
             self.question_flow = None;
-            let drv = self.driver();
+            // `driver_for`: remotely, `answer_text` rides the message path.
+            let drv = self.driver_for(&sid);
             self.dispatch("Answered", async move { drv.answer_text(&sid, &raw).await });
             return;
         }
@@ -214,8 +229,26 @@ impl App {
             return;
         }
         if n == 1 {
-            // Single question keeps the immediate `{option}` fast path.
+            if self.blocked_by_offline_hub(&sid) {
+                return;
+            }
+            // Single question keeps the immediate `{option}` fast path — except
+            // remotely, where `claude.answer` isn't available across federation:
+            // the CHOSEN OPTION'S TEXT goes down the message path instead.
             self.question_flow = None;
+            if self.hub_of(&sid).is_some() {
+                let text = q
+                    .options
+                    .get(digit)
+                    .map(|o| o.label.clone())
+                    .unwrap_or_else(|| (digit + 1).to_string());
+                let drv = self.driver_for(&sid);
+                self.dispatch(
+                    "Answered",
+                    async move { drv.answer_text(&sid, &text).await },
+                );
+                return;
+            }
             let option = (digit + 1) as u64;
             let drv = self.driver();
             self.dispatch(
@@ -228,10 +261,53 @@ impl App {
     }
 }
 
+/// Resolve a recorded raw answer set for the MESSAGE path (remote sessions):
+/// a digit string against a question with options becomes that option's label;
+/// free text and multi-select labels pass through unchanged.
+fn remote_answers(qs: &[crate::types::Question], answers: Vec<String>) -> Vec<String> {
+    answers
+        .into_iter()
+        .enumerate()
+        .map(|(i, raw)| {
+            let Some(q) = qs.get(i) else { return raw };
+            if q.options.is_empty() || q.multi_select {
+                return raw; // free text, or already ", "-joined labels
+            }
+            raw.parse::<usize>()
+                .ok()
+                .and_then(|n| n.checked_sub(1))
+                .and_then(|idx| q.options.get(idx))
+                .map(|o| o.label.clone())
+                .unwrap_or(raw)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::app::input::testutil::*;
     use crossterm::event::KeyCode;
+
+    /// Remote sessions answer over the message path, so recorded digit picks
+    /// must arrive as the text they meant; free text and multi-select labels
+    /// (already ", "-joined) pass through, as does a digit with no option list.
+    #[test]
+    fn remote_answers_resolves_digit_picks_to_their_labels() {
+        let qs: Vec<crate::types::Question> = serde_json::from_value(serde_json::json!([
+            { "question": "Pick one", "options": [{ "label": "A" }, { "label": "B" }] },
+            { "question": "Choose tools", "multi_select": true,
+              "options": [{ "label": "X" }, { "label": "Y" }] },
+            { "question": "Anything else?", "options": [] }
+        ]))
+        .unwrap();
+        let out = super::remote_answers(&qs, vec!["2".into(), "X, Y".into(), "42".into()]);
+        assert_eq!(out, vec!["B", "X, Y", "42"]);
+
+        // Out-of-range digits (and non-digits) survive untouched rather than
+        // silently answering something the user never picked.
+        let out = super::remote_answers(&qs, vec!["9".into(), "".into(), "free".into()]);
+        assert_eq!(out, vec!["9", "", "free"]);
+    }
 
     #[tokio::test]
     async fn digit_answers_a_pending_question_instead_of_starting_a_count() {

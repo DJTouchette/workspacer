@@ -131,6 +131,7 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   // decision. config.save in particular is the method whose own capspec entry
   // says agents.binaries is "argv[0] of every spawned agent".
   'plugins.tools': { label: 'List the agent tools installed plugins contribute' },
+  'federation.peers': { label: 'See linked peer machines' },
   'config.get': { label: 'Read your app settings' },
   'config.getPath': { label: 'See where your settings file lives' },
   'config.reload': { label: 'Reload your app settings' },
@@ -314,6 +315,9 @@ export const EVENT_TOPIC_RULES: EventTopicRule[] = [
     method: 'sessions.snapshot',
   },
   { pattern: 'fs.changed', disposition: 'guarded-by-capability', method: 'fs.watch' },
+  // hub.peer.* — federation-link reachability (peer name + last-seen only).
+  { pattern: 'hub.peer.connected', disposition: 'open-by-decision' },
+  { pattern: 'hub.peer.disconnected', disposition: 'open-by-decision' },
   { pattern: 'layout.changed', disposition: 'open-by-decision' },
   { pattern: 'library.changed', disposition: 'open-by-decision' },
   { pattern: 'plugin.install.progress', disposition: 'host-only' },

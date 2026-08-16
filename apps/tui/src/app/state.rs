@@ -89,6 +89,18 @@ pub enum AppMsg {
     /// project's mark. Never sent when there's no bus; every mark is derived
     /// from its path until (and unless) this lands.
     Projects(crate::projects::Projects),
+    /// One peer hub's authoritative session roster, pulled over the federation
+    /// link (`hub:<peer>/sessions.snapshots`). Replaces that hub's remote
+    /// sessions wholesale — see [`crate::federation`].
+    RemoteSeed {
+        hub: String,
+        agents: Vec<Agent>,
+    },
+    /// A peer hub reported disconnected (by `federation.peers` at seed time, or
+    /// the `hub.peer.disconnected` event): its sessions become tombstones.
+    HubDown {
+        hub: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

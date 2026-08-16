@@ -13,6 +13,8 @@ export interface HubEventEnvelope {
   id: string;
   type: string;
   source: string;
+  /** Federation: the peer hub a forwarded event arrived from; absent = local. */
+  hub?: string;
   time: string;
   data?: unknown;
 }

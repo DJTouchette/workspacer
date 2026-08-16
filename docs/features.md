@@ -144,6 +144,16 @@ remote/web/phone clients all view and drive the same fleet.
 | Example: agent-dashboard | Bus-native agent grid webview | 🔵 Working |
 | Example: clock-plugin | Minimal demo webview | 🔵 Working |
 
+## 9b. Hub federation (hub-of-hubs) — NEXT RELEASE (v0.150)
+
+| Feature | Notes | Status |
+|---|---|---|
+| Federation links | peers.json (0600) → outbound busclient per peer; curated forward list (agent.*, workflow.*); Envelope.Hub stamp; tree invariant; hub.peer.* lifecycle | 🔵 Working |
+| Qualified calls | `hub:<peer>/<method>` — tier check on bare method, plugins refused, 25s budget, peer-side confinement | 🔵 Working |
+| Client coverage | Desktop (badges/tombstones/pane gating/Machine picker), web /app, /m PWA (incl. cross-machine push), wks-tui — all merged-fleet; /remote deliberately local-only | 🔵 Working |
+| Security | Remote cwds grant no local fs roots (snapshotGrantsFsRoot fail-closed); peer tokens are the link ceiling | 🔵 Working |
+| Known limits | Headless-brain-only peers invisible to desktop/TUI (sparse rows); desktop remote chat renders snapshot window only; no nested federation | 🔵 Working |
+
 ## 10. MCP facade ("Ask the fleet" backend)
 
 | Feature | What it does | Maturity |

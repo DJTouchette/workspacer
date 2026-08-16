@@ -116,6 +116,11 @@ export const IPC = {
   HUB_EVENT: 'hub:event', // push (main → renderer)
   HUB_STATUS: 'hub:status', // push (main → renderer)
 
+  // ── Federation (peer hubs) ──
+  // Peer list snapshot. Live transitions ride the generic HUB_EVENT feed as
+  // hub.peer.connected / hub.peer.disconnected — re-invoke this on those.
+  FEDERATION_PEERS: 'federation:peers',
+
   // ── Shared layout document (hub-owned; tmux-style mirror) ──
   LAYOUT_GET: 'layout:get',
   LAYOUT_SET: 'layout:set',

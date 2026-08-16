@@ -17,6 +17,7 @@ import type { AgentWorkspace } from '../types/pane';
 import type { ClaudeSessionSnapshot } from '../types/claudeSession';
 import { useAttention } from '../contexts/AttentionContext';
 import { AgentCard } from './AgentCard';
+import { HubChip } from './HubChip';
 import { Surface } from './Surface';
 import { InspectorCard } from './claude/InspectorCard';
 import { AgentLogo } from './agentLogos';
@@ -990,7 +991,16 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                       </span>
                     </td>
                     <td style={{ ...ltd, color: 'var(--wks-text-secondary)' }}>
-                      {stats.model ? shortModelLabel(stats.model) : '—'}
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        {stats.model ? shortModelLabel(stats.model) : '—'}
+                        {/* Federation: which machine this row's agent runs on. */}
+                        {(snap?.hub ?? agent.hub) && (
+                          <HubChip
+                            name={(snap?.hub ?? agent.hub)!}
+                            offline={!!snap?.hubOffline}
+                          />
+                        )}
+                      </span>
                     </td>
                     <td style={ltdNum}>
                       {stats.ctxPct !== undefined ? (

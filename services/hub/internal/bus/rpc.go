@@ -1,10 +1,12 @@
 package bus
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -52,6 +54,33 @@ type LocalIdentHandler func(caller CallerIdentity, params json.RawMessage) (any,
 // callTimeout bounds how long a caller waits for a provider's reply.
 const callTimeout = 30 * time.Second
 
+// Federation forwards a qualified capability call (`hub:<peer>/<method>`) to a
+// peer hub. Implemented by internal/federation; nil = federation off, and every
+// qualified call is refused.
+type Federation interface {
+	// HasPeer reports whether the named peer is configured.
+	HasPeer(name string) bool
+	// Forward invokes the BARE method on the peer over its federation link and
+	// returns the raw result. It must apply its own (shorter-than-callTimeout)
+	// budget so the peer-side failure is the one the caller sees, not an
+	// ambiguous local timeout.
+	Forward(ctx context.Context, peer, method string, params json.RawMessage) (json.RawMessage, error)
+}
+
+// splitQualified parses `hub:<peer>/<method>` into its parts. Anything not in
+// that exact shape is not a federated call.
+func splitQualified(method string) (peer, bare string, ok bool) {
+	rest, found := strings.CutPrefix(method, "hub:")
+	if !found {
+		return "", "", false
+	}
+	peer, bare, found = strings.Cut(rest, "/")
+	if !found || peer == "" || bare == "" {
+		return "", "", false
+	}
+	return peer, bare, true
+}
+
 // router does request/reply capability routing between connections. Providers
 // register method names; callers invoke them; the router forwards the call to
 // the owning provider and the reply back to the caller, correlating by a global
@@ -71,6 +100,8 @@ type router struct {
 	localIdent map[string]LocalIdentHandler // same, for handlers that need the caller
 	pending    map[uint64]*pendingCall
 	timeout    time.Duration
+	// fed forwards qualified `hub:<peer>/<method>` calls; nil = federation off.
+	fed Federation
 	// noProviderSeen remembers which methods have already been reported as
 	// unprovided, so the log line fires once per method rather than once per
 	// call. Cleared for a method the moment something registers it.
@@ -208,6 +239,12 @@ func (rt *router) call(caller *conn, f Frame) {
 		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: "call missing method"})
 		return
 	}
+	// Federated calls (`hub:<peer>/<method>`) take their own authorization path
+	// and never touch the local provider table.
+	if peer, bare, ok := splitQualified(f.Method); ok {
+		rt.federatedCall(caller, f, peer, bare)
+		return
+	}
 	if !caller.mayCall(f.Method) {
 		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: caller.callDenied(f.Method)})
 		return
@@ -291,6 +328,64 @@ func (rt *router) call(caller *conn, f Frame) {
 	if !queued {
 		rt.failCall(gid, "too many calls queued behind an unresponsive provider for "+f.Method)
 	}
+}
+
+// federatedCall forwards `hub:<peer>/<bare>` over the peer's federation link.
+//
+// Authorization, deliberately different per credential kind:
+//
+//   - trusted (host token / operator tier): allowed — same authority the bare
+//     method would get locally.
+//   - scoped user token: the tier check runs against the BARE method, so a
+//     view token may call hub:work/agents.list exactly when it may call
+//     agents.list. The tier allowlists stay exact-name (never globs), and the
+//     peer-side link token is a second, independent ceiling.
+//   - plugin token: refused outright. A plugin's consented grant names what it
+//     may reach ON THIS MACHINE; silently extending `agents.list` to every
+//     configured peer would widen a consent the user never gave. If plugin
+//     federation is ever wanted, it must be a distinct, explicitly-consented
+//     grant shape — not prefix-stripping leniency.
+//
+// Local argument confinement (authorize) is deliberately NOT applied: paths in
+// a federated call name the PEER's filesystem, and canonicalizing them against
+// the local one would both reject valid calls and approve invalid ones. The
+// peer enforces its own confinement against the link token's grants.
+func (rt *router) federatedCall(caller *conn, f Frame, peer, bare string) {
+	rt.mu.Lock()
+	fed := rt.fed
+	rt.mu.Unlock()
+	if fed == nil {
+		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: "federation not configured"})
+		return
+	}
+	if !fed.HasPeer(peer) {
+		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: "unknown federation peer " + strconv.Quote(peer)})
+		return
+	}
+	id := caller.identity()
+	switch {
+	case id.PluginID != "":
+		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: "plugin " + id.PluginID + " may not call federated capabilities"})
+		return
+	case id.Trusted:
+		// host authority — allowed
+	default:
+		if !caller.mayCall(bare) {
+			_ = caller.send(Frame{Op: "error", ID: f.ID, Error: caller.callDenied(bare)})
+			return
+		}
+	}
+	// Off the read loop: the forward blocks on the peer's reply. The forwarder
+	// owns the (shorter) timeout, so the failure the caller sees names the
+	// federated hop rather than an ambiguous local deadline.
+	go func() {
+		res, err := fed.Forward(context.Background(), peer, bare, f.Params)
+		if err != nil {
+			_ = caller.send(Frame{Op: "error", ID: f.ID, Error: "hub:" + peer + ": " + err.Error()})
+			return
+		}
+		_ = caller.send(Frame{Op: "result", ID: f.ID, Result: res})
+	}()
 }
 
 // result routes a provider's reply (result or error) back to the caller.
@@ -382,4 +477,11 @@ func (rt *router) providedMethods() []string {
 type sendTask struct {
 	conn  *conn
 	frame Frame
+}
+
+// setFederation wires the federation forwarder into the router.
+func (rt *router) setFederation(f Federation) {
+	rt.mu.Lock()
+	rt.fed = f
+	rt.mu.Unlock()
 }

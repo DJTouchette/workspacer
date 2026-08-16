@@ -9,6 +9,7 @@ import {
   ctxColor,
 } from '../../lib/sessionStats';
 import { IconModel } from '../wksIcons';
+import { HubChip } from '../HubChip';
 
 /**
  * A compact, single-line status readout — Workspacer's in-app equivalent of
@@ -196,6 +197,10 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
         whiteSpace: 'nowrap',
       }}
     >
+      {/* Federation: the workspace's persistent "this agent runs on peer X"
+          marker (the sidebar card carries the same chip). Offline peer link
+          flips it to the warning tone. */}
+      {snapshot?.hub && <HubChip name={snapshot.hub} offline={!!snapshot.hubOffline} />}
       {dir && (
         <span title={activeCwd} style={{ color: 'var(--wks-accent-text)', fontWeight: 600 }}>
           {dir}

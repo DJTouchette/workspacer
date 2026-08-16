@@ -18,9 +18,12 @@ pub(super) fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
             .filter(|a| !app.is_shell_session(&a.session_id))
     };
     let total = fleet().count();
-    let waiting = fleet().filter(|a| a.is_waiting()).count();
-    let busy = fleet().filter(|a| a.is_busy()).count();
-    let idle = total.saturating_sub(waiting + busy);
+    // Tombstones (hub offline) can't be acted on: they count as neither
+    // "needs you" nor working — they get their own line below.
+    let offline = fleet().filter(|a| a.hub_offline).count();
+    let waiting = fleet().filter(|a| a.needs_you()).count();
+    let busy = fleet().filter(|a| a.is_busy() && !a.hub_offline).count();
+    let idle = total.saturating_sub(waiting + busy + offline);
     let cost: f64 = fleet()
         .filter_map(|a| derive_stats(a, app.status_lines.get(&a.session_id)).cost)
         .sum();
@@ -58,6 +61,37 @@ pub(super) fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(format!("${cost:.2}"), Style::default().fg(t.ok)),
         ]),
     ];
+    if offline > 0 {
+        lines.push(Line::from(vec![
+            Span::styled("hub offline ", Style::default().fg(t.dim)),
+            Span::styled(
+                format!("{offline}"),
+                Style::default().fg(t.bad).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+    // Peer hubs, when any are federated in: name, reachability, session count.
+    let hubs = app.remote.summary();
+    if !hubs.is_empty() {
+        let mut spans = vec![Span::styled("hubs ", Style::default().fg(t.dim))];
+        for (i, (name, online, count)) in hubs.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(" · ", Style::default().fg(t.dim)));
+            }
+            if *online {
+                spans.push(Span::styled(
+                    format!("{name} ● {count}"),
+                    Style::default().fg(t.accent),
+                ));
+            } else {
+                spans.push(Span::styled(
+                    format!("{name} ○ offline"),
+                    Style::default().fg(t.dim),
+                ));
+            }
+        }
+        lines.push(Line::from(spans));
+    }
     if let Some(s) = rate {
         let mut spans = vec![Span::styled("rate limit ", Style::default().fg(t.dim))];
         if let Some(p) = s.five_hour_pct {
@@ -88,24 +122,34 @@ pub(super) fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .filter(|a| !app.is_shell_session(&a.session_id))
     {
-        let marker = if a.is_waiting() {
+        let marker = if a.hub_offline {
+            Span::styled("○ ", Style::default().fg(t.dim))
+        } else if a.is_waiting() {
             Span::styled("● ", Style::default().fg(t.warn))
         } else if a.is_busy() {
             Span::styled("● ", Style::default().fg(t.accent))
         } else {
             Span::styled("· ", Style::default().fg(t.dim))
         };
+        // The name column carries the hub tag for remote rows, so a mixed
+        // fleet reads machine-by-machine at a glance.
+        let name = match &a.hub {
+            Some(h) => format!("{} [{h}]", app.agent_name(a)),
+            None => app.agent_name(a),
+        };
+        let (state_txt, state_style) = if a.hub_offline {
+            ("hub offline", Style::default().fg(t.dim))
+        } else {
+            (a.state(), Style::default().fg(state_color(t, a.state())))
+        };
         let mut row = vec![
             marker,
             project_mark(app, a),
             Span::styled(
-                format!("{:<28}", crate::types::truncate(&app.agent_name(a), 28)),
+                format!("{:<28}", crate::types::truncate(&name, 28)),
                 Style::default(),
             ),
-            Span::styled(
-                format!("{:<10}", a.state()),
-                Style::default().fg(state_color(t, a.state())),
-            ),
+            Span::styled(format!("{state_txt:<10}"), state_style),
         ];
         let stats = derive_stats(a, app.status_lines.get(&a.session_id));
         if let Some(p) = stats.context_pct {

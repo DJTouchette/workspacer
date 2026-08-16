@@ -544,6 +544,17 @@ workspacer token revoke &lt;token-or-prefix&gt;</code></pre>
 <a href="shots/mobile-fleet.webp" target="_blank" style="flex:1;line-height:0"><img src="shots/mobile-fleet.webp" width="640" height="859" loading="lazy" style="width:100%;height:auto;border:1px solid #2a3134;border-radius:12px" alt="The mobile Fleet tab: filters for needs-you / working / idle, and a card per agent with status, model, context meter and cost" /></a>
 <a href="shots/mobile-chat.webp" target="_blank" style="flex:1;line-height:0"><img src="shots/mobile-chat.webp" width="640" height="1098" loading="lazy" style="width:100%;height:auto;border:1px solid #2a3134;border-radius:12px" alt="The mobile Chat tab: an agent transcript with collapsible work cards, diff counts, model and permission pills, and the composer" /></a>
 </p>
+<h3>federate two machines (hub-of-hubs)</h3>
+<p><em>New in v0.150 — the next release. It's on the nightly channel now if you'd rather not wait.</em></p>
+<p>Everything above is about reaching <strong>one machine's</strong> fleet from other devices. Federation is the other direction: if you run work{spacer} on <strong>two machines</strong> (a desktop and a laptop, home and work), your hub can link to the other machine's hub and show <strong>both fleets in one UI</strong>. Remote sessions appear beside local ones with a small hub badge naming the machine; approvals, replies, and interrupts route to the right machine automatically; and when the other machine sleeps, its agents don't vanish — they tombstone ("hub offline — last seen 2h ago") and come back live when the link returns.</p>
+<p>Setup is one file. On the machine you want to <em>see into</em>, mint a token: <code>workspacer token create --scope operator</code> (or <code>triage</code> for watch-and-approve without spawning). On the machine you're <em>looking from</em>, write <code>~/.config/workspacer/peers.json</code>:</p>
+<pre><code>[{ "name": "work-pc", "url": "ws://work-pc:7895/bus", "token": "&lt;that token&gt;" }]</code></pre>
+<p>and restart the app. Use your tailnet hostname/IP, same as remote sharing — federation inherits the same transport story and the same scoped-token enforcement (the token you mint is the ceiling on everything the link can do).</p>
+<ul>
+<li><strong>Every client sees the merged fleet:</strong> the desktop app, the full web app, the mobile PWA (whose push notifications then cover both machines through the one hub your phone is paired with), and the terminal client. The spawn dialog grows a <strong>Machine</strong> picker so you can start an agent on either box.</li>
+<li><strong>Local things stay local, by design.</strong> A remote agent's files live on the other machine, so the terminal, git review, and editor panes don't offer themselves for remote sessions — chat, approvals, and the inspector are the remote surface. A remote session's directory never grants any local filesystem access.</li>
+<li><strong>Topology is deliberately simple:</strong> named peers in a file, a tree (no meshes, no loops), and only the fleet topics cross the link — a peer can't rearrange your layout, drive your UI, or see your plugins' internals.</li>
+</ul>
 <h3>what mirrors, and what stays put</h3>
 <ul>
 <li><strong>Layout mirrors.</strong> Your agent cards, tabs, and active tab are shared, so every client shows the same arrangement. With one person driving at a time, that just works; the last change wins.</li>

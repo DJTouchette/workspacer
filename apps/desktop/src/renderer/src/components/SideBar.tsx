@@ -20,6 +20,8 @@ import { collectRecentActivity, type ActivityLine } from '../lib/agentActivityLo
 import { shortModelLabel } from '../lib/modelLabel';
 import { agentAttentionScore } from '../lib/attentionRouter';
 import { AgentLogo } from './agentLogos';
+import { HubChip } from './HubChip';
+import { hubOfflineLabel } from '../lib/federation';
 import { ProjectMark } from './ProjectMark';
 import type { ProjectIdentity } from '../hooks/useConfig';
 import { requestInspector } from '../lib/watchBus';
@@ -849,9 +851,14 @@ const SideBar: React.FC<SideBarProps> = ({
             const isSupervisor = agent.kind === 'supervisor';
             const provider = agent.provider ?? 'claude';
             const state = agent.sessionId ? statusBySession[agent.sessionId] : undefined;
-            const cardState = cardStateOf(agent);
             const top: AttentionItem | undefined = topByAgent.get(agent.id);
             const snap = agent.sessionId ? snapshotBySession[agent.sessionId] : undefined;
+            // Federation: a peer hub's agent gets a hub chip; when that peer's
+            // link is down the card tombstones (muted, "hub offline — last
+            // seen …") instead of pretending its last ambient state is live.
+            const hub = snap?.hub ?? agent.hub;
+            const hubOffline = !!(hub && snap?.hubOffline);
+            const cardState = hubOffline ? ('done' as const) : cardStateOf(agent);
             const stats =
               (agent.sessionId && statsBySession[agent.sessionId]) || deriveSessionStats(snap);
             const model = shortModelLabel(stats.model) || shortModelLabel(agent.model);
@@ -879,7 +886,12 @@ const SideBar: React.FC<SideBarProps> = ({
             };
             const activity = collectRecentActivity(snap, 5);
             const log: LogLine[] = [];
-            if (cardState === 'waiting') {
+            if (hubOffline) {
+              log.push({
+                text: hubOfflineLabel(snap?.lastActivity, now),
+                color: 'var(--wks-warning)',
+              });
+            } else if (cardState === 'waiting') {
               const what =
                 top && WAITING_KINDS.has(top.kind)
                   ? top.title
@@ -889,7 +901,11 @@ const SideBar: React.FC<SideBarProps> = ({
               pushActivity(activity.slice(-4));
               log.push({ text: `Waiting: ${what}`, color: 'var(--wks-warning)' });
             } else if (!agent.sessionId) {
-              log.push({ text: 'Stopped — click to respawn', color: 'var(--wks-text-faint)' });
+              // Remote agents can't be respawned locally — no click affordance.
+              log.push({
+                text: hub ? 'Stopped' : 'Stopped — click to respawn',
+                color: 'var(--wks-text-faint)',
+              });
             } else if (cardState === 'working') {
               let lines = activity;
               if (!lines.length) {
@@ -913,8 +929,9 @@ const SideBar: React.FC<SideBarProps> = ({
                 ? 'now'
                 : relTime(now - snap.lastActivity)
               : '';
-            const label =
-              cardState === 'waiting'
+            const label = hubOffline
+              ? hubOfflineLabel(snap?.lastActivity, now)
+              : cardState === 'waiting'
                 ? top && WAITING_KINDS.has(top.kind)
                   ? KIND_VISUAL_LABEL[top.kind]
                   : 'Waiting on you'
@@ -922,7 +939,9 @@ const SideBar: React.FC<SideBarProps> = ({
                   ? 'Working'
                   : agent.sessionId
                     ? 'Idle'
-                    : 'Stopped — click to respawn';
+                    : hub
+                      ? 'Stopped'
+                      : 'Stopped — click to respawn';
             const usageTip = hasCtx
               ? `\n${Math.round(stats.ctxPct!)}% context${stats.tokens !== undefined ? ` · ${fmtTokens(stats.tokens)} tok` : ''}${stats.costUSD !== undefined ? ` · ${fmtUSD(stats.costUSD)}` : ''}${stats.model ? ` · ${stats.model}` : ''}`
               : '';
@@ -1204,6 +1223,7 @@ const SideBar: React.FC<SideBarProps> = ({
                     <AgentLogo provider={provider} size={11} neutral style={{ flexShrink: 0 }} />
                     {model}
                   </span>
+                  {hub && <HubChip name={hub} offline={hubOffline} />}
                   {(stats.tokens !== undefined || stats.costUSD !== undefined) && (
                     <span
                       style={{

@@ -337,7 +337,11 @@ impl App {
         let Some(sid) = self.target_session() else {
             return;
         };
-        let drv = self.driver();
+        if self.blocked_by_offline_hub(&sid) {
+            return;
+        }
+        // `driver_for`: remote sessions signal via `hub:<peer>/claude.signal`.
+        let drv = self.driver_for(&sid);
         let signal = signal.to_string();
         self.dispatch(ok, async move { drv.signal(&sid, &signal).await });
     }
@@ -354,13 +358,17 @@ impl App {
             return;
         }
         if let Some((sid, qs)) = self.target_questions() {
+            if self.blocked_by_offline_hub(&sid) {
+                return;
+            }
             self.input.clear();
             if qs.len() > 1 {
                 self.question_record_and_advance(&sid, &qs, text);
                 return;
             }
             self.question_flow = None;
-            let drv = self.driver();
+            // `driver_for`: remotely, answer text rides the message path.
+            let drv = self.driver_for(&sid);
             self.dispatch(
                 "Answered",
                 async move { drv.answer_text(&sid, &text).await },
@@ -371,6 +379,9 @@ impl App {
             return;
         };
         let sid = agent.session_id.clone();
+        if self.blocked_by_offline_hub(&sid) {
+            return;
+        }
         self.input.clear();
         // Optimistic echo: render the message as a pending user turn now; the
         // refold that includes it (or a failure) retires it. Slash commands
@@ -380,17 +391,27 @@ impl App {
             self.pending_echo = Some(text.clone());
             self.invalidate_transcript_cache();
         }
-        let drv = self.driver();
+        // `driver_for`: a remote chat sends via `hub:<peer>/agents.sendMessage`.
+        let drv = self.driver_for(&sid);
         let cm = self.claudemon.clone();
         let tx = self.tx.clone();
         tokio::spawn(async move {
+            let remote = drv.hub.is_some();
             match drv.message(&sid, &text).await {
                 Ok(_) => {
                     let _ = tx.send(AppMsg::Toast("Sent".into()));
                     fetch_agents(&cm, &tx).await;
                     // The delta feed carries the echo and the reply; this just
                     // closes the gap if the send landed before we subscribed.
-                    crate::app::tasks::fetch_transcript(&cm, &tx, sid).await;
+                    // Remotely there is no delta feed at all: the round trip
+                    // through the federation link IS the refresh.
+                    if remote {
+                        if let (Some(bus), Some(hub)) = (drv.bus.clone(), drv.hub.clone()) {
+                            crate::federation::fetch_remote_conversation(bus, hub, sid, tx).await;
+                        }
+                    } else {
+                        crate::app::tasks::fetch_transcript(&cm, &tx, sid).await;
+                    }
                 }
                 Err(e) => {
                     let _ = tx.send(AppMsg::SendFailed {

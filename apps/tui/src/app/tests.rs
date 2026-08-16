@@ -150,6 +150,197 @@ fn agent_cwd(id: &str, cwd: &str, mode: &str) -> Agent {
         .unwrap()
 }
 
+/// A remote (peer-hub) agent, in the hub's camelCase snapshot shape.
+fn remote_agent(hub: &str, id: &str, ambient: &str) -> Agent {
+    crate::federation::agent_from_snapshot(
+        hub,
+        &serde_json::json!({
+            "sessionId": id, "cwd": format!("/peer/{id}"), "ambientState": ambient
+        }),
+    )
+    .unwrap()
+}
+
+// ── federation: remote rows beside the local fleet ──────────────────────────
+
+#[tokio::test]
+async fn a_hub_stamped_snapshot_becomes_a_remote_row_beside_the_local_fleet() {
+    let mut app = test_app();
+    app.set_agents(vec![agent("s1")]);
+    app.apply_bus_event(crate::bus::BusEvent {
+        topic: "agent.snapshot".into(),
+        data: serde_json::json!({ "sessionId": "r1", "cwd": "/peer/x", "ambientState": "streaming" }),
+        hub: Some("work".into()),
+    });
+
+    let r1 = app
+        .all_agents
+        .iter()
+        .find(|a| a.session_id == "r1")
+        .expect("remote row merged into the fleet");
+    assert_eq!(r1.hub.as_deref(), Some("work"));
+    assert!(r1.is_busy());
+    // The local row is untouched — and NOT double-sourced from the bus.
+    let s1 = app
+        .all_agents
+        .iter()
+        .find(|a| a.session_id == "s1")
+        .unwrap();
+    assert_eq!(s1.hub, None);
+    // The sidebar view includes the remote row too.
+    assert!(app.agents.iter().any(|a| a.session_id == "r1"));
+}
+
+#[tokio::test]
+async fn stamped_sparse_rows_and_unstamped_events_create_no_remote_rows() {
+    let mut app = test_app();
+    // A sparse layout-ghost from a peer must be skipped…
+    app.apply_bus_event(crate::bus::BusEvent {
+        topic: "agent.snapshot".into(),
+        data: serde_json::json!({ "sessionId": "ghost", "sparse": true }),
+        hub: Some("work".into()),
+    });
+    // …and an UNSTAMPED snapshot is a local nudge, never a fleet row (locals
+    // are claudemon-sourced only; the dead test port answers nothing).
+    app.apply_bus_event(crate::bus::BusEvent {
+        topic: "agent.snapshot".into(),
+        data: serde_json::json!({ "sessionId": "x1", "ambientState": "streaming" }),
+        hub: None,
+    });
+    assert!(
+        app.all_agents.is_empty(),
+        "got {:?}",
+        app.all_agents
+            .iter()
+            .map(|a| &a.session_id)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn peer_disconnect_tombstones_its_sessions_and_reconnect_revives_them() {
+    let mut app = test_app();
+    app.apply_msg(AppMsg::RemoteSeed {
+        hub: "work".into(),
+        agents: vec![remote_agent("work", "r1", "waiting_input")],
+    });
+    assert!(
+        app.all_agents
+            .iter()
+            .any(|a| a.session_id == "r1" && a.needs_you()),
+        "a live remote session at its prompt needs you"
+    );
+
+    app.apply_bus_event(crate::bus::BusEvent {
+        topic: "hub.peer.disconnected".into(),
+        data: serde_json::json!({ "peer": "work", "lastSeen": "2026-08-16T00:00:00Z" }),
+        hub: None,
+    });
+    let r1 = app
+        .all_agents
+        .iter()
+        .find(|a| a.session_id == "r1")
+        .unwrap();
+    assert!(r1.hub_offline, "the session is kept, flagged, not vanished");
+    assert!(!r1.needs_you(), "a tombstone can't be acted on");
+
+    // The `m` jump skips it (nothing else waits) and actions are gated.
+    app.selected = 0;
+    app.jump_to_attention();
+    assert_eq!(app.selected, 0, "the jump found nothing actionable");
+    assert_eq!(app.toast(), Some("Nothing waiting"));
+    assert!(app.blocked_by_offline_hub("r1"));
+
+    app.apply_bus_event(crate::bus::BusEvent {
+        topic: "hub.peer.connected".into(),
+        data: serde_json::json!({ "peer": "work" }),
+        hub: None,
+    });
+    let r1 = app
+        .all_agents
+        .iter()
+        .find(|a| a.session_id == "r1")
+        .unwrap();
+    assert!(
+        !r1.hub_offline,
+        "reconnect revives the row (reseed refines it)"
+    );
+    assert!(!app.blocked_by_offline_hub("r1"));
+}
+
+#[tokio::test]
+async fn a_reseed_is_authoritative_for_its_hub() {
+    let mut app = test_app();
+    app.set_agents(vec![agent("s1")]);
+    app.apply_msg(AppMsg::RemoteSeed {
+        hub: "work".into(),
+        agents: vec![
+            remote_agent("work", "r1", "streaming"),
+            remote_agent("work", "r2", "streaming"),
+        ],
+    });
+    assert_eq!(app.all_agents.len(), 3);
+
+    // r2 ended while we weren't looking; the fresh roster drops it.
+    app.apply_msg(AppMsg::RemoteSeed {
+        hub: "work".into(),
+        agents: vec![remote_agent("work", "r1", "streaming")],
+    });
+    let ids: Vec<&str> = app
+        .all_agents
+        .iter()
+        .map(|a| a.session_id.as_str())
+        .collect();
+    assert_eq!(ids, vec!["s1", "r1"], "local rows untouched, r2 gone");
+}
+
+#[tokio::test]
+async fn opening_a_remote_agent_is_transcript_only_and_gates_local_ops() {
+    let mut app = test_app();
+    app.apply_msg(AppMsg::RemoteSeed {
+        hub: "work".into(),
+        agents: vec![remote_agent("work", "r1", "streaming")],
+    });
+    app.selected = 1;
+    app.open_agent();
+
+    assert_eq!(
+        app.chat_mode,
+        ChatMode::Transcript,
+        "no local PTY exists — the chat opens on the transcript"
+    );
+    assert!(app.terms.is_empty(), "no terminal was warmed");
+
+    // Local-only operations decline with a hint instead of failing on use.
+    app.new_terminal_tab();
+    assert_eq!(app.workspace().map(|ws| ws.tabs.len()), Some(1));
+    app.open_review();
+    assert!(app.review.is_none());
+    app.open_runs();
+    assert!(app.runs_open.is_none());
+    app.open_model_picker();
+    assert!(app.picker.is_none());
+    app.open_rename();
+    assert!(app.rename.is_none());
+    app.respawn();
+    assert_eq!(
+        app.toast(),
+        Some("remote session — respawn it on its own machine")
+    );
+}
+
+#[tokio::test]
+async fn the_remote_drivers_calls_are_hub_qualified() {
+    let mut app = test_app();
+    app.apply_msg(AppMsg::RemoteSeed {
+        hub: "work".into(),
+        agents: vec![remote_agent("work", "r1", "waiting_input")],
+    });
+    assert_eq!(app.driver_for("r1").hub.as_deref(), Some("work"));
+    assert_eq!(app.driver_for("nope").hub, None, "unknown ids stay local");
+    assert_eq!(app.driver().hub, None, "the plain driver is always local");
+}
+
 #[test]
 fn bus_statusline_event_applies_status_line() {
     let mut app = test_app();
@@ -159,6 +350,7 @@ fn bus_statusline_event_applies_status_line() {
             "sessionId": "s1",
             "statusLine": { "text": "building…" },
         }),
+        hub: None,
     });
     assert!(app.status_lines.contains_key("s1"));
 }
@@ -170,6 +362,7 @@ fn pty_bytes_event_feeds_the_terminal() {
     app.apply_bus_event(crate::bus::BusEvent {
         topic: "pty.bytes.s1".into(),
         data: serde_json::json!(base64::engine::general_purpose::STANDARD.encode("hello")),
+        hub: None,
     });
     let screen = app.terms.get("s1").unwrap().screen();
     assert!(

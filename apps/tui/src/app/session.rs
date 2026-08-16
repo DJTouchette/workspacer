@@ -132,6 +132,7 @@ impl App {
     }
 
     /// A driver pinned to a specific spawn transport (see `respawn_transport`).
+    /// Spawns are local-only, so this never hub-qualifies.
     pub(in crate::app) fn driver_on(
         &self,
         transport: crate::config::Transport,
@@ -140,6 +141,7 @@ impl App {
             claudemon: self.claudemon.clone(),
             bus: self.bus.clone(),
             transport,
+            hub: None,
         }
     }
 
@@ -152,8 +154,19 @@ impl App {
     }
 
     /// Pull a full snapshot for a session's fold. Needed on open and after a
-    /// delta gap; the delta feed covers everything in between.
+    /// delta gap; the delta feed covers everything in between. A remote
+    /// session's conversation comes over its federation link
+    /// (`hub:<peer>/sessions.conversation` — same `{items, seq}` shape the
+    /// fold adopts); local ones keep the claudemon path untouched.
     pub(in crate::app) fn load_transcript(&self, session_id: String) {
+        if let Some(hub) = self.hub_of(&session_id) {
+            let Some(bus) = self.bus.clone() else { return };
+            let tx = self.tx.clone();
+            tokio::spawn(crate::federation::fetch_remote_conversation(
+                bus, hub, session_id, tx,
+            ));
+            return;
+        }
         let cm = self.claudemon.clone();
         let tx = self.tx.clone();
         tokio::spawn(async move { fetch_transcript(&cm, &tx, session_id).await });

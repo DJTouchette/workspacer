@@ -12,6 +12,12 @@ impl App {
             self.set_toast("no agent selected");
             return;
         };
+        // Run artifacts are files beside the transcript on the agent's OWN
+        // machine; a remote session's are unreadable from here.
+        if self.is_remote_session(&sid) {
+            self.set_toast("remote session — runs live on its own machine");
+            return;
+        }
         self.runs_open = Some(sid);
         self.refresh_runs();
     }

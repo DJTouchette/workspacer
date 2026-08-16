@@ -459,6 +459,12 @@ func (s *Server) RegisterLocalIdent(method string, h LocalIdentHandler) {
 	s.router.registerLocalIdent(method, h)
 }
 
+// SetFederation wires the forwarder for qualified `hub:<peer>/<method>` calls.
+// Nil (the default) refuses every qualified call.
+func (s *Server) SetFederation(f Federation) {
+	s.router.setFederation(f)
+}
+
 // TokenFingerprint is the stable, non-secret identity of a bearer token: hex
 // SHA-256 of its value. Anything that must remember WHICH credential did
 // something records this instead of the token, so a stored fingerprint is never

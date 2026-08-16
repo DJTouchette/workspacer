@@ -32,6 +32,26 @@ pub(super) fn render_detail(f: &mut Frame, area: Rect, app: &App) {
             ),
         ]),
     ];
+    if let Some(h) = &a.hub {
+        if a.hub_offline {
+            lines.insert(
+                1,
+                kv(t, "hub", &format!("{h} — offline (last known state)")),
+            );
+            lines.insert(
+                2,
+                Line::from(Span::styled(
+                    "hub unreachable — actions disabled until it reconnects",
+                    Style::default().fg(t.warn),
+                )),
+            );
+        } else {
+            lines.insert(
+                1,
+                kv(t, "hub", &format!("{h} (remote — transcript view only)")),
+            );
+        }
+    }
     let stats = derive_stats(a, app.status_lines.get(&a.session_id));
     if let Some(m) = &stats.model {
         lines.push(kv(t, "model", m));

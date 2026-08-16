@@ -183,6 +183,20 @@ var eventTopics = []EventTopic{
 		Disposition: TopicOpenByDecision,
 		Reason:      "carries an optional directory to pre-fill in the New Agent dialog. Opening the dialog spawns nothing — the spawn itself still goes through agents.spawn and its clamps",
 	},
+	// hub.peer.* — federation-link reachability (internal/federation). The
+	// tombstone UX depends on every client hearing these: a peer going dark
+	// must render as "hub unreachable, last seen …", not as agents silently
+	// vanishing.
+	{
+		Pattern:     "hub.peer.connected",
+		Disposition: TopicOpenByDecision,
+		Reason:      "carries only the peer's configured name. The federated fleet events themselves are open to the view tier (agent.snapshot et al.), so the fact that a link to a named machine came up discloses strictly less than the feed it enables",
+	},
+	{
+		Pattern:     "hub.peer.disconnected",
+		Disposition: TopicOpenByDecision,
+		Reason:      "peer name + last-seen timestamp. The signal every client needs to tombstone that hub's sessions instead of letting them silently vanish — which reads to a user as 'my agent died'",
+	},
 	{
 		Pattern:     "layout.changed",
 		Disposition: TopicOpenByDecision,

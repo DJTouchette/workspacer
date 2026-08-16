@@ -239,13 +239,20 @@ export function useAgentManager() {
       kind?: 'supervisor';
       /** For supervisors: the id of the agent being supervised. */
       parentId?: string;
+      /** Federation: spawn on this peer hub instead of locally. Plumbed to the
+       *  spawn IPC as an extra field (main may ignore it until the bus route
+       *  lands); the local record stays hub-less until the session's snapshot
+       *  says where it actually runs. */
+      targetHub?: string;
     }) => {
       let cwd = opts.cwd;
       // Worktree isolation: carve out a fresh git worktree first and make IT
       // the agent's home, so everything cwd-scoped (plugin pane tokens,
       // watchers, checks) is confined to the agent's own tree. Falls back to
       // the repo directory if creation fails (e.g. not a repo after all).
-      if (opts.worktree && window.electronAPI.worktreeCreate) {
+      // Skipped for a remote target — the cwd lives on the peer machine, so a
+      // local worktree of it would be meaningless.
+      if (opts.worktree && !opts.targetHub && window.electronAPI.worktreeCreate) {
         try {
           const wt = await window.electronAPI.worktreeCreate({
             repoCwd: opts.cwd,
@@ -263,7 +270,10 @@ export function useAgentManager() {
       }
       let sessionId: string | undefined;
       try {
-        sessionId = await window.electronAPI.spawnClaude({
+        // Built as a variable (not a fresh literal) so the extra federation
+        // field passes the IPC's typed signature — main may ignore `targetHub`
+        // until the bus spawn route exists.
+        const spawnOpts = {
           cwd,
           provider: opts.provider,
           transport: opts.transport,
@@ -277,9 +287,11 @@ export function useAgentManager() {
           pluginTools: opts.pluginTools,
           resumeSessionId: opts.resumeSessionId,
           supervisor: opts.supervisor,
+          targetHub: opts.targetHub,
           cols: 120,
           rows: 32,
-        });
+        };
+        sessionId = await window.electronAPI.spawnClaude(spawnOpts);
       } catch (err) {
         console.error('[Agent] spawn failed:', err);
       }
@@ -312,6 +324,10 @@ export function useAgentManager() {
         toolScope: opts.toolScope,
         pluginTools: opts.pluginTools,
         sessionId,
+        // A spawn aimed at a peer machine is a REMOTE agent from birth: tag the
+        // card so pane gating / pill disabling apply before the first federated
+        // snapshot arrives to confirm it.
+        hub: opts.targetHub || undefined,
         kind: opts.kind,
         parentId: opts.parentId,
         tabs: agentTabs,
@@ -340,6 +356,10 @@ export function useAgentManager() {
    *  pre-mutation state (reconcile) aren't racing agentsRef. */
   const respawnFromRecord = useCallback(
     async (agent: AgentWorkspace, resumeSessionId: string | undefined) => {
+      // A federated session lives on the peer hub — spawning locally with its
+      // (remote) cwd would create a broken doppelgänger, so remote agents
+      // never respawn here. Their card tombstones instead (hubOffline).
+      if (agent.hub) return;
       // Claude respawns follow the config default transport unless the agent
       // explicitly ran stream — a recorded 'pty' is usually just the legacy
       // default, and users who flipped their default to stream expect old
@@ -435,6 +455,9 @@ export function useAgentManager() {
         (a) => a.sessionId === sessionId || a.lastSessionId === sessionId,
       );
       if (!agent) return;
+      // Remote agents can't be closed-and-respawned locally (the pills that
+      // reach this path are disabled for them; this is the backstop).
+      if (agent.hub) return;
       const model = overrides.model ?? agent.model;
       const effort = overrides.effort ?? agent.effort;
       const permissionMode = overrides.permissionMode ?? agent.permissionMode;
@@ -555,6 +578,8 @@ export function useAgentManager() {
       provider?: AgentProvider;
       /** Claude only: the transport the session runs on (from its snapshot). */
       transport?: 'pty' | 'stream';
+      /** Federation: the peer hub the session lives on (from its snapshot). */
+      hub?: string;
     }) => {
       setAgents((prev) => {
         if (prev.some((a) => a.sessionId === opts.sessionId)) return prev; // already tracked — dedupe inside the updater (race-safe)
@@ -580,6 +605,7 @@ export function useAgentManager() {
           nameSetByUser: !!opts.name?.trim(),
           cwd: opts.cwd,
           provider: opts.provider,
+          hub: opts.hub,
           transport: opts.transport,
           sessionId: opts.sessionId,
           parentId: parent?.id,
@@ -664,12 +690,15 @@ export function useAgentManager() {
       // respawn needs the old id as the resume target. agentsRef is updated
       // during render, so it is current here (reconcile runs post-commit,
       // after an IPC round-trip).
+      // Federated agents are exempt: their sessions live on the peer hub, so
+      // the local daemon's live-id list can never contain them — reconciling
+      // would wrongly mark every remote card dead at boot.
       const stale = agentsRef.current.filter(
-        (a) => a.sessionId && !liveSessionIds.has(a.sessionId),
+        (a) => a.sessionId && !a.hub && !liveSessionIds.has(a.sessionId),
       );
       setAgents((prev) =>
         prev.map((a) =>
-          a.sessionId && !liveSessionIds.has(a.sessionId)
+          a.sessionId && !a.hub && !liveSessionIds.has(a.sessionId)
             ? { ...a, sessionId: undefined, lastSessionId: a.sessionId }
             : a,
         ),

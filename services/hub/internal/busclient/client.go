@@ -47,6 +47,7 @@ type frame struct {
 	Op     string          `json:"op"`
 	ID     string          `json:"id,omitempty"`
 	Method string          `json:"method,omitempty"`
+	Topics []string        `json:"topics,omitempty"`
 	Params json.RawMessage `json:"params,omitempty"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  string          `json:"error,omitempty"`
@@ -68,6 +69,10 @@ type Client struct {
 	seq     uint64
 	pending map[string]chan reply
 	ready   bool
+	// Subscriptions survive the connection: re-sent on every (re)connect, the
+	// same contract hubClient.ts keeps on the desktop side.
+	subs    []string
+	onEvent func(event.Envelope)
 
 	writeMu sync.Mutex // coder/websocket forbids concurrent writers
 }
@@ -92,6 +97,51 @@ func (c *Client) Ready() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.ready && c.conn != nil
+}
+
+// OnEvent sets the handler for inbound events. Set it BEFORE Run so no event
+// races the registration; the handler is invoked from the read loop, so it must
+// not block (hand off to a channel/goroutine if the work is slow — a stalled
+// handler stalls call replies too, they share the loop).
+func (c *Client) OnEvent(fn func(event.Envelope)) {
+	c.mu.Lock()
+	c.onEvent = fn
+	c.mu.Unlock()
+}
+
+// Subscribe adds topic patterns (exact, `prefix.*`, or `*`) to the client's
+// subscription set and, when connected, sends them immediately. The full set is
+// re-sent on every reconnect, so a Subscribe survives connection drops — the
+// property federation links depend on.
+func (c *Client) Subscribe(patterns ...string) {
+	if len(patterns) == 0 {
+		return
+	}
+	c.mu.Lock()
+	have := make(map[string]bool, len(c.subs))
+	for _, s := range c.subs {
+		have[s] = true
+	}
+	var fresh []string
+	for _, p := range patterns {
+		if p != "" && !have[p] {
+			have[p] = true
+			c.subs = append(c.subs, p)
+			fresh = append(fresh, p)
+		}
+	}
+	conn := c.conn
+	connected := c.ready && conn != nil
+	c.mu.Unlock()
+	if !connected || len(fresh) == 0 {
+		return
+	}
+	out, _ := json.Marshal(frame{Op: "subscribe", Topics: fresh})
+	c.writeMu.Lock()
+	wctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	_ = conn.Write(wctx, websocket.MessageText, out)
+	cancel()
+	c.writeMu.Unlock()
 }
 
 // Run maintains the connection until ctx is cancelled, reconnecting with
@@ -136,7 +186,22 @@ func (c *Client) connectAndRead(ctx context.Context) {
 	c.mu.Lock()
 	c.conn = conn
 	c.ready = true
+	subs := append([]string(nil), c.subs...)
 	c.mu.Unlock()
+
+	// Re-establish subscriptions before anything else on the fresh connection,
+	// so a reconnect never silently loses the event feed.
+	if len(subs) > 0 {
+		out, _ := json.Marshal(frame{Op: "subscribe", Topics: subs})
+		c.writeMu.Lock()
+		wctx, cancel := context.WithTimeout(ctx, writeTimeout)
+		err := conn.Write(wctx, websocket.MessageText, out)
+		cancel()
+		c.writeMu.Unlock()
+		if err != nil {
+			conn.CloseNow()
+		}
+	}
 
 	defer func() {
 		c.mu.Lock()
@@ -163,7 +228,16 @@ func (c *Client) connectAndRead(ctx context.Context) {
 		switch f.Op {
 		case "result", "error":
 			c.deliver(f)
-			// hello / subscribed / registered / event: ignored — we only call.
+		case "event":
+			if f.Event != nil {
+				c.mu.Lock()
+				fn := c.onEvent
+				c.mu.Unlock()
+				if fn != nil {
+					fn(*f.Event)
+				}
+			}
+			// hello / subscribed / registered: acks, nothing to route.
 		}
 	}
 }

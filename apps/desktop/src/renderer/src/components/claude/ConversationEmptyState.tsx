@@ -146,12 +146,14 @@ export const ConversationEmptyState: React.FC<{
   permissionMode?: string;
   transport?: 'pty' | 'stream';
   cwd?: string;
+  /** Federation: the peer hub the session lives on (absent = local). */
+  hub?: string;
   /** Composer pre-fill the pane was spawned with (e.g. a handoff takeover
    *  message). When present the starter chips hide — picking one would
    *  clobber the prepared prompt. */
   initialPrompt?: string;
   onPick: (prompt: string) => void;
-}> = ({ agentName, provider, model, permissionMode, transport, cwd, initialPrompt, onPick }) => {
+}> = ({ agentName, provider, model, permissionMode, transport, cwd, hub, initialPrompt, onPick }) => {
   const dirName = cwd ? (cwd.replace(/\/+$/, '').split('/').pop() ?? cwd) : undefined;
 
   // Git peek: branch + dirty count + last commit, best-effort. Not a repo /
@@ -204,6 +206,7 @@ export const ConversationEmptyState: React.FC<{
     model,
     permissionMode,
     transport === 'stream' ? 'headless' : undefined,
+    hub ? `on ${hub}` : undefined,
     dirName,
     git?.branch ? `⎇ ${git.branch}` : undefined,
     git && git.dirty > 0 ? `${git.dirty} changed file${git.dirty === 1 ? '' : 's'}` : undefined,

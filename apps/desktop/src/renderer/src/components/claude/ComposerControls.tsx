@@ -44,6 +44,7 @@ import {
   type EffortLevel,
 } from '../../lib/providerCaps';
 import { deriveSessionStats } from '../../lib/sessionStats';
+import { remoteDisabledTitle } from '../../lib/federation';
 import { loadModelOptions, type ModelOption } from '../../lib/modelOptions';
 import { shortModelLabel } from '../../lib/modelLabel';
 import { claudeColors as colors } from '../claude-shared';
@@ -460,7 +461,13 @@ export const ComposerControls: React.FC<{
     ? `${permissionModeLabel(provider, permSwitching)}…`
     : permissionModeLabel(provider, currentPermMode);
 
-  const disabled = !sessionId;
+  // Federation: model/effort/permission switches act on the LOCAL daemon (IPC
+  // or a local respawn), which can't reach a session living on a peer hub —
+  // so the pills disable for remote agents. Message/interrupt/approvals are
+  // unaffected: those routes go over the bus and live elsewhere.
+  const remoteHub = snapshot?.hub;
+  const disabled = !sessionId || !!remoteHub;
+  const disabledTitle = remoteHub ? remoteDisabledTitle(remoteHub) : 'No session yet';
 
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
@@ -471,7 +478,7 @@ export const ComposerControls: React.FC<{
         disabled={disabled}
         title={
           disabled
-            ? 'No session yet'
+            ? disabledTitle
             : caps.modelSwitch === 'live'
               ? 'Switch model (applies to the next turn)'
               : 'Switch model (restarts the session)'
@@ -491,7 +498,7 @@ export const ComposerControls: React.FC<{
             disabled={disabled}
             title={
               disabled
-                ? 'No session yet'
+                ? disabledTitle
                 : caps.effort.switch === 'live'
                   ? 'Reasoning effort (applies to the next turn)'
                   : 'Reasoning effort (restarts the session)'
@@ -510,7 +517,7 @@ export const ComposerControls: React.FC<{
         disabled={disabled}
         title={
           disabled
-            ? 'No session yet'
+            ? disabledTitle
             : caps.permissionSwitch === 'live'
               ? 'Permission mode (applies immediately)'
               : 'Permission mode (restarts the session)'

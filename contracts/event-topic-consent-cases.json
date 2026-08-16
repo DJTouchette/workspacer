@@ -135,6 +135,14 @@
    "method": "fs.watch"
   },
   {
+   "pattern": "hub.peer.connected",
+   "disposition": "open-by-decision"
+  },
+  {
+   "pattern": "hub.peer.disconnected",
+   "disposition": "open-by-decision"
+  },
+  {
    "pattern": "layout.changed",
    "disposition": "open-by-decision"
   },

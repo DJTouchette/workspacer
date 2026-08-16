@@ -76,6 +76,7 @@ import type { RecentAgentSession } from '../../main/shared/ipcTypes';
 import { SESSION_SCHEMA_VERSION } from '../../main/shared/sessionSchema';
 import { usePluginHotkeys } from './hooks/usePluginHotkeys';
 import { buildPaneMenu } from './lib/paneMenu';
+import { filterPaneMenuForRemote } from './lib/federation';
 import { PaneMenuProvider, type PaneMenuContextValue } from './contexts/PaneMenuContext';
 import { wasSessionTerminated } from './lib/terminatedSessions';
 import { useSessionSnapshots } from './hooks/useSessionSnapshots';
@@ -626,6 +627,9 @@ function App() {
         parentSessionId: snapshot.parentSessionId,
         provider: snapshot.provider as AgentProvider | undefined,
         transport: snapshot.transport,
+        // Federation: a peer hub's session flows through the same adopt path;
+        // the record carries the hub so cards/panes can gate local-only UI.
+        hub: snapshot.hub,
       });
     }
   }, [snapshotBySession, agents, adoptAgent, sessionPhase]);
@@ -954,7 +958,9 @@ function App() {
       // so the fleet overlay doesn't keep covering the newly active workspace.
       if (viewLevel === 'fleet') setViewLevel('piloting');
       const agent = agents.find((a) => a.id === id);
-      if (agent && !agent.sessionId) respawnAgent(id);
+      // Remote (federated) agents never respawn locally — their session lives
+      // on the peer hub; selecting one just focuses it.
+      if (agent && !agent.sessionId && !agent.hub) respawnAgent(id);
     },
     [agents, setActiveAgentId, respawnAgent, viewLevel, setViewLevel],
   );
@@ -997,6 +1003,9 @@ function App() {
       worktree?: boolean;
       /** Pre-fills the new agent's composer (not sent) — see spawnAgent. */
       initialPrompt?: string;
+      /** Federation: spawn on this peer hub (main may ignore until the bus
+       *  route lands) — see spawnAgent. */
+      targetHub?: string;
     }) => {
       setShowSpawnDialog(false);
       setSpawnDialogCwd(null);
@@ -1793,12 +1802,21 @@ function App() {
 
   // Resolved pane-creation menu (built-ins + plugins, per ui.paneMenu), shared
   // with the "Split into…" button and the "+" new-tab dropdown via context.
+  // Both consumers create panes in the ACTIVE workspace, so when that agent is
+  // federated (lives on a peer hub) the cwd-bound built-ins — terminal, review,
+  // editor — are dropped at the source: their cwd is on the other machine.
+  const activeAgentHub =
+    activeAgent?.hub ??
+    (activeAgent?.sessionId ? snapshotBySession[activeAgent.sessionId]?.hub : undefined);
   const paneMenuValue = useMemo<PaneMenuContextValue>(
     () => ({
-      entries: buildPaneMenu(config.ui.paneMenu, pluginPanes),
+      entries: filterPaneMenuForRemote(
+        buildPaneMenu(config.ui.paneMenu, pluginPanes),
+        activeAgentHub,
+      ),
       onOpenPlugin: handleOpenPlugin,
     }),
-    [config.ui.paneMenu, pluginPanes, handleOpenPlugin],
+    [config.ui.paneMenu, pluginPanes, handleOpenPlugin, activeAgentHub],
   );
 
   // Bind plugin-contributed hotkeys + library-picker shortcut.

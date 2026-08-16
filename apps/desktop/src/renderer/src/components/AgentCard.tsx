@@ -9,6 +9,8 @@ import { useAttention } from '../contexts/AttentionContext';
 import { usePageVisible } from '../hooks/usePageVisible';
 import { StatusGlyph } from './statusGlyph';
 import { AgentLogo } from './agentLogos';
+import { HubChip } from './HubChip';
+import { hubOfflineLabel } from '../lib/federation';
 import { shortModelLabel } from '../lib/modelLabel';
 import {
   deriveSessionStats,
@@ -111,7 +113,18 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
   const { openAgent, approve, answer, sendMessage, feed } = useAttention();
   const pageVisible = usePageVisible();
   const state = snapshot?.ambientState;
-  const v = stateVisual(agent.sessionId ? state : undefined);
+  // Federation: a peer hub's agent wears a hub chip; when that peer's link is
+  // down the tile tombstones — muted "hub offline — last seen …" instead of a
+  // live ambient state, but the card stays (last known snapshot).
+  const hub = snapshot?.hub ?? agent.hub;
+  const hubOffline = !!(hub && snapshot?.hubOffline);
+  const v = hubOffline
+    ? {
+        color: 'var(--wks-text-faint)',
+        label: hubOfflineLabel(snapshot?.lastActivity, Date.now()),
+        pulse: false,
+      }
+    : stateVisual(agent.sessionId ? state : undefined);
   const usage = snapshot?.usage;
   // Managed providers (codex/opencode) have no transcript-derived `usage` —
   // their telemetry rides the statusLine. deriveSessionStats merges both (same
@@ -149,7 +162,8 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
   // Body: the last message always leads (as markdown); tool activity lives in
   // the chip row, so the two no longer alternate.
   const bodyText = lastAssistant(snapshot);
-  const bodyFallback = agent.sessionId ? 'No activity yet' : 'Stopped — click to respawn';
+  // Remote agents never respawn locally, so their stopped card drops the hint.
+  const bodyFallback = agent.sessionId ? 'No activity yet' : hub ? 'Stopped' : 'Stopped — click to respawn';
   const recentTools = useMemo(
     () => (snapshot?.completedToolCalls ?? []).slice(-2).reverse(),
     [snapshot?.completedToolCalls],
@@ -247,7 +261,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
           }}
         >
           <StatusGlyph
-            state={agent.sessionId ? state : undefined}
+            state={agent.sessionId && !hubOffline ? state : undefined}
             size={13}
             strokeWidth={2.2}
             accent="currentColor"
@@ -307,6 +321,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
         {stats.model && (
           <span style={{ color: 'var(--wks-text-secondary)' }}>{shortModelLabel(stats.model)}</span>
         )}
+        {hub && <HubChip name={hub} offline={hubOffline} />}
         {turns > 0 && (
           <span>
             · {turns} turn{turns > 1 ? 's' : ''}

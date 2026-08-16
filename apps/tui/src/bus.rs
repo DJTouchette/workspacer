@@ -28,7 +28,19 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 pub struct BusEvent {
     pub topic: String,
     pub data: Value,
+    /// Which peer hub the event came from, stamped on the ENVELOPE by the local
+    /// hub's federation link (`hub: "<peerName>"`). `None` means local — the
+    /// payload itself is never rewritten, so discriminating on this field is
+    /// the only way to tell a remote `agent.snapshot` from a local one.
+    pub hub: Option<String>,
 }
+
+/// Synthetic topic delivered once per successful (re)connect, before any real
+/// frames. Not a hub topic — underscore-prefixed so it can never collide with
+/// one. The app uses it to (re)seed call-derived state (the federated fleet):
+/// events alone can't fix restart-blindness, and the bus client is otherwise
+/// silent about its own connection state.
+pub const TOPIC_BUS_CONNECTED: &str = "_bus.connected";
 
 enum Command {
     Call {
@@ -119,6 +131,15 @@ async fn run(
         backoff = Duration::from_secs(1);
         let (mut write, mut read) = ws.split();
 
+        // Tell the app the socket is (back) up, so call-seeded state (the
+        // federated fleet) can re-seed. Sent before any subscription so the
+        // seed always precedes the events it will be reconciled against.
+        let _ = event_tx.send(BusEvent {
+            topic: TOPIC_BUS_CONNECTED.to_string(),
+            data: Value::Null,
+            hub: None,
+        });
+
         // Re-prime subscriptions on every (re)connect.
         if !topics.is_empty() {
             let frame = json!({ "op": "subscribe", "topics": topics });
@@ -201,7 +222,14 @@ fn handle_frame(
                     .unwrap_or("")
                     .to_string();
                 let data = ev.get("data").cloned().unwrap_or(Value::Null);
-                let _ = event_tx.send(BusEvent { topic, data });
+                // The federation stamp lives on the envelope, not the payload;
+                // absent or empty means the event is local.
+                let hub = ev
+                    .get("hub")
+                    .and_then(|h| h.as_str())
+                    .filter(|h| !h.is_empty())
+                    .map(String::from);
+                let _ = event_tx.send(BusEvent { topic, data, hub });
             }
         }
         _ => {} // hello / subscribed / unsubscribed acks
@@ -224,23 +252,44 @@ pub struct Driver {
     /// the desktop happened to own the hub and a PTY one when it didn't. Nobody
     /// chose that; it was a config default leaking across a seam.
     pub transport: crate::config::Transport,
+    /// When set, the session this driver targets lives on a peer hub of that
+    /// name: capability calls go out hub-qualified (`hub:<peer>/<method>`) and
+    /// the claudemon fallback is refused — there is no local daemon that knows
+    /// the session. `None` is the local path, unchanged.
+    pub hub: Option<String>,
 }
 
 impl Driver {
+    /// Qualify a capability name for the driver's hub, if any. The hub routes
+    /// `hub:<peer>/<method>` over its federation link to that peer.
+    fn method(&self, name: &str) -> String {
+        match &self.hub {
+            Some(peer) => format!("hub:{peer}/{name}"),
+            None => name.to_string(),
+        }
+    }
+
     pub async fn message(&self, sid: &str, text: &str) -> Result<()> {
-        match &self.bus {
-            Some(b) => b
+        match (&self.bus, &self.hub) {
+            (Some(b), _) => b
                 .call(
-                    "agents.sendMessage",
+                    &self.method("agents.sendMessage"),
                     json!({ "sessionId": sid, "text": text }),
                 )
                 .await
                 .map(|_| ()),
-            None => self.claudemon.message(sid, text).await,
+            (None, Some(_)) => Err(anyhow!("remote session but no hub bus connection")),
+            (None, None) => self.claudemon.message(sid, text).await,
         }
     }
 
     pub async fn answer_text(&self, sid: &str, text: &str) -> Result<()> {
+        // Remote: `claude.answer` is not reliably available across federation
+        // (the peer's provider set varies) — the chosen text goes down the
+        // ordinary message path instead, which every peer provides.
+        if self.hub.is_some() {
+            return self.message(sid, text).await;
+        }
         match &self.bus {
             Some(b) => b
                 .call("claude.answer", json!({ "sessionId": sid, "text": text }))
@@ -251,6 +300,12 @@ impl Driver {
     }
 
     pub async fn answer_all(&self, sid: &str, answers: Vec<String>) -> Result<()> {
+        // Remote: no `claude.answer` — the collected answers travel as one
+        // message, newline-joined in question order (the caller has already
+        // resolved digit picks to their labels; see `remote_answers`).
+        if self.hub.is_some() {
+            return self.message(sid, &answers.join("\n")).await;
+        }
         match &self.bus {
             Some(b) => b
                 .call(
@@ -264,6 +319,14 @@ impl Driver {
     }
 
     pub async fn answer_option(&self, sid: &str, option: u64) -> Result<()> {
+        // Remote pick-by-number needs the option's TEXT (there is no
+        // `claude.answer` across federation); the App resolves the label and
+        // routes through `answer_text`, so reaching here remotely is a bug.
+        if self.hub.is_some() {
+            return Err(anyhow!(
+                "remote session — answer with the option text, not a number"
+            ));
+        }
         match &self.bus {
             Some(b) => b
                 .call(
@@ -277,28 +340,32 @@ impl Driver {
     }
 
     pub async fn approve(&self, sid: &str, decision: &str, reason: Option<String>) -> Result<()> {
-        match &self.bus {
-            Some(b) => {
+        match (&self.bus, &self.hub) {
+            (Some(b), _) => {
                 let mut params = json!({ "sessionId": sid, "decision": decision });
                 if let Some(r) = reason {
                     params["reason"] = json!(r);
                 }
-                b.call("claude.approve", params).await.map(|_| ())
+                b.call(&self.method("claude.approve"), params)
+                    .await
+                    .map(|_| ())
             }
-            None => self.claudemon.approve(sid, decision, reason).await,
+            (None, Some(_)) => Err(anyhow!("remote session but no hub bus connection")),
+            (None, None) => self.claudemon.approve(sid, decision, reason).await,
         }
     }
 
     pub async fn signal(&self, sid: &str, signal: &str) -> Result<()> {
-        match &self.bus {
-            Some(b) => b
+        match (&self.bus, &self.hub) {
+            (Some(b), _) => b
                 .call(
-                    "claude.signal",
+                    &self.method("claude.signal"),
                     json!({ "sessionId": sid, "signal": signal }),
                 )
                 .await
                 .map(|_| ()),
-            None => self.claudemon.signal(sid, signal).await,
+            (None, Some(_)) => Err(anyhow!("remote session but no hub bus connection")),
+            (None, None) => self.claudemon.signal(sid, signal).await,
         }
     }
 
@@ -559,12 +626,19 @@ mod tests {
         client
             .subscribe(vec!["agent.snapshot".to_string()])
             .unwrap();
+        // The synthetic connect notification always precedes real events.
+        let ev = tokio::time::timeout(Duration::from_secs(3), events.recv())
+            .await
+            .expect("event within 3s")
+            .expect("event channel open");
+        assert_eq!(ev.topic, TOPIC_BUS_CONNECTED);
         let ev = tokio::time::timeout(Duration::from_secs(3), events.recv())
             .await
             .expect("event within 3s")
             .expect("event channel open");
         assert_eq!(ev.topic, "agent.snapshot");
         assert_eq!(ev.data["session_id"], json!("s1"));
+        assert_eq!(ev.hub, None, "no envelope stamp means local");
     }
 
     // A fake hub that answers every call with `result` and records (method,
@@ -606,7 +680,15 @@ mod tests {
             transport: crate::config::Transport::default(),
             claudemon: crate::claudemon::Claudemon::new("http://unused".into()),
             bus: Some(client),
+            hub: None,
         }
+    }
+
+    /// A driver whose session lives on peer hub `work`.
+    fn remote_driver(addr: std::net::SocketAddr) -> Driver {
+        let mut drv = bus_driver(addr);
+        drv.hub = Some("work".to_string());
+        drv
     }
 
     #[tokio::test]
@@ -858,6 +940,113 @@ mod tests {
         assert_eq!(method, "sessions.terminalInput");
         assert_eq!(params["sessionId"], json!("s1"));
         assert_eq!(params["bytesB64"], json!("AQID")); // base64([1,2,3])
+    }
+
+    // ── federation ──────────────────────────────────────────────────────────
+
+    /// A hub-stamped envelope (a peer's event republished by the local hub)
+    /// surfaces its hub on the BusEvent; an empty stamp reads as local.
+    #[tokio::test]
+    async fn events_carry_the_envelope_hub_stamp() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let (mut write, mut read) = ws.split();
+            while let Some(Ok(Message::Text(txt))) = read.next().await {
+                let v: Value = serde_json::from_str(&txt).unwrap();
+                if v.get("op").and_then(|o| o.as_str()) == Some("subscribe") {
+                    for hub in [json!("work"), json!(""), Value::Null] {
+                        let ev = json!({ "op": "event", "event": {
+                            "id": "e1", "type": "agent.snapshot", "source": "hub",
+                            "hub": hub, "data": { "sessionId": "r1" }
+                        }});
+                        let _ = write.send(Message::Text(ev.to_string())).await;
+                    }
+                }
+            }
+        });
+
+        let (client, mut events) = BusClient::connect(format!("ws://{addr}/bus"), None);
+        client.subscribe(vec!["agent.*".to_string()]).unwrap();
+
+        assert_eq!(next_event(&mut events).await.topic, TOPIC_BUS_CONNECTED);
+        let stamped = next_event(&mut events).await;
+        assert_eq!(stamped.hub.as_deref(), Some("work"));
+        assert_eq!(stamped.data["sessionId"], json!("r1"));
+        // An empty or null stamp is not a hub — both are local.
+        assert_eq!(next_event(&mut events).await.hub, None);
+        assert_eq!(next_event(&mut events).await.hub, None);
+    }
+
+    async fn next_event(rx: &mut mpsc::UnboundedReceiver<BusEvent>) -> BusEvent {
+        tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("event within 3s")
+            .expect("event channel open")
+    }
+
+    async fn next_call(rx: &mut mpsc::UnboundedReceiver<(String, Value)>) -> (String, Value) {
+        tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("call within 3s")
+            .expect("recorder open")
+    }
+
+    #[tokio::test]
+    async fn remote_driver_qualifies_message_approve_and_signal() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut rx = recording_hub(listener, json!({ "ok": true }));
+        let drv = remote_driver(addr);
+
+        drv.message("r1", "hello").await.expect("message ok");
+        drv.approve("r1", "yes", None).await.expect("approve ok");
+        drv.signal("r1", "SIGINT").await.expect("signal ok");
+
+        let (method, params) = next_call(&mut rx).await;
+        assert_eq!(method, "hub:work/agents.sendMessage");
+        assert_eq!(params["sessionId"], json!("r1"));
+        assert_eq!(params["text"], json!("hello"));
+        let (method, params) = next_call(&mut rx).await;
+        assert_eq!(method, "hub:work/claude.approve");
+        assert_eq!(params["decision"], json!("yes"));
+        let (method, params) = next_call(&mut rx).await;
+        assert_eq!(method, "hub:work/claude.signal");
+        assert_eq!(params["signal"], json!("SIGINT"));
+    }
+
+    /// Across federation there is no `claude.answer`: answer text (and a
+    /// collected multi-answer set) rides the peer's message path instead.
+    #[tokio::test]
+    async fn remote_driver_answers_via_the_message_path() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut rx = recording_hub(listener, json!({ "ok": true }));
+        let drv = remote_driver(addr);
+
+        drv.answer_text("r1", "Option B").await.expect("answer ok");
+        drv.answer_all("r1", vec!["Option A".into(), "free text".into()])
+            .await
+            .expect("multi-answer ok");
+
+        let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("call within 3s")
+            .expect("recorder open");
+        assert_eq!(method, "hub:work/agents.sendMessage");
+        assert_eq!(params["text"], json!("Option B"));
+        let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("call within 3s")
+            .expect("recorder open");
+        assert_eq!(method, "hub:work/agents.sendMessage");
+        assert_eq!(params["text"], json!("Option A\nfree text"));
+
+        // Pick-by-number has no meaning in a chat message; the caller must
+        // resolve the label first (the App does), so the driver refuses.
+        assert!(drv.answer_option("r1", 2).await.is_err());
     }
 
     async fn reconnecting_subscribe_hub(

@@ -28,6 +28,7 @@ import { startMcpFacade, stopMcpFacade } from './services/mcpFacadeDaemon';
 import { listLiveSessionIds } from './services/recentSessions';
 import { sweepSessionFacadeTokens } from './services/remoteTokens';
 import { setHubMainWindow, startHubClient, stopHubClient } from './services/hubClient';
+import { startFederationBridge, stopFederationBridge } from './services/federationBridge';
 import { setNoticeWindow, notifySystem } from './services/systemNotice';
 import { updateService } from './services/updateService';
 import { keepWarmService } from './services/keepWarmService';
@@ -392,6 +393,9 @@ function createWindow(): void {
         startHub()
           .then(() => {
             startHubClient();
+            // Federation: ingest peer hubs' agent.* events + hub.peer.*
+            // lifecycle into the session store (remote fleet cards).
+            startFederationBridge();
             // The MCP facade bridges hub capabilities to MCP tools for supervisor
             // sessions. Started after the hub so its bus connection has a target.
             // Optional: a failure only costs the supervisor its action tools.
@@ -703,6 +707,7 @@ async function gracefulShutdown(): Promise<void> {
   stopClaudemonStatusLineBridge();
   stopClaudemonConversationBridge();
   stopClaudemonEventBridge();
+  stopFederationBridge();
   stopHubClient();
   // Stop the daemons in parallel; each closes its stdin so its watchdog runs a
   // clean shutdown (the hub tears down sidecars first). Overall cap as a backstop.

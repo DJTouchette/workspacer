@@ -148,6 +148,11 @@
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .prov { font-family:var(--mono); font-size:10px; color:var(--dim); border:1px solid var(--line4);
     border-radius:4px; padding:1px 4px; flex:none; }
+  /* Which PEER HUB a federated session lives on. Same plate as .prov, tinted
+     blue so "remote" reads at a glance; .off is the tombstone form. */
+  .hub { font-family:var(--mono); font-size:10px; color:var(--blue-soft); border:1px solid var(--blue-edge);
+    border-radius:4px; padding:1px 4px; flex:none; }
+  .hub.off { color:var(--dim); border-color:var(--line4); }
   .grow { flex:1; }
   .pill { flex:none; font-size:11.5px; font-weight:600; letter-spacing:-.01em; padding:3px 9px;
     border-radius:999px; }
@@ -623,6 +628,22 @@
 
   /** Live snapshots keyed by sessionId — the one source every screen renders from. */
   const sessions = new Map();
+  // ── federation ────────────────────────────────────────────────────────────
+  // Linked hubs republish their agents' events here with the peer's name on the
+  // EVENT ENVELOPE (payloads untouched; absent = local), and qualified calls
+  // `hub:<peer>/<method>` route back over the link. Which hub a session lives
+  // on is learned from stamped envelopes and peer-fleet seeds; a hub whose link
+  // is down keeps its cards on screen as read-only tombstones.
+  const sessionHub = new Map();    // sessionId -> peer hub name (absent = local)
+  const offlineHubs = new Map();   // peer hub name -> last-seen ts (link down)
+  const hubOf = (s) => (s && s.hub) || '';
+  const hubDown = (s) => { const h = hubOf(s); return !!h && offlineHubs.has(h); };
+  const hubGone = (id) => { const h = sessionHub.get(id); return !!h && offlineHubs.has(h); };
+  /** hub:<peer>/<method> for a remote session, the bare method for a local one.
+   *  The bus applies the tier check to the BARE method either way, so a token
+   *  may reach hub:work/sessions.conversation exactly when it may reach
+   *  sessions.conversation. */
+  const qualify = (id, method) => { const h = sessionHub.get(id); return h ? `hub:${h}/${method}` : method; };
   /** What the bus told us this token may do (hello frame). Operator = everything. */
   let scope = { name: '', methods: [] };
   let cfg = null;              // config.get (spawn dirs + defaults)
@@ -807,12 +828,73 @@
     try {
       const list = await call('sessions.snapshots', {});
       const seen = new Set();
-      for (const s of (list || [])) if (s && s.sessionId) { seen.add(s.sessionId); fold(s); }
-      // The provider's list IS the visible fleet — drop what it no longer shows.
-      for (const id of [...sessions.keys()]) if (!seen.has(id)) sessions.delete(id);
-      pruneSessionState(seen);
+      for (const s of (list || [])) if (s && s.sessionId) { seen.add(s.sessionId); sessionHub.delete(s.sessionId); fold(s); }
+      await seedPeers(seen);
+      // The providers' lists ARE the visible fleet — drop what they no longer
+      // show. A hub whose LINK is down answered nothing at all: its sessions
+      // are tombstones to keep on screen, not rows to drop.
+      for (const id of [...sessions.keys()]) {
+        if (seen.has(id)) continue;
+        const h = sessionHub.get(id);
+        if (h && offlineHubs.has(h)) continue;
+        sessions.delete(id); sessionHub.delete(id);
+      }
+      pruneSessionState(new Set(sessions.keys()));
       afterData();
     } catch { /* the status pill shows offline */ }
+  }
+  /** Merge every connected peer's fleet onto the local seed, hub-stamped. An
+   *  older hub without federation.peers errors the first call — that reads as
+   *  "no peers"; an unreachable peer costs its fleet, never the boot. */
+  async function seedPeers(seen) {
+    let peers = [];
+    try { peers = (await call('federation.peers', {})) || []; } catch { return; }
+    const names = new Set();
+    for (const p of peers) {
+      if (!p || !p.name) continue;
+      names.add(p.name);
+      if (p.connected) offlineHubs.delete(p.name);
+      else if (!offlineHubs.has(p.name)) offlineHubs.set(p.name, p.lastSeen || 0);
+    }
+    // A hub UNLINKED (gone from the peer list) is not offline, it is gone —
+    // its tombstones must not outlive the link.
+    for (const h of [...offlineHubs.keys()]) if (!names.has(h)) offlineHubs.delete(h);
+    await Promise.all(peers.filter((p) => p && p.name && p.connected).map(async (p) => {
+      try {
+        const rows = (await call(`hub:${p.name}/sessions.snapshots`, {})) || [];
+        for (const row of rows) {
+          if (!row || !row.sessionId) continue;
+          row.hub = p.name;
+          seen.add(row.sessionId);
+          sessionHub.set(row.sessionId, p.name);
+          fold(row);
+        }
+      } catch {
+        // A blip on a nominally-connected link must not wipe the peer's cards
+        // — keep what we hold; the disconnect event (or the next reconcile)
+        // settles which way it goes.
+        for (const [id, h] of sessionHub) if (h === p.name) seen.add(id);
+      }
+    }));
+  }
+  /** A peer's link came back: replace its fleet wholesale — reseed, then drop
+   *  the sessions the reseed no longer returned. */
+  async function reseedPeer(name) {
+    try {
+      const rows = (await call(`hub:${name}/sessions.snapshots`, {})) || [];
+      const seen = new Set();
+      for (const row of rows) {
+        if (!row || !row.sessionId) continue;
+        row.hub = name;
+        seen.add(row.sessionId);
+        sessionHub.set(row.sessionId, name);
+        fold(row);
+      }
+      for (const [id, h] of [...sessionHub]) {
+        if (h === name && !seen.has(id)) { sessions.delete(id); sessionHub.delete(id); }
+      }
+    } catch { /* the 25s reconcile will retry */ }
+    afterData();
   }
   // Everything we key by session id, dropped when that session leaves the
   // fleet. This client can stay open for days on a phone, so the per-session
@@ -854,6 +936,9 @@
   const isLive = (s) => !!s && s.status !== 'ended';
   const isBlocked = (s) => !!(s && (s.pendingApproval || (s.pendingQuestions && s.pendingQuestions.length)));
   const isWorking = (s) => {
+    // A down hub's snapshots are frozen at the moment the link dropped — a
+    // spinner there would be claiming live progress nobody can see.
+    if (hubDown(s)) return false;
     const a = s && s.ambientState;
     return isLive(s) && !isBlocked(s) && (a === 'streaming' || a === 'thinking' || a === 'background');
   };
@@ -862,6 +947,15 @@
   const providerOf = (s) => (s && s.provider) || 'claude';
 
   const PROVIDER_LABEL = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', pi: 'Pi' };
+
+  /** The small chip a federated session's cards carry — which hub it lives on. */
+  const hubChipHtml = (s) => hubOf(s)
+    ? `<span class="hub${hubDown(s) ? ' off' : ''}">${esc(hubOf(s))}</span>` : '';
+  /** The tombstone line: "hub offline — last seen 4m". */
+  function hubOfflineLine(s) {
+    const ago = relTime(offlineHubs.get(hubOf(s)) || 0);
+    return 'hub offline' + (ago ? ' — last seen ' + ago : '');
+  }
 
   /** shortModelLabel, ported verbatim from lib/modelLabel.ts (its tests pin
    *  `sonnet[1m]` unchanged, so the `[1m]` marker must survive). */
@@ -1127,7 +1221,9 @@
     return String(h >>> 0);
   }
   function attentionFor(s) {
-    if (!isLive(s)) return [];
+    // A tombstoned session can't be acted on — surfacing its stale approvals
+    // in Needs You would offer buttons that can only fail.
+    if (!isLive(s) || hubDown(s)) return [];
     const sid = s.sessionId, out = [];
     const blocked = isBlocked(s);
     const idle = s.ambientState === 'idle' || s.ambientState === 'waiting_input';
@@ -1243,7 +1339,9 @@
     try {
       const params = { sessionId: id };
       if (st.seq > 0) params.sinceSeq = st.seq;
-      const r = await call('sessions.conversation', params);
+      // Hub-qualified for a remote session — sessions.conversation is
+      // view-tier, so remote chat reads exactly where local chat reads.
+      const r = await call(qualify(id, 'sessions.conversation'), params);
       st.at = Date.now();
       const seq = (r && typeof r.seq === 'number') ? r.seq : 0;
       const items = (r && Array.isArray(r.items)) ? r.items : [];
@@ -1377,6 +1475,9 @@
     else if (S.screen === 'chat') {
       title = active ? agentName(active) : 'Agent';
       meta = active ? (PROVIDER_LABEL[providerOf(active)] || providerOf(active)).toLowerCase() : '';
+      // Which hub a remote session lives on belongs in its chat header — the
+      // tmeta slot is the header's one mono label, so it rides there.
+      if (active && hubOf(active)) meta += ' · ' + hubOf(active) + (hubDown(active) ? ' (offline)' : '');
       sub = active ? lrm(agentPath(active)) : '';
     } else if (S.screen === 'flows') {
       title = 'Inspector'; meta = active ? agentName(active) : ''; sub = active ? lrm(agentPath(active)) : '';
@@ -1511,12 +1612,15 @@
   }
 
   function agentCard(s) {
-    const st = agentState(s), meta = STATES[st];
+    // A tombstoned card keeps rendering (muted, chip greyed, no inline
+    // actions) — the fleet you can't currently reach is still your fleet.
+    const down = hubDown(s);
+    const st = agentState(s), meta = down ? STATES.stopped : STATES[st];
     const sid = esc(s.sessionId);
     const t = stats(s);
-    const ask = askFor(s);
+    const ask = down ? null : askFor(s);
     const flow = (s.workflows || []).find((w) => w.status === 'running');
-    const doing = doingLine(s);
+    const doing = down ? hubOfflineLine(s) : doingLine(s);
     const tele = [];
     if (t.model) tele.push(`<span class="m">${esc(t.model)}</span>`);
     if (t.ctxPct !== undefined) {
@@ -1525,15 +1629,16 @@
     if (t.costUSD) tele.push(`<span>${esc(fmtUSD(t.costUSD))}</span>`);
     const flowLbl = flow ? `<span style="color:${C.blue}">flow: ${esc(flow.name || 'workflow')}</span>` : '';
 
-    return `<div class="agent" data-agent="${sid}" style="border-color:${ask ? meta.edge : '#1f2427'}${st === 'stopped' ? ';opacity:.62' : ''}">
+    return `<div class="agent" data-agent="${sid}" style="border-color:${ask ? meta.edge : '#1f2427'}${st === 'stopped' || down ? ';opacity:.62' : ''}">
       <button class="top" data-open="${sid}">
         <div class="hd">
-          <span class="dot${meta.pulse ? ' pulse' : ''}" style="${dotStyle(meta.color)}"></span>
+          <span class="dot${!down && meta.pulse ? ' pulse' : ''}" style="${dotStyle(meta.color)}"></span>
           ${projectMarkHtml(agentPath(s))}
           <span class="nm">${esc(agentName(s))}</span>
           <span class="prov">${esc(providerOf(s))}</span>
+          ${hubChipHtml(s)}
           <span class="grow"></span>
-          <span class="pill" style="color:${meta.color};background:${meta.bg};border:1px solid ${meta.line}">${meta.label}</span>
+          <span class="pill" style="color:${meta.color};background:${meta.bg};border:1px solid ${meta.line}">${down ? 'Hub offline' : meta.label}</span>
         </div>
         <div class="path rtl">${esc(lrm(agentPath(s)))}</div>
         ${doing ? `<div class="doing">${st === 'working'
@@ -1701,6 +1806,7 @@
         <span class="glyph" style="color:${k.color};background:${k.bg};border:1px solid ${k.edge}">${k.mark}</span>
         ${s ? projectMarkHtml(agentPath(s), 'sm') : ''}
         <span class="who">${esc(s ? agentName(s) : 'agent')}</span>
+        ${s ? hubChipHtml(s) : ''}
         <span class="grow"></span>
         <span class="ago">${esc(relTime(it.createdAt))}</span>
       </div>
@@ -1744,7 +1850,7 @@
   function renderChat() {
     const s = sessions.get(S.sessionId);
     if (!s) { go('fleet'); return false; }
-    if (needsConvFetch(s)) scheduleConvRefresh(s.sessionId);
+    if (needsConvFetch(s) && !hubDown(s)) scheduleConvRefresh(s.sessionId);
 
     const parts = [chatPillsHtml(s), transcriptHtml(s)];
     if (isWorking(s)) parts.push(streamingHtml(s));
@@ -1773,7 +1879,11 @@
     const chip = proj
       ? `<span class="proj">${projectMarkHtml(agentPath(s), 'sm')}${esc(proj.label)}</span>`
       : '';
-    return `<div class="pills">${chip}${pills.join('')}</div>`;
+    // Remote sessions carry their hub on the same label rail as the project.
+    const hubchip = hubOf(s)
+      ? `<span class="proj" style="color:${hubDown(s) ? 'var(--dim)' : 'var(--blue-soft)'};padding-left:12px">⇄ ${esc(hubOf(s))}${hubDown(s) ? ' · offline' : ''}</span>`
+      : '';
+    return `<div class="pills">${hubchip}${chip}${pills.join('')}</div>`;
   }
 
   function streamingHtml(s) {
@@ -1948,6 +2058,16 @@
 
   // ══ composer ══════════════════════════════════════════════════════════════
   function renderComposer(s) {
+    // A tombstoned session's composer is read-only: the ask dock and the
+    // launch-setting chips vanish with the send button, because every one of
+    // them is a call over a link that is down.
+    if (hubDown(s)) {
+      askDock.innerHTML = '';
+      chipsEl.innerHTML = '';
+      sendBtn.disabled = true;
+      msgEl.placeholder = hubOfflineLine(s);
+      return;
+    }
     // Pending questions dock above the composer — the thing blocking the turn.
     if (s.pendingQuestions && s.pendingQuestions.length) {
       const qs2 = s.pendingQuestions;
@@ -2051,13 +2171,14 @@
     let rows = [];
     try {
       if (caps.modelSource === 'claude') {
-        const r = await call('claude.listModels', {});
+        // Qualified: a remote session's model catalog lives on ITS hub.
+        const r = await call(qualify(s.sessionId, 'claude.listModels'), {});
         const seen = (r && r.seen) || [];
         const aliases = (r && r.aliases) || [];
         const ids = [...new Set([...aliases.map((a) => a.value), ...seen])].filter(Boolean);
         rows = ids.map((id) => ({ label: shortModel(id) || id, run: () => setModel(s.sessionId, id) }));
       } else {
-        const list = await call('providers.listModels', { provider: caps.provider, cwd: agentPath(s) });
+        const list = await call(qualify(s.sessionId, 'providers.listModels'), { provider: caps.provider, cwd: agentPath(s) });
         rows = (list || []).map((m) => ({ label: m.label || m.id, run: () => setModel(s.sessionId, m.id) }));
       }
     } catch (e) { rows = [{ label: 'Could not load models: ' + errText(e), disabled: true }]; }
@@ -2406,11 +2527,13 @@
 
   // ══ actions ═══════════════════════════════════════════════════════════════
   function approve(id, decision) {
-    call('claude.approve', { sessionId: id, decision })
+    if (hubGone(id)) { toast('Hub offline'); return; }
+    call(qualify(id, 'claude.approve'), { sessionId: id, decision })
       .then(() => toast(decision === 'no' ? 'Denied' : decision === 'always' ? 'Always allowed' : 'Approved'))
       .catch((e) => toast('Failed: ' + errText(e)));
   }
   function submitAnswers(id) {
+    if (hubGone(id)) { toast('Hub offline'); return; }
     const s = sessions.get(id);
     const questions = (s && s.pendingQuestions) || [];
     const answers = [];
@@ -2423,7 +2546,7 @@
     // Capture the question set + anchor now: the snapshot may clear
     // pendingQuestions before the call resolves.
     const anchorLen = s ? convTurns(s).length : 0;
-    call('claude.answer', { sessionId: id, answers })
+    call(qualify(id, 'claude.answer'), { sessionId: id, answers })
       .then(() => {
         recordResolved(id, false, describeAnswers(questions, answers), questions, anchorLen);
         for (let qi = 0; qi < questions.length; qi++) S.picks.delete(pickKey(id, qi));
@@ -2433,20 +2556,22 @@
       .catch((e) => toast('Failed: ' + errText(e)));
   }
   function declineQuestion(id) {
+    if (hubGone(id)) { toast('Hub offline'); return; }
     const s = sessions.get(id);
     const questions = (s && s.pendingQuestions) || [];
     const anchorLen = s ? convTurns(s).length : 0;
     recordResolved(id, true, null, questions, anchorLen);
-    call('claude.signal', { sessionId: id, signal: 'SIGINT' })
+    call(qualify(id, 'claude.signal'), { sessionId: id, signal: 'SIGINT' })
       .then(() => toast('Declined')).catch((e) => toast('Failed: ' + errText(e)));
     afterData();
   }
   function interrupt(id) {
-    call('claude.signal', { sessionId: id, signal: 'SIGINT' })
+    if (hubGone(id)) { toast('Hub offline'); return; }
+    call(qualify(id, 'claude.signal'), { sessionId: id, signal: 'SIGINT' })
       .then(() => toast('Interrupted')).catch((e) => toast('Failed: ' + errText(e)));
   }
   function setPermissionMode(id, mode) {
-    call('claude.setPermissionMode', { sessionId: id, mode })
+    call(qualify(id, 'claude.setPermissionMode'), { sessionId: id, mode })
       .then((r) => toast(r && r.ok === false ? (r.error || 'Could not switch mode') : 'Mode: ' + mode))
       .catch((e) => toast('Failed: ' + noteSwitchFailure(e)));
   }
@@ -2454,7 +2579,7 @@
     const params = { sessionId: id };
     if (model) params.model = model;
     if (effort) params.effort = effort;
-    call('claude.setModel', params)
+    call(qualify(id, 'claude.setModel'), params)
       .then((r) => toast(r && r.ok === false ? (r.error || 'Could not switch') : (model ? 'Model: ' + shortModel(model) : 'Effort: ' + effort)))
       .catch((e) => toast('Failed: ' + noteSwitchFailure(e)));
   }
@@ -2479,8 +2604,9 @@
     if (S.screen !== 'chat') return;
     const text = (msgEl.value || '').trim();
     if (!text) return;
+    if (hubGone(S.sessionId)) { toast('Hub offline'); return; }
     sendBtn.disabled = true;
-    call('agents.sendMessage', { sessionId: S.sessionId, text })
+    call(qualify(S.sessionId, 'agents.sendMessage'), { sessionId: S.sessionId, text })
       .then(() => { msgEl.value = ''; autosize(); })
       .catch((e) => toast('Send failed: ' + errText(e)))
       .finally(() => { sendBtn.disabled = false; });
@@ -2707,7 +2833,7 @@
     sock.onopen = () => {
       clearTimeout(watchdog);
       backoff = 500; attempt = 0; lastActivity = Date.now(); connected = true;
-      sock.send(JSON.stringify({ op: 'subscribe', topics: ['agent.snapshot', 'workflow.*'] }));
+      sock.send(JSON.stringify({ op: 'subscribe', topics: ['agent.snapshot', 'workflow.*', 'hub.peer.*'] }));
       // Everything else waits for `hello` — see onDiscover. Firing the optional
       // lookups here would run their can() guards before we know our scope,
       // when can() answers true for everything, so a view/triage token would
@@ -2743,10 +2869,35 @@
       else if (f.op === 'error' && f.id) { const c = calls.get(f.id); if (c) { calls.delete(f.id); c.reject(new Error(f.error || 'error')); } }
       else if (f.op === 'event' && f.event) {
         const t = f.event.type || '';
-        if (t === 'agent.snapshot' && f.event.data && f.event.data.sessionId) upsert(f.event.data);
+        // Federation: the peer's name rides the ENVELOPE — stamp it onto the
+        // snapshot (and remember it) so this session renders with its hub chip
+        // and every later call for it goes hub-qualified. Unstamped = local.
+        const peer = f.event.hub || '';
+        if (t === 'agent.snapshot' && f.event.data && f.event.data.sessionId) {
+          const snap = f.event.data;
+          if (peer) {
+            snap.hub = peer;
+            sessionHub.set(snap.sessionId, peer);
+            // A stamped push can only have crossed a live link — clear a
+            // tombstone the lifecycle event hasn't cleared yet.
+            if (offlineHubs.delete(peer)) renderChrome();
+          }
+          upsert(snap);
+        }
+        // Peer link down → tombstone that hub's sessions (cards stay, actions
+        // go); back up → clear and reseed its fleet wholesale.
+        else if (t === 'hub.peer.disconnected') {
+          const d = f.event.data || {};
+          if (d.peer) { offlineHubs.set(d.peer, Date.parse(d.lastSeen || '') || Date.now()); afterData(); }
+        }
+        else if (t === 'hub.peer.connected') {
+          const d = f.event.data || {};
+          if (d.peer) { offlineHubs.delete(d.peer); reseedPeer(d.peer); }
+        }
         // Workflow lifecycle rides its own topic on the desktop provider; the
         // snapshot catches up on the next tick, but re-rendering now keeps a
-        // watched flow honest between snapshots.
+        // watched flow honest between snapshots. Peers' flow events re-render
+        // the same way — their state arrives in the stamped snapshots.
         else if (t.indexOf('workflow.') === 0) afterData();
       }
     };

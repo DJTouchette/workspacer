@@ -64,6 +64,7 @@ import {
 import { getTailscaleInfo, setTailscaleServe } from './services/tailscaleServe';
 import { setRemoteServer } from './services/remoteServer';
 import { publishToHub, isHubConnected, callHub } from './services/hubClient';
+import { listFederationPeers } from './services/federationBridge';
 import { IPC } from './shared/ipcChannels';
 import type {
   ClaudeSessionSnapshot,
@@ -230,8 +231,34 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         label?: string;
         parentSessionId?: string;
         mcpItemIds?: string[];
+        /** Federation: spawn on this peer hub instead of locally (the spawn
+         *  dialog's Machine picker). */
+        targetHub?: string;
       },
     ) => {
+      // Federation: a spawn aimed at a peer machine routes over the bus as a
+      // qualified agents.spawn — never a local spawn wearing the wrong cwd.
+      // The PEER applies its own remote-caller clamps (skipPermissions forced
+      // off, escalating modes dropped, mcpItemIds ignored), which is correct:
+      // this machine is a remote caller there. The new session then arrives
+      // back through the federation ingest as a hub-stamped card. Local-only
+      // knobs (profileId, mcpItemIds, facade toolScope — the peer's facade is
+      // its own) are deliberately not forwarded.
+      if (opts.targetHub?.trim()) {
+        const res = (await callHub(`hub:${opts.targetHub.trim()}/agents.spawn`, {
+          provider: opts.provider,
+          transport: opts.transport,
+          cwd: opts.cwd,
+          model: opts.model,
+          effort: opts.effort,
+          permissionMode: opts.permissionMode,
+          label: opts.label,
+          cols: opts.cols,
+          rows: opts.rows,
+        })) as { sessionId?: string } | null;
+        if (!res?.sessionId) throw new Error(`spawn on hub "${opts.targetHub}" returned no session id`);
+        return res.sessionId;
+      }
       // Provider selects the coding-agent backend. OpenCode and Codex are Tier-2
       // managed: claudemon drives their machine interface (`opencode serve` HTTP+SSE
       // / `codex app-server` JSON-RPC) and translates events into the shared session
@@ -367,6 +394,28 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     },
   );
   ipcMain.handle(IPC.HUB_GET_STATUS, () => ({ connected: isHubConnected() }));
+
+  // ── Federation (peer hubs) ──
+  // The peers main has observed via hub.peer.* events (see federationBridge).
+  // Live transitions reach the renderer on the generic hub:event channel as
+  // hub.peer.connected / hub.peer.disconnected — re-invoke this on those.
+  ipcMain.handle(IPC.FEDERATION_PEERS, () => listFederationPeers());
+
+  // ── Federation: session-action routing ──
+  // A session whose store entry carries `hub` lives on a peer machine: acting
+  // on it means a qualified bus call (`hub:<peer>/<method>`) the local hub
+  // forwards over the federation link — the local claudemon has no such
+  // session, and hitting it would at best 404 and at worst act on the wrong
+  // session. Every session-scoped handler below resolves through one of these.
+  const remoteHubOf = (sessionId: string): string | undefined =>
+    claudeSessionStore.getSnapshot(sessionId)?.hub || undefined;
+  // Things that CANNOT work remotely v1 (terminal attach/resize, respawn,
+  // model/effort/permission-mode switches, handoff, close/gate) refuse loudly
+  // instead of acting on a wrong local session.
+  const assertLocalSession = (sessionId: string, what: string): void => {
+    const hub = remoteHubOf(sessionId);
+    if (hub) throw new Error(`${what} is not available for remote sessions (hub "${hub}")`);
+  };
 
   // ── Shared layout document (hub-owned) ──
   // The hub owns the workspace layout so desktop + web mirror each other. These
@@ -816,15 +865,28 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle(IPC.CLAUDE_MESSAGE, (_event, sessionId: string, text: string) =>
-    claudemonSessionClient.message(sessionId, text),
-  );
+  ipcMain.handle(IPC.CLAUDE_MESSAGE, async (_event, sessionId: string, text: string) => {
+    const hub = remoteHubOf(sessionId);
+    if (hub) {
+      // Peer capability throws when the session isn't accepting input; fold
+      // that back into the local handler's { ok } shape.
+      try {
+        await callHub(`hub:${hub}/agents.sendMessage`, { sessionId, text });
+        return { ok: true };
+      } catch (err) {
+        console.warn(`[federation] sendMessage to ${hub}:${sessionId} failed:`, err);
+        return { ok: false };
+      }
+    }
+    return claudemonSessionClient.message(sessionId, text);
+  });
   // Live permission-mode switch (no restart). On success, reflect the
   // daemon-confirmed mode into the snapshot store immediately — the switch
   // itself fires no hook, so telemetry would otherwise lag until the next one.
   ipcMain.handle(
     IPC.CLAUDE_SET_PERMISSION_MODE,
     async (_event, sessionId: string, mode: string) => {
+      assertLocalSession(sessionId, 'Permission-mode switch');
       const result = await claudemonSessionClient.setPermissionMode(sessionId, mode);
       if (result.ok && result.mode) claudeSessionStore.notePermissionMode(sessionId, result.mode);
       return result;
@@ -833,33 +895,45 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Live reasoning-effort switch (no restart). Shared with the
   // `claude.setEffort` hub capability via applyLiveEffort so the two transports
   // can't drift — the dispatch branches on provider (see liveEffort.ts).
-  ipcMain.handle(IPC.CLAUDE_SET_EFFORT, (_event, sessionId: string, effort: string) =>
-    applyLiveEffort(sessionId, effort),
-  );
+  ipcMain.handle(IPC.CLAUDE_SET_EFFORT, (_event, sessionId: string, effort: string) => {
+    assertLocalSession(sessionId, 'Effort switch');
+    return applyLiveEffort(sessionId, effort);
+  });
   // Live model switch for managed providers (no restart). Confirmation flows
   // back through the status line (codex broadcasts thread/settings/updated),
   // so no store note is needed here.
   ipcMain.handle(
     IPC.CLAUDE_SET_MODEL,
-    (_event, sessionId: string, model?: string, effort?: string) =>
-      claudemonSessionClient.setModel(sessionId, model, effort),
+    (_event, sessionId: string, model?: string, effort?: string) => {
+      assertLocalSession(sessionId, 'Model switch');
+      return claudemonSessionClient.setModel(sessionId, model, effort);
+    },
   );
   // Cross-provider handoff: daemon distills the session's conversation into a
   // brief under ~/.workspacer/handoffs/; the renderer spawns the successor and
   // points its first message at the file.
-  ipcMain.handle(IPC.CLAUDE_HANDOFF_BRIEF, (_event, sessionId: string) =>
-    claudemonSessionClient.handoffBrief(sessionId),
-  );
+  ipcMain.handle(IPC.CLAUDE_HANDOFF_BRIEF, (_event, sessionId: string) => {
+    assertLocalSession(sessionId, 'Handoff');
+    return claudemonSessionClient.handoffBrief(sessionId);
+  });
   // Agent-authored brief: the source agent writes the file itself (it's the
   // only thing holding the session in context); falls back to the mechanical
   // brief if it doesn't deliver. Resolves only once a brief file exists.
-  ipcMain.handle(IPC.CLAUDE_HANDOFF_AGENT_BRIEF, (_event, sessionId: string) =>
-    agentHandoffBrief(sessionId),
-  );
+  ipcMain.handle(IPC.CLAUDE_HANDOFF_AGENT_BRIEF, (_event, sessionId: string) => {
+    assertLocalSession(sessionId, 'Handoff');
+    return agentHandoffBrief(sessionId);
+  });
   ipcMain.handle(
     IPC.CLAUDE_APPROVE,
-    (_event, sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string) =>
-      claudemonSessionClient.approve(sessionId, decision, reason),
+    async (_event, sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string) => {
+      const hub = remoteHubOf(sessionId);
+      if (hub) {
+        // Same params the peer's own claude.approve capability takes.
+        await callHub(`hub:${hub}/claude.approve`, { sessionId, decision, reason });
+        return;
+      }
+      return claudemonSessionClient.approve(sessionId, decision, reason);
+    },
   );
   ipcMain.handle(
     IPC.CLAUDE_ANSWER,
@@ -868,29 +942,46 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       sessionId: string,
       payload: { option?: number; text?: string; answers?: string[]; answerKinds?: string[] },
     ) => {
+      const hub = remoteHubOf(sessionId);
+      if (hub) {
+        await callHub(`hub:${hub}/claude.answer`, { sessionId, ...payload });
+        // Same optimistic clear as the local path: the remote entry's pending
+        // questions otherwise linger until the peer's next snapshot lands.
+        claudeSessionStore.clearPendingQuestions(sessionId);
+        return;
+      }
       const res = await claudemonSessionClient.answer(sessionId, payload);
       claudeSessionStore.clearPendingQuestions(sessionId);
       return res;
     },
   );
-  ipcMain.handle(IPC.CLAUDE_RESIZE, (_event, sessionId: string, cols: number, rows: number) =>
-    claudemonSessionClient.resize(sessionId, cols, rows),
-  );
-  ipcMain.handle(IPC.CLAUDE_SIGNAL, (_event, sessionId: string, signal: string) =>
-    claudemonSessionClient.signal(sessionId, signal),
-  );
-  ipcMain.handle(IPC.CLAUDE_CLOSE, (_event, sessionId: string) =>
-    claudemonSessionClient.close(sessionId),
-  );
-  ipcMain.handle(IPC.CLAUDE_ATTACH, (_event, paneId: string, sessionId: string) =>
-    claudemonSessionClient.attach(paneId, sessionId, IPC.CLAUDE_PORT),
-  );
+  ipcMain.handle(IPC.CLAUDE_RESIZE, (_event, sessionId: string, cols: number, rows: number) => {
+    assertLocalSession(sessionId, 'Terminal resize');
+    return claudemonSessionClient.resize(sessionId, cols, rows);
+  });
+  ipcMain.handle(IPC.CLAUDE_SIGNAL, async (_event, sessionId: string, signal: string) => {
+    const hub = remoteHubOf(sessionId);
+    if (hub) {
+      await callHub(`hub:${hub}/claude.signal`, { sessionId, signal });
+      return;
+    }
+    return claudemonSessionClient.signal(sessionId, signal);
+  });
+  ipcMain.handle(IPC.CLAUDE_CLOSE, (_event, sessionId: string) => {
+    assertLocalSession(sessionId, 'Close');
+    return claudemonSessionClient.close(sessionId);
+  });
+  ipcMain.handle(IPC.CLAUDE_ATTACH, (_event, paneId: string, sessionId: string) => {
+    assertLocalSession(sessionId, 'Terminal attach');
+    return claudemonSessionClient.attach(paneId, sessionId, IPC.CLAUDE_PORT);
+  });
   ipcMain.handle(IPC.CLAUDE_DETACH, (_event, paneId: string) =>
     claudemonSessionClient.detach(paneId),
   );
-  ipcMain.handle(IPC.CLAUDE_GATE, (_event, sessionId: string, on: boolean) =>
-    claudemonSessionClient.setGate(sessionId, on),
-  );
+  ipcMain.handle(IPC.CLAUDE_GATE, (_event, sessionId: string, on: boolean) => {
+    assertLocalSession(sessionId, 'Approval gate');
+    return claudemonSessionClient.setGate(sessionId, on);
+  });
 
   ipcMain.handle(
     IPC.CLAUDE_SESSION_GET,

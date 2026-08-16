@@ -213,6 +213,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     toolScope?: 'view' | 'triage' | 'operator';
     /** Plugin ids whose contributed facade tools the agent may use (needs toolScope). */
     pluginTools?: string[];
+    /** Federation: spawn on this peer hub instead of locally. */
+    targetHub?: string;
   }): Promise<string> => ipcRenderer.invoke(IPC.CLAUDE_SPAWN, opts),
   /** Config changed in main (its own write, or an external one the watcher
    *  caught). Returns an unsubscribe. */
@@ -415,18 +417,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // Hub event bus — events forwarded from the hub daemon's WebSocket.
+  // `hub` is the federation stamp: the peer hub the event was republished
+  // from; absent = local.
   onHubEvent: (
     callback: (event: {
       id: string;
       type: string;
       source: string;
+      hub?: string;
       time: string;
       data?: unknown;
     }) => void,
   ): (() => void) => {
     const handler = (
       _e: Electron.IpcRendererEvent,
-      ev: { id: string; type: string; source: string; time: string; data?: unknown },
+      ev: { id: string; type: string; source: string; hub?: string; time: string; data?: unknown },
     ) => callback(ev);
     ipcRenderer.on(IPC.HUB_EVENT, handler);
     return () => ipcRenderer.removeListener(IPC.HUB_EVENT, handler);
@@ -441,6 +446,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   hubPublish: (event: { type: string; source?: string; data?: unknown }): Promise<void> =>
     ipcRenderer.invoke(IPC.HUB_PUBLISH, event),
   getHubStatus: (): Promise<{ connected: boolean }> => ipcRenderer.invoke(IPC.HUB_GET_STATUS),
+  // Federation: peer hubs main has observed via hub.peer.* lifecycle events.
+  // Live transitions arrive on onHubEvent (hub.peer.connected / .disconnected)
+  // — re-invoke this on those rather than expecting a dedicated push channel.
+  federationPeers: (): Promise<Array<{ name: string; connected: boolean; lastSeen?: number }>> =>
+    ipcRenderer.invoke(IPC.FEDERATION_PEERS),
 
   // ── Git worktrees (agent isolation) ──
   worktreeInfo: (cwd: string): Promise<unknown> => ipcRenderer.invoke(IPC.WORKTREE_INFO, cwd),

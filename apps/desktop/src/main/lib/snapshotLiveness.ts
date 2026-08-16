@@ -46,6 +46,14 @@ export function snapshotGrantsFsRoot(snap: unknown): boolean {
   // carries claudemon-shaped rows through the enrich overlay, and a field of the
   // wrong TYPE is the "will not decode" clause — it must not read as "no mode,
   // therefore live", which is exactly how a shape change widens an allow-list.
+  // FEDERATION (security-relevant): a remote session's cwd is a path on the
+  // PEER machine — it must never grant a LOCAL filesystem root, whatever its
+  // liveness. Anything but an absent/empty-string `hub` refuses, including a
+  // wrong-typed value (the "will not decode" clause: a shape change must never
+  // widen an allow-list). The Go twin has no equivalent clause because the
+  // brain derives its cwds from the local claudemon's sessions, which are
+  // never hub-stamped.
+  if (row.hub !== undefined && (typeof row.hub !== 'string' || row.hub !== '')) return false;
   if (row.mode !== undefined && typeof row.mode !== 'string') return false;
   if (row.status !== undefined && typeof row.status !== 'string') return false;
   if (row.archived !== undefined && typeof row.archived !== 'boolean') return false;

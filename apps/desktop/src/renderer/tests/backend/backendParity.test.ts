@@ -150,6 +150,7 @@ const KNOWN_STUBS = [
   'saveClipboardImage', // the host clipboard isn't the browser user's clipboard → null
   'agentSuggestTitle', // runs a local headless `claude --print`; null on web (the desktop titles the agent and the layout syncs)
   'onConfigChanged', // main-process config watcher; the bus has no equivalent event yet
+  'federationPeers', // the web mirror talks to one hub directly; no peer link → [] (could ride hub.peer.* later)
 ] as const;
 
 function webBackendMethodKeys(): Set<string> {
@@ -315,8 +316,10 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
       registered.add(m[1]);
     }
     // Hub-core surface the main process does NOT register (owned by the hub
-    // daemon / bus itself), so a match against hubCapabilities.ts is not expected.
-    const HUB_CORE = new Set(['layout.get', 'layout.set', '__publish']);
+    // daemon / bus itself), so a match against hubCapabilities.ts is not
+    // expected. federation.peers is RegisterLocal'd by cmd/hub when peers are
+    // configured (see internal/federation).
+    const HUB_CORE = new Set(['layout.get', 'layout.set', '__publish', 'federation.peers']);
 
     expect(called.size, 'expected to extract capability names from webBackend.ts').toBeGreaterThan(
       20,

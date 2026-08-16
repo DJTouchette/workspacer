@@ -227,6 +227,21 @@ export interface ClaudeSessionSnapshot {
   /** Claude sessions only: 'stream' when the session runs on the headless
    *  stream-json managed adapter (no PTY). Absent/'pty' = classic PTY TUI. */
   transport?: 'pty' | 'stream';
+  /** Federation: the peer hub this session lives on; absent = local. */
+  hub?: string;
+  /** Federation: true while that peer's federation link is down — the session
+   *  renders as a tombstone ("hub unreachable") instead of vanishing. */
+  hubOffline?: boolean;
+}
+
+// ── Federation (federation:peers) ──
+
+/** One peer hub main has observed via hub.peer.* lifecycle events. */
+export interface FederationPeerInfo {
+  name: string;
+  connected: boolean;
+  /** Unix ms of the peer's last observed liveness. */
+  lastSeen?: number;
 }
 
 // ── App configuration (config:get / config:save) ──

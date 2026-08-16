@@ -93,6 +93,12 @@ var topicDeliveryKey = []topicDelivery{
 	{topic: "layout.changed", view: true, bare: true, term: true, watch: true, snap: true,
 		why: "the accepted shared layout document, whose read (layout.get) is in the view tier. The danger here was forgery, closed by mayPublish, not disclosure"},
 
+	// ---- federation-link reachability ---------------------------------------
+	{topic: "hub.peer.connected", view: true, bare: true, term: true, watch: true, snap: true,
+		why: "only the peer's configured name; the feed it enables (agent.*) is already open to these credentials"},
+	{topic: "hub.peer.disconnected", view: true, bare: true, term: true, watch: true, snap: true,
+		why: "peer name + last-seen — the tombstone signal; withholding it makes remote agents silently vanish for exactly the clients that watch them"},
+
 	// ---- UI navigation commands (MCP facade ui tools → the renderer) --------
 	{topic: "command.focus_agent", view: true, bare: true, term: true, watch: true, snap: true,
 		why: "a navigation REQUEST carrying only the session id to focus — an id the fleet feed already delivers to every one of these credentials"},

@@ -3,6 +3,7 @@ import type { AttentionItem, AttentionKind } from '../../types/attention';
 import { ApprovalPrompt } from '../claude/ApprovalPrompt';
 import { QuestionPicker } from '../claude/QuestionPicker';
 import { useAttention, SNOOZE_MINUTES } from '../../contexts/AttentionContext';
+import { HubChip } from '../HubChip';
 import { Surface } from '../Surface';
 
 const KIND_VISUAL: Record<AttentionKind, { label: string; color: string; glyph: string }> = {
@@ -48,8 +49,10 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
     useAttention();
   const v = KIND_VISUAL[item.kind];
   // Finished / big-diff cards close the loop with review + respawn affordances.
-  const canReview = item.kind === 'done' || item.kind === 'bigdiff';
-  const canRespawn = item.kind === 'done';
+  // Both are local-machine actions, so federated (remote-hub) items hide them:
+  // the cwd and the session live on the peer.
+  const canReview = (item.kind === 'done' || item.kind === 'bigdiff') && !item.hub;
+  const canRespawn = item.kind === 'done' && !item.hub;
 
   return (
     // `raised`: the fill carries selection, the `tone` rail carries the kind —
@@ -182,6 +185,7 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
         )}
         <CardBtn label="Snooze" hint="s" onClick={() => snooze(item.signature, SNOOZE_MINUTES)} />
         <CardBtn label="Dismiss" hint="e" onClick={() => dismiss(item.signature)} />
+        {item.hub && <HubChip name={item.hub} style={{ marginLeft: 'auto' }} />}
         <span
           style={{
             marginLeft: 'auto',

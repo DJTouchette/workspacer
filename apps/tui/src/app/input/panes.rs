@@ -92,11 +92,13 @@ impl App {
         let Some(tab) = self.active_tab().cloned() else {
             return;
         };
-        // Headless stream sessions and known no-PTY sessions are proactively
-        // transcript-only — never warm a PTY stream that can't exist.
+        // Headless stream sessions, known no-PTY sessions, and remote
+        // (peer-hub) sessions are proactively transcript-only — never warm a
+        // PTY stream that can't exist here.
         let transcript_only = tab.kind == TabKind::Claude
             && (self.no_terminal.contains(&tab.session_id)
-                || self.is_stream_session(&tab.session_id));
+                || self.is_stream_session(&tab.session_id)
+                || self.is_remote_session(&tab.session_id));
         if transcript_only {
             self.chat_mode = ChatMode::Transcript;
             self.load_transcript(tab.session_id);
@@ -132,6 +134,12 @@ impl App {
         let Some(id) = self.open_agent_id().map(|s| s.to_string()) else {
             return;
         };
+        // A shell would spawn on THIS machine in a directory that names the
+        // peer's filesystem — hidden rather than failing on use.
+        if self.is_remote_session(&id) {
+            self.set_toast("remote session — terminals are local-only");
+            return;
+        }
         let cwd = self
             .chat_agent()
             .map(|a| a.cwd_str().to_string())

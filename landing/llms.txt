@@ -16,6 +16,7 @@
 - [Architecture internals](build.html#architecture): the desktop / claudemon / hub split and the hub bus.
 - [How agents are driven](build.html#providers): the two integration tiers and each provider's managed adapter.
 - [Writing a plugin (overview)](build.html#plugins): the short tour of the plugin system.
+- [Hub federation](build.html#federation): (v0.150, next release) link two machines' hubs — one UI over both fleets, hub-stamped events, `hub:<peer>/<method>` calls, peers.json, tombstones.
 - [The MCP facade & brain](build.html#mcp): exposing the hub's capabilities as MCP tools — tiered per session token (view/triage/operator), a `help` tool per tier, plugin-contributed tools, and UI navigation (focus agents, open panes, open the built-in browser).
 
 ## Build a plugin

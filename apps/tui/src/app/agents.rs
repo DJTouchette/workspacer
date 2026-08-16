@@ -4,7 +4,18 @@
 use super::*;
 
 impl App {
-    pub(in crate::app) fn set_agents(&mut self, mut list: Vec<Agent>) {
+    /// Adopt a fresh LOCAL roster from claudemon and re-fold the fleet.
+    pub(in crate::app) fn set_agents(&mut self, list: Vec<Agent>) {
+        self.local_agents = list;
+        self.fold_fleet();
+    }
+
+    /// Rebuild `all_agents` from the local roster + the remote (federated)
+    /// store. Called on every claudemon poll and whenever the remote side
+    /// changes, so a peer event doesn't wait for the next local poll.
+    pub(in crate::app) fn fold_fleet(&mut self) {
+        let mut list: Vec<Agent> = self.local_agents.clone();
+        list.extend(self.remote.agents());
         // Keep a stable order, like the Electron app: agents stay where they are
         // across polls and new sessions are appended at the end, rather than
         // re-sorting (e.g. floating waiting agents up) and making rows jump.
@@ -23,7 +34,10 @@ impl App {
         // so hide stopped sessions we never saw alive this run — while keeping
         // ones that stopped *while we were watching* (still respawnable). The
         // `show_all_sessions` toggle reveals everything (e.g. to resume an old
-        // session).
+        // session). Remote rows go through the same rule: a peer's ended
+        // session we never saw alive is history, not fleet. (Tombstones are
+        // NOT stopped — an offline hub's rows keep their last-known mode, so
+        // this filter never eats them.)
         for a in &list {
             if !a.is_stopped() {
                 self.seen_live.insert(a.session_id.clone());
@@ -164,12 +178,20 @@ impl App {
     // ── daemon reactions ──────────────────────────────────────────────────
 
     /// The display name for an agent: a user-set custom name for its cwd, else
-    /// the short cwd.
+    /// (for remote sessions) the label its home hub assigned, else the short
+    /// cwd. Remote cwds name a peer's filesystem, so their label — when the
+    /// peer set one — says more than a truncated foreign path.
     pub fn agent_name(&self, a: &Agent) -> String {
         self.names
             .get(a.cwd_str())
             .filter(|s| !s.is_empty())
             .cloned()
+            .or_else(|| {
+                a.is_remote()
+                    .then(|| a.label.clone())
+                    .flatten()
+                    .filter(|l| !l.is_empty())
+            })
             .unwrap_or_else(|| a.short_cwd())
     }
 

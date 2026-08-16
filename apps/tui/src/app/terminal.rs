@@ -55,7 +55,9 @@ impl App {
         // Headless stream sessions have no PTY by construction — never open
         // (and endlessly retry) a stream for them. Recording the fact keeps
         // watch panes labelled "transcript only" instead of "starting…".
-        if self.is_stream_session(&session_id) {
+        // Remote (peer-hub) sessions likewise: their PTY, if any, lives on
+        // another machine, and the local attach capability doesn't know them.
+        if self.is_stream_session(&session_id) || self.is_remote_session(&session_id) {
             self.no_terminal.insert(session_id);
             return;
         }
@@ -158,6 +160,12 @@ impl App {
                 self.load_transcript(sid);
             }
             ChatMode::Transcript => {
+                // Remote sessions have no local PTY (it lives on the peer's
+                // machine, if it exists at all) — snapshot-driven only.
+                if self.is_remote_session(&sid) {
+                    self.set_toast("remote session — transcript only (no local terminal)");
+                    return;
+                }
                 // Headless stream sessions have no PTY — the toggle is a no-op.
                 if self.is_stream_session(&sid) {
                     self.set_toast("headless session — no terminal");

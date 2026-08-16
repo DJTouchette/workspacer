@@ -280,7 +280,15 @@ export function useAttentionFeed(
       const snap = snapshotBySession[agent.sessionId];
       if (!snap) continue;
       const sid = agent.sessionId;
-      const base = { agentId: agent.id, agentName: agent.name, sessionId: sid, cwd: agent.cwd };
+      const base = {
+        agentId: agent.id,
+        agentName: agent.name,
+        sessionId: sid,
+        cwd: agent.cwd,
+        // Federation: carried so cards can label the peer and withhold
+        // local-only actions (respawn).
+        hub: snap.hub ?? agent.hub,
+      };
 
       if (enabled('approval') && snap.pendingApproval) {
         const ap = snap.pendingApproval;

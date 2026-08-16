@@ -2144,6 +2144,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                         )}
                         transport={claudeTransport}
                         cwd={session.liveCwd || session.cwd || cwd}
+                        hub={session.hub}
                         initialPrompt={initialPrompt}
                         onPick={(prompt) => {
                           setInputValue(prompt);

@@ -9,6 +9,7 @@ import { AgentLogo } from './agentLogos';
 import type { LibraryItem } from '../types/library';
 import type { AgentProvider } from '../types/pane';
 import { capsFor, effortLevelLabel, type EffortLevel } from '../lib/providerCaps';
+import { fetchFederationPeers, type FederationPeer } from '../lib/federation';
 
 /** Bypass-everything mode id per provider family (claude vs managed). */
 const bypassModeFor = (provider: AgentProvider): string =>
@@ -68,6 +69,8 @@ interface SpawnAgentDialogProps {
     worktree?: boolean;
     /** Pre-fills the new agent's composer (not sent). */
     initialPrompt?: string;
+    /** Federation: spawn on this peer hub instead of this machine. */
+    targetHub?: string;
   }) => void;
   onCancel: () => void;
 }
@@ -191,6 +194,21 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
 
   // Hero input focus — drives the underline accent (no :focus-within inline).
   const [cwdFocus, setCwdFocus] = useState(false);
+
+  // Federation: peer hubs this one can spawn onto. The Machine row only
+  // appears when at least one peer is connected; '' = this machine.
+  const [peers, setPeers] = useState<FederationPeer[]>([]);
+  const [targetHub, setTargetHub] = useState('');
+  useEffect(() => {
+    let live = true;
+    fetchFederationPeers().then((p) => {
+      if (live) setPeers(p);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  const connectedPeers = peers.filter((p) => p.connected);
 
   // Resume an existing Claude session in this cwd. ''=start fresh.
   const [sessions, setSessions] = useState<
@@ -507,8 +525,10 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             toolScope: toolScope || undefined,
             pluginTools: toolScope && pluginToolsSel.length ? pluginToolsSel : undefined,
             resumeSessionId: resumeSessionId || undefined,
-            worktree: useWorktree && worktreeEligible ? true : undefined,
+            // Worktree is local-machine isolation — moot on a peer hub.
+            worktree: useWorktree && worktreeEligible && !targetHub ? true : undefined,
             initialPrompt,
+            targetHub: targetHub || undefined,
           }
         : {
             cwd: cwd.trim(),
@@ -528,8 +548,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               provider !== 'pi' && toolScope && pluginToolsSel.length
                 ? pluginToolsSel
                 : undefined,
-            worktree: useWorktree && worktreeEligible ? true : undefined,
+            worktree: useWorktree && worktreeEligible && !targetHub ? true : undefined,
             initialPrompt,
+            targetHub: targetHub || undefined,
           },
     );
   };
@@ -556,6 +577,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   )?.label;
   const defaultTransportHere = isClaude ? (defaultTransport ?? 'pty') : 'pty';
   const deviations: { key: string; label: string; danger?: boolean }[] = [];
+  if (targetHub) deviations.push({ key: 'machine', label: `on ${targetHub}` });
   if (pillModel) deviations.push({ key: 'model', label: pillModel });
   if (effort) deviations.push({ key: 'effort', label: `${effort} effort` });
   if ((isClaude || provider === 'codex') && transport !== defaultTransportHere) {
@@ -609,6 +631,26 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     control: React.ReactNode;
   }
   const rows: AdvRow[] = [];
+
+  // Federation: pick the machine to spawn on. Hidden entirely unless a peer
+  // hub is actually connected — the local-only case never sees it.
+  if (connectedPeers.length > 0) {
+    rows.push({
+      key: 'machine',
+      label: 'machine',
+      title: 'Which hub runs this agent — its cwd, files and shell live there.',
+      control: (
+        <select value={targetHub} onChange={(e) => setTargetHub(e.target.value)} style={rowSelect}>
+          <option value="">This machine</option>
+          {connectedPeers.map((p) => (
+            <option key={p.name} value={p.name}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      ),
+    });
+  }
 
   if (isClaude) {
     rows.push({

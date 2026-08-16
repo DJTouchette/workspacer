@@ -13,6 +13,12 @@ impl App {
             self.set_toast("no agent selected");
             return;
         };
+        // `claude.setModel` / provider model lists aren't routed across
+        // federation — hidden rather than failing on apply.
+        if self.is_remote_session(&sid) {
+            self.set_toast("remote session — switch its model on its own machine");
+            return;
+        }
         let provider = self.provider_for(&sid);
         let managed = provider != "claude";
         let cwd = self
@@ -56,6 +62,12 @@ impl App {
             self.set_toast("no agent selected");
             return;
         };
+        // A handoff spawns the successor HERE, in a cwd that names the peer's
+        // filesystem — spawning stays local-only.
+        if self.is_remote_session(&sid) {
+            self.set_toast("remote session — hand off on its own machine");
+            return;
+        }
         let Some(cwd) = self
             .target_agent()
             .and_then(|a| a.cwd.clone())
@@ -245,6 +257,11 @@ impl App {
             self.set_toast("no agent selected");
             return;
         };
+        // `claude.setPermissionMode` isn't routed across federation.
+        if self.is_remote_session(&sid) {
+            self.set_toast("remote session — change its mode on its own machine");
+            return;
+        }
         let managed = self.provider_for(&sid) != "claude";
         let cycle: &[&str] = if managed {
             &["ask", "yolo"]

@@ -28,7 +28,9 @@ impl App {
         };
         for offset in 1..=n {
             let i = (cur + offset) % n;
-            if self.agents[i].is_waiting() {
+            // `needs_you`, not `is_waiting`: a tombstoned remote session (hub
+            // offline) can't be acted on, so the jump skips it.
+            if self.agents[i].needs_you() {
                 self.selected = i + 1;
                 return;
             }

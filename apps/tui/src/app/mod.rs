@@ -157,10 +157,17 @@ pub struct App {
     /// How many stopped orphans the last [`set_agents`] hid (for the title).
     pub hidden_count: usize,
 
-    /// Full live session set (orphan-filtered) — the source of truth for
-    /// lifecycle and by-id lookups. `agents` is the `/`-filtered projection of
-    /// this that the sidebar and selection use.
+    /// Full live session set (orphan-filtered), LOCAL + REMOTE merged — the
+    /// source of truth for lifecycle and by-id lookups. `agents` is the
+    /// `/`-filtered projection of this that the sidebar and selection use.
     pub all_agents: Vec<Agent>,
+    /// The last roster claudemon returned, verbatim. Kept apart from
+    /// `all_agents` so the fleet can be re-folded when only the remote side
+    /// changed (a peer event must not have to wait for the next local poll).
+    pub(super) local_agents: Vec<Agent>,
+    /// Remote sessions from peer hubs (federation), merged into `all_agents`
+    /// by [`App::fold_fleet`]. Empty forever when the hub has no peers.
+    pub remote: crate::federation::RemoteFleet,
     /// Active sidebar filter query (`/`); `None` means no filter. `filter_editing`
     /// is true while the query is being typed.
     pub filter: Option<String>,
@@ -284,6 +291,8 @@ impl App {
             show_all_sessions: false,
             hidden_count: 0,
             all_agents: Vec::new(),
+            local_agents: Vec::new(),
+            remote: crate::federation::RemoteFleet::default(),
             filter: None,
             filter_editing: false,
             cmdline: None,
@@ -316,13 +325,53 @@ impl App {
     }
 
     /// A cheap driver bound to the current claudemon + optional bus, for
-    /// agent-driving calls (message/approve/answer/signal).
+    /// agent-driving calls (message/approve/answer/signal). Local-path only —
+    /// for anything keyed to a session id, prefer [`App::driver_for`], which
+    /// routes remote sessions over their federation link.
     pub(super) fn driver(&self) -> crate::bus::Driver {
         crate::bus::Driver {
             claudemon: self.claudemon.clone(),
             bus: self.bus.clone(),
             transport: self.transport,
+            hub: None,
         }
+    }
+
+    /// A driver for the session `sid` lives on: hub-qualified for a remote
+    /// session (calls go `hub:<peer>/<method>` over the federation link),
+    /// identical to [`App::driver`] for a local one.
+    pub(super) fn driver_for(&self, sid: &str) -> crate::bus::Driver {
+        let mut drv = self.driver();
+        drv.hub = self.hub_of(sid);
+        drv
+    }
+
+    /// The peer hub a session lives on, or `None` for local sessions.
+    pub(super) fn hub_of(&self, sid: &str) -> Option<String> {
+        self.all_agents
+            .iter()
+            .find(|a| a.session_id == sid)
+            .and_then(|a| a.hub.clone())
+    }
+
+    /// True when `sid` is a remote (peer-hub) session.
+    pub fn is_remote_session(&self, sid: &str) -> bool {
+        self.hub_of(sid).is_some()
+    }
+
+    /// Gate an action on a tombstoned session: returns true (and toasts) when
+    /// the session's hub is offline, so callers bail before dispatching a call
+    /// that can only time out.
+    pub(super) fn blocked_by_offline_hub(&mut self, sid: &str) -> bool {
+        let offline = self
+            .all_agents
+            .iter()
+            .find(|a| a.session_id == sid)
+            .is_some_and(|a| a.hub_offline);
+        if offline {
+            self.set_toast("hub offline — actions disabled until it reconnects");
+        }
+        offline
     }
 
     // ── live toast ──────────────────────────────────────────────────────────
@@ -466,6 +515,14 @@ impl App {
                 self.managed_providers.insert(session_id, provider);
             }
             AppMsg::Projects(projects) => self.projects = projects,
+            AppMsg::RemoteSeed { hub, agents } => {
+                self.remote.seed(&hub, agents);
+                self.fold_fleet();
+            }
+            AppMsg::HubDown { hub } => {
+                self.remote.set_offline(&hub);
+                self.fold_fleet();
+            }
         }
     }
 
@@ -556,6 +613,7 @@ impl App {
     /// Route a delivered bus event into the agent view.
     pub fn apply_bus_event(&mut self, ev: crate::bus::BusEvent) {
         // Live terminal bytes: pty.bytes.<sessionId>, base64 in the event data.
+        // Never federated (pty.* isn't a forwarded topic), so always local.
         if let Some(sid) = ev.topic.strip_prefix("pty.bytes.") {
             if let Some(b64) = ev.data.as_str() {
                 if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) {
@@ -567,25 +625,97 @@ impl App {
             }
             return;
         }
+        // Hub-stamped events come from a PEER hub via the federation link; they
+        // feed the remote store only. Unstamped events keep their existing
+        // meaning untouched — the local fleet stays claudemon-sourced, and
+        // double-sourcing it is the bug this branch exists to prevent.
+        if let Some(hub) = ev.hub.clone() {
+            self.apply_remote_event(&hub, ev);
+            return;
+        }
         match ev.topic.as_str() {
+            // The bus (re)connected: (re)seed the federated fleet. Quiet no-op
+            // against a hub without federation.
+            crate::bus::TOPIC_BUS_CONNECTED => self.seed_federation(),
             // The list itself is refreshed from claudemon (see `refresh`); a bus
             // snapshot is just a nudge that something changed, so re-pull.
             "agent.snapshot" => self.refresh(),
-            "agent.statusline" => {
-                let sid = ev
-                    .data
-                    .get("sessionId")
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
-                let sl = ev.data.get("statusLine").cloned();
-                if let (Some(sid), Some(sl)) = (sid, sl) {
-                    if let Ok(status) = serde_json::from_value::<StatusLine>(sl) {
-                        self.apply_status_line(sid, status);
-                    }
+            "agent.statusline" => self.apply_bus_status_line(ev),
+            "hub.peer.connected" => {
+                if let Some(peer) = ev.data.get("peer").and_then(|v| v.as_str()) {
+                    self.remote.set_online(peer);
+                    self.seed_peer(peer.to_string());
+                    self.fold_fleet();
+                }
+            }
+            "hub.peer.disconnected" => {
+                if let Some(peer) = ev.data.get("peer").and_then(|v| v.as_str()) {
+                    self.remote.set_offline(peer);
+                    self.fold_fleet();
                 }
             }
             _ => {}
         }
+    }
+
+    /// A hub-stamped (federated) event: fold it into the remote store.
+    fn apply_remote_event(&mut self, hub: &str, ev: crate::bus::BusEvent) {
+        match ev.topic.as_str() {
+            "agent.snapshot" => {
+                let Some(agent) = crate::federation::agent_from_snapshot(hub, &ev.data) else {
+                    return; // sparse / unkeyed rows are skipped by design
+                };
+                let sid = agent.session_id.clone();
+                // A stamped event from an unknown (or believed-offline) hub is
+                // proof of life — reseed so the roster isn't just this one row.
+                if self.remote.upsert(hub, agent) {
+                    self.seed_peer(hub.to_string());
+                }
+                self.fold_fleet();
+                // A snapshot-driven remote chat has no delta feed; the snapshot
+                // event doubles as its "conversation changed" nudge. At most
+                // one refetch in flight per session (see `begin_resync`).
+                if self.chat_session_id().as_deref() == Some(sid.as_str())
+                    && self.chat_mode == ChatMode::Transcript
+                    && self.begin_resync(&sid)
+                {
+                    self.load_transcript(sid);
+                }
+            }
+            // Remote statuslines enrich remote rows exactly like local ones do
+            // (session ids are UUIDs; cross-hub collision is accepted as
+            // negligible, matching the desktop's keying decision).
+            "agent.statusline" => self.apply_bus_status_line(ev),
+            _ => {}
+        }
+    }
+
+    fn apply_bus_status_line(&mut self, ev: crate::bus::BusEvent) {
+        let sid = ev
+            .data
+            .get("sessionId")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let sl = ev.data.get("statusLine").cloned();
+        if let (Some(sid), Some(sl)) = (sid, sl) {
+            if let Ok(status) = serde_json::from_value::<StatusLine>(sl) {
+                self.apply_status_line(sid, status);
+            }
+        }
+    }
+
+    /// Kick off the full federation seed (peers, then each peer's roster).
+    fn seed_federation(&self) {
+        let Some(bus) = self.bus.clone() else { return };
+        let tx = self.tx.clone();
+        tokio::spawn(crate::federation::seed_remote_fleet(bus, tx));
+    }
+
+    /// Kick off a reseed of one peer's roster.
+    fn seed_peer(&self, hub: String) {
+        let Some(bus) = self.bus.clone() else { return };
+        let tx = self.tx.clone();
+        tokio::spawn(async move { crate::federation::seed_peer(&bus, &hub, &tx).await });
     }
 
     /// Run a control future, toast the outcome, then refresh the list (and the
@@ -599,13 +729,24 @@ impl App {
         let tx = self.tx.clone();
         let ok_msg = ok_msg.to_string();
         let reopen = self.chat_session_id();
+        // A remote chat's transcript refetch rides the federation link, not
+        // claudemon (which has never heard of the session).
+        let reopen_hub = reopen.as_deref().and_then(|sid| self.hub_of(sid));
+        let bus = self.bus.clone();
         tokio::spawn(async move {
             match fut.await {
                 Ok(_) => {
                     let _ = tx.send(AppMsg::Toast(ok_msg));
                     fetch_agents(&cm, &tx).await;
                     if let Some(sid) = reopen {
-                        fetch_transcript(&cm, &tx, sid).await;
+                        match (reopen_hub, bus) {
+                            (Some(hub), Some(bus)) => {
+                                crate::federation::fetch_remote_conversation(bus, hub, sid, tx)
+                                    .await;
+                            }
+                            (Some(_), None) => {} // remote without a bus: nothing to refetch
+                            (None, _) => fetch_transcript(&cm, &tx, sid).await,
+                        }
                     }
                 }
                 Err(e) => {

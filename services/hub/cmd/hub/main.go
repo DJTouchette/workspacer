@@ -22,6 +22,7 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/bus"
 	"github.com/djtouchette/workspacer-hub/internal/claudemon"
 	"github.com/djtouchette/workspacer-hub/internal/event"
+	"github.com/djtouchette/workspacer-hub/internal/federation"
 	"github.com/djtouchette/workspacer-hub/internal/jobobject"
 	"github.com/djtouchette/workspacer-hub/internal/layout"
 	"github.com/djtouchette/workspacer-hub/internal/parentwatch"
@@ -226,6 +227,12 @@ func defaultPushDir() string {
 	return filepath.Join(dir, "workspacer-hub")
 }
 
+// multiFlag collects a repeatable string flag (-peer a -peer b).
+type multiFlag []string
+
+func (m *multiFlag) String() string     { return strings.Join(*m, "; ") }
+func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
+
 func main() {
 	addr := flag.String("addr", "127.0.0.1:7895", "listen address for the bus + health endpoints")
 	claudemonEvents := flag.String("claudemon-events", "", "claudemon /events SSE URL to bridge onto the bus (e.g. http://127.0.0.1:7891/events)")
@@ -242,6 +249,9 @@ func main() {
 	brainBin := flag.String("brain-bin", "", "path to the brain binary to supervise; empty = auto-detect (sibling of the hub binary, then PATH)")
 	claudemonURL := flag.String("claudemon", "http://127.0.0.1:7891", "claudemon API base URL the supervised brain talks to")
 	trustedHosts := flag.String("trusted-host", os.Getenv("HUB_TRUSTED_HOSTS"), "comma-separated hostname(s) a reverse proxy in front of this hub presents (e.g. the `tailscale serve` MagicDNS name). Required for any TLS front-end: it terminates elsewhere and forwards to our loopback socket, which is the DNS-rebinding shape the Host/Origin pins refuse. Empty = no exemption")
+	var peerFlags multiFlag
+	flag.Var(&peerFlags, "peer", "federate with a peer hub (repeatable): name=work,url=ws://host:7895/bus,token=… — tests/dev only; a token here rides argv, which /proc makes world-readable. Durable peers belong in -peers-file")
+	peersFile := flag.String("peers-file", federation.DefaultPeersPath(), "federation peers file (JSON array of {name,url,token}, 0600 — tokens are scoped tokens minted ON each peer via `workspacer token create`). Curated fleet topics republish locally stamped with the peer name; peer capabilities become callable as hub:<name>/<method>")
 	flag.Parse()
 
 	b := broker.New()
@@ -345,6 +355,35 @@ func main() {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	parentwatch.Watch(cancel)
+
+	// Federation: link to configured peer hubs, republishing their fleet
+	// topics locally (stamped with the peer name) and exposing their
+	// capabilities as hub:<peer>/<method>. See docs/hub-federation.md.
+	peers, err := federation.LoadPeersFile(*peersFile)
+	if err != nil {
+		log.Fatalf("federation: %v", err)
+	}
+	for _, pf := range peerFlags {
+		p, err := federation.ParsePeerFlag(pf)
+		if err != nil {
+			log.Fatalf("-peer: %v", err)
+		}
+		peers = append(peers, p)
+	}
+	if len(peers) > 0 {
+		fed, err := federation.New(b, peers)
+		if err != nil {
+			log.Fatalf("federation: %v", err)
+		}
+		srv.SetFederation(fed)
+		// Peer liveness for clients that can't read peers.json (the web
+		// renderer): name + connected + lastSeen, nothing else.
+		srv.RegisterLocal("federation.peers", func(json.RawMessage) (any, error) {
+			return fed.PeersInfo(), nil
+		})
+		go fed.Run(ctx)
+		log.Printf("federation: linking to %d peer(s): %s", len(peers), strings.Join(fed.Peers(), ", "))
+	}
 
 	// Load + supervise plugins; expose their contributions at /plugins. The
 	// manager registers per-plugin bus tokens with srv so capability calls are

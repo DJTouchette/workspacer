@@ -10,6 +10,12 @@ impl App {
         let Some(agent) = self.target_agent() else {
             return;
         };
+        // Names are keyed by cwd in a LOCAL file; a remote cwd names the peer's
+        // filesystem (and its home hub already owns the session's label).
+        if agent.is_remote() {
+            self.set_toast("remote session — rename it on its own machine");
+            return;
+        }
         let cwd = agent.cwd_str().to_string();
         if cwd.is_empty() {
             self.set_toast("no working directory to name");
@@ -62,6 +68,12 @@ impl App {
         let Some(agent) = self.target_agent() else {
             return;
         };
+        // Notes are keyed by cwd, and a remote cwd could collide with a local
+        // repo path — the note would silently attach to the wrong project.
+        if agent.is_remote() {
+            self.set_toast("remote session — notes are local-only");
+            return;
+        }
         let cwd = agent.cwd_str().to_string();
         if cwd.is_empty() {
             self.set_toast("no working directory for notes");
@@ -334,6 +346,12 @@ impl App {
         let Some(agent) = self.target_agent() else {
             return;
         };
+        // A respawn would launch a NEW process on THIS machine in a directory
+        // that names the peer's filesystem — spawning stays local-only.
+        if agent.is_remote() {
+            self.set_toast("remote session — respawn it on its own machine");
+            return;
+        }
         if agent.state() != "stopped" {
             self.set_toast("agent is still running");
             return;

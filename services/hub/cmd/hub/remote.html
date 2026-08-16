@@ -964,6 +964,10 @@
       } else if (f.op === 'event') {
         const evt = f.event;
         if (!evt) return;
+        // Federation: hub-stamped events belong to a PEER machine; /remote is
+        // local-only (its agents.list refresh and actions are unqualified
+        // calls). Dropped deliberately — see /m's twin comment.
+        if (evt.hub) return;
         // Live PTY bytes for the terminal we're mirroring → straight to xterm.
         if (termMode && evt.type === 'pty.bytes.' + termSessionId) {
           writePty(evt.data);

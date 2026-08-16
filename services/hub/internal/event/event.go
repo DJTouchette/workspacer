@@ -12,11 +12,16 @@ import (
 
 // Envelope is one event on the bus.
 type Envelope struct {
-	ID     string          `json:"id"`
-	Type   string          `json:"type"`   // dotted topic, e.g. "agent.spawned"
-	Source string          `json:"source"` // emitter: "hub", "claudemon", a plugin id
-	Time   time.Time       `json:"time"`
-	Data   json.RawMessage `json:"data,omitempty"`
+	ID     string `json:"id"`
+	Type   string `json:"type"`   // dotted topic, e.g. "agent.spawned"
+	Source string `json:"source"` // emitter: "hub", "claudemon", a plugin id
+	// Hub names the PEER a federated event arrived from; empty = local. It
+	// answers "which machine", where Source answers "which component" — the
+	// federation layer stamps it and republishes the payload bytes untouched,
+	// so consumers key fleet state by (hub, id) without any payload rewriting.
+	Hub  string          `json:"hub,omitempty"`
+	Time time.Time       `json:"time"`
+	Data json.RawMessage `json:"data,omitempty"`
 }
 
 // Matches reports whether an event type satisfies a subscription pattern.

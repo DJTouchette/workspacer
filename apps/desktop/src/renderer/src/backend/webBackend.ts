@@ -275,6 +275,50 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
   // repaints; `reprimeAll` does it for every live stream.
   const { stream: streamPty, reprime, reprimeAll } = createPtyStreams(client);
 
+  // Federation: which peer hub each remote session lives on, learned from
+  // stamped agent.snapshot envelopes and peer-fleet seeds; plus the last
+  // snapshot per remote session so a peer disconnect can push tombstones.
+  const sessionHub = new Map<string, string>();
+  const remoteSnaps = new Map<string, ClaudeSessionSnapshot>();
+  const qualify = (sessionId: string, method: string): string => {
+    const hub = sessionHub.get(sessionId);
+    return hub ? `hub:${hub}/${method}` : method;
+  };
+  /** Merge the peers' fleets onto a local snapshot list (hub-stamped, sparse
+   *  layout-ghost rows skipped — same rule as the desktop's federation seed). */
+  const withPeerFleets = async (
+    local: ClaudeSessionSnapshot[],
+  ): Promise<ClaudeSessionSnapshot[]> => {
+    let peers: Array<{ name: string; connected: boolean }> = [];
+    try {
+      peers = ((await client.call('federation.peers', {})) ?? []) as typeof peers;
+    } catch {
+      return local; // federation off (or an older hub): local fleet only
+    }
+    const out = [...local];
+    await Promise.all(
+      peers
+        .filter((p) => p.connected)
+        .map(async (p) => {
+          try {
+            const rows = ((await client.call(`hub:${p.name}/sessions.snapshots`, {})) ??
+              []) as Array<ClaudeSessionSnapshot & { sparse?: boolean }>;
+            for (const row of rows) {
+              if (!row?.sessionId || row.sparse) continue;
+              const stamped = { ...row, hub: p.name };
+              sessionHub.set(row.sessionId, p.name);
+              remoteSnaps.set(row.sessionId, stamped);
+              out.push(stamped);
+            }
+          } catch {
+            /* an unreachable peer costs its fleet, not the whole list */
+          }
+        }),
+    );
+    return out;
+  };
+
+
   // After a reconnect the bus re-asserts topic subscriptions, but the per-stream
   // attachTerminal call (which makes claudemon replay the current screen) is not
   // re-issued — so every mirrored terminal would sit frozen until a manual
@@ -371,7 +415,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // the hub bus (settings-only surface), so the web client shows none.
     keepWarmHeartbeats: async () => [],
     claudeMessage: (sessionId, text) =>
-      client.call<{ ok: boolean; mode?: string }>('agents.sendMessage', { sessionId, text }),
+      client.call<{ ok: boolean; mode?: string }>(qualify(sessionId, 'agents.sendMessage'), { sessionId, text }),
     claudeSetPermissionMode: (sessionId, mode) =>
       client.call<{ ok: boolean; mode?: string; error?: string }>('claude.setPermissionMode', {
         sessionId,
@@ -395,17 +439,17 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         { sessionId },
       ),
     claudeApprove: (sessionId, decision, reason) =>
-      client.call<void>('claude.approve', { sessionId, decision, reason }).then(() => {}),
+      client.call<void>(qualify(sessionId, 'claude.approve'), { sessionId, decision, reason }).then(() => {}),
     claudeAnswer: (sessionId, payload) =>
-      client.call<void>('claude.answer', { sessionId, ...payload }).then(() => {}),
+      client.call<void>(qualify(sessionId, 'claude.answer'), { sessionId, ...payload }).then(() => {}),
     claudeResize: (sessionId, cols, rows) => {
       reprime(sessionId);
       return client.call<void>('sessions.terminalResize', { sessionId, cols, rows }).then(() => {});
     },
     claudeSignal: (sessionId, signal) =>
-      client.call<void>('claude.signal', { sessionId, signal }).then(() => {}),
+      client.call<void>(qualify(sessionId, 'claude.signal'), { sessionId, signal }).then(() => {}),
     claudeClose: (sessionId) =>
-      client.call<void>('claude.signal', { sessionId, signal: 'SIGTERM' }).then(() => {}),
+      client.call<void>(qualify(sessionId, 'claude.signal'), { sessionId, signal: 'SIGTERM' }).then(() => {}),
     attachClaude: (paneId, sessionId) => {
       viewerSessions.set(paneId, sessionId);
       return Promise.resolve(sessionId);
@@ -542,12 +586,19 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // sparse overlay.
     getClaudeSession: (sessionId) =>
       client
-        .call<ClaudeSessionSnapshot | null>('sessions.snapshot', { sessionId })
-        .then((s) => (s ? seedFull(s) : s)),
+        .call<ClaudeSessionSnapshot | null>(qualify(sessionId, 'sessions.snapshot'), { sessionId })
+        .then((s) => {
+          if (!s) return s;
+          const hub = sessionHub.get(sessionId);
+          return seedFull(hub ? { ...s, hub } : s);
+        }),
     getAllClaudeSessions: () =>
       client
         .call<ClaudeSessionSnapshot[]>('sessions.snapshots', {})
-        .then((list) => (list || []).map(foldSparse)),
+        .then((list) => (list || []).map(foldSparse))
+        // Federation: the LOCAL call answers with the local fleet only; the
+        // peers' fleets are fetched over their links and arrive hub-stamped.
+        .then(withPeerFleets),
     // The daemon's full resumable-session list, enriched host-side (history DB
     // names/cost + provider auto-titles). Errors resolve to [] to match the
     // desktop handler: the Sessions pane shows nothing rather than breaking.
@@ -556,10 +607,28 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // Null = "can't tell" — the web client never reconciles/auto-respawns
     // agents against the daemon; the desktop owns that.
     listLiveClaudeSessionIds: () => Promise.resolve(null),
-    onClaudeSessionUpdate: (callback) =>
-      client.subscribe('agent.snapshot', (ev) => {
-        const snap = ev.data as (ClaudeSessionSnapshot & { sparse?: boolean }) | undefined;
-        if (!snap?.sessionId) return;
+    // Federation: served by the hub-local `federation.peers` method (a browser
+    // can't read peers.json). [] on an older hub or federation off.
+    federationPeers: () =>
+      client
+        .call<Array<{ name: string; connected: boolean; lastSeen?: number }>>(
+          'federation.peers',
+          {},
+        )
+        .then((peers) => peers ?? [])
+        .catch(() => []),
+    onClaudeSessionUpdate: (callback) => {
+      const offSnap = client.subscribe('agent.snapshot', (ev) => {
+        const raw = ev.data as (ClaudeSessionSnapshot & { sparse?: boolean }) | undefined;
+        if (!raw?.sessionId) return;
+        // Federation: the peer name rides the ENVELOPE — stamp it onto the
+        // payload (and remember it) or a remote session renders as an
+        // unlabeled local-looking card with no gating.
+        const snap = ev.hub ? { ...raw, hub: ev.hub, hubOffline: undefined } : raw;
+        if (ev.hub) {
+          sessionHub.set(snap.sessionId, ev.hub);
+          remoteSnaps.set(snap.sessionId, snap);
+        }
         // Sparse rows carry no conversation of their own — they overlay the
         // last rich one — so they go through foldSparse only. A rich push is a
         // bounded window and gets spliced onto the retained history.
@@ -570,7 +639,23 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         }
         const merged = foldConversation(snap);
         if (merged) callback(merged.sessionId, merged);
-      }),
+      });
+      // Peer link down → tombstone that hub's sessions (hubOffline, cards keep
+      // rendering); link back up → the next stamped pushes clear the flag.
+      const offPeer = client.subscribe('hub.peer.disconnected', (ev) => {
+        const peer = (ev.data as { peer?: string } | undefined)?.peer;
+        if (!peer) return;
+        for (const [sessionId, hub] of sessionHub) {
+          if (hub !== peer) continue;
+          const last = remoteSnaps.get(sessionId);
+          if (last) callback(sessionId, { ...last, hubOffline: true });
+        }
+      });
+      return () => {
+        offSnap();
+        offPeer();
+      };
+    },
 
     // ── Hub plumbing ─────────────────────────────────────────────────────
     onHubEvent: (callback) => {
