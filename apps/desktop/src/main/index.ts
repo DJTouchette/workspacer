@@ -25,6 +25,8 @@ import {
 import { startHub, stopHub } from './services/hubDaemon';
 import { getRemoteServer } from './services/remoteServer';
 import { startMcpFacade, stopMcpFacade } from './services/mcpFacadeDaemon';
+import { listLiveSessionIds } from './services/recentSessions';
+import { sweepSessionFacadeTokens } from './services/remoteTokens';
 import { setHubMainWindow, startHubClient, stopHubClient } from './services/hubClient';
 import { setNoticeWindow, notifySystem } from './services/systemNotice';
 import { updateService } from './services/updateService';
@@ -399,6 +401,19 @@ function createWindow(): void {
                 err,
               ),
             );
+            // Reap per-session facade tokens whose session ended while the
+            // desktop wasn't running (eviction-time revocation only fires while
+            // we're alive). Sessions survive desktop restarts, so this must be
+            // a sweep against the daemon's live list, never a wipe — and a null
+            // list (daemon still coming up) skips rather than revoking live
+            // agents' tokens.
+            listLiveSessionIds()
+              .then((live) => {
+                if (!live) return;
+                const n = sweepSessionFacadeTokens(live);
+                if (n) console.log(`[main] swept ${n} stale session facade token(s)`);
+              })
+              .catch((err) => console.warn('[main] facade token sweep failed:', err));
           })
           .catch((err) => {
             notifySystem({

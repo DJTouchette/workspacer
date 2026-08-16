@@ -38,6 +38,8 @@
     return s && typeof s === "object" ? s : {};
   }
 
+  var providers = new Map(); // method -> async handler(params) => result
+
   var api = {
     ready: ready,
     connected: false,
@@ -46,6 +48,7 @@
     settings: initialSettings(),
     call: call,
     publish: publish,
+    provide: provide,
     on: on,
     onSettings: onSettings,
     onStatus: onStatus,
@@ -81,6 +84,47 @@
 
   function publish(type, data) {
     send({ op: "publish", event: { type: type, source: pluginId(), data: data } });
+  }
+
+  // provide(method, handler) — answer a bus method this plugin declares in its
+  // manifest `provides` (and, through a manifest `tools` entry, expose to
+  // agents as an MCP tool). handler(params) may return a value or a Promise;
+  // a throw/rejection becomes the caller's error reply. Registration is sent
+  // now and re-sent on every reconnect; the hub silently drops methods the
+  // plugin's consented grant doesn't cover (watch the `registered` ack in the
+  // hub log). There is no unregister op — a provider slot frees when the
+  // connection drops.
+  function provide(method, handler) {
+    if (typeof method !== "string" || !method || typeof handler !== "function") {
+      throw new Error("workspacer.provide(method, handler): bad arguments");
+    }
+    providers.set(method, handler);
+    if (api.connected) {
+      send({ op: "register", methods: [method] });
+    }
+  }
+
+  function registerProviders() {
+    if (!providers.size) return;
+    send({ op: "register", methods: Array.from(providers.keys()) });
+  }
+
+  function answerCall(msg) {
+    var handler = providers.get(msg.method);
+    if (!handler) {
+      send({ op: "error", id: msg.id, error: "no handler for " + msg.method });
+      return;
+    }
+    Promise.resolve()
+      .then(function () {
+        return handler(msg.params);
+      })
+      .then(function (result) {
+        send({ op: "result", id: msg.id, result: result === undefined ? null : result });
+      })
+      .catch(function (err) {
+        send({ op: "error", id: msg.id, error: String((err && err.message) || err) });
+      });
   }
 
   // on(type, handler) -> off(). "*" receives every inbound event. handler gets
@@ -203,6 +247,12 @@
       case "event":
         dispatchEvent(msg.event);
         break;
+      case "call":
+        // Inbound RPC: the hub routed a caller's capability call to us because
+        // we registered the method. Reply on the SAME id (the router's global
+        // correlation id).
+        answerCall(msg);
+        break;
     }
   }
 
@@ -234,6 +284,7 @@
       api.connected = true;
       backoff = 500; // reset on a clean open
       send({ op: "subscribe", topics: ["*"] });
+      registerProviders();
       if (!readyResolved) {
         readyResolved = true;
         readyResolve();

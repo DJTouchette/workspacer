@@ -126,6 +126,14 @@ export interface ElectronAPI {
     label?: string;
     parentSessionId?: string;
     mcpItemIds?: string[];
+    /**
+     * Grant the workspacer MCP tools at a tier: 'view' (observe-only),
+     * 'triage' (view + approve/reply/interrupt), or 'operator' (everything).
+     * Mints a per-session scoped token; the facade serves only that tier.
+     */
+    toolScope?: 'view' | 'triage' | 'operator';
+    /** Plugin ids whose contributed facade tools the agent may use (needs toolScope). */
+    pluginTools?: string[];
   }) => Promise<string>;
   /** One-shot conversation title from an agent's first exchange; null = keep
    *  the current name (feature off, or nothing worth titling). */

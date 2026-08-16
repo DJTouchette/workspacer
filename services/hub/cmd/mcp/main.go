@@ -30,7 +30,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 	"github.com/djtouchette/workspacer-hub/internal/busclient"
+	"github.com/djtouchette/workspacer-hub/internal/event"
 	"github.com/djtouchette/workspacer-hub/internal/parentwatch"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -43,6 +45,14 @@ func main() {
 	// from -token, which authenticates the facade's OUTBOUND connection to the hub
 	// bus. Env mirrors the hub's HUB_TOKEN convention (flag/env, no token file).
 	mcpToken := flag.String("mcp-token", os.Getenv("WKS_MCP_TOKEN"), "bearer token required on /mcp and /sse (empty = no auth; REQUIRED to bind a non-loopback -addr)")
+	// tokensPath is the same tokens.json the hub bus reads for its scoped
+	// capability tokens. The desktop mints a per-session record here at spawn
+	// (label `session:<id>`) so a spawned agent can present a bearer that
+	// resolves to a TIER of the facade's tools — view for summarizer workers,
+	// triage for attention-handlers, operator for supervisors — instead of the
+	// whole surface. The store is mtime-gated, so mint/revoke take effect on the
+	// next request without restarting the facade.
+	tokensPath := flag.String("tokens", authtoken.DefaultPath(), "scoped capability-token file (tokens.json) for per-session facade tiers")
 	flag.Parse()
 
 	// Fail closed: a non-loopback bind with no token lets anyone who reaches the
@@ -63,11 +73,15 @@ func main() {
 	client := busclient.New(*hubURL, *token)
 	go client.Run(ctx)
 
-	server := newServer(client)
+	gate := &authGate{static: *mcpToken, store: authtoken.NewStore(*tokensPath)}
 	if *mcpToken != "" {
 		log.Printf("mcp auth enabled (bearer token required on /mcp and /sse)")
 	}
-	mux := newMux(server, client, *mcpToken)
+	// Plugin-contributed tools: poll the hub's consented surface and graft it
+	// onto per-token servers (opt-in via each session token's plugin grants).
+	catalog := newPluginCatalog(client)
+	go catalog.run(ctx)
+	mux := newMux(newServerCache(client, catalog, tierServers(client)), client, gate)
 
 	httpSrv := &http.Server{Addr: *addr, Handler: servedHandler(*addr, mux)}
 	go func() {
@@ -86,15 +100,26 @@ func main() {
 	_ = httpSrv.Shutdown(shutCtx)
 }
 
-// newMux builds the facade's HTTP router. /mcp and /sse are wrapped in bearer
-// auth when mcpToken is set; /health stays open (unauthenticated) so liveness
-// probes work without a secret.
-func newMux(server *mcp.Server, client *busclient.Client, mcpToken string) *http.ServeMux {
-	getServer := func(*http.Request) *mcp.Server { return server }
+// newMux builds the facade's HTTP router. /mcp and /sse resolve each request's
+// credential to its token record via the authGate and serve that record's
+// server — the tier (view/triage/operator), plus any plugin tools the record
+// grants; /health stays open (unauthenticated) so liveness probes work without
+// a secret.
+func newMux(cache *serverCache, client *busclient.Client, gate *authGate) *http.ServeMux {
+	getServer := func(r *http.Request) *mcp.Server {
+		rec, ok := gate.resolveRecord(r)
+		if !ok {
+			// requireScope already rejected unresolvable requests; reaching here
+			// means the token was revoked between the gate and this lookup. Serve
+			// the empty tier rather than any tools.
+			return newDeniedServer()
+		}
+		return cache.serverFor(rec)
+	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", requireBearer(mcpToken, mcp.NewStreamableHTTPHandler(getServer, nil)))
-	mux.Handle("/sse", requireBearer(mcpToken, mcp.NewSSEHandler(getServer, nil)))
+	mux.Handle("/mcp", requireScope(gate, mcp.NewStreamableHTTPHandler(getServer, nil)))
+	mux.Handle("/sse", requireScope(gate, mcp.NewSSEHandler(getServer, nil)))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -178,18 +203,79 @@ func hostIsLoopback(name string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// requireBearer wraps h so it demands `Authorization: Bearer <token>`. When
-// token is empty it is a passthrough — the loopback-only default where the OS
-// (127.0.0.1) is the boundary, mirroring the hub bus's empty-token behavior.
-// The compare is constant-time to avoid leaking the token via timing.
-func requireBearer(token string, h http.Handler) http.Handler {
-	if token == "" {
+// authGate resolves a request's credential to a tool tier.
+//
+// Two credential kinds, opposite lifetimes:
+//   - static (-mcp-token / WKS_MCP_TOKEN): the facade-wide secret. Matching it
+//     is operator — it exists to guard non-loopback binds, same as before.
+//   - store (tokens.json): per-session scoped tokens the desktop mints at
+//     spawn. A match grants that record's TIER (view/triage/operator), which is
+//     both the tool list the client sees and the calls it may make.
+//
+// No credential at all resolves to operator ONLY when no static token is set —
+// the loopback-open default every existing client (and the desktop's own
+// supervisor spawns) relies on. A credential that is PRESENT but unknown is
+// 401, never open access: presenting a revoked session token must not quietly
+// escalate to the untokened operator default.
+type authGate struct {
+	static string
+	store  *authtoken.Store
+}
+
+// presentedToken extracts the request's credential: an `Authorization: Bearer`
+// header first, else the `t` query parameter — for clients whose MCP config
+// carries only a URL (codex `-c mcp_servers…url`, opencode.json), which cannot
+// send headers. A malformed Authorization header is returned verbatim so it
+// fails the lookups below (fail closed) instead of falling through to the
+// open default.
+func presentedToken(r *http.Request) string {
+	if h := r.Header.Get("Authorization"); h != "" {
+		if tok, ok := strings.CutPrefix(h, "Bearer "); ok {
+			return tok
+		}
 		return h
 	}
-	want := []byte("Bearer " + token)
+	return r.URL.Query().Get("t")
+}
+
+// resolveRecord maps a request to the token record governing it: the tier it
+// may use plus any per-token plugin grants. The static token and the untokened
+// loopback default both synthesize a plain operator record — NO plugin grants;
+// plugin tools are strictly opt-in per session token. The static compare is
+// constant-time to avoid leaking the token via timing; store lookups are
+// mtime-gated reads of tokens.json.
+func (g *authGate) resolveRecord(r *http.Request) (authtoken.Record, bool) {
+	tok := presentedToken(r)
+	if tok == "" {
+		if g.static == "" {
+			return authtoken.Record{Scope: authtoken.ScopeOperator}, true
+		}
+		return authtoken.Record{}, false
+	}
+	if g.static != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(g.static)) == 1 {
+		return authtoken.Record{Scope: authtoken.ScopeOperator}, true
+	}
+	if g.store != nil {
+		if rec, ok := g.store.Lookup(tok); ok {
+			return rec, true
+		}
+	}
+	return authtoken.Record{}, false
+}
+
+// resolve is resolveRecord reduced to the tier — what requireScope and most
+// tests care about.
+func (g *authGate) resolve(r *http.Request) (authtoken.Scope, bool) {
+	rec, ok := g.resolveRecord(r)
+	return rec.Scope, ok
+}
+
+// requireScope wraps h so only requests the gate can resolve reach it. The
+// tier itself is applied by newMux's getServer; this just turns "no/unknown
+// credential" into a 401 before the MCP handler sees the request.
+func requireScope(gate *authGate, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got := []byte(r.Header.Get("Authorization"))
-		if subtle.ConstantTimeCompare(got, want) != 1 {
+		if _, ok := gate.resolve(r); !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -226,165 +312,242 @@ func isLoopbackAddr(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// newServer wires every hub capability to an MCP tool. Names are snake_case
-// (the MCP tool convention); descriptions are written for the model.
-func newServer(c *busclient.Client) *mcp.Server {
+// tierServers builds one MCP server per capability tier. Which tools a tier
+// holds is DERIVED from authtoken's scope allowlists — the same patterns the
+// hub bus enforces on scoped connections — so the facade and the bus can never
+// disagree about what "view" means, and a method admitted to a tier later
+// lights up its tool here with no facade change.
+func tierServers(c *busclient.Client) map[authtoken.Scope]*mcp.Server {
+	return map[authtoken.Scope]*mcp.Server{
+		authtoken.ScopeView:     newServer(c, authtoken.ScopeView),
+		authtoken.ScopeTriage:   newServer(c, authtoken.ScopeTriage),
+		authtoken.ScopeOperator: newServer(c, authtoken.ScopeOperator),
+	}
+}
+
+// newDeniedServer is the empty tier: a valid MCP server exposing no tools.
+// Served on the (revocation-race / unknown-scope) edges where a request passed
+// the gate but no tier can be established.
+func newDeniedServer() *mcp.Server {
+	return mcp.NewServer(&mcp.Implementation{
+		Name:    "workspacer",
+		Title:   "Workspacer",
+		Version: "0.1.0",
+	}, nil)
+}
+
+// build accumulates one tier's tools as they register. The `help` tool renders
+// its docs from this registry, so what help says can't drift from what the
+// tier actually exposes.
+type build struct {
+	s     *mcp.Server
+	c     *busclient.Client
+	scope authtoken.Scope
+	allow []string // method patterns this tier may call (authtoken Scope.Methods)
+	group string   // current section, stamped onto tools as they register
+	tools []toolInfo
+}
+
+type toolInfo struct {
+	Name, Desc, Method, Group string
+}
+
+func (b *build) allowed(method string) bool { return event.MatchesAny(b.allow, method) }
+
+// newServer wires the hub capabilities a tier may call to MCP tools. Names are
+// snake_case (the MCP tool convention); descriptions are written for the model
+// and kept to ONE line each — the schemas are what every connected agent pays
+// context for, so usage guidance lives behind the `help` tool instead.
+func newServer(c *busclient.Client, scope authtoken.Scope) *mcp.Server {
+	return newServerWithPlugins(c, scope, nil)
+}
+
+// newServerWithPlugins additionally grafts plugin-contributed tools onto the
+// tier (see plugins.go) — used by the serverCache for tokens whose record
+// grants specific plugins.
+func newServerWithPlugins(c *busclient.Client, scope authtoken.Scope, plugins []grantedPluginTools) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "workspacer",
 		Title:   "Workspacer",
 		Version: "0.1.0",
 	}, nil)
+	b := &build{s: s, c: c, scope: scope, allow: scope.Methods()}
 
 	// ── Observe ────────────────────────────────────────────────────────────
-	addTool[listAgentsIn](s, c, "list_agents",
+	b.group = "observe"
+	addTool[listAgentsIn](b, "list_agents",
 		"List running Claude Code agent sessions with their state, model, context usage, and any pending approval or question. The lightweight fleet overview; use get_snapshot for full detail on one session.",
 		"agents.list")
-	addTool[transcriptIn](s, c, "get_transcript",
+	addTool[transcriptIn](b, "get_transcript",
 		"Fetch a session's transcript so you can see the context behind a pending approval or question before acting.",
 		"sessions.transcript")
-	addTool[conversationIn](s, c, "get_conversation",
-		"Fetch a session's parsed conversation items plus the latest sequence number. Pass sinceSeq to get ONLY the items after that sequence — cheap incremental polling. Track the returned seq per session and pass it back as sinceSeq next time so you only ever digest new turns, never the whole transcript.",
+	addTool[conversationIn](b, "get_conversation",
+		"Fetch a session's parsed conversation items plus the latest sequence number; pass sinceSeq to get only items after that sequence (cheap incremental polling).",
 		"sessions.conversation")
-	addTool[sessionIn](s, c, "get_snapshot",
+	addTool[sessionIn](b, "get_snapshot",
 		"Get the full live snapshot for one session: conversation turns, tool calls, usage/cost, subagents, workflow runs, and any pending approval/question. Heavier than list_agents — use it to inspect a single agent in depth.",
 		"sessions.snapshot")
-	addTool[listAgentsIn](s, c, "list_snapshots",
+	addTool[listAgentsIn](b, "list_snapshots",
 		"Get full snapshots for every session at once (verbose — large payload). Prefer list_agents for an overview and get_snapshot for one session.",
 		"sessions.snapshots")
-	addTool[listAgentsIn](s, c, "list_models",
+	addTool[listAgentsIn](b, "list_models",
 		"List the Claude models available to spawn_agent (ids + display names).",
 		"claude.listModels")
-	addTool[listAgentsIn](s, c, "get_host_cwd",
+	addTool[listAgentsIn](b, "get_host_cwd",
 		"Get the workspacer host process's current working directory — a sensible default base for new agents.",
 		"app.getCwd")
-	addTool[cwdIn](s, c, "list_resumable_sessions",
+	addTool[cwdIn](b, "list_resumable_sessions",
 		"List prior Claude Code sessions for a directory that can be resumed (the resume picker), newest first.",
 		"claude.sessionsForDir")
 
 	// ── Spawn ──────────────────────────────────────────────────────────────
-	addTool[spawnAgentIn](s, c, "spawn_agent",
-		"Start a new coding-agent session in a directory — Claude Code by default, or another harness via provider (codex, opencode, pi). Returns the new sessionId, which you can then drive with send_message, approve, answer, etc. Pass label to give the new agent a human-readable name shown in the UI, and parentSessionId (your own session id) so the new agent appears nested under you in the UI. Set mcpFacade:true to give the new agent the workspacer tools too (e.g. a summarizer worker that reads transcripts itself).",
+	b.group = "spawn"
+	addTool[spawnAgentIn](b, "spawn_agent",
+		"Start a new coding-agent session in a directory (claude by default; codex/opencode/pi via provider) and return its sessionId. See help topic 'spawn' for labeling, nesting, and granting the new agent workspacer tools via toolScope.",
 		"agents.spawn")
-	addTool[createTerminalIn](s, c, "create_terminal",
+	addTool[createTerminalIn](b, "create_terminal",
 		"Open a new shell terminal session. Returns the new sessionId; write to it with terminal_input.",
 		"terminals.create")
 
 	// ── Drive ──────────────────────────────────────────────────────────────
-	addTool[sendMessageIn](s, c, "send_message",
+	b.group = "drive"
+	addTool[sendMessageIn](b, "send_message",
 		"Send a prompt/message to a running agent session.",
 		"agents.sendMessage")
-	addTool[approveIn](s, c, "approve",
+	addTool[approveIn](b, "approve",
 		"Resolve a pending permission prompt for an agent: 'yes', 'no', or 'always'.",
 		"claude.approve")
-	addTool[answerIn](s, c, "answer",
+	addTool[answerIn](b, "answer",
 		"Answer an agent's AskUserQuestion picker by option number, free text, or a list of answers.",
 		"claude.answer")
-	addTool[signalIn](s, c, "signal",
+	addTool[signalIn](b, "signal",
 		"Send a POSIX signal to an agent session, e.g. SIGINT to interrupt or SIGTERM to stop it.",
 		"claude.signal")
-	addTool[gateIn](s, c, "set_approval_gate",
+	addTool[gateIn](b, "set_approval_gate",
 		"Turn an agent's approval gate on or off. When on, the agent pauses for permission before running tools (surfaced via list_agents / get_snapshot for you to approve).",
 		"claude.gate")
-	addTool[terminalInputIn](s, c, "terminal_input",
+	addTool[terminalInputIn](b, "terminal_input",
 		"Type raw bytes into a session's terminal (PTY) — e.g. a command followed by a carriage return (\\r), or Ctrl-C (\\u0003).",
 		"sessions.terminalInput")
-	addTool[terminalResizeIn](s, c, "terminal_resize",
+	addTool[terminalResizeIn](b, "terminal_resize",
 		"Resize a session's PTY grid (cols × rows). The PTY is shared, so this reflows the desktop pane too.",
 		"sessions.terminalResize")
 
 	// ── Filesystem (on the workspacer host) ────────────────────────────────
-	addTool[listDirIn](s, c, "list_dir",
+	b.group = "files"
+	addTool[listDirIn](b, "list_dir",
 		"List sub-directories of a host path (directories only, hidden skipped) — for choosing a working directory. Defaults to the user's home; returns { path, parent, home, dirs }.",
 		"fs.listDir")
-	addTool[listDirIn](s, c, "list_entries",
+	addTool[listDirIn](b, "list_entries",
 		"List files and directories at a host path (gitignore-aware), for an editor-style file tree.",
 		"fs.listEntries")
-	addTool[readFileIn](s, c, "read_file",
+	addTool[readFileIn](b, "read_file",
 		"Read a UTF-8 text file on the workspacer host. Returns its contents.",
 		"fs.read")
-	addTool[writeFileIn](s, c, "write_file",
+	addTool[writeFileIn](b, "write_file",
 		"Write (create or overwrite) a UTF-8 text file on the workspacer host.",
 		"fs.write")
-	addTool[searchProjectIn](s, c, "search_project",
+	addTool[searchProjectIn](b, "search_project",
 		"ripgrep a project directory for a query, returning matches grouped by file. Use for code search across the host project.",
 		"search.project")
 
 	// ── Config ─────────────────────────────────────────────────────────────
-	addTool[listAgentsIn](s, c, "get_config",
+	b.group = "config"
+	addTool[listAgentsIn](b, "get_config",
 		"Get the full workspacer config (theme, keybindings, pane and session settings).",
 		"config.get")
-	addTool[listAgentsIn](s, c, "get_config_path",
+	addTool[listAgentsIn](b, "get_config_path",
 		"Get the path to the workspacer config file on the host.",
 		"config.getPath")
-	addTool[listAgentsIn](s, c, "reload_config",
+	addTool[listAgentsIn](b, "reload_config",
 		"Re-read the config file from disk and return it.",
 		"config.reload")
-	addObjectTool(s, c, "save_config",
+	addObjectTool(b, "save_config",
 		"Persist a partial config patch (deep-merged into the current config). Pass only the keys to change, e.g. {\"ui\":{\"guiFontScale\":1.3}}.",
 		"config.save")
 
 	// ── Claude profiles ────────────────────────────────────────────────────
-	addTool[listAgentsIn](s, c, "list_profiles",
+	b.group = "profiles"
+	addTool[listAgentsIn](b, "list_profiles",
 		"List configured Claude profiles (named CLAUDE_CONFIG_DIR + extra-args presets used when spawning agents).",
 		"claude.profiles.list")
-	addTool[addProfileIn](s, c, "add_profile",
+	addTool[addProfileIn](b, "add_profile",
 		"Add a Claude profile. name is required; configDir and extraArgs optional.",
 		"claude.profiles.add")
-	addObjectTool(s, c, "update_profile",
+	addObjectTool(b, "update_profile",
 		"Update a Claude profile. Pass { id, updates: { name?, configDir?, extraArgs? } }.",
 		"claude.profiles.update")
-	addTool[idIn](s, c, "remove_profile",
+	addTool[idIn](b, "remove_profile",
 		"Remove a Claude profile by id.",
 		"claude.profiles.remove")
 
 	// ── Saved sessions (workspace arrangements) ────────────────────────────
-	addTool[listAgentsIn](s, c, "list_saved_sessions",
+	b.group = "sessions"
+	addTool[listAgentsIn](b, "list_saved_sessions",
 		"List saved workspace sessions (the session picker — saved pane/agent arrangements).",
 		"sessions.list")
-	addTool[filenameIn](s, c, "load_saved_session",
+	addTool[filenameIn](b, "load_saved_session",
 		"Load one saved workspace session by filename.",
 		"sessions.load")
-	addObjectTool(s, c, "save_saved_session",
+	addObjectTool(b, "save_saved_session",
 		"Save the current workspace arrangement. Pass the session blob ({ name, tabs|agents, ... }).",
 		"sessions.save")
-	addTool[filenameIn](s, c, "delete_saved_session",
+	addTool[filenameIn](b, "delete_saved_session",
 		"Delete a saved workspace session by filename.",
 		"sessions.delete")
 
 	// ── Layout templates ───────────────────────────────────────────────────
-	addTool[listAgentsIn](s, c, "list_layouts",
+	b.group = "layouts"
+	addTool[listAgentsIn](b, "list_layouts",
 		"List saved layout templates (pane geometry presets).",
 		"layouts.list")
-	addObjectTool(s, c, "save_layout",
+	addObjectTool(b, "save_layout",
 		"Save a layout template. Pass the layout blob ({ id?, name, ... }).",
 		"layouts.save")
-	addTool[idIn](s, c, "delete_layout",
+	addTool[idIn](b, "delete_layout",
 		"Delete a layout template by id.",
 		"layouts.delete")
 
 	// ── Library (reusable prompts, skills, agents) ─────────────────────────
-	addTool[cwdIn](s, c, "list_library",
+	b.group = "library"
+	addTool[cwdIn](b, "list_library",
 		"List reusable library items (prompts, skills, agents) — global plus, if cwd is given, that project's items.",
 		"library.list")
-	addObjectTool(s, c, "save_library",
+	addObjectTool(b, "save_library",
 		"Save a library item. Pass the item blob (scope, kind, id, name, body, …).",
 		"library.save")
-	addTool[libraryRemoveIn](s, c, "remove_library",
+	addTool[libraryRemoveIn](b, "remove_library",
 		"Remove a library item. Pass { scope: 'global'|'project'|'claude', id, cwd?, kind?: 'prompt'|'skill'|'agent' }.",
 		"library.remove")
 
 	// ── Analytics ──────────────────────────────────────────────────────────
-	addTool[listAgentsIn](s, c, "analytics_summary",
+	b.group = "analytics"
+	addTool[listAgentsIn](b, "analytics_summary",
 		"Get aggregate usage analytics across sessions (totals for tokens, cost, durations).",
 		"analytics.summary")
-	addTool[recentIn](s, c, "analytics_recent",
+	addTool[recentIn](b, "analytics_recent",
 		"Get the most recent finished sessions with their per-session usage. Pass limit to cap the count.",
 		"analytics.recent")
 
 	// ── Notify ─────────────────────────────────────────────────────────────
-	addTool[notifyIn](s, c, "notify",
+	b.group = "notify"
+	addTool[notifyIn](b, "notify",
 		"Show a desktop notification on the workspacer machine.",
 		"notifications.post")
+
+	// ── UI navigation (event-backed, explicit triage+ gate; see ui.go) ─────
+	b.group = "ui"
+	addUiTools(b)
+
+	// ── Plugin-contributed tools (per-token grants; see plugins.go) ────────
+	b.group = "plugins"
+	for _, p := range plugins {
+		for _, t := range p.Tools {
+			addPluginTool(b, p.PluginID, t)
+		}
+	}
+
+	addHelpTool(b)
 
 	return s
 }
@@ -411,11 +574,18 @@ func forward(ctx context.Context, c *busclient.Client, method string, params any
 // addTool registers one MCP tool that forwards its typed input to a hub
 // capability and returns the capability's JSON result as text. In is the tool's
 // input shape (which becomes its input schema); the output is passed through
-// untyped, so no output schema is advertised.
-func addTool[In any](s *mcp.Server, c *busclient.Client, name, desc, method string) {
-	mcp.AddTool(s, &mcp.Tool{Name: name, Description: desc},
+// untyped, so no output schema is advertised. The tool registers only when the
+// build's tier may call its hub method — the same allowlist the hub bus
+// enforces on a scoped connection — and is recorded in the registry the help
+// tool renders from.
+func addTool[In any](b *build, name, desc, method string) {
+	if !b.allowed(method) {
+		return
+	}
+	b.tools = append(b.tools, toolInfo{Name: name, Desc: desc, Method: method, Group: b.group})
+	mcp.AddTool(b.s, &mcp.Tool{Name: name, Description: desc},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-			return forward(ctx, c, method, in)
+			return forward(ctx, b.c, method, in)
 		})
 }
 
@@ -423,10 +593,14 @@ func addTool[In any](s *mcp.Server, c *busclient.Client, name, desc, method stri
 // verbatim as the capability's params. For capabilities that take a free-form
 // object (a config patch, a saved-session blob) too nested to model as a typed
 // struct — the schema is an open object so the model can pass any shape.
-func addObjectTool(s *mcp.Server, c *busclient.Client, name, desc, method string) {
-	mcp.AddTool(s, &mcp.Tool{Name: name, Description: desc},
+func addObjectTool(b *build, name, desc, method string) {
+	if !b.allowed(method) {
+		return
+	}
+	b.tools = append(b.tools, toolInfo{Name: name, Desc: desc, Method: method, Group: b.group})
+	mcp.AddTool(b.s, &mcp.Tool{Name: name, Description: desc},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in map[string]any) (*mcp.CallToolResult, any, error) {
-			return forward(ctx, c, method, in)
+			return forward(ctx, b.c, method, in)
 		})
 }
 
@@ -511,14 +685,18 @@ type recentIn struct {
 }
 
 type spawnAgentIn struct {
-	Provider        string `json:"provider,omitempty" jsonschema:"coding-agent backend to run: claude (default), codex, opencode, or pi"`
-	Cwd             string `json:"cwd,omitempty" jsonschema:"working directory for the new agent (defaults to the user's home)"`
-	Model           string `json:"model,omitempty" jsonschema:"model id to use, e.g. claude-opus-4-8 (optional; provider-specific)"`
-	ProfileID       string `json:"profileId,omitempty" jsonschema:"workspacer Claude profile id to use (optional)"`
-	SkipPermissions bool   `json:"skipPermissions,omitempty" jsonschema:"start the agent with --dangerously-skip-permissions"`
-	Label           string `json:"label,omitempty" jsonschema:"a short human label for the new agent, shown as its name in the UI"`
-	ParentSessionId string `json:"parentSessionId,omitempty" jsonschema:"the spawning agent's own session id; set this so the new agent appears nested under you in the UI"`
-	MCPFacade       bool   `json:"mcpFacade,omitempty" jsonschema:"give the new agent the workspacer MCP tools (so it can read transcripts itself); use for summarizer workers"`
+	Provider        string   `json:"provider,omitempty" jsonschema:"coding-agent backend to run: claude (default), codex, opencode, or pi"`
+	Transport       string   `json:"transport,omitempty" jsonschema:"claude/codex only: 'stream' runs headless (GUI-only); omit for the default"`
+	Cwd             string   `json:"cwd,omitempty" jsonschema:"working directory for the new agent (defaults to the user's home)"`
+	Model           string   `json:"model,omitempty" jsonschema:"model id to use, e.g. claude-opus-4-8 (optional; provider-specific)"`
+	Effort          string   `json:"effort,omitempty" jsonschema:"reasoning-effort level: low, medium, high, xhigh, or max (claude/codex)"`
+	ProfileID       string   `json:"profileId,omitempty" jsonschema:"workspacer Claude profile id to use (optional)"`
+	SkipPermissions bool     `json:"skipPermissions,omitempty" jsonschema:"start the agent with --dangerously-skip-permissions"`
+	Label           string   `json:"label,omitempty" jsonschema:"a short human label for the new agent, shown as its name in the UI"`
+	ParentSessionId string   `json:"parentSessionId,omitempty" jsonschema:"the spawning agent's own session id; set this so the new agent appears nested under you in the UI"`
+	MCPFacade       bool     `json:"mcpFacade,omitempty" jsonschema:"legacy: give the new agent the FULL workspacer tool set (operator tier); prefer toolScope"`
+	ToolScope       string   `json:"toolScope,omitempty" jsonschema:"give the new agent the workspacer tools at a tier: view (observe-only — right for summarizer workers), triage (view + approve/reply/interrupt), or operator (everything)"`
+	PluginTools     []string `json:"pluginTools,omitempty" jsonschema:"plugin ids whose contributed tools the new agent may use (requires toolScope); omit for none"`
 }
 
 type createTerminalIn struct {

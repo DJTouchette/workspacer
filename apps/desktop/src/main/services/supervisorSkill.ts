@@ -70,16 +70,20 @@ Spawn a single long-lived digest worker the first time through, then reuse it:
 \`\`\`
 spawn_agent({
   model: <summarizerModel>,
-  mcpFacade: true,          // so the worker can call get_transcript itself
+  toolScope: "view",        // read-only workspacer tools: transcripts, snapshots
   label: "fleet digest",
   parentSessionId: <your session id>,
   cwd: <any active agent's cwd, or the host cwd>
 })
 \`\`\`
 
-\`mcpFacade: true\` gives the worker the workspacer tools but does NOT make it a
-supervisor — it just reads transcripts and answers you. Reusing one worker keeps
-cost down; only spawn another if the first dies.
+\`toolScope: "view"\` gives the worker the read-only workspacer tools (so it can
+call get_transcript / get_conversation itself) and nothing else — it cannot
+spawn, message, or approve, and it pays context for only the handful of
+read-tool schemas. It does NOT make it a supervisor: it just reads transcripts
+and answers you. Reusing one worker keeps cost down; only spawn another if the
+first dies. (\`mcpFacade: true\` is the legacy spelling and grants the FULL tool
+set — prefer the scoped form.)
 
 ## 2. Each pass — work incrementally
 

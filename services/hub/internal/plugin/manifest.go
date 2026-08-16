@@ -10,9 +10,11 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/djtouchette/workspacer-hub/internal/capspec"
+	"github.com/djtouchette/workspacer-hub/internal/event"
 )
 
 // APIVersion is the manifest schema version this hub understands.
@@ -69,6 +71,13 @@ type Manifest struct {
 	Emits        []string     `json:"emits,omitempty"`
 	Consumes     []string     `json:"consumes,omitempty"`
 
+	// Tools: MCP tools this plugin contributes to the workspacer facade, each
+	// bound to a `provides` method the plugin answers. Presentation only — the
+	// AUTHORITY is the provides grant (consent-pinned like every other bus
+	// declaration): a tool whose method the pin does not cover is withheld from
+	// the facade, and the bus would refuse the registration anyway.
+	Tools []ToolDef `json:"tools,omitempty"`
+
 	// Install: a one-time setup command (argv) run in the plugin dir after a
 	// GitHub install — e.g. ["npm","install"] or ["go","build","-o","bin"].
 	// Empty = nothing to build (self-contained plugin).
@@ -108,6 +117,32 @@ type Manifest struct {
 type Capability struct {
 	Method string   `json:"method"`
 	Paths  []string `json:"paths,omitempty"`
+}
+
+// ToolDef is one MCP tool a plugin contributes to the workspacer facade: a
+// name, description and input schema for the model, bound to a bus method the
+// plugin itself answers. The facade forwards a call of the tool as a plain
+// capability call of `method`; the plugin must have registered it (op
+// "register"), which the bus only permits inside the manifest's consent-pinned
+// `provides`. The AUTHORITY is therefore the provides grant — this struct is
+// presentation, and a tool whose method the pin does not cover is withheld
+// from the facade (see Manager.ConsentedTools).
+type ToolDef struct {
+	// Name of the tool as the model sees it, namespaced by the facade
+	// (`<plugin id>_<name>`, sanitized). Lowercase [a-z0-9_], starting with a
+	// letter.
+	Name string `json:"name"`
+	// Description for the model. Required — a schema without a description is
+	// a tool the model can only misuse. Keep it to one line; longer usage
+	// guidance belongs in the description too (plugins have no help topic).
+	Description string `json:"description"`
+	// InputSchema is a JSON Schema OBJECT for the tool's arguments (`"type":
+	// "object"`). Optional; omitted means "any object".
+	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
+	// Method is the bus method the tool call forwards to. Must be matched by
+	// one of the manifest's `provides` patterns (and is therefore confined to
+	// the plugin's own namespace).
+	Method string `json:"method"`
 }
 
 // UnmarshalJSON accepts either a bare string (verb-only) or the object form.
@@ -379,8 +414,56 @@ func (m *Manifest) Validate() error {
 			return err
 		}
 	}
+	toolNames := map[string]bool{}
+	for _, t := range m.Tools {
+		if err := validateTool(m, t); err != nil {
+			return err
+		}
+		if toolNames[t.Name] {
+			return fmt.Errorf("duplicate tool name %q", t.Name)
+		}
+		toolNames[t.Name] = true
+	}
 	if err := ValidateUIDir(m.UI); err != nil {
 		return err
+	}
+	return nil
+}
+
+// toolNameRe is the shape a contributed tool name must have: what MCP clients
+// (and the `mcp__workspacer__<name>` allow-glob machinery) treat as a plain
+// tool identifier. The facade prefixes it with the sanitized plugin id.
+var toolNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+
+// validateTool checks one contributed facade tool against the manifest that
+// declares it.
+func validateTool(m *Manifest, t ToolDef) error {
+	if !toolNameRe.MatchString(t.Name) {
+		return fmt.Errorf("tool name %q must match %s", t.Name, toolNameRe)
+	}
+	if strings.TrimSpace(t.Description) == "" {
+		return fmt.Errorf("tool %q has no description — the model cannot use an undescribed tool", t.Name)
+	}
+	if t.Method == "" {
+		return fmt.Errorf("tool %q has no method", t.Name)
+	}
+	// The method must be one the manifest can answer: covered by a declared
+	// provides pattern (which validateProvides has already confined to the
+	// plugin's own namespace).
+	if !event.MatchesAny(m.Provides, t.Method) {
+		return fmt.Errorf("tool %q forwards to %q, which no `provides` pattern covers — declare it in provides first", t.Name, t.Method)
+	}
+	// The schema, when present, must be a JSON Schema OBJECT — the MCP SDK
+	// refuses (panics on) anything else at registration time, so refuse it at
+	// load time instead.
+	if len(t.InputSchema) > 0 {
+		var schema map[string]any
+		if err := json.Unmarshal(t.InputSchema, &schema); err != nil {
+			return fmt.Errorf("tool %q inputSchema is not a JSON object: %v", t.Name, err)
+		}
+		if typ, _ := schema["type"].(string); typ != "object" {
+			return fmt.Errorf("tool %q inputSchema must declare \"type\": \"object\" (got %v)", t.Name, schema["type"])
+		}
 	}
 	return nil
 }

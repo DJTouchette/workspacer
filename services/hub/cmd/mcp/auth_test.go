@@ -3,8 +3,10 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
+	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 	"github.com/djtouchette/workspacer-hub/internal/busclient"
 )
 
@@ -56,56 +58,114 @@ func TestIsLoopbackAddr(t *testing.T) {
 	}
 }
 
-func TestRequireBearer(t *testing.T) {
-	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
+// mintTestToken writes a tokens.json with one scoped record and returns the
+// store plus the token value.
+func mintTestToken(t *testing.T, scope authtoken.Scope) (*authtoken.Store, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "tokens.json")
+	rec, err := authtoken.Mint(path, scope, "session:test")
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	return authtoken.NewStore(path), rec.Token
+}
 
-	// No token configured → passthrough, no auth required.
-	t.Run("no token passes through", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		requireBearer("", ok).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/mcp", nil))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("code = %d, want 200", rec.Code)
+func resolveReq(gate *authGate, target string, header string) (authtoken.Scope, bool) {
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	if header != "" {
+		req.Header.Set("Authorization", header)
+	}
+	return gate.resolve(req)
+}
+
+func TestAuthGateResolve(t *testing.T) {
+	store, viewTok := mintTestToken(t, authtoken.ScopeView)
+
+	t.Run("no credential, no static token → operator (loopback-open default)", func(t *testing.T) {
+		gate := &authGate{store: store}
+		scope, ok := resolveReq(gate, "/mcp", "")
+		if !ok || scope != authtoken.ScopeOperator {
+			t.Fatalf("resolve = (%q, %v), want (operator, true)", scope, ok)
 		}
 	})
 
-	h := requireBearer("s3cret", ok)
-
-	t.Run("missing header is 401", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/mcp", nil))
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("code = %d, want 401", rec.Code)
+	t.Run("no credential with static token → refused", func(t *testing.T) {
+		gate := &authGate{static: "s3cret", store: store}
+		if _, ok := resolveReq(gate, "/mcp", ""); ok {
+			t.Fatal("expected refusal without a credential when a static token is set")
 		}
 	})
 
-	t.Run("wrong token is 401", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
-		req.Header.Set("Authorization", "Bearer nope")
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("code = %d, want 401", rec.Code)
+	t.Run("static token bearer → operator", func(t *testing.T) {
+		gate := &authGate{static: "s3cret", store: store}
+		scope, ok := resolveReq(gate, "/mcp", "Bearer s3cret")
+		if !ok || scope != authtoken.ScopeOperator {
+			t.Fatalf("resolve = (%q, %v), want (operator, true)", scope, ok)
 		}
 	})
 
-	t.Run("correct token is 200", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
-		req.Header.Set("Authorization", "Bearer s3cret")
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("code = %d, want 200", rec.Code)
+	t.Run("scoped token bearer → its tier", func(t *testing.T) {
+		gate := &authGate{store: store}
+		scope, ok := resolveReq(gate, "/mcp", "Bearer "+viewTok)
+		if !ok || scope != authtoken.ScopeView {
+			t.Fatalf("resolve = (%q, %v), want (view, true)", scope, ok)
+		}
+	})
+
+	t.Run("scoped token via ?t= query → its tier", func(t *testing.T) {
+		gate := &authGate{store: store}
+		scope, ok := resolveReq(gate, "/mcp?t="+viewTok, "")
+		if !ok || scope != authtoken.ScopeView {
+			t.Fatalf("resolve = (%q, %v), want (view, true)", scope, ok)
+		}
+	})
+
+	t.Run("unknown token → refused even with the open default", func(t *testing.T) {
+		// A PRESENT-but-unknown credential (e.g. a revoked session token) must
+		// 401, never quietly escalate to the untokened operator default.
+		gate := &authGate{store: store}
+		if _, ok := resolveReq(gate, "/mcp", "Bearer nope-nope"); ok {
+			t.Fatal("unknown bearer resolved; want refusal")
+		}
+		if _, ok := resolveReq(gate, "/mcp?t=nope-nope", ""); ok {
+			t.Fatal("unknown query token resolved; want refusal")
+		}
+	})
+
+	t.Run("malformed authorization header → refused", func(t *testing.T) {
+		gate := &authGate{store: store}
+		if _, ok := resolveReq(gate, "/mcp", "Basic dXNlcg=="); ok {
+			t.Fatal("malformed Authorization resolved; want refusal")
+		}
+	})
+
+	t.Run("revocation takes effect on the next request", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "tokens.json")
+		rec, err := authtoken.Mint(path, authtoken.ScopeTriage, "session:gone")
+		if err != nil {
+			t.Fatalf("mint: %v", err)
+		}
+		gate := &authGate{store: authtoken.NewStore(path)}
+		if _, ok := resolveReq(gate, "/mcp", "Bearer "+rec.Token); !ok {
+			t.Fatal("token should resolve before revocation")
+		}
+		if _, err := authtoken.Revoke(path, rec.Token); err != nil {
+			t.Fatalf("revoke: %v", err)
+		}
+		if _, ok := resolveReq(gate, "/mcp", "Bearer "+rec.Token); ok {
+			t.Fatal("revoked token still resolves")
 		}
 	})
 }
 
 // TestMuxHealthOpenMCPGuarded proves the wiring: /health is reachable without a
-// token even when auth is on, while /mcp demands the bearer.
+// token even when auth is on, while /mcp demands a resolvable credential.
 func TestMuxHealthOpenMCPGuarded(t *testing.T) {
 	client := busclient.New("ws://127.0.0.1:0/bus", "")
-	mux := newMux(newServer(client), client, "s3cret")
+	store, viewTok := mintTestToken(t, authtoken.ScopeView)
+	gate := &authGate{static: "s3cret", store: store}
+	cache := newServerCache(client, newPluginCatalog(client), tierServers(client))
+	mux := newMux(cache, client, gate)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -119,7 +179,7 @@ func TestMuxHealthOpenMCPGuarded(t *testing.T) {
 		t.Fatalf("/health status = %d, want 200 (must stay open)", resp.StatusCode)
 	}
 
-	// /mcp without a token is rejected before reaching the MCP handler.
+	// /mcp without a credential is rejected before reaching the MCP handler.
 	resp, err = http.Get(srv.URL + "/mcp")
 	if err != nil {
 		t.Fatalf("mcp GET: %v", err)
@@ -129,8 +189,8 @@ func TestMuxHealthOpenMCPGuarded(t *testing.T) {
 		t.Fatalf("/mcp without token status = %d, want 401", resp.StatusCode)
 	}
 
-	// /mcp WITH the token passes auth (reaches the MCP handler, which no longer
-	// answers 401 — a bare GET is a bad MCP request, so just assert not-401).
+	// /mcp with the static token passes auth (reaches the MCP handler, which no
+	// longer answers 401 — a bare GET is a bad MCP request, so assert not-401).
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp", nil)
 	req.Header.Set("Authorization", "Bearer s3cret")
 	resp, err = http.DefaultClient.Do(req)
@@ -140,5 +200,17 @@ func TestMuxHealthOpenMCPGuarded(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized {
 		t.Fatalf("/mcp with correct token was 401; auth should have passed")
+	}
+
+	// A scoped token passes auth too, even alongside a static token.
+	req, _ = http.NewRequest(http.MethodGet, srv.URL+"/mcp", nil)
+	req.Header.Set("Authorization", "Bearer "+viewTok)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("mcp GET with scoped token: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		t.Fatalf("/mcp with scoped token was 401; auth should have passed")
 	}
 }

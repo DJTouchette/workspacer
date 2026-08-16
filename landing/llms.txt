@@ -16,7 +16,7 @@
 - [Architecture internals](build.html#architecture): the desktop / claudemon / hub split and the hub bus.
 - [How agents are driven](build.html#providers): the two integration tiers and each provider's managed adapter.
 - [Writing a plugin (overview)](build.html#plugins): the short tour of the plugin system.
-- [The MCP facade & brain](build.html#mcp): exposing the hub's capabilities as MCP tools.
+- [The MCP facade & brain](build.html#mcp): exposing the hub's capabilities as MCP tools — tiered per session token (view/triage/operator), a `help` tool per tier, plugin-contributed tools, and UI navigation (focus agents, open panes, open the built-in browser).
 
 ## Build a plugin
 
@@ -25,7 +25,7 @@ Full-text plugin reference for LLMs: [build-plugin.md](build-plugin.md) is the c
 - [Build a plugin (HTML)](build-plugin.html): the rendered how-to page.
 - [The two kinds](build-plugin.html#intro): webview (`ui`) vs sidecar (`server`).
 - [Your first plugin](build-plugin.html#first): folder, minimal manifest, the webview page, and a sidecar sketch.
-- [The manifest](build-plugin.html#manifest): `plugin.json` fields — `id`, `apiVersion` (must be `"1"`), `version` (release version; drives update detection), `server`, `ui`, `panes`, `hotkeys`, `settings`, `capabilities`, `provides`, `emits`/`consumes`, `install`.
+- [The manifest](build-plugin.html#manifest): `plugin.json` fields — `id`, `apiVersion` (must be `"1"`), `version` (release version; drives update detection), `server`, `ui`, `panes`, `hotkeys`, `settings`, `capabilities`, `provides`, `tools` (MCP tools contributed to agents via the workspacer facade), `emits`/`consumes`, `install`.
 - [The bus protocol](build-plugin.html#bus): `ws://127.0.0.1:7895/bus?token=`, the `subscribe` / `call` / `publish` / `register` ops.
 - [Capabilities & permissions](build-plugin.html#capabilities): fail-closed grants, path-scoped `fs.*` / `search.project`, common host capabilities.
 - [Events you can consume](build-plugin.html#events): `agent.state_changed`, `agent.snapshot`, `workflow.completed`/`failed`, `ui.*`, `fs.changed`, and what you can emit.

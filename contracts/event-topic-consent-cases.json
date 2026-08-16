@@ -1,206 +1,318 @@
 {
+ "_comment": [
+  "The event-topic registry, as a cross-language fixture.",
+  "",
+  "OWNERS: services/hub/internal/capspec/eventtopics.go (Go, the ENFORCER — mayConsume",
+  "and mayPublish read it) and apps/desktop/src/renderer/src/lib/pluginPermissions.ts",
+  "(TypeScript, the DISCLOSER — the install-consent dialog and the plugins manager).",
+  "Each side is pinned to this file by its own test, so neither can move without the",
+  "other going red: eventtopics_test.go TestEventTopicRegistryMatchesTheConsentFixture",
+  "and pluginPermissions.test.ts.",
+  "",
+  "WHY IT EXISTS. The renderer used to carry a hand-copied table of the five",
+  "guarded-by-capability rows and nothing else. All the host-only rows were absent, so",
+  "a manifest declaring consumes: [\"plugin.log\", \"sidecar.*\"] rendered as an ordinary",
+  "line at severity NORMAL — plugin.log being one verbatim, unredacted line of a",
+  "sidecar's stdout/stderr, whose environment carries WKS_SETTINGS with secret plugin",
+  "settings in PLAINTEXT, and plugin.loaded the whole Manifest: install argv, the",
+  "sidecar's server command, and every declared filesystem scope. The consent dialog",
+  "was the stated justification for plugins being exempt from the registry in the first",
+  "place; a disclosure surface that under-warns is the one failure mode that matters.",
+  "",
+  "THE THREE DISPOSITIONS (the reason for each row lives in eventtopics.go, which is",
+  "the enforcing copy — this file carries the SHAPE, not the argument):",
+  "  guarded-by-capability  the payload is that capability's output; holding the",
+  "                         capability is the price of receiving the topic.",
+  "  host-only              no capability returns this payload and no scoped tier or",
+  "                         plugin has any business with it. Trusted connections only.",
+  "  open-by-decision       every tier may receive it, with the reason on the record.",
+  "",
+  "CONSENT RENDERING. `severityByDisposition` is the normative mapping from a",
+  "disposition to how the dialog must render a `consumes` line that reaches it. Both",
+  "non-open dispositions are sensitive: guarded because the same reach spelled as a",
+  "capability renders sensitive, host-only because asking for host-internal state is a",
+  "fact about the plugin whether or not the bus then refuses it. Only the Go side of",
+  "this pair enforces; only the TS side renders — so `cases` are loaded by the TS test",
+  "alone, while `topics` is normative for both.",
+  "",
+  "A topic in NO row is not host state (example.clock.tick, the rules engine's",
+  "command.*): a scoped user token is refused it (fail closed) and a plugin's manifest",
+  "is the only gate. It renders as an ordinary line, and that is correct."
+ ],
+ "vocabulary": {
   "_comment": [
-    "The event-topic registry, as a cross-language fixture.",
-    "",
-    "OWNERS: services/hub/internal/capspec/eventtopics.go (Go, the ENFORCER — mayConsume",
-    "and mayPublish read it) and apps/desktop/src/renderer/src/lib/pluginPermissions.ts",
-    "(TypeScript, the DISCLOSER — the install-consent dialog and the plugins manager).",
-    "Each side is pinned to this file by its own test, so neither can move without the",
-    "other going red: eventtopics_test.go TestEventTopicRegistryMatchesTheConsentFixture",
-    "and pluginPermissions.test.ts.",
-    "",
-    "WHY IT EXISTS. The renderer used to carry a hand-copied table of the five",
-    "guarded-by-capability rows and nothing else. All the host-only rows were absent, so",
-    "a manifest declaring consumes: [\"plugin.log\", \"sidecar.*\"] rendered as an ordinary",
-    "line at severity NORMAL — plugin.log being one verbatim, unredacted line of a",
-    "sidecar's stdout/stderr, whose environment carries WKS_SETTINGS with secret plugin",
-    "settings in PLAINTEXT, and plugin.loaded the whole Manifest: install argv, the",
-    "sidecar's server command, and every declared filesystem scope. The consent dialog",
-    "was the stated justification for plugins being exempt from the registry in the first",
-    "place; a disclosure surface that under-warns is the one failure mode that matters.",
-    "",
-    "THE THREE DISPOSITIONS (the reason for each row lives in eventtopics.go, which is",
-    "the enforcing copy — this file carries the SHAPE, not the argument):",
-    "  guarded-by-capability  the payload is that capability's output; holding the",
-    "                         capability is the price of receiving the topic.",
-    "  host-only              no capability returns this payload and no scoped tier or",
-    "                         plugin has any business with it. Trusted connections only.",
-    "  open-by-decision       every tier may receive it, with the reason on the record.",
-    "",
-    "CONSENT RENDERING. `severityByDisposition` is the normative mapping from a",
-    "disposition to how the dialog must render a `consumes` line that reaches it. Both",
-    "non-open dispositions are sensitive: guarded because the same reach spelled as a",
-    "capability renders sensitive, host-only because asking for host-internal state is a",
-    "fact about the plugin whether or not the bus then refuses it. Only the Go side of",
-    "this pair enforces; only the TS side renders — so `cases` are loaded by the TS test",
-    "alone, while `topics` is normative for both.",
-    "",
-    "A topic in NO row is not host state (example.clock.tick, the rules engine's",
-    "command.*): a scoped user token is refused it (fail closed) and a plugin's manifest",
-    "is the only gate. It renders as an ordinary line, and that is correct."
+   "The block registry every fixture in contracts/ must declare (cmd/brain",
+   "corpusvocab_test.go and its TypeScript twin). `topics` uses `disposition` as its",
+   "verdict field, which is what forbids the two shapes a hand-edit produces: a",
+   "guarded row with no capability behind it, and a host-only row that names one —",
+   "the second being how a topic no capability can unlock would come to look",
+   "unlockable, and the dialog would then offer the user a capability to blame."
   ],
-  "vocabulary": {
-    "_comment": [
-      "The block registry every fixture in contracts/ must declare (cmd/brain",
-      "corpusvocab_test.go and its TypeScript twin). `topics` uses `disposition` as its",
-      "verdict field, which is what forbids the two shapes a hand-edit produces: a",
-      "guarded row with no capability behind it, and a host-only row that names one —",
-      "the second being how a topic no capability can unlock would come to look",
-      "unlockable, and the dialog would then offer the user a capability to blame."
+  "blocks": {
+   "topics": {
+    "why": "one classified event topic. NORMATIVE for both languages: the hub reads its copy in mayConsume/mayPublish, the renderer reads its copy to describe a manifest's `consumes` lines.",
+    "required": [
+     "pattern",
+     "disposition"
     ],
-    "blocks": {
-      "topics": {
-        "why": "one classified event topic. NORMATIVE for both languages: the hub reads its copy in mayConsume/mayPublish, the renderer reads its copy to describe a manifest's `consumes` lines.",
-        "required": ["pattern", "disposition"],
-        "optional": ["method"],
-        "verdictField": "disposition",
-        "verdicts": {
-          "guarded-by-capability": { "requires": ["method"] },
-          "host-only": { "forbids": ["method"] },
-          "open-by-decision": { "forbids": ["method"] }
-        },
-        "loaders": [
-          "services/hub/internal/capspec/eventtopics_test.go::TestEventTopicRegistryMatchesTheConsentFixture",
-          "apps/desktop/src/renderer/tests/pluginPermissions.test.ts::classifies exactly the topics the fixture classifies"
-        ]
-      },
-      "cases": {
-        "why": "how the install-consent dialog must render a manifest's `consumes` lines. TypeScript-only: the hub enforces the table and does not render it.",
-        "required": ["name", "consumes", "expect"],
-        "loaders": [
-          "apps/desktop/src/renderer/tests/pluginPermissions.test.ts::it.each(topicFixture.cases)"
-        ]
-      }
-    }
+    "optional": [
+     "method"
+    ],
+    "verdictField": "disposition",
+    "verdicts": {
+     "guarded-by-capability": {
+      "requires": [
+       "method"
+      ]
+     },
+     "host-only": {
+      "forbids": [
+       "method"
+      ]
+     },
+     "open-by-decision": {
+      "forbids": [
+       "method"
+      ]
+     }
+    },
+    "loaders": [
+     "services/hub/internal/capspec/eventtopics_test.go::TestEventTopicRegistryMatchesTheConsentFixture",
+     "apps/desktop/src/renderer/tests/pluginPermissions.test.ts::classifies exactly the topics the fixture classifies"
+    ]
+   },
+   "cases": {
+    "why": "how the install-consent dialog must render a manifest's `consumes` lines. TypeScript-only: the hub enforces the table and does not render it.",
+    "required": [
+     "name",
+     "consumes",
+     "expect"
+    ],
+    "loaders": [
+     "apps/desktop/src/renderer/tests/pluginPermissions.test.ts::it.each(topicFixture.cases)"
+    ]
+   }
+  }
+ },
+ "severityByDisposition": {
+  "guarded-by-capability": "sensitive",
+  "host-only": "sensitive",
+  "open-by-decision": "normal"
+ },
+ "topics": [
+  {
+   "pattern": "agent.snapshot",
+   "disposition": "open-by-decision"
   },
-  "severityByDisposition": {
-    "guarded-by-capability": "sensitive",
-    "host-only": "sensitive",
-    "open-by-decision": "normal"
+  {
+   "pattern": "agent.state_changed",
+   "disposition": "open-by-decision"
   },
-  "topics": [
-    { "pattern": "agent.snapshot", "disposition": "open-by-decision" },
-    { "pattern": "agent.state_changed", "disposition": "open-by-decision" },
+  {
+   "pattern": "agent.statusline",
+   "disposition": "guarded-by-capability",
+   "method": "sessions.snapshot"
+  },
+  {
+   "pattern": "command.focus_agent",
+   "disposition": "open-by-decision"
+  },
+  {
+   "pattern": "command.open_pane",
+   "disposition": "open-by-decision"
+  },
+  {
+   "pattern": "command.open_plugin",
+   "disposition": "open-by-decision"
+  },
+  {
+   "pattern": "command.open_spawn_dialog",
+   "disposition": "open-by-decision"
+  },
+  {
+   "pattern": "fs.changed",
+   "disposition": "guarded-by-capability",
+   "method": "fs.watch"
+  },
+  {
+   "pattern": "layout.changed",
+   "disposition": "open-by-decision"
+  },
+  {
+   "pattern": "library.changed",
+   "disposition": "open-by-decision"
+  },
+  {
+   "pattern": "plugin.install.progress",
+   "disposition": "host-only"
+  },
+  {
+   "pattern": "plugin.loaded",
+   "disposition": "host-only"
+  },
+  {
+   "pattern": "plugin.log",
+   "disposition": "host-only"
+  },
+  {
+   "pattern": "plugin.sandbox.refused",
+   "disposition": "host-only"
+  },
+  {
+   "pattern": "plugin.sandboxed",
+   "disposition": "host-only"
+  },
+  {
+   "pattern": "plugin.settings.changed",
+   "disposition": "host-only"
+  },
+  {
+   "pattern": "plugin.unloaded",
+   "disposition": "host-only"
+  },
+  {
+   "pattern": "plugin.unsandboxed",
+   "disposition": "host-only"
+  },
+  {
+   "pattern": "pty.bytes.*",
+   "disposition": "guarded-by-capability",
+   "method": "sessions.attachTerminal"
+  },
+  {
+   "pattern": "pty.desync",
+   "disposition": "guarded-by-capability",
+   "method": "sessions.attachTerminal"
+  },
+  {
+   "pattern": "pty.exit",
+   "disposition": "guarded-by-capability",
+   "method": "sessions.attachTerminal"
+  },
+  {
+   "pattern": "sidecar.*",
+   "disposition": "host-only"
+  },
+  {
+   "pattern": "workflow.agent.finished",
+   "disposition": "open-by-decision"
+  },
+  {
+   "pattern": "workflow.completed",
+   "disposition": "open-by-decision"
+  },
+  {
+   "pattern": "workflow.failed",
+   "disposition": "open-by-decision"
+  },
+  {
+   "pattern": "workflow.started",
+   "disposition": "open-by-decision"
+  }
+ ],
+ "cases": [
+  {
+   "name": "the sidecar control plane, which used to render as two ordinary lines",
+   "consumes": [
+    "plugin.log",
+    "sidecar.*"
+   ],
+   "expect": [
     {
-      "pattern": "agent.statusline",
-      "disposition": "guarded-by-capability",
-      "method": "sessions.snapshot"
+     "pattern": "plugin.log",
+     "severity": "sensitive",
+     "detailIncludes": "host"
     },
     {
-      "pattern": "fs.changed",
-      "disposition": "guarded-by-capability",
-      "method": "fs.watch"
-    },
-    { "pattern": "layout.changed", "disposition": "open-by-decision" },
-    { "pattern": "library.changed", "disposition": "open-by-decision" },
-    { "pattern": "plugin.install.progress", "disposition": "host-only" },
-    { "pattern": "plugin.loaded", "disposition": "host-only" },
-    { "pattern": "plugin.log", "disposition": "host-only" },
-    { "pattern": "plugin.sandbox.refused", "disposition": "host-only" },
-    { "pattern": "plugin.sandboxed", "disposition": "host-only" },
-    { "pattern": "plugin.settings.changed", "disposition": "host-only" },
-    { "pattern": "plugin.unloaded", "disposition": "host-only" },
-    { "pattern": "plugin.unsandboxed", "disposition": "host-only" },
-    {
-      "pattern": "pty.bytes.*",
-      "disposition": "guarded-by-capability",
-      "method": "sessions.attachTerminal"
-    },
-    {
-      "pattern": "pty.desync",
-      "disposition": "guarded-by-capability",
-      "method": "sessions.attachTerminal"
-    },
-    {
-      "pattern": "pty.exit",
-      "disposition": "guarded-by-capability",
-      "method": "sessions.attachTerminal"
-    },
-    { "pattern": "sidecar.*", "disposition": "host-only" },
-    { "pattern": "workflow.agent.finished", "disposition": "open-by-decision" },
-    { "pattern": "workflow.completed", "disposition": "open-by-decision" },
-    { "pattern": "workflow.failed", "disposition": "open-by-decision" },
-    { "pattern": "workflow.started", "disposition": "open-by-decision" }
-  ],
-  "cases": [
-    {
-      "name": "the sidecar control plane, which used to render as two ordinary lines",
-      "consumes": ["plugin.log", "sidecar.*"],
-      "expect": [
-        {
-          "pattern": "plugin.log",
-          "severity": "sensitive",
-          "detailIncludes": "host"
-        },
-        {
-          "pattern": "sidecar.*",
-          "severity": "sensitive",
-          "detailIncludes": "host"
-        }
-      ]
-    },
-    {
-      "name": "the manifest that reads a sidecar's whole confinement map",
-      "consumes": ["plugin.loaded", "plugin.unsandboxed"],
-      "expect": [
-        {
-          "pattern": "plugin.loaded",
-          "severity": "sensitive",
-          "detailIncludes": "host"
-        },
-        {
-          "pattern": "plugin.unsandboxed",
-          "severity": "sensitive",
-          "detailIncludes": "host"
-        }
-      ]
-    },
-    {
-      "name": "a wildcard that spans the host-only plugin family",
-      "consumes": ["plugin.*"],
-      "expect": [
-        {
-          "pattern": "plugin.*",
-          "severity": "sensitive",
-          "detailIncludes": "host"
-        }
-      ]
-    },
-    {
-      "name": "the capability-guarded topics still name their capability",
-      "consumes": ["pty.bytes.*", "fs.changed", "agent.statusline"],
-      "expect": [
-        {
-          "pattern": "pty.bytes.*",
-          "severity": "sensitive",
-          "detailIncludes": "requires that capability"
-        },
-        {
-          "pattern": "fs.changed",
-          "severity": "sensitive",
-          "detailIncludes": "requires that capability"
-        },
-        {
-          "pattern": "agent.statusline",
-          "severity": "sensitive",
-          "detailIncludes": "requires that capability"
-        }
-      ]
-    },
-    {
-      "name": "open-by-decision and plugin-defined topics stay ordinary, so the flag still means something",
-      "consumes": [
-        "agent.snapshot",
-        "workflow.started",
-        "layout.changed",
-        "myplugin.tick"
-      ],
-      "expect": [
-        { "pattern": "agent.snapshot", "severity": "normal" },
-        { "pattern": "workflow.started", "severity": "normal" },
-        { "pattern": "layout.changed", "severity": "normal" },
-        { "pattern": "myplugin.tick", "severity": "normal" }
-      ]
+     "pattern": "sidecar.*",
+     "severity": "sensitive",
+     "detailIncludes": "host"
     }
-  ]
+   ]
+  },
+  {
+   "name": "the manifest that reads a sidecar's whole confinement map",
+   "consumes": [
+    "plugin.loaded",
+    "plugin.unsandboxed"
+   ],
+   "expect": [
+    {
+     "pattern": "plugin.loaded",
+     "severity": "sensitive",
+     "detailIncludes": "host"
+    },
+    {
+     "pattern": "plugin.unsandboxed",
+     "severity": "sensitive",
+     "detailIncludes": "host"
+    }
+   ]
+  },
+  {
+   "name": "a wildcard that spans the host-only plugin family",
+   "consumes": [
+    "plugin.*"
+   ],
+   "expect": [
+    {
+     "pattern": "plugin.*",
+     "severity": "sensitive",
+     "detailIncludes": "host"
+    }
+   ]
+  },
+  {
+   "name": "the capability-guarded topics still name their capability",
+   "consumes": [
+    "pty.bytes.*",
+    "fs.changed",
+    "agent.statusline"
+   ],
+   "expect": [
+    {
+     "pattern": "pty.bytes.*",
+     "severity": "sensitive",
+     "detailIncludes": "requires that capability"
+    },
+    {
+     "pattern": "fs.changed",
+     "severity": "sensitive",
+     "detailIncludes": "requires that capability"
+    },
+    {
+     "pattern": "agent.statusline",
+     "severity": "sensitive",
+     "detailIncludes": "requires that capability"
+    }
+   ]
+  },
+  {
+   "name": "open-by-decision and plugin-defined topics stay ordinary, so the flag still means something",
+   "consumes": [
+    "agent.snapshot",
+    "workflow.started",
+    "layout.changed",
+    "myplugin.tick"
+   ],
+   "expect": [
+    {
+     "pattern": "agent.snapshot",
+     "severity": "normal"
+    },
+    {
+     "pattern": "workflow.started",
+     "severity": "normal"
+    },
+    {
+     "pattern": "layout.changed",
+     "severity": "normal"
+    },
+    {
+     "pattern": "myplugin.tick",
+     "severity": "normal"
+    }
+   ]
+  }
+ ]
 }

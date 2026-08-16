@@ -130,6 +130,7 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   // both spellings, which is what makes the omission an oversight rather than a
   // decision. config.save in particular is the method whose own capspec entry
   // says agents.binaries is "argv[0] of every spawned agent".
+  'plugins.tools': { label: 'List the agent tools installed plugins contribute' },
   'config.get': { label: 'Read your app settings' },
   'config.getPath': { label: 'See where your settings file lives' },
   'config.reload': { label: 'Reload your app settings' },
@@ -299,6 +300,14 @@ export interface EventTopicRule {
 export const EVENT_TOPIC_RULES: EventTopicRule[] = [
   { pattern: 'agent.snapshot', disposition: 'open-by-decision' },
   { pattern: 'agent.state_changed', disposition: 'open-by-decision' },
+  // command.* — UI-navigation requests (focus an agent, open a pane/plugin,
+  // pre-fill the spawn dialog). Open by decision: a command event carries only
+  // its own arguments, never host state; publish-direction abuse is bounded by
+  // the manifest emits list like any other topic.
+  { pattern: 'command.focus_agent', disposition: 'open-by-decision' },
+  { pattern: 'command.open_pane', disposition: 'open-by-decision' },
+  { pattern: 'command.open_plugin', disposition: 'open-by-decision' },
+  { pattern: 'command.open_spawn_dialog', disposition: 'open-by-decision' },
   {
     pattern: 'agent.statusline',
     disposition: 'guarded-by-capability',

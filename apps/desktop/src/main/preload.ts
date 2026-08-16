@@ -205,6 +205,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     label?: string;
     parentSessionId?: string;
     mcpItemIds?: string[];
+    /**
+     * Grant the workspacer MCP tools at a tier: 'view' (observe-only),
+     * 'triage' (view + approve/reply/interrupt), or 'operator' (everything).
+     * Mints a per-session scoped token; the facade serves only that tier.
+     */
+    toolScope?: 'view' | 'triage' | 'operator';
+    /** Plugin ids whose contributed facade tools the agent may use (needs toolScope). */
+    pluginTools?: string[];
   }): Promise<string> => ipcRenderer.invoke(IPC.CLAUDE_SPAWN, opts),
   /** Config changed in main (its own write, or an external one the watcher
    *  caught). Returns an unsubscribe. */

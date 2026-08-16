@@ -58,10 +58,22 @@ vi.mock('./agentProviders', () => ({
 
 vi.mock('./configService', () => ({ configService: { getConfig: () => ({}) } }));
 
+const facadeSessionMcpConfig = vi.fn(() => '/cfg/session-facade.json');
 vi.mock('./mcpConfig', () => ({
   MCP_FACADE_URL: 'http://127.0.0.1:0/mcp',
   managedFacadeInstructions: vi.fn(() => 'FACADE'),
   buildSessionMcpConfig: vi.fn(() => null),
+  facadeSessionMcpConfig: (...a: unknown[]) => facadeSessionMcpConfig(...a),
+  facadeUrlWithToken: (token: string) => `http://127.0.0.1:0/mcp?t=${token}`,
+}));
+
+const mintSessionFacadeToken = vi.fn(() => ({
+  token: 'tok-abc',
+  scope: 'view',
+  created: '2026-01-01T00:00:00.000Z',
+}));
+vi.mock('./remoteTokens', () => ({
+  mintSessionFacadeToken: (...a: unknown[]) => mintSessionFacadeToken(...a),
 }));
 
 vi.mock('./claudemonDaemon', () => ({
@@ -214,5 +226,56 @@ describe('spawnManagedAgent — win32 codex fallback', () => {
       warn.mockRestore();
       Object.defineProperty(process, 'platform', { value: realPlatform });
     }
+  });
+});
+
+describe('spawnManagedAgent — facade tool tiers', () => {
+  it('codex + toolScope mints a token and carries it as a ?t= query on the facade URL', async () => {
+    await spawnManagedAgent({ provider: 'codex', cwd: '/proj', toolScope: 'view' });
+
+    expect(mintSessionFacadeToken).toHaveBeenCalledTimes(1);
+    expect(mintSessionFacadeToken.mock.calls[0][1]).toBe('view');
+    expect(lastManaged().mcp).toBe('http://127.0.0.1:0/mcp?t=tok-abc');
+    expect(lastManaged().instructions).toBe('FACADE');
+  });
+
+  it('claude stream + facade carries the token in a per-session config file, never payload.mcp', async () => {
+    await spawnManagedAgent({
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      toolScope: 'triage',
+    });
+
+    expect(mintSessionFacadeToken.mock.calls[0][1]).toBe('triage');
+    // The config FILE rides extraArgs; the token itself must not be in argv.
+    const extraArgs = lastManaged().extraArgs as string[];
+    expect(extraArgs[extraArgs.indexOf('--mcp-config') + 1]).toBe('/cfg/session-facade.json');
+    expect(extraArgs).toContain('--allowedTools');
+    expect(extraArgs.join(' ')).not.toContain('tok-abc');
+    expect(lastManaged()).not.toHaveProperty('mcp');
+    expect(lastManaged().instructions).toBe('FACADE');
+  });
+
+  it('legacy mcpFacade still works and defaults to operator', async () => {
+    await spawnManagedAgent({ provider: 'opencode', cwd: '/proj', mcpFacade: true });
+
+    expect(mintSessionFacadeToken.mock.calls[0][1]).toBe('operator');
+    expect(lastManaged().mcp).toBe('http://127.0.0.1:0/mcp?t=tok-abc');
+  });
+
+  it('pi gets instructions but no token (it has no MCP client to spend it on)', async () => {
+    await spawnManagedAgent({ provider: 'pi', cwd: '/proj', supervisor: true });
+
+    expect(mintSessionFacadeToken).not.toHaveBeenCalled();
+    expect(lastManaged().instructions).toBe('FACADE');
+  });
+
+  it('no facade flags → no token, no mcp, no instructions', async () => {
+    await spawnManagedAgent({ provider: 'opencode', cwd: '/proj' });
+
+    expect(mintSessionFacadeToken).not.toHaveBeenCalled();
+    expect(lastManaged()).not.toHaveProperty('mcp');
+    expect(lastManaged()).not.toHaveProperty('instructions');
   });
 });

@@ -756,7 +756,7 @@
       <ul>
         <li><b>Ask the fleet.</b> Type a question and it becomes a supervisor — a Claude with the work{spacer} tools attached that can see and drive every other agent.</li>
         <li><b>Preset sweeps</b> for the boring parts: Standup, Triage, Audit, Cost.</li>
-        <li><b>The whole fleet over MCP.</b> List agents, read transcripts, spawn, prompt, approve, answer — any MCP client can run the place.</li>
+        <li><b>The whole fleet over MCP.</b> List agents, read transcripts, spawn, prompt, approve, answer, even navigate the app — any MCP client can run the place, and every agent you spawn can get the tools at a scoped tier (observe-only up to full control). Plugins can contribute tools of their own.</li>
       </ul>
       <a class="shot" href="shots/ask-fleet.webp" target="_blank"><img width="1600" height="862" src="shots/ask-fleet.webp" loading="lazy"
         alt="The Ask pane: a question box with Standup / Triage / Audit / Cost presets and a choice of provider to run the supervisor on" /></a>
@@ -819,7 +819,7 @@
     <div class="tile pitch">
       <ul>
         <li><span class="pitch-mark">+</span><span><b>Drop in a plugin.</b> A manifest gets you a supervised sidecar, its own panes, and your theme — no fork required.</span></li>
-        <li><span class="pitch-mark">↯</span><span><b>Drive it over MCP.</b> The hub exposes the whole fleet as tools, so anything that speaks MCP can run it.</span></li>
+        <li><span class="pitch-mark">↯</span><span><b>Drive it over MCP.</b> The hub exposes the whole fleet as tiered tools, so anything that speaks MCP can run it — scoped to observe, triage, or operate.</span></li>
         <li><span class="pitch-mark">›</span><span><b>Or skip the GUI.</b> <code>wks-tui</code> is a Rust client on the same bus, with a ctrl-k palette and vim keys.</span></li>
       </ul>
       <div class="pitch-foot">

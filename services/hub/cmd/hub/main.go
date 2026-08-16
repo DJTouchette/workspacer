@@ -368,6 +368,14 @@ func main() {
 	// contributions), because the same bytes' event twin, plugin.loaded, is
 	// classified TopicHostOnly and refused to every scoped tier.
 	srv.AddRoute("/plugins", manifestListHandler(mgr.List, srv.Authorized))
+	// The consented facade-tool surface (plugin id + tool defs), for the MCP
+	// facade to advertise as MCP tools. In-process RPC rather than a widening
+	// of the public /plugins projection: tool metadata names the plugins' bus
+	// methods, which that projection deliberately withholds — the facade holds
+	// a trusted bus connection, so it asks over the bus like everything else.
+	srv.RegisterLocal("plugins.tools", func(json.RawMessage) (any, error) {
+		return mgr.ConsentedTools(), nil
+	})
 	// Per-plugin bus tokens, keyed by plugin id. Token-guarded: only the trusted
 	// host may read them (it injects each into the matching plugin's webview URL).
 	// Never exposed on the public /plugins endpoint.

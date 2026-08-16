@@ -432,6 +432,7 @@ const wks = connect();
 <li><code>settings</code>, typed settings the host renders in Settings. Each: <code>key</code>, <code>label</code>, <code>type</code> (<code>boolean</code>/<code>number</code>/<code>string</code>/<code>select</code>), <code>default</code>, <code>options</code> (for <code>select</code>), <code>help</code>, and <code>secret</code> (masked write-only PAT/API-key handling — see Settings below). Delivered into the webview as <code>window.__WKS_SETTINGS__</code> (secrets redacted) + a <code>wks-settings</code> event.</li>
 <li><code>capabilities</code>, bus methods the plugin may <strong>call</strong>. A bare string (<code>"agents.list"</code>) for an unscoped verb, or the object form <code>{ "method": "fs.read", "paths": ["${pluginDir}"] }</code> for a filesystem-scoped one.</li>
 <li><code>provides</code>, capabilities the plugin <strong>answers</strong> on the bus (it becomes a provider other clients can call).</li>
+<li><code>tools</code>, MCP tools the plugin contributes to agents through the workspacer facade — see "agent tools" below. Each: <code>name</code>, <code>description</code>, optional <code>inputSchema</code> (a JSON Schema object), and <code>method</code> (a bus method covered by your <code>provides</code>).</li>
 <li><code>emits</code> / <code>consumes</code>, event types it publishes / subscribes to.</li>
 <li><code>install</code>, a one-time setup argv run in the plugin dir after a GitHub install (e.g. <code>["go","build","-o","server","."]</code>). Requires the user's consent, which names the exact argv. A <code>node</code> command here is pinned to the bundled runtime like a sidecar's; <code>npm</code>/<code>npx</code>/<code>yarn</code>/<code>pnpm</code> cannot be, and fail if the user has no Node toolchain — prefer no <code>install</code> step at all (see "which Node your sidecar runs on").</li>
 </ul>
@@ -479,6 +480,22 @@ ws.send(JSON.stringify({ op: 'register', methods: ['myplugin.status'] }));</code
 <li><code>fs.read</code> / <code>fs.write</code> / <code>fs.watch</code> / <code>search.project</code>, path-scoped file I/O and ripgrep search (object form, <code>paths</code> required).</li>
 </ul>
 <p>List method names in <code>provides</code> and answer them on the bus, and you become a first-class capability provider the rest of the fleet (dashboards, rules, supervisors, the MCP facade) can call — e.g. a bridge sidecar can consume an external MCP server and re-expose its tools as hub capabilities.</p>
+<h3>agent tools</h3>
+<p>A plugin can hand its capabilities straight to the user's <strong>agents</strong> as MCP tools. Declare a <code>tools</code> array in the manifest, each entry bound to a method your <code>provides</code> covers, and answer the method on the bus:</p>
+<pre><code>"provides": ["myorg.jira.search"],
+"tools": [{
+  "name": "search",
+  "description": "Search Jira issues with a JQL query.",
+  "inputSchema": { "type": "object", "properties": { "jql": { "type": "string" } } },
+  "method": "myorg.jira.search"
+}]</code></pre>
+<pre><code>// sidecar (wks.js) or webview (window.workspacer) — same API:
+wks.provide('myorg.jira.search', async (params) =&gt; {
+  const issues = await searchJira(params.jql);
+  return { issues }; // raw data — the caller is a model, not your pane
+});</code></pre>
+<p>The workspacer MCP facade picks the tool up (within ~15s of the plugin loading) and exposes it as <code>mcp__workspacer__myorg_jira_search</code> — but <strong>only to sessions that were granted it</strong>: the spawn dialog's Workspacer-tools picker (or <code>pluginTools</code> on the spawn APIs) must name your plugin for the tools to appear in that agent's list. Tools are never ambient; installing a plugin does not tax every agent's context.</p>
+<p>Rules, all enforced at load or serve time: the tool <code>name</code> is lowercase <code>[a-z0-9_]</code> starting with a letter; <code>description</code> is required (keep it to a line — it's what the model reads); <code>inputSchema</code>, when present, must be a JSON Schema <strong>object</strong>; and <code>method</code> must be covered by your <code>provides</code> — which is consent-pinned, so a tool added after install stays withheld until the user reinstalls or explicitly reloads the plugin. Return plain JSON-serializable data; a thrown error becomes the agent's error result verbatim.</p>
 <div class="callout"><strong>Source of truth.</strong> The exact params/return shape of each host capability isn't a frozen public API yet. Treat <code>apps/desktop/src/main/services/hubCapabilities.ts</code> and <code>services/hub/examples/</code> as authoritative for field names, and the MCP tool list (<code>cmd/mcp/main.go</code>) for the stable subset.</div>
     </section>
 

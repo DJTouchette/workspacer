@@ -348,6 +348,7 @@ Schema version is `"apiVersion": "1"` (the loader rejects anything else). The au
 - `settings`, typed settings the host renders in Settings. Each: `key`, `label`, `type` (`boolean`/`number`/`string`/`select`), `default`, `options` (for `select`), and `help`. Delivered into the webview as `window.__WKS_SETTINGS__` + a `wks-settings` event.
 - `capabilities`, bus methods the plugin may **call**. A bare string (`"agents.list"`) for an unscoped verb, or the object form `{ "method": "fs.read", "paths": ["${pluginDir}"] }` for a filesystem-scoped one.
 - `provides`, capabilities the plugin **answers** on the bus (it becomes a provider other clients can call).
+- `tools`, MCP tools the plugin contributes to agents through the workspacer facade — see "Agent tools" below. Each: `name`, `description`, optional `inputSchema` (a JSON Schema object), and `method` (a bus method covered by your `provides`).
 - `emits` / `consumes`, event types it publishes / subscribes to.
 - `install`, a one-time setup argv run in the plugin dir after a GitHub install (e.g. `["go","build","-o","server","."]`). Requires the user's consent, which names the exact argv. A `node` command here is pinned to the bundled runtime like a sidecar's; `npm`/`npx`/`yarn`/`pnpm` cannot be, and fail if the user has no Node toolchain — prefer no `install` step at all (see "which Node your sidecar runs on").
 
@@ -405,6 +406,32 @@ The methods the host registers today (provided by the desktop app, or headlessly
 - `fs.read` / `fs.write` / `fs.watch` / `search.project`, path-scoped file I/O and ripgrep search (object form, `paths` required).
 
 List method names in `provides` and answer them on the bus, and you become a first-class capability provider the rest of the fleet (dashboards, rules, supervisors, the MCP facade) can call — e.g. a bridge sidecar can consume an external MCP server and re-expose its tools as hub capabilities.
+
+## Agent tools
+
+A plugin can hand its capabilities straight to the user's **agents** as MCP tools. Declare a `tools` array in the manifest, each entry bound to a method your `provides` covers, and answer the method on the bus:
+
+```json
+"provides": ["myorg.jira.search"],
+"tools": [{
+  "name": "search",
+  "description": "Search Jira issues with a JQL query.",
+  "inputSchema": { "type": "object", "properties": { "jql": { "type": "string" } } },
+  "method": "myorg.jira.search"
+}]
+```
+
+```js
+// sidecar (wks.js) or webview (window.workspacer) — same API:
+wks.provide('myorg.jira.search', async (params) => {
+  const issues = await searchJira(params.jql);
+  return { issues }; // raw data — the caller is a model, not your pane
+});
+```
+
+The workspacer MCP facade picks the tool up (within ~15s of the plugin loading) and exposes it as `mcp__workspacer__myorg_jira_search` — but **only to sessions that were granted it**: a spawn must pass `pluginTools: ["myorg.jira"]` (plus a `toolScope`) for your tools to appear in that agent's tool list. Tools are never ambient; installing a plugin does not tax every agent's context.
+
+Rules, all enforced at load or serve time: the tool `name` is lowercase `[a-z0-9_]` starting with a letter; `description` is required (keep it to a line — it's what the model reads); `inputSchema`, when present, must be a JSON Schema **object** (`"type": "object"`); and `method` must be covered by your `provides` — which, like every other declaration, is consent-pinned, so a tool added after install stays withheld until the user reinstalls or explicitly reloads the plugin. Return plain JSON-serializable data; a thrown error becomes the agent's error result verbatim.
 
 > **Source of truth.** The exact params/return shape of each host capability isn't a frozen public API yet. Treat `apps/desktop/src/main/services/hubCapabilities.ts` and `services/hub/examples/` as authoritative for field names, and the MCP tool list (`cmd/mcp/main.go`) for the stable subset.
 

@@ -252,13 +252,13 @@ var httpRoutes = []HTTPRoute{
 	// ---- the MCP facade (:7897) -----------------------------------------
 	{
 		Server: "mcp", Pattern: "/mcp", Disposition: RouteGuarded,
-		Reason:   "the MCP streamable-HTTP bridge onto the bus. requireBearer with a constant-time compare; a passthrough only when the token is empty, which checkBindPolicy permits solely for a loopback bind",
+		Reason:   "the MCP streamable-HTTP bridge onto the bus. requireScope resolves the credential to a tool TIER: the static -mcp-token (constant-time compare) is operator, a tokens.json scoped token gets its own tier's server, a present-but-unknown token is 401, and no-credential-at-all is operator only when no static token is set — the loopback-open default checkBindPolicy permits solely for a loopback bind",
 		Twin:     "*",
 		TwinKind: TwinMethod,
 	},
 	{
 		Server: "mcp", Pattern: "/sse", Disposition: RouteGuarded,
-		Reason:   "the SSE half of the same bridge, behind the same requireBearer",
+		Reason:   "the SSE half of the same bridge, behind the same requireScope",
 		Twin:     "*",
 		TwinKind: TwinMethod,
 	},

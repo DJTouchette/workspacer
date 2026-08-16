@@ -6,7 +6,14 @@ import * as path from 'path';
 const h = vi.hoisted(() => ({ dir: '' }));
 vi.mock('./configService', () => ({ getConfigDir: () => h.dir }));
 
-import { getOrCreateRemoteToken, listRemoteTokens, revokeRemoteToken } from './remoteTokens';
+import {
+  getOrCreateRemoteToken,
+  listRemoteTokens,
+  revokeRemoteToken,
+  mintSessionFacadeToken,
+  revokeSessionFacadeTokens,
+  sweepSessionFacadeTokens,
+} from './remoteTokens';
 
 function tokensFile(): string {
   return path.join(h.dir, 'tokens.json');
@@ -83,5 +90,64 @@ describe('remoteTokens', () => {
     expect(listRemoteTokens()).toEqual([keep]);
     expect(JSON.parse(fs.readFileSync(tokensFile(), 'utf-8'))).toEqual([keep]);
     expect(() => revokeRemoteToken(remove.token)).toThrow(/token not found/);
+  });
+});
+
+describe('session facade tokens', () => {
+  const rawTokens = () =>
+    JSON.parse(fs.readFileSync(tokensFile(), 'utf-8')) as Array<Record<string, unknown>>;
+
+  it('mints a session-labelled record with scope + plugins', () => {
+    const rec = mintSessionFacadeToken('sess-1', 'view', ['djtouchette.jira']);
+
+    expect(rec).toMatchObject({
+      scope: 'view',
+      label: 'session:sess-1',
+      plugins: ['djtouchette.jira'],
+    });
+    expect(rawTokens()).toEqual([rec]);
+  });
+
+  it('re-minting for the same session replaces the old record (no stale scope/plugins)', () => {
+    const first = mintSessionFacadeToken('sess-1', 'operator', ['a']);
+    const second = mintSessionFacadeToken('sess-1', 'view');
+
+    const raw = rawTokens();
+    expect(raw).toHaveLength(1);
+    expect(raw[0]).toMatchObject({ token: second.token, scope: 'view' });
+    expect(raw[0].plugins).toBeUndefined();
+    expect(raw.some((r) => r.token === first.token)).toBe(false);
+  });
+
+  it('is hidden from the Remote Control pairing list but preserved on rewrites', () => {
+    const pairing = getOrCreateRemoteToken('triage', 'Phone pairing');
+    const session = mintSessionFacadeToken('sess-1', 'view', ['p.x']);
+
+    expect(listRemoteTokens()).toEqual([pairing]);
+    // A pairing-list write cycle (mint another) must not strip the session
+    // record or its plugins field.
+    getOrCreateRemoteToken('view', 'Dashboard');
+    const kept = rawTokens().find((r) => r.token === session.token);
+    expect(kept).toMatchObject({ label: 'session:sess-1', plugins: ['p.x'] });
+  });
+
+  it('revokes by session id and sweeps against a live list', () => {
+    mintSessionFacadeToken('sess-1', 'view');
+    mintSessionFacadeToken('sess-2', 'triage');
+    const pairing = getOrCreateRemoteToken('operator', 'Laptop');
+
+    revokeSessionFacadeTokens('sess-1');
+    expect(rawTokens().some((r) => r.label === 'session:sess-1')).toBe(false);
+
+    // Sweep with only sess-3 live: sess-2's token goes, the pairing stays.
+    mintSessionFacadeToken('sess-3', 'view');
+    expect(sweepSessionFacadeTokens(['sess-3'])).toBe(1);
+    const labels = rawTokens().map((r) => r.label);
+    expect(labels).toContain('session:sess-3');
+    expect(labels).not.toContain('session:sess-2');
+    expect(rawTokens().some((r) => r.token === pairing.token)).toBe(true);
+
+    // Nothing stale → no write, count 0.
+    expect(sweepSessionFacadeTokens(['sess-3'])).toBe(0);
   });
 });

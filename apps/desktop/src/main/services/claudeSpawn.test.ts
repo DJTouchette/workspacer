@@ -71,6 +71,15 @@ vi.mock('./mcpConfig', () => ({
   facadeSpawnArgs: (...a: unknown[]) => facadeSpawnArgs(...a),
 }));
 
+const mintSessionFacadeToken = vi.fn(() => ({
+  token: 'tok-123',
+  scope: 'operator',
+  created: '2026-01-01T00:00:00.000Z',
+}));
+vi.mock('./remoteTokens', () => ({
+  mintSessionFacadeToken: (...a: unknown[]) => mintSessionFacadeToken(...a),
+}));
+
 const { spawnClaudeAgent } = await import('./claudeSpawn');
 
 /** argv from the most recent claudemonSessionClient.spawn call. */
@@ -188,6 +197,47 @@ describe('spawnClaudeAgent — facade takes precedence over Library MCP', () => 
     expect(installSupervisorSkill).toHaveBeenCalledTimes(1);
     expect(buildSessionMcpConfig).not.toHaveBeenCalled();
     expect(facadeSpawnArgs).toHaveBeenCalledTimes(1);
+  });
+
+  it('mints an operator session token for supervisor/mcpFacade and passes it to facadeSpawnArgs', async () => {
+    await spawnClaudeAgent({ supervisor: true });
+
+    expect(mintSessionFacadeToken).toHaveBeenCalledTimes(1);
+    expect(mintSessionFacadeToken.mock.calls[0][1]).toBe('operator');
+    const args = facadeSpawnArgs.mock.calls[0][0] as { token?: string; scope?: string };
+    expect(args.token).toBe('tok-123');
+    expect(args.scope).toBe('operator');
+  });
+
+  it('toolScope alone implies the facade and mints at that tier', async () => {
+    await spawnClaudeAgent({ cwd: '/proj', toolScope: 'view', pluginTools: ['djtouchette.jira'] });
+
+    expect(mintSessionFacadeToken).toHaveBeenCalledTimes(1);
+    const [sessionId, scope, plugins] = mintSessionFacadeToken.mock.calls[0] as unknown as [
+      string,
+      string,
+      string[] | undefined,
+    ];
+    expect(sessionId).toBeTruthy();
+    expect(scope).toBe('view');
+    expect(plugins).toEqual(['djtouchette.jira']);
+    const args = facadeSpawnArgs.mock.calls[0][0] as { scope?: string };
+    expect(args.scope).toBe('view');
+    // The facade config rides argv exactly like the legacy facade path.
+    const argv = lastArgv();
+    expect(argv[argv.indexOf('--mcp-config') + 1]).toBe('/cfg/facade.json');
+  });
+
+  it('a supervisor stays operator even if a narrower toolScope is passed', async () => {
+    await spawnClaudeAgent({ supervisor: true, toolScope: 'view' });
+
+    expect(mintSessionFacadeToken.mock.calls[0][1]).toBe('operator');
+  });
+
+  it('a plain spawn (no facade flags) mints no token', async () => {
+    await spawnClaudeAgent({ cwd: '/proj' });
+
+    expect(mintSessionFacadeToken).not.toHaveBeenCalled();
   });
 });
 

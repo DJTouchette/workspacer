@@ -223,6 +223,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         rows?: number;
         supervisor?: boolean;
         mcpFacade?: boolean;
+        /** Facade tool tier: 'view' | 'triage' | 'operator' (implies the facade). */
+        toolScope?: RemoteTokenScope;
+        /** Plugin ids whose contributed facade tools the session may use. */
+        pluginTools?: string[];
         label?: string;
         parentSessionId?: string;
         mcpItemIds?: string[];
@@ -250,6 +254,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           resumeSessionId: opts.resumeSessionId,
           supervisor: opts.supervisor,
           mcpFacade: opts.mcpFacade,
+          toolScope: opts.toolScope,
+          pluginTools: opts.pluginTools,
           label: opts.label,
           parentSessionId: opts.parentSessionId,
           cols: opts.cols,
@@ -274,6 +280,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           resumeSessionId: opts.resumeSessionId,
           supervisor: opts.supervisor,
           mcpFacade: opts.mcpFacade,
+          toolScope: opts.toolScope,
+          pluginTools: opts.pluginTools,
           label: opts.label,
           parentSessionId: opts.parentSessionId,
           mcpItemIds: opts.mcpItemIds,
@@ -291,6 +299,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         resumeSessionId: opts.resumeSessionId,
         supervisor: opts.supervisor,
         mcpFacade: opts.mcpFacade,
+        toolScope: opts.toolScope,
+        pluginTools: opts.pluginTools,
         label: opts.label,
         parentSessionId: opts.parentSessionId,
         cols: opts.cols,

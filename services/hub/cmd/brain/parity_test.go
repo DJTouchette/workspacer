@@ -375,8 +375,10 @@ func jsonStr(s string) string {
 // is neither in spawnParams' JSON tags nor here fails the drift guard below —
 // mirror it or decline it explicitly.
 var spawnParamsDeclined = map[string]string{
-	"mcpFacade":  "the workspacer MCP facade server runs inside the desktop app; headless there is no facade URL to wire",
-	"mcpItemIds": "per-spawn Library MCP servers need buildSessionMcpConfig (a desktop-owned session-scoped --mcp-config writer)",
+	"mcpFacade":   "the workspacer MCP facade server runs inside the desktop app; headless there is no facade URL to wire",
+	"mcpItemIds":  "per-spawn Library MCP servers need buildSessionMcpConfig (a desktop-owned session-scoped --mcp-config writer)",
+	"toolScope":   "the facade tool tier rides the facade (desktop-only, see mcpFacade) — minting/revoking the per-session token is desktop-owned (remoteTokens.ts)",
+	"pluginTools": "plugin tool grants are recorded on the session facade token, which headless cannot mint (see toolScope)",
 }
 
 // desktopSpawnParamRe pulls the field names out of the agents.spawn params type

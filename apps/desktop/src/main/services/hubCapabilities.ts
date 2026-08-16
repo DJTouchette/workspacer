@@ -19,6 +19,7 @@ import { byteCompare } from '../lib/providerParity';
 import { resolveTerminalShell } from '../lib/shellAllowlist';
 import { normalizeSpawnCwd } from '../lib/spawnCwd';
 import { assertNoPermissionBypass, isPermissionEscalation } from '../lib/permissionBypass';
+import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
 import { registerCapability, callHub } from './hubClient';
 import { agentNotifier } from './agentNotifier';
@@ -259,6 +260,8 @@ export function registerHubCapabilities(): void {
       rows,
       supervisor,
       mcpFacade,
+      toolScope,
+      pluginTools,
       label,
       parentSessionId,
       mcpItemIds,
@@ -277,6 +280,13 @@ export function registerHubCapabilities(): void {
       rows?: number;
       supervisor?: boolean;
       mcpFacade?: boolean;
+      /** Facade tool tier: 'view' | 'triage' | 'operator' (implies the facade).
+       *  Not an escalation door: only trusted/operator callers reach
+       *  agents.spawn at all, and the tier only ever NARROWS the facade the
+       *  legacy mcpFacade flag already granted wholesale. */
+      toolScope?: RemoteTokenScope;
+      /** Plugin ids whose contributed facade tools the session may use. */
+      pluginTools?: string[];
       label?: string;
       parentSessionId?: string;
       mcpItemIds?: string[];
@@ -342,6 +352,8 @@ export function registerHubCapabilities(): void {
         resumeSessionId,
         supervisor,
         mcpFacade,
+        toolScope,
+        pluginTools,
         label,
         parentSessionId,
         cols,
@@ -368,6 +380,8 @@ export function registerHubCapabilities(): void {
         resumeSessionId,
         supervisor,
         mcpFacade,
+        toolScope,
+        pluginTools,
         label,
         parentSessionId,
         mcpItemIds: busMcpItemIds,
@@ -385,6 +399,8 @@ export function registerHubCapabilities(): void {
       resumeSessionId,
       supervisor,
       mcpFacade,
+      toolScope,
+      pluginTools,
       label,
       parentSessionId,
       cols,

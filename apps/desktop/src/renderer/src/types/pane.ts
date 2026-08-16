@@ -161,6 +161,11 @@ export interface AgentWorkspace {
   /** Library item ids (kind 'mcp') this agent was spawned with. Re-passed on
    *  respawn so the same servers reload. */
   mcpItemIds?: string[];
+  /** Workspacer MCP tool tier granted at spawn (view/triage/operator);
+   *  re-applied on respawn so a restart keeps the same grant. */
+  toolScope?: 'view' | 'triage' | 'operator';
+  /** Plugin ids whose facade tools this agent may use; re-applied on respawn. */
+  pluginTools?: string[];
   /** claudemon session id once spawned. Undefined means the agent is stopped
    *  (e.g. the daemon session ended or didn't survive a restart). */
   sessionId?: string;

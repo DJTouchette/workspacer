@@ -92,6 +92,16 @@ var topicDeliveryKey = []topicDelivery{
 		why: "{sessionId, hookEvent, mode, cwd} — a strict subset of the agent.snapshot the same tier already gets, and the wake signal every remote client needs"},
 	{topic: "layout.changed", view: true, bare: true, term: true, watch: true, snap: true,
 		why: "the accepted shared layout document, whose read (layout.get) is in the view tier. The danger here was forgery, closed by mayPublish, not disclosure"},
+
+	// ---- UI navigation commands (MCP facade ui tools → the renderer) --------
+	{topic: "command.focus_agent", view: true, bare: true, term: true, watch: true, snap: true,
+		why: "a navigation REQUEST carrying only the session id to focus — an id the fleet feed already delivers to every one of these credentials"},
+	{topic: "command.open_pane", view: true, bare: true, term: true, watch: true, snap: true,
+		why: "a pane type plus optional cwd/url chosen by the publisher; receiving it discloses only that navigation was requested"},
+	{topic: "command.open_plugin", view: true, bare: true, term: true, watch: true, snap: true,
+		why: "an installed plugin's pane type, already listed by the unauthenticated /plugins projection"},
+	{topic: "command.open_spawn_dialog", view: true, bare: true, term: true, watch: true, snap: true,
+		why: "an optional directory to pre-fill in the New Agent dialog; the spawn itself still goes through agents.spawn and its clamps"},
 	{topic: "workflow.started", view: true, bare: true, term: true, watch: true, snap: true,
 		why: "run name, phases, agents and a cwd the tier already has via agent.snapshot"},
 	{topic: "workflow.completed", view: true, bare: true, term: true, watch: true, snap: true,

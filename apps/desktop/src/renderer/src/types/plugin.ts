@@ -90,6 +90,14 @@ export function capabilityPaths(c: PluginCapability): string[] {
   return typeof c === 'string' ? [] : (c.paths ?? []);
 }
 
+/** One MCP tool a plugin contributes to the agent facade (manifest `tools`). */
+export interface PluginToolDef {
+  name: string;
+  description: string;
+  inputSchema?: Record<string, unknown>;
+  method: string;
+}
+
 export interface PluginManifest {
   id: string;
   name: string;
@@ -103,6 +111,10 @@ export interface PluginManifest {
   hotkeys?: PluginHotkeyContribution[];
   settings?: PluginSettingDef[];
   provides?: string[];
+  /** MCP tools this plugin contributes to the workspacer agent facade, each
+   *  bound to a `provides` method. Served on the full (trusted-host) manifest;
+   *  used by the spawn dialog's plugin-tools picker. */
+  tools?: PluginToolDef[];
   /** Capabilities the plugin may call. A bare string is verb-only; the object
    *  form carries the filesystem roots a path-scoped method (fs.*, search.project)
    *  is confined to. The hub serves the object form for path-scoped caps, so the

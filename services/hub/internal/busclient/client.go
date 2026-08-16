@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/djtouchette/workspacer-hub/internal/event"
 )
 
 var (
@@ -48,6 +50,7 @@ type frame struct {
 	Params json.RawMessage `json:"params,omitempty"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  string          `json:"error,omitempty"`
+	Event  *event.Envelope `json:"event,omitempty"`
 }
 
 type reply struct {
@@ -215,6 +218,49 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 		return nil, ctx.Err()
 	case r := <-ch:
 		return r.result, r.err
+	}
+}
+
+// Publish puts one event on the bus, fire-and-forget: no ack frame exists for
+// a publish, so a nil return means "handed to the socket", not "delivered".
+// The broker stamps the envelope's id/time. Waits briefly for a reconnect like
+// Call does, so a publish issued during a blip isn't dropped silently.
+func (c *Client) Publish(ctx context.Context, ev event.Envelope) error {
+	conn, err := c.live(ctx)
+	if err != nil {
+		return err
+	}
+	out, _ := json.Marshal(frame{Op: "publish", Event: &ev})
+	c.writeMu.Lock()
+	wctx, cancel := context.WithTimeout(ctx, writeTimeout)
+	err = conn.Write(wctx, websocket.MessageText, out)
+	cancel()
+	c.writeMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("write publish: %w", err)
+	}
+	return nil
+}
+
+// live waits (bounded by readyWait/ctx) for a connected socket.
+func (c *Client) live(ctx context.Context) (*websocket.Conn, error) {
+	deadline := time.Now().Add(readyWait)
+	for {
+		c.mu.Lock()
+		if c.ready && c.conn != nil {
+			conn := c.conn
+			c.mu.Unlock()
+			return conn, nil
+		}
+		c.mu.Unlock()
+		if time.Now().After(deadline) {
+			return nil, ErrNotConnected
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
 }
 

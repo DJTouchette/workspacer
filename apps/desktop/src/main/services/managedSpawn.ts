@@ -25,7 +25,15 @@ import { resolveClaudeDefaultEffort } from './claudeEffortDefault';
 import { libraryService } from './libraryService';
 import { resolveAgentBinary, isAgentBinaryInstalled, type AgentProvider } from './agentProviders';
 import { configService } from './configService';
-import { MCP_FACADE_URL, managedFacadeInstructions, buildSessionMcpConfig } from './mcpConfig';
+import {
+  MCP_FACADE_URL,
+  managedFacadeInstructions,
+  buildSessionMcpConfig,
+  facadeSessionMcpConfig,
+  facadeUrlWithToken,
+} from './mcpConfig';
+import { mintSessionFacadeToken } from './remoteTokens';
+import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
 import { ensureSupervisorHome } from './supervisorSkill';
 import { notifySystem } from './systemNotice';
@@ -91,8 +99,20 @@ export interface ManagedSpawnOptions {
   resumeSessionId?: string;
   /** Wire the workspacer MCP facade + run the /supervise loop. */
   supervisor?: boolean;
-  /** Wire the facade tools without the supervisor loop. */
+  /** Wire the facade tools without the supervisor loop (legacy operator tier —
+   *  prefer `toolScope`). */
   mcpFacade?: boolean;
+  /**
+   * Grant the workspacer facade tools at a TIER: 'view' (observe-only — right
+   * for summarizer workers), 'triage' (view + approve/reply/interrupt), or
+   * 'operator' (everything). Mints a per-session scoped token the facade
+   * enforces, so the agent sees (and pays context for) only its tier's tools.
+   * Implies the facade; `supervisor`/`mcpFacade` without it mean 'operator'.
+   */
+  toolScope?: RemoteTokenScope;
+  /** Plugin ids whose contributed facade tools this session may use (opt-in;
+   *  recorded on the session token — see authtoken.Record.Plugins). */
+  pluginTools?: string[];
   label?: string;
   parentSessionId?: string;
   /** PTY dimensions for hybrid (PTY-backed) providers like Codex. */
@@ -140,8 +160,19 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   // Codex's stream transport mirrors Claude's: headless, GUI-only, no PTY.
   const isCodexStream = provider === 'codex' && opts.transport === 'stream';
   const bin = resolveAgentBinary(provider, configuredBin(provider));
-  const wantsFacade = opts.supervisor || opts.mcpFacade;
+  const wantsFacade = opts.supervisor || opts.mcpFacade || !!opts.toolScope;
+  // A supervisor is operator by definition; a plain facade session takes its
+  // requested tier, defaulting to operator (the legacy mcpFacade meaning).
+  const facadeScope: RemoteTokenScope = opts.supervisor
+    ? 'operator'
+    : (opts.toolScope ?? 'operator');
   const managedId = opts.resumeSessionId || randomUUID();
+  // Per-session scoped facade token. Pi ships no MCP client, so minting one
+  // for it would only leave a dangling live secret.
+  const facadeToken =
+    wantsFacade && provider !== 'pi'
+      ? mintSessionFacadeToken(managedId, facadeScope, opts.pluginTools).token
+      : undefined;
   // Permission-mode vocabulary differs by family: Claude keeps its full mode
   // set (an explicit mode wins; the legacy boolean maps to bypass — same
   // resolution as the PTY path), managed providers are just ask/yolo.
@@ -175,6 +206,14 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   // the PTY path's `--settings` in buildClaudeArgv.
   if (isClaudeStream && claudeSettingsOverlayEnabled()) {
     extraArgs.push('--settings', claudemonOverlayPath());
+  }
+  // Claude stream + facade: the per-session config file (token as an
+  // Authorization header — a file path on argv, never the token itself, since
+  // /proc/<pid>/cmdline is world-readable). The PTY path's twin lives in
+  // facadeSpawnArgs; pre-allowing mcp__workspacer matches it.
+  if (isClaudeStream && facadeToken) {
+    extraArgs.push('--mcp-config', facadeSessionMcpConfig(managedId, facadeToken));
+    extraArgs.push('--allowedTools', 'mcp__workspacer');
   }
   if (isClaudeStream && !wantsFacade && opts.mcpItemIds && opts.mcpItemIds.length) {
     const wanted = new Set(opts.mcpItemIds);
@@ -240,8 +279,15 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
       ...(Object.keys(env).length && { env }),
     }),
     ...(wantsFacade && {
-      mcp: MCP_FACADE_URL,
-      instructions: managedFacadeInstructions(!!opts.supervisor),
+      // Claude stream carries the facade via the --mcp-config file above, so
+      // no `mcp` URL for it. Codex/OpenCode registrations are URL-only (a `-c`
+      // override / opencode.json) and cannot send headers, so their token
+      // rides a `?t=` query param the facade also accepts; pi has no MCP
+      // client at all and keeps the bare URL no-op + role instructions.
+      ...(!isClaudeStream && {
+        mcp: facadeToken ? facadeUrlWithToken(facadeToken) : MCP_FACADE_URL,
+      }),
+      instructions: managedFacadeInstructions(!!opts.supervisor, facadeScope),
     }),
   });
   // The adapter emits no conversation delta until the agent first produces

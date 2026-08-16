@@ -35,6 +35,11 @@ function normalizeRecord(raw: unknown): RemoteTokenRecord | null {
     scope: r.scope as RemoteTokenScope,
     label: typeof r.label === 'string' ? r.label : undefined,
     created: typeof r.created === 'string' ? r.created : new Date(0).toISOString(),
+    // Preserve, or a rewrite of tokens.json would silently strip every
+    // session token's plugin grants.
+    ...(Array.isArray(r.plugins) && {
+      plugins: r.plugins.filter((p): p is string => typeof p === 'string' && !!p.trim()),
+    }),
   };
 }
 
@@ -66,8 +71,68 @@ function mint(scope: RemoteTokenScope, label: string): RemoteTokenRecord {
   };
 }
 
+/** Label prefix marking a per-session MCP-facade token. Session tokens live in
+ *  the same tokens.json as remote-pairing tokens (the facade and the hub read
+ *  one file), so the prefix is what separates the two lifecycles: session
+ *  tokens are minted at spawn, revoked when the session is evicted, and swept
+ *  at boot against the live session list. */
+const SESSION_LABEL_PREFIX = 'session:';
+
+function isSessionToken(r: RemoteTokenRecord): boolean {
+  return !!r.label?.startsWith(SESSION_LABEL_PREFIX);
+}
+
 export function listRemoteTokens(): RemoteTokenRecord[] {
-  return readTokens().sort((a, b) => b.created.localeCompare(a.created));
+  // Session facade tokens are lifecycle-managed plumbing, not user pairings —
+  // keep them out of the Remote Control settings UI.
+  return readTokens()
+    .filter((r) => !isSessionToken(r))
+    .sort((a, b) => b.created.localeCompare(a.created));
+}
+
+/**
+ * Mint (or replace) the MCP-facade token for a session. One token per session:
+ * a respawn onto the same id re-mints, so the old record never lingers with a
+ * stale scope or plugin list.
+ */
+export function mintSessionFacadeToken(
+  sessionId: string,
+  scope: RemoteTokenScope,
+  plugins?: string[],
+): RemoteTokenRecord {
+  const label = SESSION_LABEL_PREFIX + sessionId;
+  const records = readTokens().filter((r) => r.label !== label);
+  const next: RemoteTokenRecord = {
+    ...mint(normalizeScope(scope), label),
+    ...(plugins && plugins.length && { plugins }),
+  };
+  writeTokens([...records, next]);
+  return next;
+}
+
+/** Revoke a session's facade token(s). No-op when none exist. */
+export function revokeSessionFacadeTokens(sessionId: string): void {
+  const label = SESSION_LABEL_PREFIX + sessionId;
+  const records = readTokens();
+  const kept = records.filter((r) => r.label !== label);
+  if (kept.length !== records.length) writeTokens(kept);
+}
+
+/**
+ * Drop session facade tokens whose session is no longer alive. Called at boot
+ * with the daemon's live session list — sessions outlive desktop restarts, so
+ * "revoke everything" would cut running agents off mid-task, and "revoke
+ * nothing" would let tokens for long-gone sessions accumulate as live bearer
+ * secrets.
+ */
+export function sweepSessionFacadeTokens(liveSessionIds: Iterable<string>): number {
+  const live = new Set<string>();
+  for (const id of liveSessionIds) live.add(SESSION_LABEL_PREFIX + id);
+  const records = readTokens();
+  const kept = records.filter((r) => !isSessionToken(r) || live.has(r.label!));
+  if (kept.length === records.length) return 0;
+  writeTokens(kept);
+  return records.length - kept.length;
 }
 
 export function getOrCreateRemoteToken(scopeInput: string, labelInput?: string): RemoteTokenRecord {

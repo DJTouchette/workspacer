@@ -55,6 +55,10 @@ export interface RemoteTokenRecord {
   scope: RemoteTokenScope;
   label?: string;
   created: string;
+  /** Plugin ids whose contributed MCP-facade tools this token may use (opt-in
+   *  per token; absent = none). Read by the facade only — the hub bus ignores
+   *  it. TWIN: authtoken.Record.Plugins (services/hub/internal/authtoken). */
+  plugins?: string[];
 }
 
 // ── Claude session snapshot (sent over claude-session:get / getAll / update) ──

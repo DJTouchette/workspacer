@@ -14,7 +14,7 @@ export interface UiCommandHandlers {
   spawnAgent: (opts: { cwd?: string; name?: string; model?: string }) => void;
   /** Open the new-agent view pre-filled (does not spawn until confirmed). */
   openSpawnDialog: (opts: { cwd?: string }) => void;
-  openPane: (paneType: string, opts?: { cwd?: string }) => void;
+  openPane: (paneType: string, opts?: { cwd?: string; url?: string }) => void;
   openPlugin: (paneType: string) => void;
   closePane: (paneId: string) => void;
   /** Open the Ask pane in the global workspace. */
@@ -40,7 +40,7 @@ export function useUiCommands(handlers: UiCommandHandlers): void {
           ref.current.openSpawnDialog({ cwd: d.cwd });
           break;
         case 'command.open_pane':
-          if (d.paneType) ref.current.openPane(d.paneType, { cwd: d.cwd });
+          if (d.paneType) ref.current.openPane(d.paneType, { cwd: d.cwd, url: d.url });
           break;
         case 'command.open_plugin':
           if (d.type) ref.current.openPlugin(d.type);

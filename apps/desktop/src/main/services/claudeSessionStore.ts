@@ -27,6 +27,7 @@ import {
 import { SessionUsageAccumulator } from './sessionStore/usageAccumulator';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { writeHistory } from './sessionStore/analyticsWriter';
+import { revokeSessionFacadeTokens } from './remoteTokens';
 
 export type { WorkflowRunInfo, WorkflowAgentInfo, WorkflowPhaseInfo } from './workflowWatcher';
 
@@ -561,6 +562,15 @@ class ClaudeSessionStore {
         this.watcherUpdates.delete(sessionId);
         this.resyncing.delete(sessionId);
         this.spawnMeta.delete(sessionId);
+        // The session's MCP-facade token (if it had one) is a live bearer
+        // secret in tokens.json; the session is over, so cut it off. A respawn
+        // onto this id re-mints. Boot-time sweepSessionFacadeTokens catches
+        // sessions that ended while the desktop wasn't running.
+        try {
+          revokeSessionFacadeTokens(sessionId);
+        } catch (err) {
+          console.warn(`[claudeSessionStore] facade token revoke failed for ${sessionId}:`, err);
+        }
         const sl = this.statusLineTimers.get(sessionId);
         if (sl) {
           clearTimeout(sl);

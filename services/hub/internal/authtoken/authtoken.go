@@ -155,6 +155,12 @@ type Record struct {
 	Scope   Scope     `json:"scope"`
 	Label   string    `json:"label,omitempty"`
 	Created time.Time `json:"created"`
+	// Plugins lists the plugin ids whose contributed MCP-facade tools this
+	// token may use (opt-in per token; empty = none). Read only by the facade —
+	// the hub bus ignores it, because plugin-provided methods are gated by the
+	// PROVIDING plugin's own grants, and a scoped token's Methods() never
+	// includes a plugin namespace.
+	Plugins []string `json:"plugins,omitempty"`
 }
 
 // ConfigDir mirrors the desktop app's getConfigDir (configService.ts) and the

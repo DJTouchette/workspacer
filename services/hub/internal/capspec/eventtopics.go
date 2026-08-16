@@ -153,6 +153,36 @@ var eventTopics = []EventTopic{
 		Disposition: TopicOpenByDecision,
 		Reason:      "{sessionId, hookEvent, mode, cwd} — a strict subset of the agent.snapshot the same tier already receives, and the wake signal every remote client needs to stay live. Guarding it would take the fleet feed away from the tier it was built for while disclosing nothing extra",
 	},
+	// command.* — UI-navigation requests, published by the MCP facade's ui
+	// tools (cmd/mcp/ui.go, triage tier and up) and consumed by the desktop
+	// renderer (useUiCommands.ts). Plugins publish the same family under their
+	// manifest emits, which is a filter this table does not govern; these rows
+	// exist because a HOST component now publishes them with literals the
+	// scanner reads. Open by decision: a command event is a REQUEST carrying
+	// only its own arguments (a session id, a pane type, a URL) — it discloses
+	// no host state, and the danger direction (who may PUBLISH one) is bounded
+	// for non-trusted connections by mayPublish + manifest emits exactly as
+	// before these rows existed.
+	{
+		Pattern:     "command.focus_agent",
+		Disposition: TopicOpenByDecision,
+		Reason:      "carries only the session id to focus — an id the view tier already receives on every agent.snapshot. The consumer is the trusted desktop renderer; a scoped receiver learns nothing it couldn't already read",
+	},
+	{
+		Pattern:     "command.open_pane",
+		Disposition: TopicOpenByDecision,
+		Reason:      "carries a pane type plus optional cwd/url chosen by the publisher — a navigation request, not host state. Receiving it discloses only that navigation was requested",
+	},
+	{
+		Pattern:     "command.open_plugin",
+		Disposition: TopicOpenByDecision,
+		Reason:      "carries an installed plugin's pane type, which the unauthenticated /plugins projection already lists",
+	},
+	{
+		Pattern:     "command.open_spawn_dialog",
+		Disposition: TopicOpenByDecision,
+		Reason:      "carries an optional directory to pre-fill in the New Agent dialog. Opening the dialog spawns nothing — the spawn itself still goes through agents.spawn and its clamps",
+	},
 	{
 		Pattern:     "layout.changed",
 		Disposition: TopicOpenByDecision,

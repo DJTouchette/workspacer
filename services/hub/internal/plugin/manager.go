@@ -790,6 +790,47 @@ func (m *Manager) List() []Manifest {
 	return out
 }
 
+// PluginTools is one plugin's consented facade-tool surface, served to the MCP
+// facade via the hub-local `plugins.tools` method.
+type PluginTools struct {
+	PluginID string    `json:"pluginId"`
+	Tools    []ToolDef `json:"tools"`
+}
+
+// ConsentedTools returns every enabled plugin's contributed facade tools,
+// narrowed to what the grant pin actually consents to: a tool is included only
+// when the CONSENTED provides patterns cover its method — the same narrowing
+// grantsWithBindings/eventGrantsFor apply to the grants themselves, so the
+// facade can never advertise a tool whose registration the bus would refuse.
+func (m *Manager) ConsentedTools() []PluginTools {
+	m.mu.Lock()
+	manifests := make([]Manifest, 0, len(m.plugins))
+	for _, l := range m.plugins {
+		manifests = append(manifests, l.manifest)
+	}
+	m.mu.Unlock()
+
+	out := make([]PluginTools, 0)
+	for _, mf := range manifests {
+		if mf.Disabled || len(mf.Tools) == 0 {
+			continue
+		}
+		consented := consentedManifest(mf)
+		tools := make([]ToolDef, 0, len(mf.Tools))
+		for _, t := range mf.Tools {
+			if !event.MatchesAny(consented.Provides, t.Method) {
+				log.Printf("SECURITY: plugin %s: withholding facade tool %q — its method %q is not covered by the consented provides patterns.", mf.ID, t.Name, t.Method)
+				continue
+			}
+			tools = append(tools, t)
+		}
+		if len(tools) > 0 {
+			out = append(out, PluginTools{PluginID: mf.ID, Tools: tools})
+		}
+	}
+	return out
+}
+
 // State reports a plugin's supervisor state ("" if unknown / metadata-only).
 func (m *Manager) State(id string) supervisor.State {
 	m.mu.Lock()

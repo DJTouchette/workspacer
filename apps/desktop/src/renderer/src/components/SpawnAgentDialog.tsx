@@ -59,6 +59,10 @@ interface SpawnAgentDialogProps {
     permissionMode?: string;
     skipPermissions?: boolean;
     mcpItemIds?: string[];
+    /** Workspacer MCP tool tier (view/triage/operator); omitted = none. */
+    toolScope?: 'view' | 'triage' | 'operator';
+    /** Plugin ids whose contributed facade tools the agent may use (needs toolScope). */
+    pluginTools?: string[];
     resumeSessionId?: string;
     /** Spawn into a fresh git worktree of `cwd` instead of `cwd` itself. */
     worktree?: boolean;
@@ -148,6 +152,15 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   // from the chosen profile's default loadout; overridable here.
   const [mcpItems, setMcpItems] = useState<LibraryItem[]>([]);
   const [mcpSel, setMcpSel] = useState<string[]>([]);
+  // Workspacer MCP tools for the new agent ('' = none). The tier decides which
+  // tool subset the facade serves it — and what it pays context for.
+  const [toolScope, setToolScope] = useState<'' | 'view' | 'triage' | 'operator'>('');
+  // Installed plugins that contribute agent tools (manifest `tools`), and the
+  // per-spawn grant. Only meaningful with a tier — the token records the grant.
+  const [toolPlugins, setToolPlugins] = useState<Array<{ id: string; name: string; tools: number }>>(
+    [],
+  );
+  const [pluginToolsSel, setPluginToolsSel] = useState<string[]>([]);
 
   // Model selection. `modelSel` is the dropdown value (''=Default, an alias/id,
   // or the CUSTOM sentinel); `customModel` holds the free-text id when CUSTOM.
@@ -376,6 +389,26 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     };
   }, [cwd]);
 
+  // Plugins contributing agent tools, for the workspacer-tier picker. One-shot:
+  // the installed-plugin set doesn't change while the dialog is open.
+  useEffect(() => {
+    let cancelled = false;
+    window.electronAPI
+      .listHubPlugins?.()
+      .then((list) => {
+        if (cancelled || !Array.isArray(list)) return;
+        setToolPlugins(
+          list
+            .filter((pl) => !pl.disabled && (pl.tools?.length ?? 0) > 0)
+            .map((pl) => ({ id: pl.id, name: pl.name || pl.id, tools: pl.tools!.length })),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Pre-fill the MCP selection from the chosen profile's default loadout.
   useEffect(() => {
     const p = profiles.find((x) => x.id === profileId);
@@ -467,7 +500,12 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             effort: effort || undefined,
             permissionMode: resolvedMode,
             skipPermissions,
-            mcpItemIds: mcpSel.length ? mcpSel : undefined,
+            // Facade sessions take the workspacer MCP config instead of the
+            // Library selection (backend rule) — don't send a selection that
+            // would be silently ignored.
+            mcpItemIds: !toolScope && mcpSel.length ? mcpSel : undefined,
+            toolScope: toolScope || undefined,
+            pluginTools: toolScope && pluginToolsSel.length ? pluginToolsSel : undefined,
             resumeSessionId: resumeSessionId || undefined,
             worktree: useWorktree && worktreeEligible ? true : undefined,
             initialPrompt,
@@ -483,6 +521,13 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             effort: effort || undefined,
             permissionMode: resolvedMode,
             skipPermissions,
+            // Pi ships no MCP client — a tier grant would only mint a dangling
+            // token, so it isn't sent.
+            toolScope: provider !== 'pi' ? toolScope || undefined : undefined,
+            pluginTools:
+              provider !== 'pi' && toolScope && pluginToolsSel.length
+                ? pluginToolsSel
+                : undefined,
             worktree: useWorktree && worktreeEligible ? true : undefined,
             initialPrompt,
           },
@@ -529,6 +574,13 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   if (useWorktree && worktreeEligible) deviations.push({ key: 'worktree', label: 'worktree' });
   if (resumeSessionId) deviations.push({ key: 'resume', label: 'resume' });
   if (mcpSel.length) deviations.push({ key: 'mcp', label: `${mcpSel.length} MCP` });
+  if (toolScope)
+    deviations.push({
+      key: 'wks',
+      label:
+        `workspacer: ${toolScope}` +
+        (pluginToolsSel.length ? ` +${pluginToolsSel.length} plugin` : ''),
+    });
   if (customBinPath.trim()) deviations.push({ key: 'binary', label: 'custom binary' });
 
   const toggleAdvanced = () => {
@@ -776,6 +828,97 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             </option>
           ))}
         </select>
+      ),
+    });
+  }
+
+  // Workspacer MCP tools — the facade tier the new agent gets (see help tool /
+  // toolScope). Any provider with an MCP client; pi has none.
+  if (provider !== 'pi') {
+    rows.push({
+      key: 'workspacer',
+      label: 'workspacer',
+      title:
+        'Give this agent the workspacer MCP tools at a tier. View: read-only fleet observation (transcripts, snapshots). Triage: view + approve/reply/interrupt + UI navigation. Operator: full control including spawning agents and host files.',
+      control: (
+        <div>
+          <select
+            value={toolScope}
+            onChange={(e) => setToolScope(e.target.value as '' | 'view' | 'triage' | 'operator')}
+            style={rowSelect}
+          >
+            <option value="">Off (no workspacer tools)</option>
+            <option value="view">View — observe the fleet (read-only)</option>
+            <option value="triage">Triage — view + approve, reply, navigate UI</option>
+            <option value="operator">Operator — full control (spawn, files, config)</option>
+          </select>
+          {toolScope && toolPlugins.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div
+                style={{
+                  fontSize: '0.68rem',
+                  color: 'var(--wks-text-faint)',
+                  marginBottom: 4,
+                }}
+              >
+                Plugin tools this agent may use:
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {toolPlugins.map((pl) => {
+                  const on = pluginToolsSel.includes(pl.id);
+                  return (
+                    <button
+                      key={pl.id}
+                      onClick={() =>
+                        setPluginToolsSel((sel) =>
+                          on ? sel.filter((id) => id !== pl.id) : [...sel, pl.id],
+                        )
+                      }
+                      title={`${pl.id} — ${pl.tools} tool${pl.tools === 1 ? '' : 's'}`}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        fontFamily: 'inherit',
+                        padding: '4px 11px',
+                        borderRadius: 'var(--wks-radius-pill)',
+                        cursor: 'pointer',
+                        maxWidth: 220,
+                        border: on
+                          ? '1px solid var(--wks-accent)'
+                          : '1px solid var(--wks-border-input)',
+                        background: on ? 'var(--wks-accent-bg)' : 'transparent',
+                        color: on ? 'var(--wks-accent-text)' : 'var(--wks-text-tertiary)',
+                        transition: 'border-color 0.15s, color 0.15s',
+                      }}
+                    >
+                      <span
+                        style={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {pl.name}
+                      </span>
+                      <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)' }}>
+                        {pl.tools}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {toolScope && mcpSel.length > 0 && (
+            <div style={{ marginTop: 6, fontSize: '0.68rem', color: 'var(--wks-text-faint)' }}>
+              Workspacer tools replace the Library MCP selection — the {mcpSel.length} selected
+              server{mcpSel.length === 1 ? '' : 's'} won't be loaded.
+            </div>
+          )}
+        </div>
       ),
     });
   }

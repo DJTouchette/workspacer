@@ -32,6 +32,8 @@ import { facadeSpawnArgs, buildSessionMcpConfig } from './mcpConfig';
 import { libraryService } from './libraryService';
 import { configService } from './configService';
 import { installSupervisorSkill, ensureSupervisorHome } from './supervisorSkill';
+import { mintSessionFacadeToken } from './remoteTokens';
+import type { RemoteTokenScope } from '../shared/ipcTypes';
 
 export interface ClaudeSpawnOptions {
   cwd?: string;
@@ -57,8 +59,20 @@ export interface ClaudeSpawnOptions {
   resumeSessionId?: string;
   /** Wire the workspacer MCP facade + run the /supervise loop. */
   supervisor?: boolean;
-  /** Wire the facade tools without the supervisor loop. */
+  /** Wire the facade tools without the supervisor loop (legacy operator tier —
+   *  prefer `toolScope`). */
   mcpFacade?: boolean;
+  /**
+   * Grant the workspacer facade tools at a TIER: 'view' (observe-only — right
+   * for summarizer workers), 'triage' (view + approve/reply/interrupt), or
+   * 'operator' (everything). Mints a per-session scoped token the facade
+   * enforces, so the agent sees (and pays context for) only its tier's tools.
+   * Implies the facade; `supervisor`/`mcpFacade` without it mean 'operator'.
+   */
+  toolScope?: RemoteTokenScope;
+  /** Plugin ids whose contributed facade tools this session may use (opt-in;
+   *  recorded on the session token — see authtoken.Record.Plugins). */
+  pluginTools?: string[];
   label?: string;
   parentSessionId?: string;
   cols?: number;
@@ -125,7 +139,12 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   // these servers, not the user's global ones. Sessions with the workspacer MCP
   // facade (full supervisors, or plain facade workers a supervisor spawns) take
   // the facade config instead of the user's library MCP servers.
-  const wantsFacade = opts.supervisor || opts.mcpFacade;
+  const wantsFacade = opts.supervisor || opts.mcpFacade || !!opts.toolScope;
+  // A supervisor is operator by definition; a plain facade session takes its
+  // requested tier, defaulting to operator (the legacy mcpFacade meaning).
+  const facadeScope: RemoteTokenScope = opts.supervisor
+    ? 'operator'
+    : (opts.toolScope ?? 'operator');
   let userMcp: { path: string; toolNames: string[] } | null = null;
   if (!wantsFacade && opts.mcpItemIds && opts.mcpItemIds.length) {
     const wanted = new Set(opts.mcpItemIds);
@@ -159,11 +178,15 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     sessionId,
     // Facade sessions get the MCP config + pre-allowed tools + a role prompt.
     // A supervisor also learns its session id and is kicked into /supervise;
-    // a plain facade worker just gets the tools.
+    // a plain facade worker just gets the tools. The per-session token pins
+    // the tier server-side — the facade refuses calls outside it even if the
+    // agent guesses tool names.
     ...(wantsFacade &&
       facadeSpawnArgs({
         sessionId,
         supervisor: opts.supervisor,
+        scope: facadeScope,
+        token: mintSessionFacadeToken(sessionId, facadeScope, opts.pluginTools).token,
         summarizerModel: supCfg?.summarizerModel,
         pollSeconds: supCfg?.pollSeconds,
       })),

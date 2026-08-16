@@ -224,6 +224,10 @@ export function useAgentManager() {
       skipPermissions?: boolean;
       /** Library item ids (kind 'mcp') to load for this session. */
       mcpItemIds?: string[];
+      /** Workspacer MCP tool tier (view/triage/operator); omitted = none. */
+      toolScope?: 'view' | 'triage' | 'operator';
+      /** Plugin ids whose contributed facade tools the agent may use. */
+      pluginTools?: string[];
       initialPrompt?: string;
       /** Resume an existing Claude session (`--resume <id>`) instead of starting fresh. */
       resumeSessionId?: string;
@@ -269,6 +273,8 @@ export function useAgentManager() {
           permissionMode: opts.permissionMode,
           skipPermissions: opts.skipPermissions,
           mcpItemIds: opts.mcpItemIds,
+          toolScope: opts.toolScope,
+          pluginTools: opts.pluginTools,
           resumeSessionId: opts.resumeSessionId,
           supervisor: opts.supervisor,
           cols: 120,
@@ -303,6 +309,8 @@ export function useAgentManager() {
         permissionMode: opts.permissionMode,
         skipPermissions: opts.skipPermissions,
         mcpItemIds: opts.mcpItemIds,
+        toolScope: opts.toolScope,
+        pluginTools: opts.pluginTools,
         sessionId,
         kind: opts.kind,
         parentId: opts.parentId,
@@ -355,6 +363,8 @@ export function useAgentManager() {
           permissionMode: agent.permissionMode,
           skipPermissions: agent.skipPermissions,
           mcpItemIds: agent.mcpItemIds,
+          toolScope: agent.toolScope,
+          pluginTools: agent.pluginTools,
           resumeSessionId,
           cols: 120,
           rows: 32,
@@ -457,6 +467,8 @@ export function useAgentManager() {
           permissionMode,
           skipPermissions,
           mcpItemIds: agent.mcpItemIds,
+          toolScope: agent.toolScope,
+          pluginTools: agent.pluginTools,
           resumeSessionId,
           cols: 120,
           rows: 32,

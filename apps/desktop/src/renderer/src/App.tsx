@@ -989,6 +989,10 @@ function App() {
       permissionMode?: string;
       skipPermissions?: boolean;
       mcpItemIds?: string[];
+      /** Workspacer MCP tool tier (view/triage/operator); omitted = none. */
+      toolScope?: 'view' | 'triage' | 'operator';
+      /** Plugin ids whose contributed facade tools the agent may use. */
+      pluginTools?: string[];
       resumeSessionId?: string;
       worktree?: boolean;
       /** Pre-fills the new agent's composer (not sent) — see spawnAgent. */
@@ -1825,8 +1829,16 @@ function App() {
       markUiEvent('open-spawn-dialog');
       setShowSpawnDialog(true);
     },
-    openPane: (paneType, opts) =>
-      handleAddTab(paneType as PaneType, undefined, undefined, opts?.cwd),
+    openPane: (paneType, opts) => {
+      // A browser pane with a URL can't ride handleAddTab (its signature has
+      // no url slot) — go straight to the config-level opener, which is what
+      // the pane menu's own browser entries use.
+      if (paneType === 'browser' && opts?.url) {
+        addTabWithConfig('browser', undefined, undefined, opts.url, false, opts?.cwd);
+        return;
+      }
+      handleAddTab(paneType as PaneType, undefined, undefined, opts?.cwd);
+    },
     openPlugin: (type) => {
       const pane = pluginPanes.find((p) => p.type === type);
       if (pane) handleOpenPlugin(pane);

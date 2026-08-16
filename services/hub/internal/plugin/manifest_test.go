@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -211,5 +212,121 @@ func TestProjectScopedSettingCannotBeSecret(t *testing.T) {
 	}
 	if err := base(SettingDef{Key: "x", Label: "X", Type: "string", Scope: "per-user"}).Validate(); err == nil {
 		t.Error("an unknown scope must be refused rather than silently treated as global")
+	}
+}
+
+// Contributed facade tools: presentation bound to a provides method. The
+// validation rules exist so a manifest can't (a) declare a tool for a method
+// it can't answer, (b) ship a name/schema the MCP layer would refuse (the SDK
+// PANICS on a non-object schema), or (c) leave the model an undescribed tool.
+func TestValidateTools(t *testing.T) {
+	base := func(tool ToolDef) *Manifest {
+		return &Manifest{
+			ID:         "acme",
+			APIVersion: APIVersion,
+			Provides:   []string{"acme.search"},
+			Tools:      []ToolDef{tool},
+		}
+	}
+
+	ok := []ToolDef{
+		{Name: "search", Description: "Search things.", Method: "acme.search"},
+		{Name: "schema_d", Description: "S.", Method: "acme.search",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`)},
+	}
+	for _, tool := range ok {
+		if err := base(tool).Validate(); err != nil {
+			t.Errorf("tool %+v should be allowed: %v", tool, err)
+		}
+	}
+
+	// A namespace wildcard (`acme.*` — the only wildcard validateProvides
+	// permits) covers any method under it.
+	wild := &Manifest{ID: "acme", APIVersion: APIVersion, Provides: []string{"acme.*"},
+		Tools: []ToolDef{{Name: "sub_list", Description: "List.", Method: "acme.sub.list"}}}
+	if err := wild.Validate(); err != nil {
+		t.Errorf("wildcard-covered tool should be allowed: %v", err)
+	}
+
+	bad := []ToolDef{
+		{Name: "search", Description: "D.", Method: "acme.other"},                                                    // no provides cover
+		{Name: "search", Description: "D.", Method: "other.search"},                                                  // foreign namespace
+		{Name: "search", Description: "", Method: "acme.search"},                                                     // no description
+		{Name: "search", Description: "D.", Method: ""},                                                              // no method
+		{Name: "Search", Description: "D.", Method: "acme.search"},                                                   // uppercase name
+		{Name: "9lives", Description: "D.", Method: "acme.search"},                                                   // leading digit
+		{Name: "has-dash", Description: "D.", Method: "acme.search"},                                                 // dash
+		{Name: "search", Description: "D.", Method: "acme.search", InputSchema: json.RawMessage(`"str"`)},            // non-object schema
+		{Name: "search", Description: "D.", Method: "acme.search", InputSchema: json.RawMessage(`{"type":"array"}`)}, // wrong type
+	}
+	for _, tool := range bad {
+		if err := base(tool).Validate(); err == nil {
+			t.Errorf("tool %+v should be rejected", tool)
+		}
+	}
+
+	// Duplicate tool names are refused.
+	m := &Manifest{ID: "acme", APIVersion: APIVersion, Provides: []string{"acme.*"},
+		Tools: []ToolDef{
+			{Name: "x", Description: "D.", Method: "acme.a"},
+			{Name: "x", Description: "D.", Method: "acme.b"},
+		}}
+	if err := m.Validate(); err == nil {
+		t.Error("duplicate tool names should be rejected")
+	}
+}
+
+// ConsentedTools narrows to the PIN, not the manifest: a tool whose method
+// rides a provides pattern added after consent is withheld from the facade
+// until reinstall/reload re-baselines the pin.
+func TestConsentedToolsNarrowedByGrantPin(t *testing.T) {
+	dir := t.TempDir()
+	pluginDir := filepath.Join(dir, "acme")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mf := Manifest{
+		ID:         "acme",
+		APIVersion: APIVersion,
+		Dir:        pluginDir,
+		Provides:   []string{"acme.search"},
+		Tools: []ToolDef{
+			{Name: "search", Description: "D.", Method: "acme.search"},
+		},
+	}
+	// Pin consents to the manifest as-is.
+	ensureGrantPin(mf)
+
+	mgr := NewManager(newCapture(), nil)
+	mgr.AddAll([]Manifest{mf})
+	defer mgr.Stop()
+
+	got := mgr.ConsentedTools()
+	if len(got) != 1 || len(got[0].Tools) != 1 || got[0].Tools[0].Name != "search" {
+		t.Fatalf("expected the consented tool, got %+v", got)
+	}
+
+	// The plugin later self-amends provides + tools (plugin.json is inside its
+	// own write root). The new tool's method is NOT in the pin → withheld.
+	mf2 := mf
+	mf2.Provides = []string{"acme.search", "acme.escalate"}
+	mf2.Tools = append(mf2.Tools, ToolDef{Name: "escalate", Description: "D.", Method: "acme.escalate"})
+	mgr2 := NewManager(newCapture(), nil)
+	mgr2.AddAll([]Manifest{mf2})
+	defer mgr2.Stop()
+
+	got2 := mgr2.ConsentedTools()
+	if len(got2) != 1 || len(got2[0].Tools) != 1 || got2[0].Tools[0].Name != "search" {
+		t.Fatalf("post-consent tool must be withheld, got %+v", got2)
+	}
+
+	// Disabled plugins contribute nothing.
+	mf3 := mf
+	mf3.Disabled = true
+	mgr3 := NewManager(newCapture(), nil)
+	mgr3.AddAll([]Manifest{mf3})
+	defer mgr3.Stop()
+	if got3 := mgr3.ConsentedTools(); len(got3) != 0 {
+		t.Fatalf("disabled plugin must contribute no tools, got %+v", got3)
 	}
 }

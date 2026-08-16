@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 	"github.com/djtouchette/workspacer-hub/internal/broker"
 	"github.com/djtouchette/workspacer-hub/internal/bus"
 	"github.com/djtouchette/workspacer-hub/internal/busclient"
@@ -21,6 +22,7 @@ type busFrame struct {
 	ID      string          `json:"id,omitempty"`
 	Method  string          `json:"method,omitempty"`
 	Methods []string        `json:"methods,omitempty"`
+	Topics  []string        `json:"topics,omitempty"`
 	Params  json.RawMessage `json:"params,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
 	Error   string          `json:"error,omitempty"`
@@ -85,7 +87,7 @@ func TestFacadeRoutesToolToHub(t *testing.T) {
 	// Facade wired to the hub.
 	client := busclient.New(busURL, "")
 	go client.Run(ctx)
-	server := newServer(client)
+	server := newServer(client, authtoken.ScopeOperator)
 
 	// In-memory MCP client/server pair.
 	cT, sT := mcp.NewInMemoryTransports()
@@ -172,7 +174,7 @@ func TestFacadeNoProvider(t *testing.T) {
 
 	client := busclient.New(busURL, "")
 	go client.Run(ctx)
-	server := newServer(client)
+	server := newServer(client, authtoken.ScopeOperator)
 
 	cT, sT := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, sT, nil); err != nil {

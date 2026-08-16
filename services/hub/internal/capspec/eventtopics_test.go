@@ -94,6 +94,7 @@ var passthroughSites = map[string]string{
 	"internal/claudemon/bridge.go:Publish(event.Envelope)":      "the Publisher interface method declaration, not a call.",
 	"internal/broker/broker.go:func (b *Broker) Publish(":       "the broker's own fan-out entry point.",
 	"cmd/brain/bus.go:func (b *busClient) publish(":             "brain's publish helper. Every caller passes a literal, and those are scanned at their call sites.",
+	"cmd/mcp/ui.go:b.c.Publish(ctx, ev(in))":                    "the facade's UI-tool publish forwarder. Every tool builds its envelope with a topic literal at an event.New site in addUiTools (same file), and those are scanned there.",
 	"cmd/brain/events.go:publish(u.SessionID, u.StatusLine)":    "invokes the injected callback whose topic literal (agent.statusline) is at cmd/brain/main.go, scanned there. The parameter is a func, not a topic.",
 	"cmd/brain/library.go:workspacer.publish(type, data)":       "a line of DOCUMENTATION inside a generated skill file describing the plugin API to an agent — text, not a call.",
 	"main/ipc.ts:publishToHub(ev);":                             "IPC.HUB_PUBLISH — the renderer publishing over the desktop's own TRUSTED host connection. Same trust domain and same process tree as main; the hub cannot distinguish them, and the topic is whatever the renderer chose.",

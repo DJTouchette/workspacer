@@ -322,7 +322,7 @@ func scanGoRoutes(t *testing.T, server, rel string) []routeSite {
 			continue
 		}
 		site := routeSite{server: server, pattern: m[1], file: rel, line: i + 1}
-		site.wrapperGuarded = strings.Contains(line, "guard(") || strings.Contains(line, "requireBearer(")
+		site.wrapperGuarded = strings.Contains(line, "guard(") || strings.Contains(line, "requireBearer(") || strings.Contains(line, "requireScope(")
 		site.handlerGuarded = handlerRefuses401(body, line)
 		out = append(out, site)
 	}
