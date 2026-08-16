@@ -26,6 +26,13 @@ type helpIn struct {
 var groupGuidance = map[string]string{
 	"observe": strings.TrimSpace(`
 Start with list_agents (cheap fleet overview), then go deeper on ONE session.
+The fleet may span machines: when hubs are federated, list_agents and
+list_snapshots include every connected peer hub's sessions, and each remote
+row carries a "hub" field naming its machine (local rows have none). That hub
+value must round-trip: pass it as the hub input on the per-session tools
+(get_snapshot, get_conversation, get_transcript, send_message, approve,
+answer, signal, set_approval_gate) to reach the remote session; omit it for
+local sessions.
 Reading another agent's activity, cheapest first:
 - get_conversation with sinceSeq: track the returned seq per session and pass
   it back next time, so you only ever digest new turns. This is the right tool
@@ -45,7 +52,10 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
   tier that works: toolScope "view" for summarizer/reader workers, "triage" to
   also approve/reply/interrupt, "operator" for everything (spawning included).
   mcpFacade:true is the legacy spelling of operator.
-- Drive it afterwards with send_message; watch it with get_conversation.`),
+- Drive it afterwards with send_message; watch it with get_conversation.
+- To spawn on a federated peer machine, pass hub (a hub name seen on
+  list_agents rows). The peer clamps remote spawns itself — permission bypass
+  is refused there — and driving the new agent needs the same hub value.`),
 	"drive": strings.TrimSpace(`
 send_message queues a prompt for an agent (delivered when it can accept input).
 approve resolves a pending permission prompt (yes/no/always — "always" persists
@@ -53,7 +63,9 @@ a standing allow, so use it deliberately). answer resolves an AskUserQuestion
 picker. signal sends SIGINT (interrupt) / SIGTERM (stop). set_approval_gate
 parks every tool call for approval — useful before letting an agent continue
 unattended. terminal_input types raw bytes into a PTY session (shells from
-create_terminal); prefer send_message for agents.`),
+create_terminal); prefer send_message for agents. For a session on a federated
+peer (its list_agents row has a "hub" field), pass that hub value on
+send_message / approve / answer / signal / set_approval_gate.`),
 	"files": strings.TrimSpace(`
 Host-filesystem access (the machine workspacer runs on): list_dir / list_entries
 to explore, read_file / write_file for file IO, search_project for ripgrep

@@ -663,7 +663,7 @@ impl App {
         match ev.topic.as_str() {
             "agent.snapshot" => {
                 let Some(agent) = crate::federation::agent_from_snapshot(hub, &ev.data) else {
-                    return; // sparse / unkeyed rows are skipped by design
+                    return; // rows without a sessionId can't be keyed
                 };
                 let sid = agent.session_id.clone();
                 // A stamped event from an unknown (or believed-offline) hub is

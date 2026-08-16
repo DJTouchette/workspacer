@@ -41,6 +41,12 @@ vi.mock('./hubDaemon', () => ({
   getHubToken: () => HUB_TOKEN,
 }));
 
+/** The config the daemon reads `facade.untokenedAccess` from; per-test shape. */
+let mockConfig: Record<string, unknown> = {};
+vi.mock('./configService', () => ({
+  configService: { getConfig: () => mockConfig },
+}));
+
 vi.mock('electron', () => ({
   app: { getAppPath: () => '/tmp/app', isPackaged: false },
 }));
@@ -69,8 +75,10 @@ async function loadModule() {
 
 beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
   killStaleListener.mockClear();
   spawnMock.mockClear();
+  mockConfig = {};
 });
 
 describe('mcp facade spawn', () => {
@@ -107,6 +115,37 @@ describe('mcp facade spawn', () => {
     expect(args).not.toContain('--token');
     expect(args).not.toContain('--mcp-token');
     expect(args).not.toContain(HUB_TOKEN);
+    // Also the absent-key case for the untokened dial: no facade config key,
+    // no --untokened flag — the facade keeps its own operator default.
     expect(args).toEqual(['--addr', '127.0.0.1:7897', '--hub', 'ws://127.0.0.1:7895/bus']);
+  });
+
+  it.each(['operator', 'view', 'deny'] as const)(
+    'passes --untokened %s from facade.untokenedAccess',
+    async (dial) => {
+      mockConfig = { facade: { untokenedAccess: dial } };
+      const mod = await loadModule();
+      await mod.startMcpFacade();
+
+      const [, args] = spawnMock.mock.calls[0] as unknown as [string, string[]];
+      expect(args).toEqual([
+        '--addr',
+        '127.0.0.1:7897',
+        '--hub',
+        'ws://127.0.0.1:7895/bus',
+        '--untokened',
+        dial,
+      ]);
+    },
+  );
+
+  it('omits --untokened for an invalid dial value (the binary would refuse to start)', async () => {
+    mockConfig = { facade: { untokenedAccess: 'viewer' } };
+    const mod = await loadModule();
+    await mod.startMcpFacade();
+
+    const [, args] = spawnMock.mock.calls[0] as unknown as [string, string[]];
+    expect(args).not.toContain('--untokened');
+    expect(args).not.toContain('viewer');
   });
 });

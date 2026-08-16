@@ -53,6 +53,80 @@ export function remoteDisabledTitle(hub: string): string {
   return `on ${hub} — not available for remote agents`;
 }
 
+// ── Remote conversation sync ────────────────────────────────────────────────
+
+/** The snapshot slice the remote-conversation sync reads. */
+export interface RemoteConversationTarget {
+  sessionId: string;
+  hub?: string;
+  hubOffline?: boolean;
+}
+
+/** `window.electronAPI.federationConversation` (or the web backend twin). */
+export type RemoteConversationFetch = (
+  sessionId: string,
+  sinceSeq?: number,
+) => Promise<{ seq: number; items: unknown[] } | null>;
+
+/**
+ * The poke-side guard for a remote agent pane's conversation sync.
+ *
+ * A remote session's snapshot carries only the peer's compacted conversation
+ * window; the full transcript lives behind `federationConversation`, which
+ * makes main fetch `hub:<peer>/sessions.conversation`, fold it into the
+ * session store, and push it back through the normal snapshot flow. The pane
+ * pokes this on mount/visibility and on activity bumps; this factory keeps the
+ * poking honest (the TUI's begin_resync-style guard):
+ *
+ *   - local / tombstoned (hubOffline) targets are ignored — a down link must
+ *     not be polled; the reconnect reseed flips hubOffline off and the next
+ *     poke resumes;
+ *   - one fetch in flight at a time; pokes that land meanwhile coalesce into
+ *     a single trailing fetch;
+ *   - the last seen `seq` is passed as `sinceSeq`, so a poke when nothing
+ *     changed costs one empty incremental response, not a transcript.
+ */
+export function createRemoteConversationSync(fetchConversation: RemoteConversationFetch): {
+  poke(target: RemoteConversationTarget | null | undefined): void;
+} {
+  let tracked: { id: string; seq: number } | null = null;
+  let inflight = false;
+  let queued: RemoteConversationTarget | null = null;
+
+  const poke = (target: RemoteConversationTarget | null | undefined): void => {
+    if (!target?.sessionId || !target.hub || target.hubOffline) return;
+    if (inflight) {
+      queued = target;
+      return;
+    }
+    inflight = true;
+    const since =
+      tracked && tracked.id === target.sessionId && tracked.seq > 0 ? tracked.seq : undefined;
+    let call: Promise<{ seq: number; items: unknown[] } | null>;
+    try {
+      call = Promise.resolve(fetchConversation(target.sessionId, since));
+    } catch {
+      call = Promise.resolve(null); // a sync throw counts as a failed fetch
+    }
+    call
+      .then((res) => {
+        if (res && typeof res.seq === 'number') tracked = { id: target.sessionId, seq: res.seq };
+      })
+      .catch(() => {
+        // Link errors surface as tombstones through the snapshot flow; the
+        // poke stream just keeps quiet here.
+      })
+      .then(() => {
+        inflight = false;
+        const next = queued;
+        queued = null;
+        if (next) poke(next);
+      });
+  };
+
+  return { poke };
+}
+
 /** Compact "3h" / "5m" style duration for last-seen copy. */
 function relDur(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));

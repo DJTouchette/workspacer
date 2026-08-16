@@ -23,6 +23,7 @@ import {
 import {
   applyConversationItems,
   type ConversationDeltaWire,
+  type ConversationItemWire,
 } from './sessionStore/conversationApplier';
 import { SessionUsageAccumulator } from './sessionStore/usageAccumulator';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
@@ -390,6 +391,11 @@ class ClaudeSessionStore {
   // Last-applied conversation sequence per session (gap detection for the
   // daemon's delta stream) and sessions with a snapshot resync in flight.
   private convSeq = new Map<string, number>();
+  // Federation: last folded remote-conversation sequence per REMOTE session
+  // (fed by federationBridge's sessions.conversation fetches). Presence also
+  // marks the session's `conversation` as item-owned — window pushes stop
+  // overwriting it (see upsertRemoteSession). Cleared when the session drops.
+  private remoteConvSeq = new Map<string, number>();
   private resyncing = new Set<string>();
   // Coalescing: sessions with a pending flush scheduled (COALESCE_SNAPSHOT_UPDATES).
   private pendingFlush = new Map<string, NodeJS.Timeout>();
@@ -956,8 +962,6 @@ class ClaudeSessionStore {
     if (!hub) return;
     const sessionId = snap?.sessionId;
     if (!sessionId || typeof sessionId !== 'string') return;
-    // Layout-ghost stopped rows (`sparse`) aren't live sessions — skip them.
-    if (snap.sparse) return;
     const existing = this.sessions.get(sessionId);
     if (existing && (existing.hub ?? '') !== hub) {
       // A peer must never overwrite a LOCAL session (or another peer's) that
@@ -969,6 +973,15 @@ class ClaudeSessionStore {
       );
       return;
     }
+    if (snap.sparse) {
+      this.upsertSparseRemoteSession(hub, sessionId, snap, existing);
+      return;
+    }
+    // Once federationBridge has folded the peer's full conversation in
+    // (remoteConvSeq set), the item stream owns `conversation` — a bounded
+    // window push must not truncate the history back to twelve turns. The
+    // window still refreshes every state field around it.
+    const folded = this.remoteConvSeq.has(sessionId);
     const session: ClaudeSessionState = {
       ...(existing ?? {}),
       ...snap,
@@ -979,7 +992,8 @@ class ClaudeSessionStore {
       // no local consumer (watchers, file links) treats it as openable here.
       transcriptPath: '',
       status: snap.status ?? existing?.status ?? 'active',
-      conversation: snap.conversation ?? existing?.conversation ?? [],
+      conversation:
+        folded && existing ? existing.conversation : (snap.conversation ?? existing?.conversation ?? []),
       activeToolCalls: snap.activeToolCalls ?? [],
       completedToolCalls: snap.completedToolCalls ?? [],
       fileChanges: snap.fileChanges ?? [],
@@ -996,7 +1010,170 @@ class ClaudeSessionStore {
       hub,
       hubOffline: false,
     };
+    if (folded && existing) this.carryConversationAnchors(existing, session);
     this.sessions.set(sessionId, session);
+    this.pushUpdate(session);
+  }
+
+  /**
+   * A `sparse` remote row. Two producers share the marker:
+   *
+   *   - a headless brain (`workspacer serve`, no desktop) publishing its live
+   *     claudemon rows with the desktop field names overlaid
+   *     (services/hub/cmd/brain/enrich.go compatSnapshot) — these ARE live
+   *     sessions and must become usable cards, or a brain-only peer's whole
+   *     fleet is invisible here while /m shows it fine;
+   *   - a peer desktop's layout-ghost stopped rows (hubCapabilities
+   *     sessions.snapshots), status 'ended' — its local respawn affordance,
+   *     not a live session.
+   *
+   * Mapped explicitly, never spread: the wire row carries claudemon's
+   * snake_case originals (mode / session_id / pending / …) and the `sparse`
+   * marker itself, none of which may leak into the renderer's snapshot.
+   * Conversation stays whatever the federation fetch folded in (sparse rows
+   * never carry one); approve/reply already route over the bus by `hub`.
+   */
+  private upsertSparseRemoteSession(
+    hub: string,
+    sessionId: string,
+    snap: RemoteSnapshotWire,
+    existing: ClaudeSessionState | undefined,
+  ): void {
+    if ((snap.status ?? 'active') === 'ended') {
+      // Not a card here — but if we held it live, this is its end: same final
+      // 'ended' push + drop the reseed gives sessions a peer stops reporting.
+      if (existing) this.dropRemoteSession(existing);
+      return;
+    }
+    const session: ClaudeSessionState = {
+      sessionId,
+      cwd: snap.cwd ?? existing?.cwd ?? '',
+      ptyId: existing?.ptyId ?? sessionId,
+      transcriptPath: '',
+      status: 'active',
+      conversation: existing?.conversation ?? [],
+      activeToolCalls: existing?.activeToolCalls ?? [],
+      completedToolCalls: existing?.completedToolCalls ?? [],
+      fileChanges: existing?.fileChanges ?? [],
+      pendingApproval: this.sparsePendingApproval(snap, existing),
+      // Brain rows set this explicitly (null = cleared), so a stale question
+      // never lingers; `?? null` also clears when a producer omits the field.
+      pendingQuestions: snap.pendingQuestions ?? null,
+      subagents: existing?.subagents ?? [],
+      workflows: existing?.workflows ?? [],
+      plan: snap.plan ?? existing?.plan,
+      ambientState: snap.ambientState ?? existing?.ambientState ?? 'idle',
+      startedAt: existing?.startedAt ?? snap.startedAt ?? Date.now(),
+      lastActivity: snap.lastActivity ?? Date.now(),
+      totalToolCalls: snap.totalToolCalls ?? existing?.totalToolCalls ?? 0,
+      peakContext: existing?.peakContext ?? 0,
+      usage: snap.usage ?? existing?.usage ?? null,
+      label: snap.label ?? existing?.label,
+      parentSessionId: snap.parentSessionId ?? existing?.parentSessionId,
+      provider: snap.provider ?? existing?.provider,
+      transport: snap.transport ?? existing?.transport,
+      // isSupervisor deliberately NOT mapped: supervisorSessionIds() feeds the
+      // LOCAL supervisorNudge, which can only message local claudemon sessions.
+      hub,
+      hubOffline: false,
+    };
+    if (existing) this.carryConversationAnchors(existing, session);
+    this.sessions.set(sessionId, session);
+    this.pushUpdate(session);
+  }
+
+  /**
+   * Brain rows re-send the same pending approval on unrelated updates and
+   * carry no timestamp; an unchanged card must keep its original one, or the
+   * needs-you dock resurrects cards the user already dismissed (same rule as
+   * applyManagedPending). A changed/new card gets stamped on arrival.
+   */
+  private sparsePendingApproval(
+    snap: RemoteSnapshotWire,
+    existing: ClaudeSessionState | undefined,
+  ): PendingApproval | null {
+    const wire = snap.pendingApproval;
+    if (!wire) return null;
+    const prev = existing?.pendingApproval;
+    if (
+      prev &&
+      prev.toolName === (wire.toolName ?? '') &&
+      JSON.stringify(prev.toolInput) === JSON.stringify(wire.toolInput)
+    ) {
+      return prev;
+    }
+    return {
+      toolName: wire.toolName ?? '',
+      toolInput: wire.toolInput,
+      suggestions: wire.suggestions,
+      timestamp: wire.timestamp ?? Date.now(),
+    };
+  }
+
+  /**
+   * The wire window's `conversationOffset` / `conversationUserOffset` describe
+   * ITS bounded slice, not the folded full history this session keeps — carry
+   * the store's own anchors forward so ClaudePane's absolute-index keys and
+   * optimistic-bubble counts stay honest. (Neither field is declared on
+   * ClaudeSessionState — see bounds.ts for why the writes go through a
+   * structural cast.)
+   */
+  private carryConversationAnchors(from: ClaudeSessionState, to: ClaudeSessionState): void {
+    type Anchored = { conversationOffset?: number; conversationUserOffset?: number };
+    const src = from as unknown as Anchored;
+    const dst = to as unknown as Anchored;
+    dst.conversationOffset = src.conversationOffset ?? 0;
+    dst.conversationUserOffset = src.conversationUserOffset ?? 0;
+  }
+
+  /** One final 'ended' push so every consumer clears the card, then remove. */
+  private dropRemoteSession(session: ClaudeSessionState): void {
+    session.status = 'ended';
+    session.hubOffline = false;
+    this.pushUpdate(session);
+    // Flush synchronously: flushSession reads from the map, so the delete
+    // below would otherwise swallow the coalesced final update.
+    this.flushPending(session.sessionId);
+    this.sessions.delete(session.sessionId);
+    this.remoteConvSeq.delete(session.sessionId);
+  }
+
+  /** Last folded remote-conversation sequence, if any (federation bookkeeping —
+   *  federationBridge passes it back to the peer as `sinceSeq`). */
+  remoteConversationSeq(sessionId: string): number | undefined {
+    return this.remoteConvSeq.get(sessionId);
+  }
+
+  /**
+   * Fold a remote session's conversation — the peer's `sessions.conversation`
+   * result, claudemon's typed items — into the store, so the normal snapshot
+   * push carries the real transcript to every consumer instead of the
+   * compacted window the peer's agent.snapshot events hold. `rebuild` replaces
+   * history from the top (first fetch, or a peer-side seq reset); otherwise
+   * items append incrementally after the last folded seq. Once folded, window
+   * pushes stop overwriting `conversation` (see upsertRemoteSession): the item
+   * stream is the conversation's single source of truth, exactly as the delta
+   * stream is for local sessions.
+   */
+  applyRemoteConversation(
+    hub: string,
+    sessionId: string,
+    seq: number,
+    items: ConversationItemWire[],
+    rebuild: boolean,
+  ): void {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.hub !== hub) return;
+    if (rebuild) {
+      session.conversation = [];
+      session.totalToolCalls = 0;
+    }
+    this.remoteConvSeq.set(sessionId, seq);
+    if (!rebuild && items.length === 0) return; // nothing new — skip the push
+    // No usage callback: the peer's own snapshot `usage` field is authoritative
+    // (refreshed by every window push), and accumulating locally would record
+    // the peer's models into this machine's seen-model state.
+    applyConversationItems(session, items, () => {});
     this.pushUpdate(session);
   }
 
@@ -1019,21 +1196,21 @@ class ClaudeSessionStore {
    */
   reseedRemoteSessions(hub: string, snaps: RemoteSnapshotWire[]): void {
     if (!hub) return;
+    // A row counts as live whether rich or sparse — a headless-brain peer's
+    // whole fleet is sparse, and dropping those here made such peers invisible
+    // on the desktop. Ended rows (a peer desktop's layout-ghost stopped rows,
+    // a brain's stopped claudemon rows) are not cards and not kept.
     const keep = new Set<string>();
     for (const snap of snaps) {
-      if (snap?.sessionId && !snap.sparse) keep.add(snap.sessionId);
+      if (snap?.sessionId && snap.status !== 'ended') keep.add(snap.sessionId);
     }
     for (const s of Array.from(this.sessions.values())) {
       if (s.hub !== hub || keep.has(s.sessionId)) continue;
-      s.status = 'ended';
-      s.hubOffline = false;
-      this.pushUpdate(s);
-      // Flush synchronously: flushSession reads from the map, so the delete
-      // below would otherwise swallow the coalesced final update.
-      this.flushPending(s.sessionId);
-      this.sessions.delete(s.sessionId);
+      this.dropRemoteSession(s);
     }
-    for (const snap of snaps) this.upsertRemoteSession(hub, snap);
+    for (const snap of snaps) {
+      if (snap?.sessionId && snap.status !== 'ended') this.upsertRemoteSession(hub, snap);
+    }
   }
 
   /**

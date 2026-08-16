@@ -609,6 +609,26 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     listLiveClaudeSessionIds: () => Promise.resolve(null),
     // Federation: served by the hub-local `federation.peers` method (a browser
     // can't read peers.json). [] on an older hub or federation off.
+    // Federation: remote conversation over the qualified call — the web build
+    // can serve this directly off the bus. Local sessions read through the
+    // normal snapshot flow, so answer null for them (matches the desktop).
+    federationConversation: (sessionId, sinceSeq) => {
+      if (!sessionHub.has(sessionId)) return Promise.resolve(null);
+      return client
+        .call<{ seq: number; items: unknown[] }>(qualify(sessionId, 'sessions.conversation'), {
+          sessionId,
+          ...(sinceSeq != null && { sinceSeq }),
+        })
+        .catch(() => null);
+    },
+    // Peers are configured on the hub MACHINE (peers.json + hub restart);
+    // the web mirror can see the fleet but not edit the links. Null tells the
+    // settings UI to render read-only.
+    federationPeersConfig: async () => null,
+    federationSavePeersConfig: async () => ({
+      ok: false,
+      error: 'peers are configured on the hub machine, not from the web client',
+    }),
     federationPeers: () =>
       client
         .call<Array<{ name: string; connected: boolean; lastSeen?: number }>>(

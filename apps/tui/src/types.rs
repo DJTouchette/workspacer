@@ -190,6 +190,15 @@ pub struct Agent {
     /// filesystem on another machine.
     #[serde(default)]
     pub label: Option<String>,
+    /// True for a state-only remote row (`sparse: true` on the wire): the
+    /// headless brain's compat rows and the desktop's stopped layout-ghosts.
+    /// Live status without the desktop's enrichment — folded OVER a richer row
+    /// instead of replacing it (see `crate::federation::fold_row`), and the UI
+    /// degrades gracefully where data is missing (no label → cwd-derived name,
+    /// as everywhere else). Never set on claudemon payloads, so always false
+    /// for local sessions.
+    #[serde(default)]
+    pub sparse: bool,
 }
 
 /// Whatever Claude is waiting on, tagged by `kind` (matches claudemon's enum).

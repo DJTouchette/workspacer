@@ -25,6 +25,7 @@ import { HandoffDialog, type HandoffSettings } from '../components/claude/Handof
 import { requestHandoff } from '../lib/watchBus';
 import { bracketedPasteSubmit } from '../lib/bracketedPaste';
 import { quoteFontFamily, isTermVisible, refitAndRepaint } from '../lib/terminalUtils';
+import { createRemoteConversationSync } from '../lib/federation';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { clearMdCache, MarkdownFileCwdProvider } from '../components/markdown';
 import { clearTokenCache } from '../lib/diff/highlight';
@@ -333,6 +334,32 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   }, [sessionId, spawnError]);
 
   const { session } = useClaudeSession({ ptySessionId: sessionId, active: isActive });
+
+  // Federation: a REMOTE session's snapshot carries only the peer's compacted
+  // conversation window (or none at all for a headless-brain peer). Poking the
+  // federation:conversation IPC makes main fetch the full history over the
+  // peer link, fold it into the store, and push it back through the normal
+  // snapshot flow — so this pane renders the real transcript. Poked on mount/
+  // visibility and on new-activity bumps; main tracks the folded seq, so a
+  // poke with nothing new costs one empty incremental. Tombstoned (hubOffline)
+  // sessions are left alone until the link returns (the reconnect reseed
+  // clears the flag, which re-fires this effect). Local sessions: no-op.
+  const remoteConvSyncRef = useRef<ReturnType<typeof createRemoteConversationSync> | null>(null);
+  const remoteHub = session?.hub;
+  const remoteOffline = session?.hubOffline === true;
+  const remoteActivity = session?.lastActivity;
+  const remoteSessionId = session?.sessionId;
+  useEffect(() => {
+    if (!isActive || !remoteHub || remoteOffline || !remoteSessionId) return;
+    remoteConvSyncRef.current ??= createRemoteConversationSync((id, since) =>
+      Promise.resolve(window.electronAPI.federationConversation?.(id, since) ?? null),
+    );
+    remoteConvSyncRef.current.poke({
+      sessionId: remoteSessionId,
+      hub: remoteHub,
+      hubOffline: remoteOffline,
+    });
+  }, [isActive, remoteSessionId, remoteHub, remoteOffline, remoteActivity]);
 
   // A live snapshot means the session is back (respawn/resume revived the same
   // id) — drop the exited state so the pane returns to the normal views.

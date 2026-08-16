@@ -192,12 +192,26 @@ async fn a_hub_stamped_snapshot_becomes_a_remote_row_beside_the_local_fleet() {
 }
 
 #[tokio::test]
-async fn stamped_sparse_rows_and_unstamped_events_create_no_remote_rows() {
+async fn stamped_sparse_rows_join_the_fleet_and_unstamped_events_stay_local() {
     let mut app = test_app();
-    // A sparse layout-ghost from a peer must be skipped…
+    // A sparse row from a headless-brain peer IS a live session — it must join
+    // the fleet (skipping these made a `workspacer serve` peer invisible while
+    // /m showed its agents fine)…
     app.apply_bus_event(crate::bus::BusEvent {
         topic: "agent.snapshot".into(),
-        data: serde_json::json!({ "sessionId": "ghost", "sparse": true }),
+        data: serde_json::json!({
+            "sessionId": "b1", "cwd": "/peer/api", "provider": "claude",
+            "status": "active", "ambientState": "streaming", "sparse": true
+        }),
+        hub: Some("work".into()),
+    });
+    // …but a peer's stopped layout-ghost, never seen alive here, is history,
+    // not fleet — the same seen-live orphan rule local stopped rows go through.
+    app.apply_bus_event(crate::bus::BusEvent {
+        topic: "agent.snapshot".into(),
+        data: serde_json::json!({
+            "sessionId": "ghost", "status": "ended", "ambientState": "idle", "sparse": true
+        }),
         hub: Some("work".into()),
     });
     // …and an UNSTAMPED snapshot is a local nudge, never a fleet row (locals
@@ -207,13 +221,26 @@ async fn stamped_sparse_rows_and_unstamped_events_create_no_remote_rows() {
         data: serde_json::json!({ "sessionId": "x1", "ambientState": "streaming" }),
         hub: None,
     });
+
+    let b1 = app
+        .all_agents
+        .iter()
+        .find(|a| a.session_id == "b1")
+        .expect("sparse remote row merged into the fleet");
+    assert_eq!(b1.hub.as_deref(), Some("work"));
+    assert!(b1.is_busy());
+    assert!(b1.sparse);
     assert!(
-        app.all_agents.is_empty(),
-        "got {:?}",
-        app.all_agents
-            .iter()
-            .map(|a| &a.session_id)
-            .collect::<Vec<_>>()
+        !app.all_agents.iter().any(|a| a.session_id == "ghost"),
+        "a never-seen-alive stopped ghost stays hidden by default"
+    );
+    assert_eq!(
+        app.hidden_count, 1,
+        "…but is counted as hidden, not dropped"
+    );
+    assert!(
+        !app.all_agents.iter().any(|a| a.session_id == "x1"),
+        "unstamped events must not create fleet rows"
     );
 }
 

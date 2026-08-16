@@ -1,10 +1,12 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   filterPaneMenuForRemote,
   REMOTE_UNAVAILABLE_PANES,
   remoteDisabledTitle,
   hubOfflineLabel,
   fetchFederationPeers,
+  createRemoteConversationSync,
+  type RemoteConversationTarget,
 } from '../src/lib/federation';
 import { buildPaneMenu } from '../src/lib/paneMenu';
 import type { PluginPane } from '../src/types/plugin';
@@ -104,5 +106,94 @@ describe('fetchFederationPeers', () => {
     expect(await fetchFederationPeers()).toEqual([]);
     win.electronAPI = { federationPeers: async () => 'nonsense' };
     expect(await fetchFederationPeers()).toEqual([]);
+  });
+});
+
+describe('createRemoteConversationSync', () => {
+  const target = (over: Partial<RemoteConversationTarget> = {}): RemoteConversationTarget => ({
+    sessionId: 's1',
+    hub: 'work',
+    ...over,
+  });
+  /** Settle the factory's internal promise chain (several microtask turns). */
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  it('ignores local and tombstoned targets — a down link is never polled', async () => {
+    const fetch = vi.fn(async () => ({ seq: 1, items: [] as unknown[] }));
+    const sync = createRemoteConversationSync(fetch);
+    sync.poke(null);
+    sync.poke(undefined);
+    sync.poke({ sessionId: 's1' }); // no hub = local session
+    sync.poke(target({ hubOffline: true })); // tombstone
+    await settle();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('first poke fetches full; later pokes pass the last seen seq', async () => {
+    const fetch = vi.fn(async () => ({ seq: 7, items: [] as unknown[] }));
+    const sync = createRemoteConversationSync(fetch);
+    sync.poke(target());
+    await settle();
+    expect(fetch).toHaveBeenCalledWith('s1', undefined);
+    sync.poke(target());
+    await settle();
+    expect(fetch).toHaveBeenLastCalledWith('s1', 7);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('pokes during a fetch coalesce into exactly one trailing fetch', async () => {
+    const resolvers: Array<(v: { seq: number; items: unknown[] } | null) => void> = [];
+    const fetch = vi.fn(
+      () =>
+        new Promise<{ seq: number; items: unknown[] } | null>((r) => {
+          resolvers.push(r);
+        }),
+    );
+    const sync = createRemoteConversationSync(fetch);
+    sync.poke(target());
+    sync.poke(target());
+    sync.poke(target());
+    expect(fetch).toHaveBeenCalledTimes(1);
+    resolvers[0]({ seq: 3, items: [] });
+    await settle();
+    expect(fetch).toHaveBeenCalledTimes(2); // one trailing fetch, not two
+    expect(fetch).toHaveBeenLastCalledWith('s1', 3);
+    resolvers[1](null);
+    await settle();
+    expect(fetch).toHaveBeenCalledTimes(2); // queue drained, nothing spurious
+  });
+
+  it('a null answer records no seq — the next poke fetches full again', async () => {
+    const fetch = vi.fn(async () => null);
+    const sync = createRemoteConversationSync(fetch);
+    sync.poke(target());
+    await settle();
+    sync.poke(target());
+    await settle();
+    expect(fetch).toHaveBeenNthCalledWith(2, 's1', undefined);
+  });
+
+  it('a fetch that rejects is swallowed and does not wedge the single-flight gate', async () => {
+    let calls = 0;
+    const fetch = vi.fn(async () => {
+      if (++calls === 1) throw new Error('link flap');
+      return { seq: 2, items: [] as unknown[] };
+    });
+    const sync = createRemoteConversationSync(fetch);
+    sync.poke(target());
+    await settle();
+    sync.poke(target());
+    await settle();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('tracks seq per session — switching targets starts full', async () => {
+    const fetch = vi.fn(async () => ({ seq: 9, items: [] as unknown[] }));
+    const sync = createRemoteConversationSync(fetch);
+    sync.poke(target());
+    await settle();
+    sync.poke(target({ sessionId: 's2' }));
+    await settle();
+    expect(fetch).toHaveBeenLastCalledWith('s2', undefined);
   });
 });

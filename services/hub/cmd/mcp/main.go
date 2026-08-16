@@ -53,12 +53,20 @@ func main() {
 	// whole surface. The store is mtime-gated, so mint/revoke take effect on the
 	// next request without restarting the facade.
 	tokensPath := flag.String("tokens", authtoken.DefaultPath(), "scoped capability-token file (tokens.json) for per-session facade tiers")
+	// untokened is the deliberate dial on the credential-less loopback default:
+	// operator keeps the historical open-on-loopback behavior, view serves the
+	// read-only tier to bare requests, deny 401s them (every request must then
+	// present the static token or a tokens.json scoped token).
+	untokened := flag.String("untokened", envOr("WKS_MCP_UNTOKENED", untokenedOperator), "access tier for credential-less requests: operator (back-compat default), view (read-only tier), or deny (401)")
 	flag.Parse()
 
+	if err := checkUntokenedMode(*untokened); err != nil {
+		log.Fatalf("mcp: %v", err)
+	}
 	// Fail closed: a non-loopback bind with no token lets anyone who reaches the
 	// port drive the whole agent fleet. Loopback-with-no-token stays open (the
 	// default the desktop relies on).
-	if err := checkBindPolicy(*addr, *mcpToken); err != nil {
+	if err := checkBindPolicy(*addr, *mcpToken, *untokened); err != nil {
 		log.Fatalf("mcp: %v", err)
 	}
 
@@ -73,9 +81,12 @@ func main() {
 	client := busclient.New(*hubURL, *token)
 	go client.Run(ctx)
 
-	gate := &authGate{static: *mcpToken, store: authtoken.NewStore(*tokensPath)}
+	gate := &authGate{static: *mcpToken, store: authtoken.NewStore(*tokensPath), untokened: *untokened}
 	if *mcpToken != "" {
 		log.Printf("mcp auth enabled (bearer token required on /mcp and /sse)")
+	}
+	if *untokened != untokenedOperator {
+		log.Printf("mcp untokened access dialed to %q", *untokened)
 	}
 	// Plugin-contributed tools: poll the hub's consented surface and graft it
 	// onto per-token servers (opt-in via each session token's plugin grants).
@@ -212,14 +223,46 @@ func hostIsLoopback(name string) bool {
 //     spawn. A match grants that record's TIER (view/triage/operator), which is
 //     both the tool list the client sees and the calls it may make.
 //
-// No credential at all resolves to operator ONLY when no static token is set —
-// the loopback-open default every existing client (and the desktop's own
-// supervisor spawns) relies on. A credential that is PRESENT but unknown is
-// 401, never open access: presenting a revoked session token must not quietly
-// escalate to the untokened operator default.
+// No credential at all is governed by the untokened dial (-untokened /
+// WKS_MCP_UNTOKENED) — operator by default, the loopback-open back-compat every
+// existing client (and the desktop's own supervisor spawns) relies on; view
+// serves only the read-only tier; deny refuses. The static token, when set,
+// still overrides the dial as it always has: setting it means "credentials
+// required", so a credential-less request is refused regardless of the dial. A
+// credential that is PRESENT but unknown is 401, never open access: presenting
+// a revoked session token must not quietly escalate to the untokened default.
 type authGate struct {
 	static string
 	store  *authtoken.Store
+	// untokened is one of untokenedOperator/View/Deny. The zero value behaves
+	// as operator, so an authGate built without the field keeps the historical
+	// default.
+	untokened string
+}
+
+// The untokened-access dial's positions.
+const (
+	untokenedOperator = "operator"
+	untokenedView     = "view"
+	untokenedDeny     = "deny"
+)
+
+// checkUntokenedMode refuses an unrecognized dial value at startup — a typo in
+// a lockdown flag must not silently fall back to the open default.
+func checkUntokenedMode(mode string) error {
+	switch mode {
+	case untokenedOperator, untokenedView, untokenedDeny:
+		return nil
+	}
+	return fmt.Errorf("invalid -untokened value %q: want operator, view, or deny", mode)
+}
+
+// envOr returns the environment variable's value, or def when unset/empty.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
 
 // presentedToken extracts the request's credential: an `Authorization: Bearer`
@@ -247,10 +290,22 @@ func presentedToken(r *http.Request) string {
 func (g *authGate) resolveRecord(r *http.Request) (authtoken.Record, bool) {
 	tok := presentedToken(r)
 	if tok == "" {
-		if g.static == "" {
+		// A set static token has always meant "credentials required": refuse
+		// regardless of the dial (it can only be stricter than the dial's view/
+		// operator positions, never looser).
+		if g.static != "" {
+			return authtoken.Record{}, false
+		}
+		switch g.untokened {
+		case untokenedDeny:
+			return authtoken.Record{}, false
+		case untokenedView:
+			// Read-only tier, and — like every synthesized record — NO plugin
+			// grants; plugin tools stay strictly opt-in per session token.
+			return authtoken.Record{Scope: authtoken.ScopeView}, true
+		default: // operator, or the zero value (back-compat)
 			return authtoken.Record{Scope: authtoken.ScopeOperator}, true
 		}
-		return authtoken.Record{}, false
 	}
 	if g.static != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(g.static)) == 1 {
 		return authtoken.Record{Scope: authtoken.ScopeOperator}, true
@@ -285,10 +340,15 @@ func requireScope(gate *authGate, h http.Handler) http.Handler {
 
 // checkBindPolicy fails closed when the facade would expose its fleet-driving
 // surface beyond the local host without a token. Loopback binds may stay open
-// (the desktop default); anything reachable from the network must carry a token.
-func checkBindPolicy(addr, token string) error {
-	if token == "" && !isLoopbackAddr(addr) {
-		return fmt.Errorf("refusing to bind non-loopback address %q without an auth token: set WKS_MCP_TOKEN or -mcp-token (anyone reaching this port can drive the whole agent fleet)", addr)
+// (the desktop default); anything reachable from the network must carry a
+// token — OR run with `-untokened deny`, which is strictly stronger than the
+// static-token requirement it substitutes for: every request must then present
+// a resolvable credential (the static token merely being one way to have one),
+// and credential-less requests 401 outright. `view` does NOT satisfy the
+// policy: it still serves tools to anyone who reaches the port.
+func checkBindPolicy(addr, token, untokened string) error {
+	if token == "" && untokened != untokenedDeny && !isLoopbackAddr(addr) {
+		return fmt.Errorf("refusing to bind non-loopback address %q without an auth token: set WKS_MCP_TOKEN / -mcp-token, or -untokened deny (anyone reaching this port can drive the whole agent fleet)", addr)
 	}
 	return nil
 }
@@ -375,20 +435,20 @@ func newServerWithPlugins(c *busclient.Client, scope authtoken.Scope, plugins []
 
 	// ── Observe ────────────────────────────────────────────────────────────
 	b.group = "observe"
-	addTool[listAgentsIn](b, "list_agents",
-		"List running Claude Code agent sessions with their state, model, context usage, and any pending approval or question. The lightweight fleet overview; use get_snapshot for full detail on one session.",
+	addFleetTool[listAgentsIn](b, "list_agents",
+		"List running Claude Code agent sessions with their state, model, context usage, and any pending approval or question. The lightweight fleet overview, spanning federated peer hubs (remote rows carry a hub field); use get_snapshot for full detail on one session.",
 		"agents.list")
-	addTool[transcriptIn](b, "get_transcript",
+	addHubTool[transcriptIn](b, "get_transcript",
 		"Fetch a session's transcript so you can see the context behind a pending approval or question before acting.",
 		"sessions.transcript")
-	addTool[conversationIn](b, "get_conversation",
+	addHubTool[conversationIn](b, "get_conversation",
 		"Fetch a session's parsed conversation items plus the latest sequence number; pass sinceSeq to get only items after that sequence (cheap incremental polling).",
 		"sessions.conversation")
-	addTool[sessionIn](b, "get_snapshot",
+	addHubTool[sessionIn](b, "get_snapshot",
 		"Get the full live snapshot for one session: conversation turns, tool calls, usage/cost, subagents, workflow runs, and any pending approval/question. Heavier than list_agents — use it to inspect a single agent in depth.",
 		"sessions.snapshot")
-	addTool[listAgentsIn](b, "list_snapshots",
-		"Get full snapshots for every session at once (verbose — large payload). Prefer list_agents for an overview and get_snapshot for one session.",
+	addFleetTool[listAgentsIn](b, "list_snapshots",
+		"Get full snapshots for every session at once, spanning federated peer hubs (verbose — large payload; remote rows carry a hub field). Prefer list_agents for an overview and get_snapshot for one session.",
 		"sessions.snapshots")
 	addTool[listAgentsIn](b, "list_models",
 		"List the Claude models available to spawn_agent (ids + display names).",
@@ -402,7 +462,7 @@ func newServerWithPlugins(c *busclient.Client, scope authtoken.Scope, plugins []
 
 	// ── Spawn ──────────────────────────────────────────────────────────────
 	b.group = "spawn"
-	addTool[spawnAgentIn](b, "spawn_agent",
+	addHubTool[spawnAgentIn](b, "spawn_agent",
 		"Start a new coding-agent session in a directory (claude by default; codex/opencode/pi via provider) and return its sessionId. See help topic 'spawn' for labeling, nesting, and granting the new agent workspacer tools via toolScope.",
 		"agents.spawn")
 	addTool[createTerminalIn](b, "create_terminal",
@@ -411,19 +471,19 @@ func newServerWithPlugins(c *busclient.Client, scope authtoken.Scope, plugins []
 
 	// ── Drive ──────────────────────────────────────────────────────────────
 	b.group = "drive"
-	addTool[sendMessageIn](b, "send_message",
+	addHubTool[sendMessageIn](b, "send_message",
 		"Send a prompt/message to a running agent session.",
 		"agents.sendMessage")
-	addTool[approveIn](b, "approve",
+	addHubTool[approveIn](b, "approve",
 		"Resolve a pending permission prompt for an agent: 'yes', 'no', or 'always'.",
 		"claude.approve")
-	addTool[answerIn](b, "answer",
+	addHubTool[answerIn](b, "answer",
 		"Answer an agent's AskUserQuestion picker by option number, free text, or a list of answers.",
 		"claude.answer")
-	addTool[signalIn](b, "signal",
+	addHubTool[signalIn](b, "signal",
 		"Send a POSIX signal to an agent session, e.g. SIGINT to interrupt or SIGTERM to stop it.",
 		"claude.signal")
-	addTool[gateIn](b, "set_approval_gate",
+	addHubTool[gateIn](b, "set_approval_gate",
 		"Turn an agent's approval gate on or off. When on, the agent pauses for permission before running tools (surfaced via list_agents / get_snapshot for you to approve).",
 		"claude.gate")
 	addTool[terminalInputIn](b, "terminal_input",
@@ -611,14 +671,17 @@ func addObjectTool(b *build, name, desc, method string) {
 type listAgentsIn struct{}
 
 type transcriptIn struct {
+	hubArg
 	SessionID string `json:"sessionId" jsonschema:"the target session id"`
 }
 
 type sessionIn struct {
+	hubArg
 	SessionID string `json:"sessionId" jsonschema:"the target session id"`
 }
 
 type conversationIn struct {
+	hubArg
 	SessionID string `json:"sessionId" jsonschema:"the target session id"`
 	SinceSeq  *int   `json:"sinceSeq,omitempty" jsonschema:"return only items after this sequence number; omit for the full history"`
 }
@@ -636,6 +699,7 @@ type filenameIn struct {
 }
 
 type gateIn struct {
+	hubArg
 	SessionID string `json:"sessionId" jsonschema:"the target session id"`
 	On        bool   `json:"on" jsonschema:"true to require approval before tools run, false to let the agent run freely"`
 }
@@ -685,6 +749,10 @@ type recentIn struct {
 }
 
 type spawnAgentIn struct {
+	// Hub gets its own field (not the hubArg embed) for its distinct
+	// description: a remote spawn's meaning differs from "this session lives
+	// there", and the peer's clamp is worth stating where the model reads it.
+	Hub             string   `json:"hub,omitempty" jsonschema:"the peer hub to spawn on (a hub name from list_agents rows); omit for this machine. The peer clamps remote spawns itself — permission bypass (skipPermissions) is refused on remote spawns"`
 	Provider        string   `json:"provider,omitempty" jsonschema:"coding-agent backend to run: claude (default), codex, opencode, or pi"`
 	Transport       string   `json:"transport,omitempty" jsonschema:"claude/codex only: 'stream' runs headless (GUI-only); omit for the default"`
 	Cwd             string   `json:"cwd,omitempty" jsonschema:"working directory for the new agent (defaults to the user's home)"`
@@ -699,6 +767,13 @@ type spawnAgentIn struct {
 	PluginTools     []string `json:"pluginTools,omitempty" jsonschema:"plugin ids whose contributed tools the new agent may use (requires toolScope); omit for none"`
 }
 
+// takeHub implements hubRouted for spawn_agent's own hub field.
+func (in *spawnAgentIn) takeHub() string {
+	peer := in.Hub
+	in.Hub = ""
+	return peer
+}
+
 type createTerminalIn struct {
 	Shell string `json:"shell,omitempty" jsonschema:"shell to run (defaults to the platform default shell)"`
 	Cwd   string `json:"cwd,omitempty" jsonschema:"working directory (defaults to the user's home)"`
@@ -707,17 +782,20 @@ type createTerminalIn struct {
 }
 
 type sendMessageIn struct {
+	hubArg
 	SessionID string `json:"sessionId" jsonschema:"the target session id"`
 	Text      string `json:"text" jsonschema:"the prompt/message to send to the agent"`
 }
 
 type approveIn struct {
+	hubArg
 	SessionID string `json:"sessionId" jsonschema:"the target session id"`
 	Decision  string `json:"decision" jsonschema:"one of: yes, no, always"`
 	Reason    string `json:"reason,omitempty" jsonschema:"optional reason to record with the decision"`
 }
 
 type answerIn struct {
+	hubArg
 	SessionID string   `json:"sessionId" jsonschema:"the target session id"`
 	Option    *int     `json:"option,omitempty" jsonschema:"the numeric option to pick"`
 	Text      *string  `json:"text,omitempty" jsonschema:"a free-text answer"`
@@ -725,6 +803,7 @@ type answerIn struct {
 }
 
 type signalIn struct {
+	hubArg
 	SessionID string `json:"sessionId" jsonschema:"the target session id"`
 	Signal    string `json:"signal" jsonschema:"signal name, e.g. SIGINT or SIGTERM"`
 }

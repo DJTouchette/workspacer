@@ -120,6 +120,13 @@ export const IPC = {
   // Peer list snapshot. Live transitions ride the generic HUB_EVENT feed as
   // hub.peer.connected / hub.peer.disconnected — re-invoke this on those.
   FEDERATION_PEERS: 'federation:peers',
+  /** Fetch a REMOTE session's conversation over its federation link (handler
+   *  lives in federationBridge.ts). */
+  FEDERATION_CONVERSATION: 'federation:conversation',
+  /** Read / write ~/.config/workspacer/peers.json (handlers in
+   *  federationPeersConfig.ts); a save restarts the hub so it takes effect. */
+  FEDERATION_PEERS_CONFIG: 'federation:peersConfig',
+  FEDERATION_SAVE_PEERS_CONFIG: 'federation:savePeersConfig',
 
   // ── Shared layout document (hub-owned; tmux-style mirror) ──
   LAYOUT_GET: 'layout:get',

@@ -451,6 +451,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // — re-invoke this on those rather than expecting a dedicated push channel.
   federationPeers: (): Promise<Array<{ name: string; connected: boolean; lastSeen?: number }>> =>
     ipcRenderer.invoke(IPC.FEDERATION_PEERS),
+  /** Federation: a remote session's conversation, fetched over its hub link.
+   *  Null for local/unknown sessions or when the peer is unreachable. */
+  federationConversation: (
+    sessionId: string,
+    sinceSeq?: number,
+  ): Promise<{ seq: number; items: unknown[] } | null> =>
+    ipcRenderer.invoke(IPC.FEDERATION_CONVERSATION, sessionId, sinceSeq),
+  /** Federation: the configured peers (peers.json). Null = not available
+   *  (web mirror), distinct from [] = none configured. Tokens are redacted. */
+  federationPeersConfig: (): Promise<Array<{
+    name: string;
+    url: string;
+    hasToken: boolean;
+  }> | null> => ipcRenderer.invoke(IPC.FEDERATION_PEERS_CONFIG),
+  /** Federation: replace peers.json wholesale and restart the hub so the new
+   *  links take effect. An entry with token undefined KEEPS the stored token
+   *  for that peer name (tokens never round-trip through the renderer). */
+  federationSavePeersConfig: (
+    peers: Array<{ name: string; url: string; token?: string }>,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.FEDERATION_SAVE_PEERS_CONFIG, peers),
 
   // ── Git worktrees (agent isolation) ──
   worktreeInfo: (cwd: string): Promise<unknown> => ipcRenderer.invoke(IPC.WORKTREE_INFO, cwd),

@@ -29,6 +29,7 @@ import { listLiveSessionIds } from './services/recentSessions';
 import { sweepSessionFacadeTokens } from './services/remoteTokens';
 import { setHubMainWindow, startHubClient, stopHubClient } from './services/hubClient';
 import { startFederationBridge, stopFederationBridge } from './services/federationBridge';
+import { startFederationPeersConfig } from './services/federationPeersConfig';
 import { setNoticeWindow, notifySystem } from './services/systemNotice';
 import { updateService } from './services/updateService';
 import { keepWarmService } from './services/keepWarmService';
@@ -340,6 +341,7 @@ function createWindow(): void {
   });
 
   registerIpcHandlers(mainWindow);
+  startFederationPeersConfig();
   claudeSessionStore.setMainWindow(mainWindow);
   agentNotifier.setMainWindow(mainWindow);
   // Kick off auto-update (no-op in dev / when disabled via config).

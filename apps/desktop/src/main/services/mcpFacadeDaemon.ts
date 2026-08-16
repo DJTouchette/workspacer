@@ -10,9 +10,12 @@
  * executes. So this must start AFTER the hub is up; it connects to the bus and
  * retries on its own if the hub is briefly unavailable.
  *
- * The facade's OWN inbound surface is currently unauthenticated (loopback only)
- * — see getMcpFacadeToken below for what that costs and what has to land before
- * it can be closed.
+ * The facade's OWN inbound surface defaults to unauthenticated-on-loopback
+ * (credential-less requests get operator) — see getMcpFacadeToken below for
+ * what that costs and what has to land before it can be closed wholesale. The
+ * optional config key `facade.untokenedAccess` (operator | view | deny) is the
+ * deliberate dial on that default, passed through as the binary's --untokened
+ * flag; per-session scoped tokens keep their tiers under every setting.
  *
  * Mirrors hubDaemon.ts (binary resolution, health poll, restart backoff). Fully
  * optional from the rest of the app's point of view: if it fails to start, only
@@ -37,6 +40,7 @@ import {
   gracefulStop,
 } from '../lib/daemonUtils';
 import { hubBusUrl, getHubToken } from './hubDaemon';
+import { configService } from './configService';
 
 const PORT = PORTS.mcpFacade;
 const ADDR = `127.0.0.1:${PORT}`;
@@ -83,10 +87,10 @@ export function startMcpFacade(): Promise<void> {
  * while keeping one secret to mint, persist (0600) and rotate.
  *
  * It is not handed to the facade yet, and that is a knowing gap rather than an
- * oversight: while it stays unset, 127.0.0.1:7897/mcp is an unauthenticated
- * capability gateway — spawn agents, read and write host files, rewrite config,
- * reachable by any local process or by any page that can be talked into a
- * request to loopback.
+ * oversight: while it stays unset, 127.0.0.1:7897/mcp is by default an
+ * unauthenticated capability gateway — spawn agents, read and write host files,
+ * rewrite config, reachable by any local process or by any page that can be
+ * talked into a request to loopback.
  *
  * Setting WKS_MCP_TOKEN is what turns cmd/mcp's bearer check on, and turning it
  * on alone breaks the supervisor and every mcpFacade worker, because neither
@@ -96,9 +100,47 @@ export function startMcpFacade(): Promise<void> {
  * facade as a bare URL string with nowhere to attach one. Closing the gap means
  * landing those two together with the flip; doing the flip first would trade a
  * local-reachability risk for a certain loss of the whole control plane.
+ *
+ * The `facade.untokenedAccess` config dial (--untokened operator|view|deny) is
+ * the opt-in endgame for users who accept the cost today: `view` downgrades
+ * credential-less requests to the read-only tier, `deny` 401s them outright.
+ * Both break exactly the legacy untokened clients described above (the shared
+ * supervisor-mcp.json path); sessions spawned with a per-session scoped token
+ * (every toolScope/mcpFacade spawn since the tier work) keep working under
+ * every setting, because they present a tokens.json bearer, not the untokened
+ * default. `deny` also satisfies cmd/mcp's non-loopback bind policy on its own
+ * — refusing credential-less requests is strictly stronger than requiring the
+ * static token.
  */
 export function getMcpFacadeToken(): string {
   return getHubToken();
+}
+
+/**
+ * The untokened-access dial from config: `facade.untokenedAccess`, an OPTIONAL
+ * key read leniently off the config object (it is deliberately not part of the
+ * defaults pipeline — absent means "pass no flag" and the facade keeps its own
+ * operator default). Only the three values the binary accepts pass through;
+ * anything else is ignored with a warning rather than forwarded, because
+ * cmd/mcp fails startup on an unknown -untokened value and a config typo must
+ * not take down the whole control plane.
+ */
+function untokenedAccessSetting(): 'operator' | 'view' | 'deny' | null {
+  try {
+    const cfg = configService.getConfig() as unknown as {
+      facade?: { untokenedAccess?: unknown };
+    };
+    const v = cfg.facade?.untokenedAccess;
+    if (v === 'operator' || v === 'view' || v === 'deny') return v;
+    if (v != null) {
+      console.warn(
+        `[mcp] ignoring invalid facade.untokenedAccess ${JSON.stringify(v)} (want operator|view|deny)`,
+      );
+    }
+  } catch {
+    /* config unavailable — fall through to the facade's own default */
+  }
+  return null;
 }
 
 /** Spawn the process and wire up exit-driven restart. Returns the health promise. */
@@ -106,6 +148,8 @@ function launch(bin: string): Promise<void> {
   killStaleListener(PORT, 'mcp', bin);
 
   const args = ['--addr', ADDR, '--hub', hubBusUrl()];
+  const untokened = untokenedAccessSetting();
+  if (untokened) args.push('--untokened', untokened);
   // The bus token rides the environment rather than argv: /proc/<pid>/cmdline is
   // world-readable, so a `--token <secret>` flag hands the secret to every local
   // user. The facade's --token flag already defaults to os.Getenv("HUB_TOKEN")

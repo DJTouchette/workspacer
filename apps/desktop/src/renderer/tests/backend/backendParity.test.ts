@@ -151,6 +151,9 @@ const KNOWN_STUBS = [
   'agentSuggestTitle', // runs a local headless `claude --print`; null on web (the desktop titles the agent and the layout syncs)
   'onConfigChanged', // main-process config watcher; the bus has no equivalent event yet
   'federationPeers', // the web mirror talks to one hub directly; no peer link → [] (could ride hub.peer.* later)
+  'federationConversation', // IMPLEMENTED on web (qualified sessions.conversation); listed here because local sessions answer null by design
+  'federationPeersConfig', // peers.json lives on the hub machine; web answers null → settings render read-only
+  'federationSavePeersConfig', // same — refused with a reason string
 ] as const;
 
 function webBackendMethodKeys(): Set<string> {

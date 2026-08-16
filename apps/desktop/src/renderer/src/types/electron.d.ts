@@ -300,6 +300,24 @@ export interface ElectronAPI {
    *  — re-invoke this on those rather than expecting a dedicated push channel. */
   federationPeers: () => Promise<Array<{ name: string; connected: boolean; lastSeen?: number }>>;
 
+  /** Federation: a remote session's conversation over its hub link; null for
+   *  local/unknown sessions or unreachable peers. */
+  federationConversation: (
+    sessionId: string,
+    sinceSeq?: number,
+  ) => Promise<{ seq: number; items: unknown[] } | null>;
+  /** Federation: configured peers (tokens redacted). Null = editing not
+   *  available in this client (web mirror). */
+  federationPeersConfig: () => Promise<Array<{
+    name: string;
+    url: string;
+    hasToken: boolean;
+  }> | null>;
+  /** Federation: replace peers.json + restart the hub. token undefined keeps
+   *  the stored token for that peer name. */
+  federationSavePeersConfig: (
+    peers: Array<{ name: string; url: string; token?: string }>,
+  ) => Promise<{ ok: boolean; error?: string }>;
   // Shared layout document (hub-owned; tmux-style mirror). Reads/writes the live
   // workspace layout so the desktop and the web remote mirror each other.
   layoutGet: () => Promise<LayoutDoc>;

@@ -21,6 +21,15 @@
  *   - `hub.peer.disconnected`           → tombstone (hubOffline) that hub's
  *     sessions and record lastSeen.
  *
+ * Remote snapshots come in two shapes and both are ingested: rich rows from a
+ * peer desktop (bounded conversation window) and `sparse` rows from a peer
+ * running only the headless brain (`workspacer serve` — state/attention only,
+ * no conversation). The full transcript for either arrives on demand through
+ * the `federation:conversation` IPC registered here: the renderer pokes it for
+ * a remote pane, main calls `hub:<peer>/sessions.conversation` and folds the
+ * items into the store (fetchRemoteConversation), and the normal snapshot push
+ * carries the result everywhere.
+ *
  * The peers map backs the `federation:peers` IPC. There is no way to ASK the
  * hub for already-connected peers (lifecycle events fire on transitions only),
  * so a peer whose link was already up when this process subscribed is
@@ -29,12 +38,91 @@
  * same seed.
  */
 
+import { ipcMain } from 'electron';
+import { IPC } from '../shared/ipcChannels';
 import { subscribeHubEvents, callHub, type HubEvent } from './hubClient';
 import { claudeSessionStore, type RemoteSnapshotWire } from './claudeSessionStore';
+import type { ConversationItemWire } from './sessionStore/conversationApplier';
 import type { FederationPeerInfo } from '../shared/ipcTypes';
 
 const peers = new Map<string, FederationPeerInfo>();
 let unsubscribe: (() => void) | null = null;
+
+/** The peer's `sessions.conversation` result (claudemon's shape). */
+interface RemoteConversationSnap {
+  seq: number;
+  items: ConversationItemWire[];
+}
+
+function isConversationSnap(v: unknown): v is RemoteConversationSnap {
+  return (
+    !!v &&
+    typeof (v as RemoteConversationSnap).seq === 'number' &&
+    Array.isArray((v as RemoteConversationSnap).items)
+  );
+}
+
+// Single flight per session: ClaudePane pokes on every activity bump, and two
+// overlapping fetches folding interleaved batches is exactly the duplicate-turn
+// hazard the applier's dedup shouldn't be leaned on for.
+const conversationFetches = new Map<string, Promise<RemoteConversationSnap | null>>();
+
+/**
+ * Fetch a REMOTE session's conversation over its federation link and fold it
+ * into the session store, so the normal snapshot push carries the full
+ * transcript to every consumer (the desktop otherwise renders only the
+ * compacted window the peer's agent.snapshot events hold — /m and the TUI
+ * already fetch full history this way; this closes the desktop gap).
+ *
+ * Main's own folded-seq tracking (claudeSessionStore.remoteConversationSeq) is
+ * authoritative for `sinceSeq` — the renderer's copy can be stale across a
+ * main-side rebuild or reseed. First fetch is full; later ones incremental.
+ * A seq that moved BACKWARD means the peer's claudemon restarted its stream —
+ * our folded history may describe a conversation that no longer exists, so
+ * refetch from the top and rebuild.
+ *
+ * Returns null for local/unknown sessions, tombstoned (hubOffline) sessions —
+ * a down link must stop the polling, reconnect's reseed resumes it — and on
+ * any link error.
+ */
+export function fetchRemoteConversation(sessionId: string): Promise<RemoteConversationSnap | null> {
+  if (!sessionId || typeof sessionId !== 'string') return Promise.resolve(null);
+  const snap = claudeSessionStore.getSnapshot(sessionId);
+  const hub = snap?.hub;
+  if (!hub || snap.hubOffline) return Promise.resolve(null);
+  const inflight = conversationFetches.get(sessionId);
+  if (inflight) return inflight;
+  const fetch = (async (): Promise<RemoteConversationSnap | null> => {
+    try {
+      const since = claudeSessionStore.remoteConversationSeq(sessionId);
+      let res = await callHub<RemoteConversationSnap>(
+        `hub:${hub}/sessions.conversation`,
+        since !== undefined ? { sessionId, sinceSeq: since } : { sessionId },
+      );
+      if (!isConversationSnap(res)) return null;
+      let rebuild = since === undefined;
+      if (since !== undefined && res.seq < since) {
+        res = await callHub<RemoteConversationSnap>(`hub:${hub}/sessions.conversation`, {
+          sessionId,
+        });
+        if (!isConversationSnap(res)) return null;
+        rebuild = true;
+      }
+      claudeSessionStore.applyRemoteConversation(hub, sessionId, res.seq, res.items, rebuild);
+      return res;
+    } catch (err) {
+      console.warn(
+        `[federation] conversation fetch for ${sessionId} (hub "${hub}") failed:`,
+        err instanceof Error ? err.message : err,
+      );
+      return null;
+    } finally {
+      conversationFetches.delete(sessionId);
+    }
+  })();
+  conversationFetches.set(sessionId, fetch);
+  return fetch;
+}
 
 /** Peers main has observed, for the federation:peers IPC. */
 export function listFederationPeers(): FederationPeerInfo[] {
@@ -110,6 +198,12 @@ function handleEvent(ev: HubEvent): void {
 export function startFederationBridge(): void {
   if (unsubscribe) return;
   unsubscribe = subscribeHubEvents(handleEvent);
+  // Renderer contract (preload's federationConversation): the sinceSeq argument
+  // is accepted but unused — main's own folded-seq tracking decides full vs
+  // incremental (see fetchRemoteConversation).
+  ipcMain.handle(IPC.FEDERATION_CONVERSATION, (_event, sessionId: string) =>
+    fetchRemoteConversation(sessionId),
+  );
 }
 
 /** Stop and forget peer state (tests / shutdown). */
@@ -117,4 +211,6 @@ export function stopFederationBridge(): void {
   unsubscribe?.();
   unsubscribe = null;
   peers.clear();
+  conversationFetches.clear();
+  ipcMain.removeHandler(IPC.FEDERATION_CONVERSATION);
 }

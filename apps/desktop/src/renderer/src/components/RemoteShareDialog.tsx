@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Smartphone, Copy, Check, Eye, EyeOff } from 'lucide-react';
 import type { RemoteTokenRecord, RemoteTokenScope } from '../../../main/shared/ipcTypes';
+import LinkedMachinesSection from './LinkedMachinesSection';
 
 interface RemoteInfo {
   enabled: boolean;
@@ -210,6 +211,14 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               />
             )}
           </>
+        )}
+
+        {/* Federation: PC↔PC links (peers.json). Hidden in remote-client mode —
+            there the local hub isn't running, so there's nothing to link. In
+            the web mirror federationPeersConfig() resolves null and the
+            section renders read-only from live peer status. */}
+        {!loading && !info?.remoteClient && (
+          <LinkedMachinesSection busUrl={info?.busUrl} sharingOn={!!info?.enabled} />
         )}
 
         {!loading && info && <RemoteClientSection info={info} />}

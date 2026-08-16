@@ -57,6 +57,13 @@ Use the \`mcp__workspacer__*\` tools for ACTIONS: spawn_agent, send_message,
 notify, approve, answer. (\`list_agents\` / \`get_conversation\` exist too, but
 prefer the script for routine reads.)
 
+The script talks to THIS machine's claudemon only. The fleet may span machines
+(federated hubs): sessions on a peer hub never appear in \`fleet.mjs\` output, so
+use \`list_agents\` for fleet discovery — a row with a \`hub\` field lives on that
+peer, and you must pass that hub value through to the per-session tools
+(get_conversation, get_snapshot, send_message, approve, …) when reading or
+acting on it.
+
 ## 0. Settings
 
 Call \`get_config\` once and read \`supervisor.summarizerModel\` (fallback
@@ -90,7 +97,9 @@ set — prefer the scoped form.)
 Keep a per-agent cursor: the last conversation \`seq\` you have digested.
 
 1. Run \`fleet.mjs status\` to see the fleet and who is blocked. Ignore your own
-   session and the digest worker.
+   session and the digest worker. If federated peer hubs are linked, also check
+   \`list_agents\` for remote sessions (rows with a \`hub\` field) the script
+   cannot see.
 2. For each agent, run \`fleet.mjs convo <id> --since <last seq>\`. The first line
    is \`seq=<latest>\`; advance your cursor to it. If it prints \`(no new turns)\`,
    skip the agent — nothing changed.
