@@ -3,7 +3,8 @@ name: release
 # Build the desktop app + bundled daemons (claudemon/Rust, hub/mcp/brain/Go) on
 # all three desktop OSes. On a version tag (v*) the installers are attached to a
 # GitHub Release — along with a standalone headless-server bundle
-# (workspacer-server-<os>-<arch>) per platform; on PRs / manual runs it's a
+# (workspacer-server-<os>-<arch>) and a claudemon-only bundle
+# (workspacer-claudemon-<os>-<arch>) per platform; on PRs / manual runs it's a
 # build smoke-test that just uploads the artifacts so you can catch
 # per-platform breakage early.
 on:
@@ -264,6 +265,49 @@ jobs:
             tar -C "$tmp" -czf "$out/$name.tar.gz" workspacer-server
           fi
 
+      # Standalone claudemon-only bundle, for people building their own client
+      # against the session API documented on landing/build-client.html — they
+      # don't need workspacer/hub/brain at all, just the daemon. Same binary
+      # the server bundle above ships, packaged alone.
+      - name: Bundle standalone claudemon
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          ext=""
+          tmp="$RUNNER_TEMP"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            ext=".exe"
+            tmp=$(cygpath -u "$tmp")
+          fi
+          dir="$tmp/workspacer-claudemon"
+          rm -rf "$dir"
+          mkdir -p "$dir"
+          cp "services/claudemon/target/release/claudemon$ext" "$dir/"
+          cat > "$dir/README.md" <<'EOF'
+          # claudemon
+
+          The session daemon, standalone — no workspacer/hub/brain, just the
+          HTTP + SSE API that owns Claude Code (and Codex/OpenCode/Pi) sessions.
+
+              ./claudemon serve --host 127.0.0.1 --hook-port 7890 --api-port 7891
+
+          Loopback-only, unauthenticated by design — see the API reference and
+          security notes before exposing it beyond localhost:
+          https://github.com/DJTouchette/workspacer/blob/master/landing/build-client.html
+
+          Want the full fleet (bus, plugins, remote clients, MCP) instead? Grab
+          workspacer-server-* from the same release.
+          EOF
+          out="$PWD/apps/desktop/release"
+          mkdir -p "$out"
+          name="workspacer-claudemon-${{ matrix.server }}"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            (cd "$tmp" && 7z a "$out/$name.zip" workspacer-claudemon)
+          else
+            tar -C "$tmp" -czf "$out/$name.tar.gz" workspacer-claudemon
+          fi
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -271,7 +315,7 @@ jobs:
           # Installers PLUS the electron-updater metadata (latest*.yml) and the
           # delta .blockmap files — the updater needs the .yml + .blockmap next
           # to each installer, not just the installer — plus the standalone
-          # headless-server bundle.
+          # headless-server and claudemon-only bundles.
           path: |
             apps/desktop/release/*.exe
             apps/desktop/release/*.dmg
@@ -279,6 +323,7 @@ jobs:
             apps/desktop/release/*.yml
             apps/desktop/release/*.blockmap
             apps/desktop/release/workspacer-server-*
+            apps/desktop/release/workspacer-claudemon-*
           if-no-files-found: error
 
       # The release body comes from CHANGELOG.md, cut by scripts/changelog-section.mjs.
@@ -314,7 +359,7 @@ jobs:
           body: ${{ steps.notes.outputs.body }}
           # Attach the update metadata (latest*.yml) + .blockmap alongside the
           # installers so electron-updater can read the release as an update
-          # feed, and the standalone headless-server bundle.
+          # feed, and the standalone headless-server + claudemon-only bundles.
           files: |
             apps/desktop/release/*.exe
             apps/desktop/release/*.dmg
@@ -322,6 +367,7 @@ jobs:
             apps/desktop/release/latest*.yml
             apps/desktop/release/*.blockmap
             apps/desktop/release/workspacer-server-*
+            apps/desktop/release/workspacer-claudemon-*
           draft: true
           fail_on_unmatched_files: false
 
@@ -380,7 +426,10 @@ jobs:
                      '*.blockmap' \
                      'workspacer-server-windows-x64.zip' \
                      'workspacer-server-linux-x64.tar.gz' \
-                     'workspacer-server-darwin-arm64.tar.gz'; do
+                     'workspacer-server-darwin-arm64.tar.gz' \
+                     'workspacer-claudemon-windows-x64.zip' \
+                     'workspacer-claudemon-linux-x64.tar.gz' \
+                     'workspacer-claudemon-darwin-arm64.tar.gz'; do
             compgen -G "$pat" > /dev/null || { echo "missing expected asset: $pat"; exit 1; }
           done
 
@@ -414,7 +463,7 @@ jobs:
               || printf '_Nothing recorded in CHANGELOG.md yet._\n'
           } > "$notes_file"
           shopt -s nullglob
-          assets=( *.exe *.AppImage *.dmg latest*.yml *.blockmap workspacer-server-* )
+          assets=( *.exe *.AppImage *.dmg latest*.yml *.blockmap workspacer-server-* workspacer-claudemon-* )
           shopt -u nullglob
           gh release create nightly \
             --repo "$REPO" \
