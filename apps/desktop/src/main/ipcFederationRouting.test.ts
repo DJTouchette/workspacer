@@ -4,8 +4,11 @@
  * (`hub:<peer>/<method>`) and must NOT touch the local claudemon HTTP client —
  * the local daemon has no such session, and hitting it would at best 404 and
  * at worst act on the wrong session. Local sessions keep the claudemon path
- * byte-for-byte, and the operations that cannot work remotely v1 (attach,
- * resize, close, gate, mode/model/effort switches, handoff) refuse loudly.
+ * byte-for-byte; the operations that cannot work remotely v1 (resize, close,
+ * mode/model/effort switches, handoff) refuse loudly; and the pane-housekeeping
+ * pair is special-cased so the remote chat surface can exist at all: attach
+ * adopts the id as a stream-less GUI viewer (web-polyfill parity) and gate is
+ * a silent no-op (the peer's own client gates its claudemon).
  *
  * Strategy (mirrors ipc.test.ts): mock electron's ipcMain to capture every
  * registered handler, stub every service collaborator so ipc.ts imports
@@ -232,8 +235,6 @@ describe('local-only operations refuse loudly for remote sessions', () => {
     ['claude:handoffBrief', ['sess-remote'], 'handoffBrief'],
     ['claude:resize', ['sess-remote', 80, 24], 'resize'],
     ['claude:close', ['sess-remote'], 'close'],
-    ['claude:attach', ['pane-1', 'sess-remote'], 'attach'],
-    ['claude:gate', ['sess-remote', true], 'setGate'],
   ] as Array<[string, unknown[], string | null]>)(
     '%s throws "not available for remote sessions"',
     async (channel, args, clientMethod) => {
@@ -250,6 +251,23 @@ describe('local-only operations refuse loudly for remote sessions', () => {
       expect(callHub).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('pane housekeeping adopts or no-ops for remote sessions', () => {
+  // These two are what the pane needs to exist: refusing attach left remote
+  // panes sessionless (cards rendered, chat could neither read nor send).
+  it('claude:attach adopts the remote id as a GUI-only viewer, touching nothing', async () => {
+    const res = await invoke('claude:attach', 'pane-1', 'sess-remote');
+    expect(res).toBe('sess-remote');
+    expect(sessionClient.attach).not.toHaveBeenCalled();
+    expect(callHub).not.toHaveBeenCalled();
+  });
+
+  it('claude:gate is a silent no-op for a remote session', async () => {
+    await expect(invoke('claude:gate', 'sess-remote', true)).resolves.toBeUndefined();
+    expect(sessionClient.setGate).not.toHaveBeenCalled();
+    expect(callHub).not.toHaveBeenCalled();
+  });
 });
 
 describe('federation:peers', () => {

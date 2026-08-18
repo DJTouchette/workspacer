@@ -972,14 +972,24 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return claudemonSessionClient.close(sessionId);
   });
   ipcMain.handle(IPC.CLAUDE_ATTACH, (_event, paneId: string, sessionId: string) => {
-    assertLocalSession(sessionId, 'Terminal attach');
+    // A remote session has no local claudemon row to attach to. Adopt the id
+    // as a GUI-only viewer instead of refusing — the pane renders from the
+    // snapshot store and every action above routes by the snapshot's hub,
+    // exactly the web polyfill's no-op attach. No byte-stream port is wired,
+    // so the terminal surface stays dark; ClaudePane locks remote sessions to
+    // the GUI view. Refusing here (as before) left the pane sessionless:
+    // cards rendered but the chat surface could neither read nor send.
+    if (remoteHubOf(sessionId)) return sessionId;
     return claudemonSessionClient.attach(paneId, sessionId, IPC.CLAUDE_PORT);
   });
   ipcMain.handle(IPC.CLAUDE_DETACH, (_event, paneId: string) =>
     claudemonSessionClient.detach(paneId),
   );
   ipcMain.handle(IPC.CLAUDE_GATE, (_event, sessionId: string, on: boolean) => {
-    assertLocalSession(sessionId, 'Approval gate');
+    // Pane housekeeping, not a user action: the peer's own client gates its
+    // claudemon, so a remote session's gate is a silent no-op here (a loud
+    // refusal would just warn on every remote pane open).
+    if (remoteHubOf(sessionId)) return;
     return claudemonSessionClient.setGate(sessionId, on);
   });
 

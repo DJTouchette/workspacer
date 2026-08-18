@@ -30,23 +30,29 @@
  * items into the store (fetchRemoteConversation), and the normal snapshot push
  * carries the result everywhere.
  *
- * The peers map backs the `federation:peers` IPC. There is no way to ASK the
- * hub for already-connected peers (lifecycle events fire on transitions only),
- * so a peer whose link was already up when this process subscribed is
- * discovered implicitly: the first hub-stamped event from an unknown (or
- * believed-down) peer is treated as its connected transition and triggers the
- * same seed.
+ * The peers map backs the `federation:peers` IPC. Lifecycle events fire on
+ * transitions only, so a peer whose link was already up when this process
+ * subscribed is discovered two ways:
+ *
+ *   - proactively: on start and on every bus (re)connect the bridge asks the
+ *     hub-local `federation.peers` method and seeds every connected peer —
+ *     the /m and web clients' pattern. This closes the restart race: saving
+ *     peers.json restarts the hub, which drops our socket, and the peer link
+ *     usually comes back up (publishing its connected event) before we do;
+ *   - implicitly: a hub-stamped event from an unknown (or believed-down) peer
+ *     is treated as its connected transition and triggers the same seed.
  */
 
 import { ipcMain } from 'electron';
 import { IPC } from '../shared/ipcChannels';
-import { subscribeHubEvents, callHub, type HubEvent } from './hubClient';
+import { subscribeHubEvents, subscribeHubConnected, callHub, type HubEvent } from './hubClient';
 import { claudeSessionStore, type RemoteSnapshotWire } from './claudeSessionStore';
 import type { ConversationItemWire } from './sessionStore/conversationApplier';
 import type { FederationPeerInfo } from '../shared/ipcTypes';
 
 const peers = new Map<string, FederationPeerInfo>();
 let unsubscribe: (() => void) | null = null;
+let unsubscribeConnect: (() => void) | null = null;
 
 /** The peer's `sessions.conversation` result (claudemon's shape). */
 interface RemoteConversationSnap {
@@ -152,6 +158,46 @@ async function seedPeer(name: string): Promise<void> {
   }
 }
 
+/**
+ * Ask the hub which peers exist right now (`federation.peers`) and sync the
+ * peers map: seed every connected one, and mark offline any we believed up —
+ * a missed disconnect transition. Quiet on failure: a hub with no peers
+ * configured doesn't register the method at all, and the next (re)connect or
+ * stamped event retries.
+ */
+async function refreshPeers(): Promise<void> {
+  let infos: FederationPeerInfo[];
+  try {
+    const res = await callHub<FederationPeerInfo[]>('federation.peers', {});
+    if (!Array.isArray(res)) return;
+    infos = res;
+  } catch {
+    return;
+  }
+  for (const info of infos) {
+    if (!info || typeof info.name !== 'string' || !info.name) continue;
+    if (info.connected) {
+      markConnected(info.name);
+      void seedPeer(info.name);
+      continue;
+    }
+    const p = peers.get(info.name);
+    if (p?.connected) {
+      // We missed the disconnect event — tombstone, same as handleEvent would.
+      // `federation.peers` reports lastSeen in unix ms already (0 = never).
+      p.connected = false;
+      if (info.lastSeen) p.lastSeen = info.lastSeen;
+      claudeSessionStore.markHubPeerOffline(info.name);
+    } else if (!p) {
+      peers.set(info.name, {
+        name: info.name,
+        connected: false,
+        lastSeen: info.lastSeen || undefined,
+      });
+    }
+  }
+}
+
 function handleEvent(ev: HubEvent): void {
   if (ev.type === 'hub.peer.connected' || ev.type === 'hub.peer.disconnected') {
     const data = (ev.data ?? {}) as { peer?: string; lastSeen?: string };
@@ -198,6 +244,10 @@ function handleEvent(ev: HubEvent): void {
 export function startFederationBridge(): void {
   if (unsubscribe) return;
   unsubscribe = subscribeHubEvents(handleEvent);
+  // Proactive discovery (see module comment): once now — the hub may already
+  // be connected when the bridge starts — and again on every bus (re)connect.
+  unsubscribeConnect = subscribeHubConnected(() => void refreshPeers());
+  void refreshPeers();
   // Renderer contract (preload's federationConversation): the sinceSeq argument
   // is accepted but unused — main's own folded-seq tracking decides full vs
   // incremental (see fetchRemoteConversation).
@@ -210,6 +260,8 @@ export function startFederationBridge(): void {
 export function stopFederationBridge(): void {
   unsubscribe?.();
   unsubscribe = null;
+  unsubscribeConnect?.();
+  unsubscribeConnect = null;
   peers.clear();
   conversationFetches.clear();
   ipcMain.removeHandler(IPC.FEDERATION_CONVERSATION);

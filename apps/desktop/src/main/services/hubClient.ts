@@ -60,6 +60,21 @@ export function subscribeHubEvents(listener: (ev: HubEvent) => void): () => void
   };
 }
 
+// Main-process connect listeners: fired on every successful (re)connect, after
+// the subscribe/register frames go out. federationBridge uses this to ask the
+// hub for already-connected peers — peer lifecycle events fire on transitions
+// only, and a hub restart (e.g. saving peers.json) drops this socket, so the
+// peer's connected event usually fires before we're back to hear it.
+const connectListeners = new Set<() => void>();
+
+/** Subscribe main-process code to bus (re)connects. Returns an unsubscribe. */
+export function subscribeHubConnected(listener: () => void): () => void {
+  connectListeners.add(listener);
+  return () => {
+    connectListeners.delete(listener);
+  };
+}
+
 let ws: WebSocket | null = null;
 let mainWindow: BrowserWindow | null = null;
 let stopped = false;
@@ -162,6 +177,15 @@ function connect(): void {
     console.log(
       `[hub-client] connected; subscribed ${TOPICS.join(',')}; provides ${Array.from(handlers.keys()).join(',') || '(none)'}`,
     );
+    // A listener throwing must not kill the open handler (same rule as the
+    // event listeners below).
+    for (const listener of connectListeners) {
+      try {
+        listener();
+      } catch (err) {
+        console.error('[hub-client] connect listener failed:', err);
+      }
+    }
   });
 
   ws.on('message', (raw: WebSocket.RawData) => {

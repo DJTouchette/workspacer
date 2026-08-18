@@ -484,7 +484,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   const hasGui = true; // every provider surfaces a structured GUI conversation
   // Only PTY claude + hybrid providers have a Term; stream claude AND headless
   // codex are GUI-only (there is no PTY to render or write keystrokes to).
-  const hasTerminal = (isClaude && !isStream) || (isHybrid && !managedStream);
+  // A remote (federated) session is GUI-only regardless of transport: its PTY
+  // lives on the peer machine — the local attach is a stream-less adoption
+  // (see CLAUDE_ATTACH in main's ipc.ts), so a terminal here would stay dark.
+  const hasTerminal =
+    !session?.hub && ((isClaude && !isStream) || (isHybrid && !managedStream));
   const showViewToggle = hasGui && hasTerminal; // both surfaces → show the toggle
   // Lock to the sole available surface when the provider doesn't offer both;
   // any auto-switch below then becomes a no-op.

@@ -161,7 +161,8 @@ export const ConversationEmptyState: React.FC<{
   // hold back the other.
   const [git, setGit] = useState<GitPeek | null>(null);
   useEffect(() => {
-    if (!cwd) return;
+    // A remote session's cwd names the peer's filesystem — no local git peek.
+    if (!cwd || hub) return;
     let live = true;
     // Optional + try/catch: absent on older preloads / web polyfill / test mocks.
     try {
@@ -191,7 +192,7 @@ export const ConversationEmptyState: React.FC<{
     return () => {
       live = false;
     };
-  }, [cwd]);
+  }, [cwd, hub]);
 
   // Handoff takeover: App.tsx pre-fills the composer with a fixed in-house
   // message pointing at the brief on disk.

@@ -28,8 +28,9 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { listeners, callHub, publishSnapshot, ipcHandlers } = vi.hoisted(() => ({
+const { listeners, connectListeners, callHub, publishSnapshot, ipcHandlers } = vi.hoisted(() => ({
   listeners: new Set<(ev: unknown) => void>(),
+  connectListeners: new Set<() => void>(),
   callHub: vi.fn(async (): Promise<unknown> => []),
   publishSnapshot: vi.fn(),
   ipcHandlers: new Map<string, (...args: unknown[]) => unknown>(),
@@ -50,6 +51,10 @@ vi.mock('./hubClient', () => ({
   subscribeHubEvents: (l: (ev: unknown) => void) => {
     listeners.add(l);
     return () => listeners.delete(l);
+  },
+  subscribeHubConnected: (l: () => void) => {
+    connectListeners.add(l);
+    return () => connectListeners.delete(l);
   },
   callHub: (...a: unknown[]) => callHub(...(a as [])),
 }));
@@ -567,5 +572,54 @@ describe('security — remote snapshots grant no local fs roots', () => {
     const snap = claudeSessionStore.getSnapshot(sid)!;
     expect(snap.cwd).toBe('/peer/proj');
     expect(snapshotGrantsFsRoot(snap)).toBe(false);
+  });
+});
+
+describe('proactive discovery — federation.peers on start and bus (re)connect', () => {
+  /** Fire the hub-connected listeners the bridge registered (what hubClient
+   *  does after every successful (re)connect) and settle the async refresh. */
+  async function reconnect(): Promise<void> {
+    for (const l of Array.from(connectListeners)) l();
+    await vi.advanceTimersByTimeAsync(50);
+  }
+
+  it('seeds an already-connected peer whose lifecycle event was never seen', async () => {
+    // The restart race: the hub restarted (peers.json save), the peer link
+    // came back before our socket did, and its agents are idle — so neither a
+    // hub.peer.connected event nor a stamped agent event will ever arrive.
+    const sid = uid('remote');
+    callHub.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'federation.peers') return [{ name: 'work', connected: true, lastSeen: 5 }];
+      if (args[0] === 'hub:work/sessions.snapshots') return [remoteSnap(sid)];
+      return [];
+    });
+    await reconnect();
+    expect(listFederationPeers()).toEqual([
+      expect.objectContaining({ name: 'work', connected: true }),
+    ]);
+    expect(claudeSessionStore.getSnapshot(sid)).not.toBeNull();
+    expect(claudeSessionStore.getSnapshot(sid)!.hub).toBe('work');
+  });
+
+  it('a peer reported down tombstones a believed-up hub (missed disconnect)', async () => {
+    const sid = uid('remote');
+    callHub.mockResolvedValue([remoteSnap(sid)]);
+    await emitAndFlush({ type: 'agent.snapshot', hub: 'work', data: remoteSnap(sid) });
+    expect(claudeSessionStore.getSnapshot(sid)!.hubOffline).toBe(false);
+
+    callHub.mockImplementation(async (...args: unknown[]) =>
+      args[0] === 'federation.peers' ? [{ name: 'work', connected: false, lastSeen: 123 }] : [],
+    );
+    await reconnect();
+    expect(listFederationPeers()).toEqual([
+      expect.objectContaining({ name: 'work', connected: false, lastSeen: 123 }),
+    ]);
+    expect(claudeSessionStore.getSnapshot(sid)!.hubOffline).toBe(true);
+  });
+
+  it('a hub with no peers configured (method unregistered) is quietly ignored', async () => {
+    callHub.mockRejectedValue(new Error('no handler for federation.peers'));
+    await reconnect();
+    expect(listFederationPeers()).toEqual([]);
   });
 });

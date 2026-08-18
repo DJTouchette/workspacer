@@ -118,10 +118,13 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
 
   // Branch of the effective cwd — fetched on cwd change and on a slow clock
   // (branches move on checkout/commit, not per-keystroke). Best-effort: not a
-  // repo / no bridge → no branch segment.
+  // repo / no bridge → no branch segment. A remote (federated) session's cwd
+  // names the PEER's filesystem — running local git against it can only fail
+  // (and log-spam), so the segment is simply omitted.
+  const remote = !!snapshot?.hub;
   const [branch, setBranch] = React.useState<string | null>(null);
   React.useEffect(() => {
-    if (!activeCwd) {
+    if (!activeCwd || remote) {
       setBranch(null);
       return;
     }
@@ -146,7 +149,7 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
       live = false;
       clearInterval(t);
     };
-  }, [activeCwd]);
+  }, [activeCwd, remote]);
   const {
     model,
     ctxPct,
