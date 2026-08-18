@@ -225,6 +225,10 @@ export interface ClaudeSessionSnapshot {
    *  inside a git worktree entered mid-session. Undefined while at home. */
   liveCwd?: string;
   ptyId: string;
+  /** Absolute path of Claude's transcript JSONL. Reveals which Claude config
+   *  root (login/account) serves the session — see lib/claudeAccount.ts.
+   *  Blanked ('') for remote (federated) sessions: it names the peer's fs. */
+  transcriptPath?: string;
 
   status: 'starting' | 'active' | 'ended';
   conversation: ConversationTurn[];

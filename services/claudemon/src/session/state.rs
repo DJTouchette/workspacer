@@ -549,6 +549,21 @@ impl SessionState {
         }
     }
 
+    /// The Claude config root serving this session, `""` = the daemon's
+    /// default. Derived from the transcript path (every hook carries it, and
+    /// the stream tailer records it too) — a profile spawn with its own
+    /// `CLAUDE_CONFIG_DIR` writes transcripts under that root, which is what
+    /// keys its account-usage reading. A session that hasn't produced a
+    /// transcript yet reads as the default root; it also has no status line
+    /// yet, so nothing wrong gets patched in the interim.
+    pub fn claude_config_root(&self) -> String {
+        self.transcript_path
+            .as_deref()
+            .and_then(super::account_usage::root_from_transcript)
+            .map(|r| super::account_usage::normalize_root(&r))
+            .unwrap_or_default()
+    }
+
     /// Whether this session should be hidden from the default session list. A
     /// session is archived once it's stopped (no process attached) and has sat
     /// idle past [`ARCHIVE_AFTER_SECONDS`]. Live or recently-active sessions are

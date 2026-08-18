@@ -330,14 +330,17 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
 /// 503 when the account can't be queried (no OAuth credentials, expired token,
 /// offline) — callers must be able to tell "unknown" from "no active window".
 async fn get_usage(State(store): State<SessionStore>) -> Response {
+    // The DEFAULT account's windows (root ""): this endpoint predates account
+    // profiles and its callers (keep-warm, plugins) mean the primary login.
     let now = time::OffsetDateTime::now_utc();
-    let usage = match store.account_usage().filter(|u| u.is_fresh(now)) {
+    let usage = match store.account_usage_for("").filter(|u| u.is_fresh(now)) {
         Some(u) => u,
         None => {
-            match crate::session::account_usage::fetch_account_usage(&reqwest::Client::new()).await
+            match crate::session::account_usage::fetch_account_usage(&reqwest::Client::new(), "")
+                .await
             {
                 Ok(u) => {
-                    store.set_account_usage(u.clone());
+                    store.set_account_usage("", u.clone());
                     u
                 }
                 Err(err) => {

@@ -279,11 +279,15 @@ pub struct SessionStore {
     /// `/signal {sigint}` routes here when present.
     managed_interrupts: Arc<DashMap<String, mpsc::UnboundedSender<()>>>,
     /// Latest account-level rate-limit reading from the OAuth usage endpoint
-    /// (see `session::account_usage`). Account-scoped, so one global copy;
-    /// patched into every Claude session's status line at ingest time — the
-    /// stream transport's `rate_limit_event` rarely carries `utilization`, so
-    /// without this a stream session never shows a usage percentage.
-    account_usage: Arc<std::sync::RwLock<Option<AccountUsage>>>,
+    /// (see `session::account_usage`), keyed by Claude config root (`""` = the
+    /// daemon's default). One entry per logged-in account: a profile spawn
+    /// with its own `CLAUDE_CONFIG_DIR` is a different login with different
+    /// windows, and a single global copy used to stamp the default account's
+    /// gauges onto its sessions. Patched into each Claude session's status
+    /// line at ingest time from ITS root's entry — the stream transport's
+    /// `rate_limit_event` rarely carries `utilization`, so without this a
+    /// stream session never shows a usage percentage.
+    account_usage: Arc<std::sync::RwLock<std::collections::HashMap<String, AccountUsage>>>,
     /// Session ids for daemon-owned keep-warm pings (see `daemon::heartbeat`).
     /// A warm ping runs a real headless `claude`, whose Claude Code hooks would
     /// otherwise register a stray session and surface it in the sidebar / recent
@@ -399,7 +403,7 @@ impl SessionStore {
             managed_answers: Arc::new(DashMap::new()),
             managed_permission_modes: Arc::new(DashMap::new()),
             managed_interrupts: Arc::new(DashMap::new()),
-            account_usage: Arc::new(std::sync::RwLock::new(None)),
+            account_usage: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             heartbeat_ids: Arc::new(DashSet::new()),
         }
     }
@@ -744,7 +748,8 @@ impl SessionStore {
             let mut entry = self.states.get_mut(&canonical)?;
             let session = entry.value_mut();
             if session.provider == "claude" {
-                self.patch_rate_limits(&mut status);
+                let root = session.claude_config_root();
+                self.patch_rate_limits(&mut status, &root);
             }
             session.status_line = Some(status.clone());
             session.updated_at = OffsetDateTime::now_utc();
@@ -758,15 +763,17 @@ impl SessionStore {
         Some(state)
     }
 
-    /// Overlay the account-level rate-limit reading onto a status line. A
-    /// fresh account reading wins field-wise over whatever the session's own
-    /// wire delivered: the windows are account-scoped so it can't disagree
-    /// except by being newer, and the stream wire's rare `utilization` (it only
-    /// rides warning events) would otherwise go stale and stick. Absent /
-    /// stale readings leave the line untouched.
-    fn patch_rate_limits(&self, status: &mut StatusLine) {
+    /// Overlay the account-level rate-limit reading for one config root onto a
+    /// status line. A fresh account reading wins field-wise over whatever the
+    /// session's own wire delivered: the windows are account-scoped so it
+    /// can't disagree except by being newer, and the stream wire's rare
+    /// `utilization` (it only rides warning events) would otherwise go stale
+    /// and stick. The root MUST be the session's own (`claude_config_root`) —
+    /// a different root is a different login whose windows are unrelated.
+    /// Absent / stale readings leave the line untouched.
+    fn patch_rate_limits(&self, status: &mut StatusLine, root: &str) {
         let guard = self.account_usage.read().unwrap();
-        let Some(u) = guard.as_ref() else { return };
+        let Some(u) = guard.get(root) else { return };
         if !u.is_fresh(OffsetDateTime::now_utc()) {
             return;
         }
@@ -799,16 +806,24 @@ impl SessionStore {
         }
     }
 
-    /// Store a new account-level usage reading and push the patched status
-    /// line to every live Claude session, so clients see the gauges move
-    /// without waiting for the session's next wire event. Deliberately does
-    /// NOT bump `updated_at` — a background poll is not session activity.
-    pub fn set_account_usage(&self, usage: AccountUsage) {
-        *self.account_usage.write().unwrap() = Some(usage);
+    /// Store a new account-level usage reading for one config root and push
+    /// the patched status line to that root's live Claude sessions — and ONLY
+    /// that root's: other roots are other logins whose gauges this reading
+    /// says nothing about. Deliberately does NOT bump `updated_at` — a
+    /// background poll is not session activity.
+    pub fn set_account_usage(&self, root: &str, usage: AccountUsage) {
+        self.account_usage
+            .write()
+            .unwrap()
+            .insert(root.to_string(), usage);
         let targets: Vec<(String, Option<String>, StatusLine)> = self
             .states
             .iter()
-            .filter(|e| e.provider == "claude" && e.mode != SessionMode::Stopped)
+            .filter(|e| {
+                e.provider == "claude"
+                    && e.mode != SessionMode::Stopped
+                    && e.claude_config_root() == root
+            })
             .map(|e| {
                 (
                     e.key().clone(),
@@ -818,7 +833,7 @@ impl SessionStore {
             })
             .collect();
         for (session_id, cwd, mut status_line) in targets {
-            self.patch_rate_limits(&mut status_line);
+            self.patch_rate_limits(&mut status_line, root);
             if let Some(mut entry) = self.states.get_mut(&session_id) {
                 entry.status_line = Some(status_line.clone());
             }
@@ -830,10 +845,11 @@ impl SessionStore {
         }
     }
 
-    /// Snapshot of the latest account-level usage reading, if any. May be
-    /// stale — callers gate on [`AccountUsage::is_fresh`] themselves.
-    pub fn account_usage(&self) -> Option<AccountUsage> {
-        self.account_usage.read().unwrap().clone()
+    /// Snapshot of the latest usage reading for one config root (`""` = the
+    /// default account), if any. May be stale — callers gate on
+    /// [`AccountUsage::is_fresh`] themselves.
+    pub fn account_usage_for(&self, root: &str) -> Option<AccountUsage> {
+        self.account_usage.read().unwrap().get(root).cloned()
     }
 
     /// Whether any non-stopped Claude session exists — the account-usage
@@ -842,6 +858,21 @@ impl SessionStore {
         self.states
             .iter()
             .any(|e| e.provider == "claude" && e.mode != SessionMode::Stopped)
+    }
+
+    /// Distinct Claude config roots among live Claude sessions (`""` = the
+    /// daemon's default) — one poll target per logged-in account. Empty while
+    /// idle, which is what keeps the poller quiet.
+    pub fn live_claude_config_roots(&self) -> Vec<String> {
+        let mut roots: Vec<String> = self
+            .states
+            .iter()
+            .filter(|e| e.provider == "claude" && e.mode != SessionMode::Stopped)
+            .map(|e| e.claude_config_root())
+            .collect();
+        roots.sort();
+        roots.dedup();
+        roots
     }
 
     pub fn list(&self) -> Vec<SessionState> {
@@ -1294,7 +1325,8 @@ impl SessionStore {
         let state = {
             let mut entry = self.states.get_mut(session_id)?;
             if entry.provider == "claude" {
-                self.patch_rate_limits(&mut status);
+                let root = entry.claude_config_root();
+                self.patch_rate_limits(&mut status, &root);
             }
             entry.status_line = Some(status.clone());
             entry.updated_at = OffsetDateTime::now_utc();
@@ -2840,7 +2872,7 @@ mod tests {
     fn account_usage_patches_claude_status_lines() {
         let store = SessionStore::new();
         store.register_managed("s1", "/tmp", "claude");
-        store.set_account_usage(account_reading(42.0));
+        store.set_account_usage("", account_reading(42.0));
 
         // set_account_usage alone already pushes a patched line, so a session
         // that never produced telemetry still gets gauges.
@@ -2871,7 +2903,7 @@ mod tests {
     fn account_usage_never_touches_other_providers() {
         let store = SessionStore::new();
         store.register_managed("c1", "/tmp", "codex");
-        store.set_account_usage(account_reading(42.0));
+        store.set_account_usage("", account_reading(42.0));
         assert!(store.get("c1").unwrap().status_line.is_none());
 
         let state = store
@@ -2888,12 +2920,63 @@ mod tests {
         store.register_managed("s1", "/tmp", "claude");
         let mut old = account_reading(42.0);
         old.fetched_at = OffsetDateTime::now_utc() - time::Duration::minutes(10);
-        *store.account_usage.write().unwrap() = Some(old);
+        store
+            .account_usage
+            .write()
+            .unwrap()
+            .insert(String::new(), old);
 
         let state = store
             .apply_status_line("s1", StatusLine::default())
             .unwrap();
         assert_eq!(state.status_line.unwrap().five_hour_pct, None);
+    }
+
+    // Two logged-in accounts = two config roots = two independent readings.
+    // A reading for one root must patch ONLY that root's sessions — the old
+    // single global copy stamped the default account's gauges onto every
+    // session, overwriting a second account's own wire truth.
+    #[test]
+    fn account_usage_is_scoped_to_the_sessions_config_root() {
+        let store = SessionStore::new();
+        store.register_managed("def", "/tmp", "claude"); // no transcript → default root
+        store.register_managed("work", "/tmp", "claude");
+        store
+            .states
+            .get_mut("work")
+            .unwrap()
+            .transcript_path = Some("/home/u/.claude/accounts/work/projects/p/t.jsonl".into());
+        assert_eq!(
+            store.live_claude_config_roots(),
+            vec![String::new(), "/home/u/.claude/accounts/work".to_string()],
+        );
+
+        // Default-account reading: patches the default session, not "work".
+        store.set_account_usage("", account_reading(42.0));
+        assert_eq!(
+            store.get("def").unwrap().status_line.unwrap().five_hour_pct,
+            Some(42.0),
+        );
+        assert!(store.get("work").unwrap().status_line.is_none());
+
+        // The second account's own reading lands on its session with its own
+        // numbers, leaving the default session's gauges alone.
+        store.set_account_usage("/home/u/.claude/accounts/work", account_reading(7.0));
+        assert_eq!(
+            store.get("work").unwrap().status_line.unwrap().five_hour_pct,
+            Some(7.0),
+        );
+        assert_eq!(
+            store.get("def").unwrap().status_line.unwrap().five_hour_pct,
+            Some(42.0),
+        );
+
+        // A wire line from the "work" session is patched from ITS root's
+        // reading, not the default's.
+        let state = store
+            .apply_status_line("work", StatusLine::default())
+            .unwrap();
+        assert_eq!(state.status_line.unwrap().five_hour_pct, Some(7.0));
     }
 
     // terminate_managed drops the managed prompt channel so the adapter's driver

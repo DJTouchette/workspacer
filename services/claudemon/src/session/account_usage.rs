@@ -10,9 +10,15 @@
 //! This module fills the gap from the account side: it fetches the same OAuth
 //! usage endpoint Claude Code's own `/usage` screen reads, using the CLI's
 //! stored credentials. The reading is *account*-scoped (the windows are shared
-//! by every session on the account), so the daemon keeps one global copy in
-//! [`SessionStore`] and patches it into each Claude session's status line —
-//! see `SessionStore::apply_status_line` / `set_account_usage`.
+//! by every session on the account) — but "the account" is per CLAUDE config
+//! root: a profile spawn with its own `CLAUDE_CONFIG_DIR` (workspacer's
+//! second-account profiles) is a different login with different windows. So
+//! the daemon keeps one reading PER config root in [`SessionStore`], keyed by
+//! the root each session's transcript path reveals, and patches each Claude
+//! session's status line from its own root's reading — see
+//! `SessionStore::apply_status_line` / `set_account_usage`. A single global
+//! copy here used to stamp the default account's gauges onto every session,
+//! overwriting a second account's own wire-reported windows.
 //!
 //! Cost: zero tokens. This is an account-metadata query, not an inference
 //! call. Failure is always soft — no credentials, an expired token, or a
@@ -113,33 +119,82 @@ fn parse_resets_at(v: &Value) -> Option<i64> {
         .map(|t| t.unix_timestamp())
 }
 
-/// The CLI's OAuth access token. Read from `~/.claude/.credentials.json`
-/// (Linux/Windows); on macOS the CLI keeps it in the login Keychain instead,
-/// so fall back to `security find-generic-password`.
+/// The daemon's default Claude config root (`~/.claude`, or the daemon's own
+/// `CLAUDE_CONFIG_DIR` override). Sessions running here use the empty-string
+/// root key.
+pub fn default_config_root() -> String {
+    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            return trimmed.trim_end_matches(['/', '\\']).to_string();
+        }
+    }
+    dirs_home()
+        .map(|h| h.join(".claude").to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// The Claude config root a transcript path reveals: Claude Code writes every
+/// transcript at `<CLAUDE_CONFIG_DIR>/projects/<slug>/<id>.jsonl`, so the root
+/// is everything before the last `/projects/` component (the slug is a single
+/// dash-flattened component and can never contain a separator). `None` when
+/// the path has no `projects` component.
+pub fn root_from_transcript(path: &str) -> Option<String> {
+    // Match either separator; byte offsets are shared because the replacement
+    // is 1:1, so we can slice the ORIGINAL string (Windows paths keep their
+    // backslashes for later joins).
+    let norm = path.replace('\\', "/");
+    let idx = norm.rfind("/projects/")?;
+    if idx == 0 {
+        return None; // "/projects/x.jsonl" — no root before it
+    }
+    Some(path[..idx].to_string())
+}
+
+/// Canonical root key: trailing separators trimmed, and the daemon's default
+/// root collapsed to `""` so sessions that predate their first hook (no
+/// transcript yet → unknown root → default) share a key with sessions whose
+/// transcript spells the default root out.
+pub fn normalize_root(root: &str) -> String {
+    let trimmed = root.trim().trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() || trimmed == default_config_root() {
+        String::new()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// The CLI's OAuth access token for one config root. `""` (the default root)
+/// reads `~/.claude/.credentials.json` with a macOS-Keychain fallback; a named
+/// root reads `<root>/.credentials.json` only — a second account's login on
+/// macOS may live in the Keychain under an unknown service entry, in which
+/// case this soft-fails and that account's gauges stay wire-fed.
 ///
 /// Never refreshes: rotation is the CLI's job (racing it with our own refresh
 /// could invalidate the CLI's stored token). An expired token is an `Err` and
 /// the poll simply retries next tick — the CLI refreshes it on its next turn.
-fn read_access_token() -> Result<String> {
-    match read_credentials_json() {
+fn read_access_token(root: &str) -> Result<String> {
+    match read_credentials_json(root) {
         Ok(creds) => token_from_credentials(&creds),
         Err(file_err) => {
             #[cfg(target_os = "macos")]
             {
-                if let Ok(out) = std::process::Command::new("security")
-                    .args([
-                        "find-generic-password",
-                        "-s",
-                        "Claude Code-credentials",
-                        "-w",
-                    ])
-                    .output()
-                {
-                    if out.status.success() {
-                        if let Ok(creds) = serde_json::from_slice::<Value>(
-                            String::from_utf8_lossy(&out.stdout).trim().as_bytes(),
-                        ) {
-                            return token_from_credentials(&creds);
+                if root.is_empty() {
+                    if let Ok(out) = std::process::Command::new("security")
+                        .args([
+                            "find-generic-password",
+                            "-s",
+                            "Claude Code-credentials",
+                            "-w",
+                        ])
+                        .output()
+                    {
+                        if out.status.success() {
+                            if let Ok(creds) = serde_json::from_slice::<Value>(
+                                String::from_utf8_lossy(&out.stdout).trim().as_bytes(),
+                            ) {
+                                return token_from_credentials(&creds);
+                            }
                         }
                     }
                 }
@@ -149,11 +204,15 @@ fn read_access_token() -> Result<String> {
     }
 }
 
-fn read_credentials_json() -> Result<Value> {
-    let path = dirs_home()
-        .context("no home directory")?
-        .join(".claude")
-        .join(".credentials.json");
+fn read_credentials_json(root: &str) -> Result<Value> {
+    let path = if root.is_empty() {
+        dirs_home()
+            .context("no home directory")?
+            .join(".claude")
+            .join(".credentials.json")
+    } else {
+        std::path::PathBuf::from(root).join(".credentials.json")
+    };
     let raw =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     serde_json::from_str(&raw).context("parsing credentials json")
@@ -185,9 +244,9 @@ fn token_from_credentials(creds: &Value) -> Result<String> {
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 
-/// One fetch: credentials → GET → parsed reading.
-pub async fn fetch_account_usage(client: &reqwest::Client) -> Result<AccountUsage> {
-    let token = read_access_token()?;
+/// One fetch for one config root: credentials → GET → parsed reading.
+pub async fn fetch_account_usage(client: &reqwest::Client, root: &str) -> Result<AccountUsage> {
+    let token = read_access_token(root)?;
     let resp = client
         .get(USAGE_URL)
         .bearer_auth(token)
@@ -208,9 +267,11 @@ const POLL_INTERVAL_SECS: u64 = 60;
 
 /// Background poll loop. Ticks every [`POLL_INTERVAL_SECS`]; skips the fetch
 /// entirely while no live Claude session exists, so an idle daemon touches
-/// neither the credentials file nor the network. Each successful reading goes
-/// through [`SessionStore::set_account_usage`], which patches and re-broadcasts
-/// every live Claude session's status line.
+/// neither the credentials file nor the network. One fetch per DISTINCT config
+/// root among the live sessions (in practice one, or one per logged-in
+/// account profile); each successful reading goes through
+/// [`SessionStore::set_account_usage`], which patches and re-broadcasts the
+/// status lines of that root's sessions only.
 ///
 /// [`SessionStore::set_account_usage`]: super::store::SessionStore::set_account_usage
 pub fn spawn_poller(store: super::store::SessionStore) {
@@ -220,15 +281,15 @@ pub fn spawn_poller(store: super::store::SessionStore) {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
-            if !store.has_live_claude_session() {
-                continue;
-            }
-            match fetch_account_usage(&client).await {
-                Ok(usage) => store.set_account_usage(usage),
-                // Soft-fail by design: no credentials (API-key or Bedrock
-                // setups), expired token, offline — the gauges just stay
-                // wire-fed until the next tick succeeds.
-                Err(err) => tracing::debug!(?err, "account usage poll failed"),
+            for root in store.live_claude_config_roots() {
+                match fetch_account_usage(&client, &root).await {
+                    Ok(usage) => store.set_account_usage(&root, usage),
+                    // Soft-fail by design: no credentials (API-key or Bedrock
+                    // setups, or a second macOS account whose login lives in
+                    // the Keychain), expired token, offline — that root's
+                    // gauges just stay wire-fed until a tick succeeds.
+                    Err(err) => tracing::debug!(?err, root, "account usage poll failed"),
+                }
             }
         }
     });
@@ -286,12 +347,46 @@ mod tests {
     #[tokio::test]
     #[ignore = "network + real Claude credentials"]
     async fn live_fetch_smoke() {
-        let u = fetch_account_usage(&reqwest::Client::new())
+        let u = fetch_account_usage(&reqwest::Client::new(), "")
             .await
             .expect("fetch should succeed");
         assert!(
             u.five_hour_pct.is_some(),
             "endpoint always reports a 5h utilization: {u:?}"
+        );
+    }
+
+    #[test]
+    fn transcript_paths_reveal_their_config_root() {
+        // Default-root shape (the root itself is NOT special-cased here).
+        assert_eq!(
+            root_from_transcript("/home/u/.claude/projects/-home-u-work/abc.jsonl").as_deref(),
+            Some("/home/u/.claude"),
+        );
+        // A second-account root nested inside the primary: the LAST /projects/
+        // wins, so a slug can't fake a root and a root containing "projects"
+        // earlier in the path stays intact.
+        assert_eq!(
+            root_from_transcript("/home/u/projects/.claude/accounts/work/projects/p/abc.jsonl")
+                .as_deref(),
+            Some("/home/u/projects/.claude/accounts/work"),
+        );
+        // Windows separators, original backslashes preserved in the slice.
+        assert_eq!(
+            root_from_transcript("C:\\Users\\u\\.claude\\accounts\\work\\projects\\p\\a.jsonl")
+                .as_deref(),
+            Some("C:\\Users\\u\\.claude\\accounts\\work"),
+        );
+        assert_eq!(root_from_transcript("/tmp/nothing-here.jsonl"), None);
+    }
+
+    #[test]
+    fn normalize_collapses_default_and_trims() {
+        assert_eq!(normalize_root(""), "");
+        assert_eq!(normalize_root(&default_config_root()), "");
+        assert_eq!(
+            normalize_root("/home/u/.claude/accounts/work/"),
+            "/home/u/.claude/accounts/work",
         );
     }
 

@@ -5,6 +5,7 @@ import { usePlugins } from '../hooks/usePlugins';
 import { Home, Star, Plus, RefreshCw } from '../components/icons';
 import { ProjectMark } from '../components/ProjectMark';
 import { favouriteProjects, recentProjects, setFavourite } from '../lib/projectRegistry';
+import { claudeAccountOf } from '../lib/claudeAccount';
 import type { ProjectIdentity } from '../hooks/useConfig';
 import { AgentLogo } from '../components/agentLogos';
 import type { AgentProvider } from '../types/pane';
@@ -65,6 +66,7 @@ interface Snap {
   provider?: string;
   ambientState?: string;
   cwd?: string;
+  transcriptPath?: string;
   usage?: { costUSD?: number; contextTokens?: number } | null;
   statusLine?: {
     costUSD?: number;
@@ -122,22 +124,29 @@ const RATE_LIMIT_PROVIDERS: Array<{ id: string; title: string }> = [
 
 /**
  * The 5h/7d rate-limit windows are account-global (identical across every
- * session of one provider), so we surface them once per provider. Pick the
- * freshest statusLine that carries them — newest `receivedAt` wins — and fall
- * back to the last reading seen when the current snapshots carry none (the
- * reset countdowns stay honest: they render from absolute epochs). Renders
- * nothing until the provider has ever reported a window.
+ * session of one ACCOUNT — for Claude that's one login, i.e. one config
+ * root, not one provider: a second-account profile's sessions report their
+ * own windows and must get their own card). Pick the freshest statusLine
+ * that carries them — newest `receivedAt` wins — and fall back to the last
+ * reading seen when the current snapshots carry none (the reset countdowns
+ * stay honest: they render from absolute epochs). Renders nothing until the
+ * provider has ever reported a window.
  */
-const RateLimitCard: React.FC<{ snaps: Snap[]; provider: string; title: string }> = ({
-  snaps,
-  provider,
-  title,
-}) => {
+const RateLimitCard: React.FC<{
+  snaps: Snap[];
+  provider: string;
+  title: string;
+  /** Claude account group (lib/claudeAccount) this card covers; '' = default.
+   *  Undefined = no account filtering (non-Claude providers). */
+  account?: string;
+}> = ({ snaps, provider, title, account }) => {
+  const cacheKey = account === undefined ? provider : `${provider}:${account}`;
   let best: NonNullable<Snap['statusLine']> | null = null;
   let bestTs = -1;
   for (const s of snaps) {
     // Old snapshots may omit provider — those are Claude hook sessions.
     if ((s.provider ?? 'claude') !== provider) continue;
+    if (account !== undefined && claudeAccountOf(s.transcriptPath) !== account) continue;
     const sl = s.statusLine;
     if (
       !sl ||
@@ -155,8 +164,8 @@ const RateLimitCard: React.FC<{ snaps: Snap[]; provider: string; title: string }
       best = sl;
     }
   }
-  const cached = lastRateLimit[provider];
-  if (best && bestTs >= (cached?.ts ?? -1)) lastRateLimit[provider] = { sl: best, ts: bestTs };
+  const cached = lastRateLimit[cacheKey];
+  if (best && bestTs >= (cached?.ts ?? -1)) lastRateLimit[cacheKey] = { sl: best, ts: bestTs };
   else if (!best && cached) best = cached.sl;
   if (!best) return null;
 
@@ -696,12 +705,36 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
               clickTitle="Open the Inbox"
             />
             <Stat label="Total cost" value={fmtUSD(totalCost)} sub="this session" />
-            {/* Account-wide 5h/7d rate-limit windows, one card per provider
-                account (scanned across all sessions, not just workspacer's —
-                they're global to each account). */}
-            {RATE_LIMIT_PROVIDERS.map((p) => (
-              <RateLimitCard key={p.id} snaps={snaps} provider={p.id} title={p.title} />
-            ))}
+            {/* Account-wide 5h/7d rate-limit windows, one card per ACCOUNT
+                (scanned across all sessions, not just workspacer's — they're
+                global to each account). For Claude that means one card per
+                login: a second-account profile's sessions group by config
+                root, each with its own windows. */}
+            {RATE_LIMIT_PROVIDERS.map((p) => {
+              if (p.id !== 'claude') {
+                return <RateLimitCard key={p.id} snaps={snaps} provider={p.id} title={p.title} />;
+              }
+              // Cached groups keep their card after the last session of an
+              // account ends — same eviction-survival as the provider cache.
+              const accounts = new Set<string>(['']);
+              for (const s of snaps) {
+                if ((s.provider ?? 'claude') === 'claude') {
+                  accounts.add(claudeAccountOf(s.transcriptPath));
+                }
+              }
+              for (const k of Object.keys(lastRateLimit)) {
+                if (k.startsWith('claude:')) accounts.add(k.slice('claude:'.length));
+              }
+              return [...accounts].sort().map((a) => (
+                <RateLimitCard
+                  key={`claude:${a}`}
+                  snaps={snaps}
+                  provider="claude"
+                  title={a ? `Claude usage — ${a}` : p.title}
+                  account={a}
+                />
+              ));
+            })}
           </div>
 
           {plugins.length > 0 && (
