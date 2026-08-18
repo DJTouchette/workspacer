@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Check, Copy, Eye, EyeOff, KeyRound, Link2 } from 'lucide-react';
+import { Check, Copy, Eye, EyeOff, KeyRound } from 'lucide-react';
 import type { RemoteTokenRecord, RemoteTokenScope } from '../../../main/shared/ipcTypes';
 
 /**
@@ -139,14 +139,18 @@ const LinkedMachinesSection: React.FC<{
     : (config || []).map((p) => ({ ...p, live: liveByName.get(p.name) }));
 
   return (
-    <div
-      style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid var(--wks-border-subtle)' }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-        <Link2 size={14} color="var(--wks-text-primary)" />
-        <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--wks-text-primary)' }}>
-          Linked machines
-        </div>
+    <div>
+      {/* Rendered as the Remote Control dialog's Machines tab — the tab strip
+          is the header, so no section border or icon of its own. */}
+      <div
+        style={{
+          fontSize: '0.78rem',
+          fontWeight: 600,
+          color: 'var(--wks-text-primary)',
+          marginBottom: 4,
+        }}
+      >
+        Linked machines
       </div>
       <div
         style={{

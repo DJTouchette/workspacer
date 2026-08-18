@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Smartphone, Copy, Check, Eye, EyeOff } from 'lucide-react';
+import { Smartphone, Copy, Check, Eye, EyeOff, Link2, Server } from 'lucide-react';
 import type { RemoteTokenRecord, RemoteTokenScope } from '../../../main/shared/ipcTypes';
 import LinkedMachinesSection from './LinkedMachinesSection';
 
@@ -79,12 +79,20 @@ function withToken(url: string, token: string): string {
   }
 }
 
+/** The dialog's feature tabs. It accreted three distinct jobs over time —
+ *  phone pairing, PC↔PC federation, and running this app as a client of
+ *  another server — which used to stack into one long scroll. */
+type RemoteTab = 'phone' | 'machines' | 'server';
+
 /**
- * Surfaces the hub's remote-sharing connection details so you can drive agents
- * from a phone. When sharing is on it shows a scannable QR of the token-bearing
- * URL (the fast path — point the camera, tap, done) plus copy buttons for the
- * URL and token. When it's off it explains how to turn it on. The data comes
- * straight from `getRemoteShareInfo()` over IPC; nothing is sent anywhere.
+ * Remote Control: everything about reaching this workspacer from elsewhere,
+ * one tab per feature. "Phone" surfaces the hub's remote-sharing details so
+ * you can drive agents from a phone — a scannable QR of the token-bearing URL
+ * (the fast path — point the camera, tap, done) plus copy buttons, or how to
+ * turn sharing on when it's off. "Machines" is the federation peers editor.
+ * "Server" points this desktop at an external `workspacer serve`. The data
+ * comes straight from `getRemoteShareInfo()` over IPC; nothing is sent
+ * anywhere.
  */
 const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [info, setInfo] = useState<RemoteInfo | null>(null);
@@ -92,6 +100,45 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [copied, setCopied] = useState<string | null>(null);
   const [showToken, setShowToken] = useState(false);
   const [toggling, setToggling] = useState(false);
+  const [tab, setTab] = useState<RemoteTab>('phone');
+
+  // Client mode: this app IS the remote — no local hub runs, so phone sharing
+  // and machine links have nothing to act on. Only the Server tab remains
+  // (showing the connected state), and it's auto-selected.
+  const isClient = !!info?.remoteClient;
+  useEffect(() => {
+    if (isClient) setTab('server');
+  }, [isClient]);
+  // The web mirror can't persist the client-mode setting (no setRemoteServer
+  // on its preload polyfill), so it doesn't get the tab either.
+  const canServer = !!window.electronAPI.setRemoteServer;
+  const tabs: Array<{ id: RemoteTab; label: string; icon: React.ReactNode; hint: string }> =
+    isClient
+      ? [{ id: 'server', label: 'Server', icon: <Server size={12} />, hint: 'Connected server' }]
+      : [
+          {
+            id: 'phone',
+            label: 'Phone',
+            icon: <Smartphone size={12} />,
+            hint: 'Pair a phone to approve, answer, and chat',
+          },
+          {
+            id: 'machines',
+            label: 'Machines',
+            icon: <Link2 size={12} />,
+            hint: "Link another PC's hub into this fleet",
+          },
+          ...(canServer
+            ? [
+                {
+                  id: 'server' as const,
+                  label: 'Server',
+                  icon: <Server size={12} />,
+                  hint: 'Run this app against another Workspacer server',
+                },
+              ]
+            : []),
+        ];
 
   // Flip remote sharing on/off. Main persists the choice and restarts the hub
   // (re-binding loopback ⇄ tailnet), then returns fresh share info.
@@ -149,7 +196,7 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       <div
         onMouseDown={(e) => e.stopPropagation()}
         style={{
-          width: 440,
+          width: 660,
           maxWidth: '92vw',
           maxHeight: '90vh',
           overflowY: 'auto',
@@ -167,7 +214,7 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
           <Smartphone size={16} color="var(--wks-text-primary)" />
           <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--wks-text-primary)' }}>
-            Phone access
+            Remote Control
           </div>
         </div>
         <div
@@ -175,11 +222,11 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             fontSize: '0.7rem',
             color: 'var(--wks-text-muted)',
             lineHeight: 1.5,
-            marginBottom: 16,
+            marginBottom: 14,
           }}
         >
-          Share this desktop with your phone so you can approve prompts, answer questions, and send
-          quick messages while agents keep running here.
+          Drive this desktop from your phone, link other machines into one fleet, or run this app
+          against another Workspacer server.
         </div>
 
         {loading && (
@@ -192,9 +239,28 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           </div>
         )}
 
-        {/* Client mode: this app IS the remote — the local sharing controls are
-            moot (no local hub is running), so show only the connection state. */}
-        {!loading && info && !info.remoteClient && (
+        {/* Feature tabs. A single remaining tab (client mode) needs no strip. */}
+        {!loading && info && tabs.length > 1 && (
+          <div style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
+            {tabs.map((t) => (
+              <ModeTab key={t.id} active={tab === t.id} onClick={() => setTab(t.id)} title={t.hint}>
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    justifyContent: 'center',
+                  }}
+                >
+                  {t.icon}
+                  {t.label}
+                </span>
+              </ModeTab>
+            ))}
+          </div>
+        )}
+
+        {!loading && info && tab === 'phone' && !info.remoteClient && (
           <>
             {info.hubAdopted && <AdoptedNote claudemon={!!info.claudemonAdopted} />}
             {!info.enabled && <DisabledState busy={toggling} onStart={() => toggleShare(true)} />}
@@ -213,15 +279,14 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           </>
         )}
 
-        {/* Federation: PC↔PC links (peers.json). Hidden in remote-client mode —
-            there the local hub isn't running, so there's nothing to link. In
-            the web mirror federationPeersConfig() resolves null and the
-            section renders read-only from live peer status. */}
-        {!loading && !info?.remoteClient && (
+        {/* Federation: PC↔PC links (peers.json). In the web mirror
+            federationPeersConfig() resolves null and the tab renders
+            read-only from live peer status. */}
+        {!loading && info && tab === 'machines' && !info.remoteClient && (
           <LinkedMachinesSection busUrl={info?.busUrl} sharingOn={!!info?.enabled} />
         )}
 
-        {!loading && info && <RemoteClientSection info={info} />}
+        {!loading && info && tab === 'server' && <RemoteClientSection info={info} />}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20 }}>
           <button onClick={onClose} style={secondaryBtnStyle}>
@@ -318,31 +383,12 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
 
   const connected = info.remoteClient;
   return (
-    <details
-      style={{
-        marginTop: 18,
-        paddingTop: 14,
-        borderTop: '1px solid var(--wks-border-subtle)',
-      }}
-      open={!!connected}
-    >
-      <summary
-        style={{
-          cursor: 'pointer',
-          fontSize: '0.7rem',
-          fontWeight: 700,
-          color: connected ? 'var(--wks-accent)' : 'var(--wks-text-muted)',
-          listStylePosition: 'inside',
-        }}
-      >
-        Advanced: connect this desktop to another Workspacer server
-      </summary>
+    <div>
       <div
         style={{
           fontSize: '0.78rem',
           fontWeight: 600,
-          color: 'var(--wks-text-primary)',
-          marginTop: 12,
+          color: connected ? 'var(--wks-accent)' : 'var(--wks-text-primary)',
           marginBottom: 4,
         }}
       >
@@ -377,7 +423,7 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
             }}
           >
             Point this desktop app at <code style={inlineCode}>workspacer serve</code> on another
-            machine. This is different from phone sharing above: after restart, this window becomes
+            machine. This is different from Phone sharing: after restart, this window becomes
             a client and agents run on the server you enter here.
           </div>
           <input
@@ -407,7 +453,7 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
           </button>
         </>
       )}
-    </details>
+    </div>
   );
 }
 
@@ -825,152 +871,160 @@ function EnabledState({
     <div>
       <StatusPill on={true} />
 
-      {canManageTokens && (
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-muted)', marginBottom: 6 }}>
-            Pairing scope
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {SCOPE_OPTIONS.map((opt) => (
-              <ScopeButton
-                key={opt.scope}
-                active={scope === opt.scope}
-                option={opt}
-                onClick={() => setScope(opt.scope)}
+      {/* The wide dialog earns a two-column layout: the QR (the fast path)
+          keeps the left column to itself; everything you'd choose or copy —
+          scope, client, URL, token — sits beside it instead of below it. */}
+      <div style={{ display: 'flex', gap: 18, alignItems: 'flex-start', marginBottom: 6 }}>
+        <div style={{ flexShrink: 0, width: 212 }}>
+          {/* QR — white quiet-zone box so it scans on any theme. */}
+          {activeUrl ? (
+            <div
+              style={{
+                background: '#fff',
+                padding: 12,
+                borderRadius: 'var(--wks-radius-md)',
+                lineHeight: 0,
+              }}
+            >
+              <QRCodeSVG
+                value={activeUrl}
+                size={188}
+                level="M"
+                marginSize={0}
+                bgColor="#ffffff"
+                fgColor="#000000"
               />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Full app vs phone client. The full app is the real renderer served at
-          /app; phone is the mobile-first single-page client served at /m. */}
-      {fullAppAvailable ? (
-        <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
-          <ModeTab
-            active={mode === 'app'}
-            onClick={() => setMode('app')}
-            title="The full Workspacer UI, in the browser"
-          >
-            Full app
-          </ModeTab>
-          <ModeTab
-            active={mode === 'lite'}
-            onClick={() => setMode('lite')}
-            title="Phone client: approvals, questions, and quick chat"
-          >
-            Phone
-          </ModeTab>
-        </div>
-      ) : hasApp ? (
-        <div
-          style={{
-            fontSize: '0.69rem',
-            color: 'var(--wks-text-faint)',
-            marginBottom: 12,
-            lineHeight: 1.5,
-          }}
-        >
-          Showing the phone client. The full desktop web UI is a full-control surface; switch the
-          pairing scope to Full control to share it.
-        </div>
-      ) : (
-        <div
-          style={{
-            fontSize: '0.69rem',
-            color: 'var(--wks-text-faint)',
-            marginBottom: 12,
-            lineHeight: 1.5,
-          }}
-        >
-          Showing the phone client. The full desktop web UI is available when the web bundle is
-          built and the pairing scope is Full control.
-        </div>
-      )}
-
-      {/* QR — the fast path. White quiet-zone box so it scans on any theme. */}
-      {activeUrl ? (
-        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 14 }}>
+            </div>
+          ) : (
+            <div
+              style={{
+                height: 212,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                border: '1px dashed var(--wks-border-input)',
+                borderRadius: 'var(--wks-radius-md)',
+                color: 'var(--wks-text-faint)',
+                fontSize: '0.7rem',
+              }}
+            >
+              Preparing pairing token...
+            </div>
+          )}
           <div
             style={{
-              background: '#fff',
-              padding: 12,
-              borderRadius: 'var(--wks-radius-md)',
-              lineHeight: 0,
+              textAlign: 'center',
+              fontSize: '0.7rem',
+              color: 'var(--wks-text-muted)',
+              marginTop: 8,
             }}
           >
-            <QRCodeSVG
-              value={activeUrl}
-              size={188}
-              level="M"
-              marginSize={0}
-              bgColor="#ffffff"
-              fgColor="#000000"
-            />
+            {activeUrl
+              ? `Scan with your phone's camera to open ${
+                  mode === 'app' && fullAppAvailable ? 'the full app' : 'the phone client'
+                }.`
+              : 'Waiting for a scoped pairing token.'}
           </div>
         </div>
-      ) : (
-        <div
-          style={{
-            height: 212,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginBottom: 14,
-            border: '1px dashed var(--wks-border-input)',
-            borderRadius: 'var(--wks-radius-md)',
-            color: 'var(--wks-text-faint)',
-            fontSize: '0.7rem',
-          }}
-        >
-          Preparing pairing token...
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {canManageTokens && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-muted)', marginBottom: 6 }}>
+                Pairing scope
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {SCOPE_OPTIONS.map((opt) => (
+                  <ScopeButton
+                    key={opt.scope}
+                    active={scope === opt.scope}
+                    option={opt}
+                    onClick={() => setScope(opt.scope)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Full app vs phone client. The full app is the real renderer served
+              at /app; phone is the mobile-first single-page client served at /m. */}
+          {fullAppAvailable ? (
+            <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
+              <ModeTab
+                active={mode === 'app'}
+                onClick={() => setMode('app')}
+                title="The full Workspacer UI, in the browser"
+              >
+                Full app
+              </ModeTab>
+              <ModeTab
+                active={mode === 'lite'}
+                onClick={() => setMode('lite')}
+                title="Phone client: approvals, questions, and quick chat"
+              >
+                Phone
+              </ModeTab>
+            </div>
+          ) : hasApp ? (
+            <div
+              style={{
+                fontSize: '0.69rem',
+                color: 'var(--wks-text-faint)',
+                marginBottom: 12,
+                lineHeight: 1.5,
+              }}
+            >
+              Showing the phone client. The full desktop web UI is a full-control surface; switch
+              the pairing scope to Full control to share it.
+            </div>
+          ) : (
+            <div
+              style={{
+                fontSize: '0.69rem',
+                color: 'var(--wks-text-faint)',
+                marginBottom: 12,
+                lineHeight: 1.5,
+              }}
+            >
+              Showing the phone client. The full desktop web UI is available when the web bundle
+              is built and the pairing scope is Full control.
+            </div>
+          )}
+
+          {activeUrl && (
+            <>
+              <CopyRow
+                label="Phone URL"
+                value={activeUrl}
+                display={activeUrl}
+                copied={copied === 'url'}
+                onCopy={() => onCopy('url', activeUrl)}
+              />
+
+              <CopyRow
+                label="Token"
+                value={activeToken}
+                display={
+                  showToken ? activeToken : '•'.repeat(Math.min(24, activeToken.length || 8))
+                }
+                copied={copied === 'token'}
+                onCopy={() => onCopy('token', activeToken)}
+                extra={
+                  <button
+                    onClick={onToggleToken}
+                    title={showToken ? 'Hide token' : 'Show token'}
+                    style={iconBtnStyle}
+                  >
+                    {showToken ? <EyeOff size={13} /> : <Eye size={13} />}
+                  </button>
+                }
+              />
+            </>
+          )}
         </div>
-      )}
-      <div
-        style={{
-          textAlign: 'center',
-          fontSize: '0.7rem',
-          color: 'var(--wks-text-muted)',
-          marginBottom: 16,
-        }}
-      >
-        {activeUrl
-          ? `Scan with your phone's camera to open ${
-              mode === 'app' && fullAppAvailable ? 'the full app' : 'the phone client'
-            }.`
-          : 'Waiting for a scoped pairing token.'}
       </div>
 
       <TailscaleHttps ts={ts} on={httpsOn} busy={tsBusy} msg={tsMsg} onToggle={toggleServe} />
-
-      {activeUrl && (
-        <>
-          <CopyRow
-            label="Phone URL"
-            value={activeUrl}
-            display={activeUrl}
-            copied={copied === 'url'}
-            onCopy={() => onCopy('url', activeUrl)}
-          />
-
-          <CopyRow
-            label="Token"
-            value={activeToken}
-            display={showToken ? activeToken : '•'.repeat(Math.min(24, activeToken.length || 8))}
-            copied={copied === 'token'}
-            onCopy={() => onCopy('token', activeToken)}
-            extra={
-              <button
-                onClick={onToggleToken}
-                title={showToken ? 'Hide token' : 'Show token'}
-                style={iconBtnStyle}
-              >
-                {showToken ? <EyeOff size={13} /> : <Eye size={13} />}
-              </button>
-            }
-          />
-        </>
-      )}
 
       <div
         style={{
