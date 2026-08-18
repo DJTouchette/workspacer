@@ -11,7 +11,6 @@ import {
 } from 'lucide-react';
 import { BrandMark, Wordmark } from './Brand';
 import { AgentWorkspace } from '../types/pane';
-import type { RecentAgentSession } from '../../../main/shared/ipcTypes';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from '../types/claudeSession';
 import type { AttentionItem, AttentionKind } from '../types/attention';
 import { deriveSessionStats, fmtTokens, fmtUSD, ctxColor, planProgress } from '../lib/sessionStats';
@@ -276,9 +275,6 @@ interface SideBarProps {
   width?: number;
   /** Brief flash on the header when "next attention" found nothing to jump to. */
   noAttentionFlash?: boolean;
-  /** Resumable daemon sessions not in the layout — drives the History footer
-   *  row's count (the list itself lives in the Sessions pane). */
-  recentSessions?: RecentAgentSession[];
   /** Open the Sessions pane (session history browser). */
   onOpenHistory?: () => void;
   /** Open the Settings pane — the quiet footer row beside History. */
@@ -303,7 +299,6 @@ const SideBar: React.FC<SideBarProps> = ({
   noAttentionFlash,
   collapsed,
   width,
-  recentSessions,
   onOpenHistory,
   onOpenSettings,
 }) => {
@@ -1328,7 +1323,6 @@ const SideBar: React.FC<SideBarProps> = ({
               rows.push(renderAgentCard(child, true));
             }
           }
-          const historyCount = recentSessions?.length ?? 0;
           return (
             <>
               {rows}
@@ -1410,7 +1404,7 @@ const SideBar: React.FC<SideBarProps> = ({
                   live cards always keep the top. The border belongs to the
                   strip, not the rows, so one rule separates it from the feed
                   however many rows are showing. */}
-              {(onOpenSettings || (onOpenHistory && historyCount > 0)) && (
+              {(onOpenSettings || onOpenHistory) && (
                 <div
                   style={{
                     margin: 'auto 12px 0',
@@ -1418,12 +1412,16 @@ const SideBar: React.FC<SideBarProps> = ({
                     borderTop: '1px solid var(--wks-border-subtle)',
                   }}
                 >
-                  {onOpenHistory && historyCount > 0 && (
+                  {/* Always offered, like Settings: the pane it opens lists
+                      per-project transcript sessions, which exist regardless
+                      of what the daemon still holds — so a daemon-row count
+                      here would routinely disagree with what the pane shows,
+                      and an empty daemon must not hide the door. */}
+                  {onOpenHistory && (
                     <FooterRow
                       icon={<History size={12} strokeWidth={1.75} style={{ flexShrink: 0 }} />}
                       label="History"
-                      title="Browse and resume past sessions"
-                      trailing={<span>{historyCount}</span>}
+                      title="Browse and resume past sessions in your projects"
                       onClick={onOpenHistory}
                     />
                   )}

@@ -114,6 +114,9 @@ interface ScrollContainerProps {
   /** Resumable daemon sessions + resume — forwarded to the Sessions pane. */
   recentSessions?: RecentAgentSession[];
   onResumeRecentSession?: (session: RecentAgentSession) => void;
+  /** Session ids the layout holds or the daemon reports live — the Sessions
+   *  pane hides its transcript-sourced rows for these. */
+  historyExcludeIds?: string[];
 }
 
 export interface ScrollContainerRef {
@@ -159,6 +162,8 @@ interface PaneCallbacks {
   /** Resumable daemon sessions + resume — for the Sessions pane. */
   recentSessions?: RecentAgentSession[];
   onResumeRecentSession?: (session: RecentAgentSession) => void;
+  /** In-layout / daemon-live session ids the Sessions pane must not re-offer. */
+  historyExcludeIds?: string[];
 }
 
 function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneCallbacks) {
@@ -362,6 +367,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
         <Suspense fallback={<PaneFallback />}>
           <SessionsPane
             sessions={callbacks.recentSessions ?? []}
+            excludeSessionIds={callbacks.historyExcludeIds}
             onResume={callbacks.onResumeRecentSession}
           />
         </Suspense>
@@ -568,6 +574,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       onJumpToAgent,
       recentSessions,
       onResumeRecentSession,
+      historyExcludeIds,
     },
     ref,
   ) => {
@@ -736,6 +743,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
             ownerAgentId,
             recentSessions,
             onResumeRecentSession,
+            historyExcludeIds,
           };
 
           const cardStyle: React.CSSProperties = {

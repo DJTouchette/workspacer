@@ -71,7 +71,11 @@ import { useUiMode } from './hooks/useUiMode';
 import { useTheme } from './hooks/useTheme';
 import { useSessionLifecycle } from './hooks/useSessionLifecycle';
 import { useRecentSessions } from './hooks/useRecentSessions';
-import { filterResumableSessions, recentSessionLabel } from './lib/recentSessionFilter';
+import {
+  filterResumableSessions,
+  layoutSessionIds,
+  recentSessionLabel,
+} from './lib/recentSessionFilter';
 import type { RecentAgentSession } from '../../main/shared/ipcTypes';
 import { SESSION_SCHEMA_VERSION } from '../../main/shared/sessionSchema';
 import { usePluginHotkeys } from './hooks/usePluginHotkeys';
@@ -211,6 +215,9 @@ interface AgentWorkspaceViewProps {
   /** Resumable daemon sessions — for the Sessions pane. Changes only on the
    *  recent-sessions poll/burst, so the memo still holds between ticks. */
   recentSessions: RecentAgentSession[];
+  /** Session ids the Sessions pane must not offer as transcript rows: already
+   *  in the layout, or live under another client per the daemon. */
+  historyExcludeIds: string[];
   handlers: AgentViewHandlers;
 }
 
@@ -236,6 +243,7 @@ const AgentWorkspaceView = memo(function AgentWorkspaceView({
   appCwd,
   allAgents,
   recentSessions,
+  historyExcludeIds,
   handlers,
 }: AgentWorkspaceViewProps) {
   return (
@@ -268,6 +276,7 @@ const AgentWorkspaceView = memo(function AgentWorkspaceView({
           onJumpToAgent={handlers.onJumpToAgent}
           recentSessions={recentSessions}
           onResumeRecentSession={handlers.onResumeRecentSession}
+          historyExcludeIds={historyExcludeIds}
         />
       </ErrorBoundary>
     </div>
@@ -509,6 +518,18 @@ function App() {
     () => filterResumableSessions(allDaemonSessions, agents, ptyMapping, Infinity),
     [allDaemonSessions, agents, ptyMapping],
   );
+  // Ids the Sessions pane's transcript-sourced rows must skip: sessions the
+  // layout already represents (their card is the resume affordance), plus
+  // anything the daemon reports as not-stopped — resuming a session that's
+  // live under another client would double-drive it. The daemon rows in
+  // `recentSessions` are already filtered; transcripts know none of this.
+  const historyExcludeIds = useMemo(() => {
+    const ids = layoutSessionIds(agents, ptyMapping);
+    for (const s of allDaemonSessions) {
+      if (s.mode !== 'stopped') ids.add(s.sessionId);
+    }
+    return [...ids];
+  }, [allDaemonSessions, agents, ptyMapping]);
   const handleResumeRecentSession = useCallback(
     (s: RecentAgentSession) => {
       const provider: AgentProvider = (['claude', 'codex', 'opencode', 'pi'] as const).includes(
@@ -2088,7 +2109,6 @@ function App() {
                   noAttentionFlash={noAttentionFlash}
                   collapsed={!sidebarOverlay && railShown}
                   width={sidebarOverlay ? undefined : sidebarWidth}
-                  recentSessions={recentSessions}
                   onOpenHistory={openSessionsPane}
                   onOpenSettings={openSettings}
                 />
@@ -2181,6 +2201,7 @@ function App() {
                     appCwd={appCwd}
                     allAgents={agents}
                     recentSessions={recentSessions}
+                    historyExcludeIds={historyExcludeIds}
                     handlers={agentViewHandlers}
                   />
                 ))

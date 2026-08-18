@@ -21,12 +21,13 @@ export function recentSessionLabel(s: RecentAgentSession): string {
   return explicitName || s.title || s.name || dirName || s.sessionId.slice(0, 8);
 }
 
-export function filterResumableSessions(
-  sessions: RecentAgentSession[],
+/** Every session id the current layout already represents — an agent card
+ *  (live or stopped-with-respawn) is the affordance for its own session, so
+ *  anything listed here must not also appear as a resumable history row. */
+export function layoutSessionIds(
   agents: AgentWorkspace[],
   ptyMapping: Record<string, string>,
-  limit = 20,
-): RecentAgentSession[] {
+): Set<string> {
   const inLayout = new Set<string>(Object.values(ptyMapping));
   for (const a of agents) {
     if (a.sessionId) inLayout.add(a.sessionId);
@@ -38,6 +39,16 @@ export function filterResumableSessions(
       }
     }
   }
+  return inLayout;
+}
+
+export function filterResumableSessions(
+  sessions: RecentAgentSession[],
+  agents: AgentWorkspace[],
+  ptyMapping: Record<string, string>,
+  limit = 20,
+): RecentAgentSession[] {
+  const inLayout = layoutSessionIds(agents, ptyMapping);
   return sessions
     .filter((s) => s.mode === 'stopped' && s.cwd && !inLayout.has(s.sessionId))
     .slice(0, limit);

@@ -336,7 +336,6 @@ function Harness() {
         onOpenRemote={noop}
         viewLevel="fleet"
         collapsed
-        recentSessions={[]}
         onOpenHistory={noop}
       />
       <NavBar

@@ -4,10 +4,12 @@ import React from 'react';
 import { MODE_MANIFEST, type UiMode } from '../../src/lib/uiMode';
 
 /**
- * The sidebar's bottom strip: the quiet ways out of the live feed. History has
- * always been there; Settings joined it, so what's worth pinning down is that
- * the strip degrades cleanly — Settings must still be reachable on a fresh
- * install with no past sessions, when the History row isn't rendered at all.
+ * The sidebar's bottom strip: the quiet ways out of the live feed. History
+ * and Settings are both standing rows — History opens the project-grouped
+ * transcript browser, whose contents don't depend on what the daemon still
+ * holds, so it must stay reachable even with zero daemon sessions (it used to
+ * hide itself on a daemon count of 0, which orphaned transcript-only
+ * history). The strip renders only when the host wires at least one row.
  *
  * Scaffolding mirrors sidebarFeedFilter.test.tsx.
  */
@@ -69,17 +71,10 @@ const snapshotBySession: Record<string, any> = {
   },
 };
 
-/** Two resumable rows the layout doesn't hold — what History counts. */
-const RECENT = [
-  { sessionId: 'old-1', provider: 'claude', cwd: '/w', mode: 'stopped', updatedAt: now - 60_000 },
-  { sessionId: 'old-2', provider: 'claude', cwd: '/w', mode: 'stopped', updatedAt: now - 90_000 },
-] as any[];
-
 const Harness: React.FC<{
-  recentSessions?: any[];
   onOpenSettings?: () => void;
   onOpenHistory?: () => void;
-}> = ({ recentSessions, onOpenSettings, onOpenHistory }) => {
+}> = ({ onOpenSettings, onOpenHistory }) => {
   const attention = useAttentionFeed(snapshotBySession, agents);
   return (
     <ConfigProvider>
@@ -108,8 +103,7 @@ const Harness: React.FC<{
             onToggleCollapse={noop}
             onToggleHelp={noop}
             viewLevel="piloting"
-            recentSessions={recentSessions ?? []}
-            onOpenHistory={onOpenHistory ?? noop}
+            onOpenHistory={onOpenHistory}
             onOpenSettings={onOpenSettings}
           />
         </AttentionProvider>
@@ -123,36 +117,29 @@ const row = (name: RegExp) => screen.getByRole('button', { name });
 describe('sidebar footer strip', () => {
   it('offers Settings and opens it on click', () => {
     const onOpenSettings = vi.fn();
-    render(<Harness recentSessions={RECENT} onOpenSettings={onOpenSettings} />);
+    render(<Harness onOpenSettings={onOpenSettings} />);
     fireEvent.click(row(/^Settings$/));
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
 
   it('opens Settings from the keyboard', () => {
     const onOpenSettings = vi.fn();
-    render(<Harness recentSessions={RECENT} onOpenSettings={onOpenSettings} />);
+    render(<Harness onOpenSettings={onOpenSettings} />);
     fireEvent.keyDown(row(/^Settings$/), { key: 'Enter' });
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps Settings reachable on a fresh install with no history', () => {
-    render(<Harness recentSessions={[]} onOpenSettings={noop} />);
-    // No past sessions ⇒ no History row, but the strip must not vanish with it.
-    expect(screen.queryByRole('button', { name: /^History/ })).toBeNull();
-    expect(row(/^Settings$/)).toBeInTheDocument();
-  });
-
-  it('still shows History with its count when there are past sessions', () => {
+  it('offers History whenever it is wired, and opens it on click', () => {
+    // No daemon-count gate anymore: the pane's transcript contents exist
+    // independently of the daemon, so the door is always there.
     const onOpenHistory = vi.fn();
-    render(<Harness recentSessions={RECENT} onOpenHistory={onOpenHistory} onOpenSettings={noop} />);
-    const history = row(/^History/);
-    expect(history.textContent).toContain('2');
-    fireEvent.click(history);
+    render(<Harness onOpenHistory={onOpenHistory} onOpenSettings={noop} />);
+    fireEvent.click(row(/^History/));
     expect(onOpenHistory).toHaveBeenCalledTimes(1);
   });
 
   it('renders no strip at all when the host wires neither row', () => {
-    render(<Harness recentSessions={[]} />);
+    render(<Harness />);
     expect(screen.queryByRole('button', { name: /^Settings$/ })).toBeNull();
   });
 });

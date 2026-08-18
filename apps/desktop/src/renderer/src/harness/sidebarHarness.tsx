@@ -258,36 +258,6 @@ const statusBySession: Record<string, any> = Object.fromEntries(
   Object.values(snapshotBySession).map((s: any) => [s.sessionId, s.ambientState]),
 );
 
-// RECENT rows show the provider's auto-generated conversation title (name is
-// the spawn-default dirname, so recentSessionLabel prefers the title).
-const recent = (
-  sessionId: string,
-  provider: string,
-  cwd: string,
-  title: string,
-  ageMin: number,
-): any => ({
-  sessionId,
-  provider,
-  cwd,
-  mode: 'stopped',
-  transport: provider === 'claude' ? 'stream' : 'pty',
-  archived: false,
-  updatedAt: now - ageMin * min,
-  startedAt: now - (ageMin + 20) * min,
-  name: cwd.split('/').filter(Boolean).pop() || '',
-  title,
-  model: provider === 'claude' ? 'opus' : '',
-  costUSD: 1.2,
-});
-
-const recentSessions: any[] = [
-  recent('old-1', 'claude', '/work/infra-tf', 'Split the Terraform state per environment', 3 * 60),
-  recent('old-2', 'codex', '/work/api', 'Add rate limiting to the public endpoints', 26 * 60),
-  recent('old-3', 'claude', '/work/docs-site', 'Rewrite the getting-started guide', 2 * 24 * 60),
-  recent('old-4', 'claude', '/work/release', 'Cut the v0.14 release and tag it', 9 * 24 * 60),
-];
-
 const noop = () => {};
 
 // Scenarios: default shows every card state (design review); 'recent' trims to
@@ -334,7 +304,6 @@ function Harness() {
               viewLevel="piloting"
               collapsed={false}
               width={width}
-              recentSessions={recentSessions}
               onOpenHistory={noop}
               onOpenSettings={noop}
             />
