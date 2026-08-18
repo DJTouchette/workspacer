@@ -271,6 +271,14 @@ export interface ElectronAPI {
   ) => Promise<ClaudeProfile>;
   claudeProfilesUpdate: (id: string, updates: ProfileUpdate) => Promise<ClaudeProfile>;
   claudeProfilesRemove: (id: string) => Promise<void>;
+  /** Desktop-only (absent on the web polyfill): create a second-Claude-account
+   *  profile — a config dir sharing the primary's transcripts/memories/skills/
+   *  hooks but holding its own login. */
+  claudeProfilesAddAccount?: (
+    name: string,
+  ) => Promise<{ profile: ClaudeProfile; shared: string[]; warnings: string[] }>;
+  /** Desktop-only: profile id → "has a login" (configDir-less profiles = true). */
+  claudeProfilesLoginStatus?: () => Promise<Record<string, boolean>>;
   getClaudeSession: (sessionId: string) => Promise<ClaudeSessionSnapshot | null>;
   getAllClaudeSessions: () => Promise<ClaudeSessionSnapshot[]>;
   /** All sessions the daemon still holds (all providers, incl. archived),

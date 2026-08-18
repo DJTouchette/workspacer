@@ -393,6 +393,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.CLAUDE_PROFILES_UPDATE, id, updates),
   claudeProfilesRemove: (id: string): Promise<void> =>
     ipcRenderer.invoke(IPC.CLAUDE_PROFILES_REMOVE, id),
+  claudeProfilesAddAccount: (
+    name: string,
+  ): Promise<{ profile: ProfileUpdate; shared: string[]; warnings: string[] }> =>
+    ipcRenderer.invoke(IPC.CLAUDE_PROFILES_ADD_ACCOUNT, name),
+  claudeProfilesLoginStatus: (): Promise<Record<string, boolean>> =>
+    ipcRenderer.invoke(IPC.CLAUDE_PROFILES_LOGIN_STATUS),
 
   getClaudeSession: (sessionId: string): Promise<ClaudeSessionSnapshot | null> =>
     ipcRenderer.invoke(IPC.CLAUDE_SESSION_GET, sessionId),

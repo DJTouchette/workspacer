@@ -119,6 +119,8 @@ export const HOST_ONLY = [
   'setRemoteServer', // rewrites this desktop's own server target, then relaunches
   'appRelaunch', // Electron app lifecycle
   'openExternalUrl', // hands a URL to the host's default browser
+  'claudeProfilesAddAccount', // builds a linked CLAUDE_CONFIG_DIR on the host fs
+  'claudeProfilesLoginStatus', // probes host credential files
 ] as const satisfies readonly (keyof ElectronAPI)[];
 
 /**

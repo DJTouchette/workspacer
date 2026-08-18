@@ -86,6 +86,8 @@ export const IPC = {
   // ── Claude profiles ──
   CLAUDE_PROFILES_LIST: 'claude-profiles:list',
   CLAUDE_PROFILES_ADD: 'claude-profiles:add',
+  CLAUDE_PROFILES_ADD_ACCOUNT: 'claude-profiles:addAccount',
+  CLAUDE_PROFILES_LOGIN_STATUS: 'claude-profiles:loginStatus',
   CLAUDE_PROFILES_UPDATE: 'claude-profiles:update',
   CLAUDE_PROFILES_REMOVE: 'claude-profiles:remove',
 

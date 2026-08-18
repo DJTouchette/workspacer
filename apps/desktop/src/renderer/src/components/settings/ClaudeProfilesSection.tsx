@@ -138,6 +138,12 @@ const ClaudeProfilesSection: React.FC = () => {
   const [editArgs, setEditArgs] = useState('');
   const [editMcp, setEditMcp] = useState<string[]>([]);
   const [mcpItems, setMcpItems] = useState<LibraryItem[]>([]);
+  // Second-account flow (desktop only — the API is absent on the web mirror).
+  const canAddAccount = !!window.electronAPI.claudeProfilesAddAccount;
+  const [addingAccount, setAddingAccount] = useState(false);
+  const [accountName, setAccountName] = useState('');
+  const [accountNote, setAccountNote] = useState<string | null>(null);
+  const [loginStatus, setLoginStatus] = useState<Record<string, boolean>>({});
 
   const load = useCallback(() => {
     window.electronAPI.claudeProfilesList().then((p) => {
@@ -149,7 +155,29 @@ const ClaudeProfilesSection: React.FC = () => {
       }));
       setProfiles(list);
     });
+    window.electronAPI
+      .claudeProfilesLoginStatus?.()
+      .then((m) => setLoginStatus(m ?? {}))
+      .catch(() => {});
   }, []);
+
+  const addAccount = async () => {
+    const name = accountName.trim() || 'Second account';
+    try {
+      const res = await window.electronAPI.claudeProfilesAddAccount!(name);
+      setAccountNote(
+        `“${name}” shares this machine's memories, history, skills and settings. ` +
+          `Spawn an agent with it — Claude will ask you to log in once, then both ` +
+          `accounts run side by side.` +
+          (res.warnings.length > 0 ? ` (${res.warnings.join('; ')})` : ''),
+      );
+    } catch (err) {
+      setAccountNote(`Could not create the account: ${err instanceof Error ? err.message : err}`);
+    }
+    setAddingAccount(false);
+    setAccountName('');
+    load();
+  };
 
   useEffect(() => {
     load();
@@ -279,6 +307,20 @@ const ClaudeProfilesSection: React.FC = () => {
                         default
                       </span>
                     )}
+                    {/* Own-login profiles (a configDir) show whether anyone has
+                        signed in there yet; the login itself happens in the
+                        first agent pane spawned with the profile. */}
+                    {p.configDir && p.id in loginStatus && (
+                      <span
+                        style={{
+                          fontSize: '0.6rem',
+                          color: loginStatus[p.id] ? 'var(--wks-success)' : 'var(--wks-warning)',
+                          marginLeft: 6,
+                        }}
+                      >
+                        {loginStatus[p.id] ? 'signed in' : 'log in on first spawn'}
+                      </span>
+                    )}
                   </div>
                   {p.configDir && (
                     <div
@@ -320,7 +362,59 @@ const ClaudeProfilesSection: React.FC = () => {
           </div>
         ))}
 
-        {editing === 'new' ? (
+        {accountNote && (
+          <div
+            style={{
+              fontSize: '0.66rem',
+              color: 'var(--wks-text-muted)',
+              lineHeight: 1.5,
+              padding: '6px 8px',
+              border: '1px solid var(--wks-border-subtle)',
+              borderRadius: '4px',
+            }}
+          >
+            {accountNote}
+          </div>
+        )}
+
+        {addingAccount && (
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px',
+              padding: '8px',
+              backgroundColor: 'var(--wks-bg-surface)',
+              borderRadius: '4px',
+              border: '1px solid var(--wks-border-input)',
+            }}
+          >
+            <input
+              value={accountName}
+              onChange={(e) => setAccountName(e.target.value)}
+              placeholder="Account name (e.g. Work)"
+              style={inputStyle}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void addAccount();
+                if (e.key === 'Escape') setAddingAccount(false);
+              }}
+            />
+            <div
+              style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)', lineHeight: 1.5 }}
+            >
+              Creates a profile with its own Claude login that shares this machine's memories,
+              session history, skills and settings. You'll log in inside the first agent you spawn
+              with it.
+            </div>
+            <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+              <SmallButton label="Cancel" onClick={() => setAddingAccount(false)} />
+              <SmallButton label="Create" onClick={() => void addAccount()} primary />
+            </div>
+          </div>
+        )}
+
+        {editing === 'new' && (
           <ProfileEditForm
             name={editName}
             configDir={editConfigDir}
@@ -334,39 +428,58 @@ const ClaudeProfilesSection: React.FC = () => {
             onSave={saveEdit}
             onCancel={cancelEdit}
           />
-        ) : (
-          <button
-            onClick={() => startEdit()}
-            style={{
-              padding: '6px 12px',
-              fontSize: '0.68rem',
-              fontFamily: 'inherit',
-              fontWeight: 500,
-              backgroundColor: 'transparent',
-              color: 'var(--wks-text-muted)',
-              border: '1px dashed var(--wks-border-input)',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              height: 'auto',
-              lineHeight: 1.4,
-              margin: '4px 0 0',
-              width: '100%',
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent)';
-              (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border-input)';
-              (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-muted)';
-            }}
-          >
-            + Add Profile
-          </button>
+        )}
+        {editing !== 'new' && !addingAccount && (
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <button onClick={() => startEdit()} style={dashedAddStyle} {...dashedHover}>
+              + Add Profile
+            </button>
+            {canAddAccount && (
+              <button
+                onClick={() => {
+                  setAccountNote(null);
+                  setAddingAccount(true);
+                }}
+                title="A second Claude login that shares this machine's memories, history and skills"
+                style={dashedAddStyle}
+                {...dashedHover}
+              >
+                + Add Claude Account
+              </button>
+            )}
+          </div>
         )}
       </div>
     </Section>
   );
+};
+
+const dashedAddStyle: React.CSSProperties = {
+  padding: '6px 12px',
+  fontSize: '0.68rem',
+  fontFamily: 'inherit',
+  fontWeight: 500,
+  backgroundColor: 'transparent',
+  color: 'var(--wks-text-muted)',
+  border: '1px dashed var(--wks-border-input)',
+  borderRadius: '4px',
+  cursor: 'pointer',
+  height: 'auto',
+  lineHeight: 1.4,
+  margin: '4px 0 0',
+  flex: 1,
+};
+
+/** The shared hover affordance of the dashed add buttons. */
+const dashedHover = {
+  onMouseEnter: (e: React.MouseEvent) => {
+    (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent)';
+    (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
+  },
+  onMouseLeave: (e: React.MouseEvent) => {
+    (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border-input)';
+    (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-muted)';
+  },
 };
 
 export default ClaudeProfilesSection;

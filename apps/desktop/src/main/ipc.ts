@@ -39,6 +39,7 @@ import { installWorkspacerCli } from './services/cliInstall';
 import { ensureSupervisorHome } from './services/supervisorSkill';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
+import { createAccountConfigDir, accountLoginStatus } from './services/claudeAccountSetup';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
 import { instrumentIpcHandlers, startEventLoopLagMonitor } from './lib/stallDiagnostics';
 import { listRecentSessions, listLiveSessionIds } from './services/recentSessions';
@@ -1269,4 +1270,24 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.CLAUDE_PROFILES_REMOVE, (_event, id: string) =>
     claudeProfiles.removeProfile(id),
   );
+  // Second-account convenience: build a config dir that shares the primary's
+  // brain (transcripts, memories, skills, hooks — see claudeAccountSetup) but
+  // holds its own login, and register a profile pointing at it. Desktop-only
+  // by design: remote spawns scrub configDir off profiles (scrubBypassProfile),
+  // so an account profile picked from web/remote runs the default account.
+  ipcMain.handle(IPC.CLAUDE_PROFILES_ADD_ACCOUNT, (_event, name: string) => {
+    const trimmed = (name ?? '').trim() || 'Account';
+    const { dir, shared, warnings } = createAccountConfigDir(trimmed);
+    const profile = claudeProfiles.addProfile(trimmed, dir, [], []);
+    return { profile, shared, warnings };
+  });
+  // Per-profile "has anyone logged in here yet", keyed by profile id. Profiles
+  // without a configDir use the primary login and report true.
+  ipcMain.handle(IPC.CLAUDE_PROFILES_LOGIN_STATUS, () => {
+    const out: Record<string, boolean> = {};
+    for (const p of claudeProfiles.getProfiles()) {
+      out[p.id] = p.configDir ? accountLoginStatus(p.configDir) : true;
+    }
+    return out;
+  });
 }
