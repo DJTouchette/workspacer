@@ -1,299 +1,307 @@
 {
+ "_comment": [
+  "claude.profiles.* is answered by the BRAIN for every web / mobile / remote /",
+  "MCP client (it is a catalog method) and by claudeProfiles.ts over IPC. The two",
+  "disagreed about what a profile store even contains:",
+  "",
+  "  list    the brain PREPENDED a synthetic {id:'default'} whenever no profile",
+  "          carried isDefault, without ever writing it \u2014 two profiles there, one",
+  "          here, for the same file; and it normalized extraArgs/mcpItemIds to []",
+  "          while the desktop returned the file verbatim.",
+  "  update  the brain then refused the very id it had just listed, because update",
+  "          reads the raw file: `profile \"default\" not found`.",
+  "  add     on a fresh config dir the brain minted isDefault:TRUE and the desktop",
+  "          isDefault:FALSE, because the desktop's constructor had already",
+  "          persisted the real Default row. This method carries `configDir`,",
+  "          which becomes CLAUDE_CONFIG_DIR.",
+  "",
+  "The convergent rule: MATERIALIZE the Default row (write it) when the store is",
+  "empty, normalize the list fields on read, and make list / add / update / remove",
+  "all operate on that one set.",
+  "",
+  "`file` is claude-profiles.json's `profiles` array, or null for no file at all.",
+  "`<added>` in expectedFileIds stands for the freshly minted uuid."
+ ],
+ "vocabulary": {
   "_comment": [
-    "claude.profiles.* is answered by the BRAIN for every web / mobile / remote /",
-    "MCP client (it is a catalog method) and by claudeProfiles.ts over IPC. The two",
-    "disagreed about what a profile store even contains:",
-    "",
-    "  list    the brain PREPENDED a synthetic {id:'default'} whenever no profile",
-    "          carried isDefault, without ever writing it — two profiles there, one",
-    "          here, for the same file; and it normalized extraArgs/mcpItemIds to []",
-    "          while the desktop returned the file verbatim.",
-    "  update  the brain then refused the very id it had just listed, because update",
-    "          reads the raw file: `profile \"default\" not found`.",
-    "  add     on a fresh config dir the brain minted isDefault:TRUE and the desktop",
-    "          isDefault:FALSE, because the desktop's constructor had already",
-    "          persisted the real Default row. This method carries `configDir`,",
-    "          which becomes CLAUDE_CONFIG_DIR.",
-    "",
-    "The convergent rule: MATERIALIZE the Default row (write it) when the store is",
-    "empty, normalize the list fields on read, and make list / add / update / remove",
-    "all operate on that one set.",
-    "",
-    "`file` is claude-profiles.json's `profiles` array, or null for no file at all.",
-    "`<added>` in expectedFileIds stands for the freshly minted uuid."
+   "THE BLOCK REGISTRY. Every array-of-objects block in this file must be declared",
+   "here and everything here must be a block \u2014 closure in both directions, so a new",
+   "block is a failure until someone says what its cases must carry, and a renamed",
+   "one cannot quietly stop being validated.",
+   "",
+   "Held by cmd/brain/corpusvocab_test.go and",
+   "apps/desktop/src/main/services/contractsVocabulary.test.ts. Before those, this",
+   "kind of validation existed for exactly ONE block of ONE fixture."
   ],
-  "vocabulary": {
-    "_comment": [
-      "THE BLOCK REGISTRY. Every array-of-objects block in this file must be declared",
-      "here and everything here must be a block — closure in both directions, so a new",
-      "block is a failure until someone says what its cases must carry, and a renamed",
-      "one cannot quietly stop being validated.",
-      "",
-      "Held by cmd/brain/corpusvocab_test.go and",
-      "apps/desktop/src/main/services/contractsVocabulary.test.ts. Before those, this",
-      "kind of validation existed for exactly ONE block of ONE fixture."
+  "blocks": {
+   "list": {
+    "why": "loadProfiles over a seeded profiles file, and what it leaves on disk.",
+    "required": [
+     "name",
+     "file",
+     "expectedList",
+     "expectedFile",
+     "why"
     ],
-    "blocks": {
-      "list": {
-        "why": "loadProfiles over a seeded profiles file, and what it leaves on disk.",
-        "required": [
-          "name",
-          "file",
-          "expectedList",
-          "expectedFile",
-          "why"
-        ],
-        "loaders": [
-          "services/hub/cmd/brain/profiles_contract_test.go::TestClaudeProfilesContractCases(",
-          "apps/desktop/src/main/services/claudeProfilesContract.test.ts::contracts/claude-profiles-cases.json — list"
-        ]
-      },
-      "add": {
-        "why": "addProfile's answer and the id order it leaves behind.",
-        "required": [
-          "name",
-          "file",
-          "add",
-          "expectedAdded",
-          "expectedFileIds",
-          "why"
-        ],
-        "loaders": [
-          "services/hub/cmd/brain/profiles_contract_test.go::TestClaudeProfilesContractCases(",
-          "apps/desktop/src/main/services/claudeProfilesContract.test.ts::contracts/claude-profiles-cases.json — add"
-        ]
-      },
-      "mutate": {
-        "why": "update/remove against an id the caller got from list().",
-        "required": [
-          "name",
-          "file",
-          "why"
-        ],
-        "optional": [
-          "update",
-          "updateId",
-          "removeId",
-          "expectFound",
-          "expectedFileIds"
-        ],
-        "loaders": [
-          "services/hub/cmd/brain/profiles_contract_test.go::TestClaudeProfilesContractCases(",
-          "apps/desktop/src/main/services/claudeProfilesContract.test.ts::contracts/claude-profiles-cases.json — update/remove"
-        ]
-      }
+    "loaders": [
+     "services/hub/cmd/brain/profiles_contract_test.go::TestClaudeProfilesContractCases(",
+     "apps/desktop/src/main/services/claudeProfilesContract.test.ts::contracts/claude-profiles-cases.json \u2014 list"
+    ]
+   },
+   "add": {
+    "why": "addProfile's answer and the id order it leaves behind.",
+    "required": [
+     "name",
+     "file",
+     "add",
+     "expectedAdded",
+     "expectedFileIds",
+     "why"
+    ],
+    "loaders": [
+     "services/hub/cmd/brain/profiles_contract_test.go::TestClaudeProfilesContractCases(",
+     "apps/desktop/src/main/services/claudeProfilesContract.test.ts::contracts/claude-profiles-cases.json \u2014 add"
+    ]
+   },
+   "mutate": {
+    "why": "update/remove against an id the caller got from list().",
+    "required": [
+     "name",
+     "file",
+     "why"
+    ],
+    "optional": [
+     "update",
+     "updateId",
+     "removeId",
+     "expectFound",
+     "expectedFileIds"
+    ],
+    "loaders": [
+     "services/hub/cmd/brain/profiles_contract_test.go::TestClaudeProfilesContractCases(",
+     "apps/desktop/src/main/services/claudeProfilesContract.test.ts::contracts/claude-profiles-cases.json \u2014 update/remove"
+    ]
+   }
+  }
+ },
+ "list": [
+  {
+   "name": "an absent profiles file materializes exactly one Default row",
+   "file": null,
+   "expectedList": [
+    {
+     "id": "default",
+     "name": "Default",
+     "configDir": "",
+     "extraArgs": [],
+     "mcpItemIds": [],
+     "isDefault": true,
+     "weight": 0
     }
+   ],
+   "expectedFile": [
+    {
+     "id": "default",
+     "name": "Default",
+     "configDir": "",
+     "extraArgs": [],
+     "mcpItemIds": [],
+     "isDefault": true,
+     "weight": 0
+    }
+   ],
+   "why": "Both copies must WRITE the row, not merely pretend it is there. The brain prepended a synthetic {id:'default'} it never persisted, so claude.profiles.list returned an id that claude.profiles.update then answered `profile \"default\" not found` for."
   },
-  "list": [
+  {
+   "name": "an empty profiles array materializes the same Default row",
+   "file": [],
+   "expectedList": [
     {
-      "name": "an absent profiles file materializes exactly one Default row",
-      "file": null,
-      "expectedList": [
-        {
-          "id": "default",
-          "name": "Default",
-          "configDir": "",
-          "extraArgs": [],
-          "mcpItemIds": [],
-          "isDefault": true
-        }
-      ],
-      "expectedFile": [
-        {
-          "id": "default",
-          "name": "Default",
-          "configDir": "",
-          "extraArgs": [],
-          "mcpItemIds": [],
-          "isDefault": true
-        }
-      ],
-      "why": "Both copies must WRITE the row, not merely pretend it is there. The brain prepended a synthetic {id:'default'} it never persisted, so claude.profiles.list returned an id that claude.profiles.update then answered `profile \"default\" not found` for."
-    },
-    {
-      "name": "an empty profiles array materializes the same Default row",
-      "file": [],
-      "expectedList": [
-        {
-          "id": "default",
-          "name": "Default",
-          "configDir": "",
-          "extraArgs": [],
-          "mcpItemIds": [],
-          "isDefault": true
-        }
-      ],
-      "expectedFile": [
-        {
-          "id": "default",
-          "name": "Default",
-          "configDir": "",
-          "extraArgs": [],
-          "mcpItemIds": [],
-          "isDefault": true
-        }
-      ],
-      "why": "Same state spelled differently on disk; a reader that only handled the missing-file case would diverge on a file written and then emptied."
-    },
-    {
-      "name": "an existing profile is listed as itself, normalized, with no phantom row",
-      "file": [
-        {
-          "id": "p1",
-          "name": "Work",
-          "configDir": "",
-          "isDefault": false
-        }
-      ],
-      "expectedList": [
-        {
-          "id": "p1",
-          "name": "Work",
-          "configDir": "",
-          "extraArgs": [],
-          "mcpItemIds": [],
-          "isDefault": false
-        }
-      ],
-      "expectedFile": [
-        {
-          "id": "p1",
-          "name": "Work",
-          "configDir": "",
-          "isDefault": false
-        }
-      ],
-      "why": "The divergence in one case: the brain returned TWO profiles (a synthetic Default plus p1) where the desktop returned ONE. Missing list fields normalize to [] on both sides — the brain has always served `mcpItemIds: []` and the desktop served the file verbatim, so the same profile came back with and without the key."
-    },
-    {
-      "name": "a profile that already carries the lists keeps them",
-      "file": [
-        {
-          "id": "p1",
-          "name": "Work",
-          "configDir": "/tmp/cfg",
-          "extraArgs": [
-            "--model",
-            "opus"
-          ],
-          "mcpItemIds": [
-            "m1"
-          ],
-          "isDefault": true
-        }
-      ],
-      "expectedList": [
-        {
-          "id": "p1",
-          "name": "Work",
-          "configDir": "/tmp/cfg",
-          "extraArgs": [
-            "--model",
-            "opus"
-          ],
-          "mcpItemIds": [
-            "m1"
-          ],
-          "isDefault": true
-        }
-      ],
-      "expectedFile": [
-        {
-          "id": "p1",
-          "name": "Work",
-          "configDir": "/tmp/cfg",
-          "extraArgs": [
-            "--model",
-            "opus"
-          ],
-          "mcpItemIds": [
-            "m1"
-          ],
-          "isDefault": true
-        }
-      ],
-      "why": "The floor: normalization must not overwrite real values, and a populated file must not be rewritten."
+     "id": "default",
+     "name": "Default",
+     "configDir": "",
+     "extraArgs": [],
+     "mcpItemIds": [],
+     "isDefault": true,
+     "weight": 0
     }
-  ],
-  "add": [
+   ],
+   "expectedFile": [
     {
-      "name": "add on a fresh config dir is NOT the default",
-      "file": null,
-      "add": {
-        "name": "Work",
-        "configDir": "/tmp/evil-config-dir",
-        "extraArgs": [],
-        "mcpItemIds": []
-      },
-      "expectedAdded": {
-        "name": "Work",
-        "configDir": "/tmp/evil-config-dir",
-        "extraArgs": [],
-        "mcpItemIds": [],
-        "isDefault": false
-      },
-      "expectedFileIds": [
-        "default",
-        "<added>"
-      ],
-      "why": "The brain minted isDefault:TRUE (its readProfilesFile saw an empty file, because its Default was synthetic) and the desktop minted FALSE (its constructor had already persisted the Default). claude.profiles.add is bus-reachable and carries configDir, which becomes CLAUDE_CONFIG_DIR."
-    },
-    {
-      "name": "add trims configDir and defaults the lists",
-      "file": [
-        {
-          "id": "p1",
-          "name": "Work",
-          "configDir": "",
-          "isDefault": true
-        }
-      ],
-      "add": {
-        "name": "Play",
-        "configDir": "  /tmp/c  ",
-        "extraArgs": null,
-        "mcpItemIds": null
-      },
-      "expectedAdded": {
-        "name": "Play",
-        "configDir": "/tmp/c",
-        "extraArgs": [],
-        "mcpItemIds": [],
-        "isDefault": false
-      },
-      "expectedFileIds": [
-        "p1",
-        "<added>"
-      ],
-      "why": "`mcpItemIds ?? []` and the trim are both shared rules; a nil list marshals as JSON null in Go and clients index it as an array."
+     "id": "default",
+     "name": "Default",
+     "configDir": "",
+     "extraArgs": [],
+     "mcpItemIds": [],
+     "isDefault": true,
+     "weight": 0
     }
-  ],
-  "mutate": [
+   ],
+   "why": "Same state spelled differently on disk; a reader that only handled the missing-file case would diverge on a file written and then emptied."
+  },
+  {
+   "name": "an existing profile is listed as itself, normalized, with no phantom row",
+   "file": [
     {
-      "name": "every id the list returns can be updated",
-      "file": null,
-      "updateId": "default",
-      "update": {
-        "name": "Renamed"
-      },
-      "expectFound": true,
-      "why": "The brain LISTED 'default' and then refused to update it, because list read a synthetic row and update read the raw file. A listed id that cannot be addressed is not a profile."
-    },
-    {
-      "name": "removing the Default profile is a no-op on both providers",
-      "file": [
-        {
-          "id": "p1",
-          "name": "Work",
-          "configDir": "",
-          "isDefault": false
-        }
-      ],
-      "removeId": "default",
-      "expectedFileIds": [
-        "p1"
-      ],
-      "why": "claudeProfiles.ts: `if (id === 'default') return`. The rule has to hold wherever the row came from."
+     "id": "p1",
+     "name": "Work",
+     "configDir": "",
+     "isDefault": false
     }
-  ]
+   ],
+   "expectedList": [
+    {
+     "id": "p1",
+     "name": "Work",
+     "configDir": "",
+     "extraArgs": [],
+     "mcpItemIds": [],
+     "isDefault": false,
+     "weight": 0
+    }
+   ],
+   "expectedFile": [
+    {
+     "id": "p1",
+     "name": "Work",
+     "configDir": "",
+     "isDefault": false
+    }
+   ],
+   "why": "The divergence in one case: the brain returned TWO profiles (a synthetic Default plus p1) where the desktop returned ONE. Missing list fields normalize to [] on both sides \u2014 the brain has always served `mcpItemIds: []` and the desktop served the file verbatim, so the same profile came back with and without the key."
+  },
+  {
+   "name": "a profile that already carries the lists keeps them",
+   "file": [
+    {
+     "id": "p1",
+     "name": "Work",
+     "configDir": "/tmp/cfg",
+     "extraArgs": [
+      "--model",
+      "opus"
+     ],
+     "mcpItemIds": [
+      "m1"
+     ],
+     "isDefault": true
+    }
+   ],
+   "expectedList": [
+    {
+     "id": "p1",
+     "name": "Work",
+     "configDir": "/tmp/cfg",
+     "extraArgs": [
+      "--model",
+      "opus"
+     ],
+     "mcpItemIds": [
+      "m1"
+     ],
+     "isDefault": true,
+     "weight": 0
+    }
+   ],
+   "expectedFile": [
+    {
+     "id": "p1",
+     "name": "Work",
+     "configDir": "/tmp/cfg",
+     "extraArgs": [
+      "--model",
+      "opus"
+     ],
+     "mcpItemIds": [
+      "m1"
+     ],
+     "isDefault": true
+    }
+   ],
+   "why": "The floor: normalization must not overwrite real values, and a populated file must not be rewritten."
+  }
+ ],
+ "add": [
+  {
+   "name": "add on a fresh config dir is NOT the default",
+   "file": null,
+   "add": {
+    "name": "Work",
+    "configDir": "/tmp/evil-config-dir",
+    "extraArgs": [],
+    "mcpItemIds": []
+   },
+   "expectedAdded": {
+    "name": "Work",
+    "configDir": "/tmp/evil-config-dir",
+    "extraArgs": [],
+    "mcpItemIds": [],
+    "isDefault": false,
+    "weight": 0
+   },
+   "expectedFileIds": [
+    "default",
+    "<added>"
+   ],
+   "why": "The brain minted isDefault:TRUE (its readProfilesFile saw an empty file, because its Default was synthetic) and the desktop minted FALSE (its constructor had already persisted the Default). claude.profiles.add is bus-reachable and carries configDir, which becomes CLAUDE_CONFIG_DIR."
+  },
+  {
+   "name": "add trims configDir and defaults the lists",
+   "file": [
+    {
+     "id": "p1",
+     "name": "Work",
+     "configDir": "",
+     "isDefault": true
+    }
+   ],
+   "add": {
+    "name": "Play",
+    "configDir": "  /tmp/c  ",
+    "extraArgs": null,
+    "mcpItemIds": null
+   },
+   "expectedAdded": {
+    "name": "Play",
+    "configDir": "/tmp/c",
+    "extraArgs": [],
+    "mcpItemIds": [],
+    "isDefault": false,
+    "weight": 0
+   },
+   "expectedFileIds": [
+    "p1",
+    "<added>"
+   ],
+   "why": "`mcpItemIds ?? []` and the trim are both shared rules; a nil list marshals as JSON null in Go and clients index it as an array."
+  }
+ ],
+ "mutate": [
+  {
+   "name": "every id the list returns can be updated",
+   "file": null,
+   "updateId": "default",
+   "update": {
+    "name": "Renamed"
+   },
+   "expectFound": true,
+   "why": "The brain LISTED 'default' and then refused to update it, because list read a synthetic row and update read the raw file. A listed id that cannot be addressed is not a profile."
+  },
+  {
+   "name": "removing the Default profile is a no-op on both providers",
+   "file": [
+    {
+     "id": "p1",
+     "name": "Work",
+     "configDir": "",
+     "isDefault": false
+    }
+   ],
+   "removeId": "default",
+   "expectedFileIds": [
+    "p1"
+   ],
+   "why": "claudeProfiles.ts: `if (id === 'default') return`. The rule has to hold wherever the row came from."
+  }
+ ]
 }

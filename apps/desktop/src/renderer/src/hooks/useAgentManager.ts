@@ -449,7 +449,16 @@ export function useAgentManager() {
   const respawnAgentWithSettings = useCallback(
     async (
       sessionId: string,
-      overrides: { model?: string; effort?: string; permissionMode?: string },
+      overrides: {
+        model?: string;
+        effort?: string;
+        permissionMode?: string;
+        profileId?: string;
+        /** Sent once the respawn resolves — an automatic restart (account
+         *  failover) has nobody present to tell the resumed-but-idle session
+         *  to keep going. claudemon buffers it until the prompt settles. */
+        continuePrompt?: string;
+      },
     ) => {
       const agent = agentsRef.current.find(
         (a) => a.sessionId === sessionId || a.lastSessionId === sessionId,
@@ -461,6 +470,11 @@ export function useAgentManager() {
       const model = overrides.model ?? agent.model;
       const effort = overrides.effort ?? agent.effort;
       const permissionMode = overrides.permissionMode ?? agent.permissionMode;
+      // A profile switch re-homes the session on another login ('' = back to
+      // the default profile); it persists on the agent record so later
+      // respawns and app restarts stay on the chosen account.
+      const profileId =
+        overrides.profileId !== undefined ? overrides.profileId || undefined : agent.profileId;
       // The legacy YOLO boolean must track the mode, or the next plain respawn
       // would re-apply a bypass the user just switched away from.
       const skipPermissions = permissionMode
@@ -484,7 +498,7 @@ export function useAgentManager() {
           cwd: agent.cwd,
           provider: agent.provider,
           transport: agent.transport,
-          profileId: agent.profileId,
+          profileId,
           model,
           effort,
           permissionMode,
@@ -504,12 +518,18 @@ export function useAgentManager() {
       // marked terminated). Lift the tombstone so the restarted, running
       // session's live ticks aren't dropped by App's wasSessionTerminated() guard.
       clearSessionTerminated(newSessionId);
+      if (overrides.continuePrompt) {
+        window.electronAPI
+          .claudeMessage(newSessionId, overrides.continuePrompt)
+          .catch((err) => console.warn('[Agent] continue prompt failed:', err));
+      }
       mutateAgent(agent.id, (a) => ({
         ...a,
         model,
         effort,
         permissionMode,
         skipPermissions,
+        profileId,
         sessionId: newSessionId,
         lastSessionId: undefined,
       }));

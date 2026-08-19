@@ -32,6 +32,16 @@ export interface RestartSessionOverrides {
   model?: string;
   effort?: string;
   permissionMode?: string;
+  /** Claude only: restart under a different profile (a different
+   *  CLAUDE_CONFIG_DIR, i.e. a different LOGIN). The transcript lives in the
+   *  accounts' shared projects/ dir, so the resume continues the same
+   *  conversation under the new account. Sticky: later restarts keep it. */
+  profileId?: string;
+  /** Sent to the session once the respawn resolves. A resume restores the
+   *  CONTEXT but comes up idle at the prompt — an automatic restart (account
+   *  failover) has nobody present to say "keep going", so the trigger says it
+   *  here. claudemon buffers the send until the prompt settles. */
+  continuePrompt?: string;
 }
 
 interface UseClaudeSpawnReturn {
@@ -83,7 +93,11 @@ export function useClaudeSpawn({
   const cwdRef = useRef(cwd);
   cwdRef.current = cwd;
   const profileRef = useRef(profileId);
-  profileRef.current = profileId;
+  // Tracks the prop until a restart overrides the profile — from then on the
+  // override is authoritative (the prop is the pane's SPAWN profile and would
+  // silently flip the session back on the next render).
+  const profileOverriddenRef = useRef(false);
+  if (!profileOverriddenRef.current) profileRef.current = profileId;
   const resumeRef = useRef(resumeSessionId);
   resumeRef.current = resumeSessionId;
   const attachRef = useRef(attachSessionId);
@@ -228,6 +242,12 @@ export function useClaudeSpawn({
       viewerKeyRef.current = null;
       setIsReady(false);
       setSpawnError(null);
+      // A profile override re-homes the session (new CLAUDE_CONFIG_DIR = new
+      // login); it sticks so a later plain restart doesn't silently flip back.
+      if (overrides.profileId !== undefined) {
+        profileOverriddenRef.current = true;
+        profileRef.current = overrides.profileId || undefined;
+      }
       const { cols, rows } = lastDimsRef.current;
       try {
         const id = await window.electronAPI.spawnClaude({
@@ -251,6 +271,14 @@ export function useClaudeSpawn({
         setSessionId(id);
         subscribeStreams(id);
         setIsReady(true);
+        // Sent AFTER the spawn resolves so the session row exists — claudemon
+        // then queues it through the settle+verify flush (a send into the
+        // close→respawn gap would be rejected as stopped).
+        if (overrides.continuePrompt) {
+          window.electronAPI
+            .claudeMessage(id, overrides.continuePrompt)
+            .catch((err) => console.warn('[useClaudeSpawn] continue prompt failed:', err));
+        }
       } catch (err) {
         console.error('[useClaudeSpawn] restart failed:', err);
         if (mountedRef.current) {

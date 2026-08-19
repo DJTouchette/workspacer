@@ -1719,7 +1719,13 @@ function App() {
       const d = (e as CustomEvent).detail as
         | {
             sessionId?: string;
-            overrides?: { model?: string; effort?: string; permissionMode?: string };
+            overrides?: {
+              model?: string;
+              effort?: string;
+              permissionMode?: string;
+              profileId?: string;
+              continuePrompt?: string;
+            };
           }
         | undefined;
       if (!d?.sessionId) return;

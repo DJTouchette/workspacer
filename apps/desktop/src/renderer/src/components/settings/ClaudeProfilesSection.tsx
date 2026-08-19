@@ -10,12 +10,17 @@ interface ClaudeProfile {
   extraArgs: string[];
   mcpItemIds?: string[];
   isDefault: boolean;
+  /** Automatic-failover weight: 0 = manual only; heavier wins first when a
+   *  session's account exhausts a usage window. */
+  weight?: number;
 }
 
 const ProfileEditForm: React.FC<{
   name: string;
   configDir: string;
   args: string;
+  weight: string;
+  onWeightChange: (v: string) => void;
   mcpItems: LibraryItem[];
   mcpSel: string[];
   onToggleMcp: (id: string) => void;
@@ -28,6 +33,8 @@ const ProfileEditForm: React.FC<{
   name,
   configDir,
   args,
+  weight,
+  onWeightChange,
   mcpItems,
   mcpSel,
   onToggleMcp,
@@ -70,6 +77,23 @@ const ProfileEditForm: React.FC<{
         if (e.key === 'Enter') onSave();
       }}
     />
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <input
+        value={weight}
+        onChange={(e) => onWeightChange(e.target.value)}
+        placeholder="0"
+        inputMode="numeric"
+        style={{ ...inputStyle, width: 64 }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') onSave();
+        }}
+      />
+      <span style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', lineHeight: 1.4 }}>
+        Failover weight — 0 keeps this profile manual. Any higher number joins the automatic
+        rotation: when a session's account hits its usage window, it restarts onto the
+        heaviest signed-in profile (same conversation) and cycles on until one works.
+      </span>
+    </div>
     {mcpItems.length > 0 && (
       <div>
         <div
@@ -136,6 +160,7 @@ const ClaudeProfilesSection: React.FC = () => {
   const [editName, setEditName] = useState('');
   const [editConfigDir, setEditConfigDir] = useState('');
   const [editArgs, setEditArgs] = useState('');
+  const [editWeight, setEditWeight] = useState('0');
   const [editMcp, setEditMcp] = useState<string[]>([]);
   const [mcpItems, setMcpItems] = useState<LibraryItem[]>([]);
   // Second-account flow (desktop only — the API is absent on the web mirror).
@@ -198,12 +223,14 @@ const ClaudeProfilesSection: React.FC = () => {
       setEditName(profile.name);
       setEditConfigDir(profile.configDir);
       setEditArgs(profile.extraArgs.join(' '));
+      setEditWeight(String(profile.weight ?? 0));
       setEditMcp(profile.mcpItemIds ?? []);
     } else {
       setEditing('new');
       setEditName('');
       setEditConfigDir('');
       setEditArgs('');
+      setEditWeight('0');
       setEditMcp([]);
     }
   };
@@ -212,19 +239,26 @@ const ClaudeProfilesSection: React.FC = () => {
 
   const saveEdit = async () => {
     const args = editArgs.trim() ? editArgs.trim().split(/\s+/) : [];
+    const weight = Math.max(0, Math.round(Number(editWeight) || 0));
     if (editing === 'new') {
-      await window.electronAPI.claudeProfilesAdd(
+      const added = await window.electronAPI.claudeProfilesAdd(
         editName || 'Profile',
         editConfigDir,
         args,
         editMcp,
       );
+      // Weight rides the update path so the add IPC (and its bus twin on the
+      // brain) keeps its shape.
+      if (weight > 0 && added?.id) {
+        await window.electronAPI.claudeProfilesUpdate(added.id, { weight });
+      }
     } else if (editing) {
       await window.electronAPI.claudeProfilesUpdate(editing, {
         name: editName,
         configDir: editConfigDir,
         extraArgs: args,
         mcpItemIds: editMcp,
+        weight,
       });
     }
     setEditing(null);
@@ -251,6 +285,8 @@ const ClaudeProfilesSection: React.FC = () => {
                 name={editName}
                 configDir={editConfigDir}
                 args={editArgs}
+                weight={editWeight}
+                onWeightChange={setEditWeight}
                 mcpItems={mcpItems}
                 mcpSel={editMcp}
                 onToggleMcp={toggleMcp}
@@ -310,6 +346,14 @@ const ClaudeProfilesSection: React.FC = () => {
                     {/* Own-login profiles (a configDir) show whether anyone has
                         signed in there yet; the login itself happens in the
                         first agent pane spawned with the profile. */}
+                    {(p.weight ?? 0) > 0 && (
+                      <span
+                        title={`Automatic failover weight ${p.weight} — heavier wins first`}
+                        style={{ fontSize: '0.6rem', color: 'var(--wks-text-muted)', marginLeft: 6 }}
+                      >
+                        auto·{p.weight}
+                      </span>
+                    )}
                     {p.configDir && p.id in loginStatus && (
                       <span
                         style={{
@@ -419,6 +463,8 @@ const ClaudeProfilesSection: React.FC = () => {
             name={editName}
             configDir={editConfigDir}
             args={editArgs}
+            weight={editWeight}
+            onWeightChange={setEditWeight}
             mcpItems={mcpItems}
             mcpSel={editMcp}
             onToggleMcp={toggleMcp}

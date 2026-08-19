@@ -48,6 +48,7 @@ import { remoteDisabledTitle } from '../../lib/federation';
 import { loadModelOptions, type ModelOption } from '../../lib/modelOptions';
 import { shortModelLabel } from '../../lib/modelLabel';
 import { claudeColors as colors } from '../claude-shared';
+import type { ClaudeProfile } from '../../../../main/shared/ipcTypes';
 import {
   ContextMenu,
   ContextMenuItem,
@@ -61,6 +62,14 @@ export interface RestartOverrides {
   model?: string;
   effort?: string;
   permissionMode?: string;
+  /** Claude only: restart under another profile (another login). The resume
+   *  finds the same transcript in the accounts' shared projects/ dir, so the
+   *  conversation continues under the new account. */
+  profileId?: string;
+  /** Sent once the respawn resolves. Set by AUTOMATIC restarts (account
+   *  failover) — a resume comes back idle, and nobody is present to say
+   *  "keep going". The pills never set it: the user is right there. */
+  continuePrompt?: string;
 }
 
 /** Context-window chip; the 1M window gets the accent treatment. */
@@ -148,7 +157,7 @@ const modeItemLabel = (label: string, current: boolean, restarts: boolean): Reac
     checkedLabel(label, current)
   );
 
-type MenuKind = 'model' | 'effort' | 'permission';
+type MenuKind = 'model' | 'effort' | 'permission' | 'profile';
 
 interface MenuState {
   kind: MenuKind;
@@ -200,8 +209,14 @@ export const ComposerControls: React.FC<{
   sessionId: string | null;
   snapshot?: ClaudeSessionSnapshot | null;
   cwd?: string;
+  /** The profile (login) this session currently runs under; undefined = the
+   *  default profile. Shown/switchable only when `canSwitchProfile`. */
+  profileId?: string;
+  /** Local Claude sessions only — a profile is a CLAUDE_CONFIG_DIR, which
+   *  remote spawns scrub and other providers don't have. */
+  canSwitchProfile?: boolean;
   onRestartWith: (overrides: RestartOverrides) => void;
-}> = ({ provider, sessionId, snapshot, cwd, onRestartWith }) => {
+}> = ({ provider, sessionId, snapshot, cwd, profileId, canSwitchProfile, onRestartWith }) => {
   // The Claude transport rides on the session snapshot; 'stream' (headless
   // stream-json, no PTY) swaps in transport-aware caps — see providerCaps.ts.
   const transport = snapshot?.transport;
@@ -211,6 +226,19 @@ export const ComposerControls: React.FC<{
 
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [models, setModels] = useState<ModelOption[] | null>(null);
+  // Claude account profiles, for the profile pill (fetched once when the pill
+  // is live — the list is small and profile edits are rare).
+  const [profiles, setProfiles] = useState<ClaudeProfile[] | null>(null);
+  useEffect(() => {
+    if (!canSwitchProfile) return;
+    window.electronAPI
+      .claudeProfilesList?.()
+      .then((p) => setProfiles((p as ClaudeProfile[]) ?? []))
+      .catch(() => setProfiles([]));
+  }, [canSwitchProfile]);
+  const currentProfileId = profileId ?? profiles?.find((p) => p.isDefault)?.id;
+  const profileLabel =
+    profiles?.find((p) => p.id === currentProfileId)?.name ?? (profileId ? 'Profile' : 'Default');
   /** Model id we optimistically sent `/model` for; cleared when telemetry
    *  confirms (model label changes) or after a timeout. */
   const [switching, setSwitching] = useState<string | null>(null);
@@ -526,6 +554,25 @@ export const ComposerControls: React.FC<{
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{permLabel}</span>
         <ChevronDown size={11} strokeWidth={2.25} style={{ opacity: 0.7, flexShrink: 0 }} />
       </button>
+      {canSwitchProfile && (
+        <>
+          <Sep />
+          <button
+            className="wks-composer-ctl"
+            style={pillStyle}
+            onClick={openMenu('profile')}
+            disabled={disabled}
+            title={
+              disabled
+                ? disabledTitle
+                : 'Account profile (restarts the session, resuming this conversation under the other login)'
+            }
+          >
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{profileLabel}</span>
+            <ChevronDown size={11} strokeWidth={2.25} style={{ opacity: 0.7, flexShrink: 0 }} />
+          </button>
+        </>
+      )}
 
       {menu && !menu.confirm && (
         <ContextMenu
@@ -659,6 +706,28 @@ export const ComposerControls: React.FC<{
                   />
                 );
               })}
+            </>
+          )}
+          {menu.kind === 'profile' && (
+            <>
+              <ContextMenuLabel>Profile · restarts, same conversation</ContextMenuLabel>
+              {profiles === null && <ContextMenuItem label="Loading…" onClick={() => {}} disabled />}
+              {(profiles ?? []).map((p) => (
+                <ContextMenuItem
+                  key={p.id}
+                  label={checkedLabel(
+                    (p.weight ?? 0) > 0 ? `${p.name} · auto` : p.name,
+                    p.id === currentProfileId,
+                  )}
+                  onClick={() => {
+                    if (p.id === currentProfileId) {
+                      setMenu(null);
+                      return;
+                    }
+                    pickRestart({ profileId: p.id }, `the ${p.name} profile`);
+                  }}
+                />
+              ))}
             </>
           )}
         </ContextMenu>

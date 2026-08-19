@@ -19,6 +19,14 @@ export interface ClaudeProfile {
   mcpItemIds?: string[];
   /** Is this the default profile? */
   isDefault: boolean;
+  /** Automatic-failover weight. 0 (the default) keeps the profile manual-only;
+   *  any positive value opts it into the rotation: when a session's account
+   *  hits its usage window, the pane restarts onto the highest-weight
+   *  signed-in profile that isn't already exhausted (lib/profileFailover on
+   *  the renderer side). TWIN: `Weight` in cmd/brain/profiles.go — the brain
+   *  round-trips the file, so a field it doesn't model gets WIPED on its next
+   *  write. */
+  weight?: number;
 }
 
 /**
@@ -126,6 +134,7 @@ export const DEFAULT_PROFILE = (): ClaudeProfile => ({
   extraArgs: [],
   mcpItemIds: [],
   isDefault: true,
+  weight: 0,
 });
 
 /**
@@ -144,6 +153,9 @@ export function normalizeProfile(p: ClaudeProfile): ClaudeProfile {
     extraArgs: p.extraArgs ?? [],
     mcpItemIds: p.mcpItemIds ?? [],
     isDefault: p.isDefault === true,
+    // Emit the key always (0 = manual-only), mirroring the Go twin's
+    // no-omitempty int — same method, same shape, whichever provider answers.
+    weight: typeof p.weight === 'number' && p.weight > 0 ? p.weight : 0,
   };
 }
 
@@ -203,6 +215,9 @@ class ClaudeProfileService {
     if (updates.configDir !== undefined) profile.configDir = updates.configDir.trim();
     if (updates.extraArgs !== undefined) profile.extraArgs = updates.extraArgs;
     if (updates.mcpItemIds !== undefined) profile.mcpItemIds = updates.mcpItemIds;
+    if (updates.weight !== undefined) {
+      profile.weight = typeof updates.weight === 'number' && updates.weight > 0 ? updates.weight : 0;
+    }
     if (updates.isDefault) {
       // Unset other defaults
       for (const p of this.profiles) p.isDefault = p.id === id;

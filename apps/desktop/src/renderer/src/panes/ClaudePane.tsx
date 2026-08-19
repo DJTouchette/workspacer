@@ -60,6 +60,8 @@ import { DropOverlay } from '../components/claude/DropOverlay';
 import { ScrollToBottomButton } from '../components/claude/ScrollToBottomButton';
 import { SessionStatusBar } from '../components/claude/SessionStatusBar';
 import { ComposerControls, type RestartOverrides } from '../components/claude/ComposerControls';
+import { pickFailoverProfile, windowExhausted } from '../lib/profileFailover';
+import type { ClaudeProfile } from '../../../main/shared/ipcTypes';
 import {
   classifyFile,
   buildPromptPrefix,
@@ -496,6 +498,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   const setViewMode = showViewToggle ? setViewModeState : noopSetView;
   viewModeRef.current = viewMode;
 
+  // The profile (login) this session currently runs under. Starts as the
+  // pane's spawn profile and moves with profile-switch restarts (the pill or
+  // the automatic failover below) — the prop can't, it's frozen in the pane
+  // config.
+  const [liveProfileId, setLiveProfileId] = useState(profileId);
+
   // A fresh account profile boots Claude signed-out: the account dir is
   // seeded past first-run onboarding (claudeAccountSetup), so the REPL comes
   // up and hooks fire — but /login itself is an interactive terminal flow the
@@ -505,7 +513,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   const [needsSignIn, setNeedsSignIn] = useState(false);
   const signInForcedRef = useRef(false);
   useEffect(() => {
-    if (!profileId || !window.electronAPI.claudeProfilesLoginStatus) return;
+    if (!liveProfileId || !window.electronAPI.claudeProfilesLoginStatus) return;
     let live = true;
     let timer: ReturnType<typeof setInterval> | null = null;
     const stop = () => {
@@ -518,9 +526,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       window.electronAPI
         .claudeProfilesLoginStatus?.()
         .then((m) => {
-          if (!live || !m || !(profileId in m)) return;
-          setNeedsSignIn(!m[profileId]);
-          if (m[profileId]) stop(); // signed in — nothing left to watch
+          if (!live || !m || !(liveProfileId in m)) return;
+          setNeedsSignIn(!m[liveProfileId]);
+          if (m[liveProfileId]) stop(); // signed in — nothing left to watch
         })
         .catch(() => {});
     void probe();
@@ -529,7 +537,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       live = false;
       stop();
     };
-  }, [profileId]);
+  }, [liveProfileId]);
   useEffect(() => {
     if (needsSignIn && hasTerminal && !signInForcedRef.current) {
       signInForcedRef.current = true;
@@ -1507,6 +1515,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // is continuous.
   const handleRestartWith = useCallback(
     (overrides: RestartOverrides) => {
+      // A profile switch re-homes the session on another login — track it so
+      // the pill, the sign-in probe and the failover picker all follow.
+      if (overrides.profileId !== undefined) {
+        setLiveProfileId(overrides.profileId || undefined);
+      }
       if (attachSessionId) {
         window.dispatchEvent(
           new CustomEvent('agent:respawn', {
@@ -1532,6 +1545,87 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       managedStream,
     ],
   );
+
+  // ── Automatic account failover ──
+  // "Cycle through until one works": when this session's account exhausts a
+  // usage window, restart onto the heaviest-weighted signed-in profile that
+  // hasn't just been exhausted itself (weights live in Settings → Claude
+  // Profiles; 0 = manual only). The switch resumes the SAME conversation —
+  // transcripts sit in the accounts' shared projects/ dir. Cooldown keeps a
+  // stale statusline (the old account's last report survives the restart
+  // until the new login speaks) from re-triggering mid-flip.
+  // Local Claude sessions only: a profile is a CLAUDE_CONFIG_DIR, which
+  // remote spawns scrub and other providers don't have.
+  const canSwitchProfile =
+    isClaude && !session?.hub && typeof window.electronAPI.claudeProfilesList === 'function';
+
+  const failoverRef = useRef({ lastAt: 0, blocked: new Map<string, number>() });
+  const fiveHourPct = session?.statusLine?.fiveHourPct;
+  const sevenDayPct = session?.statusLine?.sevenDayPct;
+  const failoverEligible = isClaude && !session?.hub && !!sessionId;
+  useEffect(() => {
+    if (!failoverEligible || !windowExhausted(fiveHourPct, sevenDayPct)) return;
+    const st = failoverRef.current;
+    const now = Date.now();
+    if (now - st.lastAt < 120_000) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [profiles, status] = await Promise.all([
+          window.electronAPI.claudeProfilesList?.() ?? [],
+          window.electronAPI.claudeProfilesLoginStatus?.() ?? {},
+        ]);
+        if (cancelled) return;
+        const next = pickFailoverProfile(
+          (profiles as ClaudeProfile[]) ?? [],
+          liveProfileId,
+          (status as Record<string, boolean>) ?? {},
+          st.blocked,
+          now,
+        );
+        if (!next) return;
+        st.lastAt = now;
+        st.blocked.set(liveProfileId ?? 'default', now);
+        // A resume comes back idle: if the agent was mid-work when the window
+        // closed on it, the restart carries a continuation prompt so it picks
+        // the task back up unattended. An idle agent gets no prompt — there is
+        // nothing to continue, and a nudge would just spend the fresh quota.
+        const wasWorking =
+          (session?.ambientState && session.ambientState !== 'idle') ||
+          (session?.activeToolCalls?.length ?? 0) > 0;
+        window.electronAPI.hubPublish?.({
+          type: 'notify.post',
+          data: {
+            title: `Switched to the ${next.name} profile`,
+            body: `${title || 'An agent'} hit its account's usage window; the conversation continues on ${next.name}${wasWorking ? ' and picks its task back up' : ''}.`,
+            level: 'info',
+            key: `profile-failover-${paneId}`,
+          },
+        });
+        handleRestartWith({
+          profileId: next.id,
+          continuePrompt: wasWorking
+            ? 'This session was automatically switched to a different account because the previous one hit its usage limit — the conversation above is intact. Pick up exactly where you left off: if a task was in progress, continue it; re-run any tool call that was cut off mid-flight. If you were actually done or waiting on me, just say so briefly.'
+            : undefined,
+        });
+      } catch {
+        // Probe failure = no switch this tick; the trigger re-fires on the
+        // next statusline update.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    failoverEligible,
+    fiveHourPct,
+    sevenDayPct,
+    liveProfileId,
+    handleRestartWith,
+    title,
+    paneId,
+    session,
+  ]);
 
   // Escape key cancels in GUI mode (must be after cancelTask/isStreaming declarations)
   useEffect(() => {
@@ -2372,6 +2466,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                       sessionId={sessionId}
                       snapshot={session}
                       cwd={cwd}
+                      profileId={liveProfileId}
+                      canSwitchProfile={canSwitchProfile}
                       onRestartWith={handleRestartWith}
                     />
                   }
@@ -2424,6 +2520,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                     sessionId={sessionId}
                     snapshot={session}
                     cwd={cwd}
+                    profileId={liveProfileId}
+                    canSwitchProfile={canSwitchProfile}
                     onRestartWith={handleRestartWith}
                   />
                 )}

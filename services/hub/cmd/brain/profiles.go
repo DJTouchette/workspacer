@@ -34,6 +34,13 @@ type profile struct {
 	// keeps it an array rather than the JSON null a nil slice would marshal to.
 	MCPItemIDs []string `json:"mcpItemIds"`
 	IsDefault  bool     `json:"isDefault"`
+	// Weight opts a profile into the desktop's automatic account failover
+	// (0 = manual-only). The brain doesn't act on it — but it MUST model it:
+	// this file is round-tripped on every add/update/remove, and a field the
+	// struct doesn't carry gets wiped from disk by the next brain write.
+	// No omitempty, mirroring mcpItemIds: both providers answer one shape.
+	// TWIN: `weight` in apps/desktop .../claudeProfiles.ts normalizeProfile.
+	Weight int `json:"weight"`
 }
 
 type profilesFile struct {
@@ -246,6 +253,7 @@ type profileUpdate struct {
 	ExtraArgs  []string `json:"extraArgs"`
 	MCPItemIDs []string `json:"mcpItemIds"`
 	IsDefault  *bool    `json:"isDefault"`
+	Weight     *int     `json:"weight"`
 }
 
 func updateProfile(id string, u profileUpdate) (*profile, error) {
@@ -271,6 +279,13 @@ func updateProfile(id string, u profileUpdate) (*profile, error) {
 	}
 	if u.MCPItemIDs != nil {
 		ps[idx].MCPItemIDs = u.MCPItemIDs
+	}
+	if u.Weight != nil {
+		w := *u.Weight
+		if w < 0 {
+			w = 0
+		}
+		ps[idx].Weight = w
 	}
 	if u.IsDefault != nil && *u.IsDefault {
 		for i := range ps {

@@ -585,6 +585,9 @@ export interface ClaudeProfile {
   /** Library item ids (kind 'mcp') loaded by default when spawning with this profile. */
   mcpItemIds?: string[];
   isDefault: boolean;
+  /** Automatic-failover weight: 0/absent = manual only; heavier wins first
+   *  when a session's account exhausts a usage window (lib/profileFailover). */
+  weight?: number;
 }
 
 /** Partial update payload for claude-profiles:update. */
