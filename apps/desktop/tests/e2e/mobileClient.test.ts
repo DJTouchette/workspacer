@@ -9,6 +9,7 @@
  * No Electron, no claudemon, no Claude auth — the client only ever speaks the
  * bus protocol, so the provider is the only thing worth faking.
  */
+import * as fs from 'fs';
 import { test, expect, type Page } from '@playwright/test';
 import {
   startMobileHub,
@@ -237,6 +238,74 @@ test.describe('mobile client', () => {
       sessionId: 'ws1',
       mode: 'plan',
     });
+  });
+
+  test('a photo attaches via files.upload and rides the message as an [Image:] prefix', async ({ page }) => {
+    await openClient(page);
+    await page.locator('.agent[data-agent="ws1"] .top').click();
+    await expect(page.locator('#title')).toHaveText('workspacer');
+
+    // The + sheet's "Attach photo" opens the real file chooser. A 1×1 PNG is
+    // small enough for the client's PNG passthrough, so the name survives.
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    await page.locator('#moreBtn').click();
+    const chooser = page.waitForEvent('filechooser');
+    await page.locator('#sheet .opt', { hasText: 'Attach photo' }).click();
+    await (await chooser).setFiles({ name: 'shot.png', mimeType: 'image/png', buffer: png });
+
+    // files.upload is HUB-LOCAL (it never reaches the fake provider), so the
+    // proof it ran is the chip flipping from "uploading…" to the file name…
+    const chip = page.locator('#attach .att');
+    await expect(chip).toHaveCount(1);
+    await expect(chip).toContainText('shot.png', { timeout: 10000 });
+
+    await page.locator('#msg').fill('see this');
+    await page.locator('#send').click();
+    await expect.poll(() => hub.callsTo('agents.sendMessage').length).toBeGreaterThan(0);
+    const sent = hub.callsTo('agents.sendMessage').at(-1)!.params;
+    expect(sent.sessionId).toBe('ws1');
+    // …and the sent text carrying a real path in the hub's landing pad,
+    // desktop-parity marker form, with the bytes actually on disk.
+    const m = /^\[Image: (\S+workspacer-uploads\/[^\]]+\.png)\] see this$/.exec(sent.text);
+    expect(m, `text was: ${sent.text}`).toBeTruthy();
+    expect(fs.readFileSync(m![1])).toEqual(png);
+    // The composer resets fully after a successful send.
+    await expect(page.locator('#attach .att')).toHaveCount(0);
+    await expect(page.locator('#msg')).toHaveValue('');
+  });
+
+  test('chat hides the tab bar, and the fleet working spinner actually rotates', async ({ page }) => {
+    await openClient(page);
+    await expect(page.locator('#nav')).toBeVisible();
+
+    // The working card's ring must ROTATE — the old translateY base transform
+    // reduced the animation to matrix interpolation with rotate(360°) ≡
+    // identity, i.e. a 2px jiggle. A rotated matrix has b = sin(θ) ≠ 0.
+    const spin = page.locator('.agent[data-agent="ws1"] .doing .spin');
+    await expect(spin).toBeVisible();
+    let rotated = false;
+    for (let i = 0; i < 5 && !rotated; i++) {
+      const b = await spin.evaluate((el) => {
+        const t = getComputedStyle(el).transform;
+        const p = /matrix\(([^)]+)\)/.exec(t);
+        return p ? Math.abs(parseFloat(p[1].split(',')[1])) : 0;
+      });
+      if (b > 0.05) rotated = true;
+      await page.waitForTimeout(150);
+    }
+    expect(rotated, 'spinner transform never showed a rotation component').toBe(true);
+
+    // Entering chat trades the tab bar for transcript space; the header slims
+    // and the back button remains the way out.
+    await page.locator('.agent[data-agent="ws1"] .top').click();
+    await expect(page.locator('#title')).toHaveText('workspacer');
+    await expect(page.locator('#nav')).toBeHidden();
+    await expect(page.locator('#hdr')).toHaveClass(/chat/);
+    await page.locator('#backBtn').click();
+    await expect(page.locator('#nav')).toBeVisible();
   });
 
   test('a pending question docks above the composer and answers', async ({ page }) => {

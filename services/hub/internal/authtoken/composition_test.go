@@ -230,6 +230,13 @@ var tierActors = map[string]map[string]bool{
 		"claude.signal":      true,
 		"push.subscribe":     true,
 		"push.unsubscribe":   true,
+		// The /m attachment landing pad: caller bytes become a hub-named 0600
+		// file in tmp (never a caller path, extension allowlisted). Deliberate
+		// for the phone tier — an attachment only ACTS through the
+		// agents.sendMessage + approve pair this tier is already accepted for;
+		// capspec records the full reasoning (unscopedByDecision +
+		// compositionInert "files.upload").
+		"files.upload": true,
 	},
 }
 

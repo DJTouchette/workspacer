@@ -77,6 +77,7 @@ var unscopedByDecision = map[string]string{
 	// also fill in — see cmd/brain/shellallow.go and lib/shellAllowlist.ts.
 	"terminals.create":    "cwd is a process working directory and holding the capability at all is the gate (as agents.spawn); the OTHER caller string, `shell`, is argv[0] and is confined by an ALLOWLIST of the host's login shells rather than by fsRoots — resolveTerminalShell in both providers",
 	"sessions.transcript": "cwd only selects which historical session to resolve under ~/.claude/projects; the transcript path is derived by the provider, never taken from the caller",
+	"files.upload":        "the landing pad for remote-client attachments (/m photos): the caller supplies BYTES and an advisory filename of which only an allowlisted image/pdf extension survives — the directory (os.TempDir()/workspacer-uploads) and basename are chosen by the hub, so there is no caller path to confine. Size-capped (24 MiB decoded) and written 0600. The file only ever ACTS if the caller also references it to an agent via agents.sendMessage — a capability the same triage tier already holds, and one whose excuse (the agent's own tool approvals are the gate) covers reading an uploaded image exactly as it covers any other path a message names",
 	// jobs.* — the hub's job system (internal/jobs). A job is PERSISTED argv:
 	// upsert carries a shell command, a spawn cwd/prompt, or a capability call
 	// verbatim, and run/remove act on that stored authority. There is no
@@ -837,6 +838,13 @@ var unscopedParams = map[string]map[string]ParamDecision{
 	// precisely why the method-level guard over cmd/hub's registrations exists.
 	"layout.set": {
 		"data": {KindPermission, "the shared workspace document. Opaque to the hub except for four per-agent fields that become arguments to a LOCAL spawn when the desktop adopts it — skipPermissions, permissionMode, profileId, mcpItemIds — which layout.scrubAdoptedSpawnFields strips from a non-trusted write, matching agents.spawn's own clamps. The document's cwds and URLs are description: the hub never opens one"},
+	},
+	"files.upload": {
+		// dataBase64 deliberately has NO row: the vocabulary has no data-at-rest
+		// kind (fs.write's `contents` is likewise unlisted) — the bytes story is
+		// the method-level unscopedByDecision reason and the compositionInert
+		// claim in composition.go.
+		"name": {KindFilename, "advisory only: the basename is discarded and the extension must be on the image/pdf allowlist; the written path is hub-composed (os.TempDir()/workspacer-uploads/m-<ts>-<rand>.<ext>)"},
 	},
 	"push.subscribe": {
 		"endpoint": {KindURL, "a push-service URL the HOST posts to on the caller's behalf — a NETWORK SINK, not a string, and stored by one call for a different subsystem (push.Watch) to use later. Constrained by validatePushEndpoint to https at a non-private host; the payload is encrypted to the subscription's own keys, and RPCSubscribeAs records which credential asked so a revoked token stops being notified"},

@@ -69,6 +69,11 @@
   /* ── header ───────────────────────────────────────────────────────────── */
   header { flex:none; padding:calc(10px + var(--safe-t)) 18px 12px; border-bottom:1px solid var(--line);
     display:flex; flex-direction:column; gap:12px; }
+  /* Chat mode slims the chrome: the transcript is the point. The cwd line is
+     recoverable (project pill, "Copy working directory" in the + sheet). */
+  header.chat { padding-bottom:8px; }
+  header.chat h1 { font-size:18px; }
+  header.chat .sub { display:none; }
   .hrow { display:flex; align-items:center; gap:10px; }
   .back { width:30px; height:30px; margin-left:-6px; flex:none; display:none; align-items:center;
     justify-content:center; border-radius:8px; color:var(--muted); font-size:19px; }
@@ -159,9 +164,12 @@
   .agent .path { font-family:var(--mono); font-size:11.5px; color:var(--faint); }
   .doing { display:flex; align-items:baseline; gap:7px; font-size:13px; color:var(--text3); line-height:1.35; }
   .doing .txt { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* Optical alignment must NOT ride `transform`: wksSpin animates transform,
+     and a translateY base makes the UA matrix-interpolate translate→rotate(360°)
+     (≡ identity), so the ring jiggled 2px instead of spinning. */
   .spin { width:10px; height:10px; border-radius:999px; border:1.5px solid var(--blue);
     border-top-color:transparent; animation:wksSpin .9s linear infinite; flex:none; display:block;
-    transform:translateY(2px); }
+    position:relative; top:2px; }
   .mark { width:10px; height:10px; border-radius:999px; flex:none; display:block; transform:translateY(1px); }
   .tele { display:flex; align-items:center; gap:10px; font-family:var(--mono); font-size:11.5px;
     color:var(--muted); }
@@ -437,6 +445,19 @@
   #askDock .cap { color:var(--amber-mono); }
   #askDock .q { font-size:14.5px; line-height:1.45; color:var(--amber-text); }
   #chips { display:flex; gap:7px; padding:10px 14px 0; overflow-x:auto; }
+  /* While the software keyboard is up, every vertical pixel is transcript:
+     drop the chips rail and the safe-area padding the keyboard now covers. */
+  body.kb #chips { display:none; }
+  body.kb .crow { padding-bottom:14px; }
+  #attach { display:flex; gap:7px; padding:10px 14px 0; overflow-x:auto; }
+  #attach:empty { display:none; }
+  #attach .att { flex:none; display:flex; align-items:center; gap:7px; padding:4px 9px 4px 4px;
+    border-radius:8px; background:var(--blue-bg); border:1px solid var(--blue-line);
+    color:var(--blue-text); font-family:var(--mono); font-size:11px; max-width:170px; }
+  #attach .att img { width:22px; height:22px; border-radius:5px; object-fit:cover; flex:none; display:block; }
+  #attach .att .nm { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #attach .att.up { opacity:.55; }
+  #attach .att .x { flex:none; font-size:14px; line-height:1; padding:2px; color:inherit; opacity:.75; }
   #chips button { flex:none; padding:5px 10px; border-radius:8px; background:var(--raised);
     border:1px solid var(--line4); font-family:var(--mono); font-size:11px; color:var(--text3);
     white-space:nowrap; }
@@ -461,6 +482,10 @@
   /* ── tab bar ──────────────────────────────────────────────────────────── */
   nav { flex:none; display:grid; grid-template-columns:repeat(4,1fr); border-top:1px solid var(--line);
     background:#0e1113; padding:7px 6px calc(12px + var(--safe-b)); }
+  /* Hidden in chat (the header's back button is the way out): the transcript
+     gets the ~70-100px back, and the composer's own safe-area padding stops
+     being a double payment. Author display:grid beats the UA [hidden] rule. */
+  nav[hidden] { display:none; }
   nav button { display:flex; flex-direction:column; align-items:center; gap:4px; padding:6px 0;
     position:relative; }
   nav .ic { width:17px; height:17px; display:block; }
@@ -527,7 +552,9 @@
 
   <div id="composer">
     <div id="askDock"></div>
+    <div id="attach"></div>
     <div id="chips"></div>
+    <input type="file" id="file" accept="image/*" multiple hidden>
     <div class="crow">
       <button class="cbtn" id="moreBtn" aria-label="More">+</button>
       <textarea id="msg" rows="1" placeholder="Message workspacer…" autocomplete="off"></textarea>
@@ -557,6 +584,7 @@
   const gearBtn = $('gearBtn');
   const filtersEl = $('filters'), segmentsEl = $('segments'), main = $('main');
   const composer = $('composer'), askDock = $('askDock'), chipsEl = $('chips');
+  const attachEl = $('attach'), fileEl = $('file');
   const msgEl = $('msg'), sendBtn = $('send'), moreBtn = $('moreBtn'), backBtn = $('backBtn');
   const nav = $('nav'), tabBadge = $('tabBadge'), scrim = $('scrim'), sheet = $('sheet'), toastEl = $('toast');
 
@@ -659,6 +687,7 @@
     openRuns: new Set(),      // expanded workflow runs (by runId)
     picks: new Map(),         // sessionId:questionSetHash:index -> 1-based option
     spawn: { cwd: '', provider: '', permissionMode: '', prompt: '' },
+    attach: [],               // pending image attachments: {id, name, path, thumb, uploading}
   };
 
   // Attention bookkeeping. The snapshot has no "this turn finished, go look"
@@ -789,13 +818,13 @@
   const HANDSHAKE_BUDGETS_MS = [4500, 9000, 20000];
   let attempt = 0;
 
-  function call(method, params) {
+  function call(method, params, timeoutMs) {
     return new Promise((resolve, reject) => {
       if (!ws || ws.readyState !== WebSocket.OPEN) return reject(new Error('offline'));
       const id = 'c' + (++callSeq);
       calls.set(id, { resolve, reject });
       ws.send(JSON.stringify({ op: 'call', id, method, params: params || {} }));
-      setTimeout(() => { if (calls.has(id)) { calls.delete(id); reject(new Error('timeout')); } }, 15000);
+      setTimeout(() => { if (calls.has(id)) { calls.delete(id); reject(new Error('timeout')); } }, timeoutMs || 15000);
     });
   }
   const errText = (e) => String((e && e.message) || e || 'failed').replace(/^Error:\s*/, '');
@@ -1470,6 +1499,7 @@
     const active = sessions.get(S.sessionId);
 
     hdr.classList.toggle('has-back', S.screen === 'chat' || S.screen === 'flows');
+    hdr.classList.toggle('chat', S.screen === 'chat');
     let title = 'Fleet', meta = `${all.length} agents`, sub = '';
     if (S.screen === 'inbox') { title = 'Needs You'; meta = `${items.length} open`; }
     else if (S.screen === 'chat') {
@@ -1523,6 +1553,7 @@
     } else segmentsEl.hidden = true;
 
     composer.classList.toggle('show', S.screen === 'chat');
+    nav.hidden = S.screen === 'chat';
   }
 
   function matchesFilter(s, f) {
@@ -1578,6 +1609,10 @@
   }
   function openChat(id) {
     if (!sessions.get(id)) return;
+    // Pending attachments are per-session: their uploaded paths live on THAT
+    // session's machine (possibly a federated peer), so they must not leak
+    // into another agent's composer.
+    if (S.sessionId !== id) { S.attach = []; renderAttach(); }
     S.screen = 'chat'; S.sessionId = id;
     renderChrome(); render();
   }
@@ -1972,7 +2007,17 @@
       return `<div class="msg user"><div class="b" style="font-family:var(--mono);font-size:13px">/${esc(c.name)}${c.args ? ' ' + esc(c.args) : ''}</div></div>`
         + (c.output ? `<div class="work"><div class="steps"><div class="step"><span class="a${c.outputIsError ? ' fail' : ''}" style="white-space:pre-wrap">${esc(oneLine(c.output, 300))}</span></div></div></div>` : '');
     }
-    return `<div class="msg user"><div class="b">${esc(t.content || '')}</div></div>`;
+    // Attachment markers ([Image: /path] et al.) render as chips, not raw
+    // bracket noise — mirrors the desktop's messageImages.ts stripping.
+    const raw = String(t.content || '');
+    const tags = [];
+    const stripped = raw.replace(/\[(Image|PDF|File):\s*([^\]]+)\]\s*/g, (_, kind, p) => {
+      tags.push(`<span style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:6px;background:rgba(255,255,255,.14);font-family:var(--mono);font-size:11px">🖼 ${esc(p.split('/').pop())}</span>`);
+      return '';
+    }).trim();
+    const tagRow = tags.length
+      ? `<div style="display:flex;flex-wrap:wrap;gap:5px;${stripped ? 'margin-bottom:6px' : ''}">${tags.join('')}</div>` : '';
+    return `<div class="msg user"><div class="b">${tagRow}${esc(stripped)}</div></div>`;
   }
 
   function workCardHtml(s, calls, key) {
@@ -2195,6 +2240,7 @@
     // the settings ran through picking an agent first.
     const rows = [];
     if (s) {
+      if (can('files.upload')) rows.push({ label: 'Attach photo', run: () => fileEl.click() });
       if (isWorking(s)) rows.push({ label: 'Interrupt this turn', run: () => interrupt(s.sessionId) });
       rows.push({ label: 'Open inspector', run: () => { S.seg = 'flows'; go('flows'); } });
       rows.push({ label: 'Insert saved prompt', run: () => openLibrarySheet() });
@@ -2600,14 +2646,98 @@
     });
   }
 
+  // ══ image attachments ═══════════════════════════════════════════════════
+  // The phone's photo becomes a file on the machine RUNNING the agent: bytes go
+  // up as base64 over the bus (files.upload — hub-local, so `hub:<peer>/`
+  // qualification lands them on a federated peer's disk too), and the message
+  // carries only the returned path as a `[Image: /path]` prefix — the exact
+  // model the desktop composer uses (fileAttachment.ts buildPromptPrefix).
+  const UPLOAD_MAX_EDGE = 2048;    // photos re-encode to JPEG under this edge
+  const PASSTHRU_BYTES = 2 * 1024 * 1024; // small png/jpeg upload untouched
+  let attachSeq = 0;
+
+  function renderAttach() {
+    attachEl.innerHTML = S.attach.map((a) => `
+      <span class="att${a.uploading ? ' up' : ''}">
+        ${a.thumb ? `<img src="${a.thumb}" alt="">` : ''}
+        <span class="nm">${esc(a.uploading ? 'uploading…' : a.name)}</span>
+        <button class="x" data-att="${a.id}" aria-label="Remove attachment">✕</button>
+      </span>`).join('');
+    for (const b of attachEl.querySelectorAll('[data-att]')) {
+      b.onclick = () => { S.attach = S.attach.filter((a) => a.id !== b.dataset.att); renderAttach(); };
+    }
+  }
+
+  /** Decode via <img> (Safari decodes iPhone HEIC), bound the long edge, and
+   *  re-encode as JPEG. Small PNG/JPEG files pass through untouched so
+   *  screenshots keep their crisp text. Returns {name, dataUrl, thumb}. */
+  function normalizeImage(file) {
+    return new Promise((resolve, reject) => {
+      const passthru = (file.type === 'image/png' || file.type === 'image/jpeg') && file.size <= PASSTHRU_BYTES;
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const draw = (edge, type, q) => {
+          const k = Math.min(1, edge / Math.max(img.naturalWidth, img.naturalHeight));
+          const c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(img.naturalWidth * k));
+          c.height = Math.max(1, Math.round(img.naturalHeight * k));
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          return c.toDataURL(type, q);
+        };
+        const thumb = draw(44, 'image/jpeg', 0.7);
+        if (passthru) {
+          const r = new FileReader();
+          r.onload = () => { URL.revokeObjectURL(url); resolve({ name: file.name, dataUrl: r.result, thumb }); };
+          r.onerror = () => { URL.revokeObjectURL(url); reject(new Error('read failed')); };
+          r.readAsDataURL(file);
+          return;
+        }
+        const dataUrl = draw(UPLOAD_MAX_EDGE, 'image/jpeg', 0.85);
+        URL.revokeObjectURL(url);
+        const base = (file.name || 'photo').replace(/\.[^.]*$/, '') || 'photo';
+        resolve({ name: base + '.jpg', dataUrl, thumb });
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("couldn't decode " + (file.name || 'image'))); };
+      img.src = url;
+    });
+  }
+
+  async function attachFiles(files) {
+    for (const file of files) {
+      if (!file || !/^image\//.test(file.type || '')) continue;
+      const id = 'a' + (++attachSeq);
+      const entry = { id, name: file.name || 'photo', path: '', thumb: '', uploading: true };
+      S.attach.push(entry); renderAttach();
+      try {
+        const { name, dataUrl, thumb } = await normalizeImage(file);
+        entry.thumb = thumb; renderAttach();
+        const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+        const res = await call(qualify(S.sessionId, 'files.upload'), { name, dataBase64: b64 }, 90000);
+        if (!res || !res.path) throw new Error('no path returned');
+        entry.path = res.path; entry.name = name; entry.uploading = false;
+        if (S.attach.includes(entry)) renderAttach();   // may have been removed mid-upload
+      } catch (e) {
+        S.attach = S.attach.filter((a) => a.id !== id); renderAttach();
+        toast('Attach failed: ' + errText(e));
+      }
+    }
+  }
+
   function sendMessage() {
     if (S.screen !== 'chat') return;
-    const text = (msgEl.value || '').trim();
+    const typed = (msgEl.value || '').trim();
+    if (S.attach.some((a) => a.uploading)) { toast('Still uploading…'); return; }
+    const ready = S.attach.filter((a) => a.path);
+    // Desktop parity: attachments ride as [Image: /abs/path] prefixes and the
+    // agent opens the files itself. An image with no words is a valid message.
+    const prefix = ready.map((a) => `[Image: ${a.path}]`).join(' ');
+    const text = prefix ? prefix + (typed ? ' ' + typed : '') : typed;
     if (!text) return;
     if (hubGone(S.sessionId)) { toast('Hub offline'); return; }
     sendBtn.disabled = true;
     call(qualify(S.sessionId, 'agents.sendMessage'), { sessionId: S.sessionId, text })
-      .then(() => { msgEl.value = ''; autosize(); })
+      .then(() => { msgEl.value = ''; S.attach = []; renderAttach(); autosize(); })
       .catch((e) => toast('Send failed: ' + errText(e)))
       .finally(() => { sendBtn.disabled = false; });
   }
@@ -2971,6 +3101,16 @@
   scrim.onclick = hideSheet;
   msgEl.addEventListener('input', autosize);
   msgEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+  fileEl.addEventListener('change', () => {
+    if (fileEl.files && fileEl.files.length) void attachFiles([...fileEl.files]);
+    fileEl.value = '';   // same file re-attachable
+  });
+  // A pasted image (screenshot share → paste) attaches like a picked one.
+  msgEl.addEventListener('paste', (e) => {
+    const items = [...((e.clipboardData && e.clipboardData.items) || [])];
+    const imgs = items.filter((i) => i.kind === 'file' && /^image\//.test(i.type)).map((i) => i.getAsFile()).filter(Boolean);
+    if (imgs.length) { e.preventDefault(); void attachFiles(imgs); }
+  });
 
   // The approval buttons advertise `y` / `n`, and the question options are
   // numbered — so those keys have to actually work. Phones have no keyboard,
@@ -3018,6 +3158,7 @@
     const applyKb = () => {
       const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
       document.documentElement.style.setProperty('--kb', (kb > 80 ? kb : 0) + 'px');
+      document.body.classList.toggle('kb', kb > 80);
       if (S.screen === 'chat') main.scrollTop = main.scrollHeight;
     };
     vv.addEventListener('resize', applyKb); vv.addEventListener('scroll', applyKb); applyKb();

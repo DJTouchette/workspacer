@@ -373,6 +373,10 @@ func main() {
 		srv.RegisterLocal("push.revoke", pushMgr.RPCRevoke)
 	}
 
+	// Photo/file landing pad for remote clients (/m attachments). Hub-local so
+	// hub:<peer>/files.upload writes on the peer that runs the agent.
+	srv.RegisterLocal("files.upload", rpcFilesUpload)
+
 	// guard wraps a mutating/sensitive route so it requires the bus token.
 	guard := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {

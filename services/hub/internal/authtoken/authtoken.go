@@ -135,6 +135,7 @@ var triageMethods = []string{
 	"push.subscribe",     // /m PWA background notifications
 	"push.unsubscribe",   // symmetric teardown of the same subscription
 	"push.test",          // "is push reaching me?" — the tier that subscribes must be able to check
+	"files.upload",       // land a photo from the phone on this machine's tmp so a message can reference it
 }
 
 // Methods returns the method patterns a scope may call. Operator is the single

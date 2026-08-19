@@ -557,6 +557,10 @@ var compositionInert = map[string]InertClaim{
 		Reason:    "reads one commit's change counts in a repo guardGitCwd('git.commitNumstat', …) confines — the per-commit twin of git.numstat, with the same absence of a writer and of a downstream interpreter",
 		Witnesses: []Witness{gitCwdGuard("git.commitNumstat")},
 	},
+	"files.upload": {
+		Reason:    "writes caller bytes to a FRESHLY CREATED, hub-named 0600 file under os.TempDir()/workspacer-uploads — a directory nothing in the host reads as config, code, argv or policy, with the caller's `name` param reduced to its allowlisted image/pdf extension (its per-param decision is on the record) so no executable class lands. WRITE-THEN-INTERPRET: the only downstream reader is an agent, and only if a caller also names the path via agents.sendMessage — which is the tier's one AcceptedIn pair, whose excuse (the agent's own tool approvals gate what a message makes it read) covers an uploaded image exactly as it covers any pre-existing host path a message names. WIDEN-THEN-USE: it changes no grant, root set, permission mode, approval gate or session, and no guard consults the upload directory; the returned path is information, not authority",
+		Witnesses: []Witness{paramsClassified("name")},
+	},
 	"claude.sessionsForDir": {
 		Reason:    "lists claudemon's known sessions for a directory. Read-only, its `cwd` carries a per-parameter decision on the record, and the ids it returns are already handed out by agents.list and sessions.snapshots",
 		Witnesses: []Witness{paramsClassified("cwd")},
