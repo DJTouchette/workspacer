@@ -3190,6 +3190,7 @@
   let chromeGap = 0, staleVp = false;
   const applyViewport = () => {
     const vv = window.visualViewport;
+    maxVH = Math.max(maxVH, window.innerHeight);
     let h = Math.round(vv ? vv.height : window.innerHeight);
     const off = vv ? Math.max(0, Math.round(vv.offsetTop)) : 0;
     if (standalone && window.screen && screen.height) {
@@ -3216,6 +3217,29 @@
     document.body.classList.toggle('kb', window.innerHeight - Math.round(vv ? vv.height : window.innerHeight) > 80);
     if (S.screen === 'chat') main.scrollTop = main.scrollHeight;
   };
+  // THE ACTUAL WEBKIT BUG (iOS 17/18, standalone only): the first software
+  // keyboard permanently shrinks the viewport — innerHeight and
+  // visualViewport.height stay ~80pt short after it closes, until force-quit.
+  // No meta tag fixes it (interactive-widget is ignored in standalone). The
+  // known heal: hide the full-height shell for one SYNCHRONOUS reflow, which
+  // makes WebKit re-measure the viewport on restore. maxVH remembers the
+  // honest launch height so we only heal when something was actually lost.
+  let maxVH = window.innerHeight;
+  function healViewport() {
+    if (!standalone) return;
+    const vv = window.visualViewport;
+    if (vv && window.innerHeight - vv.height > 80) return;   // keyboard still up
+    if (maxVH - window.innerHeight <= 4) return;             // nothing to heal
+    const app = document.getElementById('app');
+    const st = main.scrollTop;                               // display:none drops scroll state
+    app.style.display = 'none';
+    void app.offsetHeight;                                   // force the reflow WebKit needs
+    app.style.display = '';
+    main.scrollTop = st;
+    applyViewport();
+  }
+  // The keyboard closes on focusout; WebKit needs a beat before the heal takes.
+  document.addEventListener('focusout', () => setTimeout(healViewport, 140));
   window.addEventListener('resize', applyViewport);
   window.addEventListener('orientationchange', applyViewport);
   if (window.visualViewport) {
@@ -3226,7 +3250,7 @@
   // stale viewport numbers and never fire resize, so re-measure on every wake
   // (visibility, bfcache restore) — and once more a beat later, because the
   // standalone viewport can settle a frame after the wake event.
-  const remeasure = () => { applyViewport(); setTimeout(applyViewport, 350); };
+  const remeasure = () => { applyViewport(); setTimeout(applyViewport, 350); setTimeout(healViewport, 400); };
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') remeasure();
   });
