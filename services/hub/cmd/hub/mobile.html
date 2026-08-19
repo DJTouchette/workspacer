@@ -3178,6 +3178,15 @@
     window.visualViewport.addEventListener('resize', applyViewport);
     window.visualViewport.addEventListener('scroll', applyViewport);
   }
+  // An installed PWA RESUMES rather than reloads: iOS can un-suspend it with
+  // stale viewport numbers and never fire resize, so re-measure on every wake
+  // (visibility, bfcache restore) — and once more a beat later, because the
+  // standalone viewport can settle a frame after the wake event.
+  const remeasure = () => { applyViewport(); setTimeout(applyViewport, 350); };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') remeasure();
+  });
+  window.addEventListener('pageshow', remeasure);
   applyViewport();
 
   renderChrome();
