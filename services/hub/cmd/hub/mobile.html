@@ -2265,6 +2265,7 @@
       rows.push({ label: 'Copy working directory', run: () => copyText(agentPath(s)) });
     }
     rows.push({ label: 'Notification settings', run: () => openNotifySheet() });
+    rows.push({ label: 'Viewport diagnostics', run: () => openDiagSheet() });
     showSheet(s ? 'AGENT' : 'WORKSPACER', rows);
   }
   async function openLibrarySheet() {
@@ -3240,6 +3241,54 @@
   }
   // The keyboard closes on focusout; WebKit needs a beat before the heal takes.
   document.addEventListener('focusout', () => setTimeout(healViewport, 140));
+
+  // ── viewport diagnostics ──────────────────────────────────────────────────
+  // The bottom-gap saga has burned enough guesses: this dumps every metric the
+  // shell can see so the phone can SEND the numbers instead of a screenshot.
+  // "Insert into composer" drops the JSON into the chat box — paste-to-agent.
+  function measureProbe(style) {
+    const p = document.createElement('div');
+    p.style.cssText = 'position:fixed;left:-9999px;top:0;width:10px;visibility:hidden;' + style;
+    document.body.appendChild(p);
+    const v = { h: p.offsetHeight, pad: getComputedStyle(p).paddingBottom };
+    p.remove();
+    return v;
+  }
+  function viewportDiag() {
+    const vv = window.visualViewport;
+    const app = document.getElementById('app').getBoundingClientRect();
+    return {
+      standalone: navigator.standalone === true,
+      displayModeStandalone: !!(window.matchMedia && matchMedia('(display-mode: standalone)').matches),
+      screen: `${screen.width}x${screen.height}`,
+      innerHW: `${window.innerWidth}x${window.innerHeight}`,
+      outerH: window.outerHeight,
+      clientH: document.documentElement.clientHeight,
+      vv: vv ? `${Math.round(vv.width)}x${Math.round(vv.height)} off=${Math.round(vv.offsetTop)} scale=${vv.scale}` : 'none',
+      dvh: measureProbe('height:100dvh').h,
+      svh: measureProbe('height:100svh').h,
+      lvh: measureProbe('height:100lvh').h,
+      safeB: measureProbe('padding-bottom:env(safe-area-inset-bottom,0px)').pad,
+      safeT: measureProbe('padding-bottom:env(safe-area-inset-top,0px)').pad,
+      maxVH, chromeGap, staleVp,
+      cssVh: getComputedStyle(document.documentElement).getPropertyValue('--vh').trim(),
+      appRect: `top=${Math.round(app.top)} bottom=${Math.round(app.bottom)} h=${Math.round(app.height)}`,
+      ua: navigator.userAgent.replace(/Mozilla\/5\.0 \([^)]*\)\s*/, ''),
+    };
+  }
+  function openDiagSheet() {
+    const d = viewportDiag();
+    const rows = [{
+      label: 'Insert into composer (send it to your agent)',
+      run: () => {
+        msgEl.value = 'Viewport diagnostics: ' + JSON.stringify(d);
+        if (S.screen === 'chat') { autosize(); msgEl.focus(); }
+        else toast('Dropped in the composer — open an agent chat to send it');
+      },
+    }];
+    for (const [k, v] of Object.entries(d)) rows.push({ label: `${k}: ${v}`, disabled: true });
+    showSheet('VIEWPORT', rows);
+  }
   window.addEventListener('resize', applyViewport);
   window.addEventListener('orientationchange', applyViewport);
   if (window.visualViewport) {
