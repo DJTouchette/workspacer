@@ -1,7 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, FolderOpen, Play, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, FolderOpen, Play, X } from 'lucide-react';
 import { Section, SmallButton, inputStyle } from './primitives';
-import type { HubJob, HubJobRun, HubJobView } from '../../../../main/shared/ipcTypes';
+import type {
+  HubJob,
+  HubJobContextStep,
+  HubJobRun,
+  HubJobView,
+} from '../../../../main/shared/ipcTypes';
 
 /**
  * Jobs — recurring and one-off tasks the hub runs on your behalf: spawn an
@@ -24,9 +29,7 @@ function triggerSummary(j: HubJobView): string {
     }
     case 'daily': {
       const days =
-        t.days && t.days.length > 0
-          ? ' · ' + t.days.map((d) => DAY_LABELS[d] ?? d).join(' ')
-          : '';
+        t.days && t.days.length > 0 ? ' · ' + t.days.map((d) => DAY_LABELS[d] ?? d).join(' ') : '';
       return `daily ${t.at}${days}`;
     }
     case 'once':
@@ -39,8 +42,11 @@ function triggerSummary(j: HubJobView): string {
 function actionSummary(j: HubJobView): string {
   const a = j.action;
   switch (a.kind) {
-    case 'spawn':
-      return `agent in ${a.spawn?.cwd ?? '?'}`;
+    case 'spawn': {
+      const steps = a.spawn?.context?.length ?? 0;
+      const pre = steps > 0 ? `${steps} step${steps > 1 ? 's' : ''} → ` : '';
+      return `${pre}agent in ${a.spawn?.cwd ?? '?'}`;
+    }
     case 'call':
       return `call ${a.call?.method ?? '?'}`;
     case 'shell':
@@ -119,11 +125,7 @@ const RunChip: React.FC<{ j: HubJobView; optimisticRunning: boolean }> = ({
   if (!j.lastRun) return null;
   const color = RUN_COLORS[j.lastRun.status];
   const label =
-    j.lastRun.status === 'error'
-      ? 'failed'
-      : j.lastRun.status === 'skipped'
-        ? 'skipped'
-        : 'ok';
+    j.lastRun.status === 'error' ? 'failed' : j.lastRun.status === 'skipped' ? 'skipped' : 'ok';
   return (
     <span
       title={j.lastRun.detail}
@@ -162,14 +164,18 @@ const RunHistory: React.FC<{ jobId: string; refreshKey: number }> = ({ jobId, re
 
   if (runs === null) {
     return (
-      <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', padding: '4px 0 4px 24px' }}>
+      <div
+        style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', padding: '4px 0 4px 24px' }}
+      >
         Loading runs…
       </div>
     );
   }
   if (runs.length === 0) {
     return (
-      <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', padding: '4px 0 4px 24px' }}>
+      <div
+        style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', padding: '4px 0 4px 24px' }}
+      >
         No runs yet.
       </div>
     );
@@ -227,6 +233,38 @@ const RunHistory: React.FC<{ jobId: string; refreshKey: number }> = ({ jobId, re
 };
 
 /** Editable state, flat for form inputs; toJob() rebuilds the wire shape. */
+/** The hub's cap (maxContextSteps in internal/jobs/jobs.go) — mirrored so the
+ *  editor stops offering a step the save would be refused for. */
+const MAX_CONTEXT_STEPS = 4;
+
+/** One context step in editor form (every field a string/bool the inputs can
+ *  hold; toJob narrows it back to the wire shape). */
+interface DraftStep {
+  kind: 'shell' | 'call';
+  command: string;
+  cwd: string;
+  method: string;
+  params: string;
+  skipIfEmpty: boolean;
+  skipUnlessMatch: string;
+  ignoreExitCode: boolean;
+}
+
+const EMPTY_STEP: DraftStep = {
+  kind: 'shell',
+  command: '',
+  cwd: '',
+  method: '',
+  params: '',
+  // Guarding is what steps are FOR, so the empty-check starts on. The exit-code
+  // forgiveness does not: a job that quietly swallows a broken command is the
+  // failure mode people can't see, and the template below turns it on where
+  // it's actually wanted.
+  skipIfEmpty: true,
+  skipUnlessMatch: '',
+  ignoreExitCode: false,
+};
+
 interface Draft {
   id: string;
   name: string;
@@ -238,6 +276,7 @@ interface Draft {
   actionKind: 'spawn' | 'call' | 'shell';
   cwd: string;
   prompt: string;
+  steps: DraftStep[];
   provider: string;
   model: string;
   method: string;
@@ -257,6 +296,7 @@ const EMPTY_DRAFT: Draft = {
   actionKind: 'spawn',
   cwd: '',
   prompt: '',
+  steps: [],
   provider: 'claude',
   model: '',
   method: '',
@@ -287,6 +327,28 @@ const TEMPLATES: Array<{ label: string; hint: string; draft: Partial<Draft> }> =
     draft: { name: '', triggerKind: 'interval', everyMinutes: '60', actionKind: 'shell' },
   },
   {
+    label: 'Script, then an agent',
+    hint: 'A command runs first — the agent is only woken if it found something',
+    draft: {
+      name: 'Failing tests',
+      triggerKind: 'daily',
+      at: '07:00',
+      actionKind: 'spawn',
+      steps: [
+        {
+          ...EMPTY_STEP,
+          command: 'go test ./... 2>&1 | tail -60',
+          // A failing suite exits nonzero — that's the interesting case here,
+          // not an error, so the guard reads the OUTPUT instead of the code.
+          ignoreExitCode: true,
+          skipUnlessMatch: 'FAIL',
+        },
+      ],
+      prompt:
+        "Last night's test run:\n\n{{output}}\n\nTriage these failures and propose a fix for each.",
+    },
+  },
+  {
     label: 'One-off agent',
     hint: 'Spawn an agent once, at a time you pick',
     draft: { name: '', triggerKind: 'once', actionKind: 'spawn' },
@@ -306,12 +368,26 @@ function toDraft(j: HubJobView): Draft {
     actionKind: j.action.kind,
     cwd: j.action.spawn?.cwd ?? '',
     prompt: j.action.spawn?.prompt ?? '',
+    steps: (j.action.spawn?.context ?? []).map(toDraftStep),
     provider: j.action.spawn?.provider ?? 'claude',
     model: j.action.spawn?.model ?? '',
     method: j.action.call?.method ?? '',
     params: j.action.call?.params ? JSON.stringify(j.action.call.params) : '',
     command: j.action.shell?.command ?? '',
     shellCwd: j.action.shell?.cwd ?? '',
+  };
+}
+
+function toDraftStep(st: HubJobContextStep): DraftStep {
+  return {
+    kind: st.kind,
+    command: st.shell?.command ?? '',
+    cwd: st.shell?.cwd ?? '',
+    method: st.call?.method ?? '',
+    params: st.call?.params ? JSON.stringify(st.call.params) : '',
+    skipIfEmpty: st.skipIfEmpty ?? false,
+    skipUnlessMatch: st.skipUnlessMatch ?? '',
+    ignoreExitCode: st.ignoreExitCode ?? false,
   };
 }
 
@@ -332,6 +408,28 @@ function draftProblem(d: Draft): string | null {
   if (d.actionKind === 'spawn') {
     if (!d.cwd.trim()) return 'Pick the directory the agent should work in.';
     if (!d.prompt.trim()) return 'Write the prompt the agent starts with.';
+    for (let i = 0; i < d.steps.length; i++) {
+      const st = d.steps[i];
+      const n = i + 1;
+      if (st.kind === 'shell' && !st.command.trim()) return `Step ${n} needs a command.`;
+      if (st.kind === 'call') {
+        if (!st.method.trim()) return `Step ${n} needs a capability method.`;
+        if (st.params.trim()) {
+          try {
+            JSON.parse(st.params);
+          } catch {
+            return `Step ${n} params must be valid JSON.`;
+          }
+        }
+      }
+      if (st.skipUnlessMatch.trim()) {
+        try {
+          new RegExp(st.skipUnlessMatch);
+        } catch {
+          return `Step ${n} has an invalid "only if it matches" pattern.`;
+        }
+      }
+    }
   }
   if (d.actionKind === 'shell' && !d.command.trim()) return 'Enter the command to run.';
   if (d.actionKind === 'call') {
@@ -361,6 +459,7 @@ function toJob(d: Draft, enabled: boolean): HubJob | Omit<HubJob, 'id'> {
     action.spawn = {
       cwd: d.cwd.trim(),
       prompt: d.prompt.trim(),
+      context: d.steps.length ? d.steps.map(toWireStep) : undefined,
       provider: d.provider || undefined,
       model: d.model.trim() || undefined,
     };
@@ -374,6 +473,22 @@ function toJob(d: Draft, enabled: boolean): HubJob | Omit<HubJob, 'id'> {
   }
   const base = { name: d.name.trim() || 'Job', enabled, trigger, action };
   return d.id ? { id: d.id, ...base } : base;
+}
+
+function toWireStep(st: DraftStep): HubJobContextStep {
+  const out: HubJobContextStep = { kind: st.kind };
+  if (st.kind === 'shell') {
+    out.shell = { command: st.command.trim(), cwd: st.cwd.trim() || undefined };
+  } else {
+    out.call = {
+      method: st.method.trim(),
+      params: st.params.trim() ? JSON.parse(st.params) : undefined,
+    };
+  }
+  if (st.skipIfEmpty) out.skipIfEmpty = true;
+  if (st.skipUnlessMatch.trim()) out.skipUnlessMatch = st.skipUnlessMatch.trim();
+  if (st.ignoreExitCode) out.ignoreExitCode = true;
+  return out;
 }
 
 const JobsSection: React.FC = () => {
@@ -437,6 +552,23 @@ const JobsSection: React.FC = () => {
     load();
   };
 
+  // Approve = clear the proposal stamp and arm it. The stamp is what the hub
+  // checks (a stamped row never schedules and jobs.run refuses it), so this one
+  // write is the whole difference between an agent's suggestion and a job.
+  const approve = async (j: HubJobView) => {
+    const { nextRunAt, lastRun, running, ...job } = j;
+    void nextRunAt;
+    void lastRun;
+    void running;
+    setError(null);
+    try {
+      await window.electronAPI.jobsUpsert({ ...job, proposedBy: undefined, enabled: true });
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const remove = async (id: string) => {
     await window.electronAPI.jobsRemove(id).catch(() => {});
     if (expanded === id) setExpanded(null);
@@ -461,129 +593,174 @@ const JobsSection: React.FC = () => {
   return (
     <Section title="Jobs">
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-muted)', lineHeight: 1.5 }}>
-        Recurring or one-off tasks the hub runs for you — spawn an agent with a prompt, run a
-        shell command, or call a bus capability. Jobs keep running while this window is closed;
-        click a row for its run history.
+        Recurring or one-off tasks the hub runs for you — spawn an agent with a prompt, run a shell
+        command, or call a bus capability. Jobs keep running while this window is closed; click a
+        row for its run history.
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
-        {jobs.map((j) =>
-          editing?.id === j.id ? (
-            <JobEditForm
-              key={j.id}
-              draft={editing}
-              onChange={setEditing}
-              onSave={() => void save(editing)}
-              onCancel={() => {
-                setEditing(null);
-                setError(null);
-              }}
-            />
-          ) : (
-            <div key={j.id}>
-              <div
-                onClick={() => setExpanded(expanded === j.id ? null : j.id)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '4px 8px',
-                  borderRadius: 'var(--wks-radius-sm)',
-                  cursor: 'pointer',
-                  opacity: j.enabled ? 1 : 0.55,
+        {[...jobs]
+          .sort((a, b) => Number(!!b.proposedBy) - Number(!!a.proposedBy))
+          .map((j) =>
+            editing?.id === j.id ? (
+              <JobEditForm
+                key={j.id}
+                draft={editing}
+                onChange={setEditing}
+                onSave={() => void save(editing)}
+                onCancel={() => {
+                  setEditing(null);
+                  setError(null);
                 }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
-                }}
-              >
-                <span
+              />
+            ) : (
+              <div key={j.id}>
+                <div
+                  onClick={() => setExpanded(expanded === j.id ? null : j.id)}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    color: 'var(--wks-text-faint)',
-                    flexShrink: 0,
+                    gap: 8,
+                    padding: '4px 8px',
+                    borderRadius: 'var(--wks-radius-sm)',
+                    cursor: 'pointer',
+                    opacity: j.enabled ? 1 : 0.55,
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
                   }}
                 >
-                  {expanded === j.id ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                </span>
-                <input
-                  type="checkbox"
-                  checked={j.enabled}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={() => void toggle(j)}
-                  title={j.enabled ? 'Disable' : 'Enable'}
-                  style={{ cursor: 'pointer', flexShrink: 0, accentColor: 'var(--wks-accent)' }}
-                />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div
+                  <span
                     style={{
-                      fontSize: '0.72rem',
-                      fontWeight: 500,
-                      color: 'var(--wks-text-secondary)',
                       display: 'flex',
-                      gap: 8,
-                      alignItems: 'baseline',
-                      minWidth: 0,
+                      alignItems: 'center',
+                      color: 'var(--wks-text-faint)',
+                      flexShrink: 0,
                     }}
                   >
-                    <span
+                    {expanded === j.id ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={j.enabled}
+                    disabled={!!j.proposedBy}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={() => void toggle(j)}
+                    title={
+                      j.proposedBy
+                        ? 'Proposed by an agent — approve it to arm it'
+                        : j.enabled
+                          ? 'Disable'
+                          : 'Enable'
+                    }
+                    style={{
+                      cursor: j.proposedBy ? 'not-allowed' : 'pointer',
+                      flexShrink: 0,
+                      accentColor: 'var(--wks-accent)',
+                    }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
                       style={{
+                        fontSize: '0.72rem',
+                        fontWeight: 500,
+                        color: 'var(--wks-text-secondary)',
+                        display: 'flex',
+                        gap: 8,
+                        alignItems: 'baseline',
+                        minWidth: 0,
+                      }}
+                    >
+                      <span
+                        style={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {j.name}
+                      </span>
+                      <RunChip j={j} optimisticRunning={optimistic(j.id)} />
+                      {j.proposedBy && (
+                        <span
+                          title={`${j.proposedBy} proposed this job. It will not run until you approve it — read the trigger and action first.`}
+                          style={{
+                            fontSize: '0.58rem',
+                            fontWeight: 500,
+                            padding: '1px 6px',
+                            borderRadius: 'var(--wks-radius-pill)',
+                            border: '1px solid var(--wks-warning)',
+                            color: 'var(--wks-warning)',
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0,
+                          }}
+                        >
+                          proposed by {j.proposedBy}
+                        </span>
+                      )}
+                    </div>
+                    <div
+                      title={
+                        j.enabled && j.nextRunAt
+                          ? `Next run ${new Date(j.nextRunAt).toLocaleString()}`
+                          : undefined
+                      }
+                      style={{
+                        fontSize: '0.66rem',
+                        color: 'var(--wks-text-faint)',
+                        fontFamily: 'var(--wks-font-mono)',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
                       }}
                     >
-                      {j.name}
-                    </span>
-                    <RunChip j={j} optimisticRunning={optimistic(j.id)} />
+                      {triggerSummary(j)}
+                      {j.enabled && j.nextRunAt ? ` (${inFuture(j.nextRunAt)})` : ''} ·{' '}
+                      {actionSummary(j)}
+                    </div>
                   </div>
-                  <div
-                    title={
-                      j.enabled && j.nextRunAt
-                        ? `Next run ${new Date(j.nextRunAt).toLocaleString()}`
-                        : undefined
-                    }
-                    style={{
-                      fontSize: '0.66rem',
-                      color: 'var(--wks-text-faint)',
-                      fontFamily: 'var(--wks-font-mono)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {triggerSummary(j)}
-                    {j.enabled && j.nextRunAt ? ` (${inFuture(j.nextRunAt)})` : ''} ·{' '}
-                    {actionSummary(j)}
-                  </div>
+                  <span onClick={(e) => e.stopPropagation()} style={{ display: 'flex', gap: 4 }}>
+                    {j.proposedBy ? (
+                      <SmallButton
+                        label={
+                          <span
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                            title="Approve this proposal and enable it"
+                          >
+                            <Check size={11} strokeWidth={2} /> Approve
+                          </span>
+                        }
+                        onClick={() => void approve(j)}
+                        primary
+                      />
+                    ) : (
+                      <SmallButton
+                        label={
+                          <span
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                            title="Run now"
+                          >
+                            <Play size={11} strokeWidth={2} />
+                          </span>
+                        }
+                        onClick={() => void runNow(j.id)}
+                      />
+                    )}
+                    <SmallButton label="Edit" onClick={() => setEditing(toDraft(j))} />
+                    <SmallButton
+                      label={<X size={11} strokeWidth={2} />}
+                      onClick={() => void remove(j.id)}
+                      danger
+                    />
+                  </span>
                 </div>
-                <span onClick={(e) => e.stopPropagation()} style={{ display: 'flex', gap: 4 }}>
-                  <SmallButton
-                    label={
-                      <span
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                        title="Run now"
-                      >
-                        <Play size={11} strokeWidth={2} />
-                      </span>
-                    }
-                    onClick={() => void runNow(j.id)}
-                  />
-                  <SmallButton label="Edit" onClick={() => setEditing(toDraft(j))} />
-                  <SmallButton
-                    label={<X size={11} strokeWidth={2} />}
-                    onClick={() => void remove(j.id)}
-                    danger
-                  />
-                </span>
+                {expanded === j.id && <RunHistory jobId={j.id} refreshKey={historyKey} />}
               </div>
-              {expanded === j.id && <RunHistory jobId={j.id} refreshKey={historyKey} />}
-            </div>
-          ),
-        )}
+            ),
+          )}
 
         {error && (
           <div
@@ -727,6 +904,161 @@ const CwdInput: React.FC<{
       />
     )}
   </div>
+);
+
+/** Pre-spawn steps: run something, feed it to the prompt, and let it cancel
+ *  the agent entirely. Rendered under the spawn prompt because that's what it
+ *  fills in — the placeholder hint sits right beside the textarea it names. */
+const ContextSteps: React.FC<{
+  steps: DraftStep[];
+  onChange: (steps: DraftStep[]) => void;
+}> = ({ steps, onChange }) => {
+  const patch = (i: number, p: Partial<DraftStep>) =>
+    onChange(steps.map((st, n) => (n === i ? { ...st, ...p } : st)));
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', flex: 1 }}>
+          {steps.length === 0
+            ? 'Optional: run something first and hand the result to the agent'
+            : 'Runs on this machine before the agent exists — use {{output}} in the prompt'}
+        </span>
+        {steps.length < MAX_CONTEXT_STEPS && (
+          <SmallButton
+            label={steps.length === 0 ? '+ Run something first' : '+ Step'}
+            onClick={() => onChange([...steps, { ...EMPTY_STEP }])}
+          />
+        )}
+      </div>
+      {steps.map((st, i) => (
+        <div
+          key={i}
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+            padding: 6,
+            borderRadius: 'var(--wks-radius-sm)',
+            border: '1px solid var(--wks-border-subtle)',
+          }}
+        >
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            <span
+              style={{
+                fontSize: '0.58rem',
+                color: 'var(--wks-text-faint)',
+                fontFamily: 'var(--wks-font-mono)',
+                flexShrink: 0,
+              }}
+              title={`Substituted at {{output.${i + 1}}}`}
+            >
+              {`{{output.${i + 1}}}`}
+            </span>
+            <select
+              value={st.kind}
+              onChange={(e) => patch(i, { kind: e.target.value as DraftStep['kind'] })}
+              style={{ ...selectStyle, width: 90, flexShrink: 0 }}
+            >
+              <option value="shell">Shell</option>
+              <option value="call">Call</option>
+            </select>
+            {st.kind === 'shell' ? (
+              <input
+                value={st.command}
+                onChange={(e) => patch(i, { command: e.target.value })}
+                placeholder="Command — its output becomes the context"
+                style={{ ...inputStyle, flex: 1, fontFamily: 'var(--wks-font-mono)' }}
+              />
+            ) : (
+              <input
+                value={st.method}
+                onChange={(e) => patch(i, { method: e.target.value })}
+                placeholder="Method (e.g. sessions.list)"
+                style={{ ...inputStyle, flex: 1, fontFamily: 'var(--wks-font-mono)' }}
+              />
+            )}
+            <SmallButton
+              label={
+                <span style={{ display: 'inline-flex', alignItems: 'center' }} title="Remove step">
+                  <X size={12} strokeWidth={2} />
+                </span>
+              }
+              onClick={() => onChange(steps.filter((_, n) => n !== i))}
+            />
+          </div>
+          {st.kind === 'shell' ? (
+            <CwdInput
+              value={st.cwd}
+              placeholder="Working directory (optional)"
+              onChange={(cwd) => patch(i, { cwd })}
+            />
+          ) : (
+            <input
+              value={st.params}
+              onChange={(e) => patch(i, { params: e.target.value })}
+              placeholder="Params JSON (optional)"
+              style={{ ...inputStyle, fontFamily: 'var(--wks-font-mono)' }}
+            />
+          )}
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <CheckLabel
+              checked={st.skipIfEmpty}
+              onChange={(skipIfEmpty) => patch(i, { skipIfEmpty })}
+              label="Skip if no output"
+              title="Nothing came back, so nothing is worth an agent — the run records as skipped and no model is called."
+            />
+            {st.kind === 'shell' && (
+              <CheckLabel
+                checked={st.ignoreExitCode}
+                onChange={(ignoreExitCode) => patch(i, { ignoreExitCode })}
+                label="Nonzero exit is OK"
+                title="For guards that signal 'nothing found' with an exit code (grep, test runners). Timeouts still fail the job either way."
+              />
+            )}
+            <input
+              value={st.skipUnlessMatch}
+              onChange={(e) => patch(i, { skipUnlessMatch: e.target.value })}
+              placeholder="Only if output matches… (regex, optional)"
+              style={{
+                ...inputStyle,
+                flex: 1,
+                minWidth: 140,
+                fontFamily: 'var(--wks-font-mono)',
+              }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const CheckLabel: React.FC<{
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+  title: string;
+}> = ({ checked, onChange, label, title }) => (
+  <label
+    title={title}
+    style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 4,
+      fontSize: '0.6rem',
+      color: 'var(--wks-text-muted)',
+      cursor: 'pointer',
+      flexShrink: 0,
+    }}
+  >
+    <input
+      type="checkbox"
+      checked={checked}
+      onChange={(e) => onChange(e.target.checked)}
+      style={{ cursor: 'pointer', accentColor: 'var(--wks-accent)' }}
+    />
+    {label}
+  </label>
 );
 
 const JobEditForm: React.FC<{
@@ -879,6 +1211,7 @@ const JobEditForm: React.FC<{
             placeholder="Model (optional — blank = the provider's default)"
             style={inputStyle}
           />
+          <ContextSteps steps={draft.steps} onChange={(steps) => set({ steps })} />
         </>
       )}
       {draft.actionKind === 'shell' && (

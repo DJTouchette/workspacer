@@ -126,6 +126,7 @@
       <a href="#layout-and-navigation">layout and navigation</a>
       <a href="#attention">attention and notifications</a>
       <a href="#remote">remote and multi-client</a>
+      <a href="#jobs">jobs</a>
       <a href="#extending">plugins, mcp, and the tui</a>
       <a href="#configuration">configuration</a>
     </nav>
@@ -575,6 +576,128 @@ workspacer token revoke &lt;token-or-prefix&gt;</code></pre>
 <li><strong>Same machine: it adopts.</strong> If a <code>workspacer serve</code> is already running when you open the desktop app, the app detects the healthy daemons and <strong>adopts</strong> them instead of spawning its own — no duplicate daemons, and quitting the app never kills a server it didn't start. The Remote Control dialog notes when you're on an adopted server (and, since an adopted server keeps its own binding, tells you the one-line fix if it's loopback-only and your phone can't reach it).</li>
 <li><strong>Another machine: Connect to Server…</strong> From the command palette (or the Remote Control dialog), give it the server's URL and token and the app relaunches as a pure client of that remote fleet — chat, approvals, live terminal bytes included. Disconnecting relaunches back to your local stack.</li>
 </ul>
+</section>
+
+<section id="jobs" class="doc">
+<h2>jobs</h2>
+<p>A <strong>job</strong> is work the hub does on your behalf without you being there: spawn an agent with a prompt, run a shell command, or call a bus capability &mdash; on an interval, at a time of day, once, or on demand. Jobs live in the <strong>hub</strong>, not the window, so they keep firing while the desktop app is closed and they work exactly the same on a headless <code>workspacer serve</code>. Manage them in <strong>Settings &rarr; Jobs</strong> (<code>Ctrl+,</code>), where each row shows its next run, its last result, and an expandable run history &mdash; or from the terminal with <code>workspacer jobs</code>.</p>
+
+<h3>triggers</h3>
+<p>Every job has exactly one trigger:</p>
+<ul>
+<li><code>{"kind":"interval","everyMinutes":60}</code> &mdash; every N minutes (minimum 1). Intervals re-anchor from <em>now</em> whenever the hub restarts.</li>
+<li><code>{"kind":"daily","at":"09:00","days":[1,2,3,4,5]}</code> &mdash; at a time of day, hub-local. <code>days</code> is a weekday mask with <code>0</code> = Sunday; omit it for every day.</li>
+<li><code>{"kind":"once","once":"2026-09-01T09:00:00Z"}</code> &mdash; an RFC3339 timestamp. The job disables itself when it fires, so a failed run can't refire forever. A time that has already passed still fires once &mdash; "run this at 9" set at 9:05 shouldn't silently mean never.</li>
+<li><code>{"kind":"manual"}</code> &mdash; only ever runs when you press <strong>Run now</strong>.</li>
+</ul>
+<p>The scheduler ticks every 30 seconds, so triggers are minute-precision by design. A due time that passed while the machine was asleep fires <em>once</em> on wake and then re-anchors &mdash; no catch-up storm. And if a job is still running when its next fire comes due, that fire is <strong>skipped, never queued</strong>: a backlog of queued agent spawns is a quota-burning failure mode, not a feature.</p>
+
+<h3>actions</h3>
+<p>And exactly one action:</p>
+<ul>
+<li><strong>spawn</strong> &mdash; start an agent and send it a prompt: <code>cwd</code> and <code>prompt</code> are required, <code>provider</code>, <code>model</code>, <code>effort</code> and <code>permissionMode</code> optional. The agent appears in your fleet like any other.</li>
+<li><strong>shell</strong> &mdash; <code>command</code> (run through <code>/bin/sh -c</code>, or <code>cmd /C</code> on Windows) and an optional <code>cwd</code>.</li>
+<li><strong>call</strong> &mdash; one bus capability: <code>method</code> plus optional <code>params</code>.</li>
+</ul>
+<p>A job's spawn goes out over the bus exactly like a remote spawn, so it inherits every clamp that path enforces: <strong>no permission bypass, no pre-approved MCP servers, and no account-profile config dir</strong>. That's deliberate &mdash; an unattended agent is the last place you want a blanket yes. Runs are capped at 15 minutes, and a failed run raises a notification (the same one the notification centre and your phone already ingest).</p>
+
+<h3>run code first, then hand it to the agent</h3>
+<p>A spawn action can run <strong>context steps</strong> before the agent exists. Each step is a shell command (or a bus call) whose output is substituted into the prompt at <code>{{output}}</code> &mdash; or <code>{{output.1}}</code>, <code>{{output.2}}</code>&hellip; when there are several. If the prompt mentions neither, the outputs are appended as fenced blocks rather than dropped. Up to four steps, each capped at 12,000 characters (an oversized one is elided in the middle, so both what ran and how it ended survive).</p>
+<p>The more useful half is that <strong>a step can call the whole thing off</strong>. Each one carries three optional guards:</p>
+<ul>
+<li><code>skipIfEmpty</code> &mdash; no output means nothing happened, so don't wake a model. (For a <code>call</code> step, JSON's several spellings of nothing &mdash; <code>{}</code>, <code>[]</code>, <code>null</code>, <code>""</code> &mdash; count as empty too.)</li>
+<li><code>skipUnlessMatch</code> &mdash; a regular expression; the agent spawns only if the output matches. Invalid patterns are refused when you save, not silently ignored at 3am.</li>
+<li><code>ignoreExitCode</code> &mdash; treat a nonzero exit as data rather than failure, for the guards that report "nothing found" that way (<code>grep</code>, most test runners). Only an exit <em>code</em> is forgiven: a timeout or an unstartable command still fails the run loudly.</li>
+</ul>
+<p>Nothing is spawned until every step has run and every guard has passed, so a quiet night costs a shell command instead of an agent, a model call and a session to clean up. A guarded run records as <strong>skipped</strong> with the reason, and &mdash; unlike a failure &mdash; it stays silent: a guard that fires nightly must not notify nightly. A healthy guarded job's history is mostly skips with the occasional real run in it.</p>
+<pre data-job-example><code>{
+  "name": "Failing tests → agent",
+  "enabled": true,
+  "trigger": { "kind": "daily", "at": "07:00", "days": [1, 2, 3, 4, 5] },
+  "action": {
+    "kind": "spawn",
+    "spawn": {
+      "cwd": "/home/you/work/api-gateway",
+      "provider": "claude",
+      "prompt": "Last night's test run:\n\n{{output}}\n\nTriage these failures and propose a fix for each.",
+      "context": [
+        {
+          "kind": "shell",
+          "shell": { "command": "go test ./... 2&gt;&amp;1 | tail -60" },
+          "ignoreExitCode": true,
+          "skipUnlessMatch": "FAIL"
+        }
+      ]
+    }
+  }
+}</code></pre>
+<p>Most mornings that job runs <code>go test</code>, sees no <code>FAIL</code>, and stops &mdash; costing nothing. On the mornings something broke, an agent is already reading the failures when you sit down.</p>
+
+<h3>writing a job spec by hand (or having an agent write one)</h3>
+<p>The editor in Settings covers every field, but a job is just JSON, and the shape below is the whole language &mdash; enough for you (or an LLM you ask) to write one from scratch. Anything the hub doesn't accept is refused at save time with a message naming the problem. The <code>//</code> notes below are annotations for you, not syntax: JSON has no comments, so strip them.</p>
+<pre data-job-spec><code>{
+  "id": "",                       // omit or leave blank to create; the hub mints one
+  "name": "Human-readable name",  // required
+  "enabled": true,
+  "proposedBy": "",               // set by the hub on an agent's proposal;
+                                  // while non-empty the job never runs
+  "trigger": {
+    "kind": "interval",           // interval | daily | once | manual
+    "everyMinutes": 60,           // interval: >= 1
+    "at": "09:00",                // daily: HH:MM, hub-local
+    "days": [1, 2, 3, 4, 5],      // daily: 0 = Sunday .. 6 = Saturday; omit = every day
+    "once": "2026-09-01T09:00:00Z" // once: RFC3339
+  },
+  "action": {
+    "kind": "spawn",              // spawn | shell | call
+    "spawn": {
+      "cwd": "/abs/path",         // required
+      "prompt": "What the agent starts with", // required
+      "provider": "claude",       // claude | codex | opencode | pi
+      "model": "",                // blank = the provider's default
+      "effort": "",               // provider effort level, if it has one
+      "permissionMode": "",       // clamped for jobs: no bypass modes
+      "context": [                // optional, max 4, run before the spawn
+        {
+          "kind": "shell",        // shell | call
+          "shell": { "command": "git log --oneline -20", "cwd": "" },
+          "call":  { "method": "sessions.list", "params": {} },
+          "skipIfEmpty": true,    // no output -> skip the run, spawn nothing
+          "skipUnlessMatch": "",  // regex; spawn only on a match
+          "ignoreExitCode": false // nonzero exit is data, not failure
+        }
+      ]
+    },
+    "shell": { "command": "…", "cwd": "" },
+    "call":  { "method": "…", "params": {} }
+  }
+}</code></pre>
+<p>Fill in only the branch you're using: one <code>trigger.kind</code> and its fields, one <code>action.kind</code> and its payload. A context step likewise carries <em>either</em> <code>shell</code> or <code>call</code>, matching its own <code>kind</code>. The rules the hub enforces:</p>
+<ul>
+<li>a job needs a <code>name</code>; a spawn needs <code>cwd</code> and <code>prompt</code>; a shell needs a <code>command</code>; a call needs a <code>method</code>;</li>
+<li>a <code>call</code> &mdash; as an action or as a context step &mdash; may not target <code>jobs.*</code> (that would recurse into the job system itself) or <code>hub:&lt;peer&gt;/</code> (a job must not execute on another machine; job state doesn't federate);</li>
+<li>at most four context steps, and a <code>skipUnlessMatch</code> that doesn't compile is rejected.</li>
+</ul>
+<p>Specs are stored by the hub at <code><em>&lt;config-dir&gt;</em>/workspacer-hub/jobs.json</code>, mode <code>0600</code>, with run history beside it in <code>jobs-history.json</code>. They deliberately do <em>not</em> live in your library or your layout: a job is stored argv &mdash; a shell command and an agent prompt that will run unattended &mdash; so it stays in a file only the hub writes. To install a spec written elsewhere, paste its fields into the Jobs editor, or add it to the <code>jobs</code> array in <code>jobs.json</code> and restart the hub (it validates on load and drops invalid rows with a log line).</p>
+
+<h3>the command line</h3>
+<p>A spec written anywhere &mdash; by hand, or by an agent you asked &mdash; becomes a real job with one command:</p>
+<pre><code>workspacer jobs add -f nightly-triage.json     # or: … -f -   to read stdin
+workspacer jobs list                           # next run + last result per job
+workspacer jobs show &lt;id&gt;                      # print one spec back as JSON
+workspacer jobs history &lt;id&gt;                   # recent runs, newest first
+workspacer jobs run &lt;id&gt;                       # fire it now
+workspacer jobs approve &lt;id&gt;                   # arm an agent's proposal
+workspacer jobs enable &lt;id&gt; | disable &lt;id&gt;
+workspacer jobs remove &lt;id&gt;</code></pre>
+<p>Ids can be shortened to any unique prefix. The spec is validated locally before it's sent, so a typo tells you what's wrong instead of failing as a connection error. Point it at another machine with <code>--host</code>/<code>--hub-port</code>, and at a specific credential with <code>--token</code> (it otherwise reuses the pairing token in your config dir). <code>--json</code> prints raw output for scripting.</p>
+
+<h3>agents can propose jobs, not arm them</h3>
+<p>An agent with the workspacer tools at the <strong>operator</strong> tier can read your jobs (<code>list_jobs</code>, <code>job_history</code>), run or delete an existing one, and <strong>propose</strong> new ones (<code>propose_job</code>). It cannot install one. A proposed job is saved <em>disabled</em> and stamped with a <code>proposedBy</code> name; the hub refuses to schedule it and refuses <code>run</code> on it, and it stays that way until you approve it &mdash; in Settings &rarr; Jobs (proposals sort to the top with an Approve button) or with <code>workspacer jobs approve</code>. You get a notification when one arrives.</p>
+<p>The reason for the split: a job is argv that runs unattended, on a schedule, indefinitely. Anything that talks its way into an agent &mdash; a poisoned README, a hostile issue comment &mdash; could otherwise buy itself a nightly foothold. There is deliberately no agent-facing tool for the ordinary write, so an agent's suggestion always lands in a review queue rather than in your crontab. Read the trigger and the action before approving; that click is the whole security boundary.</p>
+
+<h3>who can manage jobs</h3>
+<p>The <code>jobs.*</code> capabilities are <strong>host-authority only</strong>: the desktop app, the web app on a full-control pairing, the <code>workspacer jobs</code> CLI, and operator-tier agent tokens. Plugin tokens and view/triage tiers are refused at call time and see no job tools at all &mdash; <code>jobs.list</code> is gated as tightly as the writes, because the list discloses your prompts and shell commands. Operator-tier agents are the deliberate half-exception described above: they hold the read side and <code>jobs.propose</code>, never <code>jobs.upsert</code>.</p>
 </section>
 
 <section id="extending" class="doc">

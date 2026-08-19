@@ -136,6 +136,7 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   // that declares them gets an honest consent label and then a runtime refusal.
   'jobs.list': { label: 'See scheduled jobs' },
   'jobs.upsert': { label: 'Create or edit scheduled jobs (runs commands/agents)' },
+  'jobs.propose': { label: 'Propose scheduled jobs for your approval (cannot arm them)' },
   'jobs.remove': { label: 'Delete scheduled jobs' },
   'jobs.run': { label: 'Run a scheduled job now' },
   'jobs.history': { label: 'Read job run history' },

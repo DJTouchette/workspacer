@@ -619,6 +619,10 @@ var compositionInert = map[string]InertClaim{
 	// the same jobsTrusted identity check, invoked with each method's own name.
 	"jobs.upsert": recordedHalf,
 	"jobs.run":    recordedHalf,
+	"jobs.propose": {
+		Reason:    "the agent-facing half of jobs.upsert, deliberately weaker: it can only CREATE, what it creates is forced disabled and stamped proposedBy, and jobs.run refuses a stamped row — so the argv it persists cannot execute until a trusted caller writes that row back with the stamp cleared. Gated by jobsTrusted like every other jobs.* method (an operator token passes, plugin and view/triage tokens do not); the restraint that matters here is not the identity gate but the method — the MCP facade hands agents a tool for this and none for jobs.upsert",
+		Witnesses: []Witness{guarded(argBearing("jobsTrusted", "jobs.propose", hubMainFile))},
+	},
 	"jobs.list": {
 		Reason:    "returns the stored specs — which DISCLOSE shell commands and agent prompts, which is why jobsTrusted refuses every non-host caller — but writes nothing and executes nothing",
 		Witnesses: []Witness{guarded(argBearing("jobsTrusted", "jobs.list", hubMainFile))},

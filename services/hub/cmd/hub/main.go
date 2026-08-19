@@ -459,6 +459,17 @@ func main() {
 			}
 			return jsvc.Upsert(p)
 		})
+		// jobs.propose is the ONLY job write an agent is given a tool for (see
+		// cmd/mcp): same trusted gate, deliberately weaker semantics — it can
+		// only CREATE, and what it creates lands disarmed and flagged for
+		// review. jobs.upsert stays the human's method, which is what makes
+		// approval mean anything.
+		srv.RegisterLocalIdent("jobs.propose", func(c bus.CallerIdentity, p json.RawMessage) (any, error) {
+			if err := jobsTrusted("jobs.propose", c); err != nil {
+				return nil, err
+			}
+			return jsvc.Propose(p)
+		})
 		srv.RegisterLocalIdent("jobs.remove", func(c bus.CallerIdentity, p json.RawMessage) (any, error) {
 			if err := jobsTrusted("jobs.remove", c); err != nil {
 				return nil, err

@@ -71,6 +71,30 @@ Host-filesystem access (the machine workspacer runs on): list_dir / list_entries
 to explore, read_file / write_file for file IO, search_project for ripgrep
 across a project. Use these to inspect or brief work, not to do the coding
 yourself — spawn an agent in the directory instead.`),
+	"jobs": strings.TrimSpace(`
+Jobs are recurring or one-off tasks the HUB runs unattended: spawn an agent
+with a prompt, run a shell command, or call a capability — on an interval, at a
+daily time, once, or manually. They keep firing with the app closed.
+You can read them (list_jobs, job_history), run or delete an existing one, and
+PROPOSE new ones — you cannot arm one. A proposal is saved disabled with your
+name on it and never runs until the user approves it in Settings → Jobs, so
+tell the user it is waiting for review; do not report it as scheduled.
+A spec is {"name","enabled","trigger","action"}:
+- trigger: {"kind":"interval","everyMinutes":60} | {"kind":"daily","at":"09:00",
+  "days":[1,2,3,4,5]} (0=Sunday, omit for every day) | {"kind":"once","once":
+  "<RFC3339>"} | {"kind":"manual"}
+- action: {"kind":"spawn","spawn":{"cwd","prompt","provider","model"}} |
+  {"kind":"shell","shell":{"command","cwd"}} |
+  {"kind":"call","call":{"method","params"}}
+A spawn action may run CONTEXT STEPS first — code whose output is fed to the
+agent, and whose guards can cancel the run so no model is woken:
+  "context":[{"kind":"shell","shell":{"command":"go test ./..."},
+              "skipIfEmpty":true,"skipUnlessMatch":"FAIL","ignoreExitCode":true}]
+Their output is substituted into the prompt at {{output}} (or {{output.1}},
+{{output.2}}… with several steps). Prefer a guarded spawn over an unguarded
+one: a job that wakes a model nightly to answer "nothing to do" is waste the
+user pays for. Calls may not target jobs.* or hub:<peer>/, and there is a
+maximum of four context steps.`),
 	"config": strings.TrimSpace(`
 get_config returns the full workspacer config; save_config deep-merges a
 partial patch (pass ONLY the keys you change). reload_config re-reads disk.`),

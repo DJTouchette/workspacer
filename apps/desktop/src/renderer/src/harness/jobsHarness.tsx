@@ -120,6 +120,70 @@ function seed(): void {
       runs: [run('j-report', 60 * 24 * 7, 'ok', 'spawned 8a1b2c3d-...', 512)],
     },
     {
+      // The guarded shape: a script runs first, and MOST fires end there —
+      // the harness seeds more skipped runs than ok ones on purpose, because
+      // that's what a healthy guarded job looks like in the history list.
+      j: {
+        id: 'j-failing-tests',
+        name: 'Failing tests → agent',
+        enabled: true,
+        trigger: { kind: 'daily', at: '07:00', days: [1, 2, 3, 4, 5] },
+        action: {
+          kind: 'spawn',
+          spawn: {
+            cwd: '/home/you/work/api-gateway',
+            prompt:
+              "Last night's test run:\n\n{{output}}\n\nTriage these failures and propose a fix for each.",
+            provider: 'claude',
+            context: [
+              {
+                kind: 'shell',
+                shell: { command: 'go test ./... 2>&1 | tail -60' },
+                ignoreExitCode: true,
+                skipUnlessMatch: 'FAIL',
+              },
+            ],
+          },
+        },
+        nextRunAt: now + 14 * 60 * min,
+      },
+      runs: [
+        run('j-failing-tests', 60 * 10, 'skipped', 'context step 1: output did not match FAIL', 6),
+        run('j-failing-tests', 60 * 34, 'skipped', 'context step 1: output did not match FAIL', 5),
+        run('j-failing-tests', 60 * 58, 'ok', 'spawned 91ac77e0-2b3c-4d5e-8f90-bbb222ccc333', 288),
+        run('j-failing-tests', 60 * 82, 'skipped', 'context step 1: output did not match FAIL', 6),
+      ],
+    },
+    {
+      // What an agent's proposal looks like waiting for review: disarmed, badged,
+      // sorted to the top by the section itself.
+      j: {
+        id: 'j-proposed',
+        name: 'Weekly dependency audit',
+        enabled: false,
+        proposedBy: 'triage-agent',
+        trigger: { kind: 'daily', at: '08:00', days: [1] },
+        action: {
+          kind: 'spawn',
+          spawn: {
+            cwd: '/home/you/work/api-gateway',
+            prompt:
+              'Outdated dependencies:\n\n{{output}}\n\nPropose an upgrade plan, safest first.',
+            provider: 'claude',
+            context: [
+              {
+                kind: 'shell',
+                shell: { command: 'npm outdated || true' },
+                skipIfEmpty: true,
+                ignoreExitCode: true,
+              },
+            ],
+          },
+        },
+      },
+      runs: [],
+    },
+    {
       j: {
         id: 'j-cleanup',
         name: 'Prune worktrees',
@@ -169,8 +233,7 @@ let fakeRunFlip = false;
       const next: HubJobView = {
         ...job,
         id,
-        nextRunAt:
-          job.enabled && job.trigger.kind !== 'manual' ? now + 45 * min : undefined,
+        nextRunAt: job.enabled && job.trigger.kind !== 'manual' ? now + 45 * min : undefined,
         lastRun: prev?.lastRun,
       };
       jobs.set(id, next);

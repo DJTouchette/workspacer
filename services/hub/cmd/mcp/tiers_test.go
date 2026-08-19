@@ -58,7 +58,7 @@ func TestTierToolFiltering(t *testing.T) {
 			t.Errorf("view tier missing %q", want)
 		}
 	}
-	for _, banned := range []string{"spawn_agent", "send_message", "approve", "write_file", "read_file", "save_config", "create_terminal", "terminal_input", "signal", "notify"} {
+	for _, banned := range []string{"spawn_agent", "send_message", "approve", "write_file", "read_file", "save_config", "create_terminal", "terminal_input", "signal", "notify", "list_jobs", "propose_job", "run_job", "remove_job", "job_history"} {
 		if view[banned] {
 			t.Errorf("view tier must not hold %q", banned)
 		}
@@ -70,16 +70,30 @@ func TestTierToolFiltering(t *testing.T) {
 			t.Errorf("triage tier missing %q", want)
 		}
 	}
-	for _, banned := range []string{"spawn_agent", "create_terminal", "write_file", "read_file", "save_config", "terminal_input", "answer"} {
+	for _, banned := range []string{"spawn_agent", "create_terminal", "write_file", "read_file", "save_config", "terminal_input", "answer", "list_jobs", "propose_job", "run_job", "remove_job", "job_history"} {
 		if triage[banned] {
 			t.Errorf("triage tier must not hold %q", banned)
 		}
 	}
 
 	// Operator: everything, help included.
-	for _, want := range []string{"spawn_agent", "write_file", "save_config", "terminal_input", "answer", "help"} {
+	for _, want := range []string{"spawn_agent", "write_file", "save_config", "terminal_input", "answer", "help",
+		"list_jobs", "job_history", "propose_job", "run_job", "remove_job"} {
 		if !operator[want] {
 			t.Errorf("operator tier missing %q", want)
+		}
+	}
+
+	// The job surface an agent gets is deliberately ASYMMETRIC: it may propose
+	// a job, never upsert one, because a proposal lands disarmed and a
+	// jobs.upsert would not. An "upsert_job"/"save_job" tool appearing at any
+	// tier means that guarantee was traded away — the review step in
+	// Settings → Jobs would then be decoration.
+	for tier, tools := range map[string]map[string]bool{"view": view, "triage": triage, "operator": operator} {
+		for _, banned := range []string{"upsert_job", "save_job", "create_job", "edit_job", "enable_job"} {
+			if tools[banned] {
+				t.Errorf("%s tier holds %q — agents must only ever PROPOSE jobs", tier, banned)
+			}
 		}
 	}
 

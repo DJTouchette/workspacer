@@ -595,6 +595,32 @@ func newServerWithPlugins(c *busclient.Client, scope authtoken.Scope, plugins []
 		"Show a desktop notification on the workspacer machine.",
 		"notifications.post")
 
+	// ── Jobs (operator only — jobs.* matches no scoped tier's allowlist) ───
+	//
+	// The write here is propose_job, NOT jobs.upsert, and that asymmetry is the
+	// whole safety story. An operator token is `*`, so the bus already treats
+	// it as trusted and would answer jobs.upsert; what withholds it is that no
+	// tool exists for it. jobs.propose lands the row disabled and stamped, and
+	// the hub refuses to run a stamped row — so the worst a talked-into agent
+	// achieves is an entry in a review list, not argv that fires every night
+	// forever. Give an agent a tool for jobs.upsert and that guarantee is gone.
+	b.group = "jobs"
+	addTool[listAgentsIn](b, "list_jobs",
+		"List the hub's scheduled jobs with their trigger, action, next run and last result. Rows with a proposedBy field are proposals awaiting the user's approval and never run.",
+		"jobs.list")
+	addTool[idIn](b, "job_history",
+		"Get recent run records for one job id (status ok/error/skipped, plus an output or error tail).",
+		"jobs.history")
+	addObjectTool(b, "propose_job",
+		"Propose a scheduled job for the user to approve — pass a job spec ({name, trigger, action}; see help topic \"jobs\"). It is saved DISABLED and cannot run until the user approves it in Settings → Jobs, so say so rather than implying it is scheduled.",
+		"jobs.propose")
+	addTool[idIn](b, "run_job",
+		"Run an existing approved job now by id. Refused for a proposal the user has not approved yet.",
+		"jobs.run")
+	addTool[idIn](b, "remove_job",
+		"Delete a job (or withdraw a proposal) by id, along with its run history.",
+		"jobs.remove")
+
 	// ── UI navigation (event-backed, explicit triage+ gate; see ui.go) ─────
 	b.group = "ui"
 	addUiTools(b)

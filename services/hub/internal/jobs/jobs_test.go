@@ -16,6 +16,10 @@ type fakeRunner struct {
 	calls  []string // "method" or "shell:<cmd>"
 	params []any
 	fail   bool
+	// Context-step tests script the shell: nil shellOut keeps the default
+	// two-line output, shellErr is what Shell returns alongside it.
+	shellOut *string
+	shellErr error
 }
 
 func (f *fakeRunner) Call(_ context.Context, method string, params any) (json.RawMessage, error) {
@@ -36,7 +40,11 @@ func (f *fakeRunner) Shell(_ context.Context, command, _ string) (string, error)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "shell:"+command)
-	return "line1\nline2", nil
+	f.params = append(f.params, nil) // keep calls/params index-aligned
+	if f.shellOut != nil {
+		return *f.shellOut, f.shellErr
+	}
+	return "line1\nline2", f.shellErr
 }
 
 func (f *fakeRunner) recorded() []string {

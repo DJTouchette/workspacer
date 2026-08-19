@@ -258,12 +258,37 @@ export interface HubJobTrigger {
   once?: string;
 }
 
+/**
+ * One pre-spawn step: run a shell command (or a bus call) and feed its output
+ * to the model — substituted into the prompt at `{{output}}` / `{{output.N}}`,
+ * appended as a fenced block if the prompt names neither.
+ *
+ * The guards are the point: they let the job decide there is nothing worth
+ * waking a model for, and the hub then spawns NOTHING (the run records
+ * `skipped`, and unlike an error it raises no notification). See
+ * services/hub/internal/jobs/jobs.go — the hub validates all of this.
+ */
+export interface HubJobContextStep {
+  kind: 'shell' | 'call';
+  shell?: { command: string; cwd?: string };
+  call?: { method: string; params?: unknown };
+  /** No output → don't spawn. */
+  skipIfEmpty?: boolean;
+  /** Spawn only when the output matches this regexp (RE2, hub-compiled). */
+  skipUnlessMatch?: string;
+  /** A nonzero exit is data, not failure (grep finding nothing). Timeouts
+   *  still fail either way. */
+  ignoreExitCode?: boolean;
+}
+
 /** What a hub job does; exactly one of the payloads matches kind. */
 export interface HubJobAction {
   kind: 'spawn' | 'call' | 'shell';
   spawn?: {
     cwd: string;
     prompt: string;
+    /** Runs before the agent exists; may abort the run. Hub caps the list at 4. */
+    context?: HubJobContextStep[];
     provider?: string;
     model?: string;
     effort?: string;
@@ -280,6 +305,11 @@ export interface HubJob {
   enabled: boolean;
   trigger: HubJobTrigger;
   action: HubJobAction;
+  /** Set = an AGENT proposed this job (via the MCP facade's propose_job) and no
+   *  human has armed it: the hub never schedules it and refuses jobs.run until
+   *  a trusted write clears this field. Approving is exactly that write — see
+   *  JobsSection's approve(), or `workspacer jobs approve <id>`. */
+  proposedBy?: string;
   createdAt?: number;
   updatedAt?: number;
 }

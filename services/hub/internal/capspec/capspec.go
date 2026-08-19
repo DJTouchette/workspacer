@@ -88,6 +88,7 @@ var unscopedByDecision = map[string]string{
 	// jobs.* shows an honest consent line before that refusal.
 	"jobs.list":    "no params; trusted-only at the handler — the rows disclose stored shell commands and prompts, which is exactly why scoped tiers are refused",
 	"jobs.upsert":  "the job spec IS the parameter — persisted argv (shell command / spawn cwd+prompt / capability call). Trusted-only at the handler; spawn actions additionally re-enter agents.spawn over the bus and inherit its clamps",
+	"jobs.propose": "the job spec IS the parameter, exactly as jobs.upsert — but the handler disarms it: the row is forced disabled, stamped proposedBy, given a fresh id (so it can never overwrite an approved job), and refused by jobs.run until a human clears the stamp. Same trusted-only gate; it exists because the MCP facade gives operator AGENTS a tool for this method and none for jobs.upsert, so agent-written argv can be reviewed before it is ever armed",
 	"jobs.remove":  "an id naming a stored job; trusted-only at the handler",
 	"jobs.run":     "an id naming a stored job to fire now; the authority is the stored spec, the gate is the trusted-only handler",
 	"jobs.history": "an id naming a stored job; returns run records (output tails included), trusted-only at the handler",

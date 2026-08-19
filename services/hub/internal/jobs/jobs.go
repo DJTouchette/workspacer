@@ -33,11 +33,13 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/broker"
+	"github.com/djtouchette/workspacer-hub/internal/event"
 )
 
 // Trigger says when a job fires. Exactly one shape per Kind:
@@ -61,13 +63,50 @@ type Trigger struct {
 // the bus `agents.spawn` (clamped like any bus caller) and the prompt through
 // `agents.sendMessage` — claudemon buffers a message sent before the session
 // is ready, so the pair works from a cold start.
+//
+// Context runs BEFORE any of that: see ContextStep.
 type SpawnAction struct {
-	Cwd            string `json:"cwd"`
-	Prompt         string `json:"prompt"`
-	Provider       string `json:"provider,omitempty"`
-	Model          string `json:"model,omitempty"`
-	Effort         string `json:"effort,omitempty"`
-	PermissionMode string `json:"permissionMode,omitempty"`
+	Cwd    string `json:"cwd"`
+	Prompt string `json:"prompt"`
+	// Context gathers material for the prompt before the agent exists — and
+	// is the job's chance to decide there's nothing worth waking a model for.
+	Context        []ContextStep `json:"context,omitempty"`
+	Provider       string        `json:"provider,omitempty"`
+	Model          string        `json:"model,omitempty"`
+	Effort         string        `json:"effort,omitempty"`
+	PermissionMode string        `json:"permissionMode,omitempty"`
+}
+
+// ContextStep runs code and feeds the result to the model: a shell command or
+// a bus call whose output is substituted into the spawn prompt at `{{output}}`
+// (or `{{output.N}}`, 1-based, when several steps run; a prompt with no
+// placeholder gets the outputs appended as fenced blocks).
+//
+// Its second job is the more valuable one: a step can ABORT the run, so the
+// guard is evaluated by a shell command rather than by a model reading output
+// only to answer "nothing to do". Nothing is spawned until every step has run
+// and every guard has passed — an aborted run records `skipped`, spends no
+// tokens, and (unlike an error) raises no notification.
+//
+//	SkipIfEmpty     — no output means nothing happened; don't spawn.
+//	SkipUnlessMatch — spawn only when the output matches this regexp.
+//	IgnoreExitCode  — a nonzero exit is data, not failure (`grep` finding
+//	                  nothing is the canonical guard). Only an *exit code* is
+//	                  forgiven: a timeout or an unstartable command still fails.
+//
+// SECURITY: a context step is the same argv a `shell`/`call` action already
+// persists, run by the same hub process — it adds reach to a spawn job, not
+// privilege to a caller, and every jobs.* RPC stays trusted-only. Call steps
+// are held to the same method rules as a call action (no `jobs.*` recursion,
+// no `hub:<peer>/` hop to another machine).
+type ContextStep struct {
+	Kind  string       `json:"kind"` // "shell" | "call"
+	Shell *ShellAction `json:"shell,omitempty"`
+	Call  *CallAction  `json:"call,omitempty"`
+
+	SkipIfEmpty     bool   `json:"skipIfEmpty,omitempty"`
+	SkipUnlessMatch string `json:"skipUnlessMatch,omitempty"`
+	IgnoreExitCode  bool   `json:"ignoreExitCode,omitempty"`
 }
 
 // CallAction invokes one bus capability with fixed params.
@@ -93,14 +132,31 @@ type Action struct {
 
 // Job is one persisted spec. Timestamps are unix milliseconds.
 type Job struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	Enabled   bool    `json:"enabled"`
-	Trigger   Trigger `json:"trigger"`
-	Action    Action  `json:"action"`
-	CreatedAt int64   `json:"createdAt"`
-	UpdatedAt int64   `json:"updatedAt"`
+	ID      string  `json:"id"`
+	Name    string  `json:"name"`
+	Enabled bool    `json:"enabled"`
+	Trigger Trigger `json:"trigger"`
+	Action  Action  `json:"action"`
+	// ProposedBy names the agent that asked for this job and, by being set at
+	// all, marks the row as a PROPOSAL: something an agent wrote, that no human
+	// has armed. A proposal never fires (the tick skips it and Propose forces
+	// Enabled false), jobs.run refuses it, and it stays that way until a
+	// trusted caller — the Jobs UI's Approve button, or the CLI — writes it
+	// back with this field cleared.
+	//
+	// The threat it answers: a job is argv that runs unattended, forever. An
+	// operator-tier agent already holds bus authority (its token matches `*`),
+	// so the restraint can't come from the identity gate — it comes from the
+	// METHOD: the facade exposes jobs.propose and never jobs.upsert, and
+	// jobs.propose disarms whatever it's handed. One injected transcript
+	// therefore buys a suggestion in a list, not a nightly backdoor.
+	ProposedBy string `json:"proposedBy,omitempty"`
+	CreatedAt  int64  `json:"createdAt"`
+	UpdatedAt  int64  `json:"updatedAt"`
 }
+
+// IsProposal reports whether a human has yet to arm this job.
+func (j *Job) IsProposal() bool { return strings.TrimSpace(j.ProposedBy) != "" }
 
 // Run is one execution record. Status: "ok" | "error" | "skipped" (a due fire
 // found the previous run still going). Detail holds a result/output tail or
@@ -127,6 +183,18 @@ const (
 	runTimeout    = 15 * time.Minute
 	// detailCap bounds what a run record keeps of output/results.
 	detailCap = 2000
+	// maxContextSteps bounds the pre-spawn work: the steps share the job's
+	// single runTimeout, so an unbounded list is an unbounded stall in front
+	// of an agent that hasn't spawned yet.
+	maxContextSteps = 4
+	// maxPendingProposals bounds unapproved agent proposals. Without it, a
+	// looping agent turns the Jobs list into a junk drawer nobody reads — and
+	// a review queue nobody reads is a review queue that gets approved blind.
+	maxPendingProposals = 20
+	// contextCap bounds what ONE step contributes to the prompt. The prompt is
+	// a message, and the model pays for every character of it — a `git log`
+	// that grew unattended shouldn't quietly become the whole context window.
+	contextCap = 12000
 )
 
 func newID() string {
@@ -170,16 +238,15 @@ func Validate(j *Job) error {
 			strings.TrimSpace(j.Action.Spawn.Prompt) == "" {
 			return errors.New("spawn action needs cwd and prompt")
 		}
+		if err := validateContext(j.Action.Spawn.Context); err != nil {
+			return err
+		}
 	case "call":
 		if j.Action.Call == nil || strings.TrimSpace(j.Action.Call.Method) == "" {
 			return errors.New("call action needs a method")
 		}
-		m := j.Action.Call.Method
-		// jobs.* would recurse into this very surface; hub:<peer>/ would run
-		// the action on ANOTHER machine — jobs are host-local by design (and
-		// job topics deliberately don't federate either).
-		if strings.HasPrefix(m, "jobs.") || strings.HasPrefix(m, "hub:") {
-			return fmt.Errorf("call action may not target %q", m)
+		if err := validateCallMethod(j.Action.Call.Method); err != nil {
+			return err
 		}
 	case "shell":
 		if j.Action.Shell == nil || strings.TrimSpace(j.Action.Shell.Command) == "" {
@@ -187,6 +254,50 @@ func Validate(j *Job) error {
 		}
 	default:
 		return fmt.Errorf("unknown action kind %q", j.Action.Kind)
+	}
+	return nil
+}
+
+// validateCallMethod holds a bus call — an action's or a context step's — to
+// the two methods jobs may not reach: jobs.* would recurse into this very
+// surface, and hub:<peer>/ would run the call on ANOTHER machine (jobs are
+// host-local by design, and job state deliberately doesn't federate).
+func validateCallMethod(method string) error {
+	if strings.HasPrefix(method, "jobs.") || strings.HasPrefix(method, "hub:") {
+		return fmt.Errorf("call may not target %q", method)
+	}
+	return nil
+}
+
+func validateContext(steps []ContextStep) error {
+	if len(steps) > maxContextSteps {
+		return fmt.Errorf("at most %d context steps (got %d)", maxContextSteps, len(steps))
+	}
+	for i, st := range steps {
+		n := i + 1
+		switch st.Kind {
+		case "shell":
+			if st.Shell == nil || strings.TrimSpace(st.Shell.Command) == "" {
+				return fmt.Errorf("context step %d needs a command", n)
+			}
+		case "call":
+			if st.Call == nil || strings.TrimSpace(st.Call.Method) == "" {
+				return fmt.Errorf("context step %d needs a method", n)
+			}
+			if err := validateCallMethod(st.Call.Method); err != nil {
+				return fmt.Errorf("context step %d: %w", n, err)
+			}
+		default:
+			return fmt.Errorf("context step %d has unknown kind %q", n, st.Kind)
+		}
+		if st.SkipUnlessMatch != "" {
+			// Compiled here so a bad pattern is refused at save time rather
+			// than silently never matching (which reads as "the job stopped
+			// running") at 3am.
+			if _, err := regexp.Compile(st.SkipUnlessMatch); err != nil {
+				return fmt.Errorf("context step %d has an invalid skipUnlessMatch: %w", n, err)
+			}
+		}
 	}
 	return nil
 }
@@ -363,7 +474,10 @@ func (s *Service) writeAtomic(path string, raw []byte) {
 
 // rescheduleLocked recomputes a job's next fire time from now.
 func (s *Service) rescheduleLocked(j *Job) {
-	if !j.Enabled {
+	// A proposal is checked as well as the enabled flag: a hand-edited (or
+	// future-bug) row carrying enabled:true with proposedBy still set must not
+	// acquire a next run. Disarmed is a property of the row, not of one writer.
+	if !j.Enabled || j.IsProposal() {
 		delete(s.nextAt, j.ID)
 		return
 	}
@@ -438,6 +552,66 @@ func (s *Service) Upsert(p json.RawMessage) (any, error) {
 	return j, nil
 }
 
+// Propose answers jobs.propose: the AGENT-facing write. It is Upsert with the
+// teeth pulled — the row lands disabled and stamped ProposedBy, so it sits in
+// the Jobs list as a suggestion until a human arms it. Creates only: a
+// proposal may not overwrite an existing job (that would let an agent edit an
+// already-approved job's argv, which is the same escalation by another route).
+func (s *Service) Propose(p json.RawMessage) (any, error) {
+	var req struct {
+		Job
+		// ProposedBy is taken from the request because the hub can't see which
+		// agent is behind a bus connection; it's a LABEL for the human
+		// reviewing, never a permission. An empty one still marks a proposal.
+		ProposedBy string `json:"proposedBy"`
+	}
+	if err := json.Unmarshal(p, &req); err != nil {
+		return nil, fmt.Errorf("bad job: %w", err)
+	}
+	j := req.Job
+	if strings.TrimSpace(req.ProposedBy) != "" {
+		j.ProposedBy = req.ProposedBy
+	}
+	if strings.TrimSpace(j.ProposedBy) == "" {
+		j.ProposedBy = "an agent"
+	}
+	// Disarmed here, not by the caller's good manners.
+	j.Enabled = false
+	j.ID = ""
+	if err := Validate(&j); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pending := 0
+	for i := range s.jobs {
+		if s.jobs[i].IsProposal() {
+			pending++
+		}
+	}
+	if pending >= maxPendingProposals {
+		return nil, fmt.Errorf("%d job proposals are already waiting for review — approve or remove some first", pending)
+	}
+	nowMs := s.now().UnixMilli()
+	j.ID = newID()
+	j.CreatedAt = nowMs
+	j.UpdatedAt = nowMs
+	s.jobs = append(s.jobs, j)
+	// Deliberately NOT rescheduled: a proposal has no next run.
+	s.saveLocked()
+	if s.b != nil {
+		// Ride the existing notify.post — a proposal nobody hears about is a
+		// proposal nobody reviews.
+		s.b.Publish(event.New("notify.post", "jobs", map[string]any{
+			"title": "Job proposed: " + j.Name,
+			"body":  j.ProposedBy + " suggested a job. Review it in Settings → Jobs; it won't run until you approve it.",
+			"level": "info",
+			"key":   "job-proposal-" + j.ID,
+		}))
+	}
+	return j, nil
+}
+
 // Remove answers jobs.remove.
 func (s *Service) Remove(p json.RawMessage) (any, error) {
 	var req struct {
@@ -481,6 +655,12 @@ func (s *Service) RunNow(p json.RawMessage) (any, error) {
 	if job == nil {
 		s.mu.Unlock()
 		return nil, fmt.Errorf("no job %q", req.ID)
+	}
+	if job.IsProposal() {
+		s.mu.Unlock()
+		// Otherwise "propose" and "run" compose into "install and execute",
+		// and the review step was decoration.
+		return nil, fmt.Errorf("job %q is an unapproved proposal — approve it in Settings → Jobs first", job.Name)
 	}
 	if s.running[req.ID] {
 		s.mu.Unlock()

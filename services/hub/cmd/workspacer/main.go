@@ -7,8 +7,10 @@
 // full-scope brain + claudemon IS the headless server — this binary only
 // launches, supervises, and reports; it holds no product logic of its own.
 //
-// `workspacer status` probes what's running; `workspacer install-cli` puts
-// this binary on PATH.
+// `workspacer status` probes what's running; `workspacer jobs` manages the
+// hub's scheduled jobs (the host-authority path for installing a spec written
+// elsewhere — by hand, or by an agent); `workspacer install-cli` puts this
+// binary on PATH.
 package main
 
 import (
@@ -43,6 +45,8 @@ func main() {
 		os.Exit(runStatus(os.Args[2:]))
 	case "token":
 		os.Exit(runToken(os.Args[2:]))
+	case "jobs":
+		os.Exit(runJobs(os.Args[2:]))
 	case "install-cli":
 		os.Exit(runInstallCLI(os.Args[2:]))
 	case "help", "-h", "--help":
