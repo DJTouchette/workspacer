@@ -19,6 +19,8 @@ export interface UiCommandHandlers {
   closePane: (paneId: string) => void;
   /** Open the Ask pane in the global workspace. */
   openAskPane?: () => void;
+  /** Open the Workspacer Guide pane in the global workspace. */
+  openGuide?: () => void;
 }
 
 export function useUiCommands(handlers: UiCommandHandlers): void {
@@ -50,6 +52,9 @@ export function useUiCommands(handlers: UiCommandHandlers): void {
           break;
         case 'command.open_ask_pane':
           ref.current.openAskPane?.();
+          break;
+        case 'command.open_guide':
+          ref.current.openGuide?.();
           break;
         default:
           break;

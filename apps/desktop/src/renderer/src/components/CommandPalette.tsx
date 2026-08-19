@@ -178,6 +178,8 @@ interface CommandPaletteProps {
   onOpenRemote?: () => void;
   /** Open the Ask pane (fleet supervisor question interface). */
   onOpenAskPane?: () => void;
+  /** Open the Workspacer Guide pane (tour & how-do-I questions, live agent). */
+  onOpenGuide?: () => void;
   /** Open a file in an Editor pane (prompts for a file first). */
   onOpenFile?: () => void;
   /** Resolved keybindings (config merged with defaults) — drives shortcut badges. */
@@ -241,6 +243,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   onOpenLayouts,
   onOpenRemote,
   onOpenAskPane,
+  onOpenGuide,
   onOpenFile,
   shortcuts = {},
   prefix = 'ctrl+space',
@@ -315,6 +318,13 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       'Pose a question to a supervisor agent',
       <Brain size={16} strokeWidth={1.75} />,
       onOpenAskPane,
+    );
+    add(
+      'cmd-guide',
+      'Workspacer Guide',
+      'Take a tour or ask how anything works — a live agent answers (uses your usage)',
+      <PaneIcon type="guide" size={16} />,
+      onOpenGuide,
     );
     add(
       'cmd-toggle-sidebar',
@@ -485,6 +495,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     return out;
   }, [
     onOpenAskPane,
+    onOpenGuide,
     onToggleSidebar,
     onToggleInbox,
     onToggleFleet,

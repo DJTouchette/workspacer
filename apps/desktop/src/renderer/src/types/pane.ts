@@ -16,7 +16,8 @@ export type PaneType =
   | 'inspector'
   | 'mdpreview'
   | 'context'
-  | 'sessions';
+  | 'sessions'
+  | 'guide';
 
 /** Coding-agent backend an agent workspace / agent pane runs.
  *  `undefined` is treated as `'claude'` for backward compatibility with sessions

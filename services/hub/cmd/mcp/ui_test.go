@@ -112,4 +112,17 @@ func TestUiToolsPublishCommands(t *testing.T) {
 		!strings.Contains(string(ev.Data), `"url":"https://workspacer.dev/docs"`) {
 		t.Errorf("open_browser data wrong: %s", ev.Data)
 	}
+
+	// open_guide takes no arguments and publishes its own topic.
+	res, err = cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "open_guide",
+		Arguments: map[string]any{},
+	})
+	if err != nil || res.IsError {
+		t.Fatalf("open_guide failed: err=%v res=%s", err, textOf(res))
+	}
+	ev = next()
+	if ev.Type != "command.open_guide" || ev.Source != "mcp-facade" {
+		t.Fatalf("open_guide published %+v, want command.open_guide from mcp-facade", ev)
+	}
 }

@@ -174,7 +174,7 @@ func TestUiToolTierGate(t *testing.T) {
 	triage := listToolsFor(t, authtoken.ScopeTriage)
 	operator := listToolsFor(t, authtoken.ScopeOperator)
 
-	uiTools := []string{"focus_agent", "open_pane", "open_browser", "open_plugin", "open_spawn_dialog"}
+	uiTools := []string{"focus_agent", "open_pane", "open_browser", "open_plugin", "open_spawn_dialog", "open_guide"}
 	for _, name := range uiTools {
 		if view[name] {
 			t.Errorf("view tier must not hold UI tool %q", name)

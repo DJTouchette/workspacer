@@ -34,6 +34,7 @@ const InspectorPane = React.lazy(() => import('../panes/InspectorPane'));
 const MarkdownPreviewPane = React.lazy(() => import('../panes/MarkdownPreviewPane'));
 const ContextPane = React.lazy(() => import('../panes/ContextPane'));
 const SessionsPane = React.lazy(() => import('../panes/SessionsPane'));
+const GuidePane = React.lazy(() => import('../panes/GuidePane'));
 
 /** POSIX single-quote a path so it's safe as a terminal-editor argument. */
 function shellQuote(p: string): string {
@@ -111,6 +112,8 @@ interface ScrollContainerProps {
   }) => Promise<string>;
   /** Jump to a specific agent by id — forwarded to AskPane. */
   onJumpToAgent?: (agentId: string) => void;
+  /** Spawn the Workspacer guide agent from a question — forwarded to GuidePane. */
+  spawnGuide?: (question: string) => Promise<string>;
   /** Resumable daemon sessions + resume — forwarded to the Sessions pane. */
   recentSessions?: RecentAgentSession[];
   onResumeRecentSession?: (session: RecentAgentSession) => void;
@@ -157,6 +160,8 @@ interface PaneCallbacks {
   }) => Promise<string>;
   /** Jump to agent by id — for the Ask pane. */
   onJumpToAgent?: (agentId: string) => void;
+  /** Spawn the Workspacer guide — for the Guide pane. */
+  spawnGuide?: (question: string) => Promise<string>;
   /** Agent workspace that owns this pane tree. */
   ownerAgentId?: string;
   /** Resumable daemon sessions + resume — for the Sessions pane. */
@@ -341,6 +346,16 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
             spawnSupervisor={callbacks.spawnSupervisor ?? (() => Promise.resolve(''))}
             onJumpToAgent={callbacks.onJumpToAgent ?? (() => {})}
             scopeAgentId={pane.scopeAgentId}
+          />
+        </Suspense>
+      );
+    case 'guide':
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <GuidePane
+            agents={callbacks.allAgents ?? []}
+            spawnGuide={callbacks.spawnGuide ?? (() => Promise.resolve(''))}
+            onJumpToAgent={callbacks.onJumpToAgent ?? (() => {})}
           />
         </Suspense>
       );
@@ -572,6 +587,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       allAgents,
       spawnSupervisor,
       onJumpToAgent,
+      spawnGuide,
       recentSessions,
       onResumeRecentSession,
       historyExcludeIds,
@@ -740,6 +756,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
             allAgents,
             spawnSupervisor,
             onJumpToAgent,
+            spawnGuide,
             ownerAgentId,
             recentSessions,
             onResumeRecentSession,

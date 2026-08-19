@@ -34,6 +34,7 @@ import {
   ArrowLeft,
   ArrowRight,
   History,
+  LifeBuoy,
   type LucideIcon,
 } from 'lucide-react';
 import { PaneType } from '../types/pane';
@@ -80,6 +81,7 @@ const PANE_ICONS: Record<PaneType, IconComponent> = {
   mdpreview: BookOpen,
   context: PieChart,
   sessions: History,
+  guide: LifeBuoy,
 };
 
 export interface IconProps {

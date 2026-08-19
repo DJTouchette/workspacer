@@ -101,6 +101,12 @@ func addUiTools(b *build) {
 		func(in spawnDialogIn) event.Envelope {
 			return event.New("command.open_spawn_dialog", uiEventSource, in)
 		})
+	addUiTool(b, authtoken.ScopeTriage, "open_guide",
+		"Open the Workspacer Guide pane in the desktop UI — the built-in tour/help chat. Use to hand the user to the in-app guide instead of explaining workspacer yourself.",
+		"command.open_guide",
+		func(in openGuideIn) event.Envelope {
+			return event.New("command.open_guide", uiEventSource, in)
+		})
 }
 
 type focusAgentIn struct {
@@ -124,3 +130,7 @@ type openPluginIn struct {
 type spawnDialogIn struct {
 	Cwd string `json:"cwd,omitempty" jsonschema:"directory to pre-fill in the dialog"`
 }
+
+// openGuideIn is deliberately empty: the guide pane is a singleton in the
+// global workspace and takes no arguments.
+type openGuideIn struct{}

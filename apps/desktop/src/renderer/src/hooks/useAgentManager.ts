@@ -22,6 +22,7 @@ export function providerLabel(provider: AgentProvider | undefined): string {
   }
 }
 import { agentIdForSession, dedupeBySessionId } from '../lib/agentIdentity';
+import { GUIDE_AGENT_NAME, buildGuideKickoff } from '../lib/guide';
 import { markSessionTerminated, clearSessionTerminated } from '../lib/terminatedSessions';
 import { requestRecentSessionsRefresh } from '../lib/watchBus';
 
@@ -51,6 +52,7 @@ const defaultTitles: Record<PaneType, string> = {
   mdpreview: 'Preview',
   context: 'Context',
   sessions: 'Sessions',
+  guide: 'Guide',
 };
 
 /** Derive a human label from a working directory (its basename). */
@@ -235,6 +237,12 @@ export function useAgentManager() {
       worktree?: boolean;
       /** When true the spawned session receives the workspacer MCP facade. */
       supervisor?: boolean;
+      /** A first message AUTO-SENT once the spawn resolves (claudemon buffers
+       *  it through the settle+verify flush, same as the jobs scheduler and
+       *  respawn continuations). Unlike initialPrompt, the user never has to
+       *  press Enter — use only where clicking the trigger IS the consent to
+       *  send (e.g. a guide tour chip). */
+      kickoffMessage?: string;
       /** Marks this workspace as a supervisor. */
       kind?: 'supervisor';
       /** For supervisors: the id of the agent being supervised. */
@@ -294,6 +302,13 @@ export function useAgentManager() {
         sessionId = await window.electronAPI.spawnClaude(spawnOpts);
       } catch (err) {
         console.error('[Agent] spawn failed:', err);
+      }
+      // Sent AFTER the spawn resolves so the session row exists — claudemon
+      // queues it through the settle+verify flush (see useClaudeSpawn).
+      if (sessionId && opts.kickoffMessage) {
+        window.electronAPI
+          .claudeMessage(sessionId, opts.kickoffMessage)
+          .catch((err) => console.error('[Agent] kickoff message failed:', err));
       }
       const { tabs: agentTabs, activeTabId: agentActiveTab } = defaultAgentTabs(
         sessionId,
@@ -580,6 +595,37 @@ export function useAgentManager() {
         parentId: opts.parentId,
         supervisor: true,
         initialPrompt: question ?? kick,
+      });
+    },
+    [spawnAgent],
+  );
+
+  /**
+   * Spawn the Workspacer guide — a Claude agent with the workspacer MCP facade
+   * at the 'triage' tier (observe + UI-navigation tools, no spawn/host access)
+   * that answers "how do I use this app" questions and gives guided tours.
+   * The question is AUTO-SENT (with the guide role framing) once the spawn
+   * resolves: the guide only ever spawns from an explicit question click/submit,
+   * which is the consent to send. Returns the new agent id.
+   */
+  const spawnGuide = useCallback(
+    async (question: string): Promise<string> => {
+      // Same dedicated home as supervisors (~/.workspacer) — the guide is about
+      // the app, not any one repo, so it shouldn't inherit an agent's cwd.
+      let cwd = '';
+      try {
+        cwd = await window.electronAPI.getSupervisorHome();
+      } catch {
+        cwd = '';
+      }
+      return spawnAgent({
+        cwd,
+        name: GUIDE_AGENT_NAME,
+        provider: 'claude',
+        // GUI chat from the first turn — the guide is a bubbles experience.
+        transport: 'stream',
+        toolScope: 'triage',
+        kickoffMessage: buildGuideKickoff(question),
       });
     },
     [spawnAgent],
@@ -1339,6 +1385,7 @@ export function useAgentManager() {
     setActiveAgentId,
     spawnAgent,
     spawnSupervisor,
+    spawnGuide,
     adoptAgent,
     respawnAgent,
     respawnAgentWithSettings,

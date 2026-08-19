@@ -8,6 +8,7 @@ import {
   isPresetId,
   type PresetId,
 } from '../lib/keybindingPresets';
+import { GUIDE_PRESETS } from '../lib/guide';
 
 /**
  * The welcome card. Two showings, both as a modal overlay:
@@ -70,6 +71,9 @@ const Onboarding: React.FC<{
   presetId?: string;
   /** Apply a keybinding preset (first-run "pick your keymap" + replay). */
   onChoosePreset?: (id: PresetId) => void;
+  /** Ask the Workspacer guide a question: dismisses the card, spawns the guide
+   *  agent, and jumps into its chat. Section hidden when absent. */
+  onAskGuide?: (question: string) => void;
   /** Render as a modal overlay instead of filling the content area. */
   overlay?: boolean;
   /** First-run showing (dismiss persists the flag) vs a palette replay. */
@@ -82,6 +86,7 @@ const Onboarding: React.FC<{
   prefix,
   presetId,
   onChoosePreset,
+  onAskGuide,
   overlay,
   firstRun,
 }) => {
@@ -357,6 +362,91 @@ const Onboarding: React.FC<{
           .
         </div>
       </div>
+
+      {/* Ask the guide — a live tour agent, one chip-click away. */}
+      {onAskGuide && (
+        <div
+          style={{
+            position: 'relative',
+            borderTop: '1px solid var(--wks-border-subtle)',
+            padding: '18px 24px 16px',
+          }}
+        >
+          <div
+            style={{
+              fontSize: '0.66rem',
+              fontWeight: 700,
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              color: 'var(--wks-text-faint)',
+              padding: '0 8px 10px',
+            }}
+          >
+            Or just ask
+          </div>
+          {/* The guide's opening bubble — the "fake chat" teaser. */}
+          <div
+            style={{
+              display: 'flex',
+              gap: 8,
+              alignItems: 'flex-end',
+              padding: '0 8px 10px',
+            }}
+          >
+            <span style={{ flexShrink: 0, marginBottom: 2 }}>
+              <BrandMark size={18} />
+            </span>
+            <div
+              style={{
+                padding: '8px 12px',
+                borderRadius: 'var(--wks-radius-lg)',
+                background: 'var(--wks-bg-elevated)',
+                fontSize: '0.76rem',
+                lineHeight: 1.5,
+                color: 'var(--wks-text-secondary)',
+                textAlign: 'left',
+              }}
+            >
+              I&rsquo;m the built-in guide — a live agent that can open panes and show you around.
+              What do you want to know?
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0 8px' }}>
+            {GUIDE_PRESETS.slice(0, 3).map((preset) => (
+              <button
+                key={preset.id}
+                onClick={() => onAskGuide(preset.prompt)}
+                title={preset.prompt}
+                style={{
+                  padding: '4px 11px',
+                  borderRadius: 'var(--wks-radius-pill)',
+                  border: '1px solid var(--wks-accent)',
+                  background: 'transparent',
+                  color: 'var(--wks-accent)',
+                  fontSize: '0.7rem',
+                  fontWeight: 600,
+                  fontFamily: 'inherit',
+                  cursor: 'pointer',
+                }}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <div
+            style={{
+              padding: '10px 8px 0',
+              fontSize: '0.66rem',
+              color: 'var(--wks-text-faint)',
+              textAlign: 'left',
+              lineHeight: 1.5,
+            }}
+          >
+            Runs on your own Claude account and uses a little of your usage — nothing runs until you
+            tap a question.
+          </div>
+        </div>
+      )}
 
       {/* Footer — quiet provider strip + dismiss. */}
       <div

@@ -197,6 +197,7 @@ interface AgentViewHandlers {
     parentId?: string;
     provider?: AgentProvider;
   }) => Promise<string>;
+  spawnGuide: (question: string) => Promise<string>;
   onJumpToAgent: (agentId: string) => void;
   onResumeRecentSession: (session: RecentAgentSession) => void;
 }
@@ -273,6 +274,7 @@ const AgentWorkspaceView = memo(function AgentWorkspaceView({
           agentLiveCwd={liveCwd}
           allAgents={allAgents}
           spawnSupervisor={handlers.spawnSupervisor}
+          spawnGuide={handlers.spawnGuide}
           onJumpToAgent={handlers.onJumpToAgent}
           recentSessions={recentSessions}
           onResumeRecentSession={handlers.onResumeRecentSession}
@@ -307,6 +309,7 @@ function App() {
     activeAgent,
     spawnAgent,
     spawnSupervisor,
+    spawnGuide,
     adoptAgent,
     respawnAgent,
     respawnAgentWithSettings,
@@ -1191,6 +1194,32 @@ function App() {
     requestAnimationFrame(() => scrollToTab(tabId));
   }, [openPaneIn, scrollToTab]);
 
+  /** Open the Workspacer Guide pane in the global Overview workspace (command-
+   *  palette entry). Reuses an existing Guide tab rather than duplicating. */
+  const openGuidePane = useCallback(() => {
+    setShowCommandPalette(false);
+    const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'guide', 'Guide');
+    requestAnimationFrame(() => scrollToTab(tabId));
+  }, [openPaneIn, scrollToTab]);
+
+  /** A welcome-card tour chip: spawn the guide agent on the clicked question
+   *  and jump straight into its live chat (the card carries the usage note, so
+   *  the click is the informed consent to send). */
+  const startGuideTour = useCallback(
+    (question: string) => {
+      dismissWelcome();
+      void (async () => {
+        try {
+          const agentId = await spawnGuide(question);
+          handleSelectAgent(agentId);
+        } catch (err) {
+          console.error('[Guide] tour spawn failed:', err);
+        }
+      })();
+    },
+    [dismissWelcome, spawnGuide, handleSelectAgent],
+  );
+
   /** Jump to a specific agent by id — passed down to the Ask pane. */
   const handleJumpToAgent = useCallback(
     (agentId: string) => {
@@ -1882,6 +1911,13 @@ function App() {
         addTabWithConfig('browser', undefined, undefined, opts.url, false, opts?.cwd);
         return;
       }
+      // The guide is a singleton in the global workspace — same routing as
+      // command.open_guide, so the generic pane opener can't duplicate it
+      // into whatever agent happens to be active.
+      if (paneType === 'guide') {
+        openGuidePane();
+        return;
+      }
       handleAddTab(paneType as PaneType, undefined, undefined, opts?.cwd);
     },
     openPlugin: (type) => {
@@ -1899,6 +1935,9 @@ function App() {
       }
     },
     openAskPane,
+    // Route bus-driven guide opens through the singleton global pane (dedupes)
+    // rather than handleAddTab, which would drop one into the active agent.
+    openGuide: openGuidePane,
   });
 
   // --- Per-directory script buttons ---
@@ -2028,6 +2067,7 @@ function App() {
       onSplit: handlePaneSplit,
       onSplitPlugin: handlePaneSplitPlugin,
       spawnSupervisor,
+      spawnGuide,
       onJumpToAgent: handleJumpToAgent,
       onResumeRecentSession: handleResumeRecentSession,
     }),
@@ -2044,6 +2084,7 @@ function App() {
       handlePaneSplit,
       handlePaneSplitPlugin,
       spawnSupervisor,
+      spawnGuide,
       handleJumpToAgent,
       handleResumeRecentSession,
     ],
@@ -2244,6 +2285,7 @@ function App() {
                 prefix={kbPrefix}
                 presetId={config.keybindings?.presetId}
                 onChoosePreset={(id) => saveConfig(presetConfigPatch(id, config))}
+                onAskGuide={startGuideTour}
               />
             )}
 
@@ -2297,6 +2339,7 @@ function App() {
                 setShowRemote(true);
               }}
               onOpenAskPane={openAskPane}
+              onOpenGuide={openGuidePane}
               onOpenFile={() => {
                 setShowCommandPalette(false);
                 openFileInEditor();

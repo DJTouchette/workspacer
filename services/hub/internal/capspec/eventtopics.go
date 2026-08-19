@@ -183,6 +183,11 @@ var eventTopics = []EventTopic{
 		Disposition: TopicOpenByDecision,
 		Reason:      "carries an optional directory to pre-fill in the New Agent dialog. Opening the dialog spawns nothing — the spawn itself still goes through agents.spawn and its clamps",
 	},
+	{
+		Pattern:     "command.open_guide",
+		Disposition: TopicOpenByDecision,
+		Reason:      "carries no arguments — a request to open the built-in guide pane. Receiving it discloses only that navigation was requested; anything the guide then does rides its own session's scoped token",
+	},
 	// hub.peer.* — federation-link reachability (internal/federation). The
 	// tombstone UX depends on every client hearing these: a peer going dark
 	// must render as "hub unreachable, last seen …", not as agents silently
