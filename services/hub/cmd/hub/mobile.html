@@ -54,10 +54,10 @@
     --mono:'JetBrains Mono',ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  /* When the standalone viewport is known-stale (JS learned a chrome gap), the
-     reported safe-area can be stale with it — floor the home-indicator
-     clearance so the tab bar / composer never sit under it. */
-  body.stale-vp { --safe-b:max(env(safe-area-inset-bottom, 0px), 30px); }
+  /* When the standalone viewport is known-stale, the corrected #app already
+     stops at the paint boundary ABOVE the home indicator — a safe-area inset
+     on top of that is padding against a zone the shell never enters. */
+  body.stale-vp { --safe-b:0px; }
   html,body { margin:0; padding:0; height:100%; background:var(--bg); }
   /* position:fixed makes the DOCUMENT unscrollable, period. Without it iOS
      standalone let the page itself pan (rubber-band or keyboard reveal),
@@ -3187,7 +3187,7 @@
   // which is how we tell them apart) and add it back to every measurement.
   const standalone = navigator.standalone === true ||
     (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
-  let chromeGap = 0;
+  let chromeGap = 0, staleVp = false;
   const applyViewport = () => {
     const vv = window.visualViewport;
     let h = Math.round(vv ? vv.height : window.innerHeight);
@@ -3198,11 +3198,18 @@
       const land = matchMedia('(orientation: landscape)').matches;
       const sh = land ? Math.min(screen.width, screen.height) : Math.max(screen.width, screen.height);
       const gap = sh - (h + off);
-      if (gap >= 0 && gap <= 140) chromeGap = gap;
+      // The paintable surface stops ~48pt short of the screen edge (the OS
+      // keeps the home-indicator zone outside it), so claim the shortfall only
+      // up to that line — claiming the full screen clipped the composer's
+      // bottom off at the paint boundary.
+      if (gap >= 0 && gap <= 140) {
+        chromeGap = Math.max(0, gap - 48);
+        staleVp = gap > 20;
+      }
       h += chromeGap;
-      // Stale metrics can under-report the bottom safe-area too — keep the
-      // home-indicator clearance honest when we know the viewport is lying.
-      document.body.classList.toggle('stale-vp', chromeGap > 20);
+      // In stale mode #app already ends above the home indicator, so the
+      // safe-area inset would be padding against a zone we never enter.
+      document.body.classList.toggle('stale-vp', staleVp);
     }
     document.documentElement.style.setProperty('--vh', h + 'px');
     document.getElementById('app').style.transform = off ? `translateY(${off}px)` : '';
