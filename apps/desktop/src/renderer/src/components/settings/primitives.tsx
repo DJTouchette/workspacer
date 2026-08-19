@@ -32,17 +32,20 @@ export function SmallButton({
   onClick,
   primary,
   danger,
+  disabled,
 }: {
   label: React.ReactNode;
   onClick: () => void;
   primary?: boolean;
   danger?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <button
+      disabled={disabled}
       onClick={(e) => {
         e.stopPropagation();
-        onClick();
+        if (!disabled) onClick();
       }}
       style={{
         padding: '4px 12px',
@@ -57,7 +60,8 @@ export function SmallButton({
             : 'var(--wks-text-muted)',
         border: primary ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border-subtle)',
         borderRadius: 'var(--wks-radius-pill)',
-        cursor: 'pointer',
+        cursor: disabled ? 'default' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
         height: 'auto',
         lineHeight: 1.4,
         margin: 0,
