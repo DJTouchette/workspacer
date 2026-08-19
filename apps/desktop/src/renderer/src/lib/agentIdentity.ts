@@ -31,6 +31,36 @@ export function agentIdForSession(sessionId: string): string {
  * ordering stays stable. Cards without a sessionId (stopped/local agents) are
  * always kept as-is.
  */
+/**
+ * Collapse cards that share a card `id` into one. Duplicate ids are the worst
+ * corruption this layer can carry: React sibling keys collide (one workspace's
+ * pane subtree renders under another's slot — the "Overview is suddenly an
+ * agent pane" bug) and `mutateAgent`, which maps by id, writes into every
+ * twin. Ids collide when a mid-respawn card (sessionId nulled by a stray
+ * eviction tick) met an auto-adopted card minted for the same session — both
+ * spell `agent-<sessionId>`. The survivor is the one still holding a live
+ * sessionId (the healthy copy); tie goes to the first occurrence.
+ */
+export function dedupeByCardId(agents: AgentWorkspace[]): AgentWorkspace[] {
+  const survivorFor = new Map<string, AgentWorkspace>();
+  const result: AgentWorkspace[] = [];
+
+  for (const a of agents) {
+    const existing = survivorFor.get(a.id);
+    if (!existing) {
+      survivorFor.set(a.id, a);
+      result.push(a);
+    } else if (a.sessionId && !existing.sessionId) {
+      const idx = result.indexOf(existing);
+      if (idx !== -1) result[idx] = a;
+      survivorFor.set(a.id, a);
+    }
+    // else: duplicate id with no better claim — drop it.
+  }
+
+  return result;
+}
+
 export function dedupeBySessionId(agents: AgentWorkspace[]): AgentWorkspace[] {
   const survivorFor = new Map<string, AgentWorkspace>();
   const result: AgentWorkspace[] = [];

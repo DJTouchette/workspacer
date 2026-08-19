@@ -294,11 +294,42 @@ export const ComposerControls: React.FC<{
       // normal message path. A stream-transport (headless) Claude session has
       // no TUI to interpret it — the text would land as a literal prompt — so
       // it takes the structural endpoint below like the managed providers.
+      // A successful live switch must also land on the agent RECORD:
+      // agent.model feeds later restarts and saved layouts (App listens).
+      const recordSwitch = () =>
+        window.dispatchEvent(
+          new CustomEvent('agent:model-switched', { detail: { sessionId, model: id } }),
+        );
       if (caps.modelSource === 'claude' && transport !== 'stream') {
-        window.electronAPI.claudeMessage(sessionId, `/model ${id}`).catch((err) => {
-          console.warn('[ComposerControls] live model switch failed:', err);
-          setSwitching(null);
-        });
+        window.electronAPI
+          .claudeMessage(sessionId, `/model ${id}`)
+          .then((res) => {
+            // claudeMessage resolves {ok:false, mode} on a 409 (session ended /
+            // not taking input). Ignoring it left the pill spinning for the
+            // full 15s and silently reverting — fall back to the restart
+            // confirm like the structural path below (same as liveEffort.ts).
+            if (!res?.ok) {
+              setSwitching(null);
+              setMenu({
+                kind: 'model',
+                x: at.x,
+                y: at.y,
+                confirm: {
+                  overrides: { model: id },
+                  label,
+                  reason: res?.mode
+                    ? `this session can't take input right now (${res.mode})`
+                    : undefined,
+                },
+              });
+              return;
+            }
+            recordSwitch();
+          })
+          .catch((err) => {
+            console.warn('[ComposerControls] live model switch failed:', err);
+            setSwitching(null);
+          });
         return;
       }
       window.electronAPI
@@ -312,7 +343,9 @@ export const ComposerControls: React.FC<{
               y: at.y,
               confirm: { overrides: { model: id }, label, reason: res.error },
             });
+            return;
           }
+          recordSwitch();
         })
         .catch((err) => {
           console.warn('[ComposerControls] live model switch failed:', err);
@@ -711,7 +744,9 @@ export const ComposerControls: React.FC<{
           {menu.kind === 'profile' && (
             <>
               <ContextMenuLabel>Profile · restarts, same conversation</ContextMenuLabel>
-              {profiles === null && <ContextMenuItem label="Loading…" onClick={() => {}} disabled />}
+              {profiles === null && (
+                <ContextMenuItem label="Loading…" onClick={() => {}} disabled />
+              )}
               {(profiles ?? []).map((p) => (
                 <ContextMenuItem
                   key={p.id}

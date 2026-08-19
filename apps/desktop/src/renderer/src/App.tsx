@@ -83,6 +83,7 @@ import { buildPaneMenu } from './lib/paneMenu';
 import { filterPaneMenuForRemote } from './lib/federation';
 import { PaneMenuProvider, type PaneMenuContextValue } from './contexts/PaneMenuContext';
 import { wasSessionTerminated } from './lib/terminatedSessions';
+import { isRespawning } from './lib/respawnGuard';
 import { useSessionSnapshots } from './hooks/useSessionSnapshots';
 import { useBrowserHibernation } from './hooks/useBrowserHibernation';
 import {
@@ -318,6 +319,7 @@ function App() {
     applyAutoTitle,
     reconcileAgents,
     stopAgentForSession,
+    setAgentModel,
     loadAgentsFromSession,
     openPaneIn,
     openAgentWatch,
@@ -638,6 +640,10 @@ function App() {
       // Never re-adopt a session the user explicitly terminated — its dying
       // ticks can race the terminate and make it look live for a moment.
       if (wasSessionTerminated(sessionId)) continue;
+      // A mid-respawn session ISN'T orphaned — its card is about to re-attach
+      // the same id. Adopting here minted a duplicate card with the identical
+      // deterministic id (see lib/respawnGuard.ts).
+      if (isRespawning(sessionId)) continue;
       // Skip leftovers from a previous run — reachable only via explicit resume.
       if (preexisting.has(sessionId)) continue;
       // Skip if some agent already owns this session.
@@ -1763,6 +1769,20 @@ function App() {
     window.addEventListener('agent:respawn', handler);
     return () => window.removeEventListener('agent:respawn', handler);
   }, [respawnAgentWithSettings]);
+
+  // A LIVE model switch (no respawn) still has to land on the agent record:
+  // agent.model feeds every later restart (`overrides.model ?? agent.model`),
+  // saved layouts, and respawn-after-reboot — without this, a restart quietly
+  // reverted a live-switched agent to its spawn-time model.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent).detail as { sessionId?: string; model?: string } | undefined;
+      if (!d?.sessionId || !d.model) return;
+      setAgentModel(d.sessionId, d.model);
+    };
+    window.addEventListener('agent:model-switched', handler);
+    return () => window.removeEventListener('agent:model-switched', handler);
+  }, [setAgentModel]);
 
   // Cross-provider handoff: spawn the successor agent in the same cwd with its
   // composer pre-filled to read the brief (written by claudemon under

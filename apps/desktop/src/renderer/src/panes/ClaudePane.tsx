@@ -489,8 +489,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // A remote (federated) session is GUI-only regardless of transport: its PTY
   // lives on the peer machine — the local attach is a stream-less adoption
   // (see CLAUDE_ATTACH in main's ipc.ts), so a terminal here would stay dark.
-  const hasTerminal =
-    !session?.hub && ((isClaude && !isStream) || (isHybrid && !managedStream));
+  const hasTerminal = !session?.hub && ((isClaude && !isStream) || (isHybrid && !managedStream));
   const showViewToggle = hasGui && hasTerminal; // both surfaces → show the toggle
   // Lock to the sole available surface when the provider doesn't offer both;
   // any auto-switch below then becomes a no-op.
@@ -500,9 +499,13 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
 
   // The profile (login) this session currently runs under. Starts as the
   // pane's spawn profile and moves with profile-switch restarts (the pill or
-  // the automatic failover below) — the prop can't, it's frozen in the pane
-  // config.
+  // the automatic failover below). The prop DOES change now — a respawn
+  // rewrites pane.profileId — so re-sync instead of trusting the mount value
+  // (a stale mount value is how the pill claimed "Default" on second logins).
   const [liveProfileId, setLiveProfileId] = useState(profileId);
+  useEffect(() => {
+    setLiveProfileId(profileId);
+  }, [profileId]);
 
   // A fresh account profile boots Claude signed-out: the account dir is
   // seeded past first-run onboarding (claudeAccountSetup), so the REPL comes
@@ -2092,8 +2095,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                 ) : (
                   <span>
                     This profile's account isn't logged in yet. Spawn it once on the Terminal
-                    transport (or run <code style={{ fontFamily: 'var(--wks-font-mono)' }}>claude</code>{' '}
-                    with this profile in any terminal) to sign in.
+                    transport (or run{' '}
+                    <code style={{ fontFamily: 'var(--wks-font-mono)' }}>claude</code> with this
+                    profile in any terminal) to sign in.
                   </span>
                 )}
               </div>

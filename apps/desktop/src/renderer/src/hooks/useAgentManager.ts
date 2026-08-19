@@ -21,9 +21,10 @@ export function providerLabel(provider: AgentProvider | undefined): string {
       return 'Claude';
   }
 }
-import { agentIdForSession, dedupeBySessionId } from '../lib/agentIdentity';
+import { agentIdForSession, dedupeByCardId, dedupeBySessionId } from '../lib/agentIdentity';
 import { GUIDE_AGENT_NAME, buildGuideKickoff } from '../lib/guide';
 import { markSessionTerminated, clearSessionTerminated } from '../lib/terminatedSessions';
+import { markRespawning, isRespawning, settleRespawning } from '../lib/respawnGuard';
 import { requestRecentSessionsRefresh } from '../lib/watchBus';
 
 let nextId = 1;
@@ -107,6 +108,7 @@ function defaultAgentTabs(
   provider?: AgentProvider,
   transport?: 'pty' | 'stream',
   expectHistory?: boolean,
+  profileId?: string,
 ): { tabs: TabConfig[]; activeTabId: string } {
   const paneId = generateId('claude');
   const tabId = generateId('tab');
@@ -121,6 +123,9 @@ function defaultAgentTabs(
     attachSessionId: sessionId,
     expectHistory: expectHistory || undefined,
     initialPrompt,
+    // The composer's profile pill reads pane.profileId — without it every
+    // agent pane claimed the Default account regardless of the spawn profile.
+    profileId,
   };
   return {
     tabs: [
@@ -319,6 +324,7 @@ export function useAgentManager() {
         // A resumed spawn replays its transcript — the pane should show the
         // fetching state, not the new-agent hero, until it lands.
         !!opts.resumeSessionId,
+        opts.profileId,
       );
       const agent: AgentWorkspace = {
         // Deterministic id when we have a session, so every client converges on one
@@ -386,6 +392,10 @@ export function useAgentManager() {
           : agent.transport === 'stream'
             ? ('stream' as const)
             : undefined;
+      // Guard the whole spawn→commit window: the resumed session's first ticks
+      // can land before mutateAgent commits, and an unguarded auto-adopt would
+      // mint a duplicate card for them (see lib/respawnGuard.ts).
+      markRespawning(resumeSessionId);
       let sessionId: string | undefined;
       try {
         sessionId = await window.electronAPI.spawnClaude({
@@ -407,7 +417,11 @@ export function useAgentManager() {
       } catch (err) {
         console.error('[Agent] respawn failed:', err);
       }
-      if (!sessionId) return;
+      if (!sessionId) {
+        settleRespawning(resumeSessionId);
+        return;
+      }
+      markRespawning(sessionId); // a resume reuses the id; a fresh spawn minted one
       const oldSession = resumeSessionId ?? agent.sessionId ?? agent.lastSessionId;
       mutateAgent(agent.id, (a) => ({
         ...a,
@@ -435,6 +449,8 @@ export function useAgentManager() {
           }),
         })),
       }));
+      settleRespawning(resumeSessionId);
+      settleRespawning(sessionId);
     },
     [mutateAgent],
   );
@@ -495,6 +511,13 @@ export function useAgentManager() {
       const skipPermissions = permissionMode
         ? permissionMode === 'bypassPermissions' || permissionMode === 'yolo'
         : agent.skipPermissions;
+      const resumeSessionId = agent.sessionId ?? agent.lastSessionId;
+      // The respawn guard covers the whole close→spawn→commit window: while an
+      // id is marked, eviction (stopAgentForSession) won't null the card and
+      // auto-adopt won't mint a twin for its ticks. Without it a late teardown
+      // tick + adopt produced two cards with the SAME deterministic id — the
+      // "switch models and get a bunch of agents" corruption.
+      markRespawning(resumeSessionId);
       if (agent.sessionId) {
         // Tombstone before closing — the dying session keeps ticking and an
         // un-tombstoned tick would let auto-adopt resurrect the old card
@@ -506,7 +529,6 @@ export function useAgentManager() {
           /* already gone */
         }
       }
-      const resumeSessionId = agent.sessionId ?? agent.lastSessionId;
       let newSessionId: string | undefined;
       try {
         newSessionId = await window.electronAPI.spawnClaude({
@@ -528,11 +550,26 @@ export function useAgentManager() {
       } catch (err) {
         console.error('[Agent] restart-with-settings failed:', err);
       }
-      if (!newSessionId) return;
+      if (!newSessionId) {
+        // The spawn failed but the old session is already closed AND
+        // tombstoned. Leaving the record pointing at the dead id kept the
+        // tombstone dropping its ticks forever — a card that looked alive and
+        // could never be revived without an app restart. Make the failure an
+        // honest Stopped card the user can respawn.
+        clearSessionTerminated(resumeSessionId);
+        settleRespawning(resumeSessionId);
+        mutateAgent(agent.id, (a) => ({
+          ...a,
+          sessionId: undefined,
+          lastSessionId: resumeSessionId ?? a.lastSessionId,
+        }));
+        return;
+      }
       // The resume reuses the tombstoned id (newSessionId === the id we just
       // marked terminated). Lift the tombstone so the restarted, running
       // session's live ticks aren't dropped by App's wasSessionTerminated() guard.
       clearSessionTerminated(newSessionId);
+      markRespawning(newSessionId); // belt: a non-resume spawn minted a fresh id
       if (overrides.continuePrompt) {
         window.electronAPI
           .claudeMessage(newSessionId, overrides.continuePrompt)
@@ -547,7 +584,15 @@ export function useAgentManager() {
         profileId,
         sessionId: newSessionId,
         lastSessionId: undefined,
+        // Keep the panes' profile pill honest — pane.profileId is what
+        // ComposerControls renders as the current account.
+        tabs: a.tabs.map((t) => ({
+          ...t,
+          panes: t.panes.map((p) => (p.type === 'claude' ? { ...p, profileId } : p)),
+        })),
       }));
+      settleRespawning(resumeSessionId);
+      settleRespawning(newSessionId);
     },
     [mutateAgent],
   );
@@ -649,6 +694,17 @@ export function useAgentManager() {
     }) => {
       setAgents((prev) => {
         if (prev.some((a) => a.sessionId === opts.sessionId)) return prev; // already tracked — dedupe inside the updater (race-safe)
+        // A card already spelling this session's deterministic id but holding
+        // no sessionId is a mid-respawn/mid-eviction card for THIS session.
+        // Appending a twin here was the duplicate-id corruption (two cards,
+        // one React key, mutateAgent writing into both) — HEAL the existing
+        // card by re-attaching the session instead.
+        const cardId = agentIdForSession(opts.sessionId);
+        if (prev.some((a) => a.id === cardId)) {
+          return prev.map((a) =>
+            a.id === cardId ? { ...a, sessionId: opts.sessionId, lastSessionId: undefined } : a,
+          );
+        }
         const parent = opts.parentSessionId
           ? prev.find((a) => a.sessionId === opts.parentSessionId)
           : undefined;
@@ -781,11 +837,23 @@ export function useAgentManager() {
     [respawnFromRecord],
   );
 
+  /** Record a LIVE model switch (claudemon /model — no respawn) on the agent
+   *  card. agent.model feeds every later restart and saved layout; without
+   *  this a restart quietly reverted to the spawn-time model. */
+  const setAgentModel = useCallback((sessionId: string, model: string) => {
+    setAgents((prev) => prev.map((a) => (a.sessionId === sessionId ? { ...a, model } : a)));
+  }, []);
+
   /** Mark the agent owning this session as stopped — its session died mid-run
    *  (SessionEnd arrived). Same shape as reconcileAgents so the sidebar flips
    *  to "Stopped — click to respawn" immediately instead of waiting for the
    *  next resume-time reconcile (which never happens while the app runs). */
   const stopAgentForSession = useCallback((sessionId: string) => {
+    // Mid-respawn the SAME id dies and is immediately reborn: a teardown tick
+    // dispatched after the respawn committed would null the fresh sessionId
+    // and hand the reborn session to auto-adopt as an orphan — the duplicate-
+    // card corruption. While the id is guarded, its "death" is scripted.
+    if (isRespawning(sessionId)) return;
     setAgents((prev) =>
       prev.map((a) =>
         a.sessionId === sessionId ? { ...a, sessionId: undefined, lastSessionId: sessionId } : a,
@@ -794,10 +862,35 @@ export function useAgentManager() {
   }, []);
 
   const loadAgentsFromSession = useCallback((sessionAgents: AgentWorkspace[], activeId: string) => {
-    // Dedupe by sessionId on the way in: this is the merge point for every
-    // cross-client layout update, so collapsing same-session cards here is what
-    // stops the multi-client "spawn one, get seven" accumulation.
-    const list = withGlobalWorkspace(dedupeBySessionId(sessionAgents)).map((a) => {
+    // Sanitize the Overview's identity FIRST: the hub treats the layout doc as
+    // opaque, so a document can carry a non-global card squatting on the fixed
+    // 'global' id (every openPaneIn(GLOBAL_WORKSPACE_ID) and mutateAgent then
+    // writes into BOTH cards) or a global-flagged card under some other id
+    // (selectable but invisible to every "open in Overview" path). Repair both
+    // shapes instead of trusting them; keep only the first global-flagged card.
+    let sawGlobal = false;
+    const sane = sessionAgents.map((a) => {
+      if (a.global) {
+        if (sawGlobal)
+          return {
+            ...a,
+            global: undefined,
+            id: a.id === GLOBAL_WORKSPACE_ID ? generateId('agent') : a.id,
+          };
+        sawGlobal = true;
+        return a.id === GLOBAL_WORKSPACE_ID ? a : { ...a, id: GLOBAL_WORKSPACE_ID };
+      }
+      if (a.id === GLOBAL_WORKSPACE_ID) {
+        return { ...a, id: a.sessionId ? agentIdForSession(a.sessionId) : generateId('agent') };
+      }
+      return a;
+    });
+    // Dedupe by card id, then sessionId, on the way in: this is the merge point
+    // for every cross-client layout update. Same-session cards are the classic
+    // "spawn one, get seven" accumulation; same-ID cards are worse — colliding
+    // React keys render one workspace's panes under another's slot, and
+    // mutateAgent writes into every twin (the mid-respawn duplicate).
+    const list = dedupeBySessionId(dedupeByCardId(sane)).map((a) => {
       const tabs = a.tabs
         .map((t) => {
           // Drop retired 'notes' panes — that type moved out into the Notes
@@ -826,27 +919,32 @@ export function useAgentManager() {
         : (tabs[0]?.id ?? a.activeTabId);
       return { ...a, tabs, activeTabId };
     });
-    setAgents(list);
+    // Inject/backfill the Overview AFTER tab normalization: running it before
+    // (as this used to) let the pane filter empty the global card's tabs right
+    // after the backfill had already passed it — an Overview with zero tabs
+    // and a dangling activeTabId.
+    const finalList = withGlobalWorkspace(list);
+    setAgents(finalList);
     // Choose an active id that actually survived dedupe. Both the caller's
     // activeId and the raw sessionAgents[0] can point at a same-session
     // duplicate that dedupe just dropped; selecting it would leave activeAgent
     // undefined and blank the workspace. Map such an id to the surviving card
     // for its session, else fall back to the first real agent (then Overview).
-    const inList = (id?: string) => !!id && list.some((a) => a.id === id);
+    const inList = (id?: string) => !!id && finalList.some((a) => a.id === id);
     const survivorIdFor = (id: string): string | undefined => {
       const raw = sessionAgents.find((a) => a.id === id);
-      return raw?.sessionId ? list.find((a) => a.sessionId === raw.sessionId)?.id : undefined;
+      return raw?.sessionId ? finalList.find((a) => a.sessionId === raw.sessionId)?.id : undefined;
     };
     const preferred = activeId || sessionAgents[0]?.id || '';
     const chosenActiveId = inList(preferred)
       ? preferred
-      : survivorIdFor(preferred) || list.find((a) => !a.global)?.id || list[0]?.id || '';
+      : survivorIdFor(preferred) || finalList.find((a) => !a.global)?.id || finalList[0]?.id || '';
     setActiveAgentId(chosenActiveId);
     // Return the *normalized* layout (post dedupe/global-injection/active-id
     // resolution) so callers like useLayoutSync can record the echo-suppression
     // marker against what local state actually became — not the raw input,
     // which would otherwise look "changed" and bounce straight back to the hub.
-    return { agents: list, activeAgentId: chosenActiveId };
+    return { agents: finalList, activeAgentId: chosenActiveId };
   }, []);
 
   /** Open a pane in a specific workspace (agent or the global Overview) and
@@ -1394,6 +1492,7 @@ export function useAgentManager() {
     applyAutoTitle,
     reconcileAgents,
     stopAgentForSession,
+    setAgentModel,
     loadAgentsFromSession,
     openPaneIn,
     openAgentWatch,

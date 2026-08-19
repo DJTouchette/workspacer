@@ -122,6 +122,11 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   // subscribe can already provoke real pushes by approving or answering.
   'push.test': { label: 'Send a test push notification' },
 
+  // The remote-client attachment landing pad (the /m PWA's photo upload). The
+  // caller controls only bytes + an allowlisted extension; the hub picks the
+  // directory and filename (os.TempDir()/workspacer-uploads, 0600, 24 MiB cap).
+  'files.upload': { label: 'Upload a file into a temp folder on this machine' },
+
   // The CATALOG capabilities. hubCapabilities.ts registers through TWO helpers —
   // registerCapability() and the delegation-aware alias cat() — and the drift
   // guard below only ever matched the first, so these twenty registered methods
