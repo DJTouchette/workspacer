@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-status-bar-style" content="black" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Workspacer" />
 <!-- Design fonts. Loaded non-blocking on purpose: the phone usually reaches the
      hub over a tailnet that may have no route to fonts.googleapis.com, and a
@@ -54,6 +54,10 @@
     --mono:'JetBrains Mono',ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  /* The iOS 26 standalone dead strip (see applyViewport): the home indicator
+     lives below the paintable area, so safe-area clearance would be paid
+     twice. Chrome hugs the paint edge; the strip is the OS's gesture zone. */
+  body.dead-strip { --safe-b:0px; }
   html,body { margin:0; padding:0; height:100%; background:var(--bg); }
   /* position:fixed makes the DOCUMENT unscrollable, period. Without it iOS
      standalone let the page itself pan (rubber-band or keyboard reveal),
@@ -3184,11 +3188,32 @@
   // which is how we tell them apart) and add it back to every measurement.
   const standalone = navigator.standalone === true ||
     (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  // iOS 26 standalone bills the status-bar height at the BOTTOM of the small
+  // viewport regardless of status-bar style — an unpaintable strip below the
+  // shell (paint clips at the small-viewport edge; only lvh knows the screen).
+  // The home indicator sits INSIDE that dead strip, so when it exists the
+  // shell needs no home-indicator clearance of its own — body.dead-strip
+  // zeroes --safe-b and the chrome hugs the paint edge instead of floating
+  // 44px above a 47pt void.
+  let lvhCache = { key: '', v: 0 };
+  const probeLvh = () => {
+    const key = window.innerWidth + 'x' + window.innerHeight;
+    if (lvhCache.key !== key) {
+      const p = document.createElement('div');
+      p.style.cssText = 'position:fixed;left:-9999px;top:0;width:10px;height:100lvh;visibility:hidden;';
+      document.body.appendChild(p);
+      lvhCache = { key, v: p.offsetHeight };
+      p.remove();
+    }
+    return lvhCache.v;
+  };
   const applyViewport = () => {
     const vv = window.visualViewport;
     maxVH = Math.max(maxVH, window.innerHeight);
     let h = Math.round(vv ? vv.height : window.innerHeight);
     const off = vv ? Math.max(0, Math.round(vv.offsetTop)) : 0;
+    const deadStrip = standalone ? Math.max(0, probeLvh() - window.innerHeight) : 0;
+    document.body.classList.toggle('dead-strip', deadStrip > 20);
     document.documentElement.style.setProperty('--vh', h + 'px');
     document.getElementById('app').style.transform = off ? `translateY(${off}px)` : '';
     document.body.classList.toggle('kb', window.innerHeight - Math.round(vv ? vv.height : window.innerHeight) > 80);
@@ -3246,7 +3271,7 @@
       lvh: measureProbe('height:100lvh').h,
       safeB: measureProbe('padding-bottom:env(safe-area-inset-bottom,0px)').pad,
       safeT: measureProbe('padding-bottom:env(safe-area-inset-top,0px)').pad,
-      maxVH,
+      maxVH, deadStrip: document.body.classList.contains('dead-strip') ? 'on' : 'off',
       cssVh: getComputedStyle(document.documentElement).getPropertyValue('--vh').trim(),
       appRect: `top=${Math.round(app.top)} bottom=${Math.round(app.bottom)} h=${Math.round(app.height)}`,
       ua: navigator.userAgent.replace(/Mozilla\/5\.0 \([^)]*\)\s*/, ''),
