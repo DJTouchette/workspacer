@@ -167,8 +167,8 @@ const ClaudeProfilesSection: React.FC = () => {
       const res = await window.electronAPI.claudeProfilesAddAccount!(name);
       setAccountNote(
         `“${name}” shares this machine's memories, history, skills and settings. ` +
-          `Spawn an agent with it — Claude will ask you to log in once, then both ` +
-          `accounts run side by side.` +
+          `Spawn an agent with it — the pane will walk you through a one-time /login ` +
+          `in its terminal, then both accounts run side by side.` +
           (res.warnings.length > 0 ? ` (${res.warnings.join('; ')})` : ''),
       );
     } catch (err) {

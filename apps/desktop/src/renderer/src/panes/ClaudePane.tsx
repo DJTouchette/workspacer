@@ -20,7 +20,7 @@ import {
 } from '../components/claude-shared';
 import { BrandSpinner } from '../components/Brand';
 import { RefreshCw } from '../components/icons';
-import { PanelRight, ArrowRightLeft, Clock } from 'lucide-react';
+import { PanelRight, ArrowRightLeft, Clock, KeyRound } from 'lucide-react';
 import { HandoffDialog, type HandoffSettings } from '../components/claude/HandoffDialog';
 import { requestHandoff } from '../lib/watchBus';
 import { bracketedPasteSubmit } from '../lib/bracketedPaste';
@@ -495,6 +495,50 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   const viewMode: ViewMode = !hasGui ? 'terminal' : !hasTerminal ? 'gui' : viewModeState;
   const setViewMode = showViewToggle ? setViewModeState : noopSetView;
   viewModeRef.current = viewMode;
+
+  // A fresh account profile boots Claude signed-out: the account dir is
+  // seeded past first-run onboarding (claudeAccountSetup), so the REPL comes
+  // up and hooks fire — but /login itself is an interactive terminal flow the
+  // GUI can't drive. Surface that instead of letting the pane look dead:
+  // probe the profile's login state, force the Term view once, banner it, and
+  // hand the GUI back the moment credentials appear.
+  const [needsSignIn, setNeedsSignIn] = useState(false);
+  const signInForcedRef = useRef(false);
+  useEffect(() => {
+    if (!profileId || !window.electronAPI.claudeProfilesLoginStatus) return;
+    let live = true;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const stop = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+    const probe = () =>
+      window.electronAPI
+        .claudeProfilesLoginStatus?.()
+        .then((m) => {
+          if (!live || !m || !(profileId in m)) return;
+          setNeedsSignIn(!m[profileId]);
+          if (m[profileId]) stop(); // signed in — nothing left to watch
+        })
+        .catch(() => {});
+    void probe();
+    timer = setInterval(probe, 4000);
+    return () => {
+      live = false;
+      stop();
+    };
+  }, [profileId]);
+  useEffect(() => {
+    if (needsSignIn && hasTerminal && !signInForcedRef.current) {
+      signInForcedRef.current = true;
+      setViewModeState('terminal');
+    } else if (!needsSignIn && signInForcedRef.current) {
+      signInForcedRef.current = false;
+      setViewModeState('gui'); // signed in — the chat surface takes over
+    }
+  }, [needsSignIn, hasTerminal]);
 
   // Enable the approval gateway in claudemon as soon as we have a session id
   // so PreToolUse hooks get parked for our UI to resolve.
@@ -1927,6 +1971,39 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
             }}
           >
             {isDragOver && <DropOverlay />}
+
+            {/* One-time account sign-in (fresh "Add Claude Account" profile):
+              shown in BOTH views until the profile's credentials appear. */}
+            {needsSignIn && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '6px 12px',
+                  flexShrink: 0,
+                  fontSize: '0.72rem',
+                  color: 'var(--wks-text-secondary)',
+                  background: 'color-mix(in srgb, var(--wks-warning) 10%, transparent)',
+                  borderBottom: '1px solid var(--wks-border-subtle)',
+                }}
+              >
+                <KeyRound size={13} style={{ color: 'var(--wks-warning)', flexShrink: 0 }} />
+                {hasTerminal ? (
+                  <span>
+                    One-time sign-in: this profile's account isn't logged in yet — run{' '}
+                    <code style={{ fontFamily: 'var(--wks-font-mono)' }}>/login</code> in this
+                    terminal. The chat view takes over automatically once you're in.
+                  </span>
+                ) : (
+                  <span>
+                    This profile's account isn't logged in yet. Spawn it once on the Terminal
+                    transport (or run <code style={{ fontFamily: 'var(--wks-font-mono)' }}>claude</code>{' '}
+                    with this profile in any terminal) to sign in.
+                  </span>
+                )}
+              </div>
+            )}
 
             {/* Term/GUI viewport — both views fill this box; the status bar is
               its in-flow sibling below, inside the same content column. */}

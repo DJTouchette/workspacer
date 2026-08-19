@@ -16,7 +16,14 @@
  *     statusline: claudemon init keeps writing through the link), CLAUDE.md,
  *     keybindings.json;
  *   local (never linked): .credentials.json and .claude.json — the login
- *     itself, plus per-account onboarding/trust state.
+ *     itself, plus per-account onboarding/trust state. `.claude.json` is
+ *     SEEDED (see seedClaudeJson): a truly bare config dir boots Claude into
+ *     first-run onboarding (theme picker → trust → login), which fires no
+ *     hooks — the pane's GUI view showed an eternal "connecting" while sends
+ *     queued against a prompt that never settled, which read as "claudemon is
+ *     unresponsive". Seeding onboarding-done + the primary's theme and
+ *     per-project trust map boots the account straight to a live REPL whose
+ *     only remaining step is /login.
  *
  * Account dirs live at <primary>/accounts/<slug> — INSIDE the primary config
  * root — deliberately: `.claude.json` is denied by basename everywhere
@@ -147,7 +154,42 @@ export function createAccountConfigDir(name: string, primaryRoot?: string): Acco
     }
   }
 
+  seedClaudeJson(primary, dir);
+
   return { dir, shared, warnings };
+}
+
+/**
+ * Seed the account's `.claude.json` so the first spawn boots a live REPL
+ * instead of parking at first-run onboarding, which fires no hooks and left
+ * the pane "connecting" forever (verified against a bare config dir: theme
+ * picker → trust dialog → login, each an interactive screen only the terminal
+ * view can answer). Copied from the primary, WHITELIST only:
+ *
+ *   - hasCompletedOnboarding (forced true) + theme — skips the theme screen;
+ *   - projects — the per-project trust map (and prompt history), so folders
+ *     the user already trusts on the primary login are trusted here too.
+ *
+ * Never the account identity (oauthAccount, userID, …): a whitelist can't
+ * leak a key it doesn't name, which is the point — the login is the ONLY
+ * thing an account dir is supposed to own. After this, the sole remaining
+ * interactive step is /login itself (ClaudePane banners it).
+ */
+function seedClaudeJson(primary: string, dir: string): void {
+  const seed: Record<string, unknown> = { hasCompletedOnboarding: true };
+  try {
+    const primaryJson = JSON.parse(
+      fs.readFileSync(path.join(primary, '.claude.json'), 'utf-8'),
+    ) as Record<string, unknown>;
+    if (primaryJson.theme !== undefined) seed.theme = primaryJson.theme;
+    if (primaryJson.projects !== undefined) seed.projects = primaryJson.projects;
+  } catch {
+    // No primary .claude.json (or unreadable) — the defaults still skip the
+    // theme screen; trust dialogs simply appear once per project.
+  }
+  fs.writeFileSync(path.join(dir, '.claude.json'), JSON.stringify(seed, null, 2) + '\n', {
+    mode: 0o600,
+  });
 }
 
 /**

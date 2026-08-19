@@ -53,10 +53,37 @@ describe('createAccountConfigDir', () => {
     expect(fs.readFileSync(path.join(res.dir, 'CLAUDE.md'), 'utf-8')).toBe('# global');
   });
 
-  it('never creates or links anything credential-shaped', () => {
+  it('seeds .claude.json past onboarding without ever copying identity', () => {
+    // Primary state: theme + trusted projects (safe) AND account identity
+    // (must never cross — the login is the one thing an account dir owns).
+    fs.writeFileSync(
+      path.join(primary, '.claude.json'),
+      JSON.stringify({
+        theme: 'dark',
+        projects: { '/home/u/work/repo': { hasTrustDialogAccepted: true } },
+        oauthAccount: { emailAddress: 'primary@example.com' },
+        userID: 'u-123',
+      }),
+    );
     const res = createAccountConfigDir('Work', primary);
+    const seeded = JSON.parse(fs.readFileSync(path.join(res.dir, '.claude.json'), 'utf-8'));
+    // A bare config dir boots into first-run onboarding, which fires no hooks
+    // and left the pane "connecting" forever — the seed skips straight to the
+    // /login-only REPL.
+    expect(seeded.hasCompletedOnboarding).toBe(true);
+    expect(seeded.theme).toBe('dark');
+    expect(seeded.projects['/home/u/work/repo'].hasTrustDialogAccepted).toBe(true);
+    expect(seeded.oauthAccount).toBeUndefined();
+    expect(seeded.userID).toBeUndefined();
+    // And nothing credential-shaped exists.
     expect(fs.existsSync(path.join(res.dir, '.credentials.json'))).toBe(false);
-    expect(fs.existsSync(path.join(res.dir, '.claude.json'))).toBe(false);
+  });
+
+  it('seeds onboarding-done even without a primary .claude.json', () => {
+    const res = createAccountConfigDir('Work', primary);
+    const seeded = JSON.parse(fs.readFileSync(path.join(res.dir, '.claude.json'), 'utf-8'));
+    expect(seeded.hasCompletedOnboarding).toBe(true);
+    expect(seeded.projects).toBeUndefined();
   });
 
   it('uniquifies a taken slug instead of reusing the dir', () => {
