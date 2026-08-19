@@ -10,7 +10,7 @@
 //
 // The shell is versioned; bump CACHE to ship a new one.
 
-const CACHE = 'wks-m-v6';
+const CACHE = 'wks-m-v7';
 const SHELL = ['/m', '/icon-192.png'];
 
 self.addEventListener('install', (event) => {
