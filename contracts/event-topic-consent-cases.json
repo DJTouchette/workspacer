@@ -151,6 +151,10 @@
    "disposition": "open-by-decision"
   },
   {
+   "pattern": "notify.post",
+   "disposition": "host-only"
+  },
+  {
    "pattern": "plugin.install.progress",
    "disposition": "host-only"
   },

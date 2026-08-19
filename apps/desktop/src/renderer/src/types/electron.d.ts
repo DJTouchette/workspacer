@@ -17,6 +17,9 @@ import type {
   RemoteTokenScope,
   RecentAgentSession,
   InAppNotification,
+  HubJob,
+  HubJobView,
+  HubJobRun,
 } from '../../../main/shared/ipcTypes';
 
 /** One entry of the external-tool registry (main/services/toolCheck.ts). */
@@ -326,6 +329,13 @@ export interface ElectronAPI {
   federationSavePeersConfig: (
     peers: Array<{ name: string; url: string; token?: string }>,
   ) => Promise<{ ok: boolean; error?: string }>;
+  // Hub jobs: recurring/one-off tasks the hub runs (spawn an agent, call a
+  // capability, run a shell command). Trusted-only on the hub side.
+  jobsList: () => Promise<{ jobs: HubJobView[] }>;
+  jobsUpsert: (job: HubJob | Omit<HubJob, 'id'>) => Promise<HubJob>;
+  jobsRemove: (id: string) => Promise<unknown>;
+  jobsRun: (id: string) => Promise<{ started: boolean; reason?: string }>;
+  jobsHistory: (id: string) => Promise<{ runs: HubJobRun[] }>;
   // Shared layout document (hub-owned; tmux-style mirror). Reads/writes the live
   // workspace layout so the desktop and the web remote mirror each other.
   layoutGet: () => Promise<LayoutDoc>;

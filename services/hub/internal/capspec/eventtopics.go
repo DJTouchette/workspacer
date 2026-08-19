@@ -228,6 +228,12 @@ var eventTopics = []EventTopic{
 		Reason:      "the payload is EMPTY — a bare \"refetch\" signal, published with no data field at all (libraryService.ts). library.list is in neither scoped tier, so a receiver learns only that something changed and cannot follow it; there is nothing here to withhold. If this topic ever grows a payload it must be reclassified, which is why the reason names the emptiness rather than the tier",
 	},
 
+	{
+		Pattern:     "notify.post",
+		Disposition: TopicHostOnly,
+		Reason:      "an in-app notification: free-text title/body from whichever publisher raised it — a plugin's post, or a hub job failure whose body is a shell-output/error tail (internal/jobs). No capability returns notification feeds, and the bodies are written for the DESKTOP notification center, not for scoped tiers; phones get their alerts through the Web Push watcher, which never rides this topic. Withholding it from view/triage preserves exactly the pre-classification behaviour (an unclassified topic was refused to scoped tokens)",
+	},
+
 	// ---- the sidecar / plugin control plane ------------------------------
 	// No capability returns any of these. Under the old "mirrors a capability"
 	// rule they were unclassifiable and therefore permanently open; TopicHostOnly

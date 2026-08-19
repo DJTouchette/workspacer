@@ -122,6 +122,13 @@ export const IPC = {
   // Peer list snapshot. Live transitions ride the generic HUB_EVENT feed as
   // hub.peer.connected / hub.peer.disconnected — re-invoke this on those.
   FEDERATION_PEERS: 'federation:peers',
+
+  // ── Hub jobs (passthroughs to the hub's trusted-only jobs.* RPCs) ──
+  JOBS_LIST: 'jobs:list',
+  JOBS_UPSERT: 'jobs:upsert',
+  JOBS_REMOVE: 'jobs:remove',
+  JOBS_RUN: 'jobs:run',
+  JOBS_HISTORY: 'jobs:history',
   /** Fetch a REMOTE session's conversation over its federation link (handler
    *  lives in federationBridge.ts). */
   FEDERATION_CONVERSATION: 'federation:conversation',

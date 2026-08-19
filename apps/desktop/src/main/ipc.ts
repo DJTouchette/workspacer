@@ -402,6 +402,16 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // hub.peer.connected / hub.peer.disconnected — re-invoke this on those.
   ipcMain.handle(IPC.FEDERATION_PEERS, () => listFederationPeers());
 
+  // ── Hub jobs ──
+  // Thin passthroughs to the hub's jobs.* RPCs (trusted-only there; main's
+  // bus connection presents the host token). The hub owns storage, validation
+  // and scheduling — see services/hub/internal/jobs.
+  ipcMain.handle(IPC.JOBS_LIST, () => callHub('jobs.list', {}));
+  ipcMain.handle(IPC.JOBS_UPSERT, (_event, job: unknown) => callHub('jobs.upsert', job));
+  ipcMain.handle(IPC.JOBS_REMOVE, (_event, id: string) => callHub('jobs.remove', { id }));
+  ipcMain.handle(IPC.JOBS_RUN, (_event, id: string) => callHub('jobs.run', { id }));
+  ipcMain.handle(IPC.JOBS_HISTORY, (_event, id: string) => callHub('jobs.history', { id }));
+
   // ── Federation: session-action routing ──
   // A session whose store entry carries `hub` lives on a peer machine: acting
   // on it means a qualified bus call (`hub:<peer>/<method>`) the local hub

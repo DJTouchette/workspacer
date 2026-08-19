@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,10 +22,12 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 	"github.com/djtouchette/workspacer-hub/internal/broker"
 	"github.com/djtouchette/workspacer-hub/internal/bus"
+	"github.com/djtouchette/workspacer-hub/internal/busclient"
 	"github.com/djtouchette/workspacer-hub/internal/claudemon"
 	"github.com/djtouchette/workspacer-hub/internal/event"
 	"github.com/djtouchette/workspacer-hub/internal/federation"
 	"github.com/djtouchette/workspacer-hub/internal/jobobject"
+	"github.com/djtouchette/workspacer-hub/internal/jobs"
 	"github.com/djtouchette/workspacer-hub/internal/layout"
 	"github.com/djtouchette/workspacer-hub/internal/parentwatch"
 	"github.com/djtouchette/workspacer-hub/internal/plugin"
@@ -227,6 +231,31 @@ func defaultPushDir() string {
 	return filepath.Join(dir, "workspacer-hub")
 }
 
+// defaultJobsFile returns where the hub-owned job specs persist:
+// <user-config-dir>/workspacer-hub/jobs.json (0600 — a job is persisted argv,
+// so it lives with the hub's other host-trusted state, never in the library or
+// the layout document).
+func defaultJobsFile() string {
+	dir, err := os.UserConfigDir()
+	if err != nil || dir == "" {
+		return "jobs.json"
+	}
+	return filepath.Join(dir, "workspacer-hub", "jobs.json")
+}
+
+// selfBusURL is the hub's own bus endpoint for in-process clients (the jobs
+// runner): a wildcard bind dials back over loopback.
+func selfBusURL(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "ws://" + addr + "/bus"
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return "ws://" + net.JoinHostPort(host, port) + "/bus"
+}
+
 // multiFlag collects a repeatable string flag (-peer a -peer b).
 type multiFlag []string
 
@@ -252,6 +281,7 @@ func main() {
 	var peerFlags multiFlag
 	flag.Var(&peerFlags, "peer", "federate with a peer hub (repeatable): name=work,url=ws://host:7895/bus,token=… — tests/dev only; a token here rides argv, which /proc makes world-readable. Durable peers belong in -peers-file")
 	peersFile := flag.String("peers-file", federation.DefaultPeersPath(), "federation peers file (JSON array of {name,url,token}, 0600 — tokens are scoped tokens minted ON each peer via `workspacer token create`). Curated fleet topics republish locally stamped with the peer name; peer capabilities become callable as hub:<name>/<method>")
+	jobsFile := flag.String("jobs-file", defaultJobsFile(), "hub job specs file (recurring/one-off jobs: spawn an agent, call a capability, run a shell command; persisted 0600 — a job is persisted argv). Empty = jobs disabled")
 	flag.Parse()
 
 	b := broker.New()
@@ -383,6 +413,36 @@ func main() {
 		})
 		go fed.Run(ctx)
 		log.Printf("federation: linking to %d peer(s): %s", len(peers), strings.Join(fed.Peers(), ", "))
+	}
+
+	// Jobs: recurring/one-off tasks the hub runs on the user's behalf (spawn
+	// an agent with a prompt, call a capability, run a shell command). Spawn
+	// and call actions loop back through a self-dialed bus client, so
+	// `agents.spawn` is answered by whichever provider is live (desktop main
+	// or the brain) WITH every clamp that path applies to bus callers. All
+	// jobs.* RPCs are trusted-only — a job is persisted argv, so plugin
+	// tokens and view/triage tiers are refused outright (a plugin manifest
+	// may still declare jobs.*; the identity gate refuses it at call time).
+	if *jobsFile != "" {
+		self := busclient.New(selfBusURL(*addr), *token)
+		go self.Run(ctx)
+		runner := &jobs.BusRunner{CallFn: self.Call}
+		jsvc := jobs.New(b, *jobsFile,
+			filepath.Join(filepath.Dir(*jobsFile), "jobs-history.json"), runner)
+		trustedOnly := func(name string, fn func(json.RawMessage) (any, error)) {
+			srv.RegisterLocalIdent(name, func(c bus.CallerIdentity, p json.RawMessage) (any, error) {
+				if !c.IsTrusted() {
+					return nil, fmt.Errorf("%s requires host authority", name)
+				}
+				return fn(p)
+			})
+		}
+		trustedOnly("jobs.list", jsvc.List)
+		trustedOnly("jobs.upsert", jsvc.Upsert)
+		trustedOnly("jobs.remove", jsvc.Remove)
+		trustedOnly("jobs.run", jsvc.RunNow)
+		trustedOnly("jobs.history", jsvc.History)
+		go jsvc.RunScheduler(ctx)
 	}
 
 	// Load + supervise plugins; expose their contributions at /plugins. The

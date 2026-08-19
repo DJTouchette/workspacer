@@ -119,6 +119,10 @@ var topicDeliveryKey = []topicDelivery{
 	{topic: "library.changed", view: true, bare: true, term: true, watch: true, snap: true,
 		why: "an EMPTY payload — a bare refetch signal with no data field at all"},
 
+	// ---- notifications ------------------------------------------------------
+	{topic: "notify.post",
+		why: "free-text notification title/body from any publisher — a hub job failure carries a shell-output/error tail. Written for the trusted desktop notification center; phones are served by Web Push, not this topic"},
+
 	// ---- the sidecar / plugin control plane: host-only ----------------------
 	// Every column false. No capability returns any of these, so no column can
 	// be true without the topic having been re-decided.

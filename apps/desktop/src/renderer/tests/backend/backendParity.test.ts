@@ -129,6 +129,12 @@ const BUS_BACKED = [
   'layoutSet',
   'onLayoutChanged',
   'hubPublish',
+  // Hub jobs (trusted-only hub-local RPCs — see HUB_CORE below)
+  'jobsList',
+  'jobsUpsert',
+  'jobsRemove',
+  'jobsRun',
+  'jobsHistory',
 ] as const;
 
 // Web-degraded methods: no hub RPC, they return a safe default / no-op. These
@@ -322,7 +328,18 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
     // daemon / bus itself), so a match against hubCapabilities.ts is not
     // expected. federation.peers is RegisterLocal'd by cmd/hub when peers are
     // configured (see internal/federation).
-    const HUB_CORE = new Set(['layout.get', 'layout.set', '__publish', 'federation.peers']);
+    const HUB_CORE = new Set([
+      'layout.get',
+      'layout.set',
+      '__publish',
+      'federation.peers',
+      // Hub-owned job system (services/hub/internal/jobs), trusted-only RPCs.
+      'jobs.list',
+      'jobs.upsert',
+      'jobs.remove',
+      'jobs.run',
+      'jobs.history',
+    ]);
 
     expect(called.size, 'expected to extract capability names from webBackend.ts').toBeGreaterThan(
       20,

@@ -244,6 +244,62 @@ export interface FederationPeerInfo {
   lastSeen?: number;
 }
 
+// ── Hub jobs (jobs:* IPC → hub jobs.* capabilities) ──
+
+/** When a hub job fires. Exactly one shape per kind — see hub internal/jobs. */
+export interface HubJobTrigger {
+  kind: 'interval' | 'daily' | 'once' | 'manual';
+  everyMinutes?: number;
+  /** daily: "HH:MM", hub-local time. */
+  at?: string;
+  /** daily: weekdays 0=Sunday…6; empty/absent = every day. */
+  days?: number[];
+  /** once: RFC3339 timestamp. */
+  once?: string;
+}
+
+/** What a hub job does; exactly one of the payloads matches kind. */
+export interface HubJobAction {
+  kind: 'spawn' | 'call' | 'shell';
+  spawn?: {
+    cwd: string;
+    prompt: string;
+    provider?: string;
+    model?: string;
+    effort?: string;
+    permissionMode?: string;
+  };
+  call?: { method: string; params?: unknown };
+  shell?: { command: string; cwd?: string };
+}
+
+/** One persisted hub job. Timestamps are unix ms. */
+export interface HubJob {
+  id: string;
+  name: string;
+  enabled: boolean;
+  trigger: HubJobTrigger;
+  action: HubJobAction;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+/** One execution record. */
+export interface HubJobRun {
+  jobId: string;
+  startedAt: number;
+  finishedAt?: number;
+  status: 'ok' | 'error' | 'skipped';
+  detail?: string;
+}
+
+/** jobs.list row: the spec plus live scheduling state. */
+export interface HubJobView extends HubJob {
+  nextRunAt?: number;
+  lastRun?: HubJobRun;
+  running?: boolean;
+}
+
 // ── App configuration (config:get / config:save) ──
 
 /**

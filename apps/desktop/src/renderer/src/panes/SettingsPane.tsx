@@ -18,6 +18,7 @@ import EditorSection from '../components/settings/EditorSection';
 import AppsSection from '../components/settings/AppsSection';
 import ProjectsSection from '../components/settings/ProjectsSection';
 import ClaudeProfilesSection from '../components/settings/ClaudeProfilesSection';
+import JobsSection from '../components/settings/JobsSection';
 import SupervisorSection from '../components/settings/SupervisorSection';
 import ModelPricingSection from '../components/settings/ModelPricingSection';
 import { PluginsListSection, PluginDetailSection } from '../components/settings/PluginsSection';
@@ -80,6 +81,24 @@ const SECTIONS: SectionDef[] = [
     label: 'Claude Profiles',
     group: 'Agents & AI',
     keywords: ['profile', 'claude', 'model', 'api', 'permissions', 'mcp', 'config', 'key'],
+  },
+  {
+    key: 'jobs',
+    label: 'Jobs',
+    group: 'Agents & AI',
+    keywords: [
+      'job',
+      'schedule',
+      'cron',
+      'recurring',
+      'daily',
+      'interval',
+      'automation',
+      'task',
+      'timer',
+      'spawn',
+      'shell',
+    ],
   },
   {
     key: 'supervisor',
@@ -482,6 +501,8 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
         return <SessionSection config={config} save={save} />;
       case 'profiles':
         return <ClaudeProfilesSection />;
+      case 'jobs':
+        return <JobsSection />;
       case 'supervisor':
         return <SupervisorSection config={config} save={save} />;
       case 'pricing':

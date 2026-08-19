@@ -688,6 +688,14 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // The hub provides layout.get/layout.set in-process and broadcasts
     // layout.changed; the desktop reaches these through main, the web reaches
     // them straight off the bus. Identical surface either way.
+    // Hub jobs — trusted-only hub-local RPCs, so these work for a
+    // full-control pairing and error cleanly for view/triage tokens (the
+    // settings section feature-detects by the first list failing).
+    jobsList: () => client.call('jobs.list', {}),
+    jobsUpsert: (job) => client.call('jobs.upsert', job),
+    jobsRemove: (id) => client.call('jobs.remove', { id }),
+    jobsRun: (id) => client.call('jobs.run', { id }),
+    jobsHistory: (id) => client.call('jobs.history', { id }),
     layoutGet: () => client.call('layout.get', {}),
     layoutSet: (data) => client.call('layout.set', { data }),
     onLayoutChanged: (callback) =>

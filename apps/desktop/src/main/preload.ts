@@ -498,6 +498,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // ── Shared layout document (hub-owned; tmux-style mirror) ──
+  // Hub jobs (recurring/one-off tasks the hub runs) — see hub internal/jobs.
+  jobsList: (): Promise<{ jobs: unknown[] }> => ipcRenderer.invoke(IPC.JOBS_LIST),
+  jobsUpsert: (job: unknown): Promise<unknown> => ipcRenderer.invoke(IPC.JOBS_UPSERT, job),
+  jobsRemove: (id: string): Promise<void> => ipcRenderer.invoke(IPC.JOBS_REMOVE, id),
+  jobsRun: (id: string): Promise<{ started: boolean; reason?: string }> =>
+    ipcRenderer.invoke(IPC.JOBS_RUN, id),
+  jobsHistory: (id: string): Promise<{ runs: unknown[] }> =>
+    ipcRenderer.invoke(IPC.JOBS_HISTORY, id),
+
   layoutGet: (): Promise<{ version: number; data: unknown }> => ipcRenderer.invoke(IPC.LAYOUT_GET),
   layoutSet: (data: unknown): Promise<{ version: number; data: unknown }> =>
     ipcRenderer.invoke(IPC.LAYOUT_SET, data),

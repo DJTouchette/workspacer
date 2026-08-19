@@ -320,6 +320,9 @@ export const EVENT_TOPIC_RULES: EventTopicRule[] = [
   { pattern: 'hub.peer.disconnected', disposition: 'open-by-decision' },
   { pattern: 'layout.changed', disposition: 'open-by-decision' },
   { pattern: 'library.changed', disposition: 'open-by-decision' },
+  // notify.post — free-text notification bodies (a hub job failure carries a
+  // shell-output tail); written for the trusted desktop center, phones use push.
+  { pattern: 'notify.post', disposition: 'host-only' },
   { pattern: 'plugin.install.progress', disposition: 'host-only' },
   { pattern: 'plugin.loaded', disposition: 'host-only' },
   { pattern: 'plugin.log', disposition: 'host-only' },
