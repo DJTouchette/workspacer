@@ -70,6 +70,17 @@ beforeEach(() => {
     aliases: [],
     seen: [],
   });
+  api.claudeProfilesList = vi.fn().mockResolvedValue([
+    { id: 'default', name: 'Default', configDir: '', extraArgs: [], mcpItemIds: [], isDefault: true },
+    {
+      id: 'work-uuid',
+      name: 'Work',
+      configDir: '/home/u/.claude/accounts/work',
+      extraArgs: [],
+      mcpItemIds: [],
+      isDefault: false,
+    },
+  ]);
   api.providerCheckAll = vi.fn().mockResolvedValue([]);
   api.providerListModels = vi.fn().mockResolvedValue([
     {
@@ -178,5 +189,33 @@ describe('SpawnAgentDialog permissions', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /spawn agent/i }));
     expect(onSpawn).toHaveBeenCalledWith(expect.objectContaining({ effort: 'xhigh' }));
+  });
+});
+
+describe('SpawnAgentDialog profiles', () => {
+  it('renders one chip per profile — the materialized Default is the only Default', async () => {
+    const { onSpawn } = renderDialog();
+
+    // The service always materializes an `id: 'default'` row named "Default"
+    // (claudeProfiles.ts and its Go twin), so a synthetic "no profile" chip
+    // beside it rendered TWO chips both reading Default.
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Work' })).toBeInTheDocument(),
+    );
+    expect(screen.getAllByRole('button', { name: 'Default' })).toHaveLength(1);
+
+    // And the pre-selection is that real row, so a spawn carries the loadout
+    // attached to Default in Settings instead of silently skipping it.
+    fireEvent.click(screen.getByRole('button', { name: /spawn agent/i }));
+    expect(onSpawn).toHaveBeenCalledWith(expect.objectContaining({ profileId: 'default' }));
+  });
+
+  it('switches the selection to another account profile', async () => {
+    const { onSpawn } = renderDialog();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Work' }));
+    fireEvent.click(screen.getByRole('button', { name: /spawn agent/i }));
+
+    expect(onSpawn).toHaveBeenCalledWith(expect.objectContaining({ profileId: 'work-uuid' }));
   });
 });

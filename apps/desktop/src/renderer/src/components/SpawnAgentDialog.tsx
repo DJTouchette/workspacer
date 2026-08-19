@@ -31,6 +31,7 @@ interface SpawnProfile {
   id: string;
   name: string;
   mcpItemIds?: string[];
+  isDefault?: boolean;
 }
 
 interface SpawnAgentDialogProps {
@@ -313,7 +314,16 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   useEffect(() => {
     window.electronAPI
       .claudeProfilesList?.()
-      .then((list: any[]) => setProfiles(list ?? []))
+      .then((list: SpawnProfile[]) => {
+        setProfiles(list ?? []);
+        // Select the default profile rather than offering a separate "no
+        // profile" chip beside it: the service MATERIALIZES an `id: 'default'`
+        // row named "Default" (claudeProfiles.ts / the brain's twin), so a
+        // synthetic one rendered two chips both labelled Default — and picking
+        // the synthetic one silently skipped the MCP loadout the user had
+        // attached to the real Default in Settings.
+        setProfileId((cur) => cur || (list ?? []).find((p) => p.isDefault)?.id || '');
+      })
       .catch(() => {});
     window.electronAPI
       .libraryList?.(defaultCwd || undefined)
@@ -1403,16 +1413,16 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   marginTop: 8,
                 }}
               >
-                {[{ id: '', name: 'Default' }, ...profiles].map((p) => {
+                {profiles.map((p) => {
                   const on = profileId === p.id;
                   return (
                     <button
-                      key={p.id || 'default'}
+                      key={p.id}
                       onClick={() => setProfileId(p.id)}
                       title={
-                        p.id
-                          ? 'Spawn with this Claude profile — pre-fills its MCP loadout and settings.'
-                          : 'Plain spawn, no profile.'
+                        p.isDefault
+                          ? 'Spawn under the default login — plus whatever MCP loadout Default carries.'
+                          : 'Spawn with this Claude profile — pre-fills its MCP loadout and settings.'
                       }
                       style={{
                         fontSize: '0.7rem',
