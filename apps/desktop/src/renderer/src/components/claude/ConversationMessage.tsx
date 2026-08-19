@@ -42,10 +42,15 @@ export type PendingState = 'sending' | 'queued';
 
 const PENDING_LABEL: Record<PendingState, string> = {
   sending: 'Sending…',
-  queued: 'Queued',
+  // Say what "queued" MEANS: a bare "Queued" read as "sending is broken" the
+  // moment an agent was mid-turn for a while — the message is fine, it just
+  // waits for the prompt to come back.
+  queued: 'Queued — sends when this turn ends',
 };
 
-/** The un-acknowledged marker beside a pending user bubble. */
+/** The un-acknowledged marker beside a pending user bubble. Queued reads a
+ *  step brighter than sending: it can sit for a whole long turn, and a label
+ *  that dim was being missed entirely. */
 const PendingMark: React.FC<{ state: PendingState }> = ({ state }) => (
   <span
     role="status"
@@ -54,7 +59,7 @@ const PendingMark: React.FC<{ state: PendingState }> = ({ state }) => (
       alignItems: 'center',
       gap: 3,
       fontSize: '0.6rem',
-      color: colors.mutedDim,
+      color: state === 'queued' ? colors.muted : colors.mutedDim,
       whiteSpace: 'nowrap',
       userSelect: 'none',
     }}

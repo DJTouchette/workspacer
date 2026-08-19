@@ -11,7 +11,7 @@ import { ConversationMessage } from '../../src/components/claude/ConversationMes
  * current turn to finish first. Until then the bubble is marked:
  *
  *   idle agent      → "Sending…"  (brief, just the settle round-trip)
- *   agent mid-turn  → "Queued"    (lasts as long as the turn does)
+ *   agent mid-turn  → "Queued — sends when this turn ends" (lasts as long as the turn does)
  *
  * Mock scaffolding mirrors ClaudePaneOptimisticLoading.test.tsx.
  */
@@ -138,7 +138,7 @@ describe('unacknowledged sends', () => {
     send('and also update the docs');
 
     expect(await screen.findByText('and also update the docs')).toBeInTheDocument();
-    expect(screen.getByText('Queued')).toBeInTheDocument();
+    expect(screen.getByText('Queued — sends when this turn ends')).toBeInTheDocument();
     expect(screen.queryByText('Sending…')).toBeNull();
   });
 
@@ -148,7 +148,7 @@ describe('unacknowledged sends', () => {
 
     expect(await screen.findByText('start on the refactor')).toBeInTheDocument();
     expect(screen.getByText('Sending…')).toBeInTheDocument();
-    expect(screen.queryByText('Queued')).toBeNull();
+    expect(screen.queryByText('Queued — sends when this turn ends')).toBeNull();
   });
 
   it('treats a turn parked on an approval as work in progress, not idle', async () => {
@@ -158,7 +158,7 @@ describe('unacknowledged sends', () => {
     });
     render(pane());
     send('actually run the tests first');
-    expect(await screen.findByText('Queued')).toBeInTheDocument();
+    expect(await screen.findByText('Queued — sends when this turn ends')).toBeInTheDocument();
   });
 
   it('queues a second send behind the first even from an idle agent', async () => {
@@ -167,7 +167,7 @@ describe('unacknowledged sends', () => {
     expect(await screen.findByText('Sending…')).toBeInTheDocument();
     send('second');
     // The first is still on its way, so the second lands behind it.
-    expect(await screen.findByText('Queued')).toBeInTheDocument();
+    expect(await screen.findByText('Queued — sends when this turn ends')).toBeInTheDocument();
     expect(screen.getByText('Sending…')).toBeInTheDocument();
   });
 
@@ -230,6 +230,6 @@ describe('pending bubble treatment', () => {
         pending={'queued' as never}
       />,
     );
-    expect(screen.queryByText('Queued')).toBeNull();
+    expect(screen.queryByText('Queued — sends when this turn ends')).toBeNull();
   });
 });
