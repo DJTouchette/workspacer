@@ -93,6 +93,7 @@ var closureMechanisms = map[string][]string{
 	"SubscribeFiltered":            {"services", "hub", "internal", "bus", "bus.go"},
 	"scrubBootDocumentAgents":      {"services", "hub", "cmd", "brain", "bootdoc.go"},
 	"validatePushEndpoint":         {"services", "hub", "internal", "push", "endpoint.go"},
+	"jobsTrusted":                  {"services", "hub", "cmd", "hub", "main.go"},
 }
 
 // TestClosedCompositionsNameALiveMechanism is the anti-prose check: a ClosedBy
@@ -620,6 +621,7 @@ var inverseVerbs = map[string][]string{
 	"watch":     {"unwatch"},
 	"stage":     {"unstage"},
 	"approve":   {"gate"},
+	"upsert":    {"remove"},
 }
 
 // TestEveryInverseVerbPairIsUsed closes the pre-seeding move: a pair nobody

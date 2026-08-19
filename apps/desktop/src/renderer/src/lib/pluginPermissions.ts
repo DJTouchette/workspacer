@@ -132,6 +132,13 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   // says agents.binaries is "argv[0] of every spawned agent".
   'plugins.tools': { label: 'List the agent tools installed plugins contribute' },
   'federation.peers': { label: 'See linked peer machines' },
+  // jobs.* are trusted-only at call time (a job is persisted argv) — a plugin
+  // that declares them gets an honest consent label and then a runtime refusal.
+  'jobs.list': { label: 'See scheduled jobs' },
+  'jobs.upsert': { label: 'Create or edit scheduled jobs (runs commands/agents)' },
+  'jobs.remove': { label: 'Delete scheduled jobs' },
+  'jobs.run': { label: 'Run a scheduled job now' },
+  'jobs.history': { label: 'Read job run history' },
   'config.get': { label: 'Read your app settings' },
   'config.getPath': { label: 'See where your settings file lives' },
   'config.reload': { label: 'Reload your app settings' },

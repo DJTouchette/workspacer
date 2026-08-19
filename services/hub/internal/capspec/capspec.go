@@ -77,6 +77,20 @@ var unscopedByDecision = map[string]string{
 	// also fill in — see cmd/brain/shellallow.go and lib/shellAllowlist.ts.
 	"terminals.create":    "cwd is a process working directory and holding the capability at all is the gate (as agents.spawn); the OTHER caller string, `shell`, is argv[0] and is confined by an ALLOWLIST of the host's login shells rather than by fsRoots — resolveTerminalShell in both providers",
 	"sessions.transcript": "cwd only selects which historical session to resolve under ~/.claude/projects; the transcript path is derived by the provider, never taken from the caller",
+	// jobs.* — the hub's job system (internal/jobs). A job is PERSISTED argv:
+	// upsert carries a shell command, a spawn cwd/prompt, or a capability call
+	// verbatim, and run/remove act on that stored authority. There is no
+	// subtree to confine any of it to (the terminals.create argument), so the
+	// gate is IDENTITY, not paths: every jobs.* registration in cmd/hub wraps
+	// its handler in an IsTrusted() check — plugin tokens and view/triage
+	// tiers are refused at call time, the host token and operator pairings
+	// pass. The CAP_LABELS rows exist so a plugin manifest that declares
+	// jobs.* shows an honest consent line before that refusal.
+	"jobs.list":    "no params; trusted-only at the handler — the rows disclose stored shell commands and prompts, which is exactly why scoped tiers are refused",
+	"jobs.upsert":  "the job spec IS the parameter — persisted argv (shell command / spawn cwd+prompt / capability call). Trusted-only at the handler; spawn actions additionally re-enter agents.spawn over the bus and inherit its clamps",
+	"jobs.remove":  "an id naming a stored job; trusted-only at the handler",
+	"jobs.run":     "an id naming a stored job to fire now; the authority is the stored spec, the gate is the trusted-only handler",
+	"jobs.history": "an id naming a stored job; returns run records (output tails included), trusted-only at the handler",
 	// The sentence used to stop at "never opened as a path", and it was false:
 	// the encoder maps only '/', '\' and ':' to '-', so a cwd of ".." survived
 	// verbatim, became a real path COMPONENT, and joined to ~/.claude — one

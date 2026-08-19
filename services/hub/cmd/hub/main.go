@@ -243,6 +243,19 @@ func defaultJobsFile() string {
 	return filepath.Join(dir, "workspacer-hub", "jobs.json")
 }
 
+// jobsTrusted is the jobs.* identity gate: a job is PERSISTED ARGV (a shell
+// command, a spawn cwd+prompt, a capability call), so only host authority —
+// the host token or an operator-tier pairing — may touch the surface; plugin
+// tokens and view/triage tiers are refused at call time. Always invoked with
+// the capability's OWN literal name: capspec's composition bearings verify
+// this gate by grepping for exactly that call shape.
+func jobsTrusted(method string, c bus.CallerIdentity) error {
+	if !c.IsTrusted() {
+		return fmt.Errorf("%s requires host authority", method)
+	}
+	return nil
+}
+
 // selfBusURL is the hub's own bus endpoint for in-process clients (the jobs
 // runner): a wildcard bind dials back over loopback.
 func selfBusURL(addr string) string {
@@ -429,19 +442,41 @@ func main() {
 		runner := &jobs.BusRunner{CallFn: self.Call}
 		jsvc := jobs.New(b, *jobsFile,
 			filepath.Join(filepath.Dir(*jobsFile), "jobs-history.json"), runner)
-		trustedOnly := func(name string, fn func(json.RawMessage) (any, error)) {
-			srv.RegisterLocalIdent(name, func(c bus.CallerIdentity, p json.RawMessage) (any, error) {
-				if !c.IsTrusted() {
-					return nil, fmt.Errorf("%s requires host authority", name)
-				}
-				return fn(p)
-			})
-		}
-		trustedOnly("jobs.list", jsvc.List)
-		trustedOnly("jobs.upsert", jsvc.Upsert)
-		trustedOnly("jobs.remove", jsvc.Remove)
-		trustedOnly("jobs.run", jsvc.RunNow)
-		trustedOnly("jobs.history", jsvc.History)
+		// Registered with LITERAL method names, each gated by jobsTrusted
+		// called with its OWN name — the brain's completeness guard parses
+		// RegisterLocal literals out of this file, and capspec's composition
+		// bearings grep for the jobsTrusted("jobs.<x>", …) call shape. A name
+		// or a gate behind a variable is invisible to both.
+		srv.RegisterLocalIdent("jobs.list", func(c bus.CallerIdentity, p json.RawMessage) (any, error) {
+			if err := jobsTrusted("jobs.list", c); err != nil {
+				return nil, err
+			}
+			return jsvc.List(p)
+		})
+		srv.RegisterLocalIdent("jobs.upsert", func(c bus.CallerIdentity, p json.RawMessage) (any, error) {
+			if err := jobsTrusted("jobs.upsert", c); err != nil {
+				return nil, err
+			}
+			return jsvc.Upsert(p)
+		})
+		srv.RegisterLocalIdent("jobs.remove", func(c bus.CallerIdentity, p json.RawMessage) (any, error) {
+			if err := jobsTrusted("jobs.remove", c); err != nil {
+				return nil, err
+			}
+			return jsvc.Remove(p)
+		})
+		srv.RegisterLocalIdent("jobs.run", func(c bus.CallerIdentity, p json.RawMessage) (any, error) {
+			if err := jobsTrusted("jobs.run", c); err != nil {
+				return nil, err
+			}
+			return jsvc.RunNow(p)
+		})
+		srv.RegisterLocalIdent("jobs.history", func(c bus.CallerIdentity, p json.RawMessage) (any, error) {
+			if err := jobsTrusted("jobs.history", c); err != nil {
+				return nil, err
+			}
+			return jsvc.History(p)
+		})
 		go jsvc.RunScheduler(ctx)
 	}
 

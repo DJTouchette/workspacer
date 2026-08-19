@@ -131,6 +131,7 @@ var (
 	brainSearchFile   = []string{"services", "hub", "cmd", "brain", "search.go"}
 	brainProvFile     = []string{"services", "hub", "cmd", "brain", "providers.go"}
 	hubLayoutFile     = []string{"services", "hub", "internal", "layout", "layout.go"}
+	hubMainFile       = []string{"services", "hub", "cmd", "hub", "main.go"}
 	hubPluginMgrFile  = []string{"services", "hub", "internal", "plugin", "manager.go"}
 	hubPushFile       = []string{"services", "hub", "internal", "push", "push.go"}
 	hubPushEndptFile  = []string{"services", "hub", "internal", "push", "endpoint.go"}
@@ -195,6 +196,18 @@ type Composition struct {
 // FUTURE tier change, or a new capability that completes one of these shapes,
 // has something to fail against.
 var compositions = []Composition{
+	{
+		Name:     "jobs.upsert persists argv (a shell command or an agent spawn); the scheduler and jobs.run execute it later, unattended",
+		Shape:    ShapeWriteThenInterpret,
+		A:        "jobs.upsert",
+		B:        "jobs.run",
+		Crossing: "the job spec is BUILT to be interpreted: a shell action's `command` goes to /bin/sh -c on the hub's machine, a spawn action re-enters agents.spawn with a cwd and a prompt, and the trigger fires with nobody watching. Storage is the hub-owned 0600 jobs.json — deliberately NOT the library (agent-writable) or the layout (world-readable, broadcast) — so the file itself is out of reach; the bus surface is the remaining door.",
+		ClosedBy: "identity, not paths — jobsTrusted: there is no subtree to confine a shell command to (the terminals.create argument), so every jobs.* handler in cmd/hub refuses non-trusted callers via jobsTrusted called with the method's own name — plugin tokens and view/triage tiers never reach the store. A spawn action's second hop re-enters agents.spawn as a bus caller and inherits its clamps (no bypass, no mcpItemIds, profile configDir scrubbed).",
+		Bearings: []Bearing{
+			argBearing("jobsTrusted", "jobs.upsert", hubMainFile),
+			argBearing("jobsTrusted", "jobs.run", hubMainFile),
+		},
+	},
 	{
 		Name:     "fs.write plants a provider's hooks/permissions file; the next spawn in that cwd runs it unprompted",
 		Shape:    ShapeWriteThenInterpret,
@@ -601,6 +614,24 @@ var compositionInert = map[string]InertClaim{
 			"editor.terminalCommand", "scripts", "updates",
 		)},
 	},
+	// ── jobs.* — the hub's job system (internal/jobs) ──────────────────────
+	// jobs.upsert/jobs.run are the recorded pair below; the rest are gated by
+	// the same jobsTrusted identity check, invoked with each method's own name.
+	"jobs.upsert": recordedHalf,
+	"jobs.run":    recordedHalf,
+	"jobs.list": {
+		Reason:    "returns the stored specs — which DISCLOSE shell commands and agent prompts, which is why jobsTrusted refuses every non-host caller — but writes nothing and executes nothing",
+		Witnesses: []Witness{guarded(argBearing("jobsTrusted", "jobs.list", hubMainFile))},
+	},
+	"jobs.remove": {
+		Reason:    "deletes a stored job and its history behind the same jobsTrusted gate — the undo of jobs.upsert; it cannot introduce argv, only retire it",
+		Witnesses: []Witness{narrows("jobs.upsert"), guarded(argBearing("jobsTrusted", "jobs.remove", hubMainFile))},
+	},
+	"jobs.history": {
+		Reason:    "returns run records (shell output tails included — disclosure, which is what jobsTrusted gates) for a stored job id; writes nothing and executes nothing",
+		Witnesses: []Witness{guarded(argBearing("jobsTrusted", "jobs.history", hubMainFile))},
+	},
+
 	"claude.profiles.add": {
 		Reason:    "persists a profile whose configDir becomes CLAUDE_CONFIG_DIR and whose extraArgs become argv — both classified per-parameter, alongside mcpItemIds. The interpreter is real, and it is closed by scrubProfileBypass at write time on BOTH providers, with agents.spawn refusing a bypassing profileId from a bus caller as the second half",
 		Witnesses: []Witness{paramsClassified("configDir", "extraArgs", "mcpItemIds")},
