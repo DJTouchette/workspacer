@@ -477,6 +477,22 @@ test.describe('mobile client', () => {
     await expect(page.locator('.agent').first()).toBeVisible({ timeout: 10000 });
   });
 
+  test('the app shell fills the viewport exactly — no dead band at the bottom', async ({ page }) => {
+    await openClient(page);
+    // #app height must come from the MEASURED viewport (--vh), not 100dvh:
+    // standalone PWAs can report a dvh that still reserves browser-chrome
+    // space, which showed as a toolbar-sized gap under the tab bar.
+    const gap = await page.evaluate(() => {
+      const app = document.getElementById('app')!.getBoundingClientRect();
+      return {
+        bottom: Math.abs(window.innerHeight - app.bottom),
+        vh: getComputedStyle(document.documentElement).getPropertyValue('--vh').trim(),
+      };
+    });
+    expect(gap.vh).toBe('844px');
+    expect(gap.bottom).toBeLessThanOrEqual(1);
+  });
+
   test('screens have no horizontal overflow at phone width', async ({ page }) => {
     await openClient(page);
     const overflow = async () =>

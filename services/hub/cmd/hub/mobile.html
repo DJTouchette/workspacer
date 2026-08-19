@@ -64,7 +64,11 @@
   @keyframes wksSpin { to { transform:rotate(360deg) } }
   @media (prefers-reduced-motion: reduce) { *,*::before,*::after { animation:none !important; transition:none !important; } }
 
-  #app { height:calc(100dvh - var(--kb,0px)); display:flex; flex-direction:column; overflow:hidden; }
+  /* --vh is the MEASURED viewport height (JS, from window.innerHeight): in
+     installed-PWA standalone mode some engines keep 100dvh reserving space for
+     browser chrome that isn't there, leaving a dead band at the bottom about
+     the size of the toolbar. dvh stays only as the pre-script fallback. */
+  #app { height:calc(var(--vh, 100dvh) - var(--kb,0px)); display:flex; flex-direction:column; overflow:hidden; }
 
   /* ── header ───────────────────────────────────────────────────────────── */
   header { flex:none; padding:calc(10px + var(--safe-t)) 18px 12px; border-bottom:1px solid var(--line);
@@ -3152,17 +3156,29 @@
   // only; a backgrounded PWA has nothing to repaint.
   setInterval(() => { if (document.visibilityState === 'visible' && token) afterData(); }, 10000);
 
-  // iOS software keyboard: expose its height as --kb so the composer floats above it.
-  if (window.visualViewport) {
+  // Viewport plumbing. --vh is the MEASURED window height: installed-PWA
+  // standalone mode can report a stale 100dvh that still reserves browser-
+  // chrome space, so the app was ending a toolbar's height above the screen
+  // bottom. --kb is the iOS software keyboard height so the composer floats
+  // above it (innerHeight - vv.height - vv.offsetTop; sub-80px deltas are
+  // chrome jitter, not a keyboard).
+  const applyViewport = () => {
+    document.documentElement.style.setProperty('--vh', window.innerHeight + 'px');
     const vv = window.visualViewport;
-    const applyKb = () => {
+    if (vv) {
       const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
       document.documentElement.style.setProperty('--kb', (kb > 80 ? kb : 0) + 'px');
       document.body.classList.toggle('kb', kb > 80);
-      if (S.screen === 'chat') main.scrollTop = main.scrollHeight;
-    };
-    vv.addEventListener('resize', applyKb); vv.addEventListener('scroll', applyKb); applyKb();
+    }
+    if (S.screen === 'chat') main.scrollTop = main.scrollHeight;
+  };
+  window.addEventListener('resize', applyViewport);
+  window.addEventListener('orientationchange', applyViewport);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', applyViewport);
+    window.visualViewport.addEventListener('scroll', applyViewport);
   }
+  applyViewport();
 
   renderChrome();
   render();
