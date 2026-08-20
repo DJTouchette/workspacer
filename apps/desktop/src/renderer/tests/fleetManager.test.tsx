@@ -9,20 +9,16 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useAgentManager } from '../src/hooks/useAgentManager';
-import {
-  buildManagerKickoff,
-  deriveFleetRoot,
-  FLEET_MANAGER_NAME,
-} from '../src/lib/fleetManager';
+import { buildManagerKickoff, deriveFleetRoot, FLEET_MANAGER_NAME } from '../src/lib/fleetManager';
 
 describe('deriveFleetRoot', () => {
   it('explicit config wins', () => {
     expect(deriveFleetRoot('/srv/code', ['/home/u/Work/a'], '/home/u')).toBe('/srv/code');
   });
   it('derives the common parent of the configured projects', () => {
-    expect(
-      deriveFleetRoot('', ['/home/u/Work/alpha', '/home/u/Work/beta/nested'], '/home/u'),
-    ).toBe('/home/u/Work');
+    expect(deriveFleetRoot('', ['/home/u/Work/alpha', '/home/u/Work/beta/nested'], '/home/u')).toBe(
+      '/home/u/Work',
+    );
   });
   it('a lone project pins its PARENT (the project is one level below the root)', () => {
     expect(deriveFleetRoot('', ['/home/u/Work/alpha'], '/home/u')).toBe('/home/u/Work');
