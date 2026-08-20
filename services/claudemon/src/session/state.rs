@@ -501,6 +501,16 @@ pub struct SessionState {
     pub last_compact_at: Option<i64>,
     #[serde(default)]
     pub compaction_count: u64,
+    /// Live background tasks visible on the WIRE — any type: async subagents,
+    /// `run_in_background` shells (a dev server, a poll loop), workflows. Fed
+    /// by the stream driver's `background_tasks_changed` frames
+    /// (`SessionStore::set_background_tasks`) and mirrored from
+    /// `live_subagents` on the hook path. The MODE never rides on ambient
+    /// tasks (holding "responding" for a background shell painted idle agents
+    /// as working forever) — this count is how clients badge that work
+    /// honestly instead. Additive/back-compatible: absent rows read 0.
+    #[serde(default)]
+    pub background_tasks: u32,
     /// Count of background subagents (async Agent/Task tool) currently running,
     /// tracked from the `SubagentStart`/`SubagentStop` hooks. While this is
     /// non-zero, a parent `Stop` does NOT idle the session — the parent's own
@@ -544,6 +554,7 @@ impl SessionState {
             compacting: false,
             last_compact_at: None,
             compaction_count: 0,
+            background_tasks: 0,
             live_subagents: 0,
             parent_turn_ended: false,
         }
@@ -620,12 +631,14 @@ impl SessionState {
                 self.mode = SessionMode::Input;
                 self.pending = None;
                 self.live_subagents = 0;
+                self.background_tasks = 0;
                 self.parent_turn_ended = false;
             }
             HookEventKind::SessionEnd => {
                 self.mode = SessionMode::Stopped;
                 self.pending = None;
                 self.live_subagents = 0;
+                self.background_tasks = 0;
                 self.parent_turn_ended = false;
             }
 
@@ -635,6 +648,7 @@ impl SessionState {
                 self.pending = None;
                 // A fresh user turn supersedes any prior turn's background work.
                 self.live_subagents = 0;
+                self.background_tasks = 0;
                 self.parent_turn_ended = false;
             }
 
@@ -686,6 +700,10 @@ impl SessionState {
 
             HookEventKind::SubagentStart => {
                 self.live_subagents = self.live_subagents.saturating_add(1);
+                // Wire mirror: hook-driven (PTY) sessions have no
+                // background_tasks_changed frames, so the subagent count IS
+                // their live-background-work count.
+                self.background_tasks = self.live_subagents;
                 if self.mode != SessionMode::Approval && self.mode != SessionMode::Question {
                     self.mode = SessionMode::Responding;
                 }
@@ -693,6 +711,7 @@ impl SessionState {
 
             HookEventKind::SubagentStop => {
                 self.live_subagents = self.live_subagents.saturating_sub(1);
+                self.background_tasks = self.live_subagents;
                 if self.mode == SessionMode::Approval || self.mode == SessionMode::Question {
                     // A picker is up — never override it.
                 } else if self.live_subagents == 0 && self.parent_turn_ended {

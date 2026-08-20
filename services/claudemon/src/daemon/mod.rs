@@ -101,6 +101,24 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
     // session exists; costs zero tokens. See session::account_usage.
     crate::session::account_usage::spawn_poller(store.clone());
 
+    // Ghost sweep: a session row whose teardown escaped (superseded generation,
+    // crash between spawn and register) advertises a live-looking mode forever
+    // for a process that is gone. Every 5 minutes, rows with no live plumbing
+    // and 15+ minutes of silence flip to Stopped (hook-adopted sessions revive
+    // on their next hook event, so a false positive self-heals; a ghost never
+    // does). See SessionStore::sweep_ghost_sessions.
+    {
+        let store = store.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(5 * 60));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                store.sweep_ghost_sessions(time::Duration::minutes(15));
+            }
+        });
+    }
+
     let hook_addr: SocketAddr = format!("{}:{}", cfg.host, cfg.hook_port).parse()?;
     let api_addr: SocketAddr = format!("{}:{}", cfg.host, cfg.api_port).parse()?;
 

@@ -605,6 +605,7 @@ mod tests {
             compacting: false,
             last_compact_at: None,
             compaction_count: 0,
+            background_tasks: 0,
             live_subagents: 0,
             parent_turn_ended: false,
         };

@@ -581,6 +581,17 @@ export const InspectorCard: React.FC<{
               {badgeLabels[ambient]}
             </span>
           )}
+          {/* Ambient background work (a dev server, poll loop, async subagent)
+              deliberately does NOT claim the Working status — this chip is the
+              honest signal for it beside whatever the mode truthfully says. */}
+          {(session?.backgroundTasks ?? 0) > 0 && (
+            <span
+              title={`${session!.backgroundTasks} background task${session!.backgroundTasks === 1 ? '' : 's'} running (shells / subagents)`}
+              style={{ fontSize: '0.66rem', color: colors.mutedDim, flexShrink: 0 }}
+            >
+              · {session!.backgroundTasks} bg
+            </span>
+          )}
         </div>
       )}
 

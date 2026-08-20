@@ -35,6 +35,7 @@ export async function startClaudemonEventBridge(): Promise<void> {
           provider?: string;
           transport?: string;
           pending?: ManagedPendingWire | null;
+          background_tasks?: number;
         };
       };
       try {
@@ -74,6 +75,8 @@ export async function startClaudemonEventBridge(): Promise<void> {
           // Managed adapters fire no PermissionRequest/AskUserQuestion hooks —
           // the daemon's `pending` slot is their only approval/question payload.
           pending: update.state?.pending ?? null,
+          // Ambient background work (shells, subagents) — badge, never "Working".
+          backgroundTasks: update.state?.background_tasks,
         });
       }
     },

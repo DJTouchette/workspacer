@@ -52,6 +52,7 @@ fn preview_dashboard_three_sessions() {
             last_compact_at: None,
             compaction_count: 0,
             live_subagents: 0,
+            background_tasks: 0,
             parent_turn_ended: false,
         })
         .session(SessionState {
@@ -73,6 +74,7 @@ fn preview_dashboard_three_sessions() {
             last_compact_at: None,
             compaction_count: 0,
             live_subagents: 0,
+            background_tasks: 0,
             parent_turn_ended: false,
         })
         .session(SessionState {
@@ -98,6 +100,7 @@ fn preview_dashboard_three_sessions() {
             last_compact_at: None,
             compaction_count: 0,
             live_subagents: 0,
+            background_tasks: 0,
             parent_turn_ended: false,
         })
         .connected();
@@ -127,6 +130,7 @@ fn preview_chat_empty() {
             last_compact_at: None,
             compaction_count: 0,
             live_subagents: 0,
+            background_tasks: 0,
             parent_turn_ended: false,
         })
         .connected()
@@ -157,6 +161,7 @@ fn preview_chat_with_text_and_tool_calls() {
             last_compact_at: None,
             compaction_count: 0,
             live_subagents: 0,
+            background_tasks: 0,
             parent_turn_ended: false,
         })
         .connected()
@@ -224,6 +229,7 @@ fn preview_chat_with_pending_approval() {
             last_compact_at: None,
             compaction_count: 0,
             live_subagents: 0,
+            background_tasks: 0,
             parent_turn_ended: false,
         })
         .connected()
@@ -289,6 +295,7 @@ fn preview_chat_with_pending_question() {
             last_compact_at: None,
             compaction_count: 0,
             live_subagents: 0,
+            background_tasks: 0,
             parent_turn_ended: false,
         })
         .connected()
@@ -319,6 +326,7 @@ fn preview_chat_with_input_typed() {
             last_compact_at: None,
             compaction_count: 0,
             live_subagents: 0,
+            background_tasks: 0,
             parent_turn_ended: false,
         })
         .connected()
@@ -350,6 +358,7 @@ fn preview_chat_with_multiline_input() {
             last_compact_at: None,
             compaction_count: 0,
             live_subagents: 0,
+            background_tasks: 0,
             parent_turn_ended: false,
         })
         .connected()

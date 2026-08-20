@@ -309,23 +309,35 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
 /// If `value` is a `system/background_tasks_changed` frame, report whether any
 /// background task is currently running; `None` for every other frame.
 ///
-/// The async Agent/Task tool runs as a background task: the CLI emits this frame
-/// with the full *live* task set on each change — non-empty while a subagent
-/// works, `[]` once it drains (verified against a CLI 2.1.204 stream capture).
-/// The driver tracks this so the parent isn't marked idle mid-subagent (see
-/// [`handle_line`]).
-fn background_tasks_active(value: &Value) -> Option<bool> {
+/// Parse a `background_tasks_changed` frame into `(holds_busy, live_count)`.
+/// The CLI emits the full *live* task set on each change (verified against a
+/// CLI 2.1.204 stream capture).
+///
+/// Only async SUBAGENT tasks (`task_type: "local_agent"` — the async
+/// Agent/Task tool) mean "the agent is still working": their output lands
+/// back in this conversation, so idling on the dispatch turn's `result` would
+/// show idle mid-subagent. Every other type — `local_bash` (a
+/// `run_in_background` shell: a dev server, a watcher, an agent-authored poll
+/// loop), `local_workflow` (ambient/housekeeping per the CLI's own copy),
+/// teammates — leaves the REPL interactive in Claude Code itself. Treating
+/// those as busy latched sessions "responding" FOREVER once a background
+/// shell outlived its turn (observed live: a poll loop grepping the wrong
+/// file held a session busy for hours after its last turn ended). They ride
+/// the wire as `background_tasks` instead, so clients can badge them without
+/// the mode lying.
+fn background_tasks_changed(value: &Value) -> Option<(bool, u32)> {
     if value.get("type").and_then(Value::as_str) != Some("system")
         || value.get("subtype").and_then(Value::as_str) != Some("background_tasks_changed")
     {
         return None;
     }
-    Some(
-        value
-            .get("tasks")
-            .and_then(Value::as_array)
-            .is_some_and(|t| !t.is_empty()),
-    )
+    let tasks = value.get("tasks").and_then(Value::as_array);
+    let live = tasks.map_or(0, |t| t.len()) as u32;
+    let busy = tasks.is_some_and(|t| {
+        t.iter()
+            .any(|task| task.get("task_type").and_then(Value::as_str) == Some("local_agent"))
+    });
+    Some((busy, live))
 }
 
 /// Whether a `result` frame is an interrupt or a fatal error — those always
@@ -1231,10 +1243,18 @@ async fn run_session(
     // answered with content, not a yes/no.
     let mut pending_approvals: VecDeque<ParkedCanUse> = VecDeque::new();
     let mut pending_question: Option<ParkedCanUse> = None;
-    // Whether an async Agent/Task subagent is running in the background. While
+    // Whether an async Agent/Task SUBAGENT is running in the background. While
     // true, the parent's dispatch-turn `result` is held busy instead of idling
-    // the session (the subagent is still working).
+    // the session (the subagent is still working). Ambient background tasks
+    // (`local_bash` shells etc.) never set this — they only feed the session's
+    // wire-visible `background_tasks` count.
     let mut bg_tasks_active = false;
+    // Whether a turn-closing `result`'s Idle was swallowed because a subagent
+    // was still running — the drain frame owes it back (see handle_line).
+    let mut idle_suppressed = false;
+    // A resumed session reuses its row; a previous life's task count must not
+    // survive into this one.
+    store.set_background_tasks(&session_id, 0);
     // Role instructions to prepend to the first prompt only (supervisors).
     let mut pending_instructions: Option<String> = cfg.facade.instructions.clone();
 
@@ -1252,7 +1272,7 @@ async fn run_session(
                         &value, store, conv, &session_id, &out_tx,
                         &mut cur_mode, &mut acc, &mut totals,
                         &yolo_live, &mut pending_approvals, &mut pending_question,
-                        &mut pending_controls, &mut bg_tasks_active,
+                        &mut pending_controls, &mut bg_tasks_active, &mut idle_suppressed,
                     );
                 }
                 Ok(None) => break, // stdout EOF — child is exiting
@@ -1391,7 +1411,7 @@ async fn run_session(
                         &value, store, conv, &session_id, &out_tx,
                         &mut cur_mode, &mut acc, &mut totals,
                         &yolo_live, &mut pending_approvals, &mut pending_question,
-                        &mut pending_controls, &mut bg_tasks_active,
+                        &mut pending_controls, &mut bg_tasks_active, &mut idle_suppressed,
                     );
                 }
                 break;
@@ -1438,6 +1458,7 @@ fn handle_line(
     pending_question: &mut Option<ParkedCanUse>,
     pending_controls: &mut HashMap<String, PendingControl>,
     bg_tasks_active: &mut bool,
+    idle_suppressed: &mut bool,
 ) {
     match value.get("type").and_then(Value::as_str).unwrap_or("") {
         // The CLI answered one of our control requests.
@@ -1585,12 +1606,17 @@ fn handle_line(
             // live task set so that turn-closing `result` doesn't flip the parent
             // idle mid-subagent — the real idle rides the trailing `result` after
             // the task set empties. (Verified against a CLI 2.1.204 capture.)
-            if let Some(active) = background_tasks_active(value) {
-                *bg_tasks_active = active;
-                // A subagent is running while the parent looks idle (its own turn
-                // already closed) — reassert working. Guarded to Input so a parked
-                // approval/question is never clobbered.
-                if active && *cur_mode == SessionMode::Input {
+            // Only agent tasks hold busy; ambient tasks (background shells, …)
+            // update the wire count and nothing else — see
+            // [`background_tasks_changed`] for why.
+            if let Some((agent_tasks, live_tasks)) = background_tasks_changed(value) {
+                let was_holding = *bg_tasks_active;
+                *bg_tasks_active = agent_tasks;
+                store.set_background_tasks(session_id, live_tasks);
+                if agent_tasks && *cur_mode == SessionMode::Input {
+                    // A subagent is running while the parent looks idle (its own
+                    // turn already closed) — reassert working. Guarded to Input so
+                    // a parked approval/question is never clobbered.
                     apply_updates(
                         store,
                         conv,
@@ -1599,14 +1625,33 @@ fn handle_line(
                         cur_mode,
                         acc,
                     );
+                } else if was_holding && !agent_tasks && *idle_suppressed {
+                    // The last busy-holding subagent drained and the parent's own
+                    // `result` already had its Idle suppressed — pay the idle debt
+                    // NOW. The trailing `result` usually does this, but when other
+                    // ambient tasks (a background shell) keep the set non-empty
+                    // the CLI never closes the set, and waiting latched the
+                    // session busy. Guarded to Responding so a parked
+                    // approval/question survives.
+                    *idle_suppressed = false;
+                    if *cur_mode == SessionMode::Responding {
+                        apply_updates(
+                            store,
+                            conv,
+                            session_id,
+                            vec![AgentUpdate::Idle],
+                            cur_mode,
+                            acc,
+                        );
+                    }
                 }
                 return;
             }
 
             let is_result = value.get("type").and_then(Value::as_str) == Some("result");
             let abort_or_error = result_is_abort_or_error(value);
-            // Hold the turn-closing `result` busy iff a background task is still
-            // running and this isn't an interrupt/error.
+            // Hold the turn-closing `result` busy iff a background SUBAGENT is
+            // still running and this isn't an interrupt/error.
             let suppress_idle = is_result && *bg_tasks_active && !abort_or_error;
             if abort_or_error {
                 *bg_tasks_active = false;
@@ -1622,7 +1667,21 @@ fn handle_line(
             }
             let mut updates = translate(value, totals);
             if suppress_idle {
+                let before = updates.len();
                 updates.retain(|u| !matches!(u, AgentUpdate::Idle));
+                // Remember the swallowed Idle: the drain branch above owes it
+                // back if the subagent finishes without a trailing `result`.
+                if updates.len() < before {
+                    *idle_suppressed = true;
+                }
+            } else if updates
+                .iter()
+                .any(|u| matches!(u, AgentUpdate::Busy | AgentUpdate::Idle))
+            {
+                // Fresh activity (a new turn's Busy) or a delivered Idle settles
+                // the debt — a later subagent drain must not flip a LIVE turn
+                // back to Input.
+                *idle_suppressed = false;
             }
             // The init frame's inventory is names-only (translate is pure);
             // stamp file sizes on it here, where disk access is fine.
@@ -1779,26 +1838,52 @@ mod tests {
 
     #[test]
     fn background_tasks_changed_reports_live_task_set() {
-        // Non-empty task set → a subagent is running; empty → drained. The CLI
-        // sends the full live set on each change, so length is the whole signal.
+        // A live SUBAGENT (local_agent) holds the parent busy; the CLI sends
+        // the full live set on each change.
         assert_eq!(
-            background_tasks_active(&json!({ "type": "system",
+            background_tasks_changed(&json!({ "type": "system",
                 "subtype": "background_tasks_changed",
                 "tasks": [{ "task_id": "a", "task_type": "local_agent" }] })),
-            Some(true)
+            Some((true, 1))
         );
         assert_eq!(
-            background_tasks_active(&json!({ "type": "system",
+            background_tasks_changed(&json!({ "type": "system",
                 "subtype": "background_tasks_changed", "tasks": [] })),
-            Some(false)
+            Some((false, 0))
+        );
+        // A background SHELL (run_in_background Bash — a dev server, a poll
+        // loop) is ambient: it counts, but it must NOT hold the session busy.
+        // Treating it as busy latched idle sessions "responding" forever when
+        // a shell outlived its turn.
+        assert_eq!(
+            background_tasks_changed(&json!({ "type": "system",
+                "subtype": "background_tasks_changed",
+                "tasks": [{ "task_id": "b", "task_type": "local_bash" }] })),
+            Some((false, 1))
+        );
+        // Mixed set: busy while the agent lives, and the count is the whole set.
+        assert_eq!(
+            background_tasks_changed(&json!({ "type": "system",
+                "subtype": "background_tasks_changed",
+                "tasks": [{ "task_id": "a", "task_type": "local_agent" },
+                          { "task_id": "b", "task_type": "local_bash" }] })),
+            Some((true, 2))
+        );
+        // Unknown/future task types default to ambient — the failure mode of
+        // wrongly holding busy is a permanent lie, wrongly idling self-heals.
+        assert_eq!(
+            background_tasks_changed(&json!({ "type": "system",
+                "subtype": "background_tasks_changed",
+                "tasks": [{ "task_id": "c", "task_type": "local_workflow" }] })),
+            Some((false, 1))
         );
         // Any other frame is None — it isn't a background-task signal.
         assert_eq!(
-            background_tasks_active(&json!({ "type": "system", "subtype": "init" })),
+            background_tasks_changed(&json!({ "type": "system", "subtype": "init" })),
             None
         );
         assert_eq!(
-            background_tasks_active(&json!({ "type": "result", "subtype": "success" })),
+            background_tasks_changed(&json!({ "type": "result", "subtype": "success" })),
             None
         );
         // background_tasks_changed carries nothing for `translate` — it's handled
@@ -2420,6 +2505,7 @@ mod tests {
         let mut pending_question: Option<ParkedCanUse> = None;
         let mut pending_controls: HashMap<String, PendingControl> = HashMap::new();
         let mut bg_tasks_active = false;
+        let mut idle_suppressed = false;
 
         // 1) AskUserQuestion arrives → session shows the picker.
         handle_line(
@@ -2441,6 +2527,7 @@ mod tests {
             &mut pending_question,
             &mut pending_controls,
             &mut bg_tasks_active,
+            &mut idle_suppressed,
         );
         assert_eq!(
             cur_mode,
@@ -2467,6 +2554,7 @@ mod tests {
             &mut pending_question,
             &mut pending_controls,
             &mut bg_tasks_active,
+            &mut idle_suppressed,
         );
 
         // The question must survive: the approval parks silently behind it and
@@ -2493,5 +2581,143 @@ mod tests {
             "store's pending slot must still hold the Question, got {:?}",
             state.pending
         );
+    }
+
+    /// The "agent says working when it's not" latch, end to end through
+    /// handle_line. A `run_in_background` shell (a dev server, a poll loop)
+    /// keeps the CLI's background task set non-empty indefinitely; treating
+    /// that as "subagent running" suppressed the Idle of every later
+    /// turn-closing `result`, so an idle session claimed Responding for hours
+    /// (observed live). Ambient tasks must count on the wire and change
+    /// nothing else; only `local_agent` tasks hold busy — and when they drain
+    /// with a shell still live (so no trailing `result` ever comes), the
+    /// swallowed Idle must be paid immediately.
+    #[test]
+    fn background_shell_never_latches_responding_and_agent_drain_pays_idle() {
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let sid = "sid-bg-latch";
+        store.register_managed(sid, "/w", "claude");
+
+        let (out_tx, _out_rx) = mpsc::unbounded_channel::<Value>();
+        let mut cur_mode = SessionMode::Responding;
+        let mut acc = UsageAcc::default();
+        let mut totals = StreamTotals::default();
+        let yolo = AtomicBool::new(false);
+        let mut pending_approvals: VecDeque<ParkedCanUse> = VecDeque::new();
+        let mut pending_question: Option<ParkedCanUse> = None;
+        let mut pending_controls: HashMap<String, PendingControl> = HashMap::new();
+        let mut bg_tasks_active = false;
+        let mut idle_suppressed = false;
+        let mut run = |value: &Value,
+                       cur_mode: &mut SessionMode,
+                       bg: &mut bool,
+                       sup: &mut bool,
+                       pa: &mut VecDeque<ParkedCanUse>,
+                       pq: &mut Option<ParkedCanUse>,
+                       pc: &mut HashMap<String, PendingControl>,
+                       acc: &mut UsageAcc,
+                       totals: &mut StreamTotals| {
+            handle_line(
+                value, &store, &conv, sid, &out_tx, cur_mode, acc, totals, &yolo, pa, pq, pc,
+                bg, sup,
+            );
+        };
+
+        // Turn 1: the agent launches a background SHELL mid-turn…
+        run(
+            &json!({ "type": "system", "subtype": "background_tasks_changed",
+                "tasks": [{ "task_id": "sh", "task_type": "local_bash" }] }),
+            &mut cur_mode,
+            &mut bg_tasks_active,
+            &mut idle_suppressed,
+            &mut pending_approvals,
+            &mut pending_question,
+            &mut pending_controls,
+            &mut acc,
+            &mut totals,
+        );
+        assert!(!bg_tasks_active, "a shell must not hold the session busy");
+        assert_eq!(
+            store.get(sid).unwrap().background_tasks,
+            1,
+            "…but it must show on the wire"
+        );
+
+        // …and the turn ends while the shell lives on: the session must idle.
+        run(
+            &json!({ "type": "result", "subtype": "success", "is_error": false }),
+            &mut cur_mode,
+            &mut bg_tasks_active,
+            &mut idle_suppressed,
+            &mut pending_approvals,
+            &mut pending_question,
+            &mut pending_controls,
+            &mut acc,
+            &mut totals,
+        );
+        assert_eq!(
+            cur_mode,
+            SessionMode::Input,
+            "turn end with only a background shell live must idle (the latch)"
+        );
+
+        // Turn 2: an async SUBAGENT dispatches (shell still live) — busy holds
+        // across the dispatch turn's result…
+        run(
+            &json!({ "type": "system", "subtype": "background_tasks_changed",
+                "tasks": [{ "task_id": "sh", "task_type": "local_bash" },
+                          { "task_id": "ag", "task_type": "local_agent" }] }),
+            &mut cur_mode,
+            &mut bg_tasks_active,
+            &mut idle_suppressed,
+            &mut pending_approvals,
+            &mut pending_question,
+            &mut pending_controls,
+            &mut acc,
+            &mut totals,
+        );
+        assert!(bg_tasks_active, "a live subagent holds the session busy");
+        assert_eq!(cur_mode, SessionMode::Responding);
+        run(
+            &json!({ "type": "result", "subtype": "success", "is_error": false }),
+            &mut cur_mode,
+            &mut bg_tasks_active,
+            &mut idle_suppressed,
+            &mut pending_approvals,
+            &mut pending_question,
+            &mut pending_controls,
+            &mut acc,
+            &mut totals,
+        );
+        assert_eq!(
+            cur_mode,
+            SessionMode::Responding,
+            "dispatch-turn result must stay busy mid-subagent"
+        );
+        assert!(idle_suppressed, "the swallowed Idle must be remembered");
+
+        // …and when the subagent drains but the shell remains (so the CLI never
+        // empties the set and no trailing result comes), the idle debt is paid.
+        run(
+            &json!({ "type": "system", "subtype": "background_tasks_changed",
+                "tasks": [{ "task_id": "sh", "task_type": "local_bash" }] }),
+            &mut cur_mode,
+            &mut bg_tasks_active,
+            &mut idle_suppressed,
+            &mut pending_approvals,
+            &mut pending_question,
+            &mut pending_controls,
+            &mut acc,
+            &mut totals,
+        );
+        assert_eq!(
+            cur_mode,
+            SessionMode::Input,
+            "subagent drain with a shell still live must pay the suppressed idle"
+        );
+        assert!(!idle_suppressed);
+        assert_eq!(store.get(sid).unwrap().background_tasks, 1);
+        assert_eq!(store.get(sid).unwrap().mode, SessionMode::Input);
     }
 }

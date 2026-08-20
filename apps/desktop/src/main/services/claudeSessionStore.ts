@@ -290,6 +290,10 @@ export interface ClaudeSessionState {
   plan?: SessionPlan;
 
   ambientState: SessionAmbientState;
+  /** Live background tasks (async subagents, `run_in_background` shells) from
+   *  the daemon. Ambient work never claims the Working mode — this is the
+   *  honest badge (see applyManagedMode / claudemonEventBridge). */
+  backgroundTasks?: number;
   startedAt: number; // ms, when the session was first seen (for analytics duration)
   lastActivity: number;
   totalToolCalls: number;
@@ -656,10 +660,21 @@ class ClaudeSessionStore {
   applyManagedMode(
     sessionId: string,
     mode: string,
-    meta?: { provider?: string; transport?: string; pending?: ManagedPendingWire | null },
+    meta?: {
+      provider?: string;
+      transport?: string;
+      pending?: ManagedPendingWire | null;
+      backgroundTasks?: number;
+    },
   ): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    // Ambient background work (a dev server, a poll loop, an async subagent)
+    // rides its own count — the mode deliberately does not claim "working"
+    // for it, so this is what the UI badges instead.
+    if (typeof meta?.backgroundTasks === 'number') {
+      session.backgroundTasks = meta.backgroundTasks;
+    }
     // Daemon truth for sessions this process never spawned (adopted, or
     // restored after a desktop restart): backfill the backend identity so a
     // stream-transport Claude session still gates its pane correctly (no Term

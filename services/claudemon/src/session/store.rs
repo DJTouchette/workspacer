@@ -1299,6 +1299,9 @@ impl SessionStore {
         self.bytes_tx.remove(session_id);
         if let Some(mut entry) = self.states.get_mut(session_id) {
             entry.mode = SessionMode::Stopped;
+            // A stopped session runs nothing — a leftover live-task count would
+            // badge a dead row as "working in background".
+            entry.background_tasks = 0;
             entry.updated_at = OffsetDateTime::now_utc();
             let state = entry.clone();
             drop(entry);
@@ -1309,6 +1312,91 @@ impl SessionStore {
             });
         }
         true
+    }
+
+    /// Record the live background-task count (any task type) from the stream
+    /// driver's latest `background_tasks_changed` frame. Broadcasts only on
+    /// change so idle churn doesn't spam subscribers. The MODE deliberately
+    /// does not ride on this: only `local_agent` tasks hold a session busy
+    /// (see the stream driver) — this count is how clients surface ambient
+    /// work (a dev server, a poll loop) without the mode lying "responding".
+    pub fn set_background_tasks(&self, session_id: &str, live: u32) {
+        let state = {
+            let Some(mut entry) = self.states.get_mut(session_id) else {
+                return;
+            };
+            if entry.background_tasks == live {
+                return;
+            }
+            entry.background_tasks = live;
+            entry.updated_at = OffsetDateTime::now_utc();
+            entry.clone()
+        };
+        let _ = self.update_tx.send(SessionUpdate {
+            session_id: session_id.to_string(),
+            event: "Managed".to_string(),
+            state,
+        });
+    }
+
+    /// Flip sessions whose process can no longer exist to `Stopped`.
+    ///
+    /// Every daemon-owned session has live plumbing while it runs — a PTY
+    /// wrapper (`wrappers`, in-daemon and `claudemon wrap` alike) or a managed
+    /// driver input (`managed_inputs`) — and its teardown path marks the row
+    /// Stopped. But teardowns have escape hatches (a superseded generation, a
+    /// crash between spawn and register), and an escaped row then advertises
+    /// `unknown`/`input`/`responding` forever for a process that is gone: a
+    /// live-looking ghost in every client. This sweep is the belt: no plumbing
+    /// + no state change for `max_idle` → Stopped, broadcast as a SessionEnd
+    /// like the regular teardown so clients run their ended pipeline.
+    ///
+    /// Hook-adopted sessions (a bare `claude` in a terminal — hooks POST here
+    /// but nothing registers plumbing) can be swept while merely quiet; that is
+    /// accepted and self-healing — their next hook event revives the row (the
+    /// state machine sets mode on every event), while a wrongly-live ghost
+    /// never corrects itself.
+    pub fn sweep_ghost_sessions(&self, max_idle: time::Duration) -> Vec<String> {
+        let now = OffsetDateTime::now_utc();
+        let mut swept = Vec::new();
+        for entry in self.states.iter() {
+            let id = entry.key().clone();
+            if entry.mode == SessionMode::Stopped {
+                continue;
+            }
+            if now - entry.updated_at < max_idle {
+                continue;
+            }
+            if self.wrappers.contains_key(&id) || self.managed_inputs.contains_key(&id) {
+                continue;
+            }
+            swept.push(id);
+        }
+        let mut stopped = Vec::new();
+        for id in swept {
+            let state = {
+                let Some(mut entry) = self.states.get_mut(&id) else {
+                    continue;
+                };
+                // Re-check under the write lock — a hook/spawn may have raced us.
+                if entry.mode == SessionMode::Stopped || now - entry.updated_at < max_idle {
+                    continue;
+                }
+                entry.mode = SessionMode::Stopped;
+                entry.pending = None;
+                entry.background_tasks = 0;
+                entry.updated_at = OffsetDateTime::now_utc();
+                entry.clone()
+            };
+            tracing::info!(session = %id, "sweeping ghost session (no plumbing, stale) to Stopped");
+            let _ = self.update_tx.send(SessionUpdate {
+                session_id: id.clone(),
+                event: "SessionEnd".to_string(),
+                state,
+            });
+            stopped.push(id);
+        }
+        stopped
     }
 
     fn managed_input(&self, session_id: &str) -> Option<mpsc::UnboundedSender<String>> {
@@ -3521,5 +3609,58 @@ mod tests {
             store.deregister_managed("m1", gen2),
             "and the owning life must report that it did"
         );
+    }
+
+    /// The ghost sweep is the belt for every teardown escape hatch: a row with
+    /// no live plumbing and no recent state change is a live-looking lie for a
+    /// process that is gone (observed: a PTY that died at the folder-trust
+    /// dialog sat in `unknown` for hours). Zero max_idle in these tests makes
+    /// "stale" immediate — production passes 15 minutes.
+    #[test]
+    fn sweep_stops_unplumbed_rows_but_spares_live_ones() {
+        let store = SessionStore::new();
+
+        // Ghost: a row born from a hook (or an escaped teardown) — no plumbing.
+        store.ingest(hook("SessionStart", "ghost", "/repo"));
+        // Live managed session: driver input registered.
+        store.register_managed("managed", "/repo", "claude");
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input("managed", tx);
+        // Live PTY session: wrapper registered.
+        store.ingest(hook("SessionStart", "pty", "/repo"));
+        store.register_spawn("pty", "/repo", handle());
+
+        let swept = store.sweep_ghost_sessions(time::Duration::ZERO);
+        assert_eq!(swept, vec!["ghost".to_string()]);
+        assert_eq!(store.get("ghost").unwrap().mode, SessionMode::Stopped);
+        assert_ne!(store.get("managed").unwrap().mode, SessionMode::Stopped);
+        assert_ne!(store.get("pty").unwrap().mode, SessionMode::Stopped);
+
+        // Already-stopped rows are never re-swept (no broadcast churn).
+        assert!(store.sweep_ghost_sessions(time::Duration::ZERO).is_empty());
+
+        // A swept false positive self-heals: the next hook event revives it.
+        store.ingest(hook("UserPromptSubmit", "ghost", "/repo"));
+        assert_eq!(store.get("ghost").unwrap().mode, SessionMode::Responding);
+    }
+
+    /// `background_tasks` is the wire-visible ambient-work count. It must
+    /// never survive the session's end — a stopped row badged "working in
+    /// background" is the same lie the mode used to tell.
+    #[test]
+    fn background_tasks_count_updates_and_clears_on_teardown() {
+        let store = SessionStore::new();
+        store.register_managed("m1", "/repo", "claude");
+        let gen = store.claim_generation("m1");
+
+        store.set_background_tasks("m1", 2);
+        assert_eq!(store.get("m1").unwrap().background_tasks, 2);
+        // Unknown ids are a no-op, not a panic.
+        store.set_background_tasks("nope", 3);
+
+        assert!(store.deregister_managed("m1", gen));
+        let row = store.get("m1").unwrap();
+        assert_eq!(row.mode, SessionMode::Stopped);
+        assert_eq!(row.background_tasks, 0);
     }
 }

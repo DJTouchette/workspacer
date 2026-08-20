@@ -258,6 +258,11 @@ export interface ClaudeSessionSnapshot {
   plan?: SessionPlan;
 
   ambientState: SessionAmbientState;
+  /** Live background tasks (async subagents, `run_in_background` shells,
+   *  workflows). Ambient work never claims the "Working" mode — a background
+   *  dev server latching an idle agent as Working was the "agents say working
+   *  when they're not" bug — so this count is the honest badge instead. */
+  backgroundTasks?: number;
   lastActivity: number;
   totalToolCalls: number;
   usage: SessionUsage | null;
