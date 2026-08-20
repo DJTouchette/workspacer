@@ -1,6 +1,12 @@
 # The Command Layer — a tmux/neovim keyboard mode for Workspacer
 
-**Status: PLAN (approved design, not yet implemented). Companion to DESIGN_LANGUAGE.md.**
+**Status: Phases 1–3 SHIPPED (e25b597f, 5c1be001, b6d66a51) + the Settings
+enable toggle (cc679432). Remaining: Phase 4 chrome (CommandStrip, dwell-HUD,
+FocusChip, tmux preset, pane hints, multi-step ShortcutEditor, deprecation
+labels, notification-center announcement) and Phase 5 (cmdline, conflict
+validation at save, landing docs). Deferred from Phase 3 into 4/5: session
+jumplist (prefix ctrl+o/i), hub-bus command.* parity. Companion to
+DESIGN_LANGUAGE.md.**
 
 This is the synthesis of a three-way design competition (tmux prefix layer vs. full
 neovim modal app vs. Hyprland-style mod layer), judged on one killer criterion —
