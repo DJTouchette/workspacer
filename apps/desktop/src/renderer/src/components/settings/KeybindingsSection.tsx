@@ -488,6 +488,43 @@ const KeybindingsSection: React.FC<KeybindingsSectionProps> = ({ config, save })
         focused terminal (nested tmux).
       </div>
 
+      <Row label="Layer leader">
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          {(
+            [
+              { id: '', label: 'Auto' },
+              { id: 'alt', label: 'Alt tap' },
+              { id: 'ctrl', label: 'Ctrl tap' },
+              { id: 'meta', label: 'Super tap' },
+              { id: 'ctrl+space', label: 'Ctrl+Space' },
+            ] as const
+          ).map((opt) => (
+            <ModeButton
+              key={opt.id || 'auto'}
+              label={opt.label}
+              active={(config.keybindings?.commandLayer?.leaderOverride ?? '') === opt.id}
+              onClick={() =>
+                save({
+                  keybindings: {
+                    ...config.keybindings,
+                    commandLayer: {
+                      ...config.keybindings?.commandLayer,
+                      leaderOverride: opt.id,
+                    },
+                  },
+                })
+              }
+            />
+          ))}
+        </div>
+      </Row>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        The single gate key. Auto = the prefix above, with the platform substitution (on Linux,
+        Ctrl+Space becomes a lone Alt tap — fcitx/ibus grab the combo). A tap arms on a clean
+        press-and-release of the modifier alone, so it works mid-typing; pick a different tap if
+        your window manager fights Alt. Super tap will collide with most tiling WMs.
+      </div>
+
       <ShortcutEditor config={config} save={save} />
     </Section>
   );

@@ -1602,6 +1602,22 @@ function App() {
   const handleJumpBack = useCallback(() => jumpAlong(-1), [jumpAlong]);
   const handleJumpForward = useCallback(() => jumpAlong(1), [jumpAlong]);
 
+  // Closing an agent releases its harpoon pin (the LAST agent in that cwd —
+  // useAgentManager reports lastInCwd so a second agent in the same repo
+  // keeps the slot). Only explicit CLOSE does this; a stopped-but-kept card
+  // stays pinned, that's what pins are for.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent).detail as { cwd?: string; lastInCwd?: boolean } | undefined;
+      if (!d?.cwd || !d.lastInCwd) return;
+      const pins = config.ui.pinnedAgentCwds ?? [];
+      if (!pins.includes(d.cwd)) return;
+      void saveConfig({ ui: { ...config.ui, pinnedAgentCwds: pins.filter((c) => c !== d.cwd) } });
+    };
+    window.addEventListener('agent:closed', handler);
+    return () => window.removeEventListener('agent:closed', handler);
+  }, [config.ui, saveConfig]);
+
   // prefix d — tmux display-panes: numbered badges over the active tab's
   // panes; the NEXT keystroke resolves (1-9 focuses, anything else dismisses).
   // Transient App state + its own capture listener, so no pane component

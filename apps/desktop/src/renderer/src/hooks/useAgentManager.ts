@@ -760,6 +760,21 @@ export function useAgentManager() {
       if (cur !== agentId) return cur;
       return fallbackId ?? '';
     });
+    // A CLOSED agent releases its harpoon pin — but only when it was the LAST
+    // agent in that cwd (pins are cwd-keyed so a second agent in the same
+    // repo, or a later respawn of a merely-STOPPED card, keeps the slot). App
+    // owns the pin store (config.ui.pinnedAgentCwds), so this just reports
+    // the fact. agentsRef still holds the PRE-removal list here (the ref
+    // updates on the next render), so the closed agent is excluded by id
+    // rather than by trusting the list.
+    if (agent?.cwd) {
+      const lastInCwd = !agentsRef.current.some(
+        (a) => a.id !== agentId && !a.global && a.cwd === agent.cwd,
+      );
+      window.dispatchEvent(
+        new CustomEvent('agent:closed', { detail: { cwd: agent.cwd, lastInCwd } }),
+      );
+    }
     if (agent?.sessionId) {
       try {
         await window.electronAPI.claudeClose(agent.sessionId);
