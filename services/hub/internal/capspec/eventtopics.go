@@ -188,6 +188,11 @@ var eventTopics = []EventTopic{
 		Disposition: TopicOpenByDecision,
 		Reason:      "carries no arguments — a request to open the built-in guide pane. Receiving it discloses only that navigation was requested; anything the guide then does rides its own session's scoped token",
 	},
+	{
+		Pattern:     "command.run_action",
+		Disposition: TopicOpenByDecision,
+		Reason:      "carries a keyboard-action id (plus an optional digit) from the desktop's ACTION_REGISTRY — pane zoom/swap, tab and agent navigation, panel toggles: the command layer's vocabulary as a bus event. The consumer is the trusted desktop renderer, which validates the id against the registry and REFUSES the decision verbs (approve/deny) — an approval must ride a scoped facade tool, never a published event. Receiving the event discloses only that navigation was requested",
+	},
 	// hub.peer.* — federation-link reachability (internal/federation). The
 	// tombstone UX depends on every client hearing these: a peer going dark
 	// must render as "hub unreachable, last seen …", not as agents silently

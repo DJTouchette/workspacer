@@ -9,7 +9,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { HomeSpace } from './components/HomeSpace';
 import Onboarding from './components/Onboarding';
 import { presetConfigPatch } from './lib/keybindingPresets';
-import { LAYER_ACTIONS, resolveLeader } from './lib/shortcuts';
+import { ACTION_REGISTRY, LAYER_ACTIONS, resolveLeader } from './lib/shortcuts';
 import { requestChatScroll } from './lib/chatScrollBus';
 import { postNotification } from './lib/notificationBus';
 import { resolveApproval } from './lib/resolveAttention';
@@ -2174,6 +2174,17 @@ function App() {
   // Listen for bus commands (from plugins / MCP) and drive the UI. The ui.*
   // event each action emits doubles as the confirmation back on the bus.
   useUiCommands({
+    // Bus twin of the command layer: any bus participant that may publish
+    // command.run_action drives a registered UI action through the SAME
+    // dispatcher door the `:` cmdline uses. Navigation-grade only — decision
+    // verbs (approve/deny) must ride their own scoped facade tools, and
+    // fleet/inbox keys are surface-local.
+    runAction: (action, digit) => {
+      const meta = ACTION_REGISTRY.find((a) => a.action === action);
+      if (!meta || meta.scope === 'fleet' || meta.scope === 'inbox') return;
+      if (action === 'approve-attention' || action === 'deny-attention') return;
+      window.dispatchEvent(new CustomEvent('command:action', { detail: { action, digit } }));
+    },
     focusAgent: (idOrSession) => {
       const a = agents.find((x) => x.id === idOrSession || x.sessionId === idOrSession);
       if (a) handleSelectAgent(a.id);

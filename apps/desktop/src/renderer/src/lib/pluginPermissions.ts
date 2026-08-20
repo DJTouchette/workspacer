@@ -323,6 +323,7 @@ export const EVENT_TOPIC_RULES: EventTopicRule[] = [
   { pattern: 'command.open_plugin', disposition: 'open-by-decision' },
   { pattern: 'command.open_spawn_dialog', disposition: 'open-by-decision' },
   { pattern: 'command.open_guide', disposition: 'open-by-decision' },
+  { pattern: 'command.run_action', disposition: 'open-by-decision' },
   {
     pattern: 'agent.statusline',
     disposition: 'guarded-by-capability',

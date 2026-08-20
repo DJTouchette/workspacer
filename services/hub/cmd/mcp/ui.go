@@ -107,6 +107,12 @@ func addUiTools(b *build) {
 		func(in openGuideIn) event.Envelope {
 			return event.New("command.open_guide", uiEventSource, in)
 		})
+	addUiTool(b, authtoken.ScopeTriage, "run_ui_action",
+		"Run one desktop keyboard action by registry id — the command layer's vocabulary as a tool: pane zoom/swap (zoom-pane, swap-pane-left), tab/agent navigation (next-tab, next-attention, alternate-agent, jump-pinned + digit), panel toggles (toggle-sidebar, toggle-fleet), chat paging (chat-scroll-down). The desktop validates the id and REFUSES the decision verbs (approve/deny) — approvals ride their own scoped tools.",
+		"command.run_action",
+		func(in runActionIn) event.Envelope {
+			return event.New("command.run_action", uiEventSource, in)
+		})
 }
 
 type focusAgentIn struct {
@@ -121,6 +127,11 @@ type openPaneIn struct {
 
 type openBrowserIn struct {
 	URL string `json:"url" jsonschema:"the URL to open in the built-in browser pane"`
+}
+
+type runActionIn struct {
+	Action string `json:"action" jsonschema:"the registry action id, e.g. zoom-pane, next-tab, toggle-sidebar, chat-scroll-down"`
+	Digit  int    `json:"digit,omitempty" jsonschema:"slot for digit-taking actions (jump-pinned, 1-9)"`
 }
 
 type openPluginIn struct {

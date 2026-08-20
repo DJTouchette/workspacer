@@ -21,6 +21,11 @@ export interface UiCommandHandlers {
   openAskPane?: () => void;
   /** Open the Workspacer Guide pane in the global workspace. */
   openGuide?: () => void;
+  /** Run a registered keyboard ACTION by id (command.run_action) — the bus
+   *  twin of the command layer's `command:action` door. App validates the id
+   *  against ACTION_REGISTRY and refuses decision verbs (approve/deny) —
+   *  those must ride their own scoped facade tools, never a published event. */
+  runAction?: (action: string, digit?: number) => void;
 }
 
 export function useUiCommands(handlers: UiCommandHandlers): void {
@@ -55,6 +60,11 @@ export function useUiCommands(handlers: UiCommandHandlers): void {
           break;
         case 'command.open_guide':
           ref.current.openGuide?.();
+          break;
+        case 'command.run_action':
+          if (typeof d.action === 'string') {
+            ref.current.runAction?.(d.action, typeof d.digit === 'number' ? d.digit : undefined);
+          }
           break;
         default:
           break;

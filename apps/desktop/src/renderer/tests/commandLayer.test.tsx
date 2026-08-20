@@ -282,3 +282,16 @@ describe('cmdline + jumplist + the command:action door (Phase 5)', () => {
     unmount();
   });
 });
+
+describe('command:action digit pass-through (bus/cmdline parity)', () => {
+  it('carries the digit to digit-taking actions', () => {
+    const onJumpPinned = vi.fn();
+    const opts = options({ onJumpPinned, shortcuts: {} });
+    const { unmount } = renderHook(() => useKeyboardNav(opts));
+    window.dispatchEvent(
+      new CustomEvent('command:action', { detail: { action: 'jump-pinned', digit: 4 } }),
+    );
+    expect(onJumpPinned).toHaveBeenCalledWith(4);
+    unmount();
+  });
+});

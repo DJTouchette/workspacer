@@ -767,8 +767,9 @@ export function useKeyboardNav({
     // hook) executes actions through the SAME switch the chords use, so the
     // two surfaces cannot disagree about what a verb does.
     const onCommandAction = (e: Event) => {
-      const action = (e as CustomEvent).detail?.action;
-      if (typeof action === 'string') executeAction(action);
+      const detail = (e as CustomEvent).detail as { action?: unknown; digit?: unknown };
+      if (typeof detail?.action !== 'string') return;
+      executeAction(detail.action, typeof detail.digit === 'number' ? detail.digit : undefined);
     };
 
     window.addEventListener('keydown', handler, true);

@@ -110,6 +110,8 @@ var topicDeliveryKey = []topicDelivery{
 		why: "an optional directory to pre-fill in the New Agent dialog; the spawn itself still goes through agents.spawn and its clamps"},
 	{topic: "command.open_guide", view: true, bare: true, term: true, watch: true, snap: true,
 		why: "no payload at all — a request to open the built-in guide pane; receiving it discloses only that navigation was requested"},
+	{topic: "command.run_action", view: true, bare: true, term: true, watch: true, snap: true,
+		why: "a keyboard-action id from the desktop registry (zoom, nav, toggles); the trusted renderer validates it and refuses decision verbs — receiving it discloses only that navigation was requested"},
 	{topic: "workflow.started", view: true, bare: true, term: true, watch: true, snap: true,
 		why: "run name, phases, agents and a cwd the tier already has via agent.snapshot"},
 	{topic: "workflow.completed", view: true, bare: true, term: true, watch: true, snap: true,

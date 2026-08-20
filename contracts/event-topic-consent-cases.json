@@ -134,6 +134,10 @@
    "disposition": "open-by-decision"
   },
   {
+   "pattern": "command.run_action",
+   "disposition": "open-by-decision"
+  },
+  {
    "pattern": "fs.changed",
    "disposition": "guarded-by-capability",
    "method": "fs.watch"
