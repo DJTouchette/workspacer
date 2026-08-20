@@ -36,10 +36,12 @@ import * as fs from 'fs';
 
 // Capture every registered capability handler so tests can invoke them directly.
 const registered = new Map<string, (params: unknown) => unknown>();
+const emitToRenderer = vi.fn();
 vi.mock('./hubClient', () => ({
   registerCapability: (method: string, handler: (params: unknown) => unknown) => {
     registered.set(method, handler);
   },
+  emitToRenderer: (...a: unknown[]) => emitToRenderer(...a),
 }));
 
 // PRODUCTION MODE: the brain owns the catalog, so `cat(...)` registers nothing
@@ -1088,5 +1090,43 @@ describe('git.* cwd confinement', () => {
         undefined,
       );
     });
+  });
+});
+
+describe('terminals.open — the visible-terminal seam', () => {
+  beforeEach(() => emitToRenderer.mockClear());
+
+  it('pushes a FACADE_OPEN_TERMINAL event to the renderer with the caller fields intact', () => {
+    const res = call('terminals.open', {
+      cwd: os.tmpdir(),
+      command: 'npm run dev',
+      label: 'preheat dev server',
+      parentSessionId: 'MGR',
+    });
+    expect(res).toEqual({ ok: true });
+    expect(emitToRenderer).toHaveBeenCalledTimes(1);
+    const [channel, payload] = emitToRenderer.mock.calls[0] as [string, Record<string, unknown>];
+    // The renderer opens the pane off this channel (IPC.FACADE_OPEN_TERMINAL).
+    expect(channel).toBe('terminal:facade-open');
+    expect(payload).toMatchObject({
+      command: 'npm run dev',
+      label: 'preheat dev server',
+      parentSessionId: 'MGR',
+    });
+    // cwd is normalized (an existing dir survives); it is always a string.
+    expect(typeof payload.cwd).toBe('string');
+  });
+
+  it('drops non-string fields rather than forwarding junk', () => {
+    call('terminals.open', {
+      cwd: os.tmpdir(),
+      command: 123,
+      label: { nope: true },
+      parentSessionId: 'MGR',
+    });
+    const [, payload] = emitToRenderer.mock.calls[0] as [string, Record<string, unknown>];
+    expect(payload.command).toBeUndefined();
+    expect(payload.label).toBeUndefined();
+    expect(payload.parentSessionId).toBe('MGR');
   });
 });
