@@ -1,14 +1,13 @@
 # The Command Layer — a tmux/neovim keyboard mode for Workspacer
 
-**Status: Phases 1–4 SHIPPED (e25b597f boundary, 5c1be001 engine, b6d66a51
-verbs, cc679432 toggle, c293be14 chrome: CommandStrip + dwell-HUD + FocusChip
-+ PaneHints `prefix d` + tmux preset + multi-step ShortcutEditor + palette
-entry + inbox deprecation labels; design harness at
-/command-layer-harness.html). Remaining: Phase 5 (`prefix :` cmdline via
-commandRegistry extraction, save-time conflict validation via
-findChordConflicts, landing docs, notification-center announcement) and the
-deferred items: session jumplist (prefix ctrl+o/i), hub-bus command.* parity,
-TUI pin-store unification. Companion to DESIGN_LANGUAGE.md.**
+**Status: ALL FIVE PHASES SHIPPED (e25b597f boundary, 5c1be001 engine,
+b6d66a51 verbs, cc679432 toggle, c293be14 chrome + tmux preset, 16c100cf
+cmdline + jumplist + conflict warnings + announcement + landing docs; design
+harness at /command-layer-harness.html). Still open, each with its seam
+prepared: hub-bus `command.run` (the command:action door exists; needs the
+4-registry bus checklist) and TUI pin-store unification (TUI migrates off
+tui-pins.json to read config.ui.pinnedAgentCwds). Companion to
+DESIGN_LANGUAGE.md.**
 
 This is the synthesis of a three-way design competition (tmux prefix layer vs. full
 neovim modal app vs. Hyprland-style mod layer), judged on one killer criterion —
