@@ -1,12 +1,16 @@
 # The Command Layer — a tmux/neovim keyboard mode for Workspacer
 
-**Status: ALL FIVE PHASES SHIPPED (e25b597f boundary, 5c1be001 engine,
-b6d66a51 verbs, cc679432 toggle, c293be14 chrome + tmux preset, 16c100cf
-cmdline + jumplist + conflict warnings + announcement + landing docs; design
-harness at /command-layer-harness.html). Still open, each with its seam
-prepared: hub-bus `command.run` (the command:action door exists; needs the
-4-registry bus checklist) and TUI pin-store unification (TUI migrates off
-tui-pins.json to read config.ui.pinnedAgentCwds). Companion to
+**Status: COMPLETE. All five phases shipped (e25b597f boundary, 5c1be001
+engine, b6d66a51 verbs, cc679432 toggle, c293be14 chrome + tmux preset,
+16c100cf cmdline + jumplist + conflict warnings + announcement + docs), plus
+both follow-on seams: TUI pin-store unification (92ceb2e8 — harpoon N and
+prefix N share ui.pinnedAgentCwds; the TUI reads via config.get and writes via
+the brain's config.save, never becoming a third config writer; tui-pins.json
+is the off-bus store and one-time migration source) and bus parity
+(0b3143c2 — command.run_action event + the MCP facade's triage-tier
+run_ui_action tool drive actions through the same dispatcher door as `:`;
+the renderer refuses the decision verbs approve/deny, which must ride scoped
+facade tools). Design harness: /command-layer-harness.html. Companion to
 DESIGN_LANGUAGE.md.**
 
 This is the synthesis of a three-way design competition (tmux prefix layer vs. full
