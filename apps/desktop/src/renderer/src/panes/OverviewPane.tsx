@@ -548,9 +548,6 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
             animation: 'wks-fade-in 0.25s ease-out',
           }}
         >
-          {/* ── Fleet Manager — the front door to cross-project delegation ── */}
-          <FleetManagerHero />
-
           {/* ── Pending update banner ────────────────────────────────────── */}
           {updateStatus &&
             (updateStatus.state === 'downloaded' || updateStatus.state === 'downloading') && (
@@ -685,6 +682,9 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
               ＋ New agent…
             </button>
           </div>
+
+          {/* ── Fleet Manager — cross-project delegation, below New agent ── */}
+          <FleetManagerHero />
 
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 26 }}>
             <Stat
