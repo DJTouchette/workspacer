@@ -161,9 +161,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   const [toolScope, setToolScope] = useState<'' | 'view' | 'triage' | 'operator'>('');
   // Installed plugins that contribute agent tools (manifest `tools`), and the
   // per-spawn grant. Only meaningful with a tier — the token records the grant.
-  const [toolPlugins, setToolPlugins] = useState<Array<{ id: string; name: string; tools: number }>>(
-    [],
-  );
+  const [toolPlugins, setToolPlugins] = useState<
+    Array<{ id: string; name: string; tools: number }>
+  >([]);
   const [pluginToolsSel, setPluginToolsSel] = useState<string[]>([]);
 
   // Model selection. `modelSel` is the dropdown value (''=Default, an alias/id,
@@ -555,9 +555,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             // token, so it isn't sent.
             toolScope: provider !== 'pi' ? toolScope || undefined : undefined,
             pluginTools:
-              provider !== 'pi' && toolScope && pluginToolsSel.length
-                ? pluginToolsSel
-                : undefined,
+              provider !== 'pi' && toolScope && pluginToolsSel.length ? pluginToolsSel : undefined,
             worktree: useWorktree && worktreeEligible && !targetHub ? true : undefined,
             initialPrompt,
             targetHub: targetHub || undefined,

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/broker"
 )
@@ -350,6 +351,25 @@ func TestApprovingAProposalArmsIt(t *testing.T) {
 	}
 	if _, err := s.RunNow(json.RawMessage(`{"id":"` + p.ID + `"}`)); err != nil {
 		t.Errorf("an approved job must be runnable: %v", err)
+	}
+	// RunNow executes on a goroutine that finishes by writing the run history
+	// INTO THE TEST TempDir (delete(running) and the history write share one
+	// critical section, so observing running=false under the lock means the
+	// write is done). Without this barrier the write races t.TempDir cleanup —
+	// harmlessly on Linux, but Windows refuses to remove a directory with an
+	// open handle ("The directory is not empty").
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		s.mu.Lock()
+		running := s.running[p.ID]
+		s.mu.Unlock()
+		if !running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("run never finished")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

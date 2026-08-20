@@ -995,10 +995,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                         {stats.model ? shortModelLabel(stats.model) : '—'}
                         {/* Federation: which machine this row's agent runs on. */}
                         {(snap?.hub ?? agent.hub) && (
-                          <HubChip
-                            name={(snap?.hub ?? agent.hub)!}
-                            offline={!!snap?.hubOffline}
-                          />
+                          <HubChip name={(snap?.hub ?? agent.hub)!} offline={!!snap?.hubOffline} />
                         )}
                       </span>
                     </td>

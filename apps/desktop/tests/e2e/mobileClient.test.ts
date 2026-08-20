@@ -240,7 +240,9 @@ test.describe('mobile client', () => {
     });
   });
 
-  test('a photo attaches via files.upload and rides the message as an [Image:] prefix', async ({ page }) => {
+  test('a photo attaches via files.upload and rides the message as an [Image:] prefix', async ({
+    page,
+  }) => {
     await openClient(page);
     await page.locator('.agent[data-agent="ws1"] .top').click();
     await expect(page.locator('#title')).toHaveText('workspacer');
@@ -277,7 +279,9 @@ test.describe('mobile client', () => {
     await expect(page.locator('#msg')).toHaveValue('');
   });
 
-  test('chat hides the tab bar, and the fleet working spinner actually rotates', async ({ page }) => {
+  test('chat hides the tab bar, and the fleet working spinner actually rotates', async ({
+    page,
+  }) => {
     await openClient(page);
     await expect(page.locator('#nav')).toBeVisible();
 
@@ -477,7 +481,9 @@ test.describe('mobile client', () => {
     await expect(page.locator('.agent').first()).toBeVisible({ timeout: 10000 });
   });
 
-  test('the app shell fills the viewport exactly — no dead band at the bottom', async ({ page }) => {
+  test('the app shell fills the viewport exactly — no dead band at the bottom', async ({
+    page,
+  }) => {
     await openClient(page);
     // #app height must come from the MEASURED viewport (--vh), not 100dvh:
     // standalone PWAs can report a dvh that still reserves browser-chrome

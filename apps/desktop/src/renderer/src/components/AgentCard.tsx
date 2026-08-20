@@ -163,7 +163,11 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
   // the chip row, so the two no longer alternate.
   const bodyText = lastAssistant(snapshot);
   // Remote agents never respawn locally, so their stopped card drops the hint.
-  const bodyFallback = agent.sessionId ? 'No activity yet' : hub ? 'Stopped' : 'Stopped — click to respawn';
+  const bodyFallback = agent.sessionId
+    ? 'No activity yet'
+    : hub
+      ? 'Stopped'
+      : 'Stopped — click to respawn';
   const recentTools = useMemo(
     () => (snapshot?.completedToolCalls ?? []).slice(-2).reverse(),
     [snapshot?.completedToolCalls],

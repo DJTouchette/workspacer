@@ -118,7 +118,12 @@ describe('syncAccountTrust', () => {
   const primaryJson = (projects: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
     fs.writeFileSync(
       path.join(primary, '.claude.json'),
-      JSON.stringify({ projects, theme: 'dark', oauthAccount: { emailAddress: 'p@x.y' }, ...extra }),
+      JSON.stringify({
+        projects,
+        theme: 'dark',
+        oauthAccount: { emailAddress: 'p@x.y' },
+        ...extra,
+      }),
     );
 
   it('copies trust for the cwd and trusted ancestors, and nothing else', () => {

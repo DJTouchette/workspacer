@@ -14,15 +14,15 @@ describe('claudeAccountOf', () => {
   });
 
   it('maps an Add-Claude-Account root to its slug', () => {
-    expect(
-      claudeAccountOf('/home/u/.claude/accounts/work/projects/-home-u-work/abc.jsonl'),
-    ).toBe('work');
+    expect(claudeAccountOf('/home/u/.claude/accounts/work/projects/-home-u-work/abc.jsonl')).toBe(
+      'work',
+    );
   });
 
   it('handles Windows separators', () => {
-    expect(
-      claudeAccountOf('C:\\Users\\u\\.claude\\accounts\\work\\projects\\p\\a.jsonl'),
-    ).toBe('work');
+    expect(claudeAccountOf('C:\\Users\\u\\.claude\\accounts\\work\\projects\\p\\a.jsonl')).toBe(
+      'work',
+    );
     expect(claudeAccountOf('C:\\Users\\u\\.claude\\projects\\p\\a.jsonl')).toBe('');
   });
 
@@ -31,9 +31,7 @@ describe('claudeAccountOf', () => {
   });
 
   it('uses the LAST projects component, so a root containing one stays intact', () => {
-    expect(
-      claudeAccountOf('/home/u/projects/.claude/projects/p/a.jsonl'),
-    ).toBe('');
+    expect(claudeAccountOf('/home/u/projects/.claude/projects/p/a.jsonl')).toBe('');
   });
 
   it('missing/blank paths (fresh spawns, remote sessions) fall to default', () => {

@@ -1348,7 +1348,7 @@ impl SessionStore {
     /// crash between spawn and register), and an escaped row then advertises
     /// `unknown`/`input`/`responding` forever for a process that is gone: a
     /// live-looking ghost in every client. This sweep is the belt: no plumbing
-    /// + no state change for `max_idle` → Stopped, broadcast as a SessionEnd
+    /// and no state change for `max_idle` → Stopped, broadcast as a SessionEnd
     /// like the regular teardown so clients run their ended pipeline.
     ///
     /// Hook-adopted sessions (a bare `claude` in a terminal — hooks POST here
@@ -3029,11 +3029,8 @@ mod tests {
         let store = SessionStore::new();
         store.register_managed("def", "/tmp", "claude"); // no transcript → default root
         store.register_managed("work", "/tmp", "claude");
-        store
-            .states
-            .get_mut("work")
-            .unwrap()
-            .transcript_path = Some("/home/u/.claude/accounts/work/projects/p/t.jsonl".into());
+        store.states.get_mut("work").unwrap().transcript_path =
+            Some("/home/u/.claude/accounts/work/projects/p/t.jsonl".into());
         assert_eq!(
             store.live_claude_config_roots(),
             vec![String::new(), "/home/u/.claude/accounts/work".to_string()],
@@ -3051,7 +3048,12 @@ mod tests {
         // numbers, leaving the default session's gauges alone.
         store.set_account_usage("/home/u/.claude/accounts/work", account_reading(7.0));
         assert_eq!(
-            store.get("work").unwrap().status_line.unwrap().five_hour_pct,
+            store
+                .get("work")
+                .unwrap()
+                .status_line
+                .unwrap()
+                .five_hour_pct,
             Some(7.0),
         );
         assert_eq!(

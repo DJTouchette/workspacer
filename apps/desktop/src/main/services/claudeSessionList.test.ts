@@ -189,7 +189,8 @@ describe('listClaudeSessionsForDir — header cache', () => {
     // the mtime forward so a same-second rewrite can't false-hit the cache.
     fs.writeFileSync(
       file,
-      JSON.stringify({ type: 'user', message: { role: 'user', content: 'second summary!' } }) + '\n',
+      JSON.stringify({ type: 'user', message: { role: 'user', content: 'second summary!' } }) +
+        '\n',
     );
     const later = Date.now() / 1000 + 5;
     fs.utimesSync(file, later, later);

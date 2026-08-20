@@ -257,7 +257,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           cols: opts.cols,
           rows: opts.rows,
         })) as { sessionId?: string } | null;
-        if (!res?.sessionId) throw new Error(`spawn on hub "${opts.targetHub}" returned no session id`);
+        if (!res?.sessionId)
+          throw new Error(`spawn on hub "${opts.targetHub}" returned no session id`);
         return res.sessionId;
       }
       // Provider selects the coding-agent backend. OpenCode and Codex are Tier-2

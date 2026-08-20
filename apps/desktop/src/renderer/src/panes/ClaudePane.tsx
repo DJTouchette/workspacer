@@ -329,8 +329,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   useEffect(() => {
     const onWritePrefix = (e: Event) => {
       const detail = (e as CustomEvent).detail as
-        | { target?: Element | null; bytes?: string }
-        | undefined;
+        { target?: Element | null; bytes?: string } | undefined;
       if (!detail?.bytes) return;
       const container = termContainerRef.current;
       if (!container || !detail.target || !container.contains(detail.target)) return;

@@ -232,6 +232,9 @@ export function buildSessionMcpConfig(
   const filePath = path.join(dir, `${sessionId}.json`);
   // 0600: these entries carry live credentials — a library server's real
   // headers/env, or the facade session token.
-  fs.writeFileSync(filePath, JSON.stringify({ mcpServers }, null, 2), { encoding: 'utf8', mode: 0o600 });
+  fs.writeFileSync(filePath, JSON.stringify({ mcpServers }, null, 2), {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
   return { path: filePath, toolNames };
 }

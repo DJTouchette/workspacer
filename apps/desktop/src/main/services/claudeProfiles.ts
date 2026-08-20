@@ -216,7 +216,8 @@ class ClaudeProfileService {
     if (updates.extraArgs !== undefined) profile.extraArgs = updates.extraArgs;
     if (updates.mcpItemIds !== undefined) profile.mcpItemIds = updates.mcpItemIds;
     if (updates.weight !== undefined) {
-      profile.weight = typeof updates.weight === 'number' && updates.weight > 0 ? updates.weight : 0;
+      profile.weight =
+        typeof updates.weight === 'number' && updates.weight > 0 ? updates.weight : 0;
     }
     if (updates.isDefault) {
       // Unset other defaults

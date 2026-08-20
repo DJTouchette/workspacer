@@ -318,7 +318,6 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     return out;
   };
 
-
   // After a reconnect the bus re-asserts topic subscriptions, but the per-stream
   // attachTerminal call (which makes claudemon replay the current screen) is not
   // re-issued — so every mirrored terminal would sit frozen until a manual
@@ -415,7 +414,10 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // the hub bus (settings-only surface), so the web client shows none.
     keepWarmHeartbeats: async () => [],
     claudeMessage: (sessionId, text) =>
-      client.call<{ ok: boolean; mode?: string }>(qualify(sessionId, 'agents.sendMessage'), { sessionId, text }),
+      client.call<{ ok: boolean; mode?: string }>(qualify(sessionId, 'agents.sendMessage'), {
+        sessionId,
+        text,
+      }),
     claudeSetPermissionMode: (sessionId, mode) =>
       client.call<{ ok: boolean; mode?: string; error?: string }>('claude.setPermissionMode', {
         sessionId,
@@ -439,9 +441,13 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         { sessionId },
       ),
     claudeApprove: (sessionId, decision, reason) =>
-      client.call<void>(qualify(sessionId, 'claude.approve'), { sessionId, decision, reason }).then(() => {}),
+      client
+        .call<void>(qualify(sessionId, 'claude.approve'), { sessionId, decision, reason })
+        .then(() => {}),
     claudeAnswer: (sessionId, payload) =>
-      client.call<void>(qualify(sessionId, 'claude.answer'), { sessionId, ...payload }).then(() => {}),
+      client
+        .call<void>(qualify(sessionId, 'claude.answer'), { sessionId, ...payload })
+        .then(() => {}),
     claudeResize: (sessionId, cols, rows) => {
       reprime(sessionId);
       return client.call<void>('sessions.terminalResize', { sessionId, cols, rows }).then(() => {});
@@ -449,7 +455,9 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     claudeSignal: (sessionId, signal) =>
       client.call<void>(qualify(sessionId, 'claude.signal'), { sessionId, signal }).then(() => {}),
     claudeClose: (sessionId) =>
-      client.call<void>(qualify(sessionId, 'claude.signal'), { sessionId, signal: 'SIGTERM' }).then(() => {}),
+      client
+        .call<void>(qualify(sessionId, 'claude.signal'), { sessionId, signal: 'SIGTERM' })
+        .then(() => {}),
     attachClaude: (paneId, sessionId) => {
       viewerSessions.set(paneId, sessionId);
       return Promise.resolve(sessionId);

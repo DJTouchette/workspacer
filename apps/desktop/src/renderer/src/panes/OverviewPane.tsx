@@ -725,15 +725,17 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
               for (const k of Object.keys(lastRateLimit)) {
                 if (k.startsWith('claude:')) accounts.add(k.slice('claude:'.length));
               }
-              return [...accounts].sort().map((a) => (
-                <RateLimitCard
-                  key={`claude:${a}`}
-                  snaps={snaps}
-                  provider="claude"
-                  title={a ? `Claude usage — ${a}` : p.title}
-                  account={a}
-                />
-              ));
+              return [...accounts]
+                .sort()
+                .map((a) => (
+                  <RateLimitCard
+                    key={`claude:${a}`}
+                    snaps={snaps}
+                    provider="claude"
+                    title={a ? `Claude usage — ${a}` : p.title}
+                    account={a}
+                  />
+                ));
             })}
           </div>
 

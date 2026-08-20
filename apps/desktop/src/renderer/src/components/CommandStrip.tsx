@@ -288,7 +288,11 @@ const CommandStrip: React.FC<CommandStripProps> = ({
                     <ChevronRight
                       size={10}
                       strokeWidth={2.25}
-                      style={{ flexShrink: 0, alignSelf: 'center', color: 'var(--wks-text-secondary)' }}
+                      style={{
+                        flexShrink: 0,
+                        alignSelf: 'center',
+                        color: 'var(--wks-text-secondary)',
+                      }}
                     />
                   )}
                 </div>

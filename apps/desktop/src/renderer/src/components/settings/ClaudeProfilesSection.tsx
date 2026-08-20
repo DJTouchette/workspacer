@@ -90,8 +90,8 @@ const ProfileEditForm: React.FC<{
       />
       <span style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', lineHeight: 1.4 }}>
         Failover weight — 0 keeps this profile manual. Any higher number joins the automatic
-        rotation: when a session's account hits its usage window, it restarts onto the
-        heaviest signed-in profile (same conversation) and cycles on until one works.
+        rotation: when a session's account hits its usage window, it restarts onto the heaviest
+        signed-in profile (same conversation) and cycles on until one works.
       </span>
     </div>
     {mcpItems.length > 0 && (
@@ -349,7 +349,11 @@ const ClaudeProfilesSection: React.FC = () => {
                     {(p.weight ?? 0) > 0 && (
                       <span
                         title={`Automatic failover weight ${p.weight} — heavier wins first`}
-                        style={{ fontSize: '0.6rem', color: 'var(--wks-text-muted)', marginLeft: 6 }}
+                        style={{
+                          fontSize: '0.6rem',
+                          color: 'var(--wks-text-muted)',
+                          marginLeft: 6,
+                        }}
                       >
                         auto·{p.weight}
                       </span>
@@ -444,9 +448,7 @@ const ClaudeProfilesSection: React.FC = () => {
                 if (e.key === 'Escape') setAddingAccount(false);
               }}
             />
-            <div
-              style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)', lineHeight: 1.5 }}
-            >
+            <div style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)', lineHeight: 1.5 }}>
               Creates a profile with its own Claude login that shares this machine's memories,
               session history, skills and settings. You'll log in inside the first agent you spawn
               with it.

@@ -85,11 +85,9 @@ describe('buildHistoryGroups', () => {
   });
 
   it('keeps daemon-only rows in their project group (managed providers)', () => {
-    const groups = buildHistoryGroups(
-      ['/w/app'],
-      { '/w/app': [transcript('s1', 'claude work')] },
-      [daemon({ sessionId: 'c1', provider: 'codex', title: 'codex work', updatedAt: T0 + 1 })],
-    );
+    const groups = buildHistoryGroups(['/w/app'], { '/w/app': [transcript('s1', 'claude work')] }, [
+      daemon({ sessionId: 'c1', provider: 'codex', title: 'codex work', updatedAt: T0 + 1 }),
+    ]);
     expect(groups[0].rows.map((r) => r.sessionId)).toEqual(['c1', 's1']);
     expect(groups[0].rows[0].provider).toBe('codex');
     expect(groups[0].rows[0].label).toBe('codex work');

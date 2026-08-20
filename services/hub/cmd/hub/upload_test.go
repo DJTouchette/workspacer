@@ -5,9 +5,22 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// isolateTempDir points os.TempDir at a per-test directory ON EVERY PLATFORM.
+// t.Setenv("TMPDIR", …) alone was a silent no-op on Windows — os.TempDir reads
+// TMP/TEMP there — so both tests ran against the REAL temp dir: the write
+// test's file survived into the refusals test, which then reported it as a
+// refusal leaving files behind.
+func isolateTempDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	t.Setenv("TMP", dir)
+	t.Setenv("TEMP", dir)
+}
 
 func uploadCall(t *testing.T, name string, data []byte) (map[string]any, error) {
 	t.Helper()
@@ -27,7 +40,7 @@ func uploadCall(t *testing.T, name string, data []byte) (map[string]any, error) 
 // lands 0600 in the temp landing pad, and the returned path reads back the
 // exact bytes.
 func TestFilesUploadWritesIntoTheLandingPad(t *testing.T) {
-	t.Setenv("TMPDIR", t.TempDir())
+	isolateTempDir(t)
 	payload := []byte{0x89, 'P', 'N', 'G', 0, 1, 2, 3}
 
 	res, err := uploadCall(t, "../../etc/☃ passwd.PNG", payload)
@@ -52,7 +65,9 @@ func TestFilesUploadWritesIntoTheLandingPad(t *testing.T) {
 	if err != nil || string(got) != string(payload) {
 		t.Errorf("read back %q err=%v, want the uploaded bytes", got, err)
 	}
-	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+	// POSIX only: NTFS has no mode bits — Go reports 0666 for any writable
+	// file on Windows regardless of what the create call asked for.
+	if fi, _ := os.Stat(path); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Errorf("mode %v, want 0600", fi.Mode().Perm())
 	}
 	if size, _ := res["size"].(int); size != len(payload) {
@@ -61,7 +76,7 @@ func TestFilesUploadWritesIntoTheLandingPad(t *testing.T) {
 }
 
 func TestFilesUploadRefusals(t *testing.T) {
-	t.Setenv("TMPDIR", t.TempDir())
+	isolateTempDir(t)
 	cases := []struct {
 		label string
 		raw   string // raw JSON params

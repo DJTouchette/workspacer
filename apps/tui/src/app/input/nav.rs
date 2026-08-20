@@ -158,7 +158,12 @@ impl App {
                 } else {
                     v.clone() // an id whose agent isn't running right now
                 };
-                if seen.insert(sid.clone()) { Some(sid) } else { changed = true; None }
+                if seen.insert(sid.clone()) {
+                    Some(sid)
+                } else {
+                    changed = true;
+                    None
+                }
             })
             .collect();
         if changed {
@@ -285,7 +290,7 @@ mod tests {
     fn adopt_shared_pins_makes_the_config_document_the_truth() {
         let mut app = app_with_agents(2);
         app.harpoon_toggle(); // local pin: session s1
-        // The desktop pinned a different set while we ran — shared wins.
+                              // The desktop pinned a different set while we ran — shared wins.
         app.adopt_shared_pins(Some(vec!["s2".to_string()]));
         assert_eq!(app.pinned, vec!["s2"]);
         assert_eq!(app.harpoon, vec!["s2"]);
@@ -299,7 +304,10 @@ mod tests {
         // The shared key may still carry cwds written by the deprecated key's
         // brief life — normalize upgrades them against the live agents.
         let mut app = app_with_agents(2);
-        app.adopt_shared_pins(Some(vec!["/work/s2".to_string(), "/nowhere/gone".to_string()]));
+        app.adopt_shared_pins(Some(vec![
+            "/work/s2".to_string(),
+            "/nowhere/gone".to_string(),
+        ]));
         assert_eq!(app.pinned, vec!["s2"], "cwd resolved, dead path dropped");
         assert_eq!(app.harpoon, vec!["s2"]);
     }
@@ -308,7 +316,7 @@ mod tests {
     async fn adopt_shared_pins_keeps_legacy_pins_when_the_key_was_never_written() {
         let mut app = app_with_agents(2);
         app.harpoon_toggle(); // legacy-era local pin
-        // …but an ABSENT key must not wipe them: they're the migration source.
+                              // …but an ABSENT key must not wipe them: they're the migration source.
         app.adopt_shared_pins(None);
         assert_eq!(app.pinned, vec!["s1"]);
     }

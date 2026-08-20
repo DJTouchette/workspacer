@@ -19,7 +19,13 @@ pub(super) fn test_app() -> App {
     let (ptx, _prx) = tokio::sync::mpsc::unbounded_channel();
     // An unused port: the background stream tasks fail and retry harmlessly.
     let cm = Claudemon::new("http://127.0.0.1:59999".into());
-    App::new(cm, Vec::new(), Vec::new(), Config::default(), tx, ptx)
+    let mut app = App::new(cm, Vec::new(), Vec::new(), Config::default(), tx, ptx);
+    // App::new loads pins from the SHARED isolated config dir, and any pin
+    // test that persists (off-bus → tui-pins.json) would leak into whichever
+    // test constructs the next App — parallel-order-dependent flakes. Every
+    // test starts pinless; the ones about pins set their own.
+    app.pinned = Vec::new();
+    app
 }
 
 pub(super) fn agent(id: &str, mode: &str) -> Agent {

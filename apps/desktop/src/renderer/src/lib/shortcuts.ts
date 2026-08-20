@@ -320,8 +320,18 @@ export const ACTION_REGISTRY: ActionMeta[] = [
     scope: 'layer',
   },
   // Inbox (active only while the drawer is open)
-  { action: 'inbox-move-down', label: 'Select next item', section: 'Inbox · deprecated', scope: 'inbox' },
-  { action: 'inbox-move-up', label: 'Select previous item', section: 'Inbox · deprecated', scope: 'inbox' },
+  {
+    action: 'inbox-move-down',
+    label: 'Select next item',
+    section: 'Inbox · deprecated',
+    scope: 'inbox',
+  },
+  {
+    action: 'inbox-move-up',
+    label: 'Select previous item',
+    section: 'Inbox · deprecated',
+    scope: 'inbox',
+  },
   { action: 'inbox-open', label: 'Open agent', section: 'Inbox · deprecated', scope: 'inbox' },
   { action: 'inbox-approve-yes', label: 'Approve', section: 'Inbox · deprecated', scope: 'inbox' },
   { action: 'inbox-approve-no', label: 'Deny', section: 'Inbox · deprecated', scope: 'inbox' },
@@ -334,7 +344,12 @@ export const ACTION_REGISTRY: ActionMeta[] = [
   },
   { action: 'inbox-dismiss', label: 'Dismiss item', section: 'Inbox · deprecated', scope: 'inbox' },
   { action: 'inbox-snooze', label: 'Snooze item', section: 'Inbox · deprecated', scope: 'inbox' },
-  { action: 'inbox-clear-reviewed', label: 'Clear all reviewed', section: 'Inbox · deprecated', scope: 'inbox' },
+  {
+    action: 'inbox-clear-reviewed',
+    label: 'Clear all reviewed',
+    section: 'Inbox · deprecated',
+    scope: 'inbox',
+  },
 ];
 
 /** Action ids that only bind inside their own surface (fleet/inbox) or mode
@@ -347,7 +362,6 @@ export const SCOPED_ACTIONS = new Set(ACTION_REGISTRY.filter((a) => a.scope).map
 export const LAYER_ACTIONS = new Set(
   ACTION_REGISTRY.filter((a) => a.scope === 'layer').map((a) => a.action),
 );
-
 
 /** action id → label, derived from the registry. */
 export const ACTION_LABELS: Record<string, string> = Object.fromEntries(
@@ -654,8 +668,7 @@ export const REPEAT_ACTIONS = new Set([
 export function leaderPassthroughBytes(prefix: string): string {
   const parts = resolveMod((prefix ?? '').toLowerCase().trim()).split('+');
   const key = parts[parts.length - 1];
-  const ctrlOnly =
-    parts.includes('ctrl') && !parts.includes('alt') && !parts.includes('meta');
+  const ctrlOnly = parts.includes('ctrl') && !parts.includes('alt') && !parts.includes('meta');
   if (!ctrlOnly) return '';
   if (key === 'space') return '\x00';
   if (/^[a-z]$/.test(key)) return String.fromCharCode(key.charCodeAt(0) - 96);
@@ -699,9 +712,7 @@ export function findChordConflicts(shortcuts: Record<string, string>): ChordConf
   for (const [path, actions] of leaves) {
     const prefixSteps = path.split(' ');
     const shadowed = paths.filter(
-      (p) =>
-        p.steps.length > prefixSteps.length &&
-        prefixSteps.every((s, i) => p.steps[i] === s),
+      (p) => p.steps.length > prefixSteps.length && prefixSteps.every((s, i) => p.steps[i] === s),
     );
     if (shadowed.length > 0) {
       conflicts.push({

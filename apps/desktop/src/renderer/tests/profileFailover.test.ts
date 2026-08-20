@@ -27,7 +27,13 @@ const NOW = 1_000_000_000;
 describe('pickFailoverProfile', () => {
   it('picks the heaviest signed-in candidate that is not the current profile', () => {
     const profiles = [prof('default', 0, true), prof('work', 5), prof('backup', 9)];
-    const pick = pickFailoverProfile(profiles, undefined, { backup: true, work: true }, new Map(), NOW);
+    const pick = pickFailoverProfile(
+      profiles,
+      undefined,
+      { backup: true, work: true },
+      new Map(),
+      NOW,
+    );
     expect(pick?.id).toBe('backup');
   });
 

@@ -28,7 +28,7 @@ const seedAgent = (id: string, cwd: string, sessionId: string) =>
   }) as any;
 
 describe('terminateAgent → agent:closed', () => {
-  it('reports the closed agent\'s session ids, and only its own', async () => {
+  it("reports the closed agent's session ids, and only its own", async () => {
     const events: Array<{ sessionIds?: string[] }> = [];
     const onClosed = (e: Event) => events.push((e as CustomEvent).detail);
     window.addEventListener('agent:closed', onClosed);

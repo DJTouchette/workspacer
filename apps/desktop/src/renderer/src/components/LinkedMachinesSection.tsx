@@ -295,7 +295,11 @@ function PeerRow({
           {hasToken && (
             <span
               title="A link token is stored for this peer"
-              style={{ display: 'inline-flex', alignItems: 'center', color: 'var(--wks-text-muted)' }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                color: 'var(--wks-text-muted)',
+              }}
             >
               <KeyRound size={11} strokeWidth={2} />
             </span>

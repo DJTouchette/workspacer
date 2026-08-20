@@ -1008,7 +1008,9 @@ class ClaudeSessionStore {
       transcriptPath: '',
       status: snap.status ?? existing?.status ?? 'active',
       conversation:
-        folded && existing ? existing.conversation : (snap.conversation ?? existing?.conversation ?? []),
+        folded && existing
+          ? existing.conversation
+          : (snap.conversation ?? existing?.conversation ?? []),
       activeToolCalls: snap.activeToolCalls ?? [],
       completedToolCalls: snap.completedToolCalls ?? [],
       fileChanges: snap.fileChanges ?? [],

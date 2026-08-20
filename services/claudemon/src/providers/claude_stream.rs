@@ -2609,18 +2609,18 @@ mod tests {
         let mut pending_controls: HashMap<String, PendingControl> = HashMap::new();
         let mut bg_tasks_active = false;
         let mut idle_suppressed = false;
-        let mut run = |value: &Value,
-                       cur_mode: &mut SessionMode,
-                       bg: &mut bool,
-                       sup: &mut bool,
-                       pa: &mut VecDeque<ParkedCanUse>,
-                       pq: &mut Option<ParkedCanUse>,
-                       pc: &mut HashMap<String, PendingControl>,
-                       acc: &mut UsageAcc,
-                       totals: &mut StreamTotals| {
+        let run = |value: &Value,
+                   cur_mode: &mut SessionMode,
+                   bg: &mut bool,
+                   sup: &mut bool,
+                   pa: &mut VecDeque<ParkedCanUse>,
+                   pq: &mut Option<ParkedCanUse>,
+                   pc: &mut HashMap<String, PendingControl>,
+                   acc: &mut UsageAcc,
+                   totals: &mut StreamTotals| {
             handle_line(
-                value, &store, &conv, sid, &out_tx, cur_mode, acc, totals, &yolo, pa, pq, pc,
-                bg, sup,
+                value, &store, &conv, sid, &out_tx, cur_mode, acc, totals, &yolo, pa, pq, pc, bg,
+                sup,
             );
         };
 

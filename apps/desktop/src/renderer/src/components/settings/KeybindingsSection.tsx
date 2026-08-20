@@ -481,11 +481,11 @@ const KeybindingsSection: React.FC<KeybindingsSectionProps> = ({ config, save })
         </div>
       </Row>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        tmux-style keyboard mode: the prefix arms a transient key layer — pane zoom (z), swap
-        ({'{'} {'}'}), harpoon pins (m, 1–9), chat paging (Shift+K/J), approve/deny (y/n), and
-        repeat groups so prefix h h l walks panes. Chords stay armed until resolved; Esc, a
-        click, or an unknown key stands down. Prefix twice sends the literal prefix to the
-        focused terminal (nested tmux).
+        tmux-style keyboard mode: the prefix arms a transient key layer — pane zoom (z), swap ({'{'}{' '}
+        {'}'}), harpoon pins (m, 1–9), chat paging (Shift+K/J), approve/deny (y/n), and repeat
+        groups so prefix h h l walks panes. Chords stay armed until resolved; Esc, a click, or an
+        unknown key stands down. Prefix twice sends the literal prefix to the focused terminal
+        (nested tmux).
       </div>
 
       <Row label="Layer leader">

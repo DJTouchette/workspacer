@@ -423,8 +423,8 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
             }}
           >
             Point this desktop app at <code style={inlineCode}>workspacer serve</code> on another
-            machine. This is different from Phone sharing: after restart, this window becomes
-            a client and agents run on the server you enter here.
+            machine. This is different from Phone sharing: after restart, this window becomes a
+            client and agents run on the server you enter here.
           </div>
           <input
             value={url}
@@ -986,8 +986,8 @@ function EnabledState({
                 lineHeight: 1.5,
               }}
             >
-              Showing the phone client. The full desktop web UI is available when the web bundle
-              is built and the pairing scope is Full control.
+              Showing the phone client. The full desktop web UI is available when the web bundle is
+              built and the pairing scope is Full control.
             </div>
           )}
 

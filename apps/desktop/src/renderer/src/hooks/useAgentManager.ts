@@ -1483,9 +1483,7 @@ export function useAgentManager() {
         [panes[idx], panes[target]] = [panes[target], panes[idx]];
         return {
           ...a,
-          tabs: a.tabs.map((t) =>
-            t.id === tab.id ? { ...t, panes, zoomedPaneId: undefined } : t,
-          ),
+          tabs: a.tabs.map((t) => (t.id === tab.id ? { ...t, panes, zoomedPaneId: undefined } : t)),
         };
       });
     },

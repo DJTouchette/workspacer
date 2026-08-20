@@ -43,8 +43,7 @@ describe('claude.sessionsForDir id derivation', () => {
     for (const name of ['plain.jsonl', 'a.jsonl.b.jsonl', '.jsonlagent-x.jsonl']) {
       fs.writeFileSync(path.join(projectDir, name), '{"type":"user"}\n');
     }
-    const ids = (await listClaudeSessionsForDir(CWD)).map((s) => s.sessionId)
-      .sort();
+    const ids = (await listClaudeSessionsForDir(CWD)).map((s) => s.sessionId).sort();
     expect(ids).toEqual(['.jsonlagent-x', 'a.jsonl.b', 'plain']);
   });
 

@@ -71,7 +71,14 @@ beforeEach(() => {
     seen: [],
   });
   api.claudeProfilesList = vi.fn().mockResolvedValue([
-    { id: 'default', name: 'Default', configDir: '', extraArgs: [], mcpItemIds: [], isDefault: true },
+    {
+      id: 'default',
+      name: 'Default',
+      configDir: '',
+      extraArgs: [],
+      mcpItemIds: [],
+      isDefault: true,
+    },
     {
       id: 'work-uuid',
       name: 'Work',
@@ -199,9 +206,7 @@ describe('SpawnAgentDialog profiles', () => {
     // The service always materializes an `id: 'default'` row named "Default"
     // (claudeProfiles.ts and its Go twin), so a synthetic "no profile" chip
     // beside it rendered TWO chips both reading Default.
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Work' })).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Work' })).toBeInTheDocument());
     expect(screen.getAllByRole('button', { name: 'Default' })).toHaveLength(1);
 
     // And the pre-selection is that real row, so a spawn carries the loadout

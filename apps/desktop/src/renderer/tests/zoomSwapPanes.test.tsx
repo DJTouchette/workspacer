@@ -56,7 +56,14 @@ describe('zoom / swap / cycle', () => {
         [
           {
             ...seed(),
-            tabs: [{ id: 't1', title: 'T', panes: [{ id: 'p1', type: 'claude', title: 'C' }], activePaneId: 'p1' }],
+            tabs: [
+              {
+                id: 't1',
+                title: 'T',
+                panes: [{ id: 'p1', type: 'claude', title: 'C' }],
+                activePaneId: 'p1',
+              },
+            ],
           },
         ],
         'agent-1',

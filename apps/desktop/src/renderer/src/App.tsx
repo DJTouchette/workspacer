@@ -1777,7 +1777,10 @@ function App() {
     onAlternateAgent: handleAlternateAgent,
     onPinAgent: handlePinAgent,
     onJumpPinned: handleJumpPinned,
-    onApproveAttention: useCallback(() => handleAttentionDecision('yes'), [handleAttentionDecision]),
+    onApproveAttention: useCallback(
+      () => handleAttentionDecision('yes'),
+      [handleAttentionDecision],
+    ),
     onDenyAttention: useCallback(() => handleAttentionDecision('no'), [handleAttentionDecision]),
     onPaneHints: handlePaneHints,
     onCmdline: handleCmdline,
@@ -2838,12 +2841,8 @@ function App() {
                 showOptions={kbChordHints}
               />
             )}
-            {commandLayerCfg.enabled === true && (
-              <FocusChip enabled armed={chordPath !== null} />
-            )}
-            {paneHintsOn && activeTab && (
-              <PaneHints paneIds={activeTab.panes.map((p) => p.id)} />
-            )}
+            {commandLayerCfg.enabled === true && <FocusChip enabled armed={chordPath !== null} />}
+            {paneHintsOn && activeTab && <PaneHints paneIds={activeTab.panes.map((p) => p.id)} />}
 
             {/* Fleet Deck — cross-agent radar overlay. Sits OVER the still-mounted
           per-agent workspaces, so entering/leaving never remounts a pane.

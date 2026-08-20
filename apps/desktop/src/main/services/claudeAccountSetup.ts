@@ -194,9 +194,10 @@ export function createAccountConfigDir(name: string, primaryRoot?: string): Acco
 function seedClaudeJson(primary: string, dir: string): void {
   const seed: Record<string, unknown> = { hasCompletedOnboarding: true };
   try {
-    const primaryJson = JSON.parse(
-      fs.readFileSync(claudeJsonPathFor(primary), 'utf-8'),
-    ) as Record<string, unknown>;
+    const primaryJson = JSON.parse(fs.readFileSync(claudeJsonPathFor(primary), 'utf-8')) as Record<
+      string,
+      unknown
+    >;
     if (primaryJson.theme !== undefined) seed.theme = primaryJson.theme;
     if (primaryJson.projects !== undefined) seed.projects = primaryJson.projects;
   } catch {

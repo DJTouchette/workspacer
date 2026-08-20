@@ -103,7 +103,9 @@ export function readRedactedPeers(): RedactedFederationPeer[] {
  */
 function normalizePeers(
   peers: unknown,
-): { ok: true; peers: Array<{ name: string; url: string; token?: string }> } | { ok: false; error: string } {
+):
+  | { ok: true; peers: Array<{ name: string; url: string; token?: string }> }
+  | { ok: false; error: string } {
   if (!Array.isArray(peers)) return { ok: false, error: 'peers must be an array' };
   const out: Array<{ name: string; url: string; token?: string }> = [];
   const seen = new Set<string>();
@@ -189,7 +191,5 @@ export async function savePeersConfig(peersInput: unknown): Promise<SavePeersRes
 /** Register the two IPC handlers. Called once from main/index.ts. */
 export function startFederationPeersConfig(): void {
   ipcMain.handle(IPC.FEDERATION_PEERS_CONFIG, () => readRedactedPeers());
-  ipcMain.handle(IPC.FEDERATION_SAVE_PEERS_CONFIG, (_e, peers: unknown) =>
-    savePeersConfig(peers),
-  );
+  ipcMain.handle(IPC.FEDERATION_SAVE_PEERS_CONFIG, (_e, peers: unknown) => savePeersConfig(peers));
 }

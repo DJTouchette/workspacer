@@ -90,7 +90,11 @@ const HEADER_CACHE_MAX = 2000;
 
 /** Run tasks with at most `limit` in flight. Tiny local pLimit — not worth a
  *  dependency for one call site. */
-async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {

@@ -146,8 +146,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({
   useEffect(() => {
     const onWritePrefix = (e: Event) => {
       const detail = (e as CustomEvent).detail as
-        | { target?: Element | null; bytes?: string }
-        | undefined;
+        { target?: Element | null; bytes?: string } | undefined;
       if (!detail?.bytes) return;
       const container = containerRef.current;
       if (!container || !detail.target || !container.contains(detail.target)) return;

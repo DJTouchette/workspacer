@@ -153,7 +153,17 @@ export const ConversationEmptyState: React.FC<{
    *  clobber the prepared prompt. */
   initialPrompt?: string;
   onPick: (prompt: string) => void;
-}> = ({ agentName, provider, model, permissionMode, transport, cwd, hub, initialPrompt, onPick }) => {
+}> = ({
+  agentName,
+  provider,
+  model,
+  permissionMode,
+  transport,
+  cwd,
+  hub,
+  initialPrompt,
+  onPick,
+}) => {
   const dirName = cwd ? (cwd.replace(/\/+$/, '').split('/').pop() ?? cwd) : undefined;
 
   // Git peek: branch + dirty count + last commit, best-effort. Not a repo /

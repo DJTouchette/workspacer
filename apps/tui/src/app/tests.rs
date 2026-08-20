@@ -1428,8 +1428,15 @@ fn harpoon_keeps_pin_order_and_skips_non_running_sessions() {
         agent_cwd("s9", "/repo/beta", "input"),
     ]);
     app.rebuild_harpoon();
-    assert_eq!(app.harpoon, vec!["s1"], "a new session is a new agent, not the old pin");
-    assert!(app.pinned.contains(&"s2".to_string()), "the stopped pin is kept, not culled");
+    assert_eq!(
+        app.harpoon,
+        vec!["s1"],
+        "a new session is a new agent, not the old pin"
+    );
+    assert!(
+        app.pinned.contains(&"s2".to_string()),
+        "the stopped pin is kept, not culled"
+    );
 }
 
 // ── transport resolution ────────────────────────────────────────────────
