@@ -31,8 +31,15 @@ vi.mock('./claudeSessionStore', () => ({
 }));
 
 const getProfile = vi.fn(() => undefined as unknown);
-vi.mock('./claudeProfiles', () => ({
-  claudeProfiles: { getProfile: (...a: unknown[]) => getProfile(...a) },
+const getProfiles = vi.fn(() => [] as unknown[]);
+vi.mock('./claudeProfiles', async (importOriginal) => ({
+  // The scrub functions are pure — keep the real ones so profileGranted tests
+  // exercise the actual configDir-keep/drop behavior, not a stub of it.
+  ...(await importOriginal<typeof import('./claudeProfiles')>()),
+  claudeProfiles: {
+    getProfile: (...a: unknown[]) => getProfile(...a),
+    getProfiles: (...a: unknown[]) => getProfiles(...a),
+  },
 }));
 
 // ONLY listWithSecrets is mocked, deliberately: `list()` masks MCP env/headers
@@ -51,6 +58,9 @@ vi.mock('./configService', () => ({
       supervisor: { model: 'sup-model', summarizerModel: 'sonnet', pollSeconds: 30 },
     }),
   },
+  // Needed by the REAL claudeProfiles module (its profilesFile path is
+  // computed at import time) — the mock above pulls the original in.
+  getConfigDir: () => '/tmp/wks-test-config',
 }));
 
 const installSupervisorSkill = vi.fn();
@@ -238,6 +248,62 @@ describe('spawnClaudeAgent — facade takes precedence over Library MCP', () => 
     await spawnClaudeAgent({ cwd: '/proj' });
 
     expect(mintSessionFacadeToken).not.toHaveBeenCalled();
+  });
+
+  it('a manager spawn mints its token with a profilesAllowed grant for every local profile', async () => {
+    getProfiles.mockReturnValue([{ id: 'default' }, { id: 'work' }]);
+    await spawnClaudeAgent({ cwd: '/home/u/Work', manager: true, toolScope: 'operator' });
+
+    expect(mintSessionFacadeToken).toHaveBeenCalledTimes(1);
+    expect(mintSessionFacadeToken.mock.calls[0][3]).toEqual(['default', 'work']);
+  });
+
+  it('a non-manager facade spawn mints NO profile grant', async () => {
+    getProfiles.mockReturnValue([{ id: 'default' }]);
+    await spawnClaudeAgent({ supervisor: true });
+
+    expect(mintSessionFacadeToken.mock.calls[0][3]).toBeUndefined();
+  });
+});
+
+describe('spawnClaudeAgent — profileGranted (fleet-manager dispatch)', () => {
+  const workProfile = {
+    id: 'work',
+    name: 'Work',
+    configDir: '/accounts/work',
+    extraArgs: ['--dangerously-skip-permissions', '--model', 'opus'],
+    mcpItemIds: ['srv1'],
+  };
+
+  it('scrubProfileBypass alone drops the profile configDir (remote doctrine unchanged)', async () => {
+    getProfile.mockReturnValue(workProfile);
+    await spawnClaudeAgent({ cwd: '/proj', profileId: 'work', scrubProfileBypass: true });
+
+    expect(lastSpawn().env.CLAUDE_CONFIG_DIR).toBeUndefined();
+    expect(lastArgv()).not.toContain('--dangerously-skip-permissions');
+  });
+
+  it('a hub-stamped grant keeps the configDir but still strips the bypass args', async () => {
+    getProfile.mockReturnValue(workProfile);
+    await spawnClaudeAgent({
+      cwd: '/proj',
+      profileId: 'work',
+      scrubProfileBypass: true,
+      profileGranted: true,
+    });
+
+    expect(lastSpawn().env.CLAUDE_CONFIG_DIR).toBe('/accounts/work');
+    const argv = lastArgv();
+    expect(argv).not.toContain('--dangerously-skip-permissions');
+    expect(argv[argv.indexOf('--model') + 1]).toBe('opus');
+  });
+
+  it('profileGranted without the scrub boundary changes nothing (local spawns already trust)', async () => {
+    getProfile.mockReturnValue(workProfile);
+    await spawnClaudeAgent({ cwd: '/proj', profileId: 'work', profileGranted: true });
+
+    expect(lastSpawn().env.CLAUDE_CONFIG_DIR).toBe('/accounts/work');
+    expect(lastArgv()).toContain('--dangerously-skip-permissions');
   });
 });
 

@@ -40,6 +40,12 @@ function normalizeRecord(raw: unknown): RemoteTokenRecord | null {
     ...(Array.isArray(r.plugins) && {
       plugins: r.plugins.filter((p): p is string => typeof p === 'string' && !!p.trim()),
     }),
+    // Same preservation rule for the fleet-manager profile grant.
+    ...(Array.isArray(r.profilesAllowed) && {
+      profilesAllowed: r.profilesAllowed.filter(
+        (p): p is string => typeof p === 'string' && !!p.trim(),
+      ),
+    }),
   };
 }
 
@@ -99,12 +105,17 @@ export function mintSessionFacadeToken(
   sessionId: string,
   scope: RemoteTokenScope,
   plugins?: string[],
+  profilesAllowed?: string[],
 ): RemoteTokenRecord {
   const label = SESSION_LABEL_PREFIX + sessionId;
   const records = readTokens().filter((r) => r.label !== label);
   const next: RemoteTokenRecord = {
     ...mint(normalizeScope(scope), label),
     ...(plugins && plugins.length && { plugins }),
+    // Fleet-manager dispatch grant: exact profile ids this session may spawn
+    // workers under. Omitted when empty (wire-shape twin of `plugins`; pinned
+    // Go-side by TestProfilesAllowedWireShape).
+    ...(profilesAllowed && profilesAllowed.length && { profilesAllowed }),
   };
   writeTokens([...records, next]);
   return next;

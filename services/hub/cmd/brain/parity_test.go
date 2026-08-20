@@ -381,6 +381,14 @@ var spawnParamsDeclined = map[string]string{
 	"pluginTools": "plugin tool grants are recorded on the session facade token, which headless cannot mint (see toolScope)",
 }
 
+// spawnParamsAhead is the mirror escape hatch: brain spawnParams the DESKTOP
+// does not take yet, with the reason the brain leads. The symmetric rule to
+// spawnParamsDeclined — an entry here must NOT exist on the desktop side (the
+// moment hubCapabilities.ts grows the param, this guard fails until the entry
+// is pruned), and must be a real brain JSON tag, so the exception can neither
+// linger past the desktop catching up nor outlive the field it excuses.
+var spawnParamsAhead = map[string]string{}
+
 // desktopSpawnParamRe pulls the field names out of the agents.spawn params type
 // literal in hubCapabilities.ts (`provider?: AgentProvider;` → provider).
 var desktopSpawnParamRe = regexp.MustCompile(`(?m)^\s*(\w+)\?:`)
@@ -430,8 +438,16 @@ func TestSpawnParamSurfaceMatchesDesktop(t *testing.T) {
 		}
 	}
 	for param := range brain {
-		if !desktop[param] {
-			t.Errorf("brain spawnParams has %q but the desktop's agents.spawn doesn't — the surfaces must stay identical", param)
+		if !desktop[param] && spawnParamsAhead[param] == "" {
+			t.Errorf("brain spawnParams has %q but the desktop's agents.spawn doesn't — the surfaces must stay identical (or record why the brain leads in spawnParamsAhead)", param)
+		}
+	}
+	for param := range spawnParamsAhead {
+		if desktop[param] {
+			t.Errorf("spawnParamsAhead lists %q but the desktop now takes it — the surfaces converged; prune the entry", param)
+		}
+		if !brain[param] {
+			t.Errorf("spawnParamsAhead lists %q but the brain's spawnParams doesn't have it — the exception outlived the field", param)
 		}
 	}
 	for param := range spawnParamsDeclined {

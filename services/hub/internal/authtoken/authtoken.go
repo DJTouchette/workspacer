@@ -166,6 +166,17 @@ type Record struct {
 	// PROVIDING plugin's own grants, and a scoped token's Methods() never
 	// includes a plugin namespace.
 	Plugins []string `json:"plugins,omitempty"`
+	// ProfilesAllowed lists the Claude profile ids this token may dispatch
+	// agents under: an agents.spawn naming a profileId in this list keeps it
+	// (the hub stamps `profileGranted` beside it); any other profileId is
+	// stripped before the call reaches a provider. Same philosophy as Plugins —
+	// a grant recorded at mint time by the host user (the desktop's
+	// fleet-manager spawn path), never claimable by the caller itself. Exact
+	// ids only, deliberately no "*": blessing a manager means naming the
+	// accounts it may burn. Enforced in BOTH places tokens are verifiable: the
+	// hub router (scoped bus connections) and the MCP facade (per-session
+	// records multiplexed over the facade's own trusted connection).
+	ProfilesAllowed []string `json:"profilesAllowed,omitempty"`
 }
 
 // ConfigDir mirrors the desktop app's getConfigDir (configService.ts) and the

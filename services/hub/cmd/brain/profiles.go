@@ -337,6 +337,35 @@ func getProfile(id string) *profile {
 	return nil
 }
 
+// remoteSpawnProfile resolves the profile a bus spawn runs under. Ungranted —
+// the doctrine, unchanged since the day profileId was an open door — is
+// scrubBypassProfile: bypass extraArgs dropped, configDir dropped, mcpItemIds
+// dropped. Granted (profileGranted, which ONLY the hub router stamps, after
+// verifying the caller's token record lists this exact profile id —
+// internal/bus sanitizeSpawnParams deletes the key from every incoming call
+// first, so no caller can be its source) keeps the LOCAL profile's configDir:
+// the grant's entire meaning is "dispatch under this account", and the account
+// IS the CLAUDE_CONFIG_DIR. That is safe where a wire configDir never was,
+// because the id resolves against THIS host's profile store and a profile
+// created or updated OVER THE BUS has its configDir scrubbed at write time
+// (profilesAdd/profilesUpdate) — so a configDir honored here was typed in by
+// the local user, then granted to this token by the local user. The bypass
+// scrub still applies to a granted spawn: extraArgs stay allowlisted and
+// mcpItemIds stay dropped, because account identity and approval bypass are
+// different escalations and the grant only speaks for the first.
+func remoteSpawnProfile(profileID string, granted bool) *profile {
+	prof := getProfile(profileID)
+	if prof == nil {
+		return nil
+	}
+	if !granted {
+		return scrubBypassProfile(prof)
+	}
+	cp := scrubBypassProfile(prof)
+	cp.ConfigDir = prof.ConfigDir
+	return cp
+}
+
 // scrubBypassProfile returns the copy of a profile a remote (bus/web/MCP) spawn
 // is allowed to use: extraArgs reduced to the allowlist below, and no
 // CLAUDE_CONFIG_DIR. Without it, clamping the request's own fields left

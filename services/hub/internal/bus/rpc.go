@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -233,6 +234,85 @@ func (rt *router) register(cn *conn, methods []string) []string {
 	return accepted
 }
 
+// spawnMethod is the one capability whose params the router rewrites. The bus
+// is otherwise deliberately payload-blind — it routes, it doesn't interpret —
+// but profile dispatch is a per-TOKEN grant, and the token is only verifiable
+// here, so the router is the single place the grant can be turned into
+// something a provider may trust without re-verifying credentials it never
+// sees.
+const spawnMethod = "agents.spawn"
+
+// mayUseProfile reports whether this connection may dispatch an agent under
+// the named Claude profile.
+//
+//   - host token (trusted, NOT via tokens.json): yes, any profile. This is the
+//     control plane's own credential — the desktop, the MCP facade (which
+//     enforces per-session facade-token grants itself before a profileId ever
+//     reaches its bus connection), the brain. A process holding it could
+//     rewrite tokens.json, so gating it here would be theater.
+//   - scoped user token (tokens.json), operator tier included: only ids in the
+//     record's profilesAllowed grant. Operator promotion to `trusted` grants
+//     METHODS, not profiles — the fleet-manager grant is per-token by design,
+//     so two operator sessions can hold different account sets.
+//   - plugin token: never. A plugin's consent dialog never mentioned accounts.
+func (cn *conn) mayUseProfile(id string) bool {
+	if id == "" || cn.revoked.Load() {
+		return false
+	}
+	if cn.pluginID != "" {
+		return false
+	}
+	if cn.viaScopedToken {
+		return slices.Contains(cn.profilesAllowed, id)
+	}
+	return cn.trusted
+}
+
+// sanitizeSpawnParams enforces the profile-dispatch grant on an agents.spawn's
+// params, at the router's single dispatch point:
+//
+//  1. `profileGranted` is DELETED from every incoming call. It is hub-stamped
+//     only — a provider seeing it true knows the hub verified the caller, and
+//     no caller (spoofing included) can be its source.
+//  2. `profileId` survives only when the caller may use that exact profile
+//     (mayUseProfile); the hub then stamps `profileGranted: true` beside it.
+//     Otherwise the field is stripped, which is byte-for-byte today's doctrine:
+//     an ungranted bus caller cannot name a profile at all.
+//
+// Non-object params pass through untouched — there is no field to smuggle in a
+// shape the provider's own decoder would reject anyway. The provider keeps its
+// own scrubs (configDir never comes from the wire; the profile id resolves
+// against the provider's LOCAL profile store), so this is an additional gate in
+// front of them, not a replacement.
+func sanitizeSpawnParams(caller *conn, raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
+		return raw
+	}
+	delete(m, "profileGranted")
+	var pid string
+	if r, ok := m["profileId"]; ok {
+		if json.Unmarshal(r, &pid) != nil {
+			pid = "" // non-string spelling: strip rather than interpret
+		}
+	}
+	if pid != "" && caller.mayUseProfile(pid) {
+		m["profileGranted"] = json.RawMessage("true")
+	} else {
+		delete(m, "profileId")
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		// Cannot happen for a map of valid RawMessages; fail closed anyway by
+		// refusing to forward the un-sanitized original's profile fields.
+		return json.RawMessage("{}")
+	}
+	return out
+}
+
 // call routes a caller's invocation to the registered provider.
 func (rt *router) call(caller *conn, f Frame) {
 	if f.Method == "" {
@@ -254,6 +334,12 @@ func (rt *router) call(caller *conn, f Frame) {
 	if err := caller.authorize(f.Method, f.Params); err != nil {
 		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: err.Error()})
 		return
+	}
+	// Profile-dispatch grant: strip/stamp the spawn's profile fields based on
+	// the VERIFIED caller, before either dispatch path (local or provider) can
+	// see them.
+	if f.Method == spawnMethod {
+		f.Params = sanitizeSpawnParams(caller, f.Params)
 	}
 
 	// In-process handlers (hub-owned capabilities) take precedence over remote
@@ -374,6 +460,17 @@ func (rt *router) federatedCall(caller *conn, f Frame, peer, bare string) {
 			_ = caller.send(Frame{Op: "error", ID: f.ID, Error: caller.callDenied(bare)})
 			return
 		}
+	}
+	// Profile-dispatch grant, applied against the LOCAL caller before the hop —
+	// and applied AGAIN by the peer against its federation-link connection when
+	// the forwarded call re-enters the peer's own router. Both layers are load-
+	// bearing: this one keeps an ungranted local caller from riding the link's
+	// authority; the peer's keeps a granted-here id from meaning anything there
+	// unless the link credential is trusted with it. (Path confinement is
+	// deliberately NOT applied to federated params — see the comment above —
+	// but a profile id is not a path: it names a grant this router CAN verify.)
+	if bare == spawnMethod {
+		f.Params = sanitizeSpawnParams(caller, f.Params)
 	}
 	// Off the read loop: the forward blocks on the peer's reply. The forwarder
 	// owns the (shorter) timeout, so the failure the caller sees names the

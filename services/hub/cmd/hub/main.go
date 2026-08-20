@@ -326,7 +326,13 @@ func main() {
 			if !ok {
 				return bus.ScopedIdent{}, false
 			}
-			return bus.ScopedIdent{Scope: string(rec.Scope), Methods: rec.Scope.Methods()}, true
+			return bus.ScopedIdent{
+				Scope:   string(rec.Scope),
+				Methods: rec.Scope.Methods(),
+				// The profile-dispatch grant rides the ident so the router can
+				// enforce it per call (agents.spawn profileId strip/stamp).
+				ProfilesAllowed: rec.ProfilesAllowed,
+			}, true
 		})
 	}
 

@@ -385,6 +385,38 @@ describe('agents.spawn — dispatch', () => {
     );
   });
 
+  it('forwards the hub-stamped profileGranted to both claude branches, hardened to a strict boolean', async () => {
+    // The hub's sanitizeSpawnParams already deleted any caller-supplied copy —
+    // by the time it reaches this provider it is trustworthy. The `=== true`
+    // hardening is for a hub-bypassing local caller handing a truthy string.
+    await call('agents.spawn', {
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      profileId: 'work',
+      profileGranted: true,
+    });
+    expect(
+      (spawnManagedAgent.mock.calls[0][0] as { profileGranted?: boolean }).profileGranted,
+    ).toBe(true);
+
+    await call('agents.spawn', {
+      provider: 'claude',
+      transport: 'pty',
+      cwd: '/proj',
+      profileId: 'work',
+      profileGranted: 'yes',
+    });
+    expect((spawnClaudeAgent.mock.calls[0][0] as { profileGranted?: boolean }).profileGranted).toBe(
+      false,
+    );
+
+    await call('agents.spawn', { provider: 'claude', transport: 'pty', cwd: '/proj' });
+    expect((spawnClaudeAgent.mock.calls[1][0] as { profileGranted?: boolean }).profileGranted).toBe(
+      false,
+    );
+  });
+
   it("claude + transport 'pty' (or unset, with no config default) stays on spawnClaudeAgent", async () => {
     await call('agents.spawn', { provider: 'claude', transport: 'pty', cwd: '/proj' });
     expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);

@@ -119,10 +119,11 @@ func (pc *pluginCatalog) snapshot() (map[string][]pluginToolDef, int) {
 }
 
 // serverCache hands out the MCP server for a resolved token: the plain tier
-// server when the token grants no plugins, or a tier+plugin-tools server built
-// on demand and cached by (scope, granted plugins, catalog generation). The
-// cache is flushed whenever the catalog generation moves, so a plugin
-// reload/uninstall retires its tools within one poll interval.
+// server when the token record carries no per-token grants, or a
+// tier+grants server built on demand and cached by (scope, granted plugins,
+// granted profiles, catalog generation). The cache is flushed whenever the
+// catalog generation moves, so a plugin reload/uninstall retires its tools
+// within one poll interval.
 type serverCache struct {
 	c       *busclient.Client
 	catalog *pluginCatalog
@@ -139,7 +140,7 @@ func newServerCache(c *busclient.Client, catalog *pluginCatalog, base map[authto
 
 // serverFor returns the server a resolved token record should be served.
 func (sc *serverCache) serverFor(rec authtoken.Record) *mcp.Server {
-	if len(rec.Plugins) == 0 {
+	if len(rec.Plugins) == 0 && len(rec.ProfilesAllowed) == 0 {
 		if s := sc.base[rec.Scope]; s != nil {
 			return s
 		}
@@ -150,7 +151,11 @@ func (sc *serverCache) serverFor(rec authtoken.Record) *mcp.Server {
 	}
 	byID, gen := sc.catalog.snapshot()
 	granted := grantedPlugins(rec.Plugins, byID)
-	key := string(rec.Scope) + "|" + strings.Join(granted, ",") + "|" + strconv.Itoa(gen)
+	// Profiles join the cache key so two records at the same tier with
+	// different account grants can never share a spawn tool — the grant check
+	// is closed over the build, so a shared server IS a shared grant.
+	key := string(rec.Scope) + "|" + strings.Join(granted, ",") +
+		"|" + strings.Join(rec.ProfilesAllowed, ",") + "|" + strconv.Itoa(gen)
 
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
@@ -165,7 +170,7 @@ func (sc *serverCache) serverFor(rec authtoken.Record) *mcp.Server {
 	for _, id := range granted {
 		defs = append(defs, grantedPluginTools{PluginID: id, Tools: byID[id]})
 	}
-	s := newServerWithPlugins(sc.c, rec.Scope, defs)
+	s := newServerWithGrants(sc.c, rec.Scope, defs, rec.ProfilesAllowed)
 	sc.built[key] = s
 	return s
 }

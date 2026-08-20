@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -406,6 +407,13 @@ type build struct {
 	allow []string // method patterns this tier may call (authtoken Scope.Methods)
 	group string   // current section, stamped onto tools as they register
 	tools []toolInfo
+	// profiles is the token record's profile-dispatch grant
+	// (authtoken.Record.ProfilesAllowed): the Claude profile ids spawn_agent may
+	// name. Enforced HERE because the facade multiplexes every session token
+	// over one trusted bus connection — the hub sees the facade's credential,
+	// not the session's, so the per-record check must happen where the record
+	// is resolved. Exact ids only; empty = spawn_agent refuses any profileId.
+	profiles []string
 }
 
 type toolInfo struct {
@@ -419,19 +427,20 @@ func (b *build) allowed(method string) bool { return event.MatchesAny(b.allow, m
 // and kept to ONE line each — the schemas are what every connected agent pays
 // context for, so usage guidance lives behind the `help` tool instead.
 func newServer(c *busclient.Client, scope authtoken.Scope) *mcp.Server {
-	return newServerWithPlugins(c, scope, nil)
+	return newServerWithGrants(c, scope, nil, nil)
 }
 
-// newServerWithPlugins additionally grafts plugin-contributed tools onto the
-// tier (see plugins.go) — used by the serverCache for tokens whose record
-// grants specific plugins.
-func newServerWithPlugins(c *busclient.Client, scope authtoken.Scope, plugins []grantedPluginTools) *mcp.Server {
+// newServerWithGrants additionally applies a token record's per-token grants:
+// plugin-contributed tools grafted onto the tier (see plugins.go), and the
+// profile-dispatch allowlist spawn_agent checks a profileId against. Used by
+// the serverCache for tokens whose record grants either.
+func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []grantedPluginTools, profiles []string) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "workspacer",
 		Title:   "Workspacer",
 		Version: "0.1.0",
 	}, nil)
-	b := &build{s: s, c: c, scope: scope, allow: scope.Methods()}
+	b := &build{s: s, c: c, scope: scope, allow: scope.Methods(), profiles: profiles}
 
 	// ── Observe ────────────────────────────────────────────────────────────
 	b.group = "observe"
@@ -462,7 +471,7 @@ func newServerWithPlugins(c *busclient.Client, scope authtoken.Scope, plugins []
 
 	// ── Spawn ──────────────────────────────────────────────────────────────
 	b.group = "spawn"
-	addHubTool[spawnAgentIn](b, "spawn_agent",
+	addSpawnTool(b, "spawn_agent",
 		"Start a new coding-agent session in a directory (claude by default; codex/opencode/pi via provider) and return its sessionId. See help topic 'spawn' for labeling, nesting, and granting the new agent workspacer tools via toolScope.",
 		"agents.spawn")
 	addTool[createTerminalIn](b, "create_terminal",
@@ -675,6 +684,40 @@ func addTool[In any](b *build, name, desc, method string) {
 		})
 }
 
+// addSpawnTool is addHubTool specialized to spawn_agent, because spawn carries
+// the one input the facade must judge per SESSION rather than per tier: a
+// `profile` dispatch request (profileId). The tier says whether you may spawn
+// at all; the token record's profilesAllowed grant says which Claude accounts
+// you may spawn UNDER — and the check has to live here, where the per-request
+// record was resolved, because the hub only ever sees the facade's own trusted
+// bus credential. A granted id is forwarded as-is and the hub (which trusts
+// this facade's host-token connection) stamps `profileGranted` for the
+// provider; an ungranted id is refused out loud, never silently degraded —
+// dispatching "to the account with headroom" and landing on the default
+// account is a capacity bug wearing a success result.
+func addSpawnTool(b *build, name, desc, method string) {
+	if !b.allowed(method) {
+		return
+	}
+	b.tools = append(b.tools, toolInfo{Name: name, Desc: desc, Method: method, Group: b.group})
+	mcp.AddTool(b.s, &mcp.Tool{Name: name, Description: desc},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in spawnAgentIn) (*mcp.CallToolResult, any, error) {
+			if in.ProfileID != "" && !slices.Contains(b.profiles, in.ProfileID) {
+				return &mcp.CallToolResult{
+					IsError: true,
+					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(
+						"profile %q is not granted to this session token (profilesAllowed: %v). Omit profileId to spawn under the default account, or ask the workspacer user to bless this session with that profile.",
+						in.ProfileID, b.profiles)}},
+				}, nil, nil
+			}
+			m := method
+			if peer := in.takeHub(); peer != "" {
+				m = "hub:" + peer + "/" + method
+			}
+			return forward(ctx, b.c, m, in)
+		})
+}
+
 // addObjectTool registers a tool whose entire arguments object is forwarded
 // verbatim as the capability's params. For capabilities that take a free-form
 // object (a config patch, a saved-session blob) too nested to model as a typed
@@ -784,7 +827,7 @@ type spawnAgentIn struct {
 	Cwd             string   `json:"cwd,omitempty" jsonschema:"working directory for the new agent (defaults to the user's home)"`
 	Model           string   `json:"model,omitempty" jsonschema:"model id to use, e.g. claude-opus-4-8 (optional; provider-specific)"`
 	Effort          string   `json:"effort,omitempty" jsonschema:"reasoning-effort level: low, medium, high, xhigh, or max (claude/codex)"`
-	ProfileID       string   `json:"profileId,omitempty" jsonschema:"workspacer Claude profile id to use (optional)"`
+	ProfileID       string   `json:"profileId,omitempty" jsonschema:"workspacer Claude profile id to dispatch under (optional; refused unless your session token's profilesAllowed grant lists this exact id — see list_profiles for ids)"`
 	SkipPermissions bool     `json:"skipPermissions,omitempty" jsonschema:"start the agent with --dangerously-skip-permissions"`
 	Label           string   `json:"label,omitempty" jsonschema:"a short human label for the new agent, shown as its name in the UI"`
 	ParentSessionId string   `json:"parentSessionId,omitempty" jsonschema:"the spawning agent's own session id; set this so the new agent appears nested under you in the UI"`

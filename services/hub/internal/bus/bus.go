@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -106,6 +107,11 @@ type capGrant struct {
 type ScopedIdent struct {
 	Scope   string
 	Methods []string
+	// ProfilesAllowed is the token record's profile-dispatch grant
+	// (authtoken.Record.ProfilesAllowed): the Claude profile ids an
+	// agents.spawn from this connection may keep. The router strips profileId
+	// from a spawn whose caller lacks the grant — see sanitizeSpawnParams.
+	ProfilesAllowed []string
 }
 
 // operator reports whether the ident grants everything — such a token is
@@ -753,7 +759,7 @@ func (s *Server) revalidateScoped(ctx context.Context, cn *conn, tok, authScope 
 			return
 		case <-t.C:
 			si, ok := s.lookupScoped(tok)
-			if ok && si.Scope == authScope {
+			if ok && si.Scope == authScope && slices.Equal(si.ProfilesAllowed, cn.profilesAllowed) {
 				continue
 			}
 			// Both halves, exactly as UnregisterPluginToken applies them: the
@@ -762,7 +768,9 @@ func (s *Server) revalidateScoped(ctx context.Context, cn *conn, tok, authScope 
 			// consuming events.
 			cn.revoked.Store(true)
 			_ = cn.ws.CloseNow()
-			if ok {
+			if ok && si.Scope == authScope {
+				log.Printf("[bus] scoped token %s: profile grant changed while connected; connection closed (reconnect picks up the new grant)", cn.tokenID)
+			} else if ok {
 				log.Printf("[bus] scoped token %s: tier changed %q -> %q while connected; connection closed", cn.tokenID, authScope, si.Scope)
 			} else {
 				log.Printf("[bus] scoped token %s revoked; connection closed", cn.tokenID)
@@ -799,12 +807,14 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	// revocation too.
 	var viaScoped bool
 	var authScope string
+	var profilesAllowed []string
 	if pi, ok := s.lookupPluginToken(tok); ok {
 		caps, pluginID, events = pi.caps, pi.id, pi.events
 	} else if s.token == "" || tok == s.token {
 		trusted = true
 	} else if si, ok := s.lookupScoped(tok); ok {
 		viaScoped, authScope = true, si.Scope
+		profilesAllowed = si.ProfilesAllowed
 		if si.operator() {
 			trusted = true
 		} else {
@@ -839,6 +849,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 		ws: ws, ctx: ctx, trusted: trusted, caps: caps, pluginID: pluginID,
 		emits: events.Emits, consumes: events.Consumes, provides: events.Provides,
 		scope: scope, scopeMethods: scopeMethods, tokenID: TokenFingerprint(tok),
+		viaScopedToken: viaScoped, profilesAllowed: profilesAllowed,
 	}
 	s.router.addConn(cn)
 	if pluginID != "" {
@@ -1029,6 +1040,18 @@ type conn struct {
 	// matching methods. Nil on trusted and plugin conns.
 	scope        string
 	scopeMethods []string
+	// viaScopedToken marks a connection authenticated from tokens.json —
+	// INCLUDING an operator-tier record, which `trusted` alone cannot
+	// distinguish from the host token. The distinction matters exactly once:
+	// profile dispatch. A host-token conn is the control plane itself (the
+	// desktop, the MCP facade, the brain — processes that could rewrite
+	// tokens.json anyway), so it may name any profile; a scoped record, even an
+	// operator one, may only name the ids in its own profilesAllowed grant.
+	viaScopedToken bool
+	// profilesAllowed is the scoped record's profile-dispatch grant, snapshotted
+	// at handshake (revalidateScoped closes the socket if the record's grant
+	// changes, so the snapshot cannot go stale while live).
+	profilesAllowed []string
 	// Event-side grants (empty for a trusted conn, which bypasses these): which
 	// event types this plugin may publish / receive, and which capability methods
 	// it may register as a provider of. Patterns are matched with event.Matches.

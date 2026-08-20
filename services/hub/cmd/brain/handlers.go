@@ -398,6 +398,15 @@ type spawnParams struct {
 	// Reasoning-effort level (codex `model_reasoning_effort`); others ignore it.
 	Effort    string `json:"effort"`
 	ProfileID string `json:"profileId"`
+	// ProfileGranted is stamped by the HUB ROUTER and only by it: the hub
+	// deletes the key from every incoming agents.spawn and re-adds it iff the
+	// verified caller may dispatch under ProfileID (host token, or a tokens.json
+	// record whose profilesAllowed grant lists that exact id) — see
+	// internal/bus sanitizeSpawnParams. When true, the spawn keeps the LOCAL
+	// profile's CLAUDE_CONFIG_DIR (the account is the point of the grant);
+	// bypass flags and mcpItemIds are scrubbed regardless, because the grant is
+	// about which account burns the tokens, never about skipping approvals.
+	ProfileGranted bool `json:"profileGranted"`
 	// Claude permission mode (default/acceptEdits/plan/…). Bypass modes are
 	// clamped off for bus callers — see the security rule in spawn().
 	PermissionMode  string `json:"permissionMode"`
@@ -469,8 +478,9 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	// still point at a local profile whose extraArgs pin a bypass flag
 	// (--dangerously-skip-permissions / --permission-mode bypassPermissions),
 	// which buildArgv would append verbatim — defeating the clamp. Scrub the
-	// profile's bypass flags on this remote path too.
-	prof := scrubBypassProfile(getProfile(p.ProfileID))
+	// profile's bypass flags on this remote path too (configDir survives only a
+	// hub-verified profile grant — see remoteSpawnProfile).
+	prof := remoteSpawnProfile(p.ProfileID, p.ProfileGranted)
 
 	// Resume reopens an existing transcript; a fresh spawn pins a new id so our
 	// id, claude's id, and the transcript filename all agree.
@@ -566,8 +576,9 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 		}
 		req.PermissionMode = mode
 		// SECURITY: same clamp as the PTY path — a profile's extraArgs must not
-		// smuggle a bypass flag onto the managed claude-stream argv.
-		if prof := scrubBypassProfile(getProfile(p.ProfileID)); prof != nil {
+		// smuggle a bypass flag onto the managed claude-stream argv (and
+		// configDir survives only a hub-verified profile grant).
+		if prof := remoteSpawnProfile(p.ProfileID, p.ProfileGranted); prof != nil {
 			if env := buildEnv(prof); len(env) > 0 {
 				req.Env = env
 			}

@@ -24,7 +24,7 @@ import * as fs from 'fs';
 import { randomUUID } from 'crypto';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
-import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
+import { claudeProfiles, scrubBypassProfile, scrubRemoteGrantedProfile } from './claudeProfiles';
 import { syncAccountTrust } from './claudeAccountSetup';
 import { resolveClaudeDefaultEffort } from './claudeEffortDefault';
 import { buildClaudeArgv } from './claudeResolver';
@@ -54,6 +54,13 @@ export interface ClaudeSpawnOptions {
    *  request's own fields is not enough when a profile can smuggle the same
    *  flag in through extraArgs. */
   scrubProfileBypass?: boolean;
+  /** The hub verified this spawn's caller holds a token whose profilesAllowed
+   *  grant names this profileId (fleet-manager dispatch). Softens the scrub to
+   *  scrubRemoteGrantedProfile — configDir kept, bypass args and mcpItemIds
+   *  still stripped. Only hubCapabilities sets it, from the hub-STAMPED param
+   *  (sanitizeSpawnParams deletes any caller-supplied copy). Meaningless
+   *  without scrubProfileBypass. */
+  profileGranted?: boolean;
   /** YOLO / `--dangerously-skip-permissions`. */
   skipPermissions?: boolean;
   /** Re-use this id (resume an existing session). */
@@ -97,7 +104,11 @@ export interface ClaudeSpawnOptions {
  */
 export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string> {
   const rawProfile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
-  const profile = opts.scrubProfileBypass ? scrubBypassProfile(rawProfile) : rawProfile;
+  const profile = opts.scrubProfileBypass
+    ? opts.profileGranted
+      ? scrubRemoteGrantedProfile(rawProfile)
+      : scrubBypassProfile(rawProfile)
+    : rawProfile;
   const env: Record<string, string> = {};
   if (profile?.configDir) {
     env.CLAUDE_CONFIG_DIR = profile.configDir.replace(/^~/, os.homedir());
@@ -190,7 +201,16 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
         sessionId,
         supervisor: opts.supervisor,
         scope: facadeScope,
-        token: mintSessionFacadeToken(sessionId, facadeScope, opts.pluginTools).token,
+        // A host-blessed Fleet Manager's token carries a dispatch grant for
+        // every local profile — the hub verifies it and stamps profileGranted
+        // on the worker spawn. Only `manager` gets this; a plain supervisor
+        // or facade worker has no business spawning as other accounts.
+        token: mintSessionFacadeToken(
+          sessionId,
+          facadeScope,
+          opts.pluginTools,
+          opts.manager ? claudeProfiles.getProfiles().map((p) => p.id) : undefined,
+        ).token,
         summarizerModel: supCfg?.summarizerModel,
         pollSeconds: supCfg?.pollSeconds,
       })),

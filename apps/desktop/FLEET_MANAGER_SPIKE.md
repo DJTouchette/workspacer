@@ -17,7 +17,7 @@ inferred from docs/comments and not re-executed.
 - **`supervisor: true` spawn option** [V] — `apps/desktop/src/main/services/claudeSpawn.ts`
   (~L145–165): any spawn with `opts.supervisor` gets
   - the **operator-tier MCP facade** (`wantsFacade = opts.supervisor || opts.mcpFacade ||
-    !!opts.toolScope`; `facadeScope` is forced to `'operator'` for supervisors),
+!!opts.toolScope`; `facadeScope` is forced to `'operator'` for supervisors),
   - the `/supervise` skill installed idempotently into `~/.claude/skills/supervise/`
     (`installSupervisorSkill()` in `supervisorSkill.ts` — `SKILL.md` + zero-dep `fleet.mjs`
     that reads claudemon's REST API for cheap fleet status/convo/reply parsing),
@@ -66,9 +66,9 @@ inferred from docs/comments and not re-executed.
 - **Project awareness**: `get_config` (returns `config.projects`), `list_dir`,
   `list_entries`, `read_file`, `write_file`, `search_project` (ripgrep),
   `list_resumable_sessions` (per-directory recent Claude sessions = "recent activity"),
-  `list_models`, `get_host_cwd`. The `files` help topic already says *"Use these to
+  `list_models`, `get_host_cwd`. The `files` help topic already says _"Use these to
   inspect or brief work, not to do the coding yourself — spawn an agent in the directory
-  instead"* (`help.go:69`) — the facade is already written with a dispatcher in mind.
+  instead"_ (`help.go:69`) — the facade is already written with a dispatcher in mind.
 - **Jobs**: `propose_job` (saved disabled until the user arms it in Settings → Jobs) — a
   manager could propose recurring work but can't self-arm it. [V]
 
@@ -89,7 +89,7 @@ worker shows up nested under the manager in the sidebar and Fleet Deck with zero
   `get_config` already.
 - Child-project context: a worker spawned with `cwd = ~/Work/preheat` is a normal Claude
   session there — it picks up that repo's CLAUDE.md/skills itself [I, standard Claude
-  behavior]. Nothing composes a *brief* for the worker today; the closest prior art is
+  behavior]. Nothing composes a _brief_ for the worker today; the closest prior art is
   cross-provider handoff (deterministic brief file + pre-filled composer,
   `agentHandoff.ts`) [I from memory/docs, not re-read].
 
@@ -103,7 +103,7 @@ worker shows up nested under the manager in the sidebar and Fleet Deck with zero
   **`kickoffMessage`** (auto-sent via `claudeMessage` after spawn resolves,
   `useAgentManager.ts:313`). Preset chips (`GUIDE_PRESETS`) on the welcome card.
 - **Ask the Fleet** [V] — `panes/AskPane.tsx` + `spawnSupervisor` (useAgentManager L607):
-  spawns a *new* supervisor per question in `~/.workspacer`, with the question as
+  spawns a _new_ supervisor per question in `~/.workspacer`, with the question as
   `initialPrompt` — which only **pre-fills the composer** (`ClaudePane.tsx:221`), the user
   still presses Enter. Ephemeral, one-shot, not a persistent manager. Provider-selectable.
   Presets in `askPresets.ts` (Standup / Triage / Audit / Cost) are watch-flavored, not
@@ -115,7 +115,7 @@ worker shows up nested under the manager in the sidebar and Fleet Deck with zero
   (useAgentManager.ts:139), pinned, singleton, hosts cross-agent panes; its default tab is
   the `overview` dashboard pane (`OverviewPane.tsx` — projects grid, usage windows, plugin
   health, updates; 891 lines, pure dashboard, no chat). `ask` and `guide` panes are opened
-  *into* this workspace (`App.tsx:1238,1246`). This is the natural home for a
+  _into_ this workspace (`App.tsx:1238,1246`). This is the natural home for a
   fleet-manager entry point.
 - **Fleet Deck** [V] — `components/FleetDeck.tsx`, the radar/grid overlay of every agent
   card with attention scoring. A projection, not a conversation.
@@ -128,14 +128,14 @@ worker shows up nested under the manager in the sidebar and Fleet Deck with zero
 
 1. **No fleet-manager role.** `/supervise` is watch-and-triage ("you coordinate; you don't
    write the code"; surface decisions to the human). Nothing teaches an agent to
-   *inventory projects and dispatch work into them*. This is the core gap — but it is
+   _inventory projects and dispatch work into them_. This is the core gap — but it is
    mostly a skill/prompt + preset, not new infrastructure. The entire tool surface needed
    (list_dir, get_config, read_file, spawn_agent with cwd+label+parentSessionId,
    send_message, convo cursors, approve, notify) exists at operator tier today.
 2. **No completion wake.** The manager only learns a worker finished by polling.
    `supervisorNudge` fires on blocks; `agentNotifier` detects working→idle but tells only
    the user. "Dispatch and report back" wants a `[supervisor] worker finished:
-   session:<id>` nudge for children of a supervisor. Small change, big ergonomic win.
+session:<id>` nudge for children of a supervisor. Small change, big ergonomic win.
 3. **No persistent, blessed manager instance.** Ask spawns a fresh supervisor per
    question; nothing reuses one long-lived manager or restores it at boot. The Guide's
    reuse-by-fixed-name pattern solves reuse; boot-time presence is a product decision
@@ -166,7 +166,7 @@ worker shows up nested under the manager in the sidebar and Fleet Deck with zero
 
 ## 3. Design directions
 
-### (a) Fleet Manager = a blessed supervisor spawn preset  ← recommended
+### (a) Fleet Manager = a blessed supervisor spawn preset ← recommended
 
 Clone the Guide pattern at operator tier, rooted in the parent directory:
 `spawnFleetManager()` spawns (or reuses, by fixed name) ONE agent with
@@ -229,8 +229,8 @@ Demoable with ~4 small changes, no new pane:
 2. **`useAgentManager.spawnFleetManager(question)`** (~40 lines next to `spawnGuide`,
    `hooks/useAgentManager.ts`): reuse-by-name (live agent named `FLEET_MANAGER_NAME` →
    `claudeMessage(sessionId, kickoff)` + focus, else spawn), `cwd =
-   config.agents.defaultCwd || pick`, `supervisor: true`, `kickoffMessage:
-   buildManagerKickoff(question)`. PTY transport for now (gets `/supervise` + operator
+config.agents.defaultCwd || pick`, `supervisor: true`, `kickoffMessage:
+buildManagerKickoff(question)`. PTY transport for now (gets `/supervise` + operator
    facade + nudges installed today; the fleet-manager framing rides the kickoff message in
    phase 0 — no new skill file needed to demo).
 3. **Entry point**: a command-palette entry + one hero row on `OverviewPane` ("Fleet
@@ -239,7 +239,7 @@ Demoable with ~4 small changes, no new pane:
 4. **Nothing else.** Dispatch, tracking, approval, nesting, sidebar cards, notify all
    already work (§1). The demo: type "have someone bump the README in
    ~/Work/workspacer" → manager `list_dir`s, `spawn_agent{cwd:
-   ~/Work/workspacer, label: 'README bump', parentSessionId: self}` → card appears nested
+~/Work/workspacer, label: 'README bump', parentSessionId: self}` → card appears nested
    → manager polls `get_conversation --sinceSeq`, approves the edit or nudge-wakes on the
    approval, reports back with `session:<id>` links.
 
@@ -296,7 +296,7 @@ a bus caller must not smuggle a `configDir`). The doctrine stays; the manager
 gets a GRANT, not an exception:
 
 - Extend the session facade token record (authtoken) with `profilesAllowed:
-  string[]` — set ONLY by the local spawn path when the host user blesses the
+string[]` — set ONLY by the local spawn path when the host user blesses the
   manager (the same pattern as `pluginTools`: a grant recorded at mint time,
   enforced server-side).
 - `agents.spawn` (hubCapabilities) honors `profileId` iff the caller's token
@@ -331,7 +331,7 @@ building it:
 2. **Event-driven wakes instead of polling**: the worker-finished nudge (gap
    #2) is what makes short turns POSSIBLE — the manager doesn't watch
    workers, it gets woken: `[fleet] worker "preheat-viewport" finished —
-   summary attached`. Blocks already nudge via supervisorNudge; finished is
+summary attached`. Blocks already nudge via supervisorNudge; finished is
    the missing twin (agentNotifier detects working→idle at the same store
    transition sites).
 3. **Queueing is the backstop, not the plan**: claudemon already buffers
@@ -365,8 +365,37 @@ we're going, what changed lately." A conventional file per repo:
 ### Revised phase order
 
 Phase 0 (unchanged, prototype) → Phase 1: role skill + worker-finished nudge
-+ stream-transport skill install → Phase 2: briefs (`.workspacer/brief.md`
-read/write conventions in the skill; manager maintains them) → Phase 3:
-profile grants (`profilesAllowed` on the token + agents.spawn enforcement) →
-Phase 4: UI blessing (Overview hero entry, nested fleet grouping polish,
-pinned manager workspace kind).
+
+- stream-transport skill install → Phase 2: briefs (`.workspacer/brief.md`
+  read/write conventions in the skill; manager maintains them) → Phase 3:
+  profile grants (`profilesAllowed` on the token + agents.spawn enforcement) →
+  Phase 4: UI blessing (Overview hero entry, nested fleet grouping polish,
+  pinned manager workspace kind).
+
+---
+
+## 8. Status — SHIPPED 2026-08-20 (all phases)
+
+Everything above is implemented and committed:
+
+- **Manager role + spawn** — `lib/fleetManager.ts` (doctrine preamble, kickoff,
+  `deriveFleetRoot`, presets), `useAgentManager.spawnFleetManager` (reuse-by-name →
+  message; stopped → respawn; else spawn stream/operator with `manager: true` and an
+  auto-SENT kickoff), Overview `FleetManagerHero` + palette entry.
+- **Worker-finished wakes** — `supervisorNudge.onFinished` (parent-only, coalesced,
+  capped last-reply excerpt) fed from `claudeSessionStore.nudgeParentOnFinish` at all
+  three transition sites; `manager`/`supervisor` both set `isSupervisor` spawn meta.
+- **Transport parity** — stream-transport supervisors now get `installSupervisorSkill()`
+  (managedSpawn), closing the caveat in §1.
+- **Briefs** — doctrine rule 3 (`.workspacer/brief.md`, Now/Direction/Recently) rides the
+  kickoff; finish-wakes tell the manager to append to "## Recently".
+- **Profile grants (§6a)** — token records carry `profilesAllowed` (TS + Go twins,
+  wire-shape pinned both sides); hub `sanitizeSpawnParams` deletes any caller-supplied
+  `profileGranted` and stamps it only for a verified grant/trusted host; brain
+  `remoteSpawnProfile` + desktop `scrubRemoteGrantedProfile` keep the granted profile's
+  configDir while still scrubbing bypass args and mcpItemIds; the facade's `spawn_agent`
+  refuses ungranted profileIds. A `manager: true` spawn auto-grants every local profile
+  id at both mint sites.
+
+Deferred (documented, not built): `worktree` dispatch param, pinned `kind: 'manager'`
+workspace, brief summaries on Overview project cards.

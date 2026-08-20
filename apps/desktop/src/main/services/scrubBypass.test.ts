@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { scrubBypassArgs, scrubBypassProfile } from './claudeProfiles';
+import { scrubBypassArgs, scrubBypassProfile, scrubRemoteGrantedProfile } from './claudeProfiles';
 
 /**
  * The remote spawn capability forces `skipPermissions` off and drops a bypass
@@ -121,5 +121,32 @@ describe('scrubBypassProfile', () => {
 
   it('passes undefined through (no profile chosen)', () => {
     expect(scrubBypassProfile(undefined)).toBeUndefined();
+  });
+});
+
+describe('scrubRemoteGrantedProfile', () => {
+  it('keeps configDir (the grant IS the identity) but still strips bypass args and mcpItemIds', () => {
+    const profile = {
+      id: 'p2',
+      name: 'Work account',
+      configDir: '~/.claude-work',
+      extraArgs: ['--dangerously-skip-permissions', '--model', 'opus'],
+      mcpItemIds: ['evil-server'],
+      isDefault: false,
+    };
+    const granted = scrubRemoteGrantedProfile(profile)!;
+    expect(granted.configDir).toBe('~/.claude-work');
+    // The grant is to an ACCOUNT, not to that account's bypass flags or
+    // pre-approved MCP servers — those stay scrubbed exactly as for an
+    // ungranted remote spawn. TWIN: brain remoteSpawnProfile(id, granted=true)
+    // restores ConfigDir only.
+    expect(granted.extraArgs).toEqual(['--model', 'opus']);
+    expect(granted.mcpItemIds).toEqual([]);
+    expect(profile.mcpItemIds).toEqual(['evil-server']); // per-spawn view, not an edit
+  });
+
+  it('passes undefined through and normalizes a missing configDir to empty', () => {
+    expect(scrubRemoteGrantedProfile(undefined)).toBeUndefined();
+    expect(scrubRemoteGrantedProfile({ extraArgs: [] })!.configDir).toBe('');
   });
 });

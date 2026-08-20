@@ -265,6 +265,7 @@ export function registerHubCapabilities(): void {
       label,
       parentSessionId,
       mcpItemIds,
+      profileGranted,
     } = (params ?? {}) as {
       provider?: AgentProvider;
       /** Claude only: 'pty' | 'stream'. Omitted = the config default. */
@@ -290,6 +291,13 @@ export function registerHubCapabilities(): void {
       label?: string;
       parentSessionId?: string;
       mcpItemIds?: string[];
+      /** HUB-STAMPED, never caller-supplied: the hub's sanitizeSpawnParams
+       *  deletes any incoming copy and re-stamps true only after verifying the
+       *  calling token's profilesAllowed grant names this exact profileId (or
+       *  the caller is the trusted host). Softens the profile scrub to
+       *  scrubRemoteGrantedProfile — configDir kept, bypass args and
+       *  mcpItemIds still stripped. TWIN: rpc.go sanitizeSpawnParams. */
+      profileGranted?: boolean;
     };
     // SECURITY: this capability is the REMOTE/web/MCP spawn path (the local
     // desktop spawns over IPC). Driving an agent is already code execution on
@@ -386,6 +394,7 @@ export function registerHubCapabilities(): void {
         parentSessionId,
         mcpItemIds: busMcpItemIds,
         scrubProfileBypass,
+        profileGranted: profileGranted === true,
       });
       return { sessionId };
     }
@@ -393,6 +402,7 @@ export function registerHubCapabilities(): void {
       cwd,
       profileId,
       scrubProfileBypass,
+      profileGranted: profileGranted === true,
       model,
       permissionMode,
       skipPermissions,

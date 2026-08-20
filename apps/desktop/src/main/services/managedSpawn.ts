@@ -20,7 +20,7 @@ import * as os from 'os';
 import { randomUUID } from 'crypto';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
-import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
+import { claudeProfiles, scrubBypassProfile, scrubRemoteGrantedProfile } from './claudeProfiles';
 import { syncAccountTrust } from './claudeAccountSetup';
 import { resolveClaudeDefaultEffort } from './claudeEffortDefault';
 import { libraryService } from './libraryService';
@@ -89,6 +89,13 @@ export interface ManagedSpawnOptions {
   /** Strip any permission bypass the chosen PROFILE carries — set on untrusted
    *  boundaries (the hub/remote spawn capability). See scrubBypassArgs. */
   scrubProfileBypass?: boolean;
+  /** The hub verified this spawn's caller holds a token whose profilesAllowed
+   *  grant names this profileId (fleet-manager dispatch). Softens the scrub to
+   *  scrubRemoteGrantedProfile — configDir kept, bypass args and mcpItemIds
+   *  still stripped. Only hubCapabilities sets it, from the hub-STAMPED param
+   *  (sanitizeSpawnParams deletes any caller-supplied copy). Meaningless
+   *  without scrubProfileBypass. */
+  profileGranted?: boolean;
   /** Claude (stream) only: Claude profile (CLAUDE_CONFIG_DIR + extraArgs) —
    *  same semantics as the PTY path (claudeSpawn.ts). */
   profileId?: string;
@@ -175,9 +182,18 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   const managedId = opts.resumeSessionId || randomUUID();
   // Per-session scoped facade token. Pi ships no MCP client, so minting one
   // for it would only leave a dangling live secret.
+  // A host-blessed Fleet Manager's token carries a dispatch grant for every
+  // local profile — the hub verifies it and stamps profileGranted on the
+  // worker spawn. Only `manager` gets this; a plain supervisor or facade
+  // worker has no business spawning as other accounts.
   const facadeToken =
     wantsFacade && provider !== 'pi'
-      ? mintSessionFacadeToken(managedId, facadeScope, opts.pluginTools).token
+      ? mintSessionFacadeToken(
+          managedId,
+          facadeScope,
+          opts.pluginTools,
+          opts.manager ? claudeProfiles.getProfiles().map((p) => p.id) : undefined,
+        ).token
       : undefined;
   // Permission-mode vocabulary differs by family: Claude keeps its full mode
   // set (an explicit mode wins; the legacy boolean maps to bypass — same
@@ -199,7 +215,9 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   const profile =
     isClaudeStream && opts.profileId
       ? opts.scrubProfileBypass
-        ? scrubBypassProfile(claudeProfiles.getProfile(opts.profileId))
+        ? opts.profileGranted
+          ? scrubRemoteGrantedProfile(claudeProfiles.getProfile(opts.profileId))
+          : scrubBypassProfile(claudeProfiles.getProfile(opts.profileId))
         : claudeProfiles.getProfile(opts.profileId)
       : undefined;
   const env: Record<string, string> = {};

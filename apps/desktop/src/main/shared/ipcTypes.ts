@@ -59,6 +59,12 @@ export interface RemoteTokenRecord {
    *  per token; absent = none). Read by the facade only — the hub bus ignores
    *  it. TWIN: authtoken.Record.Plugins (services/hub/internal/authtoken). */
   plugins?: string[];
+  /** Claude profile ids this token's session may DISPATCH workers under
+   *  (fleet-manager grant). Exact ids only — no wildcard is honored anywhere.
+   *  Enforced by the facade's spawn tool and the hub router's
+   *  sanitizeSpawnParams (which stamps profileGranted for the provider).
+   *  TWIN: authtoken.Record.ProfilesAllowed. */
+  profilesAllowed?: string[];
 }
 
 // ── Claude session snapshot (sent over claude-session:get / getAll / update) ──

@@ -108,6 +108,27 @@ describe('session facade tokens', () => {
     expect(rawTokens()).toEqual([rec]);
   });
 
+  it('records a profilesAllowed grant, omits it when empty, and preserves it across rewrites', () => {
+    // Wire-shape TWIN of TestProfilesAllowedWireShape (services/hub
+    // internal/authtoken): present as an exact-id array, ABSENT when empty —
+    // never null/[] — so the Go side's omitempty round-trips.
+    const rec = mintSessionFacadeToken('sess-mgr', 'operator', undefined, ['default', 'work']);
+    expect(rec.profilesAllowed).toEqual(['default', 'work']);
+    const raw = rawTokens().find((r) => r.token === rec.token)!;
+    expect(raw.profilesAllowed).toEqual(['default', 'work']);
+    expect('plugins' in raw).toBe(false);
+
+    // A pairing-list write cycle must not strip the grant (readTokens
+    // normalization preserves it like `plugins`).
+    getOrCreateRemoteToken('view', 'Dashboard');
+    const kept = rawTokens().find((r) => r.token === rec.token)!;
+    expect(kept.profilesAllowed).toEqual(['default', 'work']);
+
+    const ungranted = mintSessionFacadeToken('sess-worker', 'view', undefined, []);
+    expect('profilesAllowed' in ungranted).toBe(false);
+    expect('profilesAllowed' in rawTokens().find((r) => r.token === ungranted.token)!).toBe(false);
+  });
+
   it('re-minting for the same session replaces the old record (no stale scope/plugins)', () => {
     const first = mintSessionFacadeToken('sess-1', 'operator', ['a']);
     const second = mintSessionFacadeToken('sess-1', 'view');
