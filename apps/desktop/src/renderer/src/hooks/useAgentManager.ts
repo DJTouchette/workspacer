@@ -1368,6 +1368,68 @@ export function useAgentManager() {
     [mutateAgent],
   );
 
+  /**
+   * Open a VISIBLE terminal pane on behalf of an agent that asked for one over
+   * the facade (`open_terminal` → terminals.open) — the "bring up a dev server
+   * so the user can see it" path. The terminal runs `command` on open and stays
+   * live in its pane; the caller's turn is not blocked by it.
+   *
+   * Nests under the agent whose sessionId is `parentSessionId` (a new tab in
+   * that worker's/manager's workspace, brought into view). If no such agent is
+   * tracked yet, it opens as a standalone terminal card so the process is never
+   * invisible. Reuses the normal terminal machinery (a fresh PTY + initial
+   * command) — no attach path needed.
+   */
+  const openManagedTerminal = useCallback(
+    (opts: { parentSessionId?: string; cwd?: string; command?: string; label?: string }) => {
+      const title = opts.label?.trim() || 'Terminal';
+      const paneId = generateId('terminal');
+      const tabId = generateId('tab');
+      const pane: PaneConfig = {
+        id: paneId,
+        type: 'terminal',
+        title,
+        cwd: opts.cwd,
+        initialCommand: opts.command?.trim() || undefined,
+      };
+      const tab: TabConfig = {
+        id: tabId,
+        title,
+        panes: [pane],
+        activePaneId: paneId,
+        lastActiveAt: Date.now(),
+      };
+      const parent = opts.parentSessionId
+        ? agentsRef.current.find((a) => a.sessionId === opts.parentSessionId)
+        : undefined;
+      if (parent) {
+        mutateAgent(parent.id, (a) => ({
+          ...a,
+          tabs: [...a.tabs, tab],
+          activeTabId: tabId,
+        }));
+        setActiveAgentId(parent.id);
+        return;
+      }
+      // No owning agent (yet) — stand it up as its own card so the server is
+      // still visible. deriveAgentName gives it a cwd-based name.
+      const workspaceId = generateId('agent');
+      setAgents((prev) => [
+        ...prev,
+        {
+          id: workspaceId,
+          name: title,
+          nameSetByUser: true,
+          cwd: opts.cwd || '',
+          tabs: [tab],
+          activeTabId: tabId,
+        } as AgentWorkspace,
+      ]);
+      setActiveAgentId(workspaceId);
+    },
+    [mutateAgent],
+  );
+
   const splitTab = useCallback(
     (
       tabId: string,
@@ -1668,6 +1730,7 @@ export function useAgentManager() {
     activeTabId,
     setActiveTabId,
     addTab,
+    openManagedTerminal,
     splitTab,
     removeTab,
     removePane,

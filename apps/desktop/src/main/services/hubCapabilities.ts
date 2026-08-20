@@ -21,7 +21,7 @@ import { normalizeSpawnCwd } from '../lib/spawnCwd';
 import { assertNoPermissionBypass, isPermissionEscalation } from '../lib/permissionBypass';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
-import { registerCapability, callHub } from './hubClient';
+import { registerCapability, callHub, emitToRenderer } from './hubClient';
 import { agentNotifier } from './agentNotifier';
 import { appIconPath } from '../lib/appIcon';
 import { dropHostTrusted } from '../lib/hostTrustedConfig';
@@ -462,6 +462,32 @@ export function registerHubCapabilities(): void {
       portChannel: IPC.TERMINAL_PORT,
     });
     return { sessionId: id };
+  });
+
+  // Open a VISIBLE terminal pane in the desktop and (optionally) run a command
+  // in it — the "bring up a dev server so the user can see it" path for a
+  // facade agent (`open_terminal`). Unlike terminals.create (a headless,
+  // driveable PTY), this asks the RENDERER to open a real terminal pane so the
+  // process is watchable; the pane spawns its own PTY the normal way. Nested
+  // under the calling agent's card when parentSessionId names one.
+  registerCapability('terminals.open', (params: unknown) => {
+    const { cwd, command, label, parentSessionId } = (params ?? {}) as {
+      cwd?: string;
+      command?: string;
+      label?: string;
+      parentSessionId?: string;
+    };
+    // Same cwd normalization as terminals.create; the shell is the host default
+    // (the pane opens the user's login shell), so there is no argv[0] to gate
+    // here — the command runs INSIDE that shell, under its own tool/PTY rules.
+    const resolvedCwd = normalizeSpawnCwd(cwd);
+    emitToRenderer(IPC.FACADE_OPEN_TERMINAL, {
+      cwd: resolvedCwd,
+      command: typeof command === 'string' ? command : undefined,
+      label: typeof label === 'string' ? label : undefined,
+      parentSessionId: typeof parentSessionId === 'string' ? parentSessionId : undefined,
+    });
+    return { ok: true };
   });
 
   // Surface a notification: recorded in the in-app notification center, and —

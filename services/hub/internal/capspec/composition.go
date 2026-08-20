@@ -701,6 +701,10 @@ var compositionInert = map[string]InertClaim{
 		Reason:    "starts a shell: `shell` is argv[0] and `cwd` is where it runs, both classified per-parameter, and argv[0] is closed by the shell allow-list (lib/shellAllowlist.ts + cmd/brain/shellallow.go, one list held equal by a corpus). The config keys that could redirect that argv are stripped by dropHostTrusted — the two halves of that chain are classified where they live",
 		Witnesses: []Witness{paramsClassified("shell", "cwd")},
 	},
+	"terminals.open": {
+		Reason:    "opens a VISIBLE terminal pane and runs `command` in the host's default login shell (no caller argv[0]): `cwd` and `command` are classified per-parameter, and the only thing that ever acts on either is the RENDERER the desktop forwards to — a headless brain registers no such method, so there is no second interpreter for a later guard to worry about. The line runs under the opened shell's own tool/PTY rules, exactly as sessions.terminalInput's typed bytes do",
+		Witnesses: []Witness{paramsClassified("cwd", "command")},
+	},
 	"git.stage": {
 		Reason:    "stages paths inside a repo guardGitCwd('git.stage', …) confines. The index is git's own state; no capability here reads it as policy, and the commit that consumes it is git.commit",
 		Witnesses: []Witness{gitCwdGuard("git.stage")},

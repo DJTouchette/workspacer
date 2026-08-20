@@ -520,6 +520,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on(IPC.LAYOUT_CHANGED, handler);
     return () => ipcRenderer.removeListener(IPC.LAYOUT_CHANGED, handler);
   },
+  /** A facade agent asked to open a visible terminal (open_terminal →
+   *  terminals.open). The renderer opens the pane (nested under parentSessionId
+   *  when it names a live agent). */
+  onFacadeOpenTerminal: (
+    callback: (req: {
+      cwd?: string;
+      command?: string;
+      label?: string;
+      parentSessionId?: string;
+    }) => void,
+  ): (() => void) => {
+    const handler = (
+      _e: Electron.IpcRendererEvent,
+      req: { cwd?: string; command?: string; label?: string; parentSessionId?: string },
+    ) => callback(req);
+    ipcRenderer.on(IPC.FACADE_OPEN_TERMINAL, handler);
+    return () => ipcRenderer.removeListener(IPC.FACADE_OPEN_TERMINAL, handler);
+  },
   getRemoteInfo: (): Promise<{
     enabled: boolean;
     token: string;

@@ -488,6 +488,9 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	addTool[createTerminalIn](b, "create_terminal",
 		"Open a new shell terminal session. Returns the new sessionId; write to it with terminal_input.",
 		"terminals.create")
+	addTool[openTerminalIn](b, "open_terminal",
+		"Open a VISIBLE terminal pane in workspacer and optionally run a command in it — the way to bring up a long-running process the USER should watch (a dev server, a file watcher). Unlike create_terminal (a headless PTY you drive with terminal_input), this surfaces a pane on the user's screen and returns immediately; the process keeps running there. Pass cwd (the project dir), command (e.g. \"npm run dev\"), a short label, and parentSessionId (your own session id) so it nests under you.",
+		"terminals.open")
 
 	// ── Drive ──────────────────────────────────────────────────────────────
 	b.group = "drive"
@@ -875,6 +878,13 @@ type createTerminalIn struct {
 	Cwd   string `json:"cwd,omitempty" jsonschema:"working directory (defaults to the user's home)"`
 	Cols  int    `json:"cols,omitempty" jsonschema:"initial terminal width in columns"`
 	Rows  int    `json:"rows,omitempty" jsonschema:"initial terminal height in rows"`
+}
+
+type openTerminalIn struct {
+	Cwd             string `json:"cwd,omitempty" jsonschema:"the project/working directory to open the terminal in (defaults to the user's home)"`
+	Command         string `json:"command,omitempty" jsonschema:"a command to run in the terminal on open, e.g. \"npm run dev\" — omit to open an empty shell"`
+	Label           string `json:"label,omitempty" jsonschema:"a short human label for the terminal pane, e.g. \"preheat dev server\""`
+	ParentSessionId string `json:"parentSessionId,omitempty" jsonschema:"your own session id, so the terminal nests under you in the UI"`
 }
 
 type sendMessageIn struct {

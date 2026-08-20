@@ -76,6 +76,7 @@ var unscopedByDecision = map[string]string{
 	// there is no subtree we could confine argv[0] to that the same caller cannot
 	// also fill in — see cmd/brain/shellallow.go and lib/shellAllowlist.ts.
 	"terminals.create":    "cwd is a process working directory and holding the capability at all is the gate (as agents.spawn); the OTHER caller string, `shell`, is argv[0] and is confined by an ALLOWLIST of the host's login shells rather than by fsRoots — resolveTerminalShell in both providers",
+	"terminals.open":      "opens a VISIBLE terminal pane in the desktop and (optionally) runs `command` inside the host's DEFAULT login shell — no caller argv[0]: the shell is the host's, and the command runs under that shell's own tool/PTY rules exactly as a user-typed command would. cwd is a process working directory, so holding the capability is the gate, as terminals.create. Desktop-only (it needs the renderer to surface the pane); a headless brain has no pane to open and simply does not register it",
 	"sessions.transcript": "cwd only selects which historical session to resolve under ~/.claude/projects; the transcript path is derived by the provider, never taken from the caller",
 	"files.upload":        "the landing pad for remote-client attachments (/m photos): the caller supplies BYTES and an advisory filename of which only an allowlisted image/pdf extension survives — the directory (os.TempDir()/workspacer-uploads) and basename are chosen by the hub, so there is no caller path to confine. Size-capped (24 MiB decoded) and written 0600. The file only ever ACTS if the caller also references it to an agent via agents.sendMessage — a capability the same triage tier already holds, and one whose excuse (the agent's own tool approvals are the gate) covers reading an uploaded image exactly as it covers any other path a message names",
 	// jobs.* — the hub's job system (internal/jobs). A job is PERSISTED argv:
@@ -832,6 +833,10 @@ var unscopedParams = map[string]map[string]ParamDecision{
 	"terminals.create": {
 		"cwd":   {KindPath, "a process working directory, as agents.spawn's — holding the capability is the gate"},
 		"shell": {KindExecutable, "argv[0] of a host process, taken from a bus caller. There is no subtree to confine it to that the same caller cannot also fill in with fs.write, so it is an ALLOWLIST of the host's login shells instead: resolveTerminalShell in both providers (cmd/brain/shellallow.go, lib/shellAllowlist.ts)"},
+	},
+	"terminals.open": {
+		"cwd":     {KindPath, "a process working directory for the visible terminal pane, as terminals.create's — holding the capability is the gate"},
+		"command": {KindExecutable, "NOT argv[0]: it is a line RUN INSIDE the host's default login shell (the pane opens that shell; the caller names no shell), so it executes under that shell's own tool/PTY rules exactly as a line the user typed would — there is no argv[0] to allowlist and no subtree to confine, and desktop-only surfacing means the renderer is the thing that ever acts on it (emitToRenderer FACADE_OPEN_TERMINAL in hubCapabilities.ts)"},
 	},
 	// Hub-native. Neither params scan reaches cmd/hub — they read the two
 	// PROVIDERS' handler sources — so these are written by hand, which is

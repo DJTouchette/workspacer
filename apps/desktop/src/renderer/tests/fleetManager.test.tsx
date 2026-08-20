@@ -92,6 +92,9 @@ describe('spawnFleetManager', () => {
     // monitoring loop hangs the manager and locks the user out (the reported bug).
     expect(kickoff).toContain('NEVER POLL');
     expect(kickoff).toContain('end your turn');
+    // The visible-terminal path: bring up a dev server the user can watch.
+    expect(kickoff).toContain('open_terminal');
+    expect(kickoff).toContain('does NOT block your turn');
     hook.unmount();
   });
 

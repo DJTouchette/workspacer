@@ -121,6 +121,13 @@ export function setHubMainWindow(win: BrowserWindow): void {
   mainWindow = win;
 }
 
+/** Push an event to the renderer window (main → renderer). No-op if the window
+ *  is gone. Used by capabilities that must reach the UI — e.g. terminals.open
+ *  asking the renderer to open a visible terminal pane. */
+export function emitToRenderer(channel: string, ...args: unknown[]): void {
+  forward(channel, ...args);
+}
+
 /** Register a capability main provides on the bus. Call before startHubClient. */
 export function registerCapability(method: string, handler: CapabilityHandler): void {
   handlers.set(method, handler);

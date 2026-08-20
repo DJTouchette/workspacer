@@ -710,6 +710,9 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
       client.subscribe('layout.changed', (ev) =>
         callback(ev.data as { version: number; data: unknown }),
       ),
+    // Facade-opened terminals are a desktop-pane affordance (they need a real
+    // PTY pane); the browser mirror has none, so this is a no-op subscription.
+    onFacadeOpenTerminal: () => () => {},
     getHubStatus: () => Promise.resolve({ connected: client.isConnected() }),
     getRemoteInfo: () =>
       Promise.resolve({

@@ -134,6 +134,58 @@ describe('respawn duplicate-card guard', () => {
   });
 });
 
+describe('openManagedTerminal (facade open_terminal)', () => {
+  beforeEach(() => {
+    resetRespawnGuard();
+    resetTerminatedSessions();
+  });
+
+  it('opens a visible terminal tab NESTED under the calling agent, running the command', () => {
+    const { result } = renderHook(() => useAgentManager());
+    act(() => {
+      result.current.loadAgentsFromSession([mkAgent('mgr', 'MGR')], 'mgr');
+    });
+    act(() => {
+      result.current.openManagedTerminal({
+        parentSessionId: 'MGR',
+        cwd: '/home/u/Work/preheat',
+        command: 'npm run dev',
+        label: 'preheat dev server',
+      });
+    });
+    const mgr = result.current.agents.find((a: any) => a.id === 'mgr');
+    // A new tab was added to the manager's own workspace — not a new card.
+    expect(result.current.agents.filter((a: any) => !a.global)).toHaveLength(1);
+    const termTab = mgr.tabs.find((t: any) => t.panes[0].type === 'terminal');
+    expect(termTab).toBeDefined();
+    expect(termTab.panes[0].cwd).toBe('/home/u/Work/preheat');
+    expect(termTab.panes[0].initialCommand).toBe('npm run dev');
+    expect(termTab.panes[0].title).toBe('preheat dev server');
+    expect(mgr.activeTabId).toBe(termTab.id);
+  });
+
+  it('falls back to a standalone terminal card when no agent owns the parent session', () => {
+    const { result } = renderHook(() => useAgentManager());
+    act(() => {
+      result.current.loadAgentsFromSession([mkAgent('mgr', 'MGR')], 'mgr');
+    });
+    act(() => {
+      result.current.openManagedTerminal({
+        parentSessionId: 'GHOST',
+        cwd: '/tmp/x',
+        command: 'python -m http.server',
+        label: 'static server',
+      });
+    });
+    // A standalone card exists — the process is never invisible even with no parent.
+    expect(result.current.agents.filter((a: any) => !a.global)).toHaveLength(2);
+    const card = result.current.agents.find((a: any) => a.name === 'static server');
+    expect(card).toBeDefined();
+    expect(card.tabs[0].panes[0].type).toBe('terminal');
+    expect(card.tabs[0].panes[0].initialCommand).toBe('python -m http.server');
+  });
+});
+
 describe('loadAgentsFromSession sanitization', () => {
   beforeEach(() => {
     resetRespawnGuard();

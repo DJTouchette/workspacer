@@ -341,6 +341,16 @@ export interface ElectronAPI {
   layoutGet: () => Promise<LayoutDoc>;
   layoutSet: (data: unknown) => Promise<LayoutDoc>;
   onLayoutChanged: (callback: (doc: LayoutDoc) => void) => () => void;
+  /** A facade agent asked to open a visible terminal (open_terminal →
+   *  terminals.open); the renderer opens the pane, nested under parentSessionId. */
+  onFacadeOpenTerminal: (
+    callback: (req: {
+      cwd?: string;
+      command?: string;
+      label?: string;
+      parentSessionId?: string;
+    }) => void,
+  ) => () => void;
   getRemoteInfo: () => Promise<{
     enabled: boolean;
     token: string;

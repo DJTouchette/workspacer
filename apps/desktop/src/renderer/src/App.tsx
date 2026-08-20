@@ -342,6 +342,7 @@ function App() {
     activeTabId,
     setActiveTabId,
     addTab,
+    openManagedTerminal,
     splitTab,
     removeTab,
     removePane,
@@ -1621,6 +1622,21 @@ function App() {
     config.projects,
     spawnFleetManager,
   ]);
+
+  // A facade agent (an operator worker or the Fleet Manager) asked to open a
+  // VISIBLE terminal — e.g. to bring up a dev server the user can watch. Open
+  // the pane, nested under the calling agent's card when it names one.
+  useEffect(() => {
+    const off = window.electronAPI.onFacadeOpenTerminal?.((req) => {
+      openManagedTerminal({
+        parentSessionId: req.parentSessionId,
+        cwd: req.cwd,
+        command: req.command,
+        label: req.label,
+      });
+    });
+    return off;
+  }, [openManagedTerminal]);
 
   // prefix : — the ex cmdline: the command palette in its cmdline variant.
   const handleCmdline = useCallback(() => {

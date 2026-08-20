@@ -82,7 +82,14 @@ const MANAGER_PREAMBLE =
   '- get_conversation {"sessionId":"<worker id>","sinceSeq":<last seen seq>} to read only ' +
   'new turns.\n' +
   '- approve {"sessionId":"<worker id>","decision":"yes"} for a pending permission prompt.\n' +
-  '- notify {"title":"...","body":"..."} to alert the user.';
+  '- notify {"title":"...","body":"..."} to alert the user.\n' +
+  '- open_terminal {"cwd":"/abs/project/dir","command":"npm run dev","label":"proj: dev server",' +
+  '"parentSessionId":"<your own session id>"} to bring up a long-running process the USER ' +
+  'should SEE (a dev server, a watcher). It opens a visible terminal pane and returns at ' +
+  'once — the process keeps running there, so this does NOT block your turn. Use it (or have ' +
+  'a worker use it) whenever the user wants to watch something run live, rather than burying ' +
+  'a server inside a worker’s own tool calls. A worker can only call open_terminal if you ' +
+  'dispatched it with toolScope "operator"; spawn server-runner workers at that tier.';
 
 /**
  * Full-access mode note (config agents.fleetFullAccess). Appended to the

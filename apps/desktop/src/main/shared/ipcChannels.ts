@@ -46,6 +46,9 @@ export const IPC = {
   TERMINAL_CLOSE: 'terminal:close',
   TERMINAL_PORT: 'terminal:port', // push (main → renderer, MessagePort)
   TERMINAL_EXIT: 'terminal:exit', // push (main → renderer)
+  // A facade caller (an agent's `open_terminal` → terminals.open) asked to open
+  // a VISIBLE terminal pane running a command — push it to the renderer to open.
+  FACADE_OPEN_TERMINAL: 'terminal:facade-open', // push (main → renderer)
 
   // ── Claude sessions ──
   CLAUDE_SPAWN: 'claude:spawn',

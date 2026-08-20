@@ -156,6 +156,7 @@ const KNOWN_STUBS = [
   'saveClipboardImage', // the host clipboard isn't the browser user's clipboard → null
   'agentSuggestTitle', // runs a local headless `claude --print`; null on web (the desktop titles the agent and the layout syncs)
   'onConfigChanged', // main-process config watcher; the bus has no equivalent event yet
+  'onFacadeOpenTerminal', // facade-opened terminals are a desktop-pane affordance; the browser mirror has no PTY pane → no-op
   'federationPeers', // the web mirror talks to one hub directly; no peer link → [] (could ride hub.peer.* later)
   'federationConversation', // IMPLEMENTED on web (qualified sessions.conversation); listed here because local sessions answer null by design
   'federationPeersConfig', // peers.json lives on the hub machine; web answers null → settings render read-only

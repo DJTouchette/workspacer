@@ -46,6 +46,7 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   // Terminals and agent steering — anything here can run commands or change
   // what an agent is about to do.
   'terminals.create': { label: 'Open terminals and run commands', sensitive: true },
+  'terminals.open': { label: 'Open a visible terminal pane and run a command', sensitive: true },
   'sessions.terminalInput': { label: "Type into an agent's terminal", sensitive: true },
   'sessions.attachTerminal': { label: "Attach to an agent's terminal", sensitive: true },
   'sessions.detachTerminal': { label: "Detach from an agent's terminal" },
