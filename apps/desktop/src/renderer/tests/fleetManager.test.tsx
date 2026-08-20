@@ -60,6 +60,12 @@ describe('spawnFleetManager', () => {
     expect(kickoff).toContain('You DELEGATE');
     expect(kickoff).toContain('.workspacer/brief.md');
     expect(kickoff).toContain('parentSessionId');
+    // The manager keeps its OWN brief too — its memory across restarts, held
+    // to cross-project state only (mirroring project briefs is the drift
+    // failure mode the doctrine forbids).
+    expect(kickoff).toContain('YOUR OWN fleet brief');
+    expect(kickoff).toContain('memory across restarts');
+    expect(kickoff).toContain('ONLY cross-project state');
     hook.unmount();
   });
 
