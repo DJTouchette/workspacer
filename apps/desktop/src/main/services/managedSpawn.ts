@@ -36,7 +36,7 @@ import {
 import { mintSessionFacadeToken } from './remoteTokens';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
-import { ensureSupervisorHome } from './supervisorSkill';
+import { ensureSupervisorHome, installSupervisorSkill } from './supervisorSkill';
 import { notifySystem } from './systemNotice';
 import { normalizeSpawnCwd } from '../lib/spawnCwd';
 
@@ -100,6 +100,11 @@ export interface ManagedSpawnOptions {
   resumeSessionId?: string;
   /** Wire the workspacer MCP facade + run the /supervise loop. */
   supervisor?: boolean;
+  /** Fleet Manager: a nudge-eligible parent (worker finished/blocked wakes
+   *  route to it) WITHOUT the /supervise loop or supervisor role text — its
+   *  doctrine rides its kickoff message. Callers pair it with
+   *  toolScope 'operator'. */
+  manager?: boolean;
   /** Wire the facade tools without the supervisor loop (legacy operator tier —
    *  prefer `toolScope`). */
   mcpFacade?: boolean;
@@ -213,6 +218,12 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   if (isClaudeStream && claudeSettingsOverlayEnabled()) {
     extraArgs.push('--settings', claudemonOverlayPath());
   }
+  // Transport parity (FLEET_MANAGER_SPIKE.md finding #3): the PTY path has
+  // always installed the /supervise skill for supervisors; the stream path
+  // never did, so a stream-transport supervisor got role text but no skill.
+  if (isClaudeStream && opts.supervisor) {
+    installSupervisorSkill();
+  }
   // Claude stream + facade: the per-session config file (token as an
   // Authorization header — a file path on argv, never the token itself, since
   // /proc/<pid>/cmdline is world-readable). The PTY path's twin lives in
@@ -241,7 +252,9 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   claudeSessionStore.setSpawnMeta(managedId, {
     label: opts.label,
     parentSessionId: opts.parentSessionId,
-    isSupervisor: opts.supervisor,
+    // Managers count: the nudge router (supervisorSessionIds) is keyed on
+    // this flag, and a manager IS a supervisor for wake purposes.
+    isSupervisor: opts.supervisor || opts.manager,
     provider,
     ...((isClaudeStream || isCodexStream) && { transport: 'stream' as const }),
     settings: {

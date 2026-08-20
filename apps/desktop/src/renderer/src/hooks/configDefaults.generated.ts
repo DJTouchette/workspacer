@@ -192,6 +192,7 @@ export const CONFIG_DEFAULTS = {
   agents: {
     defaultProvider: 'claude',
     defaultCwd: '',
+    fleetRoot: '',
     binaries: {
       claude: '',
       codex: '',

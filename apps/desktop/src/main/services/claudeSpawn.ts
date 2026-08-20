@@ -60,6 +60,9 @@ export interface ClaudeSpawnOptions {
   resumeSessionId?: string;
   /** Wire the workspacer MCP facade + run the /supervise loop. */
   supervisor?: boolean;
+  /** Fleet Manager: nudge-eligible parent (isSupervisor spawn meta) without
+   *  the /supervise loop — see managedSpawn's twin field. */
+  manager?: boolean;
   /** Wire the facade tools without the supervisor loop (legacy operator tier —
    *  prefer `toolScope`). */
   mcpFacade?: boolean;
@@ -119,7 +122,7 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   claudeSessionStore.setSpawnMeta(sessionId, {
     label: opts.label,
     parentSessionId: opts.parentSessionId,
-    isSupervisor: opts.supervisor,
+    isSupervisor: opts.supervisor || opts.manager,
     provider: 'claude',
     settings: {
       model: opts.model,

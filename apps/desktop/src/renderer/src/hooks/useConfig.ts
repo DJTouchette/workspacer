@@ -286,6 +286,9 @@ export interface Config {
      *  falls back to the app's launch cwd. Set this so new agents don't default
      *  to the install path. */
     defaultCwd?: string;
+  /** The Fleet Manager's home: the parent directory holding your projects.
+   *  '' = derive from config.projects (their common parent), else $HOME. */
+  fleetRoot?: string;
     /** Pre-check "isolated worktree" in the spawn dialog. */
     spawnInWorktree?: boolean;
     /** Parent directory for agent worktrees ('' = ~/.workspacer/worktrees). */

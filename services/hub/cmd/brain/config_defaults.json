@@ -185,6 +185,7 @@
   "agents": {
     "defaultProvider": "claude",
     "defaultCwd": "",
+    "fleetRoot": "",
     "binaries": {
       "claude": "",
       "codex": "",

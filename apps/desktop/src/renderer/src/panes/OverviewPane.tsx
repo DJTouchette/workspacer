@@ -1,3 +1,4 @@
+import FleetManagerHero from '../components/FleetManagerHero';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useConfig } from '../hooks/useConfig';
 import { useAttention } from '../contexts/AttentionContext';
@@ -547,6 +548,9 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
             animation: 'wks-fade-in 0.25s ease-out',
           }}
         >
+          {/* ── Fleet Manager — the front door to cross-project delegation ── */}
+          <FleetManagerHero />
+
           {/* ── Pending update banner ────────────────────────────────────── */}
           {updateStatus &&
             (updateStatus.state === 'downloaded' || updateStatus.state === 'downloading') && (

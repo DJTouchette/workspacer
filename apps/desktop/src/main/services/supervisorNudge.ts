@@ -24,6 +24,7 @@ interface PendingNudge {
 
 class SupervisorNudge {
   private pending = new Map<string, PendingNudge>();
+  private pendingFinished = new Map<string, PendingNudge>();
 
   /**
    * Call when a session has just transitioned into a needs-you state. `kind`
@@ -54,6 +55,49 @@ class SupervisorNudge {
     }
   }
 
+  /**
+   * Call when a session transitions working→idle — its turn is DONE. Unlike
+   * blocks (broadcast to every supervisor), a finish routes ONLY to the
+   * session's PARENT: it is the parent's dispatch coming home, and waking
+   * unrelated supervisors about it is noise. This wake is what lets a Fleet
+   * Manager be a pure delegator — it never polls its workers, it gets told
+   * (FLEET_MANAGER_SPIKE.md gap #2). Coalesced like blocks so a burst of
+   * finishing workers produces one wake.
+   */
+  onFinished(session: ClaudeSessionState, parentId: string, lastReply: string): void {
+    if (parentId === session.sessionId) return;
+    const label = session.label || agentLabel(session.cwd);
+    const tail = lastReply ? ` — last reply: ${truncateReply(lastReply)}` : '';
+    const line = `${label} (session:${session.sessionId}, cwd ${session.cwd || '?'})${tail}`;
+    const entry = this.pendingFinished.get(parentId);
+    if (entry) {
+      entry.blocked.add(line);
+      return;
+    }
+    const finished = new Set<string>([line]);
+    const timer = setTimeout(() => {
+      this.pendingFinished.delete(parentId);
+      void this.sendFinished(parentId, finished);
+    }, COALESCE_MS);
+    timer.unref?.();
+    this.pendingFinished.set(parentId, { timer, blocked: finished });
+  }
+
+  private async sendFinished(parentId: string, finished: Set<string>): Promise<void> {
+    const list = Array.from(finished).join('; ');
+    const text =
+      `[fleet] Worker finished: ${list}. ` +
+      `Review the result (get_conversation with sinceSeq for detail), append one line to that ` +
+      `project's .workspacer/brief.md "## Recently" (and adjust "## Now"), then report the ` +
+      `outcome briefly with session:<id> references. If it was not one of your dispatches, ` +
+      `a one-line acknowledgement is enough.`;
+    try {
+      await claudemonSessionClient.message(parentId, text);
+    } catch {
+      /* the parent may have just ended — best-effort */
+    }
+  }
+
   private async send(supervisorId: string, blocked: Set<string>): Promise<void> {
     const list = Array.from(blocked).join('; ');
     const text =
@@ -69,6 +113,12 @@ class SupervisorNudge {
       /* the supervisor may have just ended — best-effort */
     }
   }
+}
+
+/** Keep the wake message readable: one flattened, capped excerpt. */
+function truncateReply(reply: string): string {
+  const flat = reply.replace(/\s+/g, ' ').trim();
+  return flat.length > 400 ? `${flat.slice(0, 400)}…` : flat;
 }
 
 /** Basename of the working directory, as a fallback agent label. */

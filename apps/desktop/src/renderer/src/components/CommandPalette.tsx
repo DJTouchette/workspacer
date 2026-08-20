@@ -335,6 +335,20 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       onOpenGuide,
     );
     add(
+      'cmd-fleet-manager',
+      'Fleet Manager',
+      'One conversation that dispatches agents across all your projects and reports back',
+      <Brain size={16} strokeWidth={1.75} />,
+      () =>
+        window.dispatchEvent(
+          new CustomEvent('fleet-manager:ask', {
+            detail: {
+              ask: 'Inventory the projects under your directory: read every brief, then give me a tight per-project status — what is in flight, what landed recently, and what you would dispatch next.',
+            },
+          }),
+        ),
+    );
+    add(
       'cmd-command-layer',
       commandLayerEnabled ? 'Disable Command Layer' : 'Enable Command Layer (tmux-style)',
       'Transient prefix-key layer: pane zoom/swap, harpoon pins, chat paging, y/n approvals',

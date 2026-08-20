@@ -10,6 +10,7 @@ import { HomeSpace } from './components/HomeSpace';
 import Onboarding from './components/Onboarding';
 import { presetConfigPatch } from './lib/keybindingPresets';
 import { ACTION_REGISTRY, LAYER_ACTIONS, resolveLeader } from './lib/shortcuts';
+import { deriveFleetRoot } from './lib/fleetManager';
 import { requestChatScroll } from './lib/chatScrollBus';
 import { postNotification } from './lib/notificationBus';
 import { resolveApproval } from './lib/resolveAttention';
@@ -317,6 +318,7 @@ function App() {
     spawnAgent,
     spawnSupervisor,
     spawnGuide,
+    spawnFleetManager,
     adoptAgent,
     respawnAgent,
     respawnAgentWithSettings,
@@ -1584,6 +1586,36 @@ function App() {
     void saveConfig({ ui: { ...config.ui, commandLayerAnnounced: true } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configLoaded]);
+
+  // Fleet Manager entry (Overview hero + palette dispatch here): resolve the
+  // manager's home — explicit agents.fleetRoot, else the common parent of the
+  // configured projects, else $HOME (derived from the supervisor home's
+  // parent) — and hand the ask to spawnFleetManager (reuse-by-name inside).
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ask = ((e as CustomEvent).detail?.ask ?? '').toString().trim();
+      if (!ask) return;
+      void (async () => {
+        let home = '';
+        try {
+          home = ((await window.electronAPI.getSupervisorHome()) ?? '').replace(
+            /[/\\]\.workspacer$/,
+            '',
+          );
+        } catch {
+          home = '';
+        }
+        const root = deriveFleetRoot(
+          config.agents?.fleetRoot,
+          Object.keys(config.projects ?? {}),
+          home || appCwdRef.current || '/',
+        );
+        await spawnFleetManager(ask, root);
+      })();
+    };
+    window.addEventListener('fleet-manager:ask', handler);
+    return () => window.removeEventListener('fleet-manager:ask', handler);
+  }, [config.agents?.fleetRoot, config.projects, spawnFleetManager]);
 
   // prefix : — the ex cmdline: the command palette in its cmdline variant.
   const handleCmdline = useCallback(() => {

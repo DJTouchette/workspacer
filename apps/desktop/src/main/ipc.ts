@@ -216,6 +216,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
          *  Codex: 'stream' runs headless (no native TUI PTY). */
         transport?: 'pty' | 'stream';
         profileId?: string;
+        /** Fleet Manager: nudge-eligible parent without the /supervise loop. */
+        manager?: boolean;
         model?: string;
         effort?: string;
         permissionMode?: string;
@@ -308,6 +310,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           skipPermissions: opts.skipPermissions,
           resumeSessionId: opts.resumeSessionId,
           supervisor: opts.supervisor,
+          manager: opts.manager,
           mcpFacade: opts.mcpFacade,
           toolScope: opts.toolScope,
           pluginTools: opts.pluginTools,
@@ -327,6 +330,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         skipPermissions: opts.skipPermissions,
         resumeSessionId: opts.resumeSessionId,
         supervisor: opts.supervisor,
+        manager: opts.manager,
         mcpFacade: opts.mcpFacade,
         toolScope: opts.toolScope,
         pluginTools: opts.pluginTools,

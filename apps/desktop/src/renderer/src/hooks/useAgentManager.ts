@@ -23,6 +23,7 @@ export function providerLabel(provider: AgentProvider | undefined): string {
 }
 import { agentIdForSession, dedupeByCardId, dedupeBySessionId } from '../lib/agentIdentity';
 import { GUIDE_AGENT_NAME, buildGuideKickoff } from '../lib/guide';
+import { FLEET_MANAGER_NAME, buildManagerKickoff } from '../lib/fleetManager';
 import { markSessionTerminated, clearSessionTerminated } from '../lib/terminatedSessions';
 import { markRespawning, isRespawning, settleRespawning } from '../lib/respawnGuard';
 import { requestRecentSessionsRefresh } from '../lib/watchBus';
@@ -242,6 +243,10 @@ export function useAgentManager() {
       worktree?: boolean;
       /** When true the spawned session receives the workspacer MCP facade. */
       supervisor?: boolean;
+      /** Fleet Manager: routes worker-finished/blocked nudges to this session
+       *  (isSupervisor spawn meta) WITHOUT the /supervise loop — its role
+       *  rides the kickoff message instead. Implies toolScope operator. */
+      manager?: boolean;
       /** A first message AUTO-SENT once the spawn resolves (claudemon buffers
        *  it through the settle+verify flush, same as the jobs scheduler and
        *  respawn continuations). Unlike initialPrompt, the user never has to
@@ -300,6 +305,7 @@ export function useAgentManager() {
           pluginTools: opts.pluginTools,
           resumeSessionId: opts.resumeSessionId,
           supervisor: opts.supervisor,
+          manager: opts.manager,
           targetHub: opts.targetHub,
           cols: 120,
           rows: 32,
@@ -674,6 +680,60 @@ export function useAgentManager() {
       });
     },
     [spawnAgent],
+  );
+
+  /**
+   * Spawn — or reuse — THE Fleet Manager (lib/fleetManager.ts): one
+   * delegating conversation rooted at the projects parent directory `root`,
+   * operator facade, chat-first stream transport, kickoff auto-sent (never a
+   * composer pre-fill). A live manager is recognized by its fixed name and
+   * receives the ask as a plain message — its doctrine is already in
+   * context, resending the preamble would just burn tokens.
+   */
+  const spawnFleetManager = useCallback(
+    async (ask: string, root: string): Promise<string | undefined> => {
+      const live = agentsRef.current.find(
+        (a) => !a.global && a.name === FLEET_MANAGER_NAME && a.sessionId,
+      );
+      if (live?.sessionId) {
+        setActiveAgentId(live.id);
+        try {
+          await window.electronAPI.claudeMessage(live.sessionId, ask.trim());
+        } catch (err) {
+          console.warn('[fleet-manager] message to live manager failed:', err);
+        }
+        return live.sessionId;
+      }
+      // A stopped manager card respawns (resuming its conversation) before
+      // taking the ask, so its dispatch history survives an app restart.
+      const stopped = agentsRef.current.find(
+        (a) => !a.global && a.name === FLEET_MANAGER_NAME && a.lastSessionId,
+      );
+      if (stopped) {
+        await respawnFromRecord(stopped, stopped.lastSessionId);
+        const revived = agentsRef.current.find((a) => a.id === stopped.id);
+        if (revived?.sessionId) {
+          setActiveAgentId(revived.id);
+          try {
+            await window.electronAPI.claudeMessage(revived.sessionId, ask.trim());
+          } catch (err) {
+            console.warn('[fleet-manager] message to revived manager failed:', err);
+          }
+          return revived.sessionId;
+        }
+      }
+      return spawnAgent({
+        cwd: root,
+        name: FLEET_MANAGER_NAME,
+        provider: 'claude',
+        // Chat-first: the manager is a bubbles experience, like the Guide.
+        transport: 'stream',
+        toolScope: 'operator',
+        manager: true,
+        kickoffMessage: buildManagerKickoff(ask),
+      }).then((id) => id ?? undefined);
+    },
+    [spawnAgent, respawnFromRecord],
   );
 
   /** Adopt a live daemon session that has no workspace yet (e.g. one spawned via
@@ -1569,6 +1629,7 @@ export function useAgentManager() {
     spawnAgent,
     spawnSupervisor,
     spawnGuide,
+    spawnFleetManager,
     adoptAgent,
     respawnAgent,
     respawnAgentWithSettings,

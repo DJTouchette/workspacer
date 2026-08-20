@@ -468,6 +468,28 @@ class ClaudeSessionStore {
     return ids;
   }
 
+  /**
+   * Worker-finished wake (FLEET_MANAGER_SPIKE.md gap #2): when a session with
+   * a supervisor/manager PARENT transitions working→idle, nudge that parent —
+   * the dispatch came home. Called at every ambient-transition site right
+   * after notifyOnTransition, which uses the same working→idle edge for the
+   * user's own "finished" notification; blocks stay on onBlock's broadcast
+   * path. The parent must be LIVE and marked isSupervisor (managers set the
+   * same flag) — a worker whose parent ended just goes quiet.
+   */
+  private nudgeParentOnFinish(session: ClaudeSessionState, prevAmbient: SessionAmbientState): void {
+    const wasWorking =
+      prevAmbient === 'thinking' || prevAmbient === 'streaming' || prevAmbient === 'background';
+    if (!wasWorking || session.ambientState !== 'idle') return;
+    const parentId = session.parentSessionId;
+    if (!parentId) return;
+    const parent = this.sessions.get(parentId);
+    if (!parent?.isSupervisor || parent.status === 'ended') return;
+    const lastReply =
+      [...session.conversation].reverse().find((t) => t.role === 'assistant')?.content ?? '';
+    supervisorNudge.onFinished(session, parentId, lastReply);
+  }
+
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
   }
@@ -632,6 +654,7 @@ class ClaudeSessionStore {
     normalizeBackgroundAmbient(session);
 
     agentNotifier.notifyOnTransition(session, prevAmbient);
+    this.nudgeParentOnFinish(session, prevAmbient);
 
     // Event-driven supervisor wake: when this agent just entered a real decision
     // point (approval or question), nudge any supervisor so it surfaces it now
@@ -722,6 +745,7 @@ class ClaudeSessionStore {
     session.lastActivity = Date.now();
     if (next !== prevAmbient) {
       agentNotifier.notifyOnTransition(session, prevAmbient);
+      this.nudgeParentOnFinish(session, prevAmbient);
       const isBlocked = (s: SessionAmbientState) =>
         s === 'waiting_approval' || s === 'waiting_input';
       if (isBlocked(next) && !isBlocked(prevAmbient)) {
@@ -926,6 +950,7 @@ class ClaudeSessionStore {
     normalizeBackgroundAmbient(session);
     if (session.ambientState !== prevAmbient) {
       agentNotifier.notifyOnTransition(session, prevAmbient);
+      this.nudgeParentOnFinish(session, prevAmbient);
     }
     this.pushUpdate(session);
   }
