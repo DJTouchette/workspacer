@@ -395,23 +395,111 @@ export function chordBreadcrumb(
   });
 }
 
+/** Combo keys whose KeyboardEvent.key is ambiguous — matched on e.code instead
+ *  (space so Shift+Space still reads as space; backquote for layouts where the
+ *  key produces a dead key). */
+const KEY_TO_CODE: Record<string, string> = { space: 'Space', '`': 'Backquote' };
+
+/** Build a predicate matching a single keydown against a combo like "ctrl+shift+p".
+ *  Resolves the `mod` token (Cmd on macOS / Ctrl elsewhere) FIRST — without this a
+ *  stored `mod+shift+n` parses with needsCtrl=false and silently listens for the
+ *  bare Shift+N instead of Ctrl+Shift+N (the display layer resolves `mod`, so the
+ *  UI would advertise Ctrl+Shift+N while nothing fired). THE canonical matcher:
+ *  every inline copy of this logic that skipped resolveMod has been a dead
+ *  binding in production (library-picker, toggle-inspector). */
+export function comboMatcher(combo: string): (e: KeyboardEvent) => boolean {
+  const parts = resolveMod(combo.toLowerCase().trim()).split('+');
+  const key = parts[parts.length - 1];
+  const needsCtrl = parts.includes('ctrl');
+  const needsAlt = parts.includes('alt');
+  const needsShift = parts.includes('shift');
+  const needsMeta = parts.includes('meta');
+  const expectedCode = KEY_TO_CODE[key];
+  return (e) => {
+    const keyMatch = expectedCode
+      ? e.code === expectedCode
+      : (e.key === ' ' ? 'space' : e.key.toLowerCase()) === key;
+    return (
+      keyMatch &&
+      e.ctrlKey === needsCtrl &&
+      e.altKey === needsAlt &&
+      e.shiftKey === needsShift &&
+      e.metaKey === needsMeta
+    );
+  };
+}
+
 /** True when a keydown matches a direct combo like "shift+e", "ctrl+j", or a
  *  bare "j". Modifiers must match exactly (so "j" doesn't fire on Ctrl+J).
- *  Prefix chords and digit-range combos never match here. */
+ *  Prefix chords and digit-range combos never match here. Delegates to
+ *  comboMatcher so there is exactly one matching implementation to drift. */
 export function eventMatchesCombo(e: KeyboardEvent, combo: string | undefined): boolean {
-  const trimmed = resolveMod((combo ?? '').toLowerCase().trim());
-  if (!trimmed || /^prefix\s/.test(trimmed)) return false;
-  const parts = trimmed.split('+');
-  const key = parts[parts.length - 1];
-  if (key === DIGIT_RANGE_TOKEN) return false;
-  const eventKey = e.key === ' ' ? 'space' : e.key.toLowerCase();
-  return (
-    eventKey === key &&
-    e.ctrlKey === parts.includes('ctrl') &&
-    e.altKey === parts.includes('alt') &&
-    e.shiftKey === parts.includes('shift') &&
-    e.metaKey === parts.includes('meta')
-  );
+  const trimmed = (combo ?? '').trim();
+  if (!trimmed || /^prefix\s/i.test(trimmed)) return false;
+  if (trimmed.toLowerCase().split('+').pop() === DIGIT_RANGE_TOKEN) return false;
+  return comboMatcher(trimmed)(e);
+}
+
+/**
+ * Build the "does the APP own this key?" predicate for an xterm pane's
+ * attachCustomKeyEventHandler, derived from the LIVE keybinding config instead
+ * of a hardcoded list. Returning true means xterm must ignore the key (return
+ * false from the handler) so the app's own listeners can take it.
+ *
+ * The old hardcoded twins (TerminalPane / ClaudePane) had silently drifted
+ * into relics: Ctrl+T/W/D//,? were blocked from the PTY for bindings that
+ * moved to leader chords long ago — leaving them DEAD keys (neither app nor
+ * shell), stealing readline's transpose/delete-word/EOF. Deriving from config
+ * returns unbound keys to the shell and tracks presets and user rebinds
+ * automatically.
+ *
+ * App-owned, by construction:
+ *  - every direct (non-chord, non-scoped) binding that carries a real
+ *    modifier (ctrl/alt/meta/mod) — shift alone is typing, never app nav;
+ *  - bare F-keys bindings (f1 help);
+ *  - digit-range bindings (jump-tab Ctrl+1-9, move-tab Ctrl+Shift+1-9);
+ *  - the resolved chord leader when it's a modifier combo (Ctrl+Space must arm
+ *    the chord from inside a terminal; the Linux lone-Alt tap needs nothing —
+ *    it fires on window key-up and a bare modifier types nothing in a PTY);
+ *  - the retained structural rules both panes and BrowserPane's guest matcher
+ *    have always shared: wholesale Ctrl+Shift+* (pane resize/move and the
+ *    Ctrl+Shift copy/paste pair), Alt+Arrows (pane nav) and Ctrl+Alt+←/→ (tab
+ *    nav).
+ *
+ * Pane-local behaviors (the Ctrl+C/V clipboard quartet, F2 rename) stay in the
+ * pane handler ahead of this predicate — they need pane state (selection).
+ */
+export function buildXtermAppKeyPredicate(
+  shortcuts: Record<string, string>,
+  prefix?: string,
+): (e: KeyboardEvent) => boolean {
+  const matchers: ((e: KeyboardEvent) => boolean)[] = [];
+  const rangeCombos: string[] = [];
+  for (const [action, combo] of Object.entries(shortcuts)) {
+    const trimmed = (combo ?? '').trim();
+    if (!trimmed || SCOPED_ACTIONS.has(action) || /^prefix\s/i.test(trimmed)) continue;
+    if (parseDigitRangeCombo(trimmed)) {
+      rangeCombos.push(trimmed);
+      continue;
+    }
+    const parts = resolveMod(trimmed.toLowerCase()).split('+');
+    const isFKey = parts.length === 1 && /^f\d{1,2}$/.test(parts[0]);
+    const hasRealModifier = ['ctrl', 'alt', 'meta'].some((m) => parts.includes(m));
+    if (!isFKey && !hasRealModifier) continue; // bare/shift-only keys are typing
+    matchers.push(comboMatcher(trimmed));
+  }
+  const leader = (prefix ?? '').trim().toLowerCase();
+  const isLoneModifierLeader = ['ctrl', 'alt', 'shift', 'meta'].includes(leader);
+  if (leader && comboHasModifiers(leader) && !isLoneModifierLeader) {
+    matchers.push(comboMatcher(leader));
+  }
+  return (e: KeyboardEvent) => {
+    if (e.ctrlKey && e.shiftKey) return true; // resize/move + copy-paste family
+    if (e.altKey && !e.ctrlKey && e.key.startsWith('Arrow')) return true;
+    if (e.ctrlKey && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return true;
+    if (matchers.some((m) => m(e))) return true;
+    return rangeCombos.some((c) => digitFromRangeEvent(e, c) !== null);
+  };
 }
 
 /** The digit pressed (1–9) when a keydown matches a digit-range combo ("1-9",

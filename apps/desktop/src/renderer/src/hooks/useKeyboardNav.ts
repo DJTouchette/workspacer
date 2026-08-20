@@ -1,21 +1,26 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { PaneType, TabConfig } from '../types/pane';
 import { tilingColumns } from '../lib/layoutUtils';
+import { setLayerArmed } from '../lib/layerArmed';
 import {
   buildChordTree,
   chordNodeAt,
   parseDigitRangeCombo,
   DigitRangeCombo,
   comboHasModifiers,
+  comboMatcher,
   isEditableTarget,
-  resolveMod,
   SCOPED_ACTIONS,
 } from '../lib/shortcuts';
+
+// The canonical matcher moved to lib/shortcuts.ts (one implementation for the
+// window dispatcher, pane listeners, and plugin hotkeys alike); re-exported so
+// existing imports keep working.
+export { comboMatcher } from '../lib/shortcuts';
 
 const CHORD_TIMEOUT = 1500;
 
 const MODIFIER_KEY_NAMES = new Set(['Control', 'Alt', 'Shift', 'Meta']);
-const KEY_TO_CODE: Record<string, string> = { space: 'Space', '`': 'Backquote' };
 
 /** A lone-modifier leader (e.g. Linux's single Alt tap, substituted for the
  *  IME-grabbed ctrl+space — see resolveLeader) → the KeyboardEvent.key it fires
@@ -38,33 +43,6 @@ function otherModifierHeld(e: KeyboardEvent, selfKey: string): boolean {
     (selfKey !== 'Shift' && e.shiftKey) ||
     (selfKey !== 'Meta' && e.metaKey)
   );
-}
-
-/** Build a predicate matching a single keydown against a combo like "ctrl+shift+p".
- *  Resolves the `mod` token (Cmd on macOS / Ctrl elsewhere) FIRST — without this a
- *  stored `mod+shift+n` parses with needsCtrl=false and silently listens for the
- *  bare Shift+N instead of Ctrl+Shift+N (the display layer resolves `mod`, so the
- *  UI would advertise Ctrl+Shift+N while nothing fired). Mirrors eventMatchesCombo. */
-export function comboMatcher(combo: string): (e: KeyboardEvent) => boolean {
-  const parts = resolveMod(combo.toLowerCase().trim()).split('+');
-  const key = parts[parts.length - 1];
-  const needsCtrl = parts.includes('ctrl');
-  const needsAlt = parts.includes('alt');
-  const needsShift = parts.includes('shift');
-  const needsMeta = parts.includes('meta');
-  const expectedCode = KEY_TO_CODE[key];
-  return (e) => {
-    const keyMatch = expectedCode
-      ? e.code === expectedCode
-      : (e.key === ' ' ? 'space' : e.key.toLowerCase()) === key;
-    return (
-      keyMatch &&
-      e.ctrlKey === needsCtrl &&
-      e.altKey === needsAlt &&
-      e.shiftKey === needsShift &&
-      e.metaKey === needsMeta
-    );
-  };
 }
 
 /** Matchers for direct (non-prefix) bindings only; prefix chords are handled by
@@ -160,6 +138,16 @@ interface UseKeyboardNavOptions {
   onTextSizeDown?: () => void;
   onTextSizeReset?: () => void;
   onOpenReview?: () => void;
+  /** Library quick-picker (default mod+shift+l). Owned here so the chord tree
+   *  and direct matcher share one dispatch path — the old separate
+   *  bubble-phase listener had its own matcher that never resolved `mod`,
+   *  which left the default binding permanently dead. */
+  onLibraryPicker?: () => void;
+  /** Inspector rail toggle (default mod+shift+e). The rail is per-pane state,
+   *  so App routes this to the active ClaudePane over the `inspector:toggle`
+   *  CustomEvent — the pane's old focus-scoped listener had the same dead
+   *  never-resolves-`mod` matcher. */
+  onToggleInspector?: () => void;
   shortcuts?: Record<string, string>;
 }
 
@@ -198,6 +186,8 @@ export function useKeyboardNav({
   onTextSizeReset,
   onOpenReview,
   onSpawnAgent,
+  onLibraryPicker,
+  onToggleInspector,
   shortcuts = {},
 }: UseKeyboardNavOptions) {
   const directRef = useRef(buildDirectMatchers(shortcuts));
@@ -289,6 +279,7 @@ export function useKeyboardNav({
     const cancelChord = () => {
       if (chordRef.current.timeoutId) clearTimeout(chordRef.current.timeoutId);
       chordRef.current = { path: null, timeoutId: null };
+      setLayerArmed(false);
       onChordPathChange?.(null);
     };
     cancelChordRef.current = cancelChord;
@@ -298,6 +289,7 @@ export function useKeyboardNav({
     const setChordPath = (path: string[]) => {
       if (chordRef.current.timeoutId) clearTimeout(chordRef.current.timeoutId);
       chordRef.current.path = path;
+      setLayerArmed(true);
       onChordPathChange?.(path);
       chordRef.current.timeoutId = setTimeout(cancelChord, CHORD_TIMEOUT);
     };
@@ -434,6 +426,14 @@ export function useKeyboardNav({
           return true;
         case 'text-size-reset':
           onTextSizeReset?.();
+          return true;
+        case 'library-picker':
+          if (!onLibraryPicker) return false;
+          onLibraryPicker();
+          return true;
+        case 'toggle-inspector':
+          if (!onToggleInspector) return false;
+          onToggleInspector();
           return true;
         default:
           return false; // not owned here
@@ -595,6 +595,8 @@ export function useKeyboardNav({
     onTextSizeDown,
     onTextSizeReset,
     onOpenReview,
+    onLibraryPicker,
+    onToggleInspector,
   ]);
 
   // A half-typed chord survives the key-handler effect re-subscribing, and is

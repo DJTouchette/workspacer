@@ -3,6 +3,8 @@ import { useConfig, DEFAULT_CONFIG } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
 import { webviewThemeCSS, webviewThemeJS } from '../lib/webviewTheme';
 import { webviewSettingsJS } from '../lib/webviewSettings';
+import { resolveLeader, resolveMod } from '../lib/shortcuts';
+import { isLayerArmed } from '../lib/layerArmed';
 
 interface BrowserPaneProps {
   paneId: string;
@@ -172,6 +174,29 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
   const appFKeysRef = useRef(appFKeys);
   appFKeysRef.current = appFKeys;
 
+  // The resolved chord leader, pre-parsed for the before-input matcher. Null
+  // for a lone-modifier leader (Linux Alt tap — armed on the host's key-up,
+  // no forwarding needed) and for modifier-less leaders (guest keeps those:
+  // typing into a page must never arm a chord).
+  const leaderParts = useMemo(() => {
+    const resolved = resolveMod(
+      resolveLeader(config.keybindings?.prefix ?? 'ctrl+space'),
+    ).toLowerCase();
+    const parts = resolved.split('+');
+    const key = parts[parts.length - 1];
+    const mods = {
+      ctrl: parts.includes('ctrl'),
+      alt: parts.includes('alt'),
+      shift: parts.includes('shift'),
+      meta: parts.includes('meta'),
+    };
+    if (!mods.ctrl && !mods.alt && !mods.meta) return null; // bare or lone-mod leader
+    if (['ctrl', 'alt', 'shift', 'meta'].includes(key)) return null;
+    return { key: key === 'space' ? ' ' : key, ...mods };
+  }, [config.keybindings?.prefix]);
+  const leaderPartsRef = useRef(leaderParts);
+  leaderPartsRef.current = leaderParts;
+
   // Keep the injected fallback's key sets current across rebinds (the injected
   // listener itself registers once per document; only its data needs refresh).
   useEffect(() => {
@@ -210,7 +235,24 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
       if (!inp || inp.type !== 'keyDown') return;
 
       const key = String(inp.key ?? '').toLowerCase();
+      // The chord leader itself must escape the guest, or a chord can never be
+      // ARMED while a webview has focus (a combo leader like Ctrl+Space is a
+      // bare mod+key the sets below don't cover). Matched against the resolved
+      // leader's parts; the Linux lone-Alt tap needs no forwarding here — it
+      // fires on the HOST window's key-up, which webview focus doesn't eat.
+      const leader = leaderPartsRef.current;
+      const isLeader =
+        leader !== null &&
+        key === leader.key &&
+        (inp.control ?? false) === leader.ctrl &&
+        (inp.alt ?? false) === leader.alt &&
+        (inp.shift ?? false) === leader.shift &&
+        (inp.meta ?? false) === leader.meta;
       const isAppShortcut =
+        // While a chord is armed, EVERY key belongs to the host — the next
+        // keystroke is a chord step (bare letters included), not page input.
+        isLayerArmed() ||
+        isLeader ||
         ((inp.control || inp.meta) && !inp.alt && !inp.shift && appModKeysRef.current.has(key)) ||
         (inp.control && inp.alt && (inp.key === 'ArrowLeft' || inp.key === 'ArrowRight')) ||
         ((inp.control || inp.meta) && inp.shift) ||

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useMemo, useRef, useCallback, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebFontsAddon } from '@xterm/addon-web-fonts';
@@ -13,6 +13,8 @@ import {
   isTermVisible,
   refitAndRepaint,
 } from '../lib/terminalUtils';
+import { buildXtermAppKeyPredicate, resolveLeader } from '../lib/shortcuts';
+import { DEFAULT_SHORTCUTS } from '../hooks/configDefaults';
 
 /**
  * MEMORY: dispose the xterm.js instance (canvas + scrollback buffer) of a pane
@@ -98,6 +100,23 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({
   termCfgRef.current = termCfg;
   const terminalThemeRef = useRef(terminalTheme);
   terminalThemeRef.current = terminalTheme;
+
+  // "Does the APP own this key?" for xterm's custom key handler — derived from
+  // the LIVE keybinding config (defaults + presets + user rebinds) instead of
+  // the old hardcoded list, which had drifted into blocking keys that belong
+  // to the shell (Ctrl+W delete-word, Ctrl+D EOF, Ctrl+T transpose…) for app
+  // bindings that moved to leader chords long ago. Ref-read from the handler
+  // so rebinds apply without rebuilding the terminal.
+  const appKeyPredicate = useMemo(
+    () =>
+      buildXtermAppKeyPredicate(
+        { ...DEFAULT_SHORTCUTS, ...config.keybindings?.shortcuts },
+        resolveLeader(config.keybindings?.prefix ?? 'ctrl+space'),
+      ),
+    [config.keybindings],
+  );
+  const appKeyPredicateRef = useRef(appKeyPredicate);
+  appKeyPredicateRef.current = appKeyPredicate;
 
   const handleExit = useCallback(() => {
     if (terminalRef.current) {
@@ -210,36 +229,12 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({
         if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'v') {
           return false;
         }
-        // Ctrl+T/B/W/D, Ctrl+/, Ctrl+,, Ctrl+S, Ctrl+K, Ctrl+` (toggle terminal) — app-level
-        if (
-          e.ctrlKey &&
-          !e.altKey &&
-          !e.shiftKey &&
-          ['t', 'b', 'w', 'd', '/', '?', ',', 's', 'k', '`'].includes(e.key)
-        ) {
+        // App-owned keys, derived from the live keybinding config (incl. the
+        // chord leader, digit ranges, and the shared structural rules).
+        if (appKeyPredicateRef.current(e)) {
           return false;
         }
-        // Ctrl+1-9 — jump to pane
-        if (e.ctrlKey && !e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
-          return false;
-        }
-        // Alt+Arrow — sub-pane navigation
-        if (
-          e.altKey &&
-          !e.ctrlKey &&
-          ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)
-        ) {
-          return false;
-        }
-        // Ctrl+Alt+Arrow — tab navigation
-        if (e.ctrlKey && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-          return false;
-        }
-        // Ctrl+Shift combos (other than C/V above) — resize/move pane
-        if (e.ctrlKey && e.shiftKey) {
-          return false;
-        }
-        // F2 — rename
+        // F2 — rename (bound per-pane, not in the shortcuts map)
         if (e.key === 'F2') {
           return false;
         }

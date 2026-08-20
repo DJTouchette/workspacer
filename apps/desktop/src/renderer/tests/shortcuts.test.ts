@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   formatBinding,
   buildChordTree,
+  buildXtermAppKeyPredicate,
   chordNodeAt,
   chordMenu,
   chordBreadcrumb,
@@ -79,5 +80,85 @@ describe('chord tree', () => {
     const tabMenu = chordMenu(tree, ['t']);
     expect(tabMenu.map((i) => i.label).sort()).toEqual(['Close pane', 'Next tab']);
     expect(chordBreadcrumb(['t'])).toEqual(['Tab']);
+  });
+});
+
+// jsdom is not macOS, so `mod` resolves to Ctrl in these tests.
+const key = (over: Partial<KeyboardEvent>): KeyboardEvent =>
+  ({
+    key: 'a',
+    code: '',
+    ctrlKey: false,
+    altKey: false,
+    shiftKey: false,
+    metaKey: false,
+    ...over,
+  }) as KeyboardEvent;
+
+describe('buildXtermAppKeyPredicate — the config-derived terminal boundary', () => {
+  // A realistic slice of the default map: direct combos, chords, ranges,
+  // scoped keys, an F-key, and a shift-only hypothetical rebind.
+  const shortcuts: Record<string, string> = {
+    'command-palette': 'mod+k',
+    'toggle-sidebar': 'mod+b',
+    'library-picker': 'mod+shift+l',
+    'toggle-help': 'f1',
+    'jump-tab': 'ctrl+1-9',
+    'move-tab': 'ctrl+shift+1-9',
+    'new-terminal': 'prefix t',
+    'nav-left': 'prefix h',
+    'fleet-open': 'enter', // scoped — matched only inside the deck
+    'inbox-move-down': 'j', // scoped
+    'custom-shift-only': 'shift+e', // shift alone is typing, never app nav
+  };
+  const appOwns = buildXtermAppKeyPredicate(shortcuts, 'ctrl+space');
+
+  it('owns every bound direct combo, resolving the mod token', () => {
+    expect(appOwns(key({ key: 'k', ctrlKey: true }))).toBe(true);
+    expect(appOwns(key({ key: 'b', ctrlKey: true }))).toBe(true);
+    expect(appOwns(key({ key: 'L', ctrlKey: true, shiftKey: true }))).toBe(true);
+    expect(appOwns(key({ key: 'F1' }))).toBe(true);
+  });
+
+  it('returns UNBOUND relic keys to the shell (the drifted-hardcoded-list fix)', () => {
+    // The old hardcoded list blocked all of these from the PTY even though
+    // nothing in the app binds them anymore — dead keys stealing readline's
+    // transpose (Ctrl+T), delete-word (Ctrl+W) and EOF (Ctrl+D).
+    expect(appOwns(key({ key: 't', ctrlKey: true }))).toBe(false);
+    expect(appOwns(key({ key: 'w', ctrlKey: true }))).toBe(false);
+    expect(appOwns(key({ key: 'd', ctrlKey: true }))).toBe(false);
+    expect(appOwns(key({ key: '/', ctrlKey: true }))).toBe(false);
+  });
+
+  it('owns digit-range bindings via e.code', () => {
+    expect(appOwns(key({ key: '3', code: 'Digit3', ctrlKey: true }))).toBe(true);
+    // Bare digits are typing.
+    expect(appOwns(key({ key: '3', code: 'Digit3' }))).toBe(false);
+    // Numpad digits are typing too (ranges match Digit1-9 codes only).
+    expect(appOwns(key({ key: '3', code: 'Numpad3', ctrlKey: true }))).toBe(false);
+  });
+
+  it('owns the resolved combo leader so a chord can arm from inside a terminal', () => {
+    expect(appOwns(key({ key: ' ', code: 'Space', ctrlKey: true }))).toBe(true);
+  });
+
+  it('needs nothing for a lone-modifier leader (the Linux Alt tap)', () => {
+    const altLeader = buildXtermAppKeyPredicate(shortcuts, 'alt');
+    // A bare Alt keydown stays with xterm (it types nothing anyway); the tap
+    // arms on the window's key-up, which xterm never consumes.
+    expect(altLeader(key({ key: 'Alt', altKey: true }))).toBe(false);
+  });
+
+  it('keeps the shared structural rules: ctrl+shift wholesale, alt-arrows, ctrl+alt-arrows', () => {
+    expect(appOwns(key({ key: 'Z', ctrlKey: true, shiftKey: true }))).toBe(true);
+    expect(appOwns(key({ key: 'ArrowLeft', altKey: true }))).toBe(true);
+    expect(appOwns(key({ key: 'ArrowRight', ctrlKey: true, altKey: true }))).toBe(true);
+  });
+
+  it('never blocks typing: bare, shift-only, and surface-scoped keys stay with the terminal', () => {
+    expect(appOwns(key({ key: 'j' }))).toBe(false); // scoped inbox key
+    expect(appOwns(key({ key: 'Enter' }))).toBe(false); // scoped fleet key
+    expect(appOwns(key({ key: 'E', shiftKey: true }))).toBe(false); // shift-only rebind
+    expect(appOwns(key({ key: 'h' }))).toBe(false); // chord step, not direct
   });
 });

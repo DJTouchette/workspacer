@@ -18,6 +18,8 @@ import {
   StatusBadge,
   sendApproval,
 } from '../components/claude-shared';
+import { buildXtermAppKeyPredicate, resolveLeader } from '../lib/shortcuts';
+import { DEFAULT_SHORTCUTS } from '../hooks/configDefaults';
 import { BrandSpinner } from '../components/Brand';
 import { RefreshCw } from '../components/icons';
 import { PanelRight, ArrowRightLeft, Clock, KeyRound } from 'lucide-react';
@@ -166,6 +168,18 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   onPtyReady,
 }) => {
   const { config, save } = useConfig();
+  // "Does the APP own this key?" for the terminal view's xterm handler —
+  // config-derived; see buildXtermAppKeyPredicate (twin usage in TerminalPane).
+  const appKeyPredicate = useMemo(
+    () =>
+      buildXtermAppKeyPredicate(
+        { ...DEFAULT_SHORTCUTS, ...config.keybindings?.shortcuts },
+        resolveLeader(config.keybindings?.prefix ?? 'ctrl+space'),
+      ),
+    [config.keybindings],
+  );
+  const appKeyPredicateRef = useRef(appKeyPredicate);
+  appKeyPredicateRef.current = appKeyPredicate;
   // HH:MM stamps on chat turns — a global display preference (config-backed),
   // toggled from the pane header's clock button or Settings.
   const showTimestamps = config.claude?.showTimestamps ?? false;
@@ -694,22 +708,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'v') {
         return false;
       }
-      if (
-        e.ctrlKey &&
-        !e.altKey &&
-        !e.shiftKey &&
-        ['t', 'b', 'w', 'd', '/', '?', ',', 's', 'k'].includes(e.key)
-      )
-        return false;
-      if (e.ctrlKey && !e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) return false;
-      if (
-        e.altKey &&
-        !e.ctrlKey &&
-        ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)
-      )
-        return false;
-      if (e.ctrlKey && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return false;
-      if (e.ctrlKey && e.shiftKey) return false;
+      // App-owned keys, derived from the live keybinding config (incl. the
+      // chord leader, digit ranges, and the shared structural rules).
+      if (appKeyPredicateRef.current(e)) return false;
+      // F2 — rename (bound per-pane, not in the shortcuts map)
       if (e.key === 'F2') return false;
       return true;
     });
@@ -1699,35 +1701,17 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     [sessionId, attachSessionId, cwd, handoffBusy],
   );
 
-  // Inspector-rail hotkey (configurable: keybindings.shortcuts['toggle-inspector']).
-  // The rail is per-pane state, so we match the combo here for the active pane
-  // rather than routing through the global nav handler. Capture phase + stop
-  // beats xterm's own key handling when the pane is in terminal mode.
-  const inspectorCombo = config.keybindings?.shortcuts?.['toggle-inspector'];
+  // Inspector-rail toggle. The rail is per-pane state, but the KEY lives with
+  // every other binding in useKeyboardNav's executeAction (capture phase, one
+  // mod-resolving matcher — the old inline matcher here never resolved `mod`,
+  // so the default mod+shift+e was dead); App relays it as a CustomEvent and
+  // only the active pane answers.
   useEffect(() => {
-    if (!isActive || !inspectorCombo) return;
-    const parts = inspectorCombo.toLowerCase().split('+');
-    const key = parts[parts.length - 1];
-    const needCtrl = parts.includes('ctrl');
-    const needAlt = parts.includes('alt');
-    const needShift = parts.includes('shift');
-    const needMeta = parts.includes('meta');
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.ctrlKey !== needCtrl ||
-        e.altKey !== needAlt ||
-        e.shiftKey !== needShift ||
-        e.metaKey !== needMeta
-      )
-        return;
-      if (e.key.toLowerCase() !== key) return;
-      e.preventDefault();
-      e.stopPropagation();
-      toggleRail();
-    };
-    window.addEventListener('keydown', handleKeyDown, true);
-    return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [isActive, inspectorCombo, toggleRail]);
+    if (!isActive) return;
+    const handleToggle = () => toggleRail();
+    window.addEventListener('inspector:toggle', handleToggle);
+    return () => window.removeEventListener('inspector:toggle', handleToggle);
+  }, [isActive, toggleRail]);
 
   // Anchor subagents/workflow runs to the Agent/Workflow tool calls that
   // spawned them so they render inline in the timeline (exact toolUseId /

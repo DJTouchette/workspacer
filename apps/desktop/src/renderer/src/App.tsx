@@ -1467,6 +1467,12 @@ function App() {
     ),
     onTextSizeReset: useCallback(() => setTextScale(DEFAULT_TEXT_SCALE), [setTextScale]),
     onOpenReview: openReview,
+    onLibraryPicker: toggleLibraryPanel,
+    // The inspector rail is per-pane state — the active ClaudePane listens.
+    onToggleInspector: useCallback(
+      () => window.dispatchEvent(new CustomEvent('inspector:toggle')),
+      [],
+    ),
     shortcuts: resolvedShortcuts,
   });
 
@@ -1895,13 +1901,13 @@ function App() {
     [config.ui.paneMenu, pluginPanes, handleOpenPlugin, activeAgentHub],
   );
 
-  // Bind plugin-contributed hotkeys + library-picker shortcut.
+  // Bind plugin-contributed hotkeys. (The library-picker shortcut moved into
+  // useKeyboardNav's executeAction — one dispatch path, and its combo finally
+  // goes through the mod-resolving matcher.)
   usePluginHotkeys({
     pluginHotkeys,
     pluginPanes,
     handleOpenPlugin,
-    libraryPickerCombo: config.keybindings?.shortcuts?.['library-picker'],
-    openLibraryPicker: toggleLibraryPanel,
   });
 
   // Listen for bus commands (from plugins / MCP) and drive the UI. The ui.*
