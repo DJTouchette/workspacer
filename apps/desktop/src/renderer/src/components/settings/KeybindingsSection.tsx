@@ -232,6 +232,7 @@ function pendingModifiers(e: KeyboardEvent): string {
 const KeybindingsSection: React.FC<KeybindingsSectionProps> = ({ config, save }) => {
   const prefix = resolveLeader(config.keybindings?.prefix ?? 'ctrl+space');
   const chordHints = config.keybindings?.chordHints ?? true;
+  const commandLayerEnabled = config.keybindings?.commandLayer?.enabled === true;
   const [capturingPrefix, setCapturingPrefix] = useState(false);
   // While held-down modifiers are being typed, show them so the combo forming is
   // visible (e.g. "Ctrl+…"); '' means nothing pressed yet.
@@ -379,6 +380,42 @@ const KeybindingsSection: React.FC<KeybindingsSectionProps> = ({ config, save })
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         When the prefix is pressed, show a cheatsheet of the available chord keys in the bottom
         corner. Off keeps just the minimal prefix indicator.
+      </div>
+
+      <Row label="Command layer">
+        <div style={{ display: 'flex', gap: 4 }}>
+          <ModeButton
+            label="On"
+            active={commandLayerEnabled}
+            onClick={() =>
+              save({
+                keybindings: {
+                  ...config.keybindings,
+                  commandLayer: { ...config.keybindings?.commandLayer, enabled: true },
+                },
+              })
+            }
+          />
+          <ModeButton
+            label="Off"
+            active={!commandLayerEnabled}
+            onClick={() =>
+              save({
+                keybindings: {
+                  ...config.keybindings,
+                  commandLayer: { ...config.keybindings?.commandLayer, enabled: false },
+                },
+              })
+            }
+          />
+        </div>
+      </Row>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        tmux-style keyboard mode: the prefix arms a transient key layer — pane zoom (z), swap
+        ({'{'} {'}'}), harpoon pins (m, 1–9), chat paging (Shift+K/J), approve/deny (y/n), and
+        repeat groups so prefix h h l walks panes. Chords stay armed until resolved; Esc, a
+        click, or an unknown key stands down. Prefix twice sends the literal prefix to the
+        focused terminal (nested tmux).
       </div>
 
       <ShortcutEditor config={config} save={save} />
