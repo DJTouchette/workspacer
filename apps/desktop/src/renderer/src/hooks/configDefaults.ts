@@ -66,6 +66,8 @@ const RENDERER_ONLY_SHORTCUTS: Record<string, string> = {
   'chat-scroll-top': 'prefix g g',
   'chat-scroll-bottom': 'prefix shift+g',
   'alternate-agent': "prefix '",
+  // 'd' as in tmux's display-panes (its own 'q' is taken by quick-split here).
+  'pane-hints': 'prefix d',
   'pin-agent': 'prefix m',
   'jump-pinned': 'prefix 1-9',
   'approve-attention': 'prefix y',

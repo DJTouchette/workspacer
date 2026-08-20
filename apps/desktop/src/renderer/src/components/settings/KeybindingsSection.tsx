@@ -3,6 +3,7 @@ import { RotateCcw } from 'lucide-react';
 import { Config, DEFAULT_CONFIG } from '../../hooks/useConfig';
 import {
   formatBinding,
+  formatCombo,
   ACTION_SECTIONS,
   DIGIT_RANGE_ACTIONS,
   DIGIT_RANGE_TOKEN,
@@ -42,9 +43,14 @@ const ShortcutEditor: React.FC<{
   };
   const prefix = resolveLeader(config.keybindings?.prefix ?? 'ctrl+space');
   const [capturing, setCapturing] = useState<string | null>(null);
-  // True once the prefix has been pressed mid-capture: the next key becomes the
-  // chord (stored as "prefix <combo>").
+  // True once the prefix has been pressed mid-capture: the following keys
+  // become the chord (stored as "prefix <step> [<step>…]").
   const [chordPending, setChordPending] = useState(false);
+  // Multi-step chord capture: steps accumulate ('prefix g g', shifted steps
+  // like 'prefix shift+k' included) and COMMIT after a beat of silence — the
+  // only rule that works for paths the current tree doesn't know yet.
+  const [chordSteps, setChordSteps] = useState<string[]>([]);
+  const chordCommitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleCapture = useCallback(
     (action: string, e: React.KeyboardEvent) => {
@@ -79,14 +85,35 @@ const ShortcutEditor: React.FC<{
         return;
       }
 
-      const value = chordPending ? `prefix ${combo}` : combo;
+      if (chordPending) {
+        // Accumulate steps; a 750ms pause commits the whole path. This is what
+        // lets the editor express 'prefix g g' and shifted steps — committing
+        // on the first key could never record a multi-step chord.
+        const steps = [...chordSteps, combo];
+        setChordSteps(steps);
+        if (chordCommitRef.current) clearTimeout(chordCommitRef.current);
+        chordCommitRef.current = setTimeout(() => {
+          save({
+            keybindings: {
+              ...config.keybindings,
+              shortcuts: { ...currentShortcuts, [action]: `prefix ${steps.join(' ')}` },
+            },
+          });
+          setCapturing(null);
+          setChordPending(false);
+          setChordSteps([]);
+        }, 750);
+        return;
+      }
+
       save({
-        keybindings: { ...config.keybindings, shortcuts: { ...currentShortcuts, [action]: value } },
+        keybindings: { ...config.keybindings, shortcuts: { ...currentShortcuts, [action]: combo } },
       });
       setCapturing(null);
       setChordPending(false);
+      setChordSteps([]);
     },
-    [config.keybindings, currentShortcuts, prefix, chordPending, save],
+    [config.keybindings, currentShortcuts, prefix, chordPending, chordSteps, save],
   );
 
   const handleReset = useCallback(
@@ -99,12 +126,18 @@ const ShortcutEditor: React.FC<{
   );
 
   const startCapture = (action: string) => {
+    if (chordCommitRef.current) clearTimeout(chordCommitRef.current);
     setCapturing(action);
     setChordPending(false);
+    setChordSteps([]);
   };
   const stopCapture = () => {
+    // Cancel any pending multi-step commit — a blur mid-sequence must not
+    // save half a chord 750ms later.
+    if (chordCommitRef.current) clearTimeout(chordCommitRef.current);
     setCapturing(null);
     setChordPending(false);
+    setChordSteps([]);
   };
 
   return (
@@ -145,7 +178,9 @@ const ShortcutEditor: React.FC<{
               ? DIGIT_RANGE_ACTIONS.has(action)
                 ? 'Press modifier + digit…'
                 : chordPending
-                  ? `${formatBinding(prefix)} then…`
+                  ? chordSteps.length
+                    ? `${formatBinding(prefix)} ${chordSteps.map((s) => formatCombo(s)).join(' ')} …`
+                    : `${formatBinding(prefix)} then…`
                   : 'Press keys…'
               : combo
                 ? formatBinding(combo, prefix)

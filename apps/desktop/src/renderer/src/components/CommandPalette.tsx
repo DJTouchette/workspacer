@@ -18,6 +18,7 @@ import {
   Plus,
   Smartphone,
   Columns3,
+  Keyboard,
   RefreshCw,
   Settings,
   Sparkles,
@@ -180,6 +181,10 @@ interface CommandPaletteProps {
   onOpenAskPane?: () => void;
   /** Open the Workspacer Guide pane (tour & how-do-I questions, live agent). */
   onOpenGuide?: () => void;
+  /** Toggle the tmux-style command layer (Settings owns the persisted flag). */
+  onToggleCommandLayer?: () => void;
+  /** Current layer state — names the toggle entry honestly. */
+  commandLayerEnabled?: boolean;
   /** Open a file in an Editor pane (prompts for a file first). */
   onOpenFile?: () => void;
   /** Resolved keybindings (config merged with defaults) — drives shortcut badges. */
@@ -244,6 +249,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   onOpenRemote,
   onOpenAskPane,
   onOpenGuide,
+  onToggleCommandLayer,
+  commandLayerEnabled,
   onOpenFile,
   shortcuts = {},
   prefix = 'ctrl+space',
@@ -327,6 +334,13 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       onOpenGuide,
     );
     add(
+      'cmd-command-layer',
+      commandLayerEnabled ? 'Disable Command Layer' : 'Enable Command Layer (tmux-style)',
+      'Transient prefix-key layer: pane zoom/swap, harpoon pins, chat paging, y/n approvals',
+      <Keyboard size={16} strokeWidth={1.75} />,
+      onToggleCommandLayer,
+    );
+    add(
       'cmd-toggle-sidebar',
       'Toggle Sidebar',
       'Show or hide the agent sidebar',
@@ -336,8 +350,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     );
     add(
       'cmd-toggle-inbox',
-      'Toggle Inbox',
-      'Open or close the triage inbox',
+      'Toggle Inbox (deprecated)',
+      'Open or close the triage inbox — superseded by the sidebar live cards',
       <Star size={16} strokeWidth={1.75} />,
       onToggleInbox,
       'toggle-inbox',
@@ -496,6 +510,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   }, [
     onOpenAskPane,
     onOpenGuide,
+    onToggleCommandLayer,
+    commandLayerEnabled,
     onToggleSidebar,
     onToggleInbox,
     onToggleFleet,

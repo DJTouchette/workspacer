@@ -12,6 +12,9 @@ import { presetConfigPatch } from './lib/keybindingPresets';
 import { LAYER_ACTIONS, resolveLeader } from './lib/shortcuts';
 import { requestChatScroll } from './lib/chatScrollBus';
 import { resolveApproval } from './lib/resolveAttention';
+import CommandStrip from './components/CommandStrip';
+import FocusChip from './components/FocusChip';
+import PaneHints from './components/PaneHints';
 import { resolveNavHeight } from './lib/layoutUtils';
 import { markUiEvent } from './lib/longTaskMonitor';
 import PluginInstallDialog from './components/PluginInstallDialog';
@@ -1518,6 +1521,65 @@ function App() {
     [snapshotBySession],
   );
 
+  // Palette-discoverable layer toggle — existing users never see Onboarding
+  // again, so the palette is how they FIND the feature.
+  const handleToggleCommandLayer = useCallback(() => {
+    void saveConfig({
+      keybindings: {
+        ...config.keybindings,
+        commandLayer: {
+          ...config.keybindings?.commandLayer,
+          enabled: !(config.keybindings?.commandLayer?.enabled === true),
+        },
+      },
+    });
+  }, [config.keybindings, saveConfig]);
+
+  // prefix d — tmux display-panes: numbered badges over the active tab's
+  // panes; the NEXT keystroke resolves (1-9 focuses, anything else dismisses).
+  // Transient App state + its own capture listener, so no pane component
+  // needs to know hints exist.
+  const [paneHintsOn, setPaneHintsOn] = useState(false);
+  const handlePaneHints = useCallback(() => {
+    const agent = agentsRef.current.find((a) => a.id === activeAgentIdRef.current);
+    const tab = agent?.tabs.find((t) => t.id === agent.activeTabId);
+    if (tab && tab.panes.length > 1) setPaneHintsOn(true);
+  }, []);
+  useEffect(() => {
+    if (!paneHintsOn) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setPaneHintsOn(false);
+      const m = e.code?.match(/^Digit([1-9])$/);
+      if (!m || e.ctrlKey || e.altKey || e.metaKey) return;
+      const agent = agentsRef.current.find((a) => a.id === activeAgentIdRef.current);
+      const tab = agent?.tabs.find((t) => t.id === agent.activeTabId);
+      const pane = tab?.panes[parseInt(m[1], 10) - 1];
+      if (tab && pane) setActivePane(tab.id, pane.id);
+    };
+    const dismiss = () => setPaneHintsOn(false);
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('mousedown', dismiss, true);
+    window.addEventListener('blur', dismiss);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('mousedown', dismiss, true);
+      window.removeEventListener('blur', dismiss);
+    };
+  }, [paneHintsOn, setActivePane]);
+
+  // What a blind `prefix y` would approve — the strip renders it beside the
+  // y/n hints. Read at arm time (chordPath is state, so this recomputes as
+  // the strip appears); approvals only, matching handleAttentionDecision.
+  const armedAttentionHint = useMemo(() => {
+    if (chordPath === null) return null;
+    const item = attentionRef.current?.topByAgent.get(activeAgentId);
+    return item && item.kind === 'approval' ? item.title : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chordPath, activeAgentId]);
+
   // prefix Enter — focus the active pane's visible editable (composer in GUI
   // view, xterm's textarea in Term view). Same probe the agent-switch
   // autofocus uses, minus the retry loop: the pane is already mounted.
@@ -1601,6 +1663,7 @@ function App() {
     onJumpPinned: handleJumpPinned,
     onApproveAttention: useCallback(() => handleAttentionDecision('yes'), [handleAttentionDecision]),
     onDenyAttention: useCallback(() => handleAttentionDecision('no'), [handleAttentionDecision]),
+    onPaneHints: handlePaneHints,
     shortcuts: resolvedShortcuts,
   });
 
@@ -2446,6 +2509,8 @@ function App() {
 
             <CommandPalette
               visible={showCommandPalette}
+              commandLayerEnabled={commandLayerCfg.enabled === true}
+              onToggleCommandLayer={handleToggleCommandLayer}
               apps={config.apps ?? []}
               agentCwd={agentCwd || undefined}
               mode={paletteMode}
@@ -2626,12 +2691,28 @@ function App() {
               />
             )}
 
-            <ChordHint
-              path={chordPath}
-              prefix={kbPrefix}
-              shortcuts={resolvedShortcuts}
-              showOptions={kbChordHints}
-            />
+            {commandLayerCfg.enabled && (commandLayerCfg.indicator ?? 'strip') === 'strip' ? (
+              <CommandStrip
+                path={chordPath}
+                prefix={kbPrefix}
+                shortcuts={resolvedShortcuts}
+                hudDelayMs={commandLayerCfg.hudDelayMs ?? 400}
+                attentionHint={armedAttentionHint}
+              />
+            ) : (
+              <ChordHint
+                path={chordPath}
+                prefix={kbPrefix}
+                shortcuts={resolvedShortcuts}
+                showOptions={kbChordHints}
+              />
+            )}
+            {commandLayerCfg.enabled === true && (
+              <FocusChip enabled armed={chordPath !== null} />
+            )}
+            {paneHintsOn && activeTab && (
+              <PaneHints paneIds={activeTab.panes.map((p) => p.id)} />
+            )}
 
             {/* Fleet Deck — cross-agent radar overlay. Sits OVER the still-mounted
           per-agent workspaces, so entering/leaving never remounts a pane.

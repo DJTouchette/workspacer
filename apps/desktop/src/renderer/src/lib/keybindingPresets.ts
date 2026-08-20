@@ -26,7 +26,7 @@
  */
 import type { Config, KeybindingsConfig } from '../hooks/useConfig';
 
-export type PresetId = 'vscode' | 'vim' | 'jetbrains';
+export type PresetId = 'vscode' | 'vim' | 'jetbrains' | 'tmux';
 
 export interface KeybindingPreset {
   id: PresetId;
@@ -199,20 +199,78 @@ const JETBRAINS: KeybindingPreset = {
   },
 };
 
+// ── tmux ─────────────────────────────────────────────────────────────────────
+// The command layer's native tongue (COMMAND_LAYER.md): everything one
+// keystroke after the prefix, flat — no submenus, no modifier reflexes beyond
+// a handful of muscle-memory directs (palette, save, settings, text size).
+// Vocabulary follows tmux where an equivalent exists: c/t new, x kill, , rename,
+// [ ] cycle, < > move, v/s split. Designed to COMPOSE with the layer verbs
+// (z zoom, { } swap, o cycle, m/1-9 pins, y/n, ' alternate) with zero
+// collisions — choosing this preset also enables the layer
+// (presetConfigPatch); switching away leaves the layer on (deliberate: the
+// layer re-renders its strip from whatever map is live).
+const TMUX: KeybindingPreset = {
+  id: 'tmux',
+  label: 'tmux',
+  description: 'Flat prefix-key vocabulary — pairs with the command layer.',
+  prefix: 'ctrl+space',
+  chordHints: true,
+  shortcuts: {
+    'command-palette': 'mod+k',
+    'open-file': 'prefix f',
+    'next-agent': 'prefix )',
+    'prev-agent': 'prefix (',
+    'next-attention': 'prefix a',
+    'spawn-agent': 'prefix shift+n',
+    settings: 'mod+,',
+    'save-session': 'mod+s',
+    'toggle-help': 'prefix ?',
+    'text-size-up': 'mod+=',
+    'text-size-down': 'mod+-',
+    'text-size-reset': 'mod+0',
+    'toggle-terminal': 'prefix -',
+    'toggle-sidebar': 'prefix e',
+    // Deprecated surface (sidebar live cards supersede it) — direct combo
+    // kept for continuity, deliberately NOT given a layer key.
+    'toggle-inbox': 'mod+shift+i',
+    'toggle-fleet': 'prefix w',
+    'toggle-ui-mode': 'mod+shift+m',
+    'toggle-inspector': 'prefix i',
+    'library-picker': 'prefix /',
+    'open-review': 'prefix r',
+    'new-terminal': 'prefix t',
+    'new-claude': 'prefix c',
+    'new-browser': 'prefix shift+b',
+    split: 'prefix s',
+    'quick-split': 'prefix v',
+    'close-pane': 'prefix x',
+    'rename-tab': 'prefix ,',
+    'prev-tab': 'prefix [',
+    'next-tab': 'prefix ]',
+    'move-tab-left': 'prefix <',
+    'move-tab-right': 'prefix >',
+    'nav-left': 'prefix h',
+    'nav-down': 'prefix j',
+    'nav-up': 'prefix k',
+    'nav-right': 'prefix l',
+  },
+};
+
 export const KEYBINDING_PRESETS: Record<PresetId, KeybindingPreset> = {
   vscode: VSCODE,
   vim: VIM,
   jetbrains: JETBRAINS,
+  tmux: TMUX,
 };
 
 /** Display order for the picker. */
-export const PRESET_ORDER: PresetId[] = ['vscode', 'vim', 'jetbrains'];
+export const PRESET_ORDER: PresetId[] = ['vscode', 'vim', 'jetbrains', 'tmux'];
 
 /** The default preset a fresh install lands on. */
 export const DEFAULT_PRESET_ID: PresetId = 'vscode';
 
 export function isPresetId(v: unknown): v is PresetId {
-  return v === 'vscode' || v === 'vim' || v === 'jetbrains';
+  return v === 'vscode' || v === 'vim' || v === 'jetbrains' || v === 'tmux';
 }
 
 /**
@@ -256,7 +314,13 @@ export function applyPresetKeybindings(
  * CodeMirror editor — nothing reads it.)
  */
 export function presetConfigPatch(id: PresetId, config: Config, force = false): Partial<Config> {
-  return {
-    keybindings: applyPresetKeybindings(id, config.keybindings, force),
-  };
+  const keybindings = applyPresetKeybindings(id, config.keybindings, force);
+  // The tmux preset IS the command layer's vocabulary — picking it opts into
+  // the layer. One-way on purpose: switching to another preset leaves the
+  // layer enabled (its strip just re-renders from the new map); the Settings
+  // toggle remains the layer's owner.
+  if (id === 'tmux') {
+    keybindings.commandLayer = { ...keybindings.commandLayer, enabled: true };
+  }
+  return { keybindings };
 }

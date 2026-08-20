@@ -167,7 +167,10 @@ export const ACTION_REGISTRY: ActionMeta[] = [
   // Panels & Overlays
   { action: 'toggle-sidebar', label: 'Toggle sidebar', section: 'Panels & Overlays' },
   { action: 'toggle-terminal', label: 'Toggle terminal', section: 'Panels & Overlays' },
-  { action: 'toggle-inbox', label: 'Toggle inbox', section: 'Panels & Overlays' },
+  // DEPRECATED surface: the sidebar live-feed cards supersede the Inbox drawer
+  // (user decision 2026-08-20, COMMAND_LAYER.md). Binding + drawer stay
+  // functional until the cards reach full parity; nothing new references it.
+  { action: 'toggle-inbox', label: 'Toggle inbox (deprecated)', section: 'Panels & Overlays' },
   { action: 'toggle-fleet', label: 'Toggle fleet', section: 'Panels & Overlays' },
   { action: 'toggle-ui-mode', label: 'Toggle focus / full mode', section: 'Panels & Overlays' },
   { action: 'toggle-inspector', label: 'Toggle inspector', section: 'Panels & Overlays' },
@@ -275,6 +278,12 @@ export const ACTION_REGISTRY: ActionMeta[] = [
     digitRange: true,
   },
   {
+    action: 'pane-hints',
+    label: 'Pane hints (jump by number)',
+    section: 'Command layer',
+    scope: 'layer',
+  },
+  {
     action: 'approve-attention',
     label: 'Approve (active agent)',
     section: 'Command layer',
@@ -287,11 +296,11 @@ export const ACTION_REGISTRY: ActionMeta[] = [
     scope: 'layer',
   },
   // Inbox (active only while the drawer is open)
-  { action: 'inbox-move-down', label: 'Select next item', section: 'Inbox', scope: 'inbox' },
-  { action: 'inbox-move-up', label: 'Select previous item', section: 'Inbox', scope: 'inbox' },
-  { action: 'inbox-open', label: 'Open agent', section: 'Inbox', scope: 'inbox' },
-  { action: 'inbox-approve-yes', label: 'Approve', section: 'Inbox', scope: 'inbox' },
-  { action: 'inbox-approve-no', label: 'Deny', section: 'Inbox', scope: 'inbox' },
+  { action: 'inbox-move-down', label: 'Select next item', section: 'Inbox · deprecated', scope: 'inbox' },
+  { action: 'inbox-move-up', label: 'Select previous item', section: 'Inbox · deprecated', scope: 'inbox' },
+  { action: 'inbox-open', label: 'Open agent', section: 'Inbox · deprecated', scope: 'inbox' },
+  { action: 'inbox-approve-yes', label: 'Approve', section: 'Inbox · deprecated', scope: 'inbox' },
+  { action: 'inbox-approve-no', label: 'Deny', section: 'Inbox · deprecated', scope: 'inbox' },
   {
     action: 'inbox-answer',
     label: 'Answer question (option)',
@@ -299,9 +308,9 @@ export const ACTION_REGISTRY: ActionMeta[] = [
     scope: 'inbox',
     digitRange: true,
   },
-  { action: 'inbox-dismiss', label: 'Dismiss item', section: 'Inbox', scope: 'inbox' },
-  { action: 'inbox-snooze', label: 'Snooze item', section: 'Inbox', scope: 'inbox' },
-  { action: 'inbox-clear-reviewed', label: 'Clear all reviewed', section: 'Inbox', scope: 'inbox' },
+  { action: 'inbox-dismiss', label: 'Dismiss item', section: 'Inbox · deprecated', scope: 'inbox' },
+  { action: 'inbox-snooze', label: 'Snooze item', section: 'Inbox · deprecated', scope: 'inbox' },
+  { action: 'inbox-clear-reviewed', label: 'Clear all reviewed', section: 'Inbox · deprecated', scope: 'inbox' },
 ];
 
 /** Action ids that only bind inside their own surface (fleet/inbox) or mode
@@ -373,6 +382,8 @@ export const CHORD_GROUP_LABELS: Record<string, string> = {
   // Groups used by the Vim preset's which-key submenus.
   w: 'Window',
   a: 'Agent',
+  // The command layer's chat-motion group (g g / g …).
+  g: 'Chat scroll',
 };
 
 export interface ChordTreeNode {
@@ -482,6 +493,13 @@ export function comboMatcher(combo: string): (e: KeyboardEvent) => boolean {
   const needsShift = parts.includes('shift');
   const needsMeta = parts.includes('meta');
   const expectedCode = KEY_TO_CODE[key];
+  // A punctuation key that needs Shift to TYPE ('<', '?', '{', …) arrives with
+  // shiftKey=true and the character already encodes it — demanding "no shift"
+  // made every such binding dead (the vim preset's `prefix <` / `>` never
+  // fired). The character is the disambiguator, so shift is ignored for
+  // symbol keys unless the combo names it explicitly. Letters/digits keep the
+  // exact check ('k' must not fire on Shift+K — case pairs are distinct steps).
+  const shiftAgnostic = !needsShift && key.length === 1 && !/^[a-z0-9]$/.test(key);
   return (e) => {
     const keyMatch = expectedCode
       ? e.code === expectedCode
@@ -490,7 +508,7 @@ export function comboMatcher(combo: string): (e: KeyboardEvent) => boolean {
       keyMatch &&
       e.ctrlKey === needsCtrl &&
       e.altKey === needsAlt &&
-      e.shiftKey === needsShift &&
+      (shiftAgnostic || e.shiftKey === needsShift) &&
       e.metaKey === needsMeta
     );
   };

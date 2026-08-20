@@ -168,6 +168,9 @@ interface UseKeyboardNavOptions {
   onJumpPinned?: (slot: number) => void;
   onApproveAttention?: () => void;
   onDenyAttention?: () => void;
+  /** Show numbered pane badges; the next digit focuses that pane (App owns
+   *  the transient hint state and its own digit listener). */
+  onPaneHints?: () => void;
   /** The CONFIGURED (unresolved) leader — the passthrough writes the byte this
    *  combo would have sent (ctrl+space → NUL), even where the platform
    *  substitutes the armed key (the Linux Alt tap). Defaults to `prefix`. */
@@ -225,6 +228,7 @@ export function useKeyboardNav({
   onJumpPinned,
   onApproveAttention,
   onDenyAttention,
+  onPaneHints,
   shortcuts = {},
 }: UseKeyboardNavOptions) {
   const directRef = useRef(buildDirectMatchers(shortcuts));
@@ -552,6 +556,9 @@ export function useKeyboardNav({
         case 'deny-attention':
           onDenyAttention?.();
           return true;
+        case 'pane-hints':
+          onPaneHints?.();
+          return true;
         default:
           return false; // not owned here
       }
@@ -806,6 +813,7 @@ export function useKeyboardNav({
     onJumpPinned,
     onApproveAttention,
     onDenyAttention,
+    onPaneHints,
   ]);
 
   // A half-typed chord survives the key-handler effect re-subscribing, and is

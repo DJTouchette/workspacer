@@ -4,6 +4,7 @@ import {
   buildChordTree,
   buildXtermAppKeyPredicate,
   chordNodeAt,
+  comboMatcher,
   findChordConflicts,
   leaderPassthroughBytes,
   chordMenu,
@@ -11,6 +12,7 @@ import {
   resolveLeader,
 } from '../src/lib/shortcuts';
 import { DEFAULT_SHORTCUTS } from '../src/hooks/configDefaults';
+import { KEYBINDING_PRESETS } from '../src/lib/keybindingPresets';
 
 describe('formatBinding', () => {
   it('formats a direct combo', () => {
@@ -196,5 +198,26 @@ describe('findChordConflicts / leaderPassthroughBytes', () => {
 describe('default map hygiene', () => {
   it('the merged default map (persisted + renderer-only + layer) has zero chord conflicts', () => {
     expect(findChordConflicts(DEFAULT_SHORTCUTS)).toEqual([]);
+  });
+});
+
+describe('symbol chord steps are shift-agnostic', () => {
+  it("'<' and '?' fire with the shift that types them (the dead vim-preset move-tab fix)", () => {
+    // The character encodes the shift; demanding shiftKey=false killed every
+    // symbol binding on US layouts.
+    expect(comboMatcher('<')(key({ key: '<', shiftKey: true }))).toBe(true);
+    expect(comboMatcher('{')(key({ key: '{', shiftKey: true }))).toBe(true);
+    expect(comboMatcher('?')(key({ key: '?', shiftKey: true }))).toBe(true);
+    // Letters keep the exact check — case pairs stay distinct steps.
+    expect(comboMatcher('k')(key({ key: 'K', shiftKey: true }))).toBe(false);
+    expect(comboMatcher('shift+k')(key({ key: 'K', shiftKey: true }))).toBe(true);
+  });
+});
+
+describe('tmux preset hygiene', () => {
+  it('the tmux preset + renderer-only layer verbs have zero chord conflicts', () => {
+    expect(
+      findChordConflicts({ ...DEFAULT_SHORTCUTS, ...KEYBINDING_PRESETS.tmux.shortcuts }),
+    ).toEqual([]);
   });
 });
