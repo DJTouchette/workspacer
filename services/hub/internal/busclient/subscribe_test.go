@@ -187,16 +187,26 @@ func TestSubscribeWhileConnectedSendsImmediately(t *testing.T) {
 	}
 
 	c.Subscribe("workflow.*")
-	// The subscribe frame and the publish race over separate connections; give
-	// the hub a beat to process the subscribe first.
-	time.Sleep(100 * time.Millisecond)
-	publishOnce(t, ctx, busURL, "workflow.started", `{}`)
-	select {
-	case ev := <-events:
-		if ev.Type != "workflow.started" {
-			t.Fatalf("got %q", ev.Type)
+	// The subscribe frame and the publish travel over separate connections
+	// with no ordering guarantee, and no fixed pre-publish sleep is long
+	// enough on a loaded CI runner (100ms lost the race on Windows). So
+	// publish REPEATEDLY: the claim under test is that a late Subscribe takes
+	// effect WITHOUT a reconnect, and one eventually-delivered event proves
+	// it — publishes that land before the subscribe are the race, not the
+	// claim.
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		publishOnce(t, ctx, busURL, "workflow.started", `{}`)
+		select {
+		case ev := <-events:
+			if ev.Type != "workflow.started" {
+				t.Fatalf("got %q", ev.Type)
+			}
+			return
+		case <-time.After(150 * time.Millisecond):
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("late Subscribe never took effect")
+		if time.Now().After(deadline) {
+			t.Fatal("late Subscribe never took effect")
+		}
 	}
 }
