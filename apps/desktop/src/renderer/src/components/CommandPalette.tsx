@@ -28,6 +28,7 @@ import {
   type LucideIcon,
 } from './icons';
 import { shortcutFor } from '../lib/shortcuts';
+import { EX_VERBS, exVerbLabel, runLayerAction } from '../lib/commandRegistry';
 import { BrandMark } from './Brand';
 import { useUiMode } from '../hooks/useUiMode';
 
@@ -139,7 +140,7 @@ export const builtInActions: PaletteItem[] = [
 interface CommandPaletteProps {
   visible: boolean;
   apps: AppEntry[];
-  mode?: 'tab' | 'split';
+  mode?: 'tab' | 'split' | 'cmdline';
   /** Active agent's working directory — folder-launches (e.g. New Claude)
    *  reuse it so they keep the workspace's directory context. */
   agentCwd?: string;
@@ -550,6 +551,26 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   // it, so any divergence makes Arrow keys jump rows instead of stepping.
   const items: PaletteItem[] = useMemo(() => {
     if (restrictTo === 'library') return libItems;
+    // The `:` cmdline (command layer): ex verbs lead, executed through the
+    // dispatcher's own switch (runLayerAction) so keys and verbs can never
+    // disagree; everything else stays reachable below them.
+    if (mode === 'cmdline') {
+      // Commands only, ex verbs first: mixing in the pane/app/library groups
+      // would desync selection order from the rendered group order (the array
+      // comment above), and an ex cmdline is a command surface anyway.
+      return [
+        ...EX_VERBS.map((v) => ({
+          id: `ex-${v.verb}`,
+          name: `:${v.verb}`,
+          description: exVerbLabel(v),
+          keywords: v.aliases,
+          icon: <Keyboard size={16} strokeWidth={1.75} />,
+          category: 'command' as const,
+          run: () => runLayerAction(v.action),
+        })),
+        ...commandActions.filter((a) => a.id !== 'cmd-help'),
+      ];
+    }
     return [
       ...builtInActions,
       ...apps.map((app, i) => ({
@@ -572,7 +593,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       })),
       ...libItems,
     ];
-  }, [apps, pluginPanes, libItems, restrictTo, commandActions]);
+  }, [apps, pluginPanes, libItems, restrictTo, commandActions, mode]);
 
   // Remember what had focus before we opened so we can hand it back — but only
   // when the palette is *dismissed* (Escape / click-away). When the user picks
@@ -1004,7 +1025,11 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
             }}
             onKeyDown={handleKeyDown}
             placeholder={
-              restrictTo === 'library' ? 'Insert a prompt or skill…' : 'Search actions and apps…'
+              restrictTo === 'library'
+                ? 'Insert a prompt or skill…'
+                : mode === 'cmdline'
+                  ? ':q  :vs  :on  :term  :pin  :rename …'
+                  : 'Search actions and apps…'
             }
             spellCheck={false}
             style={{

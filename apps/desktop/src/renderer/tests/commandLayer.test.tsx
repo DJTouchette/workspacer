@@ -239,3 +239,46 @@ describe('command layer verbs (Phase 3)', () => {
     unmount();
   });
 });
+
+describe('cmdline + jumplist + the command:action door (Phase 5)', () => {
+  it('prefix : opens the cmdline and prefix ctrl+o / ctrl+i walk the jumplist', () => {
+    const onCmdline = vi.fn();
+    const onJumpBack = vi.fn();
+    const onJumpForward = vi.fn();
+    const opts = options({
+      onCmdline,
+      onJumpBack,
+      onJumpForward,
+      shortcuts: {
+        cmdline: 'prefix :',
+        'jump-back': 'prefix ctrl+o',
+        'jump-forward': 'prefix ctrl+i',
+      },
+    });
+    const { unmount } = renderHook(() => useKeyboardNav(opts));
+
+    arm();
+    press({ key: ':', shiftKey: true }); // shift types the colon — shift-agnostic symbol step
+    expect(onCmdline).toHaveBeenCalledTimes(1);
+
+    arm();
+    press({ key: 'o', ctrlKey: true });
+    expect(onJumpBack).toHaveBeenCalledTimes(1);
+
+    arm();
+    press({ key: 'i', ctrlKey: true });
+    expect(onJumpForward).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it('command:action executes through the dispatcher switch (the cmdline/bus door)', () => {
+    const onZoomPane = vi.fn();
+    const opts = options({ onZoomPane, shortcuts: {} });
+    const { unmount } = renderHook(() => useKeyboardNav(opts));
+    window.dispatchEvent(new CustomEvent('command:action', { detail: { action: 'zoom-pane' } }));
+    expect(onZoomPane).toHaveBeenCalledTimes(1);
+    // Garbage is ignored, not thrown.
+    window.dispatchEvent(new CustomEvent('command:action', { detail: {} }));
+    unmount();
+  });
+});

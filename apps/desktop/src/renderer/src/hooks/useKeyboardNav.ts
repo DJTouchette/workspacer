@@ -171,6 +171,11 @@ interface UseKeyboardNavOptions {
   /** Show numbered pane badges; the next digit focuses that pane (App owns
    *  the transient hint state and its own digit listener). */
   onPaneHints?: () => void;
+  /** Open the command palette in its `:` cmdline variant (ex verbs). */
+  onCmdline?: () => void;
+  /** Session jumplist over focused agents (prefix ctrl+o / ctrl+i). */
+  onJumpBack?: () => void;
+  onJumpForward?: () => void;
   /** The CONFIGURED (unresolved) leader — the passthrough writes the byte this
    *  combo would have sent (ctrl+space → NUL), even where the platform
    *  substitutes the armed key (the Linux Alt tap). Defaults to `prefix`. */
@@ -229,6 +234,9 @@ export function useKeyboardNav({
   onApproveAttention,
   onDenyAttention,
   onPaneHints,
+  onCmdline,
+  onJumpBack,
+  onJumpForward,
   shortcuts = {},
 }: UseKeyboardNavOptions) {
   const directRef = useRef(buildDirectMatchers(shortcuts));
@@ -559,6 +567,15 @@ export function useKeyboardNav({
         case 'pane-hints':
           onPaneHints?.();
           return true;
+        case 'cmdline':
+          onCmdline?.();
+          return true;
+        case 'jump-back':
+          onJumpBack?.();
+          return true;
+        case 'jump-forward':
+          onJumpForward?.();
+          return true;
         default:
           return false; // not owned here
       }
@@ -746,14 +763,24 @@ export function useKeyboardNav({
       if (isEditableTarget(e.target)) cancelChord();
     };
 
+    // The `command:action` door: the `:` cmdline (and any future bus parity
+    // hook) executes actions through the SAME switch the chords use, so the
+    // two surfaces cannot disagree about what a verb does.
+    const onCommandAction = (e: Event) => {
+      const action = (e as CustomEvent).detail?.action;
+      if (typeof action === 'string') executeAction(action);
+    };
+
     window.addEventListener('keydown', handler, true);
     window.addEventListener('keyup', upHandler, true);
+    window.addEventListener('command:action', onCommandAction);
     window.addEventListener('mousedown', disarmOnMouse, true);
     window.addEventListener('blur', disarmOnBlur);
     window.addEventListener('focusin', cancelRepeatOnEditableFocus);
     return () => {
       window.removeEventListener('keydown', handler, true);
       window.removeEventListener('keyup', upHandler, true);
+      window.removeEventListener('command:action', onCommandAction);
       window.removeEventListener('mousedown', disarmOnMouse, true);
       window.removeEventListener('blur', disarmOnBlur);
       window.removeEventListener('focusin', cancelRepeatOnEditableFocus);
@@ -814,6 +841,9 @@ export function useKeyboardNav({
     onApproveAttention,
     onDenyAttention,
     onPaneHints,
+    onCmdline,
+    onJumpBack,
+    onJumpForward,
   ]);
 
   // A half-typed chord survives the key-handler effect re-subscribing, and is

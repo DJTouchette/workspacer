@@ -48,6 +48,8 @@ export interface UIConfig {
    *  respawns and points at "the agent working HERE", matching the TUI's
    *  harpoon mental model. */
   pinnedAgentCwds?: string[];
+  /** One-time in-app announcement flag for the command layer (Phase 5). */
+  commandLayerAnnounced?: boolean;
   /** How GUI diffs are laid out: 'stacked' (removed block then added block),
    *  'inline' (interleaved unified), or 'split' (side-by-side). Absent = stacked. */
   diffView?: 'stacked' | 'inline' | 'split';

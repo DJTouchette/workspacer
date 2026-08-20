@@ -68,6 +68,9 @@ const RENDERER_ONLY_SHORTCUTS: Record<string, string> = {
   'alternate-agent': "prefix '",
   // 'd' as in tmux's display-panes (its own 'q' is taken by quick-split here).
   'pane-hints': 'prefix d',
+  cmdline: 'prefix :',
+  'jump-back': 'prefix ctrl+o',
+  'jump-forward': 'prefix ctrl+i',
   'pin-agent': 'prefix m',
   'jump-pinned': 'prefix 1-9',
   'approve-attention': 'prefix y',

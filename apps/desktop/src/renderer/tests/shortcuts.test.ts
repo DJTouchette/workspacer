@@ -6,6 +6,7 @@ import {
   chordNodeAt,
   comboMatcher,
   findChordConflicts,
+  findBindingConflicts,
   leaderPassthroughBytes,
   chordMenu,
   chordBreadcrumb,
@@ -219,5 +220,25 @@ describe('tmux preset hygiene', () => {
     expect(
       findChordConflicts({ ...DEFAULT_SHORTCUTS, ...KEYBINDING_PRESETS.tmux.shortcuts }),
     ).toEqual([]);
+  });
+});
+
+describe('findBindingConflicts', () => {
+  it('reports direct-combo duplicates and chord conflicts as readable warnings', () => {
+    const warnings = findBindingConflicts({
+      'command-palette': 'mod+k',
+      'save-session': 'ctrl+k', // same resolved combo off-mac
+      'toggle-help': 'prefix v',
+      'open-review': 'prefix v', // duplicate chord
+      'fleet-open': 'enter', // scoped — exempt from the direct check
+      'inbox-open': 'enter',
+    });
+    expect(warnings).toHaveLength(2);
+    expect(warnings.join('\n')).toContain('prefix v');
+    expect(warnings.join('\n')).toContain('Ctrl+K');
+  });
+
+  it('is quiet on the shipped defaults', () => {
+    expect(findBindingConflicts(DEFAULT_SHORTCUTS)).toEqual([]);
   });
 });

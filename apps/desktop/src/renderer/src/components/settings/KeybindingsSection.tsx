@@ -1,9 +1,11 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { RotateCcw } from 'lucide-react';
 import { Config, DEFAULT_CONFIG } from '../../hooks/useConfig';
 import {
+  findBindingConflicts,
   formatBinding,
   formatCombo,
+  LAYER_ACTIONS,
   ACTION_SECTIONS,
   DIGIT_RANGE_ACTIONS,
   DIGIT_RANGE_TOKEN,
@@ -42,6 +44,17 @@ const ShortcutEditor: React.FC<{
     ...(config.keybindings?.shortcuts ?? {}),
   };
   const prefix = resolveLeader(config.keybindings?.prefix ?? 'ctrl+space');
+  // Live conflict check over the SAME merged map the dispatcher walks (layer
+  // verbs included only while the layer is enabled — mirroring App). Warnings,
+  // not blocks: the dispatcher degrades, the user just deserves to know.
+  const bindingWarnings = useMemo(() => {
+    const merged: Record<string, string> = { ...currentShortcuts };
+    if (config.keybindings?.commandLayer?.enabled !== true) {
+      for (const a of LAYER_ACTIONS) delete merged[a];
+    }
+    return findBindingConflicts(merged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.keybindings]);
   const [capturing, setCapturing] = useState<string | null>(null);
   // True once the prefix has been pressed mid-capture: the following keys
   // become the chord (stored as "prefix <step> [<step>…]").
@@ -155,7 +168,29 @@ const ShortcutEditor: React.FC<{
       </div>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', marginBottom: '8px' }}>
         Press a key combo for a direct binding, or press the prefix first then a key for a chord.
+        Chords may be multi-step (prefix, then several keys — a pause commits).
       </div>
+      {bindingWarnings.length > 0 && (
+        <div
+          role="alert"
+          style={{
+            marginBottom: '8px',
+            padding: '6px 9px',
+            borderRadius: 'var(--wks-radius-md)',
+            border: '1px solid color-mix(in srgb, var(--wks-warning) 45%, transparent)',
+            backgroundColor: 'color-mix(in srgb, var(--wks-warning) 10%, transparent)',
+            fontSize: '0.7rem',
+            color: 'var(--wks-warning)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '3px',
+          }}
+        >
+          {bindingWarnings.map((w, i) => (
+            <div key={i}>⚠ {w}</div>
+          ))}
+        </div>
+      )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
         {ACTION_SECTIONS.flatMap((section) => [
           <div

@@ -11,6 +11,7 @@ import Onboarding from './components/Onboarding';
 import { presetConfigPatch } from './lib/keybindingPresets';
 import { LAYER_ACTIONS, resolveLeader } from './lib/shortcuts';
 import { requestChatScroll } from './lib/chatScrollBus';
+import { postNotification } from './lib/notificationBus';
 import { resolveApproval } from './lib/resolveAttention';
 import CommandStrip from './components/CommandStrip';
 import FocusChip from './components/FocusChip';
@@ -401,7 +402,7 @@ function App() {
     };
   }, []);
 
-  const [paletteMode, setPaletteMode] = useState<'tab' | 'split'>('tab');
+  const [paletteMode, setPaletteMode] = useState<'tab' | 'split' | 'cmdline'>('tab');
   const [paletteRestrict, setPaletteRestrict] = useState<'library' | undefined>(undefined);
   const [showSpawnDialog, setShowSpawnDialog] = useState(false);
   // When the new-agent view is opened for a specific directory (e.g. a
@@ -1535,6 +1536,72 @@ function App() {
     });
   }, [config.keybindings, saveConfig]);
 
+  // One-time discovery post for the command layer: existing users never see
+  // Onboarding again, and a feature whose whole point is "you never leave the
+  // keyboard" deserves better than being found by accident in Settings.
+  useEffect(() => {
+    if (!configLoaded) return;
+    if (config.ui.commandLayerAnnounced) return;
+    if (config.keybindings?.commandLayer?.enabled !== true) {
+      postNotification({
+        id: 'command-layer-intro',
+        title: 'New: the tmux-style command layer',
+        body: 'Pane zoom, harpoon pins, y/n approvals and chat paging — one keystroke after the prefix. Enable it from the command palette or Settings → Keybindings.',
+        source: 'workspacer',
+      });
+    }
+    void saveConfig({ ui: { ...config.ui, commandLayerAnnounced: true } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configLoaded]);
+
+  // prefix : — the ex cmdline: the command palette in its cmdline variant.
+  const handleCmdline = useCallback(() => {
+    setPaletteRestrict(undefined);
+    setPaletteMode('cmdline');
+    setShowCommandPalette(true);
+  }, []);
+
+  // Session jumplist (prefix ctrl+o / ctrl+i): the trail of agent workspaces
+  // you have focused, vim-style. Jumps navigate the trail without rewriting
+  // it; a NEW focus (click, pin jump, attention jump) truncates the forward
+  // branch and appends — exactly vim's jumplist shape.
+  const jumplistRef = useRef<{ trail: string[]; index: number; navigating: boolean }>({
+    trail: [],
+    index: -1,
+    navigating: false,
+  });
+  useEffect(() => {
+    const j = jumplistRef.current;
+    if (j.navigating) {
+      j.navigating = false;
+      return;
+    }
+    if (j.trail[j.index] === activeAgentId) return;
+    j.trail = [...j.trail.slice(0, j.index + 1), activeAgentId];
+    if (j.trail.length > 50) j.trail = j.trail.slice(-50);
+    j.index = j.trail.length - 1;
+  }, [activeAgentId]);
+  const jumpAlong = useCallback(
+    (delta: -1 | 1) => {
+      const j = jumplistRef.current;
+      let target = j.index + delta;
+      // Skip trail entries whose agent no longer exists.
+      while (target >= 0 && target < j.trail.length) {
+        const id = j.trail[target];
+        if (agentsRef.current.some((a) => a.id === id)) {
+          j.index = target;
+          j.navigating = true;
+          handleSelectAgent(id);
+          return;
+        }
+        target += delta;
+      }
+    },
+    [handleSelectAgent],
+  );
+  const handleJumpBack = useCallback(() => jumpAlong(-1), [jumpAlong]);
+  const handleJumpForward = useCallback(() => jumpAlong(1), [jumpAlong]);
+
   // prefix d — tmux display-panes: numbered badges over the active tab's
   // panes; the NEXT keystroke resolves (1-9 focuses, anything else dismisses).
   // Transient App state + its own capture listener, so no pane component
@@ -1664,6 +1731,9 @@ function App() {
     onApproveAttention: useCallback(() => handleAttentionDecision('yes'), [handleAttentionDecision]),
     onDenyAttention: useCallback(() => handleAttentionDecision('no'), [handleAttentionDecision]),
     onPaneHints: handlePaneHints,
+    onCmdline: handleCmdline,
+    onJumpBack: handleJumpBack,
+    onJumpForward: handleJumpForward,
     shortcuts: resolvedShortcuts,
   });
 

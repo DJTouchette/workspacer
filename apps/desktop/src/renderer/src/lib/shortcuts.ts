@@ -284,6 +284,24 @@ export const ACTION_REGISTRY: ActionMeta[] = [
     scope: 'layer',
   },
   {
+    action: 'cmdline',
+    label: 'Command line (ex verbs)',
+    section: 'Command layer',
+    scope: 'layer',
+  },
+  {
+    action: 'jump-back',
+    label: 'Jumplist back (agents)',
+    section: 'Command layer',
+    scope: 'layer',
+  },
+  {
+    action: 'jump-forward',
+    label: 'Jumplist forward (agents)',
+    section: 'Command layer',
+    scope: 'layer',
+  },
+  {
     action: 'approve-attention',
     label: 'Approve (active agent)',
     section: 'Command layer',
@@ -688,6 +706,44 @@ export function findChordConflicts(shortcuts: Record<string, string>): ChordConf
     }
   }
   return conflicts;
+}
+
+/**
+ * Human-readable binding conflicts for the Settings save-time check: chord
+ * conflicts (duplicates + prefix shadowing, via findChordConflicts) plus two
+ * un-scoped actions sharing one DIRECT combo. Surface-scoped actions are
+ * exempt from the direct check (fleet/inbox reuse y/n/j/k by design, matched
+ * only inside their own overlay). Warnings, not errors — the dispatcher
+ * degrades (first/last match wins) rather than breaking, but the user should
+ * know which key stopped meaning what they think.
+ */
+export function findBindingConflicts(shortcuts: Record<string, string>): string[] {
+  const warnings: string[] = [];
+  for (const c of findChordConflicts(shortcuts)) {
+    warnings.push(
+      c.kind === 'duplicate'
+        ? `“prefix ${c.path}” is bound to ${c.actions.map((a) => ACTION_LABELS[a] ?? a).join(' AND ')} — only one can fire`
+        : `“prefix ${c.path}” (${ACTION_LABELS[c.actions[0]] ?? c.actions[0]}) shadows longer chords: ${c.actions
+            .slice(1)
+            .map((a) => ACTION_LABELS[a] ?? a)
+            .join(', ')}`,
+    );
+  }
+  const byCombo = new Map<string, string[]>();
+  for (const [action, combo] of Object.entries(shortcuts)) {
+    const trimmed = (combo ?? '').trim();
+    if (!trimmed || /^prefix\s/i.test(trimmed) || SCOPED_ACTIONS.has(action)) continue;
+    const key = resolveMod(trimmed.toLowerCase());
+    byCombo.set(key, [...(byCombo.get(key) ?? []), action]);
+  }
+  for (const [combo, actions] of byCombo) {
+    if (actions.length > 1) {
+      warnings.push(
+        `${formatCombo(combo)} is bound to ${actions.map((a) => ACTION_LABELS[a] ?? a).join(' AND ')} — only one can fire`,
+      );
+    }
+  }
+  return warnings;
 }
 
 export function shortcutFor(
