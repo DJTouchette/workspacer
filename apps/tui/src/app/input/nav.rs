@@ -130,10 +130,49 @@ impl App {
             self.pinned_cwds.push(cwd);
             self.set_toast(format!("Pinned #{}", self.pinned_cwds.len()));
         }
-        if let Err(e) = crate::pins::save(&self.pinned_cwds) {
+        self.persist_pins();
+        self.rebuild_harpoon();
+    }
+
+    /// Write the pins to whichever store is authoritative right now: the
+    /// SHARED config (`ui.pinnedAgentCwds`, via the brain's `config.save` —
+    /// the same slots the desktop's `prefix m` / `prefix 1-9` use) when the
+    /// bus is up, or the legacy local `tui-pins.json` off-bus. Never both:
+    /// on-bus, config is the truth and a stale local file must not shadow it
+    /// on some future off-bus launch more than it already can.
+    pub(in crate::app) fn persist_pins(&mut self) {
+        if let Some(bus) = self.bus.clone() {
+            let partial = crate::pins::config_partial(&self.pinned_cwds);
+            tokio::spawn(async move {
+                let _ = bus.call("config.save", partial).await;
+            });
+        } else if let Err(e) = crate::pins::save(&self.pinned_cwds) {
             self.set_toast(crate::store::save_toast("", "pins", Err(e)));
         }
-        self.rebuild_harpoon();
+    }
+
+    /// Fold the shared pin store (from `config.get`) into the harpoon.
+    ///
+    /// `Some(list)` — the shared key exists: it IS the truth, local state
+    /// follows (the desktop may have pinned/unpinned while we ran). `None` —
+    /// the key has never been written by ANY client: if this TUI carries
+    /// legacy `tui-pins.json` pins, push them up once so they become the
+    /// shared truth instead of silently diverging from the desktop's empty
+    /// set.
+    pub(in crate::app) fn adopt_shared_pins(&mut self, shared: Option<Vec<String>>) {
+        match shared {
+            Some(cwds) => {
+                if self.pinned_cwds != cwds {
+                    self.pinned_cwds = cwds;
+                    self.rebuild_harpoon();
+                }
+            }
+            None => {
+                if !self.pinned_cwds.is_empty() {
+                    self.persist_pins();
+                }
+            }
+        }
     }
 
     /// Teleport to the 1-based harpoon slot, if it's filled.
@@ -201,6 +240,27 @@ impl App {
 mod tests {
     use super::*;
     use crate::app::input::testutil::*;
+
+    #[test]
+    fn adopt_shared_pins_makes_the_config_document_the_truth() {
+        let mut app = app_with_agents(2);
+        app.harpoon_toggle(); // local pin: /work/s1
+        // The desktop pinned a different set while we ran — shared wins.
+        app.adopt_shared_pins(Some(vec!["/work/s2".to_string()]));
+        assert_eq!(app.pinned_cwds, vec!["/work/s2"]);
+        // An explicit empty list is a real answer (everything unpinned)…
+        app.adopt_shared_pins(Some(Vec::new()));
+        assert!(app.pinned_cwds.is_empty());
+    }
+
+    #[tokio::test]
+    async fn adopt_shared_pins_keeps_legacy_pins_when_the_key_was_never_written() {
+        let mut app = app_with_agents(2);
+        app.harpoon_toggle(); // legacy-era local pin
+        // …but an ABSENT key must not wipe them: they're the migration source.
+        app.adopt_shared_pins(None);
+        assert_eq!(app.pinned_cwds, vec!["/work/s1"]);
+    }
 
     #[test]
     fn harpoon_toggle_pins_then_unpins_the_selected_agent() {

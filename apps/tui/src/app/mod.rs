@@ -515,6 +515,7 @@ impl App {
                 self.managed_providers.insert(session_id, provider);
             }
             AppMsg::Projects(projects) => self.projects = projects,
+            AppMsg::PinnedCwds(shared) => self.adopt_shared_pins(shared),
             AppMsg::RemoteSeed { hub, agents } => {
                 self.remote.seed(&hub, agents);
                 self.fold_fleet();

@@ -89,6 +89,10 @@ pub enum AppMsg {
     /// project's mark. Never sent when there's no bus; every mark is derived
     /// from its path until (and unless) this lands.
     Projects(crate::projects::Projects),
+    /// `ui.pinnedAgentCwds` from the shared config document. `None` = the key
+    /// is ABSENT (never written by any client), which gates the one-time
+    /// migration off `tui-pins.json`; `Some(vec![])` is a real "all unpinned".
+    PinnedCwds(Option<Vec<String>>),
     /// One peer hub's authoritative session roster, pulled over the federation
     /// link (`hub:<peer>/sessions.snapshots`). Replaces that hub's remote
     /// sessions wholesale — see [`crate::federation`].

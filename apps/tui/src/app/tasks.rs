@@ -39,6 +39,9 @@ pub(super) async fn fetch_projects(bus: &BusClient, tx: &UnboundedSender<AppMsg>
         return;
     };
     let _ = tx.send(AppMsg::Projects(crate::projects::from_config(&doc)));
+    // Same document, second reading: the shared harpoon pins. Piggybacking
+    // keeps "one config.get per (re)connect" true.
+    let _ = tx.send(AppMsg::PinnedCwds(crate::pins::from_config(&doc)));
 }
 
 /// Fetch a session's conversation snapshot, for the fold to adopt.
