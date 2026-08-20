@@ -299,6 +299,23 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     defer: true,
   });
 
+  // `prefix prefix` passthrough (command layer) — twin of TerminalPane's
+  // listener: write the literal leader byte iff the layer was armed from THIS
+  // pane's terminal (addressed by the arm-time element, not current focus).
+  useEffect(() => {
+    const onWritePrefix = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        | { target?: Element | null; bytes?: string }
+        | undefined;
+      if (!detail?.bytes) return;
+      const container = termContainerRef.current;
+      if (!container || !detail.target || !container.contains(detail.target)) return;
+      write(detail.bytes);
+    };
+    window.addEventListener('terminal:write-prefix', onWritePrefix);
+    return () => window.removeEventListener('terminal:write-prefix', onWritePrefix);
+  }, [write]);
+
   // Refresh button: clear rendering glitches across both views.
   //  1) Nudge the content area onto a fresh raster (toggle a composited property
   //     for one frame) — clears the rare backdrop-filter compositing garble.

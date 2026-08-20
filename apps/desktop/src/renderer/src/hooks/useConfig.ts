@@ -103,6 +103,32 @@ export interface KeybindingsConfig {
    *  by the Settings picker to show the active preset and to preserve user
    *  rebinds when switching presets. Absent on legacy configs. */
   presetId?: string;
+  /** The opt-in tmux-style command layer (COMMAND_LAYER.md). */
+  commandLayer?: CommandLayerConfig;
+}
+
+/** Settings for the transient command layer — a tmux-style armed key layer on
+ *  the chord leader. All timings configurable (motor accessibility). */
+export interface CommandLayerConfig {
+  /** THE switch. Off = the dispatcher behaves exactly as before. */
+  enabled?: boolean;
+  /** Chord idle timeout while enabled; 0 = armed until resolved (Esc/mouse/
+   *  unknown key disarm). Disabled layer keeps the legacy 1500ms. */
+  timeoutMs?: number;
+  /** After a repeat-group action (pane nav, tab cycling) the layer re-arms for
+   *  this long so `prefix h h l` walks panes without re-pressing the leader. */
+  repeatMs?: number;
+  /** Dwell before the armed strip expands into the full HUD grid. */
+  hudDelayMs?: number;
+  /** Leader pressed again while armed sends the literal prefix byte to the
+   *  terminal it was armed from (nested tmux). */
+  passthrough?: boolean;
+  /** Armed-state chrome: 'strip' (full command strip) | 'minimal' (bare chip).
+   *  Never 'none' — an enabled layer must not have invisible armed state. */
+  indicator?: 'strip' | 'minimal';
+  /** Per-platform leader escape hatch (e.g. a Hyprland setup where the Alt tap
+   *  collides with WM bindings); empty = the resolved default. */
+  leaderOverride?: string;
 }
 
 export interface NotificationsConfig {

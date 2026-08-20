@@ -519,6 +519,87 @@ export function digitFromRangeEvent(e: KeyboardEvent, combo: string | undefined)
   return m ? parseInt(m[1], 10) : null;
 }
 
+/** Actions that re-arm the layer for the repeat window after firing, so
+ *  `prefix h h l` walks panes and `prefix ] ]` cycles tabs without re-pressing
+ *  the leader. Movement only — structural actions (close, split) end the
+ *  gesture. */
+export const REPEAT_ACTIONS = new Set([
+  'nav-left',
+  'nav-right',
+  'nav-up',
+  'nav-down',
+  'next-tab',
+  'prev-tab',
+]);
+
+/** The literal byte(s) a `prefix prefix` passthrough writes to the terminal —
+ *  what the leader WOULD have sent had the app not eaten it, so a nested tmux
+ *  bound to the same prefix still works. Derived from the CONFIGURED combo
+ *  (ctrl+space → NUL even on Linux, where the tap-Alt substitute armed the
+ *  layer); combos with no terminal byte encoding return '' (no-op). */
+export function leaderPassthroughBytes(prefix: string): string {
+  const parts = resolveMod((prefix ?? '').toLowerCase().trim()).split('+');
+  const key = parts[parts.length - 1];
+  const ctrlOnly =
+    parts.includes('ctrl') && !parts.includes('alt') && !parts.includes('meta');
+  if (!ctrlOnly) return '';
+  if (key === 'space') return '\x00';
+  if (/^[a-z]$/.test(key)) return String.fromCharCode(key.charCodeAt(0) - 96);
+  return '';
+}
+
+export interface ChordConflict {
+  kind: 'duplicate' | 'shadow';
+  /** The space-joined chord path both parties share. */
+  path: string;
+  /** The action ids involved (two for a duplicate; the leaf action whose path
+   *  is also a group for a shadow). */
+  actions: string[];
+}
+
+/**
+ * Detect chord-map conflicts the tree builder would otherwise resolve
+ * silently (last-writer-wins): two actions on the SAME full path, and a leaf
+ * whose path is also a group prefix of a longer chord (the leaf fires and the
+ * submenu is unreachable — or vice versa, depending on build order). Case- and
+ * modifier-aware: steps are compared canonically ('shift+k' ≠ 'k'). Feeds
+ * Settings-save validation and the preset drift tests; buildChordTree stays
+ * permissive so a bad config degrades instead of crashing the dispatcher.
+ */
+export function findChordConflicts(shortcuts: Record<string, string>): ChordConflict[] {
+  const canonical = (step: string) => step.toLowerCase();
+  const leaves = new Map<string, string[]>(); // path → actions
+  const paths: { action: string; steps: string[] }[] = [];
+  for (const [action, combo] of Object.entries(shortcuts)) {
+    const m = /^prefix\s+(.+)$/i.exec((combo ?? '').trim());
+    if (!m) continue;
+    const steps = m[1].trim().split(/\s+/).map(canonical);
+    paths.push({ action, steps });
+    const key = steps.join(' ');
+    leaves.set(key, [...(leaves.get(key) ?? []), action]);
+  }
+  const conflicts: ChordConflict[] = [];
+  for (const [path, actions] of leaves) {
+    if (actions.length > 1) conflicts.push({ kind: 'duplicate', path, actions });
+  }
+  for (const [path, actions] of leaves) {
+    const prefixSteps = path.split(' ');
+    const shadowed = paths.filter(
+      (p) =>
+        p.steps.length > prefixSteps.length &&
+        prefixSteps.every((s, i) => p.steps[i] === s),
+    );
+    if (shadowed.length > 0) {
+      conflicts.push({
+        kind: 'shadow',
+        path,
+        actions: [...actions, ...shadowed.map((p) => p.action)],
+      });
+    }
+  }
+  return conflicts;
+}
+
 export function shortcutFor(
   action: string | undefined,
   shortcuts: Record<string, string> | undefined,

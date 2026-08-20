@@ -10,8 +10,11 @@ import {
   comboHasModifiers,
   comboMatcher,
   isEditableTarget,
+  leaderPassthroughBytes,
+  REPEAT_ACTIONS,
   SCOPED_ACTIONS,
 } from '../lib/shortcuts';
+import type { CommandLayerConfig } from './useConfig';
 
 // The canonical matcher moved to lib/shortcuts.ts (one implementation for the
 // window dispatcher, pane listeners, and plugin hotkeys alike); re-exported so
@@ -148,6 +151,13 @@ interface UseKeyboardNavOptions {
    *  CustomEvent — the pane's old focus-scoped listener had the same dead
    *  never-resolves-`mod` matcher. */
   onToggleInspector?: () => void;
+  /** The transient command layer (COMMAND_LAYER.md). Absent/disabled = the
+   *  legacy chord behavior, byte for byte. */
+  commandLayer?: CommandLayerConfig;
+  /** The CONFIGURED (unresolved) leader — the passthrough writes the byte this
+   *  combo would have sent (ctrl+space → NUL), even where the platform
+   *  substitutes the armed key (the Linux Alt tap). Defaults to `prefix`. */
+  configuredPrefix?: string;
   shortcuts?: Record<string, string>;
 }
 
@@ -188,6 +198,8 @@ export function useKeyboardNav({
   onSpawnAgent,
   onLibraryPicker,
   onToggleInspector,
+  commandLayer,
+  configuredPrefix,
   shortcuts = {},
 }: UseKeyboardNavOptions) {
   const directRef = useRef(buildDirectMatchers(shortcuts));
@@ -215,6 +227,15 @@ export function useKeyboardNav({
   // For a lone-modifier leader: true once the modifier is pressed alone and still
   // a candidate for a "tap" (no other key has joined it). Fires on its key-up.
   const tapArmedRef = useRef(false);
+  // The element focused when the layer ARMED — the terminal a `prefix prefix`
+  // passthrough addresses. Deliberately not a focus park: nothing ever
+  // focuses it back (doctrine: no focus parking, see COMMAND_LAYER.md).
+  const armSourceRef = useRef<Element | null>(null);
+  // True while the layer is re-armed by a repeat-group action rather than an
+  // explicit leader press. A focus landing in an editable target cancels THIS
+  // window (the composer autofocus beats repeatMs, and stealing typed 'hjkl'
+  // as navigation is a mode error) but never an explicit arm.
+  const repeatWindowRef = useRef(false);
   // Latest cancelChord, so the chord can be reset from outside the big effect
   // below without that effect's cleanup owning the reset. See the teardown
   // comment where it's assigned.
@@ -275,23 +296,51 @@ export function useKeyboardNav({
     // A lone-modifier leader (Linux's Alt tap) is matched by tap detection on
     // key-up, not by comboMatcher on key-down; null for ordinary combo leaders.
     const loneModLeaderKey = LONE_MODIFIER_LEADERS[prefix.toLowerCase().trim()] ?? null;
+    // The command layer's semantics only apply while enabled; disabled keeps
+    // the legacy chord behavior byte for byte.
+    const layerEnabled = commandLayer?.enabled === true;
+    const layerTimeout = layerEnabled ? (commandLayer?.timeoutMs ?? 0) : CHORD_TIMEOUT;
+    const layerRepeatMs = commandLayer?.repeatMs ?? 500;
+    const layerPassthrough = layerEnabled && (commandLayer?.passthrough ?? true);
+    const passthroughBytes = leaderPassthroughBytes(configuredPrefix ?? prefix);
 
     const cancelChord = () => {
       if (chordRef.current.timeoutId) clearTimeout(chordRef.current.timeoutId);
       chordRef.current = { path: null, timeoutId: null };
+      repeatWindowRef.current = false;
       setLayerArmed(false);
       onChordPathChange?.(null);
     };
     cancelChordRef.current = cancelChord;
 
     // Enter/move to a chord path (root = []), (re)arming the idle timeout so a
-    // half-typed chord doesn't linger forever.
-    const setChordPath = (path: string[]) => {
+    // half-typed chord doesn't linger forever. With the layer enabled the
+    // timeout is configurable and 0 means armed-until-resolved (the armed
+    // state is always visible chrome, so there is nothing to expire); a
+    // repeat re-arm passes its own shorter window.
+    const setChordPath = (path: string[], ttlMs: number = layerTimeout) => {
       if (chordRef.current.timeoutId) clearTimeout(chordRef.current.timeoutId);
+      if (chordRef.current.path === null) armSourceRef.current = document.activeElement;
       chordRef.current.path = path;
+      chordRef.current.timeoutId = ttlMs > 0 ? setTimeout(cancelChord, ttlMs) : null;
+      repeatWindowRef.current = false;
       setLayerArmed(true);
       onChordPathChange?.(path);
-      chordRef.current.timeoutId = setTimeout(cancelChord, CHORD_TIMEOUT);
+    };
+
+    // `prefix prefix` — send the literal leader byte to the terminal the layer
+    // was armed FROM (nested tmux). Addressed by the remembered element, not
+    // "the focused terminal": arming never moves focus, but a webview arm
+    // blurs its guest, so the capture-time element is the only honest address.
+    const sendPassthrough = () => {
+      const target = armSourceRef.current;
+      cancelChord();
+      if (!passthroughBytes) return;
+      window.dispatchEvent(
+        new CustomEvent('terminal:write-prefix', {
+          detail: { target, bytes: passthroughBytes },
+        }),
+      );
     };
 
     /**
@@ -450,6 +499,16 @@ export function useKeyboardNav({
 
       // 1. Chord in progress: walk the tree. Groups descend a level; leaves fire.
       if (path !== null) {
+        // Leader again at the root → literal passthrough (nested tmux),
+        // checked before the modifier wait so Ctrl+Space's held Ctrl doesn't
+        // eat it. Only at the root: deeper in a submenu the leader is just an
+        // unknown key.
+        if (layerPassthrough && path.length === 0 && !loneModLeaderKey && prefixMatch(e)) {
+          e.preventDefault();
+          e.stopPropagation();
+          sendPassthrough();
+          return;
+        }
         if (MODIFIER_KEY_NAMES.has(e.key)) return; // wait for the real key
         e.preventDefault();
         e.stopPropagation();
@@ -474,8 +533,19 @@ export function useKeyboardNav({
         if (child.node.children.length > 0) {
           setChordPath([...path, child.step]); // descend into submenu
         } else if (child.node.action) {
-          cancelChord();
-          executeAction(child.node.action);
+          const action = child.node.action;
+          if (layerEnabled && REPEAT_ACTIONS.has(action)) {
+            // Repeat group: fire, then re-arm at the PARENT path for the
+            // repeat window so `prefix h h l` walks panes. The strip stays
+            // visible for the whole window (path non-null), and a focus
+            // landing in an editable target cancels it (focusin listener).
+            executeAction(action);
+            setChordPath(path, layerRepeatMs);
+            repeatWindowRef.current = true;
+          } else {
+            cancelChord();
+            executeAction(action);
+          }
         } else {
           cancelChord();
         }
@@ -494,9 +564,13 @@ export function useKeyboardNav({
       }
 
       // 3. Combo leader pressed → arm the chord at the root. A bare (modifier-less)
-      //    leader is suppressed inside editable contexts so it doesn't eat typing.
+      //    leader is suppressed inside editable contexts so it doesn't eat typing,
+      //    and any leader is suppressed inside surfaces that opt out wholesale
+      //    (modal dialogs mark their root data-leader-suppress — arming while
+      //    typing a spawn prompt would steal the following keystrokes).
       if (!loneModLeaderKey && prefixMatch(e)) {
         if (prefixNeedsEditableGuard && isEditableTarget(e.target)) return;
+        if (leaderSuppressed(e.target)) return;
         e.preventDefault();
         e.stopPropagation();
         setChordPath([]);
@@ -538,22 +612,62 @@ export function useKeyboardNav({
     // Lone-modifier leader fires on key-up: a clean tap (armed, nothing else
     // pressed, no chord already open, no other modifier still held) arms the
     // chord root. Inert for ordinary combo leaders (loneModLeaderKey === null).
+    // A second clean tap while armed at the root is the passthrough gesture
+    // (the Linux twin of Ctrl+Space Ctrl+Space).
     const upHandler = (e: KeyboardEvent) => {
       if (!loneModLeaderKey || e.key !== loneModLeaderKey) return;
       const armed = tapArmedRef.current;
       tapArmedRef.current = false;
-      if (!armed || chordRef.current.path !== null || otherModifierHeld(e, loneModLeaderKey))
+      if (!armed || otherModifierHeld(e, loneModLeaderKey)) return;
+      if (chordRef.current.path !== null) {
+        if (layerPassthrough && chordRef.current.path.length === 0) {
+          e.preventDefault();
+          e.stopPropagation();
+          sendPassthrough();
+        }
         return;
+      }
+      if (leaderSuppressed(e.target)) return;
       e.preventDefault();
       e.stopPropagation();
       setChordPath([]);
     };
 
+    // Surfaces that opt out of leader arming wholesale (modal dialogs).
+    const leaderSuppressed = (target: EventTarget | null): boolean =>
+      target instanceof HTMLElement && !!target.closest('[data-leader-suppress]');
+
+    // The mouse never fights the layer: any click disarms. Window blur too —
+    // an armed layer must not survive an Alt-Tab away and eat the first
+    // keystroke on return.
+    const disarmOnMouse = () => {
+      if (chordRef.current.path !== null) cancelChord();
+    };
+    const disarmOnBlur = () => {
+      tapArmedRef.current = false;
+      if (chordRef.current.path !== null) cancelChord();
+    };
+    // A repeat window ends the moment focus lands somewhere the user types —
+    // the composer autofocus (a ~15-frame retry) beats repeatMs, and stealing
+    // a typed 'hjkl' as pane navigation is exactly the mode-error class the
+    // layer exists to avoid. Explicit arms are untouched: the user pressed
+    // the leader on purpose, wherever focus sits.
+    const cancelRepeatOnEditableFocus = (e: FocusEvent) => {
+      if (!repeatWindowRef.current) return;
+      if (isEditableTarget(e.target)) cancelChord();
+    };
+
     window.addEventListener('keydown', handler, true);
     window.addEventListener('keyup', upHandler, true);
+    window.addEventListener('mousedown', disarmOnMouse, true);
+    window.addEventListener('blur', disarmOnBlur);
+    window.addEventListener('focusin', cancelRepeatOnEditableFocus);
     return () => {
       window.removeEventListener('keydown', handler, true);
       window.removeEventListener('keyup', upHandler, true);
+      window.removeEventListener('mousedown', disarmOnMouse, true);
+      window.removeEventListener('blur', disarmOnBlur);
+      window.removeEventListener('focusin', cancelRepeatOnEditableFocus);
       // Deliberately NOT cancelChord() — see the effects below. This effect
       // re-runs whenever any of its ~30 callback deps changes identity, which
       // in practice is constantly; cancelling here disarmed a chord the instant
@@ -597,6 +711,8 @@ export function useKeyboardNav({
     onOpenReview,
     onLibraryPicker,
     onToggleInspector,
+    commandLayer,
+    configuredPrefix,
   ]);
 
   // A half-typed chord survives the key-handler effect re-subscribing, and is

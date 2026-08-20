@@ -139,6 +139,24 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({
     }
   }, [sessionId, paneId, onPtyReady]);
 
+  // `prefix prefix` passthrough (command layer): the dispatcher broadcasts the
+  // literal leader byte addressed by the element focused at ARM time; only the
+  // pane whose terminal contains that element writes it — "the focused
+  // terminal" would be wrong, since resolving the chord may have moved focus.
+  useEffect(() => {
+    const onWritePrefix = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        | { target?: Element | null; bytes?: string }
+        | undefined;
+      if (!detail?.bytes) return;
+      const container = containerRef.current;
+      if (!container || !detail.target || !container.contains(detail.target)) return;
+      write(detail.bytes);
+    };
+    window.addEventListener('terminal:write-prefix', onWritePrefix);
+    return () => window.removeEventListener('terminal:write-prefix', onWritePrefix);
+  }, [write]);
+
   // Build a fresh xterm.js instance into the (still-mounted) container, wire up
   // all listeners, and attach it to the live PTY. Returns a cleanup function
   // that tears down THIS instance (listeners + observer + term.dispose) without

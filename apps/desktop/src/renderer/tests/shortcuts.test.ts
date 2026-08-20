@@ -4,6 +4,8 @@ import {
   buildChordTree,
   buildXtermAppKeyPredicate,
   chordNodeAt,
+  findChordConflicts,
+  leaderPassthroughBytes,
   chordMenu,
   chordBreadcrumb,
   resolveLeader,
@@ -160,5 +162,32 @@ describe('buildXtermAppKeyPredicate — the config-derived terminal boundary', (
     expect(appOwns(key({ key: 'Enter' }))).toBe(false); // scoped fleet key
     expect(appOwns(key({ key: 'E', shiftKey: true }))).toBe(false); // shift-only rebind
     expect(appOwns(key({ key: 'h' }))).toBe(false); // chord step, not direct
+  });
+});
+
+describe('findChordConflicts / leaderPassthroughBytes', () => {
+  it('flags duplicate leaf paths and prefix shadowing, case/modifier-aware', () => {
+    const conflicts = findChordConflicts({
+      a: 'prefix t',
+      b: 'prefix t', // duplicate of a
+      c: 'prefix g',
+      d: 'prefix g g', // shadowed by c
+      e: 'prefix shift+k', // distinct from f — shift is part of the step
+      f: 'prefix k',
+      g: 'ctrl+t', // direct combos are not chords
+    });
+    expect(conflicts).toEqual([
+      { kind: 'duplicate', path: 't', actions: ['a', 'b'] },
+      { kind: 'shadow', path: 'g', actions: ['c', 'd'] },
+    ]);
+  });
+
+  it('derives the passthrough byte from the CONFIGURED leader', () => {
+    expect(leaderPassthroughBytes('ctrl+space')).toBe('\x00');
+    expect(leaderPassthroughBytes('ctrl+a')).toBe('\x01'); // tmux classic
+    expect(leaderPassthroughBytes('ctrl+b')).toBe('\x02');
+    expect(leaderPassthroughBytes('alt')).toBe(''); // no byte encoding — no-op
+    expect(leaderPassthroughBytes('ctrl+shift+p')).toBe('\x10'); // shift is display-only here
+    expect(leaderPassthroughBytes('meta+space')).toBe('');
   });
 });

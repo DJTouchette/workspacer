@@ -1068,6 +1068,10 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
 
   return (
     <div
+      // The chord leader never arms from inside this dialog: mid-typing a
+      // kickoff prompt, an armed layer would steal the following keystrokes
+      // (useKeyboardNav's leaderSuppressed check).
+      data-leader-suppress="true"
       style={{
         position: 'fixed',
         inset: 0,

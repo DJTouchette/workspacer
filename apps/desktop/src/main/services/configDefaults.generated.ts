@@ -112,6 +112,15 @@ export const CONFIG_DEFAULTS = {
     prefix: 'ctrl+space',
     chordHints: true,
     presetId: 'vscode',
+    commandLayer: {
+      enabled: false,
+      timeoutMs: 0,
+      repeatMs: 500,
+      hudDelayMs: 400,
+      passthrough: true,
+      indicator: 'strip',
+      leaderOverride: '',
+    },
     shortcuts: {
       'command-palette': 'mod+k',
       'open-file': 'mod+p',

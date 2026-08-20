@@ -954,8 +954,23 @@ function App() {
   // (see resolveLeader). This feeds both the keyboard handler and every shortcut
   // display, so chords render as "Alt T" and fire correctly, with nothing
   // rewritten on disk.
-  const kbPrefix = resolveLeader(config.keybindings?.prefix ?? 'ctrl+space');
-  const kbChordHints = config.keybindings?.chordHints ?? true;
+  // The command layer's leaderOverride wins over platform resolution — it is
+  // the escape hatch for setups where the substitute collides with the WM
+  // (e.g. Hyprland Alt bindings eating the Linux Alt tap).
+  const commandLayerCfg = useMemo(
+    () => ({
+      ...DEFAULT_CONFIG.keybindings?.commandLayer,
+      ...config.keybindings?.commandLayer,
+    }),
+    [config.keybindings?.commandLayer],
+  );
+  const configuredPrefix = config.keybindings?.prefix ?? 'ctrl+space';
+  const kbPrefix = commandLayerCfg.leaderOverride?.trim()
+    ? commandLayerCfg.leaderOverride.trim()
+    : resolveLeader(configuredPrefix);
+  // An ENABLED layer must never have invisible armed state: force the chord
+  // chrome on regardless of the chordHints preference.
+  const kbChordHints = (config.keybindings?.chordHints ?? true) || commandLayerCfg.enabled === true;
   // Defaults merged under any user overrides, so shortcut badges/labels always
   // render even when the saved config only carries a partial map.
   const resolvedShortcuts = useMemo(
@@ -1473,6 +1488,8 @@ function App() {
       () => window.dispatchEvent(new CustomEvent('inspector:toggle')),
       [],
     ),
+    commandLayer: commandLayerCfg,
+    configuredPrefix,
     shortcuts: resolvedShortcuts,
   });
 
