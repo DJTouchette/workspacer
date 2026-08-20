@@ -173,6 +173,8 @@ interface UseKeyboardNavOptions {
   onPaneHints?: () => void;
   /** Open the command palette in its `:` cmdline variant (ex verbs). */
   onCmdline?: () => void;
+  /** Jump to the Overview (dashboard) workspace — `prefix 0`. */
+  onGoOverview?: () => void;
   /** Session jumplist over focused agents (prefix ctrl+o / ctrl+i). */
   onJumpBack?: () => void;
   onJumpForward?: () => void;
@@ -235,6 +237,7 @@ export function useKeyboardNav({
   onDenyAttention,
   onPaneHints,
   onCmdline,
+  onGoOverview,
   onJumpBack,
   onJumpForward,
   shortcuts = {},
@@ -570,6 +573,9 @@ export function useKeyboardNav({
         case 'cmdline':
           onCmdline?.();
           return true;
+        case 'go-overview':
+          onGoOverview?.();
+          return true;
         case 'jump-back':
           onJumpBack?.();
           return true;
@@ -843,6 +849,7 @@ export function useKeyboardNav({
     onDenyAttention,
     onPaneHints,
     onCmdline,
+    onGoOverview,
     onJumpBack,
     onJumpForward,
   ]);

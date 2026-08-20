@@ -135,11 +135,17 @@ pub struct App {
 
     /// Harpoon-style pinned agents (session ids), in slot order. `<leader>1..9`
     /// teleports to a slot; the sidebar shows each pin's number. Derived each
-    /// poll from `pinned_cwds` resolved against the live sessions.
+    /// poll from `pinned` (session ids) filtered to the live sessions.
     pub harpoon: Vec<String>,
     /// The persisted pins, as an ordered list of cwds (stable across restarts;
     /// see [`crate::pins`]). The source of truth `harpoon` is rebuilt from.
-    pub pinned_cwds: Vec<String>,
+    /// Harpoon pins: SESSION ids, shared with the desktop (crate::pins).
+    /// May transiently hold legacy cwd values until normalize_pins upgrades
+    /// them against a known agent list.
+    pub pinned: Vec<String>,
+    /// Set when the shared pin key was ABSENT (adopt_shared_pins(None)):
+    /// legacy pins get pushed up once agents are known (rebuild_harpoon).
+    pub(crate) pins_push_pending: bool,
     /// The agent focused just before the current one — vim's alternate buffer
     /// (`Ctrl-^`).
     pub prev_focus: Option<String>,
@@ -283,7 +289,8 @@ impl App {
             tile_focus: 0,
             split_dir: SplitDir::Columns,
             harpoon: Vec::new(),
-            pinned_cwds: crate::pins::load(),
+            pinned: crate::pins::load(),
+            pins_push_pending: false,
             prev_focus: None,
             jumplist: Vec::new(),
             jump_idx: 0,

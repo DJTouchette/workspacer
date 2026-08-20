@@ -1474,31 +1474,62 @@ function App() {
     if (prev && agentsRef.current.some((a) => a.id === prev)) handleSelectAgent(prev);
   }, [handleSelectAgent]);
 
-  // Harpoon-style pins: cwd-keyed slots in config.ui.pinnedAgentCwds (an
+  // Harpoon-style pins: SESSION-id slots in config.ui.pinnedAgentSessions (an
   // ARRAY, replaced wholesale by deepMerge/configPatch — order is slot order).
-  const pinnedCwds = useMemo(
-    () => config.ui.pinnedAgentCwds ?? [],
-    [config.ui.pinnedAgentCwds],
+  // Session-keyed, not cwd-keyed: two agents in one directory made cwd slots
+  // ambiguous. Session ids are stable here — a respawn resumes the same
+  // pinned id — so a pin survives stop/respawn and dies with an explicit
+  // close (the agent:closed listener below).
+  const pinnedSessions = useMemo(
+    () => config.ui.pinnedAgentSessions ?? [],
+    [config.ui.pinnedAgentSessions],
   );
+  /** The id a pin holds for an agent: the live session, or the resumable one
+   *  a stopped card keeps (a respawn brings the SAME id back). */
+  const pinKeyOf = (a: { sessionId?: string; lastSessionId?: string }) =>
+    a.sessionId ?? a.lastSessionId;
   const handlePinAgent = useCallback(() => {
     const agent = agentsRef.current.find((a) => a.id === activeAgentIdRef.current);
-    if (!agent || agent.global || !agent.cwd) return;
-    const next = pinnedCwds.includes(agent.cwd)
-      ? pinnedCwds.filter((c) => c !== agent.cwd)
-      : [...pinnedCwds, agent.cwd];
-    void saveConfig({ ui: { ...config.ui, pinnedAgentCwds: next } });
-  }, [pinnedCwds, config.ui, saveConfig]);
+    const key = agent && !agent.global ? pinKeyOf(agent) : undefined;
+    if (!key) return;
+    const next = pinnedSessions.includes(key)
+      ? pinnedSessions.filter((sid) => sid !== key)
+      : [...pinnedSessions, key];
+    void saveConfig({ ui: { ...config.ui, pinnedAgentSessions: next } });
+  }, [pinnedSessions, config.ui, saveConfig]);
   const handleJumpPinned = useCallback(
     (slot: number) => {
-      const cwd = pinnedCwds[slot - 1];
-      if (!cwd) return;
-      // Prefer a running agent in that cwd; fall back to any (stopped) one.
-      const candidates = agentsRef.current.filter((a) => !a.global && a.cwd === cwd);
-      const target = candidates.find((a) => a.sessionId) ?? candidates[0];
+      const sid = pinnedSessions[slot - 1];
+      if (!sid) return;
+      const target = agentsRef.current.find((a) => !a.global && pinKeyOf(a) === sid);
       if (target) handleSelectAgent(target.id);
     },
-    [pinnedCwds, handleSelectAgent],
+    [pinnedSessions, handleSelectAgent],
   );
+
+  // One-time migration off the cwd-keyed store (a few hours of nightlies):
+  // resolve each pinned cwd to the first agent living there, then retire the
+  // old key (arrays empty cleanly under wholesale replacement). Runs once
+  // agents are loaded so the resolution has something to look at.
+  const pinsMigratedRef = useRef(false);
+  useEffect(() => {
+    if (pinsMigratedRef.current || !configLoaded) return;
+    const legacy = config.ui.pinnedAgentCwds;
+    if (config.ui.pinnedAgentSessions !== undefined || !legacy?.length) return;
+    const nonGlobal = agents.filter((a) => !a.global);
+    if (nonGlobal.length === 0) return; // wait for the boot restore
+    pinsMigratedRef.current = true;
+    const resolved = legacy
+      .map((cwd) => {
+        const a = nonGlobal.find((x) => x.cwd === cwd);
+        return a ? pinKeyOf(a) : undefined;
+      })
+      .filter((sid): sid is string => !!sid);
+    void saveConfig({
+      ui: { ...config.ui, pinnedAgentSessions: resolved, pinnedAgentCwds: [] },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configLoaded, agents, config.ui]);
 
   // prefix y / n — resolve the ACTIVE agent's top attention item, the same
   // sessionId-addressed path the Fleet Deck and Inbox use. Approvals only: a
@@ -1602,17 +1633,19 @@ function App() {
   const handleJumpBack = useCallback(() => jumpAlong(-1), [jumpAlong]);
   const handleJumpForward = useCallback(() => jumpAlong(1), [jumpAlong]);
 
-  // Closing an agent releases its harpoon pin (the LAST agent in that cwd —
-  // useAgentManager reports lastInCwd so a second agent in the same repo
-  // keeps the slot). Only explicit CLOSE does this; a stopped-but-kept card
-  // stays pinned, that's what pins are for.
+  // Closing an agent releases ITS pin — session-keyed, so this is exact:
+  // no other agent can share the slot. Only explicit CLOSE does this; a
+  // stopped-but-kept card stays pinned (a respawn resumes the same id),
+  // that's what pins are for.
   useEffect(() => {
     const handler = (e: Event) => {
-      const d = (e as CustomEvent).detail as { cwd?: string; lastInCwd?: boolean } | undefined;
-      if (!d?.cwd || !d.lastInCwd) return;
-      const pins = config.ui.pinnedAgentCwds ?? [];
-      if (!pins.includes(d.cwd)) return;
-      void saveConfig({ ui: { ...config.ui, pinnedAgentCwds: pins.filter((c) => c !== d.cwd) } });
+      const d = (e as CustomEvent).detail as { sessionIds?: string[] } | undefined;
+      const ids = d?.sessionIds ?? [];
+      const pins = config.ui.pinnedAgentSessions ?? [];
+      if (!ids.some((sid) => pins.includes(sid))) return;
+      void saveConfig({
+        ui: { ...config.ui, pinnedAgentSessions: pins.filter((sid) => !ids.includes(sid)) },
+      });
     };
     window.addEventListener('agent:closed', handler);
     return () => window.removeEventListener('agent:closed', handler);
@@ -1748,6 +1781,7 @@ function App() {
     onDenyAttention: useCallback(() => handleAttentionDecision('no'), [handleAttentionDecision]),
     onPaneHints: handlePaneHints,
     onCmdline: handleCmdline,
+    onGoOverview: useCallback(() => handleSelectAgent(GLOBAL_WORKSPACE_ID), [handleSelectAgent]),
     onJumpBack: handleJumpBack,
     onJumpForward: handleJumpForward,
     shortcuts: resolvedShortcuts,
@@ -2451,7 +2485,7 @@ function App() {
               <ErrorBoundary label="Sidebar" variant="region">
                 <SideBar
                   agents={agents}
-                  pinnedCwds={pinnedCwds}
+                  pinnedSessions={pinnedSessions}
                   projects={config.projects}
                   activeAgentId={activeAgentId}
                   statusBySession={statusBySession}

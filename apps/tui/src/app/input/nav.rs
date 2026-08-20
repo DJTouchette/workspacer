@@ -112,26 +112,62 @@ impl App {
         self.focus_agent_inner(id, record);
     }
 
-    /// Pin or unpin the target agent — by its cwd, so the pin survives restarts
-    /// (see `crate::pins`). Persists and rebuilds the live harpoon.
+    /// Pin or unpin the target agent — by its SESSION id, the shared slot key
+    /// (see `crate::pins`: a cwd was ambiguous with two agents in one repo).
+    /// Persists and rebuilds the live harpoon.
     pub(in crate::app) fn harpoon_toggle(&mut self) {
-        let Some(cwd) = self.target_agent().map(|a| a.cwd_str().to_string()) else {
+        let Some(sid) = self.target_agent().map(|a| a.session_id.clone()) else {
             self.set_toast("no agent to pin");
             return;
         };
-        if cwd.is_empty() {
-            self.set_toast("no working directory to pin");
-            return;
-        }
-        if let Some(pos) = self.pinned_cwds.iter().position(|c| c == &cwd) {
-            self.pinned_cwds.remove(pos);
+        if let Some(pos) = self.pinned.iter().position(|c| c == &sid) {
+            self.pinned.remove(pos);
             self.set_toast("Unpinned");
         } else {
-            self.pinned_cwds.push(cwd);
-            self.set_toast(format!("Pinned #{}", self.pinned_cwds.len()));
+            self.pinned.push(sid);
+            self.set_toast(format!("Pinned #{}", self.pinned.len()));
         }
         self.persist_pins();
         self.rebuild_harpoon();
+    }
+
+    /// Upgrade legacy cwd pin values to session ids once agents are known
+    /// (old shared key / old tui-pins.json), dedupe, and drop paths nothing
+    /// resolves. Ids whose agent isn't RUNNING right now are kept — that's a
+    /// stopped-but-resumable pin, not a dead one. Also flushes a pending
+    /// migration push (shared key was absent) once there's something
+    /// resolved to push.
+    pub(in crate::app) fn normalize_pins(&mut self) {
+        if self.all_agents.is_empty() {
+            return; // nothing to resolve against yet
+        }
+        let mut changed = false;
+        let mut seen = std::collections::HashSet::new();
+        let resolved: Vec<String> = self
+            .pinned
+            .iter()
+            .filter_map(|v| {
+                let sid = if self.all_agents.iter().any(|a| &a.session_id == v) {
+                    v.clone()
+                } else if let Some(a) = self.all_agents.iter().find(|a| a.cwd_str() == v) {
+                    changed = true;
+                    a.session_id.clone()
+                } else if v.contains('/') {
+                    changed = true; // unresolvable legacy path — convenience, drop
+                    return None;
+                } else {
+                    v.clone() // an id whose agent isn't running right now
+                };
+                if seen.insert(sid.clone()) { Some(sid) } else { changed = true; None }
+            })
+            .collect();
+        if changed {
+            self.pinned = resolved;
+            self.persist_pins();
+        } else if self.pins_push_pending && !self.pinned.is_empty() {
+            self.persist_pins();
+        }
+        self.pins_push_pending = false;
     }
 
     /// Write the pins to whichever store is authoritative right now: the
@@ -142,11 +178,11 @@ impl App {
     /// on some future off-bus launch more than it already can.
     pub(in crate::app) fn persist_pins(&mut self) {
         if let Some(bus) = self.bus.clone() {
-            let partial = crate::pins::config_partial(&self.pinned_cwds);
+            let partial = crate::pins::config_partial(&self.pinned);
             tokio::spawn(async move {
                 let _ = bus.call("config.save", partial).await;
             });
-        } else if let Err(e) = crate::pins::save(&self.pinned_cwds) {
+        } else if let Err(e) = crate::pins::save(&self.pinned) {
             self.set_toast(crate::store::save_toast("", "pins", Err(e)));
         }
     }
@@ -161,15 +197,19 @@ impl App {
     /// set.
     pub(in crate::app) fn adopt_shared_pins(&mut self, shared: Option<Vec<String>>) {
         match shared {
-            Some(cwds) => {
-                if self.pinned_cwds != cwds {
-                    self.pinned_cwds = cwds;
-                    self.rebuild_harpoon();
+            Some(pins) => {
+                if self.pinned != pins {
+                    self.pinned = pins;
+                    self.rebuild_harpoon(); // normalizes legacy cwd values too
                 }
             }
             None => {
-                if !self.pinned_cwds.is_empty() {
-                    self.persist_pins();
+                // Never written by any client: legacy pins become the shared
+                // truth once agents are known to resolve them (rebuild flushes
+                // the push).
+                if !self.pinned.is_empty() {
+                    self.pins_push_pending = true;
+                    self.rebuild_harpoon();
                 }
             }
         }
@@ -244,13 +284,24 @@ mod tests {
     #[test]
     fn adopt_shared_pins_makes_the_config_document_the_truth() {
         let mut app = app_with_agents(2);
-        app.harpoon_toggle(); // local pin: /work/s1
+        app.harpoon_toggle(); // local pin: session s1
         // The desktop pinned a different set while we ran — shared wins.
-        app.adopt_shared_pins(Some(vec!["/work/s2".to_string()]));
-        assert_eq!(app.pinned_cwds, vec!["/work/s2"]);
+        app.adopt_shared_pins(Some(vec!["s2".to_string()]));
+        assert_eq!(app.pinned, vec!["s2"]);
+        assert_eq!(app.harpoon, vec!["s2"]);
         // An explicit empty list is a real answer (everything unpinned)…
         app.adopt_shared_pins(Some(Vec::new()));
-        assert!(app.pinned_cwds.is_empty());
+        assert!(app.pinned.is_empty());
+    }
+
+    #[test]
+    fn adopt_shared_pins_resolves_legacy_cwd_values_to_sessions() {
+        // The shared key may still carry cwds written by the deprecated key's
+        // brief life — normalize upgrades them against the live agents.
+        let mut app = app_with_agents(2);
+        app.adopt_shared_pins(Some(vec!["/work/s2".to_string(), "/nowhere/gone".to_string()]));
+        assert_eq!(app.pinned, vec!["s2"], "cwd resolved, dead path dropped");
+        assert_eq!(app.harpoon, vec!["s2"]);
     }
 
     #[tokio::test]
@@ -259,16 +310,16 @@ mod tests {
         app.harpoon_toggle(); // legacy-era local pin
         // …but an ABSENT key must not wipe them: they're the migration source.
         app.adopt_shared_pins(None);
-        assert_eq!(app.pinned_cwds, vec!["/work/s1"]);
+        assert_eq!(app.pinned, vec!["s1"]);
     }
 
     #[test]
     fn harpoon_toggle_pins_then_unpins_the_selected_agent() {
         let mut app = app_with_agents(2);
         app.harpoon_toggle();
-        assert_eq!(app.pinned_cwds, vec!["/work/s1"]);
+        assert_eq!(app.pinned, vec!["s1"], "pinned by session id, not cwd");
         app.harpoon_toggle();
-        assert!(app.pinned_cwds.is_empty(), "toggling again unpins");
+        assert!(app.pinned.is_empty(), "toggling again unpins");
     }
 
     #[tokio::test]

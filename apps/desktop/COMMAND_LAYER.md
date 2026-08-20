@@ -103,7 +103,7 @@ Phase 2 grammar extension; buildChordTree gets a duplicate-path assertion.
 | `a` | jump to next agent needing attention | exists |
 | `'` | alternate (last-focused) agent | build |
 | `ctrl+o / ctrl+i` | session jumplist back / forward | build |
-| `1-9` | jump to pinned agent (⚓ badges) | build |
+| `1-9` | jump to pinned agent (⚓ badges; session-keyed — 2026-08-20 revision: cwd slots were ambiguous with two agents in one repo) | build |
 | `m` | pin/unpin agent | build |
 | `y` / `n` | approve / deny top attention item — matches Fleet Deck & sidebar-card conventions; the strip SHOWS the item summary; no-ops with a toast if nothing is pending or the top item changed in the last ~1s | build (backend exists) |
 | `shift+n` | spawn agent | exists |

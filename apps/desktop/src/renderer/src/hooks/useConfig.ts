@@ -40,13 +40,18 @@ export interface UIConfig {
    *  font-size, so every rem-sized text in the app follows. Adjustable from
    *  Settings → Appearance and mod+= / mod+- / mod+0. */
   uiFontScale?: number;
-  /** Harpoon-style agent pins (command layer): cwd-keyed slots, array order =
-   *  slot number (prefix 1-9 jumps, prefix m toggles, ⚓N badges in the
-   *  sidebar). An ARRAY on purpose — deepMerge and configPatch replace arrays
-   *  wholesale, so unpinning round-trips without the customThemes-style
-   *  wholesale-path machinery. cwd-keyed (not agent-id) so a pin survives
-   *  respawns and points at "the agent working HERE", matching the TUI's
-   *  harpoon mental model. */
+  /** Harpoon-style agent pins (command layer): SESSION-id slots, array order
+   *  = slot number (prefix 1-9 jumps, prefix m toggles, ⚓N badges in the
+   *  sidebar; the TUI's harpoon reads the same key). Session-keyed because a
+   *  cwd is ambiguous the moment two agents share a directory — and session
+   *  ids are stable here: respawns resume the same pinned id, so a pin
+   *  survives stop/respawn and dies with an explicit close. An ARRAY on
+   *  purpose — deepMerge and configPatch replace arrays wholesale, so
+   *  unpinning round-trips without wholesale-path machinery. */
+  pinnedAgentSessions?: string[];
+  /** DEPRECATED (lived for a few hours of nightlies): the cwd-keyed
+   *  predecessor of pinnedAgentSessions. Read once for migration (resolved
+   *  against live agents, then emptied); never written again. */
   pinnedAgentCwds?: string[];
   /** One-time in-app announcement flag for the command layer (Phase 5). */
   commandLayerAnnounced?: boolean;

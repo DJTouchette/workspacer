@@ -249,9 +249,9 @@ interface SideBarProps {
    * pane's status bar uses, so the two can never disagree.
    */
   snapshotBySession: Record<string, ClaudeSessionSnapshot>;
-  /** Harpoon pin slots (config.ui.pinnedAgentCwds) — ⚓N badges on pinned
+  /** Harpoon pin slots (config.ui.pinnedAgentSessions) — ⚓N badges on pinned
    *  agents' cards; array order is the `prefix 1-9` slot number. */
-  pinnedCwds?: string[];
+  pinnedSessions?: string[];
   /** config.projects — per-directory identity for the card marks. Passed rather
    *  than read from context so the sidebar harness can render without a
    *  ConfigProvider, exactly as every other config-derived prop here is. */
@@ -285,7 +285,7 @@ interface SideBarProps {
 }
 
 const SideBar: React.FC<SideBarProps> = ({
-  pinnedCwds,
+  pinnedSessions,
   projects,
   agents,
   activeAgentId,
@@ -1111,20 +1111,26 @@ const SideBar: React.FC<SideBarProps> = ({
                       >
                         {agent.name}
                       </span>
-                      {/* Harpoon pin slot (command layer): prefix <N> jumps here. */}
-                      {pinnedCwds && agent.cwd && pinnedCwds.includes(agent.cwd) && (
-                        <span
-                          title={`Pinned — prefix ${pinnedCwds.indexOf(agent.cwd) + 1} jumps here`}
-                          style={{
-                            flexShrink: 0,
-                            fontFamily: 'var(--wks-font-mono)',
-                            fontSize: '0.6rem',
-                            color: 'var(--wks-accent)',
-                          }}
-                        >
-                          ⚓{pinnedCwds.indexOf(agent.cwd) + 1}
-                        </span>
-                      )}
+                      {/* Harpoon pin slot (command layer): prefix <N> jumps here.
+                          Session-keyed; a stopped card keeps its slot via the
+                          resumable id (a respawn brings the same id back). */}
+                      {(() => {
+                        const pinKey = agent.sessionId ?? agent.lastSessionId;
+                        const slot = pinKey ? (pinnedSessions?.indexOf(pinKey) ?? -1) : -1;
+                        return slot >= 0 ? (
+                          <span
+                            title={`Pinned — prefix ${slot + 1} jumps here`}
+                            style={{
+                              flexShrink: 0,
+                              fontFamily: 'var(--wks-font-mono)',
+                              fontSize: '0.6rem',
+                              color: 'var(--wks-accent)',
+                            }}
+                          >
+                            ⚓{slot + 1}
+                          </span>
+                        ) : null;
+                      })()}
                     </span>
                   )}
                   {age && (

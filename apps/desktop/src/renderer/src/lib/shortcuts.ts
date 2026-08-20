@@ -284,6 +284,12 @@ export const ACTION_REGISTRY: ActionMeta[] = [
     scope: 'layer',
   },
   {
+    action: 'go-overview',
+    label: 'Go to Overview',
+    section: 'Command layer',
+    scope: 'layer',
+  },
+  {
     action: 'cmdline',
     label: 'Command line (ex verbs)',
     section: 'Command layer',

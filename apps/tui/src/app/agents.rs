@@ -150,20 +150,21 @@ impl App {
         })
     }
 
-    /// Rebuild the live `harpoon` (session ids) from the persisted `pinned_cwds`,
+    /// Rebuild the live `harpoon` (running session ids) from the persisted `pinned`,
     /// in pin order: each cwd resolves to whatever live session is in it, and
     /// pins with no running agent are simply absent (so slot numbers stay
     /// gap-free for what's actually reachable).
     pub(in crate::app) fn rebuild_harpoon(&mut self) {
+        // Upgrade any legacy cwd values first (and push a pending migration
+        // once agents exist to resolve against), then keep the slots that
+        // point at a LIVE agent — a pinned-but-stopped session keeps its pin,
+        // it just has no reachable slot until it's back.
+        self.normalize_pins();
         self.harpoon = self
-            .pinned_cwds
+            .pinned
             .iter()
-            .filter_map(|cwd| {
-                self.all_agents
-                    .iter()
-                    .find(|a| a.cwd_str() == cwd)
-                    .map(|a| a.session_id.clone())
-            })
+            .filter(|sid| self.all_agents.iter().any(|a| &a.session_id == *sid))
+            .cloned()
             .collect();
     }
 

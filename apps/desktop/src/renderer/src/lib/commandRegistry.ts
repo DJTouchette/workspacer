@@ -41,6 +41,7 @@ export const EX_VERBS: ExVerb[] = [
   { verb: 'w', action: 'save-session', aliases: ['write', 'save'] },
   { verb: 'help', action: 'toggle-help', aliases: ['h', 'keys'] },
   { verb: 'hints', action: 'pane-hints', aliases: ['panes', 'display'] },
+  { verb: 'dash', action: 'go-overview', aliases: ['home', 'overview'] },
 ];
 
 /** Display label for a verb's target action. */

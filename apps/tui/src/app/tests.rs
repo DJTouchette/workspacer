@@ -665,7 +665,7 @@ async fn harpoon_pin_jump_and_alternate() {
     app.open_agent(); // s2
     app.harpoon_toggle();
     assert_eq!(app.harpoon, vec!["s1".to_string(), "s2".to_string()]);
-    assert_eq!(app.pinned_cwds, vec!["/a".to_string(), "/b".to_string()]);
+    assert_eq!(app.pinned, vec!["s1".to_string(), "s2".to_string()]);
 
     // Teleport to slot 1, then the alternate-agent toggles back and forth.
     app.harpoon_jump(1);
@@ -683,17 +683,18 @@ async fn harpoon_pin_jump_and_alternate() {
 }
 
 #[tokio::test]
-async fn pins_restore_by_cwd_across_sessions() {
+async fn legacy_cwd_pins_upgrade_to_the_sessions_living_there() {
     let mut app = test_app();
-    // Simulate pins loaded from disk on startup (ordered cwds).
-    app.pinned_cwds = vec!["/work/alpha".into(), "/work/beta".into()];
+    // Simulate a legacy tui-pins.json loaded on startup (ordered cwds).
+    app.pinned = vec!["/work/alpha".into(), "/work/beta".into()];
 
-    // Nothing live yet → no resolvable pins.
+    // Nothing live yet → no resolvable pins, and no destructive rewrite.
     app.set_agents(vec![]);
     assert!(app.harpoon.is_empty());
 
-    // Agents reappear in those cwds with brand-new session ids — the pins
-    // resolve to them, in pin order (not agent order).
+    // Agents appear in those cwds — the legacy values upgrade IN PLACE to
+    // their session ids, in pin order (not agent order). From here on the
+    // slots are session-keyed: two agents in one cwd can never be ambiguous.
     app.set_agents(vec![
         agent_cwd("new-beta", "/work/beta", "responding"),
         agent_cwd("new-alpha", "/work/alpha", "responding"),
@@ -1400,17 +1401,17 @@ fn the_filter_keeps_the_selection_on_the_same_agent() {
 
 // ── harpoon ─────────────────────────────────────────────────────────────
 
-/// Pins persist as cwds, not session ids — a cwd outlives the session in it.
-/// `rebuild_harpoon` re-resolves them, and a pin whose agent isn't running is
-/// simply absent, so the reachable slots stay gap-free.
+/// Pins are session ids; a pin whose agent isn't RUNNING is simply absent
+/// from the reachable slots (kept in the store — a stopped session resumes
+/// under the same id), so the live slots stay gap-free in pin order.
 #[test]
-fn harpoon_resolves_pinned_cwds_to_whatever_session_is_in_them() {
+fn harpoon_keeps_pin_order_and_skips_non_running_sessions() {
     let mut app = test_app();
     app.set_agents(vec![
         agent_cwd("s1", "/repo/alpha", "input"),
         agent_cwd("s2", "/repo/beta", "input"),
     ]);
-    app.pinned_cwds = vec!["/repo/beta".into(), "/repo/alpha".into()];
+    app.pinned = vec!["s2".into(), "not-running".into(), "s1".into()];
     app.rebuild_harpoon();
     assert_eq!(
         app.harpoon,
@@ -1418,19 +1419,17 @@ fn harpoon_resolves_pinned_cwds_to_whatever_session_is_in_them() {
         "in pin order, not agent order"
     );
 
-    // The session in /repo/beta is replaced by a new one in the same cwd.
+    // The session in /repo/beta is REPLACED by a brand-new one in the same
+    // cwd: the pin does NOT transfer — the session is the identity now (two
+    // agents in one cwd made the old cwd rule ambiguous). The pinned id stays
+    // in the store (s2 could resume), just with no reachable slot.
     app.set_agents(vec![
         agent_cwd("s1", "/repo/alpha", "input"),
         agent_cwd("s9", "/repo/beta", "input"),
     ]);
     app.rebuild_harpoon();
-    assert_eq!(app.harpoon, vec!["s9", "s1"], "the cwd is the identity");
-
-    // A pin with nothing running in it closes the gap rather than leaving a
-    // hole, so slot 1 is always the first reachable pin.
-    app.set_agents(vec![agent_cwd("s1", "/repo/alpha", "input")]);
-    app.rebuild_harpoon();
-    assert_eq!(app.harpoon, vec!["s1"]);
+    assert_eq!(app.harpoon, vec!["s1"], "a new session is a new agent, not the old pin");
+    assert!(app.pinned.contains(&"s2".to_string()), "the stopped pin is kept, not culled");
 }
 
 // ── transport resolution ────────────────────────────────────────────────

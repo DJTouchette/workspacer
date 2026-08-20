@@ -760,20 +760,17 @@ export function useAgentManager() {
       if (cur !== agentId) return cur;
       return fallbackId ?? '';
     });
-    // A CLOSED agent releases its harpoon pin — but only when it was the LAST
-    // agent in that cwd (pins are cwd-keyed so a second agent in the same
-    // repo, or a later respawn of a merely-STOPPED card, keeps the slot). App
-    // owns the pin store (config.ui.pinnedAgentCwds), so this just reports
-    // the fact. agentsRef still holds the PRE-removal list here (the ref
-    // updates on the next render), so the closed agent is excluded by id
-    // rather than by trusting the list.
-    if (agent?.cwd) {
-      const lastInCwd = !agentsRef.current.some(
-        (a) => a.id !== agentId && !a.global && a.cwd === agent.cwd,
+    // A CLOSED agent releases its harpoon pin. Pins are SESSION-keyed, so
+    // this is exact — report both ids the card may have been pinned under
+    // (live and resumable are the same id after a respawn, but a card can
+    // hold either at close time). App owns the store and does the unpin.
+    {
+      const sessionIds = [agent?.sessionId, agent?.lastSessionId].filter(
+        (sid): sid is string => !!sid,
       );
-      window.dispatchEvent(
-        new CustomEvent('agent:closed', { detail: { cwd: agent.cwd, lastInCwd } }),
-      );
+      if (sessionIds.length) {
+        window.dispatchEvent(new CustomEvent('agent:closed', { detail: { sessionIds } }));
+      }
     }
     if (agent?.sessionId) {
       try {
