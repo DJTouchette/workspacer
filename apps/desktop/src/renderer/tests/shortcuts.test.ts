@@ -10,6 +10,7 @@ import {
   chordBreadcrumb,
   resolveLeader,
 } from '../src/lib/shortcuts';
+import { DEFAULT_SHORTCUTS } from '../src/hooks/configDefaults';
 
 describe('formatBinding', () => {
   it('formats a direct combo', () => {
@@ -189,5 +190,11 @@ describe('findChordConflicts / leaderPassthroughBytes', () => {
     expect(leaderPassthroughBytes('alt')).toBe(''); // no byte encoding — no-op
     expect(leaderPassthroughBytes('ctrl+shift+p')).toBe('\x10'); // shift is display-only here
     expect(leaderPassthroughBytes('meta+space')).toBe('');
+  });
+});
+
+describe('default map hygiene', () => {
+  it('the merged default map (persisted + renderer-only + layer) has zero chord conflicts', () => {
+    expect(findChordConflicts(DEFAULT_SHORTCUTS)).toEqual([]);
   });
 });

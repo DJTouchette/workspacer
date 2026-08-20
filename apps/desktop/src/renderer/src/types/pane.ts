@@ -110,6 +110,11 @@ export interface TabConfig {
   /** Epoch ms of the tab's last activity (focus / creation / split).
    *  Absent for tabs predating the feature. */
   lastActiveAt?: number;
+  /** tmux-style zoom: this pane temporarily fills the tab (others stay
+   *  MOUNTED but hidden, so terminals keep their PTYs). tmux semantics: any
+   *  structural or focus mutation unzooms first; a dead pane clears it.
+   *  Persists through layout save/restore like the rest of the tab. */
+  zoomedPaneId?: string;
 }
 
 /** Altitude of the workspace. Global (config.panes.viewLevel).

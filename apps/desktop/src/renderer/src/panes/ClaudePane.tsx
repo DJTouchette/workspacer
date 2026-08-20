@@ -20,6 +20,7 @@ import {
 } from '../components/claude-shared';
 import { buildXtermAppKeyPredicate, resolveLeader } from '../lib/shortcuts';
 import { DEFAULT_SHORTCUTS } from '../hooks/configDefaults';
+import { onChatScroll } from '../lib/chatScrollBus';
 import { BrandSpinner } from '../components/Brand';
 import { RefreshCw } from '../components/icons';
 import { PanelRight, ArrowRightLeft, Clock, KeyRound } from 'lucide-react';
@@ -298,6 +299,29 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     onExit: handleExit,
     defer: true,
   });
+
+  // Command-layer chat motions (prefix Shift+K/J half-page, g g top, Shift+G
+  // bottom) — only the ACTIVE pane answers. GUI view scrolls the chat
+  // container as a plain user-like scroll (so the tail pin unsticks/resticks
+  // by its own rules); Term view scrolls xterm's scrollback.
+  useEffect(() => {
+    if (!isActive) return;
+    return onChatScroll((kind) => {
+      if (viewModeRef.current === 'terminal' && terminalRef.current) {
+        const term = terminalRef.current;
+        if (kind === 'top') term.scrollToTop();
+        else if (kind === 'bottom') term.scrollToBottom();
+        else term.scrollLines(Math.round(term.rows / 2) * (kind === 'half-up' ? -1 : 1));
+        return;
+      }
+      const c = scrollContainerRef.current;
+      if (!c) return;
+      const half = Math.max(80, Math.round(c.clientHeight / 2));
+      if (kind === 'top') c.scrollTo({ top: 0 });
+      else if (kind === 'bottom') c.scrollTo({ top: c.scrollHeight });
+      else c.scrollTo({ top: c.scrollTop + (kind === 'half-up' ? -half : half) });
+    });
+  }, [isActive]);
 
   // `prefix prefix` passthrough (command layer) — twin of TerminalPane's
   // listener: write the literal leader byte iff the layer was armed from THIS

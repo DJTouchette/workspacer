@@ -40,6 +40,14 @@ export interface UIConfig {
    *  font-size, so every rem-sized text in the app follows. Adjustable from
    *  Settings → Appearance and mod+= / mod+- / mod+0. */
   uiFontScale?: number;
+  /** Harpoon-style agent pins (command layer): cwd-keyed slots, array order =
+   *  slot number (prefix 1-9 jumps, prefix m toggles, ⚓N badges in the
+   *  sidebar). An ARRAY on purpose — deepMerge and configPatch replace arrays
+   *  wholesale, so unpinning round-trips without the customThemes-style
+   *  wholesale-path machinery. cwd-keyed (not agent-id) so a pin survives
+   *  respawns and points at "the agent working HERE", matching the TUI's
+   *  harpoon mental model. */
+  pinnedAgentCwds?: string[];
   /** How GUI diffs are laid out: 'stacked' (removed block then added block),
    *  'inline' (interleaved unified), or 'split' (side-by-side). Absent = stacked. */
   diffView?: 'stacked' | 'inline' | 'split';

@@ -192,3 +192,50 @@ describe('command layer engine', () => {
     unmount();
   });
 });
+
+describe('command layer verbs (Phase 3)', () => {
+  it('fires layer verbs from their chords, with the digit step carrying its slot', () => {
+    const onZoomPane = vi.fn();
+    const onJumpPinned = vi.fn();
+    const onChatScroll = vi.fn();
+    const opts = options({
+      onZoomPane,
+      onJumpPinned,
+      onChatScroll,
+      shortcuts: {
+        'zoom-pane': 'prefix z',
+        'jump-pinned': 'prefix 1-9',
+        'chat-scroll-up': 'prefix shift+k',
+        'nav-up': 'prefix k',
+      },
+    });
+    const { unmount } = renderHook(() => useKeyboardNav(opts));
+
+    arm();
+    press({ key: 'z' });
+    expect(onZoomPane).toHaveBeenCalledTimes(1);
+
+    arm();
+    press({ key: '3', code: 'Digit3' });
+    expect(onJumpPinned).toHaveBeenCalledWith(3);
+
+    // Case pairs are distinct steps: Shift+K scrolls, bare k navigates.
+    arm();
+    press({ key: 'K', shiftKey: true });
+    expect(onChatScroll).toHaveBeenCalledWith('half-up');
+    // chat-scroll is a repeat-group verb — still armed, K again pages again.
+    press({ key: 'K', shiftKey: true });
+    expect(onChatScroll).toHaveBeenCalledTimes(2);
+    unmount();
+  });
+
+  it('a modified digit never resolves the 1-9 chord step (Ctrl+3 stays jump-tab territory)', () => {
+    const onJumpPinned = vi.fn();
+    const opts = options({ onJumpPinned, shortcuts: { 'jump-pinned': 'prefix 1-9' } });
+    const { unmount } = renderHook(() => useKeyboardNav(opts));
+    arm();
+    press({ key: '3', code: 'Digit3', ctrlKey: true });
+    expect(onJumpPinned).not.toHaveBeenCalled();
+    unmount();
+  });
+});

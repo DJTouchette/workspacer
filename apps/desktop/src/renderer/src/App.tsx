@@ -9,7 +9,9 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { HomeSpace } from './components/HomeSpace';
 import Onboarding from './components/Onboarding';
 import { presetConfigPatch } from './lib/keybindingPresets';
-import { resolveLeader } from './lib/shortcuts';
+import { LAYER_ACTIONS, resolveLeader } from './lib/shortcuts';
+import { requestChatScroll } from './lib/chatScrollBus';
+import { resolveApproval } from './lib/resolveAttention';
 import { resolveNavHeight } from './lib/layoutUtils';
 import { markUiEvent } from './lib/longTaskMonitor';
 import PluginInstallDialog from './components/PluginInstallDialog';
@@ -322,6 +324,9 @@ function App() {
     setAgentModel,
     loadAgentsFromSession,
     openPaneIn,
+    toggleZoomPane,
+    swapPane,
+    cyclePane,
     openAgentWatch,
     openInspector,
     openContext,
@@ -472,6 +477,12 @@ function App() {
   // cwd from here, so a new terminal reliably lands in the selected agent's dir.
   const activeAgentRef = useRef(activeAgent);
   activeAgentRef.current = activeAgent;
+  // Same pattern for the full list + active id — the command-layer handlers
+  // (alternate/pin/jump/approve) are stable callbacks that need current state.
+  const agentsRef = useRef(agents);
+  agentsRef.current = agents;
+  const activeAgentIdRef = useRef(activeAgentId);
+  activeAgentIdRef.current = activeAgentId;
   const [appCwd, setAppCwd] = useState('');
   // Neutral home for panes opened with no agent scope (~/.workspacer, created
   // on demand) — see handleAddTab's fallback chain.
@@ -972,11 +983,20 @@ function App() {
   // chrome on regardless of the chordHints preference.
   const kbChordHints = (config.keybindings?.chordHints ?? true) || commandLayerCfg.enabled === true;
   // Defaults merged under any user overrides, so shortcut badges/labels always
-  // render even when the saved config only carries a partial map.
-  const resolvedShortcuts = useMemo(
-    () => ({ ...DEFAULT_CONFIG.keybindings?.shortcuts, ...config.keybindings?.shortcuts }),
-    [config.keybindings?.shortcuts],
-  );
+  // render even when the saved config only carries a partial map. Command-layer
+  // verbs join the map ONLY while the layer is enabled — a disabled layer must
+  // not squat chord keys, and persisted preset/user chords always beat layer
+  // defaults (they merge later, so their leaf wins the tree).
+  const resolvedShortcuts = useMemo(() => {
+    const merged = {
+      ...DEFAULT_CONFIG.keybindings?.shortcuts,
+      ...config.keybindings?.shortcuts,
+    } as Record<string, string>;
+    if (!commandLayerCfg.enabled) {
+      for (const action of LAYER_ACTIONS) delete merged[action];
+    }
+    return merged;
+  }, [config.keybindings?.shortcuts, commandLayerCfg.enabled]);
 
   const activeTab = getActiveTab();
 
@@ -1433,6 +1453,86 @@ function App() {
     [config.ui, saveConfig],
   );
 
+  // ── Command-layer handlers (COMMAND_LAYER.md, Phase 3) ──
+  // Alternate agent (prefix ') — the last DIFFERENT workspace focused, like
+  // vim's ctrl+6 / tmux's last-window. Tracked here because useAgentManager
+  // only knows the current id.
+  const alternateAgentRef = useRef<{ cur?: string; prev?: string }>({});
+  useEffect(() => {
+    const t = alternateAgentRef.current;
+    if (t.cur !== activeAgentId) {
+      t.prev = t.cur;
+      t.cur = activeAgentId;
+    }
+  }, [activeAgentId]);
+  const handleAlternateAgent = useCallback(() => {
+    const prev = alternateAgentRef.current.prev;
+    if (prev && agentsRef.current.some((a) => a.id === prev)) handleSelectAgent(prev);
+  }, [handleSelectAgent]);
+
+  // Harpoon-style pins: cwd-keyed slots in config.ui.pinnedAgentCwds (an
+  // ARRAY, replaced wholesale by deepMerge/configPatch — order is slot order).
+  const pinnedCwds = useMemo(
+    () => config.ui.pinnedAgentCwds ?? [],
+    [config.ui.pinnedAgentCwds],
+  );
+  const handlePinAgent = useCallback(() => {
+    const agent = agentsRef.current.find((a) => a.id === activeAgentIdRef.current);
+    if (!agent || agent.global || !agent.cwd) return;
+    const next = pinnedCwds.includes(agent.cwd)
+      ? pinnedCwds.filter((c) => c !== agent.cwd)
+      : [...pinnedCwds, agent.cwd];
+    void saveConfig({ ui: { ...config.ui, pinnedAgentCwds: next } });
+  }, [pinnedCwds, config.ui, saveConfig]);
+  const handleJumpPinned = useCallback(
+    (slot: number) => {
+      const cwd = pinnedCwds[slot - 1];
+      if (!cwd) return;
+      // Prefer a running agent in that cwd; fall back to any (stopped) one.
+      const candidates = agentsRef.current.filter((a) => !a.global && a.cwd === cwd);
+      const target = candidates.find((a) => a.sessionId) ?? candidates[0];
+      if (target) handleSelectAgent(target.id);
+    },
+    [pinnedCwds, handleSelectAgent],
+  );
+
+  // prefix y / n — resolve the ACTIVE agent's top attention item, the same
+  // sessionId-addressed path the Fleet Deck and Inbox use. Approvals only: a
+  // question needs its options on screen, not a blind yes/no. Items younger
+  // than a beat are skipped — the top item can change asynchronously, and a
+  // blind approve must never race a fresh arrival (the Phase 4 strip renders
+  // the item summary beside these keys).
+  const handleAttentionDecision = useCallback(
+    (response: 'yes' | 'no') => {
+      const item = attentionRef.current?.topByAgent.get(activeAgentIdRef.current);
+      if (!item || item.kind !== 'approval') return;
+      if (Date.now() - item.createdAt < 1200) return;
+      resolveApproval(
+        item.sessionId,
+        response,
+        (snapshotBySession[item.sessionId]?.pendingQuestions?.length ?? 0) > 0,
+        snapshotBySession[item.sessionId]?.provider,
+        snapshotBySession[item.sessionId]?.transport,
+      );
+    },
+    [snapshotBySession],
+  );
+
+  // prefix Enter — focus the active pane's visible editable (composer in GUI
+  // view, xterm's textarea in Term view). Same probe the agent-switch
+  // autofocus uses, minus the retry loop: the pane is already mounted.
+  const handleFocusComposer = useCallback(() => {
+    const agent = agentsRef.current.find((a) => a.id === activeAgentIdRef.current);
+    const tab = agent?.tabs.find((t) => t.id === agent.activeTabId);
+    const paneId = tab?.activePaneId || tab?.panes[0]?.id;
+    if (!paneId) return;
+    const wrapper = document.querySelector(`[data-pane-id="${paneId}"]`);
+    const candidates = wrapper?.querySelectorAll<HTMLElement>('textarea, input') ?? [];
+    Array.from(candidates)
+      .find((el) => el.offsetParent !== null)
+      ?.focus();
+  }, []);
+
   useKeyboardNav({
     tabs,
     activeTabId,
@@ -1490,6 +1590,17 @@ function App() {
     ),
     commandLayer: commandLayerCfg,
     configuredPrefix,
+    onZoomPane: toggleZoomPane,
+    onSwapPaneLeft: useCallback(() => swapPane('left'), [swapPane]),
+    onSwapPaneRight: useCallback(() => swapPane('right'), [swapPane]),
+    onCyclePane: cyclePane,
+    onFocusComposer: handleFocusComposer,
+    onChatScroll: requestChatScroll,
+    onAlternateAgent: handleAlternateAgent,
+    onPinAgent: handlePinAgent,
+    onJumpPinned: handleJumpPinned,
+    onApproveAttention: useCallback(() => handleAttentionDecision('yes'), [handleAttentionDecision]),
+    onDenyAttention: useCallback(() => handleAttentionDecision('no'), [handleAttentionDecision]),
     shortcuts: resolvedShortcuts,
   });
 
@@ -2180,6 +2291,7 @@ function App() {
               <ErrorBoundary label="Sidebar" variant="region">
                 <SideBar
                   agents={agents}
+                  pinnedCwds={pinnedCwds}
                   projects={config.projects}
                   activeAgentId={activeAgentId}
                   statusBySession={statusBySession}

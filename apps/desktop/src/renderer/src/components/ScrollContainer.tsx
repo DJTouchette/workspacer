@@ -431,6 +431,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
 function TilingLayout({
   panes,
   activePaneId,
+  zoomedPaneId,
   agentActive,
   containerWidth,
   containerHeight,
@@ -448,6 +449,10 @@ function TilingLayout({
 }: {
   panes: PaneConfig[];
   activePaneId: string;
+  /** tmux-style zoom (TabConfig.zoomedPaneId): this pane fills the tab; the
+   *  others stay MOUNTED but hidden so terminals keep their PTYs — the same
+   *  display:none treatment a hidden workspace gets. */
+  zoomedPaneId?: string;
   agentActive: boolean;
   containerWidth: number;
   containerHeight: number;
@@ -521,16 +526,22 @@ function TilingLayout({
         // highlights the active pane of the active tab.
         const isActive = single ? isActiveTab : pane.id === activePaneId && isActiveTab;
         // Single pane fills the whole tab area (and stays headerless, labelled
-        // by the tab). Multi-pane uses the computed grid cell.
-        const cellStyle: React.CSSProperties = single
-          ? { position: 'absolute', inset: 0 }
-          : {
-              position: 'absolute',
-              left: `${layout.col * cellWidth + gap}px`,
-              top: `${layout.row * cellHeight + gap}px`,
-              width: `${layout.colSpan * cellWidth - gap * 2}px`,
-              height: `${layout.rowSpan * cellHeight - gap * 2}px`,
-            };
+        // by the tab). Multi-pane uses the computed grid cell — unless a pane
+        // is ZOOMED, in which case it fills the tab and its siblings hide
+        // (display:none, still mounted — terminals keep their PTYs, exactly
+        // like a hidden workspace; their ResizeObservers guard 0×0 fits).
+        const zoomActive = !single && !!zoomedPaneId && panes.some((p) => p.id === zoomedPaneId);
+        const cellStyle: React.CSSProperties =
+          single || (zoomActive && pane.id === zoomedPaneId)
+            ? { position: 'absolute', inset: 0 }
+            : {
+                position: 'absolute',
+                left: `${layout.col * cellWidth + gap}px`,
+                top: `${layout.row * cellHeight + gap}px`,
+                width: `${layout.colSpan * cellWidth - gap * 2}px`,
+                height: `${layout.rowSpan * cellHeight - gap * 2}px`,
+                ...(zoomActive && pane.id !== zoomedPaneId ? { display: 'none' } : {}),
+              };
 
         return (
           <div key={pane.id} style={cellStyle}>
@@ -792,6 +803,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                 <TilingLayout
                   panes={tab.panes}
                   activePaneId={tab.activePaneId}
+                  zoomedPaneId={tab.zoomedPaneId}
                   agentActive={agentActive}
                   containerWidth={tabWidth}
                   containerHeight={containerHeight}

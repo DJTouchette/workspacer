@@ -1306,7 +1306,14 @@ export function useAgentManager() {
         ...a,
         tabs: a.tabs.map((t) =>
           t.id === tabId
-            ? { ...t, panes: [...t.panes, pane], activePaneId: paneId, lastActiveAt: Date.now() }
+            ? {
+                ...t,
+                panes: [...t.panes, pane],
+                activePaneId: paneId,
+                lastActiveAt: Date.now(),
+                // tmux semantics: a structural change unzooms first.
+                zoomedPaneId: undefined,
+              }
             : t,
         ),
       }));
@@ -1378,7 +1385,9 @@ export function useAgentManager() {
             if (t.id !== tabId) return t;
             const newPanes = t.panes.filter((p) => p.id !== paneId);
             const newActive = t.activePaneId === paneId ? newPanes[0]?.id || '' : t.activePaneId;
-            return { ...t, panes: newPanes, activePaneId: newActive };
+            // A dead pane never keeps the zoom; any other close unzooms too
+            // (structural change — tmux semantics).
+            return { ...t, panes: newPanes, activePaneId: newActive, zoomedPaneId: undefined };
           }),
         };
       });
@@ -1416,11 +1425,77 @@ export function useAgentManager() {
     (tabId: string, paneId: string) => {
       mutateActiveAgent((a) => ({
         ...a,
-        tabs: a.tabs.map((t) => (t.id === tabId ? { ...t, activePaneId: paneId } : t)),
+        tabs: a.tabs.map((t) =>
+          t.id === tabId
+            ? {
+                ...t,
+                activePaneId: paneId,
+                // Focusing a DIFFERENT pane unzooms (tmux select-pane
+                // semantics: zoom follows nothing); re-focusing the zoomed
+                // pane itself keeps it.
+                zoomedPaneId: t.zoomedPaneId === paneId ? t.zoomedPaneId : undefined,
+              }
+            : t,
+        ),
       }));
     },
     [mutateActiveAgent],
   );
+
+  /** tmux-style zoom toggle for the active tab's active pane. Guarded to
+   *  multi-pane tabs (a single pane already fills the tab). */
+  const toggleZoomPane = useCallback(() => {
+    mutateActiveAgent((a) => {
+      const tab = a.tabs.find((t) => t.id === a.activeTabId);
+      if (!tab || tab.panes.length <= 1) return a;
+      const next = tab.zoomedPaneId === tab.activePaneId ? undefined : tab.activePaneId;
+      return {
+        ...a,
+        tabs: a.tabs.map((t) => (t.id === tab.id ? { ...t, zoomedPaneId: next } : t)),
+      };
+    });
+  }, [mutateActiveAgent]);
+
+  /** Swap the active pane with its grid neighbour (tmux swap-pane). Array
+   *  order IS the tiling order, so a splice swap is the whole operation;
+   *  clamps to a no-op at the edges. Unzooms (structural change). */
+  const swapPane = useCallback(
+    (direction: 'left' | 'right') => {
+      mutateActiveAgent((a) => {
+        const tab = a.tabs.find((t) => t.id === a.activeTabId);
+        if (!tab || tab.panes.length <= 1) return a;
+        const idx = tab.panes.findIndex((p) => p.id === tab.activePaneId);
+        const target = direction === 'left' ? idx - 1 : idx + 1;
+        if (idx < 0 || target < 0 || target >= tab.panes.length) return a;
+        const panes = [...tab.panes];
+        [panes[idx], panes[target]] = [panes[target], panes[idx]];
+        return {
+          ...a,
+          tabs: a.tabs.map((t) =>
+            t.id === tab.id ? { ...t, panes, zoomedPaneId: undefined } : t,
+          ),
+        };
+      });
+    },
+    [mutateActiveAgent],
+  );
+
+  /** Focus the next pane in tiling order, wrapping (tmux o). Unzooms via
+   *  setActivePane's own rule. */
+  const cyclePane = useCallback(() => {
+    mutateActiveAgent((a) => {
+      const tab = a.tabs.find((t) => t.id === a.activeTabId);
+      if (!tab || tab.panes.length <= 1) return a;
+      const idx = tab.panes.findIndex((p) => p.id === tab.activePaneId);
+      const next = tab.panes[(idx + 1) % tab.panes.length];
+      return {
+        ...a,
+        tabs: a.tabs.map((t) =>
+          t.id === tab.id ? { ...t, activePaneId: next.id, zoomedPaneId: undefined } : t,
+        ),
+      };
+    });
+  }, [mutateActiveAgent]);
 
   const hibernatePane = useCallback(
     (tabId: string, paneId: string) => {
@@ -1510,6 +1585,9 @@ export function useAgentManager() {
     renameTab,
     moveTab,
     setActivePane,
+    toggleZoomPane,
+    swapPane,
+    cyclePane,
     hibernatePane,
     wakePane,
     updatePaneUrl,

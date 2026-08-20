@@ -52,6 +52,24 @@ const RENDERER_ONLY_SHORTCUTS: Record<string, string> = {
   'inbox-dismiss': 'e',
   'inbox-snooze': 's',
   'inbox-clear-reviewed': 'shift+e',
+  // ── Command layer (COMMAND_LAYER.md) — chords live only while
+  // keybindings.commandLayer.enabled (App strips them otherwise); constant
+  // across presets like the fleet/inbox sets. Steps are case/modifier-aware:
+  // 'shift+k' and 'k' are distinct.
+  'zoom-pane': 'prefix z',
+  'swap-pane-left': 'prefix {',
+  'swap-pane-right': 'prefix }',
+  'cycle-pane': 'prefix o',
+  'focus-composer': 'prefix enter',
+  'chat-scroll-up': 'prefix shift+k',
+  'chat-scroll-down': 'prefix shift+j',
+  'chat-scroll-top': 'prefix g g',
+  'chat-scroll-bottom': 'prefix shift+g',
+  'alternate-agent': "prefix '",
+  'pin-agent': 'prefix m',
+  'jump-pinned': 'prefix 1-9',
+  'approve-attention': 'prefix y',
+  'deny-attention': 'prefix n',
 };
 
 // Persisted keybindings come from the shared single source; the renderer layers

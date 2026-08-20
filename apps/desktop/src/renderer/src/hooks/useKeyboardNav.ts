@@ -9,6 +9,7 @@ import {
   DigitRangeCombo,
   comboHasModifiers,
   comboMatcher,
+  DIGIT_RANGE_TOKEN,
   isEditableTarget,
   leaderPassthroughBytes,
   REPEAT_ACTIONS,
@@ -154,6 +155,19 @@ interface UseKeyboardNavOptions {
   /** The transient command layer (COMMAND_LAYER.md). Absent/disabled = the
    *  legacy chord behavior, byte for byte. */
   commandLayer?: CommandLayerConfig;
+  // ── Command-layer verbs (scope:'layer' — fire from the chord tree only) ──
+  onZoomPane?: () => void;
+  onSwapPaneLeft?: () => void;
+  onSwapPaneRight?: () => void;
+  onCyclePane?: () => void;
+  onFocusComposer?: () => void;
+  onChatScroll?: (kind: 'half-up' | 'half-down' | 'top' | 'bottom') => void;
+  onAlternateAgent?: () => void;
+  onPinAgent?: () => void;
+  /** Jump to pinned agent N (the `prefix 1-9` digit chord step). */
+  onJumpPinned?: (slot: number) => void;
+  onApproveAttention?: () => void;
+  onDenyAttention?: () => void;
   /** The CONFIGURED (unresolved) leader — the passthrough writes the byte this
    *  combo would have sent (ctrl+space → NUL), even where the platform
    *  substitutes the armed key (the Linux Alt tap). Defaults to `prefix`. */
@@ -200,6 +214,17 @@ export function useKeyboardNav({
   onToggleInspector,
   commandLayer,
   configuredPrefix,
+  onZoomPane,
+  onSwapPaneLeft,
+  onSwapPaneRight,
+  onCyclePane,
+  onFocusComposer,
+  onChatScroll,
+  onAlternateAgent,
+  onPinAgent,
+  onJumpPinned,
+  onApproveAttention,
+  onDenyAttention,
   shortcuts = {},
 }: UseKeyboardNavOptions) {
   const directRef = useRef(buildDirectMatchers(shortcuts));
@@ -348,7 +373,7 @@ export function useKeyboardNav({
      * doesn't own (library-picker, toggle-inspector — handled by their own
      * focus-scoped listeners) return false so the event isn't consumed here.
      */
-    const executeAction = (action: string): boolean => {
+    const executeAction = (action: string, digit?: number): boolean => {
       switch (action) {
         case 'new-terminal': {
           const id = addTab('terminal');
@@ -484,6 +509,49 @@ export function useKeyboardNav({
           if (!onToggleInspector) return false;
           onToggleInspector();
           return true;
+        // ── Command-layer verbs ──
+        case 'zoom-pane':
+          onZoomPane?.();
+          return true;
+        case 'swap-pane-left':
+          onSwapPaneLeft?.();
+          return true;
+        case 'swap-pane-right':
+          onSwapPaneRight?.();
+          return true;
+        case 'cycle-pane':
+          onCyclePane?.();
+          return true;
+        case 'focus-composer':
+          onFocusComposer?.();
+          return true;
+        case 'chat-scroll-up':
+          onChatScroll?.('half-up');
+          return true;
+        case 'chat-scroll-down':
+          onChatScroll?.('half-down');
+          return true;
+        case 'chat-scroll-top':
+          onChatScroll?.('top');
+          return true;
+        case 'chat-scroll-bottom':
+          onChatScroll?.('bottom');
+          return true;
+        case 'alternate-agent':
+          onAlternateAgent?.();
+          return true;
+        case 'pin-agent':
+          onPinAgent?.();
+          return true;
+        case 'jump-pinned':
+          if (digit !== undefined) onJumpPinned?.(digit);
+          return true;
+        case 'approve-attention':
+          onApproveAttention?.();
+          return true;
+        case 'deny-attention':
+          onDenyAttention?.();
+          return true;
         default:
           return false; // not owned here
       }
@@ -524,7 +592,21 @@ export function useKeyboardNav({
         }
 
         const node = chordNodeAt(treeRef.current, path);
-        const child = node?.children.find((c) => comboMatcher(c.step)(e));
+        let child = node?.children.find((c) => comboMatcher(c.step)(e));
+        // A '1-9' chord step (jump-pinned): any unmodified digit resolves it,
+        // carrying the digit to the action. e.code so Shift-symbols still map;
+        // numpad digits excluded by the Digit code (documented limitation).
+        let stepDigit: number | undefined;
+        if (!child && !e.ctrlKey && !e.altKey && !e.metaKey) {
+          const m = e.code?.match(/^Digit([1-9])$/);
+          if (m) {
+            const rangeChild = node?.children.find((c) => c.step === DIGIT_RANGE_TOKEN);
+            if (rangeChild) {
+              child = rangeChild;
+              stepDigit = parseInt(m[1], 10);
+            }
+          }
+        }
         if (!child) {
           cancelChord();
           return;
@@ -539,12 +621,12 @@ export function useKeyboardNav({
             // repeat window so `prefix h h l` walks panes. The strip stays
             // visible for the whole window (path non-null), and a focus
             // landing in an editable target cancels it (focusin listener).
-            executeAction(action);
+            executeAction(action, stepDigit);
             setChordPath(path, layerRepeatMs);
             repeatWindowRef.current = true;
           } else {
             cancelChord();
-            executeAction(action);
+            executeAction(action, stepDigit);
           }
         } else {
           cancelChord();
@@ -713,6 +795,17 @@ export function useKeyboardNav({
     onToggleInspector,
     commandLayer,
     configuredPrefix,
+    onZoomPane,
+    onSwapPaneLeft,
+    onSwapPaneRight,
+    onCyclePane,
+    onFocusComposer,
+    onChatScroll,
+    onAlternateAgent,
+    onPinAgent,
+    onJumpPinned,
+    onApproveAttention,
+    onDenyAttention,
   ]);
 
   // A half-typed chord survives the key-handler effect re-subscribing, and is

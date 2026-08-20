@@ -128,10 +128,12 @@ export interface ActionMeta {
    *  These live outside the chord tree and direct-matcher map (see below). */
   digitRange?: boolean;
   /** Set when the binding only applies inside one surface (the Fleet Deck or
-   *  the Inbox drawer). Scoped actions are matched by that surface's own
-   *  keydown listener while it's open — the global handler skips them, so a
-   *  bare key like "j" never fires fleet actions from a workspace. */
-  scope?: 'fleet' | 'inbox';
+   *  the Inbox drawer) or one mode (the command layer). Scoped actions are
+   *  matched by their own dispatch path — fleet/inbox by the open overlay's
+   *  listener, 'layer' by the chord tree only while commandLayer.enabled — so
+   *  the global direct matcher skips them, and the PRESET machinery never
+   *  persists them (they are constant across presets, like fleet-*). */
+  scope?: 'fleet' | 'inbox' | 'layer';
 }
 
 /** The canonical action list, in display order, grouped by section. */
@@ -227,6 +229,63 @@ export const ACTION_REGISTRY: ActionMeta[] = [
     section: 'Fleet · List view',
     scope: 'fleet',
   },
+  // Command layer (COMMAND_LAYER.md) — chord-only verbs, live while
+  // keybindings.commandLayer.enabled. Constant across presets (scope dodge).
+  { action: 'zoom-pane', label: 'Zoom pane', section: 'Command layer', scope: 'layer' },
+  { action: 'swap-pane-left', label: 'Swap pane left', section: 'Command layer', scope: 'layer' },
+  {
+    action: 'swap-pane-right',
+    label: 'Swap pane right',
+    section: 'Command layer',
+    scope: 'layer',
+  },
+  { action: 'cycle-pane', label: 'Next pane', section: 'Command layer', scope: 'layer' },
+  { action: 'focus-composer', label: 'Focus composer', section: 'Command layer', scope: 'layer' },
+  {
+    action: 'chat-scroll-up',
+    label: 'Chat half-page up',
+    section: 'Command layer',
+    scope: 'layer',
+  },
+  {
+    action: 'chat-scroll-down',
+    label: 'Chat half-page down',
+    section: 'Command layer',
+    scope: 'layer',
+  },
+  { action: 'chat-scroll-top', label: 'Chat to top', section: 'Command layer', scope: 'layer' },
+  {
+    action: 'chat-scroll-bottom',
+    label: 'Chat to bottom',
+    section: 'Command layer',
+    scope: 'layer',
+  },
+  {
+    action: 'alternate-agent',
+    label: 'Alternate agent',
+    section: 'Command layer',
+    scope: 'layer',
+  },
+  { action: 'pin-agent', label: 'Pin / unpin agent', section: 'Command layer', scope: 'layer' },
+  {
+    action: 'jump-pinned',
+    label: 'Jump to pinned agent',
+    section: 'Command layer',
+    scope: 'layer',
+    digitRange: true,
+  },
+  {
+    action: 'approve-attention',
+    label: 'Approve (active agent)',
+    section: 'Command layer',
+    scope: 'layer',
+  },
+  {
+    action: 'deny-attention',
+    label: 'Deny (active agent)',
+    section: 'Command layer',
+    scope: 'layer',
+  },
   // Inbox (active only while the drawer is open)
   { action: 'inbox-move-down', label: 'Select next item', section: 'Inbox', scope: 'inbox' },
   { action: 'inbox-move-up', label: 'Select previous item', section: 'Inbox', scope: 'inbox' },
@@ -245,9 +304,17 @@ export const ACTION_REGISTRY: ActionMeta[] = [
   { action: 'inbox-clear-reviewed', label: 'Clear all reviewed', section: 'Inbox', scope: 'inbox' },
 ];
 
-/** Action ids that only bind inside their own surface (fleet/inbox); the
- *  global direct-binding matcher must skip these. */
+/** Action ids that only bind inside their own surface (fleet/inbox) or mode
+ *  (layer); the global direct-binding matcher must skip these. */
 export const SCOPED_ACTIONS = new Set(ACTION_REGISTRY.filter((a) => a.scope).map((a) => a.action));
+
+/** Command-layer verb ids — their chords merge into the tree ONLY while
+ *  keybindings.commandLayer.enabled (App strips them otherwise), so persisted
+ *  user/preset chords always win over layer defaults. */
+export const LAYER_ACTIONS = new Set(
+  ACTION_REGISTRY.filter((a) => a.scope === 'layer').map((a) => a.action),
+);
+
 
 /** action id → label, derived from the registry. */
 export const ACTION_LABELS: Record<string, string> = Object.fromEntries(
@@ -530,6 +597,11 @@ export const REPEAT_ACTIONS = new Set([
   'nav-down',
   'next-tab',
   'prev-tab',
+  'cycle-pane',
+  'swap-pane-left',
+  'swap-pane-right',
+  'chat-scroll-up',
+  'chat-scroll-down',
 ]);
 
 /** The literal byte(s) a `prefix prefix` passthrough writes to the terminal —
