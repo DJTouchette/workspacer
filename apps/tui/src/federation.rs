@@ -103,8 +103,8 @@ impl RemoteFleet {
     /// from its hub's connectivity. The app merges this after the local list.
     pub fn agents(&self) -> Vec<Agent> {
         self.hubs
-            .iter()
-            .flat_map(|(_, state)| {
+            .values()
+            .flat_map(|state| {
                 state.sessions.values().map(move |a| {
                     let mut a = a.clone();
                     a.hub_offline = state.offline;

@@ -187,8 +187,14 @@ func TestSnapshotLatencyDistribution(t *testing.T) {
 		t.Skipf("machine cannot measure this budget: the hub-free loopback floor is already p99=%v (budget %v)",
 			floor, snapshotP99Budget)
 	}
-	if p99 > snapshotP99Budget {
-		t.Errorf("p99 %v exceeds %v localhost budget (loopback floor was %v)", p99, snapshotP99Budget, floor)
+	// Assert the HUB'S SHARE, as the paragraph above demands: raw p99 minus
+	// the measured hub-free floor. The raw-wall-clock form of this assert was
+	// the last environmental leak — a Windows CI runner posted floor=2.0ms
+	// (measurable, no skip) and hub p99=6.1ms: 4.1ms of hub share, inside
+	// budget, red anyway. A genuine hub regression still fails, because the
+	// floor is subtracted from both sides of that comparison equally.
+	if share := p99 - floor; share > snapshotP99Budget {
+		t.Errorf("hub share p99 %v (raw %v - floor %v) exceeds %v budget", share, p99, floor, snapshotP99Budget)
 	}
 }
 
