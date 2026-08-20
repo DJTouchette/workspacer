@@ -266,6 +266,7 @@ export function registerHubCapabilities(): void {
       parentSessionId,
       mcpItemIds,
       profileGranted,
+      yoloGranted,
     } = (params ?? {}) as {
       provider?: AgentProvider;
       /** Claude only: 'pty' | 'stream'. Omitted = the config default. */
@@ -298,25 +299,38 @@ export function registerHubCapabilities(): void {
        *  scrubRemoteGrantedProfile — configDir kept, bypass args and
        *  mcpItemIds still stripped. TWIN: rpc.go sanitizeSpawnParams. */
       profileGranted?: boolean;
+      /** HUB-STAMPED, never caller-supplied (same guarantee as profileGranted):
+       *  the calling token's YoloAllowed grant is verified before this is set.
+       *  When true, the spawn's requested skipPermissions / bypass mode is
+       *  HONORED instead of clamped — the fleet-manager full-access path.
+       *  TWIN: rpc.go sanitizeSpawnParams. */
+      yoloGranted?: boolean;
     };
     // SECURITY: this capability is the REMOTE/web/MCP spawn path (the local
     // desktop spawns over IPC). Driving an agent is already code execution on
     // the host, but we refuse to let a remote caller silently auto-bypass every
     // approval (`--dangerously-skip-permissions` / bypass-sandbox). Approvals
     // still surface and can be answered remotely; a YOLO agent must be started
-    // locally. So `skipPermissions` is forced off here.
+    // locally. So `skipPermissions` is forced off here — UNLESS the hub stamped
+    // `yoloGranted`, its verification that the CALLING token carries the
+    // full-access grant (fleet-manager full-access mode, config
+    // agents.fleetFullAccess). The stamp can't be forged: sanitizeSpawnParams
+    // deletes any caller-supplied copy and re-adds it only for a verified grant
+    // or the trusted host. So a granted manager's dispatched workers run
+    // bypassed; every other bus spawn is still clamped.
     //
     // The two mode spellings used to be compared inline here, which made the
     // invariant look like a property of SPAWNING. It is a property of the mode,
     // and `claude.setPermissionMode` reached the same escalation on an already
     // running agent with no clamp at all — see lib/permissionBypass.ts, now the
     // single vocabulary both doors consult.
-    if (reqSkip || isPermissionEscalation(reqMode)) {
+    const yoloOK = yoloGranted === true;
+    if (!yoloOK && (reqSkip || isPermissionEscalation(reqMode))) {
       console.warn(
-        '[hub] agents.spawn: ignoring permission bypass from a bus client — remote spawns never auto-bypass approvals.',
+        '[hub] agents.spawn: ignoring permission bypass from a bus client — remote spawns never auto-bypass approvals without a hub-verified full-access grant.',
       );
     }
-    const skipPermissions = false;
+    const skipPermissions = yoloOK ? !!reqSkip : false;
     // …and the same clamp on `mcpItemIds`, for the same reason and with a
     // sharper edge. A library item of kind `mcp` carries a `command`, `args` and
     // `env` verbatim into a `--mcp-config` file, and the spawn then passes
@@ -339,7 +353,9 @@ export function registerHubCapabilities(): void {
     // reuse the user's own YOLO profile). The brain already scrubbed this; the
     // desktop path did not, so the two stacks disagreed on the invariant.
     const scrubProfileBypass = true;
-    const permissionMode = isPermissionEscalation(reqMode) ? undefined : reqMode;
+    // A granted spawn keeps a bypass mode too (its whole point); otherwise an
+    // escalation mode is dropped to the default, same as the skip clamp above.
+    const permissionMode = !yoloOK && isPermissionEscalation(reqMode) ? undefined : reqMode;
     // Managed (Tier-2) backend — Codex / OpenCode / Pi run through claudemon's
     // adapter, not a Claude PTY. Shares the dispatch with the `claude:spawn` IPC
     // handler so this path can't silently fall back to spawning Claude (it did

@@ -1,6 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { Config } from '../../hooks/useConfig';
-import { Section, Row, SearchableSelect, SelectOption, ModeButton, inputStyle } from './primitives';
+import {
+  Section,
+  Row,
+  SearchableSelect,
+  SelectOption,
+  ModeButton,
+  CheckRow,
+  inputStyle,
+} from './primitives';
 
 const SUP_PROVIDERS: { value: 'claude' | 'codex' | 'opencode' | 'pi'; label: string }[] = [
   { value: 'claude', label: 'Claude' },
@@ -44,6 +52,12 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
 
   const patch = (p: Partial<NonNullable<Config['supervisor']>>) =>
     save({ supervisor: { ...sup, ...p } });
+
+  const agents = config.agents ?? {};
+  const fleetRoot = agents.fleetRoot ?? '';
+  const fleetFullAccess = agents.fleetFullAccess === true;
+  const patchAgents = (p: Partial<NonNullable<Config['agents']>>) =>
+    save({ agents: { ...agents, ...p } });
 
   return (
     <Section title="Supervisor">
@@ -114,6 +128,37 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
       </Row>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         How often the supervisor re-sweeps the fleet for status and pending decisions.
+      </div>
+
+      <div style={{ marginTop: 18, fontWeight: 600, fontSize: '0.8rem' }}>Fleet Manager</div>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', margin: '4px 0 8px' }}>
+        The delegating manager launched from the Overview. It dispatches real agents into your
+        projects and reports back — see “Fleet Manager” on the dashboard.
+      </div>
+
+      <Row label="Projects root">
+        <input
+          value={fleetRoot}
+          onChange={(e) => patchAgents({ fleetRoot: e.target.value })}
+          placeholder="auto (common parent of your projects)"
+          style={{ ...inputStyle, width: 260 }}
+        />
+      </Row>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        The parent directory the manager opens in. Leave blank to derive it from your configured
+        projects’ common parent (else your home directory).
+      </div>
+
+      <CheckRow
+        label="Full access (workers skip approvals)"
+        checked={fleetFullAccess}
+        onChange={(v) => patchAgents({ fleetFullAccess: v })}
+      />
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        When on, the manager and the agents it dispatches run with permissions bypassed — no
+        per-action approval prompts. Faster and hands-off, but there is no human gate on each
+        command. The manager still asks you before anything destructive or cross-repo. Off by
+        default.
       </div>
     </Section>
   );

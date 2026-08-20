@@ -177,6 +177,17 @@ type Record struct {
 	// hub router (scoped bus connections) and the MCP facade (per-session
 	// records multiplexed over the facade's own trusted connection).
 	ProfilesAllowed []string `json:"profilesAllowed,omitempty"`
+	// YoloAllowed is the full-access grant: an agents.spawn from this token may
+	// have its `skipPermissions` request HONORED (--dangerously-skip-permissions
+	// / a bypass permissionMode) instead of clamped. Like ProfilesAllowed, it is
+	// recorded at mint time by the host user (the desktop's fleet-manager spawn
+	// path, gated by the agents.fleetFullAccess setting), never claimable by the
+	// caller itself. The hub router is the sole stamper: sanitizeSpawnParams
+	// deletes any incoming `yoloGranted` and re-adds it only for a verified
+	// grant (or the trusted host), so a provider seeing the stamp knows the hub
+	// judged the caller — the stamp says the request MAY be honored, it does not
+	// itself request the bypass.
+	YoloAllowed bool `json:"yoloAllowed,omitempty"`
 }
 
 // ConfigDir mirrors the desktop app's getConfigDir (configService.ts) and the

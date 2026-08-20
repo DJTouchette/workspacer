@@ -825,8 +825,8 @@ var unscopedParams = map[string]map[string]ParamDecision{
 		// whole argument for this method's exemption was pinned by behavioural
 		// tests only and by no classification at all — and the identical
 		// escalation shipped unnoticed on claude.setPermissionMode.
-		"skipPermissions": {KindPermission, "--dangerously-skip-permissions by another name; forced to false on both bus providers (assertNoPermissionBypass in hubCapabilities.ts, the same clamp in the brain's spawn) so a remote caller cannot start an agent that auto-approves everything"},
-		"permissionMode":  {KindPermission, "the same escalation spelled as a mode: 'bypassPermissions' and 'yolo' are dropped to undefined on both bus providers, every other mode is passed through. A YOLO agent has to be started locally"},
+		"skipPermissions": {KindPermission, "--dangerously-skip-permissions by another name; forced to false on both bus providers (assertNoPermissionBypass in hubCapabilities.ts, the same clamp in the brain's spawn) so a remote caller cannot start an agent that auto-approves everything. One verified exception: the hub router (internal/bus sanitizeSpawnParams) deletes any incoming `yoloGranted` and re-stamps it solely for a caller whose token record carries the full-access grant (authtoken yoloAllowed, minted by the local user via agents.fleetFullAccess) or the trusted host — and only a stamped spawn's request is honored by the providers"},
+		"permissionMode":  {KindPermission, "the same escalation spelled as a mode: 'bypassPermissions' and 'yolo' are dropped to undefined on both bus providers, every other mode is passed through. A YOLO agent has to be started locally — or by a caller the hub stamped with the full-access grant (`yoloGranted`, same verified exception as skipPermissions)"},
 		"effort":          {KindShell, "a reasoning-effort level handed to the daemon at spawn (codex model_reasoning_effort, claude's /effort); it selects among the provider's own levels and never becomes argv the caller composes"},
 	},
 	"terminals.create": {

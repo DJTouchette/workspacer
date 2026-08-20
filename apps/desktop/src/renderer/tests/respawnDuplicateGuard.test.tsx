@@ -108,6 +108,30 @@ describe('respawn duplicate-card guard', () => {
     // The tombstone is lifted so the card can be respawned by hand later.
     expect(wasSessionTerminated('S1')).toBe(false);
   });
+
+  it('a nested worker (parentId) is DROPPED on session end, not left as a Stopped tombstone', () => {
+    const { result } = renderHook(() => useAgentManager());
+    act(() => {
+      result.current.loadAgentsFromSession(
+        [mkAgent('mgr', 'MGR'), mkAgent('worker', 'W1', { parentId: 'mgr' })],
+        'mgr',
+      );
+    });
+    act(() => {
+      result.current.stopAgentForSession('W1');
+    });
+    // The ephemeral sub-agent card is gone entirely — the manager relayed its
+    // result via the [fleet] wake, so a lingering Stopped sub-card is clutter.
+    expect(result.current.agents.find((a: any) => a.id === 'worker')).toBeUndefined();
+    // …while a top-level card in the same tick still tombstones (resumable).
+    act(() => {
+      result.current.stopAgentForSession('MGR');
+    });
+    const mgr = result.current.agents.find((a: any) => a.id === 'mgr');
+    expect(mgr).toBeDefined();
+    expect(mgr.sessionId).toBeUndefined();
+    expect(mgr.lastSessionId).toBe('MGR');
+  });
 });
 
 describe('loadAgentsFromSession sanitization', () => {

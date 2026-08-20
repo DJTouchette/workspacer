@@ -140,7 +140,7 @@ func newServerCache(c *busclient.Client, catalog *pluginCatalog, base map[authto
 
 // serverFor returns the server a resolved token record should be served.
 func (sc *serverCache) serverFor(rec authtoken.Record) *mcp.Server {
-	if len(rec.Plugins) == 0 && len(rec.ProfilesAllowed) == 0 {
+	if len(rec.Plugins) == 0 && len(rec.ProfilesAllowed) == 0 && !rec.YoloAllowed {
 		if s := sc.base[rec.Scope]; s != nil {
 			return s
 		}
@@ -151,11 +151,16 @@ func (sc *serverCache) serverFor(rec authtoken.Record) *mcp.Server {
 	}
 	byID, gen := sc.catalog.snapshot()
 	granted := grantedPlugins(rec.Plugins, byID)
-	// Profiles join the cache key so two records at the same tier with
-	// different account grants can never share a spawn tool — the grant check
-	// is closed over the build, so a shared server IS a shared grant.
+	// Profiles and the full-access grant join the cache key so two records at
+	// the same tier with different spawn grants can never share a spawn tool —
+	// each grant check is closed over the build, so a shared server IS a shared
+	// grant.
+	yoloKey := "0"
+	if rec.YoloAllowed {
+		yoloKey = "1"
+	}
 	key := string(rec.Scope) + "|" + strings.Join(granted, ",") +
-		"|" + strings.Join(rec.ProfilesAllowed, ",") + "|" + strconv.Itoa(gen)
+		"|" + strings.Join(rec.ProfilesAllowed, ",") + "|" + yoloKey + "|" + strconv.Itoa(gen)
 
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
@@ -170,7 +175,7 @@ func (sc *serverCache) serverFor(rec authtoken.Record) *mcp.Server {
 	for _, id := range granted {
 		defs = append(defs, grantedPluginTools{PluginID: id, Tools: byID[id]})
 	}
-	s := newServerWithGrants(sc.c, rec.Scope, defs, rec.ProfilesAllowed)
+	s := newServerWithGrants(sc.c, rec.Scope, defs, rec.ProfilesAllowed, rec.YoloAllowed)
 	sc.built[key] = s
 	return s
 }

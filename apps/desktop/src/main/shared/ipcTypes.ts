@@ -65,6 +65,12 @@ export interface RemoteTokenRecord {
    *  sanitizeSpawnParams (which stamps profileGranted for the provider).
    *  TWIN: authtoken.Record.ProfilesAllowed. */
   profilesAllowed?: string[];
+  /** Full-access dispatch grant (fleet-manager, config agents.fleetFullAccess):
+   *  when true, workers this session spawns may run with permissions bypassed.
+   *  The hub verifies this and stamps yoloGranted on the worker spawn — a bus
+   *  spawn's skipPermissions is otherwise clamped off. Absent = no grant.
+   *  TWIN: authtoken.Record.YoloAllowed. */
+  yoloAllowed?: boolean;
 }
 
 // ── Claude session snapshot (sent over claude-session:get / getAll / update) ──

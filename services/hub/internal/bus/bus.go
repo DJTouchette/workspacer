@@ -112,6 +112,12 @@ type ScopedIdent struct {
 	// agents.spawn from this connection may keep. The router strips profileId
 	// from a spawn whose caller lacks the grant — see sanitizeSpawnParams.
 	ProfilesAllowed []string
+	// YoloAllowed is the token record's full-access grant
+	// (authtoken.Record.YoloAllowed): whether an agents.spawn from this
+	// connection may have its skipPermissions request honored. The router
+	// stamps hub-only `yoloGranted` for a granted caller — see
+	// sanitizeSpawnParams.
+	YoloAllowed bool
 }
 
 // operator reports whether the ident grants everything — such a token is
@@ -759,7 +765,8 @@ func (s *Server) revalidateScoped(ctx context.Context, cn *conn, tok, authScope 
 			return
 		case <-t.C:
 			si, ok := s.lookupScoped(tok)
-			if ok && si.Scope == authScope && slices.Equal(si.ProfilesAllowed, cn.profilesAllowed) {
+			if ok && si.Scope == authScope && slices.Equal(si.ProfilesAllowed, cn.profilesAllowed) &&
+				si.YoloAllowed == cn.yoloAllowed {
 				continue
 			}
 			// Both halves, exactly as UnregisterPluginToken applies them: the
@@ -769,7 +776,7 @@ func (s *Server) revalidateScoped(ctx context.Context, cn *conn, tok, authScope 
 			cn.revoked.Store(true)
 			_ = cn.ws.CloseNow()
 			if ok && si.Scope == authScope {
-				log.Printf("[bus] scoped token %s: profile grant changed while connected; connection closed (reconnect picks up the new grant)", cn.tokenID)
+				log.Printf("[bus] scoped token %s: spawn grant (profiles/full-access) changed while connected; connection closed (reconnect picks up the new grant)", cn.tokenID)
 			} else if ok {
 				log.Printf("[bus] scoped token %s: tier changed %q -> %q while connected; connection closed", cn.tokenID, authScope, si.Scope)
 			} else {
@@ -808,6 +815,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	var viaScoped bool
 	var authScope string
 	var profilesAllowed []string
+	var yoloAllowed bool
 	if pi, ok := s.lookupPluginToken(tok); ok {
 		caps, pluginID, events = pi.caps, pi.id, pi.events
 	} else if s.token == "" || tok == s.token {
@@ -815,6 +823,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	} else if si, ok := s.lookupScoped(tok); ok {
 		viaScoped, authScope = true, si.Scope
 		profilesAllowed = si.ProfilesAllowed
+		yoloAllowed = si.YoloAllowed
 		if si.operator() {
 			trusted = true
 		} else {
@@ -849,7 +858,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 		ws: ws, ctx: ctx, trusted: trusted, caps: caps, pluginID: pluginID,
 		emits: events.Emits, consumes: events.Consumes, provides: events.Provides,
 		scope: scope, scopeMethods: scopeMethods, tokenID: TokenFingerprint(tok),
-		viaScopedToken: viaScoped, profilesAllowed: profilesAllowed,
+		viaScopedToken: viaScoped, profilesAllowed: profilesAllowed, yoloAllowed: yoloAllowed,
 	}
 	s.router.addConn(cn)
 	if pluginID != "" {
@@ -1052,6 +1061,9 @@ type conn struct {
 	// at handshake (revalidateScoped closes the socket if the record's grant
 	// changes, so the snapshot cannot go stale while live).
 	profilesAllowed []string
+	// yoloAllowed is the scoped record's full-access grant, snapshotted at
+	// handshake under the same revalidation contract as profilesAllowed.
+	yoloAllowed bool
 	// Event-side grants (empty for a trusted conn, which bypasses these): which
 	// event types this plugin may publish / receive, and which capability methods
 	// it may register as a provider of. Patterns are matched with event.Matches.

@@ -70,6 +70,10 @@ export interface ClaudeSpawnOptions {
   /** Fleet Manager: nudge-eligible parent (isSupervisor spawn meta) without
    *  the /supervise loop — see managedSpawn's twin field. */
   manager?: boolean;
+  /** Manager only: also grant this manager's token full-access dispatch
+   *  (yoloAllowed) so its workers may run with permissions bypassed
+   *  (config agents.fleetFullAccess). Ignored unless `manager`. */
+  fleetFullAccess?: boolean;
   /** Wire the facade tools without the supervisor loop (legacy operator tier —
    *  prefer `toolScope`). */
   mcpFacade?: boolean;
@@ -210,6 +214,7 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
           facadeScope,
           opts.pluginTools,
           opts.manager ? claudeProfiles.getProfiles().map((p) => p.id) : undefined,
+          opts.manager ? !!opts.fleetFullAccess : undefined,
         ).token,
         summarizerModel: supCfg?.summarizerModel,
         pollSeconds: supCfg?.pollSeconds,

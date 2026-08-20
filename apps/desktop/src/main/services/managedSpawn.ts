@@ -112,6 +112,10 @@ export interface ManagedSpawnOptions {
    *  doctrine rides its kickoff message. Callers pair it with
    *  toolScope 'operator'. */
   manager?: boolean;
+  /** Manager only: grant this manager's token full-access dispatch
+   *  (yoloAllowed) so its workers may run with permissions bypassed
+   *  (config agents.fleetFullAccess). Ignored unless `manager`. */
+  fleetFullAccess?: boolean;
   /** Wire the facade tools without the supervisor loop (legacy operator tier —
    *  prefer `toolScope`). */
   mcpFacade?: boolean;
@@ -193,6 +197,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
           facadeScope,
           opts.pluginTools,
           opts.manager ? claudeProfiles.getProfiles().map((p) => p.id) : undefined,
+          opts.manager ? !!opts.fleetFullAccess : undefined,
         ).token
       : undefined;
   // Permission-mode vocabulary differs by family: Claude keeps its full mode
@@ -324,7 +329,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
       ...(!isClaudeStream && {
         mcp: facadeToken ? facadeUrlWithToken(facadeToken) : MCP_FACADE_URL,
       }),
-      instructions: managedFacadeInstructions(!!opts.supervisor, facadeScope),
+      instructions: managedFacadeInstructions(!!opts.supervisor, facadeScope, managedId),
     }),
   });
   // The adapter emits no conversation delta until the agent first produces

@@ -46,6 +46,8 @@ function normalizeRecord(raw: unknown): RemoteTokenRecord | null {
         (p): p is string => typeof p === 'string' && !!p.trim(),
       ),
     }),
+    // …and the full-access grant (only the true case is ever stored).
+    ...(r.yoloAllowed === true && { yoloAllowed: true as const }),
   };
 }
 
@@ -106,6 +108,7 @@ export function mintSessionFacadeToken(
   scope: RemoteTokenScope,
   plugins?: string[],
   profilesAllowed?: string[],
+  yoloAllowed?: boolean,
 ): RemoteTokenRecord {
   const label = SESSION_LABEL_PREFIX + sessionId;
   const records = readTokens().filter((r) => r.label !== label);
@@ -116,6 +119,9 @@ export function mintSessionFacadeToken(
     // workers under. Omitted when empty (wire-shape twin of `plugins`; pinned
     // Go-side by TestProfilesAllowedWireShape).
     ...(profilesAllowed && profilesAllowed.length && { profilesAllowed }),
+    // Fleet-manager full-access grant: omitted when false, same omitempty
+    // wire shape (TWIN: authtoken.Record.YoloAllowed).
+    ...(yoloAllowed && { yoloAllowed: true as const }),
   };
   writeTokens([...records, next]);
   return next;

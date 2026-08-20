@@ -141,8 +141,10 @@ type spawnManagedReq struct {
 	Effort string `json:"effort,omitempty"`
 	// Resolved launcher binary (falls back to the provider name daemon-side).
 	Bin string `json:"bin,omitempty"`
-	// YOLO / skip approvals. Always false from the brain: bus callers never
-	// auto-bypass (see the security clamp in the spawn handler).
+	// YOLO / skip approvals. False from the brain for every bus caller except a
+	// hub-stamped full-access spawn (yoloGranted — see the security clamp in the
+	// spawn handler): the clamp zeroes skipPermissions unless the hub verified
+	// the caller's token grant.
 	Yolo bool `json:"yolo"`
 	// Codex only: "stream" runs headless (GUI-only, no native TUI PTY).
 	Transport string `json:"transport,omitempty"`

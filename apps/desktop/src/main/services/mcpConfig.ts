@@ -66,18 +66,27 @@ function workerRoleNote(scope: RemoteTokenScope): string {
 export function managedFacadeInstructions(
   supervisor: boolean,
   scope: RemoteTokenScope = 'operator',
+  sessionId?: string,
 ): string {
+  // The PTY path has always told a facade session its own id (facadeSpawnArgs'
+  // idNote); this path didn't, so a stream-transport manager had to HUNT for
+  // itself via list_agents before it could set parentSessionId on a dispatch.
+  const idNote = sessionId
+    ? ` Your own workspacer session id is ${sessionId} — pass it as parentSessionId when you spawn agents so they nest under you, and never target it with send_message/approve/signal.`
+    : '';
   if (!supervisor) {
     return (
       workerRoleNote(scope) +
+      idNote +
       ' Tool names may be prefixed by your runtime (e.g. workspacer__list_agents) — use whichever the workspacer server exposes.'
     );
   }
   return (
     `${SUPERVISOR_SYSTEM_PROMPT}\n\n` +
     'Watch the fleet continuously: start with list_agents, then get_snapshot / get_conversation for detail, ' +
-    'and surface anything that needs a human. Spawn cheap summarizer workers (toolScope "view") when you need transcript digests. ' +
-    'Tool names may be prefixed by your runtime (e.g. workspacer__list_agents) — use whichever the workspacer server exposes.'
+    'and surface anything that needs a human. Spawn cheap summarizer workers (toolScope "view") when you need transcript digests.' +
+    idNote +
+    ' Tool names may be prefixed by your runtime (e.g. workspacer__list_agents) — use whichever the workspacer server exposes.'
   );
 }
 

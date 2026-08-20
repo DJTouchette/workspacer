@@ -407,6 +407,14 @@ type spawnParams struct {
 	// bypass flags and mcpItemIds are scrubbed regardless, because the grant is
 	// about which account burns the tokens, never about skipping approvals.
 	ProfileGranted bool `json:"profileGranted"`
+	// YoloGranted is stamped by the HUB ROUTER and only by it, same contract as
+	// ProfileGranted: the hub deletes the key from every incoming agents.spawn
+	// and re-adds it iff the verified caller holds the full-access grant (host
+	// token, or a tokens.json record with yoloAllowed:true) — see internal/bus
+	// sanitizeSpawnParams. The stamp does not itself request a bypass; it says
+	// the request's own SkipPermissions / bypass PermissionMode may be honored
+	// instead of clamped.
+	YoloGranted bool `json:"yoloGranted"`
 	// Claude permission mode (default/acceptEdits/plan/…). Bypass modes are
 	// clamped off for bus callers — see the security rule in spawn().
 	PermissionMode  string `json:"permissionMode"`
@@ -442,12 +450,22 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	// and the desktop takes the same mode through a second door
 	// (claude.setPermissionMode) that had no clamp at all — see permissionmode.go
 	// and lib/permissionBypass.ts, one allowlist, held equal by a test.
-	if p.SkipPermissions || isPermissionEscalation(p.PermissionMode) {
-		log.Printf("brain: agents.spawn: ignoring permission bypass from a bus client — remote spawns never auto-bypass approvals.")
-	}
-	p.SkipPermissions = false
-	if isPermissionEscalation(p.PermissionMode) {
-		p.PermissionMode = ""
+	//
+	// One verified exception: `yoloGranted`, which ONLY the hub router stamps
+	// (internal/bus sanitizeSpawnParams deletes the key from every incoming call
+	// and re-adds it solely for a caller whose token record carries the
+	// full-access grant, or the trusted host). Stamped, the request's own bypass
+	// fields are honored — the local user opted the caller in (the desktop's
+	// fleet-manager mint path, agents.fleetFullAccess); unstamped, the clamp is
+	// byte-for-byte yesterday's.
+	if !p.YoloGranted {
+		if p.SkipPermissions || isPermissionEscalation(p.PermissionMode) {
+			log.Printf("brain: agents.spawn: ignoring permission bypass from a bus client — remote spawns never auto-bypass approvals without the hub-verified full-access grant.")
+		}
+		p.SkipPermissions = false
+		if isPermissionEscalation(p.PermissionMode) {
+			p.PermissionMode = ""
+		}
 	}
 
 	cwd := normalizeCwd(p.Cwd)
@@ -529,7 +547,8 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 // forwarded on the wire; claude-stream carries permission_mode + resume + the
 // profile's env/extra argv and — deliberately — no wire `transport` key
 // (spawn-managed claude IS the stream adapter). The caller has already clamped
-// off every bypass, so `yolo` is always false on this path.
+// off every bypass — unless the hub stamped the full-access grant
+// (yoloGranted), the one case p.SkipPermissions survives into `yolo`.
 func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string, p spawnParams) (json.RawMessage, error) {
 	isClaudeStream := provider == "claude"
 	isCodexStream := provider == "codex" && p.Transport == "stream"
@@ -552,6 +571,9 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 		Effort:    p.Effort,
 		Bin:       r.resolveSpawnBin(provider),
 		SessionID: sessionID,
+		// Post-clamp: false for every bus caller except a hub-stamped
+		// yoloGranted spawn (spawn() zeroes SkipPermissions otherwise).
+		Yolo: p.SkipPermissions,
 	}
 	if isCodexStream {
 		// Codex mirrors Claude's stream transport: 'stream' spawns headless

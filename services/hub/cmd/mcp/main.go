@@ -414,6 +414,15 @@ type build struct {
 	// not the session's, so the per-record check must happen where the record
 	// is resolved. Exact ids only; empty = spawn_agent refuses any profileId.
 	profiles []string
+	// yolo is the token record's full-access grant (authtoken.Record.YoloAllowed):
+	// whether spawn_agent may forward the caller's skipPermissions request
+	// instead of clamping it off. Enforced HERE for the SAME structural reason
+	// as profiles — the hub stamps `yoloGranted` for the facade's ONE trusted
+	// host-token connection regardless of which session is multiplexed over it,
+	// so the per-session grant can only be honored where the session's own
+	// record was resolved. Default false: an ungranted session's spawn is
+	// clamped, exactly like a bus caller's.
+	yolo bool
 }
 
 type toolInfo struct {
@@ -427,20 +436,22 @@ func (b *build) allowed(method string) bool { return event.MatchesAny(b.allow, m
 // and kept to ONE line each — the schemas are what every connected agent pays
 // context for, so usage guidance lives behind the `help` tool instead.
 func newServer(c *busclient.Client, scope authtoken.Scope) *mcp.Server {
-	return newServerWithGrants(c, scope, nil, nil)
+	return newServerWithGrants(c, scope, nil, nil, false)
 }
 
 // newServerWithGrants additionally applies a token record's per-token grants:
-// plugin-contributed tools grafted onto the tier (see plugins.go), and the
-// profile-dispatch allowlist spawn_agent checks a profileId against. Used by
-// the serverCache for tokens whose record grants either.
-func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []grantedPluginTools, profiles []string) *mcp.Server {
+// plugin-contributed tools grafted onto the tier (see plugins.go), the
+// profile-dispatch allowlist spawn_agent checks a profileId against, and the
+// full-access grant (yolo) that lets spawn_agent forward a skipPermissions
+// request instead of clamping it. Used by the serverCache for tokens whose
+// record grants any of these.
+func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []grantedPluginTools, profiles []string, yolo bool) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "workspacer",
 		Title:   "Workspacer",
 		Version: "0.1.0",
 	}, nil)
-	b := &build{s: s, c: c, scope: scope, allow: scope.Methods(), profiles: profiles}
+	b := &build{s: s, c: c, scope: scope, allow: scope.Methods(), profiles: profiles, yolo: yolo}
 
 	// ── Observe ────────────────────────────────────────────────────────────
 	b.group = "observe"
@@ -710,6 +721,22 @@ func addSpawnTool(b *build, name, desc, method string) {
 						in.ProfileID, b.profiles)}},
 				}, nil, nil
 			}
+			// Full-access grant, enforced HERE for the SAME structural reason as
+			// the profile check above: the hub stamps `yoloGranted` for the
+			// facade's single trusted host-token connection no matter which
+			// session is multiplexed over it, so a per-SESSION grant can only be
+			// judged where the session's own record (b.yolo) was resolved. Unlike
+			// the profile path this DEGRADES silently rather than refusing — it
+			// mirrors the established "remote spawns never auto-bypass approvals"
+			// clamp (the brain's spawn handler, hubCapabilities.ts), so an
+			// ungranted worker starts with approvals on instead of failing. When
+			// granted, skipPermissions rides through untouched → the hub stamps
+			// yoloGranted → the provider honors it. (spawnAgentIn's only bypass
+			// surface is SkipPermissions; there is no permissionMode field to
+			// scrub.)
+			if !b.yolo {
+				in.SkipPermissions = false
+			}
 			m := method
 			if peer := in.takeHub(); peer != "" {
 				m = "hub:" + peer + "/" + method
@@ -821,14 +848,14 @@ type spawnAgentIn struct {
 	// Hub gets its own field (not the hubArg embed) for its distinct
 	// description: a remote spawn's meaning differs from "this session lives
 	// there", and the peer's clamp is worth stating where the model reads it.
-	Hub             string   `json:"hub,omitempty" jsonschema:"the peer hub to spawn on (a hub name from list_agents rows); omit for this machine. The peer clamps remote spawns itself — permission bypass (skipPermissions) is refused on remote spawns"`
+	Hub             string   `json:"hub,omitempty" jsonschema:"the peer hub to spawn on (a hub name from list_agents rows); omit for this machine. The peer clamps remote spawns itself — permission bypass (skipPermissions) is refused on a peer spawn unless the peer's own hub trusts the federation link with the full-access grant"`
 	Provider        string   `json:"provider,omitempty" jsonschema:"coding-agent backend to run: claude (default), codex, opencode, or pi"`
 	Transport       string   `json:"transport,omitempty" jsonschema:"claude/codex only: 'stream' runs headless (GUI-only); omit for the default"`
 	Cwd             string   `json:"cwd,omitempty" jsonschema:"working directory for the new agent (defaults to the user's home)"`
 	Model           string   `json:"model,omitempty" jsonschema:"model id to use, e.g. claude-opus-4-8 (optional; provider-specific)"`
 	Effort          string   `json:"effort,omitempty" jsonschema:"reasoning-effort level: low, medium, high, xhigh, or max (claude/codex)"`
 	ProfileID       string   `json:"profileId,omitempty" jsonschema:"workspacer Claude profile id to dispatch under (optional; refused unless your session token's profilesAllowed grant lists this exact id — see list_profiles for ids)"`
-	SkipPermissions bool     `json:"skipPermissions,omitempty" jsonschema:"start the agent with --dangerously-skip-permissions"`
+	SkipPermissions bool     `json:"skipPermissions,omitempty" jsonschema:"start the agent with --dangerously-skip-permissions (honored only when your session's token carries the full-access grant — the hub verifies and stamps it; ungranted requests spawn with approvals on, and remote/federated peer spawns are re-judged by the peer's own hub)"`
 	Label           string   `json:"label,omitempty" jsonschema:"a short human label for the new agent, shown as its name in the UI"`
 	ParentSessionId string   `json:"parentSessionId,omitempty" jsonschema:"the spawning agent's own session id; set this so the new agent appears nested under you in the UI"`
 	MCPFacade       bool     `json:"mcpFacade,omitempty" jsonschema:"legacy: give the new agent the FULL workspacer tool set (operator tier); prefer toolScope"`

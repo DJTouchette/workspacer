@@ -196,6 +196,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     profileId?: string;
     /** Fleet Manager: nudge-eligible parent without the /supervise loop. */
     manager?: boolean;
+    /** Manager only: full-access dispatch grant (config agents.fleetFullAccess). */
+    fleetFullAccess?: boolean;
     model?: string;
     effort?: string;
     permissionMode?: string;

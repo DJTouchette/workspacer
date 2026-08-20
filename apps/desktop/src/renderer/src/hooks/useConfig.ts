@@ -289,6 +289,12 @@ export interface Config {
     /** The Fleet Manager's home: the parent directory holding your projects.
      *  '' = derive from config.projects (their common parent), else $HOME. */
     fleetRoot?: string;
+    /** Full-access dispatch: when true, the Fleet Manager and the workers it
+     *  dispatches run with permissions bypassed (no per-action approvals) — the
+     *  manager's session token carries a hub-verified yolo grant. Default off:
+     *  workers prompt, and the manager approves in-repo actions per its
+     *  doctrine. Trade-off is speed vs. a human gate on every command. */
+    fleetFullAccess?: boolean;
     /** Pre-check "isolated worktree" in the spawn dialog. */
     spawnInWorktree?: boolean;
     /** Parent directory for agent worktrees ('' = ~/.workspacer/worktrees). */

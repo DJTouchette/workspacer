@@ -1610,12 +1610,17 @@ function App() {
           Object.keys(config.projects ?? {}),
           home || appCwdRef.current || '/',
         );
-        await spawnFleetManager(ask, root);
+        await spawnFleetManager(ask, root, config.agents?.fleetFullAccess === true);
       })();
     };
     window.addEventListener('fleet-manager:ask', handler);
     return () => window.removeEventListener('fleet-manager:ask', handler);
-  }, [config.agents?.fleetRoot, config.projects, spawnFleetManager]);
+  }, [
+    config.agents?.fleetRoot,
+    config.agents?.fleetFullAccess,
+    config.projects,
+    spawnFleetManager,
+  ]);
 
   // prefix : — the ex cmdline: the command palette in its cmdline variant.
   const handleCmdline = useCallback(() => {

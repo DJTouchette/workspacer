@@ -218,6 +218,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         profileId?: string;
         /** Fleet Manager: nudge-eligible parent without the /supervise loop. */
         manager?: boolean;
+        /** Manager only: full-access dispatch grant (config
+         *  agents.fleetFullAccess) — its workers run with permissions bypassed. */
+        fleetFullAccess?: boolean;
         model?: string;
         effort?: string;
         permissionMode?: string;
@@ -311,6 +314,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           resumeSessionId: opts.resumeSessionId,
           supervisor: opts.supervisor,
           manager: opts.manager,
+          fleetFullAccess: opts.fleetFullAccess,
           mcpFacade: opts.mcpFacade,
           toolScope: opts.toolScope,
           pluginTools: opts.pluginTools,
@@ -331,6 +335,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         resumeSessionId: opts.resumeSessionId,
         supervisor: opts.supervisor,
         manager: opts.manager,
+        fleetFullAccess: opts.fleetFullAccess,
         mcpFacade: opts.mcpFacade,
         toolScope: opts.toolScope,
         pluginTools: opts.pluginTools,

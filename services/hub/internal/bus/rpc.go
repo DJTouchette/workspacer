@@ -268,6 +268,25 @@ func (cn *conn) mayUseProfile(id string) bool {
 	return cn.trusted
 }
 
+// mayBypassPermissions reports whether this connection holds the full-access
+// grant: whether an agents.spawn it sends may have its skipPermissions request
+// honored by the provider. Identical trust rules to mayUseProfile — host token
+// yes (the control plane's own credential), scoped user token only when its
+// record carries yoloAllowed (operator promotion grants METHODS, not the
+// bypass), plugin token never.
+func (cn *conn) mayBypassPermissions() bool {
+	if cn.revoked.Load() {
+		return false
+	}
+	if cn.pluginID != "" {
+		return false
+	}
+	if cn.viaScopedToken {
+		return cn.yoloAllowed
+	}
+	return cn.trusted
+}
+
 // sanitizeSpawnParams enforces the profile-dispatch grant on an agents.spawn's
 // params, at the router's single dispatch point:
 //
@@ -278,6 +297,12 @@ func (cn *conn) mayUseProfile(id string) bool {
 //     (mayUseProfile); the hub then stamps `profileGranted: true` beside it.
 //     Otherwise the field is stripped, which is byte-for-byte today's doctrine:
 //     an ungranted bus caller cannot name a profile at all.
+//  3. `yoloGranted` is likewise DELETED from every incoming call and hub-
+//     stamped true only for a caller holding the full-access grant
+//     (mayBypassPermissions). The stamp is about the CALLER, not the request:
+//     `skipPermissions` itself passes through untouched either way — callers
+//     keep requesting it, the stamp says the provider may honor it, and an
+//     unstamped request keeps today's clamp.
 //
 // Non-object params pass through untouched — there is no field to smuggle in a
 // shape the provider's own decoder would reject anyway. The provider keeps its
@@ -293,6 +318,10 @@ func sanitizeSpawnParams(caller *conn, raw json.RawMessage) json.RawMessage {
 		return raw
 	}
 	delete(m, "profileGranted")
+	delete(m, "yoloGranted")
+	if caller.mayBypassPermissions() {
+		m["yoloGranted"] = json.RawMessage("true")
+	}
 	var pid string
 	if r, ok := m["profileId"]; ok {
 		if json.Unmarshal(r, &pid) != nil {

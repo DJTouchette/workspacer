@@ -448,6 +448,39 @@ describe('agents.spawn — dispatch', () => {
     expect(arg.skipPermissions).toBe(false);
     expect(arg.permissionMode).toBeUndefined();
   });
+
+  it('HONORS bypass when the hub stamped yoloGranted (fleet-manager full access)', async () => {
+    // yoloGranted is provenance, not a request: the hub's sanitizeSpawnParams
+    // only sets it after verifying the caller's YoloAllowed grant. With it, the
+    // requested skipPermissions / bypass mode rides through instead of clamping.
+    await call('agents.spawn', {
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      skipPermissions: true,
+      permissionMode: 'bypassPermissions',
+      yoloGranted: true,
+    });
+    const arg = spawnManagedAgent.mock.calls[0][0] as {
+      skipPermissions: boolean;
+      permissionMode: string | undefined;
+    };
+    expect(arg.skipPermissions).toBe(true);
+    expect(arg.permissionMode).toBe('bypassPermissions');
+  });
+
+  it('a truthy-but-not-true yoloGranted does NOT unlock bypass (hub stamps a real boolean)', async () => {
+    await call('agents.spawn', {
+      provider: 'claude',
+      transport: 'pty',
+      cwd: '/proj',
+      skipPermissions: true,
+      yoloGranted: 'yes',
+    });
+    expect(
+      (spawnClaudeAgent.mock.calls[0][0] as { skipPermissions: boolean }).skipPermissions,
+    ).toBe(false);
+  });
 });
 
 describe('agents.spawn — SECURITY: remote callers cannot auto-bypass approvals', () => {

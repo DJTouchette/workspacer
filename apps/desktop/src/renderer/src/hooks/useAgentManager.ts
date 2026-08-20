@@ -247,6 +247,9 @@ export function useAgentManager() {
        *  (isSupervisor spawn meta) WITHOUT the /supervise loop — its role
        *  rides the kickoff message instead. Implies toolScope operator. */
       manager?: boolean;
+      /** Manager only: grant its token full-access dispatch (config
+       *  agents.fleetFullAccess) so its workers run with permissions bypassed. */
+      fleetFullAccess?: boolean;
       /** A first message AUTO-SENT once the spawn resolves (claudemon buffers
        *  it through the settle+verify flush, same as the jobs scheduler and
        *  respawn continuations). Unlike initialPrompt, the user never has to
@@ -306,6 +309,7 @@ export function useAgentManager() {
           resumeSessionId: opts.resumeSessionId,
           supervisor: opts.supervisor,
           manager: opts.manager,
+          fleetFullAccess: opts.fleetFullAccess,
           targetHub: opts.targetHub,
           cols: 120,
           rows: 32,
@@ -691,7 +695,7 @@ export function useAgentManager() {
    * context, resending the preamble would just burn tokens.
    */
   const spawnFleetManager = useCallback(
-    async (ask: string, root: string): Promise<string | undefined> => {
+    async (ask: string, root: string, fullAccess = false): Promise<string | undefined> => {
       const live = agentsRef.current.find(
         (a) => !a.global && a.name === FLEET_MANAGER_NAME && a.sessionId,
       );
@@ -730,7 +734,12 @@ export function useAgentManager() {
         transport: 'stream',
         toolScope: 'operator',
         manager: true,
-        kickoffMessage: buildManagerKickoff(ask),
+        // Full-access mode (config agents.fleetFullAccess): the manager itself
+        // runs bypassed AND its token carries the yolo grant, so the workers it
+        // dispatches inherit it without the manager approving every prompt.
+        fleetFullAccess: fullAccess,
+        ...(fullAccess && { permissionMode: 'bypassPermissions', skipPermissions: true }),
+        kickoffMessage: buildManagerKickoff(ask, fullAccess),
       }).then((id) => id ?? undefined);
     },
     [spawnAgent, respawnFromRecord],
@@ -926,11 +935,20 @@ export function useAgentManager() {
     // and hand the reborn session to auto-adopt as an orphan — the duplicate-
     // card corruption. While the id is guarded, its "death" is scripted.
     if (isRespawning(sessionId)) return;
-    setAgents((prev) =>
-      prev.map((a) =>
+    setAgents((prev) => {
+      // A nested worker (parentId set — a Fleet Manager's / supervisor's
+      // dispatched agent) is EPHEMERAL: when its session ends, drop the card
+      // entirely instead of leaving a resumable "Stopped" tombstone. The
+      // manager already relayed its result via the [fleet] wake, and its
+      // transcript stays reachable from History — a lingering Stopped sub-card
+      // is just clutter the user has to dismiss. Top-level cards still tombstone
+      // (they are the sessions the user actually resumes).
+      const dying = prev.find((a) => a.sessionId === sessionId);
+      if (dying?.parentId) return prev.filter((a) => a.id !== dying.id);
+      return prev.map((a) =>
         a.sessionId === sessionId ? { ...a, sessionId: undefined, lastSessionId: sessionId } : a,
-      ),
-    );
+      );
+    });
   }, []);
 
   const loadAgentsFromSession = useCallback((sessionAgents: AgentWorkspace[], activeId: string) => {

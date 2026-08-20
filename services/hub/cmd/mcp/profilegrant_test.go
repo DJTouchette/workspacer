@@ -34,7 +34,7 @@ func spawnGrantSession(t *testing.T, ctx context.Context, profiles []string) *mc
 	client := busclient.New(busURL, "")
 	go client.Run(ctx)
 
-	server := newServerWithGrants(client, authtoken.ScopeOperator, nil, profiles)
+	server := newServerWithGrants(client, authtoken.ScopeOperator, nil, profiles, false)
 	return connectTo(t, ctx, server)
 }
 

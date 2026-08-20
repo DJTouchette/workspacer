@@ -186,6 +186,7 @@
     "defaultProvider": "claude",
     "defaultCwd": "",
     "fleetRoot": "",
+    "fleetFullAccess": false,
     "binaries": {
       "claude": "",
       "codex": "",

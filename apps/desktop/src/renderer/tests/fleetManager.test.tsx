@@ -11,6 +11,17 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { useAgentManager } from '../src/hooks/useAgentManager';
 import { buildManagerKickoff, deriveFleetRoot, FLEET_MANAGER_NAME } from '../src/lib/fleetManager';
 
+describe('buildManagerKickoff — full-access mode', () => {
+  it('adds the full-access note only when the flag is set', () => {
+    expect(buildManagerKickoff('go', false)).not.toContain('FULL-ACCESS MODE IS ON');
+    const yolo = buildManagerKickoff('go', true);
+    expect(yolo).toContain('FULL-ACCESS MODE IS ON');
+    expect(yolo).toContain('will not stop for approval');
+    // The ask still lands at the end after the mode note.
+    expect(yolo.trimEnd().endsWith('go')).toBe(true);
+  });
+});
+
 describe('deriveFleetRoot', () => {
   it('explicit config wins', () => {
     expect(deriveFleetRoot('/srv/code', ['/home/u/Work/a'], '/home/u')).toBe('/srv/code');
@@ -66,6 +77,21 @@ describe('spawnFleetManager', () => {
     expect(kickoff).toContain('YOUR OWN fleet brief');
     expect(kickoff).toContain('memory across restarts');
     expect(kickoff).toContain('ONLY cross-project state');
+    // First-run managers looped guessing MCP argument names — the kickoff now
+    // carries exact call shapes (arg names must stay in lockstep with the
+    // facade's input structs in services/hub/cmd/mcp/main.go).
+    expect(kickoff).toContain('TOOL SYNTAX');
+    expect(kickoff).toContain('"parentSessionId"');
+    expect(kickoff).toContain('"sinceSeq"');
+    expect(kickoff).toContain('"decision":"yes"');
+    // …and model economics: cheap models for chores, frontier only when earned.
+    expect(kickoff).toContain('list_models');
+    expect(kickoff).toContain('haiku-class');
+    expect(kickoff).toContain('Never burn a frontier model on a chore');
+    // The anti-poll rule must be a hard STOP, not a soft "stay idle" — a
+    // monitoring loop hangs the manager and locks the user out (the reported bug).
+    expect(kickoff).toContain('NEVER POLL');
+    expect(kickoff).toContain('end your turn');
     hook.unmount();
   });
 

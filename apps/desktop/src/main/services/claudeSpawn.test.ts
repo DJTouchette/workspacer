@@ -256,13 +256,30 @@ describe('spawnClaudeAgent — facade takes precedence over Library MCP', () => 
 
     expect(mintSessionFacadeToken).toHaveBeenCalledTimes(1);
     expect(mintSessionFacadeToken.mock.calls[0][3]).toEqual(['default', 'work']);
+    // No full-access unless the manager was spawned with it.
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(false);
   });
 
-  it('a non-manager facade spawn mints NO profile grant', async () => {
+  it('a full-access manager spawn also mints the yolo grant (5th arg true)', async () => {
     getProfiles.mockReturnValue([{ id: 'default' }]);
-    await spawnClaudeAgent({ supervisor: true });
+    await spawnClaudeAgent({
+      cwd: '/home/u/Work',
+      manager: true,
+      toolScope: 'operator',
+      fleetFullAccess: true,
+    });
+
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(true);
+  });
+
+  it('a non-manager facade spawn mints NO profile or yolo grant', async () => {
+    getProfiles.mockReturnValue([{ id: 'default' }]);
+    // fleetFullAccess is ignored without manager — a plain facade worker never
+    // gets the grant even if the flag leaks in.
+    await spawnClaudeAgent({ supervisor: true, fleetFullAccess: true });
 
     expect(mintSessionFacadeToken.mock.calls[0][3]).toBeUndefined();
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
   });
 });
 

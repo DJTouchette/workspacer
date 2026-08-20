@@ -129,6 +129,21 @@ describe('session facade tokens', () => {
     expect('profilesAllowed' in rawTokens().find((r) => r.token === ungranted.token)!).toBe(false);
   });
 
+  it('records a yoloAllowed grant only when true, and preserves it across rewrites', () => {
+    // omitempty wire shape (TWIN: authtoken.Record.YoloAllowed) — present as
+    // literal true, ABSENT when false.
+    const yes = mintSessionFacadeToken('sess-yolo', 'operator', undefined, undefined, true);
+    expect(yes.yoloAllowed).toBe(true);
+    expect(rawTokens().find((r) => r.token === yes.token)!.yoloAllowed).toBe(true);
+
+    getOrCreateRemoteToken('view', 'Dashboard');
+    expect(rawTokens().find((r) => r.token === yes.token)!.yoloAllowed).toBe(true);
+
+    const no = mintSessionFacadeToken('sess-safe', 'operator', undefined, undefined, false);
+    expect('yoloAllowed' in no).toBe(false);
+    expect('yoloAllowed' in rawTokens().find((r) => r.token === no.token)!).toBe(false);
+  });
+
   it('re-minting for the same session replaces the old record (no stale scope/plugins)', () => {
     const first = mintSessionFacadeToken('sess-1', 'operator', ['a']);
     const second = mintSessionFacadeToken('sess-1', 'view');

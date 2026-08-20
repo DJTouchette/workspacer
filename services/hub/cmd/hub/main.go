@@ -329,9 +329,11 @@ func main() {
 			return bus.ScopedIdent{
 				Scope:   string(rec.Scope),
 				Methods: rec.Scope.Methods(),
-				// The profile-dispatch grant rides the ident so the router can
-				// enforce it per call (agents.spawn profileId strip/stamp).
+				// The spawn grants ride the ident so the router can enforce
+				// them per call (agents.spawn profileId strip/stamp, and the
+				// full-access `yoloGranted` stamp).
 				ProfilesAllowed: rec.ProfilesAllowed,
+				YoloAllowed:     rec.YoloAllowed,
 			}, true
 		})
 	}
