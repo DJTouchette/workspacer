@@ -10,7 +10,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { createAccountConfigDir, accountLoginStatus } from './claudeAccountSetup';
+import {
+  createAccountConfigDir,
+  accountLoginStatus,
+  claudeJsonPathFor,
+  syncAccountTrust,
+} from './claudeAccountSetup';
 
 let primary: string;
 
@@ -91,6 +96,124 @@ describe('createAccountConfigDir', () => {
     const b = createAccountConfigDir('Work!', primary); // same slug after cleanup
     expect(a.dir).not.toBe(b.dir);
     expect(b.dir).toBe(path.join(primary, 'accounts', 'work-2'));
+  });
+});
+
+describe('claudeJsonPathFor', () => {
+  it('keeps .claude.json inside an explicit (CLAUDE_CONFIG_DIR-style) root', () => {
+    expect(claudeJsonPathFor('/opt/claude-root')).toBe('/opt/claude-root/.claude.json');
+  });
+
+  it('resolves the DEFAULT root to ~/.claude.json — not ~/.claude/.claude.json', () => {
+    // The env-less login keeps its state file at the home root. Reading
+    // inside ~/.claude found nothing, so accounts were seeded with no theme
+    // and no trust map — every project's first profile spawn then parked on
+    // the interactive trust dialog.
+    const defaultRoot = path.join(os.homedir(), '.claude');
+    expect(claudeJsonPathFor(defaultRoot)).toBe(path.join(os.homedir(), '.claude.json'));
+  });
+});
+
+describe('syncAccountTrust', () => {
+  const primaryJson = (projects: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    fs.writeFileSync(
+      path.join(primary, '.claude.json'),
+      JSON.stringify({ projects, theme: 'dark', oauthAccount: { emailAddress: 'p@x.y' }, ...extra }),
+    );
+
+  it('copies trust for the cwd and trusted ancestors, and nothing else', () => {
+    primaryJson({
+      '/home/u/work': { hasTrustDialogAccepted: true, history: ['secret prompt'] },
+      '/home/u/work/repo': { hasTrustDialogAccepted: true },
+      '/home/u/elsewhere': { hasTrustDialogAccepted: true },
+      '/home/u/work/untrusted': {},
+    });
+    const res = createAccountConfigDir('Work', primary);
+    // Wipe the seed's map to model a pre-fix account (seeded from the wrong
+    // path, i.e. empty).
+    fs.writeFileSync(
+      path.join(res.dir, '.claude.json'),
+      JSON.stringify({ hasCompletedOnboarding: true }),
+    );
+
+    syncAccountTrust(res.dir, '/home/u/work/repo/sub', primary);
+
+    const acct = JSON.parse(fs.readFileSync(path.join(res.dir, '.claude.json'), 'utf-8'));
+    // cwd's trusted ancestors arrive under their own keys (trust covers
+    // subdirectories) — as bare trust flags, never prompt history.
+    expect(acct.projects['/home/u/work']).toEqual({ hasTrustDialogAccepted: true });
+    expect(acct.projects['/home/u/work/repo']).toEqual({ hasTrustDialogAccepted: true });
+    // Unrelated and untrusted primary entries never cross.
+    expect(acct.projects['/home/u/elsewhere']).toBeUndefined();
+    expect(acct.projects['/home/u/work/untrusted']).toBeUndefined();
+    // Identity never crosses; the dropped theme is backfilled.
+    expect(acct.oauthAccount).toBeUndefined();
+    expect(acct.theme).toBe('dark');
+    expect(acct.hasCompletedOnboarding).toBe(true);
+  });
+
+  it('preserves the account file and is a no-op when trust is already there', () => {
+    primaryJson({ '/home/u/work': { hasTrustDialogAccepted: true } });
+    const res = createAccountConfigDir('Work', primary);
+    fs.writeFileSync(
+      path.join(res.dir, '.claude.json'),
+      JSON.stringify({
+        hasCompletedOnboarding: true,
+        theme: 'light',
+        oauthAccount: { emailAddress: 'work@x.y' },
+        projects: { '/home/u/work': { hasTrustDialogAccepted: true, allowedTools: ['Bash'] } },
+      }),
+    );
+    const before = fs.readFileSync(path.join(res.dir, '.claude.json'), 'utf-8');
+
+    syncAccountTrust(res.dir, '/home/u/work', primary);
+
+    // Already trusted → no rewrite at all (the file may belong to a LIVE
+    // claude process; don't touch it without a reason).
+    expect(fs.readFileSync(path.join(res.dir, '.claude.json'), 'utf-8')).toBe(before);
+  });
+
+  it('merges into existing entries without clobbering claude-owned fields', () => {
+    primaryJson({ '/home/u/work': { hasTrustDialogAccepted: true } });
+    const res = createAccountConfigDir('Work', primary);
+    fs.writeFileSync(
+      path.join(res.dir, '.claude.json'),
+      JSON.stringify({
+        hasCompletedOnboarding: true,
+        projects: { '/home/u/work': { allowedTools: ['Bash'] } },
+      }),
+    );
+
+    syncAccountTrust(res.dir, '/home/u/work', primary);
+
+    const acct = JSON.parse(fs.readFileSync(path.join(res.dir, '.claude.json'), 'utf-8'));
+    expect(acct.projects['/home/u/work']).toEqual({
+      allowedTools: ['Bash'],
+      hasTrustDialogAccepted: true,
+    });
+  });
+
+  it('creates a minimal account .claude.json when none exists yet', () => {
+    primaryJson({ '/home/u/work': { hasTrustDialogAccepted: true } });
+    const dir = path.join(primary, 'accounts', 'bare');
+    fs.mkdirSync(dir, { recursive: true });
+
+    syncAccountTrust(dir, '/home/u/work', primary);
+
+    const acct = JSON.parse(fs.readFileSync(path.join(dir, '.claude.json'), 'utf-8'));
+    expect(acct.hasCompletedOnboarding).toBe(true);
+    expect(acct.projects['/home/u/work']).toEqual({ hasTrustDialogAccepted: true });
+  });
+
+  it('does nothing for an untrusted cwd or a missing primary map', () => {
+    primaryJson({ '/home/u/work': { hasTrustDialogAccepted: true } });
+    const res = createAccountConfigDir('Work', primary);
+    const before = fs.readFileSync(path.join(res.dir, '.claude.json'), 'utf-8');
+    syncAccountTrust(res.dir, '/home/u/never-trusted', primary);
+    expect(fs.readFileSync(path.join(res.dir, '.claude.json'), 'utf-8')).toBe(before);
+    // And a sibling name that merely shares a prefix is NOT an ancestor.
+    syncAccountTrust(res.dir, '/home/u/workspace', primary);
+    expect(fs.readFileSync(path.join(res.dir, '.claude.json'), 'utf-8')).toBe(before);
   });
 });
 

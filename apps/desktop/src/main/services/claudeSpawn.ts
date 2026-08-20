@@ -25,6 +25,7 @@ import { randomUUID } from 'crypto';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
+import { syncAccountTrust } from './claudeAccountSetup';
 import { resolveClaudeDefaultEffort } from './claudeEffortDefault';
 import { buildClaudeArgv } from './claudeResolver';
 import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
@@ -203,6 +204,9 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   // remote caller instead of failing the spawn.
   let cwd = normalizeSpawnCwd(opts.cwd);
   if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
+  // A profile spawn inherits the primary login's trust for this folder, or a
+  // PTY parks on the invisible trust dialog (mode "unknown", dead pane).
+  if (env.CLAUDE_CONFIG_DIR) syncAccountTrust(env.CLAUDE_CONFIG_DIR, cwd);
   return claudemonSessionClient.spawn({
     argv,
     cwd,

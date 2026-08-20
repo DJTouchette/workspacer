@@ -21,6 +21,7 @@ import { randomUUID } from 'crypto';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
+import { syncAccountTrust } from './claudeAccountSetup';
 import { resolveClaudeDefaultEffort } from './claudeEffortDefault';
 import { libraryService } from './libraryService';
 import { resolveAgentBinary, isAgentBinaryInstalled, type AgentProvider } from './agentProviders';
@@ -199,6 +200,11 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   const env: Record<string, string> = {};
   if (profile?.configDir) {
     env.CLAUDE_CONFIG_DIR = profile.configDir.replace(/^~/, os.homedir());
+    // A profile spawn inherits the primary login's trust for this folder —
+    // without it the account's own .claude.json (unlinked by design, and
+    // seeded empty by the old wrong-path read) gates the spawn on a trust
+    // dialog no headless/GUI surface ever renders.
+    syncAccountTrust(env.CLAUDE_CONFIG_DIR, cwd);
   }
   const extraArgs: string[] = [...(profile?.extraArgs ?? [])];
   // Overlay settings (hooks + statusLine) so stream sessions carry our hooks

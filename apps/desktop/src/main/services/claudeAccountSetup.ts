@@ -66,6 +66,22 @@ export function primaryClaudeConfigDir(): string {
   return override && override.trim() !== '' ? override : path.join(os.homedir(), '.claude');
 }
 
+/**
+ * Where a config root keeps its `.claude.json`. Claude Code writes it INSIDE
+ * the dir when `CLAUDE_CONFIG_DIR` points there (that's what account dirs
+ * are), but the default env-less login keeps it at `~/.claude.json` — NOT
+ * `~/.claude/.claude.json`. Reading the latter is how the account seed
+ * silently copied nothing: no theme, no per-project trust map, so every
+ * project's first spawn under a profile parked on the interactive
+ * folder-trust dialog — a screen the GUI pane never renders, which read as
+ * "the profile spawn is dead / fell back to the default account".
+ */
+export function claudeJsonPathFor(configRoot: string): string {
+  return path.resolve(configRoot) === path.join(os.homedir(), '.claude')
+    ? path.join(os.homedir(), '.claude.json')
+    : path.join(configRoot, '.claude.json');
+}
+
 function slugify(name: string): string {
   const slug = name
     .toLowerCase()
@@ -179,7 +195,7 @@ function seedClaudeJson(primary: string, dir: string): void {
   const seed: Record<string, unknown> = { hasCompletedOnboarding: true };
   try {
     const primaryJson = JSON.parse(
-      fs.readFileSync(path.join(primary, '.claude.json'), 'utf-8'),
+      fs.readFileSync(claudeJsonPathFor(primary), 'utf-8'),
     ) as Record<string, unknown>;
     if (primaryJson.theme !== undefined) seed.theme = primaryJson.theme;
     if (primaryJson.projects !== undefined) seed.projects = primaryJson.projects;
@@ -190,6 +206,77 @@ function seedClaudeJson(primary: string, dir: string): void {
   fs.writeFileSync(path.join(dir, '.claude.json'), JSON.stringify(seed, null, 2) + '\n', {
     mode: 0o600,
   });
+}
+
+/**
+ * Propagate folder trust from the primary login into a profile's config dir,
+ * called best-effort right before every profile spawn (both transports).
+ *
+ * The account's `.claude.json` is deliberately NOT linked to the primary (it
+ * owns the login), so its per-project trust map is a snapshot from account
+ * creation — and the original seed read the wrong path entirely (see
+ * claudeJsonPathFor), leaving it empty. Either way the symptom is the same:
+ * spawn the profile in any project the ACCOUNT copy doesn't trust and claude
+ * boots into the interactive trust dialog instead of a REPL — no hooks fire,
+ * claudemon reports mode "unknown", and the pane just looks dead.
+ *
+ * A folder the user already trusted on the primary login is the same human on
+ * the same machine, so the account inherits exactly that decision and nothing
+ * else: only `hasTrustDialogAccepted: true` crosses, under the primary map's
+ * own keys (trust covers subdirectories, so ancestor entries count). Genuinely
+ * new folders still prompt — in the Terminal view, where the dialog renders.
+ * `primaryRoot` is a test seam; production callers pass nothing.
+ */
+export function syncAccountTrust(
+  configDir: string,
+  cwd: string | undefined,
+  primaryRoot?: string,
+): void {
+  if (!cwd || !configDir.trim()) return;
+  const accountJsonPath = path.join(configDir.replace(/^~/, os.homedir()), '.claude.json');
+  try {
+    const primaryJson = JSON.parse(
+      fs.readFileSync(claudeJsonPathFor(primaryRoot ?? primaryClaudeConfigDir()), 'utf-8'),
+    ) as { projects?: Record<string, { hasTrustDialogAccepted?: unknown }>; theme?: unknown };
+    const primaryProjects = primaryJson?.projects;
+    if (!primaryProjects || typeof primaryProjects !== 'object') return;
+    const resolvedCwd = path.resolve(cwd);
+    const trustedKeys = Object.keys(primaryProjects).filter((key) => {
+      if (primaryProjects[key]?.hasTrustDialogAccepted !== true) return false;
+      const resolvedKey = path.resolve(key);
+      return resolvedCwd === resolvedKey || resolvedCwd.startsWith(resolvedKey + path.sep);
+    });
+    if (trustedKeys.length === 0) return;
+
+    let account: Record<string, unknown>;
+    try {
+      account = JSON.parse(fs.readFileSync(accountJsonPath, 'utf-8')) as Record<string, unknown>;
+    } catch {
+      // Account dir without a .claude.json yet (pre-seed or hand-built
+      // profile): start it the same way seedClaudeJson would.
+      account = { hasCompletedOnboarding: true };
+    }
+    const accountProjects =
+      account.projects && typeof account.projects === 'object'
+        ? (account.projects as Record<string, Record<string, unknown>>)
+        : {};
+    let changed = false;
+    for (const key of trustedKeys) {
+      if (accountProjects[key]?.hasTrustDialogAccepted === true) continue;
+      accountProjects[key] = { ...(accountProjects[key] ?? {}), hasTrustDialogAccepted: true };
+      changed = true;
+    }
+    // The broken seed also dropped the theme — backfill it while we're here.
+    if (account.theme === undefined && primaryJson.theme !== undefined) {
+      account.theme = primaryJson.theme;
+      changed = true;
+    }
+    if (!changed) return;
+    account.projects = accountProjects;
+    fs.writeFileSync(accountJsonPath, JSON.stringify(account, null, 2) + '\n', { mode: 0o600 });
+  } catch {
+    // Best-effort: worst case the pane shows the trust dialog, as before.
+  }
 }
 
 /**
