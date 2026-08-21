@@ -162,7 +162,7 @@ class SupervisorNudge {
       Pick<
         ClaudeSessionState,
         'sessionId' | 'cwd' | 'label' | 'ambientState' | 'lastActivity' | 'parentSessionId'
-      > & { isSupervisor?: boolean; status?: string } & Partial<
+      > & { isSupervisor?: boolean; status?: ClaudeSessionState['status'] } & Partial<
           Pick<ClaudeSessionState, 'conversation'>
         >
     >,
