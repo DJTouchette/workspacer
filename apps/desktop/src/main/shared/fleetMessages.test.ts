@@ -9,6 +9,7 @@ import {
   buildFleetMessage,
   excerptReply,
   parseFleetMessage,
+  FULL_REPLY_MAX,
   type FleetMessageEntry,
 } from './fleetMessages';
 
@@ -66,6 +67,64 @@ describe('buildFleetMessage → parseFleetMessage round trip', () => {
     );
     expect(blocked?.kind).toBe('blocked');
     expect(blocked?.entries.map((e) => e.blockedOn)).toEqual(['approval', 'question']);
+  });
+});
+
+describe('full final message blocks (the manager-facing payload)', () => {
+  const report = 'TLDR: shipped.\n\n## Details\n- fixed the flake\n- merged as abc123\n';
+
+  it('carries the COMPLETE multi-line reply below the bullets, and still parses', () => {
+    const text = buildFleetMessage('worker-finished', [
+      { ...finished, lastReply: excerptReply(report), fullReply: report },
+    ]);
+    // The manager reads the full report verbatim from the wake itself…
+    expect(text).toContain('Full final message — alpha: fix tests (session:w1):');
+    expect(text).toContain('## Details\n- fixed the flake');
+    expect(text).toContain('brief.md'); // instruction tail still rides along
+    // …while the GUI card parser still recognizes the wake (bullets only; the
+    // block's own `- ` lines sit past the blank line and never reach the loop).
+    const parsed = parseFleetMessage(text);
+    expect(parsed?.kind).toBe('worker-finished');
+    expect(parsed?.entries).toHaveLength(1);
+    expect(parsed?.entries[0].sessionId).toBe('w1');
+  });
+
+  it('announces truncation explicitly when a reply exceeds the generous cap', () => {
+    const huge = 'start-marker ' + 'y'.repeat(FULL_REPLY_MAX + 5000);
+    const text = buildFleetMessage('worker-finished', [{ ...finished, fullReply: huge }]);
+    expect(text).toContain('start-marker'); // the head survives
+    expect(text).toContain(`showing the first ${FULL_REPLY_MAX} of ${huge.length} characters`);
+    expect(text).toContain('lastMessage:true'); // points at the cheap fetch for the rest
+    expect(parseFleetMessage(text)?.entries[0].sessionId).toBe('w1');
+  });
+
+  it('a reply under the cap is never truncated or annotated', () => {
+    const text = buildFleetMessage('worker-finished', [{ ...finished, fullReply: report }]);
+    expect(text).not.toContain('[truncated');
+  });
+});
+
+describe('stopped/killed workers', () => {
+  it('the marker round-trips and the wake says stopped/killed, not a bare finish', () => {
+    const text = buildFleetMessage('worker-finished', [
+      { label: 'alpha', sessionId: 'w1', cwd: '/w/a', stopped: true, lastReply: 'partial work' },
+      { label: 'beta', sessionId: 'w2', cwd: '/w/b', lastReply: 'done' },
+    ]);
+    expect(text).toContain('stopped/killed');
+    expect(text).toContain('possibly incomplete'); // the explanatory note
+    const parsed = parseFleetMessage(text);
+    expect(parsed?.entries[0]).toMatchObject({ sessionId: 'w1', stopped: true });
+    expect(parsed?.entries[0].lastReply).toBe('partial work');
+    expect(parsed?.entries[1].stopped).toBeUndefined();
+  });
+
+  it('a reply that literally contains the marker text cannot forge the flag', () => {
+    const text = buildFleetMessage('worker-finished', [
+      { label: 'alpha', sessionId: 'w1', cwd: '/w/a', lastReply: 'note: — stopped/killed is a marker' },
+    ]);
+    const parsed = parseFleetMessage(text);
+    expect(parsed?.entries[0].stopped).toBeUndefined();
+    expect(parsed?.entries[0].lastReply).toContain('is a marker');
   });
 });
 

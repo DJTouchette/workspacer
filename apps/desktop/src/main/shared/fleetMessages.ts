@@ -27,6 +27,15 @@ export interface FleetMessageEntry {
   blockedOn?: 'approval' | 'question';
   /** Flattened, capped excerpt of the worker's last reply. */
   lastReply?: string;
+  /** The worker's session ENDED (killed or exited) rather than idling — the
+   *  wake says "stopped/killed" instead of reading as a clean finish. */
+  stopped?: boolean;
+  /** The worker's COMPLETE final assistant message, rendered as its own block
+   *  below the bullet list (capped at FULL_REPLY_MAX with an explicit
+   *  truncation note). Builder-side only: the parser does not round-trip it —
+   *  the GUI card renders the excerpt; the full text is for the manager agent
+   *  reading the raw wake. Set only when the excerpt is lossy. */
+  fullReply?: string;
 }
 
 export interface FleetMessage {
@@ -37,11 +46,30 @@ export interface FleetMessage {
 /** Reply excerpts longer than this are cut (with an ellipsis). */
 const REPLY_EXCERPT_MAX = 400;
 
+/** Cap on a full-reply block. Deliberately generous — the point of carrying
+ *  the complete final message is that the manager never has to fetch a 4KB
+ *  report through get_conversation; a real report is a few KB, so tens of KB
+ *  covers it with room, while still bounding a pathological reply. Truncation
+ *  is announced in the block itself, never silent. */
+export const FULL_REPLY_MAX = 32_768;
+
 /** One flattened, capped excerpt — keeps the wake readable AND single-line,
  *  which is what makes the bullet format parseable. */
 export function excerptReply(reply: string): string {
   const flat = reply.replace(/\s+/g, ' ').trim();
   return flat.length > REPLY_EXCERPT_MAX ? `${flat.slice(0, REPLY_EXCERPT_MAX)}…` : flat;
+}
+
+/** The full-reply block body: complete under the cap, explicitly annotated
+ *  over it (keeping the head — reports lead with the outcome). */
+function renderFullReply(reply: string): string {
+  const text = reply.trim();
+  if (text.length <= FULL_REPLY_MAX) return text;
+  return (
+    `${text.slice(0, FULL_REPLY_MAX)}\n` +
+    `[truncated: showing the first ${FULL_REPLY_MAX} of ${text.length} characters — ` +
+    `fetch the rest with get_conversation (lastMessage:true)]`
+  );
 }
 
 /** Header lines. The bodies after them differ, so kind is the header alone. */
@@ -55,10 +83,12 @@ const HEADERS: Record<FleetMessageKind, string> = {
 /** Instruction tails — what the manager/supervisor should DO with the wake. */
 const TAILS: Record<FleetMessageKind, string> = {
   'worker-finished':
-    `Review the result (get_conversation with sinceSeq for detail), append one line to that ` +
-    `project's .workspacer/brief.md "## Recently" (and adjust "## Now"), then report the ` +
-    `outcome briefly with session:<id> references. If it was not one of your dispatches, ` +
-    `a one-line acknowledgement is enough.`,
+    `The worker's complete final message (when longer than its bullet excerpt) is included ` +
+    `above — read it from this wake instead of fetching the conversation; use ` +
+    `get_conversation (lastMessage:true for just the final message, or sinceSeq) only if you ` +
+    `need more context. Append one line to that project's .workspacer/brief.md "## Recently" ` +
+    `(and adjust "## Now"), then report the outcome briefly with session:<id> references. ` +
+    `If it was not one of your dispatches, a one-line acknowledgement is enough.`,
   'catch-up':
     `Review each (get_conversation with sinceSeq), update the project brief's "## Recently", ` +
     `and report the outcome with session:<id> references. Then STOP again.`,
@@ -68,29 +98,55 @@ const TAILS: Record<FleetMessageKind, string> = {
 /** One entry as its bullet-body text (no leading `- `). */
 export function formatFleetEntry(e: FleetMessageEntry): string {
   const where = e.blockedOn ? e.blockedOn : `cwd ${e.cwd || '?'}`;
+  const stopped = e.stopped ? ' — stopped/killed' : '';
   const tail = e.lastReply ? ` — last reply: ${e.lastReply}` : '';
-  return `${e.label} (session:${e.sessionId}, ${where})${tail}`;
+  return `${e.label} (session:${e.sessionId}, ${where})${stopped}${tail}`;
 }
 
-/** Compose a full wake message: header, one bullet per entry, instructions. */
+/** Plain (non-bullet) note appended when any entry is stopped/killed. */
+const STOPPED_NOTE =
+  `A "stopped/killed" entry's session ENDED (killed or exited) rather than going idle — ` +
+  `treat its last reply as possibly incomplete, not as a clean finish.`;
+
+/**
+ * Compose a full wake message: header, one bullet per entry, then (for
+ * worker-finished wakes that carry one) each worker's COMPLETE final message
+ * as its own block, then instructions. The extra blocks sit between the
+ * bullets and the tail, where the parser's bullet loop has already stopped —
+ * they are read by the manager agent, not round-tripped into the GUI card
+ * (which shows the bullet excerpt).
+ */
 export function buildFleetMessage(kind: FleetMessageKind, entries: FleetMessageEntry[]): string {
   const bullets = entries.map((e) => `- ${formatFleetEntry(e)}`);
-  return `${HEADERS[kind]}\n${bullets.join('\n')}\n${TAILS[kind]}`;
+  const extras: string[] = [];
+  if (entries.some((e) => e.stopped)) extras.push(STOPPED_NOTE);
+  for (const e of entries) {
+    if (e.fullReply) {
+      extras.push(
+        `Full final message — ${e.label} (session:${e.sessionId}):\n${renderFullReply(e.fullReply)}`,
+      );
+    }
+  }
+  const head = `${HEADERS[kind]}\n${bullets.join('\n')}`;
+  if (extras.length === 0) return `${head}\n${TAILS[kind]}`;
+  return `${head}\n\n${extras.join('\n\n')}\n\n${TAILS[kind]}`;
 }
 
 /** Bullet-body grammar: `label (session:<id>, cwd <path>|approval|question)`
- *  with an optional ` — last reply: …` tail. Label is non-greedy so the FIRST
- *  `(session:` wins; a reply may contain anything (it is the anchored rest). */
+ *  with optional ` — stopped/killed` and ` — last reply: …` tails. Label is
+ *  non-greedy so the FIRST `(session:` wins; a reply may contain anything (it
+ *  is the anchored rest). */
 const ENTRY_RE =
-  /^(.+?) \(session:([\w-]+), (?:cwd (.+?)|(approval|question))\)(?: — last reply: (.*))?$/;
+  /^(.+?) \(session:([\w-]+), (?:cwd (.+?)|(approval|question))\)(?: — (stopped\/killed))?(?: — last reply: (.*))?$/;
 
 function parseEntry(body: string): FleetMessageEntry | null {
   const m = ENTRY_RE.exec(body);
   if (!m) return null;
-  const [, label, sessionId, cwd, blockedOn, lastReply] = m;
+  const [, label, sessionId, cwd, blockedOn, stopped, lastReply] = m;
   const e: FleetMessageEntry = { label, sessionId };
   if (cwd !== undefined) e.cwd = cwd;
   if (blockedOn) e.blockedOn = blockedOn as 'approval' | 'question';
+  if (stopped) e.stopped = true;
   if (lastReply) e.lastReply = lastReply;
   return e;
 }

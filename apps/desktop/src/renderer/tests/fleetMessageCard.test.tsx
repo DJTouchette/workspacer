@@ -38,6 +38,23 @@ describe('<ConversationMessage> fleet wake cards', () => {
     expect(screen.getByText('All 42 tests pass. Done.')).toBeTruthy();
   });
 
+  it('marks a stopped/killed worker with a chip, and hides the full-message block behind the card', () => {
+    const text = buildFleetMessage('worker-finished', [
+      {
+        label: 'alpha: fix tests',
+        sessionId: 'w1',
+        cwd: '/home/u/Work/alpha',
+        stopped: true,
+        lastReply: 'was mid-refactor',
+        fullReply: 'was mid-refactor\nwhen the session was killed',
+      },
+    ]);
+    render(<ConversationMessage turn={turn(text)} />);
+    expect(screen.getByText('stopped/killed')).toBeTruthy();
+    // The agent-facing full-message block never leaks into the card.
+    expect(screen.queryByText(/Full final message/)).toBeNull();
+  });
+
   it('renders a supervisor block wake with its blocked-on chip', () => {
     const text = buildFleetMessage('blocked', [
       { label: 'beta: ship', sessionId: 'w2', blockedOn: 'question' },

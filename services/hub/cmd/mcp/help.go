@@ -34,6 +34,13 @@ value must round-trip: pass it as the hub input on the per-session tools
 answer, signal, set_approval_gate) to reach the remote session; omit it for
 local sessions.
 Reading another agent's activity, cheapest first:
+- get_conversation with lastMessage:true: returns { seq, lastMessage } — just
+  the session's final assistant message. The right way to read a finished
+  worker's report without paying for its whole conversation.
+- get_conversation with textOnly:true: only the user/assistant text turns
+  (tool calls, tool results, and usage blobs stripped) — the dialogue without
+  the machinery. Both reductions compose with sinceSeq; lastMessage wins when
+  both are set.
 - get_conversation with sinceSeq: track the returned seq per session and pass
   it back next time, so you only ever digest new turns. This is the right tool
   for polling "what has agent X done since I last looked".

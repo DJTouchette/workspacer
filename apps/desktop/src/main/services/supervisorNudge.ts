@@ -33,9 +33,42 @@ interface PendingNudge {
   entries: Map<string, FleetMessageEntry>;
 }
 
+/** What the finished path needs from a worker session at DELIVERY time. The
+ *  store's session objects mutate in place, so holding the reference lets the
+ *  coalesce-window flush re-read the live truth (state flips, the final
+ *  assistant message landing late) instead of trusting the schedule-time
+ *  snapshot. All re-checked fields are optional so a caller that can't provide
+ *  them (or a session evicted mid-window) degrades to the scheduled entry. */
+type FinishedWorker = Pick<ClaudeSessionState, 'sessionId'> &
+  Partial<Pick<ClaudeSessionState, 'cwd' | 'label' | 'ambientState' | 'status' | 'conversation'>>;
+
+interface PendingFinish {
+  timer: NodeJS.Timeout;
+  /** Scheduled entry + the live session it was built from, per worker id. */
+  workers: Map<string, { entry: FleetMessageEntry; session: FinishedWorker }>;
+}
+
+/** The worker's newest assistant reply, from its live conversation. */
+function lastAssistantReply(session: FinishedWorker): string {
+  const conv = session.conversation ?? [];
+  for (let i = conv.length - 1; i >= 0; i--) {
+    if (conv[i].role === 'assistant' && conv[i].content) return conv[i].content;
+  }
+  return '';
+}
+
+/** Whether the session has received at least one real user/task turn. A
+ *  session whose conversation holds NO user turn has not been given its task
+ *  yet (the parent's kickoff message is still in flight) — its idle is a boot
+ *  idle, not a finish, and waking the manager about it tricks it into reading
+ *  an empty session. Unknown conversation (untracked session) fails OPEN. */
+function hasReceivedTask(session: FinishedWorker): boolean {
+  return !session.conversation || session.conversation.some((t) => t.role === 'user');
+}
+
 class SupervisorNudge {
   private pending = new Map<string, PendingNudge>();
-  private pendingFinished = new Map<string, PendingNudge>();
+  private pendingFinished = new Map<string, PendingFinish>();
 
   /**
    * Call when a session has just transitioned into a needs-you state. `kind`
@@ -78,27 +111,35 @@ class SupervisorNudge {
    * Manager be a pure delegator — it never polls its workers, it gets told
    * (FLEET_MANAGER_SPIKE.md gap #2). Coalesced like blocks so a burst of
    * finishing workers produces one wake.
+   *
+   * Fires only on a GENUINE finish: a worker that has never received its task
+   * turn is skipped here (boot idle), and every worker is re-verified against
+   * its live session when the coalesce window closes (see sendFinished) so an
+   * idle blip mid-stream never reports a half-done result as final.
    */
   onFinished(session: ClaudeSessionState, parentId: string, lastReply: string): void {
     if (parentId === session.sessionId) return;
+    // Misfire guard: a freshly spawned worker idles once BEFORE the parent's
+    // task message is delivered — that boot idle is not a finish.
+    if (!hasReceivedTask(session)) return;
     const finishedEntry: FleetMessageEntry = {
       label: session.label || agentLabel(session.cwd),
       sessionId: session.sessionId,
       cwd: session.cwd || '?',
       ...(lastReply ? { lastReply: excerptReply(lastReply) } : {}),
     };
-    const entry = this.pendingFinished.get(parentId);
-    if (entry) {
-      entry.entries.set(session.sessionId, finishedEntry);
+    const pending = this.pendingFinished.get(parentId);
+    if (pending) {
+      pending.workers.set(session.sessionId, { entry: finishedEntry, session });
       return;
     }
-    const entries = new Map([[session.sessionId, finishedEntry]]);
+    const workers = new Map([[session.sessionId, { entry: finishedEntry, session }]]);
     const timer = setTimeout(() => {
       this.pendingFinished.delete(parentId);
-      void this.sendFinished(parentId, entries);
+      void this.sendFinished(parentId, workers);
     }, COALESCE_MS);
     timer.unref?.();
-    this.pendingFinished.set(parentId, { timer, entries });
+    this.pendingFinished.set(parentId, { timer, workers });
   }
 
   /**
@@ -121,7 +162,9 @@ class SupervisorNudge {
       Pick<
         ClaudeSessionState,
         'sessionId' | 'cwd' | 'label' | 'ambientState' | 'lastActivity' | 'parentSessionId'
-      > & { isSupervisor?: boolean; status?: string }
+      > & { isSupervisor?: boolean; status?: string } & Partial<
+          Pick<ClaudeSessionState, 'conversation'>
+        >
     >,
     now: number,
   ): void {
@@ -135,6 +178,9 @@ class SupervisorNudge {
           c.parentSessionId === manager.sessionId &&
           c.sessionId !== manager.sessionId &&
           (c.ambientState === 'idle' || c.status === 'ended') &&
+          // Same no-task gate as onFinished: a child idling with no user turn
+          // was never given its task — nothing finished, nothing to catch up.
+          hasReceivedTask(c) &&
           // The manager has not acted since this child finished…
           c.lastActivity > manager.lastActivity &&
           // …and the finish is old enough that a normal wake would have landed.
@@ -145,6 +191,7 @@ class SupervisorNudge {
         label: c.label || agentLabel(c.cwd),
         sessionId: c.sessionId,
         cwd: c.cwd || '?',
+        ...(c.status === 'ended' ? { stopped: true } : {}),
       }));
       void this.sendCatchUp(manager.sessionId, entries);
     }
@@ -158,11 +205,46 @@ class SupervisorNudge {
     }
   }
 
+  /**
+   * Deliver a coalesced finished-wake, re-verifying each worker against its
+   * LIVE session first. The working→idle edge that scheduled the wake can lie
+   * twice: an idle blip mid-stream (the worker was back to streaming before
+   * the coalesce window closed — reporting that as finished would present a
+   * half-done result as final), and a final assistant message that lands on
+   * the conversation stream AFTER the Stop edge (claudemon keeps tailing
+   * briefly). So at delivery: drop any worker that is working again (its real
+   * finish re-fires the edge later), re-read the reply from the live
+   * conversation, mark ended sessions stopped/killed, and carry the COMPLETE
+   * final message (capped, truncation announced) so the manager never fetches
+   * a whole conversation just to read a report.
+   */
   private async sendFinished(
     parentId: string,
-    entries: Map<string, FleetMessageEntry>,
+    workers: Map<string, { entry: FleetMessageEntry; session: FinishedWorker }>,
   ): Promise<void> {
-    const text = buildFleetMessage('worker-finished', Array.from(entries.values()));
+    const entries: FleetMessageEntry[] = [];
+    for (const { entry, session } of workers.values()) {
+      const genuinelyIdle =
+        session.status === 'ended' ||
+        session.ambientState === undefined ||
+        session.ambientState === 'idle';
+      if (!genuinelyIdle) continue; // resumed working — not a finish after all
+      if (!hasReceivedTask(session)) continue; // still no task turn — boot idle
+      if (session.status === 'ended') entry.stopped = true;
+      // Fall back to the schedule-time excerpt when the live conversation has
+      // no assistant turn to re-read (untracked or already-evicted session).
+      const reply = lastAssistantReply(session) || entry.lastReply || '';
+      if (reply) {
+        entry.lastReply = excerptReply(reply);
+        // Carry the complete message only when the excerpt is lossy —
+        // otherwise the bullet already IS the whole reply.
+        if (entry.lastReply !== reply.trim()) entry.fullReply = reply;
+        else delete entry.fullReply;
+      }
+      entries.push(entry);
+    }
+    if (entries.length === 0) return;
+    const text = buildFleetMessage('worker-finished', entries);
     try {
       await claudemonSessionClient.message(parentId, text);
     } catch {
