@@ -417,14 +417,23 @@ type spawnParams struct {
 	YoloGranted bool `json:"yoloGranted"`
 	// Claude permission mode (default/acceptEdits/plan/…). Bypass modes are
 	// clamped off for bus callers — see the security rule in spawn().
-	PermissionMode  string `json:"permissionMode"`
-	SkipPermissions bool   `json:"skipPermissions"`
+	PermissionMode string `json:"permissionMode"`
+	// Tri-state on the wire: nil = the caller omitted the field, which resolves
+	// to the config default (claude.skipPermissionsDefault / a bypass
+	// defaultPermissionMode) — the same default the desktop spawn dialog
+	// pre-selects. An explicit true/false always wins. spawn() folds this into
+	// `skip` after the grant clamp; downstream reads that, never the pointer.
+	SkipPermissions *bool  `json:"skipPermissions"`
 	ResumeSessionID string `json:"resumeSessionId"`
 	Cols            int    `json:"cols"`
 	Rows            int    `json:"rows"`
 	Label           string `json:"label"`
 	ParentSessionID string `json:"parentSessionId"`
 	Supervisor      bool   `json:"supervisor"`
+	// skip is the RESOLVED skipPermissions — caller's explicit value or the
+	// config default, then clamped by spawn()'s grant gate. Unexported so it can
+	// never arrive on the wire; the spawn legs read this, not SkipPermissions.
+	skip bool
 }
 
 type sessionParam struct {
@@ -458,11 +467,28 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	// fields are honored — the local user opted the caller in (the desktop's
 	// fleet-manager mint path, agents.fleetFullAccess); unstamped, the clamp is
 	// byte-for-byte yesterday's.
+	//
+	// An OMITTED skipPermissions resolves to the config default first
+	// (claude.skipPermissionsDefault / a bypass defaultPermissionMode — what the
+	// desktop spawn dialog pre-selects), and the resolved value then passes this
+	// SAME gate: a granted caller's omitted field means "the operator's default",
+	// while for an ungranted caller the default is clamped exactly like an
+	// explicit request — config defaults never escalate an ungranted token.
+	skipDefaulted := p.SkipPermissions == nil
+	if skipDefaulted {
+		p.skip = r.skipPermissionsConfigDefault()
+	} else {
+		p.skip = *p.SkipPermissions
+	}
 	if !p.YoloGranted {
-		if p.SkipPermissions || isPermissionEscalation(p.PermissionMode) {
-			log.Printf("brain: agents.spawn: ignoring permission bypass from a bus client — remote spawns never auto-bypass approvals without the hub-verified full-access grant.")
+		if p.skip || isPermissionEscalation(p.PermissionMode) {
+			source := "from a bus client"
+			if skipDefaulted && p.skip {
+				source = "resolved from the config default (claude.skipPermissionsDefault / defaultPermissionMode)"
+			}
+			log.Printf("brain: agents.spawn: ignoring permission bypass %s — remote spawns never auto-bypass approvals without the hub-verified full-access grant.", source)
 		}
-		p.SkipPermissions = false
+		p.skip = false
 		if isPermissionEscalation(p.PermissionMode) {
 			p.PermissionMode = ""
 		}
@@ -526,7 +552,7 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	}
 
 	id, err := r.cm.spawn(ctx, spawnReq{
-		Argv:      buildArgv(prof, p.Model, p.Effort, p.SkipPermissions, p.PermissionMode, sessionID, resume),
+		Argv:      buildArgv(prof, p.Model, p.Effort, p.skip, p.PermissionMode, sessionID, resume),
 		Cwd:       cwd,
 		Cols:      cols,
 		Rows:      rows,
@@ -548,7 +574,7 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 // profile's env/extra argv and — deliberately — no wire `transport` key
 // (spawn-managed claude IS the stream adapter). The caller has already clamped
 // off every bypass — unless the hub stamped the full-access grant
-// (yoloGranted), the one case p.SkipPermissions survives into `yolo`.
+// (yoloGranted), the one case the resolved p.skip survives into `yolo`.
 func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string, p spawnParams) (json.RawMessage, error) {
 	isClaudeStream := provider == "claude"
 	isCodexStream := provider == "codex" && p.Transport == "stream"
@@ -572,8 +598,8 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 		Bin:       r.resolveSpawnBin(provider),
 		SessionID: sessionID,
 		// Post-clamp: false for every bus caller except a hub-stamped
-		// yoloGranted spawn (spawn() zeroes SkipPermissions otherwise).
-		Yolo: p.SkipPermissions,
+		// yoloGranted spawn (spawn() zeroes the resolved skip otherwise).
+		Yolo: p.skip,
 	}
 	if isCodexStream {
 		// Codex mirrors Claude's stream transport: 'stream' spawns headless
@@ -625,6 +651,20 @@ func (r *registry) claudeTransportDefault() string {
 		return t
 	}
 	return "pty"
+}
+
+// skipPermissionsConfigDefault resolves what a spawn that OMITTED
+// skipPermissions is asking for: the same config default the desktop spawn
+// dialog pre-selects — claude.skipPermissionsDefault, or a
+// claude.defaultPermissionMode that means bypass. Callers still pass the result
+// through the grant clamp in spawn(); this only answers "what is the default",
+// never "may this caller have it".
+func (r *registry) skipPermissionsConfigDefault() bool {
+	claude, _ := r.cfg.get()["claude"].(map[string]any)
+	if skip, _ := claude["skipPermissionsDefault"].(bool); skip {
+		return true
+	}
+	return permissionModeMeansBypass(str(claude["defaultPermissionMode"]))
 }
 
 func (r *registry) sendMessage(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {

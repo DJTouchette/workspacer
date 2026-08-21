@@ -563,6 +563,71 @@ describe('agents.spawn — SECURITY: remote callers cannot auto-bypass approvals
   });
 });
 
+// An OMITTED skipPermissions resolves to the config default the spawn dialog
+// pre-selects (claude.skipPermissionsDefault / a bypass defaultPermissionMode),
+// and the resolved value passes the SAME grant gate as an explicit request —
+// honored only under the hub-stamped yoloGranted, clamped for everyone else.
+// TWIN: cmd/brain spawn_skipdefault_test.go / cmd/mcp spawndefaults_test.go.
+describe('agents.spawn — omitted skipPermissions resolves the config default', () => {
+  const withClaudeCfg = (claude: Record<string, unknown>) =>
+    getConfig.mockReturnValueOnce({
+      agents: { binaries: { codex: '/custom/codex' } },
+      claude,
+    } as never);
+
+  it('resolves skipPermissionsDefault:true for a granted (yoloGranted) spawn', async () => {
+    withClaudeCfg({ skipPermissionsDefault: true, transport: 'pty' });
+    await call('agents.spawn', { cwd: '/proj', yoloGranted: true });
+    const arg = spawnClaudeAgent.mock.calls[0][0] as { skipPermissions: boolean };
+    expect(arg.skipPermissions).toBe(true);
+  });
+
+  it('resolves a bypass defaultPermissionMode the same way', async () => {
+    withClaudeCfg({
+      skipPermissionsDefault: false,
+      defaultPermissionMode: 'bypassPermissions',
+      transport: 'pty',
+    });
+    await call('agents.spawn', { cwd: '/proj', yoloGranted: true });
+    const arg = spawnClaudeAgent.mock.calls[0][0] as { skipPermissions: boolean };
+    expect(arg.skipPermissions).toBe(true);
+  });
+
+  it('CLAMPS the config default for an ungranted caller — defaults never escalate a token', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      withClaudeCfg({ skipPermissionsDefault: true, transport: 'pty' });
+      await call('agents.spawn', { cwd: '/proj' });
+      const arg = spawnClaudeAgent.mock.calls[0][0] as { skipPermissions: boolean };
+      expect(arg.skipPermissions).toBe(false);
+      expect(warn.mock.calls.flat().join('\n')).toContain('config default');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('an explicit false always beats the config default', async () => {
+    withClaudeCfg({ skipPermissionsDefault: true, transport: 'pty' });
+    await call('agents.spawn', { cwd: '/proj', skipPermissions: false, yoloGranted: true });
+    const arg = spawnClaudeAgent.mock.calls[0][0] as { skipPermissions: boolean };
+    expect(arg.skipPermissions).toBe(false);
+  });
+
+  it('default off + omitted field stays approvals-on even when granted', async () => {
+    withClaudeCfg({ skipPermissionsDefault: false, transport: 'pty' });
+    await call('agents.spawn', { cwd: '/proj', yoloGranted: true });
+    const arg = spawnClaudeAgent.mock.calls[0][0] as { skipPermissions: boolean };
+    expect(arg.skipPermissions).toBe(false);
+  });
+
+  it('the default rides the managed (claude-stream) leg too', async () => {
+    withClaudeCfg({ skipPermissionsDefault: true, transport: 'stream' });
+    await call('agents.spawn', { cwd: '/proj', yoloGranted: true });
+    const arg = spawnManagedAgent.mock.calls[0][0] as { skipPermissions: boolean };
+    expect(arg.skipPermissions).toBe(true);
+  });
+});
+
 describe('providers discovery', () => {
   // A REAL directory registered as a live agent cwd: providers.listModels' `cwd`
   // is confined to browseRoots now (claudemon runs the provider CLI in it, and
