@@ -44,7 +44,13 @@ describe('installManagerSkills', () => {
     expect(standup).toContain('must not change any brief');
     expect(checkpoint).toContain('most specific home');
     expect(checkpoint).toContain('.workspacer/brief.md');
-    expect(checkpoint).toContain('never rewrite a line the user wrote');
+    expect(checkpoint).toContain('inspect-then-edit');
+    expect(checkpoint).toContain('## User');
+    // Pruning is COLD ARCHIVAL, not deletion — the overflow moves to the
+    // archive so the brief stays short but the history survives.
+    expect(checkpoint).toContain('~20 newest');
+    expect(checkpoint).toContain('.workspacer/brief.archive.md');
+    expect(checkpoint).toContain('Do NOT delete the overflow');
   });
 
   it('sweeps the superseded /bearings and /stow dirs so no orphans linger', () => {

@@ -109,6 +109,10 @@ describe('spawnFleetManager', () => {
     // The invocable skills the manager is told it has.
     expect(kickoff).toContain('/standup');
     expect(kickoff).toContain('/checkpoint');
+    // Briefs prune by cold archival, not deletion; the fleet brief has a ## User
+    // prefs section the manager honors.
+    expect(kickoff).toContain('brief.archive.md');
+    expect(kickoff).toContain('## User');
     hook.unmount();
   });
 

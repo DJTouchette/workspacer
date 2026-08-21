@@ -49,8 +49,9 @@ and whether it is working, waiting on approval, or blocked.
 **Waiting on you** — every decision parked on the user: a worker blocked on an
 approval you escalated, a question, a merge awaiting the go-ahead.
 
-**Next up** — what you would dispatch next and why, in one line each. Suggestions
-only — do not act on them here.
+**Next up** — what you would dispatch next and why, in one line each, guided by
+each brief's "## Direction" and the fleet brief's "## User" preferences.
+Suggestions only — do not act on them here.
 
 Reference every agent as \`session:<id>\` so the user can click through. Prefer
 bullets over prose. This is a read; it must not change any brief or spawn a
@@ -66,32 +67,44 @@ description: Capture durable knowledge from this Fleet Manager session and file 
 
 A deliberate sweep of the CURRENT conversation for knowledge that only exists in
 chat and would be lost on a restart. Route each finding to the most specific
-home; never invent facts, and never overwrite the user's own words.
+home, then trim the briefs you touched. Never invent facts, and never rewrite a
+line the user wrote: inspect-then-edit (read the file, merge, write), never
+blind-append.
+
+Every brief (project AND fleet) is a \`.workspacer/brief.md\` with the same shape:
+- **## Now** — in flight, one line each. A LIVE list, not a log — a line leaves
+  the moment its work lands or is abandoned.
+- **## Direction** — durable goals, priorities, sequencing.
+- **## Recently** — a DATED log, newest first: new entries go at the TOP as
+  \`- YYYY-MM-DD  <what happened>\`. This is the only section that grows.
+- **## User** (fleet brief only) — standing preferences the user has stated.
 
 Routing, most specific first:
 
 1. **Project-intrinsic knowledge** (how a repo builds/tests, a gotcha, a
-   convention) → that project's \`.workspacer/brief.md\` "## Direction" (durable)
-   or "## Now" (in flight). If it is truly permanent and belongs in the repo's
-   own agent memory, tell the user it is worth adding to that project's
-   CLAUDE.md rather than writing it yourself.
+   convention) → that project's brief, "## Direction" if durable or "## Now" if
+   in flight. If it is truly permanent repo memory, tell the user it belongs in
+   that project's CLAUDE.md rather than writing it there yourself.
 2. **Cross-project / fleet state** (a dispatch outcome, a shifted priority, an
-   open escalation) → YOUR fleet brief at \`.workspacer/brief.md\` under your cwd:
+   open escalation) → YOUR fleet brief (\`.workspacer/brief.md\` under your cwd):
    outcomes to "## Recently", priorities/sequencing to "## Direction", open
    dispatches and user-waiting items to "## Now".
-3. **A user preference** stated this session (how they like work delivered,
-   a standing instruction) → record it under a "## User" heading in your fleet
-   brief so it survives restarts, and honor it from then on.
+3. **A user preference** stated this session → the fleet brief's "## User"
+   heading, so it survives restarts — and honor it from then on.
 4. **A task-scoped next step** that belongs to one worker → send it to that
    worker with \`send_message\`, or note it in that project's "## Now".
 
-Then DECAY: in each brief you touched, prune "## Recently" to about the last 20
-lines (oldest first), and drop "## Now" items that are done. Use
-inspect-then-edit (read the current file, merge, write) — do not blind-append,
-and never rewrite a line the user wrote.
+Then PRUNE each brief you touched:
+- **## Now** — remove every item whose work has landed or been abandoned.
+- **## Recently** — keep only the ~20 newest entries. Do NOT delete the overflow:
+  MOVE the oldest entries to \`.workspacer/brief.archive.md\` beside the brief,
+  appending them under a \`## <today's date>\` heading (create the file if it does
+  not exist). The archive is cold storage — never rewritten, only appended — so
+  the brief stays short while the history survives.
 
-Finish with a one-paragraph report: what you filed and where, and what you left
-for the user to decide. Do not spawn workers; this is bookkeeping.
+Finish with a one-paragraph report: what you filed and where, what you archived,
+and what you left for the user to decide. Do not spawn workers; this is
+bookkeeping.
 `;
 
 function skillDir(name: string): string {
