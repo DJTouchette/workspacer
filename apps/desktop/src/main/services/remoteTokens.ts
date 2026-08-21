@@ -48,6 +48,8 @@ function normalizeRecord(raw: unknown): RemoteTokenRecord | null {
     }),
     // …and the full-access grant (only the true case is ever stored).
     ...(r.yoloAllowed === true && { yoloAllowed: true as const }),
+    // …and the session-role tag the grant reconciler keys on.
+    ...((r.role === 'manager' || r.role === 'supervisor') && { role: r.role }),
   };
 }
 
@@ -109,6 +111,7 @@ export function mintSessionFacadeToken(
   plugins?: string[],
   profilesAllowed?: string[],
   yoloAllowed?: boolean,
+  role?: SessionTokenRole,
 ): RemoteTokenRecord {
   const label = SESSION_LABEL_PREFIX + sessionId;
   const records = readTokens().filter((r) => r.label !== label);
@@ -122,9 +125,64 @@ export function mintSessionFacadeToken(
     // Fleet-manager full-access grant: omitted when false, same omitempty
     // wire shape (TWIN: authtoken.Record.YoloAllowed).
     ...(yoloAllowed && { yoloAllowed: true as const }),
+    // Session-role tag so a later config flip can find and re-grant/revoke
+    // exactly this kind of token (see reconcileSessionFacadeGrants).
+    ...(role && { role }),
   };
   writeTokens([...records, next]);
   return next;
+}
+
+/** Session roles whose tokens carry a config-governed full-access grant. */
+export type SessionTokenRole = 'manager' | 'supervisor';
+
+/**
+ * Bring every role-tagged session token's full-access grant in line with the
+ * config that governs it (manager: agents.fleetFullAccess / per-project yolo;
+ * supervisor: supervisor.fullAccess — resolved by the caller, this just
+ * applies). The MCP facade re-reads the token record per request, so this IS
+ * the live apply: flipping a flag re-grants or REVOKES running managers'/
+ * supervisors' dispatch bypass immediately, no respawn. Only session tokens
+ * with a role are touched — remote pairings and plain facade workers never
+ * carried the grant vocabulary and are left alone. Returns how many records
+ * changed.
+ */
+export function reconcileSessionFacadeGrants(desired: Record<SessionTokenRole, boolean>): number {
+  const records = readTokens();
+  let changed = 0;
+  const next = records.map((r) => {
+    if (!isSessionToken(r) || !r.role) return r;
+    const want = desired[r.role];
+    if (want === (r.yoloAllowed === true)) return r;
+    changed++;
+    const { yoloAllowed: _dropped, ...rest } = r;
+    return want ? { ...rest, yoloAllowed: true as const } : rest;
+  });
+  if (changed) writeTokens(next);
+  return changed;
+}
+
+/**
+ * Reconcile ONE session's facade token: stamp its role (tokens minted before
+ * roles existed have none — this is how a reused live manager adopts the tag)
+ * and set its full-access grant to `yoloAllowed`. Returns whether the record
+ * changed. No-op when the session has no token.
+ */
+export function reconcileSessionFacadeToken(
+  sessionId: string,
+  role: SessionTokenRole,
+  yoloAllowed: boolean,
+): boolean {
+  const label = SESSION_LABEL_PREFIX + sessionId;
+  const records = readTokens();
+  const idx = records.findIndex((r) => r.label === label);
+  if (idx < 0) return false;
+  const r = records[idx];
+  if (r.role === role && (r.yoloAllowed === true) === yoloAllowed) return false;
+  const { yoloAllowed: _dropped, ...rest } = r;
+  records[idx] = { ...rest, role, ...(yoloAllowed && { yoloAllowed: true as const }) };
+  writeTokens(records);
+  return true;
 }
 
 /** Revoke a session's facade token(s). No-op when none exist. */

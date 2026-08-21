@@ -56,6 +56,8 @@ vi.mock('./libraryService', () => ({
 // full-access tests (the flag is config-resolved inside spawnClaudeAgent).
 let mockConfig: {
   supervisor: { model: string; summarizerModel: string; pollSeconds: number; fullAccess?: boolean };
+  agents?: { fleetFullAccess?: boolean };
+  projects?: Record<string, { yolo?: boolean }>;
 };
 vi.mock('./configService', () => ({
   configService: { getConfig: () => mockConfig },
@@ -90,6 +92,9 @@ const mintSessionFacadeToken = vi.fn(() => ({
 }));
 vi.mock('./remoteTokens', () => ({
   mintSessionFacadeToken: (...a: unknown[]) => mintSessionFacadeToken(...a),
+  // Imported by the REAL fullAccessGrants module (the config-resolved grant
+  // formula under test); never called by a spawn.
+  reconcileSessionFacadeGrants: vi.fn(() => 0),
 }));
 
 const { spawnClaudeAgent } = await import('./claudeSpawn');
@@ -261,12 +266,33 @@ describe('spawnClaudeAgent — facade takes precedence over Library MCP', () => 
 
     expect(mintSessionFacadeToken).toHaveBeenCalledTimes(1);
     expect(mintSessionFacadeToken.mock.calls[0][3]).toEqual(['default', 'work']);
-    // No full-access unless the manager was spawned with it.
+    // No full-access unless CONFIG grants it (agents.fleetFullAccess or a
+    // per-project yolo flag).
     expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(false);
+    // …and the role tag the live grant reconciler keys on.
+    expect(mintSessionFacadeToken.mock.calls[0][5]).toBe('manager');
   });
 
-  it('a full-access manager spawn also mints the yolo grant (5th arg true)', async () => {
+  it('agents.fleetFullAccess on → the manager mints the yolo grant (config-resolved, no caller flag needed)', async () => {
     getProfiles.mockReturnValue([{ id: 'default' }]);
+    mockConfig.agents = { fleetFullAccess: true };
+    await spawnClaudeAgent({ cwd: '/home/u/Work', manager: true, toolScope: 'operator' });
+
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(true);
+  });
+
+  it('a per-project yolo flag alone also mints the manager yolo grant', async () => {
+    getProfiles.mockReturnValue([{ id: 'default' }]);
+    mockConfig.projects = { '/home/u/Work/app': { yolo: true }, '/home/u/Work/other': {} };
+    await spawnClaudeAgent({ cwd: '/home/u/Work', manager: true, toolScope: 'operator' });
+
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(true);
+  });
+
+  it('a stale caller fleetFullAccess flag cannot resurrect a revoked grant — config wins', async () => {
+    getProfiles.mockReturnValue([{ id: 'default' }]);
+    // The respawn path re-passes the flag frozen at the ORIGINAL spawn; with
+    // the config flag since turned off, the re-minted token must be ungranted.
     await spawnClaudeAgent({
       cwd: '/home/u/Work',
       manager: true,
@@ -274,7 +300,7 @@ describe('spawnClaudeAgent — facade takes precedence over Library MCP', () => 
       fleetFullAccess: true,
     });
 
-    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(true);
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(false);
   });
 
   it('a non-manager facade spawn mints NO profile or yolo grant', async () => {
@@ -285,6 +311,8 @@ describe('spawnClaudeAgent — facade takes precedence over Library MCP', () => 
 
     expect(mintSessionFacadeToken.mock.calls[0][3]).toBeUndefined();
     expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
+    // A supervisor is still role-tagged so the reconciler can find its token.
+    expect(mintSessionFacadeToken.mock.calls[0][5]).toBe('supervisor');
   });
 });
 

@@ -572,6 +572,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.HUB_REMOTE_TOKEN_GET_OR_CREATE, scope, label),
   remoteTokenRevoke: (token: string): Promise<RemoteTokenRecord> =>
     ipcRenderer.invoke(IPC.HUB_REMOTE_TOKEN_REVOKE, token),
+  /** Re-align a live manager/supervisor session token's full-access grant
+   *  with current config (used when reusing a running Fleet Manager). Resolves
+   *  true when the token record changed. */
+  sessionGrantReconcile: (sessionId: string, role: 'manager' | 'supervisor'): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.HUB_SESSION_GRANT_RECONCILE, sessionId, role),
   // "Connect to remote server" (client mode): persist/clear the target hub.
   // Applied on relaunch — pair with appRelaunch() after a successful set.
   setRemoteServer: (

@@ -177,6 +177,21 @@ export interface AgentWorkspace {
   toolScope?: 'view' | 'triage' | 'operator';
   /** Plugin ids whose facade tools this agent may use; re-applied on respawn. */
   pluginTools?: string[];
+  /** Spawned as a supervisor (facade + /supervise loop). Re-passed on respawn
+   *  so the revived session re-mints its facade token with the same role —
+   *  without it a respawned supervisor came back as a plain facade worker
+   *  (no config-resolved full-access grant). */
+  supervisor?: boolean;
+  /** Spawned as THE Fleet Manager (nudge-eligible parent, profile-dispatch
+   *  grants, manager skills). Re-passed on respawn for the same reason as
+   *  `supervisor`: the re-minted token must carry the manager grants
+   *  (profilesAllowed + the config-resolved yolo grant), not come back bare. */
+  manager?: boolean;
+  /** Manager full-access hint recorded at spawn. Advisory on respawn — the
+   *  token's actual yolo grant is config-resolved at mint in main
+   *  (services/fullAccessGrants), so a frozen value can't resurrect a grant
+   *  the user has since revoked. */
+  fleetFullAccess?: boolean;
   /** claudemon session id once spawned. Undefined means the agent is stopped
    *  (e.g. the daemon session ended or didn't survive a restart). */
   sessionId?: string;

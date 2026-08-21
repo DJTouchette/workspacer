@@ -13,6 +13,8 @@ import {
   mintSessionFacadeToken,
   revokeSessionFacadeTokens,
   sweepSessionFacadeTokens,
+  reconcileSessionFacadeGrants,
+  reconcileSessionFacadeToken,
 } from './remoteTokens';
 
 function tokensFile(): string {
@@ -185,5 +187,96 @@ describe('session facade tokens', () => {
 
     // Nothing stale → no write, count 0.
     expect(sweepSessionFacadeTokens(['sess-3'])).toBe(0);
+  });
+});
+
+describe('full-access grant reconciliation (config flips applied live)', () => {
+  const rawTokens = () =>
+    JSON.parse(fs.readFileSync(tokensFile(), 'utf-8')) as Array<Record<string, unknown>>;
+
+  it('mint persists the role tag (and a rewrite cycle keeps it)', () => {
+    const rec = mintSessionFacadeToken(
+      'mgr-1',
+      'operator',
+      undefined,
+      ['default'],
+      true,
+      'manager',
+    );
+    expect(rec).toMatchObject({ role: 'manager', yoloAllowed: true, profilesAllowed: ['default'] });
+
+    // A pairing write cycle re-normalizes every record — role must survive it.
+    getOrCreateRemoteToken('view', 'Dashboard');
+    expect(rawTokens().find((r) => r.label === 'session:mgr-1')).toMatchObject({
+      role: 'manager',
+      yoloAllowed: true,
+    });
+  });
+
+  it('on→off REVOKES live manager/supervisor grants; off→on grants them — other tokens untouched', () => {
+    const mgr = mintSessionFacadeToken(
+      'mgr-1',
+      'operator',
+      undefined,
+      ['default'],
+      true,
+      'manager',
+    );
+    const sup = mintSessionFacadeToken(
+      'sup-1',
+      'operator',
+      undefined,
+      undefined,
+      true,
+      'supervisor',
+    );
+    const worker = mintSessionFacadeToken('wkr-1', 'view');
+    const pairing = getOrCreateRemoteToken('operator', 'Laptop');
+
+    // Both flags flipped OFF: both role tokens lose the grant, one write.
+    expect(reconcileSessionFacadeGrants({ manager: false, supervisor: false })).toBe(2);
+    let raw = rawTokens();
+    expect(raw.find((r) => r.token === mgr.token)).not.toHaveProperty('yoloAllowed');
+    expect(raw.find((r) => r.token === sup.token)).not.toHaveProperty('yoloAllowed');
+    // …and the manager keeps its OTHER grants (profiles) + role.
+    expect(raw.find((r) => r.token === mgr.token)).toMatchObject({
+      role: 'manager',
+      profilesAllowed: ['default'],
+    });
+    // Role-less session tokens and remote pairings are never touched.
+    expect(raw.find((r) => r.token === worker.token)).not.toHaveProperty('yoloAllowed');
+    expect(raw.find((r) => r.token === pairing.token)).toEqual(
+      expect.objectContaining({ label: 'Laptop' }),
+    );
+
+    // Manager flag back ON: only the manager token regains the grant.
+    expect(reconcileSessionFacadeGrants({ manager: true, supervisor: false })).toBe(1);
+    raw = rawTokens();
+    expect(raw.find((r) => r.token === mgr.token)).toMatchObject({ yoloAllowed: true });
+    expect(raw.find((r) => r.token === sup.token)).not.toHaveProperty('yoloAllowed');
+    expect(raw.find((r) => r.token === worker.token)).not.toHaveProperty('yoloAllowed');
+
+    // Already in line → no write, count 0.
+    expect(reconcileSessionFacadeGrants({ manager: true, supervisor: false })).toBe(0);
+  });
+
+  it('reconcileSessionFacadeToken stamps the role onto a legacy token and sets the grant both ways', () => {
+    // A manager token minted before roles existed: no role, no grant.
+    const legacy = mintSessionFacadeToken('mgr-old', 'operator', undefined, ['default']);
+    expect(rawTokens().find((r) => r.token === legacy.token)).not.toHaveProperty('role');
+
+    expect(reconcileSessionFacadeToken('mgr-old', 'manager', true)).toBe(true);
+    expect(rawTokens().find((r) => r.token === legacy.token)).toMatchObject({
+      role: 'manager',
+      yoloAllowed: true,
+    });
+
+    // Revocation direction.
+    expect(reconcileSessionFacadeToken('mgr-old', 'manager', false)).toBe(true);
+    expect(rawTokens().find((r) => r.token === legacy.token)).not.toHaveProperty('yoloAllowed');
+
+    // Idempotent, and a no-op for a session with no token.
+    expect(reconcileSessionFacadeToken('mgr-old', 'manager', false)).toBe(false);
+    expect(reconcileSessionFacadeToken('nope', 'manager', true)).toBe(false);
   });
 });

@@ -42,8 +42,12 @@ vi.mock('./claudeSessionStore', () => ({
 }));
 
 const getProfile = vi.fn(() => undefined as unknown);
+const getProfiles = vi.fn(() => [{ id: 'default' }] as unknown[]);
 vi.mock('./claudeProfiles', () => ({
-  claudeProfiles: { getProfile: (...a: unknown[]) => getProfile(...a) },
+  claudeProfiles: {
+    getProfile: (...a: unknown[]) => getProfile(...a),
+    getProfiles: (...a: unknown[]) => getProfiles(...a),
+  },
 }));
 
 // listWithSecrets only — see the same mock in claudeSpawn.test.ts: `list()`
@@ -78,6 +82,9 @@ const mintSessionFacadeToken = vi.fn(() => ({
 }));
 vi.mock('./remoteTokens', () => ({
   mintSessionFacadeToken: (...a: unknown[]) => mintSessionFacadeToken(...a),
+  // Imported by the REAL fullAccessGrants module (the config-resolved grant
+  // formula under test); never called by a spawn.
+  reconcileSessionFacadeGrants: vi.fn(() => 0),
 }));
 
 vi.mock('./claudemonDaemon', () => ({
@@ -286,6 +293,47 @@ describe('spawnManagedAgent — facade tool tiers', () => {
     expect(mintSessionFacadeToken).not.toHaveBeenCalled();
     expect(lastManaged()).not.toHaveProperty('mcp');
     expect(lastManaged()).not.toHaveProperty('instructions');
+  });
+});
+
+describe('spawnManagedAgent — manager grants (config-resolved, stream path)', () => {
+  it('a manager spawn mints role "manager" with the yolo grant resolved from config, not the caller flag', async () => {
+    // Caller passes a stale fleetFullAccess:true (e.g. a respawn re-passing
+    // the value frozen at the original spawn) but config has since revoked it:
+    // the re-minted token must be ungranted.
+    await spawnManagedAgent({
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      manager: true,
+      toolScope: 'operator',
+      fleetFullAccess: true,
+    });
+
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(false);
+    expect(mintSessionFacadeToken.mock.calls[0][5]).toBe('manager');
+  });
+
+  it('agents.fleetFullAccess (or a per-project yolo) grants the manager token without any caller flag', async () => {
+    mockConfig = { agents: { fleetFullAccess: true } };
+    await spawnManagedAgent({
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      manager: true,
+      toolScope: 'operator',
+    });
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(true);
+
+    mockConfig = { projects: { '/proj/app': { yolo: true } } };
+    await spawnManagedAgent({
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      manager: true,
+      toolScope: 'operator',
+    });
+    expect(mintSessionFacadeToken.mock.calls[1][4]).toBe(true);
   });
 });
 

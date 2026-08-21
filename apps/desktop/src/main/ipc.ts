@@ -61,7 +61,9 @@ import {
   getOrCreateRemoteToken,
   listRemoteTokens,
   revokeRemoteToken,
+  reconcileSessionFacadeToken,
 } from './services/remoteTokens';
+import { desiredSessionGrants } from './services/fullAccessGrants';
 import { getTailscaleInfo, setTailscaleServe } from './services/tailscaleServe';
 import { setRemoteServer } from './services/remoteServer';
 import { publishToHub, isHubConnected, callHub } from './services/hubClient';
@@ -454,6 +456,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     (_event, scope: RemoteTokenScope, label?: string) => getOrCreateRemoteToken(scope, label),
   );
   ipcMain.handle(IPC.HUB_REMOTE_TOKEN_REVOKE, (_event, token: string) => revokeRemoteToken(token));
+  // Re-align one live manager/supervisor session token's full-access grant
+  // (and its role tag — tokens minted before roles existed adopt it here)
+  // with current config. Called when the renderer REUSES a running Fleet
+  // Manager instead of spawning one, so a flag flipped since its spawn isn't
+  // frozen into its token; the config-change sync (fullAccessGrants) covers
+  // flips while it keeps running.
+  ipcMain.handle(
+    IPC.HUB_SESSION_GRANT_RECONCILE,
+    (_event, sessionId: string, role: 'manager' | 'supervisor') => {
+      if ((role !== 'manager' && role !== 'supervisor') || !sessionId?.trim()) return false;
+      return reconcileSessionFacadeToken(sessionId, role, desiredSessionGrants()[role]);
+    },
+  );
   // "Connect to remote server" (client mode): persist/clear the target. Takes
   // effect on relaunch — the local-vs-remote decision is made once at startup
   // (index.ts), so the UI calls APP_RELAUNCH after a successful set/clear.

@@ -333,3 +333,35 @@ func TestMuxHealthOpenMCPGuarded(t *testing.T) {
 		t.Fatalf("/mcp with scoped token was 401; auth should have passed")
 	}
 }
+
+// TestRequireScopeStampsTokenLabel: the gate stamps the resolved record's
+// label into the request context so tool handlers (whose servers are CACHED
+// and shared across same-grant records) can name the calling token in
+// diagnostics — the spawn clamp's strip log reads it via tokenLabelFrom.
+// Credential-less requests carry no label and fall back to "untokened".
+func TestRequireScopeStampsTokenLabel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tokens.json")
+	rec, err := authtoken.Mint(path, authtoken.ScopeOperator, "session:abc123")
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	gate := &authGate{store: authtoken.NewStore(path)}
+
+	var got string
+	h := requireScope(gate, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got = tokenLabelFrom(r.Context())
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("Authorization", "Bearer "+rec.Token)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if got != "session:abc123" {
+		t.Fatalf("token label from context = %q, want the record's label", got)
+	}
+
+	got = ""
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/mcp", nil))
+	if got != "untokened" {
+		t.Fatalf("credential-less request label = %q, want the untokened fallback", got)
+	}
+}
