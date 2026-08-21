@@ -326,14 +326,37 @@ func (g *authGate) resolve(r *http.Request) (authtoken.Scope, bool) {
 	return rec.Scope, ok
 }
 
+// tokenLabelKey carries the resolved token record's label through the request
+// context into tool handlers — the server a token is served may be CACHED and
+// shared across records with identical grants (serverCache), so a handler that
+// wants to name the calling token in a log line cannot close over it at build
+// time; it has to travel with the request.
+type tokenLabelKey struct{}
+
+// tokenLabelFrom names the calling token for log lines: its label (session
+// tokens are "session:<id>", so this identifies the session), or "untokened"
+// for the credential-less loopback default / static-token / non-HTTP callers.
+func tokenLabelFrom(ctx context.Context) string {
+	if v, ok := ctx.Value(tokenLabelKey{}).(string); ok && v != "" {
+		return v
+	}
+	return "untokened"
+}
+
 // requireScope wraps h so only requests the gate can resolve reach it. The
 // tier itself is applied by newMux's getServer; this just turns "no/unknown
-// credential" into a 401 before the MCP handler sees the request.
+// credential" into a 401 before the MCP handler sees the request — and stamps
+// the resolved record's label into the request context so tool handlers can
+// name the caller in diagnostics (see tokenLabelKey).
 func requireScope(gate *authGate, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := gate.resolve(r); !ok {
+		rec, ok := gate.resolveRecord(r)
+		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
+		}
+		if rec.Label != "" {
+			r = r.WithContext(context.WithValue(r.Context(), tokenLabelKey{}, rec.Label))
 		}
 		h.ServeHTTP(w, r)
 	})
@@ -739,8 +762,16 @@ func addSpawnTool(b *build, name, desc, method string) {
 			// granted, skipPermissions rides through untouched → the hub stamps
 			// yoloGranted → the provider honors it. (spawnAgentIn's only bypass
 			// surface is SkipPermissions; there is no permissionMode field to
-			// scrub.)
+			// scrub.) Silent to the CALLER, but not to the operator: a dropped
+			// bypass used to be undiagnosable (the worker just started with
+			// approvals on), so the strip is logged with the calling token's
+			// label — session tokens are "session:<id>", naming the session
+			// whose grant was missing.
 			if !b.yolo {
+				if in.SkipPermissions {
+					log.Printf("spawn_agent: skipPermissions requested without the full-access grant — clamped (token %s, new agent %q)",
+						tokenLabelFrom(ctx), in.Label)
+				}
 				in.SkipPermissions = false
 			}
 			m := method

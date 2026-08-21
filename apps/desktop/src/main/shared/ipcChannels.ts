@@ -104,6 +104,7 @@ export const IPC = {
   HUB_REMOTE_TOKENS_LIST: 'hub:remoteTokensList',
   HUB_REMOTE_TOKEN_GET_OR_CREATE: 'hub:remoteTokenGetOrCreate',
   HUB_REMOTE_TOKEN_REVOKE: 'hub:remoteTokenRevoke',
+  HUB_SESSION_GRANT_RECONCILE: 'hub:sessionGrantReconcile', // invoke: re-align a live manager/supervisor session token's full-access grant with config
   HUB_SET_REMOTE_SERVER: 'hub:setRemoteServer', // invoke: persist/clear the "connect to remote server" target
   TAILSCALE_GET_INFO: 'tailscale:getInfo',
   TAILSCALE_SET_SERVE: 'tailscale:setServe',

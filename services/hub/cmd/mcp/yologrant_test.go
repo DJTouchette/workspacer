@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -96,6 +98,38 @@ func TestSpawnAgentForwardsSkipPermissionsForAGrantedSession(t *testing.T) {
 	}
 	if params["yoloGranted"] != true {
 		t.Fatalf("hub did not stamp yoloGranted on the facade's forwarded spawn: %v", params)
+	}
+}
+
+// TestSpawnAgentClampLogsTheStrip: the clamp degrades the CALLER silently (the
+// spawn still succeeds, approvals on), but the strip itself must be loggable —
+// a dropped bypass was previously undiagnosable. One line, naming the calling
+// token (label from the request context; "untokened" over the in-memory test
+// transport) and the requested agent label; and NO line when nothing was
+// requested, so the log only speaks when a bypass was actually dropped.
+func TestSpawnAgentClampLogsTheStrip(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(prev)
+
+	cs := yoloGrantSession(t, ctx, false)
+	_ = spawnEchoParams(t, ctx, cs, map[string]any{
+		"cwd": "/tmp", "skipPermissions": true, "label": "worker-1",
+	})
+	out := buf.String()
+	if !strings.Contains(out, "skipPermissions requested without the full-access grant") ||
+		!strings.Contains(out, `"worker-1"`) || !strings.Contains(out, "untokened") {
+		t.Fatalf("stripped bypass must be logged with token + agent label, got:\n%s", out)
+	}
+
+	buf.Reset()
+	_ = spawnEchoParams(t, ctx, cs, map[string]any{"cwd": "/tmp", "label": "worker-2"})
+	if strings.Contains(buf.String(), "full-access grant") {
+		t.Fatalf("a spawn that requested no bypass must not log a clamp line, got:\n%s", buf.String())
 	}
 }
 

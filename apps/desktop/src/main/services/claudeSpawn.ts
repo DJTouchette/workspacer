@@ -35,6 +35,7 @@ import { configService } from './configService';
 import { installSupervisorSkill, ensureSupervisorHome } from './supervisorSkill';
 import { installManagerSkills } from './managerSkills';
 import { mintSessionFacadeToken } from './remoteTokens';
+import { managerFullAccessFromConfig } from './fullAccessGrants';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 
 export interface ClaudeSpawnOptions {
@@ -71,9 +72,11 @@ export interface ClaudeSpawnOptions {
   /** Fleet Manager: nudge-eligible parent (isSupervisor spawn meta) without
    *  the /supervise loop — see managedSpawn's twin field. */
   manager?: boolean;
-  /** Manager only: also grant this manager's token full-access dispatch
-   *  (yoloAllowed) so its workers may run with permissions bypassed
-   *  (config agents.fleetFullAccess). Ignored unless `manager`. */
+  /** Manager full-access HINT from the caller. The token's actual yolo grant
+   *  is config-resolved at mint (services/fullAccessGrants — same doctrine as
+   *  supervisor.fullAccess), so this flag no longer decides anything here; it
+   *  is kept on the wire for record fidelity (the renderer persists it on the
+   *  agent card and re-passes it on respawn). */
   fleetFullAccess?: boolean;
   /** Wire the facade tools without the supervisor loop (legacy operator tier —
    *  prefer `toolScope`). */
@@ -225,16 +228,22 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
         // every local profile — the hub verifies it and stamps profileGranted
         // on the worker spawn. Only `manager` gets this; a plain supervisor
         // or facade worker has no business spawning as other accounts.
-        // The yolo grant rides two doors: the manager's caller-passed
-        // fleetFullAccess, and the config-resolved supervisor full access —
-        // either way the hub stamps yoloGranted on the holder's worker spawns
-        // so their skipPermissions request is honored instead of clamped.
+        // The yolo grant is CONFIG-RESOLVED for both roles (fleet full access /
+        // per-project yolo for the manager, supervisor.fullAccess for a
+        // supervisor — services/fullAccessGrants is the single formula), never
+        // a caller flag: a respawn re-passing a value frozen at the original
+        // spawn must not resurrect a grant the user has since revoked, nor
+        // withhold one they granted. The hub then stamps yoloGranted on the
+        // holder's worker spawns so their skipPermissions request is honored
+        // instead of clamped. The role tag is what lets a later config flip
+        // find this token and update the grant LIVE (fullAccessGrants sync).
         token: mintSessionFacadeToken(
           sessionId,
           facadeScope,
           opts.pluginTools,
           opts.manager ? claudeProfiles.getProfiles().map((p) => p.id) : undefined,
-          opts.manager ? !!opts.fleetFullAccess : supervisorFullAccess || undefined,
+          opts.manager ? managerFullAccessFromConfig() : supervisorFullAccess || undefined,
+          opts.manager ? 'manager' : opts.supervisor ? 'supervisor' : undefined,
         ).token,
         summarizerModel: supCfg?.summarizerModel,
         pollSeconds: supCfg?.pollSeconds,

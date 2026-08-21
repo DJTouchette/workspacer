@@ -188,6 +188,14 @@ type Record struct {
 	// judged the caller — the stamp says the request MAY be honored, it does not
 	// itself request the bypass.
 	YoloAllowed bool `json:"yoloAllowed,omitempty"`
+	// Role tags a session token with the role of the session it was minted for
+	// ("manager" | "supervisor"). Written by the desktop's mint path and read
+	// back by its grant reconciler (a config full-access flip updates exactly
+	// the manager/supervisor session tokens, live, in both directions). The Go
+	// side never acts on it — the field exists here so the CLI's Load→Save
+	// rewrites (token create/revoke) preserve it instead of silently stripping
+	// every session token's role. TWIN: RemoteTokenRecord.role (ipcTypes.ts).
+	Role string `json:"role,omitempty"`
 }
 
 // ConfigDir mirrors the desktop app's getConfigDir (configService.ts) and the

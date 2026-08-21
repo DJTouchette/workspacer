@@ -66,6 +66,14 @@ export interface ProjectIdentity {
   iconFile?: string;
   /** Pinned by the user. Absent falls back to the legacy `directories.favourites`. */
   favourite?: boolean;
+  /**
+   * Per-project full-access: workers the Fleet Manager dispatches INTO this
+   * project run with permissions bypassed. The narrower, per-repo form of
+   * agents.fleetFullAccess: when ANY project sets it, the manager's session
+   * token needs the hub-verified yolo grant (services/fullAccessGrants), and
+   * the manager bypasses only for the flagged project (doctrine-enforced).
+   */
+  yolo?: boolean;
   /** Epoch ms this project was last opened. Absent falls back to the legacy
    *  `directories.recent` ordering. */
   lastOpened?: number;
@@ -218,6 +226,15 @@ interface Config {
     defaultProvider: string;
     /** Directory the spawn dialog opens at. '' = app launch cwd. */
     defaultCwd: string;
+    /** Fleet Manager home directory ('' = derived: the configured projects'
+     *  common parent, else $HOME). */
+    fleetRoot: string;
+    /** Fleet full access: the Fleet Manager runs with permissions bypassed and
+     *  its facade token carries the yolo grant, so the workers it dispatches
+     *  may run bypassed too. Read (with per-project `yolo`) by
+     *  services/fullAccessGrants — the single grant formula the mint path and
+     *  the live reconciler share. */
+    fleetFullAccess: boolean;
     /** User-configured binary paths per provider. '' = auto-detect on PATH. */
     binaries: {
       claude: string;

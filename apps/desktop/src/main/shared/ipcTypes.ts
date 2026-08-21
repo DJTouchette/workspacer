@@ -71,6 +71,14 @@ export interface RemoteTokenRecord {
    *  spawn's skipPermissions is otherwise clamped off. Absent = no grant.
    *  TWIN: authtoken.Record.YoloAllowed. */
   yoloAllowed?: boolean;
+  /** Role of the session this token was minted for. Written at mint so the
+   *  full-access grant reconciler (services/fullAccessGrants) can find exactly
+   *  the manager/supervisor session tokens when agents.fleetFullAccess /
+   *  supervisor.fullAccess flips — the facade re-reads the record per request,
+   *  so updating yoloAllowed here applies the flip live, both directions.
+   *  Absent on plain facade workers and remote pairings.
+   *  TWIN: authtoken.Record.Role (preserved by the Go CLI's rewrites). */
+  role?: 'manager' | 'supervisor';
 }
 
 // ── Claude session snapshot (sent over claude-session:get / getAll / update) ──

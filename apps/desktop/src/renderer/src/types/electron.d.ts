@@ -135,6 +135,11 @@ export interface ElectronAPI {
     cols?: number;
     rows?: number;
     supervisor?: boolean;
+    /** Fleet Manager: nudge-eligible parent without the /supervise loop. */
+    manager?: boolean;
+    /** Manager full-access hint; the token's yolo grant is config-resolved in
+     *  main (services/fullAccessGrants), this is record fidelity only. */
+    fleetFullAccess?: boolean;
     label?: string;
     parentSessionId?: string;
     mcpItemIds?: string[];
@@ -392,6 +397,9 @@ export interface ElectronAPI {
   remoteTokensList?: () => Promise<RemoteTokenRecord[]>;
   remoteTokenGetOrCreate?: (scope: RemoteTokenScope, label?: string) => Promise<RemoteTokenRecord>;
   remoteTokenRevoke?: (token: string) => Promise<RemoteTokenRecord>;
+  /** Re-align a live manager/supervisor session token's full-access grant with
+   *  current config (used when reusing a running Fleet Manager). Desktop-only. */
+  sessionGrantReconcile?: (sessionId: string, role: 'manager' | 'supervisor') => Promise<boolean>;
   /** Persist/clear the "connect to remote server" target (client mode). Takes
    *  effect on relaunch — pair with appRelaunch(). Desktop-only. */
   setRemoteServer?: (

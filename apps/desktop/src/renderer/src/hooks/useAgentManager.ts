@@ -26,6 +26,7 @@ import { GUIDE_AGENT_NAME, buildGuideKickoff } from '../lib/guide';
 import { FLEET_MANAGER_NAME, buildManagerKickoff } from '../lib/fleetManager';
 import { markSessionTerminated, clearSessionTerminated } from '../lib/terminatedSessions';
 import { markRespawning, isRespawning, settleRespawning } from '../lib/respawnGuard';
+import { buildRespawnSpawnOptions } from '../lib/respawnOptions';
 import { requestRecentSessionsRefresh } from '../lib/watchBus';
 
 let nextId = 1;
@@ -361,6 +362,12 @@ export function useAgentManager() {
         mcpItemIds: opts.mcpItemIds,
         toolScope: opts.toolScope,
         pluginTools: opts.pluginTools,
+        // Persist the role flags so a respawn re-passes them — without these a
+        // revived manager/supervisor re-minted its facade token with NO grants
+        // (the respawn-drops-grants regression; see lib/respawnOptions.ts).
+        supervisor: opts.supervisor,
+        manager: opts.manager,
+        fleetFullAccess: opts.fleetFullAccess,
         sessionId,
         // A spawn aimed at a peer machine is a REMOTE agent from birth: tag the
         // card so pane gating / pill disabling apply before the first federated
@@ -398,39 +405,18 @@ export function useAgentManager() {
       // (remote) cwd would create a broken doppelgänger, so remote agents
       // never respawn here. Their card tombstones instead (hubOffline).
       if (agent.hub) return;
-      // Claude respawns follow the config default transport unless the agent
-      // explicitly ran stream — a recorded 'pty' is usually just the legacy
-      // default, and users who flipped their default to stream expect old
-      // chats to come back in it. Managed providers keep their transport
-      // (codex 'pty' is the native TUI, a genuinely different frontend).
-      const transport =
-        agent.provider && agent.provider !== 'claude'
-          ? agent.transport
-          : agent.transport === 'stream'
-            ? ('stream' as const)
-            : undefined;
       // Guard the whole spawn→commit window: the resumed session's first ticks
       // can land before mutateAgent commits, and an unguarded auto-adopt would
       // mint a duplicate card for them (see lib/respawnGuard.ts).
       markRespawning(resumeSessionId);
       let sessionId: string | undefined;
       try {
-        sessionId = await window.electronAPI.spawnClaude({
-          cwd: agent.cwd,
-          provider: agent.provider,
-          transport,
-          profileId: agent.profileId,
-          model: agent.model,
-          effort: agent.effort,
-          permissionMode: agent.permissionMode,
-          skipPermissions: agent.skipPermissions,
-          mcpItemIds: agent.mcpItemIds,
-          toolScope: agent.toolScope,
-          pluginTools: agent.pluginTools,
-          resumeSessionId,
-          cols: 120,
-          rows: 32,
-        });
+        // Everything the record persisted rides along — including the
+        // manager/supervisor role flags, so a revived Fleet Manager re-mints
+        // its facade token with its grants intact (lib/respawnOptions.ts).
+        sessionId = await window.electronAPI.spawnClaude(
+          buildRespawnSpawnOptions(agent, resumeSessionId),
+        );
       } catch (err) {
         console.error('[Agent] respawn failed:', err);
       }
@@ -713,6 +699,16 @@ export function useAgentManager() {
       );
       if (live?.sessionId) {
         setActiveAgentId(live.id);
+        // Reusing a running manager: re-align its facade token's full-access
+        // grant with CURRENT config before handing it the ask — the grant was
+        // minted at its original spawn and the flag may have flipped since
+        // (either direction). Main resolves the desired value from config; the
+        // config-change sync covers flips while it keeps running.
+        try {
+          await window.electronAPI.sessionGrantReconcile?.(live.sessionId, 'manager');
+        } catch (err) {
+          console.warn('[fleet-manager] token grant reconcile failed:', err);
+        }
         try {
           await window.electronAPI.claudeMessage(live.sessionId, ask.trim());
         } catch (err) {
@@ -726,7 +722,16 @@ export function useAgentManager() {
         (a) => !a.global && a.name === FLEET_MANAGER_NAME && a.lastSessionId,
       );
       if (stopped) {
-        await respawnFromRecord(stopped, stopped.lastSessionId);
+        // Heal a record from before the role flags were persisted: it IS the
+        // manager (found by its fixed name), so respawn it as one — else the
+        // revived session re-mints a bare facade token with no manager grants.
+        const record: AgentWorkspace = stopped.manager
+          ? stopped
+          : { ...stopped, manager: true, toolScope: 'operator' };
+        if (!stopped.manager) {
+          mutateAgent(stopped.id, (a) => ({ ...a, manager: true, toolScope: 'operator' }));
+        }
+        await respawnFromRecord(record, stopped.lastSessionId);
         const revived = agentsRef.current.find((a) => a.id === stopped.id);
         if (revived?.sessionId) {
           setActiveAgentId(revived.id);
@@ -756,7 +761,7 @@ export function useAgentManager() {
         kickoffMessage: buildManagerKickoff(ask, fullAccess),
       }).then((id) => id ?? undefined);
     },
-    [spawnAgent, respawnFromRecord],
+    [spawnAgent, respawnFromRecord, mutateAgent],
   );
 
   /** Adopt a live daemon session that has no workspace yet (e.g. one spawned via

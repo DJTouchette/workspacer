@@ -115,6 +115,7 @@ export const HOST_ONLY = [
   'remoteTokenGetOrCreate', // mints scoped pairing tokens on the host
   'remoteTokensList',
   'remoteTokenRevoke',
+  'sessionGrantReconcile', // re-aligns a session token's full-access grant in the host tokens.json
   'tailscaleGetInfo', // shells out to the host's tailscale CLI
   'tailscaleSetServe',
   'setRemoteServer', // rewrites this desktop's own server target, then relaunches

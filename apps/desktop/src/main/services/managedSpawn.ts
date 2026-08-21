@@ -34,6 +34,7 @@ import {
   facadeUrlWithToken,
 } from './mcpConfig';
 import { mintSessionFacadeToken } from './remoteTokens';
+import { managerFullAccessFromConfig } from './fullAccessGrants';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
 import { ensureSupervisorHome, installSupervisorSkill } from './supervisorSkill';
@@ -113,9 +114,11 @@ export interface ManagedSpawnOptions {
    *  doctrine rides its kickoff message. Callers pair it with
    *  toolScope 'operator'. */
   manager?: boolean;
-  /** Manager only: grant this manager's token full-access dispatch
-   *  (yoloAllowed) so its workers may run with permissions bypassed
-   *  (config agents.fleetFullAccess). Ignored unless `manager`. */
+  /** Manager full-access HINT from the caller. The token's actual yolo grant
+   *  is config-resolved at mint (services/fullAccessGrants — same doctrine as
+   *  supervisor.fullAccess), so this flag no longer decides anything here; it
+   *  is kept on the wire for record fidelity (the renderer persists it on the
+   *  agent card and re-passes it on respawn). */
   fleetFullAccess?: boolean;
   /** Wire the facade tools without the supervisor loop (legacy operator tier —
    *  prefer `toolScope`). */
@@ -200,6 +203,10 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   // local profile — the hub verifies it and stamps profileGranted on the
   // worker spawn. Only `manager` gets this; a plain supervisor or facade
   // worker has no business spawning as other accounts.
+  // The yolo grant is CONFIG-RESOLVED for both roles (never a caller flag —
+  // a respawn's frozen fleetFullAccess must not resurrect a revoked grant),
+  // and the role tag lets a later config flip update it LIVE. TWIN:
+  // claudeSpawn.ts mints identically on the PTY path.
   const facadeToken =
     wantsFacade && provider !== 'pi'
       ? mintSessionFacadeToken(
@@ -207,7 +214,8 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
           facadeScope,
           opts.pluginTools,
           opts.manager ? claudeProfiles.getProfiles().map((p) => p.id) : undefined,
-          opts.manager ? !!opts.fleetFullAccess : supervisorFullAccess || undefined,
+          opts.manager ? managerFullAccessFromConfig() : supervisorFullAccess || undefined,
+          opts.manager ? 'manager' : opts.supervisor ? 'supervisor' : undefined,
         ).token
       : undefined;
   // Permission-mode vocabulary differs by family: Claude keeps its full mode
