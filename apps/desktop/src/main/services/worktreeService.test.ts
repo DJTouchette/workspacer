@@ -9,6 +9,8 @@ import {
   removeAgentWorktree,
   discoverNodeModules,
   linkNodeModules,
+  resolveWorktreeSetup,
+  runWorktreeSetup,
 } from './worktreeService';
 
 // Real git, real temp repo — the service is a thin shell-out and mocking git
@@ -174,6 +176,134 @@ describe('node_modules linking', () => {
     expect(fs.existsSync(path.join(wt.path!, 'node_modules', 'mine'))).toBe(true);
     // A source with nothing to link is a silent no-op.
     expect(await linkNodeModules(repo, wt.path!)).toEqual([]);
+  });
+});
+
+describe('worktree setup commands', () => {
+  // POSIX fixtures on purpose: this suite runs on the linux CI leg only (the
+  // windows containment job pins its own three vitest files).
+  const key = (dir: string) => dir.replace(/\\/g, '/').replace(/\/+$/, '');
+
+  it('runs commands sequentially in order, with cwd = the worktree root', async () => {
+    const res = await createWorktree({
+      repoCwd: repo,
+      name: 'setup-order',
+      rootOverride: wtRoot,
+      config: {
+        projects: {
+          [key(repo)]: { worktreeSetup: ['echo one >> order.txt', 'echo two >> order.txt'] },
+        },
+      },
+    });
+    expect(res.ok).toBe(true);
+    // Both wrote to the SAME relative file → both ran in the worktree, in order.
+    expect(fs.readFileSync(path.join(res.path!, 'order.txt'), 'utf8')).toBe('one\ntwo\n');
+    expect(fs.existsSync(path.join(repo, 'order.txt'))).toBe(false);
+    expect(res.setup).toEqual({
+      ran: ['echo one >> order.txt', 'echo two >> order.txt'],
+      skipped: [],
+    });
+  });
+
+  it('substitutes $SOURCE/$WORKTREE (and ${...}) and exports them as env vars', async () => {
+    const res = await createWorktree({
+      repoCwd: repo,
+      name: 'setup-vars',
+      rootOverride: wtRoot,
+      config: {
+        projects: {
+          [key(repo)]: {
+            worktreeSetup: [
+              // Single-quoted so the strings reach the service UNexpanded — the
+              // service's own textual substitution is what's under test.
+              `echo '$SOURCE|${'$'}{WORKTREE}' > subst.txt`,
+              'printenv SOURCE > envsrc.txt && printenv WORKTREE > envwt.txt',
+            ],
+          },
+        },
+      },
+    });
+    expect(res.ok).toBe(true);
+    expect(fs.readFileSync(path.join(res.path!, 'subst.txt'), 'utf8').trim()).toBe(
+      `${repo}|${res.path}`,
+    );
+    expect(fs.readFileSync(path.join(res.path!, 'envsrc.txt'), 'utf8').trim()).toBe(repo);
+    expect(fs.readFileSync(path.join(res.path!, 'envwt.txt'), 'utf8').trim()).toBe(res.path);
+  });
+
+  it('resolves script:<name> from the project scripts, and errors on an unknown name', () => {
+    const source = {
+      projects: { [key(repo)]: { worktreeSetup: ['script:deps', 'script:nope', 'npm ci'] } },
+      scripts: { [key(repo)]: [{ name: 'deps', command: 'echo scripted' }] },
+    };
+    expect(resolveWorktreeSetup(source, [repo])).toEqual([
+      { raw: 'script:deps', command: 'echo scripted' },
+      { raw: 'script:nope', error: 'no script named "nope" for this project' },
+      { raw: 'npm ci', command: 'npm ci' },
+    ]);
+  });
+
+  it('finds the config under a trailing-slash cwd and under the repo root for a subdir cwd', () => {
+    const source = { projects: { [key(repo)]: { worktreeSetup: ['echo hi'] } } };
+    expect(resolveWorktreeSetup(source, [repo + '/'])).toHaveLength(1);
+    // The spawn cwd is a SUBDIR of the repo; the entry is keyed by the root.
+    expect(resolveWorktreeSetup(source, [path.join(repo, 'src'), repo])).toHaveLength(1);
+    expect(resolveWorktreeSetup(source, [path.join(tmp, 'other')])).toEqual([]);
+    expect(resolveWorktreeSetup(undefined, [repo])).toEqual([]);
+  });
+
+  it('stops at the first failure, reports it, and still returns an ok worktree', async () => {
+    const res = await createWorktree({
+      repoCwd: repo,
+      name: 'setup-fail',
+      rootOverride: wtRoot,
+      config: {
+        projects: {
+          [key(repo)]: { worktreeSetup: ['echo a > a.txt', 'exit 3', 'echo c > c.txt'] },
+        },
+      },
+    });
+    // Non-fatal by design: the worktree exists and the agent can still spawn.
+    expect(res.ok).toBe(true);
+    expect(fs.existsSync(path.join(res.path!, 'a.txt'))).toBe(true);
+    expect(fs.existsSync(path.join(res.path!, 'c.txt'))).toBe(false);
+    expect(res.setup).toEqual({
+      ran: ['echo a > a.txt'],
+      failed: { command: 'exit 3', error: 'exit 3' },
+      skipped: ['echo c > c.txt'],
+    });
+  });
+
+  it('an unresolvable script ref fails that step (nothing silently dropped)', async () => {
+    const report = await runWorktreeSetup(
+      resolveWorktreeSetup(
+        { projects: { [key(repo)]: { worktreeSetup: ['script:missing', 'echo x'] } } },
+        [repo],
+      ),
+      { source: repo, worktree: repo },
+    );
+    expect(report?.failed).toEqual({
+      command: 'script:missing',
+      error: 'no script named "missing" for this project',
+    });
+    expect(report?.skipped).toEqual(['echo x']);
+  });
+
+  it('times out a hung command instead of stalling the spawn', async () => {
+    const report = await runWorktreeSetup(
+      [{ raw: 'sleep 30', command: 'sleep 30' }],
+      { source: repo, worktree: repo },
+      500,
+    );
+    expect(report?.failed?.command).toBe('sleep 30');
+    expect(report?.failed?.error).toMatch(/timed out/);
+  }, 10_000);
+
+  it('is a silent no-op when nothing is configured', async () => {
+    expect(await runWorktreeSetup([], { source: repo, worktree: repo })).toBeUndefined();
+    const res = await createWorktree({ repoCwd: repo, name: 'setup-none', rootOverride: wtRoot });
+    expect(res.ok).toBe(true);
+    expect(res.setup).toBeUndefined();
   });
 });
 

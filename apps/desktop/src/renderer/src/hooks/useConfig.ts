@@ -204,6 +204,16 @@ export interface ProjectIdentity {
    * manager still only bypasses for the flagged project (doctrine-enforced).
    */
   yolo?: boolean;
+  /**
+   * Shell commands run (in order) in a fresh agent worktree of this project,
+   * right after `git worktree add` + the automatic node_modules linking. Each
+   * runs with cwd = the worktree root, `$SOURCE` (the source checkout) and
+   * `$WORKTREE` (the new worktree) substituted and exported, under a 5-minute
+   * per-command timeout. `script:<name>` references this project's `scripts`
+   * entry by name. The first failure stops the rest; a failed setup is a
+   * warning, never a refused spawn.
+   */
+  worktreeSetup?: string[];
   /** Epoch ms this project was last opened. Absent falls back to the legacy
    *  `directories.recent` ordering. */
   lastOpened?: number;

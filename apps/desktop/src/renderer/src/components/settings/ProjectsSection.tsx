@@ -372,6 +372,36 @@ const ProjectsSection: React.FC<ProjectsSectionProps> = ({ config, save }) => {
                 Full access
               </label>
             </div>
+            {/* Deterministic setup for THIS project's agent worktrees: shell
+                commands run (in order) in a fresh worktree right after `git
+                worktree add` + the automatic node_modules linking. Read in the
+                main process at worktree creation, on both spawn transports. */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 10,
+                padding: '0 0 8px 32px',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: '0.6rem',
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                  color: 'var(--wks-text-faint)',
+                  marginTop: 4,
+                }}
+              >
+                Worktree setup
+              </span>
+              <WorktreeSetupField
+                value={entry.worktreeSetup ?? []}
+                label={`Worktree setup commands for ${dir}`}
+                onCommit={(commands) => update(dir, { worktreeSetup: commands })}
+              />
+            </div>
             {/* What each plugin needs to know about THIS project. Rendered
                 under the identity row rather than in a separate page, because
                 "which Jira project is this repo" is a fact about the project,
@@ -451,6 +481,68 @@ const ProjectsSection: React.FC<ProjectsSectionProps> = ({ config, save }) => {
         );
       })}
     </Section>
+  );
+};
+
+/**
+ * The worktree-setup command list, edited as text: one command per line.
+ *
+ * Held locally while typing and committed on blur (or reverted on Escape) like
+ * IconUrlField — each commit is a config write, and per-keystroke saves would
+ * also fight the config round-trip mid-edit. Blank lines are dropped on
+ * commit; an emptied field removes the setting.
+ */
+const WorktreeSetupField: React.FC<{
+  value: string[];
+  label: string;
+  onCommit: (commands: string[]) => void;
+}> = ({ value, label, onCommit }) => {
+  const [draft, setDraft] = useState(value.join('\n'));
+  const [focused, setFocused] = useState(false);
+  // Adopt external changes (another client, a reset) only while not being edited.
+  React.useEffect(() => {
+    if (!focused) setDraft(value.join('\n'));
+  }, [value, focused]);
+
+  return (
+    <textarea
+      style={{
+        ...inputStyle,
+        flex: 1,
+        minHeight: value.length ? 44 : 26,
+        resize: 'vertical',
+        fontFamily: 'var(--wks-font-mono)',
+        lineHeight: 1.5,
+      }}
+      value={draft}
+      placeholder={
+        'one command per line — e.g.  npm ci   ·   script:build   ·   ln -s $SOURCE/.env $WORKTREE/.env'
+      }
+      spellCheck={false}
+      aria-label={label}
+      title={
+        'Run these commands, in order, inside every fresh agent worktree of this project (after git worktree add and the automatic node_modules linking). ' +
+        '$SOURCE = the source checkout, $WORKTREE = the new worktree; both are also environment variables. ' +
+        '"script:<name>" runs this project\'s script button of that name. ' +
+        'Each command gets 5 minutes; the first failure skips the rest and is logged, but the agent still spawns.'
+      }
+      onFocus={() => setFocused(true)}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        setFocused(false);
+        const commands = draft
+          .split('\n')
+          .map((l) => l.trim())
+          .filter(Boolean);
+        if (commands.join('\n') !== value.join('\n')) onCommit(commands);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          setDraft(value.join('\n'));
+          (e.target as HTMLTextAreaElement).blur();
+        }
+      }}
+    />
   );
 };
 

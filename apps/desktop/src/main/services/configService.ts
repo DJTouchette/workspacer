@@ -70,6 +70,16 @@ export interface ProjectIdentity {
    *  `directories.recent` ordering. */
   lastOpened?: number;
   /**
+   * Shell commands run (in order) in a fresh agent worktree of this project,
+   * right after `git worktree add` + the automatic node_modules linking.
+   * Each runs with cwd = the worktree root, `$SOURCE` (the source checkout)
+   * and `$WORKTREE` (the new worktree) substituted and exported, under a
+   * 5-minute per-command timeout. `script:<name>` references this project's
+   * `scripts` entry by name. The first failure stops the rest; a failed setup
+   * is surfaced as a warning, never a refused spawn (worktreeService).
+   */
+  worktreeSetup?: string[];
+  /**
    * Per-project settings belonging to plugins, namespaced by plugin id. Only
    * NON-SECRET values live here: config.yaml is credential-free by design, and
    * `config.get` is an unguarded bus capability on exactly that basis (see its

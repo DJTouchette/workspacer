@@ -379,9 +379,18 @@ export function registerHubCapabilities(): void {
           // read it loosely; absent → createWorktree uses its default root.
           rootOverride: (configService.getConfig().agents as { worktreeRoot?: string } | undefined)
             ?.worktreeRoot,
+          // Supplies projects[dir].worktreeSetup (+ scripts for script:<name>).
+          config: configService.getConfig(),
         });
         if (wt.ok && wt.path) {
           spawnCwd = wt.path;
+          if (wt.setup?.failed) {
+            // The worktree is usable; the project's setup hook is not — same
+            // fall-back-and-warn stance as worktree failure itself.
+            console.warn(
+              `[hub] agents.spawn: worktree setup "${wt.setup.failed.command}" failed (${wt.setup.failed.error}); agent starts anyway`,
+            );
+          }
         } else {
           console.warn(`[hub] agents.spawn: worktree for ${cwd} failed (${wt.error}); using cwd`);
         }

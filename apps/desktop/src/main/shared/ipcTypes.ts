@@ -490,6 +490,9 @@ export interface AppConfig {
       iconFile?: string;
       favourite?: boolean;
       lastOpened?: number;
+      /** Setup commands run in a fresh agent worktree of this project (see
+       *  configService.ProjectIdentity.worktreeSetup for full semantics). */
+      worktreeSetup?: string[];
       plugins?: Record<string, Record<string, unknown>>;
     }
   >;

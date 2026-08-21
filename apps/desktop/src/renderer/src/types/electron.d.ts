@@ -62,6 +62,13 @@ export interface WorktreeCreateResult {
   ok: boolean;
   path?: string;
   branch?: string;
+  /** Outcome of the project's configured worktreeSetup commands (absent when
+   *  none). A setup failure never fails creation — surface it as a warning. */
+  setup?: {
+    ran: string[];
+    failed?: { command: string; error: string };
+    skipped: string[];
+  };
   error?: string;
 }
 

@@ -488,6 +488,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           ((configService.getConfig() as { agents?: { worktreeRoot?: string } }).agents
             ?.worktreeRoot ||
             undefined),
+        // Supplies projects[dir].worktreeSetup (+ scripts for script:<name>).
+        config: configService.getConfig(),
       }),
   );
   ipcMain.handle(IPC.WORKTREE_REMOVE, (_event, cwd: string) =>
