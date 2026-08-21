@@ -98,6 +98,7 @@ export const HOST_ONLY = [
   'onLibraryChanged', // IPC change event; the bus has no library-change topic
   'worktreeInfo', // worktree ops shell out to git on the host
   'worktreeCreate',
+  'worktreeRemove',
   'updatesGetStatus', // in-app updates are a desktop-shell (electron-updater) concern
   'updatesCheck',
   'updatesInstall',

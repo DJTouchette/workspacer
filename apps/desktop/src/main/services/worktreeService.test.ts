@@ -3,7 +3,7 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { worktreeInfo, createWorktree } from './worktreeService';
+import { worktreeInfo, createWorktree, removeAgentWorktree } from './worktreeService';
 
 // Real git, real temp repo — the service is a thin shell-out and mocking git
 // would test nothing.
@@ -93,5 +93,45 @@ describe('createWorktree', () => {
     const res = await createWorktree({ repoCwd: repo, rootOverride: wtRoot });
     expect(res.ok).toBe(true);
     expect(res.branch).toBe('wks/agent');
+  });
+});
+
+describe('removeAgentWorktree', () => {
+  it('removes a CLEAN agent worktree but keeps its branch (committed work survives)', async () => {
+    const wt = await createWorktree({
+      repoCwd: repo,
+      name: 'teardown-clean',
+      rootOverride: wtRoot,
+    });
+    expect(wt.ok).toBe(true);
+    const res = await removeAgentWorktree({ cwd: wt.path!, rootOverride: wtRoot });
+    expect(res.ok).toBe(true);
+    expect(fs.existsSync(wt.path!)).toBe(false);
+    // The branch (where a worker's commits / PR live) is NOT deleted.
+    expect(git(['branch', '--list', wt.branch!], repo)).toContain(wt.branch!.replace('wks/', ''));
+  });
+
+  it('REFUSES a dirty worktree (uncommitted work) and leaves it in place', async () => {
+    const wt = await createWorktree({
+      repoCwd: repo,
+      name: 'teardown-dirty',
+      rootOverride: wtRoot,
+    });
+    fs.writeFileSync(path.join(wt.path!, 'scratch.txt'), 'unsaved work\n');
+    const res = await removeAgentWorktree({ cwd: wt.path!, rootOverride: wtRoot });
+    expect(res.ok).toBe(false);
+    expect(res.skipped).toBe(true);
+    expect(fs.existsSync(wt.path!)).toBe(true); // work preserved
+  });
+
+  it('NEVER touches the primary checkout (not a linked worktree)', async () => {
+    const res = await removeAgentWorktree({ cwd: repo, rootOverride: wtRoot });
+    expect(res.skipped).toBe(true);
+    expect(fs.existsSync(repo)).toBe(true);
+  });
+
+  it('skips a path outside the agent worktree root', async () => {
+    const res = await removeAgentWorktree({ cwd: repo, rootOverride: path.join(tmp, 'other') });
+    expect(res.skipped).toBe(true);
   });
 });

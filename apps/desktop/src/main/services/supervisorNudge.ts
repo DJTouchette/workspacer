@@ -16,6 +16,14 @@ import type { ClaudeSessionState } from './claudeSessionStore';
 /** How long to coalesce nudges to one supervisor before sending. */
 const COALESCE_MS = 1500;
 
+/**
+ * A worker's finish must be OLDER than this before the backstop treats a
+ * still-idle manager as having MISSED the wake — long enough that the normal
+ * onFinished path (coalesce + deliver + the manager's own response) has had
+ * every chance to land. Below it, an idle manager is just mid-handoff.
+ */
+const MISSED_WAKE_GRACE_MS = 3 * 60_000;
+
 interface PendingNudge {
   timer: NodeJS.Timeout;
   /** Session ids that blocked during this window (deduped). */
@@ -81,6 +89,66 @@ class SupervisorNudge {
     }, COALESCE_MS);
     timer.unref?.();
     this.pendingFinished.set(parentId, { timer, blocked: finished });
+  }
+
+  /**
+   * BACKSTOP for a dropped wake (the "dark manager" failure): the onFinished
+   * path is best-effort — if its message never lands, or a working→idle edge
+   * was never observed, a manager can sit idle forever while a dispatched
+   * worker has finished. Run periodically over all sessions; for each LIVE,
+   * IDLE manager, find children that have finished (idle/ended) AFTER the
+   * manager last acted and long enough ago that a normal wake would have
+   * landed, and re-nudge.
+   *
+   * The dedup is implicit and exact: the moment the manager acts on the wake it
+   * reports and its lastActivity advances PAST the child's finish, so the
+   * condition clears — no acknowledgement bookkeeping to drift. A catch-up that
+   * itself fails simply re-fires next sweep. Pure over its inputs (`now` passed
+   * in) so it is trivially testable.
+   */
+  sweepMissedFinishes(
+    sessions: Array<
+      Pick<
+        ClaudeSessionState,
+        'sessionId' | 'cwd' | 'label' | 'ambientState' | 'lastActivity' | 'parentSessionId'
+      > & { isSupervisor?: boolean; status?: string }
+    >,
+    now: number,
+  ): void {
+    const managers = sessions.filter(
+      (s) => s.isSupervisor && s.status !== 'ended' && s.ambientState === 'idle',
+    );
+    if (managers.length === 0) return;
+    for (const manager of managers) {
+      const missed = sessions.filter(
+        (c) =>
+          c.parentSessionId === manager.sessionId &&
+          c.sessionId !== manager.sessionId &&
+          (c.ambientState === 'idle' || c.status === 'ended') &&
+          // The manager has not acted since this child finished…
+          c.lastActivity > manager.lastActivity &&
+          // …and the finish is old enough that a normal wake would have landed.
+          now - c.lastActivity > MISSED_WAKE_GRACE_MS,
+      );
+      if (missed.length === 0) continue;
+      const lines = missed.map(
+        (c) => `${c.label || agentLabel(c.cwd)} (session:${c.sessionId}, cwd ${c.cwd || '?'})`,
+      );
+      void this.sendCatchUp(manager.sessionId, lines);
+    }
+  }
+
+  private async sendCatchUp(parentId: string, lines: string[]): Promise<void> {
+    const text =
+      `[fleet] Catch-up — these workers finished while you were idle and you may have ` +
+      `missed the wake: ${lines.join('; ')}. Review each (get_conversation with sinceSeq), ` +
+      `update the project brief's "## Recently", and report the outcome with session:<id> ` +
+      `references. Then STOP again.`;
+    try {
+      await claudemonSessionClient.message(parentId, text);
+    } catch {
+      /* still unreachable — the next sweep retries */
+    }
   }
 
   private async sendFinished(parentId: string, finished: Set<string>): Promise<void> {

@@ -64,3 +64,69 @@ describe('supervisorNudge.onFinished', () => {
     expect(text).toContain('…');
   });
 });
+
+describe('supervisorNudge.sweepMissedFinishes (dropped-wake backstop)', () => {
+  const GRACE = 3 * 60_000;
+  const mgr = (over = {}) =>
+    ({
+      sessionId: 'mgr',
+      isSupervisor: true,
+      status: 'active',
+      ambientState: 'idle',
+      lastActivity: 1_000,
+      ...over,
+    }) as any;
+  const child = (over = {}) =>
+    ({
+      sessionId: 'w1',
+      parentSessionId: 'mgr',
+      cwd: '/home/u/Work/alpha',
+      label: 'alpha: fix tests',
+      ambientState: 'idle',
+      lastActivity: 10_000,
+      ...over,
+    }) as any;
+
+  it('re-nudges an idle manager whose child finished after it, past the grace window', () => {
+    const now = 10_000 + GRACE + 1;
+    supervisorNudge.sweepMissedFinishes([mgr(), child()], now);
+    expect(message).toHaveBeenCalledTimes(1);
+    const [target, text] = message.mock.calls[0] as [string, string];
+    expect(target).toBe('mgr');
+    expect(text).toContain('Catch-up');
+    expect(text).toContain('session:w1');
+  });
+
+  it('does NOT nudge inside the grace window (a normal wake may still be in flight)', () => {
+    supervisorNudge.sweepMissedFinishes([mgr(), child()], 10_000 + GRACE - 1);
+    expect(message).not.toHaveBeenCalled();
+  });
+
+  it('does NOT nudge when the manager already acted after the finish (implicit dedup)', () => {
+    // Manager's lastActivity is newer than the child's finish → it handled it.
+    const now = 10_000 + GRACE + 1;
+    supervisorNudge.sweepMissedFinishes([mgr({ lastActivity: 20_000 }), child()], now);
+    expect(message).not.toHaveBeenCalled();
+  });
+
+  it('ignores a still-working child (only finished/idle-or-ended children count)', () => {
+    const now = 10_000 + GRACE + 1;
+    supervisorNudge.sweepMissedFinishes([mgr(), child({ ambientState: 'thinking' })], now);
+    expect(message).not.toHaveBeenCalled();
+  });
+
+  it('nudges for an ENDED (dead) child too', () => {
+    const now = 10_000 + GRACE + 1;
+    supervisorNudge.sweepMissedFinishes(
+      [mgr(), child({ ambientState: 'streaming', status: 'ended' })],
+      now,
+    );
+    expect(message).toHaveBeenCalledTimes(1);
+  });
+
+  it('never fires when the manager itself is busy', () => {
+    const now = 10_000 + GRACE + 1;
+    supervisorNudge.sweepMissedFinishes([mgr({ ambientState: 'thinking' }), child()], now);
+    expect(message).not.toHaveBeenCalled();
+  });
+});

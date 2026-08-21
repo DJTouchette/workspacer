@@ -855,6 +855,10 @@ export function useAgentManager() {
         /* already gone */
       }
     }
+    // Tear down a dispatched worker's disposable worktree on explicit close too
+    // (the same guarded, fail-closed removal the auto-drop does). No-op for a
+    // top-level agent in a real checkout.
+    if (agent?.cwd) void window.electronAPI.worktreeRemove?.(agent.cwd);
     // Nudge the sidebar's RECENT list: the daemon keeps the closed session as
     // a resumable Stopped row, but the 60s poll wouldn't surface it for up to
     // a minute after the mode flips.
@@ -951,7 +955,14 @@ export function useAgentManager() {
       // is just clutter the user has to dismiss. Top-level cards still tombstone
       // (they are the sessions the user actually resumes).
       const dying = prev.find((a) => a.sessionId === sessionId);
-      if (dying?.parentId) return prev.filter((a) => a.id !== dying.id);
+      if (dying?.parentId) {
+        // The worker also had a disposable worktree (ship-task isolation): tear
+        // it down now that the worker is gone. Guarded + fail-closed in main —
+        // a non-worktree cwd or a dirty tree is a no-op, and the branch (its
+        // committed work / open PR) is always kept. Fire-and-forget.
+        if (dying.cwd) void window.electronAPI.worktreeRemove?.(dying.cwd);
+        return prev.filter((a) => a.id !== dying.id);
+      }
       return prev.map((a) =>
         a.sessionId === sessionId ? { ...a, sessionId: undefined, lastSessionId: sessionId } : a,
       );

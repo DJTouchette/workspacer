@@ -490,6 +490,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     name?: string;
     rootOverride?: string;
   }): Promise<unknown> => ipcRenderer.invoke(IPC.WORKTREE_CREATE, opts),
+  /** Tear down an agent worktree (guarded: only linked trees under the worktree
+   *  root, only when clean). No-op for any other path. */
+  worktreeRemove: (cwd: string): Promise<{ ok: boolean; skipped?: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.WORKTREE_REMOVE, cwd),
 
   // ── In-app updates (electron-updater; unsupported in dev/web) ──
   updatesGetStatus: (): Promise<unknown> => ipcRenderer.invoke(IPC.UPDATES_STATUS_GET),

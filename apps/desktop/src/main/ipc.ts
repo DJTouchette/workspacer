@@ -14,7 +14,7 @@ import {
 import { sessionHistory } from './services/sessionHistory';
 import { layoutService } from './services/layoutService';
 import { updateService } from './services/updateService';
-import { worktreeInfo, createWorktree } from './services/worktreeService';
+import { worktreeInfo, createWorktree, removeAgentWorktree } from './services/worktreeService';
 import { toolsStatus } from './services/toolCheck';
 import { installCustomFont, listCustomFonts } from './lib/customFonts';
 import { claudeSessionStore } from './services/claudeSessionStore';
@@ -489,6 +489,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
             ?.worktreeRoot ||
             undefined),
       }),
+  );
+  ipcMain.handle(IPC.WORKTREE_REMOVE, (_event, cwd: string) =>
+    removeAgentWorktree({
+      cwd,
+      rootOverride:
+        (configService.getConfig() as { agents?: { worktreeRoot?: string } }).agents
+          ?.worktreeRoot || undefined,
+    }),
   );
 
   // In-app updates: status pull + manual check + restart-into-update. The

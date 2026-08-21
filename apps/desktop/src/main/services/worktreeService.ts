@@ -36,6 +36,16 @@ export interface WorktreeCreateResult {
   error?: string;
 }
 
+export interface WorktreeRemoveResult {
+  ok: boolean;
+  /** The path removed, when ok. */
+  removed?: string;
+  /** Left in place on purpose: not an agent worktree, not a linked tree, or
+   *  dirty/holding uncommitted work (git refused). Not an error to surface. */
+  skipped?: boolean;
+  error?: string;
+}
+
 function git(
   args: string[],
   cwd: string,
@@ -126,4 +136,53 @@ export async function createWorktree(opts: {
     }
   }
   return { ok: false, error: 'could not find a free worktree name (tried 3 candidates)' };
+}
+
+/**
+ * Tear down an AGENT worktree (a dispatched worker's disposable tree) when the
+ * worker is gone. Fail-closed by construction and never destructive to real
+ * work:
+ *   - only ever touches a path UNDER the agent worktree root, so a real
+ *     checkout can never be named here by accident;
+ *   - only a LINKED worktree (git-dir ≠ common-dir), never a primary checkout;
+ *   - `git worktree remove` WITHOUT --force, so git itself refuses a dirty tree
+ *     (uncommitted work is left for the user), and the BRANCH is kept — the
+ *     worker's committed work / open PR survives; only the working copy goes.
+ * A non-agent path, a non-worktree, or a dirty tree returns `skipped`, not an
+ * error.
+ */
+export async function removeAgentWorktree(opts: {
+  cwd: string;
+  rootOverride?: string;
+}): Promise<WorktreeRemoveResult> {
+  const cwd = opts.cwd;
+  if (!cwd || !fs.existsSync(cwd)) return { ok: false, skipped: true };
+  // Guard 1: must live under the agent worktree root (mirrors createWorktree).
+  const root = opts.rootOverride?.trim()
+    ? path.resolve(opts.rootOverride.trim())
+    : defaultWorktreeRoot();
+  const rel = path.relative(root, path.resolve(cwd));
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+    return { ok: false, skipped: true }; // not an agent worktree — never touch it
+  }
+  // Guard 2: must be a LINKED worktree, not the repo's primary checkout. For a
+  // linked tree the per-worktree git-dir differs from the shared common-dir;
+  // for the main tree they are equal.
+  const common = await git(['rev-parse', '--path-format=absolute', '--git-common-dir'], cwd);
+  const own = await git(['rev-parse', '--path-format=absolute', '--git-dir'], cwd);
+  if (!common.ok || !own.ok || !common.stdout || common.stdout === own.stdout) {
+    return { ok: false, skipped: true };
+  }
+  const mainRoot = path.dirname(common.stdout); // <repo>/.git → <repo>
+  const res = await git(['worktree', 'remove', cwd], mainRoot);
+  if (!res.ok) {
+    // The common refusal is "contains modified or untracked files" — leave it.
+    if (/modified|untracked|locked|dirty/i.test(res.stderr)) {
+      return { ok: false, skipped: true, error: res.stderr };
+    }
+    return { ok: false, error: res.stderr || 'git worktree remove failed' };
+  }
+  await git(['worktree', 'prune'], mainRoot);
+  console.log(`[worktree] removed agent worktree ${cwd}`);
+  return { ok: true, removed: cwd };
 }

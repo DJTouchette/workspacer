@@ -85,6 +85,8 @@ export interface ElectronAPI {
     name?: string;
     rootOverride?: string;
   }) => Promise<WorktreeCreateResult>;
+  /** Tear down an agent worktree (guarded; no-op for non-agent paths). */
+  worktreeRemove?: (cwd: string) => Promise<{ ok: boolean; skipped?: boolean; error?: string }>;
 
   // In-app updates (electron-updater)
   updatesGetStatus: () => Promise<UpdateStatus>;

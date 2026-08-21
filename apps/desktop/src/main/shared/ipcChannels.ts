@@ -17,6 +17,7 @@ export const IPC = {
   // ── Git worktrees (agent isolation) ──
   WORKTREE_INFO: 'worktree:info', // invoke: is cwd a repo (root/branch)?
   WORKTREE_CREATE: 'worktree:create', // invoke: create an agent worktree
+  WORKTREE_REMOVE: 'worktree:remove', // invoke: tear down an agent worktree (guarded)
 
   // ── In-app updates (electron-updater) ──
   UPDATES_STATUS_GET: 'updates:status-get', // invoke (renderer → main): current status

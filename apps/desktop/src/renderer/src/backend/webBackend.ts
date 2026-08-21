@@ -360,6 +360,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     worktreeInfo: () => Promise.resolve({ isRepo: false }),
     worktreeCreate: () =>
       Promise.resolve({ ok: false, error: 'not available over the hub bridge' }),
+    worktreeRemove: () => Promise.resolve({ ok: false, skipped: true }),
 
     // In-app updates are a desktop-shell concern; the web mirror has no feed.
     updatesGetStatus: () => Promise.resolve({ state: 'unsupported' as const, current: '' }),

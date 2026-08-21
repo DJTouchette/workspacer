@@ -492,6 +492,28 @@ class ClaudeSessionStore {
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
+    this.startWakeBackstop();
+  }
+
+  private wakeBackstop?: NodeJS.Timeout;
+  /**
+   * Periodic safety net for a dropped worker-finished wake: onFinished is
+   * best-effort, so a manager can go dark. Every WAKE_BACKSTOP_MS, hand the
+   * live session set to supervisorNudge, which re-nudges any idle manager whose
+   * child finished without it acting. Idempotent; unref'd so it never holds the
+   * process open.
+   */
+  private startWakeBackstop(): void {
+    if (this.wakeBackstop) return;
+    const WAKE_BACKSTOP_MS = 2 * 60_000;
+    this.wakeBackstop = setInterval(() => {
+      try {
+        supervisorNudge.sweepMissedFinishes(Array.from(this.sessions.values()), Date.now());
+      } catch {
+        /* the sweep is a best-effort backstop */
+      }
+    }, WAKE_BACKSTOP_MS);
+    this.wakeBackstop.unref?.();
   }
 
   // ── Hook event handler ──
