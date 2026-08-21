@@ -40,3 +40,15 @@ func isPermissionEscalation(mode string) bool {
 	}
 	return !busSettablePermissionModes[mode]
 }
+
+// permissionModeMeansBypass reports whether a CONFIG-CHOSEN mode means
+// "approvals off" — used to resolve claude.defaultPermissionMode into a
+// skipPermissions default for a spawn that omitted the field. Deliberately NOT
+// isPermissionEscalation: that one judges a caller's REQUEST and rightly fails
+// closed on every unknown spelling, but here failing closed means the opposite
+// direction — a garbled config value must resolve to approvals ON, so only the
+// spellings known to mean bypass count. TWIN: cmd/mcp permissionModeMeansBypass
+// and lib/permissionBypass.ts CONFIG_BYPASS_PERMISSION_MODES.
+func permissionModeMeansBypass(mode string) bool {
+	return mode == "bypassPermissions" || mode == "yolo"
+}

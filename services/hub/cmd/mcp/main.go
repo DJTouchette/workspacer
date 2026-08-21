@@ -532,8 +532,8 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	addHubTool[signalIn](b, "signal",
 		"Send a POSIX signal to an agent session, e.g. SIGINT to interrupt or SIGTERM to stop it.",
 		"claude.signal")
-	addHubTool[gateIn](b, "set_approval_gate",
-		"Turn an agent's approval gate on or off. When on, the agent pauses for permission before running tools (surfaced via list_agents / get_snapshot for you to approve).",
+	addGateTool(b, "set_approval_gate",
+		"Turn an agent's approval gate on or off — a workspacer-side hold that pauses the session's tool calls for your approval (surfaced via list_agents / get_snapshot). SEPARATE from the session's Claude permission mode: gate off does NOT stop the session's own permission prompts — only its permission mode governs those (a bypass mode never prompts). The response reports the session's current permission mode so the two are distinguishable.",
 		"claude.gate")
 	addTool[terminalInputIn](b, "terminal_input",
 		"Type raw bytes into a session's terminal (PTY) — e.g. a command followed by a carriage return (\\r), or Ctrl-C (\\u0003).",
@@ -750,6 +750,25 @@ func addSpawnTool(b *build, name, desc, method string) {
 						in.ProfileID, b.profiles)}},
 				}, nil, nil
 			}
+			// An OMITTED skipPermissions resolves to the workspacer config
+			// default (claude.skipPermissionsDefault / a bypass
+			// defaultPermissionMode) — the same default the desktop spawn dialog
+			// pre-selects; an explicit caller value always wins. Resolved HERE,
+			// before the grant clamp, and forwarded as an EXPLICIT value in every
+			// case, because the provider resolves the same default for omitted
+			// fields and the hub stamps `yoloGranted` on the facade's trusted
+			// host-token connection no matter which session is multiplexed over
+			// it — a nil left on the wire would let the provider's own default
+			// resolution escalate a session whose record was never granted.
+			// Peer-hub spawns resolve from THIS hub's config too (the caller's
+			// home); the peer still re-judges the explicit value it receives.
+			skipDefaulted := in.SkipPermissions == nil
+			skip := false
+			if skipDefaulted {
+				skip = configSkipPermissionsDefault(ctx, b.c)
+			} else {
+				skip = *in.SkipPermissions
+			}
 			// Full-access grant, enforced HERE for the SAME structural reason as
 			// the profile check above: the hub stamps `yoloGranted` for the
 			// facade's single trusted host-token connection no matter which
@@ -759,27 +778,149 @@ func addSpawnTool(b *build, name, desc, method string) {
 			// mirrors the established "remote spawns never auto-bypass approvals"
 			// clamp (the brain's spawn handler, hubCapabilities.ts), so an
 			// ungranted worker starts with approvals on instead of failing. When
-			// granted, skipPermissions rides through untouched → the hub stamps
+			// granted, the resolved skip rides through → the hub stamps
 			// yoloGranted → the provider honors it. (spawnAgentIn's only bypass
 			// surface is SkipPermissions; there is no permissionMode field to
 			// scrub.) Silent to the CALLER, but not to the operator: a dropped
 			// bypass used to be undiagnosable (the worker just started with
 			// approvals on), so the strip is logged with the calling token's
 			// label — session tokens are "session:<id>", naming the session
-			// whose grant was missing.
+			// whose grant was missing. A config-defaulted bypass is clamped by
+			// the SAME gate (its own log spelling): the operator's default never
+			// escalates an ungranted token.
 			if !b.yolo {
-				if in.SkipPermissions {
-					log.Printf("spawn_agent: skipPermissions requested without the full-access grant — clamped (token %s, new agent %q)",
-						tokenLabelFrom(ctx), in.Label)
+				if skip {
+					source := "requested"
+					if skipDefaulted {
+						source = "config-defaulted (claude.skipPermissionsDefault / defaultPermissionMode)"
+					}
+					log.Printf("spawn_agent: %s skipPermissions without the full-access grant — clamped (token %s, new agent %q)",
+						source, tokenLabelFrom(ctx), in.Label)
 				}
-				in.SkipPermissions = false
+				skip = false
 			}
+			in.SkipPermissions = &skip
 			m := method
 			if peer := in.takeHub(); peer != "" {
 				m = "hub:" + peer + "/" + method
 			}
 			return forward(ctx, b.c, m, in)
 		})
+}
+
+// addGateTool is addHubTool specialized to set_approval_gate, because the gate
+// is chronically mistaken for the Claude permission mode: callers flip the gate
+// off, get {"ok":true}, and the session keeps prompting — per its permission
+// mode, which the gate never touches. The behavior is unchanged (the two ARE
+// separate concepts); the RESPONSE is made informative instead: the provider's
+// result is enriched with the session's current permission mode (best-effort,
+// from sessions.snapshot) and a note stating the distinction, so "ok but still
+// prompting" stops reading as a bug.
+func addGateTool(b *build, name, desc, method string) {
+	if !b.allowed(method) {
+		return
+	}
+	b.tools = append(b.tools, toolInfo{Name: name, Desc: desc, Method: method, Group: b.group})
+	mcp.AddTool(b.s, &mcp.Tool{Name: name, Description: desc},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in gateIn) (*mcp.CallToolResult, any, error) {
+			m, snapMethod := method, "sessions.snapshot"
+			if peer := in.takeHub(); peer != "" {
+				m = "hub:" + peer + "/" + method
+				snapMethod = "hub:" + peer + "/" + snapMethod
+			}
+			res, err := b.c.Call(ctx, m, in)
+			if err != nil {
+				return &mcp.CallToolResult{
+					IsError: true,
+					Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}},
+				}, nil, nil
+			}
+			// Keep the provider's own fields (ok/session_id/gate_enabled — the
+			// existing response convention) and graft the mode info on top.
+			out := map[string]any{}
+			if json.Unmarshal(res, &out) != nil || out == nil {
+				out = map[string]any{"ok": true}
+			}
+			mode := sessionPermissionMode(ctx, b.c, snapMethod, in.SessionID)
+			if mode == "" {
+				mode = "unknown"
+			}
+			out["permissionMode"] = mode
+			if in.On {
+				out["note"] = "gate on: tool calls now pause for your approval. The gate is separate from the session's Claude permission mode (currently " + mode + ")."
+			} else {
+				out["note"] = "gate off: workspacer no longer holds tool calls, but the session still prompts per its Claude permission mode (currently " + mode + ") — the gate and the permission mode are separate; only a bypass permission mode stops prompting."
+			}
+			enriched, merr := json.Marshal(out)
+			if merr != nil {
+				enriched = res
+			}
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: string(enriched)}},
+			}, nil, nil
+		})
+}
+
+// sessionPermissionMode fetches a session's current Claude permission mode from
+// its snapshot, best-effort ("" when unavailable). The snapshot shape differs by
+// provider (desktop live store vs brain/claudemon passthrough), so the known
+// spellings are probed rather than typed: livePermissionMode (hook telemetry,
+// the freshest), then the spawn-time settings, then flat permissionMode keys.
+func sessionPermissionMode(ctx context.Context, c *busclient.Client, method, sessionID string) string {
+	raw, err := c.Call(ctx, method, map[string]string{"sessionId": sessionID})
+	if err != nil {
+		return ""
+	}
+	var snap map[string]any
+	if json.Unmarshal(raw, &snap) != nil {
+		return ""
+	}
+	for _, k := range []string{"livePermissionMode", "permissionMode", "permission_mode"} {
+		if v, _ := snap[k].(string); v != "" {
+			return v
+		}
+	}
+	if settings, _ := snap["settings"].(map[string]any); settings != nil {
+		if v, _ := settings["permissionMode"].(string); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// configSkipPermissionsDefault resolves what a spawn_agent call that OMITTED
+// skipPermissions is asking for: the workspacer config default the desktop
+// spawn dialog pre-selects — claude.skipPermissionsDefault, or a
+// claude.defaultPermissionMode that means bypass. Read through the hub's
+// config.get so the facade and the provider can't disagree about the config.
+// Fail closed: an unreachable or garbled config resolves to false (approvals
+// on). The result still passes the grant clamp in addSpawnTool; this only
+// answers "what is the default", never "may this session have it".
+func configSkipPermissionsDefault(ctx context.Context, c *busclient.Client) bool {
+	raw, err := c.Call(ctx, "config.get", nil)
+	if err != nil {
+		return false
+	}
+	var cfg struct {
+		Claude struct {
+			SkipPermissionsDefault bool   `json:"skipPermissionsDefault"`
+			DefaultPermissionMode  string `json:"defaultPermissionMode"`
+		} `json:"claude"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return false
+	}
+	return cfg.Claude.SkipPermissionsDefault || permissionModeMeansBypass(cfg.Claude.DefaultPermissionMode)
+}
+
+// permissionModeMeansBypass reports whether a CONFIG-CHOSEN permission mode
+// means "approvals off". Only the spellings known to mean bypass count — a
+// garbled config value must resolve to approvals ON, the opposite fail-closed
+// direction from a request clamp's allowlist. TWIN: cmd/brain
+// permissionModeMeansBypass and lib/permissionBypass.ts
+// CONFIG_BYPASS_PERMISSION_MODES.
+func permissionModeMeansBypass(mode string) bool {
+	return mode == "bypassPermissions" || mode == "yolo"
 }
 
 // addObjectTool registers a tool whose entire arguments object is forwarded
@@ -892,7 +1033,7 @@ type spawnAgentIn struct {
 	Model           string   `json:"model,omitempty" jsonschema:"model id to use, e.g. claude-opus-4-8 (optional; provider-specific)"`
 	Effort          string   `json:"effort,omitempty" jsonschema:"reasoning-effort level: low, medium, high, xhigh, or max (claude/codex)"`
 	ProfileID       string   `json:"profileId,omitempty" jsonschema:"workspacer Claude profile id to dispatch under (optional; refused unless your session token's profilesAllowed grant lists this exact id — see list_profiles for ids)"`
-	SkipPermissions bool     `json:"skipPermissions,omitempty" jsonschema:"start the agent with --dangerously-skip-permissions (honored only when your session's token carries the full-access grant — the hub verifies and stamps it; ungranted requests spawn with approvals on, and remote/federated peer spawns are re-judged by the peer's own hub)"`
+	SkipPermissions *bool    `json:"skipPermissions,omitempty" jsonschema:"start the agent with --dangerously-skip-permissions; omit to use the workspacer config default (claude.skipPermissionsDefault / a bypass defaultPermissionMode), an explicit true/false always wins. Honored — whether requested or config-defaulted — only when your session's token carries the full-access grant (the hub verifies and stamps it; ungranted requests spawn with approvals on, and remote/federated peer spawns are re-judged by the peer's own hub)"`
 	Label           string   `json:"label,omitempty" jsonschema:"a short human label for the new agent, shown as its name in the UI"`
 	ParentSessionId string   `json:"parentSessionId,omitempty" jsonschema:"the spawning agent's own session id; set this so the new agent appears nested under you in the UI"`
 	MCPFacade       bool     `json:"mcpFacade,omitempty" jsonschema:"legacy: give the new agent the FULL workspacer tool set (operator tier); prefer toolScope"`

@@ -19,7 +19,11 @@ import { byteCompare } from '../lib/providerParity';
 import { resolveTerminalShell } from '../lib/shellAllowlist';
 import { normalizeSpawnCwd } from '../lib/spawnCwd';
 import { createWorktree } from './worktreeService';
-import { assertNoPermissionBypass, isPermissionEscalation } from '../lib/permissionBypass';
+import {
+  assertNoPermissionBypass,
+  isPermissionEscalation,
+  permissionModeMeansBypass,
+} from '../lib/permissionBypass';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
 import { registerCapability, callHub, emitToRenderer } from './hubClient';
@@ -331,13 +335,30 @@ export function registerHubCapabilities(): void {
     // and `claude.setPermissionMode` reached the same escalation on an already
     // running agent with no clamp at all — see lib/permissionBypass.ts, now the
     // single vocabulary both doors consult.
+    // An OMITTED skipPermissions resolves to the config default the spawn
+    // dialog pre-selects (claude.skipPermissionsDefault, or a bypass
+    // defaultPermissionMode); an explicit caller value — true or false — always
+    // wins. Resolved BEFORE the clamp below so a config-defaulted bypass passes
+    // the SAME grant gate as an explicit request: without the hub-stamped
+    // yoloGranted it is clamped identically — the operator's default never
+    // escalates an ungranted token.
+    const claudeCfg = configService.getConfig().claude;
+    const skipDefaulted = reqSkip === undefined;
+    const wantSkip = skipDefaulted
+      ? claudeCfg?.skipPermissionsDefault === true ||
+        permissionModeMeansBypass(claudeCfg?.defaultPermissionMode)
+      : !!reqSkip;
     const yoloOK = yoloGranted === true;
-    if (!yoloOK && (reqSkip || isPermissionEscalation(reqMode))) {
+    if (!yoloOK && (wantSkip || isPermissionEscalation(reqMode))) {
       console.warn(
-        '[hub] agents.spawn: ignoring permission bypass from a bus client — remote spawns never auto-bypass approvals without a hub-verified full-access grant.',
+        `[hub] agents.spawn: ignoring permission bypass ${
+          skipDefaulted && wantSkip
+            ? 'resolved from the config default (claude.skipPermissionsDefault / defaultPermissionMode)'
+            : 'from a bus client'
+        } — remote spawns never auto-bypass approvals without a hub-verified full-access grant.`,
       );
     }
-    const skipPermissions = yoloOK ? !!reqSkip : false;
+    const skipPermissions = yoloOK ? wantSkip : false;
     // …and the same clamp on `mcpItemIds`, for the same reason and with a
     // sharper edge. A library item of kind `mcp` carries a `command`, `args` and
     // `env` verbatim into a `--mcp-config` file, and the spawn then passes
@@ -430,7 +451,7 @@ export function registerHubCapabilities(): void {
     // Claude on the 'stream' transport is managed too (claudemon's headless
     // stream-json adapter, no PTY) — same shared dispatch as the IPC path so
     // the two spawn transports can't drift (standing project rule).
-    const transport = reqTransport ?? configService.getConfig().claude?.transport ?? 'pty';
+    const transport = reqTransport ?? claudeCfg?.transport ?? 'pty';
     if (transport === 'stream') {
       const sessionId = await spawnManagedAgent({
         provider: 'claude',

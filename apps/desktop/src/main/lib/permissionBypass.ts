@@ -65,6 +65,27 @@ export function isPermissionEscalation(mode: string | undefined | null): boolean
 }
 
 /**
+ * The config spellings of "approvals off" — used to resolve
+ * claude.defaultPermissionMode into a skipPermissions default when a spawn
+ * omits the field. Deliberately NOT the complement of
+ * BUS_SETTABLE_PERMISSION_MODES: that allowlist judges a caller's REQUEST and
+ * fails closed by refusing every unknown spelling, while here failing closed
+ * points the other way — a garbled config value must resolve to approvals ON,
+ * so only spellings known to mean bypass count. TWIN: permissionModeMeansBypass
+ * in the brain (cmd/brain/permissionmode.go) and the MCP facade
+ * (cmd/mcp/main.go).
+ */
+export const CONFIG_BYPASS_PERMISSION_MODES: ReadonlySet<string> = new Set([
+  'bypassPermissions',
+  'yolo',
+]);
+
+/** True when a CONFIG-CHOSEN default permission mode means "approvals off". */
+export function permissionModeMeansBypass(mode: string | undefined | null): boolean {
+  return !!mode && CONFIG_BYPASS_PERMISSION_MODES.has(mode);
+}
+
+/**
  * Throw unless `mode` is one a bus caller may set on a live session. Returns the
  * mode so the call site can use the CHECKED value rather than re-reading the
  * caller's variable — the same check-path/used-path rule assertPathAllowed

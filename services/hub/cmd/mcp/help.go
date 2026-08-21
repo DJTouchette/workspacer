@@ -52,6 +52,11 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
   tier that works: toolScope "view" for summarizer/reader workers, "triage" to
   also approve/reply/interrupt, "operator" for everything (spawning included).
   mcpFacade:true is the legacy spelling of operator.
+- skipPermissions omitted = the workspacer config default (the same one the
+  desktop spawn dialog pre-selects: claude.skipPermissionsDefault, or a bypass
+  defaultPermissionMode); an explicit true/false always wins. Requested or
+  defaulted, a bypass is honored only when your session token carries the
+  full-access grant — ungranted spawns start with approvals on.
 - Drive it afterwards with send_message; watch it with get_conversation.
 - To spawn on a federated peer machine, pass hub (a hub name seen on
   list_agents rows). The peer clamps remote spawns itself — permission bypass
@@ -62,7 +67,10 @@ approve resolves a pending permission prompt (yes/no/always — "always" persist
 a standing allow, so use it deliberately). answer resolves an AskUserQuestion
 picker. signal sends SIGINT (interrupt) / SIGTERM (stop). set_approval_gate
 parks every tool call for approval — useful before letting an agent continue
-unattended. terminal_input types raw bytes into a PTY session (shells from
+unattended. The gate is a workspacer-side hold, SEPARATE from the session's
+Claude permission mode: gate off does not stop the session's own permission
+prompts (only its permission mode governs those; the gate response reports the
+current mode). terminal_input types raw bytes into a PTY session (shells from
 create_terminal); prefer send_message for agents. For a session on a federated
 peer (its list_agents row has a "hub" field), pass that hub value on
 send_message / approve / answer / signal / set_approval_gate.`),

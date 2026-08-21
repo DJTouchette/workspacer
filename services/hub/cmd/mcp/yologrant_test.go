@@ -121,7 +121,7 @@ func TestSpawnAgentClampLogsTheStrip(t *testing.T) {
 		"cwd": "/tmp", "skipPermissions": true, "label": "worker-1",
 	})
 	out := buf.String()
-	if !strings.Contains(out, "skipPermissions requested without the full-access grant") ||
+	if !strings.Contains(out, "requested skipPermissions without the full-access grant") ||
 		!strings.Contains(out, `"worker-1"`) || !strings.Contains(out, "untokened") {
 		t.Fatalf("stripped bypass must be logged with token + agent label, got:\n%s", out)
 	}
