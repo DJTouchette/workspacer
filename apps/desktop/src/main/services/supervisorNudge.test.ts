@@ -13,6 +13,7 @@ vi.mock('./claudemonSessionClient', () => ({
 
 import { supervisorNudge } from './supervisorNudge';
 import type { ClaudeSessionState } from './claudeSessionStore';
+import { parseFleetMessage } from '../shared/fleetMessages';
 
 const worker = (over: Partial<ClaudeSessionState> = {}): ClaudeSessionState =>
   ({
@@ -40,6 +41,18 @@ describe('supervisorNudge.onFinished', () => {
     expect(text).toContain('session:w1');
     expect(text).toContain('All 42 tests pass. Done.'); // flattened, not truncated
     expect(text).toContain('brief.md');
+    // The wake must stay recognizable to the GUI's card renderer.
+    expect(parseFleetMessage(text)).toEqual({
+      kind: 'worker-finished',
+      entries: [
+        {
+          label: 'alpha: fix tests',
+          sessionId: 'w1',
+          cwd: '/home/u/Work/alpha',
+          lastReply: 'All 42 tests pass. Done.',
+        },
+      ],
+    });
   });
 
   it('coalesces a burst of finishes into ONE wake per parent', async () => {
@@ -62,6 +75,22 @@ describe('supervisorNudge.onFinished', () => {
     const [, text] = message.mock.calls[0] as [string, string];
     expect(text.length).toBeLessThan(1200);
     expect(text).toContain('…');
+  });
+});
+
+describe('supervisorNudge.onBlock', () => {
+  it('broadcasts a parseable [supervisor] wake, never to the blocked agent itself', async () => {
+    supervisorNudge.onBlock(worker(), 'approval', ['sup', 'w1']);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(message).toHaveBeenCalledTimes(1);
+    const [target, text] = message.mock.calls[0] as [string, string];
+    expect(target).toBe('sup');
+    expect(text).toContain('[supervisor]');
+    expect(text).toContain('/supervise');
+    expect(parseFleetMessage(text)).toEqual({
+      kind: 'blocked',
+      entries: [{ label: 'alpha: fix tests', sessionId: 'w1', blockedOn: 'approval' }],
+    });
   });
 });
 
@@ -95,6 +124,7 @@ describe('supervisorNudge.sweepMissedFinishes (dropped-wake backstop)', () => {
     expect(target).toBe('mgr');
     expect(text).toContain('Catch-up');
     expect(text).toContain('session:w1');
+    expect(parseFleetMessage(text)?.kind).toBe('catch-up');
   });
 
   it('does NOT nudge inside the grace window (a normal wake may still be in flight)', () => {

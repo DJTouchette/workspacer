@@ -12,6 +12,7 @@
 
 import { claudemonSessionClient } from './claudemonSessionClient';
 import type { ClaudeSessionState } from './claudeSessionStore';
+import { buildFleetMessage, excerptReply, type FleetMessageEntry } from '../shared/fleetMessages';
 
 /** How long to coalesce nudges to one supervisor before sending. */
 const COALESCE_MS = 1500;
@@ -26,8 +27,10 @@ const MISSED_WAKE_GRACE_MS = 3 * 60_000;
 
 interface PendingNudge {
   timer: NodeJS.Timeout;
-  /** Session ids that blocked during this window (deduped). */
-  blocked: Set<string>;
+  /** Entries accumulated during this window, deduped by worker session id.
+   *  Structured (not preformatted text) so the wake goes out through the
+   *  shared fleetMessages builder — the format the GUI's card parser pins. */
+  entries: Map<string, FleetMessageEntry>;
 }
 
 class SupervisorNudge {
@@ -46,20 +49,24 @@ class SupervisorNudge {
     const supervisors = supervisorIds.filter((id) => id !== session.sessionId);
     if (supervisors.length === 0) return; // no supervisor → optional, nothing to do
 
-    const label = session.label || agentLabel(session.cwd);
+    const blockedEntry: FleetMessageEntry = {
+      label: session.label || agentLabel(session.cwd),
+      sessionId: session.sessionId,
+      blockedOn: kind,
+    };
     for (const supId of supervisors) {
       const entry = this.pending.get(supId);
       if (entry) {
-        entry.blocked.add(`${label} (session:${session.sessionId}, ${kind})`);
+        entry.entries.set(session.sessionId, blockedEntry);
         continue;
       }
-      const blocked = new Set<string>([`${label} (session:${session.sessionId}, ${kind})`]);
+      const entries = new Map([[session.sessionId, blockedEntry]]);
       const timer = setTimeout(() => {
         this.pending.delete(supId);
-        void this.send(supId, blocked);
+        void this.send(supId, entries);
       }, COALESCE_MS);
       timer.unref?.();
-      this.pending.set(supId, { timer, blocked });
+      this.pending.set(supId, { timer, entries });
     }
   }
 
@@ -74,21 +81,24 @@ class SupervisorNudge {
    */
   onFinished(session: ClaudeSessionState, parentId: string, lastReply: string): void {
     if (parentId === session.sessionId) return;
-    const label = session.label || agentLabel(session.cwd);
-    const tail = lastReply ? ` — last reply: ${truncateReply(lastReply)}` : '';
-    const line = `${label} (session:${session.sessionId}, cwd ${session.cwd || '?'})${tail}`;
+    const finishedEntry: FleetMessageEntry = {
+      label: session.label || agentLabel(session.cwd),
+      sessionId: session.sessionId,
+      cwd: session.cwd || '?',
+      ...(lastReply ? { lastReply: excerptReply(lastReply) } : {}),
+    };
     const entry = this.pendingFinished.get(parentId);
     if (entry) {
-      entry.blocked.add(line);
+      entry.entries.set(session.sessionId, finishedEntry);
       return;
     }
-    const finished = new Set<string>([line]);
+    const entries = new Map([[session.sessionId, finishedEntry]]);
     const timer = setTimeout(() => {
       this.pendingFinished.delete(parentId);
-      void this.sendFinished(parentId, finished);
+      void this.sendFinished(parentId, entries);
     }, COALESCE_MS);
     timer.unref?.();
-    this.pendingFinished.set(parentId, { timer, blocked: finished });
+    this.pendingFinished.set(parentId, { timer, entries });
   }
 
   /**
@@ -131,34 +141,28 @@ class SupervisorNudge {
           now - c.lastActivity > MISSED_WAKE_GRACE_MS,
       );
       if (missed.length === 0) continue;
-      const lines = missed.map(
-        (c) => `${c.label || agentLabel(c.cwd)} (session:${c.sessionId}, cwd ${c.cwd || '?'})`,
-      );
-      void this.sendCatchUp(manager.sessionId, lines);
+      const entries = missed.map((c): FleetMessageEntry => ({
+        label: c.label || agentLabel(c.cwd),
+        sessionId: c.sessionId,
+        cwd: c.cwd || '?',
+      }));
+      void this.sendCatchUp(manager.sessionId, entries);
     }
   }
 
-  private async sendCatchUp(parentId: string, lines: string[]): Promise<void> {
-    const text =
-      `[fleet] Catch-up — these workers finished while you were idle and you may have ` +
-      `missed the wake: ${lines.join('; ')}. Review each (get_conversation with sinceSeq), ` +
-      `update the project brief's "## Recently", and report the outcome with session:<id> ` +
-      `references. Then STOP again.`;
+  private async sendCatchUp(parentId: string, entries: FleetMessageEntry[]): Promise<void> {
     try {
-      await claudemonSessionClient.message(parentId, text);
+      await claudemonSessionClient.message(parentId, buildFleetMessage('catch-up', entries));
     } catch {
       /* still unreachable — the next sweep retries */
     }
   }
 
-  private async sendFinished(parentId: string, finished: Set<string>): Promise<void> {
-    const list = Array.from(finished).join('; ');
-    const text =
-      `[fleet] Worker finished: ${list}. ` +
-      `Review the result (get_conversation with sinceSeq for detail), append one line to that ` +
-      `project's .workspacer/brief.md "## Recently" (and adjust "## Now"), then report the ` +
-      `outcome briefly with session:<id> references. If it was not one of your dispatches, ` +
-      `a one-line acknowledgement is enough.`;
+  private async sendFinished(
+    parentId: string,
+    entries: Map<string, FleetMessageEntry>,
+  ): Promise<void> {
+    const text = buildFleetMessage('worker-finished', Array.from(entries.values()));
     try {
       await claudemonSessionClient.message(parentId, text);
     } catch {
@@ -166,11 +170,8 @@ class SupervisorNudge {
     }
   }
 
-  private async send(supervisorId: string, blocked: Set<string>): Promise<void> {
-    const list = Array.from(blocked).join('; ');
-    const text =
-      `[supervisor] An agent is now blocked on a decision: ${list}. ` +
-      `Run a /supervise pass: gather the context and notify me with a recommendation.`;
+  private async send(supervisorId: string, entries: Map<string, FleetMessageEntry>): Promise<void> {
+    const text = buildFleetMessage('blocked', Array.from(entries.values()));
     try {
       // claudemon's /message queues while the supervisor is busy (or a dialog
       // is up) and delivers once its prompt settles — no raw-PTY fallback
@@ -181,12 +182,6 @@ class SupervisorNudge {
       /* the supervisor may have just ended — best-effort */
     }
   }
-}
-
-/** Keep the wake message readable: one flattened, capped excerpt. */
-function truncateReply(reply: string): string {
-  const flat = reply.replace(/\s+/g, ' ').trim();
-  return flat.length > 400 ? `${flat.slice(0, 400)}…` : flat;
 }
 
 /** Basename of the working directory, as a fallback agent label. */
