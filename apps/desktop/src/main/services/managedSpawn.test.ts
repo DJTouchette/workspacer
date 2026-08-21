@@ -81,7 +81,11 @@ vi.mock('./claudemonDaemon', () => ({
   claudeSettingsOverlayEnabled: () => false,
 }));
 
-vi.mock('./supervisorSkill', () => ({ ensureSupervisorHome: vi.fn(() => '/home/super') }));
+vi.mock('./supervisorSkill', () => ({
+  ensureSupervisorHome: vi.fn(() => '/home/super'),
+  installSupervisorSkill: vi.fn(),
+}));
+vi.mock('./managerSkills', () => ({ installManagerSkills: vi.fn() }));
 vi.mock('./systemNotice', () => ({ notifySystem: vi.fn() }));
 
 const { spawnManagedAgent } = await import('./managedSpawn');

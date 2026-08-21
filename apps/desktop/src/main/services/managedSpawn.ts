@@ -37,6 +37,7 @@ import { mintSessionFacadeToken } from './remoteTokens';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
 import { ensureSupervisorHome, installSupervisorSkill } from './supervisorSkill';
+import { installManagerSkills } from './managerSkills';
 import { notifySystem } from './systemNotice';
 import { normalizeSpawnCwd } from '../lib/spawnCwd';
 
@@ -246,6 +247,11 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   // never did, so a stream-transport supervisor got role text but no skill.
   if (isClaudeStream && opts.supervisor) {
     installSupervisorSkill();
+  }
+  // The Fleet Manager gets its own invocable skills (/bearings, /stow) — the
+  // considered counterpart to its reactive brief doctrine. Claude only.
+  if (isClaudeStream && opts.manager) {
+    installManagerSkills();
   }
   // Claude stream + facade: the per-session config file (token as an
   // Authorization header — a file path on argv, never the token itself, since

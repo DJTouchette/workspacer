@@ -33,6 +33,7 @@ import { facadeSpawnArgs, buildSessionMcpConfig } from './mcpConfig';
 import { libraryService } from './libraryService';
 import { configService } from './configService';
 import { installSupervisorSkill, ensureSupervisorHome } from './supervisorSkill';
+import { installManagerSkills } from './managerSkills';
 import { mintSessionFacadeToken } from './remoteTokens';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 
@@ -184,6 +185,11 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   if (opts.supervisor) {
     installSupervisorSkill();
     if (!model) model = supCfg?.model || undefined;
+  }
+  // The Fleet Manager's invocable skills (/bearings, /stow) — parity with the
+  // stream path (managedSpawn), where the manager normally runs.
+  if (opts.manager) {
+    installManagerSkills();
   }
 
   const argv = buildClaudeArgv({

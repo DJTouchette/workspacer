@@ -106,6 +106,9 @@ describe('spawnFleetManager', () => {
     expect(kickoff).toContain('projects[<dir>].delivery');
     // Per-project yolo autonomy.
     expect(kickoff).toContain('projects[<dir>].yolo');
+    // The invocable skills the manager is told it has.
+    expect(kickoff).toContain('/bearings');
+    expect(kickoff).toContain('/stow');
     hook.unmount();
   });
 

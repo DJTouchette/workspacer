@@ -69,6 +69,7 @@ vi.mock('./supervisorSkill', () => ({
   installSupervisorSkill: (...a: unknown[]) => installSupervisorSkill(...a),
   ensureSupervisorHome: (...a: unknown[]) => ensureSupervisorHome(...a),
 }));
+vi.mock('./managerSkills', () => ({ installManagerSkills: vi.fn() }));
 
 const buildSessionMcpConfig = vi.fn();
 const facadeSpawnArgs = vi.fn(() => ({
