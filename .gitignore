@@ -1,5 +1,8 @@
-# Dependencies & build output (match at any depth across the monorepo)
-node_modules/
+# Dependencies & build output (match at any depth across the monorepo).
+# node_modules deliberately has NO trailing slash: agent worktrees get their
+# node_modules as a SYMLINK to the source checkout's, and a dir-only pattern
+# (`node_modules/`) would not match a symlink, leaving it untracked.
+node_modules
 dist/
 release/
 *.js.map

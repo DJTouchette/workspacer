@@ -77,6 +77,91 @@ export async function worktreeInfo(cwd: string): Promise<WorktreeInfo> {
   return { isRepo: true, root: top.stdout, branch: name || undefined };
 }
 
+/**
+ * Relative paths (posix-joined with path.join, so platform separators) of
+ * `node_modules` directories in `srcRoot` whose parent sits at depth ≤ 2
+ * (`node_modules`, `<a>/node_modules`, `<a>/<b>/node_modules`). Never descends
+ * into `node_modules` itself or dot-directories. Never throws.
+ */
+export async function discoverNodeModules(srcRoot: string): Promise<string[]> {
+  const subdirs = async (dir: string): Promise<string[]> => {
+    try {
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+      return entries
+        .filter((e) => e.isDirectory() && e.name !== 'node_modules' && !e.name.startsWith('.'))
+        .map((e) => e.name);
+    } catch {
+      return [];
+    }
+  };
+  const parents: string[] = [''];
+  for (const a of await subdirs(srcRoot)) {
+    parents.push(a);
+    for (const b of await subdirs(path.join(srcRoot, a))) parents.push(path.join(a, b));
+  }
+  const found: string[] = [];
+  for (const parent of parents) {
+    const rel = path.join(parent, 'node_modules');
+    try {
+      const st = await fs.promises.stat(path.join(srcRoot, rel));
+      if (st.isDirectory()) found.push(rel);
+    } catch {
+      /* absent — skip */
+    }
+  }
+  return found;
+}
+
+/**
+ * Best-effort: symlink the source checkout's node_modules dirs (depth ≤ 2)
+ * into a fresh worktree so agents come up with dependencies installed instead
+ * of an `npm install`-less tree. Fail-safe on tree cleanliness: a link is kept
+ * only if git ignores it IN THE WORKTREE — an untracked entry would both dirty
+ * the tree and make `git worktree remove` refuse at teardown. (Note the
+ * classic gotcha: a dir-only pattern like `node_modules/` does NOT match a
+ * symlink; such links are rolled back here.) Returns the relative paths
+ * linked. Never throws.
+ */
+export async function linkNodeModules(srcRoot: string, wtPath: string): Promise<string[]> {
+  const linked: string[] = [];
+  for (const rel of await discoverNodeModules(srcRoot)) {
+    const linkPath = path.join(wtPath, rel);
+    try {
+      // Skip if anything already occupies the path (e.g. a committed dir).
+      if (fs.existsSync(linkPath) || (await lexists(linkPath))) continue;
+      // Parent must already exist in the worktree (it's a tracked dir in any
+      // repo where this rel exists in HEAD); don't mkdir into a clean tree.
+      if (!fs.existsSync(path.dirname(linkPath))) continue;
+      const target = path.join(srcRoot, rel);
+      // 'junction' only matters on Windows (no-op elsewhere): dir links
+      // without elevation; target is already absolute as junctions require.
+      await fs.promises.symlink(target, linkPath, 'junction');
+      const ignored = await git(['check-ignore', '-q', rel.split(path.sep).join('/')], wtPath);
+      if (!ignored.ok) {
+        // Not gitignored → would show untracked and block teardown; undo.
+        await fs.promises.unlink(linkPath).catch(() => {});
+        console.log(`[worktree] not linking ${rel}: not gitignored in worktree`);
+        continue;
+      }
+      console.log(`[worktree] linked ${rel} -> ${target}`);
+      linked.push(rel);
+    } catch (err) {
+      console.log(`[worktree] link ${rel} failed: ${(err as Error).message}`);
+    }
+  }
+  return linked;
+}
+
+/** Does the path exist as a directory entry (including a dangling symlink)? */
+async function lexists(p: string): Promise<boolean> {
+  try {
+    await fs.promises.lstat(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Filesystem/branch-safe slug from an agent name. */
 function slugify(name: string): string {
   const s = name
@@ -128,6 +213,8 @@ export async function createWorktree(opts: {
     const res = await git(['worktree', 'add', '-b', branch, wtPath], info.root);
     if (res.ok) {
       console.log(`[worktree] created ${wtPath} (${branch}) from ${info.root}`);
+      // Give the agent working deps without an install step; best-effort.
+      await linkNodeModules(info.root, wtPath);
       return { ok: true, path: wtPath, branch };
     }
     // Branch collision → retry with a suffix; anything else is terminal.
