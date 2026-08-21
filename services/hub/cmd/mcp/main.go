@@ -484,8 +484,8 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	addHubTool[transcriptIn](b, "get_transcript",
 		"Fetch a session's transcript so you can see the context behind a pending approval or question before acting.",
 		"sessions.transcript")
-	addHubTool[conversationIn](b, "get_conversation",
-		"Fetch a session's parsed conversation items plus the latest sequence number; pass sinceSeq to get only items after that sequence (cheap incremental polling).",
+	addConversationTool(b, "get_conversation",
+		"Fetch a session's parsed conversation items plus the latest sequence number; pass sinceSeq to get only items after that sequence (cheap incremental polling). Reductions: lastMessage:true returns just the final assistant message (a finished worker's report); textOnly:true returns only user/assistant text turns, stripping tool calls/results and usage. Both compose with sinceSeq.",
 		"sessions.conversation")
 	addHubTool[sessionIn](b, "get_snapshot",
 		"Get the full live snapshot for one session: conversation turns, tool calls, usage/cost, subagents, workflow runs, and any pending approval/question. Heavier than list_agents — use it to inspect a single agent in depth.",
@@ -958,6 +958,10 @@ type conversationIn struct {
 	hubArg
 	SessionID string `json:"sessionId" jsonschema:"the target session id"`
 	SinceSeq  *int   `json:"sinceSeq,omitempty" jsonschema:"return only items after this sequence number; omit for the full history"`
+	// LastMessage and TextOnly are facade-local (applied to the provider's
+	// result, stripped from the forwarded params — see conversation.go).
+	LastMessage bool `json:"lastMessage,omitempty" jsonschema:"return just the session's FINAL assistant message as { seq, lastMessage } — the cheap way to read a finished worker's report; composes with sinceSeq (wins over textOnly)"`
+	TextOnly    bool `json:"textOnly,omitempty" jsonschema:"return only user/assistant text turns, stripping tool calls, tool results, and usage blobs; composes with sinceSeq"`
 }
 
 type cwdIn struct {

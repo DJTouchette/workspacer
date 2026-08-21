@@ -117,6 +117,22 @@ const EntryRow: React.FC<{ entry: FleetMessageEntry }> = ({ entry }) => {
           {entry.label}
         </span>
         <SessionChip sessionId={entry.sessionId} />
+        {entry.stopped && (
+          <span
+            style={{
+              padding: '1px 6px',
+              borderRadius: 'var(--wks-radius-pill)',
+              fontSize: '0.6rem',
+              fontWeight: 600,
+              color: colors.error,
+              background: `color-mix(in srgb, ${colors.error} 12%, transparent)`,
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+            }}
+          >
+            stopped/killed
+          </span>
+        )}
         {entry.blockedOn && (
           <span
             style={{
