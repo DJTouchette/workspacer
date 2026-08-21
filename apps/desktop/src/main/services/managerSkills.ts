@@ -83,8 +83,10 @@ Routing, most specific first:
 
 1. **Project-intrinsic knowledge** (how a repo builds/tests, a gotcha, a
    convention) → that project's brief, "## Direction" if durable or "## Now" if
-   in flight. If it is truly permanent repo memory, tell the user it belongs in
-   that project's CLAUDE.md rather than writing it there yourself.
+   in flight. If the project uses rivet, a durable finding's proper home is
+   \`rivet.learn\` (its context docs) — have the worker record it there. If it is
+   truly permanent repo memory with no rivet, tell the user it belongs in that
+   project's CLAUDE.md rather than writing it there yourself.
 2. **Cross-project / fleet state** (a dispatch outcome, a shifted priority, an
    open escalation) → YOUR fleet brief (\`.workspacer/brief.md\` under your cwd):
    outcomes to "## Recently", priorities/sequencing to "## Direction", open

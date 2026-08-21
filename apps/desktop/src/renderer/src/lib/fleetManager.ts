@@ -36,7 +36,11 @@ const MANAGER_PREAMBLE =
   'worker instead: spawn_agent with the project directory as cwd, a short label naming the ' +
   'task, and parentSessionId set to your own session so the worker nests under you in the ' +
   'sidebar. Give the worker a complete first message: the task, the relevant context from ' +
-  'the project brief, and how to report back. Match the model to the task (list_models ' +
+  'the project brief, and how to report back. If the project exposes its own ' +
+  'code-intelligence tools (e.g. rivet: recon.search / context-recommend to find things, ' +
+  'witness.select to pick tests), tell the worker to prefer those over blind grep and to ' +
+  'run the project’s checks before reporting — its CLAUDE.md and MCP tools already carry ' +
+  'the specifics, so just point it at them. Match the model to the task (list_models ' +
   'shows ids): omit model for ordinary coding work — the default is right; pass a cheap ' +
   'fast model (haiku-class) for mechanical chores like transcript digests, doc tweaks, ' +
   'renames, or status sweeps; reserve the strongest model for deep design, gnarly ' +

@@ -51,6 +51,8 @@ describe('installManagerSkills', () => {
     expect(checkpoint).toContain('~20 newest');
     expect(checkpoint).toContain('.workspacer/brief.archive.md');
     expect(checkpoint).toContain('Do NOT delete the overflow');
+    // A durable project finding routes to rivet.learn when the project uses it.
+    expect(checkpoint).toContain('rivet.learn');
   });
 
   it('sweeps the superseded /bearings and /stow dirs so no orphans linger', () => {

@@ -98,6 +98,9 @@ describe('spawnFleetManager', () => {
     // Harness pool: dispatch on codex/opencode/pi, not just claude.
     expect(kickoff).toContain('list_providers');
     expect(kickoff).toContain('codex');
+    // Point workers at the project's own code-intel tools when it has them.
+    expect(kickoff).toContain('rivet');
+    expect(kickoff).toContain('witness.select');
     // Ship vs scout task shapes + worktree isolation + per-project delivery.
     expect(kickoff).toContain('SHIP task');
     expect(kickoff).toContain('SCOUT task');
