@@ -42,14 +42,25 @@ compact, already-parsed text (no JSON), so use it for READS instead of pulling
 raw tool output into your context:
 
 \`\`\`
-node "$HOME/.claude/skills/supervise/fleet.mjs" status
+node "$HOME/.claude/skills/supervise/fleet.mjs" status [--active]
 node "$HOME/.claude/skills/supervise/fleet.mjs" convo <sessionId> --since <seq>
 node "$HOME/.claude/skills/supervise/fleet.mjs" reply <sessionId>
 \`\`\`
 
-- \`status\` — one line per session: id, mode, what it's blocked on, context use, cwd.
+- \`status\` — one line per session: id, mode, what it's blocked on (and for how
+  long), context use, label, cwd. Rows are sorted blocked-first, then the other
+  live sessions, then stopped ones. \`--active\` drops the stopped sessions.
+  - \`blocked=approval:Bash (45s)\` — the age comes from the conversation item the
+    approval is parked on; a \`~\` prefix (\`(~2m)\`) means it was estimated from the
+    session's last activity instead.
+  - \`label=\` is the daemon's label when it has one. It doesn't today — labels
+    live in the desktop store, so \`list_agents\` / \`get_snapshot\` are the only
+    authoritative source — so the script derives one: an agent worktree renders
+    as \`repo: the spawn label\`, anything else as the cwd basename.
 - \`convo <id> --since <seq>\` — prints \`seq=<latest>\` then only the turns after
-  \`<seq>\`, condensed. Omit \`--since\` for the whole conversation.
+  \`<seq>\`, condensed (the API returns each tool call/result twice — a streamed
+  and a final copy — and the script dedups them). Omit \`--since\` for the whole
+  conversation.
 - \`reply <id>\` — just that session's latest assistant message (how you read a
   worker's digest).
 
@@ -165,9 +176,31 @@ const FLEET_SCRIPT = `#!/usr/bin/env node
 // local REST API and prints compact, already-parsed text so the supervisor
 // never has to reason over raw JSON. Zero dependencies (Node 18+ global fetch).
 //
-//   node fleet.mjs status                  fleet overview (mode, blocked, ctx, cwd)
+//   node fleet.mjs status [--active]        fleet overview (label, mode, blocked, ctx, cwd)
 //   node fleet.mjs convo <id> [--since N]   latest seq + only the turns after N
 //   node fleet.mjs reply <id>               that session's latest assistant message
+//
+// status rows are sorted blocked-first, then other live sessions, then stopped
+// ones (most recently active first inside each group). --active drops the
+// stopped sessions entirely.
+//
+// Notes on the data, learned by inspecting the live API:
+//  * The daemon carries NO human label — /sessions rows have no label/name/title
+//    field (the desktop app keeps labels in its own store, which is what
+//    mcp__workspacer__list_agents / get_snapshot return). So label= prefers a
+//    real field if one ever appears and otherwise DERIVES one from the cwd: an
+//    agent worktree (~/.workspacer/worktrees/<repo>/<slug>) carries the spawn
+//    label slugified into <slug>, so it renders as "repo: the slug words";
+//    anything else falls back to the cwd basename.
+//  * The conversation endpoint returns most items TWICE — the live streamed copy
+//    and the transcript-derived one, identical apart from timestamp precision
+//    (tool calls, tool results, and assistant/user text all twin). convo dedups
+//    on tool id (and, for text, on the text plus a same-second timestamp),
+//    keeping the most complete copy in its original position.
+//  * pending has no timestamp of its own, so blocked-age is read from the
+//    timestamp of the conversation item the approval is waiting on (exact); if
+//    that item can't be found the session's updated_at is used instead and the
+//    age is prefixed with a tilde.
 //
 // Override the daemon URL with the CLAUDEMON_API_URL env var.
 
@@ -192,6 +225,109 @@ function lineOf(it) {
   return null; // usage etc.
 }
 
+// --- conversation dedup ------------------------------------------------------
+
+// Stable identity of a conversation item. Tool items carry an id; text items
+// don't, so they are keyed by their text and only merged when the two copies
+// are near-simultaneous (see areTwins) — a user who really does send "continue"
+// twice must still see it twice.
+function itemKey(it) {
+  if (it.kind === 'tool_use' && it.id) return 'u:' + it.id;
+  if (it.kind === 'tool_result' && it.tool_use_id) return 'r:' + it.tool_use_id;
+  if (it.kind === 'user_message' || it.kind === 'assistant_text') return 't:' + it.kind + '|' + (it.text || '');
+  return null;
+}
+
+// Two copies of the same item, or the same text sent twice? The twins land
+// within a second of each other (the streamed copy has nanosecond precision,
+// the final one milliseconds); a copy with no timestamp at all is always a twin.
+const TWIN_WINDOW_MS = 5000;
+function areTwins(a, b) {
+  const ta = Date.parse(a.timestamp || '');
+  const tb = Date.parse(b.timestamp || '');
+  if (!Number.isFinite(ta) || !Number.isFinite(tb)) return true;
+  return Math.abs(ta - tb) <= TWIN_WINDOW_MS;
+}
+
+// How complete a copy is: number of populated fields first, total content
+// length as the tie-break. Twins usually differ only in timestamp precision,
+// but this survives a genuinely truncated streaming copy too.
+function completeness(it) {
+  let fields = 0;
+  let len = 0;
+  for (const k of Object.keys(it)) {
+    const v = it[k];
+    if (v == null || v === '') continue;
+    fields++;
+    len += (typeof v === 'string' ? v : JSON.stringify(v)).length;
+  }
+  return fields * 1e9 + len;
+}
+
+function dedup(items) {
+  const out = [];
+  const seen = new Map(); // key -> index of the last kept copy in out
+  for (const it of items) {
+    const k = itemKey(it);
+    const i = k == null ? undefined : seen.get(k);
+    const isTwin = i != null && (k[0] !== 't' || areTwins(out[i], it));
+    if (isTwin) {
+      if (completeness(it) > completeness(out[i])) out[i] = it; // keep position, upgrade copy
+      continue;
+    }
+    if (k != null) seen.set(k, out.length);
+    out.push(it);
+  }
+  return out;
+}
+
+// --- status ------------------------------------------------------------------
+
+function ago(sec) {
+  if (!(sec >= 0)) return null;
+  if (sec < 60) return Math.round(sec) + 's';
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  if (m < 60) return m + 'm' + (s ? s + 's' : '');
+  const h = Math.floor(m / 60);
+  return h + 'h' + (m % 60) + 'm';
+}
+
+function secsSince(ts) {
+  if (!ts) return null;
+  const t = Date.parse(ts);
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, (Date.now() - t) / 1000);
+}
+
+// The tool call an approval/question is parked on. Its conversation item's
+// timestamp is when the session actually blocked.
+function pendingToolUseId(p) {
+  const raw = (p && p.raw) || {};
+  return raw.tool_use_id || raw.toolUseId || null;
+}
+
+// Exact blocked-age: fetch just the tail of the conversation (a since= beyond
+// the latest seq returns the seq alone, ~90 bytes) and read the timestamp of
+// the item the approval is waiting on. Null when it can't be found.
+async function pendingAgeSecs(id, pending) {
+  const tuid = pendingToolUseId(pending);
+  if (!tuid) return null;
+  const path = '/sessions/' + encodeURIComponent(id) + '/conversation';
+  try {
+    const head = await getJSON(path + '?since=' + Number.MAX_SAFE_INTEGER);
+    const seq = Number(head && head.seq) || 0;
+    if (!seq) return null;
+    const tail = await getJSON(path + '?since=' + Math.max(0, seq - 40));
+    const items = Array.isArray(tail.items) ? tail.items : [];
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      if ((it.id === tuid || it.tool_use_id === tuid) && it.timestamp) return secsSince(it.timestamp);
+    }
+  } catch { /* fall back to updated_at */ }
+  return null;
+}
+
 function blockedOf(p) {
   if (!p) return '-';
   if (p.kind === 'approval') return 'approval:' + (p.tool || '?');
@@ -199,14 +335,69 @@ function blockedOf(p) {
   return p.kind || '?';
 }
 
-async function status() {
-  const sessions = await getJSON('/sessions');
+// The daemon exposes no label; prefer one if it ever does, else derive from cwd.
+function labelOf(s) {
+  for (const k of ['label', 'name', 'title']) {
+    if (typeof s[k] === 'string' && s[k].trim()) return trunc(s[k], 48);
+  }
+  const cwd = s.cwd || '';
+  const wt = cwd.match(/[.]workspacer[/]worktrees[/]([^/]+)[/]([^/]+)[/]?$/);
+  if (wt) {
+    const repo = wt[1];
+    const slug = wt[2].startsWith(repo + '-') ? wt[2].slice(repo.length + 1) : wt[2];
+    return trunc(repo + ': ' + slug.replace(/[-_]+/g, ' '), 48);
+  }
+  const base = cwd.replace(/[/]+$/, '').split('/').pop();
+  return base ? trunc(base, 48) : '-';
+}
+
+function ctxOf(s) {
+  const sl = s.status_line || {};
+  if (sl.context_used_pct != null) return Math.round(sl.context_used_pct) + '%';
+  const u = s.usage || {};
+  const tok = u.context_tokens != null ? u.context_tokens : u.contextTokens;
+  if (!tok) return '-';
+  const limit = u.context_limit != null ? u.context_limit : u.contextLimit;
+  if (limit) return Math.round((tok / limit) * 100) + '%';
+  return tok + 'tok';
+}
+
+// blocked first, then everything else still alive, stopped last; most recently
+// active first inside each group.
+function rankOf(s) {
+  if (s.pending) return 0;
+  return s.mode === 'stopped' ? 2 : 1;
+}
+
+async function status(activeOnly) {
+  let sessions = await getJSON('/sessions');
   if (!Array.isArray(sessions) || sessions.length === 0) { console.log('(no sessions)'); return; }
+  if (activeOnly) sessions = sessions.filter((s) => s.mode !== 'stopped');
+  if (sessions.length === 0) { console.log('(no active sessions)'); return; }
+  sessions.sort((a, b) => rankOf(a) - rankOf(b) || String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+
+  // Age is only fetched for the (few) blocked sessions — the common case stays
+  // a single request.
+  const ages = new Map();
+  await Promise.all(
+    sessions.filter((s) => s.pending).map(async (s) => {
+      let secs = await pendingAgeSecs(s.session_id, s.pending);
+      let exact = secs != null;
+      if (secs == null) secs = secsSince(s.updated_at);
+      const txt = ago(secs);
+      if (txt) ages.set(s.session_id, ' (' + (exact ? '' : '~') + txt + ')');
+    }),
+  );
+
   for (const s of sessions) {
-    let ctx = '-';
-    if (s.status_line && s.status_line.context_used_pct != null) ctx = Math.round(s.status_line.context_used_pct) + '%';
-    else if (s.usage && s.usage.contextTokens != null) ctx = s.usage.contextTokens + 'tok';
-    console.log('session:' + s.session_id + '  mode=' + s.mode + '  blocked=' + blockedOf(s.pending) + '  ctx=' + ctx + '  cwd=' + (s.cwd || '-'));
+    console.log(
+      'session:' + s.session_id +
+      '  mode=' + s.mode +
+      '  blocked=' + blockedOf(s.pending) + (ages.get(s.session_id) || '') +
+      '  ctx=' + ctxOf(s) +
+      '  label=' + labelOf(s) +
+      '  cwd=' + (s.cwd || '-'),
+    );
   }
 }
 
@@ -215,7 +406,7 @@ async function convo(id, since) {
   const q = since != null ? ('?since=' + encodeURIComponent(since)) : '';
   const data = await getJSON('/sessions/' + encodeURIComponent(id) + '/conversation' + q);
   console.log('seq=' + (data.seq || 0));
-  const items = Array.isArray(data.items) ? data.items : [];
+  const items = dedup(Array.isArray(data.items) ? data.items : []);
   let n = 0;
   for (const it of items) { const l = lineOf(it); if (l) { console.log(l); n++; } }
   if (n === 0) console.log('(no new turns)');
@@ -235,13 +426,14 @@ const argv = process.argv.slice(2);
 const cmd = argv[0];
 const si = argv.indexOf('--since');
 const sinceVal = si >= 0 ? argv[si + 1] : undefined;
+const activeOnly = argv.includes('--active');
 
 (async () => {
   try {
-    if (cmd === 'status') await status();
+    if (cmd === 'status') await status(activeOnly);
     else if (cmd === 'convo') await convo(argv[1], sinceVal);
     else if (cmd === 'reply') await reply(argv[1]);
-    else { console.error('usage: fleet.mjs status | convo <id> [--since N] | reply <id>'); process.exit(2); }
+    else { console.error('usage: fleet.mjs status [--active] | convo <id> [--since N] | reply <id>'); process.exit(2); }
   } catch (e) { console.error(String((e && e.message) || e)); process.exit(1); }
 })();
 `;
