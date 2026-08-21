@@ -30,26 +30,39 @@ afterEach(() => {
 });
 
 describe('installManagerSkills', () => {
-  const skillFile = (name: string) => path.join(home, '.claude', 'skills', name, 'SKILL.md');
+  const skillDir = (name: string) => path.join(home, '.claude', 'skills', name);
+  const skillFile = (name: string) => path.join(skillDir(name), 'SKILL.md');
 
-  it('writes both /bearings and /stow with matching skill-name frontmatter', () => {
+  it('writes both /standup and /checkpoint with matching skill-name frontmatter', () => {
     installManagerSkills();
-    const bearings = fs.readFileSync(skillFile('bearings'), 'utf8');
-    const stow = fs.readFileSync(skillFile('stow'), 'utf8');
-    expect(bearings).toMatch(/^---\nname: bearings\n/);
-    expect(stow).toMatch(/^---\nname: stow\n/);
-    // Load-bearing content: bearings is a read-only digest; stow routes + trims.
-    expect(bearings).toContain('In flight');
-    expect(bearings).toContain('must not change any brief');
-    expect(stow).toContain('most specific home');
-    expect(stow).toContain('.workspacer/brief.md');
-    expect(stow).toContain('never rewrite a line the captain wrote');
+    const standup = fs.readFileSync(skillFile('standup'), 'utf8');
+    const checkpoint = fs.readFileSync(skillFile('checkpoint'), 'utf8');
+    expect(standup).toMatch(/^---\nname: standup\n/);
+    expect(checkpoint).toMatch(/^---\nname: checkpoint\n/);
+    // Load-bearing content: standup is a read-only digest; checkpoint routes + trims.
+    expect(standup).toContain('In flight');
+    expect(standup).toContain('must not change any brief');
+    expect(checkpoint).toContain('most specific home');
+    expect(checkpoint).toContain('.workspacer/brief.md');
+    expect(checkpoint).toContain('never rewrite a line the user wrote');
+  });
+
+  it('sweeps the superseded /bearings and /stow dirs so no orphans linger', () => {
+    // Simulate an earlier build having installed the old-named skills.
+    for (const old of ['bearings', 'stow']) {
+      fs.mkdirSync(skillDir(old), { recursive: true });
+      fs.writeFileSync(skillFile(old), 'old', 'utf8');
+    }
+    installManagerSkills();
+    expect(fs.existsSync(skillDir('bearings'))).toBe(false);
+    expect(fs.existsSync(skillDir('stow'))).toBe(false);
+    expect(fs.existsSync(skillFile('standup'))).toBe(true);
   });
 
   it('is idempotent — a second install leaves identical content', () => {
     installManagerSkills();
-    const body = fs.readFileSync(skillFile('stow'), 'utf8');
+    const body = fs.readFileSync(skillFile('checkpoint'), 'utf8');
     installManagerSkills();
-    expect(fs.readFileSync(skillFile('stow'), 'utf8')).toBe(body);
+    expect(fs.readFileSync(skillFile('checkpoint'), 'utf8')).toBe(body);
   });
 });

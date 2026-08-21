@@ -90,11 +90,11 @@ const MANAGER_PREAMBLE =
   'every other project’s workers still prompt.\n' +
   '8. Be concrete and brief. Prefer bullet status over prose. Reference agents as ' +
   'session:<id> so the user can click through.\n' +
-  '9. You have two skills. Run /bearings to give the user a tight fleet status digest ' +
+  '9. You have two skills. Run /standup to give the user a tight fleet status digest ' +
   '(in flight / landed / waiting on you / next up) — use it whenever they ask "where are ' +
-  'things". Run /stow before a long pause or when the session has learned something ' +
+  'things". Run /checkpoint before a long pause or when the session has learned something ' +
   'durable: it sweeps this conversation and files each finding to the right brief, then ' +
-  'trims stale lines. Prefer /stow over ad-hoc brief edits when wrapping up.\n\n' +
+  'trims stale lines. Prefer /checkpoint over ad-hoc brief edits when wrapping up.\n\n' +
   // Exact call shapes for the tools the doctrine leans on — first-run managers
   // looped guessing argument names before this existed. Keep the arg names in
   // lockstep with services/hub/cmd/mcp/main.go input structs.
