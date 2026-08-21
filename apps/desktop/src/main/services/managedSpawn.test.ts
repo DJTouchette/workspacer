@@ -56,12 +56,16 @@ vi.mock('./agentProviders', () => ({
   isAgentBinaryInstalled: vi.fn(() => true),
 }));
 
-vi.mock('./configService', () => ({ configService: { getConfig: () => ({}) } }));
+// Mutable per-test config — reset in beforeEach, mutated by the supervisor
+// full-access tests (the flag is config-resolved inside spawnManagedAgent).
+let mockConfig: Record<string, unknown>;
+vi.mock('./configService', () => ({ configService: { getConfig: () => mockConfig } }));
 
+const managedFacadeInstructions = vi.fn(() => 'FACADE');
 const facadeSessionMcpConfig = vi.fn(() => '/cfg/session-facade.json');
 vi.mock('./mcpConfig', () => ({
   MCP_FACADE_URL: 'http://127.0.0.1:0/mcp',
-  managedFacadeInstructions: vi.fn(() => 'FACADE'),
+  managedFacadeInstructions: (...a: unknown[]) => managedFacadeInstructions(...a),
   buildSessionMcpConfig: vi.fn(() => null),
   facadeSessionMcpConfig: (...a: unknown[]) => facadeSessionMcpConfig(...a),
   facadeUrlWithToken: (token: string) => `http://127.0.0.1:0/mcp?t=${token}`,
@@ -103,6 +107,7 @@ function lastMeta(): Payload {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockConfig = {};
 });
 
 describe('spawnManagedAgent — codex headless (stream) wire shape', () => {
@@ -281,5 +286,76 @@ describe('spawnManagedAgent — facade tool tiers', () => {
     expect(mintSessionFacadeToken).not.toHaveBeenCalled();
     expect(lastManaged()).not.toHaveProperty('mcp');
     expect(lastManaged()).not.toHaveProperty('instructions');
+  });
+});
+
+describe('spawnManagedAgent — supervisor full access (config supervisor.fullAccess)', () => {
+  it('setting on: a claude-stream supervisor spawns bypassed, with the yolo token grant and the full-access role note', async () => {
+    mockConfig = { supervisor: { fullAccess: true } };
+
+    await spawnManagedAgent({
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      supervisor: true,
+    });
+
+    expect(lastManaged().yolo).toBe(true);
+    expect(lastManaged().permissionMode).toBe('bypassPermissions');
+    expect(lastMeta().settings.permissionMode).toBe('bypassPermissions');
+    // 5th mint arg = yoloAllowed — the grant the hub verifies before stamping
+    // yoloGranted on the supervisor's own spawn_agent calls, so its workers'
+    // skipPermissions requests are honored instead of clamped.
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(true);
+    // …and the injected role instructions tell it to actually request that.
+    expect(managedFacadeInstructions).toHaveBeenCalledWith(
+      true,
+      'operator',
+      expect.any(String),
+      true,
+    );
+  });
+
+  it('setting on: a managed-provider supervisor (opencode) runs yolo too', async () => {
+    mockConfig = { supervisor: { fullAccess: true } };
+
+    await spawnManagedAgent({ provider: 'opencode', cwd: '/proj', supervisor: true });
+
+    expect(lastManaged().yolo).toBe(true);
+    expect(lastMeta().settings.permissionMode).toBe('yolo');
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(true);
+  });
+
+  it('setting off: the supervisor prompts as today — no bypass, no yolo grant', async () => {
+    await spawnManagedAgent({
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      supervisor: true,
+    });
+
+    expect(lastManaged().yolo).toBe(false);
+    expect(lastManaged().permissionMode).toBe('default');
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
+    expect(managedFacadeInstructions).toHaveBeenCalledWith(
+      true,
+      'operator',
+      expect.any(String),
+      false,
+    );
+  });
+
+  it('setting on leaves non-supervisor spawns untouched', async () => {
+    mockConfig = { supervisor: { fullAccess: true } };
+
+    await spawnManagedAgent({
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      toolScope: 'view',
+    });
+
+    expect(lastManaged().yolo).toBe(false);
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
   });
 });

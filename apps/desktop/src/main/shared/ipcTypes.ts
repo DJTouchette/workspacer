@@ -464,6 +464,9 @@ export interface AppConfig {
     model: string;
     summarizerModel: string;
     pollSeconds: number;
+    /** Supervisor full-access mode: the supervisor and the workers it spawns
+     *  run with permissions bypassed (see configService). */
+    fullAccess: boolean;
   };
   /** Superseded by `projects` — still read for backwards compatibility, never
    *  written. See renderer lib/projectRegistry. */

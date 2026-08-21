@@ -67,8 +67,9 @@ acting on it.
 ## 0. Settings
 
 Call \`get_config\` once and read \`supervisor.summarizerModel\` (fallback
-\`sonnet\`) and \`supervisor.pollSeconds\` (fallback \`45\`). Your system prompt also
-states these as a fallback if the config call fails.
+\`sonnet\`), \`supervisor.pollSeconds\` (fallback \`45\`) and
+\`supervisor.fullAccess\` (fallback \`false\`). Your system prompt also states
+these as a fallback if the config call fails.
 
 ## 1. Keep one cheap summarizer worker
 
@@ -91,6 +92,12 @@ read-tool schemas. It does NOT make it a supervisor: it just reads transcripts
 and answers you. Reusing one worker keeps cost down; only spawn another if the
 first dies. (\`mcpFacade: true\` is the legacy spelling and grants the FULL tool
 set — prefer the scoped form.)
+
+When \`supervisor.fullAccess\` is true you run with permissions bypassed, and
+every worker you spawn should inherit that: also pass \`skipPermissions: true\`
+to \`spawn_agent\` so workers never stall on an approval prompt. (Your session
+token carries the grant that makes the request honored; when the setting is
+off, don't pass it — the request would be clamped anyway.)
 
 ## 2. Each pass — work incrementally
 

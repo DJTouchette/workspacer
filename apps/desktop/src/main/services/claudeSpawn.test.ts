@@ -52,12 +52,13 @@ vi.mock('./libraryService', () => ({
   libraryService: { listWithSecrets: (...a: unknown[]) => libraryList(...a) },
 }));
 
+// Mutable per-test config — reset in beforeEach, mutated by the supervisor
+// full-access tests (the flag is config-resolved inside spawnClaudeAgent).
+let mockConfig: {
+  supervisor: { model: string; summarizerModel: string; pollSeconds: number; fullAccess?: boolean };
+};
 vi.mock('./configService', () => ({
-  configService: {
-    getConfig: () => ({
-      supervisor: { model: 'sup-model', summarizerModel: 'sonnet', pollSeconds: 30 },
-    }),
-  },
+  configService: { getConfig: () => mockConfig },
   // Needed by the REAL claudeProfiles module (its profilesFile path is
   // computed at import time) — the mock above pulls the original in.
   getConfigDir: () => '/tmp/wks-test-config',
@@ -114,6 +115,9 @@ function lastSpawn(): {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockConfig = {
+    supervisor: { model: 'sup-model', summarizerModel: 'sonnet', pollSeconds: 30 },
+  };
   getProfile.mockReturnValue(undefined);
   libraryList.mockReturnValue([]);
   buildSessionMcpConfig.mockReturnValue({
@@ -281,6 +285,56 @@ describe('spawnClaudeAgent — facade takes precedence over Library MCP', () => 
 
     expect(mintSessionFacadeToken.mock.calls[0][3]).toBeUndefined();
     expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
+  });
+});
+
+describe('spawnClaudeAgent — supervisor full access (config supervisor.fullAccess)', () => {
+  it('setting on: the supervisor itself spawns with permissions bypassed', async () => {
+    mockConfig.supervisor.fullAccess = true;
+
+    await spawnClaudeAgent({ supervisor: true });
+
+    expect(lastArgv()).toContain('--dangerously-skip-permissions');
+    const meta = setSpawnMeta.mock.calls[0][1] as {
+      settings: { permissionMode: string; bypassAvailable?: boolean };
+    };
+    expect(meta.settings.permissionMode).toBe('bypassPermissions');
+    expect(meta.settings.bypassAvailable).toBe(true);
+  });
+
+  it("setting on: the supervisor's token carries the yolo grant, so its child spawns may run bypassed", async () => {
+    mockConfig.supervisor.fullAccess = true;
+
+    await spawnClaudeAgent({ supervisor: true });
+
+    // 5th mint arg = yoloAllowed: the hub verifies it and stamps yoloGranted on
+    // the supervisor's spawn_agent calls, which is what lets a worker's
+    // skipPermissions request through instead of being clamped.
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(true);
+    // …and the role prompt tells the supervisor to actually request it.
+    const args = facadeSpawnArgs.mock.calls[0][0] as { fullAccess?: boolean };
+    expect(args.fullAccess).toBe(true);
+  });
+
+  it('setting off: the supervisor prompts as today — no bypass, no yolo grant', async () => {
+    await spawnClaudeAgent({ supervisor: true });
+
+    expect(lastArgv()).not.toContain('--dangerously-skip-permissions');
+    const meta = setSpawnMeta.mock.calls[0][1] as { settings: { permissionMode: string } };
+    expect(meta.settings.permissionMode).toBe('default');
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
+    expect((facadeSpawnArgs.mock.calls[0][0] as { fullAccess?: boolean }).fullAccess).toBe(false);
+  });
+
+  it('setting on touches neither plain spawns nor non-supervisor facade workers', async () => {
+    mockConfig.supervisor.fullAccess = true;
+
+    await spawnClaudeAgent({ cwd: '/proj' });
+    expect(lastArgv()).not.toContain('--dangerously-skip-permissions');
+
+    await spawnClaudeAgent({ cwd: '/proj', toolScope: 'view' });
+    expect(lastArgv()).not.toContain('--dangerously-skip-permissions');
+    expect(mintSessionFacadeToken.mock.calls.at(-1)![4]).toBeUndefined();
   });
 });
 

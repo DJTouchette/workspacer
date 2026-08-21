@@ -202,7 +202,8 @@
     "provider": "claude",
     "model": "",
     "summarizerModel": "sonnet",
-    "pollSeconds": 45
+    "pollSeconds": 45,
+    "fullAccess": false
   },
   "directories": {
     "recent": [],

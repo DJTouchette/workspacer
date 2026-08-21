@@ -185,6 +185,15 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     ? 'operator'
     : (opts.toolScope ?? 'operator');
   const managedId = opts.resumeSessionId || randomUUID();
+  // Supervisor full-access mode (config supervisor.fullAccess, the supervisor
+  // twin of agents.fleetFullAccess): the supervisor itself runs bypassed, and
+  // its facade token below carries the yolo grant so the workers it spawns may
+  // run bypassed too. Config-resolved — not a caller flag — so every entry
+  // point (IPC, hub bus, jobs) applies the local user's setting identically.
+  // TWIN: claudeSpawn.ts resolves the same setting on the PTY path.
+  const supervisorFullAccess =
+    !!opts.supervisor && configService.getConfig().supervisor?.fullAccess === true;
+  const skipPermissions = !!opts.skipPermissions || supervisorFullAccess;
   // Per-session scoped facade token. Pi ships no MCP client, so minting one
   // for it would only leave a dangling live secret.
   // A host-blessed Fleet Manager's token carries a dispatch grant for every
@@ -198,20 +207,23 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
           facadeScope,
           opts.pluginTools,
           opts.manager ? claudeProfiles.getProfiles().map((p) => p.id) : undefined,
-          opts.manager ? !!opts.fleetFullAccess : undefined,
+          opts.manager ? !!opts.fleetFullAccess : supervisorFullAccess || undefined,
         ).token
       : undefined;
   // Permission-mode vocabulary differs by family: Claude keeps its full mode
-  // set (an explicit mode wins; the legacy boolean maps to bypass — same
-  // resolution as the PTY path), managed providers are just ask/yolo.
+  // set (an explicit mode wins; the legacy boolean maps to bypass, and
+  // supervisor full access forces it — same resolution as the PTY path),
+  // managed providers are just ask/yolo.
   const permissionMode = isClaudeStream
-    ? (opts.permissionMode ?? (opts.skipPermissions ? 'bypassPermissions' : 'default'))
-    : opts.skipPermissions
+    ? supervisorFullAccess
+      ? 'bypassPermissions'
+      : (opts.permissionMode ?? (skipPermissions ? 'bypassPermissions' : 'default'))
+    : skipPermissions
       ? 'yolo'
       : 'ask';
   const yolo = isClaudeStream
-    ? opts.skipPermissions || permissionMode === 'bypassPermissions'
-    : opts.skipPermissions;
+    ? skipPermissions || permissionMode === 'bypassPermissions'
+    : skipPermissions;
   // Claude (stream) parity with the PTY path (claudeSpawn.ts): a profile maps
   // to CLAUDE_CONFIG_DIR + its extra argv, and Library MCP selections become a
   // session-scoped --mcp-config with --strict-mcp-config + pre-allowed tools.
@@ -335,7 +347,12 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
       ...(!isClaudeStream && {
         mcp: facadeToken ? facadeUrlWithToken(facadeToken) : MCP_FACADE_URL,
       }),
-      instructions: managedFacadeInstructions(!!opts.supervisor, facadeScope, managedId),
+      instructions: managedFacadeInstructions(
+        !!opts.supervisor,
+        facadeScope,
+        managedId,
+        supervisorFullAccess,
+      ),
     }),
   });
   // The adapter emits no conversation delta until the agent first produces
@@ -360,6 +377,10 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
   const bin = resolveAgentBinary('codex', configuredBin('codex'));
   const sessionId = opts.resumeSessionId || randomUUID();
+  // Same supervisor full-access resolution as the managed path above.
+  const skipPermissions =
+    !!opts.skipPermissions ||
+    (!!opts.supervisor && configService.getConfig().supervisor?.fullAccess === true);
   claudeSessionStore.setSpawnMeta(sessionId, {
     label: opts.label,
     parentSessionId: opts.parentSessionId,
@@ -368,7 +389,7 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     settings: {
       model: opts.model,
       effort: opts.effort,
-      permissionMode: opts.skipPermissions ? 'yolo' : 'ask',
+      permissionMode: skipPermissions ? 'yolo' : 'ask',
     },
   });
   // Show the card immediately; the rollout tailer + conversation stream enrich it.
@@ -382,7 +403,7 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     bin,
     ...(model ? ['-c', `model=${JSON.stringify(model)}`] : []),
     ...(effort ? ['-c', `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
-    ...(opts.skipPermissions ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
+    ...(skipPermissions ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
   ];
   await claudemonSessionClient.spawn({
     argv,

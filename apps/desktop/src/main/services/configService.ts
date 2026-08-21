@@ -233,6 +233,10 @@ interface Config {
     summarizerModel: string;
     /** How often (seconds) the supervisor's loop re-sweeps the fleet. */
     pollSeconds: number;
+    /** Full access: the supervisor runs with permissions bypassed AND its
+     *  facade token carries the yolo grant, so the workers it spawns may run
+     *  bypassed too — the supervisor twin of agents.fleetFullAccess. */
+    fullAccess: boolean;
   };
   /** Directories surfaced in the Overview pane for quick agent launching. */
   directories: {

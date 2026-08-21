@@ -210,6 +210,7 @@ export const CONFIG_DEFAULTS = {
     model: '',
     summarizerModel: 'sonnet',
     pollSeconds: 45,
+    fullAccess: false,
   },
   directories: {
     recent: [],

@@ -346,6 +346,10 @@ export interface SupervisorConfig {
    *  Non-Claude supervisors run the chosen CLI but the workspacer MCP facade
    *  (the supervisor's fleet-coordination tools) is currently Claude-only. */
   provider?: AgentProvider;
+  /** Full access: the supervisor runs with permissions bypassed and the
+   *  summarizer workers it spawns inherit the bypass (its facade token carries
+   *  the yolo grant). The supervisor twin of agents.fleetFullAccess. */
+  fullAccess?: boolean;
 }
 
 /**
