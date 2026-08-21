@@ -4,7 +4,9 @@ import { claudeColors as colors } from '../claude-shared';
 import { parseMarkdownBlocks } from '../markdown';
 import { CopyTextButton } from './CopyTextButton';
 import { MessageImages } from './MessageImages';
+import { FleetMessageCard } from './FleetMessageCard';
 import { extractImageAttachments, imagePathsInText } from '../../lib/messageImages';
+import { parseFleetMessage } from '../../../../main/shared/fleetMessages';
 import { Clock } from 'lucide-react';
 
 /** "14:32" (locale 24h/12h per system) for a turn's ms timestamp; '' if unset. */
@@ -77,6 +79,14 @@ const ConversationMessageInner: React.FC<{
   cwd?: string;
 }> = ({ turn, showTimestamp, pending, cwd }) => {
   const isUser = turn.role === 'user';
+  // System-injected fleet/supervisor wakes arrive as plain user turns (the
+  // /message endpoint has no metadata channel) — recognize them and render a
+  // structured card instead of a paragraph bubble. A parse miss (any other
+  // user text, including a malformed wake) falls through to the raw bubble.
+  const fleetMessage = useMemo(
+    () => (isUser && turn.content ? parseFleetMessage(turn.content) : null),
+    [isUser, turn.content],
+  );
   // What you attached (markers, stripped from the text) versus what the message
   // merely mentions (left in the text, thumbnailed underneath).
   const attached = useMemo(
@@ -97,6 +107,16 @@ const ConversationMessageInner: React.FC<{
     () => (turn.content ? parseMarkdownBlocks(turn.content) : null),
     [turn.content],
   );
+
+  if (fleetMessage) {
+    return (
+      <FleetMessageCard
+        message={fleetMessage}
+        timestamp={turn.timestamp}
+        showTimestamp={showTimestamp}
+      />
+    );
+  }
 
   if (isUser) {
     return (

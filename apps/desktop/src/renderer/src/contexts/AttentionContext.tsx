@@ -80,6 +80,13 @@ export function useAttention(): AttentionContextValue {
   return ctx;
 }
 
+/** Like useAttention, but null outside the provider — for components that also
+ *  render in provider-less hosts (tests, harness pages) and merely degrade
+ *  (e.g. a session chip that isn't clickable) rather than crash. */
+export function useAttentionOptional(): AttentionContextValue | null {
+  return useContext(AttentionContext);
+}
+
 /** How long a snoozed card stays hidden. */
 export const SNOOZE_MINUTES = 30;
 
