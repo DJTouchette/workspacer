@@ -1611,7 +1611,12 @@ function App() {
           Object.keys(config.projects ?? {}),
           home || appCwdRef.current || '/',
         );
-        await spawnFleetManager(ask, root, config.agents?.fleetFullAccess === true);
+        const fullAccess = config.agents?.fleetFullAccess === true;
+        // The token needs the yolo grant if global full-access is on OR any
+        // project opts into per-project yolo — else rule 7's per-project
+        // skipPermissions would be clamped for want of the grant.
+        const anyProjectYolo = Object.values(config.projects ?? {}).some((p) => p?.yolo === true);
+        await spawnFleetManager(ask, root, fullAccess, fullAccess || anyProjectYolo);
       })();
     };
     window.addEventListener('fleet-manager:ask', handler);

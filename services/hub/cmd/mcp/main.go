@@ -473,6 +473,9 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	addTool[listAgentsIn](b, "list_models",
 		"List the Claude models available to spawn_agent (ids + display names).",
 		"claude.listModels")
+	addTool[listAgentsIn](b, "list_providers",
+		"List the coding-agent HARNESSES spawn_agent can use (claude, codex, opencode, pi) and whether each is installed/available on this host — call before dispatching a worker on a non-default provider.",
+		"providers.checkAll")
 	addTool[listAgentsIn](b, "get_host_cwd",
 		"Get the workspacer host process's current working directory — a sensible default base for new agents.",
 		"app.getCwd")
@@ -864,6 +867,7 @@ type spawnAgentIn struct {
 	MCPFacade       bool     `json:"mcpFacade,omitempty" jsonschema:"legacy: give the new agent the FULL workspacer tool set (operator tier); prefer toolScope"`
 	ToolScope       string   `json:"toolScope,omitempty" jsonschema:"give the new agent the workspacer tools at a tier: view (observe-only — right for summarizer workers), triage (view + approve/reply/interrupt), or operator (everything)"`
 	PluginTools     []string `json:"pluginTools,omitempty" jsonschema:"plugin ids whose contributed tools the new agent may use (requires toolScope); omit for none"`
+	Worktree        bool     `json:"worktree,omitempty" jsonschema:"run the new agent in a fresh, ISOLATED git worktree of cwd (its own branch) instead of the checkout itself — use for a ship task that changes code, so parallel work on one repo never collides. The worktree is created for you and used as the agent's cwd; if cwd is not a git repo the spawn falls back to cwd with a note"`
 }
 
 // takeHub implements hubRouted for spawn_agent's own hub field.

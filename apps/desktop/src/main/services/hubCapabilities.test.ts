@@ -58,6 +58,12 @@ vi.mock('./managedSpawn', () => ({
 const spawnClaudeAgent = vi.fn(async () => 'claude-session-id');
 vi.mock('./claudeSpawn', () => ({ spawnClaudeAgent: (...a: unknown[]) => spawnClaudeAgent(...a) }));
 
+const createWorktree = vi.fn(async () => ({ ok: true, path: '/wt/proj-abc', branch: 'agent/x' }));
+vi.mock('./worktreeService', () => ({
+  createWorktree: (...a: unknown[]) => createWorktree(...a),
+  worktreeInfo: vi.fn(async () => ({ isRepo: true, root: '/proj' })),
+}));
+
 const clientMock = {
   message: vi.fn(async () => ({ ok: true })),
   setPermissionMode: vi.fn(async () => ({ ok: true, mode: 'plan' })),
@@ -423,6 +429,37 @@ describe('agents.spawn — dispatch', () => {
     await call('agents.spawn', { provider: 'claude', transport: 'pty', cwd: '/proj' });
     expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
     expect(spawnManagedAgent).not.toHaveBeenCalled();
+  });
+
+  it('worktree:true carves a worktree in main and spawns the worker THERE (ship-task isolation)', async () => {
+    createWorktree.mockResolvedValueOnce({ ok: true, path: '/wt/proj-abc', branch: 'agent/x' });
+    await call('agents.spawn', {
+      provider: 'claude',
+      transport: 'pty',
+      cwd: '/proj',
+      worktree: true,
+    });
+    expect(createWorktree).toHaveBeenCalledTimes(1);
+    expect((createWorktree.mock.calls[0][0] as { repoCwd: string }).repoCwd).toBe('/proj');
+    // The worker's cwd is the worktree, not the checkout.
+    expect((spawnClaudeAgent.mock.calls[0][0] as { cwd: string }).cwd).toBe('/wt/proj-abc');
+  });
+
+  it('a worktree failure falls back to cwd rather than refusing the dispatch', async () => {
+    createWorktree.mockResolvedValueOnce({ ok: false, error: 'not a git repo' });
+    await call('agents.spawn', {
+      provider: 'claude',
+      transport: 'pty',
+      cwd: '/proj',
+      worktree: true,
+    });
+    expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
+    expect((spawnClaudeAgent.mock.calls[0][0] as { cwd: string }).cwd).toBe('/proj');
+  });
+
+  it('no worktree is created when worktree is unset (scout / in-place work)', async () => {
+    await call('agents.spawn', { provider: 'claude', transport: 'pty', cwd: '/proj' });
+    expect(createWorktree).not.toHaveBeenCalled();
   });
 
   it('falls back to the config default (claude.transport) when the caller omits transport', async () => {

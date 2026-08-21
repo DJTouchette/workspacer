@@ -308,6 +308,70 @@ const ProjectsSection: React.FC<ProjectsSectionProps> = ({ config, save }) => {
                 <SmallButton onClick={() => forget(dir)} label="Forget it" />
               </div>
             )}
+            {/* Fleet Manager dispatch policy for THIS project — how it lands
+                work (delivery mode) and whether its workers skip approvals
+                (yolo). Read at dispatch and baked into each worker's brief. */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '0 0 8px 32px',
+                flexWrap: 'wrap',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: '0.6rem',
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                  color: 'var(--wks-text-faint)',
+                }}
+              >
+                Fleet
+              </span>
+              <label
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  fontSize: '0.66rem',
+                  color: 'var(--wks-text-muted)',
+                }}
+              >
+                Delivery
+                <select
+                  value={entry.delivery ?? 'pr'}
+                  aria-label={`Fleet delivery mode for ${dir}`}
+                  title="How the Fleet Manager lands work here: open a PR for review, or land changes locally for an approved merge."
+                  onChange={(e) => update(dir, { delivery: e.target.value as 'pr' | 'local' })}
+                  style={{ ...inputStyle, width: 150 }}
+                >
+                  <option value="pr">Pull request (review)</option>
+                  <option value="local">Local merge (approve)</option>
+                </select>
+              </label>
+              <label
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  fontSize: '0.66rem',
+                  color: 'var(--wks-text-muted)',
+                  cursor: 'pointer',
+                }}
+                title="Workers dispatched into this project run with permissions bypassed (no per-action approvals). Off by default."
+              >
+                <input
+                  type="checkbox"
+                  checked={entry.yolo === true}
+                  aria-label={`Full access for workers in ${dir}`}
+                  onChange={(e) => update(dir, { yolo: e.target.checked })}
+                />
+                Full access
+              </label>
+            </div>
             {/* What each plugin needs to know about THIS project. Rendered
                 under the identity row rather than in a separate page, because
                 "which Jira project is this repo" is a fact about the project,

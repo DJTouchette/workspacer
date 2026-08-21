@@ -188,6 +188,22 @@ export interface ProjectIdentity {
   iconFile?: string;
   /** Pinned by the user. Absent falls back to the legacy `directories.favourites`. */
   favourite?: boolean;
+  /**
+   * How the Fleet Manager lands work in this project (the standing per-project
+   * delivery policy it reads at dispatch and bakes into each worker's brief):
+   *   'pr'    — open a pull request for review (default, safest).
+   *   'local' — land changes on a branch / local merge after your approval; no PR.
+   * Absent = 'pr'. Advisory to the manager, not a hard gate.
+   */
+  delivery?: 'pr' | 'local';
+  /**
+   * Per-project full-access: workers the manager dispatches INTO this project
+   * run with permissions bypassed (no per-action approvals). The narrower,
+   * per-repo form of agents.fleetFullAccess. Absent = off. When any project
+   * sets this, the manager's token gets the hub-verified yolo grant; the
+   * manager still only bypasses for the flagged project (doctrine-enforced).
+   */
+  yolo?: boolean;
   /** Epoch ms this project was last opened. Absent falls back to the legacy
    *  `directories.recent` ordering. */
   lastOpened?: number;

@@ -695,7 +695,12 @@ export function useAgentManager() {
    * context, resending the preamble would just burn tokens.
    */
   const spawnFleetManager = useCallback(
-    async (ask: string, root: string, fullAccess = false): Promise<string | undefined> => {
+    async (
+      ask: string,
+      root: string,
+      fullAccess = false,
+      grantYolo = false,
+    ): Promise<string | undefined> => {
       const live = agentsRef.current.find(
         (a) => !a.global && a.name === FLEET_MANAGER_NAME && a.sessionId,
       );
@@ -734,10 +739,12 @@ export function useAgentManager() {
         transport: 'stream',
         toolScope: 'operator',
         manager: true,
-        // Full-access mode (config agents.fleetFullAccess): the manager itself
-        // runs bypassed AND its token carries the yolo grant, so the workers it
-        // dispatches inherit it without the manager approving every prompt.
-        fleetFullAccess: fullAccess,
+        // The token's yolo grant is minted when EITHER global full-access is on
+        // OR any project is flagged yolo (per-project autonomy) — that is what
+        // lets the manager dispatch a bypassed worker at all. But the manager's
+        // OWN bypass and the full-access doctrine note ride only global
+        // full-access; per-project yolo is applied per dispatch by doctrine.
+        fleetFullAccess: grantYolo,
         ...(fullAccess && { permissionMode: 'bypassPermissions', skipPermissions: true }),
         kickoffMessage: buildManagerKickoff(ask, fullAccess),
       }).then((id) => id ?? undefined);

@@ -95,6 +95,17 @@ describe('spawnFleetManager', () => {
     // The visible-terminal path: bring up a dev server the user can watch.
     expect(kickoff).toContain('open_terminal');
     expect(kickoff).toContain('does NOT block your turn');
+    // Harness pool: dispatch on codex/opencode/pi, not just claude.
+    expect(kickoff).toContain('list_providers');
+    expect(kickoff).toContain('codex');
+    // Ship vs scout task shapes + worktree isolation + per-project delivery.
+    expect(kickoff).toContain('SHIP task');
+    expect(kickoff).toContain('SCOUT task');
+    expect(kickoff).toContain('worktree":true');
+    expect(kickoff).toContain('DELIVERY MODE');
+    expect(kickoff).toContain('projects[<dir>].delivery');
+    // Per-project yolo autonomy.
+    expect(kickoff).toContain('projects[<dir>].yolo');
     hook.unmount();
   });
 

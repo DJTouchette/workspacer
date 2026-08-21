@@ -18,6 +18,7 @@ import { resolveAgentBinary, checkAllProviders, type AgentProvider } from './age
 import { byteCompare } from '../lib/providerParity';
 import { resolveTerminalShell } from '../lib/shellAllowlist';
 import { normalizeSpawnCwd } from '../lib/spawnCwd';
+import { createWorktree } from './worktreeService';
 import { assertNoPermissionBypass, isPermissionEscalation } from '../lib/permissionBypass';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
@@ -267,6 +268,7 @@ export function registerHubCapabilities(): void {
       mcpItemIds,
       profileGranted,
       yoloGranted,
+      worktree,
     } = (params ?? {}) as {
       provider?: AgentProvider;
       /** Claude only: 'pty' | 'stream'. Omitted = the config default. */
@@ -305,6 +307,11 @@ export function registerHubCapabilities(): void {
        *  HONORED instead of clamped — the fleet-manager full-access path.
        *  TWIN: rpc.go sanitizeSpawnParams. */
       yoloGranted?: boolean;
+      /** Run the new agent in a fresh isolated git worktree of `cwd` (its own
+       *  branch) instead of the checkout — the fleet manager's ship-task
+       *  isolation so parallel work on one repo never collides. Created here in
+       *  main (the bus/facade path has no renderer to make it, unlike ipc.ts). */
+      worktree?: boolean;
     };
     // SECURITY: this capability is the REMOTE/web/MCP spawn path (the local
     // desktop spawns over IPC). Driving an agent is already code execution on
@@ -356,6 +363,32 @@ export function registerHubCapabilities(): void {
     // A granted spawn keeps a bypass mode too (its whole point); otherwise an
     // escalation mode is dropped to the default, same as the skip clamp above.
     const permissionMode = !yoloOK && isPermissionEscalation(reqMode) ? undefined : reqMode;
+    // Worktree isolation for a ship task (fleet-manager default): carve a fresh
+    // git worktree of `cwd` and spawn the worker THERE, so parallel work on one
+    // repo never collides. The IPC path does this in the renderer
+    // (useAgentManager.spawnAgent); the bus/facade path has no renderer, so it
+    // is done here. A soft failure (cwd not a repo, git error) falls back to
+    // `cwd` with a warning rather than refusing the dispatch.
+    let spawnCwd = cwd;
+    if (worktree && cwd) {
+      try {
+        const wt = await createWorktree({
+          repoCwd: cwd,
+          name: label,
+          // worktreeRoot is a renderer-config field (not in config_defaults), so
+          // read it loosely; absent → createWorktree uses its default root.
+          rootOverride: (configService.getConfig().agents as { worktreeRoot?: string } | undefined)
+            ?.worktreeRoot,
+        });
+        if (wt.ok && wt.path) {
+          spawnCwd = wt.path;
+        } else {
+          console.warn(`[hub] agents.spawn: worktree for ${cwd} failed (${wt.error}); using cwd`);
+        }
+      } catch (err) {
+        console.warn(`[hub] agents.spawn: worktree for ${cwd} threw; using cwd`, err);
+      }
+    }
     // Managed (Tier-2) backend — Codex / OpenCode / Pi run through claudemon's
     // adapter, not a Claude PTY. Shares the dispatch with the `claude:spawn` IPC
     // handler so this path can't silently fall back to spawning Claude (it did
@@ -364,7 +397,7 @@ export function registerHubCapabilities(): void {
     if (provider && provider !== 'claude') {
       const sessionId = await spawnManagedAgent({
         provider,
-        cwd,
+        cwd: spawnCwd,
         // Codex mirrors Claude's stream transport: 'stream' spawns headless
         // (GUI-only, daemon-owned thread). Must ride through here like on the
         // IPC branch (ipc.ts) or a remote headless spawn silently downgrades
@@ -393,7 +426,7 @@ export function registerHubCapabilities(): void {
       const sessionId = await spawnManagedAgent({
         provider: 'claude',
         transport: 'stream',
-        cwd,
+        cwd: spawnCwd,
         // Profile + per-spawn Library MCP servers must ride through here just
         // like on the IPC stream branch (ipc.ts) — this path used to drop both,
         // so a remote stream spawn silently ignored the chosen profile/servers.
@@ -415,7 +448,7 @@ export function registerHubCapabilities(): void {
       return { sessionId };
     }
     const sessionId = await spawnClaudeAgent({
-      cwd,
+      cwd: spawnCwd,
       profileId,
       scrubProfileBypass,
       profileGranted: profileGranted === true,

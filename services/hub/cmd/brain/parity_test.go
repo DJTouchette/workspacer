@@ -379,6 +379,7 @@ var spawnParamsDeclined = map[string]string{
 	"mcpItemIds":  "per-spawn Library MCP servers need buildSessionMcpConfig (a desktop-owned session-scoped --mcp-config writer)",
 	"toolScope":   "the facade tool tier rides the facade (desktop-only, see mcpFacade) — minting/revoking the per-session token is desktop-owned (remoteTokens.ts)",
 	"pluginTools": "plugin tool grants are recorded on the session facade token, which headless cannot mint (see toolScope)",
+	"worktree":    "ship-task worktree isolation is created by the desktop (worktreeService.createWorktree) before the spawn; the headless brain has no equivalent worktree pool, so a worktree spawn it answers just runs in cwd",
 }
 
 // spawnParamsAhead is the mirror escape hatch: brain spawnParams the DESKTOP
