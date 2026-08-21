@@ -34,7 +34,13 @@ import {
 } from '../lib/sessionStats';
 import { useConfig } from '../hooks/useConfig';
 import { DEFAULT_SHORTCUTS } from '../hooks/configDefaults';
-import { eventMatchesCombo, digitFromRangeEvent, formatBinding } from '../lib/shortcuts';
+import {
+  eventMatchesCombo,
+  digitFromRangeEvent,
+  formatBinding,
+  resolveLeader,
+} from '../lib/shortcuts';
+import { isLayerArmed } from '../lib/layerArmed';
 
 const CARD_MIN = 360; // matches the old minmax(360px) grid
 const GRID_GAP = 18;
@@ -246,6 +252,15 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
     () => ({ ...DEFAULT_SHORTCUTS, ...(config.keybindings?.shortcuts ?? {}) }),
     [config.keybindings?.shortcuts],
   );
+  // The command layer's leader, resolved exactly like App resolves kbPrefix
+  // (leaderOverride beats the platform-resolved prefix) — the deck's capture
+  // handler must recognize it to let it through (see onKey below).
+  const kbPrefix = useMemo(
+    () =>
+      config.keybindings?.commandLayer?.leaderOverride?.trim() ||
+      resolveLeader(config.keybindings?.prefix ?? 'ctrl+space'),
+    [config.keybindings?.commandLayer?.leaderOverride, config.keybindings?.prefix],
+  );
 
   // Cards (default) vs a dense List table — mirrors the overview toggle.
   // Persisted so the deck reopens in the layout you last used.
@@ -453,6 +468,14 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // tmux doctrine: the command layer always wins. Both this handler and the
+      // window chord dispatcher listen in the capture phase, so their order is
+      // whichever effect re-registered last — never let the deck's stops decide
+      // the race. While the leader is armed every keystroke is a chord step
+      // (the deck's y/n/i/digits would otherwise eat it), and the leader press
+      // itself must reach the dispatcher to arm at all.
+      if (isLayerArmed()) return;
+      if (eventMatchesCombo(e, kbPrefix)) return;
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       if (displayOrder.length === 0) return;
@@ -589,6 +612,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
     answer,
     openAgent,
     sc,
+    kbPrefix,
     fleetView,
     rows,
     posOf,
