@@ -109,6 +109,7 @@ export function patchProject(
   for (const k of Object.keys(merged) as (keyof ProjectIdentity)[]) {
     const v = merged[k];
     if (v === undefined || v === null || v === '') delete merged[k];
+    if (Array.isArray(v) && !v.length) delete merged[k];
     if (k === 'plugins' && v && !Object.keys(v as object).length) delete merged[k];
   }
   if (Object.keys(merged).length) next[key] = merged;

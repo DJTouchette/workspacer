@@ -282,6 +282,13 @@ export function useAgentManager() {
           if (wt.ok && wt.path) {
             cwd = wt.path;
             console.log(`[Agent] spawning in worktree ${wt.path} (${wt.branch})`);
+            if (wt.setup?.failed) {
+              // The worktree is usable; the project's setup hook is not — the
+              // agent still spawns, same as any other soft worktree trouble.
+              console.error(
+                `[Agent] worktree setup "${wt.setup.failed.command}" failed (${wt.setup.failed.error}); agent starts anyway`,
+              );
+            }
           } else {
             console.error('[Agent] worktree creation failed:', wt.error);
           }
