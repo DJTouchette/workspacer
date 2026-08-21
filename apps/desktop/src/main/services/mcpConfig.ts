@@ -67,6 +67,8 @@ export function managedFacadeInstructions(
   supervisor: boolean,
   scope: RemoteTokenScope = 'operator',
   sessionId?: string,
+  /** Supervisor full-access mode — same meaning as facadeSpawnArgs.fullAccess. */
+  fullAccess?: boolean,
 ): string {
   // The PTY path has always told a facade session its own id (facadeSpawnArgs'
   // idNote); this path didn't, so a stream-transport manager had to HUNT for
@@ -85,6 +87,9 @@ export function managedFacadeInstructions(
     `${SUPERVISOR_SYSTEM_PROMPT}\n\n` +
     'Watch the fleet continuously: start with list_agents, then get_snapshot / get_conversation for detail, ' +
     'and surface anything that needs a human. Spawn cheap summarizer workers (toolScope "view") when you need transcript digests.' +
+    (fullAccess
+      ? ' Full-access mode is ON (supervisor.fullAccess): you run with permissions bypassed, and every worker you spawn should too — always pass skipPermissions: true to spawn_agent so your workers never stall on an approval prompt.'
+      : '') +
     idNote +
     ' Tool names may be prefixed by your runtime (e.g. workspacer__list_agents) — use whichever the workspacer server exposes.'
   );
@@ -114,6 +119,10 @@ export function facadeSpawnArgs(opts: {
   token?: string;
   summarizerModel?: string;
   pollSeconds?: number;
+  /** Supervisor full-access mode (config supervisor.fullAccess): the session
+   *  token carries the yolo grant, so tell the supervisor to spawn its workers
+   *  with skipPermissions — without the grant that request is clamped off. */
+  fullAccess?: boolean;
 }): { mcpConfig: string; allowedTools: string[]; appendSystemPrompt: string } {
   const mcpConfig = opts.token
     ? facadeSessionMcpConfig(opts.sessionId, opts.token)
@@ -134,7 +143,10 @@ export function facadeSpawnArgs(opts: {
     appendSystemPrompt:
       `${SUPERVISOR_SYSTEM_PROMPT}\n\n${idNote} When you spawn worker agents with spawn_agent, pass parentSessionId:"${opts.sessionId}" and a short label so they appear nested under you in the UI.\n\n` +
       `Run the /supervise skill now to begin watching the fleet, and keep it running on a loop (about every ${poll}s). ` +
-      `Spawn your transcript-summarizer workers with model "${summarizer}" and toolScope "view" so they can read transcripts themselves without consuming your context.`,
+      `Spawn your transcript-summarizer workers with model "${summarizer}" and toolScope "view" so they can read transcripts themselves without consuming your context.` +
+      (opts.fullAccess
+        ? ' Full-access mode is ON (supervisor.fullAccess): you run with permissions bypassed, and every worker you spawn should too — always pass skipPermissions: true to spawn_agent so your workers never stall on an approval prompt.'
+        : ''),
   };
 }
 

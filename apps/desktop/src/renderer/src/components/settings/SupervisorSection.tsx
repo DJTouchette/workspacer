@@ -130,6 +130,17 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
         How often the supervisor re-sweeps the fleet for status and pending decisions.
       </div>
 
+      <CheckRow
+        label="Full access (supervisor + its workers skip approvals)"
+        checked={sup.fullAccess === true}
+        onChange={(v) => patch({ fullAccess: v })}
+      />
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        When on, the supervisor runs with permissions bypassed and the summarizer workers it spawns
+        inherit the same — no per-action approval prompts. Hands-off, but there is no human gate on
+        each command. Off by default.
+      </div>
+
       <div style={{ marginTop: 18, fontWeight: 600, fontSize: '0.8rem' }}>Fleet Manager</div>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', margin: '4px 0 8px' }}>
         The delegating manager launched from the Overview. It dispatches real agents into your

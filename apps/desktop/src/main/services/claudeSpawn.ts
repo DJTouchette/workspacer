@@ -121,16 +121,27 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   // Pin the session id so claude names its transcript `<id>.jsonl` and our
   // id == claude's id == the filename. Resuming keeps the existing id.
   const sessionId = opts.resumeSessionId || randomUUID();
-  // An explicit mode wins; the legacy boolean maps to bypass. Recorded on the
-  // snapshot so the composer pill shows truth.
-  const permissionMode =
-    opts.permissionMode ?? (opts.skipPermissions ? 'bypassPermissions' : 'default');
+  // Supervisor full-access mode (config supervisor.fullAccess, the supervisor
+  // twin of agents.fleetFullAccess): the supervisor itself runs with
+  // permissions bypassed, and its facade token below is minted with the yolo
+  // grant so the workers it spawns may run bypassed too. Read from config —
+  // not a caller flag — so every entry point (IPC, hub bus, jobs) resolves the
+  // local user's setting identically.
+  const supCfg = configService.getConfig().supervisor;
+  const supervisorFullAccess = !!opts.supervisor && supCfg?.fullAccess === true;
+  const skipPermissions = !!opts.skipPermissions || supervisorFullAccess;
+  // An explicit mode wins; the legacy boolean maps to bypass (and supervisor
+  // full access forces it). Recorded on the snapshot so the composer pill
+  // shows truth.
+  const permissionMode = supervisorFullAccess
+    ? 'bypassPermissions'
+    : (opts.permissionMode ?? (skipPermissions ? 'bypassPermissions' : 'default'));
   // Whether this process will carry `--dangerously-skip-permissions` — the same
   // three inputs buildClaudeArgv resolves it from below. Recorded because Claude
   // gates *switching to* bypassPermissions on the flag, so it's what tells the
   // composer whether "Full access" is a live switch or a restart.
   const bypassAvailable =
-    !!opts.skipPermissions ||
+    skipPermissions ||
     permissionMode === 'bypassPermissions' ||
     (profile?.extraArgs ?? []).includes('--dangerously-skip-permissions');
   // Record name/parent before the session registers so adopted cards are
@@ -180,7 +191,6 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
 
   // Supervisors: install the /supervise skill and default to the configured
   // supervisor model when none was passed explicitly.
-  const supCfg = configService.getConfig().supervisor;
   let model = opts.model;
   if (opts.supervisor) {
     installSupervisorSkill();
@@ -198,7 +208,7 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     model,
     effort: opts.effort,
     settingsFile: claudeSettingsOverlayEnabled() ? claudemonOverlayPath() : undefined,
-    skipPermissions: opts.skipPermissions,
+    skipPermissions,
     permissionMode: permissionMode as 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions',
     sessionId,
     // Facade sessions get the MCP config + pre-allowed tools + a role prompt.
@@ -215,15 +225,20 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
         // every local profile — the hub verifies it and stamps profileGranted
         // on the worker spawn. Only `manager` gets this; a plain supervisor
         // or facade worker has no business spawning as other accounts.
+        // The yolo grant rides two doors: the manager's caller-passed
+        // fleetFullAccess, and the config-resolved supervisor full access —
+        // either way the hub stamps yoloGranted on the holder's worker spawns
+        // so their skipPermissions request is honored instead of clamped.
         token: mintSessionFacadeToken(
           sessionId,
           facadeScope,
           opts.pluginTools,
           opts.manager ? claudeProfiles.getProfiles().map((p) => p.id) : undefined,
-          opts.manager ? !!opts.fleetFullAccess : undefined,
+          opts.manager ? !!opts.fleetFullAccess : supervisorFullAccess || undefined,
         ).token,
         summarizerModel: supCfg?.summarizerModel,
         pollSeconds: supCfg?.pollSeconds,
+        fullAccess: supervisorFullAccess,
       })),
     // User-selected MCP servers (non-facade sessions).
     ...(userMcp && {
