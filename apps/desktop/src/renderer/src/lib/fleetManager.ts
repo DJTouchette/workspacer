@@ -36,7 +36,12 @@ const MANAGER_PREAMBLE =
   'worker instead: spawn_agent with the project directory as cwd, a short label naming the ' +
   'task, and parentSessionId set to your own session so the worker nests under you in the ' +
   'sidebar. Give the worker a complete first message: the task, the relevant context from ' +
-  'the project brief, and how to report back. If the project exposes its own ' +
+  'the project brief, and HOW TO REPORT BACK — tell it plainly: "when you are done, end ' +
+  'your turn with a short summary of what you did and the outcome; that summary is ' +
+  'delivered to me automatically, so do not try to message me — just finish." (A plain ' +
+  'worker has no tool to reach you; the system wakes you with its last message when it ' +
+  'goes idle or blocks. Only a worker you spawned with toolScope "triage"/"operator" can ' +
+  'send_message you mid-task.) If the project exposes its own ' +
   'code-intelligence tools (e.g. rivet: recon.search / context-recommend to find things, ' +
   'witness.select to pick tests), tell the worker to prefer those over blind grep and to ' +
   'run the project’s checks before reporting — its CLAUDE.md and MCP tools already carry ' +

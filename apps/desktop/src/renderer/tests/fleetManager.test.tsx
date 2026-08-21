@@ -101,6 +101,10 @@ describe('spawnFleetManager', () => {
     // Point workers at the project's own code-intel tools when it has them.
     expect(kickoff).toContain('rivet');
     expect(kickoff).toContain('witness.select');
+    // Workers report BY FINISHING — the manager must tell them so (a plain
+    // worker has no channel back).
+    expect(kickoff).toContain('end your turn with a short summary');
+    expect(kickoff).toContain('delivered to me automatically');
     // Ship vs scout task shapes + worktree isolation + per-project delivery.
     expect(kickoff).toContain('SHIP task');
     expect(kickoff).toContain('SCOUT task');
