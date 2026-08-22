@@ -136,9 +136,12 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
         onChange={(v) => patch({ fullAccess: v })}
       />
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        When on, the supervisor runs with permissions bypassed and the summarizer workers it spawns
-        inherit the same — no per-action approval prompts. Hands-off, but there is no human gate on
-        each command. Off by default.
+        When on, the workers the supervisor spawns skip approvals — no per-action approval prompts.
+        Hands-off, but there is no human gate on each command. Off by default.{' '}
+        <strong>Takes effect for newly spawned sessions.</strong> A running supervisor picks this up
+        immediately for agents it spawns from now on, but its OWN tool calls keep the permission
+        mode it was started with — a session’s bypass is fixed when it spawns — so respawn it to
+        change that.
       </div>
 
       <div style={{ marginTop: 18, fontWeight: 600, fontSize: '0.8rem' }}>Fleet Manager</div>
@@ -166,10 +169,14 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
         onChange={(v) => patchAgents({ fleetFullAccess: v })}
       />
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        When on, the manager and the agents it dispatches run with permissions bypassed — no
-        per-action approval prompts. Faster and hands-off, but there is no human gate on each
-        command. The manager still asks you before anything destructive or cross-repo. Off by
-        default.
+        When on, the agents the manager dispatches run with permissions bypassed — no per-action
+        approval prompts, even when the dispatch does not ask for one. Faster and hands-off, but
+        there is no human gate on each command. The manager still asks you before anything
+        destructive or cross-repo. Off by default.{' '}
+        <strong>Takes effect for newly spawned sessions.</strong> A running manager picks this up
+        immediately for agents it dispatches from now on, but its OWN tool calls keep the permission
+        mode it was started with — a session’s bypass is fixed when it spawns — so respawn it to
+        change that. Workspacer tells you when a running manager or supervisor is affected.
       </div>
     </Section>
   );

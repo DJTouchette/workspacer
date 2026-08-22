@@ -233,8 +233,16 @@ describe('full-access grant reconciliation (config flips applied live)', () => {
     const worker = mintSessionFacadeToken('wkr-1', 'view');
     const pairing = getOrCreateRemoteToken('operator', 'Laptop');
 
-    // Both flags flipped OFF: both role tokens lose the grant, one write.
-    expect(reconcileSessionFacadeGrants({ manager: false, supervisor: false })).toBe(2);
+    // Both flags flipped OFF: both role tokens lose the grant, one write. The
+    // return names each session that MOVED — that set is what the desktop
+    // announces to the user, so it must carry the session id and direction,
+    // not just a count.
+    expect(reconcileSessionFacadeGrants({ manager: false, supervisor: false })).toEqual(
+      expect.arrayContaining([
+        { sessionId: 'mgr-1', role: 'manager', yoloAllowed: false },
+        { sessionId: 'sup-1', role: 'supervisor', yoloAllowed: false },
+      ]),
+    );
     let raw = rawTokens();
     expect(raw.find((r) => r.token === mgr.token)).not.toHaveProperty('yoloAllowed');
     expect(raw.find((r) => r.token === sup.token)).not.toHaveProperty('yoloAllowed');
@@ -250,14 +258,16 @@ describe('full-access grant reconciliation (config flips applied live)', () => {
     );
 
     // Manager flag back ON: only the manager token regains the grant.
-    expect(reconcileSessionFacadeGrants({ manager: true, supervisor: false })).toBe(1);
+    expect(reconcileSessionFacadeGrants({ manager: true, supervisor: false })).toEqual([
+      { sessionId: 'mgr-1', role: 'manager', yoloAllowed: true },
+    ]);
     raw = rawTokens();
     expect(raw.find((r) => r.token === mgr.token)).toMatchObject({ yoloAllowed: true });
     expect(raw.find((r) => r.token === sup.token)).not.toHaveProperty('yoloAllowed');
     expect(raw.find((r) => r.token === worker.token)).not.toHaveProperty('yoloAllowed');
 
-    // Already in line → no write, count 0.
-    expect(reconcileSessionFacadeGrants({ manager: true, supervisor: false })).toBe(0);
+    // Already in line → no write, nothing to announce.
+    expect(reconcileSessionFacadeGrants({ manager: true, supervisor: false })).toEqual([]);
   });
 
   it('reconcileSessionFacadeToken stamps the role onto a legacy token and sets the grant both ways', () => {
