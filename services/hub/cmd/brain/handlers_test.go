@@ -388,6 +388,89 @@ func TestSendMessageRequiresFields(t *testing.T) {
 	}
 }
 
+// A worker naming itself via fromSessionId is attributed on delivery — the
+// bug being pinned is that a worker→manager send_message otherwise carries no
+// identity at all, unlike every other fleet-chat message class.
+func TestSendMessageAttributesNamedSender(t *testing.T) {
+	var gotText string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Text string `json:"text"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotText = body.Text
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	reg := newRegistry(newClaudemonClient(srv.URL))
+	reg.meta = newMetaStore()
+	reg.meta.set("worker1", spawnMeta{Label: "Rust Worker"})
+
+	_, err := reg.handle(context.Background(), "agents.sendMessage",
+		[]byte(`{"sessionId":"manager1","text":"I'm blocked on X","fromSessionId":"worker1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[fleet] session:worker1 (Rust Worker) says:\nI'm blocked on X"
+	if gotText != want {
+		t.Fatalf("gotText = %q, want %q", gotText, want)
+	}
+}
+
+// No recorded label for the named sender: still attributed by session id
+// alone rather than going unattributed or erroring.
+func TestSendMessageAttributesUnlabeledSender(t *testing.T) {
+	var gotText string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Text string `json:"text"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotText = body.Text
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	reg := newRegistry(newClaudemonClient(srv.URL))
+	reg.meta = newMetaStore()
+
+	_, err := reg.handle(context.Background(), "agents.sendMessage",
+		[]byte(`{"sessionId":"manager1","text":"status update","fromSessionId":"worker2"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[fleet] session:worker2 says:\nstatus update"
+	if gotText != want {
+		t.Fatalf("gotText = %q, want %q", gotText, want)
+	}
+}
+
+// Omitting fromSessionId leaves the text untouched — backward compatible with
+// every existing caller (a manager dispatching, a human via chat).
+func TestSendMessageNoAttributionWithoutFromSessionID(t *testing.T) {
+	var gotText string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Text string `json:"text"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotText = body.Text
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	reg := newRegistry(newClaudemonClient(srv.URL))
+	_, err := reg.handle(context.Background(), "agents.sendMessage",
+		[]byte(`{"sessionId":"s1","text":"hello"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotText != "hello" {
+		t.Fatalf("gotText = %q, want unattributed %q", gotText, "hello")
+	}
+}
+
 func TestListRelaysRawBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/sessions" {

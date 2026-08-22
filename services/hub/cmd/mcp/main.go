@@ -554,7 +554,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	// ── Drive ──────────────────────────────────────────────────────────────
 	b.group = "drive"
 	addHubTool[sendMessageIn](b, "send_message",
-		"Send a prompt/message to a running agent session.",
+		"Send a prompt/message to a running agent session. If you are a dispatched worker messaging your own manager, pass fromSessionId (your own session id) so your message isn't anonymous.",
 		"agents.sendMessage")
 	addHubTool[approveIn](b, "approve",
 		"Resolve a pending permission prompt for an agent: 'yes', 'no', or 'always'.",
@@ -1149,8 +1149,9 @@ type openTerminalIn struct {
 
 type sendMessageIn struct {
 	hubArg
-	SessionID string `json:"sessionId" jsonschema:"the target session id"`
-	Text      string `json:"text" jsonschema:"the prompt/message to send to the agent"`
+	SessionID     string `json:"sessionId" jsonschema:"the target session id"`
+	Text          string `json:"text" jsonschema:"the prompt/message to send to the agent"`
+	FromSessionID string `json:"fromSessionId,omitempty" jsonschema:"your own session id — when set, the message is delivered with a header naming you as the sender, so the recipient (e.g. your manager) knows who sent it; omit if sending on your own account is not meaningful (a human operator via chat, a plugin)"`
 }
 
 type approveIn struct {
