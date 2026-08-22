@@ -321,3 +321,122 @@ describe('supervisorNudge.onFinished — structured results', () => {
     expect(text).not.toContain('Structured result');
   });
 });
+
+// ── Wake payload honesty: finished vs FAILED ────────────────────────────────
+//
+// A worker that dies on a provider error goes idle exactly like one that
+// finished, and its last assistant turn IS the error — so the wake used to say
+// "Worker finished" and hand the manager a crash as the summary (observed
+// 2026-08-21, an out-of-credits worker). Extends 27a881a2's stopped/killed axis
+// rather than duplicating it: stopped = the SESSION ended, failed = the AGENT
+// reported a failure, and they are independent.
+describe('supervisorNudge.onFinished — error vs completion', () => {
+  const errorReply = '⚠️ Error: Credit balance is too low to access the Anthropic API.';
+
+  it('marks a provider-error death FAILED, with an honest header and the reason', async () => {
+    supervisorNudge.onFinished(
+      worker({ conversation: turns(['user', 'ship it'], ['assistant', errorReply]) }),
+      'mgr',
+      errorReply,
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    const [, text] = message.mock.calls[0] as [string, string];
+    // The header must not say "finished" when every worker in the wake died.
+    expect(text).toContain('[fleet] Worker FAILED — did not complete:');
+    expect(text).not.toContain('[fleet] Worker finished');
+    expect(text).toContain('FAILED: Credit balance is too low');
+    expect(text).toContain('did NOT complete its task');
+    expect(text).toContain('not record it in a brief');
+    // …and it is still a parseable card, carrying the failure through.
+    const parsed = parseFleetMessage(text);
+    expect(parsed?.kind).toBe('worker-finished');
+    expect(parsed?.entries[0].failed).toContain('Credit balance is too low');
+  });
+
+  it('names out-of-credits from the structured statusLine bit', async () => {
+    supervisorNudge.onFinished(
+      worker({
+        statusLine: { overageOutOfCredits: true },
+        conversation: turns(['user', 'ship it'], ['assistant', 'stopped early']),
+      }) as never,
+      'mgr',
+      'stopped early',
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).toContain('FAILED: out of credits (overage disabled)');
+  });
+
+  it('keeps the normal header on a MIXED wake — "finished" is true of the others', async () => {
+    supervisorNudge.onFinished(
+      worker({ conversation: turns(['user', 'a'], ['assistant', errorReply]) }),
+      'mgr',
+      errorReply,
+    );
+    supervisorNudge.onFinished(
+      worker({ sessionId: 'w2', label: 'beta: docs' }),
+      'mgr',
+      'All 42 tests pass.\nDone.',
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).toContain('[fleet] Worker finished:');
+    // The bullets carry the truth per worker.
+    const parsed = parseFleetMessage(text)!;
+    expect(parsed.entries.find((e) => e.sessionId === 'w1')?.failed).toBeTruthy();
+    expect(parsed.entries.find((e) => e.sessionId === 'w2')?.failed).toBeUndefined();
+  });
+
+  it('stopped/killed and FAILED are independent axes, and can both apply', async () => {
+    supervisorNudge.onFinished(
+      worker({
+        status: 'ended',
+        conversation: turns(['user', 'a'], ['assistant', errorReply]),
+      }),
+      'mgr',
+      errorReply,
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    const [, text] = message.mock.calls[0] as [string, string];
+    const entry = parseFleetMessage(text)!.entries[0];
+    expect(entry.stopped).toBe(true);
+    expect(entry.failed).toBeTruthy();
+  });
+
+  it('leaves an ordinary finish completely unchanged', async () => {
+    supervisorNudge.onFinished(worker(), 'mgr', 'All 42 tests pass.\nDone.');
+    await vi.advanceTimersByTimeAsync(2000);
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).toContain('[fleet] Worker finished:');
+    expect(text).not.toContain('FAILED');
+    expect(parseFleetMessage(text)!.entries[0].failed).toBeUndefined();
+  });
+
+  it('the catch-up backstop tells finished from died too', () => {
+    supervisorNudge.sweepMissedFinishes(
+      [
+        {
+          sessionId: 'mgr',
+          cwd: '/home/u/Work',
+          label: 'Fleet Manager',
+          ambientState: 'idle',
+          lastActivity: 1_000,
+          isSupervisor: true,
+        },
+        {
+          sessionId: 'w9',
+          cwd: '/home/u/Work/alpha',
+          label: 'alpha: ship',
+          ambientState: 'idle',
+          lastActivity: 5_000,
+          parentSessionId: 'mgr',
+          conversation: turns(['user', 'ship'], ['assistant', errorReply]),
+        },
+      ] as never,
+      5_000 + 4 * 60_000,
+    );
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).toContain('FAILED: Credit balance is too low');
+    expect(text).toContain('did NOT complete its task');
+  });
+});

@@ -1167,6 +1167,64 @@ mod tests {
         }
     }
 
+    /// The WRITER half of contracts/agent-error-marker-cases.json.
+    ///
+    /// There is no structured error field on the wire: an AgentUpdate::Error
+    /// becomes an ordinary assistant turn prefixed with a marker (see the arm
+    /// in apply_updates for why). The desktop's workerFailure.ts reads that
+    /// prefix to tell a worker that DIED from one that FINISHED — a manager
+    /// that cannot tell those apart records a crash as a landed outcome — so
+    /// the prefix is a cross-process contract, and this pins our side of it
+    /// against the same fixture the TypeScript reader's test loads.
+    #[test]
+    fn error_marker_matches_the_cross_language_contract() {
+        const FIXTURE: &str =
+            include_str!("../../../../contracts/agent-error-marker-cases.json");
+        let spec: serde_json::Value =
+            serde_json::from_str(FIXTURE).expect("agent-error-marker-cases.json parses");
+        let marker = spec["marker"].as_str().expect("fixture has a marker");
+
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let mut mode = SessionMode::Unknown;
+        let mut acc = UsageAcc::new();
+        apply_updates(
+            &store,
+            &conv,
+            "s-marker",
+            vec![AgentUpdate::Error("Credit balance is too low.".into())],
+            &mut mode,
+            &mut acc,
+        );
+        let (_seq, items) = conv.snapshot("s-marker").expect("conversation exists");
+        match &items[0] {
+            ConversationItem::AssistantText { text, .. } => {
+                assert_eq!(
+                    text.as_str(),
+                    format!("{marker}Credit balance is too low."),
+                    "the error turn must be spelled exactly as the contract's marker + message; \
+                     changing it here silently blinds the desktop's finished-vs-failed check"
+                );
+            }
+            other => panic!("expected AssistantText, got {other:?}"),
+        }
+
+        // Every fixture case the READER must call a failure has to be a string
+        // this writer could actually have produced: marker-led. (The non-failure
+        // cases are deliberately shapes we never emit.)
+        for case in spec["cases"].as_array().expect("fixture has cases") {
+            if case["failed"].as_bool() == Some(true) {
+                let msg = case["finalMessage"].as_str().unwrap_or_default();
+                assert!(
+                    msg.trim_start().starts_with(marker),
+                    "fixture case {:?} is marked failed but does not lead with the marker this \
+                     writer emits",
+                    case["name"]
+                );
+            }
+        }
+    }
+
     #[test]
     fn apply_updates_plan_stores_state_and_pushes_conversation_item() {
         let store = SessionStore::new();

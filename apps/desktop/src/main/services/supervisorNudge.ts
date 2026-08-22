@@ -14,6 +14,7 @@ import { claudemonSessionClient } from './claudemonSessionClient';
 import type { ClaudeSessionState } from './claudeSessionStore';
 import { buildFleetMessage, excerptReply, type FleetMessageEntry } from '../shared/fleetMessages';
 import { readStructuredResult } from '../shared/structuredResult';
+import { workerFailureReason } from '../shared/workerFailure';
 
 /** How long to coalesce nudges to one supervisor before sending. */
 const COALESCE_MS = 1500;
@@ -44,7 +45,7 @@ type FinishedWorker = Pick<ClaudeSessionState, 'sessionId'> &
   Partial<
     Pick<
       ClaudeSessionState,
-      'cwd' | 'label' | 'ambientState' | 'status' | 'conversation' | 'resultSchema'
+      'cwd' | 'label' | 'ambientState' | 'status' | 'conversation' | 'resultSchema' | 'statusLine'
     >
   >;
 
@@ -169,7 +170,7 @@ class SupervisorNudge {
         ClaudeSessionState,
         'sessionId' | 'cwd' | 'label' | 'ambientState' | 'lastActivity' | 'parentSessionId'
       > & { isSupervisor?: boolean; status?: ClaudeSessionState['status'] } & Partial<
-          Pick<ClaudeSessionState, 'conversation'>
+          Pick<ClaudeSessionState, 'conversation' | 'statusLine'>
         >
     >,
     now: number,
@@ -193,12 +194,19 @@ class SupervisorNudge {
           now - c.lastActivity > MISSED_WAKE_GRACE_MS,
       );
       if (missed.length === 0) continue;
-      const entries = missed.map((c): FleetMessageEntry => ({
-        label: c.label || agentLabel(c.cwd),
-        sessionId: c.sessionId,
-        cwd: c.cwd || '?',
-        ...(c.status === 'ended' ? { stopped: true } : {}),
-      }));
+      const entries = missed.map((c): FleetMessageEntry => {
+        // The catch-up path must tell finished from died too — a manager that
+        // missed the live wake is exactly the one most likely to book a crash
+        // as an outcome.
+        const failure = workerFailureReason(c, lastAssistantReply(c));
+        return {
+          label: c.label || agentLabel(c.cwd),
+          sessionId: c.sessionId,
+          cwd: c.cwd || '?',
+          ...(c.status === 'ended' ? { stopped: true } : {}),
+          ...(failure ? { failed: failure } : {}),
+        };
+      });
       void this.sendCatchUp(manager.sessionId, entries);
     }
   }
@@ -247,6 +255,14 @@ class SupervisorNudge {
         if (entry.lastReply !== reply.trim()) entry.fullReply = reply;
         else delete entry.fullReply;
       }
+      // Did it FINISH or did it DIE? A provider error (out of credits, an
+      // overload) idles a worker exactly like a completed task and leaves the
+      // error text as its last reply — so without this the wake said "Worker
+      // finished" and handed the manager a crash as a summary. Detected from
+      // the same reply, on a separate axis from `stopped` (session ENDED),
+      // because an error can arrive with the session still alive.
+      const failure = workerFailureReason(session, reply);
+      if (failure) entry.failed = failure;
       // A dispatch that asked for a machine-readable result gets it validated
       // HERE, against the schema recorded at spawn, from the same final message
       // the prose comes from. Strictly additive: success adds the object,
