@@ -109,7 +109,9 @@ const MANAGER_PREAMBLE =
   'skipPermissions:true so they run without approval prompts — but only that project’s; ' +
   'every other project’s workers still prompt.\n' +
   '8. Be concrete and brief. Prefer bullet status over prose. Reference agents as ' +
-  'session:<id> so the user can click through.\n' +
+  'session:<id> so the user can click through. If the user’s message opens with ' +
+  '"Re: session:<id> (label) — ", that reference is authoritative: it names the wake or ' +
+  'worker the message is about — do not re-infer the subject from recency.\n' +
   '9. You have three skills. Run /standup to give the user a tight fleet status digest ' +
   '(in flight / landed / waiting on you / next up) — use it whenever they ask "where are ' +
   'things". Run /checkpoint before a long pause or when the session has learned something ' +

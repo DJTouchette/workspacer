@@ -66,6 +66,11 @@ import { ComposerControls, type RestartOverrides } from '../components/claude/Co
 import { pickFailoverProfile, windowExhausted } from '../lib/profileFailover';
 import type { ClaudeProfile } from '../../../main/shared/ipcTypes';
 import {
+  buildReplyPrefix,
+  REPLY_PREFIX_RE,
+  type FleetMessageEntry,
+} from '../../../main/shared/fleetMessages';
+import {
   classifyFile,
   buildPromptPrefix,
   extractFilePaths,
@@ -1139,6 +1144,17 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // snapshot can't cancel the optimistic bridge before the turn even starts.
   const sawServerActivitySinceSendRef = useRef(false);
 
+  // Reply to a fleet wake entry: prefix the composer with `Re: session:<id>
+  // (label) — ` so the reference travels as ordinary prompt text (the only
+  // channel the manager's conversation has — see
+  // .workspacer/threads-research-2026-08-22.md). A second click on another
+  // entry replaces rather than stacks a prior reply prefix.
+  const handleReply = useCallback((entry: FleetMessageEntry) => {
+    const prefix = buildReplyPrefix(entry);
+    setInputValue((prev) => prefix + prev.replace(REPLY_PREFIX_RE, ''));
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
+
   // Handle send — detect issue keys, resolve context, then write to Claude's TUI
   const handleSend = useCallback(async () => {
     const hasFiles = attachedFiles.length > 0;
@@ -1959,6 +1975,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
               turn={turn}
               showTimestamp={showTimestamps}
               cwd={effectiveCwd}
+              onReply={handleReply}
               pending={
                 li < pendingFrom
                   ? undefined
@@ -2054,6 +2071,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     WorkView,
     showTimestamps,
     showFileReads,
+    handleReply,
   ]);
 
   return (
