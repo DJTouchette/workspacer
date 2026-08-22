@@ -167,7 +167,9 @@ export function reconcileSessionFacadeGrants(
     const want = desired[r.role];
     if (want === (r.yoloAllowed === true)) return r;
     flips.push({
-      sessionId: r.label.slice(SESSION_LABEL_PREFIX.length),
+      // isSessionToken already proved the prefix, but `label` is optional on
+      // the record type — read it defensively rather than assert.
+      sessionId: (r.label ?? '').slice(SESSION_LABEL_PREFIX.length),
       role: r.role,
       yoloAllowed: want,
     });
