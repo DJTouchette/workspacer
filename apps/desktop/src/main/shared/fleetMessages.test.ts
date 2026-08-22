@@ -120,7 +120,12 @@ describe('stopped/killed workers', () => {
 
   it('a reply that literally contains the marker text cannot forge the flag', () => {
     const text = buildFleetMessage('worker-finished', [
-      { label: 'alpha', sessionId: 'w1', cwd: '/w/a', lastReply: 'note: — stopped/killed is a marker' },
+      {
+        label: 'alpha',
+        sessionId: 'w1',
+        cwd: '/w/a',
+        lastReply: 'note: — stopped/killed is a marker',
+      },
     ]);
     const parsed = parseFleetMessage(text);
     expect(parsed?.entries[0].stopped).toBeUndefined();

@@ -183,9 +183,20 @@ describe('a late hook frame must not null an approval the daemon still holds', (
   }
 
   const lateFrames = [
-    ['PreToolUse for the next tool', { hook_event_name: 'PreToolUse', tool_use_id: 't9', tool_name: 'Bash', tool_input: {} }],
+    [
+      'PreToolUse for the next tool',
+      { hook_event_name: 'PreToolUse', tool_use_id: 't9', tool_name: 'Bash', tool_input: {} },
+    ],
     ['PostToolUse for the previous tool', { hook_event_name: 'PostToolUse', tool_use_id: 't8' }],
-    ['an AskUserQuestion PreToolUse', { hook_event_name: 'PreToolUse', tool_use_id: 't7', tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: 'Which?', options: [] }] } }],
+    [
+      'an AskUserQuestion PreToolUse',
+      {
+        hook_event_name: 'PreToolUse',
+        tool_use_id: 't7',
+        tool_name: 'AskUserQuestion',
+        tool_input: { questions: [{ question: 'Which?', options: [] }] },
+      },
+    ],
   ] as const;
 
   for (const [what, event] of lateFrames) {
