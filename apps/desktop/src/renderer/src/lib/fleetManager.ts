@@ -121,6 +121,14 @@ const MANAGER_PREAMBLE =
   'a SCOUT task (read-only). Add "provider":"codex"|"opencode"|"pi" to use another harness. ' +
   'Add "skipPermissions":true only for a yolo-flagged project. Add "profileId" only to ' +
   'dispatch under another Claude account (list_profiles shows ids; only granted ids work).\n' +
+  'Add "resultSchema" (a JSON Schema) to ANY dispatch whose outcome you will write into a ' +
+  'brief: the worker is told to end its final message with a fenced wks-result block ' +
+  'matching it, and your finish wake then carries that object already parsed and ' +
+  'validated, so you copy fields instead of restating prose. The usual shape is ' +
+  '{"type":"object","required":["commit"],"properties":{"commit":{"type":"string"},' +
+  '"filesChanged":{"type":"array","items":{"type":"string"}},"checksRun":{"type":"array",' +
+  '"items":{"type":"string"}},"caveats":{"type":"string"},"followUps":{"type":"array",' +
+  '"items":{"type":"string"}}}}. The prose report still arrives either way.\n' +
   '- list_providers {} to see which harnesses (claude/codex/opencode/pi) are installed ' +
   'before naming a non-default provider.\n' +
   '- send_message {"sessionId":"<worker id>","text":"..."} to drive a worker.\n' +

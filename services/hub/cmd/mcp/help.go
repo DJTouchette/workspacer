@@ -64,6 +64,20 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
   defaultPermissionMode); an explicit true/false always wins. Requested or
   defaulted, a bypass is honored only when your session token carries the
   full-access grant — ungranted spawns start with approvals on.
+- resultSchema (optional) asks the worker for a MACHINE-READABLE report as well
+  as its prose: pass a JSON Schema and the worker is told to end its final
+  message with a fenced wks-result block matching it, which arrives back on your
+  worker-finished wake already parsed and VALIDATED. Use it whenever you will
+  transcribe the outcome into a brief — it turns restating a report into copying
+  fields. Typical shape: {"type":"object","required":["commit"],"properties":
+  {"commit":{"type":"string"},"filesChanged":{"type":"array","items":
+  {"type":"string"}},"checksRun":{"type":"array","items":{"type":"string"}},
+  "caveats":{"type":"string"},"followUps":{"type":"array","items":
+  {"type":"string"}}}}. Additive: the prose report is unaffected, and a worker
+  that skips or botches the block reports that beside its prose rather than
+  failing. Validated keywords are type/properties/required/items/enum/
+  additionalProperties; anything else is ignored (it can under-constrain, never
+  wrongly reject).
 - Drive it afterwards with send_message; watch it with get_conversation.
 - To spawn on a federated peer machine, pass hub (a hub name seen on
   list_agents rows). The peer clamps remote spawns itself — permission bypass

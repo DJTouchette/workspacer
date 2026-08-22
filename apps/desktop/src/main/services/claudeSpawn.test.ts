@@ -478,3 +478,45 @@ describe('spawnClaudeAgent — profile + return value', () => {
     expect(id).toBe('spawned-session-id');
   });
 });
+
+// ── Structured-result contract (spawn_agent resultSchema) ────────────────────
+describe('spawnClaudeAgent — resultSchema', () => {
+  const schema = { type: 'object', properties: { commit: { type: 'string' } } };
+
+  it('compiles the schema into --append-system-prompt for a PLAIN (non-facade) worker', async () => {
+    await spawnClaudeAgent({ cwd: '/proj', resultSchema: schema });
+    const argv = lastArgv();
+    const i = argv.indexOf('--append-system-prompt');
+    expect(i).toBeGreaterThan(-1);
+    expect(argv[i + 1]).toContain('wks-result');
+    expect(argv[i + 1]).toContain('"commit"');
+  });
+
+  it('APPENDS to the facade role prompt rather than replacing it', async () => {
+    await spawnClaudeAgent({ cwd: '/proj', toolScope: 'operator', resultSchema: schema });
+    const argv = lastArgv();
+    const prompt = argv[argv.indexOf('--append-system-prompt') + 1];
+    // The facade role note must survive — a second spread would have dropped one.
+    expect(prompt).toContain('ROLE');
+    expect(prompt).toContain('wks-result');
+    // …and the facade's own argv is still intact.
+    expect(argv).toContain('/cfg/facade.json');
+  });
+
+  it('records the schema on the spawn meta so the finish wake can validate against it', async () => {
+    await spawnClaudeAgent({ cwd: '/proj', resultSchema: schema });
+    expect(setSpawnMeta.mock.calls.at(-1)![1]).toMatchObject({ resultSchema: schema });
+  });
+
+  it('adds no --append-system-prompt at all without a schema or the facade', async () => {
+    await spawnClaudeAgent({ cwd: '/proj' });
+    expect(lastArgv()).not.toContain('--append-system-prompt');
+  });
+
+  it('REFUSES a malformed schema instead of silently dropping the contract', async () => {
+    await expect(
+      spawnClaudeAgent({ cwd: '/proj', resultSchema: 'not an object' as never }),
+    ).rejects.toThrow(/JSON Schema object/);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+});

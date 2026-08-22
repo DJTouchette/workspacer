@@ -341,6 +341,12 @@ export interface ClaudeSessionState {
   compacting?: boolean;
   lastCompactAt?: number;
   compactionCount?: number;
+  /** Structured-result contract this session was dispatched with: the JSON
+   *  Schema its `spawn_agent` carried as `resultSchema`. Held so the
+   *  worker-finished wake can validate the block the worker emits against the
+   *  shape its dispatcher asked for (shared/structuredResult). Undefined for
+   *  every ordinary dispatch — a schema is opt-in and purely additive. */
+  resultSchema?: Record<string, unknown>;
   /** Federation: the peer hub this session lives on; absent = local. Remote
    *  sessions are fed by hub-stamped agent.snapshot events (federationBridge),
    *  never by local hooks/deltas, and skip every local side effect (history,
@@ -390,6 +396,7 @@ class ClaudeSessionStore {
       provider?: string;
       transport?: 'pty' | 'stream';
       settings?: SessionSpawnSettings;
+      resultSchema?: Record<string, unknown>;
     }
   >();
   // Last-applied conversation sequence per session (gap detection for the
@@ -427,6 +434,9 @@ class ClaudeSessionStore {
       provider?: string;
       transport?: 'pty' | 'stream';
       settings?: SessionSpawnSettings;
+      /** Structured-result schema (spawn_agent's resultSchema) — see
+       *  ClaudeSessionState.resultSchema. */
+      resultSchema?: Record<string, unknown>;
     },
   ): void {
     if (!sessionId) return;
@@ -1367,6 +1377,7 @@ class ClaudeSessionStore {
       session.provider = meta.provider;
       session.transport = meta.transport;
       session.settings = meta.settings;
+      session.resultSchema = meta.resultSchema;
       this.spawnMeta.delete(sessionId);
     }
     this.sessions.set(sessionId, session);

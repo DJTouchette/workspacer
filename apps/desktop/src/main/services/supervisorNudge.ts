@@ -13,6 +13,7 @@
 import { claudemonSessionClient } from './claudemonSessionClient';
 import type { ClaudeSessionState } from './claudeSessionStore';
 import { buildFleetMessage, excerptReply, type FleetMessageEntry } from '../shared/fleetMessages';
+import { readStructuredResult } from '../shared/structuredResult';
 
 /** How long to coalesce nudges to one supervisor before sending. */
 const COALESCE_MS = 1500;
@@ -40,7 +41,12 @@ interface PendingNudge {
  *  snapshot. All re-checked fields are optional so a caller that can't provide
  *  them (or a session evicted mid-window) degrades to the scheduled entry. */
 type FinishedWorker = Pick<ClaudeSessionState, 'sessionId'> &
-  Partial<Pick<ClaudeSessionState, 'cwd' | 'label' | 'ambientState' | 'status' | 'conversation'>>;
+  Partial<
+    Pick<
+      ClaudeSessionState,
+      'cwd' | 'label' | 'ambientState' | 'status' | 'conversation' | 'resultSchema'
+    >
+  >;
 
 interface PendingFinish {
   timer: NodeJS.Timeout;
@@ -240,6 +246,16 @@ class SupervisorNudge {
         // otherwise the bullet already IS the whole reply.
         if (entry.lastReply !== reply.trim()) entry.fullReply = reply;
         else delete entry.fullReply;
+      }
+      // A dispatch that asked for a machine-readable result gets it validated
+      // HERE, against the schema recorded at spawn, from the same final message
+      // the prose comes from. Strictly additive: success adds the object,
+      // failure adds a one-line reason, and neither touches lastReply/fullReply
+      // — the manager always still receives what the worker actually wrote.
+      if (session.resultSchema) {
+        const outcome = readStructuredResult(reply, session.resultSchema);
+        if (outcome.json) entry.result = outcome.json;
+        else if (outcome.error) entry.resultError = outcome.error;
       }
       entries.push(entry);
     }

@@ -36,6 +36,7 @@ import { installSupervisorSkill, ensureSupervisorHome } from './supervisorSkill'
 import { installManagerSkills } from './managerSkills';
 import { mintSessionFacadeToken } from './remoteTokens';
 import { managerFullAccessFromConfig } from './fullAccessGrants';
+import { buildResultContract, checkResultSchema } from '../shared/structuredResult';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 
 export interface ClaudeSpawnOptions {
@@ -102,6 +103,15 @@ export interface ClaudeSpawnOptions {
    * tools. Ignored for facade/supervisor sessions (they take the facade config).
    */
   mcpItemIds?: string[];
+  /**
+   * Structured-result contract: a JSON Schema the dispatcher wants the worker's
+   * final report to carry as a fenced `wks-result` block. Compiled into
+   * `--append-system-prompt` here and validated at the worker-finished wake
+   * (shared/structuredResult, supervisorNudge). Purely additive — the worker
+   * still writes its prose summary, and a botched block degrades to a reported
+   * `resultError` beside it.
+   */
+  resultSchema?: Record<string, unknown>;
 }
 
 /**
@@ -124,6 +134,14 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   // Pin the session id so claude names its transcript `<id>.jsonl` and our
   // id == claude's id == the filename. Resuming keeps the existing id.
   const sessionId = opts.resumeSessionId || randomUUID();
+  // A malformed/oversized result contract is refused OUT LOUD rather than
+  // dropped: the caller asked for a machine-readable report, and a spawn that
+  // silently forgets the contract would hand it prose it did not expect.
+  const resultSchema = opts.resultSchema;
+  if (resultSchema !== undefined) {
+    const bad = checkResultSchema(resultSchema);
+    if (bad) throw new Error(`spawn: ${bad}`);
+  }
   // Supervisor full-access mode (config supervisor.fullAccess, the supervisor
   // twin of agents.fleetFullAccess): the supervisor itself runs with
   // permissions bypassed, and its facade token below is minted with the yolo
@@ -154,6 +172,7 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     parentSessionId: opts.parentSessionId,
     isSupervisor: opts.supervisor || opts.manager,
     provider: 'claude',
+    ...(resultSchema && { resultSchema }),
     settings: {
       model: opts.model,
       effort: opts.effort,
@@ -205,6 +224,48 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     installManagerSkills();
   }
 
+  // The facade fragment is built BEFORE the argv so the structured-result
+  // contract can be appended to its --append-system-prompt instead of racing it
+  // for the single flag: buildClaudeArgv takes one appendSystemPrompt, and a
+  // second spread would silently drop whichever key lost. A non-facade worker
+  // (the common ship-task dispatch) gets the contract as its only appended
+  // prompt.
+  const facadeArgs =
+    wantsFacade &&
+    facadeSpawnArgs({
+      sessionId,
+      supervisor: opts.supervisor,
+      scope: facadeScope,
+      // A host-blessed Fleet Manager's token carries a dispatch grant for
+      // every local profile — the hub verifies it and stamps profileGranted
+      // on the worker spawn. Only `manager` gets this; a plain supervisor
+      // or facade worker has no business spawning as other accounts.
+      // The yolo grant is CONFIG-RESOLVED for both roles (fleet full access /
+      // per-project yolo for the manager, supervisor.fullAccess for a
+      // supervisor — services/fullAccessGrants is the single formula), never
+      // a caller flag: a respawn re-passing a value frozen at the original
+      // spawn must not resurrect a grant the user has since revoked, nor
+      // withhold one they granted. The hub then stamps yoloGranted on the
+      // holder's worker spawns so their skipPermissions request is honored
+      // instead of clamped. The role tag is what lets a later config flip
+      // find this token and update the grant LIVE (fullAccessGrants sync).
+      token: mintSessionFacadeToken(
+        sessionId,
+        facadeScope,
+        opts.pluginTools,
+        opts.manager ? claudeProfiles.getProfiles().map((p) => p.id) : undefined,
+        opts.manager ? managerFullAccessFromConfig() : supervisorFullAccess || undefined,
+        opts.manager ? 'manager' : opts.supervisor ? 'supervisor' : undefined,
+      ).token,
+      summarizerModel: supCfg?.summarizerModel,
+      pollSeconds: supCfg?.pollSeconds,
+      fullAccess: supervisorFullAccess,
+    });
+  const contract = resultSchema ? buildResultContract(resultSchema) : '';
+  const appendSystemPrompt = [facadeArgs ? facadeArgs.appendSystemPrompt : '', contract]
+    .filter(Boolean)
+    .join('\n\n');
+
   const argv = buildClaudeArgv({
     extraArgs: profile?.extraArgs,
     resumeSessionId: opts.resumeSessionId,
@@ -218,37 +279,10 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     // A supervisor also learns its session id and is kicked into /supervise;
     // a plain facade worker just gets the tools. The per-session token pins
     // the tier server-side — the facade refuses calls outside it even if the
-    // agent guesses tool names.
-    ...(wantsFacade &&
-      facadeSpawnArgs({
-        sessionId,
-        supervisor: opts.supervisor,
-        scope: facadeScope,
-        // A host-blessed Fleet Manager's token carries a dispatch grant for
-        // every local profile — the hub verifies it and stamps profileGranted
-        // on the worker spawn. Only `manager` gets this; a plain supervisor
-        // or facade worker has no business spawning as other accounts.
-        // The yolo grant is CONFIG-RESOLVED for both roles (fleet full access /
-        // per-project yolo for the manager, supervisor.fullAccess for a
-        // supervisor — services/fullAccessGrants is the single formula), never
-        // a caller flag: a respawn re-passing a value frozen at the original
-        // spawn must not resurrect a grant the user has since revoked, nor
-        // withhold one they granted. The hub then stamps yoloGranted on the
-        // holder's worker spawns so their skipPermissions request is honored
-        // instead of clamped. The role tag is what lets a later config flip
-        // find this token and update the grant LIVE (fullAccessGrants sync).
-        token: mintSessionFacadeToken(
-          sessionId,
-          facadeScope,
-          opts.pluginTools,
-          opts.manager ? claudeProfiles.getProfiles().map((p) => p.id) : undefined,
-          opts.manager ? managerFullAccessFromConfig() : supervisorFullAccess || undefined,
-          opts.manager ? 'manager' : opts.supervisor ? 'supervisor' : undefined,
-        ).token,
-        summarizerModel: supCfg?.summarizerModel,
-        pollSeconds: supCfg?.pollSeconds,
-        fullAccess: supervisorFullAccess,
-      })),
+    // agent guesses tool names. Built above so the structured-result contract
+    // can share the one --append-system-prompt.
+    ...(facadeArgs && { mcpConfig: facadeArgs.mcpConfig, allowedTools: facadeArgs.allowedTools }),
+    ...(appendSystemPrompt && { appendSystemPrompt }),
     // User-selected MCP servers (non-facade sessions).
     ...(userMcp && {
       mcpConfig: userMcp.path,

@@ -1044,6 +1044,16 @@ type spawnAgentIn struct {
 	ToolScope       string   `json:"toolScope,omitempty" jsonschema:"give the new agent the workspacer tools at a tier: view (observe-only — right for summarizer workers), triage (view + approve/reply/interrupt), or operator (everything)"`
 	PluginTools     []string `json:"pluginTools,omitempty" jsonschema:"plugin ids whose contributed tools the new agent may use (requires toolScope); omit for none"`
 	Worktree        bool     `json:"worktree,omitempty" jsonschema:"run the new agent in a fresh, ISOLATED git worktree of cwd (its own branch) instead of the checkout itself — use for a ship task that changes code, so parallel work on one repo never collides. The worktree is created for you and used as the agent's cwd; if cwd is not a git repo the spawn falls back to cwd with a note"`
+	// ResultSchema is the structured-result contract (the Workflow tool's
+	// agent({schema}) shape): a JSON Schema in, a validated object back on the
+	// finished wake. Modelled as map[string]any rather than a typed struct for
+	// the same reason save_config is (addObjectTool's rationale) — a schema is
+	// inherently free-form nesting, and a partial struct would silently drop
+	// fields. NOT an authorization surface: it becomes prompt text in the
+	// worker plus a validator run over the worker's own output, so it grants
+	// the caller nothing that writing the same sentence into the worker's first
+	// message would not.
+	ResultSchema map[string]any `json:"resultSchema,omitempty" jsonschema:"OPTIONAL JSON Schema for a machine-readable result. The worker is instructed to end its final message with a fenced wks-result block matching it, and the finished-wake you receive then carries that object VALIDATED, alongside the prose — e.g. an object with required 'commit' (string) plus 'filesChanged' / 'checksRun' / 'followUps' (arrays of string) and 'caveats' (string). Additive: the worker still writes its prose summary, and a missing or invalid block reports itself instead of failing the dispatch. Desktop-only (the headless brain declines it)"`
 }
 
 // takeHub implements hubRouted for spawn_agent's own hub field.

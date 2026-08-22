@@ -30,6 +30,19 @@ export interface FleetMessageEntry {
   /** The worker's session ENDED (killed or exited) rather than idling — the
    *  wake says "stopped/killed" instead of reading as a clean finish. */
   stopped?: boolean;
+  /** A worker's VALIDATED structured result (pretty-printed JSON), when its
+   *  dispatch carried a `resultSchema` and the worker honored the contract.
+   *  Rendered as its own block below the bullets — builder-side only, like
+   *  fullReply: the GUI card shows the prose excerpt, the object is for the
+   *  manager agent, which can copy its fields into a brief line without
+   *  re-deriving them from prose. */
+  result?: string;
+  /** Why no structured result could be read (block missing, unparseable, or
+   *  schema-violating) for a dispatch that asked for one. Additive: the prose
+   *  report is still delivered — this only says the machine-readable half did
+   *  not arrive, so the manager knows to read the prose rather than assume the
+   *  worker reported nothing. */
+  resultError?: string;
   /** The worker's COMPLETE final assistant message, rendered as its own block
    *  below the bullet list (capped at FULL_REPLY_MAX with an explicit
    *  truncation note). Builder-side only: the parser does not round-trip it —
@@ -83,6 +96,9 @@ const HEADERS: Record<FleetMessageKind, string> = {
 /** Instruction tails — what the manager/supervisor should DO with the wake. */
 const TAILS: Record<FleetMessageKind, string> = {
   'worker-finished':
+    `A "structured result" block below is the worker's own machine-readable report for a ` +
+    `dispatch you gave a resultSchema — prefer its fields verbatim over re-deriving them ` +
+    `from the prose. ` +
     `The worker's complete final message (when longer than its bullet excerpt) is included ` +
     `above — read it from this wake instead of fetching the conversation; use ` +
     `get_conversation (lastMessage:true for just the final message, or sinceSeq) only if you ` +
@@ -120,6 +136,16 @@ export function buildFleetMessage(kind: FleetMessageKind, entries: FleetMessageE
   const bullets = entries.map((e) => `- ${formatFleetEntry(e)}`);
   const extras: string[] = [];
   if (entries.some((e) => e.stopped)) extras.push(STOPPED_NOTE);
+  for (const e of entries) {
+    if (e.result) {
+      extras.push(`Structured result — ${e.label} (session:${e.sessionId}):\n${e.result}`);
+    } else if (e.resultError) {
+      extras.push(
+        `Structured result MISSING — ${e.label} (session:${e.sessionId}): ${e.resultError}. ` +
+          `Read the prose report below/above instead.`,
+      );
+    }
+  }
   for (const e of entries) {
     if (e.fullReply) {
       extras.push(

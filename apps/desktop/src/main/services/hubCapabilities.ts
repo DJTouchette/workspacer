@@ -273,6 +273,7 @@ export function registerHubCapabilities(): void {
       profileGranted,
       yoloGranted,
       worktree,
+      resultSchema,
     } = (params ?? {}) as {
       provider?: AgentProvider;
       /** Claude only: 'pty' | 'stream'. Omitted = the config default. */
@@ -316,6 +317,14 @@ export function registerHubCapabilities(): void {
        *  isolation so parallel work on one repo never collides. Created here in
        *  main (the bus/facade path has no renderer to make it, unlike ipc.ts). */
       worktree?: boolean;
+      /** Structured-result contract: a JSON Schema the dispatcher wants the
+       *  worker's final report to carry as a fenced `wks-result` block. Not an
+       *  authorization surface — it is prompt text injected into the worker and
+       *  a validator run on its own output, granting the caller nothing it does
+       *  not already have by writing the same words into the worker's first
+       *  message. Refused (never silently dropped) when malformed or oversized;
+       *  see shared/structuredResult. */
+      resultSchema?: Record<string, unknown>;
     };
     // SECURITY: this capability is the REMOTE/web/MCP spawn path (the local
     // desktop spawns over IPC). Driving an agent is already code execution on
@@ -445,6 +454,7 @@ export function registerHubCapabilities(): void {
         parentSessionId,
         cols,
         rows,
+        resultSchema,
       });
       return { sessionId };
     }
@@ -474,6 +484,7 @@ export function registerHubCapabilities(): void {
         mcpItemIds: busMcpItemIds,
         scrubProfileBypass,
         profileGranted: profileGranted === true,
+        resultSchema,
       });
       return { sessionId };
     }
@@ -495,6 +506,7 @@ export function registerHubCapabilities(): void {
       cols,
       rows,
       mcpItemIds: busMcpItemIds,
+      resultSchema,
     });
     return { sessionId };
   });
