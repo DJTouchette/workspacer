@@ -213,6 +213,35 @@ describe('ClaudePane send pipeline', () => {
     fireEvent.click(await screen.findByText('Second'));
     expect(mockWrite).toHaveBeenCalledWith('2\r');
   });
+
+  it('Reply on a fleet wake entry prefixes the composer, and the prefix ships with the send', async () => {
+    const { buildFleetMessage } = await import('../../../main/shared/fleetMessages');
+    mockSession = makeSnapshot({
+      conversation: [
+        {
+          role: 'user',
+          content: buildFleetMessage('worker-finished', [
+            { label: 'alpha: fix tests', sessionId: 'w1', cwd: '/home/u/Work/alpha' },
+            { label: 'beta: ship', sessionId: 'w2', cwd: '/home/u/Work/beta' },
+          ]),
+        },
+      ],
+    });
+    render(<ClaudePane paneId="p8" title="Claude" isActive cwd="/repo" />);
+    fireEvent.click(await screen.findByTitle(/Reply to beta: ship/));
+    expect(composer().value).toBe('Re: session:w2 (beta: ship) — ');
+
+    fireEvent.change(composer(), {
+      target: { value: 'Re: session:w2 (beta: ship) — ship it' },
+    });
+    fireEvent.keyDown(composer(), { key: 'Enter' });
+    await waitFor(() =>
+      expect(window.electronAPI.claudeMessage).toHaveBeenCalledWith(
+        'sess-1',
+        'Re: session:w2 (beta: ship) — ship it',
+      ),
+    );
+  });
 });
 
 /**

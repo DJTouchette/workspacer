@@ -205,6 +205,21 @@ const STOPPED_NOTE =
   `A "stopped/killed" entry's session ENDED (killed or exited) rather than going idle — ` +
   `treat its last reply as possibly incomplete, not as a clean finish.`;
 
+/** Matches a reply reference this module produced, at the start of a user
+ *  message — so a second Reply click replaces rather than stacks. */
+export const REPLY_PREFIX_RE = /^Re: session:\S+ \([^)]*\) — /;
+
+/**
+ * The composer-side half of threading's cheap 80% (see
+ * .workspacer/threads-research-2026-08-22.md, §6): a pointer prepended to the
+ * next message so the manager can tell which worker a reply is about, without
+ * any protocol change — `session:<id>` is already the vocabulary the wake
+ * bullets and the manager's doctrine both use.
+ */
+export function buildReplyPrefix(entry: Pick<FleetMessageEntry, 'sessionId' | 'label'>): string {
+  return `Re: session:${entry.sessionId} (${entry.label}) — `;
+}
+
 /**
  * Compose a full wake message: header, one bullet per entry, then (for
  * worker-finished wakes that carry one) each worker's COMPLETE final message

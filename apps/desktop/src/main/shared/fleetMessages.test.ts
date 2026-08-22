@@ -7,9 +7,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildFleetMessage,
+  buildReplyPrefix,
   excerptReply,
   parseFleetMessage,
   FULL_REPLY_MAX,
+  REPLY_PREFIX_RE,
   type FleetMessageEntry,
 } from './fleetMessages';
 
@@ -286,5 +288,26 @@ describe('legacy single-paragraph wakes (already sitting in old transcripts)', (
         `Run a /supervise pass: gather the context and notify me with a recommendation.`,
     );
     expect(blocked?.entries[0]).toMatchObject({ sessionId: 'w2', blockedOn: 'question' });
+  });
+});
+
+describe('buildReplyPrefix (the Reply button on a wake entry)', () => {
+  it('formats a pointer, not a quote', () => {
+    expect(buildReplyPrefix({ sessionId: 'w1', label: 'alpha: fix tests' })).toBe(
+      'Re: session:w1 (alpha: fix tests) — ',
+    );
+  });
+
+  it('REPLY_PREFIX_RE matches what buildReplyPrefix produces, and only a leading one', () => {
+    const prefix = buildReplyPrefix({ sessionId: 'abc-123', label: 'beta: ship' });
+    expect(REPLY_PREFIX_RE.test(prefix + 'ship it')).toBe(true);
+    expect(REPLY_PREFIX_RE.test('ship it, ' + prefix)).toBe(false);
+  });
+
+  it('a second reply prefix replaces rather than stacks', () => {
+    const first = buildReplyPrefix({ sessionId: 'w1', label: 'alpha' });
+    const second = buildReplyPrefix({ sessionId: 'w2', label: 'beta' });
+    const composed = second + (first + 'ship it').replace(REPLY_PREFIX_RE, '');
+    expect(composed).toBe('Re: session:w2 (beta) — ship it');
   });
 });

@@ -10,7 +10,7 @@
  * behind a toggle. Anything the parser doesn't match stays a raw bubble.
  */
 import React, { useState } from 'react';
-import { AlertTriangle, Check, ChevronRight, History, Megaphone } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, History, Megaphone, Reply } from 'lucide-react';
 import type { FleetMessage, FleetMessageEntry } from '../../../../main/shared/fleetMessages';
 import { claudeColors as colors } from '../claude-shared';
 import { Surface } from '../Surface';
@@ -125,9 +125,40 @@ const SessionChip: React.FC<{ sessionId: string }> = ({ sessionId }) => {
   );
 };
 
+/** Icon-only affordance that prefixes the composer with a
+ *  `Re: session:<id> (label) — ` reference — the cheap 80% of threading (see
+ *  .workspacer/threads-research-2026-08-22.md): a pointer into the same flat
+ *  prompt string, not a UI-only grouping the model can't see. */
+const ReplyButton: React.FC<{
+  entry: FleetMessageEntry;
+  onReply: (entry: FleetMessageEntry) => void;
+}> = ({ entry, onReply }) => (
+  <button
+    title={`Reply to ${entry.label} (session:${entry.sessionId})`}
+    aria-label={`Reply to ${entry.label}`}
+    onClick={() => onReply(entry)}
+    style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      padding: 2,
+      border: 'none',
+      borderRadius: 'var(--wks-radius-pill)',
+      background: 'transparent',
+      cursor: 'pointer',
+      color: colors.muted,
+      flexShrink: 0,
+    }}
+  >
+    <Reply size={12} strokeWidth={2} aria-hidden />
+  </button>
+);
+
 /** One worker row: label · session chip · cwd/blocked-on, then the collapsed
  *  last-reply excerpt (if the wake carried one). */
-const EntryRow: React.FC<{ entry: FleetMessageEntry }> = ({ entry }) => {
+const EntryRow: React.FC<{
+  entry: FleetMessageEntry;
+  onReply?: (entry: FleetMessageEntry) => void;
+}> = ({ entry, onReply }) => {
   const [showReply, setShowReply] = useState(false);
   return (
     <div style={{ padding: '6px 12px' }}>
@@ -245,6 +276,7 @@ const EntryRow: React.FC<{ entry: FleetMessageEntry }> = ({ entry }) => {
             {basename(entry.cwd)}
           </span>
         )}
+        {onReply && <ReplyButton entry={entry} onReply={onReply} />}
       </div>
       {/* A worker's own progress line is shown OPEN, unlike a last-reply
           excerpt: it is already capped to a couple of sentences by the host,
@@ -318,7 +350,9 @@ const FleetMessageCardInner: React.FC<{
   message: FleetMessage;
   timestamp?: number;
   showTimestamp?: boolean;
-}> = ({ message, timestamp, showTimestamp }) => {
+  /** Prefixes the composer with `Re: session:<id> (label) — ` for this entry. */
+  onReply?: (entry: FleetMessageEntry) => void;
+}> = ({ message, timestamp, showTimestamp, onReply }) => {
   const allFailed =
     message.kind === 'worker-finished' &&
     message.entries.length > 0 &&
@@ -365,7 +399,7 @@ const FleetMessageCardInner: React.FC<{
       </div>
       <div style={{ padding: '2px 0 4px 0' }}>
         {message.entries.map((e) => (
-          <EntryRow key={e.sessionId} entry={e} />
+          <EntryRow key={e.sessionId} entry={e} onReply={onReply} />
         ))}
       </div>
     </Surface>
