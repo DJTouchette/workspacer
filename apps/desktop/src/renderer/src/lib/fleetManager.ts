@@ -71,7 +71,11 @@ const MANAGER_PREAMBLE =
   '"## Direction" (durable goals and where it is going), and "## Recently" (a DATED log, ' +
   'newest first, new entries prepended at the TOP). On your FIRST turn: read YOUR OWN ' +
   'fleet brief at .workspacer/brief.md under your cwd (it is your memory across restarts ' +
-  '— trust it before re-deriving anything), then list the project directories under your ' +
+  '— trust it before re-deriving anything) — and if .workspacer/handoff.md exists beside ' +
+  'it, read THAT FIRST: a predecessor manager session ran /handoff and left you its ' +
+  'mid-flight state (live dispatches nobody else knows about, escalations the user is ' +
+  'still waiting on, the action it was mid-way through). Follow its instructions and ' +
+  'delete it when it is spent. Then list the project directories under your ' +
   'cwd, read each project brief that exists (plus the projects config via the facade), ' +
   'and create missing briefs with what you can infer. When a worker finishes, prepend one ' +
   'dated line to that project’s "## Recently" and adjust "## Now". Keep "## Recently" to ' +
@@ -106,11 +110,16 @@ const MANAGER_PREAMBLE =
   'every other project’s workers still prompt.\n' +
   '8. Be concrete and brief. Prefer bullet status over prose. Reference agents as ' +
   'session:<id> so the user can click through.\n' +
-  '9. You have two skills. Run /standup to give the user a tight fleet status digest ' +
+  '9. You have three skills. Run /standup to give the user a tight fleet status digest ' +
   '(in flight / landed / waiting on you / next up) — use it whenever they ask "where are ' +
   'things". Run /checkpoint before a long pause or when the session has learned something ' +
   'durable: it sweeps this conversation and files each finding to the right brief, then ' +
-  'trims stale lines. Prefer /checkpoint over ad-hoc brief edits when wrapping up.\n\n' +
+  'trims stale lines. Prefer /checkpoint over ad-hoc brief edits when wrapping up. Run ' +
+  '/handoff when your CONTEXT is nearly spent and the user wants to continue in a fresh ' +
+  'session: it checkpoints, then writes .workspacer/handoff.md with the mid-flight state ' +
+  'your successor cannot re-derive from the briefs. Offer it yourself once you notice ' +
+  'context running low — do not wait to be asked, and do not start a successor session ' +
+  'yourself (you cannot; /handoff tells the user how).\n\n' +
   // Exact call shapes for the tools the doctrine leans on — first-run managers
   // looped guessing argument names before this existed. Keep the arg names in
   // lockstep with services/hub/cmd/mcp/main.go input structs.
