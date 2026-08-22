@@ -185,23 +185,8 @@ func (c *Client) connectAndRead(ctx context.Context) {
 
 	c.mu.Lock()
 	c.conn = conn
-	c.ready = true
 	subs := append([]string(nil), c.subs...)
 	c.mu.Unlock()
-
-	// Re-establish subscriptions before anything else on the fresh connection,
-	// so a reconnect never silently loses the event feed.
-	if len(subs) > 0 {
-		out, _ := json.Marshal(frame{Op: "subscribe", Topics: subs})
-		c.writeMu.Lock()
-		wctx, cancel := context.WithTimeout(ctx, writeTimeout)
-		err := conn.Write(wctx, websocket.MessageText, out)
-		cancel()
-		c.writeMu.Unlock()
-		if err != nil {
-			conn.CloseNow()
-		}
-	}
 
 	defer func() {
 		c.mu.Lock()
@@ -215,6 +200,28 @@ func (c *Client) connectAndRead(ctx context.Context) {
 		c.mu.Unlock()
 		conn.CloseNow()
 	}()
+
+	// Re-establish subscriptions before anything else on the fresh connection,
+	// so a reconnect never silently loses the event feed. ready is set only
+	// once this write lands (or is skipped because there's nothing to
+	// resubscribe): Ready() promises a live event feed, not just an open
+	// socket, so a caller that waits on it and then publishes never races the
+	// resubscribe frame still sitting unsent.
+	if len(subs) > 0 {
+		out, _ := json.Marshal(frame{Op: "subscribe", Topics: subs})
+		c.writeMu.Lock()
+		wctx, cancel := context.WithTimeout(ctx, writeTimeout)
+		err := conn.Write(wctx, websocket.MessageText, out)
+		cancel()
+		c.writeMu.Unlock()
+		if err != nil {
+			return
+		}
+	}
+
+	c.mu.Lock()
+	c.ready = true
+	c.mu.Unlock()
 
 	for {
 		_, data, err := conn.Read(ctx)
