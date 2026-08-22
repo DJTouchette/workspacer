@@ -824,19 +824,35 @@ func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgent
 	// An OMITTED skipPermissions resolves to the workspacer config
 	// default (claude.skipPermissionsDefault / a bypass
 	// defaultPermissionMode) — the same default the desktop spawn dialog
-	// pre-selects; an explicit caller value always wins. Resolved HERE,
-	// before the grant clamp, and forwarded as an EXPLICIT value in every
-	// case, because the provider resolves the same default for omitted
-	// fields and the hub stamps `yoloGranted` on the facade's trusted
-	// host-token connection no matter which session is multiplexed over
-	// it — a nil left on the wire would let the provider's own default
+	// pre-selects — OR to the calling session's own full-access grant.
+	// An explicit caller value always wins, in either direction.
+	//
+	// The grant leg is the point: b.yolo is true only for a manager or
+	// supervisor token, and only because CONFIG says so
+	// (agents.fleetFullAccess / a per-project yolo / supervisor.fullAccess,
+	// resolved by the desktop's fullAccessGrants and reconciled live). Those
+	// flags read "the manager and the agents it dispatches run with
+	// permissions bypassed" — so an operator who turned one on has already
+	// stated the intent for these dispatches, and a manager that simply
+	// omitted the field should not have to have guessed the magic word.
+	// Honouring the grant only when the caller happened to pass
+	// skipPermissions is what left dispatched workers prompting on every
+	// Bash call with full access visibly ON. This ADDS nothing config did
+	// not already authorise: without the grant the same value is clamped
+	// below, exactly as before.
+	//
+	// Resolved HERE, before the grant clamp, and forwarded as an EXPLICIT
+	// value in every case, because the provider resolves the same default
+	// for omitted fields and the hub stamps `yoloGranted` on the facade's
+	// trusted host-token connection no matter which session is multiplexed
+	// over it — a nil left on the wire would let the provider's own default
 	// resolution escalate a session whose record was never granted.
 	// Peer-hub spawns resolve from THIS hub's config too (the caller's
 	// home); the peer still re-judges the explicit value it receives.
 	skipDefaulted := in.SkipPermissions == nil
 	skip := false
 	if skipDefaulted {
-		skip = configSkipPermissionsDefault(ctx, b)
+		skip = b.yolo || configSkipPermissionsDefault(ctx, b)
 	} else {
 		skip = *in.SkipPermissions
 	}
@@ -1107,7 +1123,7 @@ type spawnAgentIn struct {
 	Model           string   `json:"model,omitempty" jsonschema:"model id to use, e.g. claude-opus-4-8 (optional; provider-specific)"`
 	Effort          string   `json:"effort,omitempty" jsonschema:"reasoning-effort level: low, medium, high, xhigh, or max (claude/codex)"`
 	ProfileID       string   `json:"profileId,omitempty" jsonschema:"workspacer Claude profile id to dispatch under (optional; refused unless your session token's profilesAllowed grant lists this exact id — see list_profiles for ids)"`
-	SkipPermissions *bool    `json:"skipPermissions,omitempty" jsonschema:"start the agent with --dangerously-skip-permissions; omit to use the workspacer config default (claude.skipPermissionsDefault / a bypass defaultPermissionMode), an explicit true/false always wins. Honored — whether requested or config-defaulted — only when your session's token carries the full-access grant (the hub verifies and stamps it; ungranted requests spawn with approvals on, and remote/federated peer spawns are re-judged by the peer's own hub)"`
+	SkipPermissions *bool    `json:"skipPermissions,omitempty" jsonschema:"start the agent with --dangerously-skip-permissions; omit and it resolves to a bypass when your session carries the full-access grant (the operator turned on full access for the fleet/supervisor, whose stated meaning is that the agents you dispatch skip approvals), else to the workspacer config default (claude.skipPermissionsDefault / a bypass defaultPermissionMode). An explicit true/false always wins — pass false to dispatch one worker with approvals on. Honored — whether requested, granted or config-defaulted — only when your session's token carries the full-access grant (the hub verifies and stamps it; ungranted requests spawn with approvals on, and remote/federated peer spawns are re-judged by the peer's own hub)"`
 	Label           string   `json:"label,omitempty" jsonschema:"a short human label for the new agent, shown as its name in the UI"`
 	ParentSessionId string   `json:"parentSessionId,omitempty" jsonschema:"the spawning agent's own session id; set this so the new agent appears nested under you in the UI"`
 	MCPFacade       bool     `json:"mcpFacade,omitempty" jsonschema:"legacy: give the new agent the FULL workspacer tool set (operator tier); prefer toolScope"`

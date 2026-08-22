@@ -252,6 +252,28 @@ func TestRespawnDoesNotInheritBypassWithoutTheGrant(t *testing.T) {
 	}
 }
 
+// The other direction of "clone the original", and the one the full-access
+// grant put at risk: a worker that deliberately ran with approvals ON must not
+// come back bypassed just because its dispatcher holds the grant. respawn_with
+// forwards the original's mode EXPLICITLY in both directions, so it never falls
+// into spawnWithGrants' omitted path where the grant would fill in a bypass.
+func TestRespawnDoesNotUpgradeANonBypassedOriginalForAGrantedCaller(t *testing.T) {
+	hub := newRespawnHub()
+	hub.snapshot = `{"cwd":"/w/alpha","label":"alpha: parser","provider":"claude",
+		"parentSessionId":"mgr-1","settings":{"model":"claude-opus-5","permissionMode":"default"}}`
+
+	_, h := callRespawn(t, hub, true, map[string]any{
+		"sessionId": "old-1", "amendment": "narrow it",
+	})
+	skip, ok := h.call("agents.spawn").params["skipPermissions"].(bool)
+	if !ok {
+		t.Fatal("skipPermissions must ride the wire EXPLICITLY, never be omitted")
+	}
+	if skip {
+		t.Error("a clone of a worker that ran with approvals ON must keep them on, grant or no grant")
+	}
+}
+
 func TestRespawnRefusesWithoutAnAmendment(t *testing.T) {
 	// A clone with no correction is a worker that will do the same thing again.
 	res, hub := callRespawn(t, newRespawnHub(), true, map[string]any{
