@@ -695,7 +695,28 @@ pub fn apply_updates(
         match update {
             AgentUpdate::Idle => new_mode = Some(SessionMode::Input),
             AgentUpdate::Busy => {
-                if new_mode.is_none() {
+                // A parked approval/question is a PAUSE: the agent is blocked
+                // on the user, not working. `Busy` must never demote it —
+                // `set_managed_mode` below would also drop the `pending` card
+                // (Busy carries none), leaving a session that reports
+                // `responding` (clients: "streaming") while the CLI is still
+                // blocked on an unanswered `can_use_tool`, with no approval
+                // record to answer. That is the unresolvable-approval /
+                // lying-state shape exactly, and it is unreachable for a
+                // client to repair because the daemon is the only holder of
+                // the parked request.
+                //
+                // The two `background_tasks_changed` paths in
+                // claude_stream.rs guard this same hazard inline ("Guarded to
+                // Input so a parked approval/question is never clobbered");
+                // this is the shared guard every managed provider goes
+                // through. A genuine turn end (`Idle`, from a `result` frame)
+                // is deliberately still allowed to clear the pause — that is
+                // the CLI telling us the turn is over, not a liveness ping.
+                if new_mode.is_none()
+                    && *cur_mode != SessionMode::Approval
+                    && *cur_mode != SessionMode::Question
+                {
                     new_mode = Some(SessionMode::Responding);
                 }
             }
@@ -1223,6 +1244,107 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// DEFECT 2 — "the session state lies". A `Busy` update (the CLI's
+    /// `system`/`status:requesting` and `stream_event`/`message_start` frames
+    /// both translate to one) arriving while an approval is parked used to
+    /// call `set_managed_mode(Responding, None)`: the session then reported
+    /// `responding` — which `agents.list` surfaces as `streaming` — while the
+    /// CLI was still blocked on an unanswered `can_use_tool`, AND the pending
+    /// card it needed to answer was dropped on the way through.
+    #[test]
+    fn busy_never_demotes_a_parked_approval_or_question() {
+        for (mode, pending) in [
+            (
+                SessionMode::Approval,
+                Pending::Approval {
+                    tool: Some("Read".into()),
+                    summary: Some("~/.workspacer/brief.md".into()),
+                    raw: serde_json::json!({ "tool_name": "Read" }),
+                },
+            ),
+            (
+                SessionMode::Question,
+                Pending::Question {
+                    questions: vec![],
+                    raw: serde_json::Value::Null,
+                },
+            ),
+        ] {
+            let store = SessionStore::new();
+            let conv = ConversationStore::new();
+            store.register_managed("s-block", "/tmp/proj", "claude");
+            store.set_managed_mode("s-block", mode, Some(pending));
+            let mut cur = mode;
+            let mut acc = UsageAcc::new();
+
+            apply_updates(
+                &store,
+                &conv,
+                "s-block",
+                vec![AgentUpdate::Busy],
+                &mut cur,
+                &mut acc,
+            );
+
+            let state = store.get("s-block").expect("session exists");
+            assert_eq!(
+                state.mode, mode,
+                "a Busy ping must not report work while the agent is blocked on the user"
+            );
+            assert_eq!(cur, mode, "the driver's own mode tracker must agree");
+            assert!(
+                state.pending.is_some(),
+                "the pending card must survive — without it the block is unanswerable"
+            );
+        }
+    }
+
+    /// The other half of the same guard: a batch that genuinely raises an
+    /// approval still lands it, whichever order the updates arrive in, and a
+    /// real turn end (`Idle`, from a `result` frame) still clears the pause.
+    #[test]
+    fn approval_still_lands_and_a_real_turn_end_still_clears_it() {
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.register_managed("s-mix", "/tmp/proj", "claude");
+        let mut cur = SessionMode::Responding;
+        let mut acc = UsageAcc::new();
+
+        // Busy first, PermissionPending second — the pending still wins.
+        apply_updates(
+            &store,
+            &conv,
+            "s-mix",
+            vec![
+                AgentUpdate::Busy,
+                AgentUpdate::PermissionPending {
+                    id: None,
+                    tool: Some("Read".into()),
+                    summary: None,
+                    raw: serde_json::json!({}),
+                },
+            ],
+            &mut cur,
+            &mut acc,
+        );
+        assert_eq!(cur, SessionMode::Approval);
+        assert!(store.get("s-mix").and_then(|s| s.pending).is_some());
+
+        // A `result` frame is the CLI saying the turn is over — that must
+        // still be able to release the pause, or a session could never leave
+        // Approval after an interrupt.
+        apply_updates(
+            &store,
+            &conv,
+            "s-mix",
+            vec![AgentUpdate::Idle],
+            &mut cur,
+            &mut acc,
+        );
+        assert_eq!(cur, SessionMode::Input);
+        assert!(store.get("s-mix").and_then(|s| s.pending).is_none());
     }
 
     #[test]
