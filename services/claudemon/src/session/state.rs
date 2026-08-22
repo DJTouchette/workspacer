@@ -50,14 +50,25 @@ impl HookEventKind {
     /// The subset of variants that map to real Claude Code hook event names
     /// and must be registered in `~/.claude/settings.json`.
     ///
-    /// `PostToolUseFailure` and `PermissionRequest` are NOT real registerable
-    /// hooks — they are internal / forward-compat variants only.
+    /// `PostToolUseFailure` is NOT a real registerable hook — it is an internal
+    /// variant only.
+    ///
+    /// `PermissionRequest` IS real (verified on CLI 2.1.237: registering it
+    /// fires the command once per permission prompt, in step with the
+    /// `can_use_tool` control requests the stream driver sees). It used to be
+    /// excluded here as "forward-compat only", which meant `claudemon init`
+    /// never installed it — and since it is the ONLY event that can set
+    /// `SessionMode::Approval` for a PTY session (see `apply` below), a PTY
+    /// agent's permission prompt produced no approvable record at all. The
+    /// wire shapes are pinned in `contracts/permission-request-hook-cases.json`
+    /// so a CLI wording change breaks a test instead of approvals.
     pub const REGISTERABLE: &'static [HookEventKind] = &[
         Self::SessionStart,
         Self::SessionEnd,
         Self::UserPromptSubmit,
         Self::PreToolUse,
         Self::PostToolUse,
+        Self::PermissionRequest,
         Self::Notification,
         Self::Stop,
         Self::SubagentStart,
