@@ -414,7 +414,7 @@ async fn list_sessions(
                 if state.is_empty_stopped() && !include_empty {
                     return None;
                 }
-                let u = usage::usage_for_path(state.transcript_path.as_deref());
+                let u = usage::usage_for_session(&state);
                 let mut v = serde_json::to_value(&state).unwrap_or(Value::Null);
                 if let Some(obj) = v.as_object_mut() {
                     obj.insert(
@@ -444,8 +444,8 @@ async fn get_session(
             // on a cache miss re-parses) the transcript from disk, which must
             // not happen on a runtime worker — it would stall that worker's SSE
             // streams for the duration.
-            let path = state.transcript_path.clone();
-            let u = tokio::task::spawn_blocking(move || usage::usage_for_path(path.as_deref()))
+            let for_usage = state.clone();
+            let u = tokio::task::spawn_blocking(move || usage::usage_for_session(&for_usage))
                 .await
                 .unwrap_or_default();
             let mut v = serde_json::to_value(&state).unwrap_or(Value::Null);
@@ -995,8 +995,17 @@ async fn post_model(
             effort: payload.effort.clone(),
         },
     ) {
-        Ok(()) => Json(json!({ "ok": true, "model": payload.model, "effort": payload.effort }))
-            .into_response(),
+        Ok(()) => {
+            // Accepted by the driver — the session now runs a different model,
+            // and possibly a different window (`opus` ⇄ `opus[1m]`). Move the
+            // recorded request with it, or the gauge keeps the spawn-time
+            // window until the provider happens to report one.
+            if let Some(model) = payload.model.as_deref() {
+                store.set_requested_model(&id, model);
+            }
+            Json(json!({ "ok": true, "model": payload.model, "effort": payload.effort }))
+                .into_response()
+        }
         Err(err) => (
             StatusCode::CONFLICT,
             Json(json!({ "ok": false, "error": err })),

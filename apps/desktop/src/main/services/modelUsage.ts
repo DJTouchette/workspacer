@@ -196,12 +196,70 @@ export function contextTokensOf(usage: RawUsage): number {
   );
 }
 
-// The transcript `model` id doesn't carry the `[1m]` suffix, so we can't read
-// the window size off the name. Instead: once a turn's context exceeds the
-// standard 200k window, the session must be running in 1M mode — promote the
-// limit. (observed is the live contextTokens for this session.)
-export function contextLimitFor(model: string | null | undefined, observed: number): number {
+/** Extra truth about a session's window, beyond its transcript `model` id.
+ *  Both are optional — a session that has neither falls back to the table plus
+ *  the retrospective promotion below. */
+export interface ContextLimitHints {
+  /** The window the provider itself reported, in tokens. For Claude this is
+   *  `context_window.context_window_size` off the statusLine payload (PTY) or
+   *  the stream `result` frame's `modelUsage.*.contextWindow`; for Codex it's
+   *  `model_context_window`. Real provider truth, so it outranks every guess. */
+  reportedWindow?: number | null;
+  /** The model string this session was *asked* for at spawn — the alias the
+   *  user picked in the composer (`opus[1m]`), not the concrete id. Claude
+   *  Code strips the `[1m]` marker from the transcript's `model` field, so
+   *  this is the only place the 1M choice survives before the provider has
+   *  reported a window of its own. */
+  requestedModel?: string | null;
+}
+
+/** 1M window implied by a *requested* model string, if it names one.
+ *  `[1m]` is Claude Code's own marker (`opus[1m]`, `claude-opus-5[1m]`) and
+ *  `-1m` is the id-suffix spelling; Fable/Mythos are 1M-native and carry no
+ *  marker at all. Anything else returns undefined — an unmarked alias says
+ *  nothing about the window, it does NOT mean 200k. Mirrors the Rust twin
+ *  `providers::context_window_for`. */
+export function requestedWindowFor(model: string | null | undefined): number | undefined {
+  if (!model) return undefined;
+  const m = model.toLowerCase();
+  if (m.includes('[1m]') || m.includes('-1m')) return 1_000_000;
+  if (m.includes('fable') || m.includes('mythos')) return 1_000_000;
+  return undefined;
+}
+
+/**
+ * The window this session's context bar should be drawn against.
+ *
+ * Resolved best-truth-first, because the transcript's `model` id alone cannot
+ * answer the question — Claude Code strips the `[1m]` marker from it, so a 1M
+ * session and a 200k session report the same id:
+ *
+ *   1. the window the provider reported (`hints.reportedWindow`) — a fact;
+ *   2. the model requested at spawn (`hints.requestedModel`), which still has
+ *      its `[1m]` marker — known from token zero, and never allowed to *lower*
+ *      the table's window;
+ *   3. the rates table for the transcript model id (incl. user overrides);
+ *   4. last resort — the retrospective promotion: once a turn's context has
+ *      exceeded the standard 200k window the session must be in 1M mode. Kept
+ *      because it is the only signal for a session whose window is genuinely
+ *      unknown (an adopted/foreign session with no spawn record and no
+ *      statusLine yet), but demoted below the two real signals: it only
+ *      corrects itself at the point the reading stops being useful.
+ *
+ * `observed` is the session's high-water contextTokens.
+ */
+export function contextLimitFor(
+  model: string | null | undefined,
+  observed: number,
+  hints?: ContextLimitHints,
+): number {
+  const reported = hints?.reportedWindow;
+  if (typeof reported === 'number' && Number.isFinite(reported) && reported > 0) return reported;
   const base = ratesFor(model).contextLimit;
+  const requested = requestedWindowFor(hints?.requestedModel);
+  // `max`, never assignment: a user `context_limit` override (or a 1M-native
+  // model id) must not be dragged down by a coarser requested alias.
+  if (requested !== undefined) return Math.max(base, requested);
   if (base <= 200_000 && observed > 200_000) return 1_000_000;
   return base;
 }

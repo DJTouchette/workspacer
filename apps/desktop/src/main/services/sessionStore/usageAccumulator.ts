@@ -41,11 +41,7 @@ export class SessionUsageAccumulator {
       u.contextTokens = ctx;
       if (ctx > session.peakContext) session.peakContext = ctx;
       if (model) u.model = model;
-      // Use the session's high-water mark, not just this turn: 1M mode is a
-      // session-level property, so once any turn has exceeded the 200k window
-      // the limit must stay promoted even when a later turn's context is
-      // smaller.
-      u.contextLimit = contextLimitFor(u.model, session.peakContext);
+      SessionUsageAccumulator.refreshContextLimit(session);
     }
 
     // Cumulative — only once per distinct message, ever (idempotent under
@@ -72,6 +68,30 @@ export class SessionUsageAccumulator {
     slice.inputTokens += inputTokens;
     slice.outputTokens += outputTokens;
     slice.costUSD += costUSD;
+  }
+
+  /**
+   * Recompute `usage.contextLimit` from everything the session currently knows
+   * about its window. Static because it depends on no accumulator state, and
+   * called from three places, not one: a usage turn (below), the statusLine
+   * (which carries the provider's *real* window) and a spawn/model-switch
+   * (which carries the requested `opus[1m]` alias). Either of those can land
+   * after the last usage item, and until it is folded in the bar is drawn
+   * against a stale denominator.
+   *
+   * No-op when the session has no usage yet — an all-zero gauge renders
+   * nothing, so there is no wrong number to correct.
+   */
+  static refreshContextLimit(session: ClaudeSessionState): void {
+    const u = session.usage;
+    if (!u) return;
+    // The high-water mark, not just this turn: the retrospective fallback is a
+    // session-level verdict, so once any turn has exceeded the 200k window the
+    // limit stays promoted even when a later turn's context is smaller.
+    u.contextLimit = contextLimitFor(u.model, session.peakContext, {
+      reportedWindow: session.statusLine?.contextWindowSize,
+      requestedModel: session.settings?.model,
+    });
   }
 
   /** Remove all per-session state for a session that has been evicted. */

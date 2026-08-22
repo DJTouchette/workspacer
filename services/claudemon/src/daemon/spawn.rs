@@ -55,6 +55,24 @@ pub struct SpawnPayload {
     pub rollout_provider: Option<String>,
 }
 
+/// The value of a `--model` flag in a spawn's argv, in either spelling
+/// (`--model x` / `--model=x`). The PTY spawn payload carries a raw command
+/// line rather than a structured model, but the model is exactly what says
+/// whether this session runs a 1M window (`opus[1m]`) — read it off argv so
+/// every client gets a correct context gauge without sending a new field.
+fn model_from_argv(argv: &[String]) -> Option<&str> {
+    let mut it = argv.iter();
+    while let Some(arg) = it.next() {
+        if let Some(v) = arg.strip_prefix("--model=") {
+            return Some(v);
+        }
+        if arg == "--model" {
+            return it.next().map(String::as_str);
+        }
+    }
+    None
+}
+
 pub async fn handle(
     State(store): State<SessionStore>,
     State(conv): State<ConversationStore>,
@@ -186,6 +204,9 @@ pub async fn handle(
 
     store.register_pty(&session_id, pty_handle.clone());
     store.register_spawn(&session_id, &cwd, WrapperHandle { tx: input_tx });
+    if let Some(model) = model_from_argv(&payload.argv) {
+        store.set_requested_model(&session_id, model);
+    }
     store.note_term_size(&session_id, cols, rows);
     tracing::info!(%session_id, %cwd, argv=?payload.argv, "spawned in-daemon PTY");
 
@@ -303,6 +324,11 @@ pub async fn handle_managed(
     crate::session::transcript::allow_spawn_env(&payload.env);
 
     store.register_managed(&session_id, &payload.cwd, &payload.provider);
+    // Before the driver starts, so the very first snapshot knows this session's
+    // window instead of guessing 200k from the marker-stripped transcript id.
+    if let Some(model) = payload.model.as_deref() {
+        store.set_requested_model(&session_id, model);
+    }
     let facade = crate::providers::Facade {
         mcp_url: payload.mcp.clone(),
         instructions: payload.instructions.clone(),
@@ -523,6 +549,22 @@ pub async fn handle_provider_models(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_from_argv_reads_both_spellings() {
+        let argv = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            model_from_argv(&argv(&["claude", "--model", "opus[1m]", "--verbose"])),
+            Some("opus[1m]")
+        );
+        assert_eq!(
+            model_from_argv(&argv(&["claude", "--model=sonnet[1m]"])),
+            Some("sonnet[1m]")
+        );
+        assert_eq!(model_from_argv(&argv(&["claude", "--resume", "x"])), None);
+        // A trailing `--model` with nothing after it must not panic.
+        assert_eq!(model_from_argv(&argv(&["claude", "--model"])), None);
+    }
 
     #[test]
     fn resolve_provider_bin_prefers_the_environment_override() {

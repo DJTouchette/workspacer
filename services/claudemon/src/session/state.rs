@@ -539,6 +539,17 @@ pub struct SessionState {
     /// mode to `Input`. Cleared on a new turn / session boundary.
     #[serde(skip)]
     pub parent_turn_ended: bool,
+    /// The model string this session was *asked* for at spawn — the alias the
+    /// caller picked (`opus[1m]`, `gpt-5-codex`), not the concrete id the
+    /// provider ends up reporting. Recorded because Claude Code strips the
+    /// `[1m]` marker from the `model` it writes into the transcript: without
+    /// this the daemon cannot tell a 1M session from a 200k one until the
+    /// session's context exceeds 200k, and every context gauge reads 5× too
+    /// full until then (see `usage::Usage::resolve_window`). Updated by a live
+    /// `/sessions/:id/model` switch. Additive/back-compatible: old persisted
+    /// rows and every client that doesn't send a model deserialize to `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_model: Option<String>,
 }
 
 /// Serde default for [`SessionState::provider`] — the un-managed PTY path is
@@ -571,6 +582,7 @@ impl SessionState {
             background_tasks: 0,
             live_subagents: 0,
             parent_turn_ended: false,
+            requested_model: None,
         }
     }
 

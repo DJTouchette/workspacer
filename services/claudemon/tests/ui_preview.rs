@@ -54,6 +54,7 @@ fn preview_dashboard_three_sessions() {
             live_subagents: 0,
             background_tasks: 0,
             parent_turn_ended: false,
+            requested_model: None,
         })
         .session(SessionState {
             session_id: "9e8d7c6b-aaaa-bbbb-cccc-dddddddddddd".into(),
@@ -76,6 +77,7 @@ fn preview_dashboard_three_sessions() {
             live_subagents: 0,
             background_tasks: 0,
             parent_turn_ended: false,
+            requested_model: None,
         })
         .session(SessionState {
             session_id: "11223344-eeee-ffff-0000-987654321000".into(),
@@ -102,6 +104,7 @@ fn preview_dashboard_three_sessions() {
             live_subagents: 0,
             background_tasks: 0,
             parent_turn_ended: false,
+            requested_model: None,
         })
         .connected();
     let snap = snapshot_dashboard(b, 100, 24);
@@ -132,6 +135,7 @@ fn preview_chat_empty() {
             live_subagents: 0,
             background_tasks: 0,
             parent_turn_ended: false,
+            requested_model: None,
         })
         .connected()
         .chat_for("demo-session-id");
@@ -163,6 +167,7 @@ fn preview_chat_with_text_and_tool_calls() {
             live_subagents: 0,
             background_tasks: 0,
             parent_turn_ended: false,
+            requested_model: None,
         })
         .connected()
         .chat_for_with_transcript("demo-session-id", Transcript {
@@ -231,6 +236,7 @@ fn preview_chat_with_pending_approval() {
             live_subagents: 0,
             background_tasks: 0,
             parent_turn_ended: false,
+            requested_model: None,
         })
         .connected()
         .chat_for_with_transcript("demo-session-id", Transcript {
@@ -297,6 +303,7 @@ fn preview_chat_with_pending_question() {
             live_subagents: 0,
             background_tasks: 0,
             parent_turn_ended: false,
+            requested_model: None,
         })
         .connected()
         .chat_for("demo-session-id");
@@ -328,6 +335,7 @@ fn preview_chat_with_input_typed() {
             live_subagents: 0,
             background_tasks: 0,
             parent_turn_ended: false,
+            requested_model: None,
         })
         .connected()
         .chat_for("demo-session-id")
@@ -360,6 +368,7 @@ fn preview_chat_with_multiline_input() {
             live_subagents: 0,
             background_tasks: 0,
             parent_turn_ended: false,
+            requested_model: None,
         })
         .connected()
         .chat_for("demo-session-id")

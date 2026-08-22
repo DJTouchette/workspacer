@@ -1104,6 +1104,24 @@ impl SessionStore {
         }
     }
 
+    /// Record the model string this session was asked to run (see
+    /// [`SessionState::requested_model`]). Called at spawn — before any
+    /// telemetry exists, which is the point: it is what makes a 1M window a
+    /// known fact from token zero rather than something inferred once the
+    /// session has already overflowed 200k. Also called on a live `/model`
+    /// switch, so a session that moves between 200k and 1M mid-flight tracks
+    /// it. Blank strings are ignored (an absent `--model` means "the CLI's own
+    /// default", which says nothing about the window). No-op for unknown ids.
+    pub fn set_requested_model(&self, session_id: &str, model: &str) {
+        let model = model.trim();
+        if model.is_empty() {
+            return;
+        }
+        if let Some(mut entry) = self.states.get_mut(session_id) {
+            entry.requested_model = Some(model.to_string());
+        }
+    }
+
     /// Register the prompt channel for a managed session. Prompts submitted via
     /// `submit_message` are forwarded here (the adapter's driver task owns the
     /// receiver).

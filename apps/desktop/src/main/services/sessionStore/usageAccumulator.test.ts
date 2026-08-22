@@ -46,6 +46,57 @@ describe('SessionUsageAccumulator.applyUsage — context limit', () => {
     acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 50_000 }, 'm1');
     expect(s.usage!.contextLimit).toBe(200_000);
   });
+
+  it('reads the window off the spawn request, so a 1M session is right from the first turn', () => {
+    // The regression this guards: a session spawned on `opus[1m]` reported a
+    // 200k window until it actually exceeded 200k, so its bar (and its
+    // list_agents row) read ~5× too full for the whole first fifth of the run.
+    const s = mkSession();
+    s.settings = { model: 'opus[1m]' };
+    acc.applyUsage(s, 'claude-opus-5', { input_tokens: 190_000 }, 'm1');
+    expect(s.usage!.contextLimit).toBe(1_000_000);
+  });
+
+  it('prefers the provider-reported window over the spawn request', () => {
+    const s = mkSession();
+    s.settings = { model: 'opus[1m]' };
+    s.statusLine = { contextWindowSize: 200_000 };
+    acc.applyUsage(s, 'claude-opus-5', { input_tokens: 50_000 }, 'm1');
+    expect(s.usage!.contextLimit).toBe(200_000);
+  });
+
+  it('a 200k spawn stays 200k — the fix must not default everything to 1M', () => {
+    const s = mkSession();
+    s.settings = { model: 'opus' };
+    acc.applyUsage(s, 'claude-opus-5', { input_tokens: 190_000 }, 'm1');
+    expect(s.usage!.contextLimit).toBe(200_000);
+  });
+});
+
+describe('SessionUsageAccumulator.refreshContextLimit — signals that land later', () => {
+  let acc: SessionUsageAccumulator;
+  beforeEach(() => {
+    acc = new SessionUsageAccumulator();
+  });
+
+  it('corrects the window when the status line arrives after the last usage turn', () => {
+    const s = mkSession();
+    acc.applyUsage(s, 'claude-sonnet-5', { input_tokens: 175_710 }, 'm1');
+    expect(s.usage!.contextLimit).toBe(200_000);
+    // Claude's own statusLine says the window is 1M. Nothing else changes —
+    // no new turn, no new model — so without this refresh the bar would keep
+    // claiming 88% full instead of 18%.
+    s.statusLine = { contextWindowSize: 1_000_000 };
+    SessionUsageAccumulator.refreshContextLimit(s);
+    expect(s.usage!.contextLimit).toBe(1_000_000);
+  });
+
+  it('is a no-op on a session with no usage yet (nothing to correct)', () => {
+    const s = mkSession();
+    s.statusLine = { contextWindowSize: 1_000_000 };
+    SessionUsageAccumulator.refreshContextLimit(s);
+    expect(s.usage).toBeNull();
+  });
 });
 
 describe('SessionUsageAccumulator.applyUsage — replay must not double-count', () => {

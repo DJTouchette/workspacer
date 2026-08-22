@@ -390,6 +390,26 @@ pub fn context_window_for(model: &str) -> Option<u64> {
     None
 }
 
+/// Window implied by a model string the session was *asked* for — the alias the
+/// user picked (`opus[1m]`), not a concrete provider id. Claude Code strips the
+/// `[1m]` marker from the `model` it writes into the transcript, so the request
+/// is the only carrier of a 1M choice until the provider reports a window.
+///
+/// Deliberately narrower than [`context_window_for`]: it answers only "was 1M
+/// asked for", and `None` means "says nothing", NOT "200k". A bare `opus`
+/// might be a 200k session or a Claude Code default that changes tomorrow —
+/// callers keep whatever the rates table resolved rather than pin it here.
+/// Twin of the TS `requestedWindowFor` in `modelUsage.ts`.
+pub fn requested_context_window_for(model: &str) -> Option<u64> {
+    let m = model.to_ascii_lowercase();
+    // Fable / Mythos are 1M-native: the max window is also the default, so
+    // their aliases carry no marker.
+    if m.contains("[1m]") || m.contains("-1m") || m.contains("fable") || m.contains("mythos") {
+        return Some(1_000_000);
+    }
+    None
+}
+
 /// Map an `AgentUpdate` to a conversation item, when it represents one.
 pub fn conversation_item(update: &AgentUpdate) -> Option<ConversationItem> {
     // Managed adapters have no transcript rows to inherit timestamps from, so
@@ -1155,6 +1175,25 @@ mod tests {
         assert_eq!(context_window_for("gpt-5-codex"), Some(272_000));
         assert_eq!(context_window_for("google/gemini-2.5-pro"), Some(1_048_576));
         assert_eq!(context_window_for("totally-unknown-model"), None);
+    }
+
+    #[test]
+    fn requested_window_reads_the_1m_marker_off_bare_aliases() {
+        // `context_window_for` needs a "claude" in the id, so it can't answer
+        // for the alias the composer actually sends.
+        assert_eq!(context_window_for("opus[1m]"), None);
+        assert_eq!(requested_context_window_for("opus[1m]"), Some(1_000_000));
+        assert_eq!(requested_context_window_for("sonnet[1m]"), Some(1_000_000));
+        assert_eq!(
+            requested_context_window_for("claude-opus-5[1m]"),
+            Some(1_000_000)
+        );
+        assert_eq!(requested_context_window_for("fable"), Some(1_000_000));
+        // An unmarked alias says NOTHING — not 200k. Callers keep whatever the
+        // rates table resolved rather than have a coarse alias pin the window.
+        assert_eq!(requested_context_window_for("opus"), None);
+        assert_eq!(requested_context_window_for("claude-sonnet-5"), None);
+        assert_eq!(requested_context_window_for(""), None);
     }
 
     #[test]

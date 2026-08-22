@@ -77,8 +77,11 @@ fn context_tokens_of(usage: &Value) -> u64 {
     n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens")
 }
 
-/// The transcript model id lacks the `[1m]` suffix, so we infer the 1M window
-/// once a turn's context exceeds the standard 200k.
+/// Window implied by the transcript alone: the rates table for the model id,
+/// with a last-resort retrospective promotion — the transcript model id lacks
+/// the `[1m]` suffix, so a session whose window is otherwise unknown only
+/// reveals 1M mode by exceeding the standard 200k. [`Usage::resolve_window`]
+/// overrides this with real signals when the session has any.
 fn context_limit_for(model: Option<&str>, observed: u64) -> u64 {
     let base = rates_for(model).context_limit;
     if base <= 200_000 && observed > 200_000 {
@@ -86,6 +89,45 @@ fn context_limit_for(model: Option<&str>, observed: u64) -> u64 {
     } else {
         base
     }
+}
+
+impl Usage {
+    /// Replace the transcript-derived `context_limit` with what the *session*
+    /// knows about its window — the transcript can't say, because Claude Code
+    /// strips the `[1m]` marker from the `model` id it records.
+    ///
+    /// `reported` is the provider's own window (the status line's
+    /// `context_window_size`: Claude's statusLine payload on the PTY path, the
+    /// stream `result` frame's `modelUsage.*.contextWindow` on the managed
+    /// one, `model_context_window` for Codex) — a fact, so it wins outright.
+    /// `requested` is the model string the session was spawned with
+    /// (`opus[1m]`), which still carries the marker and is known from token
+    /// zero; it may only *raise* the window, never lower one the rates table
+    /// (or a user override) already resolved higher.
+    pub fn resolve_window(&mut self, reported: Option<u64>, requested: Option<&str>) {
+        if let Some(w) = reported.filter(|w| *w > 0) {
+            self.context_limit = w;
+            return;
+        }
+        if let Some(w) = requested.and_then(crate::providers::requested_context_window_for) {
+            self.context_limit = self.context_limit.max(w);
+        }
+    }
+}
+
+/// [`usage_for_path`] for a live session, with its window resolved from the
+/// session's own signals (see [`Usage::resolve_window`]). This is what every
+/// snapshot should use — `usage_for_path` alone can only guess the window.
+pub fn usage_for_session(state: &super::state::SessionState) -> Usage {
+    let mut u = usage_for_path(state.transcript_path.as_deref());
+    u.resolve_window(
+        state
+            .status_line
+            .as_ref()
+            .and_then(|sl| sl.context_window_size),
+        state.requested_model.as_deref(),
+    );
+    u
 }
 
 /// USD cost of one turn. Cache writes cost 1.25× input, reads 0.1×.
@@ -611,6 +653,54 @@ mod tests {
     fn context_window_fable_is_1m_native() {
         let t = tx(vec![assistant_msg("m1", "claude-fable-5", 1_000, 0, 0, 10)]);
         let u = from_transcript(&t).unwrap();
+        assert_eq!(u.context_limit, 1_000_000);
+    }
+
+    /// The regression: a `opus[1m]` session under 200k reported a 200k window,
+    /// so every context gauge (and every `list_agents` row) read ~5× too full
+    /// until the session actually crossed 200k. The spawn request carries the
+    /// `[1m]` marker the transcript's model id drops — resolve from it.
+    #[test]
+    fn resolve_window_reads_1m_off_the_requested_model() {
+        let t = tx(vec![assistant_msg("m1", "claude-opus-5", 190_000, 0, 0, 10)]);
+        let mut u = from_transcript(&t).unwrap();
+        assert_eq!(u.context_limit, 200_000, "transcript alone cannot tell");
+        u.resolve_window(None, Some("opus[1m]"));
+        assert_eq!(u.context_limit, 1_000_000);
+    }
+
+    /// The provider's own window is a fact and outranks every inference —
+    /// including the retrospective 200k→1M promotion.
+    #[test]
+    fn resolve_window_prefers_the_reported_window() {
+        let t = tx(vec![assistant_msg("m1", "claude-opus-5", 300_000, 0, 0, 10)]);
+        let mut u = from_transcript(&t).unwrap();
+        assert_eq!(u.context_limit, 1_000_000, "promoted by the fallback");
+        u.resolve_window(Some(200_000), Some("opus[1m]"));
+        assert_eq!(u.context_limit, 200_000);
+    }
+
+    /// The fix must not default everything to 1M: an unmarked request says
+    /// nothing about the window, and a genuinely-200k session must keep
+    /// reporting 200k or a real approaching limit would be hidden.
+    #[test]
+    fn resolve_window_leaves_a_200k_session_alone() {
+        let t = tx(vec![assistant_msg("m1", "claude-opus-5", 190_000, 0, 0, 10)]);
+        let mut u = from_transcript(&t).unwrap();
+        u.resolve_window(None, Some("opus"));
+        assert_eq!(u.context_limit, 200_000);
+        // A zero/absent reported window is "unknown", not "no window".
+        u.resolve_window(Some(0), None);
+        assert_eq!(u.context_limit, 200_000);
+    }
+
+    /// A coarse requested alias may raise the window, never lower one the
+    /// rates table (or a user override) already resolved higher.
+    #[test]
+    fn resolve_window_never_lowers_a_1m_native_model() {
+        let t = tx(vec![assistant_msg("m1", "claude-fable-5", 1_000, 0, 0, 10)]);
+        let mut u = from_transcript(&t).unwrap();
+        u.resolve_window(None, Some("opus"));
         assert_eq!(u.context_limit, 1_000_000);
     }
 

@@ -449,6 +449,9 @@ class ClaudeSessionStore {
     const existing = this.sessions.get(sessionId);
     if (existing && meta.settings) {
       existing.settings = { ...existing.settings, ...meta.settings };
+      // A restart can change the window (`opus` → `opus[1m]`), and the new
+      // life's first usage turn is a while away — re-resolve now.
+      SessionUsageAccumulator.refreshContextLimit(existing);
       // The new life's telemetry starts empty. `livePermissionMode` holds the
       // *previous* life's hook value and the composer pill prefers it over
       // `settings`, so leaving it behind makes a restart-to-change-the-mode look
@@ -456,6 +459,21 @@ class ClaudeSessionStore {
       if (meta.settings.permissionMode) existing.livePermissionMode = undefined;
       this.pushUpdate(existing);
     }
+  }
+
+  /** Record a model a *live* switch (`claude:setModel`) asked this session to
+   *  move to. Optimistic by necessity — the provider confirms asynchronously on
+   *  the status line — but leaving `settings.model` pinned to the spawn value
+   *  is strictly worse: it would keep claiming a 1M window after a switch down
+   *  to a 200k model (and vice-versa) until telemetry catches up. No-op for
+   *  unknown ids. */
+  noteRequestedModel(sessionId: string, model: string): void {
+    if (!sessionId || !model) return;
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    session.settings = { ...session.settings, model };
+    SessionUsageAccumulator.refreshContextLimit(session);
+    this.pushUpdate(session);
   }
 
   /** Eagerly register a freshly-spawned managed (codex/opencode/pi) session so
@@ -920,6 +938,11 @@ class ClaudeSessionStore {
     if (!session) return;
     // Always record the latest value immediately (trailing-edge debounce).
     session.statusLine = statusLine;
+    // The status line carries the provider's OWN context window
+    // (`contextWindowSize`) — the one fact that settles 1M-vs-200k. It can land
+    // after the session's last usage turn, so fold it in here too, or the bar
+    // keeps the denominator the transcript's (marker-stripped) model id implied.
+    SessionUsageAccumulator.refreshContextLimit(session);
     // Stream sessions get Claude's authoritative cost here — check the budget.
     checkBudget(session);
     if (STATUSLINE_DEBOUNCE_MS <= 0) {

@@ -608,6 +608,7 @@ mod tests {
             background_tasks: 0,
             live_subagents: 0,
             parent_turn_ended: false,
+            requested_model: None,
         };
         app.sessions.insert(session.session_id.clone(), session);
         app.order.push("test-session-id".into());

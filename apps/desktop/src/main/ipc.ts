@@ -947,12 +947,16 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
   // Live model switch for managed providers (no restart). Confirmation flows
   // back through the status line (codex broadcasts thread/settings/updated),
-  // so no store note is needed here.
+  // but the *requested* model is noted in the store right away: it is the only
+  // carrier of the `[1m]` marker, so without it a switch to `opus[1m]` would
+  // keep drawing the context bar against a 200k window.
   ipcMain.handle(
     IPC.CLAUDE_SET_MODEL,
-    (_event, sessionId: string, model?: string, effort?: string) => {
+    async (_event, sessionId: string, model?: string, effort?: string) => {
       assertLocalSession(sessionId, 'Model switch');
-      return claudemonSessionClient.setModel(sessionId, model, effort);
+      const res = await claudemonSessionClient.setModel(sessionId, model, effort);
+      if (model) claudeSessionStore.noteRequestedModel(sessionId, model);
+      return res;
     },
   );
   // Cross-provider handoff: daemon distills the session's conversation into a

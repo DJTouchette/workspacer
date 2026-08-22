@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import {
   contextTokensOf,
   contextLimitFor,
+  requestedWindowFor,
   turnCostUSD,
   emptyUsage,
   type RawUsage,
@@ -92,6 +93,77 @@ describe('contextLimitFor', () => {
 
   it('boundary: exactly 200_000 observed does NOT promote', () => {
     expect(contextLimitFor('claude-sonnet-4-5', 200_000)).toBe(200_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// requestedWindowFor — the `[1m]` marker the transcript model id strips
+// ---------------------------------------------------------------------------
+describe('requestedWindowFor', () => {
+  it('reads the [1m] marker off a bare alias and a full id', () => {
+    expect(requestedWindowFor('opus[1m]')).toBe(1_000_000);
+    expect(requestedWindowFor('sonnet[1m]')).toBe(1_000_000);
+    expect(requestedWindowFor('claude-opus-5[1m]')).toBe(1_000_000);
+    expect(requestedWindowFor('claude-sonnet-5-1m')).toBe(1_000_000);
+  });
+
+  it('treats fable/mythos as 1M-native (they carry no marker)', () => {
+    expect(requestedWindowFor('fable')).toBe(1_000_000);
+    expect(requestedWindowFor('claude-mythos-5')).toBe(1_000_000);
+  });
+
+  it('says NOTHING (not 200k) for an unmarked alias — an absent marker is not a 200k claim', () => {
+    expect(requestedWindowFor('opus')).toBeUndefined();
+    expect(requestedWindowFor('claude-opus-5')).toBeUndefined();
+    expect(requestedWindowFor('')).toBeUndefined();
+    expect(requestedWindowFor(null)).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// contextLimitFor — real signals outrank the retrospective promotion
+// ---------------------------------------------------------------------------
+describe('contextLimitFor — hints', () => {
+  it('THE BUG: a 1M session under 200k reported 200k; the requested alias fixes it at token zero', () => {
+    // 190k of a 1M window read as 95% full, which is what made a healthy
+    // manager conclude it was about to die.
+    expect(contextLimitFor('claude-opus-5', 190_000)).toBe(200_000);
+    expect(contextLimitFor('claude-opus-5', 190_000, { requestedModel: 'opus[1m]' })).toBe(
+      1_000_000,
+    );
+    // …and from the very first turn, not just near the old crossover.
+    expect(contextLimitFor('claude-opus-5', 0, { requestedModel: 'opus[1m]' })).toBe(1_000_000);
+  });
+
+  it('the provider-reported window wins over every guess', () => {
+    expect(contextLimitFor('claude-opus-5', 1_000, { reportedWindow: 1_000_000 })).toBe(1_000_000);
+    // Including over the retrospective promotion: if the provider says 200k
+    // while a stale high-water mark says otherwise, the provider is right.
+    expect(
+      contextLimitFor('claude-opus-5', 300_000, { reportedWindow: 200_000, requestedModel: 'opus' }),
+    ).toBe(200_000);
+  });
+
+  it('ignores a non-positive / non-finite reported window and falls through', () => {
+    expect(contextLimitFor('claude-opus-5', 1_000, { reportedWindow: 0 })).toBe(200_000);
+    expect(contextLimitFor('claude-opus-5', 1_000, { reportedWindow: null })).toBe(200_000);
+    expect(contextLimitFor('claude-opus-5', 1_000, { reportedWindow: NaN })).toBe(200_000);
+  });
+
+  it('does NOT default everything to 1M — an unmarked request stays 200k', () => {
+    expect(contextLimitFor('claude-opus-5', 50_000, { requestedModel: 'opus' })).toBe(200_000);
+    expect(contextLimitFor('claude-sonnet-5', 50_000, { requestedModel: '' })).toBe(200_000);
+    expect(contextLimitFor('claude-haiku-4-5', 50_000, {})).toBe(200_000);
+  });
+
+  it('a requested alias may raise the window but never lower one already resolved higher', () => {
+    // Fable is 1M in the table; a coarse `opus` request must not drag it down.
+    expect(contextLimitFor('claude-fable-5', 1_000, { requestedModel: 'opus' })).toBe(1_000_000);
+  });
+
+  it('the retrospective promotion still covers a session with no signals at all', () => {
+    expect(contextLimitFor('claude-opus-5', 300_000)).toBe(1_000_000);
+    expect(contextLimitFor('claude-opus-5', 300_000, {})).toBe(1_000_000);
   });
 });
 

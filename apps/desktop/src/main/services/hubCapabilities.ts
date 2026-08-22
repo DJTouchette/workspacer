@@ -694,8 +694,9 @@ export function registerHubCapabilities(): void {
   });
 
   // Control: live model/effort switch for managed providers (no restart).
-  // Remote counterpart of the `claude:setModel` IPC handler; confirmation
-  // flows back through the status line, so no store note is needed.
+  // Remote counterpart of the `claude:setModel` IPC handler; the provider
+  // confirms the switch on the status line, but the requested model is noted
+  // eagerly so the context window follows an `opus[1m]` switch immediately.
   registerCapability('claude.setModel', async (params: unknown) => {
     const { sessionId, model, effort } = (params ?? {}) as {
       sessionId?: string;
@@ -705,7 +706,9 @@ export function registerHubCapabilities(): void {
     if (!sessionId || (!model && !effort)) {
       throw new Error('claude.setModel requires { sessionId, model and/or effort }');
     }
-    return claudemonSessionClient.setModel(sessionId, model, effort);
+    const res = await claudemonSessionClient.setModel(sessionId, model, effort);
+    if (model) claudeSessionStore.noteRequestedModel(sessionId, model);
+    return res;
   });
 
   // Control: build a cross-provider handoff brief (persisted under
