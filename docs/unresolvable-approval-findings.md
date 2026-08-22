@@ -105,3 +105,39 @@ the same unresolvable hang by a different route.
 real CLI with claudemon's argv under an isolated `CLAUDE_CONFIG_DIR`
 (`/tmp/wks-repro/cfg`, credentials symlinked, no hooks) so nothing lands in the
 live daemon, and logs every frame with timestamps.
+
+## Resolution
+
+All three defects are fixed on this branch. Kept as a document rather than
+deleted with the last commit, because the two WRONG hypotheses above (a PTY
+prompt-shape parser; something special about the `~/.workspacer/` path) are the
+ones a future reader will re-derive first, and section 1 is the evidence that
+they are dead ends.
+
+| Defect | Fix | Test |
+| --- | --- | --- |
+| A — hooks null the card they don't own | `hookEventRouter.ts`: `clearPendingApproval()` gates the PreToolUse/PostToolUse clears on `hooksOwnPending`, the mirror of the store's `daemonOwnsPending` | `hookEventRouter.test.ts` — "a late hook frame must not null an approval the daemon still holds" |
+| B — `Busy` demotes a parked approval | `providers/mod.rs::apply_updates`: `Busy` no longer raises `Responding` out of `Approval`/`Question` | `busy_never_demotes_a_parked_approval_or_question`, `approval_still_lands_and_a_real_turn_end_still_clears_it` |
+| C — `PermissionRequest` never registered | `session/state.rs`: added to `HookEventKind::REGISTERABLE`, so `daemon/init.rs` installs it | `contracts/permission-request-hook-cases.json`, read by `permission_request_contract_cases` (Rust) and `permissionRequestContract.test.ts` (TS) |
+
+The invariant the three share, and the thing to preserve: **exactly one feed
+owns a session's `pending` slot, and the other feeds may enrich it but never
+clear it.** For a stream-transport claude session (and every non-claude
+provider) that owner is the daemon's `/events` managed-mode stream; for a PTY
+claude session it is the hook feed. Mixing them is what made a blocked session
+unanswerable rather than merely mislabelled.
+
+### Known remaining asymmetries (not fixed here, none of them stranding)
+
+* `pendingQuestions` is still written and cleared from the hook feed on every
+  transport. Narrower than the approval case — `PostToolUse` only clears it for
+  a matching `AskUserQuestion` `tool_use_id`, not on any tool — but it is the
+  same shape of shared ownership.
+* `PermissionRequest` still writes `pendingApproval` on a daemon-owned session.
+  It can only ever ADD a card, so it cannot strand a session, but a late frame
+  can resurrect one the daemon already cleared, and the daemon deliberately
+  does not surface queued (non-head) approvals that this hook would.
+* `applyStopEvent` still clears the card on both transports. Deliberate: a turn
+  boundary really does mean nothing can still be parked, and a stream session
+  killed mid-approval would otherwise keep a phantom card (the daemon's
+  `stopped` mode leaves state as-is).
