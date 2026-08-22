@@ -124,6 +124,20 @@ Their output is substituted into the prompt at {{output}} (or {{output.1}},
 one: a job that wakes a model nightly to answer "nothing to do" is waste the
 user pays for. Calls may not target jobs.* or hub:<peer>/, and there is a
 maximum of four context steps.`),
+	"watch": strings.TrimSpace(`
+notify_when({sessionId, tokens|usd|idleSeconds, notifySessionId?}) is how you
+keep an eye on a running worker WITHOUT polling. Never loop on list_agents or
+get_conversation to "keep an eye on" something — that is a hang, and it locks
+the user out. Arm a watch and STOP.
+- Give at least one threshold. tokens is CUMULATIVE (input + output), so it
+  catches scope creep a context percentage would not; usd is cumulative cost;
+  idleSeconds catches a worker that stopped without finishing.
+- Crossing delivers a [fleet] wake naming exactly what crossed.
+- ONE-SHOT: the watch is discarded when it fires. Arm another if you still want
+  to watch — that is a decision you should make deliberately, not a loop.
+- The wake goes to the target's PARENT by default (you, for a worker you
+  dispatched); notifySessionId overrides it.
+- Watches live in memory: a workspacer restart clears them.`),
 	"brief": strings.TrimSpace(`
 brief_append({project, section, line}) adds ONE line to a project's
 .workspacer/brief.md. Use it instead of read_file + write_file: it is

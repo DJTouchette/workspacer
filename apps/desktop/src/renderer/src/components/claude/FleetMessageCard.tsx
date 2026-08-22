@@ -39,6 +39,12 @@ const KIND_META: Record<
     icon: History,
     tone: 'var(--wks-success)',
   },
+  threshold: {
+    badge: 'Fleet · threshold crossed',
+    badgePlural: 'Fleet · thresholds crossed',
+    icon: AlertTriangle,
+    tone: 'var(--wks-warning)',
+  },
   blocked: {
     badge: 'Supervisor · agent blocked',
     badgePlural: 'Supervisor · agents blocked',
@@ -163,6 +169,23 @@ const EntryRow: React.FC<{ entry: FleetMessageEntry }> = ({ entry }) => {
             }}
           >
             FAILED: {entry.failed}
+          </span>
+        )}
+        {entry.crossed && (
+          <span
+            title={entry.crossed}
+            style={{
+              padding: '1px 6px',
+              borderRadius: 'var(--wks-radius-pill)',
+              fontSize: '0.6rem',
+              fontWeight: 600,
+              color: colors.warning,
+              background: `color-mix(in srgb, ${colors.warning} 12%, transparent)`,
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+            }}
+          >
+            {entry.crossed}
           </span>
         )}
         {entry.blockedOn && (

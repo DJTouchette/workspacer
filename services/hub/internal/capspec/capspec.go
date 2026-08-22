@@ -294,6 +294,7 @@ var unscopedByDecision = map[string]string{
 // replaced.
 var inertMethods = map[string]string{
 	"agents.list":                "no caller params at all; it returns the session rows the provider already holds",
+	"agents.notifyWhen":          "two session ids selecting existing rows plus three NUMBERS (tokens, usd, idleSeconds), each coerced with Number() and range-checked before it is stored. Nothing composes a path, an argv or a query, and the call starts nothing: it records an intention to send a message LATER, and the message body is composed entirely by the host (buildFleetMessage over the provider's own snapshot fields) with no caller text in it. Everything it can ever report — cumulative tokens, cost, idle time — is already in the sessions.snapshot the VIEW tier reads, so it discloses nothing new; what it removes is the caller's need to poll for it",
 	"analytics.recent":           "the only params are a row limit and a time window, both coerced to numbers before they reach the store; nothing composes a path, an argv or a query the host runs",
 	"analytics.summary":          "same as analytics.recent — numeric window only",
 	"app.getCwd":                 "no params; returns the provider's own working directory",

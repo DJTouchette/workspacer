@@ -55,6 +55,7 @@ import { ensureSupervisorHome } from './supervisorSkill';
 import { scrubBootDocumentAgents } from '../lib/bootDocumentScrub';
 import { isAsciiBlank } from '../lib/asciiWhitespace';
 import { appendBriefLine, briefPathFor, parseBriefSection } from './briefService';
+import { thresholdWatcher } from './thresholdWatcher';
 
 // Mirror of ipc.ts's shell detection so a capability-spawned terminal picks the
 // same default shell a UI-spawned one would. Kept local to avoid importing the
@@ -1334,6 +1335,47 @@ export function registerHubCapabilities(): void {
     if (!sessionId) throw new Error('claude.gate requires { sessionId, on }');
     return claudemonSessionClient.setGate(sessionId, !!on);
   });
+  // ── Threshold alerts (the alternative to polling) ──────────────────────
+  //
+  // Manager doctrine forbids polling — a manager looping on list_agents is a
+  // hang, not monitoring — which left a worker's cost and context invisible
+  // until it finished. This is how the manager honours the doctrine and still
+  // sees a runaway: it asks to be told, once, and stops.
+  //
+  // OPERATOR-ONLY by construction, like brief.* and jobs.*: `agents.notifyWhen`
+  // is not in either scoped tier's exact-name allowlist. And it is an
+  // OBSERVATION, not an action — it starts nothing, changes no session, and
+  // grants no reach: everything it can report (tokens, cost, idle time) is
+  // already in the sessions.snapshot every VIEW token can read. What it removes
+  // is the polling, not a restriction.
+  registerCapability('agents.notifyWhen', (params: unknown) => {
+    const { sessionId, notifySessionId, tokens, usd, idleSeconds } = (params ?? {}) as {
+      sessionId?: string;
+      notifySessionId?: string;
+      tokens?: number;
+      usd?: number;
+      idleSeconds?: number;
+    };
+    if (!sessionId) throw new Error('agents.notifyWhen requires { sessionId }');
+    // Default the recipient to the target's PARENT — the manager that
+    // dispatched it is who wants to know, and it is the same routing the
+    // worker-finished wake already uses. An explicit notifySessionId wins.
+    const parent = claudeSessionStore
+      .getAllSnapshots()
+      .find((s) => s.sessionId === sessionId)?.parentSessionId;
+    const watcherId = notifySessionId || parent;
+    if (!watcherId) {
+      throw new Error(
+        'agents.notifyWhen: no notifySessionId and the target has no parent session — pass your own session id as notifySessionId',
+      );
+    }
+    return thresholdWatcher.arm({
+      sessionId,
+      watcherSessionId: watcherId,
+      predicate: { tokens, usd, idleSeconds },
+    });
+  });
+
   // ── Project briefs ─────────────────────────────────────────────────────
   //
   // The atomic inspect-then-edit primitive. Before it, every brief update was

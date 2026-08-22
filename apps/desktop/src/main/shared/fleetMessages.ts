@@ -15,7 +15,7 @@
  * so a bullet can never span lines.
  */
 
-export type FleetMessageKind = 'worker-finished' | 'catch-up' | 'blocked';
+export type FleetMessageKind = 'worker-finished' | 'catch-up' | 'blocked' | 'threshold';
 
 export interface FleetMessageEntry {
   /** Worker label (or cwd-basename fallback). */
@@ -37,6 +37,10 @@ export interface FleetMessageEntry {
    *  a SIGTERM is not an API refusal. Round-tripped by the parser so the GUI
    *  card can badge it too. See shared/workerFailure. */
   failed?: string;
+  /** The threshold this session crossed, already rendered ("tokens 309,412 ≥
+   *  250,000"). Present on 'threshold' entries — the answer to a notify_when
+   *  the manager armed so it would never have to poll. Round-tripped. */
+  crossed?: string;
   /** A worker's VALIDATED structured result (pretty-printed JSON), when its
    *  dispatch carried a `resultSchema` and the worker honored the contract.
    *  Rendered as its own block below the bullets — builder-side only, like
@@ -98,6 +102,7 @@ const HEADERS: Record<FleetMessageKind, string> = {
   'catch-up':
     '[fleet] Catch-up — these workers finished while you were idle and you may have missed the wake:',
   blocked: '[supervisor] An agent is now blocked on a decision:',
+  threshold: '[fleet] A threshold you asked to be told about has been crossed:',
 };
 
 /** ALTERNATE headers a kind may be delivered under, parsed back to the same
@@ -133,6 +138,11 @@ const TAILS: Record<FleetMessageKind, string> = {
     `Review each (get_conversation with sinceSeq), update the project brief's "## Recently", ` +
     `and report the outcome with session:<id> references. Then STOP again.`,
   blocked: `Run a /supervise pass: gather the context and notify me with a recommendation.`,
+  threshold:
+    `This is the notify_when you armed, and it has now fired and been DISCARDED — watches are ` +
+    `one-shot, so nothing further will arrive unless you arm another. Decide: let it run, ` +
+    `send_message it a narrowing instruction, or stop it (signal SIGTERM, then close_session) ` +
+    `and redispatch surgically with respawn_with. Then STOP again — do not start polling.`,
 };
 
 /** One entry as its bullet-body text (no leading `- `). */
@@ -140,8 +150,9 @@ export function formatFleetEntry(e: FleetMessageEntry): string {
   const where = e.blockedOn ? e.blockedOn : `cwd ${e.cwd || '?'}`;
   const stopped = e.stopped ? ' — stopped/killed' : '';
   const failed = e.failed ? ` — FAILED: ${e.failed}` : '';
+  const crossed = e.crossed ? ` — crossed: ${e.crossed}` : '';
   const tail = e.lastReply ? ` — last reply: ${e.lastReply}` : '';
-  return `${e.label} (session:${e.sessionId}, ${where})${stopped}${failed}${tail}`;
+  return `${e.label} (session:${e.sessionId}, ${where})${stopped}${failed}${crossed}${tail}`;
 }
 
 /** Plain (non-bullet) note appended when any entry FAILED. Spelled out because
@@ -198,17 +209,18 @@ export function buildFleetMessage(kind: FleetMessageKind, entries: FleetMessageE
  *  non-greedy so the FIRST `(session:` wins; a reply may contain anything (it
  *  is the anchored rest). */
 const ENTRY_RE =
-  /^(.+?) \(session:([\w-]+), (?:cwd (.+?)|(approval|question))\)(?: — (stopped\/killed))?(?: — FAILED: ((?:(?! — ).)+))?(?: — last reply: (.*))?$/;
+  /^(.+?) \(session:([\w-]+), (?:cwd (.+?)|(approval|question))\)(?: — (stopped\/killed))?(?: — FAILED: ((?:(?! — ).)+))?(?: — crossed: ((?:(?! — ).)+))?(?: — last reply: (.*))?$/;
 
 function parseEntry(body: string): FleetMessageEntry | null {
   const m = ENTRY_RE.exec(body);
   if (!m) return null;
-  const [, label, sessionId, cwd, blockedOn, stopped, failed, lastReply] = m;
+  const [, label, sessionId, cwd, blockedOn, stopped, failed, crossed, lastReply] = m;
   const e: FleetMessageEntry = { label, sessionId };
   if (cwd !== undefined) e.cwd = cwd;
   if (blockedOn) e.blockedOn = blockedOn as 'approval' | 'question';
   if (stopped) e.stopped = true;
   if (failed) e.failed = failed;
+  if (crossed) e.crossed = crossed;
   if (lastReply) e.lastReply = lastReply;
   return e;
 }
@@ -218,6 +230,10 @@ const LEGACY_TAIL_STARTS: Record<FleetMessageKind, string> = {
   'worker-finished': '. Review the result (get_conversation',
   'catch-up': '. Review each (get_conversation',
   blocked: '. Run a /supervise pass',
+  // 'threshold' post-dates the bullet format entirely — no legacy paragraph of
+  // this kind exists, and the sentinel must not be an empty string (which
+  // indexOf finds at 0 in ANY text and would make every non-wake string parse).
+  threshold: '\u0000no legacy threshold wakes exist',
 };
 
 /**

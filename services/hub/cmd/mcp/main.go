@@ -670,6 +670,11 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 		"Delete a job (or withdraw a proposal) by id, along with its run history.",
 		"jobs.remove")
 
+	// ── Threshold alerts (operator only; see the capability's own note) ────
+	addTool[notifyWhenIn](b, "notify_when",
+		"Ask to be woken ONCE when a session crosses a threshold — the way to keep an eye on a worker's cost or context WITHOUT polling (never loop on list_agents; that is a hang, not monitoring). Give at least one of tokens / usd / idleSeconds. When it crosses you get a [fleet] wake naming what was crossed, and the watch is then discarded: arm another if you still want to watch. Defaults to waking the target's parent (you, if you dispatched it).",
+		"agents.notifyWhen")
+
 	// ── Project briefs (operator only — brief.* matches no scoped tier) ────
 	//
 	// Same tier story as jobs.* above, and for a related reason: a brief is the
@@ -1122,6 +1127,14 @@ type signalIn struct {
 type terminalInputIn struct {
 	SessionID string `json:"sessionId" jsonschema:"the target session id"`
 	Data      string `json:"data" jsonschema:"raw bytes to write to the PTY"`
+}
+
+type notifyWhenIn struct {
+	SessionID       string  `json:"sessionId" jsonschema:"the session to watch"`
+	NotifySessionID string  `json:"notifySessionId,omitempty" jsonschema:"the session to wake when it crosses; omit to wake the watched session's parent (which is you, for a worker you dispatched)"`
+	Tokens          float64 `json:"tokens,omitempty" jsonschema:"fire when the session's CUMULATIVE tokens (input + output) reach this — e.g. 250000 to catch a worker whose scope is running away"`
+	USD             float64 `json:"usd,omitempty" jsonschema:"fire when the session's cumulative cost in USD reaches this — e.g. 10"`
+	IdleSeconds     float64 `json:"idleSeconds,omitempty" jsonschema:"fire when the session has sat idle this many seconds (a worker that stopped without finishing)"`
 }
 
 type briefAppendIn struct {

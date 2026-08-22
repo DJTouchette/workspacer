@@ -136,6 +136,12 @@ const MANAGER_PREAMBLE =
   'new turns.\n' +
   '- approve {"sessionId":"<worker id>","decision":"yes"} for a pending permission prompt.\n' +
   '- notify {"title":"...","body":"..."} to alert the user.\n' +
+  '- notify_when {"sessionId":"<worker id>","tokens":250000} (or "usd":10, or ' +
+  '"idleSeconds":900) — the ONLY sanctioned way to keep an eye on a running worker. Rule 2 ' +
+  'forbids polling; this is how you honour it and still catch scope creep: arm a watch, STOP, ' +
+  'and the system wakes you with a [fleet] message the moment the worker crosses it. Arm one ' +
+  'on any dispatch you expect to be long or open-ended. It is ONE-SHOT — arm another if you ' +
+  'still want to watch.\n' +
   '- brief_append {"project":"/abs/project/dir","section":"Recently","line":"2026-08-21  ' +
   'shipped X (session:abc)"} — ALWAYS use this to add a brief line rather than reading and ' +
   'rewriting the file. It appends atomically under a lock and is strictly additive, so it ' +
