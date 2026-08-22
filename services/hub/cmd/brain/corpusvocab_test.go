@@ -446,8 +446,9 @@ func TestEveryFixtureBlockIsDeclaredAndClosed(t *testing.T) {
 // allow-list and not a heuristic: "has no blocks, so skip it" is how a fixture
 // whose cases were deleted would pass.
 var vocabExempt = map[string]bool{
-	"session-schema.json": true,
-	"config-lock.json":    true,
+	"session-schema.json":         true,
+	"config-lock.json":            true,
+	"wholesale-config-paths.json": true,
 }
 
 // contractsFixtureFloor is how many case-carrying fixtures contracts/ holds.

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WHOLESALE_CONFIG_PATHS } from '../shared/configWholesale';
+import wholesaleFixture from '../../../../../contracts/wholesale-config-paths.json';
 
 // ─── isolate module per test ────────────────────────────────────────────────
 // We need to control process.platform and process.env before the module is
@@ -115,7 +116,7 @@ vi.mock('fs', () => ({
 // Import after the mock is registered so the ConfigService constructor sees it.
 // Because vitest hoists vi.mock, this import runs after the mock.
 import * as fsMock from 'fs';
-import { configService, deepMerge, applyWholesale } from './configService';
+import { configService, deepMerge, applyWholesale, setPreWriteHookForTest } from './configService';
 
 const mockedFs = vi.mocked(fsMock);
 
@@ -434,6 +435,111 @@ describe('mtime gate — folds in external (brain) writes instead of clobbering'
   });
 });
 
+// ─── save_config fix: CAS against a non-lock-participating writer ───────────
+// The mtime-gate suite above proves saveConfig folds in an external write that
+// landed BEFORE the call started. This proves the narrower, harder case: a
+// write that lands DURING this call's own computation — after its initial read,
+// before its write — from a writer that never took the cross-process lock (a
+// hand edit, or this process's own unlocked migration writes). Mirrors
+// briefService.test.ts's "COMPARE-AND-SWAP: an outside writer that ignores the
+// lock is not overwritten" and the Go twin's TestConfigSaveCASRetriesAgainst...
+describe('compare-and-swap — a writer that lands mid-save and does not hold the lock', () => {
+  beforeEach(() => {
+    mockedFs.readFileSync.mockReset();
+    mockedFs.writeFileSync.mockReset();
+    vi.mocked(fsMock.statSync).mockReset();
+  });
+
+  afterEach(() => {
+    setPreWriteHookForTest(() => {});
+    mockedFs.readFileSync.mockReset().mockImplementation(() => enoent());
+    vi.mocked(fsMock.statSync)
+      .mockReset()
+      .mockImplementation(() => enoent());
+    configService.reloadConfig();
+  });
+
+  it('retries against the fresh state and keeps BOTH changes', () => {
+    mockedFs.readFileSync.mockReturnValue('ui:\n  theme: dark\n');
+    vi.mocked(fsMock.statSync).mockReturnValue({ mtimeMs: 100, size: 20 } as any);
+    configService.reloadConfig();
+
+    let fired = false;
+    setPreWriteHookForTest(() => {
+      if (fired) return; // only the first attempt simulates the outsider
+      fired = true;
+      // The outsider writes directly to disk, bypassing withConfigLock
+      // entirely — landing a change the read at the top of THIS attempt never
+      // saw. Different section from our own partial, so an ordinary deep
+      // merge (not a wholesale replace) is what has to notice and keep it.
+      mockedFs.readFileSync.mockReturnValue('ui:\n  theme: nord\n');
+      vi.mocked(fsMock.statSync).mockReturnValue({ mtimeMs: 200, size: 21 } as any);
+    });
+
+    const cfg = configService.saveConfig({ claude: { seenModels: ['opus'] } as any });
+
+    expect(fired).toBe(true);
+    expect(cfg.ui.theme).toBe('nord'); // the outsider's change survived
+    expect((cfg.claude as any).seenModels).toEqual(['opus']); // ours did too
+    expect(mockedFs.writeFileSync).toHaveBeenCalledTimes(1); // one write, not one per attempt
+  });
+
+  it('gives up (writing nothing) when an outsider churns the file on every attempt', () => {
+    mockedFs.readFileSync.mockReturnValue('ui:\n  theme: dark\n');
+    vi.mocked(fsMock.statSync).mockReturnValue({ mtimeMs: 100, size: 20 } as any);
+    configService.reloadConfig();
+
+    let n = 0;
+    setPreWriteHookForTest(() => {
+      n++;
+      mockedFs.readFileSync.mockReturnValue(`ui:\n  theme: churn-${n}\n`);
+      vi.mocked(fsMock.statSync).mockReturnValue({ mtimeMs: 100 + n, size: 20 + n } as any);
+    });
+
+    const cfg = configService.saveConfig({ claude: { seenModels: ['opus'] } as any });
+
+    // Refused: the returned value is whatever the last fold-in saw, never
+    // written, and definitely not OUR merge presented as applied.
+    expect(mockedFs.writeFileSync).not.toHaveBeenCalled();
+    expect((cfg.claude as any)?.seenModels).not.toEqual(['opus']);
+  });
+});
+
+// ─── save_config fix: object values round-trip as objects ───────────────────
+// The reported defect: an object-valued setting sent through save_config came
+// back stringified rather than as an object. Exercised end to end through
+// saveConfig -> getConfig, the same pair the MCP facade's save_config /
+// get_config tools sit on top of.
+describe('save_config: an object-valued setting round-trips as an object', () => {
+  beforeEach(() => {
+    mockedFs.readFileSync.mockReset().mockImplementation(() => enoent());
+    mockedFs.writeFileSync.mockReset();
+    vi.mocked(fsMock.statSync)
+      .mockReset()
+      .mockImplementation(() => enoent());
+    configService.reloadConfig();
+  });
+
+  it('a nested object survives saveConfig -> getConfig as an object, not a string', () => {
+    const cfg = configService.saveConfig({
+      supervisor: { fullAccess: true, provider: 'claude' } as any,
+      projects: { '/home/u/proj': { label: 'Proj', yolo: true } } as any,
+    });
+
+    expect(typeof cfg.supervisor).toBe('object');
+    expect((cfg.supervisor as any).fullAccess).toBe(true);
+    expect(typeof (cfg.projects as any)['/home/u/proj']).toBe('object');
+    expect((cfg.projects as any)['/home/u/proj'].yolo).toBe(true);
+
+    // And the bytes actually written to disk are YAML, never a JSON-encoded
+    // string masquerading as the value of a key.
+    const written = String(mockedFs.writeFileSync.mock.calls.at(-1)?.[1] ?? '');
+    expect(written).not.toMatch(/fullAccess:\s*['"]/); // not quoted-as-string
+    expect(written).toContain('fullAccess: true');
+    expect(written).toContain('yolo: true');
+  });
+});
+
 // ─── fail-safe on broken/unreadable config files ─────────────────────────────
 // A YAML syntax error (or a transient read failure) must never wipe the user's
 // config: no writeDefaults() over the file, saves blocked while broken, and the
@@ -673,6 +779,16 @@ describe('wholesale config paths — deletion survives the merge', () => {
       'projects',
       'ui.customThemes',
     ]);
+  });
+
+  // Cross-language guard: the Go brain answers config.save for every
+  // web/mobile/MCP save_config caller, and used to hand-special-case only
+  // ui.customThemes and claude.budgets — `projects` was wholesale here and
+  // deep-merged there, so a project delete sent through save_config silently
+  // failed to delete. contracts/wholesale-config-paths.json pins both sides
+  // to the same list (see cmd/brain config_wholesale_test.go for the Go half).
+  it('agrees with the Go twin (contracts/wholesale-config-paths.json)', () => {
+    expect([...WHOLESALE_CONFIG_PATHS].sort()).toEqual([...wholesaleFixture.paths].sort());
   });
 
   it.each([...WHOLESALE_CONFIG_PATHS])('%s', (dotted) => {

@@ -20,6 +20,18 @@ import { workerFailureReason } from '../shared/workerFailure';
 const COALESCE_MS = 1500;
 
 /**
+ * How long a block must SURVIVE before it wakes a supervisor at all. Most
+ * approval/question blocks clear on their own within seconds (an auto-approve
+ * hook, a fast human), and each wake costs the supervisor a full turn of
+ * context — waking it for a block that was about to clear anyway trains the
+ * standing doctrine into "fire one blind approve and stay silent" instead of
+ * actually reading the decision. Below this, onBlockCleared cancels the wake
+ * outright; only a block still open when the timer fires ever reaches the
+ * coalesce path.
+ */
+const BLOCK_DEBOUNCE_MS = 20_000;
+
+/**
  * A worker's finish must be OLDER than this before the backstop treats a
  * still-idle manager as having MISSED the wake — long enough that the normal
  * onFinished path (coalesce + deliver + the manager's own response) has had
@@ -76,10 +88,23 @@ function hasReceivedTask(session: FinishedWorker): boolean {
 class SupervisorNudge {
   private pending = new Map<string, PendingNudge>();
   private pendingFinished = new Map<string, PendingFinish>();
+  /** Debounce timers for a block that has not yet survived BLOCK_DEBOUNCE_MS,
+   *  keyed by the BLOCKED session's id (not the supervisor — a worker can only
+   *  be blocked once at a time, so one timer per worker is enough to cover
+   *  every supervisor it would eventually wake). */
+  private pendingBlocks = new Map<string, NodeJS.Timeout>();
 
   /**
    * Call when a session has just transitioned into a needs-you state. `kind`
    * is what it's blocked on; `supervisorIds` is every live supervisor session.
+   *
+   * Debounced: the broadcast (and its own COALESCE_MS coalescing) only fires
+   * if the block is still open BLOCK_DEBOUNCE_MS later — see onBlockCleared,
+   * which the caller must invoke on the matching clear edge so a block that
+   * resolves itself never wakes anyone. Re-blocking after a clear (or a second
+   * onBlock before the debounce fires) replaces any existing timer for this
+   * session rather than stacking one, so a flapping block can never leak a
+   * timer or double-fire.
    */
   onBlock(
     session: ClaudeSessionState,
@@ -89,6 +114,40 @@ class SupervisorNudge {
     const supervisors = supervisorIds.filter((id) => id !== session.sessionId);
     if (supervisors.length === 0) return; // no supervisor → optional, nothing to do
 
+    const existing = this.pendingBlocks.get(session.sessionId);
+    if (existing) clearTimeout(existing);
+
+    const timer = setTimeout(() => {
+      this.pendingBlocks.delete(session.sessionId);
+      this.broadcastBlock(session, kind, supervisors);
+    }, BLOCK_DEBOUNCE_MS);
+    timer.unref?.();
+    this.pendingBlocks.set(session.sessionId, timer);
+  }
+
+  /**
+   * Call when a session transitions OUT of a needs-you state (approval given,
+   * question answered, the session ended). Cancels any debounce timer still
+   * waiting on this session's block, so a block that clears before
+   * BLOCK_DEBOUNCE_MS never reaches a supervisor at all. A no-op when nothing
+   * is pending (the block already survived and broadcast, or there never was
+   * one) — safe to call unconditionally on every un-block edge.
+   */
+  onBlockCleared(sessionId: string): void {
+    const timer = this.pendingBlocks.get(sessionId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.pendingBlocks.delete(sessionId);
+  }
+
+  /** The broadcast itself, run once a block has survived the debounce. Same
+   *  per-supervisor coalescing as before: a burst of blocks arriving inside
+   *  one supervisor's COALESCE_MS window still produces one wake. */
+  private broadcastBlock(
+    session: ClaudeSessionState,
+    kind: 'approval' | 'question',
+    supervisors: string[],
+  ): void {
     const blockedEntry: FleetMessageEntry = {
       label: session.label || agentLabel(session.cwd),
       sessionId: session.sessionId,

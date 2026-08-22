@@ -346,73 +346,138 @@ func (c *configService) save(partial map[string]any) map[string]any {
 	return result
 }
 
-// saveLocked is save's body, run while holding both the in-process mutex and the
-// cross-process config lock.
+// wholesaleConfigPaths are the config subtrees replaced WHOLESALE on save
+// instead of deep-merged — dotted paths matching the TS twin's
+// WHOLESALE_CONFIG_PATHS (apps/desktop/src/main/shared/configWholesale.ts),
+// pinned together by contracts/wholesale-config-paths.json. See that fixture
+// for the full rationale; in short, each of these is a user-owned map whose
+// keys the user can individually delete, and deep-merge can only ever add or
+// overwrite a key — so under it a deleted entry comes straight back and the
+// caller's only way to express "delete" is to resend the whole surviving map.
+//
+// This list used to be missing `projects` entirely: the brain hand-special-
+// cased only ui.customThemes and claude.budgets, so a project-delete sent over
+// MCP save_config (which always answers through the brain, never the
+// desktop's in-process path) silently failed to delete. Safe — nothing was
+// lost — but a real disagreement between the two config.yaml writers about
+// what a save clears, which is exactly the class of bug the TS-side unification
+// (commit c4963a73) fixed on only one side.
+var wholesaleConfigPaths = []string{"ui.customThemes", "claude.budgets", "projects"}
+
+// applyWholesale replaces merged's value at dottedPath with partial's value at
+// the same path, when partial actually names it — undoing whatever deepMerge
+// did there. Mirrors configService.ts's applyWholesale exactly (including its
+// "absent means untouched, present-but-not-a-map means empty" rule), so the
+// two languages cannot answer "was this key touched?" differently.
+func applyWholesale(merged map[string]any, partial map[string]any, dottedPath string) {
+	keys := strings.Split(dottedPath, ".")
+	leaf := keys[len(keys)-1]
+	parents := keys[:len(keys)-1]
+
+	src := partial
+	dst := merged
+	for _, k := range parents {
+		nextSrc, ok := src[k].(map[string]any)
+		if !ok {
+			return // partial doesn't reach this path — not touched
+		}
+		src = nextSrc
+		nextDst, ok := dst[k].(map[string]any)
+		if !ok {
+			return // the merge never created this parent as an object
+		}
+		dst = nextDst
+	}
+	v, present := src[leaf]
+	if !present {
+		return
+	}
+	if vMap, ok := v.(map[string]any); ok {
+		dst[leaf] = vMap
+	} else {
+		dst[leaf] = map[string]any{}
+	}
+}
+
+// preWriteHook runs once per saveLocked attempt, immediately after the merge
+// is computed and before the CAS check. A no-op in production; tests
+// override it to inject a write that lands in exactly that window (a
+// non-lock-participating writer beating us to disk), the same way a real one
+// would — see TestSaveCASRetriesAgainstAConcurrentWriter.
+var preWriteHook = func() {}
+
+// saveCASAttempts bounds the compare-and-swap retry below. Mirrors
+// briefService.ts's CAS_ATTEMPTS (the same "an outside writer beat us,
+// recompute against what's actually there" shape) — a save is rare enough
+// that a few retries cost nothing, and giving up loudly beats writing over a
+// change we cannot see.
+const saveCASAttempts = 5
+
+// saveLocked is save's body, run while holding both the in-process mutex and
+// the cross-process config lock (config.yaml.lock).
+//
+// The lock alone is enough for the two COOPERATING writers (this brain and
+// the desktop's configService, both of which take it): between them, nothing
+// can land between our read and our write. It says nothing about a writer
+// that does not participate — a hand edit of config.yaml, or (inside THIS
+// process) loadFromDisk's own one-time keybindings/chord/shortcut migrations,
+// which call writeConfigYAML directly rather than routing back through
+// save(). Those are the only remaining window, and CAS is how brief_append
+// closes the equivalent one for brief.md: re-check immediately before
+// publishing, and if the file moved under us, recompute against what is
+// actually there instead of overwriting it.
 func (c *configService) saveLocked(partial map[string]any) map[string]any {
-	// Fold in any external write (e.g. the desktop app editing config.yaml in its
-	// own process) before merging our partial, so a stale cache doesn't clobber
-	// it. UNCONDITIONALLY, not through the stamp gate: the gate is a cheap-read
-	// optimisation for get(), and a write we cannot see is the exact failure it
-	// would let through (the other writer's save landing in the same filesystem
-	// tick at the same length). Under the cross-process lock this is a genuine
-	// read-modify-write, and a save is rare enough to pay one read. Mirrors the
-	// TS twin (configService.ts saveConfigLocked).
-	c.current = c.loadFromDisk()
-	c.loadedAt = configStamp()
-	merged := deepMerge(c.current, dropHostTrusted(partial))
-	// ui.customThemes is a map of user-created entries: when the caller sends it,
-	// it is the whole truth. Deep-merge would resurrect deleted themes (it never
-	// removes keys), so replace it wholesale instead. Mirrors
-	// configService.saveConfig.
-	if uiPartial, ok := partial["ui"].(map[string]any); ok {
-		if ct, present := uiPartial["customThemes"]; present {
-			mergedUI, _ := merged["ui"].(map[string]any)
-			if mergedUI == nil {
-				mergedUI = map[string]any{}
-				merged["ui"] = mergedUI
-			}
-			if ctMap, ok := ct.(map[string]any); ok {
-				mergedUI["customThemes"] = ctMap
-			} else {
-				mergedUI["customThemes"] = map[string]any{}
-			}
+	dropped := dropHostTrusted(partial)
+	var merged map[string]any
+	for attempt := 0; attempt < saveCASAttempts; attempt++ {
+		// Fold in any external write (e.g. the desktop app editing config.yaml in
+		// its own process) before merging our partial, so a stale cache doesn't
+		// clobber it. UNCONDITIONALLY, not through the stamp gate: the gate is a
+		// cheap-read optimisation for get(), and a write we cannot see is the
+		// exact failure it would let through (the other writer's save landing in
+		// the same filesystem tick at the same length). Mirrors the TS twin
+		// (configService.ts saveConfigLocked).
+		c.current = c.loadFromDisk()
+		c.loadedAt = configStamp()
+		merged = deepMerge(c.current, dropped)
+		for _, dotted := range wholesaleConfigPaths {
+			applyWholesale(merged, dropped, dotted)
 		}
-	}
-	// claude.budgets is a user-owned map (sessionId -> number): when the caller
-	// sends it, it is the whole truth. Deep-merge would resurrect a cleared budget
-	// (a deleted key), so replace it wholesale instead — exactly like
-	// ui.customThemes above. Mirrors configService.saveConfig.
-	if claudePartial, ok := partial["claude"].(map[string]any); ok {
-		if b, present := claudePartial["budgets"]; present {
-			mergedClaude, _ := merged["claude"].(map[string]any)
-			if mergedClaude == nil {
-				mergedClaude = map[string]any{}
-				merged["claude"] = mergedClaude
-			}
-			if bMap, ok := b.(map[string]any); ok {
-				mergedClaude["budgets"] = bMap
-			} else {
-				mergedClaude["budgets"] = map[string]any{}
-			}
+		if c.persistBlocked {
+			// The on-disk config failed to load (unreadable or unparseable): keep
+			// the change in memory only. Writing here would replace the user's file
+			// with defaults + this partial — permanent loss of everything else.
+			c.current = merged
+			return merged
 		}
-	}
-	if c.persistBlocked {
-		// The on-disk config failed to load (unreadable or unparseable): keep
-		// the change in memory only. Writing here would replace the user's file
-		// with defaults + this partial — permanent loss of everything else.
+		preWriteHook()
+		// COMPARE-AND-SWAP: re-check the file's identity immediately before
+		// publishing. A non-lock-participating writer does not block on
+		// withConfigLock, so "nobody changed it while we computed the merge" is a
+		// claim that has to be checked, not assumed. Same stamp (mtime:size,
+		// compared for inequality) get() already uses — cheap, and this is a
+		// stat, not a re-read, of a file we are about to hold the lock across
+		// writing anyway.
+		if configStamp() != c.loadedAt {
+			continue // moved under us — recompute against the writer that beat us
+		}
+		if err := writeConfig(merged); err != nil {
+			// Do not adopt a value that is not on disk — serving it would make the
+			// setting look applied until the next restart reverted it. Also does
+			// not latch persistBlocked: ENOSPC and EIO are transient, and the latch
+			// is unclearable from here for the reason described in save().
+			return c.current
+		}
 		c.current = merged
+		c.loadedAt = configStamp()
 		return merged
 	}
-	if err := writeConfig(merged); err != nil {
-		// Do not adopt a value that is not on disk — serving it would make the
-		// setting look applied until the next restart reverted it. Also does not
-		// latch persistBlocked: ENOSPC and EIO are transient, and the latch is
-		// unclearable from here for the reason described in save().
-		return c.current
-	}
-	c.current = merged
-	c.loadedAt = configStamp()
-	return merged
+	// Exhausted retries: something outside the lock is rewriting config.yaml
+	// faster than a save can land. Refuse rather than write over whatever it
+	// left — the caller sees the value it did not get, same as a lock timeout.
+	log.Printf("brain: config.save: config.yaml is being rewritten outside the lock faster than "+
+		"this save could land (%d attempts) — nothing written", saveCASAttempts)
+	return c.current
 }
 
 func (c *configService) path() string { return configPath() }

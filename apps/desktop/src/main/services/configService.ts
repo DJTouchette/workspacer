@@ -535,6 +535,21 @@ function pruneRemovedShortcuts(cfg: Config): Config {
   return cfg;
 }
 
+/** How many times saveConfigLocked retries its compare-and-swap before giving
+ *  up. Mirrors briefService.ts's CAS_ATTEMPTS and the Go twin's
+ *  saveCASAttempts — the same "an outside writer beat us, recompute against
+ *  what's actually there" shape. */
+const SAVE_CAS_ATTEMPTS = 5;
+
+/** Runs once per saveConfigLocked attempt, immediately after the merge is
+ *  computed and before the CAS check. A no-op in production; tests override it
+ *  to inject a write that lands in exactly that window (a non-lock-
+ *  participating writer beating us to disk), the same way a real one would. */
+export let preWriteHook: () => void = () => {};
+export function setPreWriteHookForTest(fn: () => void): void {
+  preWriteHook = fn;
+}
+
 class ConfigService {
   private config: Config;
   /** Notified whenever the effective config changes — our own saves AND writes
@@ -692,60 +707,95 @@ class ConfigService {
     }
   }
 
-  /** saveConfig's body, run while holding the cross-process config lock. */
+  /**
+   * saveConfig's body, run while holding the cross-process config lock.
+   *
+   * The lock alone is enough for the two COOPERATING writers (this process and
+   * the Go brain, both of which take it): between them, nothing can land
+   * between our read and our write. It says nothing about a writer that does
+   * not participate — a hand edit of config.yaml, or (inside this very
+   * process) loadFromDisk's own one-time keybindings/chord/shortcut
+   * migrations, which write directly rather than routing back through
+   * saveConfig(). Those are the only remaining window, and this loop closes it
+   * the way briefService's appendBriefLine closes the equivalent one for
+   * brief.md: re-check immediately before publishing, and if the file moved
+   * under us, recompute against what is actually there instead of overwriting
+   * it. Mirrors the Go twin (services/hub/cmd/brain/config.go saveLocked).
+   */
   private saveConfigLocked(partial: Partial<Config>): Config {
-    // Fold in any external write (the brain editing config.yaml in its own
-    // process) BEFORE merging our partial, so a stale in-memory cache can't
-    // clobber it. UNCONDITIONALLY, not through the stamp gate: the gate is a
-    // cheap-read optimisation for get(), and a write we cannot see is the exact
-    // failure it would let through (the other writer's save landing in the same
-    // filesystem tick at the same length). Under the cross-process lock this is
-    // a genuine read-modify-write, and a save is rare enough to pay one read.
-    // Mirrors the Go twin (services/hub/cmd/brain/config.go saveLocked).
-    this.config = this.loadFromDisk();
-    this.loadedStamp = this.configStamp();
-    // Merge into a LOCAL value, not into this.config. The cache is only adopted
-    // once the bytes are on disk — see the write branch below.
-    const merged = deepMerge(this.config, partial) as Config;
-    // The user-owned maps (themes, budgets, project identities) are sent whole
-    // or not at all: when the caller sends one, it IS the truth. Deep-merge can
-    // only add or overwrite keys, so under it an entry the user just deleted
-    // comes straight back. Undo the merge for those paths and take the caller's
-    // map verbatim. The renderer reads the same list to know not to trim them on
-    // the way out — see main/shared/configWholesale.
-    for (const path of WHOLESALE_CONFIG_PATHS) {
-      applyWholesale(merged as unknown as Record<string, unknown>, partial, path);
-    }
-    if (this.persistBlocked) {
-      // The on-disk config failed to load (unreadable or unparseable): keep the
-      // change in memory only. Writing here would replace the user's file with
-      // defaults + this partial — permanent loss of everything else in it.
-      console.error(
-        '[ConfigService] config file failed to load — change kept in memory only, ' +
-          'NOT saved to disk (fix or remove the broken config.yaml, then reload).',
-      );
+    for (let attempt = 0; attempt < SAVE_CAS_ATTEMPTS; attempt++) {
+      // Fold in any external write (the brain editing config.yaml in its own
+      // process) BEFORE merging our partial, so a stale in-memory cache can't
+      // clobber it. UNCONDITIONALLY, not through the stamp gate: the gate is a
+      // cheap-read optimisation for get(), and a write we cannot see is the
+      // exact failure it would let through (the other writer's save landing in
+      // the same filesystem tick at the same length). Under the cross-process
+      // lock this is a genuine read-modify-write, and a save is rare enough to
+      // pay one read.
+      this.config = this.loadFromDisk();
+      this.loadedStamp = this.configStamp();
+      // Merge into a LOCAL value, not into this.config. The cache is only
+      // adopted once the bytes are on disk — see the write branch below.
+      const merged = deepMerge(this.config, partial) as Config;
+      // The user-owned maps (themes, budgets, project identities) are sent
+      // whole or not at all: when the caller sends one, it IS the truth.
+      // Deep-merge can only add or overwrite keys, so under it an entry the
+      // user just deleted comes straight back. Undo the merge for those paths
+      // and take the caller's map verbatim. The renderer reads the same list
+      // to know not to trim them on the way out — see main/shared/configWholesale.
+      for (const path of WHOLESALE_CONFIG_PATHS) {
+        applyWholesale(merged as unknown as Record<string, unknown>, partial, path);
+      }
+      if (this.persistBlocked) {
+        // The on-disk config failed to load (unreadable or unparseable): keep
+        // the change in memory only. Writing here would replace the user's
+        // file with defaults + this partial — permanent loss of everything
+        // else in it.
+        console.error(
+          '[ConfigService] config file failed to load — change kept in memory only, ' +
+            'NOT saved to disk (fix or remove the broken config.yaml, then reload).',
+        );
+        this.config = merged;
+        return this.config;
+      }
+      preWriteHook();
+      // COMPARE-AND-SWAP: re-check the file's identity immediately before
+      // publishing. A non-lock-participating writer does not block on
+      // withConfigLock, so "nobody changed it while we computed the merge" is
+      // a claim that has to be checked, not assumed. Same stamp (mtimeMs:size,
+      // compared for inequality) getConfig()'s gate already uses.
+      if (this.configStamp() !== this.loadedStamp) {
+        continue; // moved under us — recompute against the writer that beat us
+      }
+      try {
+        const data = yaml.dump(merged, { lineWidth: -1 });
+        atomicWriteFileSync(getConfigFilePath(), data);
+      } catch (err) {
+        // Do NOT adopt a value that is not on disk — serving it would make
+        // the setting look applied until the next restart reverted it, and
+        // the caller (Settings, via IPC.CONFIG_SAVE → ConfigContext.setConfig)
+        // renders whatever we return as the applied value. Mirrors the Go
+        // twin's saveLocked, which returns c.current on a writeConfigYAML
+        // error.
+        console.error('[ConfigService] failed to save config:', err);
+        return this.config;
+      }
       this.config = merged;
+      // Record our own write's stamp so the next gate check doesn't mistake it
+      // for an external change and pointlessly re-read.
+      this.loadedStamp = this.configStamp();
+      // Includes saves made by main itself (seen models, budgets) — the case
+      // the renderer could never see before.
+      this.emitChange();
       return this.config;
     }
-    try {
-      const data = yaml.dump(merged, { lineWidth: -1 });
-      atomicWriteFileSync(getConfigFilePath(), data);
-    } catch (err) {
-      // Do NOT adopt a value that is not on disk — serving it would make the
-      // setting look applied until the next restart reverted it, and the caller
-      // (Settings, via IPC.CONFIG_SAVE → ConfigContext.setConfig) renders
-      // whatever we return as the applied value. Mirrors the Go twin's
-      // saveLocked, which returns c.current on a writeConfigYAML error.
-      console.error('[ConfigService] failed to save config:', err);
-      return this.config;
-    }
-    this.config = merged;
-    // Record our own write's stamp so the next gate check doesn't mistake it
-    // for an external change and pointlessly re-read.
-    this.loadedStamp = this.configStamp();
-    // Includes saves made by main itself (seen models, budgets) — the case
-    // the renderer could never see before.
-    this.emitChange();
+    // Exhausted retries: something outside the lock is rewriting config.yaml
+    // faster than a save can land. Refuse rather than write over whatever it
+    // left — the caller sees the value it did not get, same as a lock timeout.
+    console.error(
+      `[ConfigService] config.yaml is being rewritten outside the lock faster than this save ` +
+        `could land (${SAVE_CAS_ATTEMPTS} attempts) — nothing written`,
+    );
     return this.config;
   }
 

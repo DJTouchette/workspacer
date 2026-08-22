@@ -21,7 +21,9 @@ import * as path from 'path';
 
 vi.mock('electron', () => ({ BrowserWindow: class {} }));
 vi.mock('./agentNotifier', () => ({ agentNotifier: { notifyOnTransition: vi.fn() } }));
-vi.mock('./supervisorNudge', () => ({ supervisorNudge: { onBlock: vi.fn() } }));
+vi.mock('./supervisorNudge', () => ({
+  supervisorNudge: { onBlock: vi.fn(), onBlockCleared: vi.fn() },
+}));
 vi.mock('./workflowWatcher', () => ({
   workflowWatcher: { attach: vi.fn(), detach: vi.fn(), poke: vi.fn() },
 }));
