@@ -164,6 +164,91 @@ describe('applyHookEvent — stream sessions: hooks are enrichment-only', () => 
   });
 });
 
+describe('a late hook frame must not null an approval the daemon still holds', () => {
+  // The unresolvable-approval bug (2026-08-22). A stream-transport session
+  // learns about approvals over TWO independent SSE connections to claudemon
+  // with no ordering guarantee between them: `/events` (in-process
+  // set_managed_mode -> applyManagedMode) parks the card, `/hooks/stream` (a
+  // `curl` subprocess out of the CLI's own hook) is the slower one. When a
+  // hook frame landed second it nulled `pendingApproval` unconditionally while
+  // `ambientState` stayed 'waiting_approval' (already guarded) — a session
+  // visibly blocked with nothing to approve, unrecoverable short of killing it.
+
+  function daemonParked(transport: 'pty' | 'stream'): ClaudeSessionState {
+    const s = mkSession(transport);
+    // What applyManagedPending writes when the daemon parks a can_use_tool.
+    s.ambientState = 'waiting_approval';
+    s.pendingApproval = { toolName: 'Read', toolInput: { file_path: '/x' }, timestamp: 1 } as never;
+    return s;
+  }
+
+  const lateFrames = [
+    ['PreToolUse for the next tool', { hook_event_name: 'PreToolUse', tool_use_id: 't9', tool_name: 'Bash', tool_input: {} }],
+    ['PostToolUse for the previous tool', { hook_event_name: 'PostToolUse', tool_use_id: 't8' }],
+    ['an AskUserQuestion PreToolUse', { hook_event_name: 'PreToolUse', tool_use_id: 't7', tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: 'Which?', options: [] }] } }],
+  ] as const;
+
+  for (const [what, event] of lateFrames) {
+    it(`stream: ${what} leaves the daemon's card alone`, () => {
+      const s = daemonParked('stream');
+      applyHookEvent(s, event);
+      expect(s.pendingApproval).not.toBeNull();
+      expect(s.pendingApproval?.toolName).toBe('Read');
+      // The half that was already guarded, pinned alongside it: the pair is
+      // what made the state unanswerable rather than merely stale.
+      expect(s.ambientState).toBe('waiting_approval');
+    });
+  }
+
+  it('stream: the whole observed shape — blocked state with a live card, not a null one', () => {
+    const s = daemonParked('stream');
+    for (const [, event] of lateFrames) applyHookEvent(s, event);
+    expect(s.ambientState).toBe('waiting_approval');
+    expect(s.pendingApproval).not.toBeNull();
+  });
+
+  it('a non-claude provider on the hook feed is daemon-owned too', () => {
+    const s = daemonParked('pty');
+    s.provider = 'codex';
+    applyHookEvent(s, { hook_event_name: 'PostToolUse', tool_use_id: 't8' });
+    expect(s.pendingApproval).not.toBeNull();
+  });
+
+  it('PTY claude still owns its own card: hooks set it AND clear it', () => {
+    // The hook feed is the ONLY source of approvals for a PTY claude session
+    // (PermissionRequest -> SessionMode::Approval in claudemon's state.rs), so
+    // the guard must NOT make its cards unclearable.
+    const s = mkSession('pty');
+    applyHookEvent(s, {
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Read',
+      tool_input: { file_path: '/x' },
+    });
+    expect(s.pendingApproval?.toolName).toBe('Read');
+    expect(s.ambientState).toBe('waiting_approval');
+
+    applyHookEvent(s, { hook_event_name: 'PostToolUse', tool_use_id: 't8' });
+    expect(s.pendingApproval).toBeNull();
+  });
+
+  it('a session with no transport recorded yet is treated as PTY (hook-owned)', () => {
+    const s = daemonParked('pty');
+    delete (s as { transport?: string }).transport;
+    applyHookEvent(s, { hook_event_name: 'PostToolUse', tool_use_id: 't8' });
+    expect(s.pendingApproval).toBeNull();
+  });
+
+  it('a turn boundary still sweeps the card on both transports', () => {
+    // Stop is not the same inference: it means the turn is over, so nothing
+    // can still be parked. Only "another tool moved" is the false one.
+    for (const transport of ['pty', 'stream'] as const) {
+      const s = daemonParked(transport);
+      applyStopEvent(s);
+      expect(s.pendingApproval).toBeNull();
+    }
+  });
+});
+
 describe('background subagents keep the pane busy past the parent Stop (PTY)', () => {
   const startSub = (s: ClaudeSessionState, id = 'agent-1') =>
     applyHookEvent(s, {
