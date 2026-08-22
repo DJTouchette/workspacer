@@ -76,11 +76,13 @@ vi.mock('./claudemonSessionClient', () => ({ claudemonSessionClient: clientMock 
 const notePermissionMode = vi.fn();
 const getAllSnapshots = vi.fn(() => [] as unknown[]);
 const getSnapshot = vi.fn(() => null as unknown);
+const noteRequestedModel = vi.fn();
 vi.mock('./claudeSessionStore', () => ({
   claudeSessionStore: {
     notePermissionMode: (...a: unknown[]) => notePermissionMode(...a),
     getAllSnapshots: (...a: unknown[]) => getAllSnapshots(...a),
     getSnapshot: (...a: unknown[]) => getSnapshot(...a),
+    noteRequestedModel: (...a: unknown[]) => noteRequestedModel(...a),
   },
 }));
 

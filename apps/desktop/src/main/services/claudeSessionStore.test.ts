@@ -37,6 +37,7 @@ vi.mock('./sessionStore/usageAccumulator', () => ({
   SessionUsageAccumulator: class {
     applyUsage(): void {}
     forget(): void {}
+    static refreshContextLimit(): void {}
   },
 }));
 vi.mock('./sessionStore/analyticsWriter', () => ({ writeHistory: vi.fn() }));
