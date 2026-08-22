@@ -46,6 +46,40 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
     if (hooksOwnAmbient) session.ambientState = state;
   };
 
+  // ...and the same split applies to the approval CARD, which is what a
+  // blocked session is answered through. For a daemon-owned session
+  // (`daemonOwnsPending` in claudeSessionStore: any non-claude provider, or
+  // claude on the stream transport) the approval never came from a hook at
+  // all — it is a `can_use_tool` control request the daemon parked, delivered
+  // over the SEPARATE `/events` SSE connection. The hook feed
+  // (`/hooks/stream`) is a second, slower connection with no ordering
+  // guarantee against it: the CLI's PreToolUse/PostToolUse hook is a `curl`
+  // subprocess round-tripping through the hook port, while `set_managed_mode`
+  // is in-process.
+  //
+  // So a hook clearing `pendingApproval` here could — and did — null the card
+  // for an approval the daemon is still holding, while `ambientState` stayed
+  // `waiting_approval` because of the guard above. That is precisely the
+  // unresolvable block reported on 2026-08-22: blocked forever, visibly
+  // waiting, with nothing to approve and no way out but killing the session.
+  // Never clear what this feed does not own; the daemon's own `pending` slot
+  // (applyManagedPending) clears it when the decision is really resolved.
+  //
+  // The mirror of claudeSessionStore's `daemonOwnsPending`
+  // (`provider !== 'claude' || transport === 'stream'`) — kept spelled the same
+  // way round so the two cannot drift into disagreeing about who owns the card.
+  //
+  // Scope: this guards the MID-TURN clears only (PreToolUse / PostToolUse).
+  // `PermissionRequest` still writes the card on every transport — it can only
+  // ever ADD one, so it cannot strand a session — and `applyStopEvent` still
+  // sweeps it, because a turn boundary genuinely means nothing can still be
+  // parked. It is "one tool ended, so the other feed's card must be stale"
+  // that is the false inference.
+  const hooksOwnPending = (session.provider ?? 'claude') === 'claude' && hooksOwnAmbient;
+  const clearPendingApproval = (): void => {
+    if (hooksOwnPending) session.pendingApproval = null;
+  };
+
   switch (hookName) {
     case 'SessionStart':
       session.status = 'active';
@@ -110,8 +144,11 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
       capInPlace(session.activeToolCalls, MAX_ACTIVE_TOOL_CALLS);
 
       // A new tool call invalidates any stale approval card from a prior
-      // tool — the daemon gateway only parks one decision at a time.
-      session.pendingApproval = null;
+      // tool — the daemon gateway only parks one decision at a time. Only for
+      // a card this feed owns: on a daemon-owned session this hook is the
+      // laggy half of the race described above, and the "stale" card it wants
+      // to drop is routinely the LIVE one the daemon just parked.
+      clearPendingApproval();
 
       // AskUserQuestion: surface the question payload as a pending picker.
       // Also defensively clear any stale approval card — these are mutually
@@ -126,7 +163,7 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
             multi_select: q.multi_select ?? q.multiSelect ?? false,
           }),
         );
-        session.pendingApproval = null;
+        clearPendingApproval();
         setAmbient('waiting_input');
       }
 
@@ -149,8 +186,10 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
       if (event.agent_id) break;
       // Any completed tool clears any leftover approval card — the daemon
       // gateway is single-shot, so by the time PostToolUse fires, whatever
-      // decision was pending is either resolved or no longer relevant.
-      session.pendingApproval = null;
+      // decision was pending is either resolved or no longer relevant. Same
+      // ownership caveat as PreToolUse: "by the time PostToolUse fires" only
+      // holds within ONE feed, and the daemon's approvals arrive on another.
+      clearPendingApproval();
       const completed = session.activeToolCalls.find((t) => t.id === event.tool_use_id);
       if (completed) {
         // Claude's real PostToolUse fires on success AND failure; the tool's

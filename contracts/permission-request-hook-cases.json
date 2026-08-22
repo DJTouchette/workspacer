@@ -1,0 +1,194 @@
+{
+  "_comment": [
+    "The PermissionRequest hook payload — the wire shape that turns a Claude Code",
+    "permission prompt into an ANSWERABLE record.",
+    "",
+    "Two readers pick DIFFERENT fields off the same frame, so a CLI rename breaks",
+    "exactly one of them unless both are pinned here. claudemon",
+    "(session/state.rs::apply) reads tool_name and summary|message and is the ONLY",
+    "thing that can put a PTY session into SessionMode::Approval; the desktop",
+    "(sessionStore/hookEventRouter.ts) reads tool_name, tool_input and",
+    "permission_suggestions to render the card the user actually clicks.",
+    "",
+    "`registerable` is normative too, and is the field that was WRONG:",
+    "HookEventKind::REGISTERABLE filed PermissionRequest as \"internal /",
+    "forward-compat only\", so claudemon init never wrote the hook into",
+    "~/.claude/settings.json — and a PTY agent's permission prompt therefore",
+    "produced no approvable record at all. Blocked, visible, killable, but not",
+    "answerable. Verified against CLI 2.1.237."
+  ],
+  "vocabulary": {
+    "_comment": [
+      "THE BLOCK REGISTRY. Every array-of-objects block in this file must be",
+      "declared here and everything here must be a block — closure in both",
+      "directions. Held by cmd/brain/corpusvocab_test.go and",
+      "apps/desktop/src/main/services/contractsVocabulary.test.ts."
+    ],
+    "blocks": {
+      "cases": {
+        "why": "One PermissionRequest hook payload, and the approvable record each reader must build from it. Every case must yield one on BOTH sides: the failure this corpus exists to prevent is not a wrong card, it is NO card behind a prompt the CLI is blocked on.",
+        "required": [
+          "name",
+          "payload",
+          "claudemon",
+          "desktop"
+        ],
+        "nested": {
+          "claudemon": [
+            "mode",
+            "pendingKind",
+            "tool",
+            "summary"
+          ],
+          "desktop": [
+            "ambientState",
+            "toolName",
+            "toolInput",
+            "suggestions"
+          ]
+        },
+        "loaders": [
+          "services/claudemon/src/session/state.rs::permission_request_contract_cases",
+          "apps/desktop/src/main/services/sessionStore/permissionRequestContract.test.ts::desktop reader"
+        ]
+      }
+    }
+  },
+  "hookEventName": "PermissionRequest",
+  "registerable": true,
+  "cases": [
+    {
+      "name": "tool_name + summary — the ordinary prompt",
+      "payload": {
+        "tool_name": "Write",
+        "tool_input": {
+          "file_path": "/tmp/config.yaml"
+        },
+        "summary": "Overwrite config file"
+      },
+      "claudemon": {
+        "mode": "approval",
+        "pendingKind": "approval",
+        "tool": "Write",
+        "summary": "Overwrite config file"
+      },
+      "desktop": {
+        "ambientState": "waiting_approval",
+        "toolName": "Write",
+        "toolInput": {
+          "file_path": "/tmp/config.yaml"
+        },
+        "suggestions": null
+      }
+    },
+    {
+      "name": "no summary — `message` is the fallback spelling",
+      "payload": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "rm -rf /tmp/x"
+        },
+        "message": "Run dangerous command"
+      },
+      "claudemon": {
+        "mode": "approval",
+        "pendingKind": "approval",
+        "tool": "Bash",
+        "summary": "Run dangerous command"
+      },
+      "desktop": {
+        "ambientState": "waiting_approval",
+        "toolName": "Bash",
+        "toolInput": {
+          "command": "rm -rf /tmp/x"
+        },
+        "suggestions": null
+      }
+    },
+    {
+      "name": "out-of-roots read — the shape the unresolvable-approval bug was reported on",
+      "payload": {
+        "tool_name": "Read",
+        "tool_input": {
+          "file_path": "/home/u/.workspacer/brief.md"
+        },
+        "summary": "Path is outside allowed working directories"
+      },
+      "claudemon": {
+        "mode": "approval",
+        "pendingKind": "approval",
+        "tool": "Read",
+        "summary": "Path is outside allowed working directories"
+      },
+      "desktop": {
+        "ambientState": "waiting_approval",
+        "toolName": "Read",
+        "toolInput": {
+          "file_path": "/home/u/.workspacer/brief.md"
+        },
+        "suggestions": null
+      }
+    },
+    {
+      "name": "permission_suggestions ride through to the card (desktop-only field)",
+      "payload": {
+        "tool_name": "Read",
+        "tool_input": {
+          "file_path": "/etc/hosts"
+        },
+        "summary": "Read a file outside the project",
+        "permission_suggestions": [
+          {
+            "type": "addRules",
+            "rules": [
+              {
+                "toolName": "Read"
+              }
+            ]
+          }
+        ]
+      },
+      "claudemon": {
+        "mode": "approval",
+        "pendingKind": "approval",
+        "tool": "Read",
+        "summary": "Read a file outside the project"
+      },
+      "desktop": {
+        "ambientState": "waiting_approval",
+        "toolName": "Read",
+        "toolInput": {
+          "file_path": "/etc/hosts"
+        },
+        "suggestions": [
+          {
+            "type": "addRules",
+            "rules": [
+              {
+                "toolName": "Read"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "degenerate payload — still an approvable record, never a dropped prompt",
+      "payload": {
+        "summary": "something"
+      },
+      "claudemon": {
+        "mode": "approval",
+        "pendingKind": "approval",
+        "tool": null,
+        "summary": "something"
+      },
+      "desktop": {
+        "ambientState": "waiting_approval",
+        "toolName": "",
+        "toolInput": {},
+        "suggestions": null
+      }
+    }
+  ]
+}

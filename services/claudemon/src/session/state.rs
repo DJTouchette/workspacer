@@ -50,14 +50,28 @@ impl HookEventKind {
     /// The subset of variants that map to real Claude Code hook event names
     /// and must be registered in `~/.claude/settings.json`.
     ///
-    /// `PostToolUseFailure` and `PermissionRequest` are NOT real registerable
-    /// hooks — they are internal / forward-compat variants only.
+    /// `PostToolUseFailure` is NOT a real registerable hook — it is an internal
+    /// variant only.
+    ///
+    /// `PermissionRequest` IS real (verified on CLI 2.1.237: registering it
+    /// fires the command once per permission prompt, in step with the
+    /// `can_use_tool` control requests the stream driver sees). It used to be
+    /// excluded here as "forward-compat only", which meant `claudemon init`
+    /// never installed it — and since it is the ONLY event that can set
+    /// `SessionMode::Approval` for a PTY session (see `apply` below), a PTY
+    /// agent's permission prompt produced no approvable record at all. The
+    /// wire shapes — and this registration flag — are pinned in
+    /// `contracts/permission-request-hook-cases.json`, read by
+    /// `permission_request_contract_cases` below and by the desktop's
+    /// `permissionRequestContract.test.ts`, so a CLI wording change breaks a
+    /// test instead of approvals.
     pub const REGISTERABLE: &'static [HookEventKind] = &[
         Self::SessionStart,
         Self::SessionEnd,
         Self::UserPromptSubmit,
         Self::PreToolUse,
         Self::PostToolUse,
+        Self::PermissionRequest,
         Self::Notification,
         Self::Stop,
         Self::SubagentStart,
@@ -1096,6 +1110,76 @@ mod tests {
         match state.pending.as_ref().unwrap() {
             Pending::Approval { tool, .. } => assert!(tool.is_none()),
             other => panic!("expected Pending::Approval, got {:?}", other),
+        }
+    }
+
+    /// The claudemon half of `contracts/permission-request-hook-cases.json`
+    /// (the desktop half is `hookEventRouter.permissionRequestContract.test.ts`).
+    /// Two readers pick different fields off this one frame, so a CLI rename
+    /// must break a test rather than silently produce an unanswerable prompt.
+    #[test]
+    fn permission_request_contract_cases() {
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            #[serde(rename = "hookEventName")]
+            hook_event_name: String,
+            registerable: bool,
+            cases: Vec<Case>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            payload: Value,
+            claudemon: Expected,
+        }
+        #[derive(serde::Deserialize)]
+        struct Expected {
+            mode: SessionMode,
+            #[serde(rename = "pendingKind")]
+            pending_kind: String,
+            tool: Option<String>,
+            summary: Option<String>,
+        }
+
+        const FIXTURE: &str =
+            include_str!("../../../../contracts/permission-request-hook-cases.json");
+        let fixture: Fixture = serde_json::from_str(FIXTURE).expect("fixture parses");
+
+        // The registration half: while this said `false` the hook was never
+        // written into ~/.claude/settings.json and a PTY session's permission
+        // prompt produced no approvable record at all.
+        assert_eq!(fixture.hook_event_name, HookEventKind::PermissionRequest.as_str());
+        assert_eq!(
+            fixture.registerable,
+            HookEventKind::REGISTERABLE.contains(&HookEventKind::PermissionRequest),
+            "contract and REGISTERABLE disagree about installing the PermissionRequest hook"
+        );
+
+        for case in &fixture.cases {
+            let mut state = SessionState::new("s".into(), None);
+            state.mode = SessionMode::Responding;
+            state.apply(&make_event_with_payload(
+                &fixture.hook_event_name,
+                case.payload.clone(),
+            ));
+
+            assert_eq!(state.mode, case.claudemon.mode, "mode for case {:?}", case.name);
+            match state.pending.as_ref() {
+                Some(Pending::Approval { tool, summary, raw }) => {
+                    assert_eq!(case.claudemon.pending_kind, "approval", "case {:?}", case.name);
+                    assert_eq!(tool.as_deref(), case.claudemon.tool.as_deref(), "tool for case {:?}", case.name);
+                    assert_eq!(
+                        summary.as_deref(),
+                        case.claudemon.summary.as_deref(),
+                        "summary for case {:?}",
+                        case.name
+                    );
+                    // `raw` is what a client renders from, so the payload must
+                    // survive the fold verbatim rather than being summarized away.
+                    assert_eq!(raw, &case.payload, "raw for case {:?}", case.name);
+                }
+                other => panic!("expected Pending::Approval for case {:?}, got {:?}", case.name, other),
+            }
         }
     }
 
