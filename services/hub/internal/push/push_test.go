@@ -501,6 +501,68 @@ func TestFinishedFiresOnWorkingToIdleWithDuration(t *testing.T) {
 	}
 }
 
+// A dispatch is named on the lock screen the same way the /m fleet card titles
+// it: by the task label it was dispatched with, and never by the directory it
+// happens to be working in right now. Before this, the title led with `liveCwd`
+// and ignored `label` entirely, so one worker announced itself as "workspacer"
+// when it blocked and as "wks-viewport" when it landed, after entering a
+// worktree in between.
+func TestNotificationTitleIsTheDispatchLabelNotTheLiveDirectory(t *testing.T) {
+	m, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var titles []string
+	m.notify = func(ev Event) { titles = append(titles, ev.Title) }
+	now := time.Unix(1_700_000_000, 0)
+	m.now = func() time.Time { return now }
+
+	labelled := func(ambient, liveCwd string) json.RawMessage {
+		b, _ := json.Marshal(map[string]string{
+			"sessionId": "s1", "cwd": "/x/workspacer", "liveCwd": liveCwd,
+			"label": "workspacer: fix the viewport gap", "ambientState": ambient, "status": "active",
+		})
+		return b
+	}
+	m.onSnapshot(labelled("streaming", "/x/workspacer"))
+	m.onSnapshot(labelled("waiting_approval", "/x/.worktrees/wks-viewport"))
+	now = now.Add(3 * time.Minute)
+	m.onSnapshot(labelled("idle", "/x/.worktrees/wks-viewport"))
+
+	want := []string{
+		"workspacer: fix the viewport gap needs you",
+		"workspacer: fix the viewport gap landed",
+	}
+	if len(titles) != len(want) {
+		t.Fatalf("titles: want %v, got %v", want, titles)
+	}
+	for i := range want {
+		if titles[i] != want[i] {
+			t.Errorf("title %d: want %q, got %q", i, want[i], titles[i])
+		}
+	}
+}
+
+// With no dispatch label the fallback is the directory the agent STARTED in —
+// still not liveCwd, for the renaming reason above.
+func TestUnlabelledNotificationFallsBackToTheStartDirectory(t *testing.T) {
+	m, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var titles []string
+	m.notify = func(ev Event) { titles = append(titles, ev.Title) }
+
+	b, _ := json.Marshal(map[string]string{
+		"sessionId": "s2", "cwd": "/x/preheat", "liveCwd": "/x/.worktrees/pre-1",
+		"ambientState": "waiting_input", "status": "active",
+	})
+	m.onSnapshot(b)
+	if len(titles) != 1 || titles[0] != "preheat needs you" {
+		t.Fatalf("titles: %v", titles)
+	}
+}
+
 // `background` means the turn ended but spawned work is still running — the run
 // is not over, so no finish fires until it actually clears.
 func TestBackgroundIsStillRunning(t *testing.T) {

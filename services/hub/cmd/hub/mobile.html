@@ -98,7 +98,8 @@
   .tline { display:flex; align-items:baseline; gap:7px; min-width:0; }
   .tline h1 { font-size:21px; font-weight:700; letter-spacing:-.02em; margin:0;
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .tmeta { font-family:var(--mono); font-size:11px; color:var(--disabled); flex:none; }
+  .tmeta { font-family:var(--mono); font-size:11px; color:var(--disabled);
+    flex:0 100 auto; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   .sub { font-family:var(--mono); font-size:11.5px; color:var(--faint); }
   .sub:empty { display:none; }
 
@@ -179,6 +180,19 @@
   .agent .path { font-family:var(--mono); font-size:11.5px; color:var(--faint); }
   .doing { display:flex; align-items:baseline; gap:7px; font-size:13px; color:var(--text3); line-height:1.35; }
   .doing .txt { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* THE LIVE ROW. A card's title is the task the worker was dispatched with and
+     must never move under it, so every churning signal — the state badge, the
+     spinner, the "what it is doing right now" line — is collected here, one row
+     BELOW the title. Scanning a column of cards then reads task, task, task
+     down the left edge instead of a title that renames itself mid-flight. */
+  .state { display:flex; align-items:center; gap:8px; min-width:0; }
+  .state .pill { flex:none; }
+  .state .txt { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-size:13px; color:var(--text3); }
+  /* .spin carries a +2px optical nudge for the baseline-aligned .doing row; in
+     this centre-aligned row it would sit low. */
+  .state .spin { top:0; }
   /* Optical alignment must NOT ride `transform`: wksSpin animates transform,
      and a translateY base makes the UA matrix-interpolate translate→rotate(360°)
      (≡ identity), so the ring jiggled 2px instead of spinning. */
@@ -237,6 +251,49 @@
   .recent .t { font-size:14px; color:var(--text3); min-width:0; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; }
   .recent .ago { font-family:var(--mono); font-size:11px; color:var(--dim); flex:none; }
+
+  /* ── fleet hierarchy: a manager and the workers it dispatched ─────────────
+     The desktop sidebar nests a worker under its manager with a 12px indent and
+     nothing else (SideBar.tsx: renderAgentCard(child, true)). At 320px that
+     indent alone reads as a wobble rather than a hierarchy, so the SAME
+     parentSessionId relationship gets three reinforcing signals here: a rail
+     down the left of the crew, a cap row counting the dispatches, and a
+     MANAGER chip on the parent's title row. */
+  .squad { display:flex; flex-direction:column; gap:9px; }
+  .agent.mgr { border-color:var(--blue-edge); }
+  .crew { margin-left:9px; padding-left:10px; border-left:2px solid var(--blue-edge);
+    display:flex; flex-direction:column; gap:9px; }
+  .crewcap { display:flex; flex-wrap:wrap; align-items:center; gap:3px 11px; font-family:var(--mono);
+    font-size:10.5px; letter-spacing:.07em; color:var(--disabled); }
+  .crewcap .n { color:var(--blue-soft); }
+  /* Static role chip — the title row's one badge, and it never changes while
+     the agent works (unlike .pill, which moved to .state for that reason). */
+  .role { font-family:var(--mono); font-size:10px; letter-spacing:.04em; color:var(--blue-text);
+    border:1px solid var(--blue-line); background:var(--blue-bg); border-radius:4px;
+    padding:1px 5px; flex:none; }
+
+  /* ── briefs ──────────────────────────────────────────────────────────────
+     .workspacer/brief.md — the living per-project state the Fleet Manager
+     keeps (## Now / ## Direction / ## Recently, plus ## User on its own fleet
+     brief). Read-only on the phone: this screen is for reading where the fleet
+     stands without opening the desktop. */
+  .brief { border:1px solid var(--line2); background:var(--card); border-radius:14px; overflow:hidden; }
+  .brief.fleet { border-color:var(--blue-edge); }
+  .brief .bhd { display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:14px;
+    width:100%; text-align:left; min-height:52px; }
+  .brief .brow { display:flex; align-items:center; gap:9px; min-width:0; }
+  .brief .bsub { font-size:12.5px; color:var(--faint); line-height:1.4; }
+  .brief .bhd:active { background:var(--active-soft); }
+  .brief .bnm { font-size:15px; font-weight:600; letter-spacing:-.01em; min-width:0;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .brief .chev { font-family:var(--mono); font-size:12px; color:var(--dim); flex:none; }
+  .brief .bbody { border-top:1px solid var(--line); padding:2px 14px 14px; }
+  .brief .say { font-size:13.5px; }
+  .bsec { padding-top:13px; }
+  .bsec .cap { font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; color:var(--disabled);
+    margin-bottom:5px; }
+  .bnote { font-size:12.5px; color:var(--faint); padding:13px 14px; line-height:1.45; }
+  .brief .recent { min-height:46px; margin-top:13px; }
 
   /* ── inbox ────────────────────────────────────────────────────────────── */
   .item { border:1px solid var(--line2); background:var(--card); border-radius:14px; overflow:hidden; }
@@ -423,6 +480,14 @@
   .dirrow .p { font-family:var(--mono); font-size:12px; color:var(--text2); min-width:0; }
   .dirrow .star { font-size:12px; flex:none; color:var(--ghost); }
   .dirrow .star.on { color:var(--amber); }
+  /* The dispatch's task label. 16px is not a style choice: iOS Safari zooms
+     the page on focus for anything smaller, which on this screen would shove
+     the whole shell sideways. */
+  .taskin { width:100%; min-height:50px; border:1px solid var(--line2); background:var(--card);
+    color:var(--text); border-radius:11px; padding:13px; font-size:16px; font-family:var(--sans);
+    outline:none; }
+  .taskin::placeholder { color:var(--disabled); }
+  .taskin:focus { border-color:var(--blue-line); background:#131b23; }
   .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   .provbtn { display:flex; flex-direction:column; gap:3px; padding:12px 13px; border-radius:11px;
     border:1px solid var(--line2); background:var(--card); text-align:left; }
@@ -495,7 +560,7 @@
   #send[disabled] { opacity:.45; }
 
   /* ── tab bar ──────────────────────────────────────────────────────────── */
-  nav { flex:none; display:grid; grid-template-columns:repeat(4,1fr); border-top:1px solid var(--line);
+  nav { flex:none; display:grid; grid-template-columns:repeat(5,1fr); border-top:1px solid var(--line);
     background:#0e1113; padding:6px 6px calc(10px + var(--safe-b)); }
   /* Hidden in chat (the header's back button is the way out): the transcript
      gets the ~70-100px back, and the composer's own safe-area padding stops
@@ -507,8 +572,9 @@
     position:relative; color:var(--dim); }
   nav button.on { color:var(--blue); }
   nav .ic { width:19px; height:19px; display:block; }
-  nav .l { font-size:11px; font-weight:600; letter-spacing:-.01em; color:inherit; }
-  nav .badge { position:absolute; top:2px; right:50%; margin-right:-22px; min-width:17px; height:17px;
+  nav .l { font-size:10.5px; font-weight:600; letter-spacing:-.02em; color:inherit;
+    max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  nav .badge { position:absolute; top:2px; right:50%; margin-right:-18px; min-width:17px; height:17px;
     border-radius:999px; background:var(--amber); color:var(--amber-dock); font-family:var(--mono);
     font-size:10.5px; font-weight:700; display:none; align-items:center; justify-content:center; padding:0 4px; }
   nav .badge.show { display:flex; }
@@ -567,7 +633,7 @@
     <input type="file" id="file" accept="image/*" multiple hidden>
     <div class="crow">
       <button class="cbtn" id="moreBtn" aria-label="More"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
-      <textarea id="msg" rows="1" placeholder="Message workspacer…" autocomplete="off"></textarea>
+      <textarea id="msg" rows="1" placeholder="Message this dispatch…" autocomplete="off"></textarea>
       <button id="send" aria-label="Send"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
     </div>
   </div>
@@ -578,13 +644,16 @@
       <span class="l">Fleet</span></button>
     <button data-tab="inbox">
       <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
-      <span class="l">Needs You</span><span class="badge" id="tabBadge">0</span></button>
+      <span class="l">Waiting</span><span class="badge" id="tabBadge">0</span></button>
     <button data-tab="flows">
       <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 20 7.5V16.5L12 21 4 16.5V7.5z"/><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/></svg>
       <span class="l">Flows</span></button>
+    <button data-tab="brief">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3.8h11.2L20 7.6V20a1.2 1.2 0 0 1-1.2 1.2H5A1.2 1.2 0 0 1 3.8 20V5A1.2 1.2 0 0 1 5 3.8z"/><path d="M7.6 9.5h6.4M7.6 13h8.8M7.6 16.5h5.6"/></svg>
+      <span class="l">Briefs</span></button>
     <button data-tab="new">
       <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
-      <span class="l">New</span></button>
+      <span class="l">Dispatch</span></button>
   </nav>
 </div>
 <div id="scrim"></div>
@@ -697,14 +766,15 @@
   let connected = false;
 
   const S = {
-    screen: 'fleet',          // fleet | inbox | chat | flows | new
+    screen: 'fleet',          // fleet | inbox | chat | flows | brief | new
     filter: 'all',            // fleet filter
     seg: 'flows',             // inspector segment
     sessionId: '',            // chat / inspector subject
     openWork: new Set(),      // expanded work cards (by key)
     openRuns: new Set(),      // expanded workflow runs (by runId)
     picks: new Map(),         // sessionId:questionSetHash:index -> 1-based option
-    spawn: { cwd: '', provider: '', permissionMode: '', prompt: '' },
+    briefOpen: new Set(),     // expanded project briefs (by brief key)
+    spawn: { cwd: '', provider: '', permissionMode: '', prompt: '', label: '' },
     attach: [],               // pending image attachments: {id, name, path, thumb, uploading}
   };
 
@@ -959,6 +1029,12 @@
       for (const k of [...set]) if (k.includes(':') && !live.has(k.split(':')[0])) set.delete(k);
     }
     for (const k of [...S.picks.keys()]) if (!live.has(String(k).split(':')[0])) S.picks.delete(k);
+    // Briefs are keyed by PROJECT, not session — drop the ones no live agent
+    // works in any more, or a phone left open for days accumulates the file
+    // contents of every repo the fleet ever touched.
+    const projects = new Set(briefTargets().map(briefKey));
+    for (const k of [...briefs.keys()]) if (!projects.has(k)) briefs.delete(k);
+    for (const k of [...S.briefOpen]) if (!projects.has(k)) S.briefOpen.delete(k);
   }
 
   function upsert(snap) {
@@ -989,7 +1065,24 @@
     const a = s && s.ambientState;
     return isLive(s) && !isBlocked(s) && (a === 'streaming' || a === 'thinking' || a === 'background');
   };
-  const agentName = (s) => s.label || basename(s.liveCwd || s.cwd) || String(s.sessionId || '').slice(0, 8) || 'agent';
+  /**
+   * A card's TITLE: the fixed task label the agent was dispatched with, and
+   * nothing else. It must survive the whole dispatch unchanged — it is the
+   * anchor you scan a column of cards by — so:
+   *  · `label` is spawn metadata (claudeSessionStore.setSpawnMeta / the brain's
+   *    metaStore). It is written once, at dispatch, and never rewritten;
+   *  · the fallback is basename(s.cwd), the directory the agent was STARTED in,
+   *    deliberately NOT `liveCwd`. liveCwd is live state — it follows an agent
+   *    into a worktree mid-task — so titling from it renamed an unlabelled card
+   *    from "workspacer" to "wks-viewport" while the worker was running. The
+   *    desktop titles from `agent.cwd` for the same reason (deriveAgentName).
+   * Everything that DOES change while the agent works — the state badge, the
+   * activity line — renders on the .state row underneath (see agentCard).
+   */
+  const agentName = (s) => s.label || basename(s.cwd) || basename(s.liveCwd) ||
+    String(s.sessionId || '').slice(0, 8) || 'worker';
+  /** Where it is working NOW — the worktree it entered, else its home. Live by
+   *  design: this is the card's subline, never its title. */
   const agentPath = (s) => s.liveCwd || s.cwd || '';
   const providerOf = (s) => (s && s.provider) || 'claude';
 
@@ -1206,12 +1299,12 @@
       if (act.length) return act[0].text;
       const step = planActive(s);
       if (step) return step.activeForm || step.content;
-      return 'Working…';
+      return 'In flight…';
     }
     if (st === 'review') {
       const d = diffSize(s);
-      if (d.files) return `finished · ${d.files} file${d.files === 1 ? '' : 's'}, +${d.added} −${d.removed}`;
-      return 'finished · ready for review';
+      if (d.files) return `landed · ${d.files} file${d.files === 1 ? '' : 's'}, +${d.added} −${d.removed}`;
+      return 'landed · ready for review';
     }
     if (st === 'idle' || st === 'stopped') {
       const act = recentActivity(s, 1);
@@ -1225,13 +1318,17 @@
   }
 
   // ══ agent state ═══════════════════════════════════════════════════════════
+  // The fleet's own words for what a dispatch is doing, taken from the manager
+  // doctrine and the /standup skill (lib/fleetManager.ts, managerSkills.ts):
+  // work is IN FLIGHT, it LANDS, and a decision WAITS ON YOU. Same six states
+  // and the same colours as before — only the labels are fleet-shaped.
   const STATES = {
-    working:  { label: 'Working',  color: C.blue,  bg: '#16232f', line: '#2c5a86', edge: '#243a4d', pulse: true },
-    approval: { label: 'Approval', color: C.amber, bg: '#231f16', line: '#4a4028', edge: '#413720', pulse: true },
-    question: { label: 'Question', color: C.amber, bg: '#231f16', line: '#4a4028', edge: '#413720', pulse: true },
-    review:   { label: 'Review',   color: C.green, bg: '#18251d', line: '#2f6b41', edge: '#22392b' },
-    idle:     { label: 'Idle',     color: C.dim,   bg: '#181b1d', line: '#2a3033', edge: '#1f2427' },
-    stopped:  { label: 'Stopped',  color: '#5c6468', bg: '#131618', line: '#22272a', edge: '#1c2023' },
+    working:  { label: 'In flight',   color: C.blue,  bg: '#16232f', line: '#2c5a86', edge: '#243a4d', pulse: true },
+    approval: { label: 'Approval',    color: C.amber, bg: '#231f16', line: '#4a4028', edge: '#413720', pulse: true },
+    question: { label: 'Question',    color: C.amber, bg: '#231f16', line: '#4a4028', edge: '#413720', pulse: true },
+    review:   { label: 'Landed',      color: C.green, bg: '#18251d', line: '#2f6b41', edge: '#22392b' },
+    idle:     { label: 'Standing by', color: C.dim,   bg: '#181b1d', line: '#2a3033', edge: '#1f2427' },
+    stopped:  { label: 'Stopped',     color: '#5c6468', bg: '#131618', line: '#22272a', edge: '#1c2023' },
   };
   function agentState(s) {
     if (!isLive(s)) return 'stopped';
@@ -1260,7 +1357,7 @@
     error:    { mark: '×', label: 'Error',    color: C.red,   bg: '#2a1917', edge: '#3a2422' },
     stuck:    { mark: '…', label: 'Stuck',    color: C.amber, bg: '#231f16', edge: '#413720' },
     bigdiff:  { mark: '±', label: 'Review',   color: C.green, bg: '#18251d', edge: '#22392b' },
-    done:     { mark: '✓', label: 'Finished', color: C.green, bg: '#18251d', edge: '#22392b' },
+    done:     { mark: '✓', label: 'Landed',   color: C.green, bg: '#18251d', edge: '#22392b' },
   };
   function hash(str) {
     let h = 0;
@@ -1298,7 +1395,7 @@
       if (done) {
         out.push({
           kind: 'done', agentId: sid, sig: `${sid}:done:${done}`,
-          title: 'Finished', detail: lastAssistant(s) || 'Agent is idle and ready for review',
+          title: 'Landed', detail: lastAssistant(s) || 'The dispatch is idle and ready for review',
           createdAt: done,
         });
       }
@@ -1518,8 +1615,9 @@
 
     hdr.classList.toggle('has-back', S.screen === 'chat' || S.screen === 'flows');
     hdr.classList.toggle('chat', S.screen === 'chat');
-    let title = 'Fleet', meta = `${all.length} agents`, sub = '';
-    if (S.screen === 'inbox') { title = 'Needs You'; meta = `${items.length} open`; }
+    let title = 'Fleet', meta = `${all.length} in fleet`, sub = '';
+    if (S.screen === 'inbox') { title = 'Waiting'; meta = `${items.length} on you`; }
+    else if (S.screen === 'brief') { title = 'Briefs'; meta = briefTargets().length + ' projects'; }
     else if (S.screen === 'chat') {
       title = active ? agentName(active) : 'Agent';
       meta = active ? (PROVIDER_LABEL[providerOf(active)] || providerOf(active)).toLowerCase() : '';
@@ -1529,15 +1627,15 @@
       sub = active ? lrm(agentPath(active)) : '';
     } else if (S.screen === 'flows') {
       title = 'Inspector'; meta = active ? agentName(active) : ''; sub = active ? lrm(agentPath(active)) : '';
-    } else if (S.screen === 'new') { title = 'New agent'; meta = 'spawn'; }
+    } else if (S.screen === 'new') { title = 'Dispatch'; meta = 'new worker'; }
     titleEl.textContent = title; titleMetaEl.textContent = meta; subEl.textContent = sub;
 
     // The status pill doubles as the connection lamp — an offline client that
     // still showed "3 working" would be quietly lying about live state.
     let color, label;
     if (!connected) { color = C.red; label = 'Offline'; }
-    else if (needs) { color = C.amber; label = `${needs} need${needs === 1 ? 's' : ''} you`; }
-    else if (working) { color = C.blue; label = `${working} working`; }
+    else if (needs) { color = C.amber; label = `${needs} waiting`; }
+    else if (working) { color = C.blue; label = `${working} in flight`; }
     else { color = C.green; label = 'all clear'; }
     statusDot.setAttribute('style', dotStyle(color));
     statusDot.classList.toggle('pulse', connected && needs > 0);
@@ -1552,7 +1650,7 @@
     if (S.screen === 'fleet') {
       const count = (f) => all.filter((s) => matchesFilter(s, f)).length;
       filtersEl.hidden = false;
-      filtersEl.innerHTML = [['all', 'All'], ['needs', 'Needs you'], ['working', 'Working'], ['idle', 'Idle']]
+      filtersEl.innerHTML = [['all', 'All'], ['needs', 'Waiting'], ['working', 'In flight'], ['landed', 'Landed']]
         .map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? 'on' : ''}">${l}<span class="n">${count(k)}</span></button>`).join('');
       for (const b of filtersEl.querySelectorAll('button')) {
         b.onclick = () => { S.filter = b.dataset.f; render(); renderChrome(); };
@@ -1574,17 +1672,71 @@
     nav.hidden = S.screen === 'chat';
   }
 
+  /** The fleet filters are the /standup digest's own sections (managerSkills.ts):
+   *  waiting on you / in flight / landed. Every state belongs to exactly one —
+   *  'review' moved out of "waiting on you", because a dispatch that came home
+   *  with a diff to look at is landed work, not a decision blocking you. */
   function matchesFilter(s, f) {
     const st = agentState(s);
     if (f === 'all') return true;
-    if (f === 'needs') return st === 'approval' || st === 'question' || st === 'review';
+    if (f === 'needs') return st === 'approval' || st === 'question';
     if (f === 'working') return st === 'working';
-    return st === 'idle' || st === 'stopped';
+    return st === 'review' || st === 'idle' || st === 'stopped';
   }
   const RANK = { approval: 0, question: 0, review: 1, working: 2, idle: 3, stopped: 4 };
   function fleetList() {
     return [...sessions.values()].sort((a, b) =>
       (RANK[agentState(a)] - RANK[agentState(b)]) || ((b.lastActivity || 0) - (a.lastActivity || 0)));
+  }
+  /** A manager: a session the host blessed as a supervisor/fleet manager at
+   *  spawn (claudeSpawn/managedSpawn set isSupervisor for both `supervisor` and
+   *  `manager` spawns; the brain's metaStore carries the same flag). */
+  const isManager = (s) => !!(s && s.isSupervisor);
+
+  /**
+   * CHANGE 2 — the fleet is a hierarchy, not a flat list. The hub already
+   * tracks who dispatched whom (`parentSessionId`, stamped at spawn and
+   * overlaid onto every snapshot by enrichSnapshot / claudeSessionStore), and
+   * the desktop sidebar renders workers nested under their manager. This is the
+   * phone's twin of that grouping.
+   *
+   * One rail deep, like the sidebar — but a worker whose own parent is a worker
+   * is attached to the TOP-MOST ancestor's crew rather than dropped, so nothing
+   * ever disappears from the fleet just because a dispatch nested twice.
+   *
+   * Returns [{ manager, crew }] in fleet order; a plain agent is a group with an
+   * empty crew. Filtering keeps a manager on screen whenever any of its workers
+   * matched — the group anchor is what makes the nesting legible.
+   */
+  function fleetRoster(filter) {
+    const all = fleetList();
+    const byId = new Map(all.map((x) => [x.sessionId, x]));
+    const rootOf = (s) => {
+      let cur = s;
+      // Bounded: a parent chain that loops (or a snapshot that names itself)
+      // must not spin the render loop.
+      for (let hops = 0; hops < 16; hops++) {
+        const pid = cur.parentSessionId;
+        if (!pid || pid === cur.sessionId || !byId.has(pid)) return cur;
+        cur = byId.get(pid);
+      }
+      return cur;
+    };
+    const crewOf = new Map(), roots = [];
+    for (const s of all) {
+      const root = rootOf(s);
+      if (root === s) { roots.push(s); continue; }
+      const bucket = crewOf.get(root.sessionId) || [];
+      bucket.push(s);
+      crewOf.set(root.sessionId, bucket);
+    }
+    const out = [];
+    for (const root of roots) {
+      const crew = (crewOf.get(root.sessionId) || []).filter((c) => matchesFilter(c, filter));
+      if (!matchesFilter(root, filter) && !crew.length) continue;
+      out.push({ manager: root, crew });
+    }
+    return out;
   }
 
   // ══ render router ═════════════════════════════════════════════════════════
@@ -1607,6 +1759,7 @@
     else if (S.screen === 'inbox') renderInbox();
     else if (S.screen === 'chat') { if (renderChat() === false) return; }
     else if (S.screen === 'flows') { if (renderInspector() === false) return; }
+    else if (S.screen === 'brief') renderBriefs();
     else if (S.screen === 'new') renderSpawn();
 
     if (lastScreenKey !== key) {
@@ -1637,16 +1790,16 @@
 
   // ══ fleet ═════════════════════════════════════════════════════════════════
   function renderFleet() {
-    const list = fleetList().filter((s) => matchesFilter(s, S.filter));
+    const roster = fleetRoster(S.filter);
     // Fleet is where the app LANDS, and the push banner used to live only on
     // Needs You — so the one affordance for turning notifications on sat on a
     // tab you had no reason to open until you already had a notification.
     const parts = [pushBannerHtml()];
-    if (!list.length) {
-      parts.push(emptyHtml('▦', C.dim, sessions.size ? 'Nothing here' : 'No agents yet',
-        sessions.size ? 'Try another filter.' : 'Spawn one from the New tab, or from the desktop.'));
+    if (!roster.length) {
+      parts.push(emptyHtml('▦', C.dim, sessions.size ? 'Nothing here' : 'No dispatches yet',
+        sessions.size ? 'Try another filter.' : 'Dispatch one from the Dispatch tab, or from the desktop.'));
     } else {
-      parts.push(list.map(agentCard).join(''));
+      parts.push(roster.map(squadHtml).join(''));
     }
     const rec = resumableList();
     if (rec.length) {
@@ -1664,7 +1817,33 @@
     for (const b of main.querySelectorAll('[data-resume]')) b.onclick = () => resume(b.dataset.resume);
   }
 
-  function agentCard(s) {
+  /** One manager and everything it dispatched, as a single scannable block.
+   *  A plain agent (no crew) renders as the bare card it always was. */
+  function squadHtml(g) {
+    if (!g.crew.length) return agentCard(g.manager);
+    const st = (c) => agentState(c);
+    const inFlight = g.crew.filter((c) => st(c) === 'working').length;
+    const waiting = g.crew.filter((c) => st(c) === 'approval' || st(c) === 'question').length;
+    const landed = g.crew.filter((c) => st(c) === 'review').length;
+    // Each count is one wrap unit — at 320px a "·"-joined string broke mid-count
+    // and left orphaned separators on their own line.
+    const seg = (n, word) => `<span><span class="n">${n}</span> ${word}</span>`;
+    const cap = [seg(g.crew.length, `DISPATCH${g.crew.length === 1 ? '' : 'ES'}`)];
+    if (inFlight) cap.push(seg(inFlight, 'IN FLIGHT'));
+    if (waiting) cap.push(seg(waiting, 'WAITING'));
+    if (landed) cap.push(seg(landed, 'LANDED'));
+    // The crew rail + this cap are what carry the hierarchy at 320px, where a
+    // 12px indent on its own reads as a misalignment rather than a nesting.
+    return `<div class="squad">
+      ${agentCard(g.manager, true)}
+      <div class="crew">
+        <div class="crewcap">${cap.join('')}</div>
+        ${g.crew.map((c) => agentCard(c)).join('')}
+      </div>
+    </div>`;
+  }
+
+  function agentCard(s, isMgr) {
     // A tombstoned card keeps rendering (muted, chip greyed, no inline
     // actions) — the fleet you can't currently reach is still your fleet.
     const down = hubDown(s);
@@ -1681,23 +1860,31 @@
     }
     if (t.costUSD) tele.push(`<span>${esc(fmtUSD(t.costUSD))}</span>`);
     const flowLbl = flow ? `<span style="color:${C.blue}">flow: ${esc(flow.name || 'workflow')}</span>` : '';
+    const mgr = !!isMgr || isManager(s);
 
-    return `<div class="agent" data-agent="${sid}" style="border-color:${ask ? meta.edge : '#1f2427'}${st === 'stopped' || down ? ';opacity:.62' : ''}">
+    // Two rows, and the split is the point (CHANGE 1). Row one is IDENTITY and
+    // never moves while the agent works: the project mark, the task label it
+    // was dispatched with, its role, its harness, its hub. Row two is STATE —
+    // badge, spinner, live activity — and churns freely without touching the
+    // title above it.
+    return `<div class="agent${mgr ? ' mgr' : ''}" data-agent="${sid}" style="border-color:${ask ? meta.edge : '#1f2427'}${st === 'stopped' || down ? ';opacity:.62' : ''}">
       <button class="top" data-open="${sid}">
         <div class="hd">
-          <span class="dot${!down && meta.pulse ? ' pulse' : ''}" style="${dotStyle(meta.color)}"></span>
           ${projectMarkHtml(agentPath(s))}
           <span class="nm">${esc(agentName(s))}</span>
+          ${mgr ? '<span class="role">MANAGER</span>' : ''}
           <span class="prov">${esc(providerOf(s))}</span>
           ${hubChipHtml(s)}
           <span class="grow"></span>
-          <span class="pill" style="color:${meta.color};background:${meta.bg};border:1px solid ${meta.line}">${down ? 'Hub offline' : meta.label}</span>
         </div>
         <div class="path rtl">${esc(lrm(agentPath(s)))}</div>
-        ${doing ? `<div class="doing">${st === 'working'
+        <div class="state">
+          ${!down && st === 'working'
             ? '<span class="spin"></span>'
-            : `<span class="mark" style="background:${st === 'review' ? C.green : C.dim}"></span>`
-          }<span class="txt">${esc(doing)}</span></div>` : ''}
+            : `<span class="dot${!down && meta.pulse ? ' pulse' : ''}" style="${dotStyle(meta.color)}"></span>`}
+          <span class="pill" style="color:${meta.color};background:${meta.bg};border:1px solid ${meta.line}">${down ? 'Hub offline' : meta.label}</span>
+          ${doing ? `<span class="txt">${esc(doing)}</span>` : ''}
+        </div>
         ${tele.length || flowLbl ? `<div class="tele">${tele.join('')}<span class="grow"></span>${flowLbl}</div>` : ''}
       </button>
       ${ask ? askStripHtml(s, ask) : ''}
@@ -1806,8 +1993,8 @@
     if (!items.length) {
       parts.push(`<div class="empty">
         <span class="ic" style="border:1.5px solid ${C.green};color:${C.green}">✓</span>
-        <div class="big">Inbox zero</div>
-        <div class="small">Nothing is blocked on you.${working ? ` ${working} agent${working === 1 ? ' is' : 's are'} still working — you'll get a push when one stops.` : ''}</div>
+        <div class="big">Nothing waiting on you</div>
+        <div class="small">No dispatch is blocked on a decision.${working ? ` ${working} ${working === 1 ? 'is' : 'are'} still in flight — you'll get a push when one lands.` : ''}</div>
       </div>`);
     } else {
       parts.push(items.map(inboxCard).join(''));
@@ -1842,7 +2029,7 @@
       body = `<div class="txt">${esc(it.title)}</div>
         ${it.detail ? `<div class="code">${esc(it.detail)}</div>` : ''}
         <div class="acts">
-          <button class="review" data-open="${sid}">Open agent</button>
+          <button class="review" data-open="${sid}">Open dispatch</button>
           <button class="sq" data-dismiss="${sig}">×</button>
         </div>`;
     } else {
@@ -1858,7 +2045,7 @@
       <div class="ihd">
         <span class="glyph" style="color:${k.color};background:${k.bg};border:1px solid ${k.edge}">${k.mark}</span>
         ${s ? projectMarkHtml(agentPath(s), 'sm') : ''}
-        <span class="who">${esc(s ? agentName(s) : 'agent')}</span>
+        <span class="who">${esc(s ? agentName(s) : 'worker')}</span>
         ${s ? hubChipHtml(s) : ''}
         <span class="grow"></span>
         <span class="ago">${esc(relTime(it.createdAt))}</span>
@@ -1894,7 +2081,7 @@
     }
     const denied = Notification.permission === 'denied';
     return `<div class="pushrow">
-      <span class="t">${denied ? 'Notifications are blocked for this site — turn them back on in browser settings.' : 'Get a push when an agent needs you, even with the app closed.'}</span>
+      <span class="t">${denied ? 'Notifications are blocked for this site — turn them back on in browser settings.' : 'Get a push when a worker needs you, even with the app closed.'}</span>
       ${denied ? '' : '<button data-push>Enable</button>'}
     </div>`;
   }
@@ -1941,7 +2128,7 @@
 
   function streamingHtml(s) {
     const act = recentActivity(s, 1);
-    const label = act.length ? act[0].text : 'Working…';
+    const label = act.length ? act[0].text : 'In flight…';
     return `<div class="streaming"><span class="ring"></span><span class="lbl">${esc(label)}</span>
       <span class="grow"></span><button data-cancel>Cancel</button></div>`;
   }
@@ -2136,7 +2323,7 @@
       const qs2 = s.pendingQuestions;
       const multi = qs2.length > 1;
       askDock.innerHTML = `
-        <div class="hd"><span class="g">?</span><span class="cap">NEEDS YOU · QUESTION${multi ? ` · ${qs2.length}` : ''}</span></div>
+        <div class="hd"><span class="g">?</span><span class="cap">WAITING ON YOU · QUESTION${multi ? ` · ${qs2.length}` : ''}</span></div>
         ${qs2.map((q, qi) => `<div class="q">${esc(q.question)}</div>
           <div class="opts">${(q.options || []).map((o, oi) => optionRow(s.sessionId, qi, oi, o, true)).join('')}</div>`).join('')}
         <div class="acts" style="display:flex;gap:8px">
@@ -2146,7 +2333,7 @@
     } else if (s.pendingApproval) {
       const a = s.pendingApproval;
       askDock.innerHTML = `
-        <div class="hd"><span class="g">!</span><span class="cap">NEEDS YOU · APPROVAL</span></div>
+        <div class="hd"><span class="g">!</span><span class="cap">WAITING ON YOU · APPROVAL</span></div>
         <div class="q">Approve <b style="font-family:var(--mono)">${esc(a.toolName)}</b>?</div>
         <div class="code" style="font-family:var(--mono);font-size:11.5px;color:var(--amber-mono);background:var(--amber-code);border:1px solid var(--amber-code-line);border-radius:8px;padding:8px 10px;white-space:pre-wrap;word-break:break-all;max-height:120px;overflow:auto">${esc(summarizeInput(a.toolInput))}</div>
         <div class="acts" style="display:flex;gap:8px">
@@ -2177,7 +2364,7 @@
       b.onclick = () => openChipSheet(b.dataset.chip, s);
     }
     sendBtn.disabled = !isLive(s);
-    msgEl.placeholder = isLive(s) ? 'Message workspacer…' : 'This session has ended';
+    msgEl.placeholder = isLive(s) ? `Message ${oneLine(agentName(s), 26)}…` : 'This dispatch has ended';
   }
 
   const MANAGED_MODES = [{ id: 'ask', label: 'Ask to approve' }, { id: 'yolo', label: 'Full access' }];
@@ -2263,10 +2450,18 @@
       rows.push({ label: 'Open inspector', run: () => { S.seg = 'flows'; go('flows'); } });
       rows.push({ label: 'Insert saved prompt', run: () => openLibrarySheet() });
       rows.push({ label: 'Copy working directory', run: () => copyText(agentPath(s)) });
+      rows.push({
+        label: 'Open project brief',
+        run: () => {
+          // Same key shape briefTargets() produces, or the pre-expand is a no-op.
+          S.briefOpen.add(briefKey({ cwd: String(s.cwd || '').replace(/\/+$/, ''), hub: hubOf(s) }));
+          go('brief');
+        },
+      });
     }
     rows.push({ label: 'Notification settings', run: () => openNotifySheet() });
     rows.push({ label: 'Viewport diagnostics', run: () => openDiagSheet() });
-    showSheet(s ? 'AGENT' : 'WORKSPACER', rows);
+    showSheet(s ? 'DISPATCH' : 'WORKSPACER', rows);
   }
   async function openLibrarySheet() {
     if (!can('library.list')) { toast('Prompt library needs an operator token'); return; }
@@ -2315,7 +2510,7 @@
   function flowsSegment(s) {
     const runs = [...(s.workflows || [])].sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
     if (!runs.length) {
-      return emptyHtml('◫', C.dim, 'No flows', 'Workflow runs this agent started show up here, phase by phase.');
+      return emptyHtml('◫', C.dim, 'No flows', 'Workflow runs this dispatch started show up here, phase by phase.');
     }
     return runs.map((w) => {
       const open = S.openRuns.has(w.runId);
@@ -2374,7 +2569,7 @@
   function agentsSegment(s) {
     const subs = s.subagents || [];
     if (!subs.length) {
-      return emptyHtml('◈', C.dim, 'No subagents', 'Agents this session spawned appear here while they run and after they finish.');
+      return emptyHtml('◈', C.dim, 'No subagents', 'Subagents this dispatch started appear here while they run and after they finish.');
     }
     return [...subs].sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0)).map((g) => `
       <button class="subcard" data-watch="${esc(g.id)}">
@@ -2432,7 +2627,7 @@
         `<div class="tile"><span class="l">${esc(l)}</span><span class="v">${esc(v)}</span></div>`).join('')}</div>`);
     }
     if (!parts.length) {
-      return emptyHtml('◷', C.dim, 'No usage yet', 'Token and cost telemetry appears once the agent takes a turn.');
+      return emptyHtml('◷', C.dim, 'No usage yet', 'Token and cost telemetry appears once the dispatch takes a turn.');
     }
     return parts.join('');
   }
@@ -2453,6 +2648,179 @@
     if (a.promptPreview) rows.push({ label: oneLine(a.promptPreview, 200), disabled: true });
     if (a.resultPreview) rows.push({ label: oneLine(a.resultPreview, 200), disabled: true });
     showSheet(String(a.label || a.type || a.id).toUpperCase(), rows.length ? rows : [{ label: 'No detail reported', disabled: true }]);
+  }
+
+
+  // ══ briefs ════════════════════════════════════════════════════════════════
+  // Every project the fleet works in keeps a living brief at
+  // `<repo>/.workspacer/brief.md`, and the manager keeps its own FLEET brief at
+  // the same path under its root. The shape is fixed by the manager doctrine
+  // and the /checkpoint skill (lib/fleetManager.ts rules 3–4,
+  // services/managerSkills.ts): "## Now" (in flight, a live list), "##
+  // Direction" (durable goals), "## Recently" (a dated log, newest first) and —
+  // fleet brief only — "## User" (standing preferences).
+  //
+  // Nothing in the product rendered these before: they were written by agents
+  // and read by agents. This screen is the first reader-facing view, and it is
+  // deliberately READ-ONLY — the phone is where you find out where the fleet
+  // stands, not where you rewrite the manager's memory.
+  //
+  // Reading a file is operator surface (`fs.read` is absent from the view and
+  // triage tiers, internal/authtoken), and the host scopes it to live agents'
+  // working directories — which is exactly the set of projects listed here.
+  const BRIEF_FILE = '/.workspacer/brief.md';
+  const BRIEF_ORDER = ['now', 'direction', 'recently', 'user'];
+  const briefRank = (t) => {
+    const i = BRIEF_ORDER.indexOf(String(t || '').trim().toLowerCase());
+    return i < 0 ? BRIEF_ORDER.length : i;
+  };
+  /** cwd (hub-qualified) -> { state, text, sections, err, at }. */
+  const briefs = new Map();
+  const briefKey = (t) => (t.hub || '') + '|' + t.cwd;
+
+  /** The projects this fleet is working in — one brief each, fleet briefs (the
+   *  managers' own roots) first, then most recently active. Keyed by the spawn
+   *  `cwd`, never `liveCwd`: a worker's worktree is not the project, and the
+   *  brief travels with the repo. */
+  function briefTargets() {
+    const seen = new Map();
+    for (const s of sessions.values()) {
+      const cwd = String(s.cwd || '').replace(/\/+$/, '');
+      if (!cwd) continue;
+      const hub = hubOf(s);
+      const key = hub + '|' + cwd;
+      const cur = seen.get(key) || { cwd, hub, fleet: false, at: 0 };
+      cur.fleet = cur.fleet || isManager(s);
+      cur.at = Math.max(cur.at, s.lastActivity || 0);
+      seen.set(key, cur);
+    }
+    return [...seen.values()].sort((a, b) =>
+      (Number(b.fleet) - Number(a.fleet)) || ((b.at || 0) - (a.at || 0)));
+  }
+
+  /** Split a brief into its `## ` sections, canonical ones first, the rest in
+   *  file order. The document's own `# Title`, if any, is dropped — the card
+   *  header already names the project. */
+  function parseBrief(text) {
+    const out = [];
+    let cur = null;
+    for (const line of String(text).replace(/\r\n?/g, '\n').split('\n')) {
+      const m = /^##\s+(.+?)\s*$/.exec(line);
+      if (m) { cur = { title: m[1], body: [] }; out.push(cur); continue; }
+      if (/^#\s+/.test(line)) continue;
+      if (cur) cur.body.push(line);
+    }
+    const secs = out
+      .map((sec) => ({ title: sec.title, body: sec.body.join('\n').trim() }))
+      .filter((sec) => sec.body);
+    return secs
+      .map((sec, i) => ({ sec, i }))
+      .sort((a, b) => (briefRank(a.sec.title) - briefRank(b.sec.title)) || (a.i - b.i))
+      .map((x) => x.sec);
+  }
+
+  /** Read one brief, once. Cached by project: render() runs on every snapshot
+   *  and on the 10s clock tick, so an unguarded fetch here would re-read every
+   *  project's brief several times a minute over the tailnet. */
+  function fetchBrief(t, force) {
+    const key = briefKey(t);
+    const cur = briefs.get(key);
+    if (cur && (cur.state === 'loading' || !force)) return;
+    briefs.set(key, { state: 'loading' });
+    const method = t.hub ? `hub:${t.hub}/fs.read` : 'fs.read';
+    call(method, { path: t.cwd + BRIEF_FILE }, 12000).then((r) => {
+      const text = (r && r.contents) || '';
+      briefs.set(key, { state: 'ok', text, sections: parseBrief(text), at: Date.now() });
+      if (S.screen === 'brief') render();
+    }).catch((e) => {
+      const msg = errText(e);
+      // "No brief yet" and "the host refused" are different answers and must
+      // not read the same: only the first is an invitation to have one written.
+      const missing = /enoent|no such file|not a regular file|not found/i.test(msg);
+      briefs.set(key, { state: missing ? 'missing' : 'error', err: msg, at: Date.now() });
+      if (S.screen === 'brief') render();
+    });
+  }
+
+  function renderBriefs() {
+    const targets = briefTargets();
+    const parts = [];
+    if (!can('fs.read')) {
+      parts.push(emptyHtml('▤', C.dim, 'Briefs need an operator token',
+        `This device holds a ${scope.name || 'scoped'} token — reading a project's brief is operator surface.`));
+    } else if (!targets.length) {
+      parts.push(emptyHtml('▤', C.dim, 'No projects yet',
+        'A brief appears here for every project your fleet is working in.'));
+    } else {
+      parts.push(`<div class="bnote">Each project keeps a living brief at <b>.workspacer/brief.md</b> — what is in flight, where it is going, what landed. The Fleet Manager writes them; this is a read-only view.</div>`);
+      for (const t of targets) { fetchBrief(t); parts.push(briefCardHtml(t)); }
+    }
+    main.innerHTML = `<div class="body gap12">${parts.join('')}</div>`;
+    bindBriefs(main);
+  }
+
+  function briefCardHtml(t) {
+    const key = briefKey(t), b = briefs.get(key) || { state: 'loading' };
+    const open = S.briefOpen.has(key);
+    const proj = resolveProject(t.cwd);
+    const name = (proj && proj.label) || basename(t.cwd) || t.cwd;
+    // Collapsed, a brief still has to earn its row: show the first "## Now"
+    // line, which is the one thing you came to the screen to read.
+    const nowSec = b.state === 'ok' ? b.sections.find((x) => briefRank(x.title) === 0) : null;
+    const teaser = nowSec ? firstLine((nowSec.body.split('\n').find((l) => l.trim()) || '')) : '';
+    const sub = b.state === 'loading' ? 'reading…'
+      : b.state === 'missing' ? 'not written yet'
+      : b.state === 'error' ? 'unreadable'
+      : teaser || `${b.sections.length} section${b.sections.length === 1 ? '' : 's'}`;
+
+    let body = '';
+    if (open) {
+      if (b.state === 'loading') body = `<div class="bnote">Reading ${esc(t.cwd + BRIEF_FILE)}…</div>`;
+      else if (b.state === 'missing') body = `<div class="bnote">No brief here yet. Ask the Fleet Manager to “set up project briefs” and it writes one at <b>${esc(t.cwd + BRIEF_FILE)}</b>.</div>`;
+      else if (b.state === 'error') body = `<div class="bnote">Couldn’t read it — ${esc(b.err || 'failed')}</div>`;
+      else {
+        const secs = b.sections.length
+          ? b.sections.map((sec) => `<div class="bsec"><div class="cap">${esc(sec.title.toUpperCase())}</div>
+              <div class="say">${renderMarkdown(sec.body)}</div></div>`).join('')
+          : `<div class="bsec"><div class="say">${renderMarkdown(b.text || '')}</div></div>`;
+        body = `<div class="bbody">${secs}
+          <button class="recent" data-brefresh="${esc(key)}"><span class="t">Refresh</span>
+            <span class="grow"></span><span class="ago">${esc(relTime(b.at))}</span></button></div>`;
+      }
+      if (b.state !== 'ok') body = `<div class="bbody">${body}</div>`;
+    }
+    return `<div class="brief${t.fleet ? ' fleet' : ''}">
+      <button class="bhd" data-brief="${esc(key)}">
+        <span class="brow">
+          ${projectMarkHtml(t.cwd)}
+          <span class="bnm">${esc(name)}</span>
+          ${t.fleet ? '<span class="role">FLEET</span>' : ''}
+          ${t.hub ? `<span class="hub">${esc(t.hub)}</span>` : ''}
+          <span class="grow"></span>
+          <span class="chev">${open ? '⌃' : '⌄'}</span>
+        </span>
+        ${open ? '' : `<span class="bsub">${esc(oneLine(sub, 110))}</span>`}
+      </button>
+      ${open ? body : ''}
+    </div>`;
+  }
+
+  function bindBriefs(root) {
+    for (const b of root.querySelectorAll('[data-brief]')) {
+      b.onclick = () => {
+        const k = b.dataset.brief;
+        S.briefOpen.has(k) ? S.briefOpen.delete(k) : S.briefOpen.add(k);
+        render();
+      };
+    }
+    for (const b of root.querySelectorAll('[data-brefresh]')) {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        const k = b.dataset.brefresh;
+        const t = briefTargets().find((x) => briefKey(x) === k);
+        if (t) { fetchBrief(t, true); render(); }
+      };
+    }
   }
 
   // ══ spawn ═════════════════════════════════════════════════════════════════
@@ -2494,30 +2862,43 @@
 
     main.innerHTML = `<div class="body gap18">
       <div class="group">
-        <div class="cap">WORKING DIRECTORY</div>
+        <div class="cap">PROJECT</div>
         ${dirRows || '<div class="scopenote" style="text-align:left">No directories remembered yet.</div>'}
         <button class="dirrow" data-otherdir><span class="p" style="color:var(--muted)">Other path…</span><span class="grow"></span><span class="star">+</span></button>
       </div>
       <div class="group">
-        <div class="cap">AGENT</div>
+        <div class="cap">TASK</div>
+        <input id="spawnLabel" class="taskin" placeholder="e.g. fix the mobile viewport gap"
+          autocomplete="off" autocapitalize="sentences" value="${esc(S.spawn.label)}" />
+        <div class="scopenote" style="text-align:left">The card's title, fixed for the life of the dispatch. Blank names it after the project directory.</div>
+      </div>
+      <div class="group">
+        <div class="cap">HARNESS</div>
         <div class="grid2">${provRows}</div>
       </div>
       <div class="group">
         <div class="cap">PERMISSIONS</div>
         <div class="segrow">${permRows}</div>
         ${caps.modes.some((m) => m.id === 'bypassPermissions' || m.id === 'yolo')
-          ? '<div class="scopenote" style="text-align:left">Full access is refused for remote spawns — the hub strips it.</div>' : ''}
+          ? '<div class="scopenote" style="text-align:left">Full access is refused for remote dispatches — the hub strips it.</div>' : ''}
       </div>
       ${promptChips ? `<div class="group">
         <div class="cap">SEND FIRST · FROM LIBRARY</div>
         <div class="tagchips">${promptChips}</div>
       </div>` : ''}
-      <button class="cta" id="spawnGo"${allowed ? '' : ' disabled'}>Spawn agent<span class="s">${esc(S.spawn.provider)}</span></button>
+      <button class="cta" id="spawnGo"${allowed ? '' : ' disabled'}>Dispatch worker<span class="s">${esc(S.spawn.provider)}</span></button>
       <div class="scopenote">${allowed
-        ? `spawns as <b>${esc(modeLabel(caps, S.spawn.permissionMode))}</b> in stream mode — chat, no terminal`
-        : `this device holds a <b>${esc(scope.name || 'scoped')}</b> token — spawning needs operator scope`}</div>
+        ? `dispatches as <b>${esc(modeLabel(caps, S.spawn.permissionMode))}</b> in stream mode — chat, no terminal`
+        : `this device holds a <b>${esc(scope.name || 'scoped')}</b> token — dispatching needs operator scope`}</div>
     </div>`;
 
+    const labelIn = $('spawnLabel');
+    if (labelIn) {
+      // Every chip on this screen re-renders it, so the typed task has to be
+      // banked on each keystroke or picking a harness would erase it.
+      labelIn.oninput = () => { S.spawn.label = labelIn.value; };
+      labelIn.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); labelIn.blur(); } };
+    }
     for (const b of main.querySelectorAll('[data-dir]')) b.onclick = () => { S.spawn.cwd = b.dataset.dir; render(); };
     for (const b of main.querySelectorAll('[data-prov]')) b.onclick = () => { S.spawn.provider = b.dataset.prov; S.spawn.permissionMode = ''; render(); };
     for (const b of main.querySelectorAll('[data-perm]')) b.onclick = () => { S.spawn.permissionMode = b.dataset.perm; render(); };
@@ -2526,7 +2907,7 @@
     }
     const od = main.querySelector('[data-otherdir]');
     if (od) od.onclick = () => {
-      const v = prompt('Working directory', S.spawn.cwd || '');
+      const v = prompt('Project directory', S.spawn.cwd || '');
       if (v && v.trim()) { S.spawn.cwd = v.trim(); render(); }
     };
     $('spawnGo').onclick = doSpawn;
@@ -2548,14 +2929,20 @@
 
   async function doSpawn() {
     const cwd = (S.spawn.cwd || '').trim();
-    if (!cwd) { toast('Pick a working directory'); return; }
-    const btn = $('spawnGo'); btn.disabled = true; btn.textContent = 'Spawning…';
+    if (!cwd) { toast('Pick a project directory'); return; }
+    const btn = $('spawnGo'); btn.disabled = true; btn.textContent = 'Dispatching…';
     const opts = { cwd, provider: S.spawn.provider, transport: 'stream' };
     if (S.spawn.permissionMode) opts.permissionMode = S.spawn.permissionMode;
+    // The task label IS the card's title from here on (agentName reads
+    // `label`), so a dispatch started from the phone gets a real task name
+    // instead of a directory basename.
+    const label = (S.spawn.label || '').trim().slice(0, 80);
+    if (label) opts.label = label;
     try {
       const r = await call('agents.spawn', opts);
       const id = r && r.sessionId;
-      toast('Spawned');
+      toast('Dispatched');
+      S.spawn.label = '';
       // Send the chosen library prompt as the session's first message, once the
       // daemon has a session to accept it.
       const first = spawnPrompts.find((p) => p.id === S.spawn.prompt);
@@ -2569,8 +2956,8 @@
         }
       } else go('fleet');
     } catch (e) {
-      toast('Spawn failed: ' + errText(e));
-      btn.disabled = false; btn.textContent = 'Spawn agent';
+      toast('Dispatch failed: ' + errText(e));
+      btn.disabled = false; btn.textContent = 'Dispatch worker';
     }
   }
 
@@ -2881,11 +3268,11 @@
         },
       },
       {
-        label: check(prefOn('needs')) + 'An agent needs you',
+        label: check(prefOn('needs')) + 'A worker needs you',
         run: () => { savePushPrefs({ ...pushPrefs, needs: !prefOn('needs') }); openNotifySheet(); },
       },
       {
-        label: check(prefOn('finished')) + 'A run finishes',
+        label: check(prefOn('finished')) + 'A dispatch lands',
         run: () => { savePushPrefs({ ...pushPrefs, finished: !prefOn('finished') }); openNotifySheet(); },
       },
       {
@@ -2907,7 +3294,7 @@
         run: () => { savePushPrefs({ ...pushPrefs, checkpoints: !checkpointsOn() }); openNotifySheet(); },
       },
       {
-        label: check(prefOn('ended')) + 'A session ends',
+        label: check(prefOn('ended')) + 'A dispatch stops',
         run: () => { savePushPrefs({ ...pushPrefs, ended: !prefOn('ended') }); openNotifySheet(); },
       },
     ];
@@ -3102,11 +3489,12 @@
   for (const b of nav.querySelectorAll('button')) {
     b.onclick = () => {
       const tab = b.dataset.tab;
+      if (tab === 'brief') { go(tab); return; }
       if (tab === 'flows' && !sessions.get(S.sessionId)) {
         // The inspector is always *some agent's* inspector; without one picked,
         // fall back to whatever is most worth watching.
         const pick = fleetList().find((s) => agentState(s) === 'working') || fleetList()[0];
-        if (!pick) { toast('No agent to inspect yet'); return; }
+        if (!pick) { toast('No dispatch to inspect yet'); return; }
         S.sessionId = pick.sessionId;
       }
       go(tab);
