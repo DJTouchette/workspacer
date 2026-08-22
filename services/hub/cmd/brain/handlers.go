@@ -669,8 +669,9 @@ func (r *registry) skipPermissionsConfigDefault() bool {
 
 func (r *registry) sendMessage(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p struct {
-		SessionID string `json:"sessionId"`
-		Text      string `json:"text"`
+		SessionID     string `json:"sessionId"`
+		Text          string `json:"text"`
+		FromSessionID string `json:"fromSessionId"`
 	}
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
@@ -678,12 +679,25 @@ func (r *registry) sendMessage(ctx context.Context, raw json.RawMessage) (json.R
 	if p.SessionID == "" || p.Text == "" {
 		return nil, fmt.Errorf("agents.sendMessage requires { sessionId, text }")
 	}
+	text := p.Text
+	// A caller that names itself gets attributed onto the delivered text —
+	// otherwise this is the ONLY fleet-chat message class with zero
+	// attribution (a finish/threshold/progress wake always names its
+	// subject). [fleet] and session:<id> are borrowed verbatim from
+	// fleetMessages.ts's wake grammar (apps/desktop/src/main/shared/
+	// fleetMessages.ts) rather than invented here — this path isn't one of
+	// its FleetMessageKinds, so parseFleetMessage doesn't (and shouldn't)
+	// round-trip it, but the tokens read the same as a wake to both the
+	// manager agent and a human skimming the transcript.
+	if p.FromSessionID != "" {
+		text = fleetSenderHeader(r.meta, p.FromSessionID) + text
+	}
 	// claudemon's /message settles + verifies delivery itself and QUEUES the
 	// text when the session is mid-turn or holding a dialog — a 409 now only
 	// means the session has ended. The old "type into the PTY" fallback fired
 	// exactly then, silently dropping the text into a dead terminal (the
 	// classic stuck mobile send) — surface the failure instead.
-	ok, err := r.cm.submitMessage(ctx, p.SessionID, p.Text)
+	ok, err := r.cm.submitMessage(ctx, p.SessionID, text)
 	if err != nil {
 		return nil, err
 	}

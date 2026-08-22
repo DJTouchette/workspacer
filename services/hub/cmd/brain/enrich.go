@@ -47,6 +47,24 @@ func (s *metaStore) get(id string) (spawnMeta, bool) {
 	return meta, ok
 }
 
+// fleetSenderHeader is the "[fleet] session:<id> (<label>) says:\n" prefix
+// registry.sendMessage stamps onto a message whose caller named itself (see
+// handlers.go). Label comes from the same spawn-metadata source enrichSnapshot
+// reads; a session enrichment never recorded a label for is still named by id
+// alone rather than going unattributed.
+func fleetSenderHeader(meta *metaStore, sessionID string) string {
+	label := ""
+	if meta != nil {
+		if sm, ok := meta.get(sessionID); ok {
+			label = sm.Label
+		}
+	}
+	if label != "" {
+		return "[fleet] session:" + sessionID + " (" + label + ") says:\n"
+	}
+	return "[fleet] session:" + sessionID + " says:\n"
+}
+
 // namesByCwd reads the persisted cwd→name renames. Empty on any problem (names
 // are a convenience, never load-bearing — matching the TUI).
 func namesByCwd() map[string]string {
