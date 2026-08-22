@@ -353,18 +353,35 @@ describe('supervisorNudge.onFinished — error vs completion', () => {
     expect(parsed?.entries[0].failed).toContain('Credit balance is too low');
   });
 
-  it('names out-of-credits from the structured statusLine bit', async () => {
+  it('the overage bit alone does not FAIL a clean finish — it is standing account state', async () => {
     supervisorNudge.onFinished(
       worker({
         statusLine: { overageOutOfCredits: true },
-        conversation: turns(['user', 'ship it'], ['assistant', 'stopped early']),
+        conversation: turns(['user', 'ship it'], ['assistant', 'All done, merged.']),
       }) as never,
       'mgr',
-      'stopped early',
+      'All done, merged.',
     );
     await vi.advanceTimersByTimeAsync(2000);
     const [, text] = message.mock.calls[0] as [string, string];
-    expect(text).toContain('FAILED: out of credits (overage disabled)');
+    expect(text).toContain('[fleet] Worker finished:');
+    expect(text).not.toContain('FAILED');
+    const parsed = parseFleetMessage(text)!;
+    expect(parsed.entries[0].failed).toBeUndefined();
+  });
+
+  it('enriches a marker-established failure with the structured out-of-credits bit', async () => {
+    supervisorNudge.onFinished(
+      worker({
+        statusLine: { overageOutOfCredits: true },
+        conversation: turns(['user', 'ship it'], ['assistant', errorReply]),
+      }) as never,
+      'mgr',
+      errorReply,
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).toContain('FAILED: out of credits (overage disabled) - Credit balance is too low');
   });
 
   it('keeps the normal header on a MIXED wake — "finished" is true of the others', async () => {

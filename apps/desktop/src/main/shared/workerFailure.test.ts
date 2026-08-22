@@ -51,13 +51,17 @@ describe('agent-error marker (cross-language contract)', () => {
 });
 
 describe('workerFailureReason', () => {
-  it('names out-of-credits from the structured statusLine bit, not the wording', () => {
-    expect(workerFailureReason({ statusLine: { overageOutOfCredits: true } }, 'Done.')).toBe(
-      'out of credits (overage disabled)',
-    );
+  it('the overage bit ALONE does not fail a clean finish — it is standing account state, not a turn outcome', () => {
+    expect(workerFailureReason({ statusLine: { overageOutOfCredits: true } }, 'Done.')).toBeNull();
+    expect(
+      workerFailureReason(
+        { statusLine: { overageOutOfCredits: true } },
+        'All 42 tests pass.\nMerged.',
+      ),
+    ).toBeNull();
   });
 
-  it('combines the structured bit with the marker text when both are present', () => {
+  it('enriches a marker-established failure with the structured out-of-credits bit', () => {
     const reason = workerFailureReason(
       { statusLine: { overageOutOfCredits: true } },
       '⚠️ Error: Credit balance is too low.',

@@ -26,9 +26,14 @@
  *     test and this module's READER test.
  *  2. `statusLine.overageOutOfCredits` — the daemon's structured
  *     out-of-credits bit (Claude stream `rate_limit_event`, overage disabled).
- *     Present on a session whose account has no headroom left, which is the
- *     exact case that prompted this, and it is worth naming explicitly rather
- *     than leaving to the error text's wording.
+ *     This is standing ACCOUNT state, not a per-turn event: it stays true for
+ *     the whole session regardless of what the worker just did, so it cannot
+ *     by itself justify calling a turn a failure — every clean finish on a
+ *     no-headroom account would read as a crash (observed 2026-08-22: four
+ *     completed, correctly-merged dispatches all woke their manager FAILED
+ *     this way). It only ENRICHES a failure the marker already established,
+ *     naming the operator's actual problem rather than leaving it to the API's
+ *     wording.
  *
  * FAIL-QUIET, not fail-loud: every check here is a positive match on a known
  * spelling, so an unrecognized failure degrades to today's behaviour (reported
@@ -80,19 +85,25 @@ type MaybeFailedWorker = Partial<Pick<ClaudeSessionState, 'statusLine'>>;
  * `finalMessage` is the worker's last assistant turn — the same text the wake
  * already carries as its report.
  *
- * The out-of-credits bit wins over the marker text when both are present: it is
- * the structured signal, and it names the operator's actual problem (an account
- * with no headroom) rather than whatever wording the API returned.
+ * The marker is the only signal that can CREATE a failure: it is a per-turn
+ * event (this turn ended in an API error). `overageOutOfCredits` is standing
+ * ACCOUNT state — true for the whole session regardless of what the worker
+ * did — so on its own it says nothing about how THIS turn ended, and cannot
+ * be the reason a clean finish gets reported as a crash (observed 2026-08-22:
+ * four completed, correctly-merged dispatches all woke their manager as
+ * FAILED purely because the account's overage window had no headroom). Once
+ * the marker has already established a failure, the bit is worth folding in —
+ * it names the operator's actual problem precisely rather than leaving it to
+ * the API's wording.
  */
 export function workerFailureReason(
   session: MaybeFailedWorker,
   finalMessage: string,
 ): string | null {
   const marker = errorMarkerReason(finalMessage);
+  if (!marker) return null;
   if (session.statusLine?.overageOutOfCredits === true) {
-    return marker
-      ? `out of credits (overage disabled) - ${marker}`
-      : 'out of credits (overage disabled)';
+    return `out of credits (overage disabled) - ${marker}`;
   }
   return marker;
 }
