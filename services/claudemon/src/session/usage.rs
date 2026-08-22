@@ -662,7 +662,14 @@ mod tests {
     /// `[1m]` marker the transcript's model id drops — resolve from it.
     #[test]
     fn resolve_window_reads_1m_off_the_requested_model() {
-        let t = tx(vec![assistant_msg("m1", "claude-opus-5", 190_000, 0, 0, 10)]);
+        let t = tx(vec![assistant_msg(
+            "m1",
+            "claude-opus-5",
+            190_000,
+            0,
+            0,
+            10,
+        )]);
         let mut u = from_transcript(&t).unwrap();
         assert_eq!(u.context_limit, 200_000, "transcript alone cannot tell");
         u.resolve_window(None, Some("opus[1m]"));
@@ -673,7 +680,14 @@ mod tests {
     /// including the retrospective 200k→1M promotion.
     #[test]
     fn resolve_window_prefers_the_reported_window() {
-        let t = tx(vec![assistant_msg("m1", "claude-opus-5", 300_000, 0, 0, 10)]);
+        let t = tx(vec![assistant_msg(
+            "m1",
+            "claude-opus-5",
+            300_000,
+            0,
+            0,
+            10,
+        )]);
         let mut u = from_transcript(&t).unwrap();
         assert_eq!(u.context_limit, 1_000_000, "promoted by the fallback");
         u.resolve_window(Some(200_000), Some("opus[1m]"));
@@ -685,7 +699,14 @@ mod tests {
     /// reporting 200k or a real approaching limit would be hidden.
     #[test]
     fn resolve_window_leaves_a_200k_session_alone() {
-        let t = tx(vec![assistant_msg("m1", "claude-opus-5", 190_000, 0, 0, 10)]);
+        let t = tx(vec![assistant_msg(
+            "m1",
+            "claude-opus-5",
+            190_000,
+            0,
+            0,
+            10,
+        )]);
         let mut u = from_transcript(&t).unwrap();
         u.resolve_window(None, Some("opus"));
         assert_eq!(u.context_limit, 200_000);
