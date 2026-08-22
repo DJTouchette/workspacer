@@ -35,6 +35,7 @@ import {
 } from './mcpConfig';
 import { mintSessionFacadeToken } from './remoteTokens';
 import { managerFullAccessFromConfig } from './fullAccessGrants';
+import { buildResultContract, checkResultSchema } from '../shared/structuredResult';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
 import { ensureSupervisorHome, installSupervisorSkill } from './supervisorSkill';
@@ -139,6 +140,14 @@ export interface ManagedSpawnOptions {
   /** PTY dimensions for hybrid (PTY-backed) providers like Codex. */
   cols?: number;
   rows?: number;
+  /**
+   * Structured-result contract: a JSON Schema the dispatcher wants the worker's
+   * final report to carry as a fenced `wks-result` block. Rides the daemon's
+   * first-turn `instructions` here (the managed twin of the PTY path's
+   * --append-system-prompt) and is validated at the worker-finished wake.
+   * Purely additive — the prose report is unaffected.
+   */
+  resultSchema?: Record<string, unknown>;
 }
 
 /**
@@ -188,6 +197,12 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     ? 'operator'
     : (opts.toolScope ?? 'operator');
   const managedId = opts.resumeSessionId || randomUUID();
+  // Refused out loud rather than dropped — see claudeSpawn's twin.
+  const resultSchema = opts.resultSchema;
+  if (resultSchema !== undefined) {
+    const bad = checkResultSchema(resultSchema);
+    if (bad) throw new Error(`spawn: ${bad}`);
+  }
   // Supervisor full-access mode (config supervisor.fullAccess, the supervisor
   // twin of agents.fleetFullAccess): the supervisor itself runs bypassed, and
   // its facade token below carries the yolo grant so the workers it spawns may
@@ -305,6 +320,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     // this flag, and a manager IS a supervisor for wake purposes.
     isSupervisor: opts.supervisor || opts.manager,
     provider,
+    ...(resultSchema && { resultSchema }),
     ...((isClaudeStream || isCodexStream) && { transport: 'stream' as const }),
     settings: {
       model: opts.model,
@@ -326,6 +342,14 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
       }),
     },
   });
+  const instructions = [
+    wantsFacade
+      ? managedFacadeInstructions(!!opts.supervisor, facadeScope, managedId, supervisorFullAccess)
+      : '',
+    resultSchema ? buildResultContract(resultSchema) : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
   const sessionId = await claudemonSessionClient.spawnManaged({
     provider,
     cwd,
@@ -355,13 +379,13 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
       ...(!isClaudeStream && {
         mcp: facadeToken ? facadeUrlWithToken(facadeToken) : MCP_FACADE_URL,
       }),
-      instructions: managedFacadeInstructions(
-        !!opts.supervisor,
-        facadeScope,
-        managedId,
-        supervisorFullAccess,
-      ),
     }),
+    // First-turn instructions: the facade role note (when this session has the
+    // facade) and the structured-result contract (when the dispatch carried a
+    // schema), joined so neither overwrites the other — the daemon takes ONE
+    // instructions string. A plain worker with a schema and no facade still
+    // gets its contract, which is the common ship-task dispatch.
+    ...(instructions && { instructions }),
   });
   // The adapter emits no conversation delta until the agent first produces
   // output, and managed backends fire no Claude hooks — so register the session

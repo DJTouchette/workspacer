@@ -39,12 +39,30 @@ const KIND_META: Record<
     icon: History,
     tone: 'var(--wks-success)',
   },
+  threshold: {
+    badge: 'Fleet · threshold crossed',
+    badgePlural: 'Fleet · thresholds crossed',
+    icon: AlertTriangle,
+    tone: 'var(--wks-warning)',
+  },
   blocked: {
     badge: 'Supervisor · agent blocked',
     badgePlural: 'Supervisor · agents blocked',
     icon: AlertTriangle,
     tone: 'var(--wks-warning)',
   },
+};
+
+/** The worker-finished card's HONEST face when every worker in the wake died:
+ *  a green check reading "worker finished" over an out-of-credits crash is the
+ *  same lie the wake header used to tell (see shared/workerFailure). Mixed
+ *  wakes keep the normal face — "finished" is true of the entries that did —
+ *  and each failed row carries its own FAILED chip. */
+const FAILED_META = {
+  badge: 'Fleet · worker FAILED',
+  badgePlural: 'Fleet · workers FAILED',
+  icon: AlertTriangle,
+  tone: 'var(--wks-error)',
 };
 
 /** Blocked-on chip hue follows the ambient-status vocabulary:
@@ -133,6 +151,43 @@ const EntryRow: React.FC<{ entry: FleetMessageEntry }> = ({ entry }) => {
             stopped/killed
           </span>
         )}
+        {entry.failed && (
+          <span
+            title={entry.failed}
+            style={{
+              padding: '1px 6px',
+              borderRadius: 'var(--wks-radius-pill)',
+              fontSize: '0.6rem',
+              fontWeight: 600,
+              color: colors.error,
+              background: `color-mix(in srgb, ${colors.error} 12%, transparent)`,
+              maxWidth: 220,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+            }}
+          >
+            FAILED: {entry.failed}
+          </span>
+        )}
+        {entry.crossed && (
+          <span
+            title={entry.crossed}
+            style={{
+              padding: '1px 6px',
+              borderRadius: 'var(--wks-radius-pill)',
+              fontSize: '0.6rem',
+              fontWeight: 600,
+              color: colors.warning,
+              background: `color-mix(in srgb, ${colors.warning} 12%, transparent)`,
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+            }}
+          >
+            {entry.crossed}
+          </span>
+        )}
         {entry.blockedOn && (
           <span
             style={{
@@ -219,7 +274,11 @@ const FleetMessageCardInner: React.FC<{
   timestamp?: number;
   showTimestamp?: boolean;
 }> = ({ message, timestamp, showTimestamp }) => {
-  const meta = KIND_META[message.kind];
+  const allFailed =
+    message.kind === 'worker-finished' &&
+    message.entries.length > 0 &&
+    message.entries.every((e) => e.failed);
+  const meta = allFailed ? FAILED_META : KIND_META[message.kind];
   const Icon = meta.icon;
   const badge = message.entries.length > 1 ? meta.badgePlural : meta.badge;
   return (

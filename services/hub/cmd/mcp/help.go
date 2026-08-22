@@ -64,6 +64,20 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
   defaultPermissionMode); an explicit true/false always wins. Requested or
   defaulted, a bypass is honored only when your session token carries the
   full-access grant — ungranted spawns start with approvals on.
+- resultSchema (optional) asks the worker for a MACHINE-READABLE report as well
+  as its prose: pass a JSON Schema and the worker is told to end its final
+  message with a fenced wks-result block matching it, which arrives back on your
+  worker-finished wake already parsed and VALIDATED. Use it whenever you will
+  transcribe the outcome into a brief — it turns restating a report into copying
+  fields. Typical shape: {"type":"object","required":["commit"],"properties":
+  {"commit":{"type":"string"},"filesChanged":{"type":"array","items":
+  {"type":"string"}},"checksRun":{"type":"array","items":{"type":"string"}},
+  "caveats":{"type":"string"},"followUps":{"type":"array","items":
+  {"type":"string"}}}}. Additive: the prose report is unaffected, and a worker
+  that skips or botches the block reports that beside its prose rather than
+  failing. Validated keywords are type/properties/required/items/enum/
+  additionalProperties; anything else is ignored (it can under-constrain, never
+  wrongly reject).
 - Drive it afterwards with send_message; watch it with get_conversation.
 - To spawn on a federated peer machine, pass hub (a hub name seen on
   list_agents rows). The peer clamps remote spawns itself — permission bypass
@@ -110,6 +124,62 @@ Their output is substituted into the prompt at {{output}} (or {{output.1}},
 one: a job that wakes a model nightly to answer "nothing to do" is waste the
 user pays for. Calls may not target jobs.* or hub:<peer>/, and there is a
 maximum of four context steps.`),
+	"lifecycle": strings.TrimSpace(`
+Stopping a worker is TWO steps, and both are verbs now:
+1. signal({sessionId, signal:"SIGTERM"}) stops the process. (SIGINT just
+   interrupts the current turn.)
+2. close_session({sessionId}) DISMISSES the row: it leaves list_agents and the
+   fleet stops counting it. Before this existed, the only confirmation a worker
+   had really died was sending it another signal and reading a 404.
+respawn_with({sessionId, amendment}) is the OTHER half of that move: it clones
+the stopped worker's ORIGINAL task and its cwd/model/provider/effort/parent,
+appends your correction under a heading that supersedes anything above it, and
+starts a fresh agent with both — so you state the DIAGNOSIS, not the whole task
+again. Override model/effort/label/cwd/toolScope as needed; pass worktree:true
+to start clean instead of continuing in the original's worktree. It refuses
+without an amendment (a clone with no correction just repeats itself), and the
+successor's permission mode is re-judged by the same grant check a fresh
+spawn_agent gets — a bypassed original does not make a bypassed clone.
+
+close_session refuses while the session is still working — hiding a running
+agent from list_agents while it keeps spending is worse than a stale row — and
+is idempotent, so closing an already-forgotten session succeeds. It stops the
+daemon side too for a session that had not already ended, so "dismissed" is not
+a lie. The user's desktop PANE is theirs to close; this is the fleet's view.`),
+	"watch": strings.TrimSpace(`
+notify_when({sessionId, tokens|usd|idleSeconds, notifySessionId?}) is how you
+keep an eye on a running worker WITHOUT polling. Never loop on list_agents or
+get_conversation to "keep an eye on" something — that is a hang, and it locks
+the user out. Arm a watch and STOP.
+- Give at least one threshold. tokens is CUMULATIVE (input + output), so it
+  catches scope creep a context percentage would not; usd is cumulative cost;
+  idleSeconds catches a worker that stopped without finishing.
+- Crossing delivers a [fleet] wake naming exactly what crossed.
+- ONE-SHOT: the watch is discarded when it fires. Arm another if you still want
+  to watch — that is a decision you should make deliberately, not a loop.
+- The wake goes to the target's PARENT by default (you, for a worker you
+  dispatched); notifySessionId overrides it.
+- Watches live in memory: a workspacer restart clears them.`),
+	"brief": strings.TrimSpace(`
+brief_append({project, section, line}) adds ONE line to a project's
+.workspacer/brief.md. Use it instead of read_file + write_file: it is
+inspect-then-edit under a lock, so it cannot clobber a line a worker or the user
+wrote while you were composing yours, and it is strictly additive — it never
+rewrites, reorders or reformats anything already in the file.
+- project is the project DIRECTORY (your own cwd for your fleet brief); the
+  .workspacer/brief.md path under it is composed for you.
+- section is Now | Direction | Recently | User. A typo is refused, not guessed.
+- Recently PREPENDS (a dated log, newest first); the rest append.
+- The brief is created, with all four sections, if the project has none.
+It can only ADD. Removing a stale line, or archiving, is still a file edit.`),
+	"projects": strings.TrimSpace(`
+project_status({}) returns the git state of EVERY configured project in one
+call: branch, upstream, unpushed (commits ahead), behind, and whether the tree
+is dirty. Use it for a standup instead of shelling out per repo. Pass dirs to
+limit it. A directory that is not a repo comes back as a row carrying an error,
+so one bad path never costs you the other rows. "unpushed" is ABSENT (not 0)
+when a branch has no upstream — that is "nowhere to push", not "nothing to
+push".`),
 	"config": strings.TrimSpace(`
 get_config returns the full workspacer config; save_config deep-merges a
 partial patch (pass ONLY the keys you change). reload_config re-reads disk.`),
@@ -169,6 +239,51 @@ func addHelpTool(b *build) {
 }
 
 // renderHelp renders the overview (topic == "") or one group's detail.
+// commonTools is the working set a fleet manager reaches for every session, in
+// the order it needs them. It exists for ONE reason: an MCP client that DEFERS
+// tool schemas (Claude Code does, when a server contributes many) makes the
+// agent fetch each schema before first use — measured at ~6 separate round
+// trips in a single manager session, before any work happened. The overview
+// below renders these as a single batch query, so the tax is paid once.
+//
+// A hand-picked list rather than "every tool this tier holds": batching all ~50
+// operator schemas would load ~10k tokens of context the tier system exists to
+// avoid spending. It is filtered against the tier's actual registry, so a tier
+// is never told to fetch a tool it does not hold, and an entry deleted from the
+// registry simply drops out.
+var commonTools = []string{
+	"list_agents", "get_conversation", "spawn_agent", "send_message",
+	"approve", "answer", "signal", "close_session", "respawn_with",
+	"notify_when", "brief_append", "project_status", "notify",
+}
+
+// batchLoadHint renders the one-call schema fetch, or "" when the client
+// clearly is not deferring (nothing to batch). Written as guidance rather than
+// a command because the tool NAMES are the client's to spell: an MCP tool is
+// usually exposed prefixed (mcp__workspacer__list_agents), and which prefix is
+// the runtime's business, not ours.
+func batchLoadHint(tools []toolInfo) string {
+	held := map[string]bool{}
+	for _, t := range tools {
+		held[t.Name] = true
+	}
+	var picked []string
+	for _, name := range commonTools {
+		if held[name] {
+			picked = append(picked, name)
+		}
+	}
+	if len(picked) < 2 {
+		return ""
+	}
+	return "\nIf your runtime DEFERS these tools' schemas (they are listed by name but not " +
+		"callable until fetched), load the whole working set in ONE call rather than one per " +
+		"tool — that round trip is otherwise paid several times a session, before any work " +
+		"happens. The set, in the order you will want it:\n  " + strings.Join(picked, ", ") +
+		"\nYour runtime prefixes MCP tool names (e.g. mcp__workspacer__list_agents); use the " +
+		"spelling it lists, and fetch them together."
+}
+
 func renderHelp(scope string, tools []toolInfo, topic string) string {
 	byGroup := map[string][]toolInfo{}
 	var order []string
@@ -189,6 +304,9 @@ func renderHelp(scope string, tools []toolInfo, topic string) string {
 				names = append(names, t.Name)
 			}
 			fmt.Fprintf(&sb, "- %s: %s\n", g, strings.Join(names, ", "))
+		}
+		if hint := batchLoadHint(tools); hint != "" {
+			sb.WriteString(hint)
 		}
 		return strings.TrimRight(sb.String(), "\n")
 	}

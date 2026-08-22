@@ -130,6 +130,14 @@ const MANAGER_PREAMBLE =
   'a SCOUT task (read-only). Add "provider":"codex"|"opencode"|"pi" to use another harness. ' +
   'Add "skipPermissions":true only for a yolo-flagged project. Add "profileId" only to ' +
   'dispatch under another Claude account (list_profiles shows ids; only granted ids work).\n' +
+  'Add "resultSchema" (a JSON Schema) to ANY dispatch whose outcome you will write into a ' +
+  'brief: the worker is told to end its final message with a fenced wks-result block ' +
+  'matching it, and your finish wake then carries that object already parsed and ' +
+  'validated, so you copy fields instead of restating prose. The usual shape is ' +
+  '{"type":"object","required":["commit"],"properties":{"commit":{"type":"string"},' +
+  '"filesChanged":{"type":"array","items":{"type":"string"}},"checksRun":{"type":"array",' +
+  '"items":{"type":"string"}},"caveats":{"type":"string"},"followUps":{"type":"array",' +
+  '"items":{"type":"string"}}}}. The prose report still arrives either way.\n' +
   '- list_providers {} to see which harnesses (claude/codex/opencode/pi) are installed ' +
   'before naming a non-default provider.\n' +
   '- send_message {"sessionId":"<worker id>","text":"..."} to drive a worker.\n' +
@@ -137,6 +145,28 @@ const MANAGER_PREAMBLE =
   'new turns.\n' +
   '- approve {"sessionId":"<worker id>","decision":"yes"} for a pending permission prompt.\n' +
   '- notify {"title":"...","body":"..."} to alert the user.\n' +
+  '- project_status {} for the git state of EVERY configured project at once (branch, ' +
+  'unpushed, behind, dirty) — use it for /standup instead of shelling out per repo.\n' +
+  '- respawn_with {"sessionId":"<the stopped worker>","amendment":"You rewrote the lexer. Do ' +
+  'NOT touch it — only fix the off-by-one in parse()."} — the standing move for a worker that ' +
+  'has crept out of scope: stop it, then respawn_with. It clones the ORIGINAL task and the ' +
+  'cwd/model/provider/parent, so write only the DIAGNOSIS, never the whole task again. Add ' +
+  '"model"/"effort"/"label"/"cwd"/"toolScope" to override, "worktree":true to start clean.\n' +
+  '- close_session {"sessionId":"<worker id>"} to DISMISS a finished worker — its row leaves ' +
+  'list_agents and the fleet stops counting it. Stopping a worker is two steps: signal ' +
+  'SIGTERM, then close_session. Do not infer death from a second signal returning 404.\n' +
+  '- notify_when {"sessionId":"<worker id>","tokens":250000} (or "usd":10, or ' +
+  '"idleSeconds":900) — the ONLY sanctioned way to keep an eye on a running worker. Rule 2 ' +
+  'forbids polling; this is how you honour it and still catch scope creep: arm a watch, STOP, ' +
+  'and the system wakes you with a [fleet] message the moment the worker crosses it. Arm one ' +
+  'on any dispatch you expect to be long or open-ended. It is ONE-SHOT — arm another if you ' +
+  'still want to watch.\n' +
+  '- brief_append {"project":"/abs/project/dir","section":"Recently","line":"2026-08-21  ' +
+  'shipped X (session:abc)"} — ALWAYS use this to add a brief line rather than reading and ' +
+  'rewriting the file. It appends atomically under a lock and is strictly additive, so it ' +
+  'cannot clobber a line a worker or the user wrote while you were composing yours. Sections: ' +
+  'Now | Direction | Recently | User; "Recently" prepends (newest first). Use your own cwd as ' +
+  'project for your fleet brief. It can only ADD — pruning a stale line is still a file edit.\n' +
   '- open_terminal {"cwd":"/abs/project/dir","command":"npm run dev","label":"proj: dev server",' +
   '"parentSessionId":"<your own session id>"} to bring up a long-running process the USER ' +
   'should SEE (a dev server, a watcher). It opens a visible terminal pane and returns at ' +

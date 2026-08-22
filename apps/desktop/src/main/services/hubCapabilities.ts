@@ -54,6 +54,8 @@ import { compactClaudeSnapshotForBackground } from '../shared/compactClaudeSnaps
 import { ensureSupervisorHome } from './supervisorSkill';
 import { scrubBootDocumentAgents } from '../lib/bootDocumentScrub';
 import { isAsciiBlank } from '../lib/asciiWhitespace';
+import { appendBriefLine, briefPathFor, parseBriefSection } from './briefService';
+import { thresholdWatcher } from './thresholdWatcher';
 
 // Mirror of ipc.ts's shell detection so a capability-spawned terminal picks the
 // same default shell a UI-spawned one would. Kept local to avoid importing the
@@ -273,6 +275,7 @@ export function registerHubCapabilities(): void {
       profileGranted,
       yoloGranted,
       worktree,
+      resultSchema,
     } = (params ?? {}) as {
       provider?: AgentProvider;
       /** Claude only: 'pty' | 'stream'. Omitted = the config default. */
@@ -316,6 +319,14 @@ export function registerHubCapabilities(): void {
        *  isolation so parallel work on one repo never collides. Created here in
        *  main (the bus/facade path has no renderer to make it, unlike ipc.ts). */
       worktree?: boolean;
+      /** Structured-result contract: a JSON Schema the dispatcher wants the
+       *  worker's final report to carry as a fenced `wks-result` block. Not an
+       *  authorization surface — it is prompt text injected into the worker and
+       *  a validator run on its own output, granting the caller nothing it does
+       *  not already have by writing the same words into the worker's first
+       *  message. Refused (never silently dropped) when malformed or oversized;
+       *  see shared/structuredResult. */
+      resultSchema?: Record<string, unknown>;
     };
     // SECURITY: this capability is the REMOTE/web/MCP spawn path (the local
     // desktop spawns over IPC). Driving an agent is already code execution on
@@ -445,6 +456,7 @@ export function registerHubCapabilities(): void {
         parentSessionId,
         cols,
         rows,
+        resultSchema,
       });
       return { sessionId };
     }
@@ -474,6 +486,7 @@ export function registerHubCapabilities(): void {
         mcpItemIds: busMcpItemIds,
         scrubProfileBypass,
         profileGranted: profileGranted === true,
+        resultSchema,
       });
       return { sessionId };
     }
@@ -495,6 +508,7 @@ export function registerHubCapabilities(): void {
       cols,
       rows,
       mcpItemIds: busMcpItemIds,
+      resultSchema,
     });
     return { sessionId };
   });
@@ -1321,6 +1335,128 @@ export function registerHubCapabilities(): void {
     if (!sessionId) throw new Error('claude.gate requires { sessionId, on }');
     return claudemonSessionClient.setGate(sessionId, !!on);
   });
+  // ── Dismissing a finished session ──────────────────────────────────────
+  //
+  // SIGTERM stops a worker but its row lingers: the 30s eviction is armed by a
+  // SessionEnd hook, and a killed process often emits none. The only
+  // confirmation of death was sending ANOTHER signal and reading the daemon's
+  // "404 no wrapper attached". This makes dismissal a verb.
+  //
+  // OPERATOR-ONLY by construction (agents.close is in neither scoped tier's
+  // exact-name allowlist) — for the same reason claude.signal is deliberately
+  // triage's ONLY stop verb: interrupting an agent is recoverable, forgetting
+  // it is not. And it grants no new reach: the daemon teardown it performs is
+  // claudemonSessionClient.close(), whose only escalation is the SIGTERM that
+  // claude.signal already offers.
+  registerCapability('agents.close', async (params: unknown) => {
+    const { sessionId } = (params ?? {}) as { sessionId?: string };
+    if (!sessionId) throw new Error('agents.close requires { sessionId }');
+    // Throws if the session is still WORKING — checked BEFORE any teardown, so
+    // a refusal leaves the worker exactly as it was.
+    const before = claudeSessionStore.getAllSnapshots().find((s) => s.sessionId === sessionId);
+    const result = claudeSessionStore.closeSession(sessionId);
+    // Tear the daemon side down too, but only for a row that had not already
+    // ended: a dismissal that left a live-but-idle wrapper attached would be a
+    // lie, and re-SIGTERMing an ended session is the pointless call whose 404
+    // this tool exists to replace. Best-effort — the row is gone either way,
+    // which is what the caller asked for.
+    let daemon: 'stopped' | 'already-ended' | 'failed' = 'already-ended';
+    if (result.wasLive) {
+      try {
+        await claudemonSessionClient.close(sessionId);
+        daemon = 'stopped';
+      } catch {
+        daemon = 'failed';
+      }
+    }
+    return {
+      ...result,
+      daemon,
+      label: before?.label,
+      note: result.removed
+        ? 'The session is gone from list_agents. Its desktop PANE, if the user has one open, is theirs to close.'
+        : 'No such session — it had already been forgotten. Nothing to do.',
+    };
+  });
+
+  // ── Threshold alerts (the alternative to polling) ──────────────────────
+  //
+  // Manager doctrine forbids polling — a manager looping on list_agents is a
+  // hang, not monitoring — which left a worker's cost and context invisible
+  // until it finished. This is how the manager honours the doctrine and still
+  // sees a runaway: it asks to be told, once, and stops.
+  //
+  // OPERATOR-ONLY by construction, like brief.* and jobs.*: `agents.notifyWhen`
+  // is not in either scoped tier's exact-name allowlist. And it is an
+  // OBSERVATION, not an action — it starts nothing, changes no session, and
+  // grants no reach: everything it can report (tokens, cost, idle time) is
+  // already in the sessions.snapshot every VIEW token can read. What it removes
+  // is the polling, not a restriction.
+  registerCapability('agents.notifyWhen', (params: unknown) => {
+    const { sessionId, notifySessionId, tokens, usd, idleSeconds } = (params ?? {}) as {
+      sessionId?: string;
+      notifySessionId?: string;
+      tokens?: number;
+      usd?: number;
+      idleSeconds?: number;
+    };
+    if (!sessionId) throw new Error('agents.notifyWhen requires { sessionId }');
+    // Default the recipient to the target's PARENT — the manager that
+    // dispatched it is who wants to know, and it is the same routing the
+    // worker-finished wake already uses. An explicit notifySessionId wins.
+    const parent = claudeSessionStore
+      .getAllSnapshots()
+      .find((s) => s.sessionId === sessionId)?.parentSessionId;
+    const watcherId = notifySessionId || parent;
+    if (!watcherId) {
+      throw new Error(
+        'agents.notifyWhen: no notifySessionId and the target has no parent session — pass your own session id as notifySessionId',
+      );
+    }
+    return thresholdWatcher.arm({
+      sessionId,
+      watcherSessionId: watcherId,
+      predicate: { tokens, usd, idleSeconds },
+    });
+  });
+
+  // ── Project briefs ─────────────────────────────────────────────────────
+  //
+  // The atomic inspect-then-edit primitive. Before it, every brief update was
+  // fs.read + fs.write with an unbounded window between them — over a file a
+  // manager and its workers write at the same moment, because the trigger for
+  // both is the same worker finishing. See services/briefService for the
+  // guarantee (strictly additive, locked, compare-and-swapped).
+  //
+  // OPERATOR-ONLY by construction, like jobs.*: `brief.append` matches no
+  // scoped tier's allowlist (authtoken viewMethods/triageMethods are exact
+  // names), so a view scout or a phone token cannot reach it.
+  //
+  // And it WIDENS NOTHING. It is path-scoped in capspec on `project` and takes
+  // the SAME workspaceRoots() fs.write takes, so it reaches no directory
+  // fs.write could not already write — and strictly less within one, because
+  // the caller never names a file: the basename is composed here. In the
+  // deployment that wants it, that root set is exactly right — the Fleet
+  // Manager's cwd is the projects' common parent, and containment is by
+  // subtree, so every project under it is already in the set. No live manager,
+  // no brief.append; that is the correct answer, not a gap to widen for.
+  registerCapability('brief.append', (params: unknown) => {
+    const { project, section, line } = (params ?? {}) as {
+      project?: string;
+      section?: string;
+      line?: string;
+    };
+    if (!project || isAsciiBlank(project)) throw new Error('brief.append requires { project }');
+    if (line === undefined) throw new Error('brief.append requires { line }');
+    // Guard the PROJECT directory (the caller's only path input, and the one
+    // capspec declares), then compose the brief path under the CANONICAL root
+    // the guard returned — resolving the guard's answer rather than the
+    // caller's string is what stops a symlinked project dir from being
+    // re-interpreted after the check.
+    const dir = assertPathAllowed('brief.append', project, workspaceRoots());
+    return appendBriefLine(briefPathFor(dir), parseBriefSection(section), line);
+  });
+
   registerCapability('app.getCwd', () => process.cwd());
   registerCapability('app.supervisorHome', () => ensureSupervisorHome());
 

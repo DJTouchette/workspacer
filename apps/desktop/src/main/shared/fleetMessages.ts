@@ -15,7 +15,7 @@
  * so a bullet can never span lines.
  */
 
-export type FleetMessageKind = 'worker-finished' | 'catch-up' | 'blocked';
+export type FleetMessageKind = 'worker-finished' | 'catch-up' | 'blocked' | 'threshold';
 
 export interface FleetMessageEntry {
   /** Worker label (or cwd-basename fallback). */
@@ -30,6 +30,30 @@ export interface FleetMessageEntry {
   /** The worker's session ENDED (killed or exited) rather than idling — the
    *  wake says "stopped/killed" instead of reading as a clean finish. */
   stopped?: boolean;
+  /** The worker DIED on a reported failure (a provider/API error, an
+   *  out-of-credits refusal) rather than completing: the reason, already
+   *  flattened to one line. A SEPARATE axis from `stopped`, which says the
+   *  SESSION went away — an error can arrive with the session still alive, and
+   *  a SIGTERM is not an API refusal. Round-tripped by the parser so the GUI
+   *  card can badge it too. See shared/workerFailure. */
+  failed?: string;
+  /** The threshold this session crossed, already rendered ("tokens 309,412 ≥
+   *  250,000"). Present on 'threshold' entries — the answer to a notify_when
+   *  the manager armed so it would never have to poll. Round-tripped. */
+  crossed?: string;
+  /** A worker's VALIDATED structured result (pretty-printed JSON), when its
+   *  dispatch carried a `resultSchema` and the worker honored the contract.
+   *  Rendered as its own block below the bullets — builder-side only, like
+   *  fullReply: the GUI card shows the prose excerpt, the object is for the
+   *  manager agent, which can copy its fields into a brief line without
+   *  re-deriving them from prose. */
+  result?: string;
+  /** Why no structured result could be read (block missing, unparseable, or
+   *  schema-violating) for a dispatch that asked for one. Additive: the prose
+   *  report is still delivered — this only says the machine-readable half did
+   *  not arrive, so the manager knows to read the prose rather than assume the
+   *  worker reported nothing. */
+  resultError?: string;
   /** The worker's COMPLETE final assistant message, rendered as its own block
    *  below the bullet list (capped at FULL_REPLY_MAX with an explicit
    *  truncation note). Builder-side only: the parser does not round-trip it —
@@ -78,11 +102,32 @@ const HEADERS: Record<FleetMessageKind, string> = {
   'catch-up':
     '[fleet] Catch-up — these workers finished while you were idle and you may have missed the wake:',
   blocked: '[supervisor] An agent is now blocked on a decision:',
+  threshold: '[fleet] A threshold you asked to be told about has been crossed:',
 };
+
+/** ALTERNATE headers a kind may be delivered under, parsed back to the same
+ *  kind. `worker-finished` gets an honest one for the all-failed case: a wake
+ *  whose every worker DIED must not open with the word "finished" — that is the
+ *  exact sentence a manager read as a landed outcome. Mixed wakes keep the
+ *  normal header and let the bullets carry the truth, because "finished" IS
+ *  accurate for the entries that did. */
+const ALT_HEADERS: Partial<Record<FleetMessageKind, string>> = {
+  'worker-finished': '[fleet] Worker FAILED — did not complete:',
+};
+
+/** The header a given entry set is delivered under. */
+function headerFor(kind: FleetMessageKind, entries: FleetMessageEntry[]): string {
+  const alt = ALT_HEADERS[kind];
+  if (alt && entries.length > 0 && entries.every((e) => e.failed)) return alt;
+  return HEADERS[kind];
+}
 
 /** Instruction tails — what the manager/supervisor should DO with the wake. */
 const TAILS: Record<FleetMessageKind, string> = {
   'worker-finished':
+    `A "structured result" block below is the worker's own machine-readable report for a ` +
+    `dispatch you gave a resultSchema — prefer its fields verbatim over re-deriving them ` +
+    `from the prose. ` +
     `The worker's complete final message (when longer than its bullet excerpt) is included ` +
     `above — read it from this wake instead of fetching the conversation; use ` +
     `get_conversation (lastMessage:true for just the final message, or sinceSeq) only if you ` +
@@ -93,15 +138,31 @@ const TAILS: Record<FleetMessageKind, string> = {
     `Review each (get_conversation with sinceSeq), update the project brief's "## Recently", ` +
     `and report the outcome with session:<id> references. Then STOP again.`,
   blocked: `Run a /supervise pass: gather the context and notify me with a recommendation.`,
+  threshold:
+    `This is the notify_when you armed, and it has now fired and been DISCARDED — watches are ` +
+    `one-shot, so nothing further will arrive unless you arm another. Decide: let it run, ` +
+    `send_message it a narrowing instruction, or stop it (signal SIGTERM, then close_session) ` +
+    `and redispatch surgically with respawn_with. Then STOP again — do not start polling.`,
 };
 
 /** One entry as its bullet-body text (no leading `- `). */
 export function formatFleetEntry(e: FleetMessageEntry): string {
   const where = e.blockedOn ? e.blockedOn : `cwd ${e.cwd || '?'}`;
   const stopped = e.stopped ? ' — stopped/killed' : '';
+  const failed = e.failed ? ` — FAILED: ${e.failed}` : '';
+  const crossed = e.crossed ? ` — crossed: ${e.crossed}` : '';
   const tail = e.lastReply ? ` — last reply: ${e.lastReply}` : '';
-  return `${e.label} (session:${e.sessionId}, ${where})${stopped}${tail}`;
+  return `${e.label} (session:${e.sessionId}, ${where})${stopped}${failed}${crossed}${tail}`;
 }
+
+/** Plain (non-bullet) note appended when any entry FAILED. Spelled out because
+ *  the whole point is that a manager must not book a crash as an outcome. */
+const FAILED_NOTE =
+  `A "FAILED" entry did NOT complete its task — the agent reported an error (an API ` +
+  `failure, an out-of-credits refusal, an overload) and stopped there. Its last reply is ` +
+  `that error, NOT a result: do not record it in a brief's "## Recently" as work landed. ` +
+  `Treat the dispatch as still open — re-dispatch it (respawn_with) or escalate the cause ` +
+  `to the user if it is an account/quota problem no retry will fix.`;
 
 /** Plain (non-bullet) note appended when any entry is stopped/killed. */
 const STOPPED_NOTE =
@@ -119,7 +180,18 @@ const STOPPED_NOTE =
 export function buildFleetMessage(kind: FleetMessageKind, entries: FleetMessageEntry[]): string {
   const bullets = entries.map((e) => `- ${formatFleetEntry(e)}`);
   const extras: string[] = [];
+  if (entries.some((e) => e.failed)) extras.push(FAILED_NOTE);
   if (entries.some((e) => e.stopped)) extras.push(STOPPED_NOTE);
+  for (const e of entries) {
+    if (e.result) {
+      extras.push(`Structured result — ${e.label} (session:${e.sessionId}):\n${e.result}`);
+    } else if (e.resultError) {
+      extras.push(
+        `Structured result MISSING — ${e.label} (session:${e.sessionId}): ${e.resultError}. ` +
+          `Read the prose report below/above instead.`,
+      );
+    }
+  }
   for (const e of entries) {
     if (e.fullReply) {
       extras.push(
@@ -127,7 +199,7 @@ export function buildFleetMessage(kind: FleetMessageKind, entries: FleetMessageE
       );
     }
   }
-  const head = `${HEADERS[kind]}\n${bullets.join('\n')}`;
+  const head = `${headerFor(kind, entries)}\n${bullets.join('\n')}`;
   if (extras.length === 0) return `${head}\n${TAILS[kind]}`;
   return `${head}\n\n${extras.join('\n\n')}\n\n${TAILS[kind]}`;
 }
@@ -137,16 +209,18 @@ export function buildFleetMessage(kind: FleetMessageKind, entries: FleetMessageE
  *  non-greedy so the FIRST `(session:` wins; a reply may contain anything (it
  *  is the anchored rest). */
 const ENTRY_RE =
-  /^(.+?) \(session:([\w-]+), (?:cwd (.+?)|(approval|question))\)(?: — (stopped\/killed))?(?: — last reply: (.*))?$/;
+  /^(.+?) \(session:([\w-]+), (?:cwd (.+?)|(approval|question))\)(?: — (stopped\/killed))?(?: — FAILED: ((?:(?! — ).)+))?(?: — crossed: ((?:(?! — ).)+))?(?: — last reply: (.*))?$/;
 
 function parseEntry(body: string): FleetMessageEntry | null {
   const m = ENTRY_RE.exec(body);
   if (!m) return null;
-  const [, label, sessionId, cwd, blockedOn, stopped, lastReply] = m;
+  const [, label, sessionId, cwd, blockedOn, stopped, failed, crossed, lastReply] = m;
   const e: FleetMessageEntry = { label, sessionId };
   if (cwd !== undefined) e.cwd = cwd;
   if (blockedOn) e.blockedOn = blockedOn as 'approval' | 'question';
   if (stopped) e.stopped = true;
+  if (failed) e.failed = failed;
+  if (crossed) e.crossed = crossed;
   if (lastReply) e.lastReply = lastReply;
   return e;
 }
@@ -156,6 +230,10 @@ const LEGACY_TAIL_STARTS: Record<FleetMessageKind, string> = {
   'worker-finished': '. Review the result (get_conversation',
   'catch-up': '. Review each (get_conversation',
   blocked: '. Run a /supervise pass',
+  // 'threshold' post-dates the bullet format entirely — no legacy paragraph of
+  // this kind exists, and the sentinel must not be an empty string (which
+  // indexOf finds at 0 in ANY text and would make every non-wake string parse).
+  threshold: '\u0000no legacy threshold wakes exist',
 };
 
 /**
@@ -187,8 +265,14 @@ function parseLegacyEntries(kind: FleetMessageKind, rest: string): FleetMessageE
 export function parseFleetMessage(text: string): FleetMessage | null {
   const trimmed = text.trim();
   for (const kind of Object.keys(HEADERS) as FleetMessageKind[]) {
-    const header = HEADERS[kind];
-    if (!trimmed.startsWith(header)) continue;
+    // A kind may ship under more than one header (see ALT_HEADERS): the
+    // all-failed spelling of worker-finished is still a worker-finished card,
+    // so the parser must recognize both or the honest header would silently
+    // demote the wake to a raw text blob in the GUI.
+    const header = [HEADERS[kind], ALT_HEADERS[kind]].find(
+      (h): h is string => !!h && trimmed.startsWith(h),
+    );
+    if (!header) continue;
     const rest = trimmed.slice(header.length);
     if (rest.startsWith('\n')) {
       // Current line-based format: bullets until the first non-bullet line.

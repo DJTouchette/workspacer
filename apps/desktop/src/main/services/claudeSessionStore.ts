@@ -341,6 +341,12 @@ export interface ClaudeSessionState {
   compacting?: boolean;
   lastCompactAt?: number;
   compactionCount?: number;
+  /** Structured-result contract this session was dispatched with: the JSON
+   *  Schema its `spawn_agent` carried as `resultSchema`. Held so the
+   *  worker-finished wake can validate the block the worker emits against the
+   *  shape its dispatcher asked for (shared/structuredResult). Undefined for
+   *  every ordinary dispatch — a schema is opt-in and purely additive. */
+  resultSchema?: Record<string, unknown>;
   /** Federation: the peer hub this session lives on; absent = local. Remote
    *  sessions are fed by hub-stamped agent.snapshot events (federationBridge),
    *  never by local hooks/deltas, and skip every local side effect (history,
@@ -390,6 +396,7 @@ class ClaudeSessionStore {
       provider?: string;
       transport?: 'pty' | 'stream';
       settings?: SessionSpawnSettings;
+      resultSchema?: Record<string, unknown>;
     }
   >();
   // Last-applied conversation sequence per session (gap detection for the
@@ -427,6 +434,9 @@ class ClaudeSessionStore {
       provider?: string;
       transport?: 'pty' | 'stream';
       settings?: SessionSpawnSettings;
+      /** Structured-result schema (spawn_agent's resultSchema) — see
+       *  ClaudeSessionState.resultSchema. */
+      resultSchema?: Record<string, unknown>;
     },
   ): void {
     if (!sessionId) return;
@@ -633,36 +643,7 @@ class ClaudeSessionStore {
         // timer belongs to a lifetime that is over. Deleting here would strip a
         // live agent of its label, parent and usage.
         if (this.sessions.get(sessionId)?.status !== 'ended') return;
-        this.sessions.delete(sessionId);
-        this.usageAccumulator.forget(sessionId);
-        this.convSeq.delete(sessionId);
-        this.watcherUpdates.delete(sessionId);
-        this.resyncing.delete(sessionId);
-        this.spawnMeta.delete(sessionId);
-        // The session's MCP-facade token (if it had one) is a live bearer
-        // secret in tokens.json; the session is over, so cut it off. A respawn
-        // onto this id re-mints. Boot-time sweepSessionFacadeTokens catches
-        // sessions that ended while the desktop wasn't running.
-        try {
-          revokeSessionFacadeTokens(sessionId);
-        } catch (err) {
-          console.warn(`[claudeSessionStore] facade token revoke failed for ${sessionId}:`, err);
-        }
-        const sl = this.statusLineTimers.get(sessionId);
-        if (sl) {
-          clearTimeout(sl);
-          this.statusLineTimers.delete(sessionId);
-        }
-        const mh = this.managedHistoryTimers.get(sessionId);
-        if (mh) {
-          clearTimeout(mh);
-          this.managedHistoryTimers.delete(sessionId);
-        }
-        const pf = this.pendingFlush.get(sessionId);
-        if (pf) {
-          clearTimeout(pf);
-          this.pendingFlush.delete(sessionId);
-        }
+        this.evictNow(sessionId);
       }, 30_000);
       evict.unref();
       this.evictionTimers.set(sessionId, evict);
@@ -1324,6 +1305,81 @@ class ClaudeSessionStore {
 
   // ── Internals ──
 
+  /**
+   * Forget a session and every per-session map keyed on it. The body of the
+   * SessionEnd eviction timer, extracted so `closeSession` can run the SAME
+   * teardown on demand — a second, hand-copied cleanup would be the way one of
+   * these maps quietly starts leaking again.
+   *
+   * Every per-session Map/Set must be cleared, not just `sessions`: convSeq and
+   * watcherUpdates otherwise retain one entry per ended session for the whole
+   * process lifetime. Clearing the stale convSeq also lets a resumed (reused-id)
+   * session start fresh instead of reading its first delta as a gap.
+   */
+  private evictNow(sessionId: string): void {
+    this.sessions.delete(sessionId);
+    this.usageAccumulator.forget(sessionId);
+    this.convSeq.delete(sessionId);
+    this.watcherUpdates.delete(sessionId);
+    this.resyncing.delete(sessionId);
+    this.spawnMeta.delete(sessionId);
+    // The session's MCP-facade token (if it had one) is a live bearer secret in
+    // tokens.json; the session is over, so cut it off. A respawn onto this id
+    // re-mints. Boot-time sweepSessionFacadeTokens catches sessions that ended
+    // while the desktop wasn't running.
+    try {
+      revokeSessionFacadeTokens(sessionId);
+    } catch (err) {
+      console.warn(`[claudeSessionStore] facade token revoke failed for ${sessionId}:`, err);
+    }
+    for (const timers of [this.statusLineTimers, this.managedHistoryTimers, this.pendingFlush]) {
+      const t = timers.get(sessionId);
+      if (t) {
+        clearTimeout(t);
+        timers.delete(sessionId);
+      }
+    }
+  }
+
+  /**
+   * `close_session`: dismiss a finished session's row on demand.
+   *
+   * The row of a worker that was SIGTERM'd lingers — the 30s eviction timer is
+   * armed by a SessionEnd hook, and a killed process often emits none — so
+   * "is it actually dead" was answered by sending it another signal and reading
+   * the 404. This makes dismissal the first-class verb it should have been.
+   *
+   * REFUSES a session that is still WORKING. Dismissing a running agent would
+   * strip it from list_agents while it kept burning tokens, which is the one
+   * outcome worse than a lingering row: the manager would believe it was gone.
+   * Stop it first (signal SIGTERM) — or dismiss it once it is idle, at which
+   * point this also tears the daemon side down so "dismissed" is not a lie.
+   *
+   * Idempotent: a session already forgotten reports success, because a caller
+   * asking "make this row go away" and being told "no such row" as an ERROR is
+   * exactly the ambiguity this replaces.
+   */
+  closeSession(sessionId: string): { ok: true; removed: boolean; wasLive: boolean } {
+    const session = this.sessions.get(sessionId);
+    if (!session) return { ok: true, removed: false, wasLive: false };
+    const working =
+      session.status !== 'ended' &&
+      (session.ambientState === 'thinking' ||
+        session.ambientState === 'streaming' ||
+        session.ambientState === 'background');
+    if (working) {
+      throw new Error(
+        `close_session: ${sessionId} is still working (${session.ambientState}). Dismissing it ` +
+          `would hide a running agent from list_agents while it kept spending — stop it first ` +
+          `(signal SIGTERM), then close it.`,
+      );
+    }
+    const wasLive = session.status !== 'ended';
+    this.cancelEviction(sessionId);
+    this.evictNow(sessionId);
+    return { ok: true, removed: true, wasLive };
+  }
+
   /** Drop any pending SessionEnd eviction for this id — it belongs to a
    *  lifetime that has been superseded. Safe to call when none is pending. */
   private cancelEviction(sessionId: string): void {
@@ -1367,6 +1423,7 @@ class ClaudeSessionStore {
       session.provider = meta.provider;
       session.transport = meta.transport;
       session.settings = meta.settings;
+      session.resultSchema = meta.resultSchema;
       this.spawnMeta.delete(sessionId);
     }
     this.sessions.set(sessionId, session);

@@ -128,6 +128,67 @@ describe('stopped/killed workers', () => {
   });
 });
 
+describe('FAILED workers (error vs completion)', () => {
+  const failed = { label: 'alpha', sessionId: 'w1', cwd: '/w/a', failed: 'out of credits' };
+
+  it('an all-failed wake gets an honest HEADER, not the word "finished"', () => {
+    const text = buildFleetMessage('worker-finished', [failed]);
+    expect(text).toContain('[fleet] Worker FAILED — did not complete:');
+    expect(text).not.toContain('[fleet] Worker finished');
+    expect(text).toContain('did NOT complete its task'); // the explanatory note
+    // Still the same KIND to the GUI's card renderer — the honest header must
+    // not demote the wake to a raw text blob.
+    const parsed = parseFleetMessage(text);
+    expect(parsed?.kind).toBe('worker-finished');
+    expect(parsed?.entries[0]).toMatchObject({ sessionId: 'w1', failed: 'out of credits' });
+  });
+
+  it('a MIXED wake keeps the normal header — "finished" is true of the others', () => {
+    const text = buildFleetMessage('worker-finished', [
+      failed,
+      { label: 'beta', sessionId: 'w2', cwd: '/w/b', lastReply: 'done' },
+    ]);
+    expect(text).toContain('[fleet] Worker finished:');
+    const parsed = parseFleetMessage(text);
+    expect(parsed?.entries[0].failed).toBe('out of credits');
+    expect(parsed?.entries[1].failed).toBeUndefined();
+  });
+
+  it('failed and stopped/killed are independent, and both round-trip together', () => {
+    const text = buildFleetMessage('worker-finished', [
+      { ...failed, stopped: true, lastReply: 'partial work' },
+    ]);
+    const e = parseFleetMessage(text)?.entries[0];
+    expect(e).toMatchObject({ stopped: true, failed: 'out of credits' });
+    expect(e?.lastReply).toBe('partial work');
+  });
+
+  it('a reply that literally contains the FAILED marker cannot forge the flag', () => {
+    const text = buildFleetMessage('worker-finished', [
+      { label: 'alpha', sessionId: 'w1', cwd: '/w/a', lastReply: 'note: — FAILED: is a marker' },
+    ]);
+    const parsed = parseFleetMessage(text);
+    expect(parsed?.entries[0].failed).toBeUndefined();
+    expect(parsed?.entries[0].lastReply).toContain('is a marker');
+  });
+
+  it('a failure reason and a reply both survive on one bullet', () => {
+    const text = buildFleetMessage('worker-finished', [
+      { ...failed, lastReply: 'I got as far as the parser.' },
+    ]);
+    const e = parseFleetMessage(text)?.entries[0];
+    expect(e?.failed).toBe('out of credits');
+    expect(e?.lastReply).toBe('I got as far as the parser.');
+  });
+
+  it('an ordinary wake is byte-identical to before the failed axis existed', () => {
+    const text = buildFleetMessage('worker-finished', [
+      { label: 'alpha', sessionId: 'w1', cwd: '/w/a', lastReply: 'done' },
+    ]);
+    expect(text).not.toContain('FAILED');
+  });
+});
+
 describe('parseFleetMessage on non-wake text', () => {
   it('rejects ordinary user text, prefixes alone, and malformed bullets', () => {
     expect(parseFleetMessage('Please deploy the fleet of workers')).toBeNull();

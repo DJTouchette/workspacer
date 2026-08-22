@@ -1,0 +1,200 @@
+/**
+ * notify_when: the manager's alternative to polling. Doctrine forbids the loop,
+ * so a runaway worker's cost was invisible until it finished ($22 / 309K
+ * tokens, spotted by chance, 2026-08-21). These tests pin the properties that
+ * make an armed watch trustworthy enough to STOP watching: it fires once, it
+ * fires on the right threshold, and it never fires into nothing.
+ */
+import { describe, it, expect, vi } from 'vitest';
+import {
+  ThresholdWatcher,
+  crossedBy,
+  parsePredicate,
+  type WatchableSession,
+} from './thresholdWatch';
+import { parseFleetMessage } from '../shared/fleetMessages';
+
+const session = (over: Partial<WatchableSession> = {}): WatchableSession => ({
+  sessionId: 'w1',
+  cwd: '/home/u/Work/alpha',
+  label: 'alpha: ship',
+  status: 'active',
+  ambientState: 'streaming',
+  lastActivity: 1_000,
+  usage: { totalInputTokens: 0, totalOutputTokens: 0, costUSD: 0 },
+  ...over,
+});
+
+const mgr = (): WatchableSession => ({
+  sessionId: 'mgr',
+  label: 'Fleet Manager',
+  status: 'active',
+});
+
+function rig(sessions: WatchableSession[]) {
+  const deliver = vi.fn().mockResolvedValue(undefined);
+  const watcher = new ThresholdWatcher(deliver, () => sessions);
+  return { deliver, watcher };
+}
+
+describe('parsePredicate', () => {
+  it('refuses an EMPTY predicate — an armed watch that can never fire is a lie', () => {
+    expect(() => parsePredicate({})).toThrow(/at least one threshold/);
+  });
+
+  it('refuses a non-positive or non-numeric threshold', () => {
+    expect(() => parsePredicate({ usd: 0 })).toThrow(/positive number/);
+    expect(() => parsePredicate({ tokens: -1 })).toThrow(/positive number/);
+    expect(() => parsePredicate({ idleSeconds: NaN })).toThrow(/positive number/);
+  });
+
+  it('keeps every threshold given', () => {
+    expect(parsePredicate({ tokens: 1000, usd: 5, idleSeconds: 60 })).toEqual({
+      tokens: 1000,
+      usd: 5,
+      idleSeconds: 60,
+    });
+  });
+});
+
+describe('crossedBy', () => {
+  const w = (over: object) => ({
+    id: 'x',
+    sessionId: 'w1',
+    watcherSessionId: 'mgr',
+    armedAt: 0,
+    ...over,
+  });
+
+  it('counts CUMULATIVE tokens, input plus output', () => {
+    const s = session({
+      usage: { totalInputTokens: 200_000, totalOutputTokens: 109_412, costUSD: 0 },
+    });
+    // The live case: 309,412 tokens against a 250,000 watch.
+    expect(crossedBy(w({ tokens: 250_000 }) as never, s, 0)).toBe('tokens 309,412 ≥ 250,000');
+    expect(crossedBy(w({ tokens: 400_000 }) as never, s, 0)).toBeNull();
+  });
+
+  it('reports cost with the currency and two decimals', () => {
+    const s = session({ usage: { costUSD: 22.4 } });
+    expect(crossedBy(w({ usd: 20 }) as never, s, 0)).toBe('cost $22.40 ≥ $20.00');
+  });
+
+  it('idle means IDLE — a streaming session has not been sitting there', () => {
+    const busy = session({ ambientState: 'streaming', lastActivity: 0 });
+    expect(crossedBy(w({ idleSeconds: 60 }) as never, busy, 600_000)).toBeNull();
+    const idle = session({ ambientState: 'idle', lastActivity: 0 });
+    expect(crossedBy(w({ idleSeconds: 60 }) as never, idle, 600_000)).toBe('idle for 600s ≥ 60s');
+  });
+
+  it('reports ONE crossing even when two thresholds are met', () => {
+    const s = session({ usage: { totalInputTokens: 500_000, totalOutputTokens: 0, costUSD: 99 } });
+    expect(crossedBy(w({ tokens: 1, usd: 1 }) as never, s, 0)).toMatch(/^tokens /);
+  });
+});
+
+describe('ThresholdWatcher.arm', () => {
+  it('refuses a target that does not exist or has ended', () => {
+    const { watcher } = rig([mgr(), session({ status: 'ended' })]);
+    expect(() =>
+      watcher.arm({ sessionId: 'nope', watcherSessionId: 'mgr', predicate: { usd: 1 } }),
+    ).toThrow(/no such session/);
+    expect(() =>
+      watcher.arm({ sessionId: 'w1', watcherSessionId: 'mgr', predicate: { usd: 1 } }),
+    ).toThrow(/already ended/);
+  });
+
+  it('refuses a recipient that is not live — a watch with no listener fires into nothing', () => {
+    const { watcher } = rig([session()]);
+    expect(() =>
+      watcher.arm({ sessionId: 'w1', watcherSessionId: 'ghost', predicate: { usd: 1 } }),
+    ).toThrow(/not a live session/);
+  });
+
+  it('caps how many watches one watcher may arm', () => {
+    const { watcher } = rig([mgr(), session()]);
+    for (let i = 0; i < 20; i++) {
+      watcher.arm({ sessionId: 'w1', watcherSessionId: 'mgr', predicate: { usd: i + 1 } });
+    }
+    expect(() =>
+      watcher.arm({ sessionId: 'w1', watcherSessionId: 'mgr', predicate: { usd: 99 } }),
+    ).toThrow(/max 20/);
+  });
+});
+
+describe('ThresholdWatcher.sweep', () => {
+  it('wakes the watcher with a parseable [fleet] message naming what crossed', () => {
+    const sessions = [mgr(), session()];
+    const { deliver, watcher } = rig(sessions);
+    watcher.arm({ sessionId: 'w1', watcherSessionId: 'mgr', predicate: { usd: 20 } });
+
+    watcher.sweep(0);
+    expect(deliver).not.toHaveBeenCalled(); // nothing crossed yet
+
+    sessions[1].usage = { costUSD: 22.4 };
+    watcher.sweep(0);
+    expect(deliver).toHaveBeenCalledTimes(1);
+    const [target, text] = deliver.mock.calls[0] as [string, string];
+    expect(target).toBe('mgr');
+    expect(text).toContain('[fleet] A threshold you asked to be told about');
+    expect(text).toContain('cost $22.40 ≥ $20.00');
+    expect(text).toContain('do not start polling');
+    const parsed = parseFleetMessage(text);
+    expect(parsed?.kind).toBe('threshold');
+    expect(parsed?.entries[0]).toMatchObject({ sessionId: 'w1', crossed: 'cost $22.40 ≥ $20.00' });
+  });
+
+  it('is ONE-SHOT: a second sweep past the same threshold delivers nothing', () => {
+    const sessions = [mgr(), session({ usage: { costUSD: 50 } })];
+    const { deliver, watcher } = rig(sessions);
+    watcher.arm({ sessionId: 'w1', watcherSessionId: 'mgr', predicate: { usd: 20 } });
+    watcher.sweep(0);
+    watcher.sweep(0);
+    watcher.sweep(0);
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(watcher.list()).toHaveLength(0);
+  });
+
+  it('coalesces several crossings into ONE wake per watcher', () => {
+    const sessions = [
+      mgr(),
+      session({ sessionId: 'a', label: 'alpha', usage: { costUSD: 50 } }),
+      session({ sessionId: 'b', label: 'beta', usage: { costUSD: 50 } }),
+    ];
+    const { deliver, watcher } = rig(sessions);
+    watcher.arm({ sessionId: 'a', watcherSessionId: 'mgr', predicate: { usd: 1 } });
+    watcher.arm({ sessionId: 'b', watcherSessionId: 'mgr', predicate: { usd: 1 } });
+    watcher.sweep(0);
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(parseFleetMessage(deliver.mock.calls[0][1] as string)?.entries).toHaveLength(2);
+  });
+
+  it('DROPS (never fires) a watch whose target ended — the finish wake already told them', () => {
+    const sessions = [mgr(), session({ usage: { costUSD: 50 } })];
+    const { deliver, watcher } = rig(sessions);
+    watcher.arm({ sessionId: 'w1', watcherSessionId: 'mgr', predicate: { usd: 1 } });
+    sessions[1].status = 'ended';
+    watcher.sweep(0);
+    expect(deliver).not.toHaveBeenCalled();
+    expect(watcher.list()).toHaveLength(0);
+  });
+
+  it('drops a watch whose WATCHER ended — nobody is listening', () => {
+    const sessions = [mgr(), session({ usage: { costUSD: 50 } })];
+    const { deliver, watcher } = rig(sessions);
+    watcher.arm({ sessionId: 'w1', watcherSessionId: 'mgr', predicate: { usd: 1 } });
+    sessions[0].status = 'ended';
+    watcher.sweep(0);
+    expect(deliver).not.toHaveBeenCalled();
+    expect(watcher.list()).toHaveLength(0);
+  });
+
+  it('survives a delivery failure (the watcher just ended) without throwing', async () => {
+    const sessions = [mgr(), session({ usage: { costUSD: 50 } })];
+    const deliver = vi.fn().mockRejectedValue(new Error('gone'));
+    const watcher = new ThresholdWatcher(deliver, () => sessions);
+    watcher.arm({ sessionId: 'w1', watcherSessionId: 'mgr', predicate: { usd: 1 } });
+    expect(() => watcher.sweep(0)).not.toThrow();
+    await Promise.resolve();
+  });
+});

@@ -407,3 +407,48 @@ describe('spawnManagedAgent — supervisor full access (config supervisor.fullAc
     expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
   });
 });
+
+// ── Structured-result contract (spawn_agent resultSchema) ────────────────────
+describe('spawnManagedAgent — resultSchema', () => {
+  const schema = { type: 'object', properties: { commit: { type: 'string' } } };
+
+  it('rides the first-turn instructions for a PLAIN (non-facade) managed worker', async () => {
+    await spawnManagedAgent({ provider: 'opencode', cwd: '/proj', resultSchema: schema });
+    const instructions = lastManaged().instructions as string;
+    expect(instructions).toContain('wks-result');
+    expect(instructions).toContain('"commit"');
+    // No facade was asked for, so no facade role text and no mcp URL.
+    expect(instructions).not.toContain('FACADE');
+    expect(lastManaged().mcp).toBeUndefined();
+  });
+
+  it('JOINS the facade role note and the contract rather than dropping one', async () => {
+    await spawnManagedAgent({
+      provider: 'opencode',
+      cwd: '/proj',
+      toolScope: 'operator',
+      resultSchema: schema,
+    });
+    const instructions = lastManaged().instructions as string;
+    expect(instructions).toContain('FACADE');
+    expect(instructions).toContain('wks-result');
+    expect(lastManaged().mcp).toBeTruthy();
+  });
+
+  it('records the schema on the spawn meta so the finish wake can validate against it', async () => {
+    await spawnManagedAgent({ provider: 'opencode', cwd: '/proj', resultSchema: schema });
+    expect(lastMeta()).toMatchObject({ resultSchema: schema });
+  });
+
+  it('sends no instructions at all without a schema or the facade', async () => {
+    await spawnManagedAgent({ provider: 'opencode', cwd: '/proj' });
+    expect(lastManaged().instructions).toBeUndefined();
+  });
+
+  it('REFUSES a malformed schema instead of silently dropping the contract', async () => {
+    await expect(
+      spawnManagedAgent({ provider: 'opencode', cwd: '/proj', resultSchema: 42 as never }),
+    ).rejects.toThrow(/JSON Schema object/);
+    expect(spawnManagedMock).not.toHaveBeenCalled();
+  });
+});

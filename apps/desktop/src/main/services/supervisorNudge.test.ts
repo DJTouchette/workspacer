@@ -138,7 +138,11 @@ describe('supervisorNudge.onFinished', () => {
     expect(message).not.toHaveBeenCalled();
 
     const huge = 'line\n'.repeat(20_000); // 100k chars, multi-line so the excerpt is lossy
-    supervisorNudge.onFinished(worker({ conversation: turns(['user', 't'], ['assistant', huge]) }), 'mgr', huge);
+    supervisorNudge.onFinished(
+      worker({ conversation: turns(['user', 't'], ['assistant', huge]) }),
+      'mgr',
+      huge,
+    );
     await vi.advanceTimersByTimeAsync(2000);
     const [, text] = message.mock.calls[0] as [string, string];
     expect(text).toContain('…'); // the bullet excerpt is capped
@@ -242,5 +246,197 @@ describe('supervisorNudge.sweepMissedFinishes (dropped-wake backstop)', () => {
     const now = 10_000 + GRACE + 1;
     supervisorNudge.sweepMissedFinishes([mgr({ ambientState: 'thinking' }), child()], now);
     expect(message).not.toHaveBeenCalled();
+  });
+});
+
+// ── Structured worker results (spawn_agent resultSchema) ─────────────────────
+//
+// A dispatch may name a result SCHEMA; the finish then carries a VALIDATED
+// object alongside the prose. Every case here also asserts the prose survived —
+// the feature is additive, and a schema must never cost the manager the report
+// a worker actually wrote.
+describe('supervisorNudge.onFinished — structured results', () => {
+  const schema: Record<string, unknown> = {
+    type: 'object',
+    required: ['commit', 'filesChanged'],
+    properties: {
+      commit: { type: 'string' },
+      filesChanged: { type: 'array', items: { type: 'string' } },
+      followUps: { type: 'array', items: { type: 'string' } },
+    },
+  };
+  const reply =
+    'Landed the parser fix.\n\n```wks-result\n' +
+    '{"commit":"abc1234","filesChanged":["parser.ts"],"followUps":["add a fuzz case"]}\n```';
+
+  it('delivers the validated object as its own block, beside the prose', async () => {
+    supervisorNudge.onFinished(
+      worker({ resultSchema: schema, conversation: turns(['user', 'fix'], ['assistant', reply]) }),
+      'mgr',
+      reply,
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).toContain('Structured result — alpha: fix tests (session:w1):');
+    expect(text).toContain('"commit": "abc1234"');
+    expect(text).toContain('"add a fuzz case"');
+    // …and the prose is untouched.
+    expect(text).toContain('Landed the parser fix.');
+    expect(text).toContain('Full final message — alpha: fix tests (session:w1):');
+    // …and the wake still parses into a GUI card.
+    expect(parseFleetMessage(text)?.kind).toBe('worker-finished');
+  });
+
+  it('says WHY when the worker skipped the block, and still delivers the prose', async () => {
+    const bare = 'I fixed it but forgot the block.';
+    supervisorNudge.onFinished(
+      worker({ resultSchema: schema, conversation: turns(['user', 'fix'], ['assistant', bare]) }),
+      'mgr',
+      bare,
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).toContain('Structured result MISSING');
+    expect(text).toContain('did not honor the result contract');
+    expect(text).toContain('I fixed it but forgot the block.');
+  });
+
+  it('says WHICH field was wrong when the block violates the schema', async () => {
+    const bad = 'Done.\n\n```wks-result\n{"commit":"abc"}\n```';
+    supervisorNudge.onFinished(
+      worker({ resultSchema: schema, conversation: turns(['user', 'fix'], ['assistant', bad]) }),
+      'mgr',
+      bad,
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).toContain('Structured result MISSING');
+    expect(text).toContain('filesChanged');
+  });
+
+  it('adds nothing at all to an ordinary dispatch that named no schema', async () => {
+    supervisorNudge.onFinished(worker(), 'mgr', 'All 42 tests pass.\nDone.');
+    await vi.advanceTimersByTimeAsync(2000);
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).not.toContain('Structured result');
+  });
+});
+
+// ── Wake payload honesty: finished vs FAILED ────────────────────────────────
+//
+// A worker that dies on a provider error goes idle exactly like one that
+// finished, and its last assistant turn IS the error — so the wake used to say
+// "Worker finished" and hand the manager a crash as the summary (observed
+// 2026-08-21, an out-of-credits worker). Extends 27a881a2's stopped/killed axis
+// rather than duplicating it: stopped = the SESSION ended, failed = the AGENT
+// reported a failure, and they are independent.
+describe('supervisorNudge.onFinished — error vs completion', () => {
+  const errorReply = '⚠️ Error: Credit balance is too low to access the Anthropic API.';
+
+  it('marks a provider-error death FAILED, with an honest header and the reason', async () => {
+    supervisorNudge.onFinished(
+      worker({ conversation: turns(['user', 'ship it'], ['assistant', errorReply]) }),
+      'mgr',
+      errorReply,
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    const [, text] = message.mock.calls[0] as [string, string];
+    // The header must not say "finished" when every worker in the wake died.
+    expect(text).toContain('[fleet] Worker FAILED — did not complete:');
+    expect(text).not.toContain('[fleet] Worker finished');
+    expect(text).toContain('FAILED: Credit balance is too low');
+    expect(text).toContain('did NOT complete its task');
+    expect(text).toContain('not record it in a brief');
+    // …and it is still a parseable card, carrying the failure through.
+    const parsed = parseFleetMessage(text);
+    expect(parsed?.kind).toBe('worker-finished');
+    expect(parsed?.entries[0].failed).toContain('Credit balance is too low');
+  });
+
+  it('names out-of-credits from the structured statusLine bit', async () => {
+    supervisorNudge.onFinished(
+      worker({
+        statusLine: { overageOutOfCredits: true },
+        conversation: turns(['user', 'ship it'], ['assistant', 'stopped early']),
+      }) as never,
+      'mgr',
+      'stopped early',
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).toContain('FAILED: out of credits (overage disabled)');
+  });
+
+  it('keeps the normal header on a MIXED wake — "finished" is true of the others', async () => {
+    supervisorNudge.onFinished(
+      worker({ conversation: turns(['user', 'a'], ['assistant', errorReply]) }),
+      'mgr',
+      errorReply,
+    );
+    supervisorNudge.onFinished(
+      worker({ sessionId: 'w2', label: 'beta: docs' }),
+      'mgr',
+      'All 42 tests pass.\nDone.',
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).toContain('[fleet] Worker finished:');
+    // The bullets carry the truth per worker.
+    const parsed = parseFleetMessage(text)!;
+    expect(parsed.entries.find((e) => e.sessionId === 'w1')?.failed).toBeTruthy();
+    expect(parsed.entries.find((e) => e.sessionId === 'w2')?.failed).toBeUndefined();
+  });
+
+  it('stopped/killed and FAILED are independent axes, and can both apply', async () => {
+    supervisorNudge.onFinished(
+      worker({
+        status: 'ended',
+        conversation: turns(['user', 'a'], ['assistant', errorReply]),
+      }),
+      'mgr',
+      errorReply,
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    const [, text] = message.mock.calls[0] as [string, string];
+    const entry = parseFleetMessage(text)!.entries[0];
+    expect(entry.stopped).toBe(true);
+    expect(entry.failed).toBeTruthy();
+  });
+
+  it('leaves an ordinary finish completely unchanged', async () => {
+    supervisorNudge.onFinished(worker(), 'mgr', 'All 42 tests pass.\nDone.');
+    await vi.advanceTimersByTimeAsync(2000);
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).toContain('[fleet] Worker finished:');
+    expect(text).not.toContain('FAILED');
+    expect(parseFleetMessage(text)!.entries[0].failed).toBeUndefined();
+  });
+
+  it('the catch-up backstop tells finished from died too', () => {
+    supervisorNudge.sweepMissedFinishes(
+      [
+        {
+          sessionId: 'mgr',
+          cwd: '/home/u/Work',
+          label: 'Fleet Manager',
+          ambientState: 'idle',
+          lastActivity: 1_000,
+          isSupervisor: true,
+        },
+        {
+          sessionId: 'w9',
+          cwd: '/home/u/Work/alpha',
+          label: 'alpha: ship',
+          ambientState: 'idle',
+          lastActivity: 5_000,
+          parentSessionId: 'mgr',
+          conversation: turns(['user', 'ship'], ['assistant', errorReply]),
+        },
+      ] as never,
+      5_000 + 4 * 60_000,
+    );
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).toContain('FAILED: Credit balance is too low');
+    expect(text).toContain('did NOT complete its task');
   });
 });

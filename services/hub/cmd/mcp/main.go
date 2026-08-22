@@ -446,6 +446,37 @@ type build struct {
 	// record was resolved. Default false: an ungranted session's spawn is
 	// clamped, exactly like a bus caller's.
 	yolo bool
+	// caller, when set, replaces the busclient for THIS build's calls. It
+	// exists for the composed tools (respawn.go, projectstatus.go), whose value
+	// is entirely in what they FORWARD — a fake bus is the only way to assert
+	// that a composed spawn carried the original's cwd/model/parent and was
+	// clamped by the same grant check. nil in production, where every call goes
+	// to b.c.
+	caller func(ctx context.Context, method string, params any) (json.RawMessage, error)
+}
+
+// call routes one bus call, through the test seam when one is installed.
+func (b *build) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	if b.caller != nil {
+		return b.caller(ctx, method, params)
+	}
+	return b.c.Call(ctx, method, params)
+}
+
+// forward is the package-level [forward] bound to this build's caller.
+func (b *build) forward(ctx context.Context, method string, params any) (*mcp.CallToolResult, any, error) {
+	res, err := b.call(ctx, method, params)
+	if err != nil {
+		return &mcp.CallToolResult{
+			IsError: true,
+			Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}},
+		}, nil, nil
+	}
+	text := string(res)
+	if text == "" || text == "null" {
+		text = "ok"
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil, nil
 }
 
 type toolInfo struct {
@@ -499,6 +530,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	addTool[listAgentsIn](b, "list_providers",
 		"List the coding-agent HARNESSES spawn_agent can use (claude, codex, opencode, pi) and whether each is installed/available on this host — call before dispatching a worker on a non-default provider.",
 		"providers.checkAll")
+	addProjectStatusTool(b)
 	addTool[listAgentsIn](b, "get_host_cwd",
 		"Get the workspacer host process's current working directory — a sensible default base for new agents.",
 		"app.getCwd")
@@ -511,6 +543,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	addSpawnTool(b, "spawn_agent",
 		"Start a new coding-agent session in a directory (claude by default; codex/opencode/pi via provider) and return its sessionId. See help topic 'spawn' for labeling, nesting, and granting the new agent workspacer tools via toolScope.",
 		"agents.spawn")
+	addRespawnTool(b)
 	addTool[createTerminalIn](b, "create_terminal",
 		"Open a new shell terminal session. Returns the new sessionId; write to it with terminal_input.",
 		"terminals.create")
@@ -670,6 +703,31 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 		"Delete a job (or withdraw a proposal) by id, along with its run history.",
 		"jobs.remove")
 
+	// ── Dismiss a finished session (operator only; see the capability) ─────
+	addTool[sessionIn](b, "close_session",
+		"Dismiss a FINISHED session — it leaves list_agents and the fleet stops counting it. This is the definitive answer to \"did it actually die\", which used to be inferred from a follow-up signal returning 404. Refused while the session is still working: stop it first (signal SIGTERM), then close it. Idempotent — closing an already-forgotten session succeeds.",
+		"agents.close")
+
+	// ── Threshold alerts (operator only; see the capability's own note) ────
+	addTool[notifyWhenIn](b, "notify_when",
+		"Ask to be woken ONCE when a session crosses a threshold — the way to keep an eye on a worker's cost or context WITHOUT polling (never loop on list_agents; that is a hang, not monitoring). Give at least one of tokens / usd / idleSeconds. When it crosses you get a [fleet] wake naming what was crossed, and the watch is then discarded: arm another if you still want to watch. Defaults to waking the target's parent (you, if you dispatched it).",
+		"agents.notifyWhen")
+
+	// ── Project briefs (operator only — brief.* matches no scoped tier) ────
+	//
+	// Same tier story as jobs.* above, and for a related reason: a brief is the
+	// user's own document, and the tiers are exact-name allowlists, so `brief.*`
+	// fails closed for view and triage without a line anywhere saying so. What
+	// makes this SAFE to hand an operator agent is the shape of the write, not
+	// the tier: it can only ever ADD one line to a section, it can never
+	// rewrite or reorder one, and it cannot name the file — the provider
+	// composes <project>/.workspacer/brief.md and confines the project dir to
+	// the user's declared projects.
+	b.group = "brief"
+	addTool[briefAppendIn](b, "brief_append",
+		"Append ONE line to a section of a project's .workspacer/brief.md, atomically. This is the way to update a brief — it is inspect-then-edit under a lock, so it cannot clobber a line a worker (or the user) wrote in the meantime, and it is strictly additive: it never rewrites, reorders or reformats what is already there. 'Recently' PREPENDS (that section is a dated log, newest first); the others append. Creates the brief, with its four standard sections, if the project has none.",
+		"brief.append")
+
 	// ── UI navigation (event-backed, explicit triage+ gate; see ui.go) ─────
 	b.group = "ui"
 	addUiTools(b)
@@ -742,70 +800,82 @@ func addSpawnTool(b *build, name, desc, method string) {
 	b.tools = append(b.tools, toolInfo{Name: name, Desc: desc, Method: method, Group: b.group})
 	mcp.AddTool(b.s, &mcp.Tool{Name: name, Description: desc},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in spawnAgentIn) (*mcp.CallToolResult, any, error) {
-			if in.ProfileID != "" && !slices.Contains(b.profiles, in.ProfileID) {
-				return &mcp.CallToolResult{
-					IsError: true,
-					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(
-						"profile %q is not granted to this session token (profilesAllowed: %v). Omit profileId to spawn under the default account, or ask the workspacer user to bless this session with that profile.",
-						in.ProfileID, b.profiles)}},
-				}, nil, nil
-			}
-			// An OMITTED skipPermissions resolves to the workspacer config
-			// default (claude.skipPermissionsDefault / a bypass
-			// defaultPermissionMode) — the same default the desktop spawn dialog
-			// pre-selects; an explicit caller value always wins. Resolved HERE,
-			// before the grant clamp, and forwarded as an EXPLICIT value in every
-			// case, because the provider resolves the same default for omitted
-			// fields and the hub stamps `yoloGranted` on the facade's trusted
-			// host-token connection no matter which session is multiplexed over
-			// it — a nil left on the wire would let the provider's own default
-			// resolution escalate a session whose record was never granted.
-			// Peer-hub spawns resolve from THIS hub's config too (the caller's
-			// home); the peer still re-judges the explicit value it receives.
-			skipDefaulted := in.SkipPermissions == nil
-			skip := false
-			if skipDefaulted {
-				skip = configSkipPermissionsDefault(ctx, b.c)
-			} else {
-				skip = *in.SkipPermissions
-			}
-			// Full-access grant, enforced HERE for the SAME structural reason as
-			// the profile check above: the hub stamps `yoloGranted` for the
-			// facade's single trusted host-token connection no matter which
-			// session is multiplexed over it, so a per-SESSION grant can only be
-			// judged where the session's own record (b.yolo) was resolved. Unlike
-			// the profile path this DEGRADES silently rather than refusing — it
-			// mirrors the established "remote spawns never auto-bypass approvals"
-			// clamp (the brain's spawn handler, hubCapabilities.ts), so an
-			// ungranted worker starts with approvals on instead of failing. When
-			// granted, the resolved skip rides through → the hub stamps
-			// yoloGranted → the provider honors it. (spawnAgentIn's only bypass
-			// surface is SkipPermissions; there is no permissionMode field to
-			// scrub.) Silent to the CALLER, but not to the operator: a dropped
-			// bypass used to be undiagnosable (the worker just started with
-			// approvals on), so the strip is logged with the calling token's
-			// label — session tokens are "session:<id>", naming the session
-			// whose grant was missing. A config-defaulted bypass is clamped by
-			// the SAME gate (its own log spelling): the operator's default never
-			// escalates an ungranted token.
-			if !b.yolo {
-				if skip {
-					source := "requested"
-					if skipDefaulted {
-						source = "config-defaulted (claude.skipPermissionsDefault / defaultPermissionMode)"
-					}
-					log.Printf("spawn_agent: %s skipPermissions without the full-access grant — clamped (token %s, new agent %q)",
-						source, tokenLabelFrom(ctx), in.Label)
-				}
-				skip = false
-			}
-			in.SkipPermissions = &skip
-			m := method
-			if peer := in.takeHub(); peer != "" {
-				m = "hub:" + peer + "/" + method
-			}
-			return forward(ctx, b.c, m, in)
+			return spawnWithGrants(ctx, b, method, in)
 		})
+}
+
+// spawnWithGrants is the WHOLE of a spawn's per-session judgement — the profile
+// grant, the config-default resolution, and the full-access clamp — extracted
+// from addSpawnTool's handler so that respawn_with (respawn.go), which composes
+// a spawn out of an existing session's snapshot, goes through the IDENTICAL
+// gate rather than a second copy of it. A second copy is how a "clone this
+// worker" convenience quietly becomes an escalation door: it would take the
+// original's recorded permission mode and forward it without the grant check
+// this function performs.
+func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgentIn) (*mcp.CallToolResult, any, error) {
+	if in.ProfileID != "" && !slices.Contains(b.profiles, in.ProfileID) {
+		return &mcp.CallToolResult{
+			IsError: true,
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(
+				"profile %q is not granted to this session token (profilesAllowed: %v). Omit profileId to spawn under the default account, or ask the workspacer user to bless this session with that profile.",
+				in.ProfileID, b.profiles)}},
+		}, nil, nil
+	}
+	// An OMITTED skipPermissions resolves to the workspacer config
+	// default (claude.skipPermissionsDefault / a bypass
+	// defaultPermissionMode) — the same default the desktop spawn dialog
+	// pre-selects; an explicit caller value always wins. Resolved HERE,
+	// before the grant clamp, and forwarded as an EXPLICIT value in every
+	// case, because the provider resolves the same default for omitted
+	// fields and the hub stamps `yoloGranted` on the facade's trusted
+	// host-token connection no matter which session is multiplexed over
+	// it — a nil left on the wire would let the provider's own default
+	// resolution escalate a session whose record was never granted.
+	// Peer-hub spawns resolve from THIS hub's config too (the caller's
+	// home); the peer still re-judges the explicit value it receives.
+	skipDefaulted := in.SkipPermissions == nil
+	skip := false
+	if skipDefaulted {
+		skip = configSkipPermissionsDefault(ctx, b)
+	} else {
+		skip = *in.SkipPermissions
+	}
+	// Full-access grant, enforced HERE for the SAME structural reason as
+	// the profile check above: the hub stamps `yoloGranted` for the
+	// facade's single trusted host-token connection no matter which
+	// session is multiplexed over it, so a per-SESSION grant can only be
+	// judged where the session's own record (b.yolo) was resolved. Unlike
+	// the profile path this DEGRADES silently rather than refusing — it
+	// mirrors the established "remote spawns never auto-bypass approvals"
+	// clamp (the brain's spawn handler, hubCapabilities.ts), so an
+	// ungranted worker starts with approvals on instead of failing. When
+	// granted, the resolved skip rides through → the hub stamps
+	// yoloGranted → the provider honors it. (spawnAgentIn's only bypass
+	// surface is SkipPermissions; there is no permissionMode field to
+	// scrub.) Silent to the CALLER, but not to the operator: a dropped
+	// bypass used to be undiagnosable (the worker just started with
+	// approvals on), so the strip is logged with the calling token's
+	// label — session tokens are "session:<id>", naming the session
+	// whose grant was missing. A config-defaulted bypass is clamped by
+	// the SAME gate (its own log spelling): the operator's default never
+	// escalates an ungranted token.
+	if !b.yolo {
+		if skip {
+			source := "requested"
+			if skipDefaulted {
+				source = "config-defaulted (claude.skipPermissionsDefault / defaultPermissionMode)"
+			}
+			log.Printf("spawn_agent: %s skipPermissions without the full-access grant — clamped (token %s, new agent %q)",
+				source, tokenLabelFrom(ctx), in.Label)
+		}
+		skip = false
+	}
+	in.SkipPermissions = &skip
+	m := method
+	if peer := in.takeHub(); peer != "" {
+		m = "hub:" + peer + "/" + method
+	}
+	return b.forward(ctx, m, in)
 }
 
 // addGateTool is addHubTool specialized to set_approval_gate, because the gate
@@ -896,8 +966,8 @@ func sessionPermissionMode(ctx context.Context, c *busclient.Client, method, ses
 // Fail closed: an unreachable or garbled config resolves to false (approvals
 // on). The result still passes the grant clamp in addSpawnTool; this only
 // answers "what is the default", never "may this session have it".
-func configSkipPermissionsDefault(ctx context.Context, c *busclient.Client) bool {
-	raw, err := c.Call(ctx, "config.get", nil)
+func configSkipPermissionsDefault(ctx context.Context, b *build) bool {
+	raw, err := b.call(ctx, "config.get", nil)
 	if err != nil {
 		return false
 	}
@@ -1044,6 +1114,16 @@ type spawnAgentIn struct {
 	ToolScope       string   `json:"toolScope,omitempty" jsonschema:"give the new agent the workspacer tools at a tier: view (observe-only — right for summarizer workers), triage (view + approve/reply/interrupt), or operator (everything)"`
 	PluginTools     []string `json:"pluginTools,omitempty" jsonschema:"plugin ids whose contributed tools the new agent may use (requires toolScope); omit for none"`
 	Worktree        bool     `json:"worktree,omitempty" jsonschema:"run the new agent in a fresh, ISOLATED git worktree of cwd (its own branch) instead of the checkout itself — use for a ship task that changes code, so parallel work on one repo never collides. The worktree is created for you and used as the agent's cwd; if cwd is not a git repo the spawn falls back to cwd with a note"`
+	// ResultSchema is the structured-result contract (the Workflow tool's
+	// agent({schema}) shape): a JSON Schema in, a validated object back on the
+	// finished wake. Modelled as map[string]any rather than a typed struct for
+	// the same reason save_config is (addObjectTool's rationale) — a schema is
+	// inherently free-form nesting, and a partial struct would silently drop
+	// fields. NOT an authorization surface: it becomes prompt text in the
+	// worker plus a validator run over the worker's own output, so it grants
+	// the caller nothing that writing the same sentence into the worker's first
+	// message would not.
+	ResultSchema map[string]any `json:"resultSchema,omitempty" jsonschema:"OPTIONAL JSON Schema for a machine-readable result. The worker is instructed to end its final message with a fenced wks-result block matching it, and the finished-wake you receive then carries that object VALIDATED, alongside the prose — e.g. an object with required 'commit' (string) plus 'filesChanged' / 'checksRun' / 'followUps' (arrays of string) and 'caveats' (string). Additive: the worker still writes its prose summary, and a missing or invalid block reports itself instead of failing the dispatch. Desktop-only (the headless brain declines it)"`
 }
 
 // takeHub implements hubRouted for spawn_agent's own hub field.
@@ -1097,6 +1177,20 @@ type signalIn struct {
 type terminalInputIn struct {
 	SessionID string `json:"sessionId" jsonschema:"the target session id"`
 	Data      string `json:"data" jsonschema:"raw bytes to write to the PTY"`
+}
+
+type notifyWhenIn struct {
+	SessionID       string  `json:"sessionId" jsonschema:"the session to watch"`
+	NotifySessionID string  `json:"notifySessionId,omitempty" jsonschema:"the session to wake when it crosses; omit to wake the watched session's parent (which is you, for a worker you dispatched)"`
+	Tokens          float64 `json:"tokens,omitempty" jsonschema:"fire when the session's CUMULATIVE tokens (input + output) reach this — e.g. 250000 to catch a worker whose scope is running away"`
+	USD             float64 `json:"usd,omitempty" jsonschema:"fire when the session's cumulative cost in USD reaches this — e.g. 10"`
+	IdleSeconds     float64 `json:"idleSeconds,omitempty" jsonschema:"fire when the session has sat idle this many seconds (a worker that stopped without finishing)"`
+}
+
+type briefAppendIn struct {
+	Project string `json:"project" jsonschema:"absolute path of the PROJECT DIRECTORY whose brief to update (the repo, not the brief file — .workspacer/brief.md under it is composed for you). Use your own cwd for your fleet brief"`
+	Section string `json:"section" jsonschema:"which heading to add the line under: Now (in flight), Direction (durable goals), Recently (a dated log — this one PREPENDS, newest first), or User (standing preferences; fleet brief). An unknown name is refused, never guessed"`
+	Line    string `json:"line" jsonschema:"the line to add, e.g. '2026-08-21  shipped X (session:abc)'. A leading '- ' bullet is added if you omit it, and the line is flattened to a single line"`
 }
 
 type notifyIn struct {

@@ -56,6 +56,14 @@ var PathParam = map[string]string{
 	// against a host root), while `cwd` is the absolute location the command
 	// actually runs in — the one a plugin could aim at someone else's checkout.
 	"git.diff": "cwd",
+	// brief.append writes into <project>/.workspacer/brief.md. The caller's
+	// only path input is `project`, and the BASENAME is composed by the
+	// provider, so this reaches strictly less than fs.write does within the
+	// same root — but it is still a write to a caller-chosen directory, which
+	// is exactly the shape this table exists to confine. Entered here rather
+	// than excused in unscopedByDecision precisely because "it can only write
+	// one filename" is an argument about the file, not about the directory.
+	"brief.append": "project",
 }
 
 // unscopedByDecision names methods that sit under a path-bearing namespace, or
@@ -286,6 +294,8 @@ var unscopedByDecision = map[string]string{
 // replaced.
 var inertMethods = map[string]string{
 	"agents.list":                "no caller params at all; it returns the session rows the provider already holds",
+	"agents.close":               "one sessionId selecting an existing session row, and the effect is REMOVAL — the narrowing direction, like sessions.detachTerminal and push.unsubscribe. It composes no path and no argv. Its one side effect beyond forgetting the row is claudemonSessionClient.close (viewers stopped + SIGTERM), which is exactly claude.signal's own reach and is skipped entirely for a row that had already ended. It cannot be aimed at a WORKING session at all: the provider refuses one, because hiding a running agent from list_agents while it kept spending is the only outcome worse than the lingering row this replaces",
+	"agents.notifyWhen":          "two session ids selecting existing rows plus three NUMBERS (tokens, usd, idleSeconds), each coerced with Number() and range-checked before it is stored. Nothing composes a path, an argv or a query, and the call starts nothing: it records an intention to send a message LATER, and the message body is composed entirely by the host (buildFleetMessage over the provider's own snapshot fields) with no caller text in it. Everything it can ever report — cumulative tokens, cost, idle time — is already in the sessions.snapshot the VIEW tier reads, so it discloses nothing new; what it removes is the caller's need to poll for it",
 	"analytics.recent":           "the only params are a row limit and a time window, both coerced to numbers before they reach the store; nothing composes a path, an argv or a query the host runs",
 	"analytics.summary":          "same as analytics.recent — numeric window only",
 	"app.getCwd":                 "no params; returns the provider's own working directory",
@@ -1116,7 +1126,12 @@ func IsPathScoped(method string) (field string, ok bool) {
 // The namespace is on the list for the reason the sentence above gives: every
 // prefix added since fs./search. had methods reaching the filesystem for years
 // with nobody noticing.
-var pathVerbPrefixes = []string{"fs.", "search.", "library.", "git.", "providers."}
+// brief. joined for the same reason library. did: brief.append composes a file
+// path under a caller-chosen directory. The namespace holds exactly one method
+// today, and listing the NAMESPACE rather than the method is the point — a
+// sibling added later (brief.read, brief.replace) is path-bearing by name and
+// fails closed until somebody classifies it.
+var pathVerbPrefixes = []string{"fs.", "search.", "library.", "git.", "providers.", "brief."}
 
 // LooksPathBearing reports whether method's name sits under a known filesystem
 // namespace (fs.*, search.*, library.*, git.*) and is therefore expected to
