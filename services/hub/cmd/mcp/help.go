@@ -172,6 +172,14 @@ rewrites, reorders or reformats anything already in the file.
 - Recently PREPENDS (a dated log, newest first); the rest append.
 - The brief is created, with all four sections, if the project has none.
 It can only ADD. Removing a stale line, or archiving, is still a file edit.`),
+	"projects": strings.TrimSpace(`
+project_status({}) returns the git state of EVERY configured project in one
+call: branch, upstream, unpushed (commits ahead), behind, and whether the tree
+is dirty. Use it for a standup instead of shelling out per repo. Pass dirs to
+limit it. A directory that is not a repo comes back as a row carrying an error,
+so one bad path never costs you the other rows. "unpushed" is ABSENT (not 0)
+when a branch has no upstream — that is "nowhere to push", not "nothing to
+push".`),
 	"config": strings.TrimSpace(`
 get_config returns the full workspacer config; save_config deep-merges a
 partial patch (pass ONLY the keys you change). reload_config re-reads disk.`),

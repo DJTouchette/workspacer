@@ -530,6 +530,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	addTool[listAgentsIn](b, "list_providers",
 		"List the coding-agent HARNESSES spawn_agent can use (claude, codex, opencode, pi) and whether each is installed/available on this host — call before dispatching a worker on a non-default provider.",
 		"providers.checkAll")
+	addProjectStatusTool(b)
 	addTool[listAgentsIn](b, "get_host_cwd",
 		"Get the workspacer host process's current working directory — a sensible default base for new agents.",
 		"app.getCwd")

@@ -136,6 +136,8 @@ const MANAGER_PREAMBLE =
   'new turns.\n' +
   '- approve {"sessionId":"<worker id>","decision":"yes"} for a pending permission prompt.\n' +
   '- notify {"title":"...","body":"..."} to alert the user.\n' +
+  '- project_status {} for the git state of EVERY configured project at once (branch, ' +
+  'unpushed, behind, dirty) — use it for /standup instead of shelling out per repo.\n' +
   '- respawn_with {"sessionId":"<the stopped worker>","amendment":"You rewrote the lexer. Do ' +
   'NOT touch it — only fix the off-by-one in parse()."} — the standing move for a worker that ' +
   'has crept out of scope: stop it, then respawn_with. It clones the ORIGINAL task and the ' +
