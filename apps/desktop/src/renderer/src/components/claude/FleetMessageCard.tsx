@@ -10,7 +10,7 @@
  * behind a toggle. Anything the parser doesn't match stays a raw bubble.
  */
 import React, { useState } from 'react';
-import { AlertTriangle, Check, ChevronRight, History } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, History, Megaphone } from 'lucide-react';
 import type { FleetMessage, FleetMessageEntry } from '../../../../main/shared/fleetMessages';
 import { claudeColors as colors } from '../claude-shared';
 import { Surface } from '../Surface';
@@ -44,6 +44,16 @@ const KIND_META: Record<
     badgePlural: 'Fleet · thresholds crossed',
     icon: AlertTriangle,
     tone: 'var(--wks-warning)',
+  },
+  // A worker's own mid-task self-report. Deliberately NOT the success green a
+  // finish wears and NOT the check icon: the single way this card can mislead
+  // is by reading as a completion. Accent + a megaphone says "it spoke", not
+  // "it's done"; a NEEDS A DECISION entry adds its own chip below.
+  progress: {
+    badge: 'Fleet · progress update',
+    badgePlural: 'Fleet · progress updates',
+    icon: Megaphone,
+    tone: 'var(--wks-accent)',
   },
   blocked: {
     badge: 'Supervisor · agent blocked',
@@ -188,6 +198,22 @@ const EntryRow: React.FC<{ entry: FleetMessageEntry }> = ({ entry }) => {
             {entry.crossed}
           </span>
         )}
+        {entry.needsDecision && (
+          <span
+            style={{
+              padding: '1px 6px',
+              borderRadius: 'var(--wks-radius-pill)',
+              fontSize: '0.6rem',
+              fontWeight: 600,
+              color: colors.warning,
+              background: `color-mix(in srgb, ${colors.warning} 12%, transparent)`,
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+            }}
+          >
+            needs a decision
+          </span>
+        )}
         {entry.blockedOn && (
           <span
             style={{
@@ -220,6 +246,25 @@ const EntryRow: React.FC<{ entry: FleetMessageEntry }> = ({ entry }) => {
           </span>
         )}
       </div>
+      {/* A worker's own progress line is shown OPEN, unlike a last-reply
+          excerpt: it is already capped to a couple of sentences by the host,
+          and a self-report the manager has to click to read is a self-report
+          it will skip. */}
+      {entry.note && (
+        <div
+          style={{
+            marginTop: 4,
+            padding: '6px 10px',
+            borderLeft: `2px solid ${colors.accent}`,
+            fontSize: 'calc(0.76rem * var(--claude-gui-font-scale, 1))',
+            lineHeight: 1.55,
+            color: colors.text,
+            wordBreak: 'break-word',
+          }}
+        >
+          {entry.note}
+        </div>
+      )}
       {entry.lastReply && (
         <div style={{ marginTop: 4 }}>
           <button

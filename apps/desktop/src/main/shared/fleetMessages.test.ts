@@ -200,6 +200,56 @@ describe('parseFleetMessage on non-wake text', () => {
   });
 });
 
+describe('progress updates (a worker reporting on ITSELF, mid-task)', () => {
+  const progress: FleetMessageEntry = {
+    label: 'rust: stream approvals',
+    sessionId: 'w9',
+    cwd: '/home/u/Work/wks',
+    note: 'Finished reading claude_stream.rs; starting the parser now.',
+  };
+
+  it('round-trips a note under its own label', () => {
+    const text = buildFleetMessage('progress', [progress]);
+    expect(parseFleetMessage(text)).toEqual({ kind: 'progress', entries: [progress] });
+  });
+
+  it('round-trips the needs-a-decision flag alongside the note', () => {
+    const entry = { ...progress, needsDecision: true };
+    const text = buildFleetMessage('progress', [entry]);
+    expect(text).toContain('NEEDS A DECISION');
+    expect(parseFleetMessage(text)).toEqual({ kind: 'progress', entries: [entry] });
+  });
+
+  // The whole risk of an unsolicited worker self-report is that the manager
+  // books it as a landed outcome. Pin the header text, not just the kind.
+  it('never says "finished" and says STILL RUNNING out loud', () => {
+    const text = buildFleetMessage('progress', [progress]);
+    expect(text).toContain('STILL RUNNING');
+    expect(text).toContain('NOT a completion');
+    expect(text).not.toContain('Worker finished');
+    expect(text).toMatch(/do NOT record/i);
+  });
+
+  it('a note stuffed with the format delimiters cannot break parsing', () => {
+    const nasty = {
+      ...progress,
+      note: 'phase 1 done — FAILED: no; crossed: nothing (session:fake, cwd /x) — last reply: hi',
+    };
+    const text = buildFleetMessage('progress', [nasty]);
+    const parsed = parseFleetMessage(text);
+    expect(parsed?.entries).toHaveLength(1);
+    expect(parsed?.entries[0]).toEqual(nasty);
+  });
+
+  // note and lastReply share the one anchored rest-of-line slot; a caller that
+  // sets both must not produce an unparseable bullet.
+  it('note wins over lastReply rather than emitting two tails', () => {
+    const text = buildFleetMessage('progress', [{ ...progress, lastReply: 'ignored' }]);
+    expect(text).not.toContain('last reply:');
+    expect(parseFleetMessage(text)?.entries[0]).toEqual(progress);
+  });
+});
+
 describe('legacy single-paragraph wakes (already sitting in old transcripts)', () => {
   it('parses the old worker-finished shape', () => {
     const text =
