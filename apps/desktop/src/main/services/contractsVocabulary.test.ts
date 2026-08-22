@@ -48,7 +48,11 @@ const VOCAB_CHECK_IDS = [
 
 /** Fixtures that carry no case blocks. An ALLOW-LIST, not a heuristic: "has no
  *  blocks, so skip it" is how a fixture whose cases were deleted would pass. */
-const NO_BLOCK_FIXTURES = new Set(['session-schema.json', 'config-lock.json']);
+const NO_BLOCK_FIXTURES = new Set([
+  'session-schema.json',
+  'config-lock.json',
+  'wholesale-config-paths.json',
+]);
 
 /** How many case-carrying fixtures contracts/ holds today. */
 const CONTRACTS_FIXTURE_FLOOR = 8;
