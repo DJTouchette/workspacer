@@ -46,6 +46,29 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
     if (hooksOwnAmbient) session.ambientState = state;
   };
 
+  // ...and the same split applies to the approval CARD, which is what a
+  // blocked session is answered through. For a daemon-owned session
+  // (`daemonOwnsPending` in claudeSessionStore: any non-claude provider, or
+  // claude on the stream transport) the approval never came from a hook at
+  // all — it is a `can_use_tool` control request the daemon parked, delivered
+  // over the SEPARATE `/events` SSE connection. The hook feed
+  // (`/hooks/stream`) is a second, slower connection with no ordering
+  // guarantee against it: the CLI's PreToolUse/PostToolUse hook is a `curl`
+  // subprocess round-tripping through the hook port, while `set_managed_mode`
+  // is in-process.
+  //
+  // So a hook clearing `pendingApproval` here could — and did — null the card
+  // for an approval the daemon is still holding, while `ambientState` stayed
+  // `waiting_approval` because of the guard above. That is precisely the
+  // unresolvable block reported on 2026-08-22: blocked forever, visibly
+  // waiting, with nothing to approve and no way out but killing the session.
+  // Never clear what this feed does not own; the daemon's own `pending` slot
+  // (applyManagedPending) clears it when the decision is really resolved.
+  const hooksOwnPending = (session.provider ?? 'claude') === 'claude' && !hooksOwnAmbient === false;
+  const clearPendingApproval = (): void => {
+    if (hooksOwnPending) session.pendingApproval = null;
+  };
+
   switch (hookName) {
     case 'SessionStart':
       session.status = 'active';
