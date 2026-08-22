@@ -4,20 +4,29 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/plugin"
 )
 
+// touchSeq hands each touch() call its own tick, so consecutive calls get
+// strictly increasing mtimes even when time.Now() doesn't advance between
+// them: Go's time.Now() on Windows has long-standing low resolution
+// (golang/go#67066), so two touch() calls microseconds apart can otherwise
+// read back an identical timestamp and a real edit looks like no change at
+// all to scanTree's mtime comparison.
+var touchSeq atomic.Int64
+
 // write a file with a mtime bumped comfortably past any prior scan, so the test
-// doesn't depend on the filesystem's mtime resolution.
+// doesn't depend on the filesystem's — or the process clock's — resolution.
 func touch(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	future := time.Now().Add(time.Hour)
+	future := time.Now().Add(time.Hour + time.Duration(touchSeq.Add(1))*time.Second)
 	if err := os.Chtimes(path, future, future); err != nil {
 		t.Fatal(err)
 	}
