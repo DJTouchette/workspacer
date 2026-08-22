@@ -116,6 +116,10 @@ describe('spawnFleetManager', () => {
     // The invocable skills the manager is told it has.
     expect(kickoff).toContain('/standup');
     expect(kickoff).toContain('/checkpoint');
+    expect(kickoff).toContain('/handoff');
+    // A successor manager must find a predecessor's handoff on its FIRST turn
+    // without being told — the doctrine points at it beside the fleet brief.
+    expect(kickoff).toContain('.workspacer/handoff.md');
     // Briefs prune by cold archival, not deletion; the fleet brief has a ## User
     // prefs section the manager honors.
     expect(kickoff).toContain('brief.archive.md');

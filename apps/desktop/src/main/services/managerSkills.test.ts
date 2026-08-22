@@ -1,7 +1,8 @@
 /**
- * installManagerSkills writes the Fleet Manager's invocable skills (/bearings,
- * /stow) into ~/.claude/skills so a manager session can run them. Twin of
- * installSupervisorSkill; best-effort, idempotent, content-addressed.
+ * installManagerSkills writes the Fleet Manager's invocable skills (/standup,
+ * /checkpoint, /handoff) into ~/.claude/skills so a manager session can run
+ * them. Twin of installSupervisorSkill; best-effort, idempotent,
+ * content-addressed.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
@@ -55,6 +56,35 @@ describe('installManagerSkills', () => {
     expect(checkpoint).toContain('rivet.learn');
   });
 
+  it('writes /handoff with the succession contract a fresh manager needs', () => {
+    installManagerSkills();
+    const handoff = fs.readFileSync(skillFile('handoff'), 'utf8');
+    expect(handoff).toMatch(/^---\nname: handoff\n/);
+    // The load-bearing distinction: handoff must NOT reimplement checkpoint —
+    // it RUNS it for the durable half and owns only the mid-flight half.
+    expect(handoff).toContain('/checkpoint files what should OUTLIVE the session');
+    expect(handoff).toContain('RESUME MID-FLIGHT');
+    expect(handoff).toContain('do not reimplement it');
+    expect(handoff).toContain('Pointers, never copies');
+    // The four things a successor cannot re-derive from disk.
+    expect(handoff).toContain('## In flight');
+    expect(handoff).toContain('Told to:');
+    expect(handoff).toContain('When it lands I owe it:');
+    expect(handoff).toContain('## Waiting on the user');
+    expect(handoff).toContain('## Established in conversation only');
+    expect(handoff).toContain('## Next action');
+    // Discovery: a sibling file PLUS a pointer in the always-read fleet brief.
+    expect(handoff).toContain('.workspacer/handoff.md');
+    expect(handoff).toContain('HANDOFF PENDING');
+    // The verified wake truth: finish wakes route to the worker's PARENT
+    // session, which the successor is not — so it reconciles ids once itself.
+    expect(handoff).toContain('routed to a worker\'s PARENT SESSION');
+    expect(handoff).toContain('exception to NEVER POLL');
+    // And the verified spawn truth: no role-less auto-successor, ever.
+    expect(handoff).toContain('You cannot start the successor');
+    expect(handoff).toContain('Terminate');
+  });
+
   it('sweeps the superseded /bearings and /stow dirs so no orphans linger', () => {
     // Simulate an earlier build having installed the old-named skills.
     for (const old of ['bearings', 'stow']) {
@@ -65,6 +95,7 @@ describe('installManagerSkills', () => {
     expect(fs.existsSync(skillDir('bearings'))).toBe(false);
     expect(fs.existsSync(skillDir('stow'))).toBe(false);
     expect(fs.existsSync(skillFile('standup'))).toBe(true);
+    expect(fs.existsSync(skillFile('handoff'))).toBe(true);
   });
 
   it('is idempotent — a second install leaves identical content', () => {
