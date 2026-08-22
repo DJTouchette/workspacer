@@ -152,9 +152,12 @@ describe('supervisorNudge.onFinished', () => {
 });
 
 describe('supervisorNudge.onBlock', () => {
-  it('broadcasts a parseable [supervisor] wake, never to the blocked agent itself', async () => {
+  it('broadcasts a parseable [supervisor] wake, never to the blocked agent itself, once the block survives the debounce', async () => {
     supervisorNudge.onBlock(worker(), 'approval', ['sup', 'w1']);
-    await vi.advanceTimersByTimeAsync(2000);
+    // Still within the debounce window — nothing sent yet.
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(message).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(3000);
     expect(message).toHaveBeenCalledTimes(1);
     const [target, text] = message.mock.calls[0] as [string, string];
     expect(target).toBe('sup');
@@ -164,6 +167,38 @@ describe('supervisorNudge.onBlock', () => {
       kind: 'blocked',
       entries: [{ label: 'alpha: fix tests', sessionId: 'w1', blockedOn: 'approval' }],
     });
+  });
+
+  it('never wakes anyone when the block clears before the debounce threshold', async () => {
+    supervisorNudge.onBlock(worker(), 'approval', ['sup', 'w1']);
+    await vi.advanceTimersByTimeAsync(5000); // well inside the 20s debounce
+    supervisorNudge.onBlockCleared('w1');
+    // Run well past both the debounce AND the coalesce window — still nothing.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(message).not.toHaveBeenCalled();
+  });
+
+  it('wakes exactly once when the block survives past the debounce threshold', async () => {
+    supervisorNudge.onBlock(worker(), 'approval', ['sup', 'w1']);
+    await vi.advanceTimersByTimeAsync(25_000); // past debounce + coalesce
+    expect(message).toHaveBeenCalledTimes(1);
+  });
+
+  it('a block that clears then re-blocks does not leak a timer or double-fire', async () => {
+    supervisorNudge.onBlock(worker(), 'approval', ['sup', 'w1']);
+    await vi.advanceTimersByTimeAsync(5000);
+    supervisorNudge.onBlockCleared('w1'); // clears well before the debounce fires
+    await vi.advanceTimersByTimeAsync(5000);
+    // Re-blocks — this must start a FRESH debounce window, not reuse a stale one.
+    supervisorNudge.onBlock(worker(), 'approval', ['sup', 'w1']);
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(message).not.toHaveBeenCalled(); // still short of the fresh window
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(message).toHaveBeenCalledTimes(1); // exactly one wake, not zero or two
+  });
+
+  it('onBlockCleared is a safe no-op when nothing is pending for that session', () => {
+    expect(() => supervisorNudge.onBlockCleared('never-blocked')).not.toThrow();
   });
 });
 
