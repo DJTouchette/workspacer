@@ -845,13 +845,15 @@ func (r *registry) snapshot(ctx context.Context, raw json.RawMessage) (json.RawM
 		}
 	}
 	// Not in the store (e.g. catalog scope, or a stopped session fetched
-	// explicitly): relay claudemon's row with the same desktop-shape overlay
-	// the store applies, so the caller sees one consistent snapshot shape.
+	// explicitly): relay claudemon's row with the same enrich + desktop-shape
+	// overlay the store applies, so the caller sees one consistent snapshot
+	// shape — label/parentSessionId/isSupervisor included, not just the
+	// desktop field names.
 	snap, err := r.cm.getSession(ctx, p.SessionID)
 	if err != nil {
 		return nil, err
 	}
-	return compatSnapshot(snap), nil
+	return enrichAndCompat(snap, r.meta), nil
 }
 
 // terminalsCreate opens a shell PTY in claudemon — the headless counterpart of

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 )
@@ -145,6 +147,42 @@ func TestCompatSnapshotFallsBackToTheWholePayload(t *testing.T) {
 	ti := pa["toolInput"].(map[string]any)
 	if ti["detail"] != "no tool_input here" {
 		t.Errorf("expected the whole payload as a fallback, got %#v", ti)
+	}
+}
+
+// sessions.snapshot's fallback (session not in the store) must carry the same
+// label/parentSessionId/isSupervisor nesting fields as the main store-backed
+// path — that's what enrichAndCompat exists to guarantee for both callers.
+// Before the fix, this fallback applied compatSnapshot alone and silently
+// dropped them.
+func TestSnapshotFallbackEnrichesNestingFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sessions/w1" {
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"session_id":"w1","cwd":"/proj","mode":"input"}`))
+	}))
+	defer srv.Close()
+
+	reg := newRegistry(newClaudemonClient(srv.URL))
+	reg.meta = newMetaStore()
+	reg.meta.set("w1", spawnMeta{Label: "Worker", ParentSessionID: "boss", IsSupervisor: true})
+	// reg.store stays nil — exercising the fallback path.
+
+	res, err := reg.handle(context.Background(), "sessions.snapshot", json.RawMessage(`{"sessionId":"w1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(res, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if m["label"] != "Worker" || m["parentSessionId"] != "boss" || m["isSupervisor"] != true {
+		t.Fatalf("fallback snapshot missing nesting fields: %v", m)
+	}
+	// The desktop-shape overlay (compatSnapshot) must still be applied too.
+	if m["sessionId"] != "w1" || m["sparse"] != true {
+		t.Fatalf("fallback snapshot missing desktop-shape overlay: %v", m)
 	}
 }
 

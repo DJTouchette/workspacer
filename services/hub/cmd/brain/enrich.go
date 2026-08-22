@@ -127,6 +127,17 @@ func toolInputOf(raw any) any {
 	return raw
 }
 
+// enrichAndCompat composes enrichSnapshot + compatSnapshot in the one order
+// callers need: label/parentSessionId/isSupervisor overlaid before the
+// desktop-shape fields, since compatSnapshot's own overlay doesn't touch
+// them. The ONE place both applications happen — the live session store
+// (main.go's store.enrich) and the sessions.snapshot fallback for a session
+// the store doesn't hold — so a fallback path can no longer drift from the
+// main one by calling compatSnapshot alone.
+func enrichAndCompat(snap json.RawMessage, meta *metaStore) json.RawMessage {
+	return compatSnapshot(enrichSnapshot(snap, meta))
+}
+
 func compatSnapshot(snap json.RawMessage) json.RawMessage {
 	var m map[string]any
 	if json.Unmarshal(snap, &m) != nil {

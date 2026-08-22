@@ -58,7 +58,7 @@ func main() {
 		// names (sessionId/status/ambientState/…, marked sparse) so /m and the
 		// web renderer can read brain-served rows.
 		store.enrich = func(snap json.RawMessage) json.RawMessage {
-			return compatSnapshot(enrichSnapshot(snap, meta))
+			return enrichAndCompat(snap, meta)
 		}
 		// The shared desktop fleet-visibility rule (visibility.go), backed by the
 		// hub-local layout document. It gates both the list/snapshot reads and
