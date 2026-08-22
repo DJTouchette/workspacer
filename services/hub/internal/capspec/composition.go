@@ -537,6 +537,11 @@ var compositionInert = map[string]InertClaim{
 		Reason:    "removes a watcher this caller installed — the undo of fs.watch, confined by the same assertPathAllowed('fs.unwatch', …) call. It can only ever SHRINK what fs.changed carries, and no guard consults the watcher set",
 		Witnesses: []Witness{pathGuard("fs.unwatch"), narrows("fs.watch")},
 	},
+	// ── writes whose destination is fixed by the provider ──────────────────
+	"brief.append": {
+		Reason:    "appends ONE line to a section of <project>/.workspacer/brief.md and can do nothing else: the caller names the project DIRECTORY, which assertPathAllowed('brief.append', …) confines to the same workspace roots fs.write takes, and the provider composes the basename — so unlike fs.write there is no caller-chosen filename to aim at an interpreted one (.claude/settings.json, .opencode/plugin/*.js, a ripgrep .ignore), which is what all three recorded fs.write pairs turn on. The bytes it writes are prose an AGENT reads, not config, code or argv any host process reads, and that is not a new crossing: influencing what an agent is told is already fully available to the same operator tier through agents.sendMessage, whose own record covers it. It is additive-only by construction (services/briefService), so it cannot even rewrite a line another writer put there",
+		Witnesses: []Witness{pathGuard("brief.append")},
+	},
 	"git.status": {
 		Reason:    "runs `git status` in a cwd guardGitCwd('git.status', …) confines to the workspace roots, and returns text. Writes nothing; the porcelain output is not read as policy by anything",
 		Witnesses: []Witness{gitCwdGuard("git.status")},

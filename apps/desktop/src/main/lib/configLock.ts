@@ -21,11 +21,20 @@
  * the seconds the brain allows itself — a lock this side cannot get quickly is
  * reported as a failed save, not waited out.
  */
-import * as fs from 'fs';
-import * as path from 'path';
+import { withFileLock } from './fileLock';
 
-/** Beside the file it guards, so it shares its filesystem and permissions. */
-const LOCK_SUFFIX = '.lock';
+/**
+ * The O_EXCL/steal/wait MECHANISM lives in ./fileLock — briefService.ts needs
+ * the same primitive for a file agents write concurrently, and two hand-rolled
+ * copies of a lock is exactly the drift a lock exists to prevent. Everything
+ * BELOW is this lock's policy, and it is policy that is contract-pinned: the
+ * lock filename and staleMs must agree with the Go twin.
+ */
+
+// The lock FILENAME (`<config.yaml>.lock`) is contract-pinned too and now lives
+// in ./fileLock as LOCK_SUFFIX — configLock.test.ts asserts the composed path
+// against contracts/config-lock.json's lockFileSuffix, so moving it did not
+// move the guard.
 /**
  * A lock older than this is treated as abandoned and stolen.
  *
@@ -37,13 +46,6 @@ export const LOCK_STALE_MS = 10_000;
 /** Main-thread budget. Short on purpose — see the note above. */
 const MAX_WAIT_MS = 250;
 const RETRY_MS = 10;
-
-/** Block the calling thread. `saveConfig` is sync, so there is no yielding here. */
-function sleepSync(ms: number): void {
-  // Atomics.wait on a throwaway buffer is the one portable synchronous sleep in
-  // Node; a busy-loop would spin a core for the same wall time.
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
 
 export class ConfigLockTimeout extends Error {
   constructor(path: string) {
@@ -60,62 +62,14 @@ export class ConfigLockTimeout extends Error {
  * the whole point.
  */
 export function withConfigLock<T>(configPath: string, fn: () => T): T {
-  const lockPath = configPath + LOCK_SUFFIX;
-  // The lock lives beside the file it guards, and on a fresh install that
-  // directory does not exist yet — the writer creates it, and the writer runs
-  // INSIDE the lock. Without this the very first save on a new machine throws
-  // ENOENT here and is reported as a refused save.
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  const deadline = Date.now() + MAX_WAIT_MS;
-
-  for (;;) {
-    try {
-      // 'wx' is O_CREAT|O_EXCL — atomic "create only if absent" against both the
-      // other process and another thread here.
-      const fd = fs.openSync(lockPath, 'wx');
-      try {
-        fs.writeSync(fd, `${process.pid} ${new Date().toISOString()}\n`);
-      } catch {
-        /* diagnostics only; holding the lock is what matters */
-      } finally {
-        fs.closeSync(fd);
-      }
-      break;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-
-      // Held. Steal it if the holder died mid-write, or wait a moment.
-      if (lockIsStale(lockPath)) {
-        try {
-          fs.rmSync(lockPath, { force: true });
-        } catch {
-          /* another waiter got there first — the retry below re-races fairly */
-        }
-        continue;
-      }
-      if (Date.now() >= deadline) throw new ConfigLockTimeout(configPath);
-      sleepSync(RETRY_MS);
-    }
-  }
-
-  try {
-    return fn();
-  } finally {
-    try {
-      fs.rmSync(lockPath, { force: true });
-    } catch {
-      /* a failed release would wedge config until staleMs; nothing better to do */
-    }
-  }
-}
-
-/** True when the lock file is old enough that its holder must have died. */
-function lockIsStale(lockPath: string): boolean {
-  try {
-    return Date.now() - fs.statSync(lockPath).mtimeMs > LOCK_STALE_MS;
-  } catch {
-    // Vanished between the EEXIST and the stat — the holder released it, so it
-    // is not stale, it is gone. Retrying will take it.
-    return false;
-  }
+  return withFileLock(
+    configPath,
+    {
+      staleMs: LOCK_STALE_MS,
+      maxWaitMs: MAX_WAIT_MS,
+      retryMs: RETRY_MS,
+      onTimeout: (p) => new ConfigLockTimeout(p),
+    },
+    fn,
+  );
 }

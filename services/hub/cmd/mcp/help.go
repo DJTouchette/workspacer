@@ -124,6 +124,18 @@ Their output is substituted into the prompt at {{output}} (or {{output.1}},
 one: a job that wakes a model nightly to answer "nothing to do" is waste the
 user pays for. Calls may not target jobs.* or hub:<peer>/, and there is a
 maximum of four context steps.`),
+	"brief": strings.TrimSpace(`
+brief_append({project, section, line}) adds ONE line to a project's
+.workspacer/brief.md. Use it instead of read_file + write_file: it is
+inspect-then-edit under a lock, so it cannot clobber a line a worker or the user
+wrote while you were composing yours, and it is strictly additive — it never
+rewrites, reorders or reformats anything already in the file.
+- project is the project DIRECTORY (your own cwd for your fleet brief); the
+  .workspacer/brief.md path under it is composed for you.
+- section is Now | Direction | Recently | User. A typo is refused, not guessed.
+- Recently PREPENDS (a dated log, newest first); the rest append.
+- The brief is created, with all four sections, if the project has none.
+It can only ADD. Removing a stale line, or archiving, is still a file edit.`),
 	"config": strings.TrimSpace(`
 get_config returns the full workspacer config; save_config deep-merges a
 partial patch (pass ONLY the keys you change). reload_config re-reads disk.`),

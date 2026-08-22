@@ -670,6 +670,21 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 		"Delete a job (or withdraw a proposal) by id, along with its run history.",
 		"jobs.remove")
 
+	// ── Project briefs (operator only — brief.* matches no scoped tier) ────
+	//
+	// Same tier story as jobs.* above, and for a related reason: a brief is the
+	// user's own document, and the tiers are exact-name allowlists, so `brief.*`
+	// fails closed for view and triage without a line anywhere saying so. What
+	// makes this SAFE to hand an operator agent is the shape of the write, not
+	// the tier: it can only ever ADD one line to a section, it can never
+	// rewrite or reorder one, and it cannot name the file — the provider
+	// composes <project>/.workspacer/brief.md and confines the project dir to
+	// the user's declared projects.
+	b.group = "brief"
+	addTool[briefAppendIn](b, "brief_append",
+		"Append ONE line to a section of a project's .workspacer/brief.md, atomically. This is the way to update a brief — it is inspect-then-edit under a lock, so it cannot clobber a line a worker (or the user) wrote in the meantime, and it is strictly additive: it never rewrites, reorders or reformats what is already there. 'Recently' PREPENDS (that section is a dated log, newest first); the others append. Creates the brief, with its four standard sections, if the project has none.",
+		"brief.append")
+
 	// ── UI navigation (event-backed, explicit triage+ gate; see ui.go) ─────
 	b.group = "ui"
 	addUiTools(b)
@@ -1107,6 +1122,12 @@ type signalIn struct {
 type terminalInputIn struct {
 	SessionID string `json:"sessionId" jsonschema:"the target session id"`
 	Data      string `json:"data" jsonschema:"raw bytes to write to the PTY"`
+}
+
+type briefAppendIn struct {
+	Project string `json:"project" jsonschema:"absolute path of the PROJECT DIRECTORY whose brief to update (the repo, not the brief file — .workspacer/brief.md under it is composed for you). Use your own cwd for your fleet brief"`
+	Section string `json:"section" jsonschema:"which heading to add the line under: Now (in flight), Direction (durable goals), Recently (a dated log — this one PREPENDS, newest first), or User (standing preferences; fleet brief). An unknown name is refused, never guessed"`
+	Line    string `json:"line" jsonschema:"the line to add, e.g. "2026-08-21: shipped X (session:abc)". A leading "- " is added if you omit it; the line is flattened to one line"`
 }
 
 type notifyIn struct {

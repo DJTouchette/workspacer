@@ -54,6 +54,7 @@ import { compactClaudeSnapshotForBackground } from '../shared/compactClaudeSnaps
 import { ensureSupervisorHome } from './supervisorSkill';
 import { scrubBootDocumentAgents } from '../lib/bootDocumentScrub';
 import { isAsciiBlank } from '../lib/asciiWhitespace';
+import { appendBriefLine, briefPathFor, parseBriefSection } from './briefService';
 
 // Mirror of ipc.ts's shell detection so a capability-spawned terminal picks the
 // same default shell a UI-spawned one would. Kept local to avoid importing the
@@ -1333,6 +1334,43 @@ export function registerHubCapabilities(): void {
     if (!sessionId) throw new Error('claude.gate requires { sessionId, on }');
     return claudemonSessionClient.setGate(sessionId, !!on);
   });
+  // ── Project briefs ─────────────────────────────────────────────────────
+  //
+  // The atomic inspect-then-edit primitive. Before it, every brief update was
+  // fs.read + fs.write with an unbounded window between them — over a file a
+  // manager and its workers write at the same moment, because the trigger for
+  // both is the same worker finishing. See services/briefService for the
+  // guarantee (strictly additive, locked, compare-and-swapped).
+  //
+  // OPERATOR-ONLY by construction, like jobs.*: `brief.append` matches no
+  // scoped tier's allowlist (authtoken viewMethods/triageMethods are exact
+  // names), so a view scout or a phone token cannot reach it.
+  //
+  // And it WIDENS NOTHING. It is path-scoped in capspec on `project` and takes
+  // the SAME workspaceRoots() fs.write takes, so it reaches no directory
+  // fs.write could not already write — and strictly less within one, because
+  // the caller never names a file: the basename is composed here. In the
+  // deployment that wants it, that root set is exactly right — the Fleet
+  // Manager's cwd is the projects' common parent, and containment is by
+  // subtree, so every project under it is already in the set. No live manager,
+  // no brief.append; that is the correct answer, not a gap to widen for.
+  registerCapability('brief.append', (params: unknown) => {
+    const { project, section, line } = (params ?? {}) as {
+      project?: string;
+      section?: string;
+      line?: string;
+    };
+    if (!project || isAsciiBlank(project)) throw new Error('brief.append requires { project }');
+    if (line === undefined) throw new Error('brief.append requires { line }');
+    // Guard the PROJECT directory (the caller's only path input, and the one
+    // capspec declares), then compose the brief path under the CANONICAL root
+    // the guard returned — resolving the guard's answer rather than the
+    // caller's string is what stops a symlinked project dir from being
+    // re-interpreted after the check.
+    const dir = assertPathAllowed('brief.append', project, workspaceRoots());
+    return appendBriefLine(briefPathFor(dir), parseBriefSection(section), line);
+  });
+
   registerCapability('app.getCwd', () => process.cwd());
   registerCapability('app.supervisorHome', () => ensureSupervisorHome());
 

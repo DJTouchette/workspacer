@@ -146,6 +146,11 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   'jobs.remove': { label: 'Delete scheduled jobs' },
   'jobs.run': { label: 'Run a scheduled job now' },
   'jobs.history': { label: 'Read job run history' },
+  // brief.append only ever ADDS one line to <project>/.workspacer/brief.md —
+  // it cannot rewrite a line, and it cannot name the file — but a brief is the
+  // user's own document and a plugin writing into it deserves the sensitive
+  // treatment write access gets.
+  'brief.append': { label: 'Add a line to a project brief', sensitive: true },
   'config.get': { label: 'Read your app settings' },
   'config.getPath': { label: 'See where your settings file lives' },
   'config.reload': { label: 'Reload your app settings' },

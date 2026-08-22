@@ -56,6 +56,14 @@ var PathParam = map[string]string{
 	// against a host root), while `cwd` is the absolute location the command
 	// actually runs in — the one a plugin could aim at someone else's checkout.
 	"git.diff": "cwd",
+	// brief.append writes into <project>/.workspacer/brief.md. The caller's
+	// only path input is `project`, and the BASENAME is composed by the
+	// provider, so this reaches strictly less than fs.write does within the
+	// same root — but it is still a write to a caller-chosen directory, which
+	// is exactly the shape this table exists to confine. Entered here rather
+	// than excused in unscopedByDecision precisely because "it can only write
+	// one filename" is an argument about the file, not about the directory.
+	"brief.append": "project",
 }
 
 // unscopedByDecision names methods that sit under a path-bearing namespace, or
@@ -1116,7 +1124,12 @@ func IsPathScoped(method string) (field string, ok bool) {
 // The namespace is on the list for the reason the sentence above gives: every
 // prefix added since fs./search. had methods reaching the filesystem for years
 // with nobody noticing.
-var pathVerbPrefixes = []string{"fs.", "search.", "library.", "git.", "providers."}
+// brief. joined for the same reason library. did: brief.append composes a file
+// path under a caller-chosen directory. The namespace holds exactly one method
+// today, and listing the NAMESPACE rather than the method is the point — a
+// sibling added later (brief.read, brief.replace) is path-bearing by name and
+// fails closed until somebody classifies it.
+var pathVerbPrefixes = []string{"fs.", "search.", "library.", "git.", "providers.", "brief."}
 
 // LooksPathBearing reports whether method's name sits under a known filesystem
 // namespace (fs.*, search.*, library.*, git.*) and is therefore expected to

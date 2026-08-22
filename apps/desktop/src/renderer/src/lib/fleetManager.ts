@@ -136,6 +136,12 @@ const MANAGER_PREAMBLE =
   'new turns.\n' +
   '- approve {"sessionId":"<worker id>","decision":"yes"} for a pending permission prompt.\n' +
   '- notify {"title":"...","body":"..."} to alert the user.\n' +
+  '- brief_append {"project":"/abs/project/dir","section":"Recently","line":"2026-08-21  ' +
+  'shipped X (session:abc)"} — ALWAYS use this to add a brief line rather than reading and ' +
+  'rewriting the file. It appends atomically under a lock and is strictly additive, so it ' +
+  'cannot clobber a line a worker or the user wrote while you were composing yours. Sections: ' +
+  'Now | Direction | Recently | User; "Recently" prepends (newest first). Use your own cwd as ' +
+  'project for your fleet brief. It can only ADD — pruning a stale line is still a file edit.\n' +
   '- open_terminal {"cwd":"/abs/project/dir","command":"npm run dev","label":"proj: dev server",' +
   '"parentSessionId":"<your own session id>"} to bring up a long-running process the USER ' +
   'should SEE (a dev server, a watcher). It opens a visible terminal pane and returns at ' +
