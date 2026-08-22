@@ -1,0 +1,104 @@
+{
+  "$comment": "The PermissionRequest hook payload — the wire shape that turns a Claude Code permission prompt into an ANSWERABLE record. Two independent readers pick DIFFERENT fields off the same frame, so a CLI rename breaks only one of them unless both are pinned here. claudemon (session/state.rs::apply) reads tool_name/summary|message and is the ONLY thing that can put a PTY session into SessionMode::Approval; the desktop (main/services/sessionStore/hookEventRouter.ts) reads tool_name/tool_input/permission_suggestions to render the card the user actually clicks. Registration is normative too: claudemon init writes HookEventKind::REGISTERABLE into ~/.claude/settings.json, and while PermissionRequest was misfiled there as 'forward-compat only' the hook was never installed at all, so a PTY agent's permission prompt produced no approvable record and blocked forever. Verified against CLI 2.1.237.",
+  "hookEventName": "PermissionRequest",
+  "registerable": true,
+  "cases": [
+    {
+      "name": "tool_name + summary — the ordinary prompt",
+      "payload": {
+        "tool_name": "Write",
+        "tool_input": { "file_path": "/tmp/config.yaml" },
+        "summary": "Overwrite config file"
+      },
+      "claudemon": {
+        "mode": "approval",
+        "pendingKind": "approval",
+        "tool": "Write",
+        "summary": "Overwrite config file"
+      },
+      "desktop": {
+        "ambientState": "waiting_approval",
+        "toolName": "Write",
+        "toolInput": { "file_path": "/tmp/config.yaml" },
+        "suggestions": null
+      }
+    },
+    {
+      "name": "no summary — `message` is the fallback spelling",
+      "payload": {
+        "tool_name": "Bash",
+        "tool_input": { "command": "rm -rf /tmp/x" },
+        "message": "Run dangerous command"
+      },
+      "claudemon": {
+        "mode": "approval",
+        "pendingKind": "approval",
+        "tool": "Bash",
+        "summary": "Run dangerous command"
+      },
+      "desktop": {
+        "ambientState": "waiting_approval",
+        "toolName": "Bash",
+        "toolInput": { "command": "rm -rf /tmp/x" },
+        "suggestions": null
+      }
+    },
+    {
+      "name": "out-of-roots read — the shape the unresolvable-approval bug was reported on",
+      "payload": {
+        "tool_name": "Read",
+        "tool_input": { "file_path": "/home/u/.workspacer/brief.md" },
+        "summary": "Path is outside allowed working directories"
+      },
+      "claudemon": {
+        "mode": "approval",
+        "pendingKind": "approval",
+        "tool": "Read",
+        "summary": "Path is outside allowed working directories"
+      },
+      "desktop": {
+        "ambientState": "waiting_approval",
+        "toolName": "Read",
+        "toolInput": { "file_path": "/home/u/.workspacer/brief.md" },
+        "suggestions": null
+      }
+    },
+    {
+      "name": "permission_suggestions ride through to the card (desktop-only field)",
+      "payload": {
+        "tool_name": "Read",
+        "tool_input": { "file_path": "/etc/hosts" },
+        "summary": "Read a file outside the project",
+        "permission_suggestions": [{ "type": "addRules", "rules": [{ "toolName": "Read" }] }]
+      },
+      "claudemon": {
+        "mode": "approval",
+        "pendingKind": "approval",
+        "tool": "Read",
+        "summary": "Read a file outside the project"
+      },
+      "desktop": {
+        "ambientState": "waiting_approval",
+        "toolName": "Read",
+        "toolInput": { "file_path": "/etc/hosts" },
+        "suggestions": [{ "type": "addRules", "rules": [{ "toolName": "Read" }] }]
+      }
+    },
+    {
+      "name": "degenerate payload — still an approvable record, never a dropped prompt",
+      "payload": { "summary": "something" },
+      "claudemon": {
+        "mode": "approval",
+        "pendingKind": "approval",
+        "tool": null,
+        "summary": "something"
+      },
+      "desktop": {
+        "ambientState": "waiting_approval",
+        "toolName": "",
+        "toolInput": {},
+        "suggestions": null
+      }
+    }
+  ]
+}
