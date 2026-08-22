@@ -446,6 +446,37 @@ type build struct {
 	// record was resolved. Default false: an ungranted session's spawn is
 	// clamped, exactly like a bus caller's.
 	yolo bool
+	// caller, when set, replaces the busclient for THIS build's calls. It
+	// exists for the composed tools (respawn.go, projectstatus.go), whose value
+	// is entirely in what they FORWARD — a fake bus is the only way to assert
+	// that a composed spawn carried the original's cwd/model/parent and was
+	// clamped by the same grant check. nil in production, where every call goes
+	// to b.c.
+	caller func(ctx context.Context, method string, params any) (json.RawMessage, error)
+}
+
+// call routes one bus call, through the test seam when one is installed.
+func (b *build) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	if b.caller != nil {
+		return b.caller(ctx, method, params)
+	}
+	return b.c.Call(ctx, method, params)
+}
+
+// forward is the package-level [forward] bound to this build's caller.
+func (b *build) forward(ctx context.Context, method string, params any) (*mcp.CallToolResult, any, error) {
+	res, err := b.call(ctx, method, params)
+	if err != nil {
+		return &mcp.CallToolResult{
+			IsError: true,
+			Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}},
+		}, nil, nil
+	}
+	text := string(res)
+	if text == "" || text == "null" {
+		text = "ok"
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil, nil
 }
 
 type toolInfo struct {
@@ -511,6 +542,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	addSpawnTool(b, "spawn_agent",
 		"Start a new coding-agent session in a directory (claude by default; codex/opencode/pi via provider) and return its sessionId. See help topic 'spawn' for labeling, nesting, and granting the new agent workspacer tools via toolScope.",
 		"agents.spawn")
+	addRespawnTool(b)
 	addTool[createTerminalIn](b, "create_terminal",
 		"Open a new shell terminal session. Returns the new sessionId; write to it with terminal_input.",
 		"terminals.create")
@@ -767,70 +799,82 @@ func addSpawnTool(b *build, name, desc, method string) {
 	b.tools = append(b.tools, toolInfo{Name: name, Desc: desc, Method: method, Group: b.group})
 	mcp.AddTool(b.s, &mcp.Tool{Name: name, Description: desc},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in spawnAgentIn) (*mcp.CallToolResult, any, error) {
-			if in.ProfileID != "" && !slices.Contains(b.profiles, in.ProfileID) {
-				return &mcp.CallToolResult{
-					IsError: true,
-					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(
-						"profile %q is not granted to this session token (profilesAllowed: %v). Omit profileId to spawn under the default account, or ask the workspacer user to bless this session with that profile.",
-						in.ProfileID, b.profiles)}},
-				}, nil, nil
-			}
-			// An OMITTED skipPermissions resolves to the workspacer config
-			// default (claude.skipPermissionsDefault / a bypass
-			// defaultPermissionMode) — the same default the desktop spawn dialog
-			// pre-selects; an explicit caller value always wins. Resolved HERE,
-			// before the grant clamp, and forwarded as an EXPLICIT value in every
-			// case, because the provider resolves the same default for omitted
-			// fields and the hub stamps `yoloGranted` on the facade's trusted
-			// host-token connection no matter which session is multiplexed over
-			// it — a nil left on the wire would let the provider's own default
-			// resolution escalate a session whose record was never granted.
-			// Peer-hub spawns resolve from THIS hub's config too (the caller's
-			// home); the peer still re-judges the explicit value it receives.
-			skipDefaulted := in.SkipPermissions == nil
-			skip := false
-			if skipDefaulted {
-				skip = configSkipPermissionsDefault(ctx, b.c)
-			} else {
-				skip = *in.SkipPermissions
-			}
-			// Full-access grant, enforced HERE for the SAME structural reason as
-			// the profile check above: the hub stamps `yoloGranted` for the
-			// facade's single trusted host-token connection no matter which
-			// session is multiplexed over it, so a per-SESSION grant can only be
-			// judged where the session's own record (b.yolo) was resolved. Unlike
-			// the profile path this DEGRADES silently rather than refusing — it
-			// mirrors the established "remote spawns never auto-bypass approvals"
-			// clamp (the brain's spawn handler, hubCapabilities.ts), so an
-			// ungranted worker starts with approvals on instead of failing. When
-			// granted, the resolved skip rides through → the hub stamps
-			// yoloGranted → the provider honors it. (spawnAgentIn's only bypass
-			// surface is SkipPermissions; there is no permissionMode field to
-			// scrub.) Silent to the CALLER, but not to the operator: a dropped
-			// bypass used to be undiagnosable (the worker just started with
-			// approvals on), so the strip is logged with the calling token's
-			// label — session tokens are "session:<id>", naming the session
-			// whose grant was missing. A config-defaulted bypass is clamped by
-			// the SAME gate (its own log spelling): the operator's default never
-			// escalates an ungranted token.
-			if !b.yolo {
-				if skip {
-					source := "requested"
-					if skipDefaulted {
-						source = "config-defaulted (claude.skipPermissionsDefault / defaultPermissionMode)"
-					}
-					log.Printf("spawn_agent: %s skipPermissions without the full-access grant — clamped (token %s, new agent %q)",
-						source, tokenLabelFrom(ctx), in.Label)
-				}
-				skip = false
-			}
-			in.SkipPermissions = &skip
-			m := method
-			if peer := in.takeHub(); peer != "" {
-				m = "hub:" + peer + "/" + method
-			}
-			return forward(ctx, b.c, m, in)
+			return spawnWithGrants(ctx, b, method, in)
 		})
+}
+
+// spawnWithGrants is the WHOLE of a spawn's per-session judgement — the profile
+// grant, the config-default resolution, and the full-access clamp — extracted
+// from addSpawnTool's handler so that respawn_with (respawn.go), which composes
+// a spawn out of an existing session's snapshot, goes through the IDENTICAL
+// gate rather than a second copy of it. A second copy is how a "clone this
+// worker" convenience quietly becomes an escalation door: it would take the
+// original's recorded permission mode and forward it without the grant check
+// this function performs.
+func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgentIn) (*mcp.CallToolResult, any, error) {
+	if in.ProfileID != "" && !slices.Contains(b.profiles, in.ProfileID) {
+		return &mcp.CallToolResult{
+			IsError: true,
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(
+				"profile %q is not granted to this session token (profilesAllowed: %v). Omit profileId to spawn under the default account, or ask the workspacer user to bless this session with that profile.",
+				in.ProfileID, b.profiles)}},
+		}, nil, nil
+	}
+	// An OMITTED skipPermissions resolves to the workspacer config
+	// default (claude.skipPermissionsDefault / a bypass
+	// defaultPermissionMode) — the same default the desktop spawn dialog
+	// pre-selects; an explicit caller value always wins. Resolved HERE,
+	// before the grant clamp, and forwarded as an EXPLICIT value in every
+	// case, because the provider resolves the same default for omitted
+	// fields and the hub stamps `yoloGranted` on the facade's trusted
+	// host-token connection no matter which session is multiplexed over
+	// it — a nil left on the wire would let the provider's own default
+	// resolution escalate a session whose record was never granted.
+	// Peer-hub spawns resolve from THIS hub's config too (the caller's
+	// home); the peer still re-judges the explicit value it receives.
+	skipDefaulted := in.SkipPermissions == nil
+	skip := false
+	if skipDefaulted {
+		skip = configSkipPermissionsDefault(ctx, b)
+	} else {
+		skip = *in.SkipPermissions
+	}
+	// Full-access grant, enforced HERE for the SAME structural reason as
+	// the profile check above: the hub stamps `yoloGranted` for the
+	// facade's single trusted host-token connection no matter which
+	// session is multiplexed over it, so a per-SESSION grant can only be
+	// judged where the session's own record (b.yolo) was resolved. Unlike
+	// the profile path this DEGRADES silently rather than refusing — it
+	// mirrors the established "remote spawns never auto-bypass approvals"
+	// clamp (the brain's spawn handler, hubCapabilities.ts), so an
+	// ungranted worker starts with approvals on instead of failing. When
+	// granted, the resolved skip rides through → the hub stamps
+	// yoloGranted → the provider honors it. (spawnAgentIn's only bypass
+	// surface is SkipPermissions; there is no permissionMode field to
+	// scrub.) Silent to the CALLER, but not to the operator: a dropped
+	// bypass used to be undiagnosable (the worker just started with
+	// approvals on), so the strip is logged with the calling token's
+	// label — session tokens are "session:<id>", naming the session
+	// whose grant was missing. A config-defaulted bypass is clamped by
+	// the SAME gate (its own log spelling): the operator's default never
+	// escalates an ungranted token.
+	if !b.yolo {
+		if skip {
+			source := "requested"
+			if skipDefaulted {
+				source = "config-defaulted (claude.skipPermissionsDefault / defaultPermissionMode)"
+			}
+			log.Printf("spawn_agent: %s skipPermissions without the full-access grant — clamped (token %s, new agent %q)",
+				source, tokenLabelFrom(ctx), in.Label)
+		}
+		skip = false
+	}
+	in.SkipPermissions = &skip
+	m := method
+	if peer := in.takeHub(); peer != "" {
+		m = "hub:" + peer + "/" + method
+	}
+	return b.forward(ctx, m, in)
 }
 
 // addGateTool is addHubTool specialized to set_approval_gate, because the gate
@@ -921,8 +965,8 @@ func sessionPermissionMode(ctx context.Context, c *busclient.Client, method, ses
 // Fail closed: an unreachable or garbled config resolves to false (approvals
 // on). The result still passes the grant clamp in addSpawnTool; this only
 // answers "what is the default", never "may this session have it".
-func configSkipPermissionsDefault(ctx context.Context, c *busclient.Client) bool {
-	raw, err := c.Call(ctx, "config.get", nil)
+func configSkipPermissionsDefault(ctx context.Context, b *build) bool {
+	raw, err := b.call(ctx, "config.get", nil)
 	if err != nil {
 		return false
 	}
@@ -1145,7 +1189,7 @@ type notifyWhenIn struct {
 type briefAppendIn struct {
 	Project string `json:"project" jsonschema:"absolute path of the PROJECT DIRECTORY whose brief to update (the repo, not the brief file — .workspacer/brief.md under it is composed for you). Use your own cwd for your fleet brief"`
 	Section string `json:"section" jsonschema:"which heading to add the line under: Now (in flight), Direction (durable goals), Recently (a dated log — this one PREPENDS, newest first), or User (standing preferences; fleet brief). An unknown name is refused, never guessed"`
-	Line    string `json:"line" jsonschema:"the line to add, e.g. "2026-08-21: shipped X (session:abc)". A leading "- " is added if you omit it; the line is flattened to one line"`
+	Line    string `json:"line" jsonschema:"the line to add, e.g. '2026-08-21  shipped X (session:abc)'. A leading '- ' bullet is added if you omit it, and the line is flattened to a single line"`
 }
 
 type notifyIn struct {

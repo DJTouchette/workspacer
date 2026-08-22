@@ -131,6 +131,16 @@ Stopping a worker is TWO steps, and both are verbs now:
 2. close_session({sessionId}) DISMISSES the row: it leaves list_agents and the
    fleet stops counting it. Before this existed, the only confirmation a worker
    had really died was sending it another signal and reading a 404.
+respawn_with({sessionId, amendment}) is the OTHER half of that move: it clones
+the stopped worker's ORIGINAL task and its cwd/model/provider/effort/parent,
+appends your correction under a heading that supersedes anything above it, and
+starts a fresh agent with both — so you state the DIAGNOSIS, not the whole task
+again. Override model/effort/label/cwd/toolScope as needed; pass worktree:true
+to start clean instead of continuing in the original's worktree. It refuses
+without an amendment (a clone with no correction just repeats itself), and the
+successor's permission mode is re-judged by the same grant check a fresh
+spawn_agent gets — a bypassed original does not make a bypassed clone.
+
 close_session refuses while the session is still working — hiding a running
 agent from list_agents while it keeps spending is worse than a stale row — and
 is idempotent, so closing an already-forgotten session succeeds. It stops the

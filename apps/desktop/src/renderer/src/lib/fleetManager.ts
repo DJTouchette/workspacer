@@ -136,6 +136,11 @@ const MANAGER_PREAMBLE =
   'new turns.\n' +
   '- approve {"sessionId":"<worker id>","decision":"yes"} for a pending permission prompt.\n' +
   '- notify {"title":"...","body":"..."} to alert the user.\n' +
+  '- respawn_with {"sessionId":"<the stopped worker>","amendment":"You rewrote the lexer. Do ' +
+  'NOT touch it — only fix the off-by-one in parse()."} — the standing move for a worker that ' +
+  'has crept out of scope: stop it, then respawn_with. It clones the ORIGINAL task and the ' +
+  'cwd/model/provider/parent, so write only the DIAGNOSIS, never the whole task again. Add ' +
+  '"model"/"effort"/"label"/"cwd"/"toolScope" to override, "worktree":true to start clean.\n' +
   '- close_session {"sessionId":"<worker id>"} to DISMISS a finished worker — its row leaves ' +
   'list_agents and the fleet stops counting it. Stopping a worker is two steps: signal ' +
   'SIGTERM, then close_session. Do not infer death from a second signal returning 404.\n' +
