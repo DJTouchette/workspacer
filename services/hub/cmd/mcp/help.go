@@ -124,6 +124,18 @@ Their output is substituted into the prompt at {{output}} (or {{output.1}},
 one: a job that wakes a model nightly to answer "nothing to do" is waste the
 user pays for. Calls may not target jobs.* or hub:<peer>/, and there is a
 maximum of four context steps.`),
+	"lifecycle": strings.TrimSpace(`
+Stopping a worker is TWO steps, and both are verbs now:
+1. signal({sessionId, signal:"SIGTERM"}) stops the process. (SIGINT just
+   interrupts the current turn.)
+2. close_session({sessionId}) DISMISSES the row: it leaves list_agents and the
+   fleet stops counting it. Before this existed, the only confirmation a worker
+   had really died was sending it another signal and reading a 404.
+close_session refuses while the session is still working — hiding a running
+agent from list_agents while it keeps spending is worse than a stale row — and
+is idempotent, so closing an already-forgotten session succeeds. It stops the
+daemon side too for a session that had not already ended, so "dismissed" is not
+a lie. The user's desktop PANE is theirs to close; this is the fleet's view.`),
 	"watch": strings.TrimSpace(`
 notify_when({sessionId, tokens|usd|idleSeconds, notifySessionId?}) is how you
 keep an eye on a running worker WITHOUT polling. Never loop on list_agents or

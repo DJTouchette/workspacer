@@ -1335,6 +1335,50 @@ export function registerHubCapabilities(): void {
     if (!sessionId) throw new Error('claude.gate requires { sessionId, on }');
     return claudemonSessionClient.setGate(sessionId, !!on);
   });
+  // ── Dismissing a finished session ──────────────────────────────────────
+  //
+  // SIGTERM stops a worker but its row lingers: the 30s eviction is armed by a
+  // SessionEnd hook, and a killed process often emits none. The only
+  // confirmation of death was sending ANOTHER signal and reading the daemon's
+  // "404 no wrapper attached". This makes dismissal a verb.
+  //
+  // OPERATOR-ONLY by construction (agents.close is in neither scoped tier's
+  // exact-name allowlist) — for the same reason claude.signal is deliberately
+  // triage's ONLY stop verb: interrupting an agent is recoverable, forgetting
+  // it is not. And it grants no new reach: the daemon teardown it performs is
+  // claudemonSessionClient.close(), whose only escalation is the SIGTERM that
+  // claude.signal already offers.
+  registerCapability('agents.close', async (params: unknown) => {
+    const { sessionId } = (params ?? {}) as { sessionId?: string };
+    if (!sessionId) throw new Error('agents.close requires { sessionId }');
+    // Throws if the session is still WORKING — checked BEFORE any teardown, so
+    // a refusal leaves the worker exactly as it was.
+    const before = claudeSessionStore.getAllSnapshots().find((s) => s.sessionId === sessionId);
+    const result = claudeSessionStore.closeSession(sessionId);
+    // Tear the daemon side down too, but only for a row that had not already
+    // ended: a dismissal that left a live-but-idle wrapper attached would be a
+    // lie, and re-SIGTERMing an ended session is the pointless call whose 404
+    // this tool exists to replace. Best-effort — the row is gone either way,
+    // which is what the caller asked for.
+    let daemon: 'stopped' | 'already-ended' | 'failed' = 'already-ended';
+    if (result.wasLive) {
+      try {
+        await claudemonSessionClient.close(sessionId);
+        daemon = 'stopped';
+      } catch {
+        daemon = 'failed';
+      }
+    }
+    return {
+      ...result,
+      daemon,
+      label: before?.label,
+      note: result.removed
+        ? 'The session is gone from list_agents. Its desktop PANE, if the user has one open, is theirs to close.'
+        : 'No such session — it had already been forgotten. Nothing to do.',
+    };
+  });
+
   // ── Threshold alerts (the alternative to polling) ──────────────────────
   //
   // Manager doctrine forbids polling — a manager looping on list_agents is a

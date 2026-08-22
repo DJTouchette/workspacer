@@ -670,6 +670,11 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 		"Delete a job (or withdraw a proposal) by id, along with its run history.",
 		"jobs.remove")
 
+	// ── Dismiss a finished session (operator only; see the capability) ─────
+	addTool[sessionIn](b, "close_session",
+		"Dismiss a FINISHED session — it leaves list_agents and the fleet stops counting it. This is the definitive answer to \"did it actually die\", which used to be inferred from a follow-up signal returning 404. Refused while the session is still working: stop it first (signal SIGTERM), then close it. Idempotent — closing an already-forgotten session succeeds.",
+		"agents.close")
+
 	// ── Threshold alerts (operator only; see the capability's own note) ────
 	addTool[notifyWhenIn](b, "notify_when",
 		"Ask to be woken ONCE when a session crosses a threshold — the way to keep an eye on a worker's cost or context WITHOUT polling (never loop on list_agents; that is a hang, not monitoring). Give at least one of tokens / usd / idleSeconds. When it crosses you get a [fleet] wake naming what was crossed, and the watch is then discarded: arm another if you still want to watch. Defaults to waking the target's parent (you, if you dispatched it).",

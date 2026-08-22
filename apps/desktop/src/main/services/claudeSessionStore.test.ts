@@ -523,3 +523,96 @@ describe('setSpawnMeta on a restart clears the previous life’s live permission
     expect(claudeSessionStore.getSnapshot(sid)?.livePermissionMode).toBe('acceptEdits');
   });
 });
+
+// ── close_session: dismissing a finished session's row ──────────────────────
+//
+// SIGTERM stops a worker but its row lingers: the 30s eviction is armed by a
+// SessionEnd hook, and a killed process often emits none, so "did it actually
+// die" was answered by sending ANOTHER signal and reading the 404.
+describe('closeSession — dismissal is a verb', () => {
+  it('removes an IDLE session from the store, and reports it was still live', () => {
+    const sid = uniqueId();
+    hook(sid, 'SessionStart');
+    hook(sid, 'Stop');
+    expect(claudeSessionStore.getSnapshot(sid)).toBeTruthy();
+
+    const res = claudeSessionStore.closeSession(sid);
+    expect(res).toEqual({ ok: true, removed: true, wasLive: true });
+    expect(claudeSessionStore.getSnapshot(sid)).toBeFalsy();
+    expect(claudeSessionStore.getAllSnapshots().some((s) => s.sessionId === sid)).toBe(false);
+  });
+
+  it('REFUSES a session that is still working, and leaves it untouched', () => {
+    const sid = uniqueId();
+    hook(sid, 'SessionStart');
+    hook(sid, 'UserPromptSubmit');
+    expect(claudeSessionStore.getSnapshot(sid)?.ambientState).not.toBe('idle');
+
+    expect(() => claudeSessionStore.closeSession(sid)).toThrow(/still working/);
+    // Still there, still working — a refusal must not half-dismiss.
+    expect(claudeSessionStore.getSnapshot(sid)).toBeTruthy();
+  });
+
+  it('is IDEMPOTENT: closing an unknown session succeeds rather than erroring', () => {
+    // The whole point is a definitive answer; "no such row" as an ERROR is the
+    // ambiguity this replaces.
+    expect(claudeSessionStore.closeSession('never-existed')).toEqual({
+      ok: true,
+      removed: false,
+      wasLive: false,
+    });
+  });
+
+  it('reports wasLive:false for a session that had already ENDED', () => {
+    const sid = uniqueId();
+    hook(sid, 'SessionStart');
+    hook(sid, 'SessionEnd');
+    expect(claudeSessionStore.closeSession(sid)).toEqual({
+      ok: true,
+      removed: true,
+      wasLive: false,
+    });
+  });
+
+  it('runs the SAME teardown as the eviction timer (per-session maps cleared)', () => {
+    const sid = uniqueId();
+    // Advance convSeq to 3, then dismiss without ever ending the session.
+    claudeSessionStore.applyConversationDelta({
+      session_id: sid,
+      seq: 3,
+      items: [],
+      reset: false,
+    } as never);
+    claudeSessionStore.closeSession(sid);
+
+    // A reused id must start fresh: a surviving convSeq=3 would make the next
+    // life's seq-1 delta look like a gap and force a snapshot resync fetch.
+    const originalFetch = (global as { fetch?: typeof fetch }).fetch;
+    const fetchSpy = vi.fn(async () => ({ ok: false }) as Response);
+    (global as { fetch?: typeof fetch }).fetch = fetchSpy as unknown as typeof fetch;
+    try {
+      claudeSessionStore.applyConversationDelta({
+        session_id: sid,
+        seq: 1,
+        items: [{ kind: 'user_message', text: 'reused hello' }],
+        reset: false,
+      } as never);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      (global as { fetch?: typeof fetch }).fetch = originalFetch;
+    }
+  });
+
+  it('cancels the pending eviction so a later timer cannot fire on a reused id', () => {
+    const sid = uniqueId();
+    hook(sid, 'SessionStart');
+    hook(sid, 'SessionEnd'); // arms the 30s eviction
+    claudeSessionStore.closeSession(sid);
+
+    // Reuse the id immediately (a respawn), then let the old timer's deadline
+    // pass. Without cancelEviction, it would delete the NEW session's row.
+    hook(sid, 'SessionStart');
+    vi.advanceTimersByTime(31_000);
+    expect(claudeSessionStore.getSnapshot(sid)).toBeTruthy();
+  });
+});

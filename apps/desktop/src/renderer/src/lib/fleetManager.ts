@@ -136,6 +136,9 @@ const MANAGER_PREAMBLE =
   'new turns.\n' +
   '- approve {"sessionId":"<worker id>","decision":"yes"} for a pending permission prompt.\n' +
   '- notify {"title":"...","body":"..."} to alert the user.\n' +
+  '- close_session {"sessionId":"<worker id>"} to DISMISS a finished worker — its row leaves ' +
+  'list_agents and the fleet stops counting it. Stopping a worker is two steps: signal ' +
+  'SIGTERM, then close_session. Do not infer death from a second signal returning 404.\n' +
   '- notify_when {"sessionId":"<worker id>","tokens":250000} (or "usd":10, or ' +
   '"idleSeconds":900) — the ONLY sanctioned way to keep an eye on a running worker. Rule 2 ' +
   'forbids polling; this is how you honour it and still catch scope creep: arm a watch, STOP, ' +
