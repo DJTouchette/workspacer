@@ -10,7 +10,7 @@
 //
 // The shell is versioned; bump CACHE to ship a new one.
 
-const CACHE = 'wks-m-v13';
+const CACHE = 'wks-m-v14';
 const SHELL = ['/m', '/icon-192.png'];
 
 self.addEventListener('install', (event) => {
@@ -51,7 +51,7 @@ self.addEventListener('push', (event) => {
   try { data = event.data ? event.data.json() : {}; } catch (_) {}
   const title = data.title || 'Workspacer';
   event.waitUntil(self.registration.showNotification(title, {
-    body: data.body || 'An agent needs you',
+    body: data.body || 'A worker needs you',
     icon: '/icon-192.png',
     badge: '/icon-192.png',
     tag: data.sessionId || 'workspacer',   // collapse repeats for the same agent

@@ -572,9 +572,13 @@ func workingState(s string) bool {
 
 func (m *Manager) onSnapshot(data json.RawMessage) {
 	var s struct {
-		SessionID    string `json:"sessionId"`
-		Cwd          string `json:"cwd"`
-		LiveCwd      string `json:"liveCwd"`
+		SessionID string `json:"sessionId"`
+		Cwd       string `json:"cwd"`
+		LiveCwd   string `json:"liveCwd"`
+		// The task label the agent was dispatched with (spawn metadata, written
+		// once and never rewritten). It names the WORK, so it beats any
+		// directory in a lock-screen title.
+		Label        string `json:"label"`
 		AmbientState string `json:"ambientState"`
 		Status       string `json:"status"`
 		// Content for the preview. All of it already rides on the snapshot the
@@ -600,12 +604,20 @@ func (m *Manager) onSnapshot(data json.RawMessage) {
 	if json.Unmarshal(data, &s) != nil || s.SessionID == "" {
 		return
 	}
-	name := dirName(s.LiveCwd)
+	// What the notification calls this dispatch, in the same order the /m fleet
+	// card titles it (mobile.html agentName): the dispatch label, else the
+	// directory it was STARTED in. `liveCwd` is last on purpose — it follows a
+	// worker into a git worktree mid-task, so leading with it made one dispatch
+	// announce itself under two different names during a single run.
+	name := s.Label
 	if name == "" {
 		name = dirName(s.Cwd)
 	}
 	if name == "" {
-		name = "Agent"
+		name = dirName(s.LiveCwd)
+	}
+	if name == "" {
+		name = "Worker"
 	}
 
 	prev, seen := m.states[s.SessionID]
@@ -650,7 +662,7 @@ func (m *Manager) onSnapshot(data json.RawMessage) {
 			}
 			next.checkpointsSent = i + 1
 			m.states[s.SessionID] = next
-			m.notify(Event{Kind: KindCheckpoint, Title: name + " still working",
+			m.notify(Event{Kind: KindCheckpoint, Title: name + " still in flight",
 				Body: humanDur(elapsed) + " so far", SessionID: s.SessionID})
 		}
 	}
@@ -680,7 +692,7 @@ func (m *Manager) onSnapshot(data json.RawMessage) {
 	if s.AmbientState == "idle" && wasRunning && !prev.workingSince.IsZero() {
 		ran := m.now().Sub(prev.workingSince)
 		m.states[s.SessionID] = sessionState{ambient: s.AmbientState} // run is over
-		m.notify(Event{Kind: KindFinished, Title: name + " finished",
+		m.notify(Event{Kind: KindFinished, Title: name + " landed",
 			Body: "Ran for " + humanDur(ran), Detail: clip(lastAssistantText(s.Conversation)),
 			SessionID: s.SessionID, RanFor: ran})
 	}

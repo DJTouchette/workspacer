@@ -486,7 +486,7 @@ var snapshotFieldsRequired = []string{
 // be read by mobile.html (prune when the client stops using them).
 var snapshotFieldsDeclined = map[string]string{
 	"conversation": "turn-by-turn transcript lives in claudemon's /conversation endpoint, not the session row; folding it into every snapshot/publish would ship whole transcripts per state tick — mobile fetches it on demand via sessions.conversation instead",
-	"liveCwd":      "statusline-derived live cwd is a desktop enrichment; clients fall back to cwd (mobile agentName: liveCwd || cwd)",
+	"liveCwd":      "statusline-derived live cwd is a desktop enrichment; clients fall back to cwd (mobile agentPath: liveCwd || cwd). NOTE: mobile's card TITLE is deliberately cwd-only — liveCwd follows an agent into a worktree, and titling from it renamed a running card mid-dispatch",
 }
 
 // TestCompatSnapshotCoversMobileFields cross-checks the field names the mobile
@@ -530,6 +530,39 @@ func TestCompatSnapshotCoversMobileFields(t *testing.T) {
 	for _, k := range []string{"model", "contextTokens", "contextLimit", "costUSD"} {
 		if _, ok := u[k]; !ok {
 			t.Errorf("usage overlay missing %q (mobile ctxPct/fleetCard read it)", k)
+		}
+	}
+}
+
+// nestingFieldsRequired are the spawn-metadata fields the /m client renders the
+// FLEET HIERARCHY from: the manager card, its MANAGER chip, and the crew rail
+// of workers nested beneath it (mobile.html fleetRoster / isManager / agentName).
+// They ride enrichSnapshot, not compatSnapshot, so they need their own guard —
+// without one, a brain that stopped enriching would flatten the phone's fleet
+// back into an undifferentiated list with no test saying so.
+var nestingFieldsRequired = []string{
+	"parentSessionId", // who dispatched this worker → the crew it renders in
+	"isSupervisor",    // manager/supervisor → the MANAGER chip and the group anchor
+	"label",           // the STATIC card title: the task the worker was dispatched with
+}
+
+func TestEnrichSnapshotCoversMobileNestingFields(t *testing.T) {
+	data := mustReadRepoFile(t, "services", "hub", "cmd", "hub", "mobile.html")
+	mobile := string(data)
+
+	meta := newMetaStore()
+	meta.set("w1", spawnMeta{Label: "proj: a task", ParentSessionID: "mgr", IsSupervisor: true})
+	var m map[string]any
+	enriched := enrichSnapshot(json.RawMessage(`{"session_id":"w1","cwd":"/tmp"}`), meta)
+	if err := json.Unmarshal(enriched, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range nestingFieldsRequired {
+		if !strings.Contains(mobile, field) {
+			t.Errorf("nestingFieldsRequired lists %q but mobile.html no longer reads it — prune the entry", field)
+		}
+		if _, ok := m[field]; !ok {
+			t.Errorf("mobile nests the fleet on %q but enrichSnapshot doesn't emit it", field)
 		}
 	}
 }
