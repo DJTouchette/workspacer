@@ -679,7 +679,10 @@ class ClaudeSessionStore {
 
     // Event-driven supervisor wake: when this agent just entered a real decision
     // point (approval or question), nudge any supervisor so it surfaces it now
-    // rather than on its next poll. No-op when no supervisor is running.
+    // rather than on its next poll. No-op when no supervisor is running. The
+    // nudge itself is debounced (supervisorNudge.BLOCK_DEBOUNCE_MS) — most
+    // blocks clear on their own within seconds, so onBlockCleared on the
+    // matching un-block edge below is what makes that debounce work.
     const isBlocked = (s: SessionAmbientState) => s === 'waiting_approval' || s === 'waiting_input';
     if (isBlocked(session.ambientState) && !isBlocked(prevAmbient)) {
       supervisorNudge.onBlock(
@@ -687,6 +690,8 @@ class ClaudeSessionStore {
         session.pendingApproval ? 'approval' : 'question',
         this.supervisorSessionIds(),
       );
+    } else if (!isBlocked(session.ambientState) && isBlocked(prevAmbient)) {
+      supervisorNudge.onBlockCleared(session.sessionId);
     }
 
     this.mergeWatcherData(session);
@@ -775,6 +780,8 @@ class ClaudeSessionStore {
           next === 'waiting_approval' ? 'approval' : 'question',
           this.supervisorSessionIds(),
         );
+      } else if (!isBlocked(next) && isBlocked(prevAmbient)) {
+        supervisorNudge.onBlockCleared(session.sessionId);
       }
     }
     this.pushUpdate(session);

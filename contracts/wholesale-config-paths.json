@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "Config subtrees replaced WHOLESALE on save instead of deep-merged.",
+    "",
+    "These are all user-owned MAPS whose keys can be deleted (ui.customThemes,",
+    "claude.budgets, projects). A deep merge can only ever add or overwrite keys,",
+    "so under one a removed entry comes straight back — the caller therefore",
+    "sends the entire surviving map and the writer takes it as the whole truth.",
+    "",
+    "This list used to be two hand-kept copies on the TypeScript side alone",
+    "(configService.saveConfig and the renderer's configPatch, which trims a save",
+    "down to what changed) and they drifted: `projects` was wholesale in one and",
+    "trimmed in the other, so saving one project's icon shipped a one-entry map",
+    "that main took as the whole truth — every other project lost its identity",
+    "(fixed 2026-08-14, commit c4963a73, unifying the TS side onto",
+    "apps/desktop/src/main/shared/configWholesale.ts).",
+    "",
+    "That fix never reached the Go brain, which answers config.save for every",
+    "bus caller (web, mobile, and every MCP save_config call — an agent's writes",
+    "ALWAYS go through the brain, never the desktop's in-process path). The brain",
+    "hand-special-cased only ui.customThemes and claude.budgets, so a project",
+    "delete sent over MCP silently failed to delete: safe (nothing is lost), but",
+    "a real cross-language disagreement about what config.save clears. This",
+    "fixture is what keeps the next entry from drifting the same way again.",
+    "",
+    "THE RULE for adding a path here: a value belongs on this list when it is a",
+    "user-owned map whose keys the user can individually delete, and 'the caller",
+    "resends everything they want kept' is how that delete is expressed. A plain",
+    "scalar or a map nobody deletes entries from does not belong here — it merges",
+    "normally."
+  ],
+  "paths": ["ui.customThemes", "claude.budgets", "projects"]
+}
