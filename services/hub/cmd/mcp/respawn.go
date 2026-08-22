@@ -174,10 +174,16 @@ func addRespawnTool(b *build) {
 			// would, so an ungranted caller's clone starts with approvals on
 			// even if the original ran bypassed. Live mode wins over the
 			// spawn-time one — it is what the worker was actually running at.
-			if permissionModeMeansBypass(firstNonEmpty(snap.LivePermissionMode, snap.Settings.PermissionMode)) {
-				yes := true
-				spawn.SkipPermissions = &yes
-			}
+			//
+			// Always EXPLICIT, both ways. Leaving the field nil for a
+			// non-bypassed original would hand it to spawnWithGrants' omitted
+			// path, where a granted caller's full-access grant (or the config
+			// default) would resolve it to true — silently upgrading a worker
+			// that deliberately ran with approvals ON. respawn_with clones the
+			// original; it does not re-decide this.
+			bypassed := permissionModeMeansBypass(
+				firstNonEmpty(snap.LivePermissionMode, snap.Settings.PermissionMode))
+			spawn.SkipPermissions = &bypassed
 
 			res, _, err := spawnWithGrants(ctx, b, spawnMethod, spawn)
 			if err != nil {

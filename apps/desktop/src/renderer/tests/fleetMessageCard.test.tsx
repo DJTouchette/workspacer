@@ -5,7 +5,7 @@
  * per-worker rows with a session chip and a collapsed last-reply, and leaves
  * every other user message on the raw-bubble path.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { ConversationMessage } from '../src/components/claude/ConversationMessage';
 import { buildFleetMessage } from '../../main/shared/fleetMessages';
@@ -92,5 +92,28 @@ describe('<ConversationMessage> fleet wake cards', () => {
     render(<ConversationMessage turn={turn('Worker finished the [fleet] job, nice')} />);
     expect(screen.getByText('Worker finished the [fleet] job, nice')).toBeTruthy();
     expect(screen.queryByText(/session:/)).toBeNull();
+  });
+
+  it('a Reply click on an entry hands the parent that entry, not another one in a multi-entry wake', () => {
+    const text = buildFleetMessage('worker-finished', [
+      { label: 'alpha: fix tests', sessionId: 'w1', cwd: '/home/u/Work/alpha' },
+      { label: 'beta: ship', sessionId: 'w2', cwd: '/home/u/Work/beta' },
+    ]);
+    const onReply = vi.fn();
+    render(<ConversationMessage turn={turn(text)} onReply={onReply} />);
+
+    fireEvent.click(screen.getByTitle(/Reply to beta: ship/));
+    expect(onReply).toHaveBeenCalledTimes(1);
+    expect(onReply).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'w2', label: 'beta: ship' }),
+    );
+  });
+
+  it('renders no Reply affordance when the parent does not wire onReply', () => {
+    const text = buildFleetMessage('worker-finished', [
+      { label: 'alpha: fix tests', sessionId: 'w1', cwd: '/home/u/Work/alpha' },
+    ]);
+    render(<ConversationMessage turn={turn(text)} />);
+    expect(screen.queryByTitle(/Reply to/)).toBeNull();
   });
 });

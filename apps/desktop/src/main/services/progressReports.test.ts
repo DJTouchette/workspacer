@@ -7,7 +7,13 @@
  * prevent).
  */
 import { describe, it, expect, vi } from 'vitest';
-import { ProgressReports, flattenNote, NOTE_MAX, MIN_INTERVAL_MS, MAX_REPORTS } from './progressReports';
+import {
+  ProgressReports,
+  flattenNote,
+  NOTE_MAX,
+  MIN_INTERVAL_MS,
+  MAX_REPORTS,
+} from './progressReports';
 import { parseFleetMessage } from '../shared/fleetMessages';
 
 const session = (over: Partial<Record<string, unknown>> = {}) => ({
@@ -125,9 +131,9 @@ describe('ProgressReports.report', () => {
   it('refuses a second identical note in a row without delivering it again', async () => {
     const { deliver, reports } = rig([session(), mgr()]);
     await reports.report({ callerSessionId: 'w1', note: 'same note' }, 0);
-    await expect(reports.report({ callerSessionId: 'w1', note: 'same note' }, 1000)).rejects.toThrow(
-      /NOT delivered again/,
-    );
+    await expect(
+      reports.report({ callerSessionId: 'w1', note: 'same note' }, 1000),
+    ).rejects.toThrow(/NOT delivered again/);
     expect(deliver).toHaveBeenCalledTimes(1);
   });
 

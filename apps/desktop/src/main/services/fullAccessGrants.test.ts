@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   dir: '',
   config: {} as Record<string, unknown>,
   listeners: [] as Array<(cfg: unknown) => void>,
+  posted: [] as Array<Record<string, unknown>>,
 }));
 // One mock serves both importers: remoteTokens (getConfigDir → the temp token
 // file) and fullAccessGrants (getConfig / onChange → the mutable test config).
@@ -17,6 +18,14 @@ vi.mock('./configService', () => ({
     onChange: (cb: (cfg: unknown) => void) => {
       h.listeners.push(cb);
       return () => {};
+    },
+  },
+}));
+
+vi.mock('./agentNotifier', () => ({
+  agentNotifier: {
+    postInApp: (n: Record<string, unknown>) => {
+      h.posted.push(n);
     },
   },
 }));
@@ -37,6 +46,7 @@ const rawTokens = () =>
 beforeEach(() => {
   h.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-fullaccess-'));
   h.config = {};
+  h.posted = [];
 });
 
 afterEach(() => {
@@ -128,5 +138,55 @@ describe('config flip → live token update', () => {
     h.config = { projects: { '/repo': { yolo: true } } };
     for (const cb of h.listeners) cb(h.config);
     expect(rawTokens().find((r) => r.token === mgr.token)).toMatchObject({ yoloAllowed: true });
+  });
+});
+
+describe('telling the user what a flip did and did NOT do', () => {
+  const mgr = () =>
+    mintSessionFacadeToken('mgr-1', 'operator', undefined, ['default'], true, 'manager');
+
+  it("announces only when a LIVE session's grant actually moved", () => {
+    // No role-tagged token at all: toggling the flag is not news.
+    h.config = { agents: { fleetFullAccess: true } };
+    reconcileFullAccessGrants(true);
+    expect(h.posted).toHaveLength(0);
+
+    mgr();
+    // Already in line → still nothing.
+    reconcileFullAccessGrants(true);
+    expect(h.posted).toHaveLength(0);
+
+    h.config = {};
+    reconcileFullAccessGrants(true);
+    expect(h.posted).toHaveLength(1);
+  });
+
+  it('the boot reconcile stays silent — catching up on a closed-app flip is not news', () => {
+    mgr();
+    h.config = {};
+    expect(reconcileFullAccessGrants()).toBe(1);
+    expect(h.posted).toHaveLength(0);
+  });
+
+  it("says both halves: dispatches change live, the session's own bypass does not", () => {
+    mgr();
+    h.config = {};
+    reconcileFullAccessGrants(true);
+
+    const off = h.posted[0];
+    expect(off.sessionId).toBe('mgr-1');
+    expect(off.title).toContain('Fleet Manager');
+    // The whole point of the notice: the part that CANNOT apply live.
+    expect(String(off.body)).toMatch(/respawn/i);
+
+    h.config = { agents: { fleetFullAccess: true } };
+    reconcileFullAccessGrants(true);
+    const on = h.posted[1];
+    expect(String(on.title)).toContain('on');
+    expect(String(on.body)).toMatch(/dispatch/i);
+    expect(String(on.body)).toMatch(/respawn/i);
+    // Same key both ways, so flipping back and forth replaces rather than
+    // stacking contradictory notes.
+    expect(on.key).toBe(off.key);
   });
 });

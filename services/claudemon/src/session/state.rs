@@ -1148,7 +1148,10 @@ mod tests {
         // The registration half: while this said `false` the hook was never
         // written into ~/.claude/settings.json and a PTY session's permission
         // prompt produced no approvable record at all.
-        assert_eq!(fixture.hook_event_name, HookEventKind::PermissionRequest.as_str());
+        assert_eq!(
+            fixture.hook_event_name,
+            HookEventKind::PermissionRequest.as_str()
+        );
         assert_eq!(
             fixture.registerable,
             HookEventKind::REGISTERABLE.contains(&HookEventKind::PermissionRequest),
@@ -1163,11 +1166,24 @@ mod tests {
                 case.payload.clone(),
             ));
 
-            assert_eq!(state.mode, case.claudemon.mode, "mode for case {:?}", case.name);
+            assert_eq!(
+                state.mode, case.claudemon.mode,
+                "mode for case {:?}",
+                case.name
+            );
             match state.pending.as_ref() {
                 Some(Pending::Approval { tool, summary, raw }) => {
-                    assert_eq!(case.claudemon.pending_kind, "approval", "case {:?}", case.name);
-                    assert_eq!(tool.as_deref(), case.claudemon.tool.as_deref(), "tool for case {:?}", case.name);
+                    assert_eq!(
+                        case.claudemon.pending_kind, "approval",
+                        "case {:?}",
+                        case.name
+                    );
+                    assert_eq!(
+                        tool.as_deref(),
+                        case.claudemon.tool.as_deref(),
+                        "tool for case {:?}",
+                        case.name
+                    );
                     assert_eq!(
                         summary.as_deref(),
                         case.claudemon.summary.as_deref(),
@@ -1178,7 +1194,10 @@ mod tests {
                     // survive the fold verbatim rather than being summarized away.
                     assert_eq!(raw, &case.payload, "raw for case {:?}", case.name);
                 }
-                other => panic!("expected Pending::Approval for case {:?}, got {:?}", case.name, other),
+                other => panic!(
+                    "expected Pending::Approval for case {:?}, got {:?}",
+                    case.name, other
+                ),
             }
         }
     }

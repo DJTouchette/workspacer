@@ -47,6 +47,24 @@ func (s *metaStore) get(id string) (spawnMeta, bool) {
 	return meta, ok
 }
 
+// fleetSenderHeader is the "[fleet] session:<id> (<label>) says:\n" prefix
+// registry.sendMessage stamps onto a message whose caller named itself (see
+// handlers.go). Label comes from the same spawn-metadata source enrichSnapshot
+// reads; a session enrichment never recorded a label for is still named by id
+// alone rather than going unattributed.
+func fleetSenderHeader(meta *metaStore, sessionID string) string {
+	label := ""
+	if meta != nil {
+		if sm, ok := meta.get(sessionID); ok {
+			label = sm.Label
+		}
+	}
+	if label != "" {
+		return "[fleet] session:" + sessionID + " (" + label + ") says:\n"
+	}
+	return "[fleet] session:" + sessionID + " says:\n"
+}
+
 // namesByCwd reads the persisted cwd→name renames. Empty on any problem (names
 // are a convenience, never load-bearing — matching the TUI).
 func namesByCwd() map[string]string {
@@ -125,6 +143,17 @@ func toolInputOf(raw any) any {
 		}
 	}
 	return raw
+}
+
+// enrichAndCompat composes enrichSnapshot + compatSnapshot in the one order
+// callers need: label/parentSessionId/isSupervisor overlaid before the
+// desktop-shape fields, since compatSnapshot's own overlay doesn't touch
+// them. The ONE place both applications happen — the live session store
+// (main.go's store.enrich) and the sessions.snapshot fallback for a session
+// the store doesn't hold — so a fallback path can no longer drift from the
+// main one by calling compatSnapshot alone.
+func enrichAndCompat(snap json.RawMessage, meta *metaStore) json.RawMessage {
+	return compatSnapshot(enrichSnapshot(snap, meta))
 }
 
 func compatSnapshot(snap json.RawMessage) json.RawMessage {

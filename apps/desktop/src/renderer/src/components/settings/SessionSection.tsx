@@ -2,6 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { Config } from '../../hooks/useConfig';
 import { Check, X } from 'lucide-react';
 import {
+  PERMISSION_MODE_DEFAULTS,
+  currentPermissionModeDefault,
+  permissionModeDefaultPatch,
+} from '../../lib/permissionDefaults';
+import {
   Section,
   CheckRow,
   Row,
@@ -179,6 +184,14 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
   };
   const saveKeepWarm = (patch: Partial<typeof keepWarm>) =>
     save({ claude: { ...config.claude, defaultView, keepWarm: { ...keepWarm, ...patch } } });
+
+  // The spawn-time permission default. Two config keys, one control — both are
+  // written together so they can never contradict (see lib/permissionDefaults).
+  const permissionMode = currentPermissionModeDefault(config.claude);
+  const savePermissionMode = (mode: string) =>
+    save({
+      claude: { ...config.claude, defaultView, ...permissionModeDefaultPatch(mode) },
+    });
 
   // Recent keep-warm heartbeats from claudemon's log (the "warms" list).
   const [heartbeats, setHeartbeats] = useState<
@@ -402,6 +415,27 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         How new Claude sessions run. Terminal (PTY) is the classic Claude Code TUI with both Term
         and GUI views. Headless (stream) runs Claude via claudemon's stream-json adapter — the
         structured GUI only, no terminal view. Overridable per spawn in the spawn dialog.
+      </div>
+
+      <Row label="Default permission mode">
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          {PERMISSION_MODE_DEFAULTS.map((m) => (
+            <ModeButton
+              key={m.value || 'default'}
+              label={m.label}
+              active={permissionMode === m.value}
+              onClick={() => savePermissionMode(m.value)}
+            />
+          ))}
+        </div>
+      </Row>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        What a NEW agent starts in — the spawn dialog pre-selects it, and agents dispatched by the
+        Fleet Manager or the supervisor inherit it when they do not ask for a mode themselves.{' '}
+        <strong>Full access</strong> means no per-action approval prompts at all: fast and
+        hands-off, with no human gate on each command. Applies to newly spawned sessions only —
+        running agents keep the mode they were started with (switch a live one from its pane’s
+        permission pill).
       </div>
 
       <CheckRow

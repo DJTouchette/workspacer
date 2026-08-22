@@ -271,9 +271,14 @@ export interface Config {
     showFileReads?: boolean;
     /** Concrete model ids seen across sessions, surfaced in the spawn dropdown. */
     seenModels?: string[];
-    /** Permission mode pre-selected in the spawn dialog, remembered from the
-     *  last spawn ('' = provider default). */
+    /** Permission mode pre-selected in the spawn dialog ('' = provider
+     *  default, i.e. "Ask to approve"). Set from Settings → Session; also what
+     *  the hub facade resolves an OMITTED spawn_agent skipPermissions from. */
     defaultPermissionMode?: string;
+    /** The bypass spelling of defaultPermissionMode: true ⇒ new agents start
+     *  with `--dangerously-skip-permissions`. Settings writes the two together
+     *  (see SessionSection) so they can never contradict. */
+    skipPermissionsDefault?: boolean;
     /** How new Claude sessions run: 'pty' (classic Claude Code TUI — Term +
      *  GUI) or 'stream' (headless stream-json via claudemon's managed adapter —
      *  GUI only). Per-spawn overridable in the spawn dialog. Default 'stream'. */

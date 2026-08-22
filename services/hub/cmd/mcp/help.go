@@ -59,11 +59,14 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
   tier that works: toolScope "view" for summarizer/reader workers, "triage" to
   also approve/reply/interrupt, "operator" for everything (spawning included).
   mcpFacade:true is the legacy spelling of operator.
-- skipPermissions omitted = the workspacer config default (the same one the
-  desktop spawn dialog pre-selects: claude.skipPermissionsDefault, or a bypass
-  defaultPermissionMode); an explicit true/false always wins. Requested or
-  defaulted, a bypass is honored only when your session token carries the
-  full-access grant — ungranted spawns start with approvals on.
+- skipPermissions omitted = bypass if your session carries the full-access
+  grant (the operator turned on full access for the fleet/supervisor, which
+  means the agents you dispatch skip approvals), else the workspacer config
+  default (the same one the desktop spawn dialog pre-selects:
+  claude.skipPermissionsDefault, or a bypass defaultPermissionMode). An
+  explicit true/false always wins — pass false to dispatch ONE worker with
+  approvals on. Requested or defaulted, a bypass is honored only when your
+  session token carries the grant — ungranted spawns start with approvals on.
 - resultSchema (optional) asks the worker for a MACHINE-READABLE report as well
   as its prose: pass a JSON Schema and the worker is told to end its final
   message with a fenced wks-result block matching it, which arrives back on your

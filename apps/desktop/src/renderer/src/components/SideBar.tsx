@@ -795,11 +795,14 @@ const SideBar: React.FC<SideBarProps> = ({
           </div>
         )}
 
-        {/* Render agents with nested children beneath their parent.
-            Strategy: any agent with a parentId that resolves to a known agent's
-            id is rendered indented below that parent. Top-level agents are those
-            with no parentId, or whose parentId doesn't resolve (fallback so
-            nothing disappears). Children are NOT rendered again at top level. */}
+        {/* Render agents with nested descendants beneath their top-most ancestor.
+            Strategy mirrors the mobile PWA's fleetRoster(): any agent whose
+            parentId chain resolves to a known top-level agent is rendered
+            indented below that agent, however many hops away (a grandchild
+            joins its manager's crew rather than nesting under its immediate
+            parent). Top-level agents are those with no parentId, or whose
+            parentId doesn't resolve (fallback so nothing disappears).
+            Descendants are NOT rendered again at top level. */}
         {(() => {
           // Apply the name/provider filter (nav rows like Overview always shown).
           const q = filter.trim().toLowerCase();
@@ -813,16 +816,34 @@ const SideBar: React.FC<SideBarProps> = ({
             : agents;
           // Build a set of all known agent ids for fast parent-resolution checks.
           const agentIds = new Set(shown.map((a) => a.id));
-          // Build a lookup: parentId → child agents (any kind with a resolvable parentId).
+          const shownById = new Map(shown.map((a) => [a.id, a]));
+          // A worker dispatched by a worker (a grandchild of the manager) still
+          // needs a home. Mirror the mobile PWA's fleetRoster(): walk the
+          // parentId chain to the top-most resolvable ancestor and attach the
+          // whole chain there, flat, rather than nesting a third level or
+          // dropping it because its immediate parent isn't top-level. Bounded
+          // hop count guards a parentId cycle (or a snapshot naming itself).
+          const rootOf = (agent: (typeof agents)[0]): (typeof agents)[0] => {
+            let cur = agent;
+            for (let hops = 0; hops < 16; hops++) {
+              const pid = cur.parentId;
+              if (!pid || pid === cur.id || !agentIds.has(pid)) return cur;
+              cur = shownById.get(pid)!;
+            }
+            return cur;
+          };
+          // Build a lookup: root agent id → every descendant (children AND
+          // grandchildren+), any kind with a resolvable parentId.
           const childrenByParent = new Map<string, typeof agents>();
           const topLevel: typeof agents = [];
           for (const agent of shown) {
-            if (agent.parentId && agentIds.has(agent.parentId)) {
-              const bucket = childrenByParent.get(agent.parentId) ?? [];
-              bucket.push(agent);
-              childrenByParent.set(agent.parentId, bucket);
-            } else {
+            const root = rootOf(agent);
+            if (root === agent) {
               topLevel.push(agent);
+            } else {
+              const bucket = childrenByParent.get(root.id) ?? [];
+              bucket.push(agent);
+              childrenByParent.set(root.id, bucket);
             }
           }
 

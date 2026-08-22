@@ -6,7 +6,7 @@ import { CopyTextButton } from './CopyTextButton';
 import { MessageImages } from './MessageImages';
 import { FleetMessageCard } from './FleetMessageCard';
 import { extractImageAttachments, imagePathsInText } from '../../lib/messageImages';
-import { parseFleetMessage } from '../../../../main/shared/fleetMessages';
+import { parseFleetMessage, type FleetMessageEntry } from '../../../../main/shared/fleetMessages';
 import { Clock } from 'lucide-react';
 
 /** "14:32" (locale 24h/12h per system) for a turn's ms timestamp; '' if unset. */
@@ -77,7 +77,10 @@ const ConversationMessageInner: React.FC<{
   pending?: PendingState;
   /** Session cwd — resolves a relative image path mentioned in the message. */
   cwd?: string;
-}> = ({ turn, showTimestamp, pending, cwd }) => {
+  /** Prefixes the composer with `Re: session:<id> (label) — ` for a fleet
+   *  wake entry. Only fleet-wake user turns render a Reply affordance. */
+  onReply?: (entry: FleetMessageEntry) => void;
+}> = ({ turn, showTimestamp, pending, cwd, onReply }) => {
   const isUser = turn.role === 'user';
   // System-injected fleet/supervisor wakes arrive as plain user turns (the
   // /message endpoint has no metadata channel) — recognize them and render a
@@ -114,6 +117,7 @@ const ConversationMessageInner: React.FC<{
         message={fleetMessage}
         timestamp={turn.timestamp}
         showTimestamp={showTimestamp}
+        onReply={onReply}
       />
     );
   }

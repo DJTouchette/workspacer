@@ -1199,8 +1199,7 @@ mod tests {
     /// against the same fixture the TypeScript reader's test loads.
     #[test]
     fn error_marker_matches_the_cross_language_contract() {
-        const FIXTURE: &str =
-            include_str!("../../../../contracts/agent-error-marker-cases.json");
+        const FIXTURE: &str = include_str!("../../../../contracts/agent-error-marker-cases.json");
         let spec: serde_json::Value =
             serde_json::from_str(FIXTURE).expect("agent-error-marker-cases.json parses");
         let marker = spec["marker"].as_str().expect("fixture has a marker");

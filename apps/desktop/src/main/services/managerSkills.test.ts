@@ -78,7 +78,7 @@ describe('installManagerSkills', () => {
     expect(handoff).toContain('HANDOFF PENDING');
     // The verified wake truth: finish wakes route to the worker's PARENT
     // session, which the successor is not — so it reconciles ids once itself.
-    expect(handoff).toContain('routed to a worker\'s PARENT SESSION');
+    expect(handoff).toContain("routed to a worker's PARENT SESSION");
     expect(handoff).toContain('exception to NEVER POLL');
     // And the verified spawn truth: no role-less auto-successor, ever.
     expect(handoff).toContain('You cannot start the successor');
