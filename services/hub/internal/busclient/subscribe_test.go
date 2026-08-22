@@ -59,7 +59,13 @@ func startHub(t *testing.T, ln net.Listener) func() {
 	}
 }
 
-// publishOnce dials the hub as a separate trusted client and publishes one event.
+// publishOnce dials the hub as a separate trusted client and publishes one
+// event. It reads the hub's hello frame before writing: the hub sends it the
+// instant its per-connection read loop is up, so waiting for it proves the
+// publish below lands on a goroutine that's actually reading, instead of
+// racing the still-in-progress connection setup on the other end (a real gap
+// on a loaded Windows runner — a brand-new connection dialed and torn down
+// immediately after one write has no guarantee the server side got that far).
 func publishOnce(t *testing.T, ctx context.Context, busURL, topic, data string) {
 	t.Helper()
 	conn, _, err := websocket.Dial(ctx, busURL, nil)
@@ -67,6 +73,9 @@ func publishOnce(t *testing.T, ctx context.Context, busURL, topic, data string) 
 		t.Fatalf("publisher dial: %v", err)
 	}
 	defer conn.CloseNow()
+	if _, _, err := conn.Read(ctx); err != nil {
+		t.Fatalf("publisher hello: %v", err)
+	}
 	ev := event.New(topic, "test", json.RawMessage(data))
 	out, _ := json.Marshal(map[string]any{"op": "publish", "event": ev})
 	if err := conn.Write(ctx, websocket.MessageText, out); err != nil {
