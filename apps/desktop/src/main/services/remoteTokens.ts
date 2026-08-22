@@ -144,22 +144,38 @@ export type SessionTokenRole = 'manager' | 'supervisor';
  * the live apply: flipping a flag re-grants or REVOKES running managers'/
  * supervisors' dispatch bypass immediately, no respawn. Only session tokens
  * with a role are touched — remote pairings and plain facade workers never
- * carried the grant vocabulary and are left alone. Returns how many records
- * changed.
+ * carried the grant vocabulary and are left alone. Returns one entry per record
+ * that actually CHANGED — a live session whose dispatch bypass just appeared or
+ * vanished, which is exactly the set worth telling the user about (see
+ * fullAccessGrants' announce step); an empty array means the flip touched
+ * nothing live.
  */
-export function reconcileSessionFacadeGrants(desired: Record<SessionTokenRole, boolean>): number {
+export interface SessionGrantFlip {
+  sessionId: string;
+  role: SessionTokenRole;
+  /** The grant the record now holds. */
+  yoloAllowed: boolean;
+}
+
+export function reconcileSessionFacadeGrants(
+  desired: Record<SessionTokenRole, boolean>,
+): SessionGrantFlip[] {
   const records = readTokens();
-  let changed = 0;
+  const flips: SessionGrantFlip[] = [];
   const next = records.map((r) => {
     if (!isSessionToken(r) || !r.role) return r;
     const want = desired[r.role];
     if (want === (r.yoloAllowed === true)) return r;
-    changed++;
+    flips.push({
+      sessionId: r.label.slice(SESSION_LABEL_PREFIX.length),
+      role: r.role,
+      yoloAllowed: want,
+    });
     const { yoloAllowed: _dropped, ...rest } = r;
     return want ? { ...rest, yoloAllowed: true as const } : rest;
   });
-  if (changed) writeTokens(next);
-  return changed;
+  if (flips.length) writeTokens(next);
+  return flips;
 }
 
 /**

@@ -14,8 +14,13 @@
  *     to RUNNING managers/supervisors immediately, in both directions
  *     (granting and revoking), no respawn needed.
  */
+import { agentNotifier } from './agentNotifier';
 import { configService } from './configService';
-import { reconcileSessionFacadeGrants, type SessionTokenRole } from './remoteTokens';
+import {
+  reconcileSessionFacadeGrants,
+  type SessionGrantFlip,
+  type SessionTokenRole,
+} from './remoteTokens';
 
 /**
  * Whether the Fleet Manager's token should carry the full-access grant: global
@@ -46,15 +51,66 @@ export function desiredSessionGrants(): Record<SessionTokenRole, boolean> {
 /**
  * One-shot reconcile of every role-tagged session token against current
  * config. Returns how many token records changed.
+ *
+ * `announce` posts a notification for each live session whose grant actually
+ * moved — see announceGrantFlips for why. Off for the boot reconcile: catching
+ * up a flag flipped while the desktop was closed is not news.
  */
-export function reconcileFullAccessGrants(): number {
-  const n = reconcileSessionFacadeGrants(desiredSessionGrants());
-  if (n) {
+export function reconcileFullAccessGrants(announce = false): number {
+  const flips = reconcileSessionFacadeGrants(desiredSessionGrants());
+  if (flips.length) {
     console.log(
-      `[fullAccessGrants] reconciled ${n} session token grant(s) with config full-access flags`,
+      `[fullAccessGrants] reconciled ${flips.length} session token grant(s) with config full-access flags`,
     );
+    if (announce) announceGrantFlips(flips);
   }
-  return n;
+  return flips.length;
+}
+
+const ROLE_LABEL: Record<SessionTokenRole, string> = {
+  manager: 'Fleet Manager',
+  supervisor: 'Supervisor',
+};
+
+/**
+ * Say out loud what a full-access flip did and — just as importantly — what it
+ * did NOT do.
+ *
+ * Half of this setting applies live and half cannot, and silently doing nothing
+ * visible is what made the whole thing undiagnosable. What IS live: the facade
+ * re-reads the token record per request, so the agents a running manager
+ * dispatches from now on are judged under the new grant immediately (and with
+ * the grant now ADDING the bypass, that is the whole fix). What can NEVER be
+ * live: a session's own permission bypass is fixed at spawn and minted into its
+ * process, so the manager's own tool calls keep whatever mode it was started
+ * with until it is respawned.
+ *
+ * Deliberately a NOTIFICATION, not an automatic respawn. Respawning a live
+ * manager mid-fleet would drop the conversation that knows what every worker
+ * was dispatched to do — a far more expensive surprise than a prompt. The
+ * notification carries the manager's sessionId, so clicking it selects that
+ * agent and the existing respawn control on its card is one click away: the
+ * respawn is OFFERED, and stays the user's decision.
+ *
+ * Only records that actually changed are announced, so toggling the flag with
+ * no manager running says nothing.
+ */
+function announceGrantFlips(flips: SessionGrantFlip[]): void {
+  for (const flip of flips) {
+    const who = ROLE_LABEL[flip.role];
+    agentNotifier.postInApp({
+      // Keyed per session+role: flipping back and forth replaces the earlier
+      // note instead of stacking a pile of contradictory ones.
+      key: `full-access:${flip.role}:${flip.sessionId}`,
+      level: 'info',
+      source: 'system',
+      sessionId: flip.sessionId,
+      title: flip.yoloAllowed ? `Full access on for the ${who}` : `Full access off for the ${who}`,
+      body: flip.yoloAllowed
+        ? `Agents it dispatches from now on skip approval prompts. Its own tool calls do not — a session's bypass is fixed when it spawns. Open it and respawn if you want the ${who} itself running with full access.`
+        : `Agents it dispatches from now on ask for approval again. Workers already running keep the mode they started with, and so does the ${who}'s own session until it is respawned.`,
+    });
+  }
 }
 
 let started = false;
@@ -71,7 +127,9 @@ export function startFullAccessGrantSync(): void {
   started = true;
   configService.onChange(() => {
     try {
-      reconcileFullAccessGrants();
+      // announce: a flip from here is something the user just did (or a writer
+      // did on their behalf), so the half that cannot apply live must be said.
+      reconcileFullAccessGrants(true);
     } catch (err) {
       console.error('[fullAccessGrants] grant reconcile failed:', err);
     }

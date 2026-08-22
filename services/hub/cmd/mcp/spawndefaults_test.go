@@ -108,16 +108,56 @@ func TestSpawnAgentConfigDefaultIsClampedAndLoggedForAnUngrantedSession(t *testi
 	}
 }
 
-// TestSpawnAgentOmittedSkipWithDefaultOffStaysOff: default off + omitted field
-// → approvals on, and still an explicit false on the wire.
-func TestSpawnAgentOmittedSkipWithDefaultOffStaysOff(t *testing.T) {
+// TestSpawnAgentOmittedSkipWithDefaultOffStaysOffWithoutTheGrant: default off +
+// omitted field + no grant → approvals on, and still an explicit false on the
+// wire.
+func TestSpawnAgentOmittedSkipWithDefaultOffStaysOffWithoutTheGrant(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	cs := spawnDefaultsSession(t, ctx, false, map[string]any{"skipPermissionsDefault": false})
+	params := spawnEchoParams(t, ctx, cs, map[string]any{"cwd": "/tmp"})
+	if v, present := params["skipPermissions"]; !present || v != false {
+		t.Fatalf("default off, no grant: omitted skipPermissions must forward explicit false, got present=%v value=%v", present, v)
+	}
+}
+
+// TestSpawnAgentGrantAddsTheBypassToAnOmittedField: THE gap-#2 behaviour. The
+// full-access grant exists only because config says the manager/supervisor's
+// dispatched agents skip approvals (agents.fleetFullAccess / a per-project yolo
+// / supervisor.fullAccess), so a granted session that OMITS skipPermissions
+// gets the bypass — the grant ADDS it, it does not merely honor a caller that
+// happened to pass it. Before this, a manager dispatching without the magic
+// word watched every worker prompt on every Bash call with full access visibly
+// ON, and there was no way to tell from the outside why.
+//
+// Note the config here has the default OFF: the grant alone is enough.
+func TestSpawnAgentGrantAddsTheBypassToAnOmittedField(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	cs := spawnDefaultsSession(t, ctx, true, map[string]any{"skipPermissionsDefault": false})
 	params := spawnEchoParams(t, ctx, cs, map[string]any{"cwd": "/tmp"})
+	if params["skipPermissions"] != true {
+		t.Fatalf("granted session + omitted skipPermissions must resolve to true (the grant IS the operator's intent), got %v", params)
+	}
+	if params["yoloGranted"] != true {
+		t.Fatalf("hub did not stamp yoloGranted on the granted spawn: %v", params)
+	}
+}
+
+// TestSpawnAgentGrantDoesNotOverrideAnExplicitFalse: the grant fills in an
+// OMITTED field only. A manager that deliberately dispatches one worker with
+// approvals on — a worker about to touch something it should be gated on —
+// still gets what it asked for.
+func TestSpawnAgentGrantDoesNotOverrideAnExplicitFalse(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	cs := spawnDefaultsSession(t, ctx, true, map[string]any{"skipPermissionsDefault": false})
+	params := spawnEchoParams(t, ctx, cs, map[string]any{"cwd": "/tmp", "skipPermissions": false})
 	if v, present := params["skipPermissions"]; !present || v != false {
-		t.Fatalf("default off: omitted skipPermissions must forward explicit false, got present=%v value=%v", present, v)
+		t.Fatalf("explicit false must beat the grant, got present=%v value=%v", present, v)
 	}
 }
 

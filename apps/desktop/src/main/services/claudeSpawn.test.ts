@@ -94,7 +94,7 @@ vi.mock('./remoteTokens', () => ({
   mintSessionFacadeToken: (...a: unknown[]) => mintSessionFacadeToken(...a),
   // Imported by the REAL fullAccessGrants module (the config-resolved grant
   // formula under test); never called by a spawn.
-  reconcileSessionFacadeGrants: vi.fn(() => 0),
+  reconcileSessionFacadeGrants: vi.fn(() => []),
 }));
 
 const { spawnClaudeAgent } = await import('./claudeSpawn');
