@@ -65,6 +65,29 @@ describe('<ConversationMessage> fleet wake cards', () => {
     expect(screen.getByText('session:w2')).toBeTruthy();
   });
 
+  it('renders a worker progress update as its own face — never a completion', () => {
+    const text = buildFleetMessage('progress', [
+      {
+        label: 'rust: stream approvals',
+        sessionId: 'w9',
+        cwd: '/home/u/Work/wks',
+        note: 'Read most of claude_stream.rs; I have written no code yet.',
+        needsDecision: true,
+      },
+    ]);
+    render(<ConversationMessage turn={turn(text)} />);
+
+    expect(screen.getByText(/progress update/i)).toBeTruthy();
+    // The one thing this card must never look like.
+    expect(screen.queryByText(/worker finished/i)).toBeNull();
+    expect(screen.getByText('needs a decision')).toBeTruthy();
+    // The note is shown OPEN — no toggle to click.
+    expect(
+      screen.getByText('Read most of claude_stream.rs; I have written no code yet.'),
+    ).toBeTruthy();
+    expect(screen.queryByText('last reply')).toBeNull();
+  });
+
   it('leaves ordinary user text on the bubble path', () => {
     render(<ConversationMessage turn={turn('Worker finished the [fleet] job, nice')} />);
     expect(screen.getByText('Worker finished the [fleet] job, nice')).toBeTruthy();

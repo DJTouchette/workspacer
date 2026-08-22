@@ -15,7 +15,8 @@
  * so a bullet can never span lines.
  */
 
-export type FleetMessageKind = 'worker-finished' | 'catch-up' | 'blocked' | 'threshold';
+export type FleetMessageKind =
+  'worker-finished' | 'catch-up' | 'blocked' | 'threshold' | 'progress';
 
 export interface FleetMessageEntry {
   /** Worker label (or cwd-basename fallback). */
@@ -41,6 +42,18 @@ export interface FleetMessageEntry {
    *  250,000"). Present on 'threshold' entries — the answer to a notify_when
    *  the manager armed so it would never have to poll. Round-tripped. */
   crossed?: string;
+  /** A worker's OWN mid-task progress line, in its own words (flattened and
+   *  capped by the host before it gets here). Present on 'progress' entries —
+   *  the worker-initiated half that notify_when's host-side thresholds cannot
+   *  cover: "finished phase 1", "the approach you gave me is wrong", "I'm
+   *  reading more than I expected". Round-tripped, and rendered under its OWN
+   *  label ("reports:") rather than lastReply's, because the entry is not a
+   *  finish and must never read as one. Mutually exclusive with lastReply. */
+  note?: string;
+  /** The worker says it is BLOCKED on the manager's answer, not merely keeping
+   *  it informed. Only a rendering/urgency hint — the channel is one-way, and
+   *  the manager still replies with send_message. Round-tripped. */
+  needsDecision?: boolean;
   /** A worker's VALIDATED structured result (pretty-printed JSON), when its
    *  dispatch carried a `resultSchema` and the worker honored the contract.
    *  Rendered as its own block below the bullets — builder-side only, like
@@ -103,6 +116,13 @@ const HEADERS: Record<FleetMessageKind, string> = {
     '[fleet] Catch-up — these workers finished while you were idle and you may have missed the wake:',
   blocked: '[supervisor] An agent is now blocked on a decision:',
   threshold: '[fleet] A threshold you asked to be told about has been crossed:',
+  // Deliberately does NOT contain the word "finished", and says STILL RUNNING
+  // in the header itself: the one failure mode of an unsolicited worker
+  // self-report is a manager booking it as an outcome. The card face differs
+  // too (see FleetMessageCard) — but the header is what the manager AGENT
+  // reads, and it is the line that has to be unmistakable.
+  progress:
+    '[fleet] Progress update from a worker — it is STILL RUNNING; this is NOT a completion:',
 };
 
 /** ALTERNATE headers a kind may be delivered under, parsed back to the same
@@ -143,6 +163,14 @@ const TAILS: Record<FleetMessageKind, string> = {
     `one-shot, so nothing further will arrive unless you arm another. Decide: let it run, ` +
     `send_message it a narrowing instruction, or stop it (signal SIGTERM, then close_session) ` +
     `and redispatch surgically with respawn_with. Then STOP again — do not start polling.`,
+  progress:
+    `The worker sent this ITSELF, mid-task, and is still running: its finish wake will still ` +
+    `arrive. Do NOT record it in a brief's "## Recently" as work landed, and do not treat its ` +
+    `line as a result. If it needs no decision, do NOTHING — a bare acknowledgement costs the ` +
+    `worker a turn and tells it nothing. If it flags NEEDS A DECISION, or if the update shows ` +
+    `the dispatch going wrong, answer it with send_message, or stop it (signal SIGTERM, then ` +
+    `close_session) and redispatch surgically with respawn_with. Then STOP again — do not start ` +
+    `polling, and do not ask it for further updates.`,
 };
 
 /** One entry as its bullet-body text (no leading `- `). */
@@ -151,8 +179,16 @@ export function formatFleetEntry(e: FleetMessageEntry): string {
   const stopped = e.stopped ? ' — stopped/killed' : '';
   const failed = e.failed ? ` — FAILED: ${e.failed}` : '';
   const crossed = e.crossed ? ` — crossed: ${e.crossed}` : '';
-  const tail = e.lastReply ? ` — last reply: ${e.lastReply}` : '';
-  return `${e.label} (session:${e.sessionId}, ${where})${stopped}${failed}${crossed}${tail}`;
+  const decision = e.needsDecision ? ' — NEEDS A DECISION' : '';
+  // One anchored tail, never two: `note` and `lastReply` are the same slot
+  // under different labels (the grammar can only have one rest-of-line), and a
+  // worker's own progress line wins — an entry carrying one is not a finish.
+  const tail = e.note
+    ? ` — reports: ${e.note}`
+    : e.lastReply
+      ? ` — last reply: ${e.lastReply}`
+      : '';
+  return `${e.label} (session:${e.sessionId}, ${where})${stopped}${failed}${crossed}${decision}${tail}`;
 }
 
 /** Plain (non-bullet) note appended when any entry FAILED. Spelled out because
@@ -205,23 +241,27 @@ export function buildFleetMessage(kind: FleetMessageKind, entries: FleetMessageE
 }
 
 /** Bullet-body grammar: `label (session:<id>, cwd <path>|approval|question)`
- *  with optional ` — stopped/killed` and ` — last reply: …` tails. Label is
- *  non-greedy so the FIRST `(session:` wins; a reply may contain anything (it
- *  is the anchored rest). */
+ *  with optional ` — stopped/killed` and ` — last reply: …`/` — reports: …`
+ *  tails. Label is non-greedy so the FIRST `(session:` wins; the tail may
+ *  contain anything (it is the anchored rest) — and the two spellings of that
+ *  tail are alternatives, not siblings, because only one rest-of-line exists. */
 const ENTRY_RE =
-  /^(.+?) \(session:([\w-]+), (?:cwd (.+?)|(approval|question))\)(?: — (stopped\/killed))?(?: — FAILED: ((?:(?! — ).)+))?(?: — crossed: ((?:(?! — ).)+))?(?: — last reply: (.*))?$/;
+  /^(.+?) \(session:([\w-]+), (?:cwd (.+?)|(approval|question))\)(?: — (stopped\/killed))?(?: — FAILED: ((?:(?! — ).)+))?(?: — crossed: ((?:(?! — ).)+))?(?: — (NEEDS A DECISION))?(?: — (?:last reply: (.*)|reports: (.*)))?$/;
 
 function parseEntry(body: string): FleetMessageEntry | null {
   const m = ENTRY_RE.exec(body);
   if (!m) return null;
-  const [, label, sessionId, cwd, blockedOn, stopped, failed, crossed, lastReply] = m;
+  const [, label, sessionId, cwd, blockedOn, stopped, failed, crossed, decision, lastReply, note] =
+    m;
   const e: FleetMessageEntry = { label, sessionId };
   if (cwd !== undefined) e.cwd = cwd;
   if (blockedOn) e.blockedOn = blockedOn as 'approval' | 'question';
   if (stopped) e.stopped = true;
   if (failed) e.failed = failed;
   if (crossed) e.crossed = crossed;
+  if (decision) e.needsDecision = true;
   if (lastReply) e.lastReply = lastReply;
+  if (note) e.note = note;
   return e;
 }
 
@@ -234,6 +274,8 @@ const LEGACY_TAIL_STARTS: Record<FleetMessageKind, string> = {
   // this kind exists, and the sentinel must not be an empty string (which
   // indexOf finds at 0 in ANY text and would make every non-wake string parse).
   threshold: '\u0000no legacy threshold wakes exist',
+  // Same story, same sentinel: 'progress' post-dates the bullet format too.
+  progress: '\u0000no legacy progress wakes exist',
 };
 
 /**
