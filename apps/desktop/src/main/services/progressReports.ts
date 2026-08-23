@@ -15,10 +15,11 @@
  * WHAT IT IS NOT. It is not a second `send_message`. The recipient is NEVER a
  * parameter: the caller's own session id is stamped host-side (the facade reads
  * it from the per-request token record's `session:<id>` label; the hub router
- * stamps it for a scoped bus connection), and the recipient is derived from that
- * — the caller's PARENT, or a refusal. A worker holding this capability cannot
- * name a session at all, so there is no session it can reach but the one that
- * dispatched it.
+ * instead STRIPS any caller-supplied session id for a scoped bus connection,
+ * which has no session identity to stamp from), and the recipient is derived
+ * from that — the caller's PARENT, or a refusal. A worker holding this
+ * capability cannot name a session at all, so there is no session it can reach
+ * but the one that dispatched it.
  *
  * It is also not `notify_when`. Thresholds (tokens / usd / idle) are covered
  * host-side and are strictly better there, because the worker cannot forget to

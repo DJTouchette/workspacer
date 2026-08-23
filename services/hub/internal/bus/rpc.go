@@ -387,6 +387,34 @@ func sanitizeReportProgressParams(caller *conn, raw json.RawMessage) json.RawMes
 	return out
 }
 
+// paramSanitizer rewrites a call's params based on the VERIFIED caller. Keyed
+// by the BARE method name in [methodSanitizers] below.
+type paramSanitizer func(caller *conn, raw json.RawMessage) json.RawMessage
+
+// methodSanitizers is the single source of truth for which capabilities have
+// caller-identity fields the router must strip or stamp rather than forward
+// verbatim. Both call() and federatedCall() dispatch through
+// [sanitizeCallParams] against this ONE map — neither path hand-lists methods
+// itself — so a sanitizer added here automatically covers the federated hop
+// too, and the two paths cannot drift apart by construction. Before this, each
+// dispatch point repeated its own `if method == X` list by hand, and the
+// federated one silently forgot the field-stripping half of
+// agents.reportProgress the day it was added to the view tier: see
+// TestReportProgressCallerSessionIsStrippedBeforeTheFederatedHop.
+var methodSanitizers = map[string]paramSanitizer{
+	spawnMethod:          sanitizeSpawnParams,
+	reportProgressMethod: sanitizeReportProgressParams,
+}
+
+// sanitizeCallParams applies method's sanitizer, if any, against the VERIFIED
+// caller. Methods with no entry in [methodSanitizers] pass through untouched.
+func sanitizeCallParams(caller *conn, method string, raw json.RawMessage) json.RawMessage {
+	if s, ok := methodSanitizers[method]; ok {
+		return s(caller, raw)
+	}
+	return raw
+}
+
 // call routes a caller's invocation to the registered provider.
 func (rt *router) call(caller *conn, f Frame) {
 	if f.Method == "" {
@@ -409,17 +437,11 @@ func (rt *router) call(caller *conn, f Frame) {
 		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: err.Error()})
 		return
 	}
-	// Profile-dispatch grant: strip/stamp the spawn's profile fields based on
-	// the VERIFIED caller, before either dispatch path (local or provider) can
-	// see them.
-	if f.Method == spawnMethod {
-		f.Params = sanitizeSpawnParams(caller, f.Params)
-	}
-	// Identity assertion, same single dispatch point: a caller may not tell the
-	// provider which session it is.
-	if f.Method == reportProgressMethod {
-		f.Params = sanitizeReportProgressParams(caller, f.Params)
-	}
+	// Identity-assertion / grant fields the caller may not set for itself
+	// (profile dispatch, the reportProgress session stamp, ...): strip/stamp
+	// them based on the VERIFIED caller, before either dispatch path (local or
+	// provider) can see them. See [methodSanitizers].
+	f.Params = sanitizeCallParams(caller, f.Method, f.Params)
 
 	// In-process handlers (hub-owned capabilities) take precedence over remote
 	// providers. Run off the read loop so a slow handler can't stall the caller's
@@ -540,30 +562,26 @@ func (rt *router) federatedCall(caller *conn, f Frame, peer, bare string) {
 			return
 		}
 	}
-	// Profile-dispatch grant, applied against the LOCAL caller before the hop —
-	// and applied AGAIN by the peer against its federation-link connection when
-	// the forwarded call re-enters the peer's own router. Both layers are load-
-	// bearing: this one keeps an ungranted local caller from riding the link's
-	// authority; the peer's keeps a granted-here id from meaning anything there
-	// unless the link credential is trusted with it. (Path confinement is
-	// deliberately NOT applied to federated params — see the comment above —
-	// but a profile id is not a path: it names a grant this router CAN verify.)
-	if bare == spawnMethod {
-		f.Params = sanitizeSpawnParams(caller, f.Params)
-	}
-	// The identity assertion, stripped BEFORE the hop for the same reason the
-	// profile grant is checked before it: the local tier check above ran against
-	// the bare method, so a view token that may call agents.reportProgress here
-	// may call hub:<peer>/agents.reportProgress too — and on the far side this
-	// arrives on the peer's federation-link connection, which is trusted
-	// whenever the peer minted an operator-tier link token. The peer's own
-	// sanitizer would then exempt it, and a scoped local caller would have
-	// forged a progress wake FROM any session on the PEER to that session's
-	// manager, carrying arbitrary prompt text. Local caller, local credential,
-	// local router: this is the only layer that can tell it is untrusted.
-	if bare == reportProgressMethod {
-		f.Params = sanitizeReportProgressParams(caller, f.Params)
-	}
+	// Same sanitize table as the local dispatch point, applied against the
+	// BARE method — and applied AGAIN by the peer against its federation-link
+	// connection when the forwarded call re-enters the peer's own router. Both
+	// layers are load-bearing: this one keeps an ungranted local caller from
+	// riding the link's authority; the peer's keeps a granted-here id/stamp from
+	// meaning anything there unless the link credential is trusted with it.
+	// (Path confinement is deliberately NOT applied to federated params — see
+	// the comment above — but these fields are grants and identity assertions
+	// this router CAN verify, not paths naming the peer's filesystem.)
+	//
+	// This MUST go through the same [methodSanitizers] table as call() rather
+	// than its own hand-written list: the local tier check above runs against
+	// the bare method, so any tier that may call a sanitized method locally may
+	// call hub:<peer>/<method> too — and on the far side that arrives on the
+	// peer's federation-link connection, which is trusted whenever the peer
+	// minted an operator-tier link token, so the peer's own sanitizer exempts
+	// it. A hand-listed pair here that forgot one entry is exactly how
+	// agents.reportProgress's callerSessionId briefly rode across ungated: see
+	// TestReportProgressCallerSessionIsStrippedBeforeTheFederatedHop.
+	f.Params = sanitizeCallParams(caller, bare, f.Params)
 	// Off the read loop: the forward blocks on the peer's reply. The forwarder
 	// owns the (shorter) timeout, so the failure the caller sees names the
 	// federated hop rather than an ambiguous local deadline.
