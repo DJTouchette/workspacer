@@ -307,23 +307,6 @@ export interface ClaudeSessionState {
   /** True for fleet-supervisor sessions — they get nudged when another agent
    *  blocks on a decision (see supervisorNudge). */
   isSupervisor?: boolean;
-  /**
-   * Whether the PARENT is still waiting to hear back from this session — the
-   * gate on the worker-finished wake (see nudgeParentOnFinish).
-   *
-   * Armed by a request from the parent (the dispatch itself, or a follow-up
-   * `send_message` the parent names itself on) and cleared the moment a wake
-   * about this session is delivered. Without it, every working→idle edge is a
-   * "finish": chatting with a dispatched worker in its pane wakes the manager
-   * once per exchange, and a permission block that flaps re-reports the same
-   * unfinished turn (both observed live — apps/desktop/PER_TURN_WAKE_FINDING.md).
-   *
-   * Deliberately tri-state: `undefined` means "we never saw how this session
-   * was started" (adopted, or a life that predates the flag) and behaves
-   * exactly as before. Only a session we KNOW has already reported is silenced,
-   * which is what keeps sweepMissedFinishes' reach intact.
-   */
-  parentAwaitingReport?: boolean;
   /** Coding-agent backend ('claude' | 'codex' | 'opencode'), for analytics. */
   provider?: string;
   /** Claude sessions only: 'stream' when the session runs on the headless
@@ -652,6 +635,7 @@ class ClaudeSessionStore {
       applySessionEndEvent(session);
       workflowWatcher.detach(sessionId);
       forgetTelemetry(sessionId);
+      supervisorNudge.forgetWorker(sessionId);
       // Always finalize to 'ended'. A Stop event earlier in this turn may have
       // already fired its delayed 'active' snapshot (setting historyWritten),
       // but that row is non-terminal — the analytics record upsert is keyed by
@@ -1467,10 +1451,6 @@ class ClaudeSessionStore {
       session.label = meta.label;
       session.parentSessionId = meta.parentSessionId;
       session.isSupervisor = meta.isSupervisor;
-      // A dispatch IS a request for a report — arm the finish wake for the one
-      // report this spawn earns. Only for a session that actually has a parent;
-      // a top-level session has nobody to report to.
-      if (meta.parentSessionId) session.parentAwaitingReport = true;
       session.provider = meta.provider;
       session.transport = meta.transport;
       session.settings = meta.settings;

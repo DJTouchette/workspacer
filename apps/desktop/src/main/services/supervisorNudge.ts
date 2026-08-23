@@ -93,6 +93,18 @@ class SupervisorNudge {
    *  be blocked once at a time, so one timer per worker is enough to cover
    *  every supervisor it would eventually wake). */
   private pendingBlocks = new Map<string, NodeJS.Timeout>();
+  /**
+   * The signature (reply + stopped + failed) of the last finished-wake actually
+   * delivered for this worker, keyed by worker session id — PER_TURN_WAKE_FINDING.md.
+   * A working→idle edge is a genuine finish ONLY the first time; a repeat edge
+   * (a block that flaps, a re-derived Stop) with the identical reply/status is
+   * noise, not a new report, and must not re-wake the parent. A follow-up that
+   * produces an actually different reply — the wanted case, a manager sending a
+   * worker a second instruction — always looks different from the last
+   * signature and still fires. Cleared on SessionEnd via forgetWorker so it
+   * doesn't retain an entry per session for the process lifetime.
+   */
+  private lastReportedReply = new Map<string, string>();
 
   /**
    * Call when a session has just transitioned into a needs-you state. `kind`
@@ -332,6 +344,14 @@ class SupervisorNudge {
         if (outcome.json) entry.result = outcome.json;
         else if (outcome.error) entry.resultError = outcome.error;
       }
+      // Nothing new to report: this edge produced the exact reply/status
+      // already delivered for this worker — a flapping block or a re-derived
+      // Stop with no fresh output (PER_TURN_WAKE_FINDING.md 1b). A genuinely
+      // different reply, a fresh stop, or a newly-surfaced failure always
+      // changes the signature and still wakes the parent (1a).
+      const signature = `${reply} ${entry.stopped ? 1 : 0} ${entry.failed ?? ''}`;
+      if (this.lastReportedReply.get(session.sessionId) === signature) continue;
+      this.lastReportedReply.set(session.sessionId, signature);
       entries.push(entry);
     }
     if (entries.length === 0) return;
@@ -341,6 +361,14 @@ class SupervisorNudge {
     } catch {
       /* the parent may have just ended — best-effort */
     }
+  }
+
+  /** Drop the dedup signature for a worker whose life has ended, so
+   *  `lastReportedReply` doesn't retain one entry per session for the whole
+   *  process lifetime (same concern as claudeSessionStore's per-session
+   *  Maps — see its evictNow). A respawn onto a reused id starts fresh. */
+  forgetWorker(sessionId: string): void {
+    this.lastReportedReply.delete(sessionId);
   }
 
   private async send(supervisorId: string, entries: Map<string, FleetMessageEntry>): Promise<void> {

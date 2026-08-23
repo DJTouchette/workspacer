@@ -32,9 +32,17 @@ const worker = (over: Partial<ClaudeSessionState> = {}): ClaudeSessionState =>
     ...over,
   }) as ClaudeSessionState;
 
+// supervisorNudge is a module-level singleton, so its per-worker dedup state
+// (lastReportedReply — see PER_TURN_WAKE_FINDING.md) would otherwise leak
+// between tests that happen to reuse a worker id and reply text. Forget every
+// id this file dispatches under so each test starts as a fresh worker life,
+// exactly like a real SessionEnd would.
+const KNOWN_WORKER_IDS = ['w1', 'w2', 'w3', 'w9', 'mgr'];
+
 beforeEach(() => {
   vi.useFakeTimers();
   message.mockClear();
+  for (const id of KNOWN_WORKER_IDS) supervisorNudge.forgetWorker(id);
 });
 afterEach(() => vi.useRealTimers());
 

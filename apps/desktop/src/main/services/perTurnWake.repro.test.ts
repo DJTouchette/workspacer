@@ -1,6 +1,9 @@
 /**
- * REPRODUCTION (2026-08-22) — "a conversational child wakes its manager once
- * per turn". Settles a claim made by code reading alone.
+ * REGRESSION (2026-08-22) — the per-turn worker-finished wake. Originally a
+ * reproduction proving `nudgeParentOnFinish` fired on EVERY working→idle edge
+ * (apps/desktop/PER_TURN_WAKE_FINDING.md); now pins the fix: a wake fires only
+ * when a turn produced something new to report, not once per edge and not
+ * once per dispatch (a latch of that shape would silently break case 1a below).
  *
  * This drives the REAL claudeSessionStore and the REAL supervisorNudge with the
  * hook + conversation-delta traffic a live child session produces. The only
@@ -66,7 +69,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
-describe('REPRO: worker-finished wake fires on EVERY working→idle edge', () => {
+describe('worker-finished wake fires once per turn with something new to report', () => {
   it('a child conversed with three times wakes its manager three times', async () => {
     const mgr = uid('mgr');
     const child = uid('child');
@@ -104,7 +107,7 @@ describe('REPRO: worker-finished wake fires on EVERY working→idle edge', () =>
     expect(message.mock.calls[2][1]).toContain('A 200ms timeout that CI trips.');
   });
 
-  it('the same edge from an approval blip (no new prompt) also re-wakes', async () => {
+  it('an approval blip (no new prompt, same reply) does NOT re-wake — the fixed 1b case', async () => {
     const mgr = uid('mgr');
     const child = uid('child');
     claudeSessionStore.setSpawnMeta(mgr, { label: 'Fleet Manager', isSupervisor: true });
@@ -118,11 +121,19 @@ describe('REPRO: worker-finished wake fires on EVERY working→idle edge', () =>
 
     // The block clears, the agent resumes and stops again — no user turn at
     // all, and the reply has not changed. Observed live 2026-08-21 16:16:32
-    // and 16:16:43 in the fleet-manager transcript, 11 s apart.
+    // and 16:16:43 in the fleet-manager transcript, 11 s apart. This second
+    // working→idle edge has nothing new to report, so it must NOT re-wake the
+    // manager — that was the actual defect (PER_TURN_WAKE_FINDING.md 1b).
     hook(child, 'PreToolUse');
     hook(child, 'Stop');
     await vi.advanceTimersByTimeAsync(3000);
+    expect(message).toHaveBeenCalledTimes(1);
+
+    // But once the worker actually has something new to say, the wake fires
+    // again — this is NOT a once-per-dispatch latch (that would break case 1a).
+    turn(child, 'explain the failure', 'It was a stale lockfile.');
+    await vi.advanceTimersByTimeAsync(3000);
     expect(message).toHaveBeenCalledTimes(2);
-    expect(message.mock.calls[1][1]).toContain('Claude needs your permission');
+    expect(message.mock.calls[1][1]).toContain('stale lockfile');
   });
 });
