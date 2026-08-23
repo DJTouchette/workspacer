@@ -702,6 +702,47 @@ pub fn spawn_session(
     });
 }
 
+/// Shown in the conversation when a codex session degrades to the rollout
+/// fallback, so the degradation is legible to whoever dispatched it rather than
+/// being inferred from a missing structured result.
+const DEGRADED_NOTICE: &str = "⚠️ Codex degraded to the rollout fallback: the \
+app-server RPC path was unavailable, so this session runs as a terminal UI with \
+its transcript tailed into the GUI. Workspacer MCP tools and role instructions \
+are still attached; approvals happen in the Term view, and text arrives in \
+transcript-sized chunks rather than token deltas.";
+
+/// The `-c mcp_servers.*` config overrides that attach the facade to a codex
+/// process: the workspacer MCP facade (tools at the session's tier, token on the
+/// URL) and the daemon's per-session AskUserQuestion shim.
+///
+/// ONE list, shared by the app-server and the fallback TUI. They took different
+/// paths before, which is how the fallback silently came up with no tools at
+/// all — a divergence that could only be noticed by its absence.
+fn facade_mcp_overrides(session_id: &str, facade: &Facade) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    if let Some(mcp_url) = &facade.mcp_url {
+        out.push((
+            "mcp_servers.workspacer.url".to_string(),
+            Value::String(mcp_url.clone()).to_string(),
+        ));
+    }
+    // AskUserQuestion: the daemon serves a per-session MCP endpoint that parks a
+    // structured question for the GUI and blocks until /answer resolves it —
+    // Codex's stand-in for Claude's native tool. The generous tool timeout is
+    // the point: a question can legitimately wait on the user for hours.
+    if let Some(api_base) = crate::daemon::API_BASE.get() {
+        out.push((
+            "mcp_servers.workspacer_ask.url".to_string(),
+            Value::String(format!("{api_base}/mcp/ask/{session_id}")).to_string(),
+        ));
+        out.push((
+            "mcp_servers.workspacer_ask.tool_timeout_sec".to_string(),
+            "21600".to_string(),
+        ));
+    }
+    out
+}
+
 /// A connected JSON-RPC-over-WebSocket stream to a session's `codex app-server`.
 type CodexWs =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -732,12 +773,6 @@ async fn start_appserver(
 
     let mut cmd = Command::new(bin);
     cmd.arg("app-server").arg("--listen").arg(&ws_url);
-    // Register the workspacer MCP facade (supervisors) as a config override so
-    // `codex app-server` exposes its tools.
-    if let Some(mcp_url) = &facade.mcp_url {
-        cmd.arg("-c")
-            .arg(format!("mcp_servers.workspacer.url=\"{mcp_url}\""));
-    }
     if let Some((model, effort)) = overrides {
         if let Some(m) = model {
             cmd.arg("-c").arg(format!("model={}", Value::String(m)));
@@ -747,16 +782,9 @@ async fn start_appserver(
                 .arg(format!("model_reasoning_effort={}", Value::String(e)));
         }
     }
-    // AskUserQuestion: the daemon serves a per-session MCP endpoint that parks
-    // a structured question for the GUI and blocks until /answer resolves it —
-    // Codex's stand-in for Claude's native tool. The generous tool timeout is
-    // the point: a question can legitimately wait on the user for hours.
-    if let Some(api_base) = crate::daemon::API_BASE.get() {
-        cmd.arg("-c").arg(format!(
-            "mcp_servers.workspacer_ask.url=\"{api_base}/mcp/ask/{session_id}\""
-        ));
-        cmd.arg("-c")
-            .arg("mcp_servers.workspacer_ask.tool_timeout_sec=21600");
+    // The workspacer MCP facade + the daemon's AskUserQuestion shim.
+    for (key, value) in facade_mcp_overrides(session_id, facade) {
+        cmd.arg("-c").arg(format!("{key}={value}"));
     }
     let child = cmd
         .current_dir(cwd)
@@ -782,6 +810,17 @@ async fn start_appserver(
 /// in the Term; text lands in rollout-sized chunks rather than token deltas) but
 /// robust and version-independent, so a Codex CLI that changed `app-server` /
 /// `--remote` still gives a working pane instead of an empty one.
+///
+/// It carries the FACADE with it. It used to take no `facade` at all, so a
+/// dispatched worker that landed here came up looking healthy while missing its
+/// workspacer MCP tools, its role instructions and its `wks-result` contract —
+/// and nothing said so, which reads from the manager's side as a worker that
+/// inexplicably ignored its result schema. A silent partial-capability session
+/// is worse than a failed spawn: the degradation is now both repaired (the MCP
+/// servers are registered as config overrides on the TUI, exactly as
+/// `start_appserver` does, and the role instructions ride the first prompt) and
+/// VISIBLE (a warn log plus a notice pushed into the session's conversation, so
+/// `get_conversation` shows it).
 #[allow(clippy::too_many_arguments)]
 async fn run_rollout_fallback(
     store: &SessionStore,
@@ -792,6 +831,12 @@ async fn run_rollout_fallback(
     effort: Option<String>,
     bin: &str,
     yolo: bool,
+    facade: &Facade,
+    // Role instructions not yet delivered to the agent. Distinct from
+    // `facade.instructions` because the ws path may already have consumed them:
+    // `initial_prompts` below are ALREADY instruction-wrapped, so re-prepending
+    // would send the contract twice.
+    mut pending_instructions: Option<String>,
     // Prompts the user sent on the ws path that were never delivered (buffered
     // while waiting for the TUI's thread). Already echoed into the conversation
     // store and already instruction-wrapped — deliver them to the fallback TUI
@@ -799,23 +844,33 @@ async fn run_rollout_fallback(
     initial_prompts: Vec<String>,
 ) -> anyhow::Result<()> {
     // Plain codex TUI (no `--remote`): it owns its own session and writes a rollout.
-    let mut argv = vec![bin.to_string()];
-    if let Some(m) = &model {
-        argv.push("-c".to_string());
-        argv.push(format!("model={}", Value::String(m.clone())));
-    }
-    if let Some(e) = &effort {
-        argv.push("-c".to_string());
-        argv.push(format!(
-            "model_reasoning_effort={}",
-            Value::String(e.clone())
-        ));
-    }
-    if yolo {
-        argv.push("--dangerously-bypass-approvals-and-sandbox".to_string());
-    }
+    let argv = fallback_tui_argv(
+        bin,
+        model.as_deref(),
+        effort.as_deref(),
+        yolo,
+        session_id,
+        facade,
+    );
     let tui = super::spawn_attach_pty(store, session_id, &argv, cwd)
         .context("spawning fallback codex TUI")?;
+    // Make the degradation visible. It is not a failure — the pane works — but
+    // it is a different, thinner session than the one that was asked for, and
+    // whoever dispatched it has to be able to see that.
+    tracing::warn!(
+        session = %session_id,
+        facade = facade.mcp_url.is_some(),
+        instructions = pending_instructions.is_some(),
+        "codex degraded to the rollout fallback (Term + transcript-tailed GUI): \
+         structural approvals and token-level streaming are unavailable"
+    );
+    conv.push(
+        session_id,
+        vec![ConversationItem::AssistantText {
+            text: DEGRADED_NOTICE.to_string(),
+            timestamp: None,
+        }],
+    );
     // Drive the GUI conversation from the rollout transcript.
     super::codex_rollout::spawn_tailer(
         store.clone(),
@@ -845,8 +900,12 @@ async fn run_rollout_fallback(
         tokio::select! {
             msg = rx.recv() => match msg {
                 Some(text) => {
+                    // Echo verbatim, but prepend the role instructions (once) to
+                    // what the agent actually receives — same contract as the ws
+                    // path, which is what carries the `wks-result` schema.
                     conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
-                    write_prompt(&tui, &text).await;
+                    let sent = with_instructions(&mut pending_instructions, text);
+                    write_prompt(&tui, &sent).await;
                 }
                 None => break, // managed input dropped → terminated
             },
@@ -860,6 +919,53 @@ async fn run_rollout_fallback(
     }
     let _ = pty::signal_child(&tui, Signal::Sigkill);
     Ok(())
+}
+
+/// Argv for the fallback TUI. Same config overrides the app-server path applies
+/// — model, reasoning effort, the bypass flag, and (the bit that used to go
+/// missing) the facade's MCP servers.
+fn fallback_tui_argv(
+    bin: &str,
+    model: Option<&str>,
+    effort: Option<&str>,
+    yolo: bool,
+    session_id: &str,
+    facade: &Facade,
+) -> Vec<String> {
+    let mut argv = vec![bin.to_string()];
+    if let Some(m) = model {
+        argv.push("-c".to_string());
+        argv.push(format!("model={}", Value::String(m.to_string())));
+    }
+    if let Some(e) = effort {
+        argv.push("-c".to_string());
+        argv.push(format!(
+            "model_reasoning_effort={}",
+            Value::String(e.to_string())
+        ));
+    }
+    if yolo {
+        argv.push("--dangerously-bypass-approvals-and-sandbox".to_string());
+    }
+    // The workspacer MCP facade (and the daemon's AskUserQuestion shim) are
+    // plain `-c mcp_servers.*` config overrides — the TUI takes them exactly
+    // like the app-server does, so a fallback session keeps its tools.
+    for (key, value) in facade_mcp_overrides(session_id, facade) {
+        argv.push("-c".to_string());
+        argv.push(format!("{key}={value}"));
+    }
+    argv
+}
+
+/// Prepend the role instructions (once) to what the agent actually receives.
+/// The user's own message is echoed verbatim into the conversation separately;
+/// this is only the wire text. Taking the Option is what makes it once-only —
+/// the brief rides the first prompt of the session and nothing after it.
+fn with_instructions(pending: &mut Option<String>, text: String) -> String {
+    match pending.take() {
+        Some(instr) => format!("{instr}\n\n{text}"),
+        None => text,
+    }
 }
 
 /// Write one prompt into a fallback TUI's PTY as a bracketed paste + Enter
@@ -918,6 +1024,9 @@ async fn run_session(
                 effort,
                 bin,
                 yolo,
+                facade,
+                // Nothing has been sent yet, so the whole role brief is still owed.
+                facade.instructions.clone(),
                 Vec::new(),
             )
             .await;
@@ -1124,10 +1233,7 @@ async fn run_session(
                     // Echo the user's message verbatim, but prepend the role
                     // instructions (once) to what's actually sent to the agent.
                     conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
-                    let sent = match pending_instructions.take() {
-                        Some(instr) => format!("{instr}\n\n{text}"),
-                        None => text,
-                    };
+                    let sent = with_instructions(&mut pending_instructions, text);
                     if cur_mode != SessionMode::Responding {
                         store.set_managed_mode(session_id, SessionMode::Responding, None);
                         cur_mode = SessionMode::Responding;
@@ -1213,6 +1319,11 @@ async fn run_session(
             effort,
             bin,
             yolo,
+            facade,
+            // Whatever the ws path had not yet delivered. `pending_prompts` are
+            // already instruction-wrapped, so this is `None` once the first one
+            // consumed the brief.
+            pending_instructions,
             pending_prompts,
         )
         .await;
@@ -1681,6 +1792,57 @@ mod tests {
 
     fn policy_for(headless: bool, yolo: bool) -> TurnPolicy {
         TurnPolicy::new(headless, Arc::new(AtomicBool::new(yolo)))
+    }
+
+    // ── Rollout fallback keeps the facade, and says so ─────────────────────
+    //
+    // The bug these pin: `run_rollout_fallback` took no `facade` at all, so a
+    // session that degraded here came up *working* but with no workspacer MCP
+    // tools, no role instructions and no `wks-result` contract — silently. From
+    // the dispatching manager's side that reads as a worker that ignored its
+    // result schema.
+
+    #[test]
+    fn the_fallback_tui_registers_the_facade_mcp_server() {
+        let facade = Facade {
+            mcp_url: Some("http://127.0.0.1:9/mcp?t=tok".into()),
+            instructions: None,
+        };
+        let argv = fallback_tui_argv("codex", Some("gpt-5.5"), None, true, "s1", &facade);
+        assert!(
+            argv.iter()
+                .any(|a| a == "mcp_servers.workspacer.url=\"http://127.0.0.1:9/mcp?t=tok\""),
+            "facade MCP server missing from the fallback TUI argv: {argv:?}"
+        );
+        // …and the rest of what the app-server path applies.
+        assert!(argv.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()));
+        assert!(argv.iter().any(|a| a == "model=\"gpt-5.5\""));
+    }
+
+    #[test]
+    fn a_facade_less_session_registers_no_workspacer_server() {
+        let argv = fallback_tui_argv("codex", None, None, false, "s1", &Facade::default());
+        assert!(!argv
+            .iter()
+            .any(|a| a.starts_with("mcp_servers.workspacer.url")));
+        assert_eq!(argv[0], "codex");
+    }
+
+    /// The `wks-result` contract rides the role instructions, and the role
+    /// instructions ride the FIRST prompt — once, never twice.
+    #[test]
+    fn role_instructions_ride_the_first_prompt_only() {
+        let mut pending = Some("ROLE BRIEF".to_string());
+        assert_eq!(
+            with_instructions(&mut pending, "do the thing".into()),
+            "ROLE BRIEF\n\ndo the thing"
+        );
+        assert_eq!(with_instructions(&mut pending, "next".into()), "next");
+    }
+
+    #[test]
+    fn a_session_with_no_role_brief_sends_the_prompt_untouched() {
+        assert_eq!(with_instructions(&mut None, "hi".into()), "hi");
     }
 
     #[test]
