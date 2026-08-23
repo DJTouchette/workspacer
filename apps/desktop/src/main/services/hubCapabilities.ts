@@ -255,6 +255,15 @@ export function registerHubCapabilities(): void {
   // sessionId so the caller can immediately drive it with the other
   // capabilities. The session runs headless in claudemon; a desktop pane can
   // attach to it later via the normal attach flow.
+  //
+  // THIS is the path the Fleet Manager actually dispatches every worker
+  // through (MCP facade → agents.spawn), never the IPC one — so it is the
+  // one that matters most for the manager/fleetFullAccess drop
+  // managedSpawnOptions.ts documents: all three branches below used to
+  // hand-copy their spawn-options object and silently omit both fields,
+  // meaning NO Fleet Manager spawned over the bus (codex, opencode, pi, or
+  // even Claude) ever came up as isSupervisor, so it never received a single
+  // worker-finished wake.
   registerCapability('agents.spawn', async (params: unknown) => {
     const {
       provider,
@@ -269,6 +278,8 @@ export function registerHubCapabilities(): void {
       cols,
       rows,
       supervisor,
+      manager,
+      fleetFullAccess,
       mcpFacade,
       toolScope,
       pluginTools,
@@ -293,6 +304,14 @@ export function registerHubCapabilities(): void {
       cols?: number;
       rows?: number;
       supervisor?: boolean;
+      /** Fleet Manager: nudge-eligible parent without the /supervise loop —
+       *  see managedSpawnOptions.ts for why dropping this is the load-bearing
+       *  bug class this capability must not repeat. */
+      manager?: boolean;
+      /** Manager only: full-access dispatch grant (config agents.fleetFullAccess);
+       *  kept on the wire for record fidelity (fullAccessGrants.ts resolves the
+       *  actual grant from config, not this flag). */
+      fleetFullAccess?: boolean;
       mcpFacade?: boolean;
       /** Facade tool tier: 'view' | 'triage' | 'operator' (implies the facade).
        *  Not an escalation door: only trusted/operator callers reach
@@ -439,6 +458,16 @@ export function registerHubCapabilities(): void {
     // before — `provider` was ignored here, which is why a Codex agent spawned
     // from the web/remote client came up as Claude).
     if (provider && provider !== 'claude') {
+      // profileId is a Claude account concept (CLAUDE_CONFIG_DIR) with no
+      // equivalent on a managed provider — same 'unsupported' classification
+      // as managedSpawnOptions.ts, but ANNOUNCED rather than just never
+      // reaching spawnManagedAgent, per this path's own no-silent-drop rule
+      // (see the mcpItemIds warning just above).
+      if (profileId) {
+        console.warn(
+          `[hub] agents.spawn: ignoring profileId for provider "${provider}" — Claude accounts (CLAUDE_CONFIG_DIR) have no equivalent on this provider.`,
+        );
+      }
       const sessionId = await spawnManagedAgent({
         provider,
         cwd: spawnCwd,
@@ -452,6 +481,13 @@ export function registerHubCapabilities(): void {
         skipPermissions,
         resumeSessionId,
         supervisor,
+        // The Fleet Manager pair. This branch used to hand-copy fields and
+        // silently drop both — no `manager` means no isSupervisor, so a
+        // codex/opencode/pi Fleet Manager dispatched over the bus (the ONLY
+        // path a remote/MCP-facade caller has) never received worker-finished
+        // wakes at all. See managedSpawnOptions.ts for the IPC twin of this bug.
+        manager,
+        fleetFullAccess,
         mcpFacade,
         toolScope,
         pluginTools,
@@ -477,10 +513,16 @@ export function registerHubCapabilities(): void {
         // so a remote stream spawn silently ignored the chosen profile/servers.
         profileId,
         model,
+        effort,
         permissionMode,
         skipPermissions,
         resumeSessionId,
         supervisor,
+        // Same pair, same reason as the managed-provider branch above — a
+        // Claude Fleet Manager spawned over the bus with transport 'stream'
+        // must not silently come up unsupervised either.
+        manager,
+        fleetFullAccess,
         mcpFacade,
         toolScope,
         pluginTools,
@@ -499,10 +541,13 @@ export function registerHubCapabilities(): void {
       scrubProfileBypass,
       profileGranted: profileGranted === true,
       model,
+      effort,
       permissionMode,
       skipPermissions,
       resumeSessionId,
       supervisor,
+      manager,
+      fleetFullAccess,
       mcpFacade,
       toolScope,
       pluginTools,
