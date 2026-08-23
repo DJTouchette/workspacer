@@ -327,6 +327,49 @@ func TestRespawnOverridesWinOverTheOriginal(t *testing.T) {
 	}
 }
 
+// G5: the original was dispatched with a structured-result contract, so its
+// snapshot records `resultSchema` (setSpawnMeta). Losing it on respawn
+// silently downgrades a structured dispatch to a prose one — the caller gets
+// prose back where it expected a validated object, with nothing announcing
+// the downgrade.
+func TestRespawnInheritsResultSchemaFromTheOriginalSnapshot(t *testing.T) {
+	hub := newRespawnHub()
+	hub.snapshot = `{"cwd":"/w/alpha-wt","label":"alpha: parser","provider":"claude",
+		"parentSessionId":"mgr-1","settings":{"model":"claude-opus-5","effort":"high",
+		"permissionMode":"bypassPermissions"},
+		"resultSchema":{"type":"object","required":["commit"],"properties":{"commit":{"type":"string"}}}}`
+
+	_, h := callRespawn(t, hub, true, map[string]any{
+		"sessionId": "old-1", "amendment": "narrow it",
+	})
+	spawn := h.call("agents.spawn")
+	if spawn == nil {
+		t.Fatal("no agents.spawn call")
+	}
+	schema, ok := spawn.params["resultSchema"].(map[string]any)
+	if !ok {
+		t.Fatalf("resultSchema was not forwarded to the spawn, got params: %#v", spawn.params)
+	}
+	if schema["type"] != "object" {
+		t.Errorf("resultSchema.type = %v, want %q", schema["type"], "object")
+	}
+	required, _ := schema["required"].([]any)
+	if len(required) != 1 || required[0] != "commit" {
+		t.Errorf("resultSchema.required = %v, want [\"commit\"]", schema["required"])
+	}
+}
+
+// An original spawned with no resultSchema must not fabricate one — a bare
+// spawn should stay a bare spawn.
+func TestRespawnOmitsResultSchemaWhenTheOriginalHadNone(t *testing.T) {
+	_, hub := callRespawn(t, newRespawnHub(), true, map[string]any{
+		"sessionId": "old-1", "amendment": "narrow it",
+	})
+	if _, present := hub.call("agents.spawn").params["resultSchema"]; present {
+		t.Error("resultSchema should be absent, not fabricated, when the original had none")
+	}
+}
+
 func TestRespawnReportsAFailedSpawnInsteadOfSendingIntoTheVoid(t *testing.T) {
 	hub := newRespawnHub()
 	hub.spawnErr = true

@@ -203,6 +203,7 @@ fn preview_chat_with_text_and_tool_calls() {
                     raw: json!({}),
                 },
             ],
+            ..Default::default()
         });
     let snap = snapshot_chat(b, 100, 30);
     print_titled("CHAT — text + Bash + tool result + Read", &snap);
@@ -253,6 +254,7 @@ fn preview_chat_with_pending_approval() {
                     raw: json!({}),
                 },
             ],
+            ..Default::default()
         });
     let snap = snapshot_chat(b, 100, 30);
     print_titled("CHAT — pending approval (Bash)", &snap);

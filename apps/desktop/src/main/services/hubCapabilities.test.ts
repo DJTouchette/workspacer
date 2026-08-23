@@ -70,6 +70,8 @@ const clientMock = {
   setModel: vi.fn(async () => ({ ok: true })),
   handoffBrief: vi.fn(async () => ({ path: '/brief.md' })),
   listProviderModels: vi.fn(async () => ['m1', 'm2']),
+  answer: vi.fn(async () => ({ ok: true, managed: true })),
+  input: vi.fn(async () => undefined),
 };
 vi.mock('./claudemonSessionClient', () => ({ claudemonSessionClient: clientMock }));
 
@@ -77,6 +79,7 @@ const notePermissionMode = vi.fn();
 const getAllSnapshots = vi.fn(() => [] as unknown[]);
 const getSnapshot = vi.fn(() => null as unknown);
 const noteRequestedModel = vi.fn();
+const clearPendingQuestions = vi.fn();
 vi.mock('./claudeSessionStore', async (importOriginal) => {
   // Keep the real contextTokensFromStatusLine — it's a pure helper, and the
   // agents.list statusLine-fallback test below needs the real math, not a mock.
@@ -87,6 +90,7 @@ vi.mock('./claudeSessionStore', async (importOriginal) => {
       getAllSnapshots: (...a: unknown[]) => getAllSnapshots(...a),
       getSnapshot: (...a: unknown[]) => getSnapshot(...a),
       noteRequestedModel: (...a: unknown[]) => noteRequestedModel(...a),
+      clearPendingQuestions: (...a: unknown[]) => clearPendingQuestions(...a),
     },
     contextTokensFromStatusLine: actual.contextTokensFromStatusLine,
   };
@@ -836,6 +840,66 @@ describe('claude control pass-throughs', () => {
     await expect(async () => await call('claude.handoffBrief', {})).rejects.toThrow(
       /requires \{ sessionId \}/,
     );
+  });
+
+  // G3: a codex HYBRID session is transport 'pty' (no 'stream'), but it still
+  // registers the daemon's structural ask channel (start_appserver wires
+  // mcp_servers.workspacer_ask for both the headless app-server and the TUI
+  // that attaches to it). Routing on transport alone sent `answer` down the
+  // keystroke path, which types into the TUI composer while the daemon's
+  // mcp_ask shim keeps blocking for up to 6h. Routing on provider fixes it.
+  it('claude.answer routes a codex HYBRID (pty-transport) session through POST /answer, not keystrokes', async () => {
+    getSnapshot.mockReturnValue({ provider: 'codex', transport: 'pty' } as never);
+    const res = await call('claude.answer', { sessionId: 's1', option: 2 });
+    expect(clientMock.answer).toHaveBeenCalledWith('s1', {
+      option: 2,
+      text: undefined,
+      answers: undefined,
+      answerKinds: undefined,
+    });
+    expect(clientMock.input).not.toHaveBeenCalled();
+    expect(clearPendingQuestions).toHaveBeenCalledWith('s1');
+    expect(res).toEqual({ ok: true });
+  });
+
+  it('claude.answer routes a codex STREAM session through POST /answer', async () => {
+    getSnapshot.mockReturnValue({ provider: 'codex', transport: 'stream' } as never);
+    await call('claude.answer', { sessionId: 's1', option: 1 });
+    expect(clientMock.answer).toHaveBeenCalled();
+    expect(clientMock.input).not.toHaveBeenCalled();
+  });
+
+  it('claude.answer routes an opencode session through POST /answer regardless of transport', async () => {
+    getSnapshot.mockReturnValue({ provider: 'opencode', transport: 'pty' } as never);
+    await call('claude.answer', { sessionId: 's1', text: 'yes' });
+    expect(clientMock.answer).toHaveBeenCalledWith('s1', {
+      option: undefined,
+      text: 'yes',
+      answers: undefined,
+      answerKinds: undefined,
+    });
+    expect(clientMock.input).not.toHaveBeenCalled();
+  });
+
+  it('claude.answer still types keystrokes for a plain claude PTY session', async () => {
+    getSnapshot.mockReturnValue({ provider: 'claude', transport: 'pty' } as never);
+    await call('claude.answer', { sessionId: 's1', option: 3 });
+    expect(clientMock.input).toHaveBeenCalledWith('s1', '3\r');
+    expect(clientMock.answer).not.toHaveBeenCalled();
+  });
+
+  it('claude.answer routes a claude STREAM session through POST /answer', async () => {
+    getSnapshot.mockReturnValue({ provider: 'claude', transport: 'stream' } as never);
+    await call('claude.answer', { sessionId: 's1', option: 1 });
+    expect(clientMock.answer).toHaveBeenCalled();
+    expect(clientMock.input).not.toHaveBeenCalled();
+  });
+
+  it('claude.answer falls back to keystrokes when the snapshot has no provider (legacy/unknown)', async () => {
+    getSnapshot.mockReturnValue({ transport: 'pty' } as never);
+    await call('claude.answer', { sessionId: 's1', option: 1 });
+    expect(clientMock.input).toHaveBeenCalledWith('s1', '1\r');
+    expect(clientMock.answer).not.toHaveBeenCalled();
   });
 });
 
