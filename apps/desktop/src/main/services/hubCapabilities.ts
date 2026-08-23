@@ -8,7 +8,7 @@ import { Notification, shell } from 'electron';
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
-import { claudeSessionStore } from './claudeSessionStore';
+import { claudeSessionStore, contextTokensFromStatusLine } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { applyLiveEffort } from './liveEffort';
 import { agentHandoffBrief } from './agentHandoff';
@@ -212,10 +212,13 @@ export function registerHubCapabilities(): void {
       sessionId: s.sessionId,
       cwd: s.cwd,
       state: s.ambientState,
-      model: s.usage?.model ?? null,
-      contextTokens: s.usage?.contextTokens ?? 0,
-      contextLimit: s.usage?.contextLimit ?? 0,
-      costUSD: s.usage?.costUSD ?? 0,
+      // Managed providers (codex/opencode/pi) never populate `s.usage` — their
+      // numbers live only on `statusLine`. Fall back to it the same way
+      // analyticsWriter.ts does, or every non-Claude row reports all-zero.
+      model: s.usage?.model ?? s.statusLine?.modelDisplay ?? null,
+      contextTokens: s.usage?.contextTokens ?? contextTokensFromStatusLine(s.statusLine) ?? 0,
+      contextLimit: s.usage?.contextLimit ?? s.statusLine?.contextWindowSize ?? 0,
+      costUSD: s.usage?.costUSD ?? s.statusLine?.costUSD ?? 0,
       // What the agent is blocked on, if anything — lets a remote client show
       // the actual approval/question instead of a generic "waiting" badge.
       pendingApproval: s.pendingApproval
@@ -748,10 +751,18 @@ export function registerHubCapabilities(): void {
     }
     // Stream-transport sessions have no PTY: raw input can't answer them, so
     // route structurally through POST /answer (the daemon resolves the parked
-    // AskUserQuestion over the adapter's control protocol). PTY sessions keep
-    // the keystroke path — /answer requires mode=Question, which races hook
-    // mode flips (same reasoning as ClaudePane's handleAnswer).
-    if (claudeSessionStore.getSnapshot(sessionId)?.transport === 'stream') {
+    // AskUserQuestion over the adapter's control protocol). Claude PTY sessions
+    // keep the keystroke path — /answer requires mode=Question, which races
+    // hook mode flips (same reasoning as ClaudePane's handleAnswer). Every
+    // managed (non-claude) provider — codex, opencode, pi — registers the
+    // daemon's `/mcp/ask/:id` endpoint regardless of transport (codex hybrid
+    // included: `start_appserver` wires it for both the headless app-server
+    // and the TUI it attaches to), so a managed PTY session must ALSO go
+    // structural: typing into a codex hybrid TUI composer would land as
+    // ordinary chat text while the daemon's mcp_ask shim keeps the tool call
+    // parked for up to its 6h timeout.
+    const snap = claudeSessionStore.getSnapshot(sessionId);
+    if (snap?.transport === 'stream' || (snap?.provider && snap.provider !== 'claude')) {
       await claudemonSessionClient.answer(sessionId, { option, text, answers, answerKinds });
     } else if (option !== undefined) {
       await claudemonSessionClient.input(sessionId, `${option}\r`);

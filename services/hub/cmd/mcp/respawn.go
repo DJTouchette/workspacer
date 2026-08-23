@@ -65,6 +65,13 @@ type respawnSnapshot struct {
 		PermissionMode string `json:"permissionMode"`
 	} `json:"settings"`
 	LivePermissionMode string `json:"livePermissionMode"`
+	// ResultSchema is the structured-result contract the original was spawned
+	// with (spawn_agent's resultSchema, recorded on the snapshot by
+	// setSpawnMeta). Without inheriting it, "stop it, respawn with the
+	// diagnosis baked in" silently downgrades a structured dispatch to a prose
+	// one — the caller gets prose back where it expected a validated object,
+	// with nothing announcing the downgrade.
+	ResultSchema map[string]any `json:"resultSchema"`
 }
 
 // RESPAWN_HEADING separates the inherited task from the correction. Spelled
@@ -168,6 +175,7 @@ func addRespawnTool(b *build) {
 				ParentSessionId: snap.ParentSessionID,
 				ToolScope:       in.ToolScope,
 				Worktree:        in.Worktree,
+				ResultSchema:    snap.ResultSchema,
 			}
 			// The original's permission mode is REQUESTED, not granted: it goes
 			// through spawnWithGrants exactly as a hand-typed skipPermissions

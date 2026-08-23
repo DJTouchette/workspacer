@@ -2,22 +2,27 @@
  * Names an agent after what it is actually doing, the way a chat service names
  * a conversation: one cheap model call on the first exchange, then never again.
  *
- * The call goes through claudemon's `POST /oneshot`, NOT a local `claude
- * --print` — a headless claude fires the user's Claude Code hooks, and the
- * daemon would register a stray session for every one of them (a ghost row in
- * RECENT per titled agent, verified). The daemon pins and suppresses the run's
- * session id the way keep-warm already does. We only resolve the launcher argv,
- * the same division of labor as spawns and heartbeats.
+ * The call is a `directCompletion` one-shot — no agent session is spawned for
+ * a seven-word title. Which harness answers is the agent's OWN provider, not
+ * claude: this used to shell out to the claude binary unconditionally, so a
+ * codex-primary user with no claude installed silently lost auto-titling
+ * altogether. The primitive owns the per-provider transport (and the
+ * ghost-session suppression claude needs); this file owns the prompt and what
+ * counts as a title.
  *
  * The model comes from `config.agents.autoTitle.model` — a title is a two-token
  * task, so it defaults to haiku and is deliberately NOT the agent's own model.
- * When the call can't run at all (daemon down or too old for the route, no
- * claude, timeout, refusal) the caller still gets a title: the first line of
- * what the user asked, via sessionTitles' `cleanTitle`, which is exactly what
- * the RECENT list has always shown.
+ * That default is a CLAUDE alias, though, so it is resolved against the
+ * provider before use and falls back to that provider's own default rather than
+ * being handed to a CLI that cannot serve it.
+ *
+ * When the call can't run at all (daemon down, no binary, not logged in,
+ * timeout, refusal) the caller still gets a title: the first line of what the
+ * user asked, via sessionTitles' `cleanTitle`, which is exactly what the RECENT
+ * list has always shown.
  */
-import { CLAUDEMON_API_URL } from './claudemonDaemon';
-import { claudeBaseArgv } from './claudeResolver';
+import type { AgentProvider } from './agentProviders';
+import { complete, resolveCompletionModel, completionSupported } from './directCompletion';
 import { configService } from './configService';
 import { cleanTitle } from './sessionTitles';
 
@@ -119,42 +124,41 @@ export function buildTitlePrompt(userMessage: string, assistantReply?: string): 
   return parts.join('\n');
 }
 
-/** Ask the daemon for one headless turn. Null on any failure — never throws. */
-async function runOneshot(prompt: string, model: string): Promise<string | null> {
-  try {
-    const res = await fetch(`${CLAUDEMON_API_URL}/oneshot`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        argv: claudeBaseArgv(),
-        model,
-        prompt,
-        timeout_secs: Math.round(TIMEOUT_MS / 1000),
-      }),
-      signal: AbortSignal.timeout(TIMEOUT_MS + 5_000),
-    });
-    if (!res.ok) {
-      // A daemon predating /oneshot answers 404 — fall back, don't shell out.
-      console.log(`[agentTitler] /oneshot returned ${res.status}`);
-      return null;
-    }
-    const body = (await res.json()) as { ok?: boolean; text?: string; error?: string };
-    if (!body?.ok) {
-      console.log(`[agentTitler] title call failed: ${body?.error ?? 'unknown'}`);
-      return null;
-    }
-    return body.text ?? null;
-  } catch (err) {
-    console.log(`[agentTitler] title call failed: ${(err as Error).message}`);
-    return null;
-  }
-}
-
 export interface TitleRequest {
   /** The first thing the user asked this agent. */
   userMessage: string;
   /** The agent's first reply, when there is one — sharpens vague openers. */
   assistantReply?: string;
+  /**
+   * The agent's own backend. Absent ⇒ 'claude', matching every other
+   * provider-optional field in the tree (see types/pane.ts `resolveProvider`)
+   * and keeping agents spawned before this parameter existed working.
+   */
+  provider?: AgentProvider;
+}
+
+/**
+ * The model to title with, for THIS provider.
+ *
+ * `agents.autoTitle.model` predates multi-provider support and defaults to
+ * `'haiku'`, a claude alias — handing that to codex is the
+ * `supervisor.summarizerModel: 'sonnet'` bug. So it is only used when the
+ * provider can actually serve it, and the downgrade is logged once per call
+ * rather than swallowed: a title quietly written by a different model than the
+ * user configured is the sort of thing worth being able to grep for.
+ *
+ * Exported for tests — this is the provider seam, so it is the part worth
+ * pinning.
+ */
+export function titleModelFor(provider: AgentProvider, configured?: string): string | null {
+  const { model, downgraded } = resolveCompletionModel(provider, configured);
+  if (downgraded) {
+    console.log(
+      `[agentTitler] agents.autoTitle.model='${configured}' is not a ${provider} model; ` +
+        `using ${model ?? `${provider}'s own default`}`,
+    );
+  }
+  return model;
 }
 
 /**
@@ -170,11 +174,33 @@ export async function generateAgentTitle(req: TitleRequest): Promise<string | nu
   const userMessage = (req.userMessage ?? '').trim();
   if (!userMessage) return null;
 
+  const provider = req.provider ?? 'claude';
   const fallback = cleanTitle(userMessage) ?? null;
-  const raw = await runOneshot(
-    buildTitlePrompt(userMessage, req.assistantReply),
-    cfg?.model ?? 'haiku',
-  );
-  if (raw === null) return fallback && clipWords(fallback, MAX_TITLE_CHARS * 2);
-  return sanitizeTitle(raw) ?? (fallback && clipWords(fallback, MAX_TITLE_CHARS * 2));
+  const degraded = () => fallback && clipWords(fallback, MAX_TITLE_CHARS * 2);
+
+  // A provider with no one-shot adapter isn't a reason to leave the agent named
+  // after its cwd — the user's own first line has always been a fine title.
+  if (!completionSupported(provider)) return degraded();
+
+  // `complete` is documented never to throw, but a cosmetic feature must not be
+  // able to reject into a UI path even if that ever stops being true.
+  const res = await complete({
+    provider,
+    prompt: buildTitlePrompt(userMessage, req.assistantReply),
+    model: titleModelFor(provider, cfg?.model ?? 'haiku'),
+    timeoutMs: TIMEOUT_MS,
+    // A title is a handful of words; a model that writes an essay gets cut off
+    // rather than being allowed to stream one back.
+    maxOutputChars: MAX_TITLE_CHARS * 8,
+  }).catch((err: unknown) => {
+    console.log(`[agentTitler] title call threw: ${(err as Error)?.message}`);
+    return { ok: false as const, reason: 'failed' as const, message: 'threw' };
+  });
+  if (!res.ok) {
+    // One line, one reason, once per agent — a cosmetic feature must be legible
+    // in the log without being noisy in it.
+    console.log(`[agentTitler] no ${provider} title (${res.reason}): ${res.message}`);
+    return degraded();
+  }
+  return sanitizeTitle(res.text) ?? degraded();
 }

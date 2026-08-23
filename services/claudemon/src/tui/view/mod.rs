@@ -617,6 +617,7 @@ mod tests {
             transcript: Transcript {
                 path: Some("/x.jsonl".into()),
                 messages,
+                ..Default::default()
             },
             editor: Editor::new(),
             transcript_focus: false,

@@ -702,6 +702,47 @@ pub fn spawn_session(
     });
 }
 
+/// Shown in the conversation when a codex session degrades to the rollout
+/// fallback, so the degradation is legible to whoever dispatched it rather than
+/// being inferred from a missing structured result.
+const DEGRADED_NOTICE: &str = "⚠️ Codex degraded to the rollout fallback: the \
+app-server RPC path was unavailable, so this session runs as a terminal UI with \
+its transcript tailed into the GUI. Workspacer MCP tools and role instructions \
+are still attached; approvals happen in the Term view, and text arrives in \
+transcript-sized chunks rather than token deltas.";
+
+/// The `-c mcp_servers.*` config overrides that attach the facade to a codex
+/// process: the workspacer MCP facade (tools at the session's tier, token on the
+/// URL) and the daemon's per-session AskUserQuestion shim.
+///
+/// ONE list, shared by the app-server and the fallback TUI. They took different
+/// paths before, which is how the fallback silently came up with no tools at
+/// all — a divergence that could only be noticed by its absence.
+fn facade_mcp_overrides(session_id: &str, facade: &Facade) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    if let Some(mcp_url) = &facade.mcp_url {
+        out.push((
+            "mcp_servers.workspacer.url".to_string(),
+            Value::String(mcp_url.clone()).to_string(),
+        ));
+    }
+    // AskUserQuestion: the daemon serves a per-session MCP endpoint that parks a
+    // structured question for the GUI and blocks until /answer resolves it —
+    // Codex's stand-in for Claude's native tool. The generous tool timeout is
+    // the point: a question can legitimately wait on the user for hours.
+    if let Some(api_base) = crate::daemon::API_BASE.get() {
+        out.push((
+            "mcp_servers.workspacer_ask.url".to_string(),
+            Value::String(format!("{api_base}/mcp/ask/{session_id}")).to_string(),
+        ));
+        out.push((
+            "mcp_servers.workspacer_ask.tool_timeout_sec".to_string(),
+            "21600".to_string(),
+        ));
+    }
+    out
+}
+
 /// A connected JSON-RPC-over-WebSocket stream to a session's `codex app-server`.
 type CodexWs =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -732,12 +773,6 @@ async fn start_appserver(
 
     let mut cmd = Command::new(bin);
     cmd.arg("app-server").arg("--listen").arg(&ws_url);
-    // Register the workspacer MCP facade (supervisors) as a config override so
-    // `codex app-server` exposes its tools.
-    if let Some(mcp_url) = &facade.mcp_url {
-        cmd.arg("-c")
-            .arg(format!("mcp_servers.workspacer.url=\"{mcp_url}\""));
-    }
     if let Some((model, effort)) = overrides {
         if let Some(m) = model {
             cmd.arg("-c").arg(format!("model={}", Value::String(m)));
@@ -747,16 +782,9 @@ async fn start_appserver(
                 .arg(format!("model_reasoning_effort={}", Value::String(e)));
         }
     }
-    // AskUserQuestion: the daemon serves a per-session MCP endpoint that parks
-    // a structured question for the GUI and blocks until /answer resolves it —
-    // Codex's stand-in for Claude's native tool. The generous tool timeout is
-    // the point: a question can legitimately wait on the user for hours.
-    if let Some(api_base) = crate::daemon::API_BASE.get() {
-        cmd.arg("-c").arg(format!(
-            "mcp_servers.workspacer_ask.url=\"{api_base}/mcp/ask/{session_id}\""
-        ));
-        cmd.arg("-c")
-            .arg("mcp_servers.workspacer_ask.tool_timeout_sec=21600");
+    // The workspacer MCP facade + the daemon's AskUserQuestion shim.
+    for (key, value) in facade_mcp_overrides(session_id, facade) {
+        cmd.arg("-c").arg(format!("{key}={value}"));
     }
     let child = cmd
         .current_dir(cwd)
@@ -782,6 +810,17 @@ async fn start_appserver(
 /// in the Term; text lands in rollout-sized chunks rather than token deltas) but
 /// robust and version-independent, so a Codex CLI that changed `app-server` /
 /// `--remote` still gives a working pane instead of an empty one.
+///
+/// It carries the FACADE with it. It used to take no `facade` at all, so a
+/// dispatched worker that landed here came up looking healthy while missing its
+/// workspacer MCP tools, its role instructions and its `wks-result` contract —
+/// and nothing said so, which reads from the manager's side as a worker that
+/// inexplicably ignored its result schema. A silent partial-capability session
+/// is worse than a failed spawn: the degradation is now both repaired (the MCP
+/// servers are registered as config overrides on the TUI, exactly as
+/// `start_appserver` does, and the role instructions ride the first prompt) and
+/// VISIBLE (a warn log plus a notice pushed into the session's conversation, so
+/// `get_conversation` shows it).
 #[allow(clippy::too_many_arguments)]
 async fn run_rollout_fallback(
     store: &SessionStore,
@@ -792,6 +831,12 @@ async fn run_rollout_fallback(
     effort: Option<String>,
     bin: &str,
     yolo: bool,
+    facade: &Facade,
+    // Role instructions not yet delivered to the agent. Distinct from
+    // `facade.instructions` because the ws path may already have consumed them:
+    // `initial_prompts` below are ALREADY instruction-wrapped, so re-prepending
+    // would send the contract twice.
+    mut pending_instructions: Option<String>,
     // Prompts the user sent on the ws path that were never delivered (buffered
     // while waiting for the TUI's thread). Already echoed into the conversation
     // store and already instruction-wrapped — deliver them to the fallback TUI
@@ -799,23 +844,33 @@ async fn run_rollout_fallback(
     initial_prompts: Vec<String>,
 ) -> anyhow::Result<()> {
     // Plain codex TUI (no `--remote`): it owns its own session and writes a rollout.
-    let mut argv = vec![bin.to_string()];
-    if let Some(m) = &model {
-        argv.push("-c".to_string());
-        argv.push(format!("model={}", Value::String(m.clone())));
-    }
-    if let Some(e) = &effort {
-        argv.push("-c".to_string());
-        argv.push(format!(
-            "model_reasoning_effort={}",
-            Value::String(e.clone())
-        ));
-    }
-    if yolo {
-        argv.push("--dangerously-bypass-approvals-and-sandbox".to_string());
-    }
+    let argv = fallback_tui_argv(
+        bin,
+        model.as_deref(),
+        effort.as_deref(),
+        yolo,
+        session_id,
+        facade,
+    );
     let tui = super::spawn_attach_pty(store, session_id, &argv, cwd)
         .context("spawning fallback codex TUI")?;
+    // Make the degradation visible. It is not a failure — the pane works — but
+    // it is a different, thinner session than the one that was asked for, and
+    // whoever dispatched it has to be able to see that.
+    tracing::warn!(
+        session = %session_id,
+        facade = facade.mcp_url.is_some(),
+        instructions = pending_instructions.is_some(),
+        "codex degraded to the rollout fallback (Term + transcript-tailed GUI): \
+         structural approvals and token-level streaming are unavailable"
+    );
+    conv.push(
+        session_id,
+        vec![ConversationItem::AssistantText {
+            text: DEGRADED_NOTICE.to_string(),
+            timestamp: None,
+        }],
+    );
     // Drive the GUI conversation from the rollout transcript.
     super::codex_rollout::spawn_tailer(
         store.clone(),
@@ -845,8 +900,12 @@ async fn run_rollout_fallback(
         tokio::select! {
             msg = rx.recv() => match msg {
                 Some(text) => {
+                    // Echo verbatim, but prepend the role instructions (once) to
+                    // what the agent actually receives — same contract as the ws
+                    // path, which is what carries the `wks-result` schema.
                     conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
-                    write_prompt(&tui, &text).await;
+                    let sent = with_instructions(&mut pending_instructions, text);
+                    write_prompt(&tui, &sent).await;
                 }
                 None => break, // managed input dropped → terminated
             },
@@ -860,6 +919,53 @@ async fn run_rollout_fallback(
     }
     let _ = pty::signal_child(&tui, Signal::Sigkill);
     Ok(())
+}
+
+/// Argv for the fallback TUI. Same config overrides the app-server path applies
+/// — model, reasoning effort, the bypass flag, and (the bit that used to go
+/// missing) the facade's MCP servers.
+fn fallback_tui_argv(
+    bin: &str,
+    model: Option<&str>,
+    effort: Option<&str>,
+    yolo: bool,
+    session_id: &str,
+    facade: &Facade,
+) -> Vec<String> {
+    let mut argv = vec![bin.to_string()];
+    if let Some(m) = model {
+        argv.push("-c".to_string());
+        argv.push(format!("model={}", Value::String(m.to_string())));
+    }
+    if let Some(e) = effort {
+        argv.push("-c".to_string());
+        argv.push(format!(
+            "model_reasoning_effort={}",
+            Value::String(e.to_string())
+        ));
+    }
+    if yolo {
+        argv.push("--dangerously-bypass-approvals-and-sandbox".to_string());
+    }
+    // The workspacer MCP facade (and the daemon's AskUserQuestion shim) are
+    // plain `-c mcp_servers.*` config overrides — the TUI takes them exactly
+    // like the app-server does, so a fallback session keeps its tools.
+    for (key, value) in facade_mcp_overrides(session_id, facade) {
+        argv.push("-c".to_string());
+        argv.push(format!("{key}={value}"));
+    }
+    argv
+}
+
+/// Prepend the role instructions (once) to what the agent actually receives.
+/// The user's own message is echoed verbatim into the conversation separately;
+/// this is only the wire text. Taking the Option is what makes it once-only —
+/// the brief rides the first prompt of the session and nothing after it.
+fn with_instructions(pending: &mut Option<String>, text: String) -> String {
+    match pending.take() {
+        Some(instr) => format!("{instr}\n\n{text}"),
+        None => text,
+    }
 }
 
 /// Write one prompt into a fallback TUI's PTY as a bracketed paste + Enter
@@ -918,6 +1024,9 @@ async fn run_session(
                 effort,
                 bin,
                 yolo,
+                facade,
+                // Nothing has been sent yet, so the whole role brief is still owed.
+                facade.instructions.clone(),
                 Vec::new(),
             )
             .await;
@@ -968,6 +1077,11 @@ async fn run_session(
     // so ask↔yolo stay live-switchable in BOTH directions (spawned_yolo=false).
     let yolo_live = Arc::new(AtomicBool::new(yolo));
     store.register_managed_yolo(session_id, yolo_live.clone(), yolo && !headless);
+    // The sandbox/approval posture that rides on every headless `turn/start`.
+    // It shares `yolo_live` with the store, so a live `/permission-mode` flip
+    // moves the REAL sandbox with the adapter's auto-accept instead of only
+    // half of it.
+    let policy = TurnPolicy::new(headless, yolo_live.clone());
 
     // Hybrid: the native TUI OWNS the thread — bare `codex --remote` creates and
     // runs it (a real, "running", resumable rollout) — then we rejoin it over
@@ -1011,18 +1125,19 @@ async fn run_session(
     // conversation is pre-seeded from the rollout in spawn.rs, so the GUI
     // shows the history the app-server already has.
     if headless {
+        // A bypassed headless session states the bypass to the app-server
+        // itself — `sandbox` + `approvalPolicy` — instead of relying on the
+        // adapter auto-accepting approval requests, which leaves codex's own
+        // sandbox fully in force. RESUME MATTERS AS MUCH AS START: a resumed
+        // thread never runs `thread/start`, so without the same params here a
+        // resumed worker silently reverts to sandboxed. Non-bypassed sessions
+        // send neither param and keep codex's resolved defaults.
         match &thread_id {
             Some(tid) => {
-                let _ = out_tx.send(json!({
-                    "jsonrpc": "2.0", "id": 2, "method": "thread/resume",
-                    "params": { "threadId": tid }
-                }));
+                let _ = out_tx.send(thread_resume_request(tid, headless, yolo));
             }
             None => {
-                let _ = out_tx.send(json!({
-                    "jsonrpc": "2.0", "id": 101, "method": "thread/start",
-                    "params": { "cwd": cwd }
-                }));
+                let _ = out_tx.send(thread_start_request(cwd, headless, yolo));
             }
         }
     }
@@ -1076,7 +1191,7 @@ async fn run_session(
                         handle_message(
                             &value, store, conv, session_id, &out_tx,
                             &mut thread_id, &mut subscribed, &mut pending_prompts, &mut req_id,
-                            &mut cur_mode, &mut acc, &yolo_live, &mut pending_approvals,
+                            &mut cur_mode, &mut acc, &policy, &mut pending_approvals,
                             &mut pending_switch, headless,
                         );
                     }
@@ -1118,10 +1233,7 @@ async fn run_session(
                     // Echo the user's message verbatim, but prepend the role
                     // instructions (once) to what's actually sent to the agent.
                     conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
-                    let sent = match pending_instructions.take() {
-                        Some(instr) => format!("{instr}\n\n{text}"),
-                        None => text,
-                    };
+                    let sent = with_instructions(&mut pending_instructions, text);
                     if cur_mode != SessionMode::Responding {
                         store.set_managed_mode(session_id, SessionMode::Responding, None);
                         cur_mode = SessionMode::Responding;
@@ -1129,7 +1241,7 @@ async fn run_session(
                     match &thread_id {
                         Some(tid) => {
                             req_id += 1;
-                            send_turn(&out_tx, req_id, tid, &sent);
+                            send_turn(&out_tx, req_id, tid, &sent, &policy);
                         }
                         // Thread not open yet — buffer the (already-wrapped) prompt.
                         None => pending_prompts.push(sent),
@@ -1207,6 +1319,11 @@ async fn run_session(
             effort,
             bin,
             yolo,
+            facade,
+            // Whatever the ws path had not yet delivered. `pending_prompts` are
+            // already instruction-wrapped, so this is `None` once the first one
+            // consumed the brief.
+            pending_instructions,
             pending_prompts,
         )
         .await;
@@ -1284,7 +1401,7 @@ fn handle_message(
     req_id: &mut u64,
     cur_mode: &mut SessionMode,
     acc: &mut UsageAcc,
-    yolo: &AtomicBool,
+    policy: &TurnPolicy,
     pending_approvals: &mut VecDeque<ParkedApproval>,
     pending_switch: &mut Option<crate::session::ModelSwitch>,
     headless: bool,
@@ -1342,7 +1459,7 @@ fn handle_message(
                 }
                 for text in std::mem::take(pending_prompts) {
                     *req_id += 1;
-                    send_turn(out_tx, *req_id, &tid, &text);
+                    send_turn(out_tx, *req_id, &tid, &text, policy);
                 }
             }
             return;
@@ -1365,7 +1482,7 @@ fn handle_message(
                 // Flush any prompts that arrived before the thread was found.
                 for text in std::mem::take(pending_prompts) {
                     *req_id += 1;
-                    send_turn(out_tx, *req_id, tid, &text);
+                    send_turn(out_tx, *req_id, tid, &text, policy);
                 }
             }
         }
@@ -1392,7 +1509,7 @@ fn handle_message(
             }
             for text in std::mem::take(pending_prompts) {
                 *req_id += 1;
-                send_turn(out_tx, *req_id, &tid, &text);
+                send_turn(out_tx, *req_id, &tid, &text, policy);
             }
         }
     }
@@ -1433,7 +1550,7 @@ fn handle_message(
     // `resolve_approval`, called from the decision branch in run_session).
     if value.get("id").is_some() && method.ends_with("/requestApproval") {
         let id = value.get("id").cloned().unwrap_or(Value::Null);
-        if yolo.load(Ordering::Relaxed) {
+        if policy.bypassing() {
             let _ = out_tx
                 .send(json!({ "jsonrpc": "2.0", "id": id, "result": { "decision": "accept" } }));
         } else {
@@ -1463,13 +1580,145 @@ pub(crate) fn thread_id_of(v: Option<&Value>) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn send_turn(out_tx: &mpsc::UnboundedSender<Value>, id: u64, thread_id: &str, text: &str) {
-    let _ = out_tx.send(json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": "turn/start",
-        "params": { "threadId": thread_id, "input": [ { "type": "text", "text": text } ] }
-    }));
+/// Codex's own sandbox vocabulary. `thread/start` and `thread/resume` take a
+/// bare [`SandboxMode`] string under `sandbox`; `turn/start` takes a tagged
+/// [`SandboxPolicy`] object under `sandboxPolicy`. Same concept, two shapes —
+/// both read off codex 0.149's generated JSON schema (`codex app-server
+/// generate-json-schema --out …`, `v2/ThreadStartParams.json` /
+/// `v2/TurnStartParams.json`).
+const SANDBOX_MODE_FULL: &str = "danger-full-access";
+/// `AskForApproval`. `never` is codex's "don't ask me anything"; `on-request`
+/// is its ordinary ask-when-needed posture.
+const APPROVAL_NEVER: &str = "never";
+const APPROVAL_ON_REQUEST: &str = "on-request";
+
+/// Whether a *headless* thread should be created (`thread/start`) or rejoined
+/// (`thread/resume`) with the bypass overrides, and which ones.
+///
+/// `None` means "send neither param", which is the whole point of the split: a
+/// session spawned WITHOUT the bypass grant must keep whatever codex's own
+/// config resolves for its cwd — untouched, exactly as before this existed.
+///
+/// Hybrid always answers `None`: there the native TUI creates the thread and
+/// already carries `--dangerously-bypass-approvals-and-sandbox` itself, so the
+/// bypass is real at the source and ours would be redundant.
+fn thread_bypass_params(headless: bool, yolo: bool) -> Option<(&'static str, &'static str)> {
+    (headless && yolo).then_some((SANDBOX_MODE_FULL, APPROVAL_NEVER))
+}
+
+/// Apply [`thread_bypass_params`] to a `thread/start` / `thread/resume` params
+/// object in place.
+fn apply_thread_bypass(params: &mut Value, headless: bool, yolo: bool) {
+    if let Some((sandbox, approval)) = thread_bypass_params(headless, yolo) {
+        params["sandbox"] = json!(sandbox);
+        params["approvalPolicy"] = json!(approval);
+    }
+}
+
+/// The headless bootstrap `thread/start` (id 101) — this client creates the
+/// thread, so the bypass has to be stated here.
+fn thread_start_request(cwd: &str, headless: bool, yolo: bool) -> Value {
+    let mut params = json!({ "cwd": cwd });
+    apply_thread_bypass(&mut params, headless, yolo);
+    json!({ "jsonrpc": "2.0", "id": 101, "method": "thread/start", "params": params })
+}
+
+/// The headless `thread/resume` (id 2) — the resume path skips `thread/start`
+/// entirely, so it needs the same overrides or a resumed bypassed worker comes
+/// back sandboxed.
+fn thread_resume_request(thread_id: &str, headless: bool, yolo: bool) -> Value {
+    let mut params = json!({ "threadId": thread_id });
+    apply_thread_bypass(&mut params, headless, yolo);
+    json!({ "jsonrpc": "2.0", "id": 2, "method": "thread/resume", "params": params })
+}
+
+/// The sandbox/approval posture this session stamps on every `turn/start`.
+///
+/// Two flags, not one, because the directions are asymmetric. `yolo` is the
+/// live `/permission-mode` state (the same `AtomicBool` the store flips).
+/// `engaged` latches the first moment the session was ever bypassed — at spawn,
+/// or later via a live `ask → yolo` flip.
+///
+/// Before the latch flips we send NO sandbox or approval params at all, so an
+/// un-bypassed session keeps codex's own resolved defaults and is never widened
+/// by us. After it flips we own the posture and must state it explicitly in
+/// *both* directions: a `yolo → ask` flip that only cleared the adapter's
+/// auto-accept would leave the thread sitting at `danger-full-access` while the
+/// UI reported `ask` — the two halves diverging, which is worse than either.
+///
+/// Turn-scoped rather than live because a sandbox only governs what a turn
+/// *executes*, and codex applies `turn/start`'s override "for this turn and
+/// subsequent turns". A flip lands on the next turn; nothing runs between turns.
+///
+/// Hybrid stamps nothing, ever — see [`thread_bypass_params`].
+struct TurnPolicy {
+    headless: bool,
+    yolo: Arc<AtomicBool>,
+    engaged: Arc<AtomicBool>,
+}
+
+impl TurnPolicy {
+    fn new(headless: bool, yolo: Arc<AtomicBool>) -> Self {
+        let engaged = Arc::new(AtomicBool::new(yolo.load(Ordering::Relaxed)));
+        Self {
+            headless,
+            yolo,
+            engaged,
+        }
+    }
+
+    /// Is the adapter currently auto-accepting approval requests?
+    fn bypassing(&self) -> bool {
+        self.yolo.load(Ordering::Relaxed)
+    }
+
+    /// `(sandboxPolicy, approvalPolicy)` for a `turn/start`, or `None` to send
+    /// neither. Reads the live flag (and latches it), so it reflects a
+    /// `/permission-mode` switch made since the last turn.
+    fn turn_params(&self) -> Option<(Value, &'static str)> {
+        if !self.headless {
+            return None;
+        }
+        let yolo = self.bypassing();
+        if yolo {
+            self.engaged.store(true, Ordering::Relaxed);
+        } else if !self.engaged.load(Ordering::Relaxed) {
+            // Never bypassed — leave codex's defaults alone.
+            return None;
+        }
+        Some(if yolo {
+            (json!({ "type": "dangerFullAccess" }), APPROVAL_NEVER)
+        } else {
+            // Re-tightened after a bypass. We can't restore the unknown
+            // pre-bypass default, so state codex's ordinary posture explicitly
+            // — a narrowing from full access, and honest about what it is.
+            (json!({ "type": "workspaceWrite" }), APPROVAL_ON_REQUEST)
+        })
+    }
+}
+
+/// Build a `turn/start` request. Headless sessions carry the sandbox/approval
+/// posture on every turn (see [`TurnPolicy`]); hybrid carries neither.
+fn turn_start_request(id: u64, thread_id: &str, text: &str, policy: &TurnPolicy) -> Value {
+    let mut params = json!({
+        "threadId": thread_id,
+        "input": [ { "type": "text", "text": text } ]
+    });
+    if let Some((sandbox, approval)) = policy.turn_params() {
+        params["sandboxPolicy"] = sandbox;
+        params["approvalPolicy"] = json!(approval);
+    }
+    json!({ "jsonrpc": "2.0", "id": id, "method": "turn/start", "params": params })
+}
+
+fn send_turn(
+    out_tx: &mpsc::UnboundedSender<Value>,
+    id: u64,
+    thread_id: &str,
+    text: &str,
+    policy: &TurnPolicy,
+) {
+    let _ = out_tx.send(turn_start_request(id, thread_id, text, policy));
 }
 
 /// Push a `thread/settings/update` for a live model/effort switch. Partial params
@@ -1530,6 +1779,337 @@ async fn write_msg(stdin: &mut ChildStdin, value: &Value) -> anyhow::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Headless bypass: sandbox + approval policy on the wire ──────────────
+    //
+    // The bug these pin: `skipPermissions` on the headless (stream) transport
+    // used to be pure adapter-side auto-accept of `requestApproval`, so a
+    // "full access" worker still ran inside codex's own sandbox — fatal in a
+    // fresh ship worktree, which is never in the user's trusted-projects list.
+    // Field names/values verified against codex 0.149's generated JSON schema
+    // (`v2/ThreadStartParams.json`, `v2/ThreadResumeParams.json`,
+    // `v2/TurnStartParams.json`).
+
+    fn policy_for(headless: bool, yolo: bool) -> TurnPolicy {
+        TurnPolicy::new(headless, Arc::new(AtomicBool::new(yolo)))
+    }
+
+    // ── Live probe against a real `codex app-server` ───────────────────────
+    //
+    // `#[ignore]`d: it needs the codex CLI, network and an authenticated
+    // account, so it never runs in CI. Run it by hand when touching the
+    // sandbox/approval wire:
+    //
+    //   CODEX_BIN=$(which codex) cargo test -p claudemon --lib \
+    //     codex_headless_bypass_really_escapes_the_sandbox -- --ignored --nocapture
+    //
+    // It drives the EXACT request builders the driver uses — not a re-typed
+    // copy — creates a thread in a fresh directory that is NOT in the user's
+    // codex trusted-projects list, and asks the agent to write a file there.
+    // Under codex's default sandbox for an untrusted cwd that write is denied;
+    // it succeeds only if the bypass genuinely reached the app-server.
+
+    async fn live_probe(bin: &str, dir: &std::path::Path, yolo: bool) -> anyhow::Result<bool> {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")?
+            .local_addr()?
+            .port();
+        let ws_url = format!("ws://127.0.0.1:{port}");
+        let mut child = Command::new(bin)
+            .arg("app-server")
+            .arg("--listen")
+            .arg(&ws_url)
+            .current_dir(dir)
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()?;
+        wait_ready(&format!("http://127.0.0.1:{port}")).await?;
+        let (ws, _) = connect_async(&ws_url).await?;
+        let (mut w, mut r) = ws.split();
+
+        async fn send(
+            w: &mut futures_util::stream::SplitSink<CodexWs, Message>,
+            v: Value,
+        ) -> anyhow::Result<()> {
+            w.send(Message::Text(v.to_string())).await?;
+            Ok(())
+        }
+        send(
+            &mut w,
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": { "clientInfo": { "name": "workspacer-test", "version": "0" } } }),
+        )
+        .await?;
+        let cwd = dir.to_string_lossy().to_string();
+        send(&mut w, thread_start_request(&cwd, true, yolo)).await?;
+
+        let mut thread: Option<String> = None;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
+        let target = dir.join("wks-sandbox-probe.txt");
+        while tokio::time::Instant::now() < deadline {
+            let Ok(Some(Ok(Message::Text(t)))) =
+                tokio::time::timeout(std::time::Duration::from_secs(30), r.next()).await
+            else {
+                break;
+            };
+            for line in t.split('\n').map(str::trim).filter(|l| !l.is_empty()) {
+                let Ok(v) = serde_json::from_str::<Value>(line) else {
+                    continue;
+                };
+                eprintln!("<< {}", &line[..line.len().min(280)]);
+                if v.get("id").and_then(Value::as_u64) == Some(101) {
+                    assert!(
+                        v.get("error").is_none(),
+                        "the app-server REJECTED our thread/start params: {v}"
+                    );
+                    let tid = thread_id_of(v.get("result")).expect("thread id");
+                    thread = Some(tid.clone());
+                    let policy = policy_for(true, yolo);
+                    send(
+                        &mut w,
+                        turn_start_request(
+                            3,
+                            &tid,
+                            "Write the single word `ok` into ./wks-sandbox-probe.txt in the \
+                         current directory, then reply DONE. Do not ask any questions.",
+                            &policy,
+                        ),
+                    )
+                    .await?;
+                }
+                // Non-bypassed control: an approval request means the sandbox is
+                // in force. Deny it and stop — that IS the expected outcome.
+                if v.get("method")
+                    .and_then(Value::as_str)
+                    .is_some_and(|m| m.ends_with("/requestApproval"))
+                {
+                    let id = v.get("id").cloned().unwrap_or(Value::Null);
+                    send(
+                        &mut w,
+                        json!({ "jsonrpc": "2.0", "id": id,
+                        "result": { "decision": "denied" } }),
+                    )
+                    .await?;
+                }
+                if v.get("method")
+                    .and_then(Value::as_str)
+                    .is_some_and(|m| m == "turn/completed" || m == "turn/failed")
+                    && thread.is_some()
+                {
+                    let _ = child.start_kill();
+                    return Ok(target.exists());
+                }
+            }
+        }
+        let _ = child.start_kill();
+        Ok(target.exists())
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the codex CLI, network and an authenticated account"]
+    async fn codex_headless_bypass_really_escapes_the_sandbox() {
+        let bin = std::env::var("CODEX_BIN").unwrap_or_else(|_| "codex".into());
+        let root = std::env::temp_dir().join(format!("wks-codex-probe-{}", uuid::Uuid::new_v4()));
+        let bypassed = root.join("bypassed");
+        let control = root.join("control");
+        std::fs::create_dir_all(&bypassed).unwrap();
+        std::fs::create_dir_all(&control).unwrap();
+
+        let got = live_probe(&bin, &bypassed, true)
+            .await
+            .expect("bypassed probe");
+        let ctl = live_probe(&bin, &control, false)
+            .await
+            .expect("control probe");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(
+            got,
+            "BYPASSED headless session could not write in an untrusted cwd"
+        );
+        assert!(
+            !ctl,
+            "CONTROL (non-bypassed) session wrote without approval — \
+            the sandbox was already off, so this probe proves nothing"
+        );
+    }
+
+    // ── Rollout fallback keeps the facade, and says so ─────────────────────
+    //
+    // The bug these pin: `run_rollout_fallback` took no `facade` at all, so a
+    // session that degraded here came up *working* but with no workspacer MCP
+    // tools, no role instructions and no `wks-result` contract — silently. From
+    // the dispatching manager's side that reads as a worker that ignored its
+    // result schema.
+
+    #[test]
+    fn the_fallback_tui_registers_the_facade_mcp_server() {
+        let facade = Facade {
+            mcp_url: Some("http://127.0.0.1:9/mcp?t=tok".into()),
+            instructions: None,
+        };
+        let argv = fallback_tui_argv("codex", Some("gpt-5.5"), None, true, "s1", &facade);
+        assert!(
+            argv.iter()
+                .any(|a| a == "mcp_servers.workspacer.url=\"http://127.0.0.1:9/mcp?t=tok\""),
+            "facade MCP server missing from the fallback TUI argv: {argv:?}"
+        );
+        // …and the rest of what the app-server path applies.
+        assert!(argv.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()));
+        assert!(argv.iter().any(|a| a == "model=\"gpt-5.5\""));
+    }
+
+    #[test]
+    fn a_facade_less_session_registers_no_workspacer_server() {
+        let argv = fallback_tui_argv("codex", None, None, false, "s1", &Facade::default());
+        assert!(!argv
+            .iter()
+            .any(|a| a.starts_with("mcp_servers.workspacer.url")));
+        assert_eq!(argv[0], "codex");
+    }
+
+    /// The `wks-result` contract rides the role instructions, and the role
+    /// instructions ride the FIRST prompt — once, never twice.
+    #[test]
+    fn role_instructions_ride_the_first_prompt_only() {
+        let mut pending = Some("ROLE BRIEF".to_string());
+        assert_eq!(
+            with_instructions(&mut pending, "do the thing".into()),
+            "ROLE BRIEF\n\ndo the thing"
+        );
+        assert_eq!(with_instructions(&mut pending, "next".into()), "next");
+    }
+
+    #[test]
+    fn a_session_with_no_role_brief_sends_the_prompt_untouched() {
+        assert_eq!(with_instructions(&mut None, "hi".into()), "hi");
+    }
+
+    #[test]
+    fn headless_bypassed_thread_start_carries_the_sandbox_and_approval_override() {
+        let req = thread_start_request("/tmp/wt", true, true);
+        assert_eq!(req["method"], "thread/start");
+        assert_eq!(req["params"]["cwd"], "/tmp/wt");
+        assert_eq!(req["params"]["sandbox"], "danger-full-access");
+        assert_eq!(req["params"]["approvalPolicy"], "never");
+    }
+
+    #[test]
+    fn headless_unbypassed_thread_start_sends_neither_param() {
+        let req = thread_start_request("/tmp/wt", true, false);
+        // Byte-for-byte what we sent before the bypass existed: codex keeps
+        // whatever its own config resolves for this cwd.
+        assert_eq!(req["params"], json!({ "cwd": "/tmp/wt" }));
+    }
+
+    #[test]
+    fn hybrid_thread_start_is_untouched_even_when_bypassed() {
+        // Hybrid's bypass is real at the source (the thread-owning TUI carries
+        // `--dangerously-bypass-approvals-and-sandbox`); ours must not intrude.
+        assert_eq!(
+            thread_start_request("/tmp/wt", false, true)["params"],
+            json!({ "cwd": "/tmp/wt" })
+        );
+    }
+
+    /// The resume path skips `thread/start` entirely — without this a resumed
+    /// bypassed worker silently comes back sandboxed.
+    #[test]
+    fn headless_bypassed_thread_resume_carries_the_same_override() {
+        let req = thread_resume_request("th_1", true, true);
+        assert_eq!(req["method"], "thread/resume");
+        assert_eq!(req["params"]["threadId"], "th_1");
+        assert_eq!(req["params"]["sandbox"], "danger-full-access");
+        assert_eq!(req["params"]["approvalPolicy"], "never");
+    }
+
+    #[test]
+    fn headless_unbypassed_thread_resume_sends_neither_param() {
+        assert_eq!(
+            thread_resume_request("th_1", true, false)["params"],
+            json!({ "threadId": "th_1" })
+        );
+    }
+
+    #[test]
+    fn headless_bypassed_turns_carry_the_sandbox_policy() {
+        let req = turn_start_request(7, "th_1", "go", &policy_for(true, true));
+        assert_eq!(req["method"], "turn/start");
+        assert_eq!(req["params"]["input"][0]["text"], "go");
+        assert_eq!(
+            req["params"]["sandboxPolicy"],
+            json!({ "type": "dangerFullAccess" })
+        );
+        assert_eq!(req["params"]["approvalPolicy"], "never");
+    }
+
+    #[test]
+    fn unbypassed_turns_carry_no_sandbox_or_approval_params() {
+        for p in [
+            policy_for(true, false),
+            policy_for(false, false),
+            policy_for(false, true),
+        ] {
+            let req = turn_start_request(7, "th_1", "go", &p);
+            assert!(req["params"].get("sandboxPolicy").is_none());
+            assert!(req["params"].get("approvalPolicy").is_none());
+        }
+    }
+
+    /// A live `/permission-mode` flip must move the REAL sandbox with the
+    /// adapter's auto-accept — both directions — or the UI lies about what the
+    /// session can do.
+    #[test]
+    fn live_permission_mode_flip_moves_the_sandbox_too() {
+        let live = Arc::new(AtomicBool::new(true));
+        let p = TurnPolicy::new(true, live.clone());
+        assert_eq!(
+            turn_start_request(1, "th", "a", &p)["params"]["sandboxPolicy"],
+            json!({ "type": "dangerFullAccess" })
+        );
+
+        // yolo → ask: re-tighten explicitly, rather than leaving the thread at
+        // danger-full-access while the UI reports "ask".
+        live.store(false, Ordering::SeqCst);
+        let req = turn_start_request(2, "th", "b", &p);
+        assert_eq!(
+            req["params"]["sandboxPolicy"],
+            json!({ "type": "workspaceWrite" })
+        );
+        assert_eq!(req["params"]["approvalPolicy"], "on-request");
+
+        // …and back again.
+        live.store(true, Ordering::SeqCst);
+        assert_eq!(
+            turn_start_request(3, "th", "c", &p)["params"]["approvalPolicy"],
+            "never"
+        );
+    }
+
+    /// A session spawned WITHOUT the grant stays on codex's defaults until the
+    /// grant actually arrives — we never widen it on our own, and we never
+    /// tighten it either (which would be a behaviour change of its own).
+    #[test]
+    fn a_never_bypassed_session_is_never_stamped() {
+        let live = Arc::new(AtomicBool::new(false));
+        let p = TurnPolicy::new(true, live.clone());
+        assert_eq!(
+            turn_start_request(1, "th", "a", &p)["params"],
+            json!({ "threadId": "th", "input": [ { "type": "text", "text": "a" } ] })
+        );
+
+        // Granted live: now — and only now — we own the posture, in both
+        // directions, because we can no longer restore the unknown default.
+        live.store(true, Ordering::SeqCst);
+        assert_eq!(
+            turn_start_request(2, "th", "b", &p)["params"]["sandboxPolicy"],
+            json!({ "type": "dangerFullAccess" })
+        );
+        live.store(false, Ordering::SeqCst);
+        assert_eq!(
+            turn_start_request(3, "th", "c", &p)["params"]["sandboxPolicy"],
+            json!({ "type": "workspaceWrite" })
+        );
+    }
 
     #[test]
     fn model_info_preserves_model_specific_effort_ids() {
@@ -1996,7 +2576,7 @@ mod tests {
         let mut req_id = 2u64;
         let mut cur_mode = SessionMode::Input;
         let mut acc = UsageAcc::new();
-        let yolo = AtomicBool::new(false);
+        let policy = policy_for(true, false);
         let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
         let mut pending_switch = None;
 
@@ -2012,7 +2592,7 @@ mod tests {
             &mut req_id,
             &mut cur_mode,
             &mut acc,
-            &yolo,
+            &policy,
             &mut pending_approvals,
             &mut pending_switch,
             true,
@@ -2046,7 +2626,7 @@ mod tests {
             let mut req_id = 2u64;
             let mut cur_mode = SessionMode::Input;
             let mut acc = UsageAcc::new();
-            let yolo = AtomicBool::new(false);
+            let policy = policy_for(headless, false);
             let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
             let mut pending_switch = None;
 
@@ -2063,7 +2643,7 @@ mod tests {
                 &mut req_id,
                 &mut cur_mode,
                 &mut acc,
-                &yolo,
+                &policy,
                 &mut pending_approvals,
                 &mut pending_switch,
                 headless,
@@ -2108,7 +2688,7 @@ mod tests {
         let mut req_id = 2u64;
         let mut cur_mode = SessionMode::Input;
         let mut acc = UsageAcc::new();
-        let yolo = AtomicBool::new(false);
+        let policy = policy_for(true, false);
         let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
         let mut pending_switch = None;
 
@@ -2125,7 +2705,7 @@ mod tests {
             &mut req_id,
             &mut cur_mode,
             &mut acc,
-            &yolo,
+            &policy,
             &mut pending_approvals,
             &mut pending_switch,
             true,
@@ -2172,7 +2752,7 @@ mod tests {
         let mut req_id = 101u64;
         let mut cur_mode = SessionMode::Responding;
         let mut acc = UsageAcc::new();
-        let yolo = AtomicBool::new(false);
+        let policy = policy_for(true, false);
         let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
         let mut pending_switch = None;
 
@@ -2190,7 +2770,7 @@ mod tests {
             &mut req_id,
             &mut cur_mode,
             &mut acc,
-            &yolo,
+            &policy,
             &mut pending_approvals,
             &mut pending_switch,
             true,
@@ -2241,7 +2821,7 @@ mod tests {
         let mut req_id = 2u64;
         let mut cur_mode = SessionMode::Responding;
         let mut acc = UsageAcc::new();
-        let yolo = AtomicBool::new(false);
+        let policy = policy_for(false, false);
         let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
         let mut pending_switch = None;
 
@@ -2268,7 +2848,7 @@ mod tests {
                     &mut req_id,
                     cur_mode,
                     &mut acc,
-                    &yolo,
+                    &policy,
                     pending_approvals,
                     &mut pending_switch,
                     false,
@@ -2351,7 +2931,7 @@ mod tests {
         let mut req_id = 2u64;
         let mut cur_mode = SessionMode::Responding;
         let mut acc = UsageAcc::new();
-        let yolo = AtomicBool::new(true);
+        let policy = policy_for(false, true);
         let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
         let mut pending_switch = None;
 
@@ -2371,7 +2951,7 @@ mod tests {
             &mut req_id,
             &mut cur_mode,
             &mut acc,
-            &yolo,
+            &policy,
             &mut pending_approvals,
             &mut pending_switch,
             false,

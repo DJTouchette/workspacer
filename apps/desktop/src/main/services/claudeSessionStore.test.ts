@@ -448,6 +448,50 @@ describe('managed pending → approval/question cards', () => {
   });
 });
 
+// Managed providers (codex/opencode/pi) never emit a transcript `usage` item,
+// so usageAccumulator.applyUsage — the only other peakContext writer — never
+// runs for them. Without applyStatusLine also feeding peakContext, their
+// session_history rows report peakContext:0 forever, even though the daemon's
+// statusLine carried the real percentage the whole time.
+describe('applyStatusLine feeds peakContext for statusLine-only (codex-shaped) sessions', () => {
+  it('derives peakContext from contextUsedPct * contextWindowSize and tracks the max', () => {
+    const sid = uniqueId();
+    hook(sid, 'SessionStart');
+    expect(claudeSessionStore.getSnapshot(sid)?.peakContext).toBe(0);
+
+    claudeSessionStore.applyStatusLine(sid, {
+      modelDisplay: 'gpt-5-codex',
+      contextUsedPct: 10,
+      contextWindowSize: 272_000,
+    });
+    expect(claudeSessionStore.getSnapshot(sid)?.peakContext).toBe(27_200);
+
+    // A later, smaller reading must not pull the peak back down.
+    claudeSessionStore.applyStatusLine(sid, {
+      modelDisplay: 'gpt-5-codex',
+      contextUsedPct: 5,
+      contextWindowSize: 272_000,
+    });
+    expect(claudeSessionStore.getSnapshot(sid)?.peakContext).toBe(27_200);
+
+    // A higher reading raises it further.
+    claudeSessionStore.applyStatusLine(sid, {
+      modelDisplay: 'gpt-5-codex',
+      contextUsedPct: 40,
+      contextWindowSize: 272_000,
+    });
+    expect(claudeSessionStore.getSnapshot(sid)?.peakContext).toBe(108_800);
+  });
+
+  it('leaves peakContext untouched when the statusLine carries no context reading', () => {
+    const sid = uniqueId();
+    hook(sid, 'SessionStart');
+
+    claudeSessionStore.applyStatusLine(sid, { modelDisplay: 'gpt-5-codex', costUSD: 0.4 });
+    expect(claudeSessionStore.getSnapshot(sid)?.peakContext).toBe(0);
+  });
+});
+
 describe('liveCwd follows the agent into and out of a worktree', () => {
   it('tracks a mid-session cwd change without touching the spawn cwd', () => {
     const sid = uniqueId();

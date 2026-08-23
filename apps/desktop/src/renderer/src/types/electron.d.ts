@@ -159,6 +159,8 @@ export interface ElectronAPI {
   agentSuggestTitle: (req: {
     userMessage: string;
     assistantReply?: string;
+    /** The agent's own backend — titling uses ITS harness, not claude's. */
+    provider?: 'claude' | 'codex' | 'opencode' | 'pi';
   }) => Promise<string | null>;
   /** Push: config changed in main (own write or an external one). Unsubscribe. */
   onConfigChanged: (cb: (config: unknown) => void) => () => void;
