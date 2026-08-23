@@ -118,14 +118,20 @@ export function managedOptionsFromRequest(
   provider: NonNullable<AgentSpawnRequest['provider']>,
   req: AgentSpawnRequest,
 ): ManagedSpawnOptions {
+  if (req.transport === 'stream' && provider !== 'codex') {
+    console.warn(
+      `[managedSpawn] ${provider}: ignoring transport 'stream' — ` +
+        'only Claude and Codex have a headless transport',
+    );
+  }
   return {
     provider,
     cwd: req.cwd,
     // Codex mirrors Claude's stream transport: 'stream' spawns headless
-    // (GUI-only, daemon-owned thread). Forwarded for every managed provider —
-    // only Codex ACTS on it (spawnManagedAgent's isCodexStream), but carrying
-    // it means an unhonourable request is reported rather than vanishing.
-    ...(req.transport === 'stream' && { transport: 'stream' as const }),
+    // (GUI-only, daemon-owned thread). No other managed adapter accepts a
+    // transport at all, so the key stays OFF their payload — but the request is
+    // ANNOUNCED here rather than vanishing, which is this module's whole rule.
+    ...(provider === 'codex' && req.transport === 'stream' && { transport: 'stream' as const }),
     model: req.model,
     effort: req.effort,
     // Managed providers have only ask/yolo, so an explicit bypass mode folds
@@ -175,9 +181,6 @@ export function explainUnsupportedManagedOptions(opts: ManagedSpawnOptions): str
     out.push(
       `permissionMode '${opts.permissionMode}' — managed providers only have ask/yolo (spawning in ask)`,
     );
-  }
-  if (opts.transport === 'stream' && opts.provider !== 'codex') {
-    out.push(`transport 'stream' — only Claude and Codex have a headless transport`);
   }
   if (opts.provider === 'pi' && (opts.supervisor || opts.mcpFacade || opts.toolScope)) {
     out.push('the workspacer MCP facade — pi ships no MCP client, so its tools cannot attach');

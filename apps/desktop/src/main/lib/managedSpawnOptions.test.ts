@@ -11,7 +11,7 @@
  * be added and quietly ignored — SPAWN_REQUEST_FIELDS fails to compile until it
  * is classified, and this test fails until the classification is honest.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   SPAWN_REQUEST_FIELDS,
   managedOptionsFromRequest,
@@ -60,6 +60,16 @@ describe('managedOptionsFromRequest', () => {
     expect(opts.toolScope).toBe('operator');
     expect(opts.transport).toBe('stream');
     expect(opts.provider).toBe('codex');
+  });
+
+  it('keeps transport off a provider whose adapter has no headless mode, loudly', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const opts = managedOptionsFromRequest('opencode', { transport: 'stream' });
+    // The daemon adapter would reject the key, so it must not ride the payload
+    // — but the request is reported rather than silently vanishing.
+    expect(opts).not.toHaveProperty('transport');
+    expect(warn.mock.calls.join(' ')).toMatch(/transport 'stream'/);
+    warn.mockRestore();
   });
 
   it('folds every bypass spelling into skipPermissions', () => {
@@ -131,12 +141,6 @@ describe('explainUnsupportedManagedOptions', () => {
     expect(why.join('\n')).toMatch(/profileId/);
     expect(why.join('\n')).toMatch(/mcpItemIds/);
     expect(why.join('\n')).toMatch(/permissionMode 'plan'/);
-  });
-
-  it('flags a headless request no provider but codex can serve', () => {
-    expect(
-      explainUnsupportedManagedOptions({ provider: 'opencode', transport: 'stream' }).join('\n'),
-    ).toMatch(/transport 'stream'/);
   });
 
   it('flags a facade asked of pi, which has no MCP client', () => {
