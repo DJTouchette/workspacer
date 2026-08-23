@@ -123,6 +123,12 @@ export const HOST_ONLY = [
   'openExternalUrl', // hands a URL to the host's default browser
   'claudeProfilesAddAccount', // builds a linked CLAUDE_CONFIG_DIR on the host fs
   'claudeProfilesLoginStatus', // probes host credential files
+  // The brief board. Main resolves every path itself from the host's config and
+  // writes the host's .workspacer/brief.md files under an advisory lock; there
+  // is no bus capability for it and the web backend has no stub, so leaving
+  // these out would not degrade the pane, it would delete it.
+  'loadBriefBoard',
+  'moveBriefCard',
 ] as const satisfies readonly (keyof ElectronAPI)[];
 
 /**

@@ -228,6 +228,8 @@ const Column: React.FC<{
 
   return (
     <div
+      data-column={column}
+      data-lane={lane.key}
       onDragOver={(e) => {
         if (!accepts) return;
         e.preventDefault();
