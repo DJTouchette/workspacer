@@ -39,3 +39,17 @@ services/hub/*.exe~
 
 # Playwright run artefacts (traces, failure screenshots) from the e2e suites.
 apps/desktop/test-results/
+
+# Rivet — hand-authored project knowledge (.rivet/context, .rivet/learnings,
+# .rivet/hooks, .rivet/runbooks, .rivet/config.yaml) IS tracked, since CLAUDE.md
+# tells every dispatched agent to read it. These are generated indexes/caches
+# that rebuild locally via `rivet serve` and must never be committed.
+.recon/
+.rivet/embeddings/
+.rivet/recon/
+
+# Stray nested .rivet/ (rivet was run once with cwd set here by mistake) —
+# not the project's real context root; left in place, untracked, for a human
+# to fold into /.rivet/learnings or delete. See CLAUDE.md's .rivet/ for the
+# real tracked context.
+apps/desktop/src/renderer/.rivet/

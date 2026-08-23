@@ -1,0 +1,116 @@
+# Rivet configuration
+# See: https://github.com/djtouchette/rivet
+
+# Context — controls how the context system behaves.
+# auto_compact: true (default) — nudge Claude to consolidate docs when they get long.
+#               false — let learnings accumulate and compact manually (e.g. after merges).
+#               Set to false for team workflows where branches add learnings independently
+#               and compaction happens on main after merge.
+# wiki_paths:   extra markdown roots indexed as wiki reference docs, in addition
+#               to .rivet/wiki/. Point at an existing docs/ tree or a checked-out
+#               Azure DevOps wiki (itself a git repo of markdown). Your team keeps
+#               those checkouts current; rivet only reads them.
+# context:
+#   auto_compact: false
+#   wiki_paths:
+#     - "../project.wiki/**"
+#     - "docs/**"
+
+# Project CLI — the repo-local CLI that exposes project-specific operations.
+# Uncomment and set the path to your project CLI binary.
+# project_cli:
+#   command: "./bin/projectcli"
+
+# Capabilities — project-specific tools that Rivet exposes to Claude Code via MCP.
+# Each capability has a name, kind, description, command, output format, and safety level.
+#
+# Safety levels:
+#   safe      — read-only, low-risk, can run automatically
+#   guarded   — potentially meaningful, may require checks
+#   dangerous — can mutate important state, requires explicit approval
+#
+# Capability kinds:
+#   project_command — a command from your project CLI
+#   tool            — a standalone tool (e.g., vaulty)
+#   mcp             — an external MCP server
+#   workflow        — a multi-step workflow
+#
+# Example:
+# capabilities:
+#   - name: "db.patient-summary"
+#     kind: "project_command"
+#     description: "Read-only patient summary report"
+#     command: ["./bin/projectcli", "db", "patient-summary"]
+#     output: "json"
+#     safety: "safe"
+#
+#   - name: "vaulty"
+#     kind: "tool"
+#     description: "Secret access and command brokering"
+#     command: ["vaulty"]
+#     output: "json"
+#     safety: "guarded"
+
+capabilities: []
+
+# Schema — database intelligence.
+# Configure one or more read-only database connections. All queries Rivet makes
+# target system catalogs and stats views — never application data.
+#
+# Environment variables in user/password/dsn are expanded at runtime, so you
+# can reference secrets from your shell or vaulty instead of committing them.
+#
+# Example:
+# schema:
+#   databases:
+#     - name: prod
+#       engine: postgres            # postgres | mssql
+#       host: db.example.com
+#       port: 5432
+#       user: readonly
+#       password: ${SCHEMA_PW}      # expanded from env
+#       database: production
+#       sslmode: require            # postgres only
+#       default: true
+#     - name: prod-mssql
+#       engine: mssql
+#       host: sql.example.com
+#       port: 1433
+#       user: ${MSSQL_USER}
+#       password: ${MSSQL_PW}
+#       database: app_prod
+#   migrations:
+#     dir: ./db/migrations          # or dirs: [...] for multiple roots
+#     dialect: postgres             # optional hint
+#   code_scan:
+#     roots: [./src, ./backend]     # where to look for SQL-bearing source
+#     languages: [csharp, go]       # optional filter
+#     exclude: ["**/node_modules/**", "**/bin/**"]
+
+# Policies — rules that gate capability execution based on environment.
+# Each policy has a match (which capabilities it applies to) and constraints.
+#
+# Match fields (all optional, AND logic when multiple are set):
+#   safety       — match by safety level (safe, guarded, dangerous)
+#   kind         — match by capability kind
+#   capabilities — match by specific capability names
+#
+# Constraints:
+#   require_env — env vars that must be set (non-empty) before execution
+#   deny_env    — env vars that must NOT be set during execution
+#
+# Example:
+# policies:
+#   - name: "no-dangerous-in-ci"
+#     description: "Block dangerous capabilities in CI environments"
+#     match:
+#       safety: "dangerous"
+#     deny_env: ["CI"]
+#
+#   - name: "prod-gate"
+#     description: "Require explicit prod approval for migrations"
+#     match:
+#       capabilities: ["db.migrate", "search.reindex"]
+#     require_env: ["PROD_APPROVED"]
+
+policies: []
