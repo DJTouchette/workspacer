@@ -452,7 +452,7 @@ const STATUS_PATTERNS: Array<[BriefStatus, RegExp]> = [
     // `dispatched` only counts when it is not being NEGATED — "NOT YET
     // DISPATCHED" is backlog language, and reading it as live work is the
     // single most likely misclassification in these briefs.
-    /\b(?:in flight|in-flight|(?<!not yet )dispatched|in progress|underway|running now|being (?:built|written|fixed)|wip)\b/i,
+    /\b(?:in flight|in-flight|(?<!not yet )dispatched|dispatch(?:es)? out|in progress|underway|running now|being (?:built|written|fixed)|wip)\b/i,
   ],
   ['landed', /\b(?:resolved|fixed|merged|landed|shipped|committed|pushed|closed|built)\b/i],
   // "Next up" is scoped TIGHT on purpose. It is `/standup`'s own generated
@@ -473,6 +473,32 @@ const MARKER_STATUS: Array<[BriefStatus, RegExp]> = [
   ['in-flight', /[🚧🔨🏗]/u],
   ['landed', /[✅✔☑🎉]/u],
 ];
+
+/**
+ * Which state an entry's own words claim.
+ *
+ * `waiting-on-you` keeps ABSOLUTE precedence: an entry can be both landed and
+ * blocking ("✅ RESOLVED … ONE HUMAN ACTION NEEDED"), and the one that needs
+ * the user is the one they must see. Among the other three the EARLIEST mention
+ * wins, not a fixed ranking — real entries mention several states in passing
+ * ("Duplicate-wake bug FIXED and merged … it discarded the salvage that was
+ * dispatched earlier"), and a fixed order lets a word buried in the detail
+ * outvote the headline the author led with.
+ */
+function statusFromText(raw: string): BriefStatus | undefined {
+  const [, blocking] = STATUS_PATTERNS[0];
+  if (blocking.test(raw)) return 'waiting-on-you';
+  let best: BriefStatus | undefined;
+  let bestAt = Infinity;
+  for (const [status, re] of STATUS_PATTERNS.slice(1)) {
+    const at = raw.search(re);
+    if (at >= 0 && at < bestAt) {
+      bestAt = at;
+      best = status;
+    }
+  }
+  return best;
+}
 
 /**
  * Retraction / supersession, checked at the HEAD of the entry.
@@ -542,6 +568,14 @@ function headlineCut(s: string): string {
  *  prose at its first natural break. */
 const BOLD_TITLE_MAX = 120;
 
+/** How far into the entry a bold span may start and still be a HEADLINE.
+ *  Mid-sentence emphasis is not a title: real briefs contain lines like
+ *  "…right-click the card → **Terminate** → reopen from Overview", where the
+ *  bold span is a UI label and taking it as the headline produces a card
+ *  titled "Terminate" that says nothing about the entry. A headline sits at
+ *  the front, after at most a short lead-in. */
+const BOLD_TITLE_MAX_OFFSET = 12;
+
 const REF_RE = /(session:[0-9a-f]{6,}|\b[0-9a-f]{7,12}\b)/g;
 const MAX_REFS = 5;
 
@@ -593,7 +627,14 @@ export function deriveCard(entry: BriefEntry, column: BoardColumn): BriefCard {
   if (!retracted) {
     const bold = /\*\*(.+?)\*\*/s.exec(body);
     const boldText = bold ? plainify(bold[1]) : '';
-    if (boldText.length >= 8 && boldText.length <= BOLD_TITLE_MAX) title = boldText;
+    if (
+      bold &&
+      bold.index <= BOLD_TITLE_MAX_OFFSET &&
+      boldText.length >= 8 &&
+      boldText.length <= BOLD_TITLE_MAX
+    ) {
+      title = boldText;
+    }
   }
   if (!title) title = plainify(headlineCut(plainify(body)));
   if (!title) title = plainify(body.split('\n')[0]);
@@ -617,7 +658,7 @@ export function deriveCard(entry: BriefEntry, column: BoardColumn): BriefCard {
   const glyphs = `${marker ?? ''}${marker2?.[0] ?? ''}`;
   const status =
     (glyphs ? MARKER_STATUS.find(([, re]) => re.test(glyphs))?.[0] : undefined) ??
-    STATUS_PATTERNS.find(([, re]) => re.test(raw))?.[0];
+    statusFromText(raw);
 
   return {
     id: entry.id,

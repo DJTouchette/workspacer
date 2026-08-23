@@ -528,3 +528,50 @@ describe('insertPointFor', () => {
     expect(doc.lines[insertPointFor(doc, 'Recently')]).toBe('- newest');
   });
 });
+
+/**
+ * THE REAL FILES, MOVED FOR REAL. The fixture above pins the rules; this pins
+ * them against the actual briefs on this machine — long, emoji-laden, full of
+ * nested markdown and numbered sub-lists. Every entry is archived, and moved to
+ * every column, and the result is checked line for line. Self-skips where the
+ * files are absent (CI, a fresh checkout).
+ *
+ * This is the test that says the archive drag cannot corrupt a brief. If it
+ * ever goes red, the feature is unsafe to ship, not merely buggy.
+ */
+describe('real briefs survive real moves', () => {
+  const realBriefs = (): string[] => realBriefPaths().filter((p) => p.endsWith('brief.md'));
+
+  it('archives EVERY entry of every real brief, losing not one byte', () => {
+    for (const p of realBriefs()) {
+      const orig = fs.readFileSync(p, 'utf-8');
+      for (const entry of parseBrief(orig).entries) {
+        const { content, entry: removed } = removeEntry(orig, entry.id);
+        expect(removed.text).toBe(entry.text);
+        // The brief, minus exactly this entry's lines and nothing else.
+        const expected = orig.split('\n');
+        expected.splice(entry.start, entry.end - entry.start);
+        expect(content, `${p}: archiving disturbed another line`).toBe(expected.join('\n'));
+        expect(appendToArchive('', removed.lines, '2026-08-22')).toContain(entry.text);
+      }
+    }
+  });
+
+  it('moves EVERY entry to every column without losing a line', () => {
+    const sorted = (s: string): string[] => s.split('\n').slice().sort();
+    for (const p of realBriefs()) {
+      const orig = fs.readFileSync(p, 'utf-8');
+      for (const entry of parseBrief(orig).entries) {
+        for (const col of ['Now', 'Direction', 'Recently']) {
+          const next = moveEntryToColumn(orig, entry.id, col);
+          expect(sorted(next), `${p}: lost a line moving ${entry.text.slice(0, 50)}`).toEqual(
+            sorted(orig),
+          );
+          const moved = parseBrief(next).entries.find((e) => e.id === entry.id);
+          expect(moved, `${p}: entry vanished moving to ${col}`).toBeDefined();
+          expect(moved!.text).toBe(entry.text);
+        }
+      }
+    }
+  });
+});
