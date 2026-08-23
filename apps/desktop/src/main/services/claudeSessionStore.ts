@@ -222,6 +222,17 @@ export interface SessionStatusLine {
   receivedAt?: string;
 }
 
+/** Derive an absolute context-token count from statusLine's percentage +
+ *  window size — the only context signal managed providers (codex/opencode/
+ *  pi) ever emit, since they never produce a transcript `usage` item and so
+ *  never run through usageAccumulator.applyUsage. Returns undefined when
+ *  either piece is missing, so callers can distinguish "no data" from "zero
+ *  used" instead of silently reporting 0. */
+export function contextTokensFromStatusLine(sl?: SessionStatusLine): number | undefined {
+  if (sl?.contextUsedPct === undefined || sl?.contextWindowSize === undefined) return undefined;
+  return Math.round((sl.contextUsedPct / 100) * sl.contextWindowSize);
+}
+
 /** Capabilities parsed from Claude's stream `init` frame (stream sessions). */
 export interface SessionCapabilities {
   fastMode?: boolean;
@@ -946,6 +957,13 @@ class ClaudeSessionStore {
     if (!session) return;
     // Always record the latest value immediately (trailing-edge debounce).
     session.statusLine = statusLine;
+    // Managed providers (codex/opencode/pi) never emit a transcript `usage`
+    // item, so applyUsage (the only other peakContext writer) never runs for
+    // them — without this, their peak-context analytics stay 0 forever.
+    const slContextTokens = contextTokensFromStatusLine(statusLine);
+    if (slContextTokens !== undefined && slContextTokens > session.peakContext) {
+      session.peakContext = slContextTokens;
+    }
     // The status line carries the provider's OWN context window
     // (`contextWindowSize`) — the one fact that settles 1M-vs-200k. It can land
     // after the session's last usage turn, so fold it in here too, or the bar
