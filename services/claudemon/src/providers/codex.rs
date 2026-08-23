@@ -40,10 +40,10 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
-use super::{apply_updates, AgentUpdate, Facade, ModelInfo, UsageAcc};
+use super::{apply_updates, note_user_send, set_mode, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::protocol::Signal;
 use crate::session::conversation::ConversationItem;
-use crate::session::state::{Pending, SessionMode};
+use crate::session::state::{Pending, PendingWrite, SessionMode};
 use crate::session::{ConversationStore, SessionStore};
 use crate::wrapper::pty;
 
@@ -490,16 +490,17 @@ fn surface_approval(
     cur_mode: &mut SessionMode,
     parked: &ParkedApproval,
 ) {
-    store.set_managed_mode(
+    set_mode(
+        store,
         session_id,
         SessionMode::Approval,
-        Some(Pending::Approval {
+        PendingWrite::Park(Pending::Approval {
             tool: parked.tool.clone(),
             summary: parked.summary.clone(),
             raw: parked.raw.clone(),
         }),
+        cur_mode,
     );
-    *cur_mode = SessionMode::Approval;
 }
 
 /// Answer the FIFO head of the parked approvals with the user's decision, then
@@ -523,10 +524,13 @@ fn resolve_approval(
     let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": parked.id, "result": result }));
     match pending_approvals.front() {
         Some(next) => surface_approval(store, session_id, cur_mode, next),
-        None => {
-            store.set_managed_mode(session_id, SessionMode::Responding, None);
-            *cur_mode = SessionMode::Responding;
-        }
+        None => set_mode(
+            store,
+            session_id,
+            SessionMode::Responding,
+            PendingWrite::Resolve,
+            cur_mode,
+        ),
     }
 }
 
@@ -1234,10 +1238,7 @@ async fn run_session(
                     // instructions (once) to what's actually sent to the agent.
                     conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
                     let sent = with_instructions(&mut pending_instructions, text);
-                    if cur_mode != SessionMode::Responding {
-                        store.set_managed_mode(session_id, SessionMode::Responding, None);
-                        cur_mode = SessionMode::Responding;
-                    }
+                    note_user_send(store, session_id, &mut cur_mode);
                     match &thread_id {
                         Some(tid) => {
                             req_id += 1;

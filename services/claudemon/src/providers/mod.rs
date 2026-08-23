@@ -40,7 +40,7 @@ use tokio::sync::mpsc;
 use crate::protocol::{Signal, WrapperMessage};
 use crate::session::conversation::ConversationItem;
 use crate::session::state::{
-    Capabilities, Pending, Plan, PlanStatus, PlanStep, SessionMode, StatusLine,
+    Capabilities, Pending, PendingWrite, Plan, PlanStatus, PlanStep, SessionMode, StatusLine,
 };
 use crate::session::store::WrapperHandle;
 use crate::session::{ConversationStore, SessionStore};
@@ -691,6 +691,63 @@ fn synthesized_rate_limit_warning(windows: &[(&str, Option<f64>)]) -> Option<Str
         .map(|(label, p)| format!("You're close to your {label} usage limit — {p:.0}% used"))
 }
 
+/// Write a managed session's mode through the store's guarded funnel and sync
+/// the driver's own `cur_mode` mirror to what the store actually holds.
+///
+/// Every adapter keeps a local `cur_mode` because it drives decisions the store
+/// can't (which frame re-surfaces a queued approval, whether to bother writing
+/// at all). That mirror is only safe if it follows the store rather than the
+/// request: a [`PendingWrite::Keep`] write is suppressed while an approval or
+/// question is parked, and a driver that then believed its own `Responding`
+/// would go on to make every later decision on a mode the store never adopted.
+///
+/// An unregistered session (teardown race) has no state to read back, so the
+/// mirror takes the requested mode — the same thing the pre-funnel code did.
+pub(crate) fn set_mode(
+    store: &SessionStore,
+    session_id: &str,
+    mode: SessionMode,
+    write: PendingWrite,
+    cur_mode: &mut SessionMode,
+) {
+    *cur_mode = match store.set_managed_mode(session_id, mode, write) {
+        Some(state) => state.mode,
+        None => mode,
+    };
+}
+
+/// Mode bookkeeping for a user message that was just written to an agent's
+/// stdin. Shared by every managed driver's send arm (claude stream, codex,
+/// opencode, pi) — each had its own copy, and three of the four had the copy
+/// aae765a3 had to fix.
+///
+/// A parked approval/question is a PAUSE: the CLI is blocked on the user, not
+/// working. Reasserting `Responding` here must never demote it —
+/// `set_managed_mode` would also drop the `pending` card (a `Responding` write
+/// carries none), leaving a session that reports `responding` (clients:
+/// "streaming") while the CLI is still blocked on an unanswered
+/// `can_use_tool`, with no approval record left to answer. The parked request
+/// only lives inside this driver, so nothing else can repair it: the session
+/// wedges silently and its transcript stops growing.
+///
+/// This is the same invariant as `apply_updates`' `Busy` arm and the
+/// `background_tasks_changed` paths in `handle_line`: exactly one feed owns a
+/// session's pending slot; others may enrich but never clear. It is no longer
+/// re-derived here — the write goes in as [`PendingWrite::Keep`] and the store
+/// is what refuses it. Only the state write is suppressed: the message itself
+/// already went down stdin and still queues in the CLI.
+pub(crate) fn note_user_send(store: &SessionStore, session_id: &str, cur_mode: &mut SessionMode) {
+    if *cur_mode != SessionMode::Responding {
+        set_mode(
+            store,
+            session_id,
+            SessionMode::Responding,
+            PendingWrite::Keep,
+            cur_mode,
+        );
+    }
+}
+
 /// Drive the stores from a batch of translated updates. Shared by every
 /// adapter. Mode changes are debounced (Approval always re-applies since its
 /// `pending` can change); conversation items are pushed together; usage
@@ -704,8 +761,11 @@ pub fn apply_updates(
     acc: &mut UsageAcc,
 ) {
     let mut items = Vec::new();
-    let mut new_mode: Option<SessionMode> = None;
-    let mut pending: Option<Pending> = None;
+    // The mode this batch resolves to, paired with what it means to do to the
+    // session's single pending slot. Carrying the intent (rather than a bare
+    // `Option<Pending>`) is what lets the store refuse a liveness write that
+    // would clobber a parked request — see [`PendingWrite`].
+    let mut new_mode: Option<(SessionMode, PendingWrite)> = None;
     let mut usage_changed = false;
     // Latest plan in this batch (last-write-wins); applied after the item push
     // so its own conversation item lands just past the batch's items.
@@ -713,45 +773,42 @@ pub fn apply_updates(
 
     for update in &updates {
         match update {
-            AgentUpdate::Idle => new_mode = Some(SessionMode::Input),
+            // A genuine turn end (a `result` frame) really is the CLI saying
+            // the turn is over, so it is allowed to clear a parked request —
+            // unlike `Busy`, which is only a liveness ping.
+            AgentUpdate::Idle => new_mode = Some((SessionMode::Input, PendingWrite::Resolve)),
             AgentUpdate::Busy => {
                 // A parked approval/question is a PAUSE: the agent is blocked
-                // on the user, not working. `Busy` must never demote it —
-                // `set_managed_mode` below would also drop the `pending` card
-                // (Busy carries none), leaving a session that reports
-                // `responding` (clients: "streaming") while the CLI is still
-                // blocked on an unanswered `can_use_tool`, with no approval
-                // record to answer. That is the unresolvable-approval /
-                // lying-state shape exactly, and it is unreachable for a
-                // client to repair because the daemon is the only holder of
-                // the parked request.
+                // on the user, not working. `Busy` is a liveness ping and says
+                // nothing about that, so it goes in as `Keep` and the store
+                // drops it while a request is parked. Left unguarded (as it
+                // was) it demoted the pause to `Responding` AND dropped the
+                // card, leaving a session that reports "streaming" while the
+                // CLI is still blocked on an unanswered `can_use_tool` with no
+                // approval record to answer — unrepairable from outside,
+                // because the daemon is the only holder of the parked request.
                 //
-                // The two `background_tasks_changed` paths in
-                // claude_stream.rs guard this same hazard inline ("Guarded to
-                // Input so a parked approval/question is never clobbered");
-                // this is the shared guard every managed provider goes
-                // through. A genuine turn end (`Idle`, from a `result` frame)
-                // is deliberately still allowed to clear the pause — that is
-                // the CLI telling us the turn is over, not a liveness ping.
-                if new_mode.is_none()
-                    && *cur_mode != SessionMode::Approval
-                    && *cur_mode != SessionMode::Question
-                {
-                    new_mode = Some(SessionMode::Responding);
+                // The `new_mode.is_none()` check is a different thing and
+                // stays: within one batch, an explicit `Idle`/`Approval`
+                // outranks a liveness ping.
+                if new_mode.is_none() {
+                    new_mode = Some((SessionMode::Responding, PendingWrite::Keep));
                 }
             }
             AgentUpdate::PermissionPending {
                 tool, summary, raw, ..
             } => {
-                new_mode = Some(SessionMode::Approval);
                 // NOTE: surfacing the pending approval is accurate telemetry, but
                 // forwarding the user's decision back to the provider's approval
                 // API is a follow-up (Phase 4).
-                pending = Some(Pending::Approval {
-                    tool: tool.clone(),
-                    summary: summary.clone(),
-                    raw: raw.clone(),
-                });
+                new_mode = Some((
+                    SessionMode::Approval,
+                    PendingWrite::Park(Pending::Approval {
+                        tool: tool.clone(),
+                        summary: summary.clone(),
+                        raw: raw.clone(),
+                    }),
+                ));
             }
             AgentUpdate::Usage {
                 model,
@@ -836,10 +893,11 @@ pub fn apply_updates(
     if let Some(plan) = plan {
         store.set_plan(conv, session_id, plan);
     }
-    if let Some(mode) = new_mode {
+    if let Some((mode, write)) = new_mode {
+        // Approval always re-applies: its `pending` payload can change even
+        // when the mode doesn't (a second parked request replacing the card).
         if mode != *cur_mode || mode == SessionMode::Approval {
-            store.set_managed_mode(session_id, mode, pending);
-            *cur_mode = mode;
+            set_mode(store, session_id, mode, write, cur_mode);
         }
     }
     if usage_changed {
@@ -1313,7 +1371,7 @@ mod tests {
             let store = SessionStore::new();
             let conv = ConversationStore::new();
             store.register_managed("s-block", "/tmp/proj", "claude");
-            store.set_managed_mode("s-block", mode, Some(pending));
+            store.set_managed_mode("s-block", mode, PendingWrite::Park(pending));
             let mut cur = mode;
             let mut acc = UsageAcc::new();
 

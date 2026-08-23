@@ -1395,6 +1395,7 @@ async fn status_line_stream(
 mod tests {
     use super::*;
     use crate::session::conversation::ConversationItem;
+    use crate::session::state::PendingWrite;
     use crate::session::store::WrapperHandle;
     use crate::session::ModelSwitch;
     use axum::body::Body;
@@ -1945,7 +1946,7 @@ mod tests {
         state.store.register_managed("sess-1", "/tmp/proj", "codex");
         state
             .store
-            .set_managed_mode("sess-1", SessionMode::Approval, None);
+            .set_managed_mode("sess-1", SessionMode::Approval, PendingWrite::Resolve);
         let req = post_json("/sessions/sess-1/approve", json!({ "decision": "maybe" }));
         let (status, body) = request(state, req).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -1958,7 +1959,7 @@ mod tests {
         state.store.register_managed("sess-1", "/tmp/proj", "codex");
         state
             .store
-            .set_managed_mode("sess-1", SessionMode::Approval, None);
+            .set_managed_mode("sess-1", SessionMode::Approval, PendingWrite::Resolve);
         let (tx, mut rx) = mpsc::unbounded_channel::<bool>();
         state.store.register_managed_decision("sess-1", tx);
         let req = post_json("/sessions/sess-1/approve", json!({ "decision": "yes" }));
@@ -2053,7 +2054,7 @@ mod tests {
         state.store.register_managed("sess-1", "/tmp/proj", "codex");
         state
             .store
-            .set_managed_mode("sess-1", SessionMode::Question, None);
+            .set_managed_mode("sess-1", SessionMode::Question, PendingWrite::Resolve);
         let (h, _rx) = wrapper();
         state.store.attach_pty("sess-1", h);
         let req = post_json("/sessions/sess-1/answer", json!({ "option": 10 }));
@@ -2068,7 +2069,7 @@ mod tests {
         state.store.register_managed("sess-1", "/tmp/proj", "codex");
         state
             .store
-            .set_managed_mode("sess-1", SessionMode::Question, None);
+            .set_managed_mode("sess-1", SessionMode::Question, PendingWrite::Resolve);
         let (h, mut rx) = wrapper();
         state.store.attach_pty("sess-1", h);
         let req = post_json("/sessions/sess-1/answer", json!({ "option": 2 }));

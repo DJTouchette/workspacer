@@ -11,7 +11,9 @@ use time::OffsetDateTime;
 use super::account_usage::AccountUsage;
 use super::conversation::{ConversationItem, ConversationStore};
 use super::permission_mode::{classify_screen, PermissionMode, PermissionSwitchError};
-use super::state::{HookEvent, Pending, Plan, SessionMode, SessionState, StatusLine, Transport};
+use super::state::{
+    HookEvent, Pending, PendingWrite, Plan, SessionMode, SessionState, StatusLine, Transport,
+};
 use crate::protocol::WrapperMessage;
 
 const BROADCAST_CAPACITY: usize = 256;
@@ -1071,19 +1073,52 @@ impl SessionStore {
             .or_insert_with(|| broadcast::channel(BYTE_BROADCAST_CAPACITY).0);
     }
 
-    /// Drive a managed session's mode (and optional pending) directly, since
+    /// Drive a managed session's mode (and its pending slot) directly, since
     /// managed backends don't emit Claude hooks. Broadcasts a SessionUpdate.
     /// Returns None if the session isn't registered.
+    ///
+    /// **This is the single guarded place every pending-slot write goes
+    /// through.** `write` says what the caller means to do with the slot (see
+    /// [`PendingWrite`]); a [`PendingWrite::Keep`] write — liveness or
+    /// enrichment — is suppressed outright while an approval or a question is
+    /// parked, mode included. That is the invariant from
+    /// `docs/unresolvable-approval-findings.md` enforced structurally rather
+    /// than by a hand-written condition at each of a dozen call sites, four of
+    /// which forgot it and wedged real sessions.
+    ///
+    /// The returned state is what the store actually holds afterwards, NOT
+    /// what was asked for. A driver mirroring the mode locally must take it
+    /// from here (see [`crate::providers::set_mode`]) or its mirror drifts
+    /// from the store the first time a write is suppressed.
     pub fn set_managed_mode(
         &self,
         session_id: &str,
         mode: SessionMode,
-        pending: Option<Pending>,
+        write: PendingWrite,
     ) -> Option<SessionState> {
         let state = {
             let mut entry = self.states.get_mut(session_id)?;
-            entry.mode = mode;
-            entry.pending = pending;
+            match write {
+                // A parked request is a PAUSE: the agent is blocked on the
+                // user, not working. A liveness write knows nothing about that
+                // and must not speak for it — return the parked state
+                // unchanged, and broadcast nothing (there is no change to
+                // announce).
+                PendingWrite::Keep
+                    if entry.mode == SessionMode::Approval
+                        || entry.mode == SessionMode::Question =>
+                {
+                    return Some(entry.clone());
+                }
+                PendingWrite::Park(pending) => {
+                    entry.mode = mode;
+                    entry.pending = Some(pending);
+                }
+                PendingWrite::Resolve | PendingWrite::Keep => {
+                    entry.mode = mode;
+                    entry.pending = None;
+                }
+            }
             entry.updated_at = OffsetDateTime::now_utc();
             entry.clone()
         };
@@ -3682,5 +3717,236 @@ mod tests {
         let row = store.get("m1").unwrap();
         assert_eq!(row.mode, SessionMode::Stopped);
         assert_eq!(row.background_tasks, 0);
+    }
+
+    fn approval(tool: &str) -> Pending {
+        Pending::Approval {
+            tool: Some(tool.into()),
+            summary: Some("outside allowed working directories".into()),
+            raw: serde_json::json!({ "tool_name": tool }),
+        }
+    }
+
+    /// The funnel's whole point. A `Keep` write is liveness/enrichment — a busy
+    /// ping, a message written to stdin, a background-task count changing —
+    /// and it knows nothing about whether the user is still blocking the
+    /// agent. While a request is parked it must change NOTHING: not the
+    /// pending card (dropping it strands the session, because the parked
+    /// request lives only inside the driver and nothing outside can rebuild
+    /// it), and not the mode either (reporting `responding` for a session
+    /// that is actually waiting on a human is the "lying state" half of the
+    /// same bug).
+    ///
+    /// Before this guard lived in the store, every caller re-derived it by
+    /// hand and four of them forgot.
+    #[test]
+    fn a_keep_write_changes_nothing_while_a_request_is_parked() {
+        for (parked_mode, parked) in [
+            (SessionMode::Approval, approval("Read")),
+            (
+                SessionMode::Question,
+                Pending::Question {
+                    questions: vec![],
+                    raw: serde_json::Value::Null,
+                },
+            ),
+        ] {
+            let store = SessionStore::new();
+            store.register_managed("s-keep", "/w", "claude");
+            store.set_managed_mode("s-keep", parked_mode, PendingWrite::Park(parked));
+            let mut rx = store.subscribe();
+
+            let returned = store
+                .set_managed_mode("s-keep", SessionMode::Responding, PendingWrite::Keep)
+                .expect("registered session");
+
+            assert_eq!(
+                returned.mode, parked_mode,
+                "the returned state must be what the store HOLDS, not what was asked for — \
+                 a driver mirrors its `cur_mode` from it"
+            );
+            let row = store.get("s-keep").expect("session state");
+            assert_eq!(row.mode, parked_mode, "mode must not be demoted");
+            assert!(
+                row.pending.is_some(),
+                "the pending card must survive a liveness write"
+            );
+            assert!(
+                rx.try_recv().is_err(),
+                "a suppressed write has nothing to announce — it must not broadcast"
+            );
+        }
+    }
+
+    /// The other half: with nothing parked, a `Keep` write is an ordinary
+    /// liveness update and applies normally. Without this the composer would
+    /// look dead after a nudge.
+    #[test]
+    fn a_keep_write_applies_when_nothing_is_parked() {
+        let store = SessionStore::new();
+        store.register_managed("s-live", "/w", "claude");
+        store.set_managed_mode("s-live", SessionMode::Input, PendingWrite::Resolve);
+
+        let returned = store
+            .set_managed_mode("s-live", SessionMode::Responding, PendingWrite::Keep)
+            .expect("registered session");
+
+        assert_eq!(returned.mode, SessionMode::Responding);
+        assert_eq!(
+            store.get("s-live").expect("session state").mode,
+            SessionMode::Responding
+        );
+    }
+
+    /// `Resolve` is the owner saying the block is over (the user answered, or a
+    /// genuine turn boundary arrived). It clears the slot even from a parked
+    /// state — otherwise an answered approval would leave a phantom card.
+    #[test]
+    fn a_resolve_write_clears_a_parked_request() {
+        let store = SessionStore::new();
+        store.register_managed("s-resolve", "/w", "claude");
+        store.set_managed_mode(
+            "s-resolve",
+            SessionMode::Approval,
+            PendingWrite::Park(approval("Bash")),
+        );
+
+        store.set_managed_mode("s-resolve", SessionMode::Responding, PendingWrite::Resolve);
+
+        let row = store.get("s-resolve").expect("session state");
+        assert_eq!(row.mode, SessionMode::Responding);
+        assert!(row.pending.is_none());
+    }
+
+    /// `Park` replaces the card even when the mode is unchanged — a second
+    /// parked request taking over the single slot from the one just answered.
+    #[test]
+    fn a_park_write_replaces_the_card_it_finds() {
+        let store = SessionStore::new();
+        store.register_managed("s-park", "/w", "claude");
+        store.set_managed_mode(
+            "s-park",
+            SessionMode::Approval,
+            PendingWrite::Park(approval("Read")),
+        );
+        store.set_managed_mode(
+            "s-park",
+            SessionMode::Approval,
+            PendingWrite::Park(approval("Bash")),
+        );
+
+        let row = store.get("s-park").expect("session state");
+        match row.pending {
+            Some(Pending::Approval { tool, .. }) => assert_eq!(tool.as_deref(), Some("Bash")),
+            other => panic!("expected the newer approval card, got {other:?}"),
+        }
+    }
+
+    fn hook_with(event: &str, session_id: &str, payload: serde_json::Value) -> HookEvent {
+        let mut h = hook(event, session_id, "/w");
+        h.payload = payload.as_object().cloned().unwrap_or_default();
+        h
+    }
+
+    /// The daemon half of the same ownership rule, on the OTHER feed. Claude
+    /// Code still runs the user's hooks for a headless stream session, so
+    /// `PreToolUse`/`PostToolUse`/`PermissionRequest` land here routinely while
+    /// the driver owns the pending slot — and `SessionState::apply` would
+    /// happily clear it, replace it with a question, or resurrect an approval
+    /// the driver already answered. `ingest` keeps those hooks as enrichment
+    /// only. It had no test until now, which is how the same shape survived on
+    /// the desktop's copy of this router.
+    #[test]
+    fn hooks_never_touch_the_pending_slot_of_a_daemon_owned_session() {
+        for (event, payload) in [
+            // Would clear the card outright.
+            ("PostToolUse", serde_json::json!({ "tool_name": "Bash" })),
+            // Would replace the parked approval with a question picker.
+            (
+                "PreToolUse",
+                serde_json::json!({
+                    "tool_name": "AskUserQuestion",
+                    "tool_input": { "questions": [ { "question": "Which?", "options": [] } ] }
+                }),
+            ),
+            // Would rewrite the card from the laggier of two feeds.
+            (
+                "PermissionRequest",
+                serde_json::json!({ "tool_name": "Write" }),
+            ),
+            // Would declare the turn over while the CLI is still blocked.
+            ("Stop", serde_json::json!({})),
+        ] {
+            let store = SessionStore::new();
+            store.register_managed("s-hooked", "/w", "claude");
+            store.set_transport("s-hooked", Transport::Stream);
+            store.set_managed_mode(
+                "s-hooked",
+                SessionMode::Approval,
+                PendingWrite::Park(approval("Read")),
+            );
+
+            store.ingest(hook_with(event, "s-hooked", payload));
+
+            let row = store.get("s-hooked").expect("session state");
+            assert_eq!(
+                row.mode,
+                SessionMode::Approval,
+                "a {event} hook must not drive the mode of a driver-owned session"
+            );
+            match row.pending {
+                Some(Pending::Approval { tool, .. }) => assert_eq!(
+                    tool.as_deref(),
+                    Some("Read"),
+                    "a {event} hook must not rewrite the driver's card"
+                ),
+                other => panic!("a {event} hook destroyed the driver's approval: {other:?}"),
+            }
+        }
+    }
+
+    /// What the hook feed IS allowed to do for a daemon-owned session: enrich.
+    /// `transcript_path` only ever arrives on a hook, and `/transcript` needs
+    /// it.
+    #[test]
+    fn hooks_still_enrich_a_daemon_owned_session_with_the_transcript_path() {
+        let store = SessionStore::new();
+        store.register_managed("s-enrich", "/w", "claude");
+        store.set_transport("s-enrich", Transport::Stream);
+
+        store.ingest(hook_with(
+            "PostToolUse",
+            "s-enrich",
+            serde_json::json!({ "transcript_path": "/tmp/t.jsonl" }),
+        ));
+
+        assert_eq!(
+            store.get("s-enrich").and_then(|s| s.transcript_path),
+            Some("/tmp/t.jsonl".to_string())
+        );
+    }
+
+    /// The mirror image: for a PTY claude session the hook feed IS the owner,
+    /// so the very same frame must raise the approval. Without this the guard
+    /// above could be "fixed" by ignoring hooks everywhere, which would leave
+    /// PTY sessions with no approvable record at all — the third defect in
+    /// `docs/unresolvable-approval-findings.md`.
+    #[test]
+    fn the_hook_feed_still_owns_a_pty_sessions_pending_slot() {
+        let store = SessionStore::new();
+        store.ingest(hook("SessionStart", "s-pty", "/w"));
+
+        store.ingest(hook_with(
+            "PermissionRequest",
+            "s-pty",
+            serde_json::json!({ "tool_name": "Read", "summary": "outside roots" }),
+        ));
+
+        let row = store.get("s-pty").expect("session state");
+        assert_eq!(row.mode, SessionMode::Approval);
+        match row.pending {
+            Some(Pending::Approval { tool, .. }) => assert_eq!(tool.as_deref(), Some("Read")),
+            other => panic!("the PTY hook feed must raise an approvable card, got {other:?}"),
+        }
     }
 }
