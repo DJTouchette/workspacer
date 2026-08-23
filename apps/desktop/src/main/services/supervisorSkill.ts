@@ -105,8 +105,10 @@ spawn_agent({
 
 \`toolScope: "view"\` gives the worker the read-only workspacer tools (so it can
 call get_transcript / get_conversation itself) and nothing else — it cannot
-spawn, message, or approve, and it pays context for only the handful of
-read-tool schemas. It does NOT make it a supervisor: it just reads transcripts
+spawn, approve, or message another session, and it pays context for only the
+handful of read-tool schemas. The one thing every tier can send is
+\`report_progress\`: a rate-limited line to whoever dispatched it, which arrives
+as a \`[fleet] Progress update\` wake and is never a completion. It does NOT make it a supervisor: it just reads transcripts
 and answers you. Reusing one worker keeps cost down; only spawn another if the
 first dies. (\`mcpFacade: true\` is the legacy spelling and grants the FULL tool
 set — prefer the scoped form.)

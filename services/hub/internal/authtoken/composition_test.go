@@ -216,11 +216,27 @@ var tierActors = map[string]map[string]bool{
 		// READ selector. A method that writes a file or flips an approval mode is
 		// not a read selector and has no entry here.
 		"sessions.transcript": true,
+		// The one WRITING actor a read-only tier holds, and the acknowledgement
+		// is the whole justification: its actor param (`callerSessionId`, KindID)
+		// selects the CALLER, not a target, and no caller on this tier may supply
+		// it. sanitizeReportProgressParams deletes it from every untrusted
+		// connection on both dispatch paths (local and federated), and a scoped
+		// bus connection has no session identity for the router to stamp in its
+		// place — so a view token reaching this method lands on the provider's
+		// "could not identify your session" refusal, every time. The credential
+		// that CAN use it is the MCP facade's, which resolves the session from
+		// the token record rather than from params. `note` is the other actor
+		// param (KindShell, prompt text into a running agent) and it rides the
+		// same containment: reaching a reader at all requires the identity this
+		// tier cannot assert. capspec records both decisions plus the
+		// compositionInert claim.
+		"agents.reportProgress": true,
 	},
 	"triage": {
 		// Triage's Methods() is viewMethods ++ triageMethods, so it inherits
-		// view's one read actor and must acknowledge it here too.
-		"sessions.transcript": true,
+		// view's actors and must acknowledge them here too.
+		"sessions.transcript":   true,
+		"agents.reportProgress": true,
 		// The acting surface triage adds on top of view. Every one is already on
 		// capspec's composition record: claude.approve + agents.sendMessage as the
 		// AcceptedIn pair, the other three as recorded halves / inert claims. A NEW

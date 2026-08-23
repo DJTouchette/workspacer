@@ -152,6 +152,13 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   // treatment write access gets.
   'agents.close': { label: 'Dismiss a finished agent session', sensitive: true },
   'agents.notifyWhen': { label: 'Ask to be told when an agent crosses a cost or idle threshold' },
+  // Sensitive for agents.sendMessage's reason — the note lands in a running
+  // agent's conversation, where it is read as instruction — even though the
+  // recipient is the host's choice, not the caller's.
+  'agents.reportProgress': {
+    label: 'Send a progress note to the agent that dispatched this one',
+    sensitive: true,
+  },
   'brief.append': { label: 'Add a line to a project brief', sensitive: true },
   'config.get': { label: 'Read your app settings' },
   'config.getPath': { label: 'See where your settings file lives' },

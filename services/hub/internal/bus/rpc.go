@@ -242,6 +242,17 @@ func (rt *router) register(cn *conn, methods []string) []string {
 // sees.
 const spawnMethod = "agents.spawn"
 
+// reportProgressMethod is the second, for the same structural reason and the
+// mirror-image rewrite. `callerSessionId` is not a target — it is the caller
+// ASSERTING WHO IT IS, and the provider turns that assertion into a recipient
+// (the named session's own parent). An assertion of identity is exactly the
+// thing a caller may not make about itself, so the router deletes it from every
+// caller that is not the control plane. The MCP facade, which IS the control
+// plane, stamps it from the per-request token record's `session:<id>` label
+// before the call ever reaches this connection — the same "the facade resolved
+// the session, the hub cannot" split spawn's yolo/profile grants have.
+const reportProgressMethod = "agents.reportProgress"
+
 // mayUseProfile reports whether this connection may dispatch an agent under
 // the named Claude profile.
 //
@@ -342,6 +353,40 @@ func sanitizeSpawnParams(caller *conn, raw json.RawMessage) json.RawMessage {
 	return out
 }
 
+// sanitizeReportProgressParams deletes `callerSessionId` from an untrusted
+// caller's agents.reportProgress params. There is no stamping half: the bus
+// connection of a scoped or plugin token carries no session identity to stamp
+// from, so the honest result is ABSENCE — and absence is not silent, because the
+// provider refuses a report it cannot attribute with a message saying exactly
+// that ("the host could not identify your session from your credential"). What
+// this closes is a plugin or phone token forging a progress wake FROM any worker
+// TO its manager, which is the one thing a one-way channel with a host-derived
+// recipient would otherwise still allow.
+//
+// Trusted callers pass through: the desktop, the brain and the MCP facade are
+// the control plane, and the facade in particular multiplexes every session over
+// one host-token connection, so it is the only party that CAN name the session
+// (from the token record it resolved). Non-object params pass through untouched.
+func sanitizeReportProgressParams(caller *conn, raw json.RawMessage) json.RawMessage {
+	if caller.trusted || len(raw) == 0 {
+		return raw
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
+		return raw
+	}
+	if _, ok := m["callerSessionId"]; !ok {
+		return raw
+	}
+	delete(m, "callerSessionId")
+	out, err := json.Marshal(m)
+	if err != nil {
+		// Cannot happen for a map of valid RawMessages; fail closed anyway.
+		return json.RawMessage("{}")
+	}
+	return out
+}
+
 // call routes a caller's invocation to the registered provider.
 func (rt *router) call(caller *conn, f Frame) {
 	if f.Method == "" {
@@ -369,6 +414,11 @@ func (rt *router) call(caller *conn, f Frame) {
 	// see them.
 	if f.Method == spawnMethod {
 		f.Params = sanitizeSpawnParams(caller, f.Params)
+	}
+	// Identity assertion, same single dispatch point: a caller may not tell the
+	// provider which session it is.
+	if f.Method == reportProgressMethod {
+		f.Params = sanitizeReportProgressParams(caller, f.Params)
 	}
 
 	// In-process handlers (hub-owned capabilities) take precedence over remote
@@ -500,6 +550,19 @@ func (rt *router) federatedCall(caller *conn, f Frame, peer, bare string) {
 	// but a profile id is not a path: it names a grant this router CAN verify.)
 	if bare == spawnMethod {
 		f.Params = sanitizeSpawnParams(caller, f.Params)
+	}
+	// The identity assertion, stripped BEFORE the hop for the same reason the
+	// profile grant is checked before it: the local tier check above ran against
+	// the bare method, so a view token that may call agents.reportProgress here
+	// may call hub:<peer>/agents.reportProgress too — and on the far side this
+	// arrives on the peer's federation-link connection, which is trusted
+	// whenever the peer minted an operator-tier link token. The peer's own
+	// sanitizer would then exempt it, and a scoped local caller would have
+	// forged a progress wake FROM any session on the PEER to that session's
+	// manager, carrying arbitrary prompt text. Local caller, local credential,
+	// local router: this is the only layer that can tell it is untrusted.
+	if bare == reportProgressMethod {
+		f.Params = sanitizeReportProgressParams(caller, f.Params)
 	}
 	// Off the read loop: the forward blocks on the peer's reply. The forwarder
 	// owns the (shorter) timeout, so the failure the caller sees names the

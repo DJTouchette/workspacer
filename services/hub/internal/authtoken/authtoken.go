@@ -89,6 +89,25 @@ var viewMethods = []string{
 	//                          names are already stamped on every agent.* event
 	//                          this same tier receives
 	"push.key", // VAPID public key — needed before subscribing, discloses nothing
+	// The one method in this list that WRITES anywhere, admitted so the facade's
+	// tool set derives from this allowlist again rather than sitting beside it.
+	// It is here because it is the least a tier can hold and still let a
+	// read-only worker say "the approach you gave me is wrong": before it, that
+	// sentence cost a triage dispatch, which also hands the worker approve and
+	// interrupt over OTHER sessions.
+	//
+	// What makes it admissible at VIEW is that a caller on this tier cannot
+	// reach it. It names no recipient — the host derives that from the caller's
+	// own parentSessionId — and it cannot name a SENDER either: `callerSessionId`
+	// is the caller asserting who it is, and the router deletes that from every
+	// untrusted caller (sanitizeReportProgressParams, on the local AND the
+	// federated dispatch path). A scoped bus connection carries no session
+	// identity to stamp from, so a phone or plugin token calling this directly
+	// lands on the provider's "could not identify your session" refusal. Only
+	// the MCP facade — which resolves the session from the per-request token
+	// record's `session:<id>` label — can actually use it. Acknowledged as a
+	// deliberate view/triage actor in authtoken's composition_test.go.
+	"agents.reportProgress",
 }
 
 // triageMethods is what "acting on attention" adds on top of view: resolving

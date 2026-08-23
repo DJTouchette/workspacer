@@ -151,7 +151,14 @@ var unscopedByDecision = map[string]string{
 	// on the record in Compositions() as the one AcceptedIn entry, with a test
 	// that fails if any tier acquires both halves of a pair it was not accepted
 	// for — which is the guarantee this sentence could not give by itself.
-	"agents.sendMessage": "text is a prompt for an agent that is already running; there is no path to confine, so holding the capability is the gate. The older wording — 'the agent's own tool approvals are the gate' — named a bound that only holds for a caller which cannot also RESOLVE those approvals, and the triage tier holds claude.approve. See Compositions(): agents.sendMessage + claude.approve is recorded, accepted for triage, and machine-checked against every other tier",
+	// agents.reportProgress is agents.sendMessage's primitive — caller text into
+	// a running agent's conversation — with the RECIPIENT taken away from the
+	// caller. It gets its own entry rather than leaning on the sentence below
+	// because the difference is the whole capability: the caller names no
+	// session but the one it claims to BE (`callerSessionId`), and the host
+	// derives the destination from that session's own parentSessionId.
+	"agents.reportProgress": "`note` is prompt text for an agent that is already running — agents.sendMessage's reach — and the containment is that the caller cannot choose WHO reads it. There is no recipient param: the caller supplies `callerSessionId`, the host looks that session up in its own store and delivers to its parentSessionId or refuses, so the only pair this can ever connect is (a tracked session, whatever dispatched it). `callerSessionId` is not a caller value on the path an agent actually uses either — the MCP facade stamps it from the per-request token record's `session:<id>` label, and the hub bus deletes it from every untrusted caller's params (sanitizeReportProgressParams), so a scoped or plugin token cannot name a session at all and lands on the no-identity refusal. Bounded in volume as well as reach: one line, flattened, capped at 500 chars, one per 60s, 20 per session for life",
+	"agents.sendMessage":    "text is a prompt for an agent that is already running; there is no path to confine, so holding the capability is the gate. The older wording — 'the agent's own tool approvals are the gate' — named a bound that only holds for a caller which cannot also RESOLVE those approvals, and the triage tier holds claude.approve. See Compositions(): agents.sendMessage + claude.approve is recorded, accepted for triage, and machine-checked against every other tier",
 	// The rest of git.*: every one takes a mandatory absolute `cwd` and the
 	// desktop provider already contains it to the workspace roots (guardGitCwd).
 	// Per-plugin root confinement is the right end state, but two shipped
@@ -482,9 +489,15 @@ var dangerousParams = map[string]ParamKind{
 	// /bin/bash. `effort` reaches a live agent as the message `/effort <level>`.
 	// None of the four was in this list, so no scan on either provider could
 	// ever demand a decision for them.
+	// `note` is the same class as `text` one more name over: agents.reportProgress
+	// delivers it into a running agent's conversation, where it is read as
+	// instruction. It is in the vocabulary rather than excused as "just a status
+	// line" because the NAME is the thing a scanner sees, and the next method to
+	// grow a `note` may not flatten, cap and wrap it the way that one does.
 	"data": KindShell, "bytesB64": KindShell, "stdin": KindShell,
 	"script": KindShell, "keys": KindShell, "text": KindShell,
 	"answers": KindShell, "option": KindShell, "effort": KindShell,
+	"note": KindShell,
 	// Approval policy of a process that is ALREADY running. agents.spawn clamps
 	// `skipPermissions` and `permissionMode` off for a bus caller on both
 	// providers; `mode` is the same value arriving after the fact, through
@@ -510,6 +523,11 @@ var dangerousParams = map[string]ParamKind{
 	"webhook": KindURL, "port": KindPort,
 	// Ids that RESOLVE into one of the above.
 	"id": KindID, "itemId": KindID, "mcpItemIds": KindID, "profileId": KindID,
+	// An id that resolves into WHO THE CALLER IS rather than what it is acting
+	// on — agents.reportProgress derives its recipient from it. Listed so a
+	// second method that ever accepts one has to say where it comes from; on the
+	// path an agent uses, it comes from the credential, not the caller.
+	"callerSessionId": KindID,
 	// A patch WRAPPER: claude.profiles.update carries its configDir/extraArgs/
 	// mcpItemIds inside `updates`, and a scanner that only saw the wrapper name
 	// (the desktop's does — the object is passed whole) saw a param the
@@ -898,6 +916,10 @@ var unscopedParams = map[string]map[string]ParamDecision{
 	},
 	"claude.setModel": {
 		"effort": {KindShell, "the same live-switch endpoint as claude.setEffort, reached with a model beside it; neither value is composed into argv by this process"},
+	},
+	"agents.reportProgress": {
+		"note":            {KindShell, "prompt text for an already-running agent, like claude.setEffort's value and unlike claude.answer's — it is delivered with claudemonSessionClient.message (the queued /message endpoint every other [fleet] wake uses), never written to a PTY, and never composed into argv. The caller controls the SENTENCE and nothing around it: the host flattens it to one line, refuses it over 500 chars, and wraps it in a header and tail it composes itself (buildFleetMessage('progress')), which state that the sender is still running and that this is not a completion"},
+		"callerSessionId": {KindID, "selects the CALLER, not a target: the host reads this session out of its own store and delivers to that row's parentSessionId, so the value can only ever pick a (session, its own parent) pair that already exists — it can name no recipient, and a session with no parent or a dead parent is refused rather than routed anywhere. On the path an agent actually uses it is not a caller value at all: the MCP facade overwrites it from the request token's `session:<id>` label, and the hub bus strips it from every untrusted caller (sanitizeReportProgressParams in internal/bus/rpc.go)"},
 	},
 	// claude.answer's three payload spellings all end at
 	// claudemonSessionClient.input / r.cm.input — the same call

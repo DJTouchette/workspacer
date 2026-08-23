@@ -481,7 +481,7 @@ func TestCapabilitiesWithAPathParamAreClassified(t *testing.T) {
 // scan finds in the vocabulary. A ratchet, held by RatchetError — see
 // brainDangerousParamFloor in cmd/brain/capspec_params_test.go, which is the
 // same rule over the other provider.
-const desktopDangerousParamFloor = 68
+const desktopDangerousParamFloor = 70
 
 // TestNestedParamsAreNotInvisible is the mutation this parser used to fail. An
 // options object is the obvious place for a handler to carry an env and an
