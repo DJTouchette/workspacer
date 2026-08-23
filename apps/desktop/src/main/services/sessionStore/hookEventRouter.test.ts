@@ -4,6 +4,7 @@ import {
   applyHookEvent,
   applyStopEvent,
   normalizeBackgroundAmbient,
+  pendingSlotOwner,
   sessionHasBackgroundWork,
 } from './hookEventRouter';
 import type { ClaudeSessionState } from '../claudeSessionStore';
@@ -81,15 +82,17 @@ describe('applyHookEvent — stream sessions: hooks are enrichment-only', () => 
     expect(s.activeToolCalls).toHaveLength(0);
     expect(s.completedToolCalls).toHaveLength(1);
 
+    // …but NOT the pending slot: on a stream session the daemon owns the
+    // approval/question cards (see the ownership describe below).
     applyHookEvent(s, {
       hook_event_name: 'PermissionRequest',
       tool_name: 'Bash',
       tool_input: { command: 'rm -rf /' },
     });
-    expect(s.pendingApproval?.toolName).toBe('Bash');
+    expect(s.pendingApproval).toBeNull();
   });
 
-  it('still surfaces AskUserQuestion pickers (payload without the mode flip)', () => {
+  it('leaves the AskUserQuestion picker to the daemon (it parks Pending::Question itself)', () => {
     const s = mkSession('stream');
     s.ambientState = 'streaming';
     applyHookEvent(s, {
@@ -98,7 +101,10 @@ describe('applyHookEvent — stream sessions: hooks are enrichment-only', () => 
       tool_name: 'AskUserQuestion',
       tool_input: { questions: [{ question: 'Which?', options: [{ label: 'a' }] }] },
     });
-    expect(s.pendingQuestions).toHaveLength(1);
+    // claude_stream.rs parks AskUserQuestion as Pending::Question on the
+    // /events feed; the tool card is still enrichment we keep.
+    expect(s.pendingQuestions).toBeNull();
+    expect(s.activeToolCalls).toHaveLength(1);
     expect(s.ambientState).toBe('streaming'); // mode comes from the daemon
   });
 
@@ -249,14 +255,21 @@ describe('a late hook frame must not null an approval the daemon still holds', (
     expect(s.pendingApproval).toBeNull();
   });
 
-  it('a turn boundary still sweeps the card on both transports', () => {
-    // Stop is not the same inference: it means the turn is over, so nothing
-    // can still be parked. Only "another tool moved" is the false one.
-    for (const transport of ['pty', 'stream'] as const) {
-      const s = daemonParked(transport);
-      applyStopEvent(s);
-      expect(s.pendingApproval).toBeNull();
-    }
+  it('a turn boundary sweeps the card this feed owns — and only that one', () => {
+    // "The turn is over, so nothing can still be parked" holds within ONE
+    // feed. For a stream session the owner's turn end is the driver's
+    // `result` frame (AgentUpdate::Idle -> PendingWrite::Resolve), and this
+    // Stop hook is the slow second feed: a background subagent's can_use_tool
+    // parked before it lands would be stranded exactly as a late PostToolUse
+    // stranded one.
+    const pty = daemonParked('pty');
+    applyStopEvent(pty);
+    expect(pty.pendingApproval).toBeNull();
+
+    const stream = daemonParked('stream');
+    applyStopEvent(stream);
+    expect(stream.pendingApproval).not.toBeNull();
+    expect(stream.pendingApproval?.toolName).toBe('Read');
   });
 });
 
@@ -455,5 +468,146 @@ describe('normalizeBackgroundAmbient — workflows keep idle honest', () => {
     expect(sessionHasBackgroundWork(s)).toBe(true);
     s.subagents[0].status = 'complete';
     expect(sessionHasBackgroundWork(s)).toBe(false);
+  });
+});
+
+describe('the pending slot has exactly one owner', () => {
+  // INVARIANT: exactly one feed owns a session's pending slot; others may
+  // enrich but never park or resolve it. The hook feed owns it for claude on
+  // the PTY transport only — for a stream session or any non-claude provider
+  // the daemon's `pending` slot (applyManagedPending) is the sole writer, and
+  // this feed is the laggy one racing it over a separate SSE connection.
+
+  function daemonQuestion(transport: 'pty' | 'stream'): ClaudeSessionState {
+    const s = mkSession(transport);
+    s.ambientState = 'waiting_input';
+    s.pendingQuestions = [
+      { question: 'Which?', options: [{ label: 'a' }], multi_select: false },
+    ] as never;
+    return s;
+  }
+
+  it('names the owner the same way round as claudeSessionStore.daemonOwnsPending', () => {
+    expect(pendingSlotOwner({ provider: 'claude', transport: 'pty' })).toBe('hooks');
+    expect(pendingSlotOwner({} as ClaudeSessionState)).toBe('hooks'); // default claude/pty
+    expect(pendingSlotOwner({ provider: 'claude', transport: 'stream' })).toBe('daemon');
+    expect(pendingSlotOwner({ provider: 'codex', transport: 'pty' })).toBe('daemon');
+    expect(pendingSlotOwner({ provider: 'pi' } as ClaudeSessionState)).toBe('daemon');
+  });
+
+  describe('questions: the hook feed neither parks nor resolves a daemon-owned picker', () => {
+    it('stream: a late AskUserQuestion PostToolUse does not answer-by-forgetting', () => {
+      // The strand: the driver still holds the AskUserQuestion `can_use_tool`
+      // open, ambientState stays 'waiting_input' (already guarded), and the
+      // picker the user must answer through is gone.
+      const s = daemonQuestion('stream');
+      applyHookEvent(s, {
+        hook_event_name: 'PreToolUse',
+        tool_use_id: 'q1',
+        tool_name: 'AskUserQuestion',
+        tool_input: { questions: [{ question: 'Which?', options: [{ label: 'a' }] }] },
+      });
+      applyHookEvent(s, { hook_event_name: 'PostToolUse', tool_use_id: 'q1' });
+      expect(s.pendingQuestions).not.toBeNull();
+      expect(s.pendingQuestions).toHaveLength(1);
+      expect(s.ambientState).toBe('waiting_input');
+    });
+
+    it('codex: same, on a non-claude provider that fires no hooks of its own', () => {
+      const s = daemonQuestion('pty');
+      s.provider = 'codex';
+      applyHookEvent(s, {
+        hook_event_name: 'PreToolUse',
+        tool_use_id: 'q1',
+        tool_name: 'AskUserQuestion',
+        tool_input: { questions: [{ question: 'Injected?', options: [] }] },
+      });
+      expect(s.pendingQuestions?.[0].question).toBe('Which?');
+      applyHookEvent(s, { hook_event_name: 'PostToolUse', tool_use_id: 'q1' });
+      expect(s.pendingQuestions).not.toBeNull();
+    });
+
+    it('PTY claude still owns the picker end to end: parked, then cleared', () => {
+      const s = mkSession('pty');
+      applyHookEvent(s, {
+        hook_event_name: 'PreToolUse',
+        tool_use_id: 'q1',
+        tool_name: 'AskUserQuestion',
+        tool_input: { questions: [{ question: 'Which?', options: [{ label: 'a' }] }] },
+      });
+      expect(s.pendingQuestions).toHaveLength(1);
+      expect(s.ambientState).toBe('waiting_input');
+      applyHookEvent(s, { hook_event_name: 'PostToolUse', tool_use_id: 'q1' });
+      expect(s.pendingQuestions).toBeNull();
+    });
+  });
+
+  describe('approvals: PermissionRequest can add a card too, and that is not harmless', () => {
+    it('stream: does not resurrect an approval the daemon already resolved', () => {
+      // The hook is a curl subprocess; its PermissionRequest can land after
+      // the driver answered and cleared the request. Writing the card then
+      // shows an Approve/Deny the daemon will reject as unknown.
+      const s = mkSession('stream');
+      s.ambientState = 'streaming'; // daemon already resumed the turn
+      applyHookEvent(s, {
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'Bash',
+        tool_input: { command: 'ls' },
+      });
+      expect(s.pendingApproval).toBeNull();
+    });
+
+    it("stream: does not surface a queued approval over the daemon's head card", () => {
+      // claude_stream.rs parks ONE can_use_tool at a time and re-surfaces the
+      // next only when the head is answered; the hooks fire for all of them.
+      const s = mkSession('stream');
+      s.ambientState = 'waiting_approval';
+      s.pendingApproval = {
+        toolName: 'Read',
+        toolInput: { file_path: '/x' },
+        timestamp: 1,
+      } as never;
+      applyHookEvent(s, {
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'Bash',
+        tool_input: { command: 'rm -rf /' },
+      });
+      expect(s.pendingApproval?.toolName).toBe('Read');
+    });
+
+    it('codex: a hook-shaped PermissionRequest cannot write a daemon-owned card', () => {
+      const s = mkSession('pty');
+      s.provider = 'codex';
+      applyHookEvent(s, {
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'Bash',
+        tool_input: {},
+      });
+      expect(s.pendingApproval).toBeNull();
+    });
+  });
+
+  describe('turn boundary: Stop sweeps only what this feed owns', () => {
+    it('stream: a Stop landing after the driver parked a background request leaves it', () => {
+      const s = mkSession('stream');
+      s.ambientState = 'waiting_approval';
+      s.pendingApproval = { toolName: 'Bash', toolInput: {}, timestamp: 1 } as never;
+      s.pendingQuestions = [{ question: 'Which?', options: [] }] as never;
+      applyStopEvent(s);
+      expect(s.pendingApproval).not.toBeNull();
+      expect(s.pendingQuestions).not.toBeNull();
+      // Everything Stop legitimately owns still happens.
+      expect(s.activeToolCalls).toHaveLength(0);
+      expect(s.ambientState).toBe('waiting_approval');
+    });
+
+    it('PTY claude: Stop still sweeps both halves of its own slot', () => {
+      const s = mkSession('pty');
+      s.pendingApproval = { toolName: 'Bash', toolInput: {}, timestamp: 1 } as never;
+      s.pendingQuestions = [{ question: 'Which?', options: [] }] as never;
+      applyStopEvent(s);
+      expect(s.pendingApproval).toBeNull();
+      expect(s.pendingQuestions).toBeNull();
+    });
   });
 });
