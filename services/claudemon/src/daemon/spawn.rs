@@ -73,6 +73,45 @@ fn model_from_argv(argv: &[String]) -> Option<&str> {
     None
 }
 
+/// Reject a working directory no child could actually start in — the daemon-side
+/// backstop under the desktop's own pre-flight (`main/lib/spawnCwd.ts`).
+///
+/// Neither route notices this on its own, and each fails to notice differently:
+///
+///   - `handle_managed` registers the session id and answers 200 while the
+///     adapter boots in a background task, so a launch that never happens
+///     surfaces as a `warn` line and a row that is already `Stopped`.
+///   - `handle` LOOKS synchronous, but `spawn_command` forks — the chdir runs in
+///     the CHILD, so the parent takes an `Ok` handle to a process that is already
+///     dead, answers 200, and the row is gone by the time the caller asks for it.
+///
+/// Either way the caller is handed a session id for an agent that never existed,
+/// and every message to it comes back `409 session has ended` (or a 404). The
+/// desktop pre-flights this now, but it is not the only client: the brain, the
+/// TUI, and any MCP-facade dispatch reach these routes directly.
+///
+/// `~` is the spelling that actually arrives. BINDING DECISION 1 means no layer
+/// between a config field and this one expands it (`normalizeSpawnCwd` and the
+/// brain's `normalizeCwd` both pass it through verbatim and are pinned that way
+/// by contracts/path-containment-cases.json), so a fleet root a person typed as
+/// `~/` reaches here as a directory literally named `~`. This function does not
+/// expand it either — the rule stands; it just refuses it where the caller can
+/// still be told why.
+fn cwd_problem(cwd: &str) -> Option<String> {
+    let ok = std::fs::metadata(cwd).map(|m| m.is_dir()).unwrap_or(false);
+    if ok {
+        return None;
+    }
+    // Named explicitly: "~" looks like a valid path to whoever typed it, so the
+    // message has to say why it is not, rather than only that it is not.
+    let hint = if cwd.starts_with('~') {
+        " (a leading \"~\" is not expanded here — send an absolute path)"
+    } else {
+        ""
+    };
+    Some(format!("cwd is not an existing directory: {cwd}{hint}"))
+}
+
 pub async fn handle(
     State(store): State<SessionStore>,
     State(conv): State<ConversationStore>,
@@ -80,6 +119,10 @@ pub async fn handle(
 ) -> impl IntoResponse {
     if payload.argv.is_empty() {
         return (StatusCode::BAD_REQUEST, "argv must not be empty").into_response();
+    }
+    // Before the fork, which is the only place this can still be reported.
+    if let Some(problem) = cwd_problem(&payload.cwd) {
+        return (StatusCode::BAD_REQUEST, problem).into_response();
     }
 
     // Prefer the caller-pinned id (matches `claude --session-id <uuid>`); fall
@@ -301,6 +344,12 @@ pub async fn handle_managed(
             format!("unsupported managed provider: {}", payload.provider),
         )
             .into_response();
+    }
+    // Before the session id is minted and registered: the 200 below is not a
+    // statement that the agent started, so an unusable cwd has to be refused
+    // here or it becomes a card nobody can talk to.
+    if let Some(problem) = cwd_problem(&payload.cwd) {
+        return (StatusCode::BAD_REQUEST, problem).into_response();
     }
     // Resuming a claude stream session keeps the CLI's *prior* session id (see
     // the claude_stream module contract — `--resume` is not re-pinnable), so an
@@ -549,6 +598,54 @@ pub async fn handle_provider_models(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The ghost this guard exists to prevent: both spawn routes answer 200 with
+    /// a session id before anyone knows the child lives, so an unusable cwd used
+    /// to reach the user as an agent card whose session was already stopped (or
+    /// gone) and whose every message came back 409. Reproduced exactly that way
+    /// on both routes against a live daemon before this existed.
+    #[test]
+    fn cwd_problem_takes_directories_and_refuses_the_rest() {
+        // A real directory is the whole happy path.
+        assert_eq!(
+            cwd_problem(&std::env::temp_dir().to_string_lossy()),
+            None,
+            "an existing directory must spawn"
+        );
+        // Existing is not enough — a file cannot be a working directory.
+        let a_file = std::env::current_exe().expect("test binary path");
+        assert!(cwd_problem(&a_file.to_string_lossy())
+            .expect("a file is not a cwd")
+            .contains("not an existing directory"));
+        // And a path that simply is not there.
+        let missing = std::env::temp_dir().join("claudemon-no-such-dir-4f3a9c");
+        assert!(cwd_problem(&missing.to_string_lossy()).is_some());
+        // An empty cwd is the same refusal rather than a silent fallback: both
+        // normalizers upstream already turn "" into $HOME, so an empty string
+        // arriving here is a caller bug, not a request to guess.
+        assert!(cwd_problem("").is_some());
+    }
+
+    #[test]
+    fn cwd_problem_explains_the_tilde_rather_than_expanding_it() {
+        // The literal that broke the Fleet Manager: `agents.fleetRoot` typed as
+        // "~/", trailing slash stripped by the normalizers, handed to this
+        // daemon as a directory named "~". BINDING DECISION 1 says do not
+        // expand it — so say why it failed instead.
+        let problem = cwd_problem("~").expect("a directory named ~ does not exist");
+        assert!(problem.contains("not expanded"), "got: {problem}");
+        assert!(
+            cwd_problem("~/Work")
+                .expect("nor does ~/Work")
+                .contains("not expanded"),
+            "the hint belongs on every tilde spelling"
+        );
+        // A real directory whose NAME contains a tilde gets no such lecture.
+        let tilde_named = std::env::temp_dir().join("claudemon-a~b-test");
+        std::fs::create_dir_all(&tilde_named).expect("mkdir");
+        assert_eq!(cwd_problem(&tilde_named.to_string_lossy()), None);
+        let _ = std::fs::remove_dir(&tilde_named);
+    }
 
     #[test]
     fn model_from_argv_reads_both_spellings() {

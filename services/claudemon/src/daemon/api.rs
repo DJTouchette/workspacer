@@ -2344,6 +2344,37 @@ mod tests {
         assert_ne!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 
+    // Both routes hand back a session id BEFORE the child is known to live —
+    // the managed one boots its driver in a background task, and the PTY one
+    // forks, so a failed chdir happens in the child after the parent already
+    // has an Ok handle. A cwd nothing can run in therefore has to be refused
+    // here, or it becomes a card whose every message 409s. "~" is the spelling
+    // that actually arrives (nothing between a config field and this route
+    // expands it — BINDING DECISION 1).
+    #[tokio::test]
+    async fn spawn_bad_cwd_is_400() {
+        let req = post_json(
+            "/sessions/spawn",
+            json!({ "argv": ["/bin/echo", "hi"], "cwd": "~" }),
+        );
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains("not an existing directory"), "got: {body}");
+        assert!(body.contains("not expanded"), "got: {body}");
+    }
+
+    #[tokio::test]
+    async fn spawn_managed_bad_cwd_is_400() {
+        let req = post_json(
+            "/sessions/spawn-managed",
+            json!({ "provider": "claude", "transport": "stream", "cwd": "~" }),
+        );
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(String::from_utf8_lossy(&body).contains("not an existing directory"));
+    }
+
     #[tokio::test]
     async fn spawn_managed_bad_provider_is_400() {
         let req = post_json(
