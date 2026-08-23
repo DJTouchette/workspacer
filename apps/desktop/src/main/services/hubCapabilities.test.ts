@@ -350,6 +350,34 @@ describe('agents.list — statusLine fallback for managed providers', () => {
       }),
     ]);
   });
+
+  // The successor's half of manager succession. adopt_workers reads both ids
+  // out of the predecessor's handoff file — but a manager that CRASHED wrote
+  // no handoff, and until this field rode the row there was no way to find the
+  // workers it left pointing at a session that is gone. With it, a successor
+  // groups the fleet by parentSessionId and any parent with no row of its own
+  // is a dead parent still holding live children.
+  it('carries parentSessionId, so orphaned workers are discoverable without a handoff file', () => {
+    getAllSnapshots.mockReturnValue([
+      { sessionId: 'w1', cwd: '/proj', ambientState: 'streaming', parentSessionId: 'dead-mgr' },
+      { sessionId: 'w2', cwd: '/proj', ambientState: 'idle', parentSessionId: 'dead-mgr' },
+      { sessionId: 'solo', cwd: '/proj', ambientState: 'idle' },
+    ] as never);
+    const rows = call('agents.list') as { sessionId: string; parentSessionId: string | null }[];
+    expect(rows.map((r) => [r.sessionId, r.parentSessionId])).toEqual([
+      ['w1', 'dead-mgr'],
+      ['w2', 'dead-mgr'],
+      // Explicitly null, never absent: a caller diffing parents against live
+      // session ids must be able to tell "no parent" from "field not served".
+      ['solo', null],
+    ]);
+    // The dangling-parent derivation the successor actually runs.
+    const live = new Set(rows.map((r) => r.sessionId));
+    const orphaned = [...new Set(rows.map((r) => r.parentSessionId))].filter(
+      (p): p is string => !!p && !live.has(p),
+    );
+    expect(orphaned).toEqual(['dead-mgr']);
+  });
 });
 
 // The plural call is a BACKGROUND feed: every consumer (promoteSessionSnapshots,

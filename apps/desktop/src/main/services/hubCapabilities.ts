@@ -213,6 +213,26 @@ export function registerHubCapabilities(): void {
       sessionId: s.sessionId,
       cwd: s.cwd,
       state: s.ambientState,
+      // Who dispatched this session, when anything did — the fleet's wake
+      // routing key (agents.reparent / reparentChildren re-points exactly this
+      // field). It is here for the ONE case the handoff file cannot cover: a
+      // manager that CRASHED wrote no handoff, so its successor has no
+      // predecessor id to adopt from. With this on the row the successor can
+      // derive the candidates instead — group the rows by parentSessionId, and
+      // any parent id that has no row of its own is a DEAD parent whose
+      // children are still running, which is exactly the `fromSessionId`
+      // agents.reparent wants. It narrows the manual reconciliation to
+      // "which of these dangling parents was mine"; it does not answer that
+      // question on its own (a dead session is evicted from the store, so
+      // nothing here says the parent was a manager, or which one was yours).
+      //
+      // NOT a widening of the view tier. `sessions.snapshots` sits in the same
+      // viewMethods allowlist and already serves the FULL snapshot — this field
+      // included — and the brain's own agents.list has emitted it since
+      // enrichSnapshot, because /m nests the fleet on it. This reduced row was
+      // the odd one out: a view caller could already read every parent id here
+      // by paying for the heavier call.
+      parentSessionId: s.parentSessionId ?? null,
       // Managed providers (codex/opencode/pi) never populate `s.usage` — their
       // numbers live only on `statusLine`. Fall back to it the same way
       // analyticsWriter.ts does, or every non-Claude row reports all-zero.
