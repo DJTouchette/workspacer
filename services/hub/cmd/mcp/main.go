@@ -542,9 +542,14 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	//
 	// Placed beside observe rather than in drive because it is the one tool a
 	// READ-ONLY worker holds that sends anything: it reaches its own manager and
-	// no other session, and it names neither end.
+	// no other session, and it names neither end. Gated on the tier allowlist
+	// like every other tool here — agents.reportProgress is in authtoken's
+	// viewMethods, so this lights up for all three tiers from that list rather
+	// than from a hand-written exception.
 	b.group = "report"
-	addProgressTool(b)
+	if b.allowed(reportProgressMethod) {
+		addProgressTool(b)
+	}
 
 	// ── Spawn ──────────────────────────────────────────────────────────────
 	b.group = "spawn"

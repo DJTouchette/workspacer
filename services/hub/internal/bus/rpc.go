@@ -551,6 +551,19 @@ func (rt *router) federatedCall(caller *conn, f Frame, peer, bare string) {
 	if bare == spawnMethod {
 		f.Params = sanitizeSpawnParams(caller, f.Params)
 	}
+	// The identity assertion, stripped BEFORE the hop for the same reason the
+	// profile grant is checked before it: the local tier check above ran against
+	// the bare method, so a view token that may call agents.reportProgress here
+	// may call hub:<peer>/agents.reportProgress too — and on the far side this
+	// arrives on the peer's federation-link connection, which is trusted
+	// whenever the peer minted an operator-tier link token. The peer's own
+	// sanitizer would then exempt it, and a scoped local caller would have
+	// forged a progress wake FROM any session on the PEER to that session's
+	// manager, carrying arbitrary prompt text. Local caller, local credential,
+	// local router: this is the only layer that can tell it is untrusted.
+	if bare == reportProgressMethod {
+		f.Params = sanitizeReportProgressParams(caller, f.Params)
+	}
 	// Off the read loop: the forward blocks on the peer's reply. The forwarder
 	// owns the (shorter) timeout, so the failure the caller sees names the
 	// federated hop rather than an ambiguous local deadline.

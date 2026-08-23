@@ -1,7 +1,7 @@
 // report_progress — the one thing a dispatched worker may say to the manager
 // that dispatched it.
 //
-// TIER. This tool is registered for EVERY tier, including view, and that is the
+// TIER. This tool is present at EVERY tier, including view, and that is the
 // point rather than an oversight. Before it, a worker that needed to say "the
 // approach you gave me is wrong" had to be dispatched at triage or operator —
 // tiers that also hand it approve / interrupt / send_message over OTHER
@@ -9,17 +9,21 @@
 // agent's permission prompt just to tell its manager it is spending its whole
 // window reading.
 //
-// What makes that safe is that the tool takes NO session id, in either
+// It reaches every tier the ordinary way: `agents.reportProgress` is in
+// authtoken's viewMethods, so newServer's b.allowed gate lights it up for view,
+// triage and operator alike, and the tool set still derives purely from the tier
+// allowlist with no hand-written exception beside it. Admitting it there does
+// widen the raw bus surface — a scoped view/triage token may now CALL the method
+// — and what makes that harmless is that the tool takes NO session id, in either
 // direction. The caller cannot name a recipient (the host derives it from the
 // caller's own parentSessionId, or refuses), and it cannot name a SENDER either:
 // `callerSessionId` is stamped below from the request's own token record, and
-// the hub bus deletes the field from every untrusted caller, so the credential
-// is the identity. A view token therefore gains exactly one reach it did not
-// have — one rate-limited line to the session that dispatched it — and nothing
-// else. That is also why the registration is unconditional instead of adding
-// agents.reportProgress to authtoken's view tier: the bus surface stays closed,
-// so a phone or plugin token holding view/triage cannot call the method
-// directly, only a session credential going through this facade can.
+// the hub bus DELETES the field from every untrusted caller, on the local and
+// the federated dispatch path both. A scoped bus connection carries no session
+// identity for the router to stamp in its place, so a phone or plugin token
+// calling the method directly lands on the provider's "could not identify your
+// session" refusal — the reach it gains is a method that always refuses. Only a
+// session credential going through this facade can actually send anything.
 //
 // The BOUNDS (length, one per minute, twenty per session, no duplicates) live
 // host-side in the provider, not here, and every one of them refuses out loud —
@@ -69,8 +73,9 @@ func callerSessionID(ctx context.Context) string {
 	return strings.TrimSpace(strings.TrimPrefix(label, sessionTokenPrefix))
 }
 
-// addProgressTool registers report_progress on a tier's server. Unconditional —
-// see the file comment for why this one is not derived from b.allowed.
+// addProgressTool registers report_progress on a tier's server. Called behind
+// the caller's own b.allowed check, like every other tool here — see the file
+// comment for why the method it forwards is admissible at the view tier.
 func addProgressTool(b *build) {
 	const name = "report_progress"
 	const desc = "Tell the agent that dispatched you how your task is going, mid-task, in ONE line — a phase landed, the approach you were given is wrong, you are burning context faster than expected. It goes to your manager and nowhere else (you cannot name a recipient, and you have no way to reach any other session with it), it does NOT end your turn or your task, and your final message still reaches your manager in full when you finish. Limited to one per minute and 20 per session; use it when your manager's next decision would change, not to narrate."

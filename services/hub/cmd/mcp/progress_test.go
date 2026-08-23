@@ -12,10 +12,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// TestReportProgressIsHeldByEveryTier pins the deliberate exception: this is the
-// only tool registered without asking b.allowed, and a VIEW worker holding it is
-// the whole point — the alternative was dispatching a read-only scout at triage
-// just so it could say "the approach you gave me is wrong", which also hands it
+// TestReportProgressIsHeldByEveryTier: a VIEW worker holding this tool is the
+// whole point — the alternative was dispatching a read-only scout at triage just
+// so it could say "the approach you gave me is wrong", which also hands it
 // approve/interrupt over other sessions.
 func TestReportProgressIsHeldByEveryTier(t *testing.T) {
 	for _, scope := range []authtoken.Scope{authtoken.ScopeView, authtoken.ScopeTriage, authtoken.ScopeOperator} {
@@ -25,15 +24,29 @@ func TestReportProgressIsHeldByEveryTier(t *testing.T) {
 	}
 }
 
-// …and the other half of that exception, which is what keeps it safe: the METHOD
-// is in no scoped tier's allowlist, so the facade (whose bus connection is the
-// trusted host token) is the only way to reach it. A phone's triage token or a
-// plugin token cannot call agents.reportProgress on the bus directly, where
-// there would be no credential to derive a sender from.
-func TestReportProgressMethodIsNotOnTheScopedBusSurface(t *testing.T) {
-	for _, scope := range []authtoken.Scope{authtoken.ScopeView, authtoken.ScopeTriage} {
-		if event.MatchesAny(scope.Methods(), reportProgressMethod) {
-			t.Errorf("%s tier may call %s on the bus — a scoped connection carries no session identity, so the sender would be whatever the caller claimed", scope, reportProgressMethod)
+// …and it gets there the ORDINARY way, which is the property worth pinning
+// rather than the membership above. report_progress was once the single tool
+// registered without asking b.allowed — a hand-written exception sitting beside
+// the tier derivation, which meant tiers_test.go's "the tools are what the scope
+// may call" rule quietly had one member it did not explain. Now
+// agents.reportProgress is in authtoken's viewMethods and the tool follows from
+// it, so the two agree per tier: admit or withdraw the method and the tool moves
+// with it, in one place.
+//
+// The trade this makes is real and is contained elsewhere: a scoped view/triage
+// token may now CALL agents.reportProgress on the bus, where there is no
+// credential to derive a sender from. That is harmless only because the router
+// deletes `callerSessionId` from every untrusted caller — on the local path and
+// the federated one — so such a call reaches the provider unattributed and is
+// refused. Those two strips are pinned in internal/bus/reportprogress_test.go;
+// if either goes, this derivation is no longer safe to keep.
+func TestReportProgressToolFollowsTheTierAllowlist(t *testing.T) {
+	for _, scope := range []authtoken.Scope{authtoken.ScopeView, authtoken.ScopeTriage, authtoken.ScopeOperator} {
+		mayCall := event.MatchesAny(scope.Methods(), reportProgressMethod)
+		hasTool := listToolsFor(t, scope)["report_progress"]
+		if mayCall != hasTool {
+			t.Errorf("%s tier: may call %s = %v but holds the report_progress tool = %v — the tool must derive from the allowlist, not from an exception beside it",
+				scope, reportProgressMethod, mayCall, hasTool)
 		}
 	}
 }

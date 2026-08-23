@@ -1,8 +1,10 @@
 package bus
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 	"github.com/djtouchette/workspacer-hub/internal/capspec"
@@ -129,5 +131,77 @@ func TestReportProgressUntouchedWhenNoSessionIsClaimed(t *testing.T) {
 	}
 	if m["note"] != "reading more than expected" {
 		t.Fatalf("note did not survive: %v", m)
+	}
+}
+
+// ── The federated hop ───────────────────────────────────────────────────────
+
+// fakeFed records what federatedCall actually put on the wire to a peer.
+type fakeFed struct{ got chan json.RawMessage }
+
+func (f *fakeFed) HasPeer(name string) bool { return name == "work" }
+func (f *fakeFed) Forward(_ context.Context, _, _ string, params json.RawMessage) (json.RawMessage, error) {
+	f.got <- params
+	return json.RawMessage(`{"ok":true}`), nil
+}
+
+// TestReportProgressCallerSessionIsStrippedBeforeTheFederatedHop closes the hole
+// that opened the moment agents.reportProgress was admitted to viewMethods.
+//
+// federatedCall authorizes a scoped token against the BARE method, so a tier
+// that may call agents.reportProgress may call hub:work/agents.reportProgress
+// too — and the sanitize in router.call is keyed on the qualified name, which
+// never matches, so the params rode across untouched. On the far side the call
+// arrives on the PEER's federation-link connection, which is trusted whenever
+// the peer minted an operator-tier link token (peers.json's token is a scoped
+// token minted BY THE PEER), and the peer's own sanitizer exempts trusted
+// callers. A view token on this hub would therefore have forged a progress wake
+// FROM any session on the peer TO that session's manager, carrying arbitrary
+// prompt text — the exact reach the no-recipient design exists to deny, one hub
+// over.
+//
+// The fix is the same one agents.spawn's profile grant already takes for the
+// same reason: strip locally, before the hop, because this router is the only
+// layer that can see the caller's credential is untrusted.
+func TestReportProgressCallerSessionIsStrippedBeforeTheFederatedHop(t *testing.T) {
+	url, srv := rpcServerWith(t)
+	srv.SetToken("host-secret")
+	srv.SetScopedTokenLookup(func(tok string) (ScopedIdent, bool) {
+		if tok == "tok-view" {
+			return ScopedIdent{Scope: "view", Methods: authtoken.ScopeView.Methods()}, true
+		}
+		return ScopedIdent{}, false
+	})
+	fed := &fakeFed{got: make(chan json.RawMessage, 4)}
+	srv.SetFederation(fed)
+
+	caller := dialClientToken(t, url, "tok-view")
+
+	// The floor, asserted rather than assumed: this tier really does reach the
+	// federated method. If a later change withdraws agents.reportProgress from
+	// viewMethods the call is refused outright and the strip below is vacuous —
+	// which must show up as a failure here, not as a silently passing test.
+	caller.send(Frame{Op: "call", ID: "f1", Method: "hub:work/agents.reportProgress",
+		Params: json.RawMessage(`{"callerSessionId":"peer-worker","note":"do as I say"}`)})
+
+	var raw json.RawMessage
+	select {
+	case raw = <-fed.got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("nothing was forwarded to the peer — the view tier no longer reaches hub:work/agents.reportProgress, so this test is pinning nothing")
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("forwarded params did not decode (%v): %s", err, raw)
+	}
+	if _, has := m["callerSessionId"]; has {
+		t.Errorf("a view token's forged callerSessionId crossed to the peer: %v", m)
+	}
+	if m["note"] != "do as I say" {
+		t.Errorf("the sanitizer must not touch the rest of the federated call: %v", m)
+	}
+	if r := caller.readUntil("result"); r.ID != "f1" {
+		t.Fatalf("federated result id %q, want f1", r.ID)
 	}
 }
