@@ -182,13 +182,13 @@ fn from_transcript_value(tx: &Value) -> Option<Usage> {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         // Neutralize Claude's `<synthetic>` placeholder (see from_transcript).
-        let row_model = msg
-            .get("model")
-            .and_then(|m| m.as_str())
-            .filter(|m| !m.starts_with('<'));
+        let raw_model = msg.get("model").and_then(|m| m.as_str());
+        let placeholder = raw_model.is_some_and(|m| m.starts_with('<'));
+        let row_model = raw_model.filter(|_| !placeholder);
 
-        // Point-in-time context/model: main thread only (see from_transcript).
-        if !sidechain {
+        // Point-in-time context/model: main thread only, and never from a
+        // placeholder row (see from_transcript).
+        if !sidechain && !placeholder {
             usage.context_tokens = context_tokens_of(u);
             if let Some(model) = row_model {
                 usage.model = Some(model.to_string());
@@ -274,14 +274,17 @@ fn fold_transcript(
         // Neutralize Claude's `<synthetic>` placeholder (and any `<...>` marker):
         // it is not a real model, so it must not clobber the reported model nor
         // force default pricing — synthetic turns inherit the thread model.
-        let row_model = msg
-            .get("model")
-            .and_then(|m| m.as_str())
-            .filter(|m| !m.starts_with('<'));
+        let raw_model = msg.get("model").and_then(|m| m.as_str());
+        let placeholder = raw_model.is_some_and(|m| m.starts_with('<'));
+        let row_model = raw_model.filter(|_| !placeholder);
 
         // Point-in-time context/model: main thread only — a sub-agent's turn
         // must not clobber the session's context gauge or reported model.
-        if !sidechain {
+        // A placeholder row is skipped outright: it is the CLI answering itself
+        // (e.g. "No response requested." to a resume kickoff) with all-zero
+        // usage, which is not an observation of the window — folding it in
+        // zeroes the gauge and makes a healthy session read as frozen.
+        if !sidechain && !placeholder {
             usage.context_tokens = context_tokens_of(u);
             if let Some(model) = row_model {
                 usage.model = Some(model.to_string());
@@ -765,6 +768,26 @@ mod tests {
         );
     }
 
+    /// ...and it must not zero the CONTEXT GAUGE either. The CLI answers a
+    /// resume kickoff with a local `<synthetic>` row carrying all-zero usage;
+    /// folding that in reported a healthy 96k-token session at 0 tokens on a
+    /// `<synthetic>` model, which reads exactly like a wedged worker. A
+    /// placeholder's zeros are not an observation of the window.
+    #[test]
+    fn synthetic_placeholder_does_not_zero_the_context_gauge() {
+        let t = tx(vec![
+            assistant_msg("m1", "claude-opus-4-8", 90_000, 0, 6_683, 500),
+            assistant_msg("m2", "<synthetic>", 0, 0, 0, 0),
+        ]);
+        let u = from_transcript(&t).unwrap();
+        assert_eq!(
+            u.context_tokens, 96_683,
+            "a placeholder row must leave the last real turn's context standing"
+        );
+        assert_eq!(u.model.as_deref(), Some("claude-opus-4-8"));
+        assert_eq!(u.context_limit, 200_000);
+    }
+
     /// 1M-mode is a session-level property: once any main-thread turn exceeds the
     /// 200k window the limit must stay promoted even when a later turn's context
     /// (e.g. after auto-compaction) falls back under 200k.
@@ -1082,6 +1105,17 @@ mod tests {
         ]});
         let u = from_transcript_value(&tx).unwrap();
         assert_eq!(u.context_limit, 1_000_000);
+    }
+
+    #[test]
+    fn value_api_ignores_synthetic_placeholder_rows() {
+        let tx = serde_json::json!({"messages": [
+            assistant_value("m1", "claude-sonnet-4-6", 200, 5_000, 80),
+            assistant_value("m2", "<synthetic>", 0, 0, 0),
+        ]});
+        let u = from_transcript_value(&tx).unwrap();
+        assert_eq!(u.context_tokens, 200 + 5_000);
+        assert_eq!(u.model.as_deref(), Some("claude-sonnet-4-6"));
     }
 
     #[test]
