@@ -3,6 +3,11 @@ import type { ClaudeOrigin, LibraryItem, LibrarySaveInput, LibraryKind } from '.
 import type { AnalyticsSummary, SessionHistoryRecord } from './analytics';
 import type { Layout, LayoutAgent } from './layout';
 import type {
+  BoardData,
+  BoardLane,
+  BoardMoveRequest,
+} from '../../../main/services/briefBoardService';
+import type {
   ClaudeSessionSnapshot,
   AppConfig,
   AppConfigPartial,
@@ -505,6 +510,14 @@ export interface ElectronAPI {
   readDir: (
     dirPath: string,
   ) => Promise<{ path: string; entries: { name: string; path: string; isDir: boolean }[] }>;
+
+  /** The brief board (BoardPane). One swimlane per project, plus the manager's
+   *  own fleet lane. Absent on web — the board writes to local files. */
+  loadBriefBoard?: () => Promise<BoardData>;
+  /** The drag, and it is a real write: a column move relocates the entry's
+   *  lines inside `.workspacer/brief.md`; `to: 'archive'` moves them out into
+   *  `brief.archive.md`. Resolves with the lane re-read from disk. */
+  moveBriefCard?: (req: BoardMoveRequest) => Promise<BoardLane>;
   /** Open a file with the OS default handler via a file:// URL (browser for .html). */
   fileOpenExternal: (filePath: string) => Promise<{ ok: boolean; error?: string }>;
   /** Reveal a file in the OS file manager. No-ops ({ok:false}) on web. */

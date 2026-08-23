@@ -14,6 +14,7 @@ import type {
   RemoteTokenScope,
   RecentAgentSession,
 } from './shared/ipcTypes';
+import type { BoardData, BoardLane, BoardMoveRequest } from './services/briefBoardService';
 
 // ── MessagePort storage (preload isolated world) ──
 // Minimal type for the DOM MessagePort (main tsconfig lacks DOM lib)
@@ -706,6 +707,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     dirPath: string,
   ): Promise<{ path: string; entries: { name: string; path: string; isDir: boolean }[] }> =>
     ipcRenderer.invoke(IPC.FILE_LIST_DIR, dirPath),
+
+  // The brief board (BoardPane). `loadBriefBoard` returns one swimlane per
+  // project plus the manager's own fleet lane; `moveBriefCard` is the drag, and
+  // it WRITES — a column move relocates the entry's lines inside
+  // .workspacer/brief.md, and `to: 'archive'` moves them out into
+  // brief.archive.md. Both reject rather than half-write; the returned lane is
+  // freshly re-read from disk, so the pane never renders what it hoped for.
+  loadBriefBoard: (): Promise<BoardData> => ipcRenderer.invoke(IPC.BRIEF_BOARD_LOAD),
+  moveBriefCard: (req: BoardMoveRequest): Promise<BoardLane> =>
+    ipcRenderer.invoke(IPC.BRIEF_BOARD_MOVE, req),
   // Open a file with the OS default handler (file:// URL — browser for .html).
   fileOpenExternal: (filePath: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.FILE_OPEN_EXTERNAL, filePath),

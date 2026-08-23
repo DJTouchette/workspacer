@@ -4,6 +4,7 @@ import React from 'react';
 import {
   SquareTerminal,
   FileCode2,
+  ClipboardList,
   Globe,
   Bot,
   Sparkles,
@@ -83,6 +84,7 @@ const PANE_ICONS: Record<PaneType, IconComponent> = {
   context: PieChart,
   sessions: History,
   guide: LifeBuoy,
+  board: LayoutGrid,
 };
 
 export interface IconProps {
@@ -136,6 +138,7 @@ export {
   ArrowLeft,
   ArrowRight,
   History,
+  ClipboardList,
 };
 
 // Workspacer Icon Pack — the custom two-tone agent glyph set (panes, status,

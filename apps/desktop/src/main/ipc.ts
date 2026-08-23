@@ -44,6 +44,7 @@ import { listClaudeSessionsForDir } from './services/claudeSessionList';
 import { instrumentIpcHandlers, startEventLoopLagMonitor } from './lib/stallDiagnostics';
 import { listRecentSessions, listLiveSessionIds } from './services/recentSessions';
 import { readTextFile, writeTextFile, listDir } from './services/fileService';
+import { loadBoard, applyBoardMove, type BoardMoveRequest } from './services/briefBoardService';
 import { readImagePreview } from './services/imagePreview';
 import { savePastedImage } from './services/clipboardImage';
 import { startWatch, stopWatch, setEmitSink } from './services/fileWatchService';
@@ -1178,6 +1179,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     writeTextFile(filePath, contents),
   );
   ipcMain.handle(IPC.FILE_LIST_DIR, (_event, dirPath: string) => listDir(dirPath));
+
+  // The brief board. Both handlers resolve their own paths from config — the
+  // renderer passes a lane KEY, never a path, so it cannot name a file for main
+  // to write. A move that loses its compare-and-swap rejects, and the pane
+  // reloads rather than retrying blind.
+  ipcMain.handle(IPC.BRIEF_BOARD_LOAD, () => loadBoard());
+  ipcMain.handle(IPC.BRIEF_BOARD_MOVE, (_event, req: BoardMoveRequest) => applyBoardMove(req));
 
   // Open a file with the OS default handler (browser for .html) via a file://
   // URL, and reveal a file in the OS file manager. Both validate existence

@@ -25,6 +25,7 @@ import {
   Star,
   History,
   IconSearch,
+  ClipboardList,
   type LucideIcon,
 } from './icons';
 import { shortcutFor } from '../lib/shortcuts';
@@ -170,6 +171,8 @@ interface CommandPaletteProps {
   onOpenAgents?: () => void;
   /** Open the Sessions pane (browse + resume past daemon sessions). */
   onOpenSessions?: () => void;
+  /** Open the brief Board (kanban over every project's .workspacer/brief.md). */
+  onOpenBoard?: () => void;
   /** Open an Inspector pane for the currently-piloted agent (plan/flows/agents/files/usage). */
   onOpenInspector?: () => void;
   /** Open a Context pane itemizing the current agent's context window. */
@@ -244,6 +247,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   onOpenAnalytics,
   onOpenAgents,
   onOpenSessions,
+  onOpenBoard,
   onOpenInspector,
   onOpenContext,
   onOpenLayouts,
@@ -404,6 +408,13 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       onOpenAgents,
     );
     add(
+      'cmd-board',
+      'Open Brief Board',
+      'Every project’s brief as cards — drag to move an entry, or to archive it',
+      <ClipboardList size={16} strokeWidth={1.75} />,
+      onOpenBoard,
+    );
+    add(
       'cmd-sessions',
       'Session History',
       'Browse and resume past sessions in a pane',
@@ -535,6 +546,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     onOpenAnalytics,
     onOpenAgents,
     onOpenSessions,
+    onOpenBoard,
     onOpenInspector,
     onOpenContext,
     onOpenLayouts,
