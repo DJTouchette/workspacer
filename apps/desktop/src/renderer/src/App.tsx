@@ -1616,7 +1616,11 @@ function App() {
         // project opts into per-project yolo — else rule 7's per-project
         // skipPermissions would be clamped for want of the grant.
         const anyProjectYolo = Object.values(config.projects ?? {}).some((p) => p?.yolo === true);
-        await spawnFleetManager(ask, root, fullAccess, fullAccess || anyProjectYolo);
+        // Which harness the manager itself runs on (Settings → Supervisor →
+        // Fleet Manager). Everything the role needs is provider-blind below
+        // this call; only the entry point ever hardcoded 'claude'.
+        const provider = config.agents?.managerProvider ?? 'claude';
+        await spawnFleetManager(ask, root, fullAccess, fullAccess || anyProjectYolo, provider);
       })();
     };
     window.addEventListener('fleet-manager:ask', handler);
@@ -1624,6 +1628,7 @@ function App() {
   }, [
     config.agents?.fleetRoot,
     config.agents?.fleetFullAccess,
+    config.agents?.managerProvider,
     config.projects,
     spawnFleetManager,
   ]);

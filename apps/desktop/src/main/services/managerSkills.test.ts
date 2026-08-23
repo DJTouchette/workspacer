@@ -104,4 +104,44 @@ describe('installManagerSkills', () => {
     installManagerSkills();
     expect(fs.readFileSync(skillFile('checkpoint'), 'utf8')).toBe(body);
   });
+
+  // A Fleet Manager on codex was previously left with NO slash commands: the
+  // install was gated on Claude. Codex reads $CODEX_HOME/skills (else
+  // ~/.codex/skills) and parses the identical SKILL.md format, so the fix is a
+  // destination change — and the doctrine text must stay byte-identical, since
+  // a per-provider copy is exactly what would drift.
+  describe('per-provider destination', () => {
+    const codexSkillFile = (name: string) => path.join(home, '.codex', 'skills', name, 'SKILL.md');
+
+    it('writes the SAME skills into codex’s skills dir', () => {
+      delete process.env.CODEX_HOME;
+      installManagerSkills('claude');
+      installManagerSkills('codex');
+      for (const name of ['standup', 'checkpoint', 'handoff']) {
+        expect(fs.existsSync(codexSkillFile(name))).toBe(true);
+        expect(fs.readFileSync(codexSkillFile(name), 'utf8')).toBe(
+          fs.readFileSync(skillFile(name), 'utf8'),
+        );
+      }
+    });
+
+    it('honours $CODEX_HOME', () => {
+      const alt = path.join(home, 'alt-codex');
+      process.env.CODEX_HOME = alt;
+      try {
+        installManagerSkills('codex');
+        expect(fs.existsSync(path.join(alt, 'skills', 'standup', 'SKILL.md'))).toBe(true);
+      } finally {
+        delete process.env.CODEX_HOME;
+      }
+    });
+
+    it('skips (loudly) a provider with no known skills directory', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      installManagerSkills('pi');
+      expect(warn).toHaveBeenCalled();
+      expect(fs.existsSync(path.join(home, '.pi'))).toBe(false);
+      warn.mockRestore();
+    });
+  });
 });

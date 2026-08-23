@@ -127,6 +127,68 @@ describe('spawnFleetManager', () => {
     hook.unmount();
   });
 
+  it('runs the manager on the configured harness, role flags intact', async () => {
+    // The Overview entry point used to hardcode provider 'claude', so a Fleet
+    // Manager on codex was impossible. The role flags matter more than the
+    // provider: without `manager` the session is never marked isSupervisor and
+    // NO worker-finished wake is routed to it, and without `fleetFullAccess`
+    // its token is minted with no dispatch grants.
+    const hook = renderHook(() => useAgentManager());
+    await act(async () => {
+      await hook.result.current.spawnFleetManager('status', '/home/u/Work', false, true, 'codex');
+    });
+    expect(spawnClaude).toHaveBeenCalledTimes(1);
+    expect(spawnClaude.mock.calls[0][0]).toMatchObject({
+      provider: 'codex',
+      transport: 'stream',
+      toolScope: 'operator',
+      manager: true,
+      fleetFullAccess: true,
+    });
+    hook.unmount();
+  });
+
+  it('does not resurrect a stopped manager from a DIFFERENT harness', async () => {
+    // A conversation cannot move between harnesses, so after switching
+    // agents.managerProvider the stopped claude card is left alone and a fresh
+    // codex manager spawns — otherwise the setting would look applied and
+    // silently keep reviving the old provider's manager.
+    const hook = renderHook(() => useAgentManager());
+    act(() =>
+      hook.result.current.loadAgentsFromSession(
+        [
+          {
+            id: 'agent-m',
+            name: FLEET_MANAGER_NAME,
+            cwd: '/home/u/Work',
+            provider: 'claude',
+            manager: true,
+            lastSessionId: 'mgr-old',
+            tabs: [
+              {
+                id: 't',
+                title: 'M',
+                panes: [{ id: 'p', type: 'claude', title: 'C' }],
+                activePaneId: 'p',
+              },
+            ],
+            activeTabId: 't',
+          } as any,
+        ],
+        'agent-m',
+      ),
+    );
+    await act(async () => {
+      await hook.result.current.spawnFleetManager('status', '/home/u/Work', false, false, 'codex');
+    });
+    expect(spawnClaude).toHaveBeenCalledTimes(1);
+    const opts = spawnClaude.mock.calls[0][0];
+    expect(opts.provider).toBe('codex');
+    // A FRESH manager, not a resume of the claude conversation.
+    expect(opts.resumeSessionId).toBeUndefined();
+    hook.unmount();
+  });
+
   it('reuses a LIVE manager by name — the ask goes as a plain message, no second spawn', async () => {
     const hook = renderHook(() => useAgentManager());
     act(() =>

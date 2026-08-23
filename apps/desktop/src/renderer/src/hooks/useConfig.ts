@@ -326,6 +326,12 @@ export interface Config {
      *  workers prompt, and the manager approves in-repo actions per its
      *  doctrine. Trade-off is speed vs. a human gate on every command. */
     fleetFullAccess?: boolean;
+    /** The harness the Fleet Manager ITSELF runs on (absent = claude). The
+     *  manager dispatches through the workspacer MCP facade, so this is limited
+     *  to providers with an MCP client. Applies to the next manager you start —
+     *  a running/stopped manager keeps its own harness (its conversation cannot
+     *  move between them). */
+    managerProvider?: AgentProvider;
     /** Pre-check "isolated worktree" in the spawn dialog. */
     spawnInWorktree?: boolean;
     /** Parent directory for agent worktrees ('' = ~/.workspacer/worktrees). */

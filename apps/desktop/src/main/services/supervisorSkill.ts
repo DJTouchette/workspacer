@@ -1,8 +1,9 @@
 /**
  * The `/supervise` skill: the fleet-supervisor's loop, shipped with the app and
- * installed (idempotently) as a personal Claude Code skill the moment a
- * supervisor session is spawned. Keeping it a real skill — not just system-prompt
- * text — means the user can read and edit it (`~/.claude/skills/supervise/`), and
+ * installed (idempotently) as a personal skill the moment a supervisor session
+ * is spawned, into the directory ITS harness reads (`~/.claude/skills` for
+ * Claude, `$CODEX_HOME/skills` for Codex — same SKILL.md format). Keeping it a
+ * real skill — not just system-prompt text — means the user can read and edit it, and
  * the supervisor invokes it as `/supervise` and re-runs it on a loop.
  *
  * The skill ships with a parsing helper (`fleet.mjs`) installed alongside it.
@@ -16,10 +17,16 @@
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
+import { agentSkillDir } from '../lib/agentSkills';
+import type { AgentProvider } from './agentProviders';
 
 const SKILL_NAME = 'supervise';
 
-const SKILL_BODY = `---
+/** The skill text. Parameterized ONLY on its own install directory: the helper
+ *  script is invoked by absolute path, and that path differs per harness
+ *  (`~/.claude/skills/supervise` vs `$CODEX_HOME/skills/supervise`). Everything
+ *  else is identical across providers on purpose — one doctrine, no fork. */
+const skillBody = (dir: string): string => `---
 name: supervise
 description: Coordinate the Workspacer agent fleet — watch every running agent, summarize what each is doing using cheap summarizer workers, and surface decisions that need a human with full context. Only useful inside a Workspacer supervisor session (requires the mcp__workspacer__* tools).
 ---
@@ -42,9 +49,9 @@ compact, already-parsed text (no JSON), so use it for READS instead of pulling
 raw tool output into your context:
 
 \`\`\`
-node "$HOME/.claude/skills/supervise/fleet.mjs" status [--active]
-node "$HOME/.claude/skills/supervise/fleet.mjs" convo <sessionId> --since <seq>
-node "$HOME/.claude/skills/supervise/fleet.mjs" reply <sessionId>
+node "${dir}/fleet.mjs" status [--active]
+node "${dir}/fleet.mjs" convo <sessionId> --since <seq>
+node "${dir}/fleet.mjs" reply <sessionId>
 \`\`\`
 
 - \`status\` — one line per session: id, mode, what it's blocked on (and for how
@@ -438,9 +445,10 @@ const activeOnly = argv.includes('--active');
 })();
 `;
 
-/** Directory the skill (and its helpers) are installed into. */
-function skillDir(): string {
-  return path.join(os.homedir(), '.claude', 'skills', SKILL_NAME);
+/** Directory the skill (and its helpers) are installed into for `provider`, or
+ *  null when that harness has no personal-skills convention (lib/agentSkills). */
+function skillDir(provider: AgentProvider): string | null {
+  return agentSkillDir(provider, SKILL_NAME);
 }
 
 /**
@@ -493,11 +501,17 @@ function writeIfChanged(file: string, content: string): void {
  * supervisor falls back to its system prompt / the MCP tools. Safe to call on
  * every supervisor spawn.
  */
-export function installSupervisorSkill(): void {
+export function installSupervisorSkill(provider: AgentProvider = 'claude'): void {
+  const dir = skillDir(provider);
+  if (!dir) {
+    console.warn(
+      `[supervisorSkill] ${provider} has no known personal-skills directory — skipping /supervise`,
+    );
+    return;
+  }
   try {
-    const dir = skillDir();
     fs.mkdirSync(dir, { recursive: true });
-    writeIfChanged(path.join(dir, 'SKILL.md'), SKILL_BODY);
+    writeIfChanged(path.join(dir, 'SKILL.md'), skillBody(dir));
     writeIfChanged(path.join(dir, 'fleet.mjs'), FLEET_SCRIPT);
   } catch {
     /* installing the skill is best-effort */

@@ -235,6 +235,10 @@ interface Config {
      *  services/fullAccessGrants — the single grant formula the mint path and
      *  the live reconciler share. */
     fleetFullAccess: boolean;
+    /** Coding-agent harness the Fleet Manager itself runs on ('' = claude).
+     *  The manager needs an MCP client to dispatch at all, so this is
+     *  claude/codex/opencode — see SupervisorSection. */
+    managerProvider: string;
     /** User-configured binary paths per provider. '' = auto-detect on PATH. */
     binaries: {
       claude: string;

@@ -92,11 +92,15 @@ vi.mock('./claudemonDaemon', () => ({
   claudeSettingsOverlayEnabled: () => false,
 }));
 
+const installSupervisorSkill = vi.fn();
+const installManagerSkills = vi.fn();
 vi.mock('./supervisorSkill', () => ({
   ensureSupervisorHome: vi.fn(() => '/home/super'),
-  installSupervisorSkill: vi.fn(),
+  installSupervisorSkill: (...a: unknown[]) => installSupervisorSkill(...a),
 }));
-vi.mock('./managerSkills', () => ({ installManagerSkills: vi.fn() }));
+vi.mock('./managerSkills', () => ({
+  installManagerSkills: (...a: unknown[]) => installManagerSkills(...a),
+}));
 vi.mock('./systemNotice', () => ({ notifySystem: vi.fn() }));
 
 const { spawnManagedAgent } = await import('./managedSpawn');
@@ -450,5 +454,87 @@ describe('spawnManagedAgent — resultSchema', () => {
       spawnManagedAgent({ provider: 'opencode', cwd: '/proj', resultSchema: 42 as never }),
     ).rejects.toThrow(/JSON Schema object/);
     expect(spawnManagedMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The Fleet Manager ROLE on codex. The IPC managed branch used to drop
+ * `manager` entirely, so none of this happened: the session came up unflagged
+ * (invisible to the wake router) and its token was minted with no dispatch
+ * grants, so every worker it spawned was clamped. Pinned here because a manager
+ * missing any one of these looks exactly like a working one.
+ */
+describe('spawnManagedAgent — a Fleet Manager on codex', () => {
+  beforeEach(() => {
+    mockConfig = { agents: { fleetFullAccess: true } };
+  });
+
+  it('marks the session a wake target (isSupervisor)', async () => {
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/home/u/Work',
+      manager: true,
+      toolScope: 'operator',
+      fleetFullAccess: true,
+    });
+    // nudgeParentOnFinish refuses to wake a parent without this flag — it IS
+    // the difference between a manager and a decorative one.
+    expect(lastMeta()).toMatchObject({ isSupervisor: true, provider: 'codex' });
+  });
+
+  it('mints its token with the manager role, profile grants and the config yolo grant', async () => {
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/home/u/Work',
+      manager: true,
+      toolScope: 'operator',
+      fleetFullAccess: true,
+    });
+    const [sessionId, scope, plugins, profiles, yolo, role] = mintSessionFacadeToken.mock.calls.at(
+      -1,
+    )! as unknown[];
+    expect(typeof sessionId).toBe('string');
+    expect(scope).toBe('operator');
+    expect(plugins).toBeUndefined();
+    // profilesAllowed: the hub verifies this and stamps profileGranted on the
+    // worker spawn, which is how a manager dispatches under another account.
+    expect(profiles).toEqual(['default']);
+    // yoloAllowed: config-resolved (never the caller's flag) — without it every
+    // dispatched worker's skipPermissions is clamped off by the hub.
+    expect(yolo).toBe(true);
+    expect(role).toBe('manager');
+    // …and the facade actually attaches, with the token on the URL (codex
+    // registers MCP servers by URL and cannot send headers).
+    expect(String(lastManaged().mcp)).toContain('t=tok-abc');
+  });
+
+  it('installs its slash commands into codex’s skills dir, not claude’s', async () => {
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/home/u/Work',
+      manager: true,
+      toolScope: 'operator',
+    });
+    expect(installManagerSkills).toHaveBeenCalledWith('codex');
+  });
+
+  it('drops the yolo grant when config says so, without touching the role', async () => {
+    mockConfig = { agents: { fleetFullAccess: false } };
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/home/u/Work',
+      manager: true,
+      toolScope: 'operator',
+      // A stale fleetFullAccess from a respawn record must NOT resurrect a
+      // revoked grant — the mint reads config, not this flag.
+      fleetFullAccess: true,
+    });
+    const call = mintSessionFacadeToken.mock.calls.at(-1)! as unknown[];
+    expect(call[4]).toBe(false);
+    expect(call[5]).toBe('manager');
   });
 });
