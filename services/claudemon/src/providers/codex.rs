@@ -968,6 +968,11 @@ async fn run_session(
     // so ask↔yolo stay live-switchable in BOTH directions (spawned_yolo=false).
     let yolo_live = Arc::new(AtomicBool::new(yolo));
     store.register_managed_yolo(session_id, yolo_live.clone(), yolo && !headless);
+    // The sandbox/approval posture that rides on every headless `turn/start`.
+    // It shares `yolo_live` with the store, so a live `/permission-mode` flip
+    // moves the REAL sandbox with the adapter's auto-accept instead of only
+    // half of it.
+    let policy = TurnPolicy::new(headless, yolo_live.clone());
 
     // Hybrid: the native TUI OWNS the thread — bare `codex --remote` creates and
     // runs it (a real, "running", resumable rollout) — then we rejoin it over
@@ -1011,18 +1016,19 @@ async fn run_session(
     // conversation is pre-seeded from the rollout in spawn.rs, so the GUI
     // shows the history the app-server already has.
     if headless {
+        // A bypassed headless session states the bypass to the app-server
+        // itself — `sandbox` + `approvalPolicy` — instead of relying on the
+        // adapter auto-accepting approval requests, which leaves codex's own
+        // sandbox fully in force. RESUME MATTERS AS MUCH AS START: a resumed
+        // thread never runs `thread/start`, so without the same params here a
+        // resumed worker silently reverts to sandboxed. Non-bypassed sessions
+        // send neither param and keep codex's resolved defaults.
         match &thread_id {
             Some(tid) => {
-                let _ = out_tx.send(json!({
-                    "jsonrpc": "2.0", "id": 2, "method": "thread/resume",
-                    "params": { "threadId": tid }
-                }));
+                let _ = out_tx.send(thread_resume_request(tid, headless, yolo));
             }
             None => {
-                let _ = out_tx.send(json!({
-                    "jsonrpc": "2.0", "id": 101, "method": "thread/start",
-                    "params": { "cwd": cwd }
-                }));
+                let _ = out_tx.send(thread_start_request(cwd, headless, yolo));
             }
         }
     }
@@ -1076,7 +1082,7 @@ async fn run_session(
                         handle_message(
                             &value, store, conv, session_id, &out_tx,
                             &mut thread_id, &mut subscribed, &mut pending_prompts, &mut req_id,
-                            &mut cur_mode, &mut acc, &yolo_live, &mut pending_approvals,
+                            &mut cur_mode, &mut acc, &policy, &mut pending_approvals,
                             &mut pending_switch, headless,
                         );
                     }
@@ -1129,7 +1135,7 @@ async fn run_session(
                     match &thread_id {
                         Some(tid) => {
                             req_id += 1;
-                            send_turn(&out_tx, req_id, tid, &sent);
+                            send_turn(&out_tx, req_id, tid, &sent, &policy);
                         }
                         // Thread not open yet — buffer the (already-wrapped) prompt.
                         None => pending_prompts.push(sent),
@@ -1284,7 +1290,7 @@ fn handle_message(
     req_id: &mut u64,
     cur_mode: &mut SessionMode,
     acc: &mut UsageAcc,
-    yolo: &AtomicBool,
+    policy: &TurnPolicy,
     pending_approvals: &mut VecDeque<ParkedApproval>,
     pending_switch: &mut Option<crate::session::ModelSwitch>,
     headless: bool,
@@ -1342,7 +1348,7 @@ fn handle_message(
                 }
                 for text in std::mem::take(pending_prompts) {
                     *req_id += 1;
-                    send_turn(out_tx, *req_id, &tid, &text);
+                    send_turn(out_tx, *req_id, &tid, &text, policy);
                 }
             }
             return;
@@ -1365,7 +1371,7 @@ fn handle_message(
                 // Flush any prompts that arrived before the thread was found.
                 for text in std::mem::take(pending_prompts) {
                     *req_id += 1;
-                    send_turn(out_tx, *req_id, tid, &text);
+                    send_turn(out_tx, *req_id, tid, &text, policy);
                 }
             }
         }
@@ -1392,7 +1398,7 @@ fn handle_message(
             }
             for text in std::mem::take(pending_prompts) {
                 *req_id += 1;
-                send_turn(out_tx, *req_id, &tid, &text);
+                send_turn(out_tx, *req_id, &tid, &text, policy);
             }
         }
     }
@@ -1433,7 +1439,7 @@ fn handle_message(
     // `resolve_approval`, called from the decision branch in run_session).
     if value.get("id").is_some() && method.ends_with("/requestApproval") {
         let id = value.get("id").cloned().unwrap_or(Value::Null);
-        if yolo.load(Ordering::Relaxed) {
+        if policy.bypassing() {
             let _ = out_tx
                 .send(json!({ "jsonrpc": "2.0", "id": id, "result": { "decision": "accept" } }));
         } else {
@@ -1463,13 +1469,145 @@ pub(crate) fn thread_id_of(v: Option<&Value>) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn send_turn(out_tx: &mpsc::UnboundedSender<Value>, id: u64, thread_id: &str, text: &str) {
-    let _ = out_tx.send(json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": "turn/start",
-        "params": { "threadId": thread_id, "input": [ { "type": "text", "text": text } ] }
-    }));
+/// Codex's own sandbox vocabulary. `thread/start` and `thread/resume` take a
+/// bare [`SandboxMode`] string under `sandbox`; `turn/start` takes a tagged
+/// [`SandboxPolicy`] object under `sandboxPolicy`. Same concept, two shapes —
+/// both read off codex 0.149's generated JSON schema (`codex app-server
+/// generate-json-schema --out …`, `v2/ThreadStartParams.json` /
+/// `v2/TurnStartParams.json`).
+const SANDBOX_MODE_FULL: &str = "danger-full-access";
+/// `AskForApproval`. `never` is codex's "don't ask me anything"; `on-request`
+/// is its ordinary ask-when-needed posture.
+const APPROVAL_NEVER: &str = "never";
+const APPROVAL_ON_REQUEST: &str = "on-request";
+
+/// Whether a *headless* thread should be created (`thread/start`) or rejoined
+/// (`thread/resume`) with the bypass overrides, and which ones.
+///
+/// `None` means "send neither param", which is the whole point of the split: a
+/// session spawned WITHOUT the bypass grant must keep whatever codex's own
+/// config resolves for its cwd — untouched, exactly as before this existed.
+///
+/// Hybrid always answers `None`: there the native TUI creates the thread and
+/// already carries `--dangerously-bypass-approvals-and-sandbox` itself, so the
+/// bypass is real at the source and ours would be redundant.
+fn thread_bypass_params(headless: bool, yolo: bool) -> Option<(&'static str, &'static str)> {
+    (headless && yolo).then_some((SANDBOX_MODE_FULL, APPROVAL_NEVER))
+}
+
+/// Apply [`thread_bypass_params`] to a `thread/start` / `thread/resume` params
+/// object in place.
+fn apply_thread_bypass(params: &mut Value, headless: bool, yolo: bool) {
+    if let Some((sandbox, approval)) = thread_bypass_params(headless, yolo) {
+        params["sandbox"] = json!(sandbox);
+        params["approvalPolicy"] = json!(approval);
+    }
+}
+
+/// The headless bootstrap `thread/start` (id 101) — this client creates the
+/// thread, so the bypass has to be stated here.
+fn thread_start_request(cwd: &str, headless: bool, yolo: bool) -> Value {
+    let mut params = json!({ "cwd": cwd });
+    apply_thread_bypass(&mut params, headless, yolo);
+    json!({ "jsonrpc": "2.0", "id": 101, "method": "thread/start", "params": params })
+}
+
+/// The headless `thread/resume` (id 2) — the resume path skips `thread/start`
+/// entirely, so it needs the same overrides or a resumed bypassed worker comes
+/// back sandboxed.
+fn thread_resume_request(thread_id: &str, headless: bool, yolo: bool) -> Value {
+    let mut params = json!({ "threadId": thread_id });
+    apply_thread_bypass(&mut params, headless, yolo);
+    json!({ "jsonrpc": "2.0", "id": 2, "method": "thread/resume", "params": params })
+}
+
+/// The sandbox/approval posture this session stamps on every `turn/start`.
+///
+/// Two flags, not one, because the directions are asymmetric. `yolo` is the
+/// live `/permission-mode` state (the same `AtomicBool` the store flips).
+/// `engaged` latches the first moment the session was ever bypassed — at spawn,
+/// or later via a live `ask → yolo` flip.
+///
+/// Before the latch flips we send NO sandbox or approval params at all, so an
+/// un-bypassed session keeps codex's own resolved defaults and is never widened
+/// by us. After it flips we own the posture and must state it explicitly in
+/// *both* directions: a `yolo → ask` flip that only cleared the adapter's
+/// auto-accept would leave the thread sitting at `danger-full-access` while the
+/// UI reported `ask` — the two halves diverging, which is worse than either.
+///
+/// Turn-scoped rather than live because a sandbox only governs what a turn
+/// *executes*, and codex applies `turn/start`'s override "for this turn and
+/// subsequent turns". A flip lands on the next turn; nothing runs between turns.
+///
+/// Hybrid stamps nothing, ever — see [`thread_bypass_params`].
+struct TurnPolicy {
+    headless: bool,
+    yolo: Arc<AtomicBool>,
+    engaged: Arc<AtomicBool>,
+}
+
+impl TurnPolicy {
+    fn new(headless: bool, yolo: Arc<AtomicBool>) -> Self {
+        let engaged = Arc::new(AtomicBool::new(yolo.load(Ordering::Relaxed)));
+        Self {
+            headless,
+            yolo,
+            engaged,
+        }
+    }
+
+    /// Is the adapter currently auto-accepting approval requests?
+    fn bypassing(&self) -> bool {
+        self.yolo.load(Ordering::Relaxed)
+    }
+
+    /// `(sandboxPolicy, approvalPolicy)` for a `turn/start`, or `None` to send
+    /// neither. Reads the live flag (and latches it), so it reflects a
+    /// `/permission-mode` switch made since the last turn.
+    fn turn_params(&self) -> Option<(Value, &'static str)> {
+        if !self.headless {
+            return None;
+        }
+        let yolo = self.bypassing();
+        if yolo {
+            self.engaged.store(true, Ordering::Relaxed);
+        } else if !self.engaged.load(Ordering::Relaxed) {
+            // Never bypassed — leave codex's defaults alone.
+            return None;
+        }
+        Some(if yolo {
+            (json!({ "type": "dangerFullAccess" }), APPROVAL_NEVER)
+        } else {
+            // Re-tightened after a bypass. We can't restore the unknown
+            // pre-bypass default, so state codex's ordinary posture explicitly
+            // — a narrowing from full access, and honest about what it is.
+            (json!({ "type": "workspaceWrite" }), APPROVAL_ON_REQUEST)
+        })
+    }
+}
+
+/// Build a `turn/start` request. Headless sessions carry the sandbox/approval
+/// posture on every turn (see [`TurnPolicy`]); hybrid carries neither.
+fn turn_start_request(id: u64, thread_id: &str, text: &str, policy: &TurnPolicy) -> Value {
+    let mut params = json!({
+        "threadId": thread_id,
+        "input": [ { "type": "text", "text": text } ]
+    });
+    if let Some((sandbox, approval)) = policy.turn_params() {
+        params["sandboxPolicy"] = sandbox;
+        params["approvalPolicy"] = json!(approval);
+    }
+    json!({ "jsonrpc": "2.0", "id": id, "method": "turn/start", "params": params })
+}
+
+fn send_turn(
+    out_tx: &mpsc::UnboundedSender<Value>,
+    id: u64,
+    thread_id: &str,
+    text: &str,
+    policy: &TurnPolicy,
+) {
+    let _ = out_tx.send(turn_start_request(id, thread_id, text, policy));
 }
 
 /// Push a `thread/settings/update` for a live model/effort switch. Partial params
@@ -1530,6 +1668,147 @@ async fn write_msg(stdin: &mut ChildStdin, value: &Value) -> anyhow::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Headless bypass: sandbox + approval policy on the wire ──────────────
+    //
+    // The bug these pin: `skipPermissions` on the headless (stream) transport
+    // used to be pure adapter-side auto-accept of `requestApproval`, so a
+    // "full access" worker still ran inside codex's own sandbox — fatal in a
+    // fresh ship worktree, which is never in the user's trusted-projects list.
+    // Field names/values verified against codex 0.149's generated JSON schema
+    // (`v2/ThreadStartParams.json`, `v2/ThreadResumeParams.json`,
+    // `v2/TurnStartParams.json`).
+
+    fn policy_for(headless: bool, yolo: bool) -> TurnPolicy {
+        TurnPolicy::new(headless, Arc::new(AtomicBool::new(yolo)))
+    }
+
+    #[test]
+    fn headless_bypassed_thread_start_carries_the_sandbox_and_approval_override() {
+        let req = thread_start_request("/tmp/wt", true, true);
+        assert_eq!(req["method"], "thread/start");
+        assert_eq!(req["params"]["cwd"], "/tmp/wt");
+        assert_eq!(req["params"]["sandbox"], "danger-full-access");
+        assert_eq!(req["params"]["approvalPolicy"], "never");
+    }
+
+    #[test]
+    fn headless_unbypassed_thread_start_sends_neither_param() {
+        let req = thread_start_request("/tmp/wt", true, false);
+        // Byte-for-byte what we sent before the bypass existed: codex keeps
+        // whatever its own config resolves for this cwd.
+        assert_eq!(req["params"], json!({ "cwd": "/tmp/wt" }));
+    }
+
+    #[test]
+    fn hybrid_thread_start_is_untouched_even_when_bypassed() {
+        // Hybrid's bypass is real at the source (the thread-owning TUI carries
+        // `--dangerously-bypass-approvals-and-sandbox`); ours must not intrude.
+        assert_eq!(
+            thread_start_request("/tmp/wt", false, true)["params"],
+            json!({ "cwd": "/tmp/wt" })
+        );
+    }
+
+    /// The resume path skips `thread/start` entirely — without this a resumed
+    /// bypassed worker silently comes back sandboxed.
+    #[test]
+    fn headless_bypassed_thread_resume_carries_the_same_override() {
+        let req = thread_resume_request("th_1", true, true);
+        assert_eq!(req["method"], "thread/resume");
+        assert_eq!(req["params"]["threadId"], "th_1");
+        assert_eq!(req["params"]["sandbox"], "danger-full-access");
+        assert_eq!(req["params"]["approvalPolicy"], "never");
+    }
+
+    #[test]
+    fn headless_unbypassed_thread_resume_sends_neither_param() {
+        assert_eq!(
+            thread_resume_request("th_1", true, false)["params"],
+            json!({ "threadId": "th_1" })
+        );
+    }
+
+    #[test]
+    fn headless_bypassed_turns_carry_the_sandbox_policy() {
+        let req = turn_start_request(7, "th_1", "go", &policy_for(true, true));
+        assert_eq!(req["method"], "turn/start");
+        assert_eq!(req["params"]["input"][0]["text"], "go");
+        assert_eq!(
+            req["params"]["sandboxPolicy"],
+            json!({ "type": "dangerFullAccess" })
+        );
+        assert_eq!(req["params"]["approvalPolicy"], "never");
+    }
+
+    #[test]
+    fn unbypassed_turns_carry_no_sandbox_or_approval_params() {
+        for p in [
+            policy_for(true, false),
+            policy_for(false, false),
+            policy_for(false, true),
+        ] {
+            let req = turn_start_request(7, "th_1", "go", &p);
+            assert!(req["params"].get("sandboxPolicy").is_none());
+            assert!(req["params"].get("approvalPolicy").is_none());
+        }
+    }
+
+    /// A live `/permission-mode` flip must move the REAL sandbox with the
+    /// adapter's auto-accept — both directions — or the UI lies about what the
+    /// session can do.
+    #[test]
+    fn live_permission_mode_flip_moves_the_sandbox_too() {
+        let live = Arc::new(AtomicBool::new(true));
+        let p = TurnPolicy::new(true, live.clone());
+        assert_eq!(
+            turn_start_request(1, "th", "a", &p)["params"]["sandboxPolicy"],
+            json!({ "type": "dangerFullAccess" })
+        );
+
+        // yolo → ask: re-tighten explicitly, rather than leaving the thread at
+        // danger-full-access while the UI reports "ask".
+        live.store(false, Ordering::SeqCst);
+        let req = turn_start_request(2, "th", "b", &p);
+        assert_eq!(
+            req["params"]["sandboxPolicy"],
+            json!({ "type": "workspaceWrite" })
+        );
+        assert_eq!(req["params"]["approvalPolicy"], "on-request");
+
+        // …and back again.
+        live.store(true, Ordering::SeqCst);
+        assert_eq!(
+            turn_start_request(3, "th", "c", &p)["params"]["approvalPolicy"],
+            "never"
+        );
+    }
+
+    /// A session spawned WITHOUT the grant stays on codex's defaults until the
+    /// grant actually arrives — we never widen it on our own, and we never
+    /// tighten it either (which would be a behaviour change of its own).
+    #[test]
+    fn a_never_bypassed_session_is_never_stamped() {
+        let live = Arc::new(AtomicBool::new(false));
+        let p = TurnPolicy::new(true, live.clone());
+        assert_eq!(
+            turn_start_request(1, "th", "a", &p)["params"],
+            json!({ "threadId": "th", "input": [ { "type": "text", "text": "a" } ] })
+        );
+
+        // Granted live: now — and only now — we own the posture, in both
+        // directions, because we can no longer restore the unknown default.
+        live.store(true, Ordering::SeqCst);
+        assert_eq!(
+            turn_start_request(2, "th", "b", &p)["params"]["sandboxPolicy"],
+            json!({ "type": "dangerFullAccess" })
+        );
+        live.store(false, Ordering::SeqCst);
+        assert_eq!(
+            turn_start_request(3, "th", "c", &p)["params"]["sandboxPolicy"],
+            json!({ "type": "workspaceWrite" })
+        );
+    }
 
     #[test]
     fn model_info_preserves_model_specific_effort_ids() {
@@ -1996,7 +2275,7 @@ mod tests {
         let mut req_id = 2u64;
         let mut cur_mode = SessionMode::Input;
         let mut acc = UsageAcc::new();
-        let yolo = AtomicBool::new(false);
+        let policy = policy_for(true, false);
         let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
         let mut pending_switch = None;
 
@@ -2012,7 +2291,7 @@ mod tests {
             &mut req_id,
             &mut cur_mode,
             &mut acc,
-            &yolo,
+            &policy,
             &mut pending_approvals,
             &mut pending_switch,
             true,
@@ -2046,7 +2325,7 @@ mod tests {
             let mut req_id = 2u64;
             let mut cur_mode = SessionMode::Input;
             let mut acc = UsageAcc::new();
-            let yolo = AtomicBool::new(false);
+            let policy = policy_for(headless, false);
             let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
             let mut pending_switch = None;
 
@@ -2063,7 +2342,7 @@ mod tests {
                 &mut req_id,
                 &mut cur_mode,
                 &mut acc,
-                &yolo,
+                &policy,
                 &mut pending_approvals,
                 &mut pending_switch,
                 headless,
@@ -2108,7 +2387,7 @@ mod tests {
         let mut req_id = 2u64;
         let mut cur_mode = SessionMode::Input;
         let mut acc = UsageAcc::new();
-        let yolo = AtomicBool::new(false);
+        let policy = policy_for(true, false);
         let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
         let mut pending_switch = None;
 
@@ -2125,7 +2404,7 @@ mod tests {
             &mut req_id,
             &mut cur_mode,
             &mut acc,
-            &yolo,
+            &policy,
             &mut pending_approvals,
             &mut pending_switch,
             true,
@@ -2172,7 +2451,7 @@ mod tests {
         let mut req_id = 101u64;
         let mut cur_mode = SessionMode::Responding;
         let mut acc = UsageAcc::new();
-        let yolo = AtomicBool::new(false);
+        let policy = policy_for(true, false);
         let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
         let mut pending_switch = None;
 
@@ -2190,7 +2469,7 @@ mod tests {
             &mut req_id,
             &mut cur_mode,
             &mut acc,
-            &yolo,
+            &policy,
             &mut pending_approvals,
             &mut pending_switch,
             true,
@@ -2241,7 +2520,7 @@ mod tests {
         let mut req_id = 2u64;
         let mut cur_mode = SessionMode::Responding;
         let mut acc = UsageAcc::new();
-        let yolo = AtomicBool::new(false);
+        let policy = policy_for(false, false);
         let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
         let mut pending_switch = None;
 
@@ -2268,7 +2547,7 @@ mod tests {
                     &mut req_id,
                     cur_mode,
                     &mut acc,
-                    &yolo,
+                    &policy,
                     pending_approvals,
                     &mut pending_switch,
                     false,
@@ -2351,7 +2630,7 @@ mod tests {
         let mut req_id = 2u64;
         let mut cur_mode = SessionMode::Responding;
         let mut acc = UsageAcc::new();
-        let yolo = AtomicBool::new(true);
+        let policy = policy_for(false, true);
         let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
         let mut pending_switch = None;
 
@@ -2371,7 +2650,7 @@ mod tests {
             &mut req_id,
             &mut cur_mode,
             &mut acc,
-            &yolo,
+            &policy,
             &mut pending_approvals,
             &mut pending_switch,
             false,
