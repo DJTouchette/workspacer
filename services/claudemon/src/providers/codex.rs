@@ -1794,6 +1794,145 @@ mod tests {
         TurnPolicy::new(headless, Arc::new(AtomicBool::new(yolo)))
     }
 
+    // ── Live probe against a real `codex app-server` ───────────────────────
+    //
+    // `#[ignore]`d: it needs the codex CLI, network and an authenticated
+    // account, so it never runs in CI. Run it by hand when touching the
+    // sandbox/approval wire:
+    //
+    //   CODEX_BIN=$(which codex) cargo test -p claudemon --lib \
+    //     codex_headless_bypass_really_escapes_the_sandbox -- --ignored --nocapture
+    //
+    // It drives the EXACT request builders the driver uses — not a re-typed
+    // copy — creates a thread in a fresh directory that is NOT in the user's
+    // codex trusted-projects list, and asks the agent to write a file there.
+    // Under codex's default sandbox for an untrusted cwd that write is denied;
+    // it succeeds only if the bypass genuinely reached the app-server.
+
+    async fn live_probe(bin: &str, dir: &std::path::Path, yolo: bool) -> anyhow::Result<bool> {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")?
+            .local_addr()?
+            .port();
+        let ws_url = format!("ws://127.0.0.1:{port}");
+        let mut child = Command::new(bin)
+            .arg("app-server")
+            .arg("--listen")
+            .arg(&ws_url)
+            .current_dir(dir)
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()?;
+        wait_ready(&format!("http://127.0.0.1:{port}")).await?;
+        let (ws, _) = connect_async(&ws_url).await?;
+        let (mut w, mut r) = ws.split();
+
+        async fn send(
+            w: &mut futures_util::stream::SplitSink<CodexWs, Message>,
+            v: Value,
+        ) -> anyhow::Result<()> {
+            w.send(Message::Text(v.to_string())).await?;
+            Ok(())
+        }
+        send(
+            &mut w,
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": { "clientInfo": { "name": "workspacer-test", "version": "0" } } }),
+        )
+        .await?;
+        let cwd = dir.to_string_lossy().to_string();
+        send(&mut w, thread_start_request(&cwd, true, yolo)).await?;
+
+        let mut thread: Option<String> = None;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
+        let target = dir.join("wks-sandbox-probe.txt");
+        while tokio::time::Instant::now() < deadline {
+            let Ok(Some(Ok(Message::Text(t)))) =
+                tokio::time::timeout(std::time::Duration::from_secs(30), r.next()).await
+            else {
+                break;
+            };
+            for line in t.split('\n').map(str::trim).filter(|l| !l.is_empty()) {
+                let Ok(v) = serde_json::from_str::<Value>(line) else {
+                    continue;
+                };
+                eprintln!("<< {}", &line[..line.len().min(280)]);
+                if v.get("id").and_then(Value::as_u64) == Some(101) {
+                    assert!(
+                        v.get("error").is_none(),
+                        "the app-server REJECTED our thread/start params: {v}"
+                    );
+                    let tid = thread_id_of(v.get("result")).expect("thread id");
+                    thread = Some(tid.clone());
+                    let policy = policy_for(true, yolo);
+                    send(
+                        &mut w,
+                        turn_start_request(
+                            3,
+                            &tid,
+                            "Write the single word `ok` into ./wks-sandbox-probe.txt in the \
+                         current directory, then reply DONE. Do not ask any questions.",
+                            &policy,
+                        ),
+                    )
+                    .await?;
+                }
+                // Non-bypassed control: an approval request means the sandbox is
+                // in force. Deny it and stop — that IS the expected outcome.
+                if v.get("method")
+                    .and_then(Value::as_str)
+                    .is_some_and(|m| m.ends_with("/requestApproval"))
+                {
+                    let id = v.get("id").cloned().unwrap_or(Value::Null);
+                    send(
+                        &mut w,
+                        json!({ "jsonrpc": "2.0", "id": id,
+                        "result": { "decision": "denied" } }),
+                    )
+                    .await?;
+                }
+                if v.get("method")
+                    .and_then(Value::as_str)
+                    .is_some_and(|m| m == "turn/completed" || m == "turn/failed")
+                    && thread.is_some()
+                {
+                    let _ = child.start_kill();
+                    return Ok(target.exists());
+                }
+            }
+        }
+        let _ = child.start_kill();
+        Ok(target.exists())
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the codex CLI, network and an authenticated account"]
+    async fn codex_headless_bypass_really_escapes_the_sandbox() {
+        let bin = std::env::var("CODEX_BIN").unwrap_or_else(|_| "codex".into());
+        let root = std::env::temp_dir().join(format!("wks-codex-probe-{}", uuid::Uuid::new_v4()));
+        let bypassed = root.join("bypassed");
+        let control = root.join("control");
+        std::fs::create_dir_all(&bypassed).unwrap();
+        std::fs::create_dir_all(&control).unwrap();
+
+        let got = live_probe(&bin, &bypassed, true)
+            .await
+            .expect("bypassed probe");
+        let ctl = live_probe(&bin, &control, false)
+            .await
+            .expect("control probe");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(
+            got,
+            "BYPASSED headless session could not write in an untrusted cwd"
+        );
+        assert!(
+            !ctl,
+            "CONTROL (non-bypassed) session wrote without approval — \
+            the sandbox was already off, so this probe proves nothing"
+        );
+    }
+
     // ── Rollout fallback keeps the facade, and says so ─────────────────────
     //
     // The bug these pin: `run_rollout_fallback` took no `facade` at all, so a
