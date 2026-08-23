@@ -538,6 +538,14 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 		"List prior Claude Code sessions for a directory that can be resumed (the resume picker), newest first.",
 		"claude.sessionsForDir")
 
+	// ── Report (every tier, including view; see progress.go) ───────────────
+	//
+	// Placed beside observe rather than in drive because it is the one tool a
+	// READ-ONLY worker holds that sends anything: it reaches its own manager and
+	// no other session, and it names neither end.
+	b.group = "report"
+	addProgressTool(b)
+
 	// ── Spawn ──────────────────────────────────────────────────────────────
 	b.group = "spawn"
 	addSpawnTool(b, "spawn_agent",

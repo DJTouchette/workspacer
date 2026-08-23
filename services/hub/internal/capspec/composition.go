@@ -566,6 +566,10 @@ var compositionInert = map[string]InertClaim{
 		Reason:    "writes caller bytes to a FRESHLY CREATED, hub-named 0600 file under os.TempDir()/workspacer-uploads — a directory nothing in the host reads as config, code, argv or policy, with the caller's `name` param reduced to its allowlisted image/pdf extension (its per-param decision is on the record) so no executable class lands. WRITE-THEN-INTERPRET: the only downstream reader is an agent, and only if a caller also names the path via agents.sendMessage — which is the tier's one AcceptedIn pair, whose excuse (the agent's own tool approvals gate what a message makes it read) covers an uploaded image exactly as it covers any pre-existing host path a message names. WIDEN-THEN-USE: it changes no grant, root set, permission mode, approval gate or session, and no guard consults the upload directory; the returned path is information, not authority",
 		Witnesses: []Witness{paramsClassified("name")},
 	},
+	"agents.reportProgress": {
+		Reason:    "WRITE-THEN-INTERPRET: `note` is read as instruction, by an AGENT — but that crossing is already fully available to any caller holding agents.sendMessage, whose recorded pair covers it, and this method reaches strictly less of it. The caller cannot pick the reader (the host derives it from the caller's own parentSessionId), cannot suppress the host-composed header that says the sender is still running, and cannot exceed one 500-char line per 60s. WIDEN-THEN-USE: it changes no grant, root set, permission mode, approval gate or session — the only state it touches is its own in-memory per-session budget, which nothing else consults, and `callerSessionId` selects the caller rather than a target",
+		Witnesses: []Witness{paramsClassified("note", "callerSessionId")},
+	},
 	"claude.sessionsForDir": {
 		Reason:    "lists claudemon's known sessions for a directory. Read-only, its `cwd` carries a per-parameter decision on the record, and the ids it returns are already handed out by agents.list and sessions.snapshots",
 		Witnesses: []Witness{paramsClassified("cwd")},

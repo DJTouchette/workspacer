@@ -56,6 +56,7 @@ import { scrubBootDocumentAgents } from '../lib/bootDocumentScrub';
 import { isAsciiBlank } from '../lib/asciiWhitespace';
 import { appendBriefLine, briefPathFor, parseBriefSection } from './briefService';
 import { thresholdWatcher } from './thresholdWatcher';
+import { progressReporter } from './progressReporter';
 
 // Mirror of ipc.ts's shell detection so a capability-spawned terminal picks the
 // same default shell a UI-spawned one would. Kept local to avoid importing the
@@ -1477,6 +1478,34 @@ export function registerHubCapabilities(): void {
       watcherSessionId: watcherId,
       predicate: { tokens, usd, idleSeconds },
     });
+  });
+
+  // ── A worker reporting on ITSELF (the other half of not polling) ────────
+  //
+  // notifyWhen above is the manager asking to be told about a NUMBER. This is
+  // the worker telling its manager something only the worker knows: "the
+  // approach you gave me is wrong", "phase 1 landed", "I am reading far more
+  // than I expected". Before it, the only way a worker could reach its manager
+  // mid-task was to be dispatched at toolScope triage/operator — tiers that
+  // also hand it approve/interrupt/reply over OTHER sessions. See
+  // services/progressReports.ts for the bounds (rate, lifetime cap, duplicate
+  // and length refusals, all loud rather than silent).
+  //
+  // THE RECIPIENT IS NEVER A PARAMETER. The caller names no session but the one
+  // it claims to BE (`callerSessionId`), and the host derives the recipient
+  // from that session's own `parentSessionId` — so the only pair this can ever
+  // connect is (a tracked session, whatever dispatched it), and a caller with
+  // no parent is refused rather than routed somewhere plausible. The MCP facade
+  // stamps `callerSessionId` from the per-request token record's `session:<id>`
+  // label (never from caller params), and the hub bus strips it from every
+  // untrusted caller, so a scoped or plugin token cannot name a session at all.
+  registerCapability('agents.reportProgress', (params: unknown) => {
+    const { callerSessionId, note, needsDecision } = (params ?? {}) as {
+      callerSessionId?: string;
+      note?: string;
+      needsDecision?: boolean;
+    };
+    return progressReporter.report({ callerSessionId, note, needsDecision });
   });
 
   // ── Project briefs ─────────────────────────────────────────────────────

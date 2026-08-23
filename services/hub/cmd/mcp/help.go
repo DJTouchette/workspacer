@@ -200,6 +200,23 @@ per-project (pass cwd). list/save/remove.`),
 	"analytics": strings.TrimSpace(`
 analytics_summary aggregates usage/cost across sessions; analytics_recent
 returns the latest finished sessions with per-session usage.`),
+	"report": strings.TrimSpace(`
+report_progress({note, needsDecision?}) is how you talk to whoever dispatched
+you, WITHOUT finishing. You cannot address it: it goes to your manager, derived
+from your own credential, and there is no session id in the call.
+- ONE line, about your own run: a phase landed, the approach you were given is
+  wrong, you are burning context far faster than the task warrants. Say what
+  would change your manager's next decision.
+- It does NOT end your turn or your task, and it is not your report: your final
+  message reaches your manager in full when you actually finish.
+- needsDecision:true marks you BLOCKED on an answer. The channel is one-way —
+  your manager may reply with a message, or may not — so keep working if you
+  can, and do not wait on it.
+- One per minute, 20 per session, no repeats. Every bound refuses out loud, so
+  a rejected note was NOT delivered: shorten it, wait, or fold it into the next
+  one. Nothing is ever silently truncated.
+- If you have no manager (nobody dispatched you), it refuses — tell the user in
+  your reply instead.`),
 	"notify": strings.TrimSpace(`
 notify shows a desktop notification on the workspacer machine — use it to
 surface something that needs the user's attention.`),
