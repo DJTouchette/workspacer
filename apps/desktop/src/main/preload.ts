@@ -239,6 +239,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   agentSuggestTitle: (req: {
     userMessage: string;
     assistantReply?: string;
+    /** The agent's own backend — titling uses ITS harness, not claude's. */
+    provider?: 'claude' | 'codex' | 'opencode' | 'pi';
   }): Promise<string | null> => ipcRenderer.invoke(IPC.AGENT_SUGGEST_TITLE, req),
   workflowAgentTranscript: (
     sessionId: string,

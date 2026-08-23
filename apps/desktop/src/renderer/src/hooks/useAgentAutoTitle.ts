@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { AgentWorkspace } from '../types/pane';
+import { resolveProvider, type AgentWorkspace } from '../types/pane';
 import type { ClaudeSessionSnapshot, ConversationTurn } from '../types/claudeSession';
 
 /**
@@ -111,7 +111,9 @@ export function useAgentAutoTitle({
       if (inFlightRef.current.has(agent.id)) continue;
       inFlightRef.current.add(agent.id);
       window.electronAPI
-        .agentSuggestTitle(exchange)
+        // The agent's OWN provider titles it: a codex agent must not need a
+        // claude binary on PATH to get a name.
+        .agentSuggestTitle({ ...exchange, provider: resolveProvider(agent.provider) })
         .then((title) => onTitle(agent.id, title))
         // A cosmetic feature must not spam the console on a missing binary;
         // main already logs the reason once.
