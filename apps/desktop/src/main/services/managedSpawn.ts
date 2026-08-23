@@ -42,6 +42,7 @@ import { ensureSupervisorHome, installSupervisorSkill } from './supervisorSkill'
 import { installManagerSkills } from './managerSkills';
 import { notifySystem } from './systemNotice';
 import { normalizeSpawnCwd } from '../lib/spawnCwd';
+import { explainUnsupportedManagedOptions } from '../lib/managedSpawnOptions';
 
 /** Install hints surfaced when a provider CLI isn't on PATH. */
 const INSTALL_HINT: Record<AgentProvider, string> = {
@@ -164,6 +165,16 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     throw new Error("spawnManagedAgent: provider 'claude' requires transport 'stream'");
   }
   assertProviderInstalled(provider);
+  // ANNOUNCE, never silently omit. An option this provider cannot carry is
+  // logged with the reason — the Fleet-Manager-on-Codex bug was a hand-copied
+  // option literal quietly dropping `manager`/`fleetFullAccess`, and a
+  // half-wired agent is indistinguishable from a working one until the wakes
+  // that never arrive are noticed hours later. Both entry points (the
+  // `claude:spawn` IPC and the `agents.spawn` hub capability) land here, so
+  // this covers them at once.
+  for (const why of explainUnsupportedManagedOptions(opts)) {
+    console.warn(`[managedSpawn] ${provider}: ignoring ${why}`);
+  }
   // Codex is a hybrid (GUI + Term) on every platform, but the wiring differs:
   //  - macOS/Linux: the app-server JSON-RPC adapter (the generic managed path
   //    below) drives the structured GUI *and* spawns the native TUI in a PTY,
@@ -413,10 +424,21 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   const skipPermissions =
     !!opts.skipPermissions ||
     (!!opts.supervisor && configService.getConfig().supervisor?.fullAccess === true);
+  // The Windows rollout hybrid predates the facade wiring: it spawns a bare TUI
+  // and tails the transcript, so a manager/facade session asked for here comes
+  // up WITHOUT its tools. Said out loud rather than discovered later.
+  if (opts.manager || opts.supervisor || opts.mcpFacade || opts.toolScope) {
+    console.warn(
+      '[managedSpawn] codex (Windows rollout hybrid): the workspacer MCP facade is not wired on this path — ' +
+        'this session gets no workspacer tools (wake routing still applies)',
+    );
+  }
   claudeSessionStore.setSpawnMeta(sessionId, {
     label: opts.label,
     parentSessionId: opts.parentSessionId,
-    isSupervisor: opts.supervisor,
+    // Managers are wake targets exactly like supervisors — same flag, same
+    // reason as the managed path above.
+    isSupervisor: opts.supervisor || opts.manager,
     provider: 'codex',
     settings: {
       model: opts.model,

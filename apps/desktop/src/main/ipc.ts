@@ -32,6 +32,7 @@ import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { agentHandoffBrief } from './services/agentHandoff';
 import { resolveAgentBinary, checkAllProviders } from './services/agentProviders';
 import { spawnManagedAgent } from './services/managedSpawn';
+import { managedOptionsFromRequest, type AgentSpawnRequest } from './lib/managedSpawnOptions';
 import { spawnClaudeAgent } from './services/claudeSpawn';
 import { applyLiveEffort } from './services/liveEffort';
 import { logsDir } from './services/logFile';
@@ -206,128 +207,55 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.TERMINAL_CLOSE, (_event, id: string) => claudemonSessionClient.close(id));
 
   // ── Claude sessions (delegated to claudemon) ──
-  ipcMain.handle(
-    IPC.CLAUDE_SPAWN,
-    async (
-      _event,
-      opts: {
-        cwd?: string;
-        provider?: 'claude' | 'codex' | 'opencode' | 'pi';
-        /** Claude: 'pty' (classic TUI) or 'stream' (headless stream-json,
-         *  managed adapter); omitted = the config default (claude.transport).
-         *  Codex: 'stream' runs headless (no native TUI PTY). */
-        transport?: 'pty' | 'stream';
-        profileId?: string;
-        /** Fleet Manager: nudge-eligible parent without the /supervise loop. */
-        manager?: boolean;
-        /** Manager only: full-access dispatch grant (config
-         *  agents.fleetFullAccess) — its workers run with permissions bypassed. */
-        fleetFullAccess?: boolean;
-        model?: string;
-        effort?: string;
-        permissionMode?: string;
-        skipPermissions?: boolean;
-        resumeSessionId?: string;
-        cols?: number;
-        rows?: number;
-        supervisor?: boolean;
-        mcpFacade?: boolean;
-        /** Facade tool tier: 'view' | 'triage' | 'operator' (implies the facade). */
-        toolScope?: RemoteTokenScope;
-        /** Plugin ids whose contributed facade tools the session may use. */
-        pluginTools?: string[];
-        label?: string;
-        parentSessionId?: string;
-        mcpItemIds?: string[];
-        /** Federation: spawn on this peer hub instead of locally (the spawn
-         *  dialog's Machine picker). */
-        targetHub?: string;
-      },
-    ) => {
-      // Federation: a spawn aimed at a peer machine routes over the bus as a
-      // qualified agents.spawn — never a local spawn wearing the wrong cwd.
-      // The PEER applies its own remote-caller clamps (skipPermissions forced
-      // off, escalating modes dropped, mcpItemIds ignored), which is correct:
-      // this machine is a remote caller there. The new session then arrives
-      // back through the federation ingest as a hub-stamped card. Local-only
-      // knobs (profileId, mcpItemIds, facade toolScope — the peer's facade is
-      // its own) are deliberately not forwarded.
-      if (opts.targetHub?.trim()) {
-        const res = (await callHub(`hub:${opts.targetHub.trim()}/agents.spawn`, {
-          provider: opts.provider,
-          transport: opts.transport,
-          cwd: opts.cwd,
-          model: opts.model,
-          effort: opts.effort,
-          permissionMode: opts.permissionMode,
-          label: opts.label,
-          cols: opts.cols,
-          rows: opts.rows,
-        })) as { sessionId?: string } | null;
-        if (!res?.sessionId)
-          throw new Error(`spawn on hub "${opts.targetHub}" returned no session id`);
-        return res.sessionId;
-      }
-      // Provider selects the coding-agent backend. OpenCode and Codex are Tier-2
-      // managed: claudemon drives their machine interface (`opencode serve` HTTP+SSE
-      // / `codex app-server` JSON-RPC) and translates events into the shared session
-      // model, so they light up the GUI / Fleet Deck like a Claude session — no PTY.
-      const provider = opts.provider ?? 'claude';
-      if (provider !== 'claude') {
-        // Managed (Tier-2) backend — driven by claudemon's adapter, not a PTY.
-        // Shared with the `agents.spawn` hub capability so the two transports
-        // can't diverge (see managedSpawn.ts).
-        return spawnManagedAgent({
-          provider,
-          cwd: opts.cwd,
-          // Codex mirrors Claude's stream transport: 'stream' spawns headless
-          // (GUI-only, daemon-owned thread). Other providers ignore it.
-          ...(provider === 'codex' &&
-            opts.transport === 'stream' && { transport: 'stream' as const }),
-          model: opts.model,
-          effort: opts.effort,
-          skipPermissions: opts.skipPermissions || opts.permissionMode === 'yolo',
-          resumeSessionId: opts.resumeSessionId,
-          supervisor: opts.supervisor,
-          mcpFacade: opts.mcpFacade,
-          toolScope: opts.toolScope,
-          pluginTools: opts.pluginTools,
-          label: opts.label,
-          parentSessionId: opts.parentSessionId,
-          cols: opts.cols,
-          rows: opts.rows,
-        });
-      }
-      // Claude on the 'stream' transport is also managed — claudemon's
-      // claude_stream adapter runs headless stream-json (no PTY). Same shared
-      // dispatch as the other managed providers so the IPC and hub-bus spawn
-      // paths can't drift (standing project rule; see managedSpawn.ts).
-      const transport = opts.transport ?? configService.getConfig().claude?.transport ?? 'pty';
-      if (transport === 'stream') {
-        return spawnManagedAgent({
-          provider: 'claude',
-          transport: 'stream',
-          cwd: opts.cwd,
-          profileId: opts.profileId,
-          model: opts.model,
-          effort: opts.effort,
-          permissionMode: opts.permissionMode,
-          skipPermissions: opts.skipPermissions,
-          resumeSessionId: opts.resumeSessionId,
-          supervisor: opts.supervisor,
-          manager: opts.manager,
-          fleetFullAccess: opts.fleetFullAccess,
-          mcpFacade: opts.mcpFacade,
-          toolScope: opts.toolScope,
-          pluginTools: opts.pluginTools,
-          label: opts.label,
-          parentSessionId: opts.parentSessionId,
-          mcpItemIds: opts.mcpItemIds,
-        });
-      }
-      // Claude (Tier-1) PTY spawn. Shared with the `agents.spawn` hub capability
-      // via spawnClaudeAgent so the two transports can't drift (see claudeSpawn.ts).
-      return spawnClaudeAgent({
+  ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: AgentSpawnRequest) => {
+    // Federation: a spawn aimed at a peer machine routes over the bus as a
+    // qualified agents.spawn — never a local spawn wearing the wrong cwd.
+    // The PEER applies its own remote-caller clamps (skipPermissions forced
+    // off, escalating modes dropped, mcpItemIds ignored), which is correct:
+    // this machine is a remote caller there. The new session then arrives
+    // back through the federation ingest as a hub-stamped card. Local-only
+    // knobs (profileId, mcpItemIds, facade toolScope — the peer's facade is
+    // its own) are deliberately not forwarded.
+    if (opts.targetHub?.trim()) {
+      const res = (await callHub(`hub:${opts.targetHub.trim()}/agents.spawn`, {
+        provider: opts.provider,
+        transport: opts.transport,
+        cwd: opts.cwd,
+        model: opts.model,
+        effort: opts.effort,
+        permissionMode: opts.permissionMode,
+        label: opts.label,
+        cols: opts.cols,
+        rows: opts.rows,
+      })) as { sessionId?: string } | null;
+      if (!res?.sessionId)
+        throw new Error(`spawn on hub "${opts.targetHub}" returned no session id`);
+      return res.sessionId;
+    }
+    // Provider selects the coding-agent backend. OpenCode and Codex are Tier-2
+    // managed: claudemon drives their machine interface (`opencode serve` HTTP+SSE
+    // / `codex app-server` JSON-RPC) and translates events into the shared session
+    // model, so they light up the GUI / Fleet Deck like a Claude session — no PTY.
+    const provider = opts.provider ?? 'claude';
+    if (provider !== 'claude') {
+      // Managed (Tier-2) backend — driven by claudemon's adapter, not a PTY.
+      // Shared with the `agents.spawn` hub capability so the two transports
+      // can't diverge (see managedSpawn.ts). The request→options translation
+      // lives in lib/managedSpawnOptions so it is TOTAL over the request
+      // shape: this branch used to hand-copy fields and silently lost
+      // `manager`/`fleetFullAccess`, which is exactly what made a Fleet
+      // Manager on Codex impossible (no isSupervisor = no worker wakes).
+      return spawnManagedAgent(managedOptionsFromRequest(provider, opts));
+    }
+    // Claude on the 'stream' transport is also managed — claudemon's
+    // claude_stream adapter runs headless stream-json (no PTY). Same shared
+    // dispatch as the other managed providers so the IPC and hub-bus spawn
+    // paths can't drift (standing project rule; see managedSpawn.ts).
+    const transport = opts.transport ?? configService.getConfig().claude?.transport ?? 'pty';
+    if (transport === 'stream') {
+      return spawnManagedAgent({
+        provider: 'claude',
+        transport: 'stream',
         cwd: opts.cwd,
         profileId: opts.profileId,
         model: opts.model,
@@ -343,12 +271,32 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         pluginTools: opts.pluginTools,
         label: opts.label,
         parentSessionId: opts.parentSessionId,
-        cols: opts.cols,
-        rows: opts.rows,
         mcpItemIds: opts.mcpItemIds,
       });
-    },
-  );
+    }
+    // Claude (Tier-1) PTY spawn. Shared with the `agents.spawn` hub capability
+    // via spawnClaudeAgent so the two transports can't drift (see claudeSpawn.ts).
+    return spawnClaudeAgent({
+      cwd: opts.cwd,
+      profileId: opts.profileId,
+      model: opts.model,
+      effort: opts.effort,
+      permissionMode: opts.permissionMode,
+      skipPermissions: opts.skipPermissions,
+      resumeSessionId: opts.resumeSessionId,
+      supervisor: opts.supervisor,
+      manager: opts.manager,
+      fleetFullAccess: opts.fleetFullAccess,
+      mcpFacade: opts.mcpFacade,
+      toolScope: opts.toolScope,
+      pluginTools: opts.pluginTools,
+      label: opts.label,
+      parentSessionId: opts.parentSessionId,
+      cols: opts.cols,
+      rows: opts.rows,
+      mcpItemIds: opts.mcpItemIds,
+    });
+  });
 
   // ── Hub (control-plane / event bus) ──
   // Returns null (not []) when the hub is unreachable, so the renderer can
