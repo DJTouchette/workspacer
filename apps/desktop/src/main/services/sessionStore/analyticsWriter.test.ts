@@ -53,4 +53,44 @@ describe('writeHistory — managed provider (Codex) falls back to statusLine', (
     expect(rec.outputTokens).toBe(3_400);
     expect(rec.model).toBe('gpt-5-codex');
   });
+
+  it('records a single per-model slice keyed by statusLine.modelDisplay when usage.models is absent', () => {
+    recordModelsMock.mockClear();
+    writeHistory(mkManagedSession(), 'active');
+
+    expect(recordModelsMock).toHaveBeenCalledTimes(1);
+    expect(recordModelsMock).toHaveBeenCalledWith('codex-1', {
+      'gpt-5-codex': { inputTokens: 12_000, outputTokens: 3_400, costUSD: 0.4 },
+    });
+  });
+
+  it('does not call recordModels when there is no model to key the slice by', () => {
+    recordModelsMock.mockClear();
+    const session = mkManagedSession();
+    session.statusLine!.modelDisplay = undefined;
+    writeHistory(session, 'active');
+
+    expect(recordModelsMock).not.toHaveBeenCalled();
+  });
+
+  it('still prefers usage.models over the statusLine fallback for Claude sessions', () => {
+    recordModelsMock.mockClear();
+    const session = mkManagedSession();
+    session.provider = 'claude';
+    session.usage = {
+      model: 'claude-opus-4-1',
+      contextTokens: 0,
+      contextLimit: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      costUSD: 0,
+      models: { 'claude-opus-4-1': { inputTokens: 500, outputTokens: 100, costUSD: 0.02 } },
+    } as never;
+    writeHistory(session, 'active');
+
+    expect(recordModelsMock).toHaveBeenCalledTimes(1);
+    expect(recordModelsMock).toHaveBeenCalledWith('codex-1', {
+      'claude-opus-4-1': { inputTokens: 500, outputTokens: 100, costUSD: 0.02 },
+    });
+  });
 });

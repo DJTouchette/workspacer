@@ -51,5 +51,21 @@ export function writeHistory(session: ClaudeSessionState, status: 'active' | 'en
   });
   // Per-model split (main thread + subagent turns). Cumulative totals, so the
   // replace-style upsert stays idempotent across repeated snapshots.
-  if (session.usage?.models) sessionHistory.recordModels(session.sessionId, session.usage.models);
+  if (session.usage?.models) {
+    sessionHistory.recordModels(session.sessionId, session.usage.models);
+  } else if (session.statusLine?.modelDisplay) {
+    // Managed providers (codex/opencode/pi) never populate `session.usage`, so
+    // there's no turn-by-turn per-model history to fold — claudemon's UsageAcc
+    // tracks one cumulative total for the session's current model. Record that
+    // single slice so per-model spend isn't empty for them; a session that
+    // actually switches models mid-run only gets its latest model's totals,
+    // not a true split, which matches what the daemon can tell us.
+    sessionHistory.recordModels(session.sessionId, {
+      [session.statusLine.modelDisplay]: {
+        inputTokens: session.statusLine.totalInputTokens ?? 0,
+        outputTokens: session.statusLine.totalOutputTokens ?? 0,
+        costUSD: session.statusLine.costUSD ?? 0,
+      },
+    });
+  }
 }
