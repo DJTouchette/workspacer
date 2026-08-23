@@ -77,14 +77,20 @@ const notePermissionMode = vi.fn();
 const getAllSnapshots = vi.fn(() => [] as unknown[]);
 const getSnapshot = vi.fn(() => null as unknown);
 const noteRequestedModel = vi.fn();
-vi.mock('./claudeSessionStore', () => ({
-  claudeSessionStore: {
-    notePermissionMode: (...a: unknown[]) => notePermissionMode(...a),
-    getAllSnapshots: (...a: unknown[]) => getAllSnapshots(...a),
-    getSnapshot: (...a: unknown[]) => getSnapshot(...a),
-    noteRequestedModel: (...a: unknown[]) => noteRequestedModel(...a),
-  },
-}));
+vi.mock('./claudeSessionStore', async (importOriginal) => {
+  // Keep the real contextTokensFromStatusLine — it's a pure helper, and the
+  // agents.list statusLine-fallback test below needs the real math, not a mock.
+  const actual = await importOriginal<typeof import('./claudeSessionStore')>();
+  return {
+    claudeSessionStore: {
+      notePermissionMode: (...a: unknown[]) => notePermissionMode(...a),
+      getAllSnapshots: (...a: unknown[]) => getAllSnapshots(...a),
+      getSnapshot: (...a: unknown[]) => getSnapshot(...a),
+      noteRequestedModel: (...a: unknown[]) => noteRequestedModel(...a),
+    },
+    contextTokensFromStatusLine: actual.contextTokensFromStatusLine,
+  };
+});
 
 const checkAllProviders = vi.fn(async () => ({ codex: true }));
 const resolveAgentBinary = vi.fn(() => '/bin/codex');
@@ -234,6 +240,75 @@ describe('registerHubCapabilities — registration', () => {
       { sessionId: 's1', provider: 'claude' },
     ]);
     expect(listRecentSessions).toHaveBeenCalledTimes(1);
+  });
+});
+
+// agents.list is the bread-and-butter "what's running?" call behind
+// mcp__workspacer__list_agents, mobile, and remote. Managed providers
+// (codex/opencode/pi) never populate `session.usage` — see
+// claudeSessionStore's `contextTokensFromStatusLine` doc comment — so this
+// must fall back to `statusLine` or every non-Claude row reports all-zero.
+describe('agents.list — statusLine fallback for managed providers', () => {
+  it('reads model/context/cost from usage when present (Claude-shaped session)', () => {
+    getAllSnapshots.mockReturnValue([
+      {
+        sessionId: 'c1',
+        cwd: '/proj',
+        ambientState: 'idle',
+        usage: { model: 'claude-opus-4-1', contextTokens: 12_000, contextLimit: 200_000, costUSD: 1.2 },
+        statusLine: undefined,
+      },
+    ] as never);
+    expect(call('agents.list')).toEqual([
+      expect.objectContaining({
+        sessionId: 'c1',
+        model: 'claude-opus-4-1',
+        contextTokens: 12_000,
+        contextLimit: 200_000,
+        costUSD: 1.2,
+      }),
+    ]);
+  });
+
+  it('falls back to statusLine when usage is null (codex-shaped session)', () => {
+    getAllSnapshots.mockReturnValue([
+      {
+        sessionId: 'x1',
+        cwd: '/proj',
+        ambientState: 'idle',
+        usage: null,
+        statusLine: {
+          modelDisplay: 'gpt-5-codex',
+          contextUsedPct: 10,
+          contextWindowSize: 272_000,
+          costUSD: 0.4,
+        },
+      },
+    ] as never);
+    expect(call('agents.list')).toEqual([
+      expect.objectContaining({
+        sessionId: 'x1',
+        model: 'gpt-5-codex',
+        contextTokens: 27_200,
+        contextLimit: 272_000,
+        costUSD: 0.4,
+      }),
+    ]);
+  });
+
+  it('reports honest zeros/nulls when neither usage nor statusLine carries data', () => {
+    getAllSnapshots.mockReturnValue([
+      { sessionId: 'n1', cwd: '/proj', ambientState: 'idle', usage: null, statusLine: undefined },
+    ] as never);
+    expect(call('agents.list')).toEqual([
+      expect.objectContaining({
+        sessionId: 'n1',
+        model: null,
+        contextTokens: 0,
+        contextLimit: 0,
+        costUSD: 0,
+      }),
+    ]);
   });
 });
 

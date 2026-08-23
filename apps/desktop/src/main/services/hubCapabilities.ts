@@ -8,7 +8,7 @@ import { Notification, shell } from 'electron';
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
-import { claudeSessionStore } from './claudeSessionStore';
+import { claudeSessionStore, contextTokensFromStatusLine } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { applyLiveEffort } from './liveEffort';
 import { agentHandoffBrief } from './agentHandoff';
@@ -212,10 +212,13 @@ export function registerHubCapabilities(): void {
       sessionId: s.sessionId,
       cwd: s.cwd,
       state: s.ambientState,
-      model: s.usage?.model ?? null,
-      contextTokens: s.usage?.contextTokens ?? 0,
-      contextLimit: s.usage?.contextLimit ?? 0,
-      costUSD: s.usage?.costUSD ?? 0,
+      // Managed providers (codex/opencode/pi) never populate `s.usage` — their
+      // numbers live only on `statusLine`. Fall back to it the same way
+      // analyticsWriter.ts does, or every non-Claude row reports all-zero.
+      model: s.usage?.model ?? s.statusLine?.modelDisplay ?? null,
+      contextTokens: s.usage?.contextTokens ?? contextTokensFromStatusLine(s.statusLine) ?? 0,
+      contextLimit: s.usage?.contextLimit ?? s.statusLine?.contextWindowSize ?? 0,
+      costUSD: s.usage?.costUSD ?? s.statusLine?.costUSD ?? 0,
       // What the agent is blocked on, if anything — lets a remote client show
       // the actual approval/question instead of a generic "waiting" badge.
       pendingApproval: s.pendingApproval

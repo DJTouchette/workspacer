@@ -70,13 +70,22 @@ export interface WatchableSession {
     totalOutputTokens?: number;
     costUSD?: number;
   } | null;
+  /** Managed providers (codex/opencode/pi) never populate `usage` — their
+   *  numbers live only here. Same fallback analyticsWriter.ts uses. */
+  statusLine?: {
+    totalInputTokens?: number;
+    totalOutputTokens?: number;
+    costUSD?: number;
+  };
 }
 
 /** Total tokens a session has burned — the number the manager means by "how big
  *  has this got". Cumulative, not the point-in-time context window: a worker
  *  that compacts twice has spent the tokens either way. */
 export function sessionTokens(s: WatchableSession): number {
-  return (s.usage?.totalInputTokens ?? 0) + (s.usage?.totalOutputTokens ?? 0);
+  const input = s.usage?.totalInputTokens ?? s.statusLine?.totalInputTokens ?? 0;
+  const output = s.usage?.totalOutputTokens ?? s.statusLine?.totalOutputTokens ?? 0;
+  return input + output;
 }
 
 /**
@@ -94,7 +103,7 @@ export function crossedBy(watch: ThresholdWatch, s: WatchableSession, now: numbe
     }
   }
   if (watch.usd !== undefined) {
-    const usd = s.usage?.costUSD ?? 0;
+    const usd = s.usage?.costUSD ?? s.statusLine?.costUSD ?? 0;
     if (usd >= watch.usd) return `cost $${usd.toFixed(2)} ≥ $${watch.usd.toFixed(2)}`;
   }
   if (watch.idleSeconds !== undefined) {

@@ -10,6 +10,7 @@ import {
   ThresholdWatcher,
   crossedBy,
   parsePredicate,
+  sessionTokens,
   type WatchableSession,
 } from './thresholdWatch';
 import { parseFleetMessage } from '../shared/fleetMessages';
@@ -90,6 +91,51 @@ describe('crossedBy', () => {
   it('reports ONE crossing even when two thresholds are met', () => {
     const s = session({ usage: { totalInputTokens: 500_000, totalOutputTokens: 0, costUSD: 99 } });
     expect(crossedBy(w({ tokens: 1, usd: 1 }) as never, s, 0)).toMatch(/^tokens /);
+  });
+});
+
+// Managed providers (codex/opencode/pi) never populate `usage` — the root
+// cause is that claudemon's conversation-item mapper never emits a 'usage'
+// item for them, so the accumulator that fills `session.usage` never runs.
+// Without a statusLine fallback here, notify_when(tokens|usd) can never fire
+// for a codex worker: sessionTokens() and the usd branch both read 0 forever,
+// silently, with no error — it just never wakes the manager.
+describe('codex-shaped sessions (usage: null) fall back to statusLine', () => {
+  const codexSession = (over: Partial<WatchableSession> = {}): WatchableSession =>
+    session({
+      usage: null,
+      statusLine: { totalInputTokens: 200_000, totalOutputTokens: 109_412, costUSD: 22.4 },
+      ...over,
+    });
+
+  it('sessionTokens sums statusLine tokens when usage is null', () => {
+    expect(sessionTokens(codexSession())).toBe(309_412);
+  });
+
+  it('crossedBy fires on tokens for a codex session', () => {
+    const w = { id: 'x', sessionId: 'w1', watcherSessionId: 'mgr', armedAt: 0, tokens: 250_000 };
+    expect(crossedBy(w as never, codexSession(), 0)).toBe('tokens 309,412 ≥ 250,000');
+  });
+
+  it('crossedBy fires on usd for a codex session', () => {
+    const w = { id: 'x', sessionId: 'w1', watcherSessionId: 'mgr', armedAt: 0, usd: 20 };
+    expect(crossedBy(w as never, codexSession(), 0)).toBe('cost $22.40 ≥ $20.00');
+  });
+
+  it('prefers usage over statusLine when both are present', () => {
+    const s = codexSession({ usage: { totalInputTokens: 1, totalOutputTokens: 1, costUSD: 1 } });
+    expect(sessionTokens(s)).toBe(2);
+  });
+
+  it('an armed watch actually SWEEPS and wakes the manager for a codex worker', () => {
+    const sessions = [mgr(), codexSession()];
+    const { deliver, watcher } = rig(sessions);
+    watcher.arm({ sessionId: 'w1', watcherSessionId: 'mgr', predicate: { usd: 20 } });
+    watcher.sweep(0);
+    expect(deliver).toHaveBeenCalledTimes(1);
+    const [target, text] = deliver.mock.calls[0] as [string, string];
+    expect(target).toBe('mgr');
+    expect(text).toContain('cost $22.40 ≥ $20.00');
   });
 });
 
