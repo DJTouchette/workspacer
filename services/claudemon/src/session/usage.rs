@@ -475,6 +475,7 @@ mod tests {
         Transcript {
             path: None,
             messages,
+            ..Default::default()
         }
     }
 

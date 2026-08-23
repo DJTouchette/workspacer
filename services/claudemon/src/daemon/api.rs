@@ -1139,6 +1139,25 @@ async fn get_transcript(
             }
         };
     };
+    // `transcript_path` is only ever set by a Claude `SessionStart` hook, and
+    // codex/opencode/pi fire no hooks at all — so for a managed non-claude
+    // session both the authoritative path and the cwd-based
+    // `~/.claude/projects` fallback below are guaranteed empty, every time.
+    // Say so structurally instead of returning silence that reads as "this
+    // session has nothing to show": point the caller at get_conversation,
+    // which is provider-aware (and even replays the codex rollout for a
+    // restarted daemon).
+    if state.provider != "claude" {
+        return Json(transcript::Transcript {
+            unsupported: true,
+            note: Some(format!(
+                "get_transcript is Claude-only — {} sessions never write a ~/.claude/projects JSONL transcript. Use get_conversation (sessions.conversation) instead.",
+                state.provider
+            )),
+            ..Default::default()
+        })
+        .into_response();
+    }
     // Authoritative path captured from the hook — read the exact file. Falls
     // through to cwd-based resolution only if it isn't known yet or is missing.
     // Reading/parsing the JSONL is blocking file I/O; run it off the async
@@ -1612,14 +1631,41 @@ mod tests {
 
     #[tokio::test]
     async fn get_transcript_with_no_file_returns_empty_transcript() {
-        // No transcript on disk for this id → the reader falls through to a
-        // default (empty) Transcript rather than erroring.
+        // A live CLAUDE session with no transcript file recorded yet (e.g. the
+        // SessionStart hook hasn't fired) → the reader falls through to a
+        // default (empty, but SUPPORTED) Transcript rather than erroring.
+        let state = test_state();
+        state
+            .store
+            .register_managed("sess-1", "/tmp/proj", "claude");
+        let (status, body) = request(state, get("/sessions/sess-1/transcript")).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert!(v.is_object(), "transcript is a JSON object");
+        assert_eq!(v["messages"], json!([]));
+        assert_eq!(v["unsupported"], false);
+    }
+
+    // G6: a codex (or opencode/pi) session never fires the SessionStart hook
+    // that sets transcript_path, and its cwd would never hold a
+    // ~/.claude/projects JSONL either — so the old behaviour silently served
+    // an empty transcript indistinguishable from "this session genuinely has
+    // nothing yet". A manager reading `messages: []` for both cases has no
+    // way to tell "keep polling" from "wrong tool — use get_conversation".
+    #[tokio::test]
+    async fn get_transcript_for_a_managed_non_claude_session_reports_unsupported() {
         let state = test_state();
         state.store.register_managed("sess-1", "/tmp/proj", "codex");
         let (status, body) = request(state, get("/sessions/sess-1/transcript")).await;
         assert_eq!(status, StatusCode::OK);
         let v = serde_json::from_slice::<Value>(&body).unwrap();
-        assert!(v.is_object(), "transcript is a JSON object");
+        assert_eq!(v["messages"], json!([]));
+        assert_eq!(v["unsupported"], true);
+        let note = v["note"].as_str().expect("note explains why");
+        assert!(
+            note.contains("get_conversation"),
+            "note should point the caller at get_conversation, got: {note}"
+        );
     }
 
     #[tokio::test]

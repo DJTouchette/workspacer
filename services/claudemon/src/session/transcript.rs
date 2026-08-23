@@ -185,6 +185,19 @@ pub struct Transcript {
     pub path: Option<String>,
     #[serde(default)]
     pub messages: Vec<TranscriptMessage>,
+    /// Set when this response is not "no transcript recorded yet" but rather
+    /// "this session's provider never writes a Claude-shaped JSONL transcript
+    /// at all" (codex/opencode/pi). Their history lives elsewhere and is
+    /// served by `get_conversation`/`sessions.conversation` instead, which
+    /// even replays the codex rollout on a restarted daemon. Without this
+    /// flag both cases render as an empty `messages: []`, and empty reads as
+    /// "this session has nothing to show" — which is wrong and unactionable
+    /// for a provider that was never going to have one.
+    #[serde(default)]
+    pub unsupported: bool,
+    /// Human-readable reason, set alongside `unsupported`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// Roles we display by default. Everything else (summary, meta entries)
@@ -285,6 +298,7 @@ fn read_transcript_file(path: PathBuf) -> Result<Transcript> {
     Ok(Transcript {
         path: Some(path.to_string_lossy().into_owned()),
         messages,
+        ..Default::default()
     })
 }
 
