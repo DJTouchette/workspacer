@@ -601,6 +601,92 @@ describe('agents.spawn — dispatch', () => {
       (spawnClaudeAgent.mock.calls[0][0] as { skipPermissions: boolean }).skipPermissions,
     ).toBe(false);
   });
+
+  // The bug this dispatch was sent to find: agents.spawn is the ONLY path a
+  // remote/MCP-facade Fleet Manager dispatch goes through (never the IPC
+  // path), and all three of its branches used to hand-copy the spawn-options
+  // object literal and silently omit `manager`/`fleetFullAccess` — the exact
+  // field-drop class managedSpawnOptions.ts fixed on the IPC side. Pinned here
+  // per-branch so it cannot regress quietly on any of the three again.
+  describe('manager / fleetFullAccess / effort forwarding (the field-drop class this path must not repeat)', () => {
+    it('forwards manager, fleetFullAccess and effort on the managed-provider branch (codex)', async () => {
+      await call('agents.spawn', {
+        provider: 'codex',
+        cwd: '/proj',
+        manager: true,
+        fleetFullAccess: true,
+        effort: 'high',
+      });
+      expect(spawnManagedAgent).toHaveBeenCalledTimes(1);
+      const arg = spawnManagedAgent.mock.calls[0][0] as {
+        manager?: boolean;
+        fleetFullAccess?: boolean;
+        effort?: string;
+      };
+      expect(arg.manager).toBe(true);
+      expect(arg.fleetFullAccess).toBe(true);
+      expect(arg.effort).toBe('high');
+    });
+
+    it('forwards manager, fleetFullAccess and effort on the claude "stream" branch', async () => {
+      await call('agents.spawn', {
+        provider: 'claude',
+        transport: 'stream',
+        cwd: '/proj',
+        manager: true,
+        fleetFullAccess: true,
+        effort: 'high',
+      });
+      expect(spawnManagedAgent).toHaveBeenCalledTimes(1);
+      const arg = spawnManagedAgent.mock.calls[0][0] as {
+        manager?: boolean;
+        fleetFullAccess?: boolean;
+        effort?: string;
+      };
+      expect(arg.manager).toBe(true);
+      expect(arg.fleetFullAccess).toBe(true);
+      expect(arg.effort).toBe('high');
+    });
+
+    it('forwards manager, fleetFullAccess and effort on the claude "pty" branch', async () => {
+      await call('agents.spawn', {
+        provider: 'claude',
+        transport: 'pty',
+        cwd: '/proj',
+        manager: true,
+        fleetFullAccess: true,
+        effort: 'high',
+      });
+      expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
+      const arg = spawnClaudeAgent.mock.calls[0][0] as {
+        manager?: boolean;
+        fleetFullAccess?: boolean;
+        effort?: string;
+      };
+      expect(arg.manager).toBe(true);
+      expect(arg.fleetFullAccess).toBe(true);
+      expect(arg.effort).toBe('high');
+    });
+
+    it('omitted manager/fleetFullAccess stay falsy rather than defaulting true (no accidental escalation)', async () => {
+      await call('agents.spawn', { provider: 'codex', cwd: '/proj' });
+      const arg = spawnManagedAgent.mock.calls[0][0] as {
+        manager?: boolean;
+        fleetFullAccess?: boolean;
+      };
+      expect(arg.manager).toBeUndefined();
+      expect(arg.fleetFullAccess).toBeUndefined();
+    });
+
+    it('warns and drops profileId for a non-claude managed provider instead of silently discarding it', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await call('agents.spawn', { provider: 'codex', cwd: '/proj', profileId: 'work' });
+      const arg = spawnManagedAgent.mock.calls[0][0] as { profileId?: string };
+      expect(arg.profileId).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('ignoring profileId'));
+      warn.mockRestore();
+    });
+  });
 });
 
 describe('agents.spawn — SECURITY: remote callers cannot auto-bypass approvals', () => {
