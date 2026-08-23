@@ -1213,6 +1213,15 @@ function App() {
     requestAnimationFrame(() => scrollToTab(tabId));
   }, [openPaneIn, scrollToTab]);
 
+  /** Open the brief Board — the kanban over every project's
+   *  `.workspacer/brief.md`, one swimlane per project plus the fleet brief.
+   *  Global rather than per-agent: it is the Fleet Manager's cross-project view. */
+  const openBoardPane = useCallback(() => {
+    setShowCommandPalette(false);
+    const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'board', 'Board');
+    requestAnimationFrame(() => scrollToTab(tabId));
+  }, [openPaneIn, scrollToTab]);
+
   /** Open an Inspector pane for the currently-piloted agent (command-palette
    *  entry). The pane binds to that agent's session and live-updates; needs a
    *  running session to inspect. */
@@ -2745,6 +2754,7 @@ function App() {
               onOpenAnalytics={openAnalytics}
               onOpenAgents={hasAgentMonitorActivity ? openAgentsPane : undefined}
               onOpenSessions={openSessionsPane}
+              onOpenBoard={openBoardPane}
               onOpenInspector={openInspectorForActive}
               onOpenContext={openContextForActive}
               onOpenLayouts={() => {

@@ -56,6 +56,7 @@ const defaultTitles: Record<PaneType, string> = {
   context: 'Context',
   sessions: 'Sessions',
   guide: 'Guide',
+  board: 'Board',
 };
 
 /** Derive a human label from a working directory (its basename). */
