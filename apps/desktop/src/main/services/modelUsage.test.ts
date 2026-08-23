@@ -140,7 +140,10 @@ describe('contextLimitFor — hints', () => {
     // Including over the retrospective promotion: if the provider says 200k
     // while a stale high-water mark says otherwise, the provider is right.
     expect(
-      contextLimitFor('claude-opus-5', 300_000, { reportedWindow: 200_000, requestedModel: 'opus' }),
+      contextLimitFor('claude-opus-5', 300_000, {
+        reportedWindow: 200_000,
+        requestedModel: 'opus',
+      }),
     ).toBe(200_000);
   });
 
