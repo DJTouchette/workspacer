@@ -97,7 +97,18 @@ prompts (only its permission mode governs those; the gate response reports the
 current mode). terminal_input types raw bytes into a PTY session (shells from
 create_terminal); prefer send_message for agents. For a session on a federated
 peer (its list_agents row has a "hub" field), pass that hub value on
-send_message / approve / answer / signal / set_approval_gate.`),
+send_message / approve / answer / signal / set_approval_gate.
+adopt_workers is for SUCCESSION, and you need it once, on your first turn as a
+replacement manager. Fleet wakes are parent-keyed: a worker's finished report
+and its report_progress notes go to the session that dispatched it, so when a
+manager is replaced its dispatches are talking to a session that is gone.
+adopt_workers({fromSessionId: <the manager you replaced>, toSessionId: <your
+own session id>}) re-points them at you — after it, every one of those workers
+wakes YOU when it finishes, with no polling and no reconciliation by hand. The
+predecessor's id is on the first line of its handoff file. It is refused if you
+are not a live manager session (re-pointing workers at a parent no wake can
+reach would silence them, which is worse than leaving them), and "0 moved" is a
+real answer: the predecessor had nothing left in flight.`),
 	"files": strings.TrimSpace(`
 Host-filesystem access (the machine workspacer runs on): list_dir / list_entries
 to explore, read_file / write_file for file IO, search_project for ripgrep

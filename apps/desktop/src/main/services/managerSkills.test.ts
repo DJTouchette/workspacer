@@ -43,6 +43,10 @@ describe('installManagerSkills', () => {
     // Load-bearing content: standup is a read-only digest; checkpoint routes + trims.
     expect(standup).toContain('In flight');
     expect(standup).toContain('must not change any brief');
+    // A worker's mid-task report arrives as a [fleet] wake in this very
+    // conversation — the digest reads it there instead of re-asking the worker.
+    expect(standup).toContain('report_progress');
+    expect(standup).toContain('NEEDS A DECISION');
     expect(checkpoint).toContain('most specific home');
     expect(checkpoint).toContain('.workspacer/brief.md');
     expect(checkpoint).toContain('inspect-then-edit');
@@ -77,9 +81,22 @@ describe('installManagerSkills', () => {
     expect(handoff).toContain('.workspacer/handoff.md');
     expect(handoff).toContain('HANDOFF PENDING');
     // The verified wake truth: finish wakes route to the worker's PARENT
-    // session, which the successor is not — so it reconciles ids once itself.
+    // session, which the successor is not — so its FIRST action is to adopt
+    // them, which re-points the routing key (claudeSessionStore.reparentChildren
+    // via agents.reparent). Without this line the successor falls back to
+    // reconciling ids by hand, which is what the tool exists to delete.
     expect(handoff).toContain("routed to a worker's PARENT SESSION");
-    expect(handoff).toContain('exception to NEVER POLL');
+    expect(handoff).toContain('adopt_workers({fromSessionId:');
+    expect(handoff).toContain('toSessionId: "<your own session id>"');
+    // Both ends of the call have to be findable from the file itself: the
+    // predecessor's id is on the header line the template already writes.
+    expect(handoff).toContain('Written by session:<your own session id>');
+    // The reconciliation that survives is the bounded one — only the workers
+    // that finished BEFORE the adoption — not the old open-ended polling loop.
+    expect(handoff).toContain('finished BEFORE you adopted them');
+    // A worker can talk back mid-task from any tier; the manager should say so
+    // when it leaves its paper-trail instruction.
+    expect(handoff).toContain('report_progress');
     // And the verified spawn truth: no role-less auto-successor, ever.
     expect(handoff).toContain('You cannot start the successor');
     expect(handoff).toContain('Terminate');

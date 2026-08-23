@@ -588,6 +588,15 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 		"Resize a session's PTY grid (cols × rows). The PTY is shared, so this reflows the desktop pane too.",
 		"sessions.terminalResize")
 
+	// Manager succession. Operator-only by derivation, like every tool here:
+	// `agents.reparent` is in neither scoped tier's allowlist, so addTool's own
+	// b.allowed gate leaves it off the view and triage servers. Not federated —
+	// a worker and the manager that dispatched it live on the same hub, so
+	// there is no peer to route the move to.
+	addTool[adoptWorkersIn](b, "adopt_workers",
+		"Take over the workers a PREVIOUS manager dispatched, so their finished and progress wakes arrive at you instead of at the session that is gone. Pass fromSessionId (the manager you are replacing — a handoff file names it on its first line) and toSessionId (your own session id). See help topic 'drive'.",
+		"agents.reparent")
+
 	// ── Filesystem (on the workspacer host) ────────────────────────────────
 	b.group = "files"
 	addTool[listDirIn](b, "list_dir",
@@ -1065,6 +1074,11 @@ type conversationIn struct {
 
 type cwdIn struct {
 	Cwd string `json:"cwd,omitempty" jsonschema:"a project/working directory on the host"`
+}
+
+type adoptWorkersIn struct {
+	FromSessionID string `json:"fromSessionId" jsonschema:"the session id of the manager you are replacing — every worker still parented to it moves to you"`
+	ToSessionID   string `json:"toSessionId" jsonschema:"your own session id (it is in your system instructions); it must be a live manager session, or the call is refused rather than silencing the workers"`
 }
 
 type idIn struct {

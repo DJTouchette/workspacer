@@ -159,6 +159,13 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
     label: 'Send a progress note to the agent that dispatched this one',
     sensitive: true,
   },
+  // Sensitive because it REDIRECTS a channel: every worker-finished and
+  // progress wake a manager's dispatches produce arrives at the session named
+  // here from then on, and the outgoing manager hears nothing further.
+  'agents.reparent': {
+    label: 'Move a retiring manager’s workers onto their successor',
+    sensitive: true,
+  },
   'brief.append': { label: 'Add a line to a project brief', sensitive: true },
   'config.get': { label: 'Read your app settings' },
   'config.getPath': { label: 'See where your settings file lives' },
