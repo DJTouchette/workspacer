@@ -1080,6 +1080,34 @@ fn surface_approval(
     *cur_mode = SessionMode::Approval;
 }
 
+/// Mode bookkeeping for a user message that was just written to the CLI's
+/// stdin.
+///
+/// A parked approval/question is a PAUSE: the CLI is blocked on the user, not
+/// working. Reasserting `Responding` here must never demote it —
+/// `set_managed_mode` would also drop the `pending` card (a `Responding` write
+/// carries none), leaving a session that reports `responding` (clients:
+/// "streaming") while the CLI is still blocked on an unanswered
+/// `can_use_tool`, with no approval record left to answer. The parked request
+/// only lives inside this driver, so nothing else can repair it: the session
+/// wedges silently and its transcript stops growing.
+///
+/// This is the same invariant, and deliberately the same three-line guard, as
+/// `apply_updates`' `Busy` arm (`providers/mod.rs`) and the
+/// `background_tasks_changed` paths in `handle_line`: exactly one feed owns a
+/// session's pending slot; others may enrich but never clear. Only the state
+/// write is suppressed — the message itself already went down stdin and still
+/// queues in the CLI.
+fn note_user_send(store: &SessionStore, session_id: &str, cur_mode: &mut SessionMode) {
+    if *cur_mode != SessionMode::Responding
+        && *cur_mode != SessionMode::Approval
+        && *cur_mode != SessionMode::Question
+    {
+        store.set_managed_mode(session_id, SessionMode::Responding, None);
+        *cur_mode = SessionMode::Responding;
+    }
+}
+
 // ── Live driver ──────────────────────────────────────────────────────────────
 
 /// Spawn and drive a stream-transport Claude session in the background.
@@ -1298,10 +1326,7 @@ async fn run_session(
                         "type": "user",
                         "message": { "role": "user", "content": [ { "type": "text", "text": sent } ] }
                     }));
-                    if cur_mode != SessionMode::Responding {
-                        store.set_managed_mode(&session_id, SessionMode::Responding, None);
-                        cur_mode = SessionMode::Responding;
-                    }
+                    note_user_send(store, &session_id, &mut cur_mode);
                 }
                 None => break, // managed input dropped → terminated
             },
@@ -2580,6 +2605,106 @@ mod tests {
             matches!(state.pending, Some(Pending::Question { .. })),
             "store's pending slot must still hold the Question, got {:?}",
             state.pending
+        );
+    }
+
+    /// The wedge: a `send_message` arriving mid-turn used to call
+    /// `set_managed_mode(Responding, None)` unconditionally, wiping the parked
+    /// approval card while the CLI stayed blocked on the unanswered
+    /// `can_use_tool`. The session then reported `responding` (clients:
+    /// "streaming") with `pending: null` forever — the manager could no longer
+    /// see that there was anything to answer, and the transcript stopped
+    /// growing. Same invariant as
+    /// `busy_never_demotes_a_parked_approval_or_question`, fourth site.
+    #[test]
+    fn a_user_send_never_wipes_a_parked_approval_or_question() {
+        for (tool, input) in [
+            ("Bash", json!({ "command": "ls" })),
+            (
+                "AskUserQuestion",
+                json!({ "questions": [
+                    { "question": "Pick a color", "options": [ { "label": "Red" } ] }
+                ]}),
+            ),
+        ] {
+            let store = SessionStore::new();
+            let conv = ConversationStore::new();
+            let sid = "sid-send-clobber";
+            store.register_managed(sid, "/w", "claude");
+
+            let (out_tx, _out_rx) = mpsc::unbounded_channel::<Value>();
+            let mut cur_mode = SessionMode::Responding;
+            let mut acc = UsageAcc::default();
+            let mut totals = StreamTotals::default();
+            let yolo = AtomicBool::new(false);
+            let mut pending_approvals: VecDeque<ParkedCanUse> = VecDeque::new();
+            let mut pending_question: Option<ParkedCanUse> = None;
+            let mut pending_controls: HashMap<String, PendingControl> = HashMap::new();
+            let mut bg_tasks_active = false;
+            let mut idle_suppressed = false;
+
+            // The CLI blocks on a permission handshake.
+            handle_line(
+                &json!({ "type": "control_request", "request_id": "cli-1", "request": {
+                    "subtype": "can_use_tool", "tool_name": tool,
+                    "input": input, "tool_use_id": "tu-1"
+                }}),
+                &store,
+                &conv,
+                sid,
+                &out_tx,
+                &mut cur_mode,
+                &mut acc,
+                &mut totals,
+                &yolo,
+                &mut pending_approvals,
+                &mut pending_question,
+                &mut pending_controls,
+                &mut bg_tasks_active,
+                &mut idle_suppressed,
+            );
+            let parked_mode = cur_mode;
+            assert!(
+                parked_mode == SessionMode::Approval || parked_mode == SessionMode::Question,
+                "{tool} should have parked a block, got {parked_mode:?}"
+            );
+
+            // The manager nudges the worker while it is parked.
+            note_user_send(&store, sid, &mut cur_mode);
+
+            assert_eq!(
+                cur_mode, parked_mode,
+                "the driver's own mode tracker must still say the agent is blocked"
+            );
+            let state = store.get(sid).expect("session state");
+            assert_eq!(
+                state.mode, parked_mode,
+                "a user send must not report work while the CLI is blocked on the user"
+            );
+            assert!(
+                state.pending.is_some(),
+                "the pending card must survive — the parked request lives only in this \
+                 driver, so without the card nothing can answer it and the session wedges"
+            );
+        }
+    }
+
+    /// The other half of that guard: a send to a genuinely idle session still
+    /// flips it to working, so the composer doesn't look dead after a nudge.
+    #[test]
+    fn a_user_send_to_an_idle_session_still_reports_work() {
+        let store = SessionStore::new();
+        let sid = "sid-send-idle";
+        store.register_managed(sid, "/w", "claude");
+        store.set_managed_mode(sid, SessionMode::Input, None);
+        let mut cur_mode = SessionMode::Input;
+
+        note_user_send(&store, sid, &mut cur_mode);
+
+        assert_eq!(cur_mode, SessionMode::Responding);
+        assert_eq!(
+            store.get(sid).expect("session state").mode,
+            SessionMode::Responding
         );
     }
 
