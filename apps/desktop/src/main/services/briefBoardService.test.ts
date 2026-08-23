@@ -29,6 +29,14 @@ vi.mock('./configService', () => ({
   configService: { getConfig: () => ({ projects: projects.value }) },
 }));
 
+// The lane list also consults session history for directories the fleet has
+// worked in. Mocked so these tests describe a fixed fleet rather than whatever
+// this machine happens to have run.
+const history = vi.hoisted(() => ({ rows: [] as Array<{ cwd: string }> }));
+vi.mock('./sessionHistory', () => ({
+  sessionHistory: { recent: () => history.rows },
+}));
+
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -70,6 +78,7 @@ beforeEach(() => {
   fs.mkdirSync(path.join(projectDir, '.workspacer'), { recursive: true });
   fs.writeFileSync(briefPath(), BRIEF);
   projects.value = { [projectDir]: { label: 'Demo' } };
+  history.rows = [];
   readHook.fn = undefined;
 });
 
@@ -85,6 +94,33 @@ describe('boardLaneTargets', () => {
     expect(lanes[0].dir).toBe(os.homedir());
     expect(lanes.slice(1).map((l) => l.dir)).toContain(projectDir);
     expect(lanes.find((l) => l.dir === projectDir)?.label).toBe('Demo');
+  });
+
+  it('finds a project with a brief that config forgot — projects can be empty', () => {
+    // config.projects is empty on this machine right now (a known get_config
+    // regression). A board that showed one lane in that state would look
+    // broken rather than honest, so a directory the fleet has worked in AND
+    // already has a brief in still earns a lane.
+    projects.value = {};
+    history.rows = [{ cwd: projectDir }];
+    const lanes = boardLaneTargets();
+    expect(lanes.map((l) => l.dir)).toContain(projectDir);
+    expect(lanes.find((l) => l.dir === projectDir)?.label).toBe('demo');
+  });
+
+  it('does NOT list a worked-in directory with no brief — the board is not a directory list', () => {
+    projects.value = {};
+    const scratch = path.join(root, 'scratch');
+    fs.mkdirSync(scratch, { recursive: true });
+    history.rows = [{ cwd: scratch }];
+    expect(boardLaneTargets().map((l) => l.dir)).not.toContain(scratch);
+  });
+
+  it('lists a REGISTERED project even with no brief, so the invitation can show', () => {
+    const bare = path.join(root, 'bare');
+    fs.mkdirSync(bare, { recursive: true });
+    projects.value = { [bare]: { label: 'Bare' } };
+    expect(boardLaneTargets().map((l) => l.dir)).toContain(bare);
   });
 
   it('does not list the same directory twice when a project IS the fleet root', () => {

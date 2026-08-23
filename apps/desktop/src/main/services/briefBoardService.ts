@@ -29,6 +29,7 @@ import * as path from 'path';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { withFileLock } from '../lib/fileLock';
 import { configService } from './configService';
+import { sessionHistory } from './sessionHistory';
 import {
   BOARD_COLUMNS,
   appendToArchive,
@@ -109,12 +110,25 @@ function readIndex(dir: string): { index: ReturnType<typeof normalizeIndex>; fou
   }
 }
 
+/** How far back to look for directories the fleet has actually worked in. */
+const HISTORY_LOOKBACK = 300;
+
 /**
- * Every lane the board shows: the fleet brief first, then each project in
- * config's `projects` map. Projects come from config rather than from live
- * sessions (which is what the mobile PWA uses) because the board is a place you
- * go to see the whole fleet, including the projects nothing is running in
- * right now.
+ * Every lane the board shows: the fleet brief first, then every project.
+ *
+ * WHY THIS IS A UNION AND NOT JUST `config.projects`. The registry is the
+ * primary source and a registered project always gets a lane, brief or not, so
+ * the "no brief here yet" invitation can appear. But `projects` can be empty
+ * while the fleet is plainly working in several repos — it is empty on this
+ * machine right now, from a known `get_config` regression — and a board that
+ * showed one lane in that state would look broken rather than honest. So the
+ * same config-derived directories `renderer/lib/projectRegistry` counts as
+ * projects are included, plus the working directories of past sessions, which
+ * is how the mobile PWA finds briefs.
+ *
+ * Discovered directories must ALREADY HAVE a brief to earn a lane. Registered
+ * ones do not. Without that asymmetry the board would fill with every scratch
+ * directory an agent ever ran in.
  */
 export function boardLaneTargets(): Array<{
   dir: string;
@@ -124,19 +138,56 @@ export function boardLaneTargets(): Array<{
   const out: Array<{ dir: string; label: string; kind: 'fleet' | 'project' }> = [
     { dir: os.homedir(), label: 'Fleet', kind: 'fleet' },
   ];
-  const projects = configService.getConfig().projects ?? {};
   const seen = new Set([path.resolve(os.homedir())]);
-  for (const [dir, identity] of Object.entries(projects)) {
+  const add = (dir: string, label?: string): void => {
     const resolved = path.resolve(dir);
-    if (seen.has(resolved)) continue;
+    if (!resolved || seen.has(resolved)) return;
     seen.add(resolved);
     out.push({
       dir: resolved,
-      label: identity?.label || path.basename(resolved) || resolved,
+      label: label || path.basename(resolved) || resolved,
       kind: 'project',
     });
+  };
+
+  const config = configService.getConfig();
+  const projects = config.projects ?? {};
+  for (const [dir, identity] of Object.entries(projects)) add(dir, identity?.label);
+  // The rest of what projectRegistry treats as a known project: a directory you
+  // favourited, opened, or configured a script or widget board for.
+  for (const dir of config.directories?.favourites ?? []) add(dir);
+  for (const dir of config.directories?.recent ?? []) add(dir);
+  for (const dir of Object.keys(config.scripts ?? {})) add(dir);
+  for (const dir of Object.keys(config.widgets ?? {})) add(dir);
+
+  // Directories the fleet has actually worked in, but only where a brief is
+  // already written.
+  for (const dir of recentWorkingDirs()) {
+    if (seen.has(path.resolve(dir))) continue;
+    try {
+      if (fs.statSync(briefPathFor(dir)).isFile()) add(dir);
+    } catch {
+      /* no brief there — not a project for this board's purposes */
+    }
   }
+
   return out;
+}
+
+/** Working directories of recent sessions, newest first. Reads the local
+ *  history store (synchronous SQLite), not the daemon — the board must not need
+ *  a running claudemon to list projects. */
+function recentWorkingDirs(): string[] {
+  try {
+    const dirs: string[] = [];
+    for (const rec of sessionHistory.recent(HISTORY_LOOKBACK)) {
+      const cwd = String(rec.cwd ?? '').replace(/[/\\]+$/, '');
+      if (cwd && !dirs.includes(cwd)) dirs.push(cwd);
+    }
+    return dirs;
+  } catch {
+    return [];
+  }
 }
 
 function briefPathFor(dir: string): string {
