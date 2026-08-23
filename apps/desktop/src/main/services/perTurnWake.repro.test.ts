@@ -136,4 +136,36 @@ describe('worker-finished wake fires once per turn with something new to report'
     expect(message).toHaveBeenCalledTimes(2);
     expect(message.mock.calls[1][1]).toContain('stale lockfile');
   });
+
+  it('a wake that failed to send is retried, not silenced by its own dedup', async () => {
+    const mgr = uid('mgr');
+    const child = uid('child');
+    claudeSessionStore.setSpawnMeta(mgr, { label: 'Fleet Manager', isSupervisor: true });
+    hook(mgr, 'SessionStart');
+    claudeSessionStore.setSpawnMeta(child, { label: 'gamma: migrate', parentSessionId: mgr });
+    hook(child, 'SessionStart');
+
+    // The wire is down for this delivery — the manager is never told.
+    message.mockRejectedValueOnce(new Error('daemon unreachable'));
+    turn(child, 'run the migration', 'Migration applied, 12 tables.');
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(message).toHaveBeenCalledTimes(1); // attempted…
+
+    // …and since it never landed, the next edge for the same reply must still
+    // report. Suppression means "the manager has already been told this"; a
+    // throw means it has not. Wakes going MISSING is the opposite symptom of
+    // the duplicate this dedup kills, and the failure mode has to fall on the
+    // side of re-reporting (PER_TURN_WAKE_FINDING.md).
+    hook(child, 'PreToolUse');
+    hook(child, 'Stop');
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(message).toHaveBeenCalledTimes(2);
+    expect(message.mock.calls[1][1]).toContain('Migration applied, 12 tables.');
+
+    // Once it HAS landed, the identical edge is noise again — 1b still holds.
+    hook(child, 'PreToolUse');
+    hook(child, 'Stop');
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(message).toHaveBeenCalledTimes(2);
+  });
 });

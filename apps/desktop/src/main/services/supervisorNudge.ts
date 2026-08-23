@@ -341,6 +341,8 @@ class SupervisorNudge {
     workers: Map<string, { entry: FleetMessageEntry; session: FinishedWorker }>,
   ): Promise<void> {
     const entries: FleetMessageEntry[] = [];
+    /** Signatures to book as reported — applied only after the send lands. */
+    const delivered: Array<[string, string]> = [];
     for (const { entry, session } of workers.values()) {
       const genuinelyIdle =
         session.status === 'ended' ||
@@ -384,7 +386,7 @@ class SupervisorNudge {
       // changes the signature and still wakes the parent (1a).
       const signature = `${reply} ${entry.stopped ? 1 : 0} ${entry.failed ?? ''}`;
       if (this.lastReportedReply.get(session.sessionId) === signature) continue;
-      this.lastReportedReply.set(session.sessionId, signature);
+      delivered.push([session.sessionId, signature]);
       entries.push(entry);
     }
     if (entries.length === 0) return;
@@ -393,7 +395,17 @@ class SupervisorNudge {
       await claudemonSessionClient.message(parentId, text);
     } catch {
       /* the parent may have just ended — best-effort */
+      return; // NOT delivered: leave the signatures unrecorded (see below)
     }
+    // Record the signatures only once the wake is actually on the wire. The
+    // suppression means "the parent has already been told this", so booking it
+    // on a send that THREW would turn a lost wake into a permanently silenced
+    // one — the next identical edge would dedup against a report nobody ever
+    // received. The opposite symptom (wakes going missing) is as real as the
+    // duplicate this dedup exists to kill — PER_TURN_WAKE_FINDING.md — so the
+    // failure mode has to fall on the side of re-reporting.
+    for (const [sessionId, signature] of delivered)
+      this.lastReportedReply.set(sessionId, signature);
   }
 
   /** Drop the dedup signature for a worker whose life has ended, so
