@@ -291,13 +291,17 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   // Transport parity (FLEET_MANAGER_SPIKE.md finding #3): the PTY path has
   // always installed the /supervise skill for supervisors; the stream path
   // never did, so a stream-transport supervisor got role text but no skill.
-  if (isClaudeStream && opts.supervisor) {
-    installSupervisorSkill();
+  // PROVIDER parity too: the install is routed to the directory THIS harness
+  // reads (~/.claude/skills vs $CODEX_HOME/skills — identical SKILL.md format),
+  // rather than being gated on Claude and leaving a codex manager with no
+  // slash commands at all. Same doctrine text everywhere by design.
+  if (opts.supervisor) {
+    installSupervisorSkill(provider);
   }
-  // The Fleet Manager gets its own invocable skills (/bearings, /stow) — the
-  // considered counterpart to its reactive brief doctrine. Claude only.
-  if (isClaudeStream && opts.manager) {
-    installManagerSkills();
+  // The Fleet Manager gets its own invocable skills (/standup, /checkpoint,
+  // /handoff) — the considered counterpart to its reactive brief doctrine.
+  if (opts.manager) {
+    installManagerSkills(provider);
   }
   // Claude stream + facade: the per-session config file (token as an
   // Authorization header — a file path on argv, never the token itself, since

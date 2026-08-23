@@ -1,7 +1,10 @@
 /**
  * Fleet-Manager skills — invocable slash commands installed into the user's
- * personal Claude Code skills dir for a `manager:true` session, the same way
- * `installSupervisorSkill` installs `/supervise` for the supervisor loop.
+ * personal skills dir for a `manager:true` session, the same way
+ * `installSupervisorSkill` installs `/supervise` for the supervisor loop. The
+ * DIRECTORY follows the session's harness (`~/.claude/skills` for Claude,
+ * `$CODEX_HOME/skills` for Codex — identical SKILL.md format); the doctrine
+ * text is deliberately the same on every provider.
  *
  * Three skills, all leaning on the manager's operator-tier workspacer facade:
  *   /standup    — an on-demand fleet status digest (what's in flight, what
@@ -23,8 +26,9 @@
  * doctrine (the kickoff already describes briefs and status reporting).
  */
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
+import { agentSkillDir } from '../lib/agentSkills';
+import type { AgentProvider } from './agentProviders';
 
 const STANDUP_NAME = 'standup';
 const CHECKPOINT_NAME = 'checkpoint';
@@ -267,8 +271,10 @@ Then stop. Do not dispatch anything new: a dispatch you make now is a dispatch
 nobody is waiting for.
 `;
 
-function skillDir(name: string): string {
-  return path.join(os.homedir(), '.claude', 'skills', name);
+/** Where this skill installs for `provider` — null when that harness has no
+ *  personal-skills convention we can write to (see lib/agentSkills). */
+function skillDir(provider: AgentProvider, name: string): string | null {
+  return agentSkillDir(provider, name);
 }
 
 /** Write `file` only if changed, to avoid churning the user's files/watchers. */
@@ -287,22 +293,37 @@ function writeIfChanged(file: string, content: string): void {
  * them so a manager session always sees the current version, and removing the
  * superseded firstmate-named dirs. Best-effort and safe to call on every
  * manager spawn — the twin of installSupervisorSkill.
+ *
+ * `provider` picks the DESTINATION only (`~/.claude/skills` vs
+ * `$CODEX_HOME/skills`); the doctrine text is identical on every harness by
+ * design — see lib/agentSkills. A provider with no known skills directory is
+ * logged and skipped: a manager there still has its doctrine (it rides the
+ * kickoff message) and its facade tools, just no slash commands.
  */
-export function installManagerSkills(): void {
+export function installManagerSkills(provider: AgentProvider = 'claude'): void {
+  if (!agentSkillDir(provider, STANDUP_NAME)) {
+    console.warn(
+      `[managerSkills] ${provider} has no known personal-skills directory — ` +
+        'skipping /standup, /checkpoint and /handoff for this manager',
+    );
+    return;
+  }
   try {
     for (const [name, body] of [
       [STANDUP_NAME, STANDUP_BODY],
       [CHECKPOINT_NAME, CHECKPOINT_BODY],
       [HANDOFF_NAME, HANDOFF_BODY],
     ] as const) {
-      const dir = skillDir(name);
+      const dir = skillDir(provider, name);
+      if (!dir) continue;
       fs.mkdirSync(dir, { recursive: true });
       writeIfChanged(path.join(dir, 'SKILL.md'), body);
     }
     // Sweep the old names so a manager from the earlier build isn't left with
     // duplicate /bearings + /stow skills alongside the renamed pair.
     for (const old of RETIRED_NAMES) {
-      fs.rmSync(skillDir(old), { recursive: true, force: true });
+      const dir = skillDir(provider, old);
+      if (dir) fs.rmSync(dir, { recursive: true, force: true });
     }
   } catch {
     /* installing the skills is best-effort */
