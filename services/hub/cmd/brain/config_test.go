@@ -235,6 +235,14 @@ func TestConfigSaveIgnoresUpdatesFromTheBus(t *testing.T) {
 }
 
 func TestMigrateKeybindingsLegacyVim(t *testing.T) {
+	// migrateKeybindings does not just transform the map — it PERSISTS it, via a
+	// direct writeConfigYAML outside the lock and the CAS. Without this redirect
+	// the line below builds a bare-defaults config and this test publishes it
+	// over the developer's real ~/.config/workspacer/config.yaml, wiping every
+	// setting on the machine on every `go test ./...`. That is not a
+	// hypothetical: it is what it did until 2026-08-23.
+	tempConfigHome(t)
+
 	cfg := defaultConfig()
 	cfg["keybindings"] = map[string]any{"mode": "vim", "leader": "space"} // legacy shape
 	migrated := migrateKeybindings(cfg)

@@ -39,8 +39,52 @@ var symlinkGate = sweepguard.Gate("cmd/brain's symlink-gated tests", 25)
 // gitGate counts the tests that shell out to a real `git`.
 var gitGate = sweepguard.Gate("cmd/brain's git-gated tests", 3)
 
+// sandboxConfigHome points the whole test BINARY's configDir() at a temp dir.
+//
+// configDir() reads XDG_CONFIG_HOME (APPDATA on Windows) and every config-backed
+// service in this package resolves through it — configService, the read-time
+// keybinding migrations, the auth-token store. A test that constructs any of
+// them without calling tempConfigHome/setConfigHome therefore runs against the
+// DEVELOPER'S OWN ~/.config/workspacer, and dozens do (newRegistry alone builds
+// a configService, and 47 tests call it).
+//
+// Reading it was already wrong. Writing it was destructive: on 2026-08-23 a
+// single test that built a defaults-shaped map and handed it to
+// migrateKeybindings — which writes through to disk — reset the machine's real
+// config.yaml to factory settings on every `go test ./...`, repeatedly, faster
+// than it could be restored by hand. writeConfigYAML now refuses that specific
+// write (refuseWipeWithDefaults), but a per-call refusal is the wrong place to
+// rely on: the durable property is that this binary cannot address the real
+// config dir at all.
+//
+// Set before m.Run, so it covers every test including those with no redirect of
+// their own. Tests that DO redirect (t.Setenv via tempConfigHome/setConfigHome)
+// override it for their duration and restore it afterwards, unchanged.
+//
+// HOME is deliberately left alone: configDir() only falls back to it when
+// XDG_CONFIG_HOME is empty, which it no longer is, and tests that need a
+// sandboxed home have tempHome for exactly that.
+func sandboxConfigHome() (cleanup func()) {
+	dir, err := os.MkdirTemp("", "wks-brain-confighome-")
+	if err != nil {
+		// Nothing to sandbox with. Fail loudly rather than silently running the
+		// suite against the developer's real config dir — that is the outcome
+		// this exists to prevent.
+		panic("cmd/brain: cannot create a sandbox config home: " + err.Error())
+	}
+	for _, k := range []string{"XDG_CONFIG_HOME", "APPDATA"} {
+		if err := os.Setenv(k, dir); err != nil {
+			panic("cmd/brain: cannot redirect " + k + ": " + err.Error())
+		}
+	}
+	return func() { _ = os.RemoveAll(dir) }
+}
+
 func TestMain(m *testing.M) {
-	os.Exit(sweepguard.RunGates(m))
+	cleanup := sandboxConfigHome()
+	code := sweepguard.RunGates(m)
+	cleanup()
+	os.Exit(code)
 }
 
 // gatedTestName is the TOP-LEVEL test a gate counts. Subtests are not counted
