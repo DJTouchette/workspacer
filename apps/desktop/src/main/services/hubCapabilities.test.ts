@@ -259,7 +259,12 @@ describe('agents.list — statusLine fallback for managed providers', () => {
         sessionId: 'c1',
         cwd: '/proj',
         ambientState: 'idle',
-        usage: { model: 'claude-opus-4-1', contextTokens: 12_000, contextLimit: 200_000, costUSD: 1.2 },
+        usage: {
+          model: 'claude-opus-4-1',
+          contextTokens: 12_000,
+          contextLimit: 200_000,
+          costUSD: 1.2,
+        },
         statusLine: undefined,
       },
     ] as never);
