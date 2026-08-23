@@ -508,6 +508,114 @@ class ClaudeSessionStore {
   }
 
   /**
+   * Hand every dispatch a retiring manager still has in flight to its
+   * SUCCESSOR, so the wakes keep arriving.
+   *
+   * Fleet wakes are PARENT-KEYED: a worker-finished wake routes only to the
+   * worker's own live `isSupervisor` parent (nudgeParentOnFinish below), and the
+   * dropped-wake backstop keys off the same field (`sweepMissedFinishes`
+   * matches `c.parentSessionId === manager.sessionId`). So replacing a Fleet
+   * Manager used to ORPHAN every worker it had dispatched: the successor could
+   * never receive their reports, and the only workaround was a manual ritual
+   * where the outgoing manager begged each worker to leave results on disk.
+   * Re-pointing `parentSessionId` is the whole fix — and because the backstop
+   * re-reads the field on every sweep, it needs no separate re-pointing.
+   *
+   * `parentSessionId` IS the routing key and nothing else. This changes routing
+   * deliberately and completely: after this call the old manager hears nothing
+   * further about these workers, by design. It records no lineage — a second
+   * meaning on this field would fire "Worker finished" wakes at the wrong
+   * session.
+   *
+   * Also moved: dispatches still in `spawnMeta` (spawned, no hook yet — the
+   * most orphan-prone case of all, a worker whose whole life is ahead of it),
+   * and any finished-wake already queued inside supervisorNudge's coalesce
+   * window for the old parent, which would otherwise be delivered to a manager
+   * on its way out.
+   *
+   * Deliberately ALLOWED while the old manager is still alive: that is the
+   * normal handoff — an outgoing manager is by definition mid-turn when it
+   * hands over, so refusing on a live predecessor would refuse the only case
+   * this exists for. Refused, loudly, when the successor cannot actually
+   * receive wakes (unknown, ended, or not a manager), because quietly
+   * re-pointing workers at a session that no wake can reach is strictly worse
+   * than the orphaning it was meant to fix.
+   *
+   * Returns the ids actually moved: `moved` for live sessions, `pending` for
+   * not-yet-registered dispatches.
+   */
+  reparentChildren(
+    oldManagerId: string,
+    newManagerId: string,
+  ): { moved: string[]; pending: string[] } {
+    if (!oldManagerId || !newManagerId) {
+      throw new Error('reparent_children: both the outgoing and the new manager id are required');
+    }
+    if (oldManagerId === newManagerId) {
+      throw new Error(`reparent_children: ${newManagerId} is already the parent — nothing to move`);
+    }
+    const successor = this.sessions.get(newManagerId);
+    const successorMeta = this.spawnMeta.get(newManagerId);
+    if (!successor && !successorMeta) {
+      throw new Error(
+        `reparent_children: no session ${newManagerId} — a wake can only be routed to a session ` +
+          `this process knows about`,
+      );
+    }
+    if (successor?.status === 'ended') {
+      throw new Error(
+        `reparent_children: ${newManagerId} has ended — moving workers to a dead parent would ` +
+          `orphan them exactly as leaving them was`,
+      );
+    }
+    // A parent that isn't a manager is a black hole for wakes: nudgeParentOnFinish
+    // requires `parent.isSupervisor`, so this would silence every dispatch
+    // instead of rerouting it — and silently, which is the worst shape.
+    if (!(successor?.isSupervisor ?? successorMeta?.isSupervisor)) {
+      throw new Error(
+        `reparent_children: ${newManagerId} is not a manager (isSupervisor) — worker-finished ` +
+          `wakes are only ever delivered to a supervisor parent`,
+      );
+    }
+
+    const moved: string[] = [];
+    for (const session of this.sessions.values()) {
+      if (session.parentSessionId !== oldManagerId) continue;
+      // The successor may itself have been dispatched BY the outgoing manager
+      // (the usual way a manager is replaced). Never let it become its own
+      // parent — nudgeParentOnFinish would then wake it about itself.
+      if (session.sessionId === newManagerId) continue;
+      // Federated sessions are fed by their own hub's snapshots; their parent
+      // is that peer's fact and the next snapshot would overwrite us anyway.
+      if (session.hub) continue;
+      session.parentSessionId = newManagerId;
+      moved.push(session.sessionId);
+      this.pushUpdate(session);
+    }
+
+    const pending: string[] = [];
+    for (const [sessionId, meta] of this.spawnMeta) {
+      if (meta.parentSessionId !== oldManagerId || sessionId === newManagerId) continue;
+      meta.parentSessionId = newManagerId;
+      pending.push(sessionId);
+    }
+
+    // A wake for these workers may already be sitting in the coalesce window
+    // addressed to the old manager. Re-address it rather than let it land on a
+    // manager that is being retired.
+    supervisorNudge.reassignPendingFinish(oldManagerId, newManagerId);
+
+    // The per-worker "nothing new to report" signature (supervisorNudge's
+    // lastReportedReply) is deliberately NOT cleared. A worker that already
+    // reported before the handoff has an unchanged reply, and re-delivering
+    // that identical payload to the successor is precisely the duplicate wake
+    // PER_TURN_WAKE_FINDING.md 1b calls noise; its result belongs in the
+    // handoff brief. Anything the worker does AFTER the move produces a
+    // different reply and wakes the successor normally.
+    return { moved, pending };
+  }
+
+  /**
    * Worker-finished wake (FLEET_MANAGER_SPIKE.md gap #2): when a session with
    * a supervisor/manager PARENT transitions working→idle, nudge that parent —
    * the dispatch came home. Called at every ambient-transition site right

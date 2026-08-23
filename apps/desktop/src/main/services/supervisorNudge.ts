@@ -221,6 +221,39 @@ class SupervisorNudge {
   }
 
   /**
+   * Re-address a finished-wake that is still inside its coalesce window from a
+   * retiring manager to its successor — the queued-wake half of
+   * claudeSessionStore.reparentChildren.
+   *
+   * `pendingFinished` is keyed by PARENT id, so a worker that finished in the
+   * seconds before a handoff has its report addressed to the manager on its way
+   * out. Everything under `oldParentId` is by construction a child of the old
+   * manager (onFinished keys off the child's own parentSessionId), so the whole
+   * bucket moves. Merging into an existing window for the successor dedups by
+   * worker id; otherwise the window restarts, costing at most COALESCE_MS.
+   * No-op when nothing is queued.
+   */
+  reassignPendingFinish(oldParentId: string, newParentId: string): void {
+    if (oldParentId === newParentId) return;
+    const pending = this.pendingFinished.get(oldParentId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingFinished.delete(oldParentId);
+    const existing = this.pendingFinished.get(newParentId);
+    if (existing) {
+      for (const [workerId, worker] of pending.workers) existing.workers.set(workerId, worker);
+      return;
+    }
+    const workers = pending.workers;
+    const timer = setTimeout(() => {
+      this.pendingFinished.delete(newParentId);
+      void this.sendFinished(newParentId, workers);
+    }, COALESCE_MS);
+    timer.unref?.();
+    this.pendingFinished.set(newParentId, { timer, workers });
+  }
+
+  /**
    * BACKSTOP for a dropped wake (the "dark manager" failure): the onFinished
    * path is best-effort — if its message never lands, or a working→idle edge
    * was never observed, a manager can sit idle forever while a dispatched
@@ -308,6 +341,8 @@ class SupervisorNudge {
     workers: Map<string, { entry: FleetMessageEntry; session: FinishedWorker }>,
   ): Promise<void> {
     const entries: FleetMessageEntry[] = [];
+    /** Signatures to book as reported — applied only after the send lands. */
+    const delivered: Array<[string, string]> = [];
     for (const { entry, session } of workers.values()) {
       const genuinelyIdle =
         session.status === 'ended' ||
@@ -351,7 +386,7 @@ class SupervisorNudge {
       // changes the signature and still wakes the parent (1a).
       const signature = `${reply} ${entry.stopped ? 1 : 0} ${entry.failed ?? ''}`;
       if (this.lastReportedReply.get(session.sessionId) === signature) continue;
-      this.lastReportedReply.set(session.sessionId, signature);
+      delivered.push([session.sessionId, signature]);
       entries.push(entry);
     }
     if (entries.length === 0) return;
@@ -360,7 +395,17 @@ class SupervisorNudge {
       await claudemonSessionClient.message(parentId, text);
     } catch {
       /* the parent may have just ended — best-effort */
+      return; // NOT delivered: leave the signatures unrecorded (see below)
     }
+    // Record the signatures only once the wake is actually on the wire. The
+    // suppression means "the parent has already been told this", so booking it
+    // on a send that THREW would turn a lost wake into a permanently silenced
+    // one — the next identical edge would dedup against a report nobody ever
+    // received. The opposite symptom (wakes going missing) is as real as the
+    // duplicate this dedup exists to kill — PER_TURN_WAKE_FINDING.md — so the
+    // failure mode has to fall on the side of re-reporting.
+    for (const [sessionId, signature] of delivered)
+      this.lastReportedReply.set(sessionId, signature);
   }
 
   /** Drop the dedup signature for a worker whose life has ended, so
