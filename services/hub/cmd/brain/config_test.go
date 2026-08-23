@@ -436,6 +436,67 @@ func TestConfigSaveDoesNotClobberUnparseableFile(t *testing.T) {
 	}
 }
 
+// TestConfigSaveDoesNotClobberEmptyOrCommentOnlyFile proves the Go twin of the
+// desktop configService.ts fail-safe: yaml.Unmarshal of an empty or
+// comment-only config.yaml succeeds with a NIL map (not an error), so without
+// an explicit guard deepMerge(defaults, nil) would silently hand back
+// untouched defaults and the next save would write those bare defaults over
+// the user's real config. Assert the refusal, not just the parse result —
+// that's the property that protects the user.
+func TestConfigSaveDoesNotClobberEmptyOrCommentOnlyFile(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		contents string
+	}{
+		{"empty file", ""},
+		{"comment-only file", "# just a comment\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := seedConfig(t, tc.contents)
+
+			c := newConfigService()
+			c.save(map[string]any{"editor": map[string]any{"vim": true}})
+
+			after, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatalf("config.yaml disappeared: %v", err)
+			}
+			if string(after) != tc.contents {
+				t.Fatalf("save() overwrote a %s with defaults, discarding whatever the user actually had.\n got: %q\nwant: %q", tc.name, string(after), tc.contents)
+			}
+		})
+	}
+}
+
+// TestConfigENOENTAfterLoadIsNotFirstRun proves a config.yaml that disappears
+// mid-run (e.g. a hand edit that truncates before rewriting) is NOT treated as
+// "no config yet": the singleton already has one, so ENOENT here must keep the
+// existing in-memory config and block saves, not reseed bare defaults that the
+// next save would then persist over whatever the user actually has.
+func TestConfigENOENTAfterLoadIsNotFirstRun(t *testing.T) {
+	p := seedConfig(t, "ui:\n  theme: solarized\n")
+
+	c := newConfigService()
+	before := c.current
+
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	got := c.reload()
+
+	if !reflect.DeepEqual(got, before) {
+		t.Fatalf("ENOENT after a config was already loaded reseeded defaults instead of keeping the existing config.\n got: %#v\nwant: %#v", got, before)
+	}
+	if !c.persistBlocked {
+		t.Fatal("ENOENT after a config was already loaded did not block saves")
+	}
+
+	c.save(map[string]any{"editor": map[string]any{"vim": true}})
+	if _, err := os.ReadFile(p); err == nil {
+		t.Fatal("save() reseeded config.yaml after a mid-run disappearance instead of refusing to write")
+	}
+}
+
 func TestListModelsReadsConfigDefault(t *testing.T) {
 	tempConfigHome(t)
 	// Seed a config with a default model + a persisted seen model.

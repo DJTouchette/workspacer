@@ -133,7 +133,16 @@ func (c *configService) loadFromDisk() map[string]any {
 	data, err := os.ReadFile(configPath())
 	if err != nil {
 		if os.IsNotExist(err) {
-			// First run — no config file yet: seed it with defaults.
+			if c.current != nil {
+				// We had a config a moment ago — this is a mid-run
+				// disappearance (e.g. a hand edit that truncated before
+				// rewriting), not a first run. Treating it as first run would
+				// seed bare defaults and the next save would write them over
+				// whatever the user actually has. Mirrors configService.ts.
+				c.persistBlocked = true
+				return c.current
+			}
+			// Genuine first run — no config file yet: seed it with defaults.
 			c.writeDefaults(defaults)
 			return defaults
 		}
@@ -159,6 +168,17 @@ func (c *configService) loadFromDisk() map[string]any {
 				c.lastBrokenBackup = string(data)
 			}
 		}
+		return defaults
+	}
+	if parsed == nil {
+		// A 0-byte / whitespace-only / comment-only config.yaml unmarshals to a
+		// nil map with NO error above — it is not a parse error. deepMerge(defaults,
+		// nil) would silently hand back untouched defaults, and saveLocked
+		// re-reads via this same function unconditionally, so the next save
+		// would write those bare defaults over the user's real config. Treat it
+		// like the parse-error branch above: block saves instead. Mirrors
+		// configService.ts loadFromDisk.
+		c.persistBlocked = true
 		return defaults
 	}
 	c.lastBrokenBackup = ""
