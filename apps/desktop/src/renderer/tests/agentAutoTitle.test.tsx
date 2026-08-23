@@ -117,7 +117,24 @@ describe('useAgentAutoTitle', () => {
     expect(suggest).toHaveBeenCalledWith({
       userMessage: 'fix the flaky sidebar test',
       assistantReply: 'Looking at the suite now',
+      provider: 'claude',
     });
+  });
+
+  it('titles a codex agent with CODEX, not with claude', async () => {
+    // The whole point of carrying the provider: a codex-primary user with no
+    // claude binary on PATH used to lose auto-titling silently.
+    const onTitle = vi.fn();
+    renderHook(() =>
+      useAgentAutoTitle({
+        agents: [agent({ provider: 'codex' })],
+        snapshotBySession: snap(EXCHANGE),
+        enabled: true,
+        onTitle,
+      }),
+    );
+    await waitFor(() => expect(suggest).toHaveBeenCalled());
+    expect(suggest.mock.calls[0][0]).toMatchObject({ provider: 'codex' });
   });
 
   it('does not fire twice while the first call is still in flight', async () => {
