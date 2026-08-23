@@ -27,7 +27,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use super::{apply_updates, AgentUpdate, UsageAcc};
 use crate::session::conversation::ConversationItem;
-use crate::session::state::SessionMode;
+use crate::session::state::{PendingWrite, SessionMode};
 use crate::session::{ConversationStore, SessionStore};
 
 /// Translate one rollout JSONL line into typed updates. Pure and total.
@@ -568,7 +568,7 @@ async fn tail(
     acc.estimate_costs();
     // The session is ready for input until a turn starts (the TUI is idle on
     // launch); reflect that so the GUI composer's /message isn't mode-gated away.
-    store.set_managed_mode(session_id, SessionMode::Input, None);
+    store.set_managed_mode(session_id, SessionMode::Input, PendingWrite::Resolve);
 
     let mut offset: u64 = 0;
     // Bytes of a trailing record caught mid-write (see `drain_complete_lines`).

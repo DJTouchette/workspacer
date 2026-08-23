@@ -27,7 +27,7 @@ use axum::{
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
-use crate::session::state::{Pending, PendingQuestion};
+use crate::session::state::{Pending, PendingQuestion, PendingWrite};
 use crate::session::{ManagedAnswer, SessionMode, SessionStore};
 
 /// How long a question may sit unanswered before we give up and unblock the
@@ -152,8 +152,14 @@ impl QuestionGuard {
         self.defused = true;
         self.store
             .unregister_managed_answer_if(&self.session_id, &self.tx);
-        self.store
-            .set_managed_mode(&self.session_id, SessionMode::Responding, None);
+        // `Resolve`: this guard is the slot's owner — it parked the question
+        // and is the one thing that knows it is over (answered, or timed out
+        // with the tool call already returning an error to the agent).
+        self.store.set_managed_mode(
+            &self.session_id,
+            SessionMode::Responding,
+            PendingWrite::Resolve,
+        );
     }
 }
 
@@ -213,7 +219,7 @@ async fn tools_call(store: &SessionStore, session_id: &str, id: Value, req: &Val
     store.set_managed_mode(
         session_id,
         SessionMode::Question,
-        Some(Pending::Question {
+        PendingWrite::Park(Pending::Question {
             questions: questions.clone(),
             raw: arguments,
         }),

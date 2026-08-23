@@ -25,10 +25,10 @@ use serde_json::Value;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
-use super::{apply_updates, AgentUpdate, Facade, ModelInfo, UsageAcc};
+use super::{apply_updates, note_user_send, set_mode, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::protocol::Signal;
 use crate::session::conversation::ConversationItem;
-use crate::session::state::{Pending, SessionMode};
+use crate::session::state::{Pending, PendingWrite, SessionMode};
 use crate::session::{ConversationStore, ModelSwitch, SessionStore};
 use crate::wrapper::pty;
 
@@ -397,16 +397,17 @@ fn surface_permission(
     cur_mode: &mut SessionMode,
     parked: &ParkedPermission,
 ) {
-    store.set_managed_mode(
+    set_mode(
+        store,
         session_id,
         SessionMode::Approval,
-        Some(Pending::Approval {
+        PendingWrite::Park(Pending::Approval {
             tool: parked.tool.clone(),
             summary: parked.summary.clone(),
             raw: parked.raw.clone(),
         }),
+        cur_mode,
     );
-    *cur_mode = SessionMode::Approval;
 }
 
 /// Park a non-YOLO permission request and, if it becomes the new FIFO head,
@@ -443,10 +444,13 @@ fn resolve_permission(
     let head = pending.pop_front()?;
     match pending.front() {
         Some(next) => surface_permission(store, session_id, cur_mode, next),
-        None => {
-            store.set_managed_mode(session_id, SessionMode::Responding, None);
-            *cur_mode = SessionMode::Responding;
-        }
+        None => set_mode(
+            store,
+            session_id,
+            SessionMode::Responding,
+            PendingWrite::Resolve,
+            cur_mode,
+        ),
     }
     Some(head.id)
 }
@@ -655,10 +659,7 @@ async fn run_session(
                         Some(instr) => format!("{instr}\n\n{text}"),
                         None => text,
                     };
-                    if cur_mode != SessionMode::Responding {
-                        store.set_managed_mode(session_id, SessionMode::Responding, None);
-                        cur_mode = SessionMode::Responding;
-                    }
+                    note_user_send(store, session_id, &mut cur_mode);
                     let c = client.clone();
                     let url = format!("{base}/session/{oc_id}/message");
                     let mut body = serde_json::json!({ "parts": [ { "type": "text", "text": sent } ] });

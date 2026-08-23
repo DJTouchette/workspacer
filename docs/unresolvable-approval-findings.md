@@ -127,16 +127,77 @@ provider) that owner is the daemon's `/events` managed-mode stream; for a PTY
 claude session it is the hook feed. Mixing them is what made a blocked session
 unanswerable rather than merely mislabelled.
 
-### Known remaining asymmetries (not fixed here, none of them stranding)
+### The class, swept (2026-08-23)
 
-* `pendingQuestions` is still written and cleared from the hook feed on every
-  transport. Narrower than the approval case — `PostToolUse` only clears it for
-  a matching `AskUserQuestion` `tool_use_id`, not on any tool — but it is the
-  same shape of shared ownership.
-* `PermissionRequest` still writes `pendingApproval` on a daemon-owned session.
-  It can only ever ADD a card, so it cannot strand a session, but a late frame
-  can resurrect one the daemon already cleared, and the daemon deliberately
-  does not surface queued (non-head) approvals that this hook would.
+Two more commits landed against this invariant after the table above:
+`aae765a3` (a `send_message` must not wipe a parked approval, in
+`claude_stream::note_user_send`) and then a full sweep of `services/claudemon`.
+
+The sweep's finding is that the invariant was being enforced by a hand-written
+condition repeated at every call site —
+
+```rust
+if cur_mode != SessionMode::Approval && cur_mode != SessionMode::Question {
+    store.set_managed_mode(id, SessionMode::Responding, None);
+}
+```
+
+— and that **three more drivers had the same send arm with the guard missing**,
+each reachable exactly like the claude one:
+
+| Site | Shape |
+| --- | --- |
+| `opencode.rs`, `rx.recv()` arm | `if cur_mode != Responding { set_managed_mode(Responding, None) }` — true while a permission is parked |
+| `codex.rs`, `rx.recv()` arm | same |
+| `pi.rs`, `rx.recv()` arm | same |
+
+Plus two pi-only defects of the same family: it surfaced the **newest** parked
+dialog while the decision arm answered the **FIFO front** (user approves one
+card, a different request gets their answer), and answering a dialog never
+re-surfaced the next one — so with two dialogs in flight, answering one cleared
+the card while pi stayed blocked on the other. That is the unresolvable-approval
+shape reached through pi.
+
+**The fix is structural rather than a fourth, fifth and sixth `if`.**
+`SessionStore::set_managed_mode` no longer takes a bare `Option<Pending>`; it
+takes a [`PendingWrite`] saying what the write MEANS:
+
+* `Park(pending)` — the owner raising a block. Always applies.
+* `Resolve` — the user answered, or a genuine turn boundary arrived. Clears.
+* `Keep` — liveness/enrichment (a busy ping, a message written to stdin, a
+  background-task count). Suppressed **entirely** while a request is parked,
+  mode included.
+
+The guard now lives in one place and cannot be forgotten: a new call site must
+say which of the three it is, and the compiler asks. `set_managed_mode` returns
+what the store actually holds (not what was asked for), and drivers mirror
+their `cur_mode` from it via `providers::set_mode`, so a suppressed write can't
+leave a driver believing a mode the store never adopted. The four drivers' send
+arms are now one shared `providers::note_user_send`.
+
+`ingest`'s existing rule — hooks are enrichment-only for a managed/stream
+session, `session/store.rs` — turns out to be why items 1 and 2 below do NOT
+hold inside claudemon. It had no test; it has three now.
+
+### Known remaining asymmetries
+
+Both are in **`apps/desktop/src/main/services/sessionStore/hookEventRouter.ts`**
+and were re-verified as live on 2026-08-23. Neither has a claudemon analogue:
+the daemon's `ingest` returns early for managed/stream sessions before
+`SessionState::apply` runs, so no hook can reach a driver-owned pending slot
+(`hooks_never_touch_the_pending_slot_of_a_daemon_owned_session`).
+
+* `pendingQuestions` is still written (`PreToolUse`, line ~160) and cleared
+  (`PostToolUse`, ~205) from the hook feed on every transport. Narrower than
+  the approval case — the clear requires a matching `AskUserQuestion`
+  `tool_use_id` — but it is the same shape of shared ownership, and unlike
+  `pendingApproval` it has no `hooksOwnPending` gate at all.
+* `PermissionRequest` (~222) still writes `pendingApproval` on a daemon-owned
+  session. It can only ever ADD a card, so it cannot strand a session, but a
+  late frame can resurrect one the daemon already cleared, and the daemon
+  deliberately does not surface queued (non-head) approvals that this hook
+  would.
+
 * `applyStopEvent` still clears the card on both transports. Deliberate: a turn
   boundary really does mean nothing can still be parked, and a stream session
   killed mid-approval would otherwise keep a phantom card (the daemon's

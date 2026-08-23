@@ -150,6 +150,49 @@ pub enum Pending {
     },
 }
 
+/// What a managed-mode write intends to do with a session's single `pending`
+/// slot.
+///
+/// This is the type form of the invariant that has produced the worst bugs on
+/// this project (see `docs/unresolvable-approval-findings.md`): **exactly one
+/// feed owns a session's pending slot; the others may enrich it but must never
+/// clear it.** Before this existed, `set_managed_mode` took a bare
+/// `Option<Pending>` and every caller re-derived the guard by hand —
+///
+/// ```ignore
+/// if cur_mode != SessionMode::Approval && cur_mode != SessionMode::Question {
+///     store.set_managed_mode(id, SessionMode::Responding, None);
+/// }
+/// ```
+///
+/// — which four sites simply forgot. Each omission produced the same
+/// unanswerable shape: mode `Responding` (clients: "streaming") with
+/// `pending: null`, while the CLI stayed blocked on an unanswered
+/// `can_use_tool` that lives only inside the driver, so nothing outside could
+/// repair it. The session wedged silently.
+///
+/// Passing an intent instead of a value moves the guard into
+/// [`SessionStore::set_managed_mode`](crate::session::SessionStore::set_managed_mode),
+/// where it cannot be forgotten: a new call site must say which of the three
+/// things it is doing, and only two of them are allowed to touch the slot.
+#[derive(Debug, Clone)]
+pub enum PendingWrite {
+    /// Park a request for the user (an approval card, a question picker). The
+    /// caller is the slot's owner announcing a new block; always applied.
+    Park(Pending),
+    /// The parked request is over — the user answered it, or a genuine turn
+    /// boundary (a `result` frame, session start/stop) means nothing can still
+    /// be waiting. Clears the slot.
+    Resolve,
+    /// Liveness / enrichment only: a busy ping, a message written to stdin, a
+    /// background-task count changing. Such a write says nothing about whether
+    /// the user is still blocking the agent, so it is suppressed **entirely**
+    /// while a request is parked — mode included, because reporting
+    /// `Responding` for a session that is actually waiting on a human is the
+    /// other half of the same bug.
+    Keep,
+}
+
 /// The agent's current plan / checklist, surfaced as first-class session state.
 ///
 /// A single last-write-wins snapshot: whenever the agent rewrites its plan

@@ -34,10 +34,11 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
-use super::{apply_updates, AgentUpdate, Facade, UsageAcc};
+use super::{apply_updates, note_user_send, set_mode, AgentUpdate, Facade, UsageAcc};
 use crate::session::conversation::ConversationItem;
 use crate::session::state::{
-    Capabilities, ContextInventory, ContextItem, Pending, PendingQuestion, SessionMode,
+    Capabilities, ContextInventory, ContextItem, Pending, PendingQuestion, PendingWrite,
+    SessionMode,
 };
 use crate::session::store::{ManagedAnswer, ManagedPermissionSwitch};
 use crate::session::transcript::{blocks, flatten_tool_result, Block};
@@ -1068,44 +1069,17 @@ fn surface_approval(
     cur_mode: &mut SessionMode,
     parked: &ParkedCanUse,
 ) {
-    store.set_managed_mode(
+    set_mode(
+        store,
         session_id,
         SessionMode::Approval,
-        Some(Pending::Approval {
+        PendingWrite::Park(Pending::Approval {
             tool: parked.tool.clone(),
             summary: parked.summary.clone(),
             raw: parked.raw.clone(),
         }),
+        cur_mode,
     );
-    *cur_mode = SessionMode::Approval;
-}
-
-/// Mode bookkeeping for a user message that was just written to the CLI's
-/// stdin.
-///
-/// A parked approval/question is a PAUSE: the CLI is blocked on the user, not
-/// working. Reasserting `Responding` here must never demote it —
-/// `set_managed_mode` would also drop the `pending` card (a `Responding` write
-/// carries none), leaving a session that reports `responding` (clients:
-/// "streaming") while the CLI is still blocked on an unanswered
-/// `can_use_tool`, with no approval record left to answer. The parked request
-/// only lives inside this driver, so nothing else can repair it: the session
-/// wedges silently and its transcript stops growing.
-///
-/// This is the same invariant, and deliberately the same three-line guard, as
-/// `apply_updates`' `Busy` arm (`providers/mod.rs`) and the
-/// `background_tasks_changed` paths in `handle_line`: exactly one feed owns a
-/// session's pending slot; others may enrich but never clear. Only the state
-/// write is suppressed — the message itself already went down stdin and still
-/// queues in the CLI.
-fn note_user_send(store: &SessionStore, session_id: &str, cur_mode: &mut SessionMode) {
-    if *cur_mode != SessionMode::Responding
-        && *cur_mode != SessionMode::Approval
-        && *cur_mode != SessionMode::Question
-    {
-        store.set_managed_mode(session_id, SessionMode::Responding, None);
-        *cur_mode = SessionMode::Responding;
-    }
 }
 
 // ── Live driver ──────────────────────────────────────────────────────────────
@@ -1344,10 +1318,13 @@ async fn run_session(
                         // user gets its card; otherwise the turn resumes.
                         match pending_approvals.front() {
                             Some(next) => surface_approval(store, &session_id, &mut cur_mode, next),
-                            None => {
-                                store.set_managed_mode(&session_id, SessionMode::Responding, None);
-                                cur_mode = SessionMode::Responding;
-                            }
+                            None => set_mode(
+                                store,
+                                &session_id,
+                                SessionMode::Responding,
+                                PendingWrite::Resolve,
+                                &mut cur_mode,
+                            ),
                         }
                     } else {
                         tracing::debug!(session = %session_id, "claude stream: decision with no parked approval — dropped");
@@ -1367,10 +1344,13 @@ async fn run_session(
                         // must re-surface rather than being wiped to Responding.
                         match pending_approvals.front() {
                             Some(next) => surface_approval(store, &session_id, &mut cur_mode, next),
-                            None => {
-                                store.set_managed_mode(&session_id, SessionMode::Responding, None);
-                                cur_mode = SessionMode::Responding;
-                            }
+                            None => set_mode(
+                                store,
+                                &session_id,
+                                SessionMode::Responding,
+                                PendingWrite::Resolve,
+                                &mut cur_mode,
+                            ),
                         }
                     }
                 }
@@ -1580,15 +1560,16 @@ fn handle_line(
                 // A question for the human — park it as `Question` even under
                 // yolo (auto-approving it without answers would be nonsense).
                 let questions = questions_from(&input);
-                store.set_managed_mode(
+                set_mode(
+                    store,
                     session_id,
                     SessionMode::Question,
-                    Some(Pending::Question {
+                    PendingWrite::Park(Pending::Question {
                         questions,
                         raw: input.clone(),
                     }),
+                    cur_mode,
                 );
-                *cur_mode = SessionMode::Question;
                 *pending_question = Some(ParkedCanUse {
                     request_id,
                     input,
@@ -2696,7 +2677,7 @@ mod tests {
         let store = SessionStore::new();
         let sid = "sid-send-idle";
         store.register_managed(sid, "/w", "claude");
-        store.set_managed_mode(sid, SessionMode::Input, None);
+        store.set_managed_mode(sid, SessionMode::Input, PendingWrite::Resolve);
         let mut cur_mode = SessionMode::Input;
 
         note_user_send(&store, sid, &mut cur_mode);
@@ -2844,5 +2825,207 @@ mod tests {
         assert!(!idle_suppressed);
         assert_eq!(store.get(sid).unwrap().background_tasks, 1);
         assert_eq!(store.get(sid).unwrap().mode, SessionMode::Input);
+    }
+
+    /// A scratch directory that removes itself, so a panicking test leaves
+    /// nothing behind in /tmp (a per-user-quota tmpfs on this project's
+    /// machines — see `crate::testtmp`).
+    #[cfg(unix)]
+    struct ScratchDir(std::path::PathBuf);
+
+    #[cfg(unix)]
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A stand-in `claude` that speaks the exact headless stream-json control
+    /// protocol `run_session` drives: it blocks on a `can_use_tool` permission
+    /// handshake for the first user message, acknowledges any later message
+    /// while still blocked (a real CLI keeps streaming liveness frames), and
+    /// only closes the turn once it receives the `control_response`.
+    ///
+    /// A shell script rather than a mock: the point of this test is that the
+    /// wedge is unreachable through real pipes, a real child process and the
+    /// real driver loop, not that a hand-fed `handle_line` behaves.
+    #[cfg(unix)]
+    fn write_blocking_stub(dir: &std::path::Path) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("stub-claude");
+        std::fs::write(
+            &path,
+            r#"#!/bin/sh
+# Ignores argv (build_argv's flags are exercised by their own tests).
+asked=0
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"user"'*)
+      if [ "$asked" = 0 ]; then
+        asked=1
+        # Block on a permission handshake, exactly as the CLI does for a tool
+        # call outside the allowed working directories.
+        printf '%s\n' '{"type":"control_request","request_id":"cli-1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls /"},"tool_use_id":"tu-1"}}'
+      else
+        # A nudge arriving mid-block. The CLI is still waiting on the
+        # unanswered request, but it keeps emitting liveness frames.
+        printf '%s\n' '{"type":"system","subtype":"status","status":"requesting"}'
+        printf '%s\n' '{"type":"stream_event","event":{"type":"message_start","message":{"role":"assistant"}}}'
+        printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"ack-nudge"}}}'
+      fi
+      ;;
+    *'"subtype":"success"'*)
+      # The approval came back — the turn can finish.
+      printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"done","duration_ms":1,"usage":{"input_tokens":1,"output_tokens":1},"total_cost_usd":0.01}'
+      ;;
+  esac
+done
+"#,
+        )
+        .expect("writing the stub CLI");
+        let mut perms = std::fs::metadata(&path)
+            .expect("stub metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).expect("chmod the stub CLI");
+        path
+    }
+
+    /// Poll `cond` until it holds or the deadline passes. Returns whether it
+    /// held, so callers assert with their own message.
+    #[cfg(unix)]
+    async fn settles(mut cond: impl FnMut() -> bool) -> bool {
+        for _ in 0..600 {
+            if cond() {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        cond()
+    }
+
+    /// **The wedge, end to end.** Everything above this is a unit test over
+    /// `handle_line`; this drives a real child process over real pipes through
+    /// the real `run_session` loop, and reaches it through the same two public
+    /// store entry points the daemon's HTTP handlers use (`submit_message` for
+    /// `POST /message`, `submit_managed_decision` for `POST /approve`). The
+    /// only stand-in is the `claude` binary itself.
+    ///
+    /// The sequence that cost this project four worker sessions:
+    ///   1. the CLI blocks on `can_use_tool` — the session parks an approval;
+    ///   2. a manager nudges the worker mid-block (`POST /message`);
+    ///   3. the CLI, still blocked, streams liveness frames.
+    ///
+    /// Either (2) or (3) used to write `Responding`/`pending: null`. The card
+    /// only ever existed inside this driver, so once it was gone nothing could
+    /// answer the CLI: the worker reported "streaming" forever and its
+    /// transcript stopped growing. The approval must survive both, and must
+    /// still be answerable afterwards.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_blocked_session_survives_a_nudge_and_is_still_answerable() {
+        let dir = ScratchDir(
+            std::env::temp_dir().join(format!("claudemon-e2e-{}", uuid::Uuid::new_v4())),
+        );
+        std::fs::create_dir_all(&dir.0).expect("scratch dir");
+        let bin = write_blocking_stub(&dir.0);
+
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let sid = "e2e-blocked";
+        // Exactly what `daemon::spawn` does before handing over to the driver.
+        store.register_managed(sid, &dir.0.to_string_lossy(), "claude");
+        store.set_transport(sid, crate::session::state::Transport::Stream);
+        spawn_session(
+            store.clone(),
+            conv.clone(),
+            SpawnConfig {
+                session_id: sid.to_string(),
+                cwd: dir.0.to_string_lossy().to_string(),
+                bin: bin.to_string_lossy().to_string(),
+                model: None,
+                effort: None,
+                permission_mode: None,
+                resume: None,
+                extra_args: vec![],
+                env: HashMap::new(),
+                yolo: false,
+                facade: Facade::default(),
+            },
+        );
+
+        assert!(
+            settles(|| store.is_managed(sid)).await,
+            "the driver never registered its input channel"
+        );
+        assert!(
+            matches!(
+                store.submit_message(sid, "read something".into()),
+                crate::session::MessageOutcome::Sent
+            ),
+            "the first prompt should reach the driver"
+        );
+
+        // 1. The CLI blocks on the permission handshake.
+        assert!(
+            settles(|| store
+                .get(sid)
+                .is_some_and(|s| s.mode == SessionMode::Approval))
+            .await,
+            "the can_use_tool frame should have parked an approval, got {:?}",
+            store.get(sid).map(|s| s.mode)
+        );
+        assert!(
+            store.get(sid).and_then(|s| s.pending).is_some(),
+            "a parked approval must carry the card that answers it"
+        );
+
+        // 2. A manager nudges the blocked worker, and 3. the CLI answers with
+        // liveness frames while still blocked. The ack is the observable that
+        // the driver has fully processed both.
+        assert!(
+            matches!(
+                store.submit_message(sid, "any update?".into()),
+                crate::session::MessageOutcome::Sent
+            ),
+            "the nudge should reach the driver"
+        );
+        assert!(
+            settles(|| conv.snapshot(sid).is_some_and(|(_, items)| items
+                .iter()
+                .any(|i| format!("{i:?}").contains("ack-nudge"))))
+            .await,
+            "the driver never processed the nudge + the liveness frames after it"
+        );
+
+        let blocked = store.get(sid).expect("session state");
+        assert_eq!(
+            blocked.mode,
+            SessionMode::Approval,
+            "the session must still report that it is blocked on the user — reporting \
+             `responding` here is the lying-state half of the wedge"
+        );
+        assert!(
+            blocked.pending.is_some(),
+            "the approval card must survive the nudge — it lives only inside this driver, \
+             so once it is gone nothing can answer the CLI and the worker wedges silently"
+        );
+
+        // The card is still real: answering it unblocks the CLI for good.
+        assert!(
+            store.submit_managed_decision(sid, true),
+            "the parked approval should still be answerable"
+        );
+        assert!(
+            settles(|| store.get(sid).is_some_and(|s| s.mode == SessionMode::Input)).await,
+            "the CLI should have finished its turn once the approval was answered, got {:?}",
+            store.get(sid).map(|s| s.mode)
+        );
+        assert!(
+            store.get(sid).and_then(|s| s.pending).is_none(),
+            "a finished turn leaves no phantom card"
+        );
+
+        store.terminate_managed(sid);
     }
 }

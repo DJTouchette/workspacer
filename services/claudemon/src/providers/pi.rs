@@ -34,9 +34,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::mpsc;
 
-use super::{apply_updates, AgentUpdate, Facade, ModelInfo, UsageAcc};
+use super::{apply_updates, note_user_send, set_mode, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::session::conversation::ConversationItem;
-use crate::session::state::SessionMode;
+use crate::session::state::{PendingWrite, SessionMode};
 use crate::session::{ConversationStore, ModelSwitch, SessionStore};
 
 /// List the models Pi can launch with (cached; see [`super::cached_or_fetch`]).
@@ -777,7 +777,7 @@ async fn run_tui_session(
     let tui = super::spawn_attach_pty(store, session_id, &argv, cwd).context("spawning pi TUI")?;
 
     // Ready for input as soon as the TUI is up (mode-gates the GUI composer).
-    store.set_managed_mode(session_id, SessionMode::Input, None);
+    store.set_managed_mode(session_id, SessionMode::Input, PendingWrite::Resolve);
 
     // Drive the GUI from the session file (background; best-effort).
     {
@@ -953,20 +953,22 @@ async fn run_session(
                         Some(instr) => format!("{instr}\n\n{text}"),
                         None => text,
                     };
-                    if cur_mode != SessionMode::Responding {
-                        store.set_managed_mode(session_id, SessionMode::Responding, None);
-                        cur_mode = SessionMode::Responding;
-                    }
+                    note_user_send(store, session_id, &mut cur_mode);
                     let _ = write_msg(&mut stdin, &json!({ "type": "prompt", "message": sent })).await;
                 }
                 None => break, // managed input dropped → terminated
             },
             decision = drx.recv() => match decision {
                 Some(approve) => {
-                    if let Some(req) = pending_approvals.pop_front() {
+                    if let Some(req) = resolve_dialog(
+                        store,
+                        conv,
+                        session_id,
+                        &mut cur_mode,
+                        &mut acc,
+                        &mut pending_approvals,
+                    ) {
                         let _ = respond_ui(&mut stdin, &req, approve).await;
-                        store.set_managed_mode(session_id, SessionMode::Responding, None);
-                        cur_mode = SessionMode::Responding;
                     }
                 }
                 None => break,
@@ -1049,16 +1051,15 @@ async fn handle_message(
             // Auto-accept so the agent keeps working without surfacing a card.
             let _ = respond_ui(stdin, value, true).await;
         } else {
-            // Surface the approval and remember the request so /approve can
-            // forward the user's decision (see the decision branch above).
-            let updates = vec![AgentUpdate::PermissionPending {
-                id: None,
-                tool: Some(method.to_string()),
-                summary: dialog_summary(value),
-                raw: value.clone(),
-            }];
-            apply_updates(store, conv, session_id, updates, cur_mode, acc);
+            // Remember the request so /approve can forward the user's decision
+            // (see the decision branch above). Only the queue HEAD is
+            // displayed: the store's pending is a single slot and the decision
+            // branch answers the FIFO front, so surfacing a later arrival would
+            // show the user one card and answer a different request.
             pending_approvals.push_back(value.clone());
+            if pending_approvals.len() == 1 {
+                surface_dialog(store, conv, session_id, cur_mode, acc, value);
+            }
         }
         return;
     }
@@ -1067,6 +1068,64 @@ async fn handle_message(
     if !updates.is_empty() {
         apply_updates(store, conv, session_id, updates, cur_mode, acc);
     }
+}
+
+/// Surface a parked Extension UI dialog as the session's pending Approval card.
+///
+/// The store holds a single pending slot, so only the *front* of
+/// `pending_approvals` is ever displayed — later requests wait parked and are
+/// re-surfaced here when the front is answered, keeping the displayed card and
+/// the FIFO reply in sync (the same discipline `claude_stream::surface_approval`
+/// and `codex::surface_approval` keep).
+fn surface_dialog(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    cur_mode: &mut SessionMode,
+    acc: &mut UsageAcc,
+    req: &Value,
+) {
+    let method = req.get("method").and_then(Value::as_str).unwrap_or("");
+    let updates = vec![AgentUpdate::PermissionPending {
+        id: None,
+        tool: Some(method.to_string()),
+        summary: dialog_summary(req),
+        raw: req.clone(),
+    }];
+    apply_updates(store, conv, session_id, updates, cur_mode, acc);
+}
+
+/// Retire the FIFO head of the parked dialogs and hand it back so the caller
+/// can answer it, then put the *next* parked dialog on the card — or, only when
+/// the queue really is empty, declare the block over.
+///
+/// The re-surface is the load-bearing half. Without it, answering one of two
+/// concurrent dialogs cleared the card while pi stayed blocked on the second:
+/// the session read `responding` with `pending: null` and nothing outside the
+/// driver held the parked request, so it could only be killed. That is the
+/// unresolvable-approval shape (`docs/unresolvable-approval-findings.md`),
+/// reached through pi rather than through claude. `codex::resolve_approval` and
+/// `claude_stream`'s decision arm keep the same discipline.
+fn resolve_dialog(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    cur_mode: &mut SessionMode,
+    acc: &mut UsageAcc,
+    pending_approvals: &mut std::collections::VecDeque<Value>,
+) -> Option<Value> {
+    let head = pending_approvals.pop_front()?;
+    match pending_approvals.front().cloned() {
+        Some(next) => surface_dialog(store, conv, session_id, cur_mode, acc, &next),
+        None => set_mode(
+            store,
+            session_id,
+            SessionMode::Responding,
+            PendingWrite::Resolve,
+            cur_mode,
+        ),
+    }
+    Some(head)
 }
 
 /// Answer an Extension UI dialog request. `confirm` takes a boolean; `select`
@@ -1121,6 +1180,7 @@ async fn write_msg(stdin: &mut ChildStdin, value: &Value) -> anyhow::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::state::Pending;
 
     // idx 17 — session-file tailer: a mid-write partial line must not be
     // duplicated. When the tailer first catches a JSONL entry WITHOUT its
@@ -1544,5 +1604,136 @@ mod tests {
             tui_argv("pi", "sid-1", None, None),
             vec!["pi", "--session-id", "sid-1"]
         );
+    }
+
+    fn dialog(id: u64, message: &str) -> Value {
+        json!({
+            "type": "extension_ui_request",
+            "id": id,
+            "method": "confirm",
+            "message": message
+        })
+    }
+
+    /// A throwaway `ChildStdin` for the branches that never write to it. Pi's
+    /// non-yolo dialog path only parks and surfaces; the reply goes out from the
+    /// decision arm, which is not what these tests exercise.
+    #[cfg(unix)]
+    async fn dev_null_stdin() -> (tokio::process::Child, ChildStdin) {
+        let mut child = Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawning `cat` for a throwaway stdin");
+        let stdin = child.stdin.take().expect("piped stdin");
+        (child, stdin)
+    }
+
+    /// The store's pending is ONE slot and the decision arm answers the FIFO
+    /// *front*, so the card must show the front too. Surfacing each new arrival
+    /// (as this did) showed the user the second dialog's text and then sent
+    /// their yes/no to the first — the wrong request answered with the wrong
+    /// intent, silently.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn only_the_queue_head_is_shown_when_dialogs_pile_up() {
+        let (_child, mut stdin) = dev_null_stdin().await;
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let sid = "pi-dialog-head";
+        store.register_managed(sid, "/w", "pi");
+        let mut cur_mode = SessionMode::Responding;
+        let mut acc = UsageAcc::new();
+        let yolo = AtomicBool::new(false);
+        let mut pending: std::collections::VecDeque<Value> = std::collections::VecDeque::new();
+
+        for req in [dialog(1, "first"), dialog(2, "second")] {
+            handle_message(
+                &req,
+                &store,
+                &conv,
+                sid,
+                &mut stdin,
+                &mut cur_mode,
+                &mut acc,
+                &yolo,
+                &mut pending,
+            )
+            .await;
+        }
+
+        assert_eq!(pending.len(), 2, "both dialogs must stay parked");
+        let state = store.get(sid).expect("session state");
+        assert_eq!(state.mode, SessionMode::Approval);
+        match state.pending {
+            Some(Pending::Approval { summary, .. }) => assert_eq!(
+                summary.as_deref(),
+                Some("first"),
+                "the displayed card must be the request the decision arm will answer"
+            ),
+            other => panic!("expected an approval card, got {other:?}"),
+        }
+    }
+
+    /// Answering one of two concurrent dialogs used to clear the card and
+    /// declare `Responding` while pi was still blocked on the second: the
+    /// session read "streaming" with no pending record, and the parked request
+    /// lives only inside the driver, so nothing outside could answer it. The
+    /// next parked dialog must take the slot instead.
+    #[test]
+    fn answering_one_dialog_resurfaces_the_next_instead_of_stranding_it() {
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let sid = "pi-dialog-resurface";
+        store.register_managed(sid, "/w", "pi");
+        let mut cur_mode = SessionMode::Responding;
+        let mut acc = UsageAcc::new();
+        let mut pending: std::collections::VecDeque<Value> =
+            [dialog(1, "first"), dialog(2, "second")]
+                .into_iter()
+                .collect();
+        surface_dialog(&store, &conv, sid, &mut cur_mode, &mut acc, &pending[0]);
+
+        let answered = resolve_dialog(&store, &conv, sid, &mut cur_mode, &mut acc, &mut pending)
+            .expect("the head dialog");
+
+        assert_eq!(answered["id"], 1, "the FIFO head is the one answered");
+        assert_eq!(
+            cur_mode,
+            SessionMode::Approval,
+            "pi is still blocked on the second dialog"
+        );
+        let state = store.get(sid).expect("session state");
+        assert_eq!(state.mode, SessionMode::Approval);
+        match state.pending {
+            Some(Pending::Approval { summary, .. }) => {
+                assert_eq!(summary.as_deref(), Some("second"))
+            }
+            other => panic!("the next parked dialog must own the card, got {other:?}"),
+        }
+    }
+
+    /// The other half: when the queue really does drain, the block is over and
+    /// the card goes away — otherwise a session keeps a phantom approval.
+    #[test]
+    fn answering_the_last_dialog_clears_the_card() {
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let sid = "pi-dialog-drain";
+        store.register_managed(sid, "/w", "pi");
+        let mut cur_mode = SessionMode::Responding;
+        let mut acc = UsageAcc::new();
+        let mut pending: std::collections::VecDeque<Value> =
+            [dialog(1, "only")].into_iter().collect();
+        surface_dialog(&store, &conv, sid, &mut cur_mode, &mut acc, &pending[0]);
+
+        resolve_dialog(&store, &conv, sid, &mut cur_mode, &mut acc, &mut pending)
+            .expect("the head dialog");
+
+        assert_eq!(cur_mode, SessionMode::Responding);
+        let state = store.get(sid).expect("session state");
+        assert_eq!(state.mode, SessionMode::Responding);
+        assert!(state.pending.is_none());
     }
 }
