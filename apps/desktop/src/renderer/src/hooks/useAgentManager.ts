@@ -693,6 +693,7 @@ export function useAgentManager() {
       root: string,
       fullAccess = false,
       grantYolo = false,
+      provider: AgentProvider = 'claude',
     ): Promise<string | undefined> => {
       const live = agentsRef.current.find(
         (a) => !a.global && a.name === FLEET_MANAGER_NAME && a.sessionId,
@@ -717,9 +718,18 @@ export function useAgentManager() {
         return live.sessionId;
       }
       // A stopped manager card respawns (resuming its conversation) before
-      // taking the ask, so its dispatch history survives an app restart.
+      // taking the ask, so its dispatch history survives an app restart — but
+      // only one on the REQUESTED harness. A conversation cannot move between
+      // harnesses (a codex thread has no claude transcript and vice versa), so
+      // after switching agents.managerProvider the old card is left alone and a
+      // fresh manager starts on the new one; otherwise flipping the setting
+      // would silently keep resurrecting the old provider's manager.
       const stopped = agentsRef.current.find(
-        (a) => !a.global && a.name === FLEET_MANAGER_NAME && a.lastSessionId,
+        (a) =>
+          !a.global &&
+          a.name === FLEET_MANAGER_NAME &&
+          a.lastSessionId &&
+          (a.provider ?? 'claude') === provider,
       );
       if (stopped) {
         // Heal a record from before the role flags were persisted: it IS the
@@ -746,8 +756,15 @@ export function useAgentManager() {
       return spawnAgent({
         cwd: root,
         name: FLEET_MANAGER_NAME,
-        provider: 'claude',
+        // The harness the manager itself runs on (config agents.managerProvider).
+        // Everything the role needs below this line is provider-blind: the MCP
+        // facade attaches at the operator tier for managed providers too, the
+        // grant chain knows codex's 'yolo' spelling, and the worker-finished
+        // wake routes on the isSupervisor flag `manager: true` sets.
+        provider,
         // Chat-first: the manager is a bubbles experience, like the Guide.
+        // Claude and Codex both have a headless stream transport; the others
+        // ignore it (and spawnManagedAgent says so out loud).
         transport: 'stream',
         toolScope: 'operator',
         manager: true,

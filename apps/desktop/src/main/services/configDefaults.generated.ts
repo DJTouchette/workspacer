@@ -194,6 +194,7 @@ export const CONFIG_DEFAULTS = {
     defaultCwd: '',
     fleetRoot: '',
     fleetFullAccess: false,
+    managerProvider: 'claude',
     binaries: {
       claude: '',
       codex: '',

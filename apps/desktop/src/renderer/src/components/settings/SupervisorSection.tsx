@@ -17,6 +17,19 @@ const SUP_PROVIDERS: { value: 'claude' | 'codex' | 'opencode' | 'pi'; label: str
   { value: 'pi', label: 'Pi' },
 ];
 
+/**
+ * Harnesses the Fleet Manager ROLE is verified on. Narrower than SUP_PROVIDERS
+ * on purpose: the manager needs an MCP client to dispatch at all, and a
+ * personal-skills directory for /standup, /checkpoint and /handoff. Claude and
+ * Codex have both (`~/.claude/skills` / `$CODEX_HOME/skills`, identical
+ * SKILL.md format); listing a harness that silently loses half the role is the
+ * failure mode this picker exists to avoid.
+ */
+const MANAGER_PROVIDERS: { value: 'claude' | 'codex'; label: string }[] = [
+  { value: 'claude', label: 'Claude' },
+  { value: 'codex', label: 'Codex' },
+];
+
 interface SupervisorSectionProps {
   config: Config;
   save: (partial: Partial<Config>) => Promise<Config>;
@@ -148,6 +161,26 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', margin: '4px 0 8px' }}>
         The delegating manager launched from the Overview. It dispatches real agents into your
         projects and reports back — see “Fleet Manager” on the dashboard.
+      </div>
+
+      <Row label="Manager agent">
+        <div style={{ display: 'flex', gap: 4 }}>
+          {MANAGER_PROVIDERS.map((p) => (
+            <ModeButton
+              key={p.value}
+              label={p.label}
+              active={(agents.managerProvider ?? 'claude') === p.value}
+              onClick={() => patchAgents({ managerProvider: p.value })}
+            />
+          ))}
+        </div>
+      </Row>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        The harness the manager itself runs on. It dispatches workers on any harness either way —
+        this is only which one hosts the manager’s own conversation.{' '}
+        <strong>Applies to the next manager you start.</strong> A conversation cannot move between
+        harnesses, so an existing Fleet Manager card keeps the one it was started on; terminate it
+        (right-click → Terminate) to start a fresh manager here.
       </div>
 
       <Row label="Projects root">

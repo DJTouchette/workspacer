@@ -1,6 +1,7 @@
 /**
  * The Fleet Manager — ONE conversation orchestrating many agents
- * (FLEET_MANAGER_SPIKE.md). A real Claude agent rooted at the user's projects
+ * (FLEET_MANAGER_SPIKE.md). A real agent — on whichever harness config
+ * agents.managerProvider names — rooted at the user's projects
  * parent directory, holding the workspacer MCP facade at the OPERATOR tier,
  * whose whole job is delegation: inventory the projects, dispatch real agents
  * into them, relay results, and keep every turn short enough that the user
@@ -44,8 +45,10 @@ const MANAGER_PREAMBLE =
   'send_message you mid-task.) If the project exposes its own ' +
   'code-intelligence tools (e.g. rivet: recon.search / context-recommend to find things, ' +
   'witness.select to pick tests), tell the worker to prefer those over blind grep and to ' +
-  'run the project’s checks before reporting — its CLAUDE.md and MCP tools already carry ' +
-  'the specifics, so just point it at them. Match the model to the task (list_models ' +
+  'run the project’s checks before reporting — its CLAUDE.md / AGENTS.md and MCP tools ' +
+  'already carry the specifics, so just point it at them (both files are conventions for ' +
+  'the same thing — claude reads CLAUDE.md, codex reads AGENTS.md — so name whichever the ' +
+  'repo actually has). Match the model to the task (list_models ' +
   'shows ids): omit model for ordinary coding work — the default is right; pass a cheap ' +
   'fast model (haiku-class) for mechanical chores like transcript digests, doc tweaks, ' +
   'renames, or status sweeps; reserve the strongest model for deep design, gnarly ' +
