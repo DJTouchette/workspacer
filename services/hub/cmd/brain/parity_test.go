@@ -375,12 +375,15 @@ func jsonStr(s string) string {
 // is neither in spawnParams' JSON tags nor here fails the drift guard below —
 // mirror it or decline it explicitly.
 var spawnParamsDeclined = map[string]string{
-	"mcpFacade":    "the workspacer MCP facade server runs inside the desktop app; headless there is no facade URL to wire",
-	"mcpItemIds":   "per-spawn Library MCP servers need buildSessionMcpConfig (a desktop-owned session-scoped --mcp-config writer)",
-	"toolScope":    "the facade tool tier rides the facade (desktop-only, see mcpFacade) — minting/revoking the per-session token is desktop-owned (remoteTokens.ts)",
-	"pluginTools":  "plugin tool grants are recorded on the session facade token, which headless cannot mint (see toolScope)",
-	"worktree":     "ship-task worktree isolation is created by the desktop (worktreeService.createWorktree) before the spawn; the headless brain has no equivalent worktree pool, so a worktree spawn it answers just runs in cwd",
-	"resultSchema": "the structured-result contract has TWO desktop-owned halves and neither exists headless: the schema is compiled into the worker's spawn prompt (claudeSpawn's --append-system-prompt / managedSpawn's first-turn instructions) and it is READ BACK by supervisorNudge's worker-finished wake, which is a desktop session-store facility — the brain has no session store holding the schema and no wake to deliver the validated object on, so a brain-answered spawn would take the param and silently never honor it",
+	"mcpFacade": "the workspacer MCP facade server runs inside the desktop app; headless there is no facade URL to wire",
+	// `manager` IS mirrored (see spawnParams.Manager) — only its full-access
+	// COMPANION is declined, and for the same reason as mcpFacade.
+	"fleetFullAccess": "inert on the wire even on the desktop: nothing reads the spawn option — the manager's actual bypass is resolved from CONFIG at mint time (fullAccessGrants.managerFullAccessFromConfig), deliberately not from this flag, so a respawn's frozen copy cannot resurrect a revoked grant. The only thing it is a record OF is the role-tagged grant on a minted session facade token, which headless cannot mint (see mcpFacade/toolScope). Mirroring it would add a param the brain accepts and provably never honors; the bypass a bus caller can legitimately obtain here already rides the hub-verified `yoloGranted` stamp instead",
+	"mcpItemIds":      "per-spawn Library MCP servers need buildSessionMcpConfig (a desktop-owned session-scoped --mcp-config writer)",
+	"toolScope":       "the facade tool tier rides the facade (desktop-only, see mcpFacade) — minting/revoking the per-session token is desktop-owned (remoteTokens.ts)",
+	"pluginTools":     "plugin tool grants are recorded on the session facade token, which headless cannot mint (see toolScope)",
+	"worktree":        "ship-task worktree isolation is created by the desktop (worktreeService.createWorktree) before the spawn; the headless brain has no equivalent worktree pool, so a worktree spawn it answers just runs in cwd",
+	"resultSchema":    "the structured-result contract has TWO desktop-owned halves and neither exists headless: the schema is compiled into the worker's spawn prompt (claudeSpawn's --append-system-prompt / managedSpawn's first-turn instructions) and it is READ BACK by supervisorNudge's worker-finished wake, which is a desktop session-store facility — the brain has no session store holding the schema and no wake to deliver the validated object on, so a brain-answered spawn would take the param and silently never honor it",
 }
 
 // spawnParamsAhead is the mirror escape hatch: brain spawnParams the DESKTOP

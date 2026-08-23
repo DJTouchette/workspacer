@@ -430,6 +430,26 @@ type spawnParams struct {
 	Label           string `json:"label"`
 	ParentSessionID string `json:"parentSessionId"`
 	Supervisor      bool   `json:"supervisor"`
+	// Manager is the Fleet Manager flag: a nudge-eligible parent WITHOUT the
+	// /supervise watch loop. Headless it means exactly one thing — the session
+	// is recorded as a wake target (spawnMeta.IsSupervisor, surfaced as the
+	// snapshot's isSupervisor), which is what the worker-finished nudge router
+	// and every client's crew nesting key on. Dropping it is the bug 8cabb4a5
+	// fixed on the desktop: a bus-spawned Fleet Manager came up invisible to the
+	// wake router, so its workers finished into the void.
+	//
+	// NOT A PRIVILEGE HERE, deliberately. On the desktop `manager` ALSO widens
+	// the minted session facade token (every profile in profilesAllowed, the
+	// config-resolved yolo grant, the 'manager' role tag) — but every one of
+	// those lives in mintSessionFacadeToken, and the headless brain mints no
+	// facade token at all (see spawnParamsDeclined's mcpFacade/toolScope
+	// entries). So a bus client asserting `manager:true` here gains a wake
+	// subscription for the agent it was already authorized to spawn and nothing
+	// else: it does not touch skip, PermissionMode, ProfileGranted or
+	// YoloGranted, and the bypass clamp in spawn() below is untouched by it.
+	// If this field ever grows a privilege implication, it must move behind the
+	// same hub-verified stamp as YoloGranted rather than staying caller-set.
+	Manager bool `json:"manager"`
 	// skip is the RESOLVED skipPermissions — caller's explicit value or the
 	// config default, then clamped by spawn()'s grant gate. Unexported so it can
 	// never arrive on the wire; the spawn legs read this, not SkipPermissions.
@@ -439,6 +459,15 @@ type spawnParams struct {
 type sessionParam struct {
 	SessionID string `json:"sessionId"`
 }
+
+// isWakeTarget is the one thing Supervisor and Manager mean in common headless:
+// the session is nudge-eligible, so it is recorded with IsSupervisor and shows
+// up as the snapshot's isSupervisor. A manager IS a supervisor for wake
+// purposes — the desktop spells the identical rule `opts.supervisor ||
+// opts.manager` at both of managedSpawn.ts's setSpawnMeta calls. Kept as one
+// method so the two spawn legs below cannot drift the way the desktop's
+// hand-copied option literals did.
+func (p spawnParams) isWakeTarget() bool { return p.Supervisor || p.Manager }
 
 func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p spawnParams
@@ -539,8 +568,8 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 
 	// Record spawn metadata before the session registers, so the live store's
 	// enricher picks up the name/parent the moment claudemon reports SessionStart.
-	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.Supervisor) {
-		r.meta.set(sessionID, spawnMeta{Label: p.Label, ParentSessionID: p.ParentSessionID, IsSupervisor: p.Supervisor})
+	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.isWakeTarget()) {
+		r.meta.set(sessionID, spawnMeta{Label: p.Label, ParentSessionID: p.ParentSessionID, IsSupervisor: p.isWakeTarget()})
 	}
 
 	cols, rows := p.Cols, p.Rows
@@ -586,8 +615,8 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 			return nil, err
 		}
 	}
-	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.Supervisor) {
-		r.meta.set(sessionID, spawnMeta{Label: p.Label, ParentSessionID: p.ParentSessionID, IsSupervisor: p.Supervisor})
+	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.isWakeTarget()) {
+		r.meta.set(sessionID, spawnMeta{Label: p.Label, ParentSessionID: p.ParentSessionID, IsSupervisor: p.isWakeTarget()})
 	}
 
 	req := spawnManagedReq{
