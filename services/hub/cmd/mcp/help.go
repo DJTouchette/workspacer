@@ -156,7 +156,9 @@ get_conversation to "keep an eye on" something — that is a hang, and it locks
 the user out. Arm a watch and STOP.
 - Give at least one threshold. tokens is CUMULATIVE (input + output), so it
   catches scope creep a context percentage would not; usd is cumulative cost;
-  idleSeconds catches a worker that stopped without finishing.
+  idleSeconds catches a worker that stopped without finishing — it measures
+  SILENCE, not the reported state, so it also catches one that is wedged and
+  still claiming to stream. The wake names which of the two it was.
 - Crossing delivers a [fleet] wake naming exactly what crossed.
 - ONE-SHOT: the watch is discarded when it fires. Arm another if you still want
   to watch — that is a decision you should make deliberately, not a loop.

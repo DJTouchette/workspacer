@@ -43,7 +43,9 @@ export interface ThresholdPredicate {
   tokens?: number;
   /** Fire when the session's cumulative cost in USD reaches this. */
   usd?: number;
-  /** Fire when the session has been idle for this many seconds. */
+  /** Fire when nothing has arrived from the session for this many seconds —
+   *  whether it is sitting at a prompt or claiming to still be working (see
+   *  `crossedBy`: a wedged session reports `streaming` forever). */
   idleSeconds?: number;
 }
 
@@ -107,12 +109,31 @@ export function crossedBy(watch: ThresholdWatch, s: WatchableSession, now: numbe
     if (usd >= watch.usd) return `cost $${usd.toFixed(2)} ≥ $${watch.usd.toFixed(2)}`;
   }
   if (watch.idleSeconds !== undefined) {
-    // Idle means IDLE: a session that is thinking or streaming has not been
-    // sitting there, however long ago its last recorded activity was.
-    const idle = s.ambientState === undefined || s.ambientState === 'idle';
+    // "A worker that stopped without finishing" is this predicate's whole
+    // stated purpose (mcp help.go) — and the most damaging way a worker stops
+    // is precisely the one that never reports `idle`. A wedged session (an
+    // approval clobbered mid-turn, a driver blocked on a request nobody can
+    // see) reports `streaming` forever, so gating on `ambientState === 'idle'`
+    // made this watch structurally blind to the exact failure it was armed
+    // for: every such watch was silently unfireable.
+    //
+    // `lastActivity` is what makes broadening it safe. It moves only on real
+    // conversation deltas and ambient transitions and deliberately NOT on
+    // statusLine ticks, so "nothing has arrived in N seconds" is a fact about
+    // output whatever the session claims to be doing.
+    //
+    // The two cases still read differently, because they ARE different: a
+    // session sitting at a prompt is done; one still claiming to work has
+    // stalled. Naming the claimed state keeps the wake honest — a genuinely
+    // long single tool call (a slow build) can trip this too, and the manager
+    // can see that from the message rather than being told a lie about idling.
     const since = now - (s.lastActivity ?? now);
-    if (idle && since >= watch.idleSeconds * 1000) {
-      return `idle for ${Math.round(since / 1000)}s ≥ ${watch.idleSeconds}s`;
+    if (since >= watch.idleSeconds * 1000) {
+      const secs = Math.round(since / 1000);
+      const settled = s.ambientState === undefined || s.ambientState === 'idle';
+      return settled
+        ? `idle for ${secs}s ≥ ${watch.idleSeconds}s`
+        : `no activity for ${secs}s ≥ ${watch.idleSeconds}s (still reports ${s.ambientState})`;
     }
   }
   return null;

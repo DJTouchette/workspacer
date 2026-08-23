@@ -35,8 +35,19 @@ export class SessionUsageAccumulator {
     const u = session.usage;
     if (!u.models) u.models = {}; // sessions restored from pre-split snapshots
 
+    // `<synthetic>` is Claude Code's placeholder id on rows the CLI generates
+    // locally rather than from a model — notably its "No response requested."
+    // reply to a resume kickoff, which carries all-zero usage. That is not an
+    // observation of the context window and not a model that ran, so folding it
+    // in ZEROES the gauge and renames the session's model, manufacturing a
+    // freeze-shaped reading on a perfectly healthy session (it did exactly that
+    // during the 2026-08-23 wedge investigation). Same `<`-prefix predicate
+    // `rememberModel` below already applies; the Rust reader guards its own
+    // fold the same way (`session/usage.rs`).
+    const placeholder = !!model && model.startsWith('<');
+
     if (model) this.rememberModel(model);
-    if (!sidechain) {
+    if (!sidechain && !placeholder) {
       const ctx = contextTokensOf(usage);
       u.contextTokens = ctx;
       if (ctx > session.peakContext) session.peakContext = ctx;
@@ -52,7 +63,10 @@ export class SessionUsageAccumulator {
       if (seen.has(key)) return;
       seen.add(key);
     }
-    const turnModel = model ?? u.model;
+    // A placeholder row still counts (its zeros are harmless), but it is priced
+    // and filed under the thread's model — never as a `<synthetic>` slice of
+    // its own. Parity with the Rust reader's `row_model.or(usage.model)`.
+    const turnModel = (placeholder ? null : model) ?? u.model;
     const inputTokens = contextTokensOf(usage);
     const outputTokens = usage.output_tokens ?? 0;
     const costUSD = turnCostUSD(turnModel, usage);

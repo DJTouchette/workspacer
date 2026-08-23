@@ -225,6 +225,14 @@ export function registerHubCapabilities(): void {
         ? { toolName: s.pendingApproval.toolName, toolInput: s.pendingApproval.toolInput }
         : null,
       pendingQuestions: s.pendingQuestions ?? null,
+      // Epoch ms of the last REAL conversation delta or ambient transition —
+      // deliberately not bumped by statusLine ticks (see claudeSessionStore's
+      // note at the statusLine handler). That makes it the one field on this
+      // row that can catch a wedged agent: `state === 'streaming' && now -
+      // lastActivity > 5min` is a session claiming to work with nothing
+      // arriving. `state` alone cannot — a wedged session reports `streaming`
+      // forever, which is also why an idleSeconds watch never fires on one.
+      lastActivity: s.lastActivity,
     })),
   );
 

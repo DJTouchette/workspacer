@@ -81,11 +81,33 @@ describe('crossedBy', () => {
     expect(crossedBy(w({ usd: 20 }) as never, s, 0)).toBe('cost $22.40 ≥ $20.00');
   });
 
-  it('idle means IDLE — a streaming session has not been sitting there', () => {
-    const busy = session({ ambientState: 'streaming', lastActivity: 0 });
-    expect(crossedBy(w({ idleSeconds: 60 }) as never, busy, 600_000)).toBeNull();
+  it('fires on a settled session and names it as idle', () => {
     const idle = session({ ambientState: 'idle', lastActivity: 0 });
     expect(crossedBy(w({ idleSeconds: 60 }) as never, idle, 600_000)).toBe('idle for 600s ≥ 60s');
+  });
+
+  // The wedge. This predicate exists to catch "a worker that stopped without
+  // finishing", and the worst way a worker stops is the one that keeps
+  // reporting `streaming` — an approval clobbered mid-turn leaves the session
+  // claiming to work with nothing arriving, forever. Gating on
+  // `ambientState === 'idle'` made every such watch unfireable, so the one
+  // failure a manager most wants a wake for was the one it could never send.
+  it('fires on a session that claims to be working but has produced nothing', () => {
+    const wedged = session({ ambientState: 'streaming', lastActivity: 0 });
+    expect(crossedBy(w({ idleSeconds: 60 }) as never, wedged, 600_000)).toBe(
+      'no activity for 600s ≥ 60s (still reports streaming)',
+    );
+    // Blocked-on-the-user counts too: 10 minutes parked on an approval is
+    // something the manager wants told, and the message says which it is.
+    const parked = session({ ambientState: 'waiting_approval', lastActivity: 0 });
+    expect(crossedBy(w({ idleSeconds: 60 }) as never, parked, 600_000)).toBe(
+      'no activity for 600s ≥ 60s (still reports waiting_approval)',
+    );
+  });
+
+  it('does not fire on a session that is producing, whatever its state', () => {
+    const working = session({ ambientState: 'streaming', lastActivity: 590_000 });
+    expect(crossedBy(w({ idleSeconds: 60 }) as never, working, 600_000)).toBeNull();
   });
 
   it('reports ONE crossing even when two thresholds are met', () => {

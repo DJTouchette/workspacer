@@ -198,6 +198,56 @@ describe('SessionUsageAccumulator.applyUsage — subagent (sidechain) turns', ()
   });
 });
 
+describe('SessionUsageAccumulator.applyUsage — <synthetic> placeholder rows', () => {
+  let acc: SessionUsageAccumulator;
+  beforeEach(() => {
+    acc = new SessionUsageAccumulator();
+  });
+
+  it('never zeroes the context gauge or renames the model', () => {
+    // The CLI answers a resume kickoff ("Continue from where you left off.")
+    // with a local row: model "<synthetic>", all-zero usage, text "No response
+    // requested.". Folding it as a real turn reported a healthy 96k-token
+    // session at 0 tokens on a "<synthetic>" model — which reads exactly like a
+    // wedged worker, and did mislead a live investigation.
+    const s = mkSession();
+    acc.applyUsage(
+      s,
+      'claude-opus-5',
+      { input_tokens: 90_000, cache_read_input_tokens: 6_683 },
+      'm1',
+    );
+    expect(s.usage!.contextTokens).toBe(96_683);
+
+    acc.applyUsage(
+      s,
+      '<synthetic>',
+      { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 },
+      'm2',
+    );
+    expect(s.usage!.contextTokens).toBe(96_683);
+    expect(s.usage!.model).toBe('claude-opus-5');
+    expect(s.peakContext).toBe(96_683);
+  });
+
+  it('bills a placeholder turn under the thread model, not a <synthetic> slice', () => {
+    const s = mkSession();
+    acc.applyUsage(s, 'claude-opus-5', { input_tokens: 1_000, output_tokens: 500 }, 'm1');
+    acc.applyUsage(s, '<synthetic>', { input_tokens: 0, output_tokens: 2_000 }, 'm2');
+    expect(Object.keys(s.usage!.models)).toEqual(['claude-opus-5']);
+    // opus: $5/M in, $25/M out — the placeholder's output prices at opus rates.
+    expect(s.usage!.models['claude-opus-5'].outputTokens).toBe(2_500);
+  });
+
+  it('leaves a real model turn untouched (the guard is placeholder-only)', () => {
+    const s = mkSession();
+    acc.applyUsage(s, 'claude-opus-5', { input_tokens: 1_000 }, 'm1');
+    acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 40_000 }, 'm2');
+    expect(s.usage!.contextTokens).toBe(40_000);
+    expect(s.usage!.model).toBe('claude-sonnet-4-5');
+  });
+});
+
 describe('SessionUsageAccumulator.rememberModel — external seenModels not clobbered', () => {
   beforeEach(() => {
     vi.mocked(configService.saveConfig).mockClear();

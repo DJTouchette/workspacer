@@ -1201,7 +1201,7 @@ type notifyWhenIn struct {
 	NotifySessionID string  `json:"notifySessionId,omitempty" jsonschema:"the session to wake when it crosses; omit to wake the watched session's parent (which is you, for a worker you dispatched)"`
 	Tokens          float64 `json:"tokens,omitempty" jsonschema:"fire when the session's CUMULATIVE tokens (input + output) reach this — e.g. 250000 to catch a worker whose scope is running away"`
 	USD             float64 `json:"usd,omitempty" jsonschema:"fire when the session's cumulative cost in USD reaches this — e.g. 10"`
-	IdleSeconds     float64 `json:"idleSeconds,omitempty" jsonschema:"fire when the session has sat idle this many seconds (a worker that stopped without finishing)"`
+	IdleSeconds     float64 `json:"idleSeconds,omitempty" jsonschema:"fire when NOTHING has arrived from the session for this many seconds — whether it is sitting at a prompt or still claiming to work. This is the catch-all for a worker that stopped without finishing, including a wedged one whose state still reads 'streaming'; the wake says which it is"`
 }
 
 type briefAppendIn struct {

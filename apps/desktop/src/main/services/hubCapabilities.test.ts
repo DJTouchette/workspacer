@@ -305,6 +305,31 @@ describe('agents.list — statusLine fallback for managed providers', () => {
     ]);
   });
 
+  // The freeze detector. A wedged agent reports `streaming` forever, so `state`
+  // alone can never distinguish "working" from "blocked on something nobody can
+  // see". `lastActivity` can: it moves only on real conversation deltas and
+  // ambient transitions, never on statusLine ticks. Without it on this row the
+  // only way to spot a stuck worker is to stat its worktree from outside.
+  it('carries lastActivity, so a caller can tell working from wedged', () => {
+    getAllSnapshots.mockReturnValue([
+      {
+        sessionId: 'w1',
+        cwd: '/proj',
+        ambientState: 'streaming',
+        usage: null,
+        statusLine: undefined,
+        lastActivity: 1_700_000_000_000,
+      },
+    ] as never);
+    expect(call('agents.list')).toEqual([
+      expect.objectContaining({
+        sessionId: 'w1',
+        state: 'streaming',
+        lastActivity: 1_700_000_000_000,
+      }),
+    ]);
+  });
+
   it('reports honest zeros/nulls when neither usage nor statusLine carries data', () => {
     getAllSnapshots.mockReturnValue([
       { sessionId: 'n1', cwd: '/proj', ambientState: 'idle', usage: null, statusLine: undefined },
