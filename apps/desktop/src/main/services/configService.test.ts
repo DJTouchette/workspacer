@@ -116,16 +116,26 @@ vi.mock('fs', () => ({
 // Import after the mock is registered so the ConfigService constructor sees it.
 // Because vitest hoists vi.mock, this import runs after the mock.
 import * as fsMock from 'fs';
-import { configService, deepMerge, applyWholesale, setPreWriteHookForTest } from './configService';
+import {
+  configService,
+  ConfigService,
+  deepMerge,
+  applyWholesale,
+  setPreWriteHookForTest,
+} from './configService';
 
 const mockedFs = vi.mocked(fsMock);
 
 describe('deepMerge semantics – via configService.saveConfig', () => {
   beforeEach(() => {
-    // Reset to defaults between tests by reloading from the (mocked) disk
-    // which always throws ENOENT, so loadFromDisk returns pure defaults.
-    // We cannot call reloadConfig() because it also tries writeDefaults(), but
-    // that's mocked out so it's safe.
+    // Reset to defaults between tests by reloading from a config.yaml that
+    // parses to an empty object, so deepMerge(defaultConfig(), {}) hands back
+    // a fresh defaults object every time. This is NOT an ENOENT reload: once
+    // the singleton has ever held a config (true from module import onward),
+    // loadFromDisk treats ENOENT as a mid-run disappearance and keeps the
+    // existing (possibly test-polluted) config rather than reseeding — the
+    // exact behavior the empty/comment-only-file fail-safe below depends on.
+    mockedFs.readFileSync.mockReturnValue('{}\n');
     configService.reloadConfig();
   });
 
@@ -512,7 +522,12 @@ describe('compare-and-swap — a writer that lands mid-save and does not hold th
 // get_config tools sit on top of.
 describe('save_config: an object-valued setting round-trips as an object', () => {
   beforeEach(() => {
-    mockedFs.readFileSync.mockReset().mockImplementation(() => enoent());
+    // A config.yaml that parses to {} resets to fresh defaults via the normal
+    // success path. A plain ENOENT would NOT reset here — the singleton has
+    // already held a config since module import, so loadFromDisk now treats
+    // ENOENT as a mid-run disappearance and keeps whatever config the prior
+    // test left behind instead of reseeding defaults.
+    mockedFs.readFileSync.mockReset().mockReturnValue('{}\n');
     mockedFs.writeFileSync.mockReset();
     vi.mocked(fsMock.statSync)
       .mockReset()
@@ -559,11 +574,35 @@ describe('loadFromDisk fail-safe — broken or unreadable config.yaml', () => {
     configService.reloadConfig();
   });
 
-  it('ENOENT (first run) still seeds the file with defaults', () => {
-    const cfg = configService.reloadConfig();
+  it('a genuine first run (no config loaded yet) seeds the file with defaults', () => {
+    // The shared singleton already has a config in memory, so reloadConfig()
+    // on it can never exercise "first run" — that state (this.config still
+    // undefined) only exists once, before a ConfigService's very first load.
+    // Construct a fresh instance directly (same mocked fs, no module
+    // reimport) to observe that state honestly.
+    const fresh = new ConfigService();
+    const cfg = fresh.getConfig();
+
     expect(cfg.ui.theme).toBe('everforest');
     // writeDefaults ran: defaults were persisted for the first run.
     expect(mockedFs.writeFileSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('ENOENT after a config was already loaded is NOT first run — no reseed, saves blocked', () => {
+    // The shared singleton already has a config (from module import). A
+    // disappearing config.yaml here is a mid-run disappearance (e.g. a hand
+    // edit that truncated before rewriting), not "no config yet" — it must
+    // NOT be reseeded with bare defaults, which would then be written over
+    // whatever the user actually has on the next save.
+    const before = configService.getConfig();
+    const cfg = configService.reloadConfig();
+
+    expect(cfg).toBe(before); // kept the existing in-memory config, not fresh defaults
+    expect(mockedFs.writeFileSync).not.toHaveBeenCalled();
+
+    mockedFs.writeFileSync.mockClear();
+    configService.saveConfig({ ui: { theme: 'light' } as any });
+    expect(mockedFs.writeFileSync).not.toHaveBeenCalled();
   });
 
   it('a YAML parse error falls back to defaults WITHOUT overwriting the file', () => {
@@ -592,6 +631,37 @@ describe('loadFromDisk fail-safe — broken or unreadable config.yaml', () => {
     // …but nothing is written over the user's broken file.
     expect(mockedFs.writeFileSync).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['an empty file', ''],
+    ['a comment-only file', '# just a comment\n'],
+  ])(
+    '%s parses to a non-object — refuses to persist instead of resetting to defaults',
+    (_label, contents) => {
+      // yaml.load('') / yaml.load('# comment') return undefined/null, not a
+      // parse error. That used to slip past the guard entirely: deepMerge(defaults,
+      // undefined) silently returns defaults with no persistBlocked, no backup, no
+      // log — and the NEXT save (which re-reads unconditionally) would then write
+      // those bare defaults over the user's real config. The property under test
+      // is the refusal, not just the in-memory parse result.
+      mockedFs.readFileSync.mockReturnValue(contents);
+      const cfg = configService.reloadConfig();
+
+      // Defaults in memory…
+      expect(cfg.ui.theme).toBe('everforest');
+      // …but nothing was written to "fix" the file.
+      expect(mockedFs.writeFileSync).not.toHaveBeenCalled();
+
+      // And the fail-safe actually blocks the next save, rather than letting it
+      // through to reset the real file to defaults.
+      mockedFs.writeFileSync.mockClear();
+      const saved = configService.saveConfig({ ui: { theme: 'light' } as any });
+      expect(mockedFs.writeFileSync).not.toHaveBeenCalled();
+      // The change is kept in memory only (saveConfigLocked's existing
+      // persistBlocked behavior), not silently dropped.
+      expect(saved.ui.theme).toBe('light');
+    },
+  );
 
   it('a non-ENOENT read error uses defaults in memory and blocks writes', () => {
     mockedFs.readFileSync.mockImplementation(() => {

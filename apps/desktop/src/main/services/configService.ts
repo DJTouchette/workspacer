@@ -554,7 +554,10 @@ export function setPreWriteHookForTest(fn: () => void): void {
   preWriteHook = fn;
 }
 
-class ConfigService {
+// Exported so tests can construct a genuinely fresh instance (this.config
+// starts undefined) without the fragility of resetting/reimporting the whole
+// module — the app itself only ever uses the `configService` singleton below.
+export class ConfigService {
   private config: Config;
   /** Notified whenever the effective config changes — our own saves AND writes
    *  by anyone else (the brain serving the web/phone clients, a hand edit). */
@@ -621,7 +624,19 @@ class ConfigService {
       data = fs.readFileSync(configPath, 'utf-8');
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        // First run — no config file yet: seed it with defaults.
+        if (this.config != null) {
+          // We had a config a moment ago — this is a mid-run disappearance
+          // (e.g. a hand edit that truncated before rewriting), not a first
+          // run. Treating it as first run would seed bare defaults and the
+          // next save would write them over whatever the user actually has.
+          this.persistBlocked = true;
+          console.error(
+            `[ConfigService] ${configPath} disappeared mid-run — running on the last-known ` +
+              'config in memory; saves are disabled until it reappears.',
+          );
+          return this.config;
+        }
+        // Genuine first run — no config file yet: seed it with defaults.
         this.writeDefaults();
         return defaults;
       }
@@ -639,6 +654,21 @@ class ConfigService {
 
     try {
       const parsed = yaml.load(data) as Partial<Config>;
+      if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        // A 0-byte / whitespace-only / comment-only config.yaml is NOT a parse
+        // error — yaml.load returns undefined/null and deepMerge would quietly
+        // hand back untouched defaults. Adopting that silently is a total
+        // config loss on the next save (saveConfigLocked re-reads via this
+        // same function unconditionally). Treat it like the parse-error branch
+        // below: block saves rather than let the next write reset the file.
+        this.persistBlocked = true;
+        console.error(
+          `[ConfigService] ${configPath} did not parse to an object — running on defaults ` +
+            'in memory; your config file was NOT modified and saves are disabled until it does:',
+          parsed,
+        );
+        return defaults;
+      }
       const merged = deepMerge(defaults, parsed) as Config;
       // migrateKeybindings runs first: a legacy-schema config is reset wholesale
       // to the flat defaults, after which migrateFlatChords is a no-op. A modern
