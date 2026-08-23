@@ -740,6 +740,31 @@ app.on('before-quit', (event) => {
   void gracefulShutdown().finally(() => app.quit());
 });
 
+// A raw SIGINT/SIGTERM (e.g. Ctrl-C on `make dev`, or `concurrently -k` killing
+// this process when a sibling exits) does NOT fire 'before-quit' in Electron —
+// Node's default handler just kills the process, skipping gracefulShutdown and
+// losing whatever the renderer hadn't already flushed (session/workspace state
+// is only written via the quit-time save handshake above). Routing the signal
+// through app.quit() makes dev-mode shutdown take the same path as a packaged
+// app's UI quit. A second signal while that's already in flight forces an exit
+// instead of leaving the terminal hanging on a stuck daemon.
+function handleTerminationSignal(signal: NodeJS.Signals): void {
+  if (!app.isReady()) {
+    process.exit(0);
+    return;
+  }
+  if (shuttingDown) {
+    console.warn(`[quit] second ${signal} during graceful shutdown — forcing exit`);
+    process.exit(1);
+    return;
+  }
+  console.log(`[quit] ${signal} received — routing through graceful shutdown`);
+  app.quit();
+}
+
+process.on('SIGINT', () => handleTerminationSignal('SIGINT'));
+process.on('SIGTERM', () => handleTerminationSignal('SIGTERM'));
+
 app.on('window-all-closed', () => {
   // Quit on all platforms; this fires before-quit, which runs gracefulShutdown.
   app.quit();
