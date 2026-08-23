@@ -196,6 +196,10 @@ vi.mock('./terminalShare', () => ({}));
 vi.mock('./supervisorSkill', () => ({ ensureSupervisorHome: vi.fn(() => '/home/super') }));
 
 const { registerHubCapabilities } = await import('./hubCapabilities');
+// The REAL ProgressReports singleton (over the mocked store and claudemon
+// above): its refusals and its per-session budget are the capability's
+// behaviour, so mocking it would leave the wiring asserting nothing.
+const { progressReporter } = await import('./progressReporter');
 const { searchProject } = await import('./searchService');
 const gitMock = await import('./gitService');
 
@@ -1037,6 +1041,69 @@ describe('agents.sendMessage', () => {
     await expect(async () => await call('agents.sendMessage', { sessionId: 's1' })).rejects.toThrow(
       /requires \{ sessionId, text \}/,
     );
+    expect(clientMock.message).not.toHaveBeenCalled();
+  });
+});
+
+// agents.reportProgress is the WORKER's half of the fleet wake channel, and the
+// wiring is what makes it exist at all: the service (progressReports.ts) landed
+// on master with no caller. These assert the two ends the wiring is responsible
+// for — the recipient is derived, never named, and the wake that arrives is a
+// 'progress' one, which is the whole reason the kind exists (a manager that
+// books a self-report as a finish has recorded work that has not landed).
+describe('agents.reportProgress', () => {
+  const worker = {
+    sessionId: 'w-1',
+    cwd: '/w/alpha',
+    label: 'alpha: parser',
+    parentSessionId: 'mgr-1',
+  };
+  const manager = { sessionId: 'mgr-1', cwd: '/w', label: 'Fleet Manager' };
+
+  beforeEach(() => {
+    progressReporter.reset();
+    getAllSnapshots.mockReturnValue([worker, manager]);
+  });
+
+  it('delivers the note to the caller’s PARENT as a progress wake, not a finish', async () => {
+    const res = await call('agents.reportProgress', {
+      callerSessionId: 'w-1',
+      note: 'phase 1 landed; starting the migration',
+    });
+    expect(res).toEqual({ deliveredTo: 'mgr-1' });
+
+    const [to, text] = clientMock.message.mock.calls[0] as [string, string];
+    expect(to).toBe('mgr-1');
+    expect(text).toContain('STILL RUNNING');
+    expect(text).not.toContain('finished');
+    expect(text).toContain('reports: phase 1 landed; starting the migration');
+    expect(text).toContain('alpha: parser (session:w-1, cwd /w/alpha)');
+  });
+
+  it('marks a blocked worker so the manager can tell it from an FYI', async () => {
+    await call('agents.reportProgress', {
+      callerSessionId: 'w-1',
+      note: 'the approach you gave me is wrong',
+      needsDecision: true,
+    });
+    expect(clientMock.message.mock.calls[0][1]).toContain('NEEDS A DECISION');
+  });
+
+  // The containment: there is no recipient param, so a caller the host cannot
+  // identify has nowhere for its note to go — and it is TOLD so rather than
+  // having the message dropped, because a worker that believes it reported and
+  // did not is the failure this channel exists to prevent.
+  it('refuses rather than guessing when the caller has no identity', async () => {
+    await expect(
+      async () => await call('agents.reportProgress', { note: 'hello' }),
+    ).rejects.toThrow(/could not identify your session/);
+    expect(clientMock.message).not.toHaveBeenCalled();
+  });
+
+  it('refuses a caller with no parent — nothing dispatched it', async () => {
+    await expect(
+      async () => await call('agents.reportProgress', { callerSessionId: 'mgr-1', note: 'hello' }),
+    ).rejects.toThrow(/no parent session/);
     expect(clientMock.message).not.toHaveBeenCalled();
   });
 });
