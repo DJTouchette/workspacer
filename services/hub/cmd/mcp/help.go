@@ -105,7 +105,15 @@ manager is replaced its dispatches are talking to a session that is gone.
 adopt_workers({fromSessionId: <the manager you replaced>, toSessionId: <your
 own session id>}) re-points them at you — after it, every one of those workers
 wakes YOU when it finishes, with no polling and no reconciliation by hand. The
-predecessor's id is on the first line of its handoff file. It is refused if you
+predecessor's id is on the first line of its handoff file. If it CRASHED and
+wrote no handoff, list_agents still points at it: every row carries
+parentSessionId, so a parent id that appears on no row of its own is a dead
+parent whose workers are still running — that is your fromSessionId. That
+narrows the search rather than settling it: an ended session leaves no row, so
+nothing there proves the dangling parent was a manager or that it was YOURS.
+With more than one dangling parent, read a worker of each group (its row's cwd,
+and get_snapshot for what it was dispatched to do) and match that against what
+you were told to take over before adopting. It is refused if you
 are not a live manager session (re-pointing workers at a parent no wake can
 reach would silence them, which is worse than leaving them), and "0 moved" is a
 real answer: the predecessor had nothing left in flight.`),
