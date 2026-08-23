@@ -11,8 +11,10 @@ package main
 // added on the app side flows through without a matching Go change.
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -518,11 +520,85 @@ func writeConfigYAML(cfg map[string]any) error {
 		log.Printf("brain: config marshal failed: %v", err)
 		return err
 	}
+	if err := refuseWipeWithDefaults(data); err != nil {
+		return err
+	}
 	if err := writeFileAtomic(configPath(), data, 0o644); err != nil {
 		log.Printf("brain: config write failed: %v", err)
 		return err
 	}
 	return nil
+}
+
+// errWipeWithDefaults is returned instead of publishing a whole-config document
+// that is EXACTLY the shipped defaults over a config.yaml that is something
+// else. Its callers already handle a write error correctly: saveLocked returns
+// the previous value rather than adopting one that is not on disk, and the
+// read-time migrations discard it — so the refusal costs a setting that did not
+// apply and saves every setting the user had.
+var errWipeWithDefaults = errors.New("refusing to replace a populated config.yaml with bare defaults")
+
+// refuseWipeWithDefaults is the LAST line of defence for the whole-config
+// serialize, sitting where every writer of config.yaml converges — saveLocked's
+// merge, writeDefaults' first-run seed, and the three read-time migrations that
+// call writeConfigYAML directly, outside both the cross-process lock and the CAS.
+//
+// It exists because loadFromDisk's fail-safes are not sufficient on their own.
+// Those guard the paths where "we ended up holding defaults" is a CONSEQUENCE of
+// a bad read (absent, unreadable, unparseable, empty). They cannot see a caller
+// that simply HANDS this function a defaults-shaped map it built itself:
+//
+//	cfg := defaultConfig()
+//	cfg["keybindings"] = map[string]any{"mode": "vim"} // legacy shape
+//	migrateKeybindings(cfg)                            // → writeConfigYAML(cfg)
+//
+// which publishes the shipped defaults over whatever config.yaml holds, with no
+// lock, no re-read, no persistBlocked, and no error anyone reads. That is not
+// hypothetical: it is how the developer's live ~/.config/workspacer/config.yaml
+// was reset to factory settings repeatedly on 2026-08-23 — a unit test built
+// that map and ran against the real config dir, so every `go test ./...` in
+// services/hub wiped the machine's real settings, including
+// claude.skipPermissionsDefault. The unbounded-blast-radius primitive is the
+// direct writeConfigYAML call, and this is the guard on it.
+//
+// The rule is deliberately exact rather than heuristic, so it cannot misfire:
+// refuse only when the document being written is BYTE-IDENTICAL to the
+// serialized defaults AND the file already there is a different, parseable,
+// non-empty config. Everything else is allowed, which is what keeps the normal
+// paths intact:
+//
+//   - genuine first run — config.yaml is absent, so there is nothing to lose and
+//     writeDefaults seeds it exactly as before;
+//   - unreadable / unparseable / empty on disk — loadFromDisk's persistBlocked
+//     branches own those, and returning nil here leaves their behaviour alone;
+//   - a no-op rewrite of a config that already IS the defaults;
+//   - every ordinary save, since a merge over a populated config is not
+//     byte-identical to the defaults document.
+//
+// The one case it would refuse legitimately is a user resetting EVERY setting at
+// once — every theme, bookmark, keybinding, pane and project back to its shipped
+// value in a single save. There is no such feature, and turning that into a
+// logged refusal is the right side to err on.
+func refuseWipeWithDefaults(data []byte) error {
+	bare, err := yaml.Marshal(defaultConfig())
+	if err != nil || !bytes.Equal(data, bare) {
+		return nil // not a bare-defaults document — an ordinary write
+	}
+	onDisk, err := os.ReadFile(configPath())
+	if err != nil {
+		return nil // absent (first run) or unreadable — seeding is the correct move
+	}
+	if bytes.Equal(onDisk, data) {
+		return nil // already the defaults — a no-op rewrite loses nothing
+	}
+	var parsed map[string]any
+	if err := yaml.Unmarshal(onDisk, &parsed); err != nil || parsed == nil {
+		return nil // unparseable or empty — loadFromDisk's persistBlocked owns those
+	}
+	log.Printf("brain: REFUSED a write that would have replaced %s (%d bytes of real settings) "+
+		"with the shipped defaults — the caller handed writeConfigYAML a defaults-shaped config "+
+		"rather than one derived from disk; nothing written", configPath(), len(onDisk))
+	return errWipeWithDefaults
 }
 
 // writeFileAtomic replaces path with data via a unique temp file in the SAME
