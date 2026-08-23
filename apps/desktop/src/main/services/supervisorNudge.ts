@@ -221,6 +221,39 @@ class SupervisorNudge {
   }
 
   /**
+   * Re-address a finished-wake that is still inside its coalesce window from a
+   * retiring manager to its successor — the queued-wake half of
+   * claudeSessionStore.reparentChildren.
+   *
+   * `pendingFinished` is keyed by PARENT id, so a worker that finished in the
+   * seconds before a handoff has its report addressed to the manager on its way
+   * out. Everything under `oldParentId` is by construction a child of the old
+   * manager (onFinished keys off the child's own parentSessionId), so the whole
+   * bucket moves. Merging into an existing window for the successor dedups by
+   * worker id; otherwise the window restarts, costing at most COALESCE_MS.
+   * No-op when nothing is queued.
+   */
+  reassignPendingFinish(oldParentId: string, newParentId: string): void {
+    if (oldParentId === newParentId) return;
+    const pending = this.pendingFinished.get(oldParentId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingFinished.delete(oldParentId);
+    const existing = this.pendingFinished.get(newParentId);
+    if (existing) {
+      for (const [workerId, worker] of pending.workers) existing.workers.set(workerId, worker);
+      return;
+    }
+    const workers = pending.workers;
+    const timer = setTimeout(() => {
+      this.pendingFinished.delete(newParentId);
+      void this.sendFinished(newParentId, workers);
+    }, COALESCE_MS);
+    timer.unref?.();
+    this.pendingFinished.set(newParentId, { timer, workers });
+  }
+
+  /**
    * BACKSTOP for a dropped wake (the "dark manager" failure): the onFinished
    * path is best-effort — if its message never lands, or a working→idle edge
    * was never observed, a manager can sit idle forever while a dispatched
