@@ -1516,6 +1516,58 @@ export function registerHubCapabilities(): void {
     return progressReporter.report({ callerSessionId, note, needsDecision });
   });
 
+  // ── Manager succession (the wake has to follow the fleet) ──────────────
+  //
+  // Every fleet wake is PARENT-KEYED: a worker-finished nudge goes to the
+  // worker's own live `isSupervisor` parent, the 15-minute backstop sweeps on
+  // the same field, and reportProgress above derives its recipient from it. So
+  // replacing a Fleet Manager ORPHANED every dispatch it had in flight — the
+  // successor could not receive their reports at all, and the workaround in the
+  // /handoff skill was a manual ritual: beg each worker to leave its result on
+  // disk, then reconcile a list of ids by hand.
+  //
+  // This is the verb that removes it. The store owns the move
+  // (claudeSessionStore.reparentChildren — live sessions, not-yet-registered
+  // spawns, and a finish already sitting in the coalesce window), including its
+  // refusals: a successor that is unknown, ended, or not a manager cannot
+  // receive a wake, and re-pointing workers at one is worse than the orphaning.
+  //
+  // THE CALLER IS THE SUCCESSOR, deliberately, and it names itself. The
+  // verified replacement recipe destroys the outgoing manager (Terminate drops
+  // the card) BEFORE the new one exists, so there is no moment at which the
+  // outgoing session could name its own successor — but the successor boots
+  // knowing both ids: its own is in its system prompt (mcpConfig's idNote), and
+  // its predecessor's is the first line of the handoff file it reads on its
+  // first turn. Doing it automatically on spawn was the alternative and was
+  // rejected: with the old card and its id already gone, the host would have to
+  // GUESS which dead manager a fresh one is replacing, and a wrong guess
+  // silently re-points a live worker's wakes into a conversation that never
+  // dispatched it — a worse failure than the one being fixed, and a silent one.
+  //
+  // OPERATOR-ONLY by construction, like agents.close and brief.append:
+  // `agents.reparent` is in neither scoped tier's exact-name allowlist, so a
+  // view scout or a phone token cannot reach it.
+  registerCapability('agents.reparent', (params: unknown) => {
+    const { fromSessionId, toSessionId } = (params ?? {}) as {
+      fromSessionId?: string;
+      toSessionId?: string;
+    };
+    if (!fromSessionId || !toSessionId) {
+      throw new Error('agents.reparent requires { fromSessionId, toSessionId }');
+    }
+    const { moved, pending } = claudeSessionStore.reparentChildren(fromSessionId, toSessionId);
+    const count = moved.length + pending.length;
+    return {
+      moved,
+      pending,
+      // Say which way it went, because "0 moved" is a real and useful answer —
+      // the predecessor had nothing in flight — and must not read as a failure.
+      note: count
+        ? `${count} dispatch(es) now report to ${toSessionId}: their finished and progress wakes arrive here, not at ${fromSessionId}.`
+        : `Nothing was still parented to ${fromSessionId} — it had no dispatch left in flight. Any result you are owed is on disk or in its transcript.`,
+    };
+  });
+
   // ── Project briefs ─────────────────────────────────────────────────────
   //
   // The atomic inspect-then-edit primitive. Before it, every brief update was

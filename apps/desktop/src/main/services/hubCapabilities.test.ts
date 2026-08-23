@@ -80,6 +80,7 @@ const getAllSnapshots = vi.fn(() => [] as unknown[]);
 const getSnapshot = vi.fn(() => null as unknown);
 const noteRequestedModel = vi.fn();
 const clearPendingQuestions = vi.fn();
+const reparentChildren = vi.fn(() => ({ moved: [] as string[], pending: [] as string[] }));
 vi.mock('./claudeSessionStore', async (importOriginal) => {
   // Keep the real contextTokensFromStatusLine — it's a pure helper, and the
   // agents.list statusLine-fallback test below needs the real math, not a mock.
@@ -91,6 +92,7 @@ vi.mock('./claudeSessionStore', async (importOriginal) => {
       getSnapshot: (...a: unknown[]) => getSnapshot(...a),
       noteRequestedModel: (...a: unknown[]) => noteRequestedModel(...a),
       clearPendingQuestions: (...a: unknown[]) => clearPendingQuestions(...a),
+      reparentChildren: (...a: unknown[]) => reparentChildren(...a),
     },
     contextTokensFromStatusLine: actual.contextTokensFromStatusLine,
   };
@@ -1105,6 +1107,65 @@ describe('agents.reportProgress', () => {
       async () => await call('agents.reportProgress', { callerSessionId: 'mgr-1', note: 'hello' }),
     ).rejects.toThrow(/no parent session/);
     expect(clientMock.message).not.toHaveBeenCalled();
+  });
+});
+
+// agents.reparent is the manager-succession verb, and the wiring is the whole
+// point: claudeSessionStore.reparentChildren landed fully tested with NO caller,
+// so a replaced Fleet Manager still orphaned every dispatch it had in flight.
+// These assert the seam — the two ids reach the store in the right order, and
+// the store's refusals reach the caller instead of being smoothed over.
+describe('agents.reparent', () => {
+  beforeEach(() => {
+    reparentChildren.mockReset();
+    reparentChildren.mockReturnValue({ moved: [], pending: [] });
+  });
+
+  it('hands the store (outgoing, successor) in that order and says where the wakes go now', () => {
+    reparentChildren.mockReturnValue({ moved: ['w-1', 'w-2'], pending: ['w-3'] });
+    const res = call('agents.reparent', { fromSessionId: 'old-mgr', toSessionId: 'new-mgr' }) as {
+      moved: string[];
+      pending: string[];
+      note: string;
+    };
+    expect(reparentChildren).toHaveBeenCalledWith('old-mgr', 'new-mgr');
+    expect(res.moved).toEqual(['w-1', 'w-2']);
+    expect(res.pending).toEqual(['w-3']);
+    expect(res.note).toContain('3 dispatch(es) now report to new-mgr');
+  });
+
+  // "Nothing moved" is the answer when the predecessor had nothing left in
+  // flight, and a successor that reads it as a failure would fall back to the
+  // hand-reconciliation ritual this verb exists to delete.
+  it('reports an empty move as a real answer, not an error', () => {
+    const res = call('agents.reparent', { fromSessionId: 'old-mgr', toSessionId: 'new-mgr' }) as {
+      moved: string[];
+      note: string;
+    };
+    expect(res.moved).toEqual([]);
+    expect(res.note).toContain('Nothing was still parented to old-mgr');
+  });
+
+  it('requires both ids — a half-named move is refused before the store is touched', () => {
+    expect(() => call('agents.reparent', { fromSessionId: 'old-mgr' })).toThrow(
+      /requires \{ fromSessionId, toSessionId \}/,
+    );
+    expect(() => call('agents.reparent', { toSessionId: 'new-mgr' })).toThrow(
+      /requires \{ fromSessionId, toSessionId \}/,
+    );
+    expect(reparentChildren).not.toHaveBeenCalled();
+  });
+
+  // The store refuses a successor no wake could reach (unknown, ended, not a
+  // manager). That refusal is the safety property; swallowing it here would
+  // report a successful adoption of workers that had just been silenced.
+  it('surfaces the store’s refusal verbatim', () => {
+    reparentChildren.mockImplementation(() => {
+      throw new Error('reparent_children: new-mgr is not a manager (isSupervisor)');
+    });
+    expect(() =>
+      call('agents.reparent', { fromSessionId: 'old-mgr', toSessionId: 'new-mgr' }),
+    ).toThrow(/is not a manager/);
   });
 });
 

@@ -47,13 +47,17 @@ description: Fleet status at a glance for the Workspacer Fleet Manager — a tig
 Produce ONE concise digest and stop. Do not spawn anything; do not poll. Read,
 compose, report. Sources, cheapest first: your own fleet brief
 (.workspacer/brief.md under your cwd), each project's brief, and \`list_agents\`
-for live state. Use \`get_conversation\` with \`sinceSeq\` only if you need a
-worker's latest outcome you have not already recorded.
+for live state. The \`report_progress\` notes your workers sent you are already
+in THIS conversation as \`[fleet]\` wakes — read them there rather than asking a
+worker to repeat itself. Use \`get_conversation\` with \`sinceSeq\` only if you
+need a worker's latest outcome you have not already recorded.
 
 Emit exactly these four sections (drop a section only if it is genuinely empty):
 
 **In flight** — each running dispatch: \`session:<id>\` — project — one-line task,
-and whether it is working, waiting on approval, or blocked.
+and whether it is working, waiting on approval, or blocked. Include the last
+progress note it sent you, if any; a note marked NEEDS A DECISION means that
+worker is blocked on YOUR answer, so say what you are going to tell it.
 
 **Landed recently** — the newest entries across the project briefs' "## Recently"
 (a few lines, newest first), each with its project.
@@ -211,16 +215,27 @@ handoff has already been consumed — delete it and carry on from the briefs.
 - <the ONE thing I was about to do, concrete enough that the successor can just
   do it without reconstructing my reasoning>
 
-## Orphaned wakes
-The worker-finished wake is routed to a worker's PARENT SESSION — the session
-that wrote this file, which is gone. Every worker under "In flight" will finish
-SILENTLY: no [fleet] message will ever reach you about it. So, ONCE, on your
-first turn, \`list_agents\` and reconcile it against the ids above; for any that
-has already finished, \`get_conversation\` it, do what that entry says is owed,
-and file the outcome. For any still running, re-check those specific ids each
-time the user next speaks to you, until each one is resolved. This is the one
-sanctioned exception to NEVER POLL, and it is bounded: only these ids, only
-when the user is already talking to you, and it ends when the list empties.
+## Adopt the fleet — your FIRST action, before anything else
+Every fleet wake is routed to a worker's PARENT SESSION: its finished report and
+its \`report_progress\` notes go to whatever dispatched it, which is the session
+that wrote this file and is gone. Left alone, every worker under "In flight"
+finishes SILENTLY. One call moves them onto you:
+
+\`adopt_workers({fromSessionId: "<the id on the 'Written by' line at the top of
+this file>", toSessionId: "<your own session id>"})\`
+
+It moves every dispatch still parented to me — including one spawned so recently
+it has not reported yet, and a finish already on its way — and from then on they
+wake YOU when they land. No polling, no reconciliation by hand. It tells you what
+it moved; "nothing was still parented" is a real answer (they all finished
+already), not a failure, and it is refused out loud if you are not a live manager
+session rather than quietly silencing anyone.
+
+Then, ONCE, \`list_agents\` and reconcile it against the ids above for the ones
+that finished BEFORE you adopted them: \`get_conversation\` each, do what its
+entry says is owed, and file the outcome. That pass is bounded — only these ids,
+only once — and everything after it arrives as a wake, the way it does for a
+dispatch you made yourself.
 
 ## Close out
 When every "In flight" entry is resolved and every fact above is either acted on
@@ -239,14 +254,17 @@ The successor reads its fleet brief on its first turn no matter what, so the
 pointer is what guarantees discovery even on an older build whose doctrine does
 not mention handoffs. It removes the line as part of "Close out".
 
-## Step 5 — leave the fleet a paper trail, not a promise
+## Step 5 — leave the fleet a paper trail as well
 
-For each in-flight worker, \`send_message\` it one short instruction so its
-result survives the lost wake: a ship worker leaves a dated line in its
-project's brief "## Recently" when it finishes; a scout writes its findings to
-the report file it was told to produce. A queued message does not disturb a
-worker mid-turn. Now the successor learns the outcome from disk even if it
-never reads the transcript.
+Your successor adopts your workers on its first turn, so their reports are no
+longer lost by default — but a wake is one message in one conversation, and a
+dated brief line outlives it. For each in-flight worker, \`send_message\` it one
+short instruction: a ship worker leaves a dated line in its project's brief
+"## Recently" when it finishes; a scout writes its findings to the report file
+it was told to produce. A queued message does not disturb a worker mid-turn. And
+remind it that \`report_progress\` reaches its manager from ANY tier, view scouts
+included — one line after the handover tells your successor what it is holding
+without waiting for the whole task to land.
 
 ## Step 6 — hand it to the user, and be honest that you cannot do it yourself
 
@@ -265,7 +283,8 @@ So finish by telling the user, in this order:
    kills this session AND drops the card, so nothing resumes it.
 3. Open the Fleet Manager again from the Overview. With no card to reuse, it
    spawns a genuinely fresh session — new context, same role, same grants,
-   re-minted from current config — and reads the handoff on its first turn.
+   re-minted from current config — and reads the handoff on its first turn,
+   whose first instruction is to adopt your workers so their wakes follow it.
 
 Then stop. Do not dispatch anything new: a dispatch you make now is a dispatch
 nobody is waiting for.
