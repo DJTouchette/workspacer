@@ -34,6 +34,23 @@ describe('deriveFleetRoot', () => {
   it('a lone project pins its PARENT (the project is one level below the root)', () => {
     expect(deriveFleetRoot('', ['/home/u/Work/alpha'], '/home/u')).toBe('/home/u/Work');
   });
+  // The break this pins: agents.fleetRoot typed as '~/' in Settings reached the
+  // spawn as a directory literally named '~' (nothing downstream expands it, by
+  // binding decision), so every Fleet Manager came up stopped-on-arrival — a
+  // card that opens into an empty session and answers no messages.
+  it("expands a leading '~' in the explicit root — a person typing '~/' means home", () => {
+    expect(deriveFleetRoot('~/', [], '/home/u')).toBe('/home/u/');
+    expect(deriveFleetRoot('~', [], '/home/u')).toBe('/home/u');
+    expect(deriveFleetRoot('~/Work', [], '/home/u')).toBe('/home/u/Work');
+    expect(deriveFleetRoot('  ~/Work  ', [], '/home/u')).toBe('/home/u/Work');
+  });
+  it("leaves '~user' and mid-path tildes alone — only the home shorthand is ours to resolve", () => {
+    expect(deriveFleetRoot('~alice/Work', [], '/home/u')).toBe('~alice/Work');
+    expect(deriveFleetRoot('/srv/a~b', [], '/home/u')).toBe('/srv/a~b');
+  });
+  it('expands the same shorthand in project paths before taking their common parent', () => {
+    expect(deriveFleetRoot('', ['~/Work/alpha', '~/Work/beta'], '/home/u')).toBe('/home/u/Work');
+  });
   it('falls back to home when projects share no meaningful parent', () => {
     expect(deriveFleetRoot('', ['/srv/x', '/opt/y'], '/home/u')).toBe('/home/u');
     expect(deriveFleetRoot('', [], '/home/u')).toBe('/home/u');

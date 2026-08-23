@@ -41,7 +41,7 @@ import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonD
 import { ensureSupervisorHome, installSupervisorSkill } from './supervisorSkill';
 import { installManagerSkills } from './managerSkills';
 import { notifySystem } from './systemNotice';
-import { normalizeSpawnCwd } from '../lib/spawnCwd';
+import { assertSpawnCwd, normalizeSpawnCwd } from '../lib/spawnCwd';
 import { explainUnsupportedManagedOptions } from '../lib/managedSpawnOptions';
 
 /** Install hints surfaced when a provider CLI isn't on PATH. */
@@ -196,6 +196,10 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   // rather than inheriting some repo; everything else uses the given cwd.
   let cwd = normalizeSpawnCwd(opts.cwd);
   if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
+  // Refused here, before a session id exists: this path's 200 arrives BEFORE
+  // the adapter's child launches, so an unusable cwd otherwise surfaces as a
+  // live-looking card whose session is already stopped (see spawnCwd.ts).
+  assertSpawnCwd(cwd);
 
   const isClaudeStream = provider === 'claude';
   // Codex's stream transport mirrors Claude's: headless, GUI-only, no PTY.
@@ -422,6 +426,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
 async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   let cwd = opts.cwd || process.env.HOME || os.homedir();
   if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
+  assertSpawnCwd(cwd);
   const bin = resolveAgentBinary('codex', configuredBin('codex'));
   const sessionId = opts.resumeSessionId || randomUUID();
   // Same supervisor full-access resolution as the managed path above.

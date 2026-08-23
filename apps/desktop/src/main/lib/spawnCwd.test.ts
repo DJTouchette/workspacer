@@ -9,12 +9,16 @@
 // trailing slashes; this side existence-checked and silently fell back to
 // $HOME. Each suite tested its own rule, so neither noticed.
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { SweepTally, itSweptTheWholeCorpus } from '../../../tests/support/sweepTally';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { normalizeSpawnCwd } from './spawnCwd';
+import { normalizeSpawnCwd, spawnCwdProblem, assertSpawnCwd } from './spawnCwd';
+import { notifySystem } from '../services/systemNotice';
+
+// The guard's whole point is that the failure is USER-visible; capture the notice.
+vi.mock('../services/systemNotice', () => ({ notifySystem: vi.fn() }));
 
 interface SpawnCwdCase {
   in: string;
@@ -61,4 +65,51 @@ describe('spawn cwd normalization — cross-language contract', () => {
   });
 
   itSweptTheWholeCorpus(tally, 'the spawnCwds block', 14, { allow: 0, deny: 0 });
+});
+
+/**
+ * The guard that makes the rule above survivable. normalizeSpawnCwd passes '~'
+ * through by design; claudemon then answers 200, registers the id and only
+ * afterwards fails to launch the child — so without this pre-flight the user
+ * gets an agent card whose session is already stopped and whose messages all
+ * 409. Reproduced exactly that way before this guard existed.
+ */
+describe('spawnCwdProblem — a cwd no process could run in', () => {
+  it('accepts a real directory', () => {
+    expect(spawnCwdProblem(os.tmpdir())).toBeNull();
+  });
+
+  it('rejects a path that does not exist', () => {
+    const problem = spawnCwdProblem(path.join(os.tmpdir(), 'wks-no-such-dir-4f3a9c'));
+    expect(problem).toContain('not an existing directory');
+  });
+
+  it('rejects a FILE — existing is not the same as usable as a cwd', () => {
+    const file = path.join(os.tmpdir(), `wks-spawncwd-${process.pid}.txt`);
+    fs.writeFileSync(file, 'x');
+    try {
+      expect(spawnCwdProblem(file)).toContain('not an existing directory');
+    } finally {
+      fs.unlinkSync(file);
+    }
+  });
+
+  it("explains the '~' case rather than just reporting it — that spelling is the trap", () => {
+    // The literal that broke the Fleet Manager: agents.fleetRoot typed as '~/',
+    // trailing slash stripped by normalizeSpawnCwd, handed to the daemon as a
+    // directory named '~'.
+    const problem = spawnCwdProblem(normalizeSpawnCwd('~/'));
+    expect(problem).toContain('"~"');
+    expect(problem).toContain('not expanded');
+    // And a real path that merely CONTAINS a tilde gets no such lecture.
+    expect(spawnCwdProblem(path.join(os.tmpdir(), 'a~b'))).not.toContain('not expanded');
+  });
+
+  it('assertSpawnCwd raises a user-visible notice AND throws — a console line was the bug', () => {
+    expect(() => assertSpawnCwd('~')).toThrow(/not an existing directory/);
+    expect(notifySystem).toHaveBeenCalledWith(
+      expect.objectContaining({ level: 'error', title: 'Agent could not start' }),
+    );
+    expect(() => assertSpawnCwd(os.tmpdir())).not.toThrow();
+  });
 });

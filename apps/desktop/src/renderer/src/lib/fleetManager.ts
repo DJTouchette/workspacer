@@ -199,6 +199,26 @@ export function buildManagerKickoff(ask: string, fullAccess = false): string {
 }
 
 /**
+ * Expand a leading '~' against the home directory.
+ *
+ * The spawn boundary deliberately does NOT do this — main/lib/spawnCwd.ts
+ * trims a caller's cwd and nothing else (BINDING DECISION 1), so '~' reaches
+ * the daemon as an ordinary filename and the agent is launched in a directory
+ * that does not exist. That rule is about paths arriving over the bus; this
+ * value is different in kind: a person typed it into Settings → Projects root,
+ * where '~/' is simply how a person spells their home directory. Expanding it
+ * HERE, at the one place the setting is read, keeps the boundary's rule intact
+ * while the setting means what the person meant.
+ *
+ * '~user' is left alone: resolving another account's home is not something the
+ * renderer can do, and guessing would be worse than passing it through.
+ */
+function expandHome(p: string, home: string): string {
+  if (p !== '~' && !p.startsWith('~/') && !p.startsWith('~\\')) return p;
+  return `${home.replace(/[/\\]+$/, '')}${p.slice(1)}`;
+}
+
+/**
  * Resolve the manager's home directory: the explicit config
  * (agents.fleetRoot) wins; else the COMMON PARENT of the configured projects
  * (the directory that visibly "contains the user's work"); else the home
@@ -209,9 +229,9 @@ export function deriveFleetRoot(
   projectCwds: string[],
   home: string,
 ): string {
-  const explicit = (fleetRoot ?? '').trim();
+  const explicit = expandHome((fleetRoot ?? '').trim(), home);
   if (explicit) return explicit;
-  const dirs = projectCwds.map((c) => c.replace(/\/+$/, '')).filter(Boolean);
+  const dirs = projectCwds.map((c) => expandHome(c, home).replace(/\/+$/, '')).filter(Boolean);
   if (dirs.length > 0) {
     let parts = dirs[0].split('/');
     for (const d of dirs.slice(1)) {

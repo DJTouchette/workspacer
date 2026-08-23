@@ -49,6 +49,8 @@
  * other code point is an ordinary character in a filename.
  */
 import * as os from 'os';
+import * as fs from 'fs';
+import { notifySystem } from '../services/systemNotice';
 
 /** The whitespace `normalizeSpawnCwd` strips — space, tab and the four ASCII
  *  vertical/form controls. The Go twin carries the identical literal set. */
@@ -58,4 +60,56 @@ export function normalizeSpawnCwd(cwd: string | undefined | null): string {
   let s = (cwd ?? '').replace(TRIM_SET, '');
   while (s.length > 1 && (s.endsWith('/') || s.endsWith('\\'))) s = s.slice(0, -1);
   return s === '' ? os.homedir() : s;
+}
+
+/**
+ * The other half of that decision, and the reason it needs one.
+ *
+ * `normalizeSpawnCwd` hands the daemon the caller's string verbatim so that "a
+ * spawn that cannot run where it was asked to fails where it was asked to" —
+ * but until this guard the failure was INVISIBLE. claudemon registers the
+ * session id and answers 200 BEFORE the child launches (`spawn_session` drives
+ * it in the background), so a cwd that is not a directory produced a card whose
+ * session was already `stopped` and whose every message came back
+ * `409 session has ended and cannot accept chat input`. That is the
+ * "it opens up, I'm stuck in a new session and nothing goes through" report:
+ * the agent never existed, and nothing said so.
+ *
+ * A literal `~` is the spelling that gets here: BINDING DECISION 1 means no
+ * layer on the caller's path expands it, so a config field a person typed
+ * `~/` into names a directory that does not exist.
+ *
+ * NOT part of the Go twin — `normalizeCwd` in the brain is a pure string rule
+ * and has no notifier to raise. This is the desktop's own pre-flight, in the
+ * shape of managedSpawn's `assertProviderInstalled`: refuse with a banner
+ * rather than mint a dead agent.
+ */
+export function spawnCwdProblem(cwd: string): string | null {
+  let isDir = false;
+  try {
+    isDir = fs.statSync(cwd).isDirectory();
+  } catch {
+    isDir = false;
+  }
+  if (isDir) return null;
+  // Named explicitly, because "~" LOOKS like a valid path to the person who
+  // typed it — the message has to say why it isn't, not just that it isn't.
+  const tilde = cwd.startsWith('~')
+    ? ' A leading "~" is not expanded on this seam — write the absolute path (e.g. /home/you/Work).'
+    : '';
+  return `Working directory "${cwd}" is not an existing directory.${tilde}`;
+}
+
+/** Pre-flight for every spawn entry point: refuse a cwd no process could run
+ *  in, loudly (in-app banner) and before a session id exists to be confused by. */
+export function assertSpawnCwd(cwd: string): void {
+  const problem = spawnCwdProblem(cwd);
+  if (!problem) return;
+  notifySystem({
+    level: 'error',
+    key: 'spawn-cwd',
+    title: 'Agent could not start',
+    detail: problem,
+  });
+  throw new Error(problem);
 }

@@ -23,6 +23,16 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// The spawn cwd pre-flight is real fs (lib/spawnCwd.ts) and these are wire-shape
+// tests against paths like '/proj' that do not exist on disk. Keep the
+// normalization real and stub only the assertion — its own behavior is pinned in
+// lib/spawnCwd.test.ts, and the test below pins that this path still calls it.
+const assertSpawnCwdMock = vi.fn();
+vi.mock('../lib/spawnCwd', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/spawnCwd')>()),
+  assertSpawnCwd: (...a: unknown[]) => assertSpawnCwdMock(...a),
+}));
+
 const spawnManagedMock = vi.fn(async () => 'managed-session-id');
 const spawnMock = vi.fn(async () => 'pty-session-id');
 vi.mock('./claudemonSessionClient', () => ({
@@ -119,6 +129,34 @@ function lastMeta(): Payload {
 beforeEach(() => {
   vi.clearAllMocks();
   mockConfig = {};
+});
+
+/**
+ * The pre-flight itself. claudemon answers 200 and registers the session id
+ * BEFORE the child launches, so a cwd no process could run in used to reach the
+ * user as an agent card whose session was already stopped and whose every
+ * message came back 409 — the "it opens and nothing goes through" report. The
+ * refusal has to happen on this side of the spawn, so the wiring is pinned here
+ * and the rule itself in lib/spawnCwd.test.ts.
+ */
+describe('spawnManagedAgent — spawn cwd pre-flight', () => {
+  it('checks the RESOLVED cwd before spawning', async () => {
+    assertSpawnCwdMock.mockClear();
+    await spawnManagedAgent({ provider: 'codex', cwd: '/proj' });
+    expect(assertSpawnCwdMock).toHaveBeenCalledWith('/proj');
+  });
+
+  it('a refused cwd fails the spawn instead of minting a session', async () => {
+    assertSpawnCwdMock.mockClear();
+    spawnManagedMock.mockClear();
+    assertSpawnCwdMock.mockImplementationOnce(() => {
+      throw new Error('Working directory "~" is not an existing directory.');
+    });
+    await expect(spawnManagedAgent({ provider: 'codex', cwd: '/proj' })).rejects.toThrow(
+      'not an existing directory',
+    );
+    expect(spawnManagedMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('spawnManagedAgent — codex headless (stream) wire shape', () => {

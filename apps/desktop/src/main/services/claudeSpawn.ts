@@ -19,7 +19,7 @@
  * the already-safe `skipPermissions` / `permissionMode` in.
  */
 import * as os from 'os';
-import { normalizeSpawnCwd } from '../lib/spawnCwd';
+import { assertSpawnCwd, normalizeSpawnCwd } from '../lib/spawnCwd';
 import * as fs from 'fs';
 import { randomUUID } from 'crypto';
 import { claudeSessionStore } from './claudeSessionStore';
@@ -291,11 +291,15 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     }),
   });
   // Fleet supervisors with no explicit cwd open in their dedicated home
-  // (~/.workspacer); everything else uses the given cwd (when it exists) or
-  // falls back to home. The existence guard tolerates a stale/bad path from a
-  // remote caller instead of failing the spawn.
+  // (~/.workspacer); everything else uses the given cwd exactly as written —
+  // normalizeSpawnCwd trims and nothing more, deliberately (BINDING DECISION 1:
+  // no layer on a caller's path expands '~'). Which is why the pre-flight below
+  // has to exist: a path that cannot be a working directory must fail HERE,
+  // where the user is told, rather than as a session claudemon registers and
+  // then stops the instant the child fails to launch.
   let cwd = normalizeSpawnCwd(opts.cwd);
   if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
+  assertSpawnCwd(cwd);
   // A profile spawn inherits the primary login's trust for this folder, or a
   // PTY parks on the invisible trust dialog (mode "unknown", dead pane).
   if (env.CLAUDE_CONFIG_DIR) syncAccountTrust(env.CLAUDE_CONFIG_DIR, cwd);

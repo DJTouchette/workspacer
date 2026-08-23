@@ -193,7 +193,8 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
       </Row>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         The parent directory the manager opens in. Leave blank to derive it from your configured
-        projects’ common parent (else your home directory).
+        projects’ common parent (else your home directory). An absolute path or a leading{' '}
+        <code>~/</code>; anything else is taken literally.
       </div>
 
       <CheckRow
