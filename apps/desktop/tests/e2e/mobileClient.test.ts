@@ -18,6 +18,7 @@ import {
   WORKING_FINISHED,
   MULTI_QUESTION_A,
   MULTI_QUESTION_B,
+  stallSnapshot,
   type MobileHub,
 } from './fixtures/mobileHub';
 
@@ -174,6 +175,72 @@ test.describe('mobile client', () => {
     await expect(done.first().locator('.who')).toHaveText('workspacer');
     await expect(done.first().locator('.txt')).toContainText('attention feed');
     await expect(done.first().locator('.review')).toHaveText('Review diff');
+  });
+
+  test('a working agent stuck for 5 minutes raises Not moving, then its stalled workflow follows at 8', async ({
+    page,
+  }) => {
+    await openClient(page);
+    // ws1 ('workspacer') carries no statusLine.receivedAt, so once it stalls
+    // it reads as alive-but-quiet ("Not moving") rather than silent — the
+    // desktop's own fallback for a session with no status-line signal.
+    const start = Date.now();
+    await page.clock.install({ time: start });
+
+    // Nothing about ws1 changes from here: same conversation, same tool
+    // counts, same workflow totals — its fingerprint never moves, so the
+    // 5-minute session stall fires purely off the clock.
+    await page.clock.fastForward(5.5 * 60_000);
+    await page.locator('nav button[data-tab="inbox"]').click();
+    // Fast-forwarding real time also ages rivet's pending question past its
+    // own 5-minute STUCK_MS, so it picks up the same '…' glyph — match on the
+    // card's own text, not the shared glyph, to isolate ws1's card.
+    const notMoving = page.locator('.item').filter({ hasText: 'Not moving' });
+    await expect(notMoving.first()).toBeVisible({ timeout: 5000 });
+    await expect(notMoving.first().locator('.who')).toHaveText('workspacer');
+    await expect(notMoving.first().locator('.ibd')).toContainText('nothing has changed for');
+    // The session-level card must not claim silence it can't observe.
+    await expect(notMoving.first().locator('.ibd')).not.toContainText('No signal');
+
+    // ws1's own running workflow ('mobile-audit') gets more rope (8 minutes)
+    // before it's judged stalled on its own — a run whose agents are all
+    // parked looks exactly as busy as one that's flying, so it needs the
+    // same fingerprint treatment, against a longer fuse.
+    await page.clock.fastForward(3 * 60_000);
+    await page.locator('nav button[data-tab="fleet"]').click();
+    await page.locator('nav button[data-tab="inbox"]').click();
+    const wfStalled = page.locator('.item').filter({ hasText: 'Workflow not moving' });
+    await expect(wfStalled.first()).toBeVisible({ timeout: 5000 });
+    await expect(wfStalled.first().locator('.ibd')).toContainText('mobile-audit');
+    await expect(wfStalled.first().locator('.ibd')).toContainText('still marked running');
+
+    // The session-level "Not moving" card must still be there alongside it —
+    // two distinct facts, not one collapsing into the other.
+    await expect(notMoving.first()).toBeVisible();
+  });
+
+  test('a working agent whose status line goes silent raises No signal instead', async ({
+    page,
+  }) => {
+    await openClient(page);
+    const start = Date.now();
+    await page.clock.install({ time: start });
+
+    // A fresh push establishes the fingerprint mark and a status line that
+    // ticked just now — so far indistinguishable from any other working agent.
+    hub.pushSnapshot(stallSnapshot(start));
+    await expect(page.locator('.agent[data-agent="stall1"]')).toBeVisible({ timeout: 5000 });
+
+    // Six minutes pass with no further snapshot: the conversation/tool-call
+    // fingerprint is frozen (past the 5-minute session threshold) AND the
+    // status line hasn't ticked in six minutes (past the 90s silence
+    // threshold) — the process itself has gone quiet, not just its output.
+    await page.clock.fastForward(6 * 60_000);
+    await page.locator('nav button[data-tab="inbox"]').click();
+    const noSignal = page.locator('.item').filter({ hasText: 'No signal' });
+    await expect(noSignal.first()).toBeVisible({ timeout: 5000 });
+    await expect(noSignal.first().locator('.who')).toHaveText('stall-repo');
+    await expect(noSignal.first().locator('.ibd')).toContainText('stopped reporting');
   });
 
   test('chat renders work cards, flow cards, changed files and the composer', async ({ page }) => {

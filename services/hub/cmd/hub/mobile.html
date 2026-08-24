@@ -790,6 +790,16 @@
   const snoozed = new Map();       // signature -> until ts
   const SNOOZE_MS = 30 * 60 * 1000;
   const BIGDIFF_LINES = 80, STUCK_MS = 5 * 60 * 1000, ERROR_RECENT_MS = 5 * 60 * 1000;
+  // Stall detection — ported from lib/stallDetector.ts + useAttentionFeed.ts.
+  // sessionId -> {fingerprint, since}: when the session's (or its workflow's)
+  // observable progress last changed. Held separately because a run's own
+  // agents can advance while the parent session otherwise looks idle-quiet,
+  // and vice versa — each is judged against its own fingerprint.
+  const progressMarks = new Map();
+  const wfMarks = new Map();
+  const STALL_MS = 5 * 60 * 1000;          // a working session with no fingerprint change this long
+  const WORKFLOW_STALL_MS = 8 * 60 * 1000; // a workflow's agents get more rope — a turn is a whole session's work
+  const SILENT_MS = 90 * 1000;             // how long without a status-line tick before the process itself reads dead
 
   /** Decisions you already made, kept client-side and anchored by conversation
    *  length so they survive the snapshot rebuilds that replace `conversation`. */
@@ -933,6 +943,7 @@
     const next = snap.sparse && prev ? Object.assign({}, prev, snap) : snap;
     sessions.set(snap.sessionId, next);
     trackDone(next);
+    trackProgress(next);
   }
   // The working→idle edge is the only evidence a turn finished; without holding
   // it, a finished agent is indistinguishable from one that never ran.
@@ -943,6 +954,88 @@
     else if (cur === 'thinking' || cur === 'streaming' || cur === 'background' ||
              cur === 'waiting_input' || cur === 'waiting_approval') doneAt.delete(id);
     prevAmbient.set(id, cur);
+  }
+  // Everything observable that moves when real work is happening, as one
+  // string — counts and totals rather than contents, so it only has to answer
+  // "did anything advance". Token spend is in here because it moves mid-turn
+  // even when nothing else does (a long extended-thinking block produces no
+  // conversation items at all). Desktop-sourced snapshots carry these fields
+  // camelCase; a headless brain-only session's raw claudemon row carries only
+  // `tool_calls` and `status_line` (snake_case) — read as a fallback so a
+  // session with no desktop attached still gets a real signal instead of a
+  // fingerprint frozen at "0" forever.
+  function progressFingerprint(s) {
+    const sl = s.statusLine || {}, rawSl = s.status_line || {}, u = s.usage || {};
+    const outTok = sl.totalOutputTokens ?? rawSl.total_output_tokens ?? u.totalOutputTokens ?? 0;
+    const inTok = sl.totalInputTokens ?? rawSl.total_input_tokens ?? u.totalInputTokens ?? 0;
+    const totalToolCalls = s.totalToolCalls ?? s.tool_calls ?? 0;
+    const subs = (s.subagents || [])
+      .map((a) => `${a.id}${a.status}${a.toolCalls ?? 0}${a.tokens ?? 0}`).join(',');
+    return [
+      (s.conversation || []).length,
+      (s.activeToolCalls || []).length,
+      (s.completedToolCalls || []).length,
+      (s.fileChanges || []).length,
+      totalToolCalls,
+      outTok,
+      inTok,
+      subs,
+      workflowFingerprint(s),
+    ].join('|');
+  }
+  // The workflow half, on its own so a run can be judged against its own
+  // agents' progress rather than the whole session's — a run whose agents are
+  // all parked looks exactly as busy as one that's flying.
+  function workflowFingerprint(s) {
+    return (s.workflows || [])
+      .map((w) => `${w.runId}${w.status}${w.totalToolCalls ?? 0}${w.totalTokens ?? 0}:` +
+        (w.agents || [])
+          .map((a) => `${a.id}${a.status}${a.toolCalls ?? 0}${a.tokens ?? 0}${a.lastToolName || ''}`)
+          .join(','))
+      .join(';');
+  }
+  // When a session's (or its workflows') fingerprint last changed. Called on
+  // every fold() so `since` only advances when something really moved.
+  function trackProgress(s) {
+    const id = s.sessionId, now = Date.now();
+    const fp = progressFingerprint(s);
+    const mark = progressMarks.get(id);
+    if (!mark || mark.fingerprint !== fp) progressMarks.set(id, { fingerprint: fp, since: now });
+    const wfp = workflowFingerprint(s);
+    const wfMark = wfMarks.get(id);
+    if (!wfMark || wfMark.fingerprint !== wfp) wfMarks.set(id, { fingerprint: wfp, since: now });
+  }
+  // True when the status line has ticked recently enough to call the process
+  // alive. Absent status line → unknown, and we don't claim silence we can't
+  // observe (managed providers other than claude, and any headless session
+  // claudemon hasn't forwarded a status line for yet, publish none).
+  function statusLineReceivedAt(s) {
+    if (s.statusLine && s.statusLine.receivedAt) return s.statusLine.receivedAt;
+    if (s.status_line && s.status_line.received_at) return s.status_line.received_at;
+    return undefined;
+  }
+  function statusLineAlive(s, now) {
+    const at = statusLineReceivedAt(s);
+    if (!at) return true;
+    const ts = Date.parse(at);
+    if (Number.isNaN(ts)) return true;
+    return now - ts < SILENT_MS;
+  }
+  // Whether an agent (or one of its workflow runs) has stalled, and how badly.
+  // `null` for an agent that isn't claiming to work, hasn't been tracked yet,
+  // or is still inside the grace period.
+  function stallOf(s, mark, thresholdMs, now) {
+    if (!mark || !isWorking(s)) return null;
+    const stalledForMs = now - mark.since;
+    if (stalledForMs < thresholdMs) return null;
+    return { stalledForMs, alive: statusLineAlive(s, now) };
+  }
+  // Human phrasing for an elapsed stall — "6m", "1h 4m". Plain on purpose: the
+  // card states an observation and lets the reader draw the conclusion.
+  function stalledFor(ms) {
+    const mins = Math.floor(ms / 60000);
+    if (mins < 60) return `${Math.max(1, mins)}m`;
+    return `${Math.floor(mins / 60)}h ${mins % 60}m`;
   }
   async function seed() {
     try {
@@ -1021,7 +1114,7 @@
   // bookkeeping (dismissed signatures especially, one per resolved item) would
   // otherwise only ever grow.
   function pruneSessionState(live) {
-    for (const m of [prevAmbient, doneAt, resolvedQs]) {
+    for (const m of [prevAmbient, doneAt, resolvedQs, progressMarks, wfMarks]) {
       for (const id of [...m.keys()]) if (!live.has(id)) m.delete(id);
     }
     const sidOf = (sig) => String(sig).split(':')[0];
@@ -1423,6 +1516,40 @@
           });
         }
       }
+    }
+    // stuck — the agent says it's working but nothing observable has moved.
+    // Distinct from the pendingQuestions "stuck" above: that one is waiting on
+    // YOU, this one is waiting on nothing anyone can see. Two readings, not
+    // one: "Not moving" (alive — its status line is still ticking, probably a
+    // long think or a wedged tool call) vs "No signal" (the process itself has
+    // stopped talking to us) — collapsing them into one badge would lose
+    // exactly the distinction that makes the card actionable.
+    const stallNow = Date.now();
+    const stall = stallOf(s, progressMarks.get(sid), STALL_MS, stallNow);
+    if (stall) {
+      const silent = !stall.alive;
+      out.push({
+        kind: 'stuck', agentId: sid, sig: `${sid}:stalled`,
+        title: silent ? 'No signal' : 'Not moving',
+        detail: silent
+          ? `Nothing for ${stalledFor(stall.stalledForMs)} — the agent has stopped reporting at all.`
+          : `Working, but nothing has changed for ${stalledFor(stall.stalledForMs)}.`,
+        createdAt: stallNow - stall.stalledForMs,
+      });
+    }
+    // A run whose agents have all gone quiet looks exactly as busy as one
+    // that's flying, so it's judged on its own agents' progress.
+    for (const run of (s.workflows || []).filter((w) => w.status === 'running')) {
+      const wfStall = stallOf(s, wfMarks.get(sid), WORKFLOW_STALL_MS, stallNow);
+      if (!wfStall) continue;
+      const running = (run.agents || []).filter((a) => a.status === 'running').length;
+      out.push({
+        kind: 'stuck', agentId: sid, sig: `${sid}:wfstalled:${run.runId}`,
+        title: `Workflow not moving${run.name ? ' · ' + run.name : ''}`,
+        detail: `No agent has advanced for ${stalledFor(wfStall.stalledForMs)}` +
+          (running ? ` (${running} still marked running)` : '') + '.',
+        createdAt: stallNow - wfStall.stalledForMs,
+      });
     }
     return out;
   }
@@ -2029,7 +2156,13 @@
           <button class="deny" data-approve="${sid}" data-d="no">Deny</button>
         </div>
         <div class="acts"><button class="deny" data-approve="${sid}" data-d="always" style="height:40px;font-size:13px">Always allow ${esc(it.title)}</button></div>`;
-    } else if (it.kind === 'question' || it.kind === 'stuck') {
+    } else if (it.kind === 'question' || (it.kind === 'stuck' && it.questions)) {
+      // A stale pendingQuestions item is 'stuck' too (see attentionFor), and
+      // shares this question-shaped body — but the stall-detection 'stuck'
+      // cards below carry no `questions` at all, just a title/detail like
+      // bigdiff/error, so they must fall through to the generic branch
+      // instead of rendering an empty question block with a dangling
+      // "Decline & stop" button that declines nothing.
       const qs2 = it.questions || [];
       const groups = qs2.map((q, qi) => `
         <div class="txt">${esc(q.question)}</div>
@@ -2042,6 +2175,19 @@
         ${it.detail ? `<div class="code">${esc(it.detail)}</div>` : ''}
         <div class="acts">
           <button class="review" data-open="${sid}">Open dispatch</button>
+          <button class="sq" data-dismiss="${sig}">×</button>
+        </div>`;
+    } else if (it.kind === 'stuck') {
+      // The stall-detection card (no `questions` — see attentionFor above).
+      // Its title IS the two-state read ("Not moving" vs "No signal", or a
+      // named workflow's own version of the same) that the desktop shows as
+      // its card headline — the generic branch below drops `it.title` in
+      // favour of `it.detail` alone, which would silently erase exactly the
+      // distinction this card exists to preserve.
+      body = `<div class="txt"><b>${esc(it.title)}</b><br />${esc(it.detail || '')}</div>
+        <div class="acts">
+          <button class="review" data-open="${sid}">Open dispatch</button>
+          <button class="sq" data-snooze="${sig}">◷</button>
           <button class="sq" data-dismiss="${sig}">×</button>
         </div>`;
     } else {
