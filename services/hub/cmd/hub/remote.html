@@ -429,7 +429,7 @@
     document.body.classList.remove('chat-open');
     titleEl.textContent = 'workspacer remote';
     if (sessions.size === 0) {
-      main.innerHTML = `<div class="empty">No active sessions.</div>`;
+      main.innerHTML = `<div class="empty">No active dispatches.</div>`;
       return;
     }
     const items = [...sessions.values()].sort((a, b) =>
@@ -722,7 +722,7 @@
 
   function renderChat() {
     const s = sessions.get(view.sessionId);
-    titleEl.textContent = s ? shortCwd(s.cwd) : 'session ended';
+    titleEl.textContent = s ? shortCwd(s.cwd) : 'dispatch ended';
     renderAsk(s);
     // Composer adapts to what the agent needs: answering a question vs chatting.
     const input = $('chatInput'), sendBtn = $('chatSend');
