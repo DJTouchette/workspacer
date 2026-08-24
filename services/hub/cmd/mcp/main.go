@@ -893,6 +893,17 @@ func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgent
 	} else {
 		skip = *in.SkipPermissions
 	}
+	// An OMITTED model resolves to the workspacer config default
+	// (claude.defaultModel) — the same value the desktop spawn dialog
+	// pre-fills. Without this, a dispatch that names no model gets no
+	// `--model` flag at all, and `claude` falls back to ITS OWN default
+	// rather than the operator's, which silently drops a configured `[1m]`
+	// 1M-context variant (e.g. `opus[1m]`) on every worker a Fleet Manager
+	// dispatches plainly. An explicit caller value always wins — including
+	// one that deliberately omits the `[1m]` marker for a cheaper worker.
+	if in.Model == "" {
+		in.Model = configDefaultModel(ctx, b)
+	}
 	// Full-access grant, enforced HERE for the SAME structural reason as
 	// the profile check above: the hub stamps `yoloGranted` for the
 	// facade's single trusted host-token connection no matter which
@@ -1088,6 +1099,28 @@ func configSkipPermissionsDefault(ctx context.Context, b *build) bool {
 	return cfg.Claude.SkipPermissionsDefault || permissionModeMeansBypass(cfg.Claude.DefaultPermissionMode)
 }
 
+// configDefaultModel resolves what a spawn_agent call that OMITTED model is
+// asking for: the workspacer config default (claude.defaultModel) the desktop
+// spawn dialog pre-fills — e.g. "opus[1m]". Read through the hub's config.get,
+// same as configSkipPermissionsDefault, so the facade and the provider can't
+// disagree about the config. Fail closed to "" (no default, `claude` picks its
+// own) on an unreachable or garbled config — never invent a model id.
+func configDefaultModel(ctx context.Context, b *build) string {
+	raw, err := b.call(ctx, "config.get", nil)
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		Claude struct {
+			DefaultModel string `json:"defaultModel"`
+		} `json:"claude"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return ""
+	}
+	return cfg.Claude.DefaultModel
+}
+
 // permissionModeMeansBypass reports whether a CONFIG-CHOSEN permission mode
 // means "approvals off". Only the spellings known to mean bypass count — a
 // garbled config value must resolve to approvals ON, the opposite fail-closed
@@ -1214,7 +1247,7 @@ type spawnAgentIn struct {
 	Provider        string   `json:"provider,omitempty" jsonschema:"coding-agent backend to run: claude (default), codex, opencode, or pi"`
 	Transport       string   `json:"transport,omitempty" jsonschema:"claude/codex only: 'stream' runs headless (GUI-only); omit for the default"`
 	Cwd             string   `json:"cwd,omitempty" jsonschema:"working directory for the new agent (defaults to the user's home)"`
-	Model           string   `json:"model,omitempty" jsonschema:"model id to use, e.g. claude-opus-4-8 (optional; provider-specific)"`
+	Model           string   `json:"model,omitempty" jsonschema:"model id to use (optional; provider-specific). Omit to inherit the workspacer config default (claude.defaultModel), the SAME model — including any 1M-context '[1m]' variant, e.g. 'opus[1m]' — this session itself is likely running on. A bare id with no '[1m]' suffix (e.g. claude-opus-4-8) gets the STANDARD 200K context window even if this session has a 1M one; append '[1m]' (e.g. claude-opus-4-8[1m]) to request the larger window explicitly"`
 	Effort          string   `json:"effort,omitempty" jsonschema:"reasoning-effort level: low, medium, high, xhigh, or max (claude/codex)"`
 	ProfileID       string   `json:"profileId,omitempty" jsonschema:"workspacer Claude profile id to dispatch under (optional; refused unless your session token's profilesAllowed grant lists this exact id — see list_profiles for ids)"`
 	SkipPermissions *bool    `json:"skipPermissions,omitempty" jsonschema:"start the agent with --dangerously-skip-permissions; omit and it resolves to a bypass when your session carries the full-access grant (the operator turned on full access for the fleet/supervisor, whose stated meaning is that the agents you dispatch skip approvals), else to the workspacer config default (claude.skipPermissionsDefault / a bypass defaultPermissionMode). An explicit true/false always wins — pass false to dispatch one worker with approvals on. Honored — whether requested, granted or config-defaulted — only when your session's token carries the full-access grant (the hub verifies and stamps it; ungranted requests spawn with approvals on, and remote/federated peer spawns are re-judged by the peer's own hub)"`
