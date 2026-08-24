@@ -273,6 +273,15 @@ export interface ClaudeSessionSnapshot {
   label?: string;
   /** Session id of the agent that spawned this one — drives nesting in the UI. */
   parentSessionId?: string;
+  /** This session's own orphan truth, computed server-side (see
+   *  claudeSessionStore's `refreshOrphanStatus`) from live rows + dead-manager
+   *  tombstones — always fresh as of this snapshot, never a value the renderer
+   *  derived itself. Present only when `parentSessionId` names a session
+   *  confirmed gone; `confirmedManager` is true when a tombstone proved the
+   *  dead parent really was a manager, false for a merely dangling parent id.
+   *  Undefined while the parent is alive, unset, or this is a federated
+   *  remote session. */
+  orphan?: { confirmedManager: boolean };
   /** Coding-agent backend ('claude' | 'codex' | 'opencode' | 'pi'). Set at spawn
    *  time; lets an adopted card render the right provider label/logo. */
   provider?: string;

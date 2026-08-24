@@ -93,6 +93,55 @@ describe('respawn duplicate-card guard', () => {
     expect(cards[0].tabs[0].panes[0].id).toBe('agent-S1-p');
   });
 
+  it('adoptAgent preserves a DANGLING parentSessionId instead of dropping it when the parent has no local card (crashed-manager / restart case)', () => {
+    const { result } = renderHook(() => useAgentManager());
+    act(() => {
+      // GHOST-MANAGER never has a card here — either it crashed before this
+      // process ever saw it (e.g. the daemon session outlived a desktop
+      // restart), or this app instance never adopted it at all. Before the
+      // fix, `parentId: parent?.id` silently dropped the reference the moment
+      // the local lookup failed, and the worker rendered as an ordinary
+      // top-level card with no "Unwatched" chip — precisely the crashed-
+      // manager case the chip exists for.
+      result.current.adoptAgent({
+        sessionId: 'W1',
+        cwd: '/proj',
+        parentSessionId: 'GHOST-MANAGER',
+      });
+    });
+    const worker = result.current.agents.find((a: any) => a.sessionId === 'W1');
+    expect(worker).toBeDefined();
+    // The deterministic id any card FOR that session would carry — preserved
+    // even though no such card exists here, so SideBar's dangling-parent check
+    // (`!!agent.parentId && !agentIds.has(agent.parentId)`) now correctly
+    // flags it as orphaned instead of treating the missing parentId as "no
+    // parent at all".
+    expect(worker.parentId).toBe('agent-GHOST-MANAGER');
+  });
+
+  it('does NOT drop a worker card on session end when its parentId is dangling (only a resolved parent means the result was actually relayed)', () => {
+    const { result } = renderHook(() => useAgentManager());
+    act(() => {
+      // No manager card is loaded at all — the worker's parent never resolved.
+      result.current.loadAgentsFromSession(
+        [mkAgent('agent-W1', 'W1', { parentId: 'agent-GHOST-MANAGER' })],
+        'agent-W1',
+      );
+    });
+    act(() => {
+      result.current.stopAgentForSession('W1');
+    });
+    // Unlike a normally-nested worker (whose live manager card proves the
+    // result was relayed via the [fleet] wake), an orphan's result was never
+    // picked up by anyone — dropping its card here would erase the only place
+    // the user could notice and follow up. It must tombstone as Stopped
+    // instead, exactly like a top-level card.
+    const worker = result.current.agents.find((a: any) => a.id === 'agent-W1');
+    expect(worker, 'an orphaned worker must tombstone, not vanish, on session end').toBeDefined();
+    expect(worker.sessionId).toBeUndefined();
+    expect(worker.lastSessionId).toBe('W1');
+  });
+
   it('a failed respawn leaves an honest Stopped card, not a tombstoned zombie', async () => {
     const { result } = renderHook(() => useAgentManager());
     act(() => {

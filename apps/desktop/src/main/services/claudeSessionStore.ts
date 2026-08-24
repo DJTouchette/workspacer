@@ -373,6 +373,17 @@ export interface ClaudeSessionState {
   hub?: string;
   /** Federation: true while that peer's link is down (tombstone state). */
   hubOffline?: boolean;
+  /**
+   * This session's own orphan truth, recomputed fresh on every snapshot leaving
+   * the store (see `refreshOrphanStatus`) — never written anywhere else, so it
+   * can't drift from `managerTombstones`/live rows the way a value cached at
+   * adopt time can. Present only when `parentSessionId` names a session
+   * confirmed gone; `confirmedManager` mirrors `OrphanCandidate.confirmedManager`
+   * for that same parent (true = a tombstone proved it was a manager, false =
+   * a bare dangling parent id). Undefined while the parent is alive, unset, or
+   * this is a federated remote session (its parent is the PEER's fact).
+   */
+  orphan?: { confirmedManager: boolean };
 }
 
 // Serialisable snapshot sent over IPC
@@ -1682,11 +1693,15 @@ class ClaudeSessionStore {
   getSnapshot(sessionId: string): ClaudeSessionSnapshot | null {
     const session = this.sessions.get(sessionId);
     if (!session) return null;
+    this.refreshOrphanStatus(session);
     return { ...session, ...detachPendingSlot(session) };
   }
 
   getAllSnapshots(): ClaudeSessionSnapshot[] {
-    return Array.from(this.sessions.values()).map((s) => ({ ...s, ...detachPendingSlot(s) }));
+    return Array.from(this.sessions.values()).map((s) => {
+      this.refreshOrphanStatus(s);
+      return { ...s, ...detachPendingSlot(s) };
+    });
   }
 
   // ── Internals ──
@@ -1740,6 +1755,14 @@ class ClaudeSessionStore {
         clearTimeout(t);
         timers.delete(sessionId);
       }
+    }
+    // Any live child of THIS session had its `orphan` field computed while this
+    // row was still alive — that fact just flipped, and nothing else will push
+    // an update for a child whose own state didn't change. Refresh them now so
+    // the renderer's "Unwatched" chip lights up the moment the dispatcher dies
+    // instead of waiting on the child's next unrelated hook tick.
+    for (const child of this.sessions.values()) {
+      if (child.parentSessionId === sessionId && !child.hub) this.pushUpdate(child);
     }
     // This session may have been the last child of an earlier dead manager —
     // and the tombstone just written is itself pointless unless children of it
@@ -1887,7 +1910,34 @@ class ClaudeSessionStore {
     this.pushUpdate(session);
   }
 
+  /**
+   * Recompute `session.orphan` from live rows + `managerTombstones` — the same
+   * facts `orphanCandidates` reports, read in the other direction (child looks
+   * up its own parent instead of a caller grouping by parent). Called at every
+   * point a snapshot leaves the store (push, getSnapshot, getAllSnapshots), so
+   * the field is always fresh at the moment it's read and there is no separate
+   * state to keep in sync — it is thrown away and rebuilt every time.
+   */
+  private refreshOrphanStatus(session: ClaudeSessionState): void {
+    const parentId = session.parentSessionId;
+    // Federated sessions: parentSessionId (if set) names a session on the PEER,
+    // not a row this process can judge — same exclusion orphanCandidates
+    // applies to federated children.
+    if (!parentId || session.hub) {
+      session.orphan = undefined;
+      return;
+    }
+    const row = this.sessions.get(parentId);
+    if (row && row.status !== 'ended') {
+      session.orphan = undefined; // parent alive: not orphaned
+      return;
+    }
+    const tomb = this.managerTombstones.get(parentId);
+    session.orphan = { confirmedManager: Boolean(tomb) || row?.isSupervisor === true };
+  }
+
   private pushUpdate(session: ClaudeSessionState): void {
+    this.refreshOrphanStatus(session);
     if (!COALESCE_SNAPSHOT_UPDATES) {
       // Original immediate-send path (byte-for-byte identical behaviour).
       // Federation: never republish a REMOTE session onto the local bus — it
@@ -1914,6 +1964,7 @@ class ClaudeSessionStore {
   private flushSession(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    this.refreshOrphanStatus(session);
     // Mirror onto the hub bus for the web build (no-op when remote sharing is
     // off). Passed as a factory so the object spread is skipped entirely when
     // the hub won't use it. Federation: remote sessions are never republished

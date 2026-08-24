@@ -67,9 +67,12 @@ const base = {
   lastActivity: Date.now(),
 };
 
-function harnessFor(agents: any[]) {
+function harnessFor(agents: any[], snapshotOverrides: Record<string, any> = {}) {
   const snapshotBySession: Record<string, any> = Object.fromEntries(
-    agents.map((a) => [a.sessionId, { ...base, sessionId: a.sessionId, ambientState: 'idle' }]),
+    agents.map((a) => [
+      a.sessionId,
+      { ...base, sessionId: a.sessionId, ambientState: 'idle', ...snapshotOverrides[a.sessionId] },
+    ]),
   );
   const statusBySession: Record<string, any> = Object.fromEntries(
     agents.map((a) => [a.sessionId, 'idle']),
@@ -162,8 +165,12 @@ describe('SideBar fleet nesting — grandchildren', () => {
  * is gone, so nobody is positioned to hear its result. It must appear only
  * for that exact case, never for an ordinary top-level agent or a normally
  * nested child whose parent resolves, and it must say something different
- * depending on whether the dispatcher is a *confirmed* Fleet Manager
- * (`dispatchedByManager: true`, recorded at adopt time) or merely absent.
+ * depending on whether the dispatcher is a *confirmed* Fleet Manager or
+ * merely absent. That "confirmed" bit prefers the daemon's own live truth
+ * (`snapshotBySession[...].orphan.confirmedManager`, recomputed from
+ * managerTombstones on every push) and falls back to the renderer-local guess
+ * snapshotted once at adopt time (`dispatchedByManager`) only when the daemon
+ * hasn't reported one.
  */
 describe('SideBar — orphaned-worker "Unwatched" chip', () => {
   it('renders on a worker whose parentId does not resolve to any known agent', () => {
@@ -218,5 +225,21 @@ describe('SideBar — orphaned-worker "Unwatched" chip', () => {
     const titles = chips.map((el) => el.closest('span')?.getAttribute('title'));
     expect(titles.some((t) => t?.includes('manager session ended'))).toBe(true);
     expect(titles.some((t) => t?.includes('no longer here'))).toBe(true);
+  });
+
+  it("prefers the daemon's real orphan/confirmedManager truth over a stale or absent dispatchedByManager guess", () => {
+    const agents = [
+      // dispatchedByManager is FALSE — the renderer-local guess, snapshotted
+      // once at adopt time — but the daemon's own snapshot (recomputed live
+      // from managerTombstones on every push, see claudeSessionStore's
+      // refreshOrphanStatus) says the dead parent WAS a confirmed manager.
+      // That ground truth must win.
+      { ...mkAgent('a-worker', 'lone-worker', 'a-ghost-manager'), dispatchedByManager: false },
+    ];
+    const Harness = harnessFor(agents, { 's-a-worker': { orphan: { confirmedManager: true } } });
+    render(<Harness />);
+
+    const chip = screen.getByText('Unwatched');
+    expect(chip.closest('span')?.getAttribute('title')).toContain('manager session ended');
   });
 });

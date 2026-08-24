@@ -46,6 +46,7 @@ vi.mock('./sessionStore/analyticsWriter', () => ({ writeHistory: vi.fn() }));
 vi.mock('./remoteTokens', () => ({ revokeSessionFacadeTokens: vi.fn() }));
 
 import { claudeSessionStore } from './claudeSessionStore';
+import { publishSnapshot } from './hubTelemetry';
 
 let seq = 0;
 const uid = (p: string): string => `${p}-tomb-${++seq}`;
@@ -155,6 +156,97 @@ describe('a dead manager leaves a tombstone its successor can identify', () => {
     worker(uid('w'), live);
 
     expect(candidateFor(live)).toBeFalsy();
+  });
+});
+
+/**
+ * `agents.orphans` was, until now, the ONLY path this truth reached anyone —
+ * an MCP-facade tool call a manager makes, never something the desktop's own
+ * renderer could see. The "Unwatched" sidebar chip had to guess from
+ * renderer-local state instead. These pin that a worker's OWN snapshot now
+ * carries the real answer (`orphan.confirmedManager`), computed fresh from
+ * managerTombstones/live rows every time it leaves the store — never a
+ * separately-mutated field that could drift from `orphanCandidates`.
+ *
+ * Placed BEFORE the retention/cap tests below on purpose: those push the
+ * tombstone map to its 32-entry cap using a fake clock that gets re-based to
+ * real time on every `beforeEach`, so a tombstone created by a LATER test can
+ * carry an `endedAt` earlier than one from an EARLIER test that advanced fake
+ * time by simulated hours — exactly the ordering the cap's oldest-first
+ * eviction is sensitive to. Running here avoids relying on the cap not being
+ * full, which is what the retention tests below are for in the first place.
+ */
+describe("the tombstone truth reaches the renderer on the child's own snapshot", () => {
+  it('a confirmed-manager tombstone reports orphan.confirmedManager:true on the live worker', () => {
+    const dead = uid('mgr');
+    const w = uid('w');
+    manager(dead);
+    worker(w, dead);
+
+    dieAndEvict(dead);
+
+    expect(claudeSessionStore.getSnapshot(w)?.orphan).toEqual({ confirmedManager: true });
+  });
+
+  it('a bare dangling (non-manager) dead parent reports confirmedManager:false, not an absent field', () => {
+    const deadWorker = uid('w');
+    const child = uid('w');
+    claudeSessionStore.setSpawnMeta(deadWorker, { label: 'not a manager' });
+    hook(deadWorker, 'SessionStart');
+    worker(child, deadWorker);
+
+    dieAndEvict(deadWorker);
+
+    expect(claudeSessionStore.getSnapshot(child)?.orphan).toEqual({ confirmedManager: false });
+  });
+
+  it('a LIVE parent means no orphan field at all — the worker is not orphaned', () => {
+    const live = uid('mgr');
+    const w = uid('w');
+    manager(live);
+    worker(w, live);
+
+    expect(claudeSessionStore.getSnapshot(w)?.orphan).toBeUndefined();
+  });
+
+  it('an ordinary session with no parent carries no orphan field', () => {
+    const solo = uid('w');
+    hook(solo, 'SessionStart');
+    expect(claudeSessionStore.getSnapshot(solo)?.orphan).toBeUndefined();
+  });
+
+  it('adopting (reparentChildren) clears the field immediately — a re-pointed worker is no longer dangling', () => {
+    const dead = uid('mgr');
+    const w = worker(uid('w'), dead);
+    manager(dead);
+    dieAndEvict(dead);
+    expect(claudeSessionStore.getSnapshot(w)?.orphan).toEqual({ confirmedManager: true });
+
+    const successor = uid('mgr');
+    manager(successor);
+    claudeSessionStore.reparentChildren(dead, successor);
+
+    expect(claudeSessionStore.getSnapshot(w)?.orphan).toBeUndefined();
+  });
+
+  it("evicting a manager immediately pushes a fresh snapshot for each live child, so the chip doesn't wait on that child's own next hook", () => {
+    const pub = vi.mocked(publishSnapshot);
+    const dead = uid('mgr');
+    const w = uid('w');
+    manager(dead);
+    worker(w, dead);
+    pub.mockClear(); // drop the SessionStart-triggered pushes above
+
+    dieAndEvict(dead);
+
+    const pushedForWorker = pub.mock.calls
+      .map(([factory]) => factory())
+      .find((snap: { sessionId: string }) => snap.sessionId === w);
+    expect(
+      pushedForWorker,
+      'the worker must have been re-pushed as part of the eviction',
+    ).toBeTruthy();
+    expect(pushedForWorker.orphan).toEqual({ confirmedManager: true });
   });
 });
 
