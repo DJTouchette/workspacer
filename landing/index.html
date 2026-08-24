@@ -4,17 +4,17 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>work{spacer} :: a manager agent for your coding fleet</title>
-<meta name="description" content="One manager agent dispatches Claude Code, Codex, OpenCode and Pi across your repos — and writes what the fleet learns into a brief that stays in the project. Local-first, MIT, alpha." />
+<meta name="description" content="One manager agent dispatches Claude Code, Codex, OpenCode and Pi across your repos, then writes what the fleet learns into a brief that stays in the project. Local-first, MIT, alpha." />
 <link rel="canonical" href="https://www.workspacer.app/" />
 
 <!-- Social cards. og:image must be an absolute URL or nothing unfurls it. -->
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://www.workspacer.app/" />
-<meta property="og:title" content="work{spacer} — you have four agents, not four heads" />
+<meta property="og:title" content="work{spacer} :: you have four agents, not four heads" />
 <meta property="og:description" content="A manager agent you talk to dispatches the fleet, wakes when work lands, and keeps a brief for every project that outlives the sessions. Local-first, MIT, and yours to fork." />
 <meta property="og:image" content="https://www.workspacer.app/shots/fleet-deck.webp" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="work{spacer} — you have four agents, not four heads" />
+<meta name="twitter:title" content="work{spacer} :: you have four agents, not four heads" />
 <meta name="twitter:description" content="A manager agent you talk to dispatches the fleet, wakes when work lands, and keeps a brief for every project that outlives the sessions." />
 <meta name="twitter:image" content="https://www.workspacer.app/shots/fleet-deck.webp" />
 
@@ -28,7 +28,7 @@
 <style>
   :root {
     /* Everforest ground, but the text ramp runs to near-white so the page has
-       contrast headroom. Green is an ACCENT now — if it shows up on every
+       contrast headroom. Green is an ACCENT now. If it shows up on every
        heading, link and bullet it stops meaning anything. */
     --bg: #1b2023;
     --bg-elev: #20262a;
@@ -42,7 +42,7 @@
     --fg-dim: #7d8884;
     --fg-faint: #5f6b68;
 
-    --accent: #a7c080;          /* sapling — the one loud colour */
+    --accent: #a7c080;          /* sapling, the one loud colour */
     --accent-soft: #c2d7a2;
     --accent-dim: rgba(167,192,128,0.14);
     --amber: #dbbc7f;           /* alpha badge only */
@@ -142,7 +142,7 @@
 
   /* ---- hero ------------------------------------------------------------- */
   header { position: relative; overflow: hidden; padding: 76px 0 0; }
-  /* Not a square grid — that shape is on every developer-tool page there is.
+  /* A square grid is the shape on every developer-tool page there is.
      This is an editor's ground instead: the line rhythm of a text buffer, plus
      a column ruler standing in the gutter between the copy and the pane. Same
      job as the old grid (texture that fades, confined to the hero) with a
@@ -168,7 +168,7 @@
                        box-shadow: 0 0 0 3px var(--accent-dim); flex-shrink: 0; }
   h1 { font-size: clamp(38px, 4.4vw, 58px); max-width: 15ch; margin: 22px 0 0;
        text-wrap: balance; }
-  /* The wordmark's cursor is a flourish, not a word — keep it from competing
+  /* The wordmark's cursor is a flourish, not a word. Keep it from competing
      with the headline it trails. */
   h1 .mark { font-size: 0.44em; opacity: 0.5; vertical-align: 0.28em; margin-left: 0.18em; }
   .hero-sub { max-width: 510px; margin: 22px 0 0; font-size: clamp(16px, 1.3vw, 18px);
@@ -179,7 +179,7 @@
   .hero-alts a:hover { color: var(--accent); }
 
   /* ---- hero pane -------------------------------------------------------- */
-  /* Every part of this is chrome the app actually has: the pane tab strip, a
+  /* Every part of this is chrome the app has: the pane tab strip, a
      turn's work log, an approval waiting on a keypress, the session bar. */
   .pane-demo { border: 1px solid var(--line); border-radius: var(--r-lg);
                background: var(--bg-card); overflow: hidden;
@@ -204,7 +204,7 @@
   .pd-panels { display: grid; }
   /* min-width:0 twice, and both are load-bearing on a phone: a grid item and a
      flex item both default to min-width:auto, which means neither will shrink
-     below its longest unbroken line — so a long `session:… · worktree …` row
+     below its longest unbroken line, so a long `session:… · worktree …` row
      pushed the whole pane wider than the viewport instead of ellipsing. */
   .pd-panels > .pd-body { grid-area: 1 / 1; min-width: 0; }
   .pd-body.off { visibility: hidden; }
@@ -219,7 +219,7 @@
              font-family: var(--font-mono); font-size: 11.5px; line-height: 1.9; }
   .pd-diff div { padding: 0 12px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
   /* Green is the page's one loud colour, so a removal reads as *dimmed* rather
-     than red — no second accent, and no token the other three pages lack. */
+     than red. No second accent, and no token the other three pages lack. */
   .pd-diff .add { color: var(--accent); background: rgba(167,192,128,0.10); }
   .pd-diff .del { color: var(--fg-faint); background: rgba(0,0,0,0.22); }
   .pd-ask { border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: 14px;
@@ -280,7 +280,7 @@
      as one block: the app, and the numbers about it. */
   /* position:relative is load-bearing: .hero-grid is absolutely positioned over
      the whole <header>, and without a positioned box here it paints its rules
-     straight across this band — including over the screenshot. */
+     straight across this band, including over the screenshot. */
   .shot-band { position: relative; border-top: 1px solid var(--line);
                background: var(--bg-elev); padding: 60px 0 0; }
   .shot-band .frame { border-radius: var(--r-lg); box-shadow: 0 40px 90px -36px rgba(0,0,0,0.95); }
@@ -349,7 +349,7 @@
   .harness-footer span { display: inline-flex; align-items: flex-start; gap: 8px; }
   .harness-footer .tick { color: var(--accent); flex-shrink: 0; margin-top: 3px; }
   /* The caveat sits in the same row as the ticks and must not read as one.
-     Amber is the alpha badge's colour — the page's "true, with a condition".
+     Amber is the alpha badge's colour, the page's "true, with a condition".
      display:block, not inline-flex like its siblings: this one is a sentence
      with emphasis inside it, and as a flex container every phrase became its
      own justified item. */
@@ -392,7 +392,7 @@
 
   /* ---- architecture ----------------------------------------------------- */
   .arch { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
-  /* Same node primitive, four across — the four properties of a dispatch. */
+  /* Same node primitive, four across: the four properties of a dispatch. */
   .arch.quad { grid-template-columns: repeat(4, 1fr); }
   .node { padding: 26px; }
   .node .badge { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em;
@@ -460,8 +460,8 @@
   /* ---- the brief -------------------------------------------------------- */
   /* The brief is a markdown file, so the page renders it as one rather than
      paraphrasing it into a feature bullet: same headings, same disposition
-     markers, same dated lines. .doc-h / .doc-li are deliberately NOT scoped to
-     .doc — the hero pane reuses them for its brief tab. */
+     markers, same dated lines. .doc-h / .doc-li are NOT scoped to
+     .doc, because the hero pane reuses them for its brief tab. */
   .brief-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
                 gap: 26px; align-items: start; }
   .doc { border: 1px solid var(--line); border-radius: var(--r); background: var(--bg-card);
@@ -532,7 +532,7 @@
     /* Below this the two hero columns starve each other: the headline wraps to
        five lines and the pane loses its diff. Stack, copy first. */
     .hero-inner { grid-template-columns: 1fr; gap: 44px; padding-bottom: 64px; }
-    /* Stacked, there is no gutter for the column ruler to stand in — it would
+    /* Stacked, there is no gutter for the column ruler to stand in, so it would
        just be a line through the middle of the headline. Rhythm only. */
     .hero-grid { background-image: linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px);
                  background-size: 100% 30px; background-position: 0 0; background-repeat: repeat; }
@@ -553,14 +553,14 @@
     .tree .row { grid-template-columns: 1fr; gap: 4px; }
     .shot-band { padding-top: 44px; }
     .duo { flex-direction: column; }
-    /* column direction resolves `flex:1` against height — pin the basis back to auto
+    /* column direction resolves `flex:1` against height, so pin the basis back to auto
        or the desktop shot collapses to nothing */
     .duo .d { flex: none; width: 100%; }
     .duo .phones { flex-basis: auto; width: 76%; }
     .proof-item { flex-basis: 50%; min-width: 0; }
   }
   @media (max-width: 560px) {
-    /* The eyebrow is three facts joined by dots — at this width it wraps to two
+    /* The eyebrow is three facts joined by dots. At this width it wraps to two
        lines and stops reading as one line of metadata. Drop to the two that
        aren't already a badge in the nav. */
     .hero-eyebrow .third { display: none; }
@@ -572,7 +572,7 @@
        a hole under the two short tabs. A jump on tap is the better trade. */
     .pd-body.off { display: none; }
     .pd-diff { font-size: 10.5px; }
-    /* The brief is a monospace document — at phone width 12px wraps every
+    /* The brief is a monospace document. At phone width 12px wraps every
        line three times. Shrink rather than truncate: the wording is the point. */
     .doc-body { font-size: 11px; padding: 14px 14px 16px; }
   }
@@ -580,7 +580,7 @@
     * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
   }
-  /* Nothing here should widen the viewport — one overflowing element is what
+  /* Nothing here should widen the viewport. One overflowing element is what
      lets phones zoom out past the layout. */
   html, body { overflow-x: clip; }
 </style>
@@ -610,7 +610,7 @@
     <button class="nav-toggle" id="nav-toggle" aria-label="menu" aria-expanded="false">≡</button>
   </div>
 </div>
-<!-- Same destinations as .navlinks — keep the two lists in sync. -->
+<!-- Same destinations as .navlinks. Keep the two lists in sync. -->
 <div class="mobile-menu" id="mobile-menu"><div class="wrap">
   <a href="docs.html">docs</a>
   <a href="build-plugin.html">plugins</a>
@@ -627,7 +627,7 @@
     <div class="hero-copy">
       <div class="hero-eyebrow"><span class="dot"></span>local-first · open source<span class="third"> · alpha</span></div>
       <h1 class="display">You have four agents. You don't have four <span class="g">heads</span>.<span class="mark">{<span class="bar blink"></span>}</span></h1>
-      <p class="hero-sub">One manager agent you talk to dispatches the rest — into your repos, on your CLIs — and writes what the fleet learns into a brief that stays in the project. Sessions live in a local daemon, so closing the window never stops the work.</p>
+      <p class="hero-sub">One manager agent you talk to dispatches the rest across your repos, on your own CLIs. It writes what the fleet learns into a brief that stays in the project. Sessions live in a local daemon, so closing the window never stops the work.</p>
       <div class="hero-cta">
         <a class="btn btn-fill btn-lg" id="dl-btn-hero" href="https://github.com/DJTouchette/workspacer/releases/latest">Download</a>
         <a class="btn btn-line btn-lg" href="docs.html">Read the docs</a>
@@ -637,7 +637,7 @@
 
     <!-- Not a screenshot: the same tab strip, work log, wake card and status bar
          the app renders, in markup, so the hero costs no image and stays legible
-         at any width. The tabs really switch. All three panels tell ONE story,
+         at any width. The tabs switch. All three panels tell ONE story,
          and it is the story of the page: you ask the manager for something, it
          dispatches a real agent and stops, the wake comes back saying the work
          was already done, and that fact goes into the project's brief so nobody
@@ -658,7 +658,7 @@
         <div class="pd-body" id="pdp-manager" role="tabpanel" aria-labelledby="pdt-manager">
           <div class="pd-act"><b>you</b><span>fix the sidebar nesting bug in workspacer</span></div>
           <div class="pd-act"><b>dispatch</b><span>session:5325a7de · sonnet · worktree wks/sidebar-nesting</span></div>
-          <div class="pd-act"><b>·</b><span>turn ends — the manager does not poll</span></div>
+          <div class="pd-act"><b>·</b><span>turn ends. no polling</span></div>
           <div class="pd-ask">
             <div class="lbl">[fleet] worker-finished · 6 min later</div>
             <div class="q">Already fixed by <code>a394bd4d</code>. Reverted the logic to prove the test was load-bearing, watched it fail, restored it. No change needed.</div>
@@ -669,7 +669,7 @@
         <div class="pd-body off" id="pdp-brief" role="tabpanel" aria-labelledby="pdt-brief">
           <div class="doc-body" style="padding:0;">
             <div class="doc-h">## Now</div>
-            <div class="doc-li"><span class="m">⚠️</span><span><i>2026-08-23</i> <b>the "dead" worktree is not dead</b> — ~884 lines of uncommitted work that exists nowhere else. No cleanup sweep may remove it.</span></div>
+            <div class="doc-li"><span class="m">⚠️</span><span><i>2026-08-23</i> <b>the "dead" worktree is not dead.</b> ~884 lines of uncommitted work that exists nowhere else. No cleanup sweep may remove it.</span></div>
             <div class="doc-h">## Recently</div>
             <div class="doc-li"><span class="m">-</span><span><i>2026-08-23:</i> the grandchild nesting bug <b>was already fixed</b> by <code>a394bd4d</code>. Recorded so the stale report does not get re-fixed a third time.</span></div>
           </div>
@@ -687,7 +687,7 @@
             <div class="q"><code>go test -race ./internal/bus/...</code></div>
             <!-- Real default bindings, not invented ones: y/n are
                  fleet-approve-yes / fleet-approve-no in configDefaults.ts, and
-                 Escape is the interrupt. They are remappable — see the docs. -->
+                 Escape is the interrupt. They are remappable (see the docs). -->
             <div class="pd-keys">
               <span><kbd>y</kbd> approve</span>
               <span><kbd>n</kbd> deny</span>
@@ -707,8 +707,8 @@
   <div class="shot-band"><div class="wrap">
     <div class="frame">
       <img width="1600" height="862" src="shots/fleet-deck.webp" fetchpriority="high"
-        alt="The Fleet Deck: four agents as live cards — status, model, context %, cost, and a message box on each, one mid-task" />
-      <div class="frame-cap">the fleet deck — status, model, context, and cost for every running agent</div>
+        alt="The Fleet Deck: four agents as live cards showing status, model, context %, cost, and a message box on each, one mid-task" />
+      <div class="frame-cap">the fleet deck: status, model, context and cost for every running agent</div>
     </div>
   </div></div>
 
@@ -724,14 +724,14 @@
 <section id="why"><div class="wrap">
   <div class="sec-head">
     <div class="h2"><span class="hash">#</span>built for the <span class="g">babysitting</span> problem</div>
-    <p class="sec-sub">Four agents is one too many to watch. And every one of them starts tomorrow from zero. Attention and amnesia are the same problem wearing two coats — you are the only thing holding the fleet together, and you don't scale.</p>
+    <p class="sec-sub">Four agents is one too many to watch. And every one of them starts tomorrow from zero. Attention and amnesia are the same problem wearing two coats. You are the only thing holding the fleet together, and you don't scale.</p>
   </div>
   <div class="duo-grid">
     <div class="tile panel">
       <div class="k">attention</div>
       <h3>You can't watch a whole fleet</h3>
       <ul>
-        <li><b>Everything waits on you.</b> An approval here, a question there, a finished branch nobody has looked at — and the only way to find out is to go and look.</li>
+        <li><b>Everything waits on you.</b> An approval here, a question there, a finished branch nobody has looked at. The only way to find out about any of it is to go and look.</li>
         <li><b>Looking is the expensive part.</b> Reading yourself back into a task you left twenty minutes ago costs more than the answer you came for.</li>
         <li><b>So you run two agents instead of six,</b> because the third one is where watching stops being free.</li>
       </ul>
@@ -741,38 +741,38 @@
       <h3>Every session starts from zero</h3>
       <ul>
         <li><b>The agent that fixed it last week is gone.</b> The next one has no idea the fix was tried, reverted, and tried again a different way.</li>
-        <li><b>Your instructions file isn't the same thing.</b> It says how the code is built. It doesn't say what happened on Tuesday, or which lead turned out to be a dead end.</li>
+        <li><b>Your instructions file covers something else.</b> It says how the code is built. It says nothing about what happened on Tuesday, or which lead turned out to be a dead end.</li>
         <li><b>You are the carrier.</b> Every piece of context that moves between two sessions moves because you typed it again.</li>
       </ul>
     </div>
   </div>
-  <p class="sec-note">work{spacer} answers both with the same move: <b>stop being the orchestrator</b>. One agent takes the dispatching — and writes down what the fleet learns, in the project, where the next one will read it.</p>
+  <p class="sec-note">work{spacer} answers both with the same move: <b>stop being the orchestrator</b>. One agent takes the dispatching, and writes down what the fleet learns in the project, where the next one will read it.</p>
 </div></section>
 
 <section id="brief" class="alt"><div class="wrap">
   <div class="sec-head">
     <div class="h2"><span class="hash">#</span>your agents forget everything. <span class="g">your projects don't have to</span>.</div>
-    <p class="sec-sub">Every project keeps a brief — <code>.workspacer/brief.md</code>, in the repo, plain markdown. The manager writes it as work lands. You read the same file, and you can edit it; your words are authoritative and nothing overwrites them.</p>
+    <p class="sec-sub">Every project keeps a brief at <code>.workspacer/brief.md</code>, in the repo, in plain markdown. The manager writes it as work lands. You read the same file, and you can edit it; your words are authoritative and nothing overwrites them.</p>
   </div>
 
   <div class="brief-grid">
     <div>
       <!-- Real lines from the briefs this repo's own fleet keeps, trimmed for
            width. The wording is theirs. An invented example would have been
-           tidier, which is exactly the problem with it. -->
+           tidier, which is the problem with it. -->
       <div class="doc">
         <div class="doc-bar"><span class="path">.workspacer/brief.md</span><span class="who">written by the manager<br />read by the next agent</span></div>
         <div class="doc-body">
           <div class="doc-h">## Now</div>
-          <div class="doc-li"><span class="m">⚠️</span><span><i>2026-08-23</i> <b>NEEDS A USER DECISION — THE "DEAD" WORKTREE IS NOT DEAD.</b> It holds ~884 lines of real uncommitted work that exists nowhere else. Commit it, extract it, or discard it deliberately — and until then, no cleanup sweep may remove this worktree.</span></div>
-          <div class="doc-li"><span class="m">✅</span><span><i>2026-08-23</i> The three "candidate fixes" are all closed and <b>none needed the fix it proposed</b>. An incidental candidate-fix note from a worker whose scope excluded it is a LEAD, not a defect — always dispatch these verify-then-fix.</span></div>
+          <div class="doc-li"><span class="m">⚠️</span><span><i>2026-08-23</i> <b>THE "DEAD" WORKTREE IS NOT DEAD.</b> It holds ~884 lines of real uncommitted work that exists nowhere else. Commit it, extract it, or discard it deliberately. No cleanup sweep may remove this worktree.</span></div>
+          <div class="doc-li"><span class="m">✅</span><span><i>2026-08-23</i> The three "candidate fixes" are all closed and <b>none needed the fix it proposed</b>. An incidental candidate-fix note from a worker whose scope excluded it is a LEAD, not a defect. Always dispatch these verify-then-fix.</span></div>
           <div class="doc-h">## Direction</div>
-          <div class="doc-li"><span class="m">-</span><span>Delivery mode: <b>local</b> — ship workers merge into the main checkout's current branch; push on user request.</span></div>
-          <div class="doc-li"><span class="m">❌</span><span><i>2026-08-22</i> <b>RETRACTION</b> — "there is NO lightweight direct-completion primitive in this codebase" IS WRONG. I recorded that this afternoon as a standing infra fact. A later session checked it and found <code>agentTitler.ts</code> was already doing exactly that.</span></div>
+          <div class="doc-li"><span class="m">-</span><span>Delivery mode: <b>local</b>. Ship workers merge into the main checkout's current branch; push on user request.</span></div>
+          <div class="doc-li"><span class="m">❌</span><span><i>2026-08-22</i> <b>RETRACTION.</b> "there is NO lightweight direct-completion primitive in this codebase" IS WRONG. I recorded that this afternoon as a standing infra fact. A later session checked it and found <code>agentTitler.ts</code> was already doing a one-shot.</span></div>
           <div class="doc-h">## Recently</div>
           <div class="doc-li"><span class="m">-</span><span><i>2026-08-23:</i> the grandchild nesting bug <b>was already fixed</b> earlier the same day by <code>a394bd4d</code>. Proved the coverage is load-bearing rather than just reading it: reverted the logic, watched the test fail, restored, confirmed green. <b>Recorded so the stale bug report does not get re-fixed a third time.</b></span></div>
         </div>
-        <div class="doc-cap">excerpts from this repo's own brief — trimmed for width, wording verbatim</div>
+        <div class="doc-cap">excerpts from this repo's own brief, trimmed for width, wording verbatim</div>
       </div>
 
       <div class="doc">
@@ -781,7 +781,7 @@
           <div class="doc-h">## User</div>
           <div class="doc-li"><span class="m">-</span><span><b>PUSHES NEED AN EXPLICIT GO-AHEAD, on both projects.</b> Workers merge locally and stop there; never push unprompted. The user approves push batches by name.</span></div>
         </div>
-        <div class="doc-cap">the fourth heading — standing preferences the manager honours every turn</div>
+        <div class="doc-cap">the fourth heading: standing preferences the manager honours every turn</div>
       </div>
     </div>
 
@@ -790,35 +790,35 @@
         <div class="n">01</div>
         <div>
           <h4>Written as the work lands</h4>
-          <p>Not by you, and not by the worker that did the job — by the manager, at the moment a dispatch reports back. One file, two audiences: the next agent is handed it, and so are you.</p>
+          <p>The manager writes it at the moment a dispatch reports back. Not you, and not the worker that did the job. One file, two audiences: the next agent is handed it, and so are you.</p>
         </div>
       </div>
       <div class="prop">
         <div class="n">02</div>
         <div>
           <h4>A shape that decays on purpose</h4>
-          <p><code>## Now</code> is a live list — a line leaves the moment its work lands. <code>## Direction</code> is durable. <code>## Recently</code> is a dated log, newest first, and the only section that grows. Three retention policies in four headings, which is three more than a chat transcript has.</p>
+          <p><code>## Now</code> is a live list, and a line leaves the moment its work lands. <code>## Direction</code> is durable. <code>## Recently</code> is a dated log, newest first, and the only section that grows. Three retention policies in four headings, which is three more than a chat transcript has.</p>
         </div>
       </div>
       <div class="prop">
         <div class="n">03</div>
         <div>
-          <h4>Pruned and archived, not just appended</h4>
-          <p><code>/checkpoint</code> keeps the newest entries and moves the overflow to <code>brief.archive.md</code> beside it — nothing is deleted. On the brief board, archiving is a drag. A memory that only ever grows stops being read, and then it may as well not exist.</p>
+          <h4>It shrinks as well as grows</h4>
+          <p><code>/checkpoint</code> keeps the newest entries and moves the overflow to <code>brief.archive.md</code> beside it, so nothing is deleted. On the brief board, archiving is a drag. A memory that only ever grows stops being read, and then it may as well not exist.</p>
         </div>
       </div>
       <div class="prop">
         <div class="n">04</div>
         <div>
           <h4>Safe to write while you're writing</h4>
-          <p>A manager updates a brief at exactly the moment a worker in that project is editing it — the trigger for both is the same worker finishing. <code>brief_append</code> inserts exactly one line under a lock, re-reading the file inside it, so concurrent updates all land and your own edits are never rewritten.</p>
+          <p>A manager updates a brief at the same moment a worker in that project is editing it, because the trigger for both is the same worker finishing. <code>brief_append</code> inserts one line under a lock, re-reading the file inside it, so concurrent updates all land and your own edits are never rewritten.</p>
         </div>
       </div>
       <div class="prop">
         <div class="n">05</div>
         <div>
           <h4>It records <em>why</em></h4>
-          <p>Rejected designs and the reasoning that killed them. Beliefs that turned out to be wrong, marked as retractions rather than quietly deleted. Do-not-re-dispatch markers. A task list records what; a brief records what not to try again.</p>
+          <p>Rejected designs, and the reasoning that killed them. Beliefs that turned out to be wrong, marked as retractions rather than quietly deleted, plus do-not-re-dispatch markers. A task list records what happened; a brief records what not to try again.</p>
         </div>
       </div>
     </div>
@@ -829,8 +829,8 @@
        where it fails. -->
   <div class="tile counter">
     <div>
-      <h4>A brief can go stale. This one did — four times in a day.</h4>
-      <p>In a fast fleet, a line can be wrong within hours: the thing it describes gets fixed by someone else while the note still says it's broken. That is not hypothetical. This repo's own log numbers its misses, and each one cost a real dispatch:</p>
+      <h4>A brief can go stale. This one went stale four times in one day.</h4>
+      <p>In a fast fleet, a line can be wrong within hours: the thing it describes gets fixed by someone else while the note still says it's broken. This repo's own log numbers its misses, and each one cost a dispatch:</p>
       <div class="quote">
         “THIRD already-fixed item today”<br />
         “FOURTH already-fixed item today”<br />
@@ -840,75 +840,75 @@
     <div>
       <h4>So the system builds for correction, not for correctness.</h4>
       <ul>
-        <li><b>Every entry is dated</b> and carries a disposition marker — ✅ closed, ⚠️ waiting on you, ❌ retracted. A wrong line gets contradicted in place, not deleted.</li>
-        <li><b>Archiving keeps it short enough to actually read,</b> which is the only thing that keeps it accurate.</li>
-        <li><b>A lead is dispatched verify-then-fix,</b> never blind-fix — the standing rule is that “the cost of a clean no-op is one cheap worker; the cost of a blind fix is a conflicting re-implementation”.</li>
+        <li><b>Every entry is dated</b> and carries a disposition marker: ✅ closed, ⚠️ waiting on you, ❌ retracted. A wrong line gets contradicted in place, not deleted.</li>
+        <li><b>Archiving keeps it short enough to read,</b> which is the only thing that keeps it accurate.</li>
+        <li><b>A lead is dispatched verify-then-fix,</b> never blind-fix. The standing rule: “the cost of a clean no-op is one cheap worker, the cost of a blind fix is a conflicting re-implementation”.</li>
         <li><b>Being wrong gets written down too.</b> One worker reverted a fix just to prove the existing test caught it, then recorded the result so the stale report would not be fixed a third time.</li>
       </ul>
     </div>
   </div>
 
-  <p class="sec-note">The brief is <b>operational</b> memory — who did what, what was decided, what not to try again. It is not a map of your code: work{spacer} doesn't read, index or understand your repo, and when a finding is really architectural the manager is told to file it into whatever code-context tooling the project already has. Every brief is also a board you can drag, and a tab on your phone.</p>
+  <p class="sec-note">The brief is <b>operational</b> memory: who did what, what was decided, what not to try again. It is not a map of your code. work{spacer} doesn't read, index or understand your repo, and when a finding is architectural the manager is told to file it into whatever code-context tooling the project already has. Every brief is also a board you can drag, and a tab on your phone.</p>
 </div></section>
 
 <section id="manager"><div class="wrap">
   <div class="sec-head">
     <div class="h2"><span class="hash">#</span>a manager you <span class="g">talk to</span>, not a board you drive</div>
-    <p class="sec-sub">Open the Fleet Manager from the Overview and it comes up as a real agent session on your own CLI, rooted at the parent directory of your projects, holding the work{spacer} tools at the operator tier. You give it work in a sentence. It does the dispatching.</p>
+    <p class="sec-sub">Open the Fleet Manager from the Overview and it comes up as a real agent session on your own CLI, rooted at the parent directory of your projects, holding the work{spacer} tools at the operator tier. You give it work in a sentence and it does the dispatching.</p>
   </div>
   <div class="trio">
     <div class="tile box">
       <div class="k">01_delegate</div>
       <h3>It never does the work</h3>
-      <p>No edits, no builds, no long investigations of its own — its availability <em>is</em> the feature. Every turn ends in seconds so you can always reach it. It picks the model to match the job, too: a cheap fast one for a rename, the strongest one for a gnarly bug, and never a frontier model on a chore.</p>
+      <p>No edits, no builds, no long investigations of its own. Staying available is its job, so every turn ends in seconds and you can always reach it. It picks the model to match the work: a cheap fast one for a rename, the strongest one for a gnarly bug, and never a frontier model on a chore.</p>
     </div>
     <div class="tile box">
       <div class="k">02_never_poll</div>
       <h3>It stops after dispatching</h3>
-      <p>No status loops, no “just checking on the workers” — that isn't monitoring, it's a hang, and it locks you out of the conversation. A turn that ends right after dispatching is the manager working correctly. It can afford that because it doesn't have to look: it gets woken.</p>
+      <p>No status loops, no “just checking on the workers”. That isn't monitoring, it's a hang, and it locks you out of the conversation. A turn that ends right after dispatching is the manager working correctly. It can afford that because it doesn't have to look: it gets woken.</p>
     </div>
     <div class="tile box">
       <div class="k">03_keep_the_brief</div>
       <h3>It writes the result down</h3>
-      <p>When a dispatch lands, one dated line goes to the top of that project's <code>## Recently</code> and the matching line leaves <code>## Now</code>. Ask it where things stand and it answers from the briefs — including its own, which is how it survives being restarted.</p>
+      <p>When a dispatch lands, one dated line goes to the top of that project's <code>## Recently</code> and the matching line leaves <code>## Now</code>. Ask it where things stand and it answers from the briefs, including its own, which is how it survives being restarted.</p>
     </div>
   </div>
 
   <p class="sec-note" style="margin-bottom:26px;"><b>The wake is the mechanism.</b> Four things can reach the manager, and they all arrive through one channel as an ordinary message it can act on:</p>
   <div class="tile tree">
-    <div class="row"><span class="name">worker-finished</span><span class="desc">a dispatch went idle. The wake carries its final message — and its validated JSON result, if the dispatch asked for one. A backstop sweep catches any finish the live signal missed.</span></div>
+    <div class="row"><span class="name">worker-finished</span><span class="desc">a dispatch went idle. The wake carries its final message, plus its validated JSON result if the dispatch asked for one. A backstop sweep catches any finish the live signal missed.</span></div>
     <div class="row"><span class="name">blocked</span><span class="desc">a worker is sitting on an approval or a question. The manager can answer it, or escalate to you</span></div>
-    <div class="row"><span class="name">threshold</span><span class="desc">a limit the manager armed for itself — tokens, cost, time. Deliberately in-memory and one-shot: it fires once, and it's gone if the app restarts</span></div>
+    <div class="row"><span class="name">threshold</span><span class="desc">a limit the manager armed for itself on tokens, cost, or time. In-memory and one-shot by design: it fires once, and it's gone if the app restarts</span></div>
     <div class="row"><span class="name">progress</span><span class="desc">the worker's own mid-task note, in its own words: “finished phase 1”, “the approach you gave me is wrong”. Rendered as a report, never as a finish</span></div>
   </div>
-  <p class="sec-note">Wakes are parent-keyed, so replacing a manager means the successor adopts its in-flight workers as its first act — otherwise their results report to a session that's gone. One honest limit: that manager→worker graph lives in the desktop app's memory. <b>Sessions survive a restart; the parentage doesn't.</b></p>
+  <p class="sec-note">Wakes are parent-keyed, so replacing a manager means the successor adopts its in-flight workers as its first act. Otherwise their results report to a session that's gone. One limit: that manager→worker graph lives in the desktop app's memory. <b>Sessions survive a restart; the parentage doesn't.</b></p>
 </div></section>
 
 <section id="dispatch" class="alt"><div class="wrap">
   <div class="sec-head">
-    <div class="h2"><span class="hash">#</span>how a task actually <span class="g">lands</span></div>
+    <div class="h2"><span class="hash">#</span>how a task <span class="g">lands</span></div>
     <p class="sec-sub">Every dispatch is one of two shapes, and the manager picks. A <em>ship</em> task changes code. A <em>scout</em> task only looks. They are dispatched differently, and that difference is enforced by the hub rather than requested in a prompt.</p>
   </div>
   <div class="arch quad">
     <div class="tile node">
       <div class="badge">ship task</div>
       <h4>Its own worktree</h4>
-      <p>Code changes go to a fresh <code>wks/</code> branch in a worktree under <code>~/.workspacer/worktrees</code>, so two agents in one repo never collide. <code>node_modules</code> is linked in and your setup hooks run. It isolates branches and files — <em>not</em> your machine: same dependencies, same ports, same network.</p>
+      <p>Code changes go to a fresh <code>wks/</code> branch in a worktree under <code>~/.workspacer/worktrees</code>, so two agents in one repo never collide. <code>node_modules</code> is linked in and your setup hooks run. It isolates branches and files, not your machine: same dependencies, same ports, same network.</p>
     </div>
     <div class="tile node">
       <div class="badge">scout task</div>
       <h4>A read-only token</h4>
-      <p>An investigation is dispatched at the <em>view</em> tier: the hub mints that session its own capability token whose allowlist has no spawn, no approve, no shell. Not a polite instruction in a prompt — a refusal at the call.</p>
+      <p>An investigation is dispatched at the <em>view</em> tier: the hub mints that session its own capability token whose allowlist has no spawn, no approve, no shell. The hub refuses the call itself, so no prompt has to be trusted.</p>
     </div>
     <div class="tile node">
       <div class="badge">delivery</div>
       <h4>PR, or local merge</h4>
-      <p>Each project carries how work should land — open a pull request, or merge locally once you approve — and the manager bakes it into the worker's first message so the instructions and the outcome can't diverge. It is advisory to the manager, not a hard gate.</p>
+      <p>Each project carries how work should land, either a pull request or a local merge once you approve. The manager bakes it into the worker's first message so the instructions and the outcome can't diverge. It is advisory to the manager, not a hard gate.</p>
     </div>
     <div class="tile node">
       <div class="badge">result</div>
-      <h4>JSON, not just prose</h4>
-      <p>A dispatch can carry a JSON Schema. The worker ends with a fenced result block, it's validated before the manager ever sees it, and you get a card. If it doesn't parse, the wake says so — rather than leaving the manager to guess the worker reported nothing.</p>
+      <h4>A result you can parse</h4>
+      <p>A dispatch can carry a JSON Schema. The worker ends with a fenced result block, it's validated before the manager ever sees it, and you get a card. If it doesn't parse, the wake says so, instead of leaving the manager to guess that the worker reported nothing.</p>
     </div>
   </div>
   <p class="sec-note">You stay in the loop by default: the manager may approve a worker's prompts while the action stays inside the repo it dispatched to, and must escalate anything destructive, cross-repo or credential-touching to you. Per-project <code>yolo</code> turns prompts off for <em>that</em> project's workers only.</p>
@@ -917,13 +917,13 @@
 <section id="fleet"><div class="wrap">
   <div class="sec-head">
     <div class="h2"><span class="hash">#</span>every worker is a <span class="g">real session</span></div>
-    <p class="sec-sub">Not an invisible subagent that returns a paragraph. Each one is a full agent you can open, drive, interrupt, re-model, approve — or ignore entirely and let the manager handle. The delegation is optional; the sessions are real either way.</p>
+    <p class="sec-sub">Each one is a full agent you can open, drive, interrupt, re-model and approve, or ignore and let the manager handle it. They are not invisible subagents that return a paragraph and vanish. The delegation is optional; the sessions are real either way.</p>
   </div>
   <div class="trio">
     <div class="tile box">
       <div class="k">ambient_awareness</div>
       <h3>Know who needs you</h3>
-      <p>A status dot per agent and a live <em>N waiting</em> count. The inbox collects everything waiting on you — and stays quiet for the agent you're already watching.</p>
+      <p>A status dot per agent and a live <em>N waiting</em> count. The inbox collects everything waiting on you, and stays quiet for the agent you're already watching.</p>
       <a class="shot" href="shots/triage-inbox.webp" target="_blank"><img width="1600" height="862" src="shots/triage-inbox.webp" loading="lazy"
         alt="The inbox docked over the fleet: two finished agents waiting for review with open / respawn / snooze / dismiss actions" /></a>
     </div>
@@ -947,7 +947,7 @@
 <section id="agents" class="alt"><div class="wrap">
   <div class="sec-head">
     <div class="h2"><span class="hash">#</span>four harnesses, <span class="g">one fleet</span></div>
-    <p class="sec-sub">Spawn any of them from the same dialog — yourself, or through the manager. Pick a repo, a model, a profile, and go; they all land in the same fleet, on your subscriptions.</p>
+    <p class="sec-sub">Spawn any of them from the same dialog, yourself or through the manager. Pick a repo, a model, a profile, and go; they all land in the same fleet, on your subscriptions.</p>
   </div>
   <div class="harness-grid">
     <div class="harness">
@@ -975,17 +975,17 @@
   </div>
   <div class="harness-footer">
     <span><svg class="tick" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8.5 6.5 12 13 4"/></svg> Approval cards, the question picker, and one workspace per agent on all four</span>
-    <span><svg class="tick" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8.5 6.5 12 13 4"/></svg> Your CLIs, your subscriptions, your machine — nothing is proxied through us</span>
+    <span><svg class="tick" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8.5 6.5 12 13 4"/></svg> Your CLIs, your subscriptions, your machine. Nothing is proxied through us</span>
     <!-- The old copy here claimed live token cost on every provider. It isn't
          true, and a page that overclaims the boring parts doesn't get believed
          about the interesting ones. -->
-    <span class="caveat"><svg class="warn" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 2.5 15 14H1L8 2.5Z" stroke-linejoin="round"/><path d="M8 6.6v3.2M8 11.6v.5"/></svg> Not at parity, and we won't pretend: cost on Codex is a pricing-table estimate rather than a wire figure, and Pi ships no MCP client at all — so a Pi worker gets none of the work{spacer} tools. Claude Code is the most complete of the four, and the manager itself runs on Claude or Codex. It <em>dispatches</em> to all four.</span>
+    <span class="caveat"><svg class="warn" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 2.5 15 14H1L8 2.5Z" stroke-linejoin="round"/><path d="M8 6.6v3.2M8 11.6v.5"/></svg> Not at parity, and we won't pretend: cost on Codex is a pricing-table estimate rather than a wire figure, and Pi ships no MCP client at all, so a Pi worker gets none of the work{spacer} tools. Claude Code is the most complete of the four, and the manager itself runs on Claude or Codex. It <em>dispatches</em> to all four.</span>
   </div>
   <div class="showcase">
     <a class="frame" href="shots/spawn-dialog.webp" target="_blank">
       <img width="1600" height="862" src="shots/spawn-dialog.webp" loading="lazy"
         alt="The spawn dialog: pick Claude Code, Codex, OpenCode, or Pi, a model, terminal or headless transport, and a permission mode" />
-      <div class="frame-cap">one dispatch dialog, four providers — model, transport, and permissions up front</div>
+      <div class="frame-cap">one dispatch dialog for four providers, with model, transport and permissions up front</div>
     </a>
   </div>
 </div></section>
@@ -993,33 +993,33 @@
 <section id="ide"><div class="wrap">
   <div class="sec-head">
     <div class="h2"><span class="hash">#</span>and it's still an <span class="g">IDE</span></div>
-    <p class="sec-sub">Everything an agent needs around it, in the same window. Each agent keeps its own tabs and panes in the daemon, separate from the window — close the app and nothing dies.</p>
+    <p class="sec-sub">Everything an agent needs around it, in the same window. Each agent keeps its own tabs and panes in the daemon, separate from the window, so you can close the app and nothing dies.</p>
   </div>
   <div class="tile tree">
     <div class="row"><span class="name">terminal</span><span class="desc">a real xterm and PTY shell scoped to the agent cwd</span></div>
-    <div class="row"><span class="name">editor</span><span class="desc">sandboxed CodeMirror with project search, optional vim mode, and a file tree — or your own <code>$EDITOR</code> in a terminal pane</span></div>
+    <div class="row"><span class="name">editor</span><span class="desc">sandboxed CodeMirror with project search, optional vim mode, and a file tree, or your own <code>$EDITOR</code> in a terminal pane</span></div>
     <div class="row"><span class="name">review</span><span class="desc">git status, diff, stage, commit, and push in the app</span></div>
-    <div class="row"><span class="name">board</span><span class="desc">every brief the fleet keeps as topic cards, one lane per project — and the drag is real: dropping a card on Archive moves it out of the brief and into <code>brief.archive.md</code></span></div>
+    <div class="row"><span class="name">board</span><span class="desc">every brief the fleet keeps as topic cards, one lane per project. The drag does the work: dropping a card on Archive moves it out of the brief and into <code>brief.archive.md</code></span></div>
     <div class="row"><span class="name">browser</span><span class="desc">embedded webview with nav, bookmarks, app mode, themed to match</span></div>
     <div class="row"><span class="name">agents</span><span class="desc">fleet monitor plus live watch panes for subagents and workflows</span></div>
     <div class="row"><span class="name">plugins</span><span class="desc">install, remove, and health-check sidecars that bring their own panes</span></div>
   </div>
-  <p class="sec-note">Arrange it your way: <b>fleet and focus modes</b> flip in one key between watching every agent and quieting the sidebar to the one you're in, without remounting a pane. Plus a command palette, remappable keybindings with leader chords, 18 themes and a theme maker, and layout templates — all in <a href="docs.html">the docs</a>.</p>
+  <p class="sec-note">Arrange it your way: <b>fleet and focus modes</b> flip in one key between watching every agent and quieting the sidebar to the one you're in, without remounting a pane. Plus a command palette, remappable keybindings with leader chords, 18 themes and a theme maker, and layout templates, all in <a href="docs.html">the docs</a>.</p>
   <div class="gallery">
     <a class="frame" href="shots/editor.webp" target="_blank">
       <img width="1600" height="862" src="shots/editor.webp" loading="lazy"
         alt="The sandboxed editor plugin: project file tree beside a CodeMirror editor with syntax highlighting" />
-      <div class="frame-cap">the editor plugin — a sandboxed sidecar with your project tree and theme</div>
+      <div class="frame-cap">the editor plugin, a sandboxed sidecar with your project tree and theme</div>
     </a>
     <a class="frame" href="shots/overview.webp" target="_blank">
       <img width="1600" height="862" src="shots/overview.webp" loading="lazy"
         alt="The Overview space: fleet stats, session cost, plugin panes, favourites and recent directories" />
-      <div class="frame-cap">the overview space — where the Fleet Manager starts, beside spend, plugins, and recent repos</div>
+      <div class="frame-cap">the overview space, where the Fleet Manager starts, beside spend, plugins and recent repos</div>
     </a>
     <a class="frame" href="shots/ask-question.webp" target="_blank">
       <img width="1600" height="862" src="shots/ask-question.webp" loading="lazy"
         alt="An agent's question rendered inline in the chat with numbered options, next to per-turn changed-file cards" />
-      <div class="frame-cap">questions render in the chat too — numbered options, diffs a click away</div>
+      <div class="frame-cap">questions render in the chat too, with numbered options and diffs a click away</div>
     </a>
   </div>
 </div></section>
@@ -1034,15 +1034,15 @@
       <div class="k">remote</div>
       <h3>Check on it from anywhere</h3>
       <ul>
-        <li><b>A phone PWA</b> at <code>/m</code> you install from a QR code — reads as a fleet manager: Fleet, Waiting, Flows, Briefs and Dispatch tabs, with big approve buttons for clearing approvals from the couch.</li>
+        <li><b>A phone PWA</b> at <code>/m</code> you install from a QR code. It reads as a fleet manager: Fleet, Waiting, Flows, Briefs and Dispatch tabs, with big approve buttons for clearing approvals from the couch.</li>
         <li><b>The full app over the bus,</b> the real renderer at <code>/app</code>, with tmux-style layout mirroring between desktop and web.</li>
-        <li><b>No desktop required.</b> <code>workspacer serve</code> runs the same fleet on a headless box — though the box does have to be on; nothing runs in a cloud, because there isn't one. Sharing is off by default, and tokens can be scoped view-only.</li>
+        <li><b>No desktop required.</b> <code>workspacer serve</code> runs the same fleet on a headless box, though the box does have to be on. Nothing runs in a cloud, because there isn't one. Sharing is off by default, and tokens can be scoped view-only.</li>
         <li><b>Two machines, one fleet.</b> Federate your desktop's hub with your laptop's and every client shows both machines' agents side by side, approvals routed to the right box, offline peers marked rather than vanished.</li>
       </ul>
       <div class="shot">
         <div class="duo">
           <a class="d" href="shots/web-remote.webp" target="_blank"><img width="1600" height="859" src="shots/web-remote.webp" loading="lazy"
-            alt="The full workspacer renderer running in Chrome over Tailscale — same fleet, same panes, served by the hub" /></a>
+            alt="The full workspacer renderer running in Chrome over Tailscale: same fleet, same panes, served by the hub" /></a>
           <div class="phones">
             <a class="m" href="shots/mobile-fleet.webp" target="_blank"><img width="640" height="859" src="shots/mobile-fleet.webp" loading="lazy"
               alt="The phone PWA Fleet tab: All / Waiting / In flight / Landed filters, and a card per agent with a static identity row (project, task, role) and a separate state row (status, model, context meter, cost)" /></a>
@@ -1056,9 +1056,9 @@
       <div class="k">control_plane</div>
       <h3>Or drive it from a tool</h3>
       <ul>
-        <li><b>The whole fleet over MCP.</b> List agents, read transcripts, dispatch, prompt, approve, answer, append to a brief, even navigate the app — any MCP client can run the place. This is the same facade the manager holds; you can hand it to anything.</li>
-        <li><b>Scoped, per session.</b> Every agent that gets the tools gets them at a tier — <em>view</em> to observe, <em>triage</em> to clear approvals, <em>operator</em> to dispatch — enforced by the hub on each call, not by the prompt. Plugins can contribute tools of their own.</li>
-        <li><b>Jobs that run without you.</b> Recurring or one-off: dispatch an agent with a prompt, run a command, or call a capability — on a timer, at a time of day, or once. A job can run a script <em>first</em> and hand the output to the agent, and skip waking a model at all when the script finds nothing. The hub owns them, so they keep firing with the app closed. <a href="docs.html#jobs">Docs &rarr;</a></li>
+        <li><b>The whole fleet over MCP.</b> List agents, read transcripts, dispatch, prompt, approve, answer, append to a brief, even navigate the app. Any MCP client can run the place. This is the same facade the manager holds, and you can hand it to anything.</li>
+        <li><b>Scoped, per session.</b> Every agent that gets the tools gets them at a tier: <em>view</em> to observe, <em>triage</em> to clear approvals, <em>operator</em> to dispatch. The hub enforces the tier on every call, so the prompt never has to. Plugins can contribute tools of their own.</li>
+        <li><b>Jobs that run without you.</b> Recurring or one-off: dispatch an agent with a prompt, run a command, or call a capability. Fire it on a timer, at a time of day, or once. A job can run a script <em>first</em> and hand the output to the agent, and skip waking a model at all when the script finds nothing. The hub owns them, so they keep firing with the app closed. <a href="docs.html#jobs">Docs &rarr;</a></li>
         <li><b>Or skip the GUI.</b> <code>wks-tui</code> is a Rust client on the same bus, with a ctrl-k palette and vim keys.</li>
       </ul>
     </div>
@@ -1068,25 +1068,25 @@
     <div class="tile node"><div class="badge">session daemon</div><h4>claudemon <span>[rust]</span></h4><p>Owns the sessions and PTYs, runs the per-provider adapters, streams conversation and usage.</p></div>
     <div class="tile node"><div class="badge">control plane</div><h4>hub <span>[go]</span></h4><p>The event bus, capability router, token tiers, plugin system, jobs, and the MCP facade.</p></div>
   </div>
-  <p class="sec-note">Sessions live in the daemon, not the window — closing a window never kills an agent, and quitting the app doesn't either. <a href="build.html">Read the internals →</a></p>
+  <p class="sec-note">Sessions live in the daemon, not the window. Closing a window never kills an agent, and quitting the app doesn't either. <a href="build.html">Read the internals →</a></p>
 </div></section>
 
 <section id="status"><div class="wrap">
   <div class="sec-head">
     <div class="h2"><span class="hash">#</span>what this is, and what it <span class="g">isn't</span></div>
-    <p class="sec-sub">work{spacer} is alpha and built in the open by one person. Here is the list you'd otherwise find out the hard way — every line of it is a thing we'd rather tell you now than have you discover in week two.</p>
+    <p class="sec-sub">work{spacer} is alpha and built in the open by one person. Here is the list you'd otherwise find out the hard way. Every line of it is something we'd rather tell you now than have you discover in week two.</p>
   </div>
   <div class="facts">
     <div class="fact"><b>Alpha, and it means it.</b> Sharp edges, breaking changes between releases, and features that land faster than the docs describing them.</div>
     <div class="fact"><b>The builds are unsigned.</b> macOS and Windows will warn you, and you'll have to click through it. There is no code-signing certificate yet.</div>
-    <div class="fact"><b>It's for one person on their own machine.</b> No accounts, no multi-user model, no client separation — the tokens are capabilities, not logins. Federation joins <em>your</em> desktop and <em>your</em> laptop, not a team.</div>
-    <div class="fact"><b>Bring your own CLIs and subscriptions.</b> work{spacer} drives Claude Code, Codex, OpenCode and Pi — it doesn't replace them, resell them, or proxy them.</div>
+    <div class="fact"><b>It's for one person on their own machine.</b> No accounts, no multi-user model, no client separation. The tokens are capabilities, not logins. Federation joins <em>your</em> desktop and <em>your</em> laptop, not a team.</div>
+    <div class="fact"><b>Bring your own CLIs and subscriptions.</b> work{spacer} drives Claude Code, Codex, OpenCode and Pi. It doesn't replace them, resell them, or proxy them.</div>
     <div class="fact"><b>Nothing runs while your machine is off.</b> <code>workspacer serve</code> is headless, but something still has to be powered on. Your code never leaves it either.</div>
     <div class="fact"><b>Worktrees isolate branches, not environments.</b> Agents share your machine, dependencies, ports and network. If you need a sandbox, this isn't one.</div>
     <div class="fact"><b>The harnesses aren't at parity.</b> Codex cost is an estimate, Pi gets no work{spacer} tools, and Claude Code is where the deepest integration lives.</div>
     <div class="fact"><b>The manager→worker graph doesn't survive a restart.</b> Sessions do, and the briefs do; the parentage is re-established by hand or by a successor adopting.</div>
     <div class="fact"><b>Delivery mode is advisory,</b> not a gate. It tells the manager how to land work; it does not stop a worker from doing something else.</div>
-    <div class="fact"><b>Push notifications are still being hardened.</b> The phone PWA can wake you when an agent needs you — don't bet the farm on the delivery yet.</div>
+    <div class="fact"><b>Push notifications are still being hardened.</b> The phone PWA can wake you when an agent needs you, but don't bet the farm on the delivery yet.</div>
     <div class="fact"><b>It doesn't read your code.</b> No indexing, no code intelligence, no answers about your repo. That's a different kind of tool, and work{spacer} is happy to dispatch agents that use one.</div>
     <div class="fact"><b>MIT, and the whole thing is here.</b> Desktop, both daemons, the TUI, the plugin system and this page. Fork it, gut it, ship your own.</div>
   </div>
@@ -1104,7 +1104,7 @@
         <div class="p">git clone https://github.com/DJTouchette/workspacer</div>
         <div class="ok out">cloned into ./workspacer</div>
         <div class="p">make setup</div>
-        <div class="ok out">desktop, claudemon (rust), hub (go) — ready</div>
+        <div class="ok out">desktop, claudemon (rust), hub (go): ready</div>
         <div class="p">./dev</div>
         <div class="out">work{spacer} dev → electron + daemons up</div>
         <div class="p"><span class="cur"></span></div>
@@ -1112,8 +1112,8 @@
     </div>
     <div class="tile pitch">
       <ul>
-        <li><span class="pitch-mark">+</span><span><b>Drop in a plugin.</b> A manifest gets you a supervised sidecar, its own panes, and your theme — no fork required.</span></li>
-        <li><span class="pitch-mark">↯</span><span><b>Drive it over MCP.</b> The hub exposes the whole fleet as tiered tools, so anything that speaks MCP can run it — scoped to observe, triage, or operate.</span></li>
+        <li><span class="pitch-mark">+</span><span><b>Drop in a plugin.</b> A manifest gets you a supervised sidecar, its own panes, and your theme. No fork required.</span></li>
+        <li><span class="pitch-mark">↯</span><span><b>Drive it over MCP.</b> The hub exposes the whole fleet as tiered tools, so anything that speaks MCP can run it, scoped to observe, triage, or operate.</span></li>
         <li><span class="pitch-mark">›</span><span><b>Or skip the GUI.</b> <code>wks-tui</code> is a Rust client on the same bus, with a ctrl-k palette and vim keys.</span></li>
       </ul>
       <div class="pitch-foot">
@@ -1129,13 +1129,13 @@
 
 <section id="get" class="cta"><div class="wrap">
   <h2 class="display">Point it at your projects and let the manager dispatch.</h2>
-  <p>work{spacer} is in alpha and the builds are unsigned — expect sharp edges and a warning dialog. Installers for Linux, macOS, and Windows, plus a standalone server bundle for a box with no desktop.</p>
+  <p>work{spacer} is in alpha and the builds are unsigned, so expect sharp edges and a warning dialog. Installers for Linux, macOS, and Windows, plus a standalone server bundle for a box with no desktop.</p>
   <div class="cta-actions">
     <a class="btn btn-fill btn-lg" id="dl-btn" href="https://github.com/DJTouchette/workspacer/releases/latest">Download</a>
     <a class="btn btn-line btn-lg" href="docs.html">Read the docs</a>
     <a class="btn btn-line btn-lg" href="https://github.com/DJTouchette/workspacer">View on GitHub</a>
   </div>
-  <div class="dl-alts" id="dl-alts">installers for linux, macos, and windows — plus the standalone server bundles — land on <a href="https://github.com/DJTouchette/workspacer/releases">the releases page</a>.</div>
+  <div class="dl-alts" id="dl-alts">installers for linux, macos, and windows, plus the standalone server bundles, land on <a href="https://github.com/DJTouchette/workspacer/releases">the releases page</a>.</div>
 </div></section>
 
 <footer><div class="wrap">
@@ -1182,7 +1182,7 @@
   });
 })();
 
-// The hero pane's tabs really switch — it's a demo, not a picture of one. The
+// The hero pane's tabs work. It is a demo, not a picture of one. The
 // markup already ships with the manager tab selected and the other two carrying
 // .off, so with JS blocked the pane degrades to a static manager conversation
 // instead of three panels stacked on top of each other.
@@ -1202,7 +1202,7 @@
   };
   tabs.forEach(function (tab, i) {
     tab.addEventListener('click', function () { select(i); });
-    // Roving tabindex plus arrow keys — a tablist you can only reach with a
+    // Roving tabindex plus arrow keys. A tablist you can only reach with a
     // mouse is just three buttons wearing a costume.
     tab.addEventListener('keydown', function (e) {
       var step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
@@ -1214,8 +1214,8 @@
 })();
 
 // Live star count in the nav pill. Stays as the word "GitHub" until the API
-// answers, so a rate-limited or offline visitor never sees a bare "0" — and
-// below FLOOR, where the number reads as a liability rather than proof, the
+// answers, so a rate-limited or offline visitor never sees a bare "0". Below
+// FLOOR, where the number reads as a liability rather than proof, the
 // plain label is the better pill.
 (function () {
   var FLOOR = 10;
@@ -1248,7 +1248,7 @@
   var ua = navigator.userAgent;
   // Phones and tablets first: an iPhone UA contains "like Mac OS X" and
   // Android's contains "Linux", so without this gate they'd be offered a
-  // desktop installer. iPadOS 13+ masquerades as a Mac — the touch check
+  // desktop installer. iPadOS 13+ masquerades as a Mac, so the touch check
   // catches it. Mobile keeps the generic releases-page button.
   var isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) ||
     (/Mac/.test(ua) && navigator.maxTouchPoints > 1);
@@ -1258,7 +1258,7 @@
     : /Linux|X11|CrOS/i.test(ua) ? 'Linux'
     : null;
 
-  // The nav button stays a terse "Download" — it has no room for a version.
+  // The nav button stays a terse "Download" because it has no room for a version.
   var label = function (btn, text) { if (btn.id !== 'dl-btn-nav') btn.textContent = text; };
   if (os) btns.forEach(function (b) { label(b, 'Download for ' + os); });
 
