@@ -151,9 +151,12 @@ search, not a file search.
   `recon.tests` / `witness`, just not as symbols. (Go source `.go` files index normally.)
 - **`recon.related`, `recon.context`, `recon.symbols file:` require a FILE path, never a
   directory.** Use `recon.search` first to find the file.
-- **The MCP tools above need `.mcp.json` (checked in, `rivet serve`) to actually be exposed.**
-  A fresh Claude Code install must approve it once (`claude mcp list` shows "Pending approval"
-  until you do); until approved, agents silently fall back to plain Grep instead of `recon.*`.
+- **The MCP tools above come from `.mcp.json` (checked in, `rivet serve`).** Dispatched
+  workers, whether spawned by workspacer itself or Claude Code's own Task/Agent tool, get
+  `mcp__rivet__*` immediately, no approval step. That gate only exists for a human running
+  the interactive `claude` TUI directly: on a fresh clone or a new machine, that session must
+  approve it once (`claude mcp list` shows "Pending approval" until you do), and only that
+  session falls back to plain Grep until approved.
 
 ## Workflow recipes for this codebase
 

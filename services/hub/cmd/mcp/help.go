@@ -56,9 +56,10 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
 - Pass message: the TASK ITSELF, as the new agent's first turn. Dispatching is
   one call — you do not spawn, wait for the id, and then send_message. The host
   hands the prompt to the daemon as part of the spawn, so it cannot race the
-  agent coming up, and the resultSchema contract below is prepended to it, so
-  the contract and the task land together in the first turn. Use send_message
-  for anything AFTER that first turn.
+  agent coming up. The resultSchema contract below lands separately: an
+  appended system prompt for the default Claude PTY provider, prepended text
+  for managed/stream providers. Either way it reaches the agent's first turn
+  alongside the task. Use send_message for anything AFTER that first turn.
 - Pass label (short human name) and parentSessionId (your own session id) so
   the new agent nests under you in the UI.
 - Give the new agent workspacer tools only when it needs them, at the LOWEST
