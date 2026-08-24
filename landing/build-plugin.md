@@ -18,13 +18,13 @@ Set `ui` to a subdirectory of static assets and **omit `server`**. There is no p
 
 ### sidecar plugin (`server`)
 
-Set `server.command` to a long-lived process the hub spawns and supervises (spawn → health-poll → restart-on-crash, SIGTERM then SIGKILL on stop). It's a polyglot sidecar: **any language**. It connects to the bus itself, so it can run *always-on with no pane at all* (an automation), `provide` capabilities other clients call, and/or serve its own webview panes from its port (the host points the pane's webview straight at `http://127.0.0.1:<port><path>` — nothing is proxied through the hub).
+Set `server.command` to a long-lived process the hub spawns and supervises (spawn → health-poll → restart-on-crash, SIGTERM then SIGKILL on stop). It's a polyglot sidecar: **any language**. It connects to the bus itself, so it can run *always-on with no pane at all* (an automation), `provide` capabilities other clients call, and/or serve its own webview panes from its port. The host points the pane's webview straight at `http://127.0.0.1:<port><path>`; nothing is proxied through the hub.
 
 - Reach for it when your plugin *does* something in the background: reacts to events, calls out to another service, answers capabilities for the rest of the fleet.
 - Give it a `port` + `health` path so the supervisor can health-check it and surface `sidecar.*` status colors.
-- Examples: the bundled `clock-plugin` (the minimal sidecar demo) and the catalog's automations — `policy-approver`, `fleet-guardian`, `test-on-save`, `slack-bridge`.
+- Examples: the bundled `clock-plugin` (the minimal sidecar demo) and the catalog's automations: `policy-approver`, `fleet-guardian`, `test-on-save`, `slack-bridge`.
 
-The two aren't mutually exclusive in spirit — a sidecar can also serve panes — but a single manifest sets *either* `server` *or* `ui` as the way its panes are served. If it declares panes with neither, the loader rejects it (the webview would have no URL to load).
+The two aren't mutually exclusive in spirit (a sidecar can also serve panes), but a single manifest sets *either* `server` *or* `ui` as the way its panes are served. If it declares panes with neither, the loader rejects it (the webview would have no URL to load).
 
 ## Your first plugin
 
@@ -60,11 +60,11 @@ my-hello/
 }
 ```
 
-`panes` contributes one pane type; `hotkeys` binds a key to open it; `capabilities` asks for the single verb `agents.list` and nothing else. Ask for only what you use — the bus rejects any call you didn't declare.
+`panes` contributes one pane type; `hotkeys` binds a key to open it; `capabilities` asks for the single verb `agents.list` and nothing else. Ask for only what you use: the bus rejects any call you didn't declare.
 
 ### 3. the page
 
-The host **auto-injects the Plugin SDK** into your served HTML, so `window.workspacer` is just there — no bus WebSocket to hand-roll. Await `ready`, then `call` a capability, subscribe with `on`, `publish`, and read live `settings`. The whole client is a few lines:
+The host **auto-injects the Plugin SDK** into your served HTML, so `window.workspacer` is just there and there's no bus WebSocket to hand-roll. Await `ready`, then `call` a capability, subscribe with `on`, `publish`, and read live `settings`. The whole client is a few lines:
 
 ```js
 await window.workspacer.ready;                     // resolves when connected
@@ -86,7 +86,7 @@ let settings = window.workspacer.settings;
 window.workspacer.onSettings((next) => { settings = next; });
 ```
 
-> **Plugin SDK.** The hub serves `/plugins/sdk.js` and injects `<script src="/plugins/sdk.js"></script>` (plus `window.__WKS_PLUGIN_ID__` and `window.__WKS_SETTINGS__`) into every webview's HTML, so `window.workspacer` is present with no setup. It stays fully inside the manifest sandbox: the SDK subscribes to `*` under the hood, but **delivery is still capability-scoped** — `on(type)` only fires for events you listed in `consumes`, and `call(method)` only works for methods you listed in `capabilities`. It is a convenience wrapper over the bus, not a way around it. `window.workspacer` also exposes a live `.connected` boolean (true while the socket is up), `onStatus(connected => …)` to react to every connect/disconnect (including reconnect cycles), plus `.token` and `.url` if you need the raw connection.
+> **Plugin SDK.** The hub serves `/plugins/sdk.js` and injects `<script src="/plugins/sdk.js"></script>` (plus `window.__WKS_PLUGIN_ID__` and `window.__WKS_SETTINGS__`) into every webview's HTML, so `window.workspacer` is present with no setup. It stays fully inside the manifest sandbox: the SDK subscribes to `*` under the hood, but **delivery is still capability-scoped**: `on(type)` only fires for events you listed in `consumes`, and `call(method)` only works for methods you listed in `capabilities`. It is a convenience wrapper over the bus, not a way around it. `window.workspacer` also exposes a live `.connected` boolean (true while the socket is up), `onStatus(connected => …)` to react to every connect/disconnect (including reconnect cycles), plus `.token` and `.url` if you need the raw connection.
 
 Style the page with the injected `--wks-*` theme tokens (with fallbacks, e.g. `background: var(--wks-bg-base, #1a1a1a)`) so it matches the app. The host re-injects them on every live theme switch, and also exposes `window.__WKS_THEME__` + a `wks-theme` event for canvas UIs.
 
@@ -96,7 +96,7 @@ Drop `my-hello/` into your plugins dir (in the app: `<configDir>/plugins`; in de
 
 ### make it a sidecar instead
 
-To make this a **sidecar**, drop `ui`, add a `server` block pointing at your process (and an `install` build step if it needs compiling), and connect to the bus from that process. A sidecar has no injected SDK — it speaks the bus frames directly. It gets its token in the `HUB_TOKEN` environment variable instead of the URL; the bus address isn't passed in the environment, so connect to the default `127.0.0.1:7895` (or whatever `--addr` your hub listens on). A tiny Node sidecar that watches for agents that need you and posts a notification, raw frames and all:
+To make this a **sidecar**, drop `ui`, add a `server` block pointing at your process (and an `install` build step if it needs compiling), and connect to the bus from that process. A sidecar has no injected SDK; it speaks the bus frames directly. It gets its token in the `HUB_TOKEN` environment variable instead of the URL; the bus address isn't passed in the environment, so connect to the default `127.0.0.1:7895` (or whatever `--addr` your hub listens on). A tiny Node sidecar that watches for agents that need you and posts a notification, raw frames and all:
 
 ```js
 // server.js — a headless sidecar (no pane at all)
@@ -141,16 +141,16 @@ A sidecar with no `panes` and no `ui` is a pure automation: it never shows a win
 
 A `"command": "node"` sidecar does **not** run on whatever Node happens to be on the user's machine. The desktop app re-points it at its own bundled runtime (Electron running as Node), so your sidecar gets a known-modern Node even on a machine with no Node installed at all. That's what makes the `wks.js` twin below safe to depend on: the global `WebSocket` it uses is a Node 22+ built-in, and the bundled runtime tracks the app's Electron, which is well past that.
 
-Only a bare `node` / `node.exe` command is redirected. A prebuilt per-platform binary (`./bin/${os}-${arch}/server${exe}`) is always launched exactly as written, and `"/usr/bin/node"` is treated as a path to a specific binary, not as "give me Node" — write plain `"node"` if you want the guarantee.
+Only a bare `node` / `node.exe` command is redirected. A prebuilt per-platform binary (`./bin/${os}-${arch}/server${exe}`) is always launched exactly as written, and `"/usr/bin/node"` is treated as a path to a specific binary, not as "give me Node". Write plain `"node"` if you want the guarantee.
 
 Your **`install` step is where this stops.** Electron ships no package manager, so there is nothing to re-point `npm` at: an `"install": ["npm", "install"]` runs the user's own npm off their `PATH` and fails outright on a machine that hasn't got one. Two things follow:
 
-- **Prefer zero dependencies.** A sidecar that vendors `wks.js` and sticks to built-in `WebSocket` / `fs` / `http` needs no `install` step at all, and so installs cleanly for every user. The `require('ws')` in the example above is exactly what forces that `npm install` — drop it and the `install` line goes away with it.
-- **If you must build, depend on nothing the user has to have** — `["go", "build", "-o", "server", "."]`, or just commit a prebuilt binary. Note also that an `npm install` builds against the *system* Node while your sidecar runs on the *bundled* one, so a native module can end up compiled for a different ABI than the Node that later loads it; the failure surfaces at `require` time, a long way from the cause. An `install` step whose command is plain `node` (e.g. `["node", "build.js"]`) is pinned to the same runtime as the sidecar and doesn't have this problem.
+- **Prefer zero dependencies.** A sidecar that vendors `wks.js` and sticks to built-in `WebSocket` / `fs` / `http` needs no `install` step at all, and so installs cleanly for every user. The `require('ws')` in the example above is exactly what forces that `npm install`; drop it and the `install` line goes away with it.
+- **If you must build, depend on nothing the user has to have**: `["go", "build", "-o", "server", "."]`, or just commit a prebuilt binary. Note also that an `npm install` builds against the *system* Node while your sidecar runs on the *bundled* one, so a native module can end up compiled for a different ABI than the Node that later loads it; the failure surfaces at `require` time, a long way from the cause. An `install` step whose command is plain `node` (e.g. `["node", "build.js"]`) is pinned to the same runtime as the sidecar and doesn't have this problem.
 
 ### the Node twin (`wks.js`)
 
-Sidecars have no injected SDK, but you can vendor one file that gives you the same surface as `window.workspacer`. Drop this zero-dependency `wks.js` next to your `server.js` (it uses only Node >=22 built-ins — the global `WebSocket`, `fs`, `path`), then `require('./wks.js')`. It reads the token from `HUB_TOKEN` (falling back to `WKS_BUS_TOKEN` then a `.bus-token` file), connects to `ws://127.0.0.1:7895/bus`, and reconnects on drop:
+Sidecars have no injected SDK, but you can vendor one file that gives you the same surface as `window.workspacer`. Drop this zero-dependency `wks.js` next to your `server.js` (it uses only Node >=22 built-ins: the global `WebSocket`, `fs`, `path`), then `require('./wks.js')`. It reads the token from `HUB_TOKEN` (falling back to `WKS_BUS_TOKEN` then a `.bus-token` file), connects to `ws://127.0.0.1:7895/bus`, and reconnects on drop:
 
 ```js
 // wks.js — a zero-dependency hub-bus client for a sidecar (Node >=22, built-in WebSocket).
@@ -275,7 +275,7 @@ function connect(opts = {}) {
 module.exports = { connect };
 ```
 
-Your `server.js` then reads like the webview client — the same `ready` / `on` / `call` / `publish` / `settings` surface, and it mirrors the live connection status too (`.connected` and `onStatus(connected => …)`, firing on every drop and reconnect), so a sidecar can track the bus the same way a webview does (the bus enforces your manifest either way):
+Your `server.js` then reads like the webview client, with the same `ready` / `on` / `call` / `publish` / `settings` surface, and it mirrors the live connection status too (`.connected` and `onStatus(connected => …)`, firing on every drop and reconnect), so a sidecar can track the bus the same way a webview does (the bus enforces your manifest either way):
 
 ```js
 // server.js
@@ -294,7 +294,7 @@ const wks = connect();
 
 ## Widgets
 
-A **widget** is a small, glanceable view pinned to a *project directory*. It lives in the inspector rail's Project board, keyed by the agent's cwd — so several agents working in one repo all see the same board.
+A **widget** is a small, glanceable view pinned to a *project directory*. It lives in the inspector rail's Project board, keyed by the agent's cwd, so several agents working in one repo all see the same board.
 
 A widget is a **sibling of a pane, not a shrunken one**. This is the same distinction iPhone widgets make, and for the same reason: your pane may own a big bundle, a scroll region, or an editing surface, and none of that reads at 150px. Declare `widgets` alongside `panes`; they're served from the same origin, so one sidecar backs both.
 
@@ -319,42 +319,42 @@ A widget is a **sibling of a pane, not a shrunken one**. This is the same distin
 | `medium` | 2×1 | full width, one row |
 | `large` | 2×2 | a full-width square |
 
-Declare only what your widget actually reads well at — the user picks among those and nothing else. Omitting `sizes` means `["small"]`. There is deliberately no free resizing: three classes force the design decision at authoring time and keep every board aligned. Your widget is told nothing about its size directly; lay out against the box you're given, and use a CSS container/media query if you need to reflow between classes.
+Declare only what your widget actually reads well at: the user picks among those and nothing else. Omitting `sizes` means `["small"]`. There is deliberately no free resizing: three classes force the design decision at authoring time and keep every board aligned. Your widget is told nothing about its size directly; lay out against the box you're given, and use a CSS container/media query if you need to reflow between classes.
 
 Your widget page gets the same treatment a pane does:
 
-- **The SDK**, auto-injected — `window.workspacer` with the same `call` / `publish` / `on` surface.
-- **Theme tokens** — the app's `--wks-*` variables, reapplied when the user switches theme. Style against them and your widget matches the app.
-- **Your settings** — `window.__WKS_SETTINGS__` plus a `wks-settings` event, same as a pane.
-- **Query params** — `?cwd=<project>&surface=widget` (plus your `busToken`). `surface=widget` lets one HTML file serve both a pane and a widget and branch on it.
+- **The SDK**, auto-injected: `window.workspacer` with the same `call` / `publish` / `on` surface.
+- **Theme tokens**: the app's `--wks-*` variables, reapplied when the user switches theme. Style against them and your widget matches the app.
+- **Your settings**: `window.__WKS_SETTINGS__` plus a `wks-settings` event, same as a pane.
+- **Query params**: `?cwd=<project>&surface=widget` (plus your `busToken`). `surface=widget` lets one HTML file serve both a pane and a widget and branch on it.
 
 Two rules the host enforces on your behalf, worth designing for:
 
-- **A widget can be unmounted at any moment.** Closing the rail or switching to the Session tab tears the webview down; reopening loads it fresh. Keep no state in the widget that isn't recoverable — put it in your sidecar.
-- **Keep the sidecar the expensive part.** One sidecar can back a pane and several widgets while polling once. Don't give each widget its own poll loop, and avoid continuous animation — a widget on a visible board is not background-throttled.
+- **A widget can be unmounted at any moment.** Closing the rail or switching to the Session tab tears the webview down; reopening loads it fresh. Keep no state in the widget that isn't recoverable; put it in your sidecar.
+- **Keep the sidecar the expensive part.** One sidecar can back a pane and several widgets while polling once. Don't give each widget its own poll loop, and avoid continuous animation: a widget on a visible board is not background-throttled.
 
 ## The manifest
 
 Schema version is `"apiVersion": "1"` (the loader rejects anything else). The authoritative field list is `internal/plugin/manifest.go`; the real fields:
 
 - `id` (required), `name`. `id` is the install dir name and the token key; namespace it (`owner.thing`).
-- `apiVersion` — MUST be the string `"1"`.
-- `version` — your plugin's release version (semver-ish, e.g. `"1.4.0"`; an optional leading `v` is fine). Optional, but it's what powers update detection: the Plugins Manager re-fetches your repo's manifest and offers **Update** only when the published `version` is higher than the installed one. Omit it and the plugin can still be reinstalled, but never reports an update. Bump it on every release.
-- `server`, the sidecar process: `command` (required when `server` is set), `args`, `port`, `health` (a path, e.g. `/health`). The hub serves the plugin's panes from `http://127.0.0.1:<port><path>`. A `command` of exactly `node` is run on the app's bundled Node rather than the system one — see "which Node your sidecar runs on".
+- `apiVersion`: MUST be the string `"1"`.
+- `version`: your plugin's release version (semver-ish, e.g. `"1.4.0"`; an optional leading `v` is fine). Optional, but it's what powers update detection: the Plugins Manager re-fetches your repo's manifest and offers **Update** only when the published `version` is higher than the installed one. Omit it and the plugin can still be reinstalled, but never reports an update. Bump it on every release.
+- `server`, the sidecar process: `command` (required when `server` is set), `args`, `port`, `health` (a path, e.g. `/health`). The hub serves the plugin's panes from `http://127.0.0.1:<port><path>`. A `command` of exactly `node` is run on the app's bundled Node rather than the system one; see "which Node your sidecar runs on".
 - `ui`, instead of `server`, a subdir of static assets the hub serves itself at `/plugins/ui/<id>/`. This is a webview plugin with no sidecar process. Only the named subdir is exposed (not `plugin.json` or `.bus-token`).
 - `panes`, pane types injected into the UI. Each: `type` (unique id), `title`, `icon`, `path` (the URL path served for the pane), and `scope` (`global` = Overview only, `agent` = inside an agent workspace and gets its sessionId/cwd, `both` = wherever you are, the default).
-- `widgets`, glanceable views for a project's widget board — see "Widgets" above. Each: `id` (unique within your plugin), `title`, `icon`, `path`, and `sizes` (any of `small` / `medium` / `large`; omitted = `["small"]`).
+- `widgets`, glanceable views for a project's widget board (see "Widgets" above). Each: `id` (unique within your plugin), `title`, `icon`, `path`, and `sizes` (any of `small` / `medium` / `large`; omitted = `["small"]`).
 - `hotkeys`, each with `id`, `default` (e.g. `ctrl+shift+a`), and `command`, which is either `open-pane:<paneType>` or `emit:<eventType>`.
 - `settings`, typed settings the host renders in Settings. Each: `key`, `label`, `type` (`boolean`/`number`/`string`/`select`), `default`, `options` (for `select`), and `help`. Delivered into the webview as `window.__WKS_SETTINGS__` + a `wks-settings` event.
 - `capabilities`, bus methods the plugin may **call**. A bare string (`"agents.list"`) for an unscoped verb, or the object form `{ "method": "fs.read", "paths": ["${pluginDir}"] }` for a filesystem-scoped one.
 - `provides`, capabilities the plugin **answers** on the bus (it becomes a provider other clients can call).
-- `tools`, MCP tools the plugin contributes to agents through the workspacer facade — see "Agent tools" below. Each: `name`, `description`, optional `inputSchema` (a JSON Schema object), and `method` (a bus method covered by your `provides`).
+- `tools`, MCP tools the plugin contributes to agents through the workspacer facade (see "Agent tools" below). Each: `name`, `description`, optional `inputSchema` (a JSON Schema object), and `method` (a bus method covered by your `provides`).
 - `emits` / `consumes`, event types it publishes / subscribes to.
-- `install`, a one-time setup argv run in the plugin dir after a GitHub install (e.g. `["go","build","-o","server","."]`). Requires the user's consent, which names the exact argv. A `node` command here is pinned to the bundled runtime like a sidecar's; `npm`/`npx`/`yarn`/`pnpm` cannot be, and fail if the user has no Node toolchain — prefer no `install` step at all (see "which Node your sidecar runs on").
+- `install`, a one-time setup argv run in the plugin dir after a GitHub install (e.g. `["go","build","-o","server","."]`). Requires the user's consent, which names the exact argv. A `node` command here is pinned to the bundled runtime like a sidecar's; `npm`/`npx`/`yarn`/`pnpm` cannot be, and fail if the user has no Node toolchain. Prefer no `install` step at all (see "which Node your sidecar runs on").
 
 ## The bus protocol
 
-Webviews should reach for the injected `window.workspacer` SDK (see "your first plugin") rather than these raw frames — but this is the protocol it speaks under the hood, and the one a sidecar (or the `wks.js` twin above) talks directly. Whether webview or sidecar, a plugin is just another client on the hub bus. It opens one bidirectional WebSocket to `ws://127.0.0.1:7895/bus?token=<busToken>` (webviews get the token in the pane URL as `?busToken=`; sidecars get theirs in the `HUB_TOKEN` environment variable) and exchanges JSON frames. Publish and subscribe share the same pipe. Four ops matter:
+Webviews should reach for the injected `window.workspacer` SDK (see "your first plugin") rather than these raw frames, but this is the protocol it speaks under the hood, and the one a sidecar (or the `wks.js` twin above) talks directly. Whether webview or sidecar, a plugin is just another client on the hub bus. It opens one bidirectional WebSocket to `ws://127.0.0.1:7895/bus?token=<busToken>` (webviews get the token in the pane URL as `?busToken=`; sidecars get theirs in the `HUB_TOKEN` environment variable) and exchanges JSON frames. Publish and subscribe share the same pipe. Four ops matter:
 
 ```js
 // subscribe to events (topics you declared in "consumes")
@@ -371,9 +371,9 @@ ws.send(JSON.stringify({ op: 'call', id: 'c1', method: 'agents.list', params: {}
 ws.send(JSON.stringify({ op: 'register', methods: ['myplugin.status'] }));
 ```
 
-An incoming event is `{"op":"event","event":{ id, type, source, time, data }}` — the hub stamps `id`/`time` if you leave them blank. A reply to your `call` comes back as `{"op":"result","id":"c1","result":{…}}`, or `{"op":"error","id":"c1","error":"…"}`. When you `provide`, a caller's request arrives as an `op:'call'` frame you answer with an `op:'result'` carrying the same id.
+An incoming event is `{"op":"event","event":{ id, type, source, time, data }}`. The hub stamps `id`/`time` if you leave them blank. A reply to your `call` comes back as `{"op":"result","id":"c1","result":{…}}`, or `{"op":"error","id":"c1","error":"…"}`. When you `provide`, a caller's request arrives as an `op:'call'` frame you answer with an `op:'result'` carrying the same id.
 
-Two rules the bus enforces against your declared grants: you can only `call` a method you listed in `capabilities`, and you can only `publish` a type you listed in `emits` — an undeclared call or publish is refused. Topic patterns (in `subscribe`, `consumes`, `emits`) are exact (`agent.state_changed`), namespace wildcard (`agent.*`), or all (`*`). The router is **single-owner per method**, so when you `provide`, pick a namespace nobody else claims.
+Two rules the bus enforces against your declared grants: you can only `call` a method you listed in `capabilities`, and you can only `publish` a type you listed in `emits`. An undeclared call or publish is refused. Topic patterns (in `subscribe`, `consumes`, `emits`) are exact (`agent.state_changed`), namespace wildcard (`agent.*`), or all (`*`). The router is **single-owner per method**, so when you `provide`, pick a namespace nobody else claims.
 
 ## Capabilities & permissions
 
@@ -381,7 +381,7 @@ Capabilities are request/reply methods. List the ones you **call** in `capabilit
 
 ### the path-scoped rule
 
-Filesystem and project-search methods (`fs.*`, `search.project`) are the only ones that **must** use the object form and declare `paths`, or the loader rejects them — a plugin can never get unrestricted host filesystem access:
+Filesystem and project-search methods (`fs.*`, `search.project`) are the only ones that **must** use the object form and declare `paths`, or the loader rejects them. A plugin can never get unrestricted host filesystem access:
 
 ```json
 "capabilities": [
@@ -391,21 +391,21 @@ Filesystem and project-search methods (`fs.*`, `search.project`) are the only on
 ]
 ```
 
-Path tokens: `${pluginDir}` (your own folder), `${agentCwd}`, or an absolute path. `${agentCwd}` only resolves on a **per-pane webview token** for an agent-scoped pane (the pane mints an ephemeral token confined to that agent's directory on mount and revokes it on unmount) — it grants nothing on a static per-plugin or sidecar token. Anything unresolved grants nothing.
+Path tokens: `${pluginDir}` (your own folder), `${agentCwd}`, or an absolute path. `${agentCwd}` only resolves on a **per-pane webview token** for an agent-scoped pane (the pane mints an ephemeral token confined to that agent's directory on mount and revokes it on unmount); it grants nothing on a static per-plugin or sidecar token. Anything unresolved grants nothing.
 
 ### common host capabilities
 
-The methods the host registers today (provided by the desktop app, or headlessly by `cmd/brain`) — the same surface the MCP facade re-exposes as tools. The ones you'll reach for first:
+The methods the host registers today (provided by the desktop app, or headlessly by `cmd/brain`) are the same surface the MCP facade re-exposes as tools. The ones you'll reach for first:
 
 - `agents.list`, running agents with state / usage / pending asks.
 - `agents.sendMessage`, send a prompt to an agent (`{ sessionId, text }`).
-- `agents.spawn`, start a new agent (returns its sessionId). There is no `agents.kill` — to stop or steer a session, use `claude.signal` (`{ sessionId, signal }`).
+- `agents.spawn`, start a new agent (returns its sessionId). There is no `agents.kill`; to stop or steer a session, use `claude.signal` (`{ sessionId, signal }`).
 - `notifications.post`, notify the user (`{ title, body }` at minimum). Every call lands in the in-app notification center (the bell in the top bar) and, unless the user disabled OS notifications or you pass `inAppOnly: true`, also shows a clickable desktop notification. Optional fields: `level` (`info`|`success`|`warn`|`error`), `source` (shown in the center, e.g. `"plugin:ci"`), a click target (`sessionId` to focus that agent, `paneType` to open your pane, or `url`), `key` (same-key notifications replace instead of stack), `silent` (no toast, history only).
 - `claude.approve` / `claude.answer` / `claude.signal`, resolve an approval, answer an AskUserQuestion, send a signal.
 - `sessions.snapshot` / `sessions.transcript` / `sessions.conversation`, live session state and history.
 - `fs.read` / `fs.write` / `fs.watch` / `search.project`, path-scoped file I/O and ripgrep search (object form, `paths` required).
 
-List method names in `provides` and answer them on the bus, and you become a first-class capability provider the rest of the fleet (dashboards, rules, supervisors, the MCP facade) can call — e.g. a bridge sidecar can consume an external MCP server and re-expose its tools as hub capabilities.
+List method names in `provides` and answer them on the bus, and you become a first-class capability provider the rest of the fleet (dashboards, rules, supervisors, the MCP facade) can call. For example, a bridge sidecar can consume an external MCP server and re-expose its tools as hub capabilities.
 
 ## Agent tools
 
@@ -429,9 +429,9 @@ wks.provide('myorg.jira.search', async (params) => {
 });
 ```
 
-The workspacer MCP facade picks the tool up (within ~15s of the plugin loading) and exposes it as `mcp__workspacer__myorg_jira_search` — but **only to sessions that were granted it**: a spawn must pass `pluginTools: ["myorg.jira"]` (plus a `toolScope`) for your tools to appear in that agent's tool list. Tools are never ambient; installing a plugin does not tax every agent's context.
+The workspacer MCP facade picks the tool up (within ~15s of the plugin loading) and exposes it as `mcp__workspacer__myorg_jira_search`, but **only to sessions that were granted it**: a spawn must pass `pluginTools: ["myorg.jira"]` (plus a `toolScope`) for your tools to appear in that agent's tool list. Tools are never ambient; installing a plugin does not tax every agent's context.
 
-Rules, all enforced at load or serve time: the tool `name` is lowercase `[a-z0-9_]` starting with a letter; `description` is required (keep it to a line — it's what the model reads); `inputSchema`, when present, must be a JSON Schema **object** (`"type": "object"`); and `method` must be covered by your `provides` — which, like every other declaration, is consent-pinned, so a tool added after install stays withheld until the user reinstalls or explicitly reloads the plugin. Return plain JSON-serializable data; a thrown error becomes the agent's error result verbatim.
+Rules, all enforced at load or serve time: the tool `name` is lowercase `[a-z0-9_]` starting with a letter; `description` is required (keep it to a line; it's what the model reads); `inputSchema`, when present, must be a JSON Schema **object** (`"type": "object"`); and `method` must be covered by your `provides`, which, like every other declaration, is consent-pinned, so a tool added after install stays withheld until the user reinstalls or explicitly reloads the plugin. Return plain JSON-serializable data; a thrown error becomes the agent's error result verbatim.
 
 > **Source of truth.** The exact params/return shape of each host capability isn't a frozen public API yet. Treat `apps/desktop/src/main/services/hubCapabilities.ts` and `services/hub/examples/` as authoritative for field names, and the MCP tool list (`cmd/mcp/main.go`) for the stable subset.
 
@@ -439,23 +439,23 @@ Rules, all enforced at load or serve time: the tool `name` is lowercase `[a-z0-9
 
 Events are fire-and-forget pub/sub (state changes, lifecycle, UI activity). Declare the ones you subscribe to in `consumes` and the ones you publish in `emits`. Use capabilities when you need an answer or want to *make* something happen; use events to react.
 
-### consume — events the fleet publishes to you
+### consume: events the fleet publishes to you
 
-- `agent.state_changed`, the workhorse transition ping — published from claudemon's stream by the hub bridge, payload `{ sessionId, hookEvent, mode, cwd }` (the state dot). There are no separate `agent.spawned` / `agent.done` / `agent.terminated` events — subscribe to this for mode transitions, and to `workflow.*` for lifecycle.
-- `agent.snapshot`, a per-agent snapshot (state + usage). Context %, token/cost, and pending approvals/questions ride here and on the enriched `agents.list` rows. **The conversation on it is a bounded window, not the whole transcript** — this event fires on every flush of every session, so shipping full history would push megabytes a second at every subscriber. You get the newest turns plus `conversationOffset`, the absolute index of the first turn in the array (absolute index = `conversationOffset` + array index), and the tool-call / file-change lists are tailed and their payloads truncated the same way. If you only need to know *that* something changed, treat this as a wake-up and re-query `agents.list` — that is what `fleet-radar` does and it is immune to payload changes. If you genuinely need the transcript, call `sessions.conversation` (`{ sessionId, sinceSeq }`), which returns items after a sequence rather than the whole log.
+- `agent.state_changed`, the workhorse transition ping, published from claudemon's stream by the hub bridge, payload `{ sessionId, hookEvent, mode, cwd }` (the state dot). There are no separate `agent.spawned` / `agent.done` / `agent.terminated` events; subscribe to this for mode transitions, and to `workflow.*` for lifecycle.
+- `agent.snapshot`, a per-agent snapshot (state + usage). Context %, token/cost, and pending approvals/questions ride here and on the enriched `agents.list` rows. **The conversation on it is a bounded window, not the whole transcript**: this event fires on every flush of every session, so shipping full history would push megabytes a second at every subscriber. You get the newest turns plus `conversationOffset`, the absolute index of the first turn in the array (absolute index = `conversationOffset` + array index), and the tool-call / file-change lists are tailed and their payloads truncated the same way. If you only need to know *that* something changed, treat this as a wake-up and re-query `agents.list`; that is what `fleet-radar` does, and it is immune to payload changes. If you genuinely need the transcript, call `sessions.conversation` (`{ sessionId, sinceSeq }`), which returns items after a sequence rather than the whole log.
 - `agent.statusline`, the context % / cost / rate-limit status line for an agent.
 - `workflow.started` / `workflow.completed` / `workflow.failed` / `workflow.agent.finished`, a workflow run started, finished, failed, or one of its agents finished.
-- `ui.pane.opened` / `ui.pane.focused` / `ui.tab.focused`, renderer activity — which pane/tab the user is looking at (subscribe to `ui.*` to follow focus).
+- `ui.pane.opened` / `ui.pane.focused` / `ui.tab.focused`, renderer activity: which pane/tab the user is looking at (subscribe to `ui.*` to follow focus).
 - `fs.changed`, a file you're watching changed (paired with the `fs.watch` capability).
 - `sidecar.*` / `plugin.*`, plugin supervisor and lifecycle state (these back the health colors in the Plugins Manager).
 
 Subscribing to a namespace (`agent.*`, `ui.*`, `sidecar.*`) is the easy way to catch a whole family without listing each type.
 
-### emit — events you publish
+### emit: events you publish
 
 - **Your own namespaced events**, anything under your plugin's namespace, e.g. `example.hello.tick`. Declare each type (or a `myplugin.*` wildcard) in `emits`. Other plugins can `consume` them.
 - `command.focus_agent` (`data: { sessionId }`) / `command.spawn_agent`, ask the desktop to focus or spawn an agent. The `command.*` namespace is the "ask the host to do something" channel: you publish, the renderer acts. A hotkey can fire one directly with `"command": "emit:<eventType>"`.
-- `notify.post`, fire-and-forget path into the in-app notification center (same `data` fields as the `notifications.post` capability). Every connected client that renders the UI (desktop, web remote) ingests it. If the window isn't focused when it arrives, it auto-escalates to a clickable OS notification (browser notification on web), so it is never invisible — the difference from the capability is delivery semantics (broadcast, no ack, OS only when unwatched) rather than reach.
+- `notify.post`, fire-and-forget path into the in-app notification center (same `data` fields as the `notifications.post` capability). Every connected client that renders the UI (desktop, web remote) ingests it. If the window isn't focused when it arrives, it auto-escalates to a clickable OS notification (browser notification on web), so it is never invisible. The difference from the capability is delivery semantics (broadcast, no ack, OS only when unwatched) rather than reach.
 
 ## Settings
 
@@ -471,16 +471,16 @@ Declare typed `settings` in the manifest and the host renders them in Settings f
 ]
 ```
 
-**Secrets.** Add `"secret": true` to a string setting that holds a PAT/API key. The host renders a masked, write-only input (set/replace/clear — never displayed), and the stored value never leaves the hub on any read surface: settings reads, the `plugin.settings.changed` broadcast, and the webview `window.__WKS_SETTINGS__` injection all report the sentinel `"__WKS_SECRET__"` instead. The plaintext is delivered ONLY in the sidecar's `WKS_SETTINGS` env — so a secret is for sidecar code, never webview code. Storage is a `0600` file in the plugin's directory. A secret must not declare a non-empty `default` (the manifest listing is public). Writing the sentinel back is ignored ("unchanged"), writing `""` clears. Older hosts ignore the flag and fall back to a plain string input, so adding it is backward-compatible.
+**Secrets.** Add `"secret": true` to a string setting that holds a PAT/API key. The host renders a masked, write-only input (set/replace/clear, never displayed), and the stored value never leaves the hub on any read surface: settings reads, the `plugin.settings.changed` broadcast, and the webview `window.__WKS_SETTINGS__` injection all report the sentinel `"__WKS_SECRET__"` instead. The plaintext is delivered ONLY in the sidecar's `WKS_SETTINGS` env, so a secret is for sidecar code, never webview code. Storage is a `0600` file in the plugin's directory. A secret must not declare a non-empty `default` (the manifest listing is public). Writing the sentinel back is ignored ("unchanged"), writing `""` clears. Older hosts ignore the flag and fall back to a plain string input, so adding it is backward-compatible.
 
-**Per-project settings.** Add `"scope": "project"` to a setting whose value belongs to a *directory* rather than to the plugin — which Jira project a repo maps to, which GitHub repo it ships from. The host stores it under `config.projects[<dir>].plugins[<your-id>]` and renders it on the **Projects** settings page, beside that project's name and icon, so a user configures a project in one place instead of once per plugin. Read it by declaring the `config.get` capability and looking up your own id for the pane's `cwd`:
+**Per-project settings.** Add `"scope": "project"` to a setting whose value belongs to a *directory* rather than to the plugin: which Jira project a repo maps to, which GitHub repo it ships from. The host stores it under `config.projects[<dir>].plugins[<your-id>]` and renders it on the **Projects** settings page, beside that project's name and icon, so a user configures a project in one place instead of once per plugin. Read it by declaring the `config.get` capability and looking up your own id for the pane's `cwd`:
 
 ```js
 const cfg = await wks.call('config.get', {});
 const mine = cfg?.projects?.[cwd]?.plugins?.['you.my-plugin'] ?? {};
 ```
 
-A project setting **cannot be secret** — the manifest is rejected at load if you try. Project values live in `config.yaml`, which holds no credentials (that is exactly why `config.get` is readable at all), so the split is: the project setting names *which* thing, and a global `"secret": true` setting holds the key to it.
+A project setting **cannot be secret**: the manifest is rejected at load if you try. Project values live in `config.yaml`, which holds no credentials (that is exactly why `config.get` is readable at all), so the split is: the project setting names *which* thing, and a global `"secret": true` setting holds the key to it.
 
 Values are delivered to a **webview** as `window.__WKS_SETTINGS__` (secrets redacted) and re-delivered live on every change via a `wks-settings` event, so a webview updates without reloading:
 
@@ -505,9 +505,7 @@ The hub scans on load and emits `plugin.loaded`. For a tighter loop, `workspacer
 workspacer plugin dev ./my-hello     # watch → rebuild → hot-reload → tail logs
 ```
 
-> **Note.** `workspacer plugin dev` is a sibling task in flight — the poll-based watch → rebuild → hot-reload → logs loop. Until it lands, iterate with a dev hub pointed at your plugins dir and re-drop the folder (or toggle Enable/Disable in the Plugins Manager) to reload.
-
-A webview plugin needs no build step — edit the files and reopen the pane. A sidecar with an `install` step is rebuilt before reload. The Plugins Manager's Enable/Disable toggles a `.disabled` marker and reloads, so you can flip a plugin off without uninstalling it.
+A webview plugin needs no build step: edit the files and reopen the pane. A sidecar with an `install` step is rebuilt before reload. The Plugins Manager's Enable/Disable toggles a `.disabled` marker and reloads, so you can flip a plugin off without uninstalling it.
 
 ## Publishing
 
@@ -515,7 +513,7 @@ A plugin is just a folder in a git repo. To share one, push it to **its own GitH
 
 - **Install** from the Plugins Manager by pasting an `owner/repo` reference (or a full URL, a `/tree/<ref>` URL, or a direct `.tar.gz` URL). work{spacer} downloads it, runs the manifest's `install` build step, and loads it.
 - Installation is the **trusted-install** model, like a VS Code extension: it downloads and runs code from the internet, so it asks for consent and shows the manifest and permissions first. Extraction is zip-slip-guarded and atomic.
-- **Updates** are version-driven. The Plugins Manager's *Check for updates* re-fetches each installed plugin's manifest from the repo it was installed from and compares the published `version` to the one on disk — it surfaces an **Update** button only when the source is genuinely newer (otherwise the button reads **Reinstall**, which pulls a fresh copy on demand). So cut a release by bumping `version` in `plugin.json` and pushing; users installed from your repo will see the update on their next check.
+- **Updates** are version-driven. The Plugins Manager's *Check for updates* re-fetches each installed plugin's manifest from the repo it was installed from and compares the published `version` to the one on disk. It surfaces an **Update** button only when the source is genuinely newer (otherwise the button reads **Reinstall**, which pulls a fresh copy on demand). So cut a release by bumping `version` in `plugin.json` and pushing; users installed from your repo will see the update on their next check.
 - Give your repo a clear README with the manifest's declared `capabilities` so installers know what it can reach.
 
 There's a public catalog of install-ready plugins at [github.com/DJTouchette/workspacer-plugins](https://github.com/DJTouchette/workspacer-plugins): dashboards (Fleet Radar, Cost HUD, Focus Tracker), fleet automations (Policy Approver, Fleet Guardian, Test on Save, CI Watcher), and remote reach (Slack Bridge, Phone Push, Standup Digest). Each is a zero-dependency repo you can install straight from the Plugins Manager (paste `DJTouchette/workspacer-plugin-<name>`), and together they double as reference implementations for every plugin shape on this page. To list yours there, open a PR against the catalog repo's index.
