@@ -172,9 +172,15 @@ export interface DerivedSessionStats {
   overageOutOfCredits?: boolean;
 }
 
-export function deriveSessionStats(
-  snapshot?: Pick<ClaudeSessionSnapshot, 'usage' | 'statusLine'> | null,
-): DerivedSessionStats {
+/**
+ * What {@link deriveSessionStats} actually needs. Kept looser than a whole
+ * snapshot because account-scoped surfaces (the Overview's usage card) hold a
+ * statusLine and no session at all, and they must be able to derive the same
+ * numbers as a pane that does.
+ */
+export type SessionStatsSource = Partial<Pick<ClaudeSessionSnapshot, 'usage' | 'statusLine'>>;
+
+export function deriveSessionStats(snapshot?: SessionStatsSource | null): DerivedSessionStats {
   const sl: SessionStatusLine | undefined = snapshot?.statusLine;
   const usage: SessionUsage | null | undefined = snapshot?.usage;
 
