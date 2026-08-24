@@ -756,8 +756,14 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	// the user's declared projects.
 	b.group = "brief"
 	addTool[briefAppendIn](b, "brief_append",
-		"Append ONE line to a section of a project's .workspacer/brief.md, atomically. This is the way to update a brief — it is inspect-then-edit under a lock, so it cannot clobber a line a worker (or the user) wrote in the meantime, and it is strictly additive: it never rewrites, reorders or reformats what is already there. 'Recently' PREPENDS (that section is a dated log, newest first); the others append. Creates the brief, with its four standard sections, if the project has none.",
+		"Append ONE line to a section of a project's .workspacer/brief.md, atomically. This is the way to update a brief. It is inspect-then-edit under a lock, so it cannot clobber a line a worker (or the user) wrote in the meantime, and it is strictly additive: it never rewrites, reorders or reformats what is already there. 'Recently' PREPENDS (that section is a dated log, newest first); the others append. Creates the brief, with its four standard sections, if the project has none. A line longer than 4000 characters is REFUSED with nothing written, rather than cut: split it and append each part. The result reports the section's entry count and byte size after the write, so you can see a brief going over budget without reading it.",
 		"brief.append")
+
+	// The trim half of the same document. See the capability's own note: this is
+	// the Board's archive move, exposed so /checkpoint stops doing it in shell.
+	addTool[briefArchiveIn](b, "brief_archive",
+		"Move the OLDEST entries of ONE brief section out to .workspacer/brief.archive.md, in a single call. This is how you trim a brief: the entries leave the brief and arrive in the archive byte for byte, under the same lock brief_append takes, so nothing is rewritten and nothing is lost. Give keep (leave this many of the newest and archive the rest, which is idempotent) or count (archive exactly this many of the oldest), not both. Remember that 'Recently' is newest-first, so its oldest entries are its last. Returns how many entries moved, plus the section's entry count and byte size afterwards.",
+		"brief.archive")
 
 	// ── UI navigation (event-backed, explicit triage+ gate; see ui.go) ─────
 	b.group = "ui"
@@ -1308,7 +1314,14 @@ type notifyWhenIn struct {
 type briefAppendIn struct {
 	Project string `json:"project" jsonschema:"absolute path of the PROJECT DIRECTORY whose brief to update (the repo, not the brief file — .workspacer/brief.md under it is composed for you). Use your own cwd for your fleet brief"`
 	Section string `json:"section" jsonschema:"which heading to add the line under: Now (in flight), Direction (durable goals), Recently (a dated log — this one PREPENDS, newest first), or User (standing preferences; fleet brief). An unknown name is refused, never guessed"`
-	Line    string `json:"line" jsonschema:"the line to add, e.g. '2026-08-21  shipped X (session:abc)'. A leading '- ' bullet is added if you omit it, and the line is flattened to a single line"`
+	Line    string `json:"line" jsonschema:"the line to add, e.g. '2026-08-21  shipped X (session:abc)'. A leading '- ' bullet is added if you omit it, and the line is flattened to a single line. Over 4000 characters it is refused rather than cut, and nothing is written: split it into separate entries"`
+}
+
+type briefArchiveIn struct {
+	Project string `json:"project" jsonschema:"absolute path of the PROJECT DIRECTORY whose brief to trim. That is the repo, not the brief file: both .workspacer paths under it are composed for you. Use your own cwd for your fleet brief"`
+	Section string `json:"section" jsonschema:"which heading to trim: Now, Direction, Recently or User. An unknown name is refused, never guessed"`
+	Keep    int    `json:"keep,omitempty" jsonschema:"leave this many of the section's NEWEST entries and archive everything older. 1 or more; running it twice changes nothing the second time. Give this or count, never both"`
+	Count   int    `json:"count,omitempty" jsonschema:"archive exactly this many of the section's OLDEST entries, 1 or more. Give this or keep, never both"`
 }
 
 type notifyIn struct {

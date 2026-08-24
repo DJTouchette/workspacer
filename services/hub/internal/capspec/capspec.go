@@ -64,6 +64,12 @@ var PathParam = map[string]string{
 	// than excused in unscopedByDecision precisely because "it can only write
 	// one filename" is an argument about the file, not about the directory.
 	"brief.append": "project",
+	// brief.archive is the same shape one verb over: it takes the same `project`
+	// directory, composes both .workspacer basenames itself, and moves entries
+	// from the brief into the archive beside it. Two files rather than one, both
+	// still named by the provider, so the caller-chosen value to confine is again
+	// the directory and nothing else.
+	"brief.archive": "project",
 }
 
 // unscopedByDecision names methods that sit under a path-bearing namespace, or

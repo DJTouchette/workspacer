@@ -37,11 +37,14 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  BRIEF_LINE_MAX,
   BRIEF_SECTIONS,
+  BriefLineTooLong,
   BriefLockTimeout,
   appendBriefLine,
   appendToBrief,
   briefPathFor,
+  briefSectionStats,
   normalizeBriefLine,
   parseBriefSection,
   type BriefSection,
@@ -141,8 +144,8 @@ describe('normalizeBriefLine / parseBriefSection', () => {
     expect(() => normalizeBriefLine('   ')).toThrow(/empty/);
   });
 
-  it('caps a pathological line', () => {
-    expect(normalizeBriefLine('x'.repeat(5000)).length).toBeLessThan(2100);
+  it('refuses a pathological line instead of keeping half of it', () => {
+    expect(() => normalizeBriefLine('x'.repeat(5000))).toThrow(BriefLineTooLong);
   });
 
   it('accepts a section case-insensitively and REFUSES a typo', () => {
@@ -271,5 +274,111 @@ describe('the section vocabulary is the doctrine’s', () => {
     // skill both name these four; a fifth added here without them would be a
     // heading no reader of a brief expects.
     expect([...BRIEF_SECTIONS]).toEqual<BriefSection[]>(['Now', 'Direction', 'Recently', 'User']);
+  });
+});
+
+/**
+ * The tail of a long line is not silently lost.
+ *
+ * The cap used to guillotine at 2000 characters and append an ellipsis, and the
+ * caller was told nothing: 13 of the 45 entries in this repo's own brief end in
+ * that ellipsis, about 30 percent. The tool is additive-only, so it cannot go
+ * back and repair a line it cut; a refusal writes nothing and the caller still
+ * holds every character it composed.
+ */
+describe('an over-long line is REFUSED, not silently truncated', () => {
+  it('accepts a line exactly at the limit', () => {
+    const at = 'x'.repeat(BRIEF_LINE_MAX);
+    expect(normalizeBriefLine(at)).toBe(`- ${at}`);
+  });
+
+  it('refuses one character more, naming the length and the limit', () => {
+    const over = 'x'.repeat(BRIEF_LINE_MAX + 1);
+    expect(() => normalizeBriefLine(over)).toThrow(BriefLineTooLong);
+    let err: Error | undefined;
+    try {
+      normalizeBriefLine(over);
+    } catch (e) {
+      err = e as Error;
+    }
+    expect(err?.message).toContain(String(BRIEF_LINE_MAX + 1));
+    expect(err?.message).toContain(String(BRIEF_LINE_MAX));
+    expect(err?.message).toMatch(/split/i);
+  });
+
+  // Literal lengths on purpose: this is the exact loss that was happening, and
+  // it must read as a failure against the old 2000-character guillotine rather
+  // than against a constant that moved.
+  it('lands a 2400-character line whole, where the old cap cut it at 2000', () => {
+    const out = normalizeBriefLine('x'.repeat(2400));
+    expect(out.endsWith('…'), 'the tail was guillotined and nobody was told').toBe(false);
+    expect(out).toHaveLength(2402);
+  });
+
+  it('never ends a written line with the old ellipsis', () => {
+    expect(normalizeBriefLine('x'.repeat(BRIEF_LINE_MAX)).endsWith('…')).toBe(false);
+  });
+
+  it('measures the FLATTENED line, so a wrapped one is not refused for its newlines', () => {
+    const wrapped = `${'x'.repeat(100)}\n${'y'.repeat(100)}`;
+    expect(normalizeBriefLine(wrapped)).toBe(`- ${'x'.repeat(100)} ${'y'.repeat(100)}`);
+  });
+});
+
+describe('the append result reports the section it landed in', () => {
+  it('counts entries and bytes for the section, and bytes for the whole brief', () => {
+    const res = briefSectionStats(appendToBrief(BRIEF, 'Recently', 'newest'), 'Recently');
+    expect(res.entriesInSection).toBe(3);
+    expect(res.bytesInSection).toBeGreaterThan(0);
+    expect(res.bytesInSection).toBeLessThan(res.bytesInBrief);
+  });
+
+  it('counts an entry under a ### sub-heading as part of its ## section', () => {
+    const withSub = `## Now\n- one\n\n### A group\n- two\n\n## Recently\n- three\n`;
+    expect(briefSectionStats(withSub, 'Now').entriesInSection).toBe(2);
+  });
+
+  it('reports zero for a section the brief does not have', () => {
+    const stats = briefSectionStats('## Now\n- one\n', 'Direction');
+    expect(stats.entriesInSection).toBe(0);
+    expect(stats.bytesInSection).toBe(0);
+  });
+});
+
+describe('appendBriefLine reports the size the caller just added to', () => {
+  let dir: string;
+  let brief: string;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-brief-size-'));
+    brief = briefPathFor(dir);
+  });
+  afterEach(() => {
+    readHook.fn = undefined;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('carries the section count so a manager knows to checkpoint without reading', () => {
+    fs.mkdirSync(path.dirname(brief), { recursive: true });
+    fs.writeFileSync(brief, BRIEF);
+    const res = appendBriefLine(brief, 'Recently', '2026-08-24  newest');
+    expect(res.entriesInSection).toBe(3);
+    expect(res.bytesInBrief).toBe(Buffer.byteLength(fs.readFileSync(brief, 'utf-8'), 'utf8'));
+    expect(res.bytesInSection).toBeLessThan(res.bytesInBrief);
+  });
+
+  it('grows the count by exactly one per append', () => {
+    const first = appendBriefLine(brief, 'Now', 'a');
+    const second = appendBriefLine(brief, 'Now', 'b');
+    expect(second.entriesInSection).toBe(first.entriesInSection + 1);
+  });
+
+  it('writes NOTHING when it refuses an over-long line', () => {
+    fs.mkdirSync(path.dirname(brief), { recursive: true });
+    fs.writeFileSync(brief, BRIEF);
+    expect(() => appendBriefLine(brief, 'Now', 'x'.repeat(BRIEF_LINE_MAX + 1))).toThrow(
+      BriefLineTooLong,
+    );
+    expect(fs.readFileSync(brief, 'utf-8')).toBe(BRIEF);
+    expect(fs.existsSync(`${brief}.lock`)).toBe(false);
   });
 });

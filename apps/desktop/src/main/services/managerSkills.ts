@@ -112,13 +112,31 @@ Routing, most specific first:
 4. **A task-scoped next step** that belongs to one worker → send it to that
    worker with \`send_message\`, or note it in that project's "## Now".
 
-Then PRUNE each brief you touched:
-- **## Now** — remove every item whose work has landed or been abandoned.
-- **## Recently** — keep only the ~20 newest entries. Do NOT delete the overflow:
-  MOVE the oldest entries to \`.workspacer/brief.archive.md\` beside the brief,
-  appending them under a \`## <today's date>\` heading (create the file if it does
-  not exist). The archive is cold storage — never rewritten, only appended — so
-  the brief stays short while the history survives.
+Then PRUNE each brief you touched. The JUDGEMENT is yours; the mechanics are a
+tool call, so do not do this with \`cp\`, \`sed\` or a rewritten file.
+
+- **## Now**: remove every item whose work has landed or been abandoned. That is
+  a judgement only you can make, so read each line and decide. Removing a line is
+  still a file edit (inspect-then-edit, never blind-write).
+- **## Recently**: keep roughly the 20 newest entries and archive the rest with
+  \`brief_archive({project, section: "Recently", keep: 20})\`. It moves the oldest
+  entries out to \`.workspacer/brief.archive.md\` in one call, byte for byte,
+  under the same lock \`brief_append\` takes. Pick the number yourself: keep more
+  when the last few days were busy, fewer when the log has gone stale. Running it
+  again with the same \`keep\` changes nothing, so it is safe to repeat.
+- **## Direction**: long, and mostly still true, so trim it only when an entry
+  is genuinely finished or superseded. When several are, archive them the same
+  way with a \`keep\` that leaves the live ones.
+
+The archive is cold storage: only ever appended to, never rewritten, so nothing
+you archive is lost. \`brief_archive\` writes one \`## <today's date>\` heading and
+adds to it, which is why hand-writing archive headings produces the mess it does.
+
+\`brief_append\` tells you two things worth acting on. A line over 4000 characters
+is REFUSED and nothing is written, so split it into separate entries rather than
+retrying it whole. And every result carries \`entriesInSection\` and
+\`bytesInSection\`, the state of that section after your write, so you can see one
+going over budget without reading it. Past ~20 entries, trim it.
 
 Finish with a one-paragraph report: what you filed and where, what you archived,
 and what you left for the user to decide. Do not spawn workers; this is

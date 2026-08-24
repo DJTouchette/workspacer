@@ -55,6 +55,7 @@ import { ensureSupervisorHome } from './supervisorSkill';
 import { scrubBootDocumentAgents } from '../lib/bootDocumentScrub';
 import { isAsciiBlank } from '../lib/asciiWhitespace';
 import { appendBriefLine, briefPathFor, parseBriefSection } from './briefService';
+import { archiveOldestEntries } from './briefBoardService';
 import { thresholdWatcher } from './thresholdWatcher';
 import { progressReporter } from './progressReporter';
 
@@ -1716,6 +1717,34 @@ export function registerHubCapabilities(): void {
     // re-interpreted after the check.
     const dir = assertPathAllowed('brief.append', project, workspaceRoots());
     return appendBriefLine(briefPathFor(dir), parseBriefSection(section), line);
+  });
+
+  // The other half of the same document: trim a section by moving its OLDEST
+  // entries into `<project>/.workspacer/brief.archive.md`. This is the Board's
+  // drag-to-Archive move called as a capability, not a second implementation of
+  // it: the entries are spliced out whole and appended to the archive verbatim,
+  // under the SAME lock brief.append takes.
+  //
+  // It exists because /checkpoint had no way to call it. The skill could only
+  // append, so the model did the trim in shell instead, and one morning of that
+  // left three differently worded headings in the archive and a litter of .bak
+  // files beside the brief. The judgement stays with the model (which section,
+  // how many to keep); only the mechanics move into code.
+  //
+  // Same tier story and the SAME confinement as brief.append: operator-only by
+  // construction, path-scoped on `project`, and the caller never names a file.
+  // It cannot name an entry either, so it can only ever take the oldest end of
+  // one section, and everything it takes is still on disk in the archive.
+  registerCapability('brief.archive', (params: unknown) => {
+    const { project, section, count, keep } = (params ?? {}) as {
+      project?: string;
+      section?: string;
+      count?: number;
+      keep?: number;
+    };
+    if (!project || isAsciiBlank(project)) throw new Error('brief.archive requires { project }');
+    const dir = assertPathAllowed('brief.archive', project, workspaceRoots());
+    return archiveOldestEntries({ dir, section: parseBriefSection(section), count, keep });
   });
 
   registerCapability('app.getCwd', () => process.cwd());

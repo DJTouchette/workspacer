@@ -32,15 +32,20 @@ import { configService } from './configService';
 import { sessionHistory } from './sessionHistory';
 import {
   BOARD_COLUMNS,
+  BriefColumnMissing,
   appendToArchive,
   cardsForArchive,
   cardsForBrief,
+  isPrependSection,
   moveEntryToColumn,
   normalizeIndex,
+  parseBrief,
   removeEntry,
+  removeEntryLines,
   type BoardColumn,
   type BriefCard,
 } from '../shared/briefBoard';
+import { briefSectionStats, type BriefSizeReport } from './briefService';
 
 const BRIEF_DIR = '.workspacer';
 const BRIEF_FILE = 'brief.md';
@@ -348,4 +353,123 @@ export function applyBoardMove(req: BoardMoveRequest): BoardLane {
   }
 
   return loadLane(target);
+}
+
+export interface BriefArchiveRequest {
+  /** The project directory. Already confined by the caller: this module composes
+   *  both filenames itself, exactly as brief.append does. */
+  dir: string;
+  /** Which `##` heading to trim. */
+  section: string;
+  /** Archive this many of the section's OLDEST entries. */
+  count?: number;
+  /** Or: leave this many of its newest and archive everything past them. */
+  keep?: number;
+  /** The archive's batch heading. Defaults to today, and exists for the tests. */
+  date?: string;
+}
+
+export interface BriefArchiveResult extends BriefSizeReport {
+  path: string;
+  archivePath: string;
+  section: string;
+  /** How many entries actually moved. */
+  archived: number;
+  /** The `## <date>` heading they landed under. */
+  date: string;
+}
+
+/**
+ * Move the OLDEST entries of one section out to `brief.archive.md`.
+ *
+ * WHY THIS EXISTS AS A CAPABILITY. The board could already do this move, but
+ * only one card at a time and only by dragging, so /checkpoint improvised the
+ * same thing in shell: copy the brief, cut the overflow out with sed, hand-write
+ * a batch heading. One morning of that left three differently worded headings in
+ * the archive and four .bak files beside the brief. Nothing about the move was
+ * missing, only a way to call it.
+ *
+ * WHICH END IS THE OLDEST. `## Recently` is kept newest-first, so its oldest
+ * entries are its LAST; every other section is written in arrival order, so its
+ * oldest are its FIRST. That is `isPrependSection`, the same rule brief_append
+ * inserts by, read from the one place it is written down.
+ *
+ * The move itself is `removeEntryLines` + `appendToArchive`, unchanged: whole
+ * lines are spliced out of the brief and appended to the archive verbatim, in
+ * the order they sat in, so an archived entry is byte-identical to the entry
+ * that left. Nothing here rewrites a line, and the whole pass runs under the
+ * brief's lock with the same compare-and-swap every other write here takes.
+ */
+export function archiveOldestEntries(req: BriefArchiveRequest): BriefArchiveResult {
+  const { dir, section } = req;
+  const briefPath = briefPathFor(dir);
+  const archivePath = archivePathFor(dir);
+  const date = req.date ?? todayStamp();
+  const wanted = section.trim().toLowerCase();
+
+  // Exactly one of the two, because they answer different questions and a
+  // caller that gave both has not decided which. `keep` is the idempotent form
+  // (run it twice, the second run moves nothing), which is why /checkpoint uses
+  // it; `count` is for a caller that has already counted.
+  const hasCount = typeof req.count === 'number';
+  const hasKeep = typeof req.keep === 'number';
+  if (hasCount === hasKeep) {
+    throw new Error(
+      'brief.archive: give either count (archive this many of the oldest) or keep ' +
+        '(leave this many of the newest), and not both',
+    );
+  }
+  const bound = hasCount ? req.count! : req.keep!;
+  if (!Number.isInteger(bound) || bound < 0) {
+    throw new Error(
+      `brief.archive: ${hasCount ? 'count' : 'keep'} must be a whole number, 0 or more`,
+    );
+  }
+
+  let archived = 0;
+  withBrief(briefPath, (content) => {
+    const doc = parseBrief(content);
+    const hasSection = doc.sections.some((s) => s.level === 2 && s.title.toLowerCase() === wanted);
+    if (!hasSection) throw new BriefColumnMissing(section);
+
+    const inSection = doc.entries.filter((e) => e.column.toLowerCase() === wanted);
+    const oldestFirst = isPrependSection(section) ? [...inSection].reverse() : inSection;
+    const want = hasCount ? req.count! : Math.max(0, inSection.length - req.keep!);
+    const chosen = new Set(
+      oldestFirst.slice(0, Math.min(want, inSection.length)).map((e) => e.start),
+    );
+    // Back in document order, so the archive reads the way the section did.
+    const moving = inSection.filter((e) => chosen.has(e.start));
+    archived = moving.length;
+
+    // Splice from the bottom up: every entry's line indexes point into the same
+    // array, and removing an earlier one would shift the rest.
+    let lines = doc.lines;
+    for (const entry of [...moving].reverse()) lines = removeEntryLines(lines, entry);
+
+    return {
+      next: lines.join('\n'),
+      // ARCHIVE FIRST, and only once the compare-and-swap has passed, for the
+      // reason in this file's header: a crash between the two writes must
+      // duplicate an entry, never lose it. The archive is read HERE rather than
+      // outside, so a retry composes against what is on disk now.
+      beforeWrite: () =>
+        atomicWriteFileSync(
+          archivePath,
+          moving.reduce(
+            (acc, entry) => appendToArchive(acc, entry.lines, date),
+            readOrNull(archivePath) ?? '',
+          ),
+        ),
+    };
+  });
+
+  return {
+    path: briefPath,
+    archivePath,
+    section,
+    archived,
+    date,
+    ...briefSectionStats(readOrNull(briefPath) ?? '', section),
+  };
 }

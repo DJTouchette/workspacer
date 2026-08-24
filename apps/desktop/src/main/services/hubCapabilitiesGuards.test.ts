@@ -484,11 +484,11 @@ describe('fixture-driven guard coverage — path capabilities main owns in produ
 
   // Ratcheted to the number of methods each owner serves today. A fixture whose
   // `providers` lists shrank would otherwise still satisfy `.length > 0`.
-  itSweptTheWholeCorpus(tildeSweep, "the no-tilde-expansion sweep over 'main'", 5, {
+  itSweptTheWholeCorpus(tildeSweep, "the no-tilde-expansion sweep over 'main'", 6, {
     allow: 0,
     deny: 0,
   });
-  itSweptTheWholeCorpus(mainSweep, "the methods 'main' owns in production", 5, {
+  itSweptTheWholeCorpus(mainSweep, "the methods 'main' owns in production", 6, {
     allow: 0,
     deny: 0,
   });

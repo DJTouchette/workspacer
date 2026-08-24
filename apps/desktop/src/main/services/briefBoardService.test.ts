@@ -40,7 +40,13 @@ vi.mock('./sessionHistory', () => ({
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { applyBoardMove, loadBoard, boardLaneTargets, todayStamp } from './briefBoardService';
+import {
+  applyBoardMove,
+  archiveOldestEntries,
+  loadBoard,
+  boardLaneTargets,
+  todayStamp,
+} from './briefBoardService';
 import { parseBrief } from '../shared/briefBoard';
 import { appendBriefLine } from './briefService';
 
@@ -369,5 +375,160 @@ describe('concurrent writers', () => {
     readHook.fn = undefined;
     // The entry is still where it was — nothing was half-written.
     expect(read(briefPath())).toContain('A resolved thing');
+  });
+});
+
+/**
+ * The archive primitive /checkpoint calls.
+ *
+ * The board could already move ONE card out to brief.archive.md, but only by
+ * dragging it, so /checkpoint improvised the same move in shell: cp the brief,
+ * sed the overflow out, hand-write a heading. One morning of that left three
+ * differently worded archive headings and four .bak files beside the brief.
+ * This is the same move as a batch, and the bar is the board's: the entries
+ * arrive in the archive byte for byte and every line left behind is untouched.
+ */
+describe('archiveOldestEntries: trimming a section in one call', () => {
+  /** A Recently section is newest-first, so its OLDEST entries are at the
+   *  bottom. Written here as five dated lines, oldest last. */
+  const LOG = [
+    '# Demo — project brief',
+    '',
+    '## Now',
+    '- 🚧 still going',
+    '',
+    '## Direction',
+    '- first goal',
+    '- second goal',
+    '- third goal',
+    '',
+    '## Recently',
+    '- 2026-08-24: five (newest)',
+    '- 2026-08-23: four',
+    '- 2026-08-22: three',
+    '- 2026-08-21: two',
+    '- 2026-08-20: one (oldest)',
+    '',
+  ].join('\n');
+
+  beforeEach(() => {
+    fs.writeFileSync(briefPath(), LOG);
+  });
+
+  it('takes the OLDEST entries of a newest-first section, which are its last', () => {
+    const res = archiveOldestEntries({ dir: projectDir, section: 'Recently', count: 2 });
+    expect(res.archived).toBe(2);
+    const brief = read(briefPath());
+    expect(brief).toContain('five (newest)');
+    expect(brief).toContain('2026-08-22: three');
+    expect(brief).not.toContain('2026-08-21: two');
+    expect(brief).not.toContain('one (oldest)');
+    const archive = read(archivePath());
+    expect(archive).toContain('- 2026-08-21: two');
+    expect(archive).toContain('- 2026-08-20: one (oldest)');
+  });
+
+  it('takes the OLDEST entries of an appending section, which are its first', () => {
+    archiveOldestEntries({ dir: projectDir, section: 'Direction', count: 2 });
+    const brief = read(briefPath());
+    expect(brief).not.toContain('- first goal');
+    expect(brief).not.toContain('- second goal');
+    expect(brief).toContain('- third goal');
+  });
+
+  it('leaves every line it did not move byte-identical', () => {
+    archiveOldestEntries({ dir: projectDir, section: 'Recently', count: 2 });
+    const expected = LOG.split('\n').filter(
+      (l) => !l.includes('2026-08-21: two') && !l.includes('one (oldest)'),
+    );
+    expect(read(briefPath())).toBe(expected.join('\n'));
+  });
+
+  it('archives the entries byte-identically, under ONE dated heading', () => {
+    archiveOldestEntries({ dir: projectDir, section: 'Recently', count: 3 });
+    const archive = read(archivePath());
+    expect(archive.match(new RegExp(`## ${todayStamp()}`, 'g'))).toHaveLength(1);
+    for (const line of ['- 2026-08-22: three', '- 2026-08-21: two', '- 2026-08-20: one (oldest)']) {
+      expect(archive.split('\n')).toContain(line);
+    }
+    // Relative order is preserved: the archive reads the way the section did.
+    const at = (s: string): number => archive.indexOf(s);
+    expect(at('three')).toBeLessThan(at('two'));
+    expect(at('two')).toBeLessThan(at('one (oldest)'));
+  });
+
+  it('keeps the newest N when told how many to KEEP, and is idempotent', () => {
+    const first = archiveOldestEntries({ dir: projectDir, section: 'Recently', keep: 3 });
+    expect(first.archived).toBe(2);
+    expect(first.entriesInSection).toBe(3);
+    const again = archiveOldestEntries({ dir: projectDir, section: 'Recently', keep: 3 });
+    expect(again.archived).toBe(0);
+    expect(again.entriesInSection).toBe(3);
+  });
+
+  it('reports the section size afterwards, in the shape brief.append reports it', () => {
+    const res = archiveOldestEntries({ dir: projectDir, section: 'Recently', count: 2 });
+    expect(res.entriesInSection).toBe(3);
+    expect(res.bytesInBrief).toBe(Buffer.byteLength(read(briefPath()), 'utf8'));
+    expect(res.bytesInSection).toBeLessThan(res.bytesInBrief);
+    expect(res.date).toBe(todayStamp());
+  });
+
+  it('appends to an existing archive without rewriting a line of it', () => {
+    const existing = '# Brief archive\n\n## 2026-08-01\n- 2026-07-31: something ancient.\n';
+    fs.writeFileSync(archivePath(), existing);
+    archiveOldestEntries({ dir: projectDir, section: 'Recently', count: 1 });
+    const after = read(archivePath());
+    expect(after.startsWith(existing.replace(/\n$/, ''))).toBe(true);
+  });
+
+  it('clamps to what is there rather than failing', () => {
+    const res = archiveOldestEntries({ dir: projectDir, section: 'Recently', count: 99 });
+    expect(res.archived).toBe(5);
+    expect(res.entriesInSection).toBe(0);
+    expect(read(briefPath())).toContain('## Recently');
+  });
+
+  it('writes nothing at all when there is nothing to archive', () => {
+    const before = read(briefPath());
+    const res = archiveOldestEntries({ dir: projectDir, section: 'Recently', count: 0 });
+    expect(res.archived).toBe(0);
+    expect(read(briefPath())).toBe(before);
+    expect(fs.existsSync(archivePath())).toBe(false);
+  });
+
+  it('refuses a section the brief does not have, without writing', () => {
+    const before = read(briefPath());
+    expect(() => archiveOldestEntries({ dir: projectDir, section: 'User', count: 1 })).toThrow(
+      /User/,
+    );
+    expect(read(briefPath())).toBe(before);
+    expect(fs.existsSync(archivePath())).toBe(false);
+  });
+
+  it('refuses when neither count nor keep is given, and when both are', () => {
+    expect(() => archiveOldestEntries({ dir: projectDir, section: 'Recently' })).toThrow(
+      /count.*keep/i,
+    );
+    expect(() =>
+      archiveOldestEntries({ dir: projectDir, section: 'Recently', count: 1, keep: 1 }),
+    ).toThrow(/count.*keep/i);
+  });
+
+  it('shares its lock with brief_append, so an agent write cannot interleave', () => {
+    // Same proof the column-move test uses: taking the board's lock and then
+    // calling appendBriefLine from inside it must time out rather than land.
+    let inner: Error | undefined;
+    readHook.fn = (p) => {
+      if (!p.endsWith('brief.md') || inner) return;
+      try {
+        appendBriefLine(briefPath(), 'Now', 'an agent line');
+      } catch (e) {
+        inner = e as Error;
+      }
+    };
+    archiveOldestEntries({ dir: projectDir, section: 'Recently', count: 1 });
+    readHook.fn = undefined;
+    expect(inner?.name).toBe('BriefLockTimeout');
   });
 });
