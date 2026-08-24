@@ -23,7 +23,6 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { BarChart3, X, AlertTriangle } from 'lucide-react';
-import type { ClaudeSessionSnapshot } from '../../types/claudeSession';
 import {
   deriveSessionStats,
   usageWindows,
@@ -34,6 +33,7 @@ import {
   fmtUSD,
   ctxColor,
 } from '../../lib/sessionStats';
+import type { SessionStatsSource } from '../../lib/sessionStats';
 import { AgentLogo } from '../agentLogos';
 import type { AgentProvider } from '../../types/pane';
 
@@ -105,10 +105,19 @@ const SectionTitle: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   </div>
 );
 
+/** What the dialog needs to draw. A whole snapshot satisfies it, and so does
+ *  the bare statusLine the Overview's account card holds — that card covers an
+ *  account, not a session, so there is no snapshot to hand over. */
+export type UsageDetailSource = SessionStatsSource & { provider?: string };
+
 export const UsageDetailDialog: React.FC<{
-  snapshot?: ClaudeSessionSnapshot | null;
+  snapshot?: UsageDetailSource | null;
+  /** `session` (default) adds the opening session's own model/tokens/cost.
+   *  `account` is for surfaces that speak for a whole account and have no one
+   *  session behind them, where those figures would be somebody else's. */
+  scope?: 'session' | 'account';
   onClose: () => void;
-}> = ({ snapshot, onClose }) => {
+}> = ({ snapshot, scope = 'session', onClose }) => {
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -126,10 +135,14 @@ export const UsageDetailDialog: React.FC<{
   const provider = (snapshot?.provider as AgentProvider | undefined) ?? 'claude';
 
   // Session facts: only the ones that arrived. A missing cost is a session that
-  // has not been priced yet, not a free one, so it gets no row.
+  // has not been priced yet, not a free one, so it gets no row. An account-scoped
+  // opener contributes none of them: the statusLine it holds belongs to whichever
+  // session reported the account's windows last, and that session's cost is not
+  // the reader's.
   const facts: Array<{ label: string; value: string }> = [];
-  if (stats.model) facts.push({ label: 'Model', value: stats.model });
-  if (stats.ctxPct !== undefined) {
+  const sessionScoped = scope === 'session';
+  if (sessionScoped && stats.model) facts.push({ label: 'Model', value: stats.model });
+  if (sessionScoped && stats.ctxPct !== undefined) {
     facts.push({
       label: 'Context used',
       value: sl?.contextWindowSize
@@ -137,13 +150,13 @@ export const UsageDetailDialog: React.FC<{
         : `${Math.round(stats.ctxPct)}%`,
     });
   }
-  if (sl?.totalInputTokens !== undefined)
+  if (sessionScoped && sl?.totalInputTokens !== undefined)
     facts.push({ label: 'Input tokens', value: fmtTokens(sl.totalInputTokens) });
-  if (sl?.totalOutputTokens !== undefined)
+  if (sessionScoped && sl?.totalOutputTokens !== undefined)
     facts.push({ label: 'Output tokens', value: fmtTokens(sl.totalOutputTokens) });
-  if (stats.tokens !== undefined)
+  if (sessionScoped && stats.tokens !== undefined)
     facts.push({ label: 'Total tokens', value: fmtTokens(stats.tokens) });
-  if (stats.costUSD !== undefined)
+  if (sessionScoped && stats.costUSD !== undefined)
     facts.push({ label: 'Session cost', value: fmtUSD(stats.costUSD) });
 
   const received = sl?.receivedAt ? new Date(sl.receivedAt) : undefined;

@@ -23,6 +23,7 @@ import { WorkflowRunCard } from './WorkflowRunCard';
 import { SubagentRow } from './SubagentRow';
 import { fmtTokens } from './agentUtils';
 import { planProgress, usageWindows, fmtWindowLength } from '../../lib/sessionStats';
+import { UsageDetailDialog } from './UsageDetailDialog';
 import { requestReviewFile } from '../../lib/reviewBus';
 import { requestAgentWatch, requestContextPane } from '../../lib/watchBus';
 import { ConfigContext } from '../../contexts/ConfigContext';
@@ -451,6 +452,9 @@ export const InspectorCard: React.FC<{
             ? 'plan'
             : 'files'),
   );
+  // The usage tab's account-limit group opens the same dialog as the pane's
+  // status bar.
+  const [usageOpen, setUsageOpen] = useState(false);
   const files = useMemo(() => aggregateFiles(fileChanges), [fileChanges]);
 
   // Click-through: open a dedicated live watch pane for one subagent /
@@ -1036,20 +1040,47 @@ export const InspectorCard: React.FC<{
               {/* One bar per window the provider actually reported. See
                   `usageWindows`. Codex has no monthly window and Claude has one
                   only while extra usage is enabled, so the list is built from
-                  the data rather than fixed at three. */}
-              {usageWindows(sl ?? {}).map((w) => (
-                <UsageBar
-                  key={w.key}
-                  label={w.label}
-                  pct={w.pct}
-                  sub={[
-                    fmtWindowLength(w.windowMins),
-                    w.resetsAt ? `resets ${fmtReset(w.resetsAt)}` : undefined,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                />
-              ))}
+                  the data rather than fixed at three.
+
+                  The group is a click target for the same dialog the status bar
+                  opens: the rule is that usage is clickable wherever it is drawn,
+                  and this card is where a reader looks for it. */}
+              {usageWindows(sl ?? {}).length > 0 && (
+                <div
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Show usage detail"
+                  title="Account limits. Click for detail."
+                  onClick={() => setUsageOpen(true)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setUsageOpen(true);
+                    }
+                  }}
+                  style={{ cursor: 'pointer' }}
+                >
+                  {usageWindows(sl ?? {}).map((w) => (
+                    <UsageBar
+                      key={w.key}
+                      label={w.label}
+                      pct={w.pct}
+                      sub={[
+                        fmtWindowLength(w.windowMins),
+                        w.resetsAt ? `resets ${fmtReset(w.resetsAt)}` : undefined,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    />
+                  ))}
+                </div>
+              )}
+              {/* Sibling, not child: a portal bubbles through the REACT tree, so
+                  a dialog inside the target above would reopen on its own
+                  backdrop click. */}
+              {usageOpen && (
+                <UsageDetailDialog snapshot={snapshot} onClose={() => setUsageOpen(false)} />
+              )}
               {sl?.rateLimitWarning && (
                 <div
                   style={{

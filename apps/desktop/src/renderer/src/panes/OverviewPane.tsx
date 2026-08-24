@@ -7,7 +7,8 @@ import { Home, Star, Plus, RefreshCw } from '../components/icons';
 import { ProjectMark } from '../components/ProjectMark';
 import { favouriteProjects, recentProjects, setFavourite } from '../lib/projectRegistry';
 import { claudeAccountOf } from '../lib/claudeAccount';
-import { usageWindows } from '../lib/sessionStats';
+import { usageWindows, fmtWindowLength } from '../lib/sessionStats';
+import { UsageDetailDialog } from '../components/claude/UsageDetailDialog';
 import type { ProjectIdentity } from '../hooks/useConfig';
 import { AgentLogo } from '../components/agentLogos';
 import type { AgentProvider } from '../types/pane';
@@ -137,7 +138,10 @@ const RATE_LIMIT_PROVIDERS: Array<{ id: string; title: string }> = [
  * stay honest: they render from absolute epochs). Renders nothing until the
  * provider has ever reported a window.
  */
-const RateLimitCard: React.FC<{
+/** Exported for the surface test that pins which surfaces open the usage
+ *  dialog — the Overview is the one a reader calls "the dashboard", and it
+ *  spent a release drawing the windows without a way into their detail. */
+export const RateLimitCard: React.FC<{
   snaps: Snap[];
   provider: string;
   title: string;
@@ -145,6 +149,7 @@ const RateLimitCard: React.FC<{
    *  Undefined = no account filtering (non-Claude providers). */
   account?: string;
 }> = ({ snaps, provider, title, account }) => {
+  const [detailOpen, setDetailOpen] = useState(false);
   const cacheKey = account === undefined ? provider : `${provider}:${account}`;
   let best: NonNullable<Snap['statusLine']> | null = null;
   let bestTs = -1;
@@ -177,9 +182,14 @@ const RateLimitCard: React.FC<{
   // Render a window when Claude gives us a utilization % OR just a reset time.
   // Many accounts only report the reset while comfortably within a window, so a
   // pct-less row shows the label + reset countdown (an empty meter track).
-  const Row: React.FC<{ label: string; pct?: number; reset?: number }> = ({ label, pct, reset }) =>
+  const Row: React.FC<{ label: string; pct?: number; reset?: number; title?: string }> = ({
+    label,
+    pct,
+    reset,
+    title: tip,
+  }) =>
     pct === undefined && reset === undefined ? null : (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div title={tip} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span
           style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', width: 22, flexShrink: 0 }}
         >
@@ -225,46 +235,96 @@ const RateLimitCard: React.FC<{
     );
 
   return (
-    <div
-      style={{
-        flex: 1,
-        minWidth: 220,
-        padding: '15px 16px',
-        borderRadius: 'var(--wks-radius-md)',
-        background: 'var(--wks-bg-raised)',
-        border: '1px solid var(--wks-border-subtle)',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 6,
-      }}
-    >
+    <>
       <div
+        role="button"
+        tabIndex={0}
+        aria-label="Show usage detail"
+        title="Usage and account limits. Click for detail."
+        onClick={() => setDetailOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setDetailOpen(true);
+          }
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent)';
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border-subtle)';
+        }}
         style={{
+          flex: 1,
+          minWidth: 220,
+          padding: '15px 16px',
+          borderRadius: 'var(--wks-radius-md)',
+          background: 'var(--wks-bg-raised)',
+          border: '1px solid var(--wks-border-subtle)',
           display: 'flex',
-          alignItems: 'center',
+          flexDirection: 'column',
           gap: 6,
-          fontSize: '0.62rem',
-          color: 'var(--wks-text-faint)',
-          textTransform: 'uppercase',
-          letterSpacing: '0.08em',
+          cursor: 'pointer',
+          transition: 'border-color 0.12s',
         }}
       >
-        {/* Same provider mark vocabulary as the sidebar / nav / spawn dialog. */}
-        <AgentLogo
-          provider={provider as AgentProvider}
-          size={13}
-          style={{ color: 'var(--wks-text-secondary)', flexShrink: 0 }}
-        />
-        {title}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            fontSize: '0.62rem',
+            color: 'var(--wks-text-faint)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+          }}
+        >
+          {/* Same provider mark vocabulary as the sidebar / nav / spawn dialog. */}
+          <AgentLogo
+            provider={provider as AgentProvider}
+            size={13}
+            style={{ color: 'var(--wks-text-secondary)', flexShrink: 0 }}
+          />
+          {title}
+        </div>
+        {/* One row per window the provider reported, labelled with the window's
+            own length where it is known. Codex has no monthly window and Claude
+            has one only while extra usage is enabled, so the rows come from the
+            data, not from a fixed list of three. */}
+        {usageWindows(best).map((w) => {
+          const length = fmtWindowLength(w.windowMins);
+          return (
+            <Row
+              key={w.key}
+              label={w.short}
+              pct={w.pct}
+              reset={w.resetsAt}
+              // The label column is 22px wide, so the window's full length rides
+              // in the tooltip — and in the dialog this card now opens.
+              title={[
+                length ? `${w.label} (${length} window)` : w.label,
+                w.pct !== undefined ? `${Math.round(w.pct)}% used` : undefined,
+                w.resetsAt ? fmtReset(w.resetsAt) : undefined,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            />
+          );
+        })}
       </div>
-      {/* One row per window the provider reported, labelled with the window's
-          own length where it is known. Codex has no monthly window and Claude
-          has one only while extra usage is enabled, so the rows come from the
-          data, not from a fixed list of three. */}
-      {usageWindows(best).map((w) => (
-        <Row key={w.key} label={w.short} pct={w.pct} reset={w.resetsAt} />
-      ))}
-    </div>
+      {/* Outside the card on purpose: a portal still bubbles its events through
+          the REACT tree, so a dialog nested inside the card would reopen itself
+          the moment a backdrop click closed it. Account-scoped, because `best`
+          is whichever session reported the account's windows most recently and
+          its own tokens and cost are not this card's to show. */}
+      {detailOpen && (
+        <UsageDetailDialog
+          snapshot={{ statusLine: best, provider }}
+          scope="account"
+          onClose={() => setDetailOpen(false)}
+        />
+      )}
+    </>
   );
 };
 
