@@ -10,11 +10,21 @@ import {
   inputStyle,
 } from './primitives';
 
-const SUP_PROVIDERS: { value: 'claude' | 'codex' | 'opencode' | 'pi'; label: string }[] = [
+/**
+ * Harnesses the Supervisor ROLE is verified on. Pi is deliberately absent:
+ * the supervisor's whole job is watching the fleet through the workspacer MCP
+ * facade and notifying you, but pi core ships no MCP client at all — `pi.rs`
+ * warns facade tools are unavailable to it, `managedSpawn.ts` refuses to mint
+ * it a facade token (`provider !== 'pi'`), and `agentSkillsRoot` returns null
+ * for it so it never gets the /supervise skill either. A "Pi supervisor"
+ * would run on role instructions alone with no way to observe or coordinate
+ * anything — the same failure mode MANAGER_PROVIDERS below already excludes
+ * Pi (and OpenCode) to avoid.
+ */
+const SUP_PROVIDERS: { value: 'claude' | 'codex' | 'opencode'; label: string }[] = [
   { value: 'claude', label: 'Claude' },
   { value: 'codex', label: 'Codex' },
   { value: 'opencode', label: 'OpenCode' },
-  { value: 'pi', label: 'Pi' },
 ];
 
 /**
@@ -94,10 +104,9 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
       </Row>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Which CLI the supervisor runs on (also pickable when you launch one from “Ask the Fleet”).
-        Codex, OpenCode, and Pi supervisors are wired to the workspacer MCP facade — the
-        supervisor’s tools to observe and coordinate agents — via their own MCP config.
-        Experimental: it needs a CLI build with remote-MCP support; Claude remains the most
-        battle-tested.
+        Codex and OpenCode supervisors are wired to the workspacer MCP facade — the supervisor’s
+        tools to observe and coordinate agents — via their own MCP config. Experimental: it needs a
+        CLI build with remote-MCP support; Claude remains the most battle-tested.
       </div>
 
       <Row label="Supervisor model">
