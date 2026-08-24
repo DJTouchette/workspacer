@@ -1,4 +1,9 @@
-import type { ClaudeSessionState, PendingApproval, PendingQuestion } from '../claudeSessionStore';
+import type {
+  ClaudeSessionState,
+  PendingApproval,
+  PendingQuestion,
+  PendingQuestionOption,
+} from '../claudeSessionStore';
 
 // ── The pending slot ──────────────────────────────────────────────────────────
 //
@@ -72,6 +77,47 @@ export type SessionWithoutPending = Omit<
   'pendingApproval' | 'pendingQuestions'
 >;
 
+/** The parked payloads, frozen at the type level. Deep enough that every way
+ *  of writing one is an error and not just the outermost assignment:
+ *  `q.question = …` and `q.options.push(…)` are as dead as `q.options = []`. */
+type ReadOnlyPendingApproval = Readonly<PendingApproval>;
+type ReadOnlyPendingQuestion = Readonly<Omit<PendingQuestion, 'options'>> & {
+  readonly options: readonly Readonly<PendingQuestionOption>[];
+};
+
+/**
+ * A session as a COLLABORATOR OUTSIDE the store sees it: free to read the
+ * pending slot and free to enrich everything else, unable to touch the slot at
+ * all.
+ *
+ * This is the fence past the file boundary. {@link PendingFencedSession} fences
+ * the store's own class body, but `this.sessions.values()` hands live rows to
+ * the notifier, the supervisor nudger, the usage accumulator, the conversation
+ * applier, the budget watcher and the analytics writer — six modules holding a
+ * mutable reference to a fenced row, which today only READ the slot. This type
+ * is what makes that a compiler fact rather than a code-review promise.
+ *
+ * Deliberately STRONGER than `PendingFencedSession`, and the difference matters:
+ * a bare `readonly` field forbids `session.pendingQuestions = …` (TS2540) but
+ * says nothing about `session.pendingQuestions.push(…)`, which reaches the same
+ * array the store is holding. Here the array is `readonly T[]`, so `push`,
+ * `splice` and `[0] = …` do not exist (TS2339 / TS2542).
+ *
+ * The price is that a `PendingReadOnlySession` is NOT assignable back to
+ * `ClaudeSessionState` — a `readonly T[]` is not a `T[]`. That is the point: a
+ * fenced collaborator cannot launder the row by handing it to something that
+ * takes the mutable type. Store rows and plain `ClaudeSessionState` values flow
+ * INTO it freely (mutable is assignable to readonly), so call sites are
+ * unchanged.
+ */
+export type PendingReadOnlySession = Omit<
+  ClaudeSessionState,
+  'pendingApproval' | 'pendingQuestions'
+> & {
+  readonly pendingApproval: ReadOnlyPendingApproval | null;
+  readonly pendingQuestions: readonly ReadOnlyPendingQuestion[] | null;
+};
+
 function sameApproval(a: PendingApproval | null, b: PendingApproval): boolean {
   return (
     !!a && a.toolName === b.toolName && JSON.stringify(a.toolInput) === JSON.stringify(b.toolInput)
@@ -90,11 +136,15 @@ function sameApproval(a: PendingApproval | null, b: PendingApproval): boolean {
  */
 export class PendingSlot {
   private readonly owned: boolean;
+  /** The one place the fence is widened back to a mutable row. Every fenced
+   *  type above is assignable INTO this constructor, so the gated door is open
+   *  to the store, to the hook feed and to any fenced collaborator that ever
+   *  earns a legitimate write — and the cast lives here rather than at each of
+   *  their call sites, where it would read as permission. */
+  private readonly session: ClaudeSessionState;
 
-  constructor(
-    private readonly session: ClaudeSessionState,
-    feed: PendingFeed,
-  ) {
+  constructor(session: PendingReadOnlySession, feed: PendingFeed) {
+    this.session = session as ClaudeSessionState;
     this.owned = pendingSlotOwner(session) === feed;
   }
 
@@ -174,8 +224,8 @@ export class PendingSlot {
  *   • a no-op when nothing is parked, so it can never be the thing that empties
  *     a slot some other feed just filled.
  */
-export function acknowledgeAnswer(session: PendingFencedSession): PendingQuestion[] | null {
-  const live = session as ClaudeSessionState;
+export function acknowledgeAnswer(session: PendingReadOnlySession): PendingQuestion[] | null {
+  const live = session as unknown as ClaudeSessionState;
   if (live.pendingQuestions) live.pendingQuestions = null;
   return live.pendingQuestions;
 }
@@ -202,6 +252,67 @@ export function bornWithPending(
   session.pendingQuestions = previous?.pendingQuestions ?? null;
   fill(new PendingSlot(session, feed));
   return session;
+}
+
+/**
+ * A DETACHED copy of a session's pending slot, for handing outside the store.
+ *
+ * `getSnapshot`/`getAllSnapshots` shallow-clone the row, which left
+ * `snap.pendingQuestions` pointing at the store's own array and
+ * `snap.pendingApproval` at the store's own card. A caller never had to name
+ * either field to corrupt them: `snap.pendingQuestions.push(…)`,
+ * `.length = 0`, or `card.toolInput.command = …` reached past every fence
+ * above — no assignment, so no `readonly` could have caught it, and no
+ * `PendingSlot`, so no ownership check ran. Emptying the array is the freeze
+ * shape; rewriting the card is worse, because the Approve button still works
+ * and just approves something other than what is shown.
+ *
+ * So the slot is COPIED out rather than typed out. A type would have had to
+ * reach the IPC boundary's `ClaudeSessionSnapshot` (main/shared/ipcTypes) and
+ * the renderer's copy of it to mean anything, and it would still only bind
+ * code that opts into the type — whereas a caller mutating a detached copy
+ * simply cannot reach the store, cast or no cast. Cheap where it matters: an
+ * unblocked session has nothing parked and both branches return `null`.
+ *
+ * Used at every point a snapshot leaves the store: `getSnapshot`,
+ * `getAllSnapshots`, and the `publishSnapshot` factory that mirrors a row onto
+ * the hub bus. (The `webContents.send` copy does not need it — Electron
+ * structured-clones across the IPC boundary, so the renderer never holds a
+ * reference to anything of ours.)
+ */
+export function detachPendingSlot(
+  session: Pick<ClaudeSessionState, 'pendingApproval' | 'pendingQuestions'>,
+): Pick<ClaudeSessionState, 'pendingApproval' | 'pendingQuestions'> {
+  return {
+    pendingApproval: detachApproval(session.pendingApproval),
+    pendingQuestions: session.pendingQuestions?.map(detachQuestion) ?? null,
+  };
+}
+
+function detachApproval(approval: PendingApproval | null): PendingApproval | null {
+  if (!approval) return null;
+  // Spread first so no key is ADDED that the original did not have — an
+  // `undefined` `suggestions` is not the same wire shape as an absent one.
+  const copy: PendingApproval = { ...approval, toolInput: detachToolInput(approval.toolInput) };
+  if (approval.suggestions) copy.suggestions = [...approval.suggestions];
+  return copy;
+}
+
+function detachQuestion(question: PendingQuestion): PendingQuestion {
+  return { ...question, options: question.options?.map((o) => ({ ...o })) ?? question.options };
+}
+
+/** Tool input is arbitrary hook/daemon JSON, so it needs a real deep copy.
+ *  `structuredClone` refuses functions and class instances; nothing that ever
+ *  arrives here is one, but a snapshot read must not be the thing that throws,
+ *  so an unexpected payload degrades to the shared reference. */
+function detachToolInput(input: unknown): any {
+  if (input === null || typeof input !== 'object') return input;
+  try {
+    return structuredClone(input);
+  } catch {
+    return input;
+  }
 }
 
 /** A row at birth: the slot starts empty and no feed owns anything yet — the

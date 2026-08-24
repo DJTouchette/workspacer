@@ -1,6 +1,6 @@
 import { contextTokensOf, contextLimitFor, turnCostUSD, emptyUsage } from '../modelUsage';
 import { configService } from '../configService';
-import type { ClaudeSessionState } from '../claudeSessionStore';
+import type { PendingReadOnlySession } from './pendingSlot';
 
 // ── SessionUsageAccumulator ───────────────────────────────────────────────────
 
@@ -25,7 +25,7 @@ export class SessionUsageAccumulator {
    * context gauge or reported model.
    */
   applyUsage(
-    session: ClaudeSessionState,
+    session: PendingReadOnlySession,
     model: string | null,
     usage: any,
     key: string | null,
@@ -96,7 +96,7 @@ export class SessionUsageAccumulator {
    * No-op when the session has no usage yet — an all-zero gauge renders
    * nothing, so there is no wrong number to correct.
    */
-  static refreshContextLimit(session: ClaudeSessionState): void {
+  static refreshContextLimit(session: PendingReadOnlySession): void {
     const u = session.usage;
     if (!u) return;
     // The high-water mark, not just this turn: the retrospective fallback is a

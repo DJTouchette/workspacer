@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { sessionHistory } from '../sessionHistory';
-import type { ClaudeSessionState } from '../claudeSessionStore';
+import type { PendingReadOnlySession } from './pendingSlot';
 
 // ── SessionAnalyticsWriter ────────────────────────────────────────────────────
 
@@ -18,7 +18,7 @@ export function gitBranchOf(cwd: string): string {
 }
 
 /** Snapshot this session's metadata into the analytics history store. */
-export function writeHistory(session: ClaudeSessionState, status: 'active' | 'ended'): void {
+export function writeHistory(session: PendingReadOnlySession, status: 'active' | 'ended'): void {
   const now = Date.now();
   const workflowFailed = session.workflows.filter((w) => w.status === 'failed').length;
   const subagentCount =

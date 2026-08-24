@@ -1,4 +1,5 @@
-import type { ClaudeSessionState, PlanStep, ToolCall } from '../claudeSessionStore';
+import type { PlanStep, ToolCall } from '../claudeSessionStore';
+import type { PendingReadOnlySession } from './pendingSlot';
 import { applyStopEvent } from './hookEventRouter';
 import {
   capConversationInPlace,
@@ -89,7 +90,7 @@ export interface ConversationDeltaWire {
 }
 
 export type ApplyUsageFn = (
-  session: ClaudeSessionState,
+  session: PendingReadOnlySession,
   model: string | null,
   usage: any,
   key: string | null,
@@ -99,7 +100,7 @@ export type ApplyUsageFn = (
 /** Check if a message was already added to avoid duplicates (claude's JSONL
  *  occasionally repeats a message, e.g. around compaction). */
 export function isDuplicateMessage(
-  session: ClaudeSessionState,
+  session: PendingReadOnlySession,
   role: string,
   content: string,
   timestamp?: number,
@@ -167,7 +168,7 @@ const MANAGED_EDIT_TOOLS = new Set([
  * fleet-deck file stats stay empty. Runs inside the tool_use dedup (a
  * re-delivered id never reaches here), so entries aren't double-recorded.
  */
-function recordManagedFileChange(session: ClaudeSessionState, tc: ToolCall, ts: number): void {
+function recordManagedFileChange(session: PendingReadOnlySession, tc: ToolCall, ts: number): void {
   if (!MANAGED_EDIT_TOOLS.has(tc.name.toLowerCase())) return;
   const paths: string[] = [];
   // Multi-file apply_patch (codex app-server): `changes: [{ path, kind, diff }]`.
@@ -191,7 +192,7 @@ function recordManagedFileChange(session: ClaudeSessionState, tc: ToolCall, ts: 
  * (same contract as hookEventRouter: caller owns side-effects like pushUpdate).
  */
 export function applyConversationItems(
-  session: ClaudeSessionState,
+  session: PendingReadOnlySession,
   items: ConversationItemWire[],
   applyUsageFn: ApplyUsageFn,
 ): void {

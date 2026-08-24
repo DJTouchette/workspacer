@@ -25,7 +25,8 @@ import { configService } from './configService';
 import { appIconPath } from '../lib/appIcon';
 import { IPC } from '../shared/ipcChannels';
 import type { InAppNotification } from '../shared/ipcTypes';
-import type { ClaudeSessionState, SessionAmbientState } from './claudeSessionStore';
+import type { SessionAmbientState } from './claudeSessionStore';
+import type { PendingReadOnlySession } from './sessionStore/pendingSlot';
 
 const NEEDS_YOU: SessionAmbientState[] = ['waiting_approval', 'waiting_input'];
 // 'background' counts as working so "finished" fires when the spawned work
@@ -46,7 +47,7 @@ interface NotificationsConfig {
 }
 
 /** Human label for a session — its explicit label, else the cwd basename. */
-function agentLabel(session: ClaudeSessionState): string {
+function agentLabel(session: PendingReadOnlySession): string {
   if (session.label) return session.label;
   const cwd = session.cwd;
   if (!cwd) return 'Agent';
@@ -73,7 +74,7 @@ function summarizeToolInput(input: unknown): string | null {
 }
 
 /** Best-known cumulative session cost (statusLine is authoritative when live). */
-function sessionCost(session: ClaudeSessionState): number {
+function sessionCost(session: PendingReadOnlySession): number {
   return session.statusLine?.costUSD ?? session.usage?.costUSD ?? 0;
 }
 
@@ -148,7 +149,7 @@ class AgentNotifier {
    * notification center (silently — no toast — when the user is already
    * watching that agent).
    */
-  notifyOnTransition(session: ClaudeSessionState, prevState: SessionAmbientState): void {
+  notifyOnTransition(session: PendingReadOnlySession, prevState: SessionAmbientState): void {
     const cfg = this.cfg();
     const next = session.ambientState;
     if (next === prevState) return;

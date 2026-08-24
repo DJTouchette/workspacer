@@ -22,6 +22,35 @@ describe('buildManagerKickoff — full-access mode', () => {
   });
 });
 
+describe('buildManagerKickoff — crash succession', () => {
+  // Version rot, not logic: the doctrine taught the manager to find a dead
+  // predecessor by scanning list_agents for a parentSessionId with no session
+  // row of its own. That was the only method available until `list_orphans`
+  // shipped (600a2c4e), and it is strictly worse than the tool — it cannot see
+  // an EVICTED manager at all (the store keeps a tombstone the read has, the
+  // agent list does not), and it cannot tell a dead manager from a worker that
+  // spawned agents of its own. Teaching the old method now sends a successor
+  // down a path that silently mis-adopts.
+  const doctrine = buildManagerKickoff('go');
+
+  it('names list_orphans as the answer when a predecessor crashed', () => {
+    expect(doctrine).toContain('list_orphans');
+    expect(doctrine).toMatch(/crashed[\s\S]{0,120}list_orphans|list_orphans[\s\S]{0,200}crash/i);
+  });
+
+  it('no longer teaches deriving a dead manager from list_agents', () => {
+    expect(doctrine).not.toMatch(/list_agents still tells you/);
+    expect(doctrine).not.toMatch(/parentSessionId that has no session row/);
+  });
+
+  it('warns that a candidate is a lead, not an answer', () => {
+    // list_orphans reports and never picks; adopting the wrong group re-points
+    // another manager's workers with nothing saying so.
+    expect(doctrine).toContain('confirmedManager:false');
+    expect(doctrine).toMatch(/adopt_workers’? fromSessionId/);
+  });
+});
+
 describe('deriveFleetRoot', () => {
   it('explicit config wins', () => {
     expect(deriveFleetRoot('/srv/code', ['/home/u/Work/a'], '/home/u')).toBe('/srv/code');
