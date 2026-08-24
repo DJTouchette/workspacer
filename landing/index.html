@@ -389,6 +389,10 @@
   .duo .phones { flex: 0 0 46%; display: flex; align-items: flex-start; gap: 12px; }
   .duo .m { flex: 1; min-width: 0; line-height: 0; }
   .duo .m img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 14px; }
+  /* No desktop half right now — see the comment at the .duo markup. Centre the
+     phone pair and give it a sane width instead of leaving a 54% hole. */
+  .duo.phones-only { justify-content: center; padding: 26px 20px; }
+  .duo.phones-only .phones { flex: 0 0 62%; }
 
   /* ---- architecture ----------------------------------------------------- */
   .arch { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
@@ -1095,9 +1099,10 @@
         <li><b>Two machines, one fleet.</b> Federate your desktop's hub with your laptop's and every client shows both machines' agents side by side, approvals routed to the right box, offline peers marked rather than vanished.</li>
       </ul>
       <div class="shot">
-        <div class="duo">
-          <a class="d" href="shots/web-remote.webp" target="_blank"><img width="1600" height="859" src="shots/web-remote.webp" loading="lazy"
-            alt="The full workspacer renderer running in Chrome over Tailscale: same fleet, same panes, served by the hub" /></a>
+        <!-- Desktop-in-a-browser capture pulled 2026-08-23: the only frame we
+             had was of a real session and legible in it. Phones-only until the
+             /app route is restaged off the fabricated fleet. -->
+        <div class="duo phones-only">
           <div class="phones">
             <a class="m" href="shots/mobile-fleet.webp" target="_blank"><img width="640" height="1098" src="shots/mobile-fleet.webp" loading="lazy"
               alt="The phone PWA Fleet tab: All / Waiting / In flight / Landed filters, and a card per agent with a static identity row (project, task, role) and a separate state row (status, model, context meter, cost)" /></a>
