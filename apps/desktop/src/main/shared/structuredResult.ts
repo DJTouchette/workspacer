@@ -87,7 +87,7 @@ export function buildResultContract(schema: Record<string, unknown>): string {
   return (
     'STRUCTURED RESULT CONTRACT. Whoever dispatched you asked for a machine-readable ' +
     'result as well as your prose. When your work is finished, write your normal ' +
-    'summary first — it is read by a human and must not be dropped — and then END your ' +
+    'summary first. It is read by a human and must not be dropped. Then END your ' +
     'final message with a fenced code block tagged `' +
     RESULT_FENCE +
     '` containing ONE JSON object that validates against this schema:\n\n' +
@@ -96,7 +96,7 @@ export function buildResultContract(schema: Record<string, unknown>): string {
     RESULT_FENCE +
     '\n{ ... }\n```\n\n' +
     'Emit the block only in your FINAL message (not mid-task), only once, and put ' +
-    'nothing after it. Report what actually happened — an empty list or a null is a ' +
+    'nothing after it. Report what actually happened. An empty list or a null is a ' +
     'truthful answer; an invented value is not. If you could not complete the task, ' +
     'still emit the block with whatever fields are true and say so in the prose.'
   );

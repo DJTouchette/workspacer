@@ -1230,7 +1230,7 @@ type spawnAgentIn struct {
 	// holding spawn_agent already holds send_message, and could always have
 	// sent this exact text to the session it just created. This removes a round
 	// trip, not a check.
-	Message string `json:"message,omitempty" jsonschema:"the new agent's FIRST MESSAGE — the task itself, sent as soon as it starts, so you do not have to follow the spawn with a separate send_message. Delivered by the host as part of the spawn (it cannot race the agent coming up), and the wks-result contract from resultSchema is prepended to it, so both land in the agent's first turn"`
+	Message string `json:"message,omitempty" jsonschema:"the new agent's FIRST MESSAGE — the task itself, sent as soon as it starts, so you do not have to follow the spawn with a separate send_message. Delivered by the host as part of the spawn (it cannot race the agent coming up). The wks-result contract from resultSchema lands separately, not prepended into this text: an appended system prompt for the default Claude PTY provider, or prepended ahead of this message for managed/stream providers. Either way it arrives in the agent's first turn alongside this message"`
 	// ResultSchema is the structured-result contract (the Workflow tool's
 	// agent({schema}) shape): a JSON Schema in, a validated object back on the
 	// finished wake. Modelled as map[string]any rather than a typed struct for
