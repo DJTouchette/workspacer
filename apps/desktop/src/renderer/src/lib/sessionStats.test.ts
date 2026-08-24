@@ -2,8 +2,11 @@ import { describe, it, expect } from 'vitest';
 import {
   deriveSessionStats,
   fmtTokens,
+  fmtWindowLength,
+  fmtWindowShort,
   isSnapshotStale,
   summarizeFileChanges,
+  usageWindows,
   STALE_AFTER_MS,
 } from './sessionStats';
 import type { FileChange, SessionStatusLine, SessionUsage } from '../types/claudeSession';
@@ -114,5 +117,79 @@ describe('summarizeFileChanges', () => {
 
   it('is empty for no changes', () => {
     expect(summarizeFileChanges([])).toEqual({ files: 0, added: 0, removed: 0 });
+  });
+});
+
+describe('window length formatting', () => {
+  it('spells whole days, whole hours and loose minutes', () => {
+    expect(fmtWindowShort(300)).toBe('5h');
+    expect(fmtWindowShort(10_080)).toBe('7d');
+    expect(fmtWindowShort(90)).toBe('90m');
+    expect(fmtWindowLength(300)).toBe('5 hours');
+    expect(fmtWindowLength(10_080)).toBe('7 days');
+    expect(fmtWindowLength(1440)).toBe('1 day');
+    expect(fmtWindowLength(90)).toBe('1 hour 30 min');
+  });
+
+  it('reports nothing for an unknown or nonsensical length', () => {
+    expect(fmtWindowShort(undefined)).toBeUndefined();
+    expect(fmtWindowLength(undefined)).toBeUndefined();
+    expect(fmtWindowShort(0)).toBeUndefined();
+  });
+});
+
+describe('usageWindows', () => {
+  it('carries the window length into the label and the short name', () => {
+    const ws = usageWindows({
+      fiveHourPct: 11,
+      fiveHourResetsAt: 1_787_593_199,
+      fiveHourWindowMins: 300,
+      sevenDayPct: 2,
+      sevenDayWindowMins: 10_080,
+    });
+    expect(ws.map((w) => w.key)).toEqual(['fiveHour', 'sevenDay']);
+    expect(ws[0]).toMatchObject({ short: '5h', label: '5-hour limit', windowMins: 300, pct: 11 });
+    expect(ws[1]).toMatchObject({ short: '7d', label: '7-day limit', windowMins: 10_080 });
+  });
+
+  it('labels a window by the length the provider actually reported', () => {
+    // A Codex primary window need not be five hours; the slot it lands in must
+    // not put "5-hour" on a 90-minute window.
+    const [w] = usageWindows({ fiveHourPct: 40, fiveHourWindowMins: 90 });
+    expect(w.label).toBe('90-minute limit');
+    expect(w.short).toBe('90m');
+  });
+
+  // ── degrade gracefully ──────────────────────────────────────────────────
+  it('omits a window the provider does not report at all', () => {
+    // Codex reports primary + secondary and never a monthly window. The monthly
+    // slot must be absent, not a 0% meter.
+    const ws = usageWindows({
+      fiveHourPct: 19,
+      fiveHourWindowMins: 300,
+      sevenDayPct: 3,
+      sevenDayWindowMins: 10_080,
+    });
+    expect(ws.map((w) => w.key)).toEqual(['fiveHour', 'sevenDay']);
+    expect(ws.some((w) => w.key === 'monthly')).toBe(false);
+  });
+
+  it('keeps a window that reported only a reset time, with no percentage', () => {
+    // Claude's stream sends resetsAt without utilization outside warning events.
+    // The row is real; the meter is not, so pct stays undefined rather than 0.
+    const ws = usageWindows({ fiveHourResetsAt: 1_787_593_199 });
+    expect(ws).toHaveLength(1);
+    expect(ws[0].pct).toBeUndefined();
+    expect(ws[0].resetsAt).toBe(1_787_593_199);
+  });
+
+  it('falls back to the slot name when no length is reported', () => {
+    const ws = usageWindows({ monthlyPct: 5 });
+    expect(ws[0]).toMatchObject({ key: 'monthly', short: 'Mo', label: 'Monthly limit' });
+    expect(ws[0].windowMins).toBeUndefined();
+  });
+
+  it('is empty when no window reported anything', () => {
+    expect(usageWindows({})).toEqual([]);
   });
 });

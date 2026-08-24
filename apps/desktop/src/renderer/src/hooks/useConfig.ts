@@ -76,6 +76,13 @@ export interface UIConfig {
    *  built-in default set plus every contributed plugin pane; an explicit array
    *  (even empty) is used verbatim, in order. See lib/paneMenu.ts. */
   paneMenu?: string[];
+  /** Utilization (0-100) at which an account rate-limit window earns its own
+   *  chip in the agent status bar. The windows are account-scoped and identical
+   *  in every open pane, so the bar shows only the busiest one at rest and adds
+   *  the rest once they are genuinely close to a limit; the usage dialog behind
+   *  the chip always lists them all. Set to 0 to keep every reported window in
+   *  the bar. Absent = 70. */
+  usageWindowChipPct?: number;
 }
 
 export interface TerminalConfig {

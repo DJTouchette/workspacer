@@ -433,12 +433,18 @@ pub struct StatusLine {
     /// Unix epoch seconds the 5h window resets at.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub five_hour_resets_at: Option<i64>,
+    /// How long the 5h window is, in minutes. See [`CLAUDE_FIVE_HOUR_WINDOW_MINUTES`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub five_hour_window_minutes: Option<u64>,
     /// `rate_limits.seven_day.used_percentage` (0–100).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seven_day_pct: Option<f64>,
     /// Unix epoch seconds the 7d window resets at.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seven_day_resets_at: Option<i64>,
+    /// How long the weekly window is, in minutes. See [`CLAUDE_SEVEN_DAY_WINDOW_MINUTES`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seven_day_window_minutes: Option<u64>,
     /// Monthly overage/credit window utilization (0–100). Sourced from Claude's
     /// stream `overage` `rateLimitType`; absent for the interactive statusLine
     /// (which carries only 5h/7d) and for providers without a monthly window.
@@ -447,6 +453,11 @@ pub struct StatusLine {
     /// Unix epoch seconds the monthly overage window resets at.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub monthly_resets_at: Option<i64>,
+    /// How long the monthly overage window is, in minutes. Stays `None` for
+    /// Claude: a calendar month is 28-31 days and no source spells it out, so
+    /// clients show that window without a duration rather than a made-up one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub monthly_window_minutes: Option<u64>,
     /// Human warning message when a window crosses its warning threshold
     /// (Claude's `status: allowed_warning`). Cleared when comfortable again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -466,6 +477,15 @@ pub struct StatusLine {
     )]
     pub received_at: Option<OffsetDateTime>,
 }
+
+/// Claude's account windows are named by their length rather than carrying it:
+/// `five_hour` is 300 minutes and `seven_day` is 10080. Nothing on Claude's
+/// wire spells the duration out, so the daemon stamps it from the window's own
+/// name and every client reads the same `*_window_minutes` field that Codex
+/// fills from its own `windowDurationMins`.
+pub const CLAUDE_FIVE_HOUR_WINDOW_MINUTES: u64 = 300;
+/// See [`CLAUDE_FIVE_HOUR_WINDOW_MINUTES`].
+pub const CLAUDE_SEVEN_DAY_WINDOW_MINUTES: u64 = 10_080;
 
 impl StatusLine {
     /// Extract the fields we care about from Claude Code's raw statusLine JSON.
@@ -511,18 +531,21 @@ impl StatusLine {
             five_hour_resets_at: five
                 .and_then(|f| f.get("resets_at"))
                 .and_then(Value::as_i64),
+            five_hour_window_minutes: five.map(|_| CLAUDE_FIVE_HOUR_WINDOW_MINUTES),
             seven_day_pct: seven
                 .and_then(|s| s.get("used_percentage"))
                 .and_then(Value::as_f64),
             seven_day_resets_at: seven
                 .and_then(|s| s.get("resets_at"))
                 .and_then(Value::as_i64),
+            seven_day_window_minutes: seven.map(|_| CLAUDE_SEVEN_DAY_WINDOW_MINUTES),
             monthly_pct: monthly
                 .and_then(|m| m.get("used_percentage"))
                 .and_then(Value::as_f64),
             monthly_resets_at: monthly
                 .and_then(|m| m.get("resets_at"))
                 .and_then(Value::as_i64),
+            monthly_window_minutes: None,
             // The interactive statusLine JSON doesn't carry warning/overage
             // status or capabilities — those ride the stream events only.
             rate_limit_warning: None,
@@ -1033,6 +1056,42 @@ pub struct HookEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Claude never spells a window's length out, so the daemon stamps it from
+    /// the window's own name, and only for the windows that actually reported.
+    #[test]
+    fn claude_status_line_stamps_window_lengths_it_knows() {
+        let sl = StatusLine::from_claude_json(&serde_json::json!({
+            "rate_limits": {
+                "five_hour": { "used_percentage": 11.0, "resets_at": 1787593199 },
+                "seven_day": { "used_percentage": 2.0 }
+            }
+        }));
+        assert_eq!(
+            sl.five_hour_window_minutes,
+            Some(CLAUDE_FIVE_HOUR_WINDOW_MINUTES)
+        );
+        assert_eq!(
+            sl.seven_day_window_minutes,
+            Some(CLAUDE_SEVEN_DAY_WINDOW_MINUTES)
+        );
+        // No monthly window in the payload, so nothing is claimed for it: not a
+        // length, not a percentage.
+        assert_eq!(sl.monthly_pct, None);
+        assert_eq!(sl.monthly_window_minutes, None);
+    }
+
+    /// A statusLine with no rate_limits block at all (most accounts) must leave
+    /// every window untouched rather than stamping lengths onto empty slots.
+    #[test]
+    fn claude_status_line_without_windows_stamps_nothing() {
+        let sl = StatusLine::from_claude_json(&serde_json::json!({
+            "model": { "display_name": "Opus" }
+        }));
+        assert_eq!(sl.five_hour_window_minutes, None);
+        assert_eq!(sl.seven_day_window_minutes, None);
+        assert_eq!(sl.monthly_window_minutes, None);
+    }
 
     /// Build a minimal HookEvent with an empty payload.
     fn make_event(name: &str) -> HookEvent {

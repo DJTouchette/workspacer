@@ -7,6 +7,7 @@ import { Home, Star, Plus, RefreshCw } from '../components/icons';
 import { ProjectMark } from '../components/ProjectMark';
 import { favouriteProjects, recentProjects, setFavourite } from '../lib/projectRegistry';
 import { claudeAccountOf } from '../lib/claudeAccount';
+import { usageWindows } from '../lib/sessionStats';
 import type { ProjectIdentity } from '../hooks/useConfig';
 import { AgentLogo } from '../components/agentLogos';
 import type { AgentProvider } from '../types/pane';
@@ -73,10 +74,13 @@ interface Snap {
     costUSD?: number;
     fiveHourPct?: number;
     fiveHourResetsAt?: number;
+    fiveHourWindowMins?: number;
     sevenDayPct?: number;
     sevenDayResetsAt?: number;
+    sevenDayWindowMins?: number;
     monthlyPct?: number;
     monthlyResetsAt?: number;
+    monthlyWindowMins?: number;
     receivedAt?: string;
   };
 }
@@ -253,9 +257,13 @@ const RateLimitCard: React.FC<{
         />
         {title}
       </div>
-      <Row label="5h" pct={best.fiveHourPct} reset={best.fiveHourResetsAt} />
-      <Row label="7d" pct={best.sevenDayPct} reset={best.sevenDayResetsAt} />
-      <Row label="Mo" pct={best.monthlyPct} reset={best.monthlyResetsAt} />
+      {/* One row per window the provider reported, labelled with the window's
+          own length where it is known. Codex has no monthly window and Claude
+          has one only while extra usage is enabled, so the rows come from the
+          data, not from a fixed list of three. */}
+      {usageWindows(best).map((w) => (
+        <Row key={w.key} label={w.short} pct={w.pct} reset={w.resetsAt} />
+      ))}
     </div>
   );
 };

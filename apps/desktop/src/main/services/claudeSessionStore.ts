@@ -215,12 +215,20 @@ export interface SessionStatusLine {
   costUSD?: number;
   fiveHourPct?: number;
   fiveHourResetsAt?: number;
+  /** How long the 5h window is, in minutes (300 for Claude; Codex reports its
+   *  own figure). Absent when the provider does not say. */
+  fiveHourWindowMins?: number;
   sevenDayPct?: number;
   sevenDayResetsAt?: number;
+  /** How long the weekly window is, in minutes (10080 for Claude). */
+  sevenDayWindowMins?: number;
   /** Monthly overage/credit window (Claude stream `overage` type). Absent for
    *  the interactive statusLine and providers without a monthly window. */
   monthlyPct?: number;
   monthlyResetsAt?: number;
+  /** How long the monthly window is, in minutes. Never set for Claude: a
+   *  calendar month has no fixed length and no source reports one. */
+  monthlyWindowMins?: number;
   /** Human warning when a window crosses its threshold (stream only). */
   rateLimitWarning?: string;
   /** Monthly overage disabled for lack of credits (stream only). */

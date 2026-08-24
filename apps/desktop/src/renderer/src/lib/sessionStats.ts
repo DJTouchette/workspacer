@@ -152,13 +152,20 @@ export interface DerivedSessionStats {
   fiveHourPct?: number;
   /** Unix epoch seconds the 5h rate-limit window resets at. */
   fiveHourResetsAt?: number;
+  /** The 5h window's length in minutes (300 for Claude; Codex reports its own,
+   *  which is why this is carried rather than assumed). */
+  fiveHourWindowMins?: number;
   sevenDayPct?: number;
   /** Unix epoch seconds the 7d rate-limit window resets at. */
   sevenDayResetsAt?: number;
+  /** The weekly window's length in minutes (10080 for Claude). */
+  sevenDayWindowMins?: number;
   /** Monthly overage/credit window utilization (stream `overage` type). */
   monthlyPct?: number;
   /** Unix epoch seconds the monthly overage window resets at. */
   monthlyResetsAt?: number;
+  /** The monthly window's length in minutes. No source reports one today. */
+  monthlyWindowMins?: number;
   /** Active "approaching a limit" warning (stream only). */
   rateLimitWarning?: string;
   /** Monthly overage disabled for lack of credits (stream only). */
@@ -196,11 +203,134 @@ export function deriveSessionStats(
     costUSD: sl?.costUSD ?? usage?.costUSD,
     fiveHourPct: sl?.fiveHourPct,
     fiveHourResetsAt: sl?.fiveHourResetsAt,
+    fiveHourWindowMins: sl?.fiveHourWindowMins,
     sevenDayPct: sl?.sevenDayPct,
     sevenDayResetsAt: sl?.sevenDayResetsAt,
+    sevenDayWindowMins: sl?.sevenDayWindowMins,
     monthlyPct: sl?.monthlyPct,
     monthlyResetsAt: sl?.monthlyResetsAt,
+    monthlyWindowMins: sl?.monthlyWindowMins,
     rateLimitWarning: sl?.rateLimitWarning,
     overageOutOfCredits: sl?.overageOutOfCredits,
   };
+}
+
+// ── Account rate-limit windows ───────────────────────────────────────────────
+//
+// Every surface that draws windows (the status bar chip, its detail modal, the
+// Inspector card, the Overview card) builds its list from `usageWindows` rather
+// than hard-coding three rows. The reason is that the set is genuinely variable:
+// Claude has no monthly window unless extra usage is enabled on the account, and
+// Codex reports two windows and never a monthly one. A hard-coded list draws a
+// dead 0% meter for whatever is missing; this list simply omits it, and picks
+// the monthly window back up on its own if the account ever enables overage.
+
+/** One rolling account window, as the provider actually reported it. */
+export interface UsageWindow {
+  key: 'fiveHour' | 'sevenDay' | 'monthly';
+  /** Cramped-surface label: the window's own length when known (`5h`, `7d`),
+   *  else the slot's name. */
+  short: string;
+  /** Full label for roomy surfaces: `5-hour limit`. */
+  label: string;
+  /** Utilization 0–100. Undefined when only a reset time arrived. */
+  pct?: number;
+  /** Unix epoch seconds this window resets at. */
+  resetsAt?: number;
+  /** Window length in minutes, when the provider reports or implies one. */
+  windowMins?: number;
+}
+
+/** Compact window length: `5h`, `7d`, `90m`. Undefined when unknown. */
+export function fmtWindowShort(mins?: number): string | undefined {
+  if (!mins || mins <= 0) return undefined;
+  if (mins % 1440 === 0) return `${mins / 1440}d`;
+  if (mins % 60 === 0) return `${mins / 60}h`;
+  return `${mins}m`;
+}
+
+/** Spelled-out window length: `5 hours`, `7 days`, `1 hour 30 min`. */
+export function fmtWindowLength(mins?: number): string | undefined {
+  if (!mins || mins <= 0) return undefined;
+  const unit = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
+  if (mins % 1440 === 0) return unit(mins / 1440, 'day');
+  if (mins % 60 === 0) return unit(mins / 60, 'hour');
+  if (mins > 60) return `${unit(Math.floor(mins / 60), 'hour')} ${mins % 60} min`;
+  return `${mins} min`;
+}
+
+/** Attributive form for a window label: `5-hour`, `7-day`, `90-minute`. Feeds
+ *  "5-hour limit", so the label states the real duration rather than assuming
+ *  the slot's conventional one (a Codex primary window need not be 5 hours). */
+export function fmtWindowAdjective(mins?: number): string | undefined {
+  if (!mins || mins <= 0) return undefined;
+  if (mins % 1440 === 0) return `${mins / 1440}-day`;
+  if (mins % 60 === 0) return `${mins / 60}-hour`;
+  return `${mins}-minute`;
+}
+
+/**
+ * The account windows this session actually has data for, in order.
+ *
+ * A window earns a row when it carries a percentage OR a reset time; a slot with
+ * neither is not "0% used", it is not reported, and rendering it would invent a
+ * meter. `windowMins` rides along so the label can say how long the window is
+ * instead of leaving it to the slot's name.
+ */
+/** The window fields `usageWindows` needs. Both `DerivedSessionStats` and the
+ *  raw `SessionStatusLine` satisfy it, so either can be passed. */
+export type UsageWindowSource = Partial<
+  Pick<
+    DerivedSessionStats,
+    | 'fiveHourPct'
+    | 'fiveHourResetsAt'
+    | 'fiveHourWindowMins'
+    | 'sevenDayPct'
+    | 'sevenDayResetsAt'
+    | 'sevenDayWindowMins'
+    | 'monthlyPct'
+    | 'monthlyResetsAt'
+    | 'monthlyWindowMins'
+  >
+>;
+
+export function usageWindows(stats: UsageWindowSource): UsageWindow[] {
+  const slots: Array<
+    Pick<UsageWindow, 'key' | 'label' | 'pct' | 'resetsAt' | 'windowMins'> & { fallback: string }
+  > = [
+    {
+      key: 'fiveHour',
+      label: '5-hour limit',
+      fallback: '5h',
+      pct: stats.fiveHourPct,
+      resetsAt: stats.fiveHourResetsAt,
+      windowMins: stats.fiveHourWindowMins,
+    },
+    {
+      key: 'sevenDay',
+      label: '7-day limit',
+      fallback: '7d',
+      pct: stats.sevenDayPct,
+      resetsAt: stats.sevenDayResetsAt,
+      windowMins: stats.sevenDayWindowMins,
+    },
+    {
+      key: 'monthly',
+      label: 'Monthly limit',
+      fallback: 'Mo',
+      pct: stats.monthlyPct,
+      resetsAt: stats.monthlyResetsAt,
+      windowMins: stats.monthlyWindowMins,
+    },
+  ];
+  return slots
+    .filter((s) => s.pct !== undefined || s.resetsAt !== undefined)
+    .map(({ fallback, label, ...s }) => {
+      const adj = fmtWindowAdjective(s.windowMins);
+      return {
+        ...s,
+        label: adj ? `${adj} limit` : label,
+        short: fmtWindowShort(s.windowMins) ?? fallback,
+      };
+    });
 }

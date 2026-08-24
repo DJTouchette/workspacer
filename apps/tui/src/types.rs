@@ -42,12 +42,23 @@ pub struct StatusLine {
     /// 5h rate-limit window used %, 0–100 (Pro/Max only).
     #[serde(default)]
     pub five_hour_pct: Option<f64>,
+    /// The 5h window's length in minutes. Codex reports its own figure per
+    /// window; Claude's is stamped from the window's name. Absent when nothing
+    /// reported one, in which case the slot's short name stands in.
+    #[serde(default)]
+    pub five_hour_window_minutes: Option<u64>,
     /// 7d rate-limit window used %, 0–100 (Pro/Max only).
     #[serde(default)]
     pub seven_day_pct: Option<f64>,
+    /// The weekly window's length in minutes.
+    #[serde(default)]
+    pub seven_day_window_minutes: Option<u64>,
     /// Monthly overage/credit window used %, 0–100 (Claude stream `overage`).
     #[serde(default)]
     pub monthly_pct: Option<f64>,
+    /// The monthly window's length in minutes. No source reports one today.
+    #[serde(default)]
+    pub monthly_window_minutes: Option<u64>,
     /// Human warning when a window crosses its threshold (stream only).
     #[serde(default)]
     pub rate_limit_warning: Option<String>,
@@ -1175,6 +1186,19 @@ pub fn truncate(s: &str, max: usize) -> String {
     } else {
         s.to_string()
     }
+}
+
+/// Compact window length for a status readout: `5h`, `7d`, `90m`. `None` when
+/// the provider did not report a length, so callers keep the slot's own name.
+pub fn window_short(mins: Option<u64>) -> Option<String> {
+    let m = mins.filter(|m| *m > 0)?;
+    Some(if m % 1440 == 0 {
+        format!("{}d", m / 1440)
+    } else if m % 60 == 0 {
+        format!("{}h", m / 60)
+    } else {
+        format!("{m}m")
+    })
 }
 
 #[cfg(test)]

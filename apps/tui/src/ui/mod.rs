@@ -19,7 +19,7 @@ use ratatui::Frame;
 use crate::app::{App, ChatMode, SplitDir, TabKind, View};
 use crate::keys::{Action, Context};
 use crate::theme::Theme;
-use crate::types::{derive_stats, Agent, DerivedStats, Part, Role};
+use crate::types::{derive_stats, window_short, Agent, DerivedStats, Part, Role};
 use serde_json::Value;
 use tui_term::widget::PseudoTerminal;
 

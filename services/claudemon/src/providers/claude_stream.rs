@@ -38,7 +38,7 @@ use super::{apply_updates, note_user_send, set_mode, AgentUpdate, Facade, UsageA
 use crate::session::conversation::ConversationItem;
 use crate::session::state::{
     Capabilities, ContextInventory, ContextItem, Pending, PendingOwner, PendingQuestion,
-    PendingWrite, SessionMode,
+    PendingWrite, SessionMode, CLAUDE_FIVE_HOUR_WINDOW_MINUTES, CLAUDE_SEVEN_DAY_WINDOW_MINUTES,
 };
 use crate::session::store::{ManagedAnswer, ManagedPermissionSwitch};
 use crate::session::transcript::{blocks, flatten_tool_result, Block};
@@ -277,13 +277,24 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
                 let (five_hour_pct, five_hour_resets_at) = bucket(!is_seven_day && !is_overage);
                 let (seven_day_pct, seven_day_resets_at) = bucket(is_seven_day);
                 let (monthly_pct, monthly_resets_at) = bucket(is_overage);
+                // The event names the window but never its length, so stamp the
+                // length the name defines, and only for the bucket this event
+                // fills. The other buckets carry no reading here.
+                let mins = |on: bool, m: u64| on.then_some(m);
                 out.push(AgentUpdate::RateLimits {
                     five_hour_pct,
                     five_hour_resets_at,
+                    five_hour_window_minutes: mins(
+                        !is_seven_day && !is_overage,
+                        CLAUDE_FIVE_HOUR_WINDOW_MINUTES,
+                    ),
                     seven_day_pct,
                     seven_day_resets_at,
+                    seven_day_window_minutes: mins(is_seven_day, CLAUDE_SEVEN_DAY_WINDOW_MINUTES),
                     monthly_pct,
                     monthly_resets_at,
+                    // A calendar month has no fixed length; leave it unreported.
+                    monthly_window_minutes: None,
                 });
             }
             // Status (distinct from utilization): a warning fires only when a
@@ -1994,10 +2005,14 @@ mod tests {
         assert!(updates.contains(&AgentUpdate::RateLimits {
             five_hour_pct: Some(19.0),
             five_hour_resets_at: Some(1783314600),
+            // The event names the window; the daemon stamps how long it is.
+            five_hour_window_minutes: Some(300),
             seven_day_pct: None,
             seven_day_resets_at: None,
+            seven_day_window_minutes: None,
             monthly_pct: None,
             monthly_resets_at: None,
+            monthly_window_minutes: None,
         }));
         let updates = t(json!({ "type": "rate_limit_event", "rate_limit_info": {
             "status": "allowed", "resetsAt": 1783914600, "rateLimitType": "seven_day_sonnet",
@@ -2005,10 +2020,13 @@ mod tests {
         assert!(updates.contains(&AgentUpdate::RateLimits {
             five_hour_pct: None,
             five_hour_resets_at: None,
+            five_hour_window_minutes: None,
             seven_day_pct: Some(3.0),
             seven_day_resets_at: Some(1783914600),
+            seven_day_window_minutes: Some(10_080),
             monthly_pct: None,
             monthly_resets_at: None,
+            monthly_window_minutes: None,
         }));
         // `overage` is the monthly window — it must land in `monthly_*`, never
         // in the 5h fields (the bug this parser rewrite fixes).
@@ -2018,10 +2036,14 @@ mod tests {
         assert!(updates.contains(&AgentUpdate::RateLimits {
             five_hour_pct: None,
             five_hour_resets_at: None,
+            five_hour_window_minutes: None,
             seven_day_pct: None,
             seven_day_resets_at: None,
+            seven_day_window_minutes: None,
             monthly_pct: Some(61.0),
             monthly_resets_at: Some(1785000000),
+            // A calendar month has no fixed length, so none is claimed.
+            monthly_window_minutes: None,
         }));
     }
 

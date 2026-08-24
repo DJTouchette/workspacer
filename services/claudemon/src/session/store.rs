@@ -13,6 +13,7 @@ use super::conversation::{ConversationItem, ConversationStore};
 use super::permission_mode::{classify_screen, PermissionMode, PermissionSwitchError};
 use super::state::{
     HookEvent, Pending, PendingWrite, Plan, SessionMode, SessionState, StatusLine, Transport,
+    CLAUDE_FIVE_HOUR_WINDOW_MINUTES, CLAUDE_SEVEN_DAY_WINDOW_MINUTES,
 };
 use crate::protocol::WrapperMessage;
 
@@ -807,6 +808,20 @@ impl SessionStore {
         }
         if status.monthly_resets_at.is_none() {
             status.monthly_resets_at = u.monthly_resets_at;
+        }
+        // Window lengths: this reading is Claude's, whose windows are named by
+        // their length. Stamp each one that actually has a reading, so clients
+        // can label "5 hours" / "7 days" instead of just "5h"/"7d". The monthly
+        // overage window has no fixed length, so it stays unreported.
+        if status.five_hour_window_minutes.is_none()
+            && (status.five_hour_pct.is_some() || status.five_hour_resets_at.is_some())
+        {
+            status.five_hour_window_minutes = Some(CLAUDE_FIVE_HOUR_WINDOW_MINUTES);
+        }
+        if status.seven_day_window_minutes.is_none()
+            && (status.seven_day_pct.is_some() || status.seven_day_resets_at.is_some())
+        {
+            status.seven_day_window_minutes = Some(CLAUDE_SEVEN_DAY_WINDOW_MINUTES);
         }
         if status.overage_out_of_credits.is_none() {
             status.overage_out_of_credits = u.out_of_credits;

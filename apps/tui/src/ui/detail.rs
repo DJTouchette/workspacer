@@ -64,14 +64,19 @@ pub(super) fn render_detail(f: &mut Frame, area: Rect, app: &App) {
     }
     // Account-wide rate-limit windows, when Claude reports them (Pro/Max).
     if let Some(sl) = app.status_lines.get(&a.session_id) {
+        // The key is the window's own length where it is known, so the reader
+        // learns how long the window is, not just which slot it fills.
         if let Some(p) = sl.five_hour_pct {
-            lines.push(kv(t, "5h", &format!("{p:.0}% used")));
+            let k = window_short(sl.five_hour_window_minutes).unwrap_or_else(|| "5h".into());
+            lines.push(kv(t, &k, &format!("{p:.0}% used")));
         }
         if let Some(p) = sl.seven_day_pct {
-            lines.push(kv(t, "7d", &format!("{p:.0}% used")));
+            let k = window_short(sl.seven_day_window_minutes).unwrap_or_else(|| "7d".into());
+            lines.push(kv(t, &k, &format!("{p:.0}% used")));
         }
         if let Some(p) = sl.monthly_pct {
-            lines.push(kv(t, "Mo", &format!("{p:.0}% used")));
+            let k = window_short(sl.monthly_window_minutes).unwrap_or_else(|| "Mo".into());
+            lines.push(kv(t, &k, &format!("{p:.0}% used")));
         }
         if sl.overage_out_of_credits == Some(true) {
             lines.push(kv(t, "overage", "out of credits"));
@@ -221,7 +226,9 @@ pub(super) fn progress_bar(done: usize, total: usize) -> String {
     format!("{}{}", "▰".repeat(filled), "▱".repeat(CELLS - filled))
 }
 
-pub(super) fn kv<'a>(t: &Theme, k: &'a str, v: &str) -> Line<'a> {
+// The key is borrowed only for the format! below, which owns its output, so the
+// line is 'static and callers may pass a temporary (a window's own length, say).
+pub(super) fn kv(t: &Theme, k: &str, v: &str) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("{k:<7}"), Style::default().fg(t.dim)),
         Span::raw(v.to_string()),
