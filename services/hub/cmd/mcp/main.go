@@ -596,6 +596,15 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	addTool[adoptWorkersIn](b, "adopt_workers",
 		"Take over the workers a PREVIOUS manager dispatched, so their finished and progress wakes arrive at you instead of at the session that is gone. Pass fromSessionId (the manager you are replacing — a handoff file names it on its first line) and toSessionId (your own session id). See help topic 'drive'.",
 		"agents.reparent")
+	// The discovery half, for the case adopt_workers cannot cover on its own: a
+	// manager that CRASHED wrote no handoff file, so nothing tells the successor
+	// which id to adopt FROM. Deliberately a separate READ rather than a
+	// no-argument mode on adopt_workers — it hands back candidates and the
+	// caller picks, because guessing which dead manager was yours re-points a
+	// live worker's wakes silently and wrongly.
+	addTool[listAgentsIn](b, "list_orphans",
+		"Find the workers left behind by a manager that is gone. Returns each DEAD parent that still has live children, with what it was called, its directory, when it died, whether it was confirmed to be a manager, and the workers still pointing at it. Use it when you are replacing a manager that crashed without leaving a handoff file: pick the candidate that matches what you were told to take over, then pass its sessionId as fromSessionId to adopt_workers. It never adopts anything by itself.",
+		"agents.orphans")
 
 	// ── Filesystem (on the workspacer host) ────────────────────────────────
 	b.group = "files"

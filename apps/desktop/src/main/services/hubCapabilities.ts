@@ -233,6 +233,22 @@ export function registerHubCapabilities(): void {
       // the odd one out: a view caller could already read every parent id here
       // by paying for the heavier call.
       parentSessionId: s.parentSessionId ?? null,
+      // The two fields that turn a parent id into a NAME. Same convergence
+      // argument as parentSessionId above and the same evidence: the brain's
+      // agents.list has served both since enrichSnapshot (pinned by
+      // cmd/brain/parity_test.go, because /m titles and nests the fleet on
+      // them), and the desktop's own `sessions.snapshots` — the other method in
+      // the same viewMethods allowlist — already ships the whole snapshot,
+      // these included, through compactClaudeSnapshotForBackground's spread. So
+      // this is the reduced row catching up with what the view tier could
+      // already read by paying for the heavier call; it widens nothing.
+      //
+      // They are also exactly what succession needs: `label` is the static task
+      // title a manager is recognised by, and `isSupervisor` is the difference
+      // between "a dispatch of mine" and "another manager's". agents.orphans
+      // below answers the same two questions about the DEAD.
+      label: s.label ?? null,
+      isSupervisor: s.isSupervisor === true,
       // Managed providers (codex/opencode/pi) never populate `s.usage` — their
       // numbers live only on `statusLine`. Fall back to it the same way
       // analyticsWriter.ts does, or every non-Claude row reports all-zero.
@@ -1567,6 +1583,44 @@ export function registerHubCapabilities(): void {
   // OPERATOR-ONLY by construction, like agents.close and brief.append:
   // `agents.reparent` is in neither scoped tier's exact-name allowlist, so a
   // view scout or a phone token cannot reach it.
+  // The read that makes the crash case answerable. `agents.reparent` needs a
+  // `fromSessionId`, and a manager that CRASHED wrote no handoff file to read
+  // one off — its row is evicted ~30 s after SessionEnd, so nothing was left of
+  // it but a dangling parent id on the workers. The store now keeps a tombstone
+  // for a dead MANAGER (claudeSessionStore.orphanCandidates), so the successor
+  // is told which dangling parents were managers, what they were called, where
+  // they worked and when they died.
+  //
+  // It REPORTS, it never adopts. Folding this into `agents.reparent` as a
+  // no-argument "adopt whatever is orphaned" mode was the alternative and is
+  // still refused: `confirmedManager` narrows the candidates but cannot say
+  // which manager was YOURS, and a wrong guess silently re-points a live
+  // worker's wakes into a conversation that never dispatched it. Two managers
+  // can die with live children; only the caller knows which brief it was
+  // handed. So the answer is a ranked list whose top row is usually obvious and
+  // whose ambiguity, when there is any, is visible.
+  //
+  // OPERATOR-ONLY by the same construction as agents.reparent: it is in neither
+  // scoped tier's exact-name allowlist. It discloses nothing new in kind — a
+  // manager's label and cwd were on its own agents.list row while it lived, and
+  // its children's rows are there now — only the same facts about a session
+  // that has ended.
+  registerCapability('agents.orphans', () => {
+    const candidates = claudeSessionStore.orphanCandidates();
+    const confirmed = candidates.filter((c) => c.confirmedManager);
+    return {
+      candidates,
+      // "None" is a real and common answer (the predecessor finished its
+      // dispatches, or handed over cleanly) and must not read as a failure.
+      note: candidates.length
+        ? `${candidates.length} dead parent(s) still have live children; ${confirmed.length} are confirmed managers. ` +
+          `Pick the one you are replacing — match its label/cwd against what you were told to take over — and pass ` +
+          `its sessionId as fromSessionId to adopt_workers. Adopting the wrong group re-points another manager's ` +
+          `workers onto you, so do not guess between two candidates: read a worker of each first.`
+        : 'Nothing is orphaned here: every live agent either has a live parent or was never dispatched by one.',
+    };
+  });
+
   registerCapability('agents.reparent', (params: unknown) => {
     const { fromSessionId, toSessionId } = (params ?? {}) as {
       fromSessionId?: string;
