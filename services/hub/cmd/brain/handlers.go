@@ -450,6 +450,22 @@ type spawnParams struct {
 	// If this field ever grows a privilege implication, it must move behind the
 	// same hub-verified stamp as YoloGranted rather than staying caller-set.
 	Manager bool `json:"manager"`
+	// Message is the new agent's FIRST PROMPT, carried by the spawn instead of
+	// a follow-up agents.sendMessage.
+	//
+	// MIRRORED rather than declined, unlike resultSchema next door, and the
+	// difference is where the field is honored. resultSchema has two
+	// desktop-owned halves (a prompt the desktop compiles, a wake the desktop
+	// delivers), so headless would take it and provably never honor it. This
+	// one is claudemon's: the daemon queues it inside its own spawn handler and
+	// its own provider drivers drain it, and the brain reaches exactly the same
+	// two routes the desktop does. Declining it would mean a bus caller's
+	// dispatch silently loses its task the moment the desktop is not running.
+	//
+	// Not a privilege: agents.sendMessage is a TRIAGE method while agents.spawn
+	// is operator-only, so every caller that gets here could already send this
+	// text to the session it just created.
+	Message string `json:"message"`
 	// skip is the RESOLVED skipPermissions — caller's explicit value or the
 	// config default, then clamped by spawn()'s grant gate. Unexported so it can
 	// never arrive on the wire; the spawn legs read this, not SkipPermissions.
@@ -580,18 +596,34 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 		rows = 32
 	}
 
-	id, err := r.cm.spawn(ctx, spawnReq{
-		Argv:      buildArgv(prof, p.Model, p.Effort, p.skip, p.PermissionMode, sessionID, resume),
-		Cwd:       cwd,
-		Cols:      cols,
-		Rows:      rows,
-		Env:       buildEnv(prof),
-		SessionID: sessionID,
+	id, queued, err := r.cm.spawn(ctx, spawnReq{
+		Argv:         buildArgv(prof, p.Model, p.Effort, p.skip, p.PermissionMode, sessionID, resume),
+		Cwd:          cwd,
+		Cols:         cols,
+		Rows:         rows,
+		Env:          buildEnv(prof),
+		SessionID:    sessionID,
+		FirstMessage: p.Message,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return jsonResult(map[string]string{"sessionId": id})
+	return jsonResult(spawnResult(id, p.Message, queued))
+}
+
+// spawnResult is the agents.spawn answer both legs return. `messageQueued` is
+// this host's acknowledgement that it took delivery of the first prompt — read
+// back off claudemon's own `first_message_queued` rather than assumed, so a
+// daemon that predates the field reports false and the caller (the MCP facade's
+// confirmFirstMessage) sends the prompt itself instead of leaving a worker idle
+// with no task. Omitted entirely when no message was asked for, so the shape
+// stays exactly today's for every other spawn.
+func spawnResult(id, message string, queued bool) map[string]any {
+	out := map[string]any{"sessionId": id}
+	if strings.TrimSpace(message) != "" {
+		out["messageQueued"] = queued
+	}
+	return out
 }
 
 // spawnManagedSession launches an adapter-driven session via claudemon's
@@ -664,11 +696,12 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 			}
 		}
 	}
-	id, err := r.cm.spawnManaged(ctx, req)
+	req.FirstMessage = p.Message
+	id, queued, err := r.cm.spawnManaged(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	return jsonResult(map[string]string{"sessionId": id})
+	return jsonResult(spawnResult(id, p.Message, queued))
 }
 
 // claudeTransportDefault reads config.claude.transport — the same default the
@@ -927,7 +960,9 @@ func (r *registry) terminalsCreate(ctx context.Context, raw json.RawMessage) (js
 		rows = 32
 	}
 	// No session_id pinned: a shell has no claude transcript to align with.
-	id, err := r.cm.spawn(ctx, spawnReq{Argv: []string{shell}, Cwd: cwd, Cols: cols, Rows: rows})
+	// A shell takes no first message (nothing would read it), so the queued
+	// flag is discarded rather than reported.
+	id, _, err := r.cm.spawn(ctx, spawnReq{Argv: []string{shell}, Cwd: cwd, Cols: cols, Rows: rows})
 	if err != nil {
 		return nil, err
 	}

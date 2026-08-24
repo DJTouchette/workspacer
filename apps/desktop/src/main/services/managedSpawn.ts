@@ -149,6 +149,25 @@ export interface ManagedSpawnOptions {
    * Purely additive — the prose report is unaffected.
    */
   resultSchema?: Record<string, unknown>;
+  /**
+   * The agent's FIRST PROMPT — the dispatch itself — carried by the spawn
+   * instead of a separate `agents.sendMessage` once the id comes back.
+   *
+   * DISTINCT FROM `instructions`, and it has to be. `instructions` (the facade
+   * role note + the result contract, joined below) is a passive PREFIX: every
+   * adapter parks it in a `pending_instructions` slot and prepends it to the
+   * first prompt the session receives, so it never starts a turn on its own. A
+   * dispatch put there would wait forever for the prompt it *is*. Sent as a
+   * real prompt, this gets the ordering right for free — contract first, task
+   * second, one turn, once.
+   *
+   * The window it closes is measured, not theoretical: claudemon's
+   * `register_managed` marks the row `Input` with no wrapper attached, so a
+   * `POST /message` issued between the spawn's 200 and the provider driver's
+   * `register_managed_input` is refused with a 404. The prompt is queued inside
+   * the spawn handler instead, and drained by that same registration.
+   */
+  firstMessage?: string;
 }
 
 /**
@@ -405,6 +424,11 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     // instructions string. A plain worker with a schema and no facade still
     // gets its contract, which is the common ship-task dispatch.
     ...(instructions && { instructions }),
+    // The dispatch prompt itself — a SEPARATE field, never folded into
+    // `instructions` above, because `instructions` alone never starts a turn
+    // (see ManagedSpawnOptions.firstMessage). The daemon prepends one to the
+    // other, so the contract still lands ahead of the task.
+    ...(opts.firstMessage && { firstMessage: opts.firstMessage }),
   });
   // The adapter emits no conversation delta until the agent first produces
   // output, and managed backends fire no Claude hooks — so register the session
@@ -475,6 +499,10 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     rows: opts.rows ?? 32,
     sessionId,
     rolloutProvider: 'codex',
+    // This branch spawns a bare TUI (no facade, no `instructions`), so the
+    // dispatch is the only host-injected text it gets — dropping it here would
+    // leave the one provider path whose worker never learns its task.
+    firstMessage: opts.firstMessage,
   });
   return sessionId;
 }

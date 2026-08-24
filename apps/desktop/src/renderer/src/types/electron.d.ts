@@ -158,6 +158,13 @@ export interface ElectronAPI {
     pluginTools?: string[];
     /** Federation: spawn on this peer hub instead of locally. */
     targetHub?: string;
+    /** The agent's FIRST PROMPT, auto-sent as part of the spawn. claudemon
+     *  queues it before the id comes back, so it cannot race the session coming
+     *  up — which a `claudeMessage()` fired the moment this resolves genuinely
+     *  can (a managed row is registered but has no prompt channel yet, and the
+     *  daemon refuses with a 404). TWIN: preload.ts `spawnClaude`, and
+     *  main/lib/managedSpawnOptions.ts `AgentSpawnRequest`. */
+    message?: string;
   }) => Promise<string>;
   /** One-shot conversation title from an agent's first exchange; null = keep
    *  the current name (feature off, or nothing worth titling). */

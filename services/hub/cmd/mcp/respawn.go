@@ -176,6 +176,27 @@ func addRespawnTool(b *build) {
 				ToolScope:       in.ToolScope,
 				Worktree:        in.Worktree,
 				ResultSchema:    snap.ResultSchema,
+				// The composed dispatch rides the SPAWN now, rather than a
+				// follow-up sendMessage below.
+				//
+				// On whether respawn_with should INHERIT a first message the
+				// way it inherits resultSchema: no, and the distinction is
+				// exact. resultSchema had to be inherited because it is a
+				// property of the DISPATCH CONTRACT recorded nowhere else, so
+				// dropping it silently downgraded a structured dispatch to a
+				// prose one. A first message needs no inheriting because this
+				// tool already recovers something strictly better:
+				// `firstUserMessage` reads the task out of the original's
+				// CONVERSATION — the text the agent actually received — where
+				// the spawn param would only be a staler second copy of the
+				// same thing, plus a rule about which one wins.
+				//
+				// Using the field to DELIVER is a plain improvement though: it
+				// closes the window this tool's own error path documents
+				// ("spawned session:%s but could not deliver the task"), and
+				// spawnWithGrants still falls back to sendMessage when the
+				// provider does not confirm it took the prompt.
+				Message: task + respawnHeading + in.Amendment,
 			}
 			// The original's permission mode is REQUESTED, not granted: it goes
 			// through spawnWithGrants exactly as a hand-typed skipPermissions
@@ -208,13 +229,12 @@ func addRespawnTool(b *build) {
 				return toolError("respawn_with: the spawn returned no sessionId, so the composed task could not be delivered. The new agent (if any) is idle — find it with list_agents and send it the task yourself. Spawn result: " + resultText(res))
 			}
 
-			message := task + respawnHeading + in.Amendment
-			if _, err := b.call(ctx, route(sendMethod), map[string]string{
-				"sessionId": newID,
-				"text":      message,
-			}); err != nil {
-				return toolError(fmt.Sprintf("respawn_with: spawned session:%s but could not deliver the task (%v). Send it yourself with send_message.", newID, err))
-			}
+			// Delivery already happened inside spawnWithGrants — with the
+			// spawn when the provider confirmed it took the prompt, by a
+			// fallback sendMessage when it did not. An undelivered task comes
+			// back as res.IsError above, so there is nothing left to send. Two
+			// sends here would be worse than none: the successor would read the
+			// whole dispatch twice.
 
 			out, merr := json.Marshal(map[string]any{
 				"sessionId":  newID,

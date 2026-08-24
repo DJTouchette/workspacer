@@ -53,6 +53,11 @@ pub struct SpawnPayload {
     /// view — a "hybrid" session that has both a terminal and a structured GUI.
     #[serde(default)]
     pub rollout_provider: Option<String>,
+    /// The agent's FIRST PROMPT, delivered as part of the spawn rather than by
+    /// a second call after the id comes back. See
+    /// [`SessionStore::queue_first_message`] for why the two-call form races.
+    #[serde(default)]
+    pub first_message: Option<String>,
 }
 
 /// The value of a `--model` flag in a spawn's argv, in either spelling
@@ -251,7 +256,16 @@ pub async fn handle(
         store.set_requested_model(&session_id, model);
     }
     store.note_term_size(&session_id, cols, rows);
-    tracing::info!(%session_id, %cwd, argv=?payload.argv, "spawned in-daemon PTY");
+    // Queued BEFORE the 200 below, so the caller never has to send it itself
+    // and never has to guess when the TUI is ready for it. A fresh PTY row is
+    // `Unknown`, so this rides the existing cold-start ladder: flushed on the
+    // first `Input` transition, settled past the composer redraw, then
+    // submit-verified.
+    let first_message_queued = payload
+        .first_message
+        .as_deref()
+        .is_some_and(|text| store.queue_first_message(&session_id, text));
+    tracing::info!(%session_id, %cwd, argv=?payload.argv, first_message_queued, "spawned in-daemon PTY");
 
     // Hybrid agents (e.g. Codex): the PTY above is the agent's own TUI (the Term
     // view); additionally tail its rollout transcript so the GUI conversation
@@ -265,7 +279,16 @@ pub async fn handle(
         );
     }
 
-    Json(json!({ "session_id": session_id, "cwd": cwd })).into_response()
+    // `first_message_queued` is the caller's CONFIRMATION that the prompt was
+    // accepted for delivery. Reported rather than assumed: a client talking to
+    // a daemon that predates the field would otherwise take a plain 200 as
+    // "dispatched" and leave a worker idle with no prompt.
+    Json(json!({
+        "session_id": session_id,
+        "cwd": cwd,
+        "first_message_queued": first_message_queued,
+    }))
+    .into_response()
 }
 
 /// `POST /sessions/spawn-managed` — spawn a *managed* (adapter-driven) session.
@@ -328,6 +351,20 @@ pub struct SpawnManagedPayload {
     /// `/sessions/spawn`'s `env`.
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// The agent's FIRST PROMPT, delivered as part of the spawn rather than by
+    /// a second call after the id comes back.
+    ///
+    /// DISTINCT FROM `instructions`, deliberately. `instructions` is a passive
+    /// PREFIX: every adapter holds it in a `pending_instructions` slot and
+    /// `with_instructions` prepends it to the first prompt the session
+    /// receives — it never starts a turn on its own. So the two cannot be one
+    /// field: a dispatch put in `instructions` would sit in that slot forever,
+    /// waiting for a prompt that is the very thing it was meant to be. Riding
+    /// the normal prompt channel also gets the ordering right for free — the
+    /// facade role note and the `wks-result` contract are prepended to this
+    /// text, once, in one turn.
+    #[serde(default)]
+    pub first_message: Option<String>,
 }
 
 pub async fn handle_managed(
@@ -373,6 +410,16 @@ pub async fn handle_managed(
     crate::session::transcript::allow_spawn_env(&payload.env);
 
     store.register_managed(&session_id, &payload.cwd, &payload.provider);
+    // Queued BEFORE the driver task starts and before the 200 below, so it is
+    // waiting when `register_managed_input` drains it. Doing it here rather
+    // than leaving it to the caller is the whole point: `register_managed`
+    // above marks the row `Input` while attaching no wrapper, so a caller that
+    // spawned and then posted a message would be refused with a 404 for as long
+    // as the provider takes to boot.
+    let first_message_queued = payload
+        .first_message
+        .as_deref()
+        .is_some_and(|text| store.queue_first_message(&session_id, text));
     // Before the driver starts, so the very first snapshot knows this session's
     // window instead of guessing 200k from the marker-stripped transcript id.
     if let Some(model) = payload.model.as_deref() {
@@ -479,9 +526,16 @@ pub async fn handle_managed(
         ),
         _ => unreachable!(),
     }
-    tracing::info!(%session_id, provider = %payload.provider, cwd = %payload.cwd, "spawned managed session");
+    tracing::info!(%session_id, provider = %payload.provider, cwd = %payload.cwd, first_message_queued, "spawned managed session");
 
-    Json(json!({ "session_id": session_id, "cwd": payload.cwd })).into_response()
+    // The caller's CONFIRMATION that the first prompt was accepted for
+    // delivery — see the PTY route for why it is reported rather than assumed.
+    Json(json!({
+        "session_id": session_id,
+        "cwd": payload.cwd,
+        "first_message_queued": first_message_queued,
+    }))
+    .into_response()
 }
 
 /// Query params for `GET /providers/:provider/models`.

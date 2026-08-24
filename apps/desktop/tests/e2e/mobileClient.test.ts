@@ -607,7 +607,12 @@ test.describe('mobile client', () => {
     await expect(page.locator('.permbtn', { hasText: 'Full access' })).toBeDisabled();
     await page.locator('.permbtn', { hasText: 'Accept edits' }).click();
 
-    // A library prompt rides along as the first message.
+    // A library prompt rides along ON the spawn as its first message. It used
+    // to be a second agents.sendMessage made only after the new row had landed
+    // in the fleet list — so a dispatch whose session had not appeared yet
+    // dropped its prompt entirely and silently, and a phone dispatch is
+    // transport:'stream' (a managed row registered before its prompt channel
+    // exists), which refuses a message in that window with a 404.
     await page.locator('.tagchip', { hasText: 'Standup' }).click();
     await page.locator('.dirrow[data-dir]').nth(1).click();
     await page.locator('#spawnGo').click();
@@ -619,6 +624,10 @@ test.describe('mobile client', () => {
       transport: 'stream',
       permissionMode: 'acceptEdits',
     });
+    expect(hub.callsTo('agents.spawn')[0].params.message).toBeTruthy();
+    // The host acknowledged it, so there is no follow-up send — two deliveries
+    // would make the worker read its prompt twice.
+    expect(hub.callsTo('agents.sendMessage')).toHaveLength(0);
   });
 
   test('a triage token hides operator-only affordances', async ({ page }) => {

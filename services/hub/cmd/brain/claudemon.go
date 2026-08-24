@@ -111,21 +111,30 @@ type spawnReq struct {
 	Rows      int               `json:"rows,omitempty"`
 	Env       map[string]string `json:"env,omitempty"`
 	SessionID string            `json:"session_id,omitempty"`
+	// FirstMessage is the agent's first prompt, queued by the daemon INSIDE its
+	// spawn handler (before the 200) rather than posted by us afterwards. The
+	// two-call form races: the daemon hands back an addressable id for a
+	// session whose child is not up yet.
+	FirstMessage string `json:"first_message,omitempty"`
 }
 
 // spawn launches a command in a PTY inside claudemon and returns the session id
-// claudemon assigned (the one we pinned, when we pin one).
-func (c *claudemonClient) spawn(ctx context.Context, req spawnReq) (string, error) {
+// claudemon assigned (the one we pinned, when we pin one) plus whether it
+// confirmed queuing the first message (`first_message_queued` — false from a
+// daemon that predates the field, which is exactly what the caller needs to
+// know before reporting a dispatch as delivered).
+func (c *claudemonClient) spawn(ctx context.Context, req spawnReq) (string, bool, error) {
 	var resp struct {
-		SessionID string `json:"session_id"`
+		SessionID      string `json:"session_id"`
+		FirstMsgQueued bool   `json:"first_message_queued"`
 	}
 	if err := c.postJSON(ctx, "/sessions/spawn", req, &resp); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if resp.SessionID == "" {
-		return "", fmt.Errorf("spawn response missing session_id")
+		return "", false, fmt.Errorf("spawn response missing session_id")
 	}
-	return resp.SessionID, nil
+	return resp.SessionID, resp.FirstMsgQueued, nil
 }
 
 // spawnManagedReq is the /sessions/spawn-managed payload (SpawnManagedPayload
@@ -158,21 +167,28 @@ type spawnManagedReq struct {
 	Env map[string]string `json:"env,omitempty"`
 	// Caller-pinned session id, so every client converges on one card.
 	SessionID string `json:"session_id,omitempty"`
+	// FirstMessage is the agent's first prompt. DISTINCT from the payload's
+	// `instructions` (which the brain does not send at all): instructions is a
+	// passive prefix the adapter prepends to whatever prompt arrives first and
+	// never starts a turn on its own, so a dispatch put there would wait
+	// forever for the prompt it is.
+	FirstMessage string `json:"first_message,omitempty"`
 }
 
 // spawnManaged launches an adapter-driven (Tier-2) session — Codex/OpenCode/Pi,
 // or Claude on the headless stream-json transport — and returns the session id.
-func (c *claudemonClient) spawnManaged(ctx context.Context, req spawnManagedReq) (string, error) {
+func (c *claudemonClient) spawnManaged(ctx context.Context, req spawnManagedReq) (string, bool, error) {
 	var resp struct {
-		SessionID string `json:"session_id"`
+		SessionID      string `json:"session_id"`
+		FirstMsgQueued bool   `json:"first_message_queued"`
 	}
 	if err := c.postJSON(ctx, "/sessions/spawn-managed", req, &resp); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if resp.SessionID == "" {
-		return "", fmt.Errorf("spawn-managed response missing session_id")
+		return "", false, fmt.Errorf("spawn-managed response missing session_id")
 	}
-	return resp.SessionID, nil
+	return resp.SessionID, resp.FirstMsgQueued, nil
 }
 
 func (c *claudemonClient) getSession(ctx context.Context, id string) (json.RawMessage, error) {

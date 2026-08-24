@@ -1159,7 +1159,30 @@ impl SessionStore {
     /// `submit_message` are forwarded here (the adapter's driver task owns the
     /// receiver).
     pub fn register_managed_input(&self, session_id: &str, tx: mpsc::UnboundedSender<String>) {
-        self.managed_inputs.insert(session_id.to_string(), tx);
+        self.managed_inputs
+            .insert(session_id.to_string(), tx.clone());
+        // Drain anything queued BEFORE this channel existed — in practice the
+        // spawn payload's `first_message` (see `queue_first_message`).
+        //
+        // This is the only place a managed session's queue can be drained, and
+        // it has to be here: `register_managed` marks the row `Input` up front
+        // (so the card is not born "connecting"), but no PTY wrapper is ever
+        // attached and no hook `Input` transition arrives, so neither of the
+        // PTY drains — `ingest`'s `became_input` flush nor `send_message_now` —
+        // ever fires for it. A message left in the queue would sit there until
+        // the session stopped and `clear_pending_messages` dropped it: silent
+        // loss, and the worker idles forever with no prompt.
+        //
+        // Ordering is what makes the first message race-free: the daemon
+        // enqueues it while still inside the spawn handler, before the 200, and
+        // this drain runs the instant the driver's channel is live. There is no
+        // window in between for the caller to have to guess at.
+        for text in self.take_pending_messages(session_id) {
+            if tx.send(text).is_err() {
+                tracing::warn!(session_id, "managed prompt channel closed before the queued first message could be delivered");
+                break;
+            }
+        }
     }
 
     /// Register the structural AskUserQuestion answer channel for a managed
@@ -1842,6 +1865,38 @@ impl SessionStore {
         }
     }
 
+    /// Queue a spawn's FIRST MESSAGE — the dispatch prompt that rode the spawn
+    /// payload (`first_message`) instead of a separate `POST /message` after
+    /// the id came back.
+    ///
+    /// Called from inside the spawn handlers, BEFORE they answer 200, which is
+    /// the whole point. A caller that spawns and then sends is racing a session
+    /// that is registered but not yet driven: `register_managed` marks the row
+    /// `Input` with no wrapper attached, so a `POST /message` landing in that
+    /// window resolves to [`MessageOutcome::NoWrapper`] (HTTP 404) — the
+    /// message is refused and the worker sits with no prompt. Enqueuing here
+    /// happens-before the id is even visible to the caller, so there is no
+    /// window at all.
+    ///
+    /// Delivery differs by session kind and both routes already exist:
+    ///   - PTY (`/sessions/spawn`): the existing cold-start ladder — the queue
+    ///     is flushed on the first `Input` transition, settled and
+    ///     submit-verified (`schedule_pending_flush`).
+    ///   - managed (`/sessions/spawn-managed`): drained into the provider's
+    ///     prompt channel by [`Self::register_managed_input`].
+    ///
+    /// Blank text is ignored, so an absent field and an empty one behave the
+    /// same. If the child never launches, the row goes `Stopped` and
+    /// `clear_pending_messages` drops the queue with it — the failure shows up
+    /// as a stopped session, not as a live-looking card holding a lost prompt.
+    pub fn queue_first_message(&self, session_id: &str, text: &str) -> bool {
+        if text.trim().is_empty() {
+            return false;
+        }
+        self.enqueue_message(session_id, text.to_string());
+        true
+    }
+
     fn enqueue_message(&self, session_id: &str, text: String) {
         let mut q = self
             .pending_messages
@@ -2016,11 +2071,7 @@ impl SessionStore {
     /// [`Self::schedule_pending_flush`] on the `Input` transition. No-op when
     /// the queue is empty.
     fn flush_pending_messages(&self, session_id: &str) -> Vec<String> {
-        let queued: Vec<String> = self
-            .pending_messages
-            .get_mut(session_id)
-            .map(|mut q| std::mem::take(&mut *q))
-            .unwrap_or_default();
+        let queued = self.take_pending_messages(session_id);
         let mut sent = Vec::with_capacity(queued.len());
         for text in queued {
             if self.send_message_now(session_id, text.clone()) == MessageOutcome::Sent {
@@ -2028,6 +2079,17 @@ impl SessionStore {
             }
         }
         sent
+    }
+
+    /// Atomically drain the queue (`mem::take` under the shard lock), leaving
+    /// delivery to the caller. The PTY flush writes the batch to the child;
+    /// `register_managed_input` pushes it down the provider's prompt channel.
+    /// Atomicity is what lets the two drains coexist without ever double-sending.
+    fn take_pending_messages(&self, session_id: &str) -> Vec<String> {
+        self.pending_messages
+            .get_mut(session_id)
+            .map(|mut q| std::mem::take(&mut *q))
+            .unwrap_or_default()
     }
 
     fn clear_pending_messages(&self, session_id: &str) {
@@ -3119,6 +3181,92 @@ mod tests {
             .apply_status_line("work", StatusLine::default())
             .unwrap();
         assert_eq!(state.status_line.unwrap().five_hour_pct, Some(7.0));
+    }
+
+    // ── first message on the spawn payload ──────────────────────────────────
+    //
+    // The race this closes, measured rather than assumed: `register_managed`
+    // marks the row `Input` up front but attaches no PTY wrapper, and
+    // `register_managed_input` only runs deep inside the provider's driver task
+    // (claude_stream.rs registers it AFTER `Command::spawn`), which starts after
+    // the spawn handler has already answered 200. So a caller that spawns and
+    // then posts its prompt is talking to a session that cannot take one yet.
+    #[test]
+    fn a_message_posted_before_the_driver_is_up_is_refused() {
+        let store = SessionStore::new();
+        store.register_managed("m1", "/tmp", "claude");
+        // Exactly the window a spawn-then-send caller sits in.
+        assert_eq!(
+            store.submit_message("m1", "do the thing".into()),
+            MessageOutcome::NoWrapper,
+            "a managed session with no driver yet must refuse, not silently accept"
+        );
+    }
+
+    // …and the fix: the prompt rides the spawn payload, is queued before the
+    // 200, and the driver's own registration drains it. No window to race.
+    #[test]
+    fn queued_first_message_is_delivered_when_the_managed_driver_registers() {
+        let store = SessionStore::new();
+        store.register_managed("m1", "/tmp", "claude");
+        assert!(store.queue_first_message("m1", "do the thing"));
+
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input("m1", tx);
+
+        assert_eq!(rx.try_recv().ok().as_deref(), Some("do the thing"));
+        // Once only — the queue was drained, not copied.
+        assert!(rx.try_recv().is_err(), "the first message must not repeat");
+    }
+
+    // Queue order is delivery order: a first message plus anything that landed
+    // behind it arrives in the order it was queued, never reversed or merged.
+    #[test]
+    fn queued_first_messages_drain_in_order() {
+        let store = SessionStore::new();
+        store.register_managed("m1", "/tmp", "codex");
+        store.queue_first_message("m1", "first");
+        store.queue_first_message("m1", "second");
+
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input("m1", tx);
+
+        assert_eq!(rx.try_recv().ok().as_deref(), Some("first"));
+        assert_eq!(rx.try_recv().ok().as_deref(), Some("second"));
+    }
+
+    // Blank is the same as absent, so an empty field never mints an empty turn
+    // (and the spawn route reports `first_message_queued: false` for it).
+    #[test]
+    fn a_blank_first_message_is_not_queued() {
+        let store = SessionStore::new();
+        store.register_managed("m1", "/tmp", "pi");
+        assert!(!store.queue_first_message("m1", "   \n "));
+
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input("m1", tx);
+        assert!(rx.try_recv().is_err());
+    }
+
+    // A PTY row is born `Unknown`, so its first message rides the existing
+    // cold-start ladder instead: held until the session reaches `Input`.
+    #[test]
+    fn a_pty_first_message_waits_for_the_input_transition() {
+        let store = SessionStore::new();
+        store.register_spawn(
+            "p1",
+            "/tmp",
+            WrapperHandle {
+                tx: mpsc::unbounded_channel().0,
+            },
+        );
+        assert!(store.queue_first_message("p1", "do the thing"));
+        // Not drained by a managed registration it has nothing to do with, and
+        // not lost: it is still queued for the Input flush.
+        assert_eq!(
+            store.take_pending_messages("p1"),
+            vec!["do the thing".to_string()]
+        );
     }
 
     // terminate_managed drops the managed prompt channel so the adapter's driver

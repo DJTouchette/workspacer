@@ -228,9 +228,28 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         label: opts.label,
         cols: opts.cols,
         rows: opts.rows,
-      })) as { sessionId?: string } | null;
+        // The dispatch prompt rides to the peer with the spawn. It is not a
+        // local-only knob like profileId/toolScope — the peer's own
+        // agents.spawn delivers it there, and dropping it would hand the peer a
+        // worker with no task.
+        message: opts.message,
+      })) as { sessionId?: string; messageQueued?: boolean } | null;
       if (!res?.sessionId)
         throw new Error(`spawn on hub "${opts.targetHub}" returned no session id`);
+      // Federation is where version skew actually lives: a peer that predates
+      // `message` answers an ordinary successful spawn with the prompt nowhere,
+      // and the worker over there just sits. `messageQueued` is the peer saying
+      // it took delivery; without it, send the prompt the old way rather than
+      // report a dispatch that never arrived.
+      if (opts.message?.trim() && res.messageQueued !== true) {
+        console.error(
+          `[IPC] hub "${opts.targetHub}" did not confirm the first message for session:${res.sessionId} — sending it separately`,
+        );
+        await callHub(`hub:${opts.targetHub.trim()}/agents.sendMessage`, {
+          sessionId: res.sessionId,
+          text: opts.message,
+        });
+      }
       return res.sessionId;
     }
     // Provider selects the coding-agent backend. OpenCode and Codex are Tier-2
@@ -273,6 +292,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         label: opts.label,
         parentSessionId: opts.parentSessionId,
         mcpItemIds: opts.mcpItemIds,
+        firstMessage: opts.message,
       });
     }
     // Claude (Tier-1) PTY spawn. Shared with the `agents.spawn` hub capability
@@ -296,6 +316,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       cols: opts.cols,
       rows: opts.rows,
       mcpItemIds: opts.mcpItemIds,
+      firstMessage: opts.message,
     });
   });
 

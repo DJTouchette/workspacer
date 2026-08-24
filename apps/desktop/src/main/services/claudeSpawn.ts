@@ -112,6 +112,24 @@ export interface ClaudeSpawnOptions {
    * `resultError` beside it.
    */
   resultSchema?: Record<string, unknown>;
+  /**
+   * The agent's FIRST PROMPT — the dispatch itself — carried by the spawn
+   * instead of by a separate `claude.message` / `agents.sendMessage` once the
+   * id comes back.
+   *
+   * Two-call dispatch has a real window: the daemon registers a session id and
+   * answers 200 BEFORE the child is up, so the caller is handed an addressable
+   * id for a session that cannot yet take input (managed rows refuse with 404;
+   * a PTY has to wait for its first `Input` transition either way). Riding the
+   * spawn payload removes the window — claudemon queues the prompt inside the
+   * spawn handler and delivers it through the same settle-and-verify ladder a
+   * chat send uses.
+   *
+   * NOT the same channel as the result contract: that is compiled into
+   * `--append-system-prompt` here (a system prompt, always present), while this
+   * is a user turn (it starts the work). Both reach the worker, in that order.
+   */
+  firstMessage?: string;
 }
 
 /**
@@ -310,5 +328,6 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     rows: opts.rows,
     env,
     sessionId,
+    firstMessage: opts.firstMessage,
   });
 }

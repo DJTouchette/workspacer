@@ -63,6 +63,10 @@ export interface AgentSpawnRequest {
   /** Federation: spawn on this peer hub instead of locally (the spawn dialog's
    *  Machine picker). */
   targetHub?: string;
+  /** The agent's first prompt, delivered BY THE SPAWN (claudemon queues it
+   *  before answering) instead of a second call once the id comes back. See
+   *  ManagedSpawnOptions.firstMessage for the window that closes. */
+  message?: string;
 }
 
 /**
@@ -98,6 +102,7 @@ export const SPAWN_REQUEST_FIELDS = {
     why: 'Library MCP selections ride Claude’s --mcp-config; managed providers register servers their own way',
   },
   targetHub: { kind: 'derived', into: 'a federated hub:<peer>/agents.spawn before dispatch' },
+  message: { kind: 'derived', into: 'firstMessage (the daemon queues it as the first prompt)' },
 } satisfies Record<
   keyof AgentSpawnRequest,
   { kind: 'forward' } | { kind: 'derived'; into: string } | { kind: 'unsupported'; why: string }
@@ -157,6 +162,10 @@ export function managedOptionsFromRequest(
     // dropping them behind an isClaudeStream guard (both are Claude-only).
     profileId: req.profileId,
     mcpItemIds: req.mcpItemIds,
+    // The request calls it `message` (the vocabulary a dispatcher uses); the
+    // spawn helper calls it `firstMessage` (what it is to the session). One
+    // rename, here, so neither surface has to carry the other's word.
+    firstMessage: req.message,
   };
 }
 
