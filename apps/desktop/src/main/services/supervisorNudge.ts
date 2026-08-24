@@ -12,6 +12,7 @@
 
 import { claudemonSessionClient } from './claudemonSessionClient';
 import type { ClaudeSessionState } from './claudeSessionStore';
+import type { PendingReadOnlySession } from './sessionStore/pendingSlot';
 import { buildFleetMessage, excerptReply, type FleetMessageEntry } from '../shared/fleetMessages';
 import { readStructuredResult } from '../shared/structuredResult';
 import { workerFailureReason } from '../shared/workerFailure';
@@ -119,7 +120,7 @@ class SupervisorNudge {
    * timer or double-fire.
    */
   onBlock(
-    session: ClaudeSessionState,
+    session: PendingReadOnlySession,
     kind: 'approval' | 'question',
     supervisorIds: string[],
   ): void {
@@ -156,7 +157,7 @@ class SupervisorNudge {
    *  per-supervisor coalescing as before: a burst of blocks arriving inside
    *  one supervisor's COALESCE_MS window still produces one wake. */
   private broadcastBlock(
-    session: ClaudeSessionState,
+    session: PendingReadOnlySession,
     kind: 'approval' | 'question',
     supervisors: string[],
   ): void {
@@ -195,7 +196,7 @@ class SupervisorNudge {
    * its live session when the coalesce window closes (see sendFinished) so an
    * idle blip mid-stream never reports a half-done result as final.
    */
-  onFinished(session: ClaudeSessionState, parentId: string, lastReply: string): void {
+  onFinished(session: PendingReadOnlySession, parentId: string, lastReply: string): void {
     if (parentId === session.sessionId) return;
     // Misfire guard: a freshly spawned worker idles once BEFORE the parent's
     // task message is delivered — that boot idle is not a finish.

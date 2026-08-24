@@ -8,7 +8,7 @@ import {
   truncateToolInput,
 } from './bounds';
 import { PendingSlot, pendingSlotOwner } from './pendingSlot';
-import type { PendingFencedSession } from './pendingSlot';
+import type { PendingReadOnlySession } from './pendingSlot';
 
 // ── HookEventRouter ───────────────────────────────────────────────────────────
 //
@@ -55,24 +55,27 @@ function toolResponseIsError(resp: unknown): boolean {
 // state its intent as a `PendingWrite` (`Park` / `Resolve` / `Keep`) that the
 // store can refuse. This file is the desktop's equivalent gate: the router body
 // sees the session through `HookFedSession`, where the pending fields are
-// READONLY, so the only way to touch them is a `PendingSlot` — which knows who
-// owns them. A new writer cannot forget the check; it will not compile.
+// READONLY — and readonly all the way down, so `pendingQuestions.push(…)` is as
+// dead as `pendingQuestions = …`. The only way to touch them is a
+// `PendingSlot` — which knows who owns them. A new writer cannot forget the
+// check; it will not compile.
 
 export { pendingSlotOwner };
 
 /** The router body's view of a session: everything writable except the pending
- *  slot. (Callers still pass a plain `ClaudeSessionState`; only this file's
- *  body is constrained.) */
-type HookFedSession = PendingFencedSession;
+ *  slot, which is readonly down to the question array's elements. Now the same
+ *  type every collaborator outside the store gets — a plain `ClaudeSessionState`
+ *  and a store row both flow into it, so callers are unchanged. */
+type HookFedSession = PendingReadOnlySession;
 
 /** This feed's handle on the slot — a `PendingSlot` that has declared itself
  *  the hook feed, so every park and resolve is refused on a session the daemon
  *  or a peer owns. */
-function hookSlot(session: ClaudeSessionState): PendingSlot {
+function hookSlot(session: PendingReadOnlySession): PendingSlot {
   return new PendingSlot(session, 'hooks');
 }
 
-export function applyHookEvent(session: ClaudeSessionState, event: any): void {
+export function applyHookEvent(session: PendingReadOnlySession, event: any): void {
   routeHookEvent(session, hookSlot(session), event);
 }
 
@@ -324,7 +327,7 @@ function routeHookEvent(session: HookFedSession, pending: PendingSlot, event: an
 /** True when work the agent spawned is still running after its own turn:
  *  an async background subagent, or a Workflow run (which detaches from the
  *  turn immediately — its parent Stop fires while the workflow grinds on). */
-export function sessionHasBackgroundWork(session: ClaudeSessionState): boolean {
+export function sessionHasBackgroundWork(session: PendingReadOnlySession): boolean {
   return (
     session.subagents.some((s) => s.status === 'running') ||
     session.workflows.some((w) => w.status === 'running')
@@ -339,7 +342,7 @@ export function sessionHasBackgroundWork(session: ClaudeSessionState): boolean {
  * notifier reads the transition, so "finished" fires on true idle only.
  * Ended sessions are left alone.
  */
-export function normalizeBackgroundAmbient(session: ClaudeSessionState): void {
+export function normalizeBackgroundAmbient(session: PendingReadOnlySession): void {
   if (session.status === 'ended') return;
   if (session.ambientState === 'idle' && sessionHasBackgroundWork(session)) {
     session.ambientState = 'background';
@@ -349,7 +352,7 @@ export function normalizeBackgroundAmbient(session: ClaudeSessionState): void {
 }
 
 /** Apply the Stop event's synchronous state mutations only. */
-export function applyStopEvent(session: ClaudeSessionState): void {
+export function applyStopEvent(session: PendingReadOnlySession): void {
   applyStopEventTo(session, hookSlot(session));
 }
 
@@ -387,7 +390,7 @@ function applyStopEventTo(session: HookFedSession, pending: PendingSlot): void {
 }
 
 /** Apply the SessionEnd event's synchronous state mutations only. */
-export function applySessionEndEvent(session: ClaudeSessionState): void {
+export function applySessionEndEvent(session: PendingReadOnlySession): void {
   session.status = 'ended';
   session.ambientState = 'idle';
   session.parentTurnEnded = false;

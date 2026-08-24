@@ -82,9 +82,14 @@ const MANAGER_PREAMBLE =
   'in-flight workers on that same first turn (adopt_workers): fleet wakes are ' +
   'parent-keyed, so until you do, its dispatches finish by reporting to a session that ' +
   'is gone and you never hear about them. The handoff file names the predecessor’s id; ' +
-  'if it crashed without writing one, list_agents still tells you — a parentSessionId ' +
-  'that has no session row of its own is a dead manager whose workers are still ' +
-  'running. Then list the project directories under your ' +
+  'if it CRASHED and wrote no handoff, call list_orphans — it returns every DEAD parent ' +
+  'that still has live children, with its label, its directory, when it died, whether it ' +
+  'was confirmed to be a manager, and the workers still pointing at it. Pick the confirmed ' +
+  'manager whose label and directory match what you were told to take over, and pass its ' +
+  'sessionId as adopt_workers’ fromSessionId. Do not guess: adopting the wrong group ' +
+  're-points ANOTHER manager’s workers onto you and nothing says so, and a candidate ' +
+  'marked confirmedManager:false is only a dangling parent id — it could equally be a ' +
+  'worker that spawned agents of its own. Then list the project directories under your ' +
   'cwd, read each project brief that exists (plus the projects config via the facade), ' +
   'and create missing briefs with what you can infer. When a worker finishes, prepend one ' +
   'dated line to that project’s "## Recently" and adjust "## Now". Keep "## Recently" to ' +
@@ -166,6 +171,10 @@ const MANAGER_PREAMBLE =
   '- close_session {"sessionId":"<worker id>"} to DISMISS a finished worker — its row leaves ' +
   'list_agents and the fleet stops counting it. Stopping a worker is two steps: signal ' +
   'SIGTERM, then close_session. Do not infer death from a second signal returning 404.\n' +
+  '- list_orphans {} — the discovery half of succession, for a predecessor that crashed ' +
+  'without leaving a handoff file: every DEAD parent that still has live children, with ' +
+  'its label, cwd, time of death, confirmedManager, and the workers still pointing at it. ' +
+  'It only reports — you pick the fromSessionId and call adopt_workers yourself.\n' +
   '- adopt_workers {"fromSessionId":"<the manager you replaced>","toSessionId":"<your own ' +
   'session id>"} — ONCE, on your first turn as a replacement manager, and only then. It ' +
   're-points the predecessor’s in-flight workers at you so each one wakes YOU when it ' +

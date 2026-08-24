@@ -10,14 +10,14 @@
 import { Notification } from 'electron';
 import { configService } from './configService';
 import { agentNotifier } from './agentNotifier';
-import type { ClaudeSessionState } from './claudeSessionStore';
+import type { PendingReadOnlySession } from './sessionStore/pendingSlot';
 
 /** Sessions we've already alerted for, so a growing cost doesn't re-notify. */
 const alerted = new Set<string>();
 
 /** The session's best-known cumulative cost (statusLine is Claude's own
  *  authoritative number in stream mode; else the transcript-derived usage). */
-function sessionCost(session: ClaudeSessionState): number {
+function sessionCost(session: PendingReadOnlySession): number {
   return session.statusLine?.costUSD ?? session.usage?.costUSD ?? 0;
 }
 
@@ -26,7 +26,7 @@ function sessionCost(session: ClaudeSessionState): number {
  * notification per crossing; clears the latch when spend drops back under the
  * budget (e.g. the user raised it), so a later crossing alerts again.
  */
-export function checkBudget(session: ClaudeSessionState): void {
+export function checkBudget(session: PendingReadOnlySession): void {
   const budgets = configService.getConfig().claude?.budgets;
   const budget = budgets?.[session.sessionId];
   if (!budget || budget <= 0) return;

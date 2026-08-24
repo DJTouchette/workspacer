@@ -30,6 +30,7 @@ import {
   acknowledgeAnswer,
   bornWithEmptyPending,
   bornWithPending,
+  detachPendingSlot,
   PendingSlot,
 } from './sessionStore/pendingSlot';
 import type { PendingFencedSession, SessionWithoutPending } from './sessionStore/pendingSlot';
@@ -1672,14 +1673,20 @@ class ClaudeSessionStore {
 
   // ── Queries ──
 
+  // The clone is shallow BY DESIGN for everything except the pending slot: a
+  // snapshot is read constantly (the fleet list, the hub facade, every IPC
+  // fetch) and deep-copying a full conversation on each one is not affordable.
+  // The slot is the exception because it is the one field with an invariant —
+  // exactly one feed owns it — and a shallow clone handed every caller a live
+  // reference to it. See `detachPendingSlot`.
   getSnapshot(sessionId: string): ClaudeSessionSnapshot | null {
     const session = this.sessions.get(sessionId);
     if (!session) return null;
-    return { ...session };
+    return { ...session, ...detachPendingSlot(session) };
   }
 
   getAllSnapshots(): ClaudeSessionSnapshot[] {
-    return Array.from(this.sessions.values()).map((s) => ({ ...s }));
+    return Array.from(this.sessions.values()).map((s) => ({ ...s, ...detachPendingSlot(s) }));
   }
 
   // ── Internals ──
@@ -1887,7 +1894,7 @@ class ClaudeSessionStore {
       // arrived FROM a peer (hub-stamped envelope), and publishSnapshot would
       // re-emit it as an unlabelled local agent.snapshot (a duplicate to every
       // bus client, and an event-loop seed if this hub is itself a peer).
-      if (!session.hub) publishSnapshot(() => ({ ...session }));
+      if (!session.hub) publishSnapshot(() => ({ ...session, ...detachPendingSlot(session) }));
       if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
       this.mainWindow.webContents.send('claude-session:update', session.sessionId, { ...session });
       return;
@@ -1911,7 +1918,7 @@ class ClaudeSessionStore {
     // off). Passed as a factory so the object spread is skipped entirely when
     // the hub won't use it. Federation: remote sessions are never republished
     // (see the identical guard on the non-coalesced path above).
-    if (!session.hub) publishSnapshot(() => ({ ...session }));
+    if (!session.hub) publishSnapshot(() => ({ ...session, ...detachPendingSlot(session) }));
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
     this.mainWindow.webContents.send('claude-session:update', session.sessionId, { ...session });
   }
