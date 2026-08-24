@@ -10,7 +10,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <style>
   :root {
-    /* Shared with index.html / build.html — keep the ramp in sync. */
+    /* Shared with index.html / build.html; keep the ramp in sync. */
     --bg: #1b2023; --bg-2: #20262a; --panel: #232a2e;
     --line: rgba(255,255,255,0.08); --line-soft: rgba(255,255,255,0.05);
     --green: #a7c080; --green-dim: #7f9460;
@@ -29,6 +29,11 @@
     -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
   }
   code, pre, kbd, samp, .mono { font-family: var(--font-mono); }
+  /* A long inline path or JSON blob used to push the whole page sideways
+     on a phone. Inline code wraps; code inside a <pre> keeps its lines and
+     scrolls with the <pre> instead. */
+  code { overflow-wrap: anywhere; }
+  pre code { overflow-wrap: normal; }
   .wordmark, .mark { font-family: var(--font-mono); }
   a { color: var(--green); }
   ::selection { background: var(--green); color: #1e2326; }
@@ -80,7 +85,7 @@
   pre code { background: none; border: none; padding: 0; color: var(--ink); font-size: 13px; line-height: 1.7; }
   blockquote { border-left: 2px solid var(--green-dim); background: var(--bg-2); padding: 10px 16px; margin: 14px 0; color: var(--ink-dim); border-radius: 0 4px 4px 0; max-width: 80ch; }
 
-  /* route tables — this page needs them; the other docs pages don't. */
+  /* route tables: this page needs them, the other docs pages don't. */
   table { border-collapse: collapse; margin: 16px 0; width: 100%; max-width: 88ch; font-size: 14px; }
   th { text-align: left; color: var(--ink-faint); font-size: 11px; letter-spacing: 0.11em; text-transform: uppercase; font-weight: 500; padding: 0 14px 8px 0; border-bottom: 1px solid var(--line); }
   td { color: var(--ink-dim); padding: 9px 14px 9px 0; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
@@ -100,6 +105,9 @@
     main { padding: 26px 22px 90px; }
     nav .links a:not(:last-child) { display: none; }
     table { font-size: 13px; }
+    /* The route column is nowrap on a desktop so a path reads as one unit.
+       On a phone that alone is wider than the screen, so let it wrap. */
+    td:first-child { white-space: normal; }
   }
 </style>
   <!-- PostHog web analytics (shared across every landing page) -->
@@ -141,24 +149,24 @@
 
     <section id="why" class="doc">
 <h2>the seam</h2>
-<p>The desktop app is not work{spacer}. It's a <em>client</em>. The agent sessions, the PTYs, the transcripts, the token accounting, the approval queue — all of that lives in <code>claudemon</code>, a Rust daemon that keeps running whether or not a window is open. Everything the Electron UI shows, it got over HTTP.</p>
-<p>Which means anything else can get it too. This page is the contract: run the daemon, speak this API, and you have the whole fleet — every provider, every approval, every live conversation — with none of our UI.</p>
+<p>The desktop app is not work{spacer}. It's a <em>client</em>. The agent sessions, the PTYs, the transcripts, the token accounting, the approval queue all live in <code>claudemon</code>, a Rust daemon that keeps running whether or not a window is open. Everything the Electron UI shows, it got over HTTP.</p>
+<p>Which means anything else can get it too. This page is the contract: run the daemon, speak this API, and you have the whole fleet, every provider and approval and live conversation, with none of our UI.</p>
 <h3>who this is for</h3>
 <ul>
 <li>You want a <strong>lighter client</strong>: a status bar, a menu-bar widget, a single-pane view, a dashboard on a second monitor.</li>
 <li>You want a <strong>different shape</strong> entirely: a web app, a mobile app, an Emacs mode, a Raycast extension, a physical button that approves the pending tool call.</li>
-<li>You want to <strong>drive agents from a script</strong> without a UI at all — spawn, prompt, watch for the answer, move on.</li>
+<li>You want to <strong>drive agents from a script</strong> without a UI at all: spawn, prompt, watch for the answer, move on.</li>
 <li>You're on a machine where an Electron app is the wrong answer, and a browser tab or a terminal is the right one.</li>
 </ul>
-<p>There's already a second client proving the seam holds: <a href="https://github.com/DJTouchette/workspacer/tree/master/apps/tui"><code>wks-tui</code></a>, the Rust terminal client in <code>apps/tui/</code>. It talks to exactly this API and nothing else. When you want to know how a real client handles a case, read that — it's the reference implementation.</p>
-<div class="callout"><strong>Two APIs, one stack.</strong> <code>claudemon</code> (this page) is the session API — the direct, lowest-level surface, and the right one for a UI. The <code>hub</code> bus is the control plane on top: pub/sub events, capability RPC, plugins, MCP, remote access. If you're writing a <em>plugin</em> that lives inside work{spacer}, you want the <a href="build-plugin.html">bus instead</a>. If you're writing your <em>own app</em>, you want this.</div>
+<p>There's already a second client proving the seam holds: <a href="https://github.com/DJTouchette/workspacer/tree/master/apps/tui"><code>wks-tui</code></a>, the Rust terminal client in <code>apps/tui/</code>. It talks to exactly this API and nothing else. When you want to know how a real client handles a case, read that. It is the reference implementation.</p>
+<div class="callout"><strong>Two APIs, one stack.</strong> <code>claudemon</code> (this page) is the session API, the direct lowest-level surface and the right one for a UI. The <code>hub</code> bus is the control plane on top: pub/sub events, capability RPC, plugins, MCP, remote access. If you're writing a <em>plugin</em> that lives inside work{spacer}, you want the <a href="build-plugin.html">bus instead</a>. If you're writing your <em>own app</em>, you want this.</div>
     </section>
 
     <section id="run" class="doc">
 <h2>run it headless</h2>
 <p>Three ways to get an API to talk to. All of them end with claudemon listening on <code>127.0.0.1:7891</code>.</p>
 <h3>1. the whole stack, no GUI</h3>
-<p>The <code>workspacer</code> CLI supervises claudemon plus the hub (and the headless capability provider, <code>brain</code>) as one unit. This is the server bundle — grab <code>workspacer-server-&lt;os&gt;-&lt;arch&gt;</code> from the <a href="https://github.com/DJTouchette/workspacer/releases">releases</a>, or <code>make build-cli</code> from source:</p>
+<p>The <code>workspacer</code> CLI supervises claudemon plus the hub (and the headless capability provider, <code>brain</code>) as one unit. This is the server bundle. Grab <code>workspacer-server-&lt;os&gt;-&lt;arch&gt;</code> from the <a href="https://github.com/DJTouchette/workspacer/releases">releases</a>, or <code>make build-cli</code> from source:</p>
 <pre><code>workspacer serve
 workspacer serve --json          # ready banner as one JSON object on stdout</code></pre>
 <p>Useful flags: <code>--host</code> (default <code>127.0.0.1</code>), <code>--claudemon-api-port</code> (<code>7891</code>), <code>--claudemon-hook-port</code> (<code>7890</code>), <code>--hub-port</code> (<code>7895</code>), <code>--token</code> (or <code>$HUB_TOKEN</code>).</p>
@@ -166,15 +174,15 @@ workspacer serve --json          # ready banner as one JSON object on stdout</co
 <p>If you only want the session API and none of the control plane, run the daemon straight. This is the smallest thing that works:</p>
 <pre><code>claudemon serve
 claudemon serve --host 127.0.0.1 --hook-port 7890 --api-port 7891</code></pre>
-<p>Two ports, and they do different jobs. <code>--api-port</code> (7891) is <em>this API</em> — the one your client talks to. <code>--hook-port</code> (7890) is where Claude Code's hooks POST their lifecycle events <em>in</em>; you never call it, but the daemon needs it to observe PTY-transport Claude sessions. <code>--db-path</code> overrides the SQLite store.</p>
-<p>One-time setup so Claude Code actually emits those hooks:</p>
+<p>Two ports, and they do different jobs. <code>--api-port</code> (7891) is <em>this API</em>, the one your client talks to. <code>--hook-port</code> (7890) is where Claude Code's hooks POST their lifecycle events <em>in</em>; you never call it, but the daemon needs it to observe PTY-transport Claude sessions. <code>--db-path</code> overrides the SQLite store.</p>
+<p>One-time setup so Claude Code emits those hooks:</p>
 <pre><code>claudemon init            # merge hooks + statusLine into ~/.claude/settings.json
 claudemon init --dry-run  # print the merged document instead of writing it</code></pre>
 <p>The merge is atomic and idempotent, and leaves your own settings alone. If you'd rather not touch the global file at all, <code>--overlay &lt;path&gt;</code> writes a standalone claudemon-owned settings file to pass to <code>claude --settings</code> instead.</p>
 <h3>3. alongside the running app</h3>
-<p>If the desktop app is already open, claudemon is <em>already</em> on 7891 — the app spawned it. Point your client at it and you're a second client on the same live sessions. Nothing to start, no conflict: your UI and the desktop UI will see the same fleet and each other's changes, live.</p>
+<p>If the desktop app is already open, claudemon is <em>already</em> on 7891, spawned by the app. Point your client at it and you're a second client on the same live sessions. Nothing to start, no conflict: your UI and the desktop UI will see the same fleet and each other's changes, live.</p>
 <p>This is the fastest way to develop. Open the app, start building against 7891, watch your client and the real one stay in lockstep.</p>
-<div class="callout"><strong>Adoption, not collision.</strong> Before spawning, the desktop probes <code>/health</code> on the port. A <em>healthy</em> daemon that's already there gets <strong>adopted</strong> — the app uses it and never signals it on quit. So a <code>workspacer serve</code> you started stays yours; opening the GUI later just joins it.</div>
+<div class="callout"><strong>Adoption, not collision.</strong> Before spawning, the desktop probes <code>/health</code> on the port. A <em>healthy</em> daemon that's already there gets <strong>adopted</strong>: the app uses it and never signals it on quit. So a <code>workspacer serve</code> you started stays yours; opening the GUI later just joins it.</div>
 <h3>check it's up</h3>
 <pre><code>curl -s http://127.0.0.1:7891/health          # -> ok
 curl -s http://127.0.0.1:7891/sessions | jq</code></pre>
@@ -182,7 +190,7 @@ curl -s http://127.0.0.1:7891/sessions | jq</code></pre>
 
     <section id="model" class="doc">
 <h2>the session model</h2>
-<p>One object matters more than all the others. A <strong>session</strong> is one agent — its state machine, its cwd, its provider, its pending question, its cost. Get this shape and most of the API is obvious.</p>
+<p>One object matters more than all the others. A <strong>session</strong> is one agent: its state machine, its cwd, its provider, its pending question, its cost. Get this shape and most of the API is obvious.</p>
 <pre><code>{
   "session_id": "9f3c…",              // the identity; use it everywhere
   "cwd": "/home/you/project",
@@ -204,19 +212,19 @@ curl -s http://127.0.0.1:7891/sessions | jq</code></pre>
   "usage": { … },                     // added by the API, not stored on the session
   "archived": false                   // added by the API: stopped + long-idle
 }</code></pre>
-<h3>mode — the state machine</h3>
+<h3>mode: the state machine</h3>
 <p>Six values. This is what drives a status dot, and it's the single field most clients render first.</p>
 <table>
 <tr><th>mode</th><th>meaning</th></tr>
-<tr><td><code>unknown</code></td><td>No signal yet — just spawned, or the daemon restarted and hasn't seen an event.</td></tr>
+<tr><td><code>unknown</code></td><td>No signal yet: just spawned, or the daemon restarted and hasn't seen an event.</td></tr>
 <tr><td><code>input</code></td><td><strong>Idle.</strong> The prompt is up, it's waiting for you. Safe to send a message.</td></tr>
 <tr><td><code>responding</code></td><td><strong>Working.</strong> Thinking, calling tools, writing.</td></tr>
 <tr><td><code>approval</code></td><td><strong>Blocked on you.</strong> A tool wants permission. <code>pending</code> tells you which.</td></tr>
 <tr><td><code>question</code></td><td><strong>Blocked on you.</strong> An <code>AskUserQuestion</code> picker is up. <code>pending</code> has the questions.</td></tr>
 <tr><td><code>stopped</code></td><td>Session ended. Rows stick around as resumable history.</td></tr>
 </table>
-<p><code>approval</code> and <code>question</code> deliberately override <code>responding</code>: while a picker is up the agent is <em>waiting on a human</em>, not working. Those two modes are the ones worth a notification — they're the whole "your fleet needs you" signal.</p>
-<h3>pending — what it's waiting on</h3>
+<p><code>approval</code> and <code>question</code> override <code>responding</code> on purpose: while a picker is up the agent is <em>waiting on a human</em>, not working. Those two modes are the ones worth a notification, since they're the whole "your fleet needs you" signal.</p>
+<h3>pending: what it's waiting on</h3>
 <p>Non-null exactly when <code>mode</code> is <code>approval</code> or <code>question</code>. Tagged by <code>kind</code>:</p>
 <pre><code>// kind: "approval"
 { "kind": "approval", "tool": "Bash", "summary": "rm -rf ./dist", "raw": { … } }
@@ -228,14 +236,14 @@ curl -s http://127.0.0.1:7891/sessions | jq</code></pre>
                    "multiSelect": false,
                    "options": [ … ] } ],
   "raw": { … } }</code></pre>
-<p>Answer the first with <a href="#rest"><code>/approve</code></a>, the second with <a href="#rest"><code>/answer</code></a>. <code>raw</code> is the untouched upstream payload — reach for it when you need a field the daemon didn't normalize.</p>
+<p>Answer the first with <a href="#rest"><code>/approve</code></a>, the second with <a href="#rest"><code>/answer</code></a>. <code>raw</code> is the untouched upstream payload; reach for it when you need a field the daemon didn't normalize.</p>
 <h3>provider and transport</h3>
-<p><code>provider</code> is which agent backend drives the session: <code>claude</code>, <code>codex</code>, <code>opencode</code>, or <code>pi</code>. <code>transport</code> is <em>how</em>: <code>pty</code> (there's a real terminal you can attach to and stream bytes from) or <code>stream</code> (headless — no PTY, so don't offer a terminal view). Gate your UI on <code>transport</code>, not on <code>provider</code>: Claude runs both ways.</p>
+<p><code>provider</code> is which agent backend drives the session: <code>claude</code>, <code>codex</code>, <code>opencode</code>, or <code>pi</code>. <code>transport</code> is <em>how</em>: <code>pty</code> (there's a real terminal you can attach to and stream bytes from) or <code>stream</code> (headless, with no PTY, so don't offer a terminal view). Gate your UI on <code>transport</code>, not on <code>provider</code>: Claude runs both ways.</p>
     </section>
 
     <section id="rest" class="doc">
 <h2>http reference</h2>
-<p>Base URL is <code>http://127.0.0.1:7891</code>. JSON in, JSON out. Every route is in <code>services/claudemon/src/daemon/api.rs</code> — that file is the authority if this page ever drifts.</p>
+<p>Base URL is <code>http://127.0.0.1:7891</code>. JSON in, JSON out. Every route is in <code>services/claudemon/src/daemon/api.rs</code>, which is the authority if this page ever drifts.</p>
 
 <h3>reading the fleet</h3>
 <table>
@@ -244,36 +252,36 @@ curl -s http://127.0.0.1:7891/sessions | jq</code></pre>
 <tr><td><span class="verb">GET</span> <code>/sessions</code></td><td>Every session as the object above, each with <code>usage</code> and <code>archived</code> merged in. <code>?include_archived=true</code> adds stopped + long-idle rows (7 days); <code>?include_empty=true</code> additionally un-hides spawned-but-never-used rows. Both default off.</td></tr>
 <tr><td><span class="verb">GET</span> <code>/sessions/:id</code></td><td>One session, same shape. <code>404</code> if unknown.</td></tr>
 <tr><td><span class="verb">GET</span> <code>/sessions/:id/transcript</code></td><td>The raw Claude JSONL transcript. <code>?cwd=</code> helps locate it when the id and the on-disk name differ.</td></tr>
-<tr><td><span class="verb">GET</span> <code>/sessions/:id/conversation</code></td><td>Structured conversation — <a href="#conversation">see below</a>. <code>?since=&lt;seq&gt;</code> for incremental catch-up.</td></tr>
+<tr><td><span class="verb">GET</span> <code>/sessions/:id/conversation</code></td><td>Structured conversation; <a href="#conversation">see below</a>. <code>?since=&lt;seq&gt;</code> for incremental catch-up.</td></tr>
 <tr><td><span class="verb">GET</span> <code>/sessions/:id/output</code></td><td>The PTY scrollback buffer (<code>pty</code> transport only).</td></tr>
-<tr><td><span class="verb">GET</span> <code>/usage</code></td><td>Account-level rate-limit windows, no session needed: <code>five_hour_pct</code>, <code>five_hour_resets_at</code>, <code>seven_day_pct</code>, <code>seven_day_resets_at</code>, <code>monthly_pct</code>, <code>monthly_resets_at</code>, <code>out_of_credits</code>, <code>fetched_at</code>. <code>503</code> when the account can't be queried — so you can tell <em>unknown</em> from <em>no active window</em>.</td></tr>
+<tr><td><span class="verb">GET</span> <code>/usage</code></td><td>Account-level rate-limit windows, no session needed: <code>five_hour_pct</code>, <code>five_hour_resets_at</code>, <code>seven_day_pct</code>, <code>seven_day_resets_at</code>, <code>monthly_pct</code>, <code>monthly_resets_at</code>, <code>out_of_credits</code>, <code>fetched_at</code>. <code>503</code> when the account can't be queried, so you can tell <em>unknown</em> from <em>no active window</em>.</td></tr>
 <tr><td><span class="verb">GET</span> <code>/heartbeats</code></td><td>Keep-warm ping log (the scheduled 5h-window warmer).</td></tr>
 </table>
 
 <h3>driving a session</h3>
 <table>
 <tr><th>route</th><th>body</th></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/:id/message</code></td><td><code>{ "text": "…" }</code> — <strong>the one you want.</strong> Sends a prompt through the settle-and-verify pipeline: delivered now if the prompt is up, queued and flushed on the next idle transition otherwise (cold start, mid-turn, open dialog). Only a stopped session rejects it. Prefer this over <code>/input</code> for anything user-facing.</td></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/:id/input</code></td><td><code>{ "text": "…", "newline": true }</code> or <code>{ "bytes_b64": "…" }</code> — raw bytes into the PTY, no pipeline, no guarantees. For terminal emulation and keystrokes, not prompts.</td></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/:id/approve</code></td><td><code>{ "decision": "yes" | "no" | "always", "reason": "…" }</code> — resolve a pending approval. <code>reason</code> rides along with a block and shows up in the agent's context. (<code>always</code> is treated as <code>yes</code>; hooks have no "remember this" channel.)</td></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/:id/answer</code></td><td><code>{ "option": 2 }</code> (1-indexed) or <code>{ "text": "…" }</code>. Multi-question prompts take <code>{ "answers": ["2", "my answer"] }</code>, one per question in order — pass <code>answerKinds: ["option","text"]</code> alongside it so a free-text answer that happens to be a number isn't remapped to an option.</td></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/:id/signal</code></td><td><code>{ "signal": "sigint" | "sigterm" | "sigkill" }</code>. <code>sigint</code> is a structural interrupt on managed providers — it stops the <em>turn</em> without killing the session, so PTY-free clients can cancel too.</td></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/:id/permission-mode</code></td><td><code>{ "mode": "…" }</code> — live switch, no restart, conversation untouched.</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/:id/message</code></td><td><code>{ "text": "…" }</code>, <strong>the one you want.</strong> Sends a prompt through the settle-and-verify pipeline: delivered now if the prompt is up, queued and flushed on the next idle transition otherwise (cold start, mid-turn, open dialog). Only a stopped session rejects it. Prefer this over <code>/input</code> for anything user-facing.</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/:id/input</code></td><td><code>{ "text": "…", "newline": true }</code> or <code>{ "bytes_b64": "…" }</code>: raw bytes into the PTY, no pipeline, no guarantees. For terminal emulation and keystrokes, not prompts.</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/:id/approve</code></td><td><code>{ "decision": "yes" | "no" | "always", "reason": "…" }</code> resolves a pending approval. <code>reason</code> rides along with a block and shows up in the agent's context. (<code>always</code> is treated as <code>yes</code>; hooks have no "remember this" channel.)</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/:id/answer</code></td><td><code>{ "option": 2 }</code> (1-indexed) or <code>{ "text": "…" }</code>. Multi-question prompts take <code>{ "answers": ["2", "my answer"] }</code>, one per question in order. Pass <code>answerKinds: ["option","text"]</code> alongside it so a free-text answer that happens to be a number isn't remapped to an option.</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/:id/signal</code></td><td><code>{ "signal": "sigint" | "sigterm" | "sigkill" }</code>. <code>sigint</code> is a structural interrupt on managed providers: it stops the <em>turn</em> without killing the session, so PTY-free clients can cancel too.</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/:id/permission-mode</code></td><td><code>{ "mode": "…" }</code>, a live switch: no restart, conversation untouched.</td></tr>
 <tr><td><span class="verb post">POST</span> <code>/sessions/:id/model</code></td><td>Live model switch on providers that support it.</td></tr>
 <tr><td><span class="verb post">POST</span> <code>/sessions/:id/resize</code></td><td>Resize the PTY (<code>pty</code> transport).</td></tr>
 <tr><td><span class="verb post">POST</span> <code>/sessions/:id/handoff</code></td><td>Build a deterministic handoff brief for another agent to pick up. <code>{ "no_persist": true }</code> returns it without writing to disk.</td></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/:id/decide</code></td><td><code>{ "body": { … } }</code> — the raw hook decision, returned to Claude Code verbatim. Bypasses <code>/approve</code>'s opinionated mapping when you need exact control.</td></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/:id/gate</code></td><td><code>{ "on": true }</code> — opt this session into the deferred-hook gateway, parking <code>PreToolUse</code> responses until a client decides.</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/:id/decide</code></td><td><code>{ "body": { … } }</code>, the raw hook decision, returned to Claude Code verbatim. Bypasses <code>/approve</code>'s opinionated mapping when you need exact control.</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/:id/gate</code></td><td><code>{ "on": true }</code> opts this session into the deferred-hook gateway, parking <code>PreToolUse</code> responses until a client decides.</td></tr>
 </table>
 
 <h3>starting sessions</h3>
 <table>
 <tr><th>route</th><th>body</th></tr>
 <tr><td><span class="verb post">POST</span> <code>/sessions/spawn</code></td><td>A PTY session. <code>{ "argv": ["claude", …], "cwd": "/path", "cols": 120, "rows": 40, "env": {…}, "session_id": "…" }</code>. <code>argv</code> and <code>cwd</code> are required.</td></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/spawn-managed</code></td><td>A managed (daemon-driven) session — the modern path. <code>provider</code> must be <code>claude</code>, <code>codex</code>, <code>opencode</code>, or <code>pi</code>; anything else is a <code>400</code>. Returns the session id <em>immediately</em> and boots the adapter in the background, so you can render the card while the process starts.</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/spawn-managed</code></td><td>A managed (daemon-driven) session, the modern path. <code>provider</code> must be <code>claude</code>, <code>codex</code>, <code>opencode</code>, or <code>pi</code>; anything else is a <code>400</code>. Returns the session id <em>immediately</em> and boots the adapter in the background, so you can render the card while the process starts.</td></tr>
 <tr><td><span class="verb">GET</span> <code>/providers/:provider/models</code></td><td>Models available for <code>codex</code>, <code>opencode</code>, or <code>pi</code>. <code>?bin=</code> and <code>?cwd=</code> override the binary and working dir.</td></tr>
 </table>
-<p>The managed spawn body in full — everything but <code>provider</code> and <code>cwd</code> is optional:</p>
+<p>The managed spawn body in full. Everything but <code>provider</code> and <code>cwd</code> is optional:</p>
 <pre><code>{
   "provider": "codex",           // required: claude | codex | opencode | pi
   "cwd": "/home/you/project",    // required
@@ -294,15 +302,15 @@ curl -s http://127.0.0.1:7891/sessions | jq</code></pre>
 
     <section id="streams" class="doc">
 <h2>the live streams</h2>
-<p>Five <a href="https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events">SSE</a> endpoints. Every one names its event type, so an <code>EventSource</code> can listen by name. All five send a keep-alive every <strong>15 seconds</strong> — if you go 30+ without a frame, you've been disconnected.</p>
+<p>Five <a href="https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events">SSE</a> endpoints. Every one names its event type, so an <code>EventSource</code> can listen by name. All five send a keep-alive every <strong>15 seconds</strong>, so if you go 30+ without a frame you've been disconnected.</p>
 <p>The split is deliberate and worth internalizing: <strong>SSE down, POST up.</strong> There's no bidirectional socket here. You subscribe to what changes, and you act with ordinary HTTP requests. (The hub bus makes the opposite choice, one WebSocket both ways, because plugins are simpler that way.)</p>
 <table>
 <tr><th>stream</th><th>event</th><th>payload</th></tr>
-<tr><td><span class="verb">GET</span> <code>/events</code></td><td><code>session.update</code></td><td><code>{ session_id, event, state }</code> where <code>state</code> is the full session object. <strong>Start here</strong> — this one stream drives a whole fleet view.</td></tr>
-<tr><td><span class="verb">GET</span> <code>/conversation/stream</code></td><td><code>conversation.delta</code></td><td><code>{ session_id, seq, reset, items }</code> — new conversation items for <em>any</em> session. <a href="#conversation">See below.</a></td></tr>
+<tr><td><span class="verb">GET</span> <code>/events</code></td><td><code>session.update</code></td><td><code>{ session_id, event, state }</code> where <code>state</code> is the full session object. <strong>Start here</strong>: this one stream drives a whole fleet view.</td></tr>
+<tr><td><span class="verb">GET</span> <code>/conversation/stream</code></td><td><code>conversation.delta</code></td><td><code>{ session_id, seq, reset, items }</code>, new conversation items for <em>any</em> session. <a href="#conversation">See below.</a></td></tr>
 <tr><td><span class="verb">GET</span> <code>/sessions/:id/stream</code></td><td><code>pty.bytes</code></td><td>base64 PTY output for one session. Opens with a snapshot of the existing scrollback, then live chunks. <code>pty</code> transport only.</td></tr>
 <tr><td><span class="verb">GET</span> <code>/hooks/stream</code></td><td><code>hook</code></td><td>Raw, unaggregated Claude Code hook events, before the state machine touches them. For building your own session store.</td></tr>
-<tr><td><span class="verb">GET</span> <code>/statusline/stream</code></td><td><code>statusline</code></td><td><code>{ session_id, cwd, status_line }</code> — context %, cost, rate limits. High-frequency, on its own channel so it can't flood the others.</td></tr>
+<tr><td><span class="verb">GET</span> <code>/statusline/stream</code></td><td><code>statusline</code></td><td><code>{ session_id, cwd, status_line }</code>: context %, cost, rate limits. High-frequency, on its own channel so it can't flood the others.</td></tr>
 </table>
 <p>Note that <code>/events</code> and <code>/conversation/stream</code> are <strong>fleet-wide</strong>, not per-session. You open each once for your whole app and route by <code>session_id</code>, rather than opening a stream per agent. A twenty-agent fleet is still two connections.</p>
 <pre><code>const events = new EventSource('http://127.0.0.1:7891/events');
@@ -316,7 +324,7 @@ events.addEventListener('session.update', (e) =&gt; {
 
     <section id="conversation" class="doc">
 <h2>the conversation</h2>
-<p>You don't have to parse terminal scrollback, and you shouldn't. claudemon reads the agent's own transcript and gives you a typed item list — the same one the desktop app renders.</p>
+<p>You don't have to parse terminal scrollback, and you shouldn't. claudemon reads the agent's own transcript and gives you a typed item list, the same one the desktop app renders.</p>
 <p><code>GET /sessions/:id/conversation</code> returns <code>{ session_id, seq, items }</code>. Each item is tagged by <code>kind</code>:</p>
 <table>
 <tr><th>kind</th><th>fields</th></tr>
@@ -325,20 +333,20 @@ events.addEventListener('session.update', (e) =&gt; {
 <tr><td><code>tool_use</code></td><td><code>id</code>, <code>name</code>, <code>input</code> (raw JSON), <code>timestamp</code></td></tr>
 <tr><td><code>tool_result</code></td><td><code>tool_use_id</code>, <code>content</code>, <code>is_error</code>, <code>timestamp</code></td></tr>
 <tr><td><code>usage</code></td><td><code>model</code>, <code>usage</code>, <code>message_id</code>, <code>sidechain</code> (true for subagent turns)</td></tr>
-<tr><td><code>plan</code></td><td><code>steps</code>, <code>updatedAt</code> — the agent's checklist</td></tr>
+<tr><td><code>plan</code></td><td><code>steps</code>, <code>updatedAt</code>, the agent's checklist</td></tr>
 <tr><td><code>slash_command</code></td><td><code>name</code>, <code>args</code>, <code>timestamp</code></td></tr>
 <tr><td><code>command_output</code></td><td><code>output</code>, <code>is_error</code>, <code>timestamp</code></td></tr>
 </table>
-<p>Pair <code>tool_result</code> to <code>tool_use</code> by <code>tool_use_id</code> → <code>id</code>. Ignore kinds you don't know — more will be added, and that's the intended failure mode.</p>
+<p>Pair <code>tool_result</code> to <code>tool_use</code> by <code>tool_use_id</code> → <code>id</code>. Ignore kinds you don't know. More will be added, and that's the intended failure mode.</p>
 <h3>staying in sync</h3>
 <p><code>seq</code> is a monotonic counter per session. The pattern:</p>
 <ul>
 <li>Fetch <code>GET /sessions/:id/conversation</code> once for the backlog. Keep the <code>seq</code>.</li>
 <li>Subscribe to <code>/conversation/stream</code> and append the <code>items</code> of each <code>conversation.delta</code>.</li>
-<li>If a delta arrives with <code>reset: true</code>, <strong>discard your buffer</strong> and take the items as the new truth — that's a compaction or a replay, not an append.</li>
+<li>If a delta arrives with <code>reset: true</code>, <strong>discard your buffer</strong> and take the items as the new truth. That's a compaction or a replay rather than an append.</li>
 <li>If you dropped frames, re-fetch with <code>?since=&lt;last_seq&gt;</code> and you'll get only what you missed.</li>
 </ul>
-<p>Sessions are capped at 5000 items in memory; older ones fall off the front. The transcript on disk is still complete — <code>/transcript</code> if you need it all.</p>
+<p>Sessions are capped at 5000 items in memory; older ones fall off the front. The transcript on disk is still complete; use <code>/transcript</code> if you need it all.</p>
     </section>
 
     <section id="client" class="doc">
@@ -399,29 +407,29 @@ function render() {
 });
 const { session_id } = await res.json();
 await say(session_id, 'Read the README and summarize the architecture.');</code></pre>
-<p>The id comes back before the adapter finishes booting, so render the card immediately — the first <code>session.update</code> will fill it in.</p>
+<p>The id comes back before the adapter finishes booting, so render the card immediately and let the first <code>session.update</code> fill it in.</p>
     </section>
 
     <section id="security" class="doc">
 <h2>the local security model</h2>
-<p>claudemon can spawn processes and write files. It is bound to loopback and defended as a local-only service — worth understanding before you expose it.</p>
+<p>claudemon can spawn processes and write files. It is bound to loopback and defended as a local-only service, which is worth understanding before you expose it.</p>
 <ul>
-<li><strong>Loopback by default.</strong> <code>--host</code> defaults to <code>127.0.0.1</code>. There is <em>no authentication on the claudemon API</em> — its security boundary is the bind address.</li>
+<li><strong>Loopback by default.</strong> <code>--host</code> defaults to <code>127.0.0.1</code>. There is <em>no authentication on the claudemon API</em>. Its security boundary is the bind address.</li>
 <li><strong>Host-header guard.</strong> Requests whose <code>Host</code> isn't loopback (or the daemon's own bind address) get <code>403</code>, before any handler runs. This kills DNS rebinding, where a malicious page resolves its own domain to 127.0.0.1 to drive your daemon.</li>
 <li><strong>Loopback-scoped CORS.</strong> Only loopback origins are allowed, so an arbitrary website can't script it from a browser.</li>
 <li><strong>Bounded bodies.</strong> 16 MB request-body cap, so a buggy or hostile local client can't push an unbounded payload through the fan-out and into SQLite.</li>
-<li><strong>Path-traversal-proof ids.</strong> Session ids are validated (≤128 chars, ASCII alphanumeric plus <code>-</code> <code>_</code> <code>.</code>, no <code>..</code>) before touching the filesystem — <code>%2e%2e%2f</code> included, since axum decodes first.</li>
+<li><strong>Path-traversal-proof ids.</strong> Session ids are validated (≤128 chars, ASCII alphanumeric plus <code>-</code> <code>_</code> <code>.</code>, no <code>..</code>) before touching the filesystem, <code>%2e%2e%2f</code> included, since axum decodes first.</li>
 </ul>
-<div class="callout"><strong>Don't put claudemon on a network.</strong> There's no auth to turn on. If you need remote reach, put the <strong>hub</strong> there instead — it has token auth, capability-scoped tokens (<code>view</code> / <code>triage</code> / <code>operator</code>), and is designed to be reachable over a Tailscale tailnet. Your remote client talks to the hub; the hub talks to claudemon over loopback. See <a href="build.html#architecture">the internals page</a>.</div>
+<div class="callout"><strong>Don't put claudemon on a network.</strong> There's no auth to turn on. If you need remote reach, put the <strong>hub</strong> there instead. It has token auth, capability-scoped tokens (<code>view</code> / <code>triage</code> / <code>operator</code>), and is designed to be reachable over a Tailscale tailnet. Your remote client talks to the hub; the hub talks to claudemon over loopback. See <a href="build.html#architecture">the internals page</a>.</div>
     </section>
 
     <section id="stability" class="doc">
 <h2>what's stable</h2>
-<p>Straight answer: work{spacer} is alpha and this API is not versioned yet. Here's what that actually means in practice, so you can judge the risk yourself rather than guess.</p>
+<p>Straight answer: work{spacer} is alpha and this API is not versioned yet. Here's what that means in practice, so you can judge the risk yourself rather than guess.</p>
 <h3>what you can lean on</h3>
 <ul>
-<li><strong>Route paths and verbs.</strong> The table above is the daemon's whole surface and it's been stable in shape — <code>/sessions</code>, <code>/events</code>, <code>/message</code>, <code>/approve</code>, <code>/answer</code> are load-bearing for three shipped clients.</li>
-<li><strong>Additive fields.</strong> New session fields land with serde defaults and back-compat, on purpose — old rows and old clients keep deserializing. You'll see fields appear; you shouldn't see them vanish.</li>
+<li><strong>Route paths and verbs.</strong> The table above is the daemon's whole surface and it's been stable in shape. <code>/sessions</code>, <code>/events</code>, <code>/message</code>, <code>/approve</code>, and <code>/answer</code> are load-bearing for three shipped clients.</li>
+<li><strong>Additive fields.</strong> New session fields land with serde defaults and back-compat on purpose, so old rows and old clients keep deserializing. You'll see fields appear; you shouldn't see them vanish.</li>
 <li><strong>Tagged unions stay tagged.</strong> <code>pending.kind</code> and conversation <code>kind</code> are discriminators; new variants get added to them.</li>
 <li><strong>The enum values above.</strong> <code>mode</code>, <code>transport</code>, and the signal names are the wire vocabulary every client already depends on.</li>
 </ul>
@@ -439,7 +447,7 @@ await say(session_id, 'Read the README and summarize the architecture.');</code>
 <li><strong>Prefer <code>/message</code> over <code>/input</code></strong>, and <code>/approve</code> over <code>/decide</code>. The opinionated endpoints are the ones we keep working; the raw ones expose upstream shapes that shift.</li>
 <li><strong>Read <code>apps/tui</code> when a case is unclear.</strong> It's a real client against this exact API, and it gets updated with the daemon.</li>
 </ul>
-<p>If you build something, <a href="https://github.com/DJTouchette/workspacer/issues">open an issue</a> — the fastest way for this surface to become a versioned, frozen contract is for there to be clients whose breakage would matter.</p>
+<p>If you build something, <a href="https://github.com/DJTouchette/workspacer/issues">open an issue</a>. The fastest way for this surface to become a versioned, frozen contract is for there to be clients whose breakage would matter.</p>
     </section>
 
     <div class="foot">work{spacer} :: build a client :: <a href="build.html">internals →</a> :: <a href="build-plugin.html">build a plugin →</a></div>
