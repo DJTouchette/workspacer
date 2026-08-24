@@ -14,7 +14,7 @@ import { PaneConfig, PaneType, TabConfig, AgentWorkspace, AgentProvider } from '
 import type { PluginPane as PluginPaneDef } from '../types/plugin';
 import type { RecentAgentSession } from '../../../main/shared/ipcTypes';
 import { useConfig } from '../hooks/useConfig';
-import { tilingColumns } from '../lib/layoutUtils';
+import { tilingColumns, computePaneLayouts } from '../lib/layoutUtils';
 import { useIsSmallScreen } from '../hooks/useMediaQuery';
 
 // Lazy-load pane types that aren't needed on initial render
@@ -488,31 +488,7 @@ function TilingLayout({
   const cols = isSmallScreen ? 1 : tilingColumns(count);
   const rows = Math.ceil(count / cols);
 
-  const layouts: Array<{ col: number; row: number; colSpan: number; rowSpan: number }> = [];
-
-  if (count === 1) {
-    layouts.push({ col: 0, row: 0, colSpan: 1, rowSpan: 1 });
-  } else if (isSmallScreen) {
-    for (let i = 0; i < count; i++) {
-      layouts.push({ col: 0, row: i, colSpan: 1, rowSpan: 1 });
-    }
-  } else if (count === 2) {
-    layouts.push({ col: 0, row: 0, colSpan: 1, rowSpan: 1 });
-    layouts.push({ col: 1, row: 0, colSpan: 1, rowSpan: 1 });
-  } else if (count === 3) {
-    layouts.push({ col: 0, row: 0, colSpan: 1, rowSpan: 2 });
-    layouts.push({ col: 1, row: 0, colSpan: 1, rowSpan: 1 });
-    layouts.push({ col: 1, row: 1, colSpan: 1, rowSpan: 1 });
-  } else {
-    for (let i = 0; i < count; i++) {
-      layouts.push({ col: i % cols, row: Math.floor(i / cols), colSpan: 1, rowSpan: 1 });
-    }
-    const lastRowStart = Math.floor((count - 1) / cols) * cols;
-    const lastRowCount = count - lastRowStart;
-    if (lastRowCount < cols) {
-      layouts[count - 1].colSpan = cols - lastRowCount + 1;
-    }
-  }
+  const layouts = computePaneLayouts(count, isSmallScreen);
 
   const cellWidth = containerWidth / cols;
   const cellHeight = containerHeight / rows;
