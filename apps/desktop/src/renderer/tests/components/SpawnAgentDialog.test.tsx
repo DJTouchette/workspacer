@@ -114,7 +114,7 @@ describe('SpawnAgentDialog permissions', () => {
     // everything else stays behind the collapsed advanced fold.
     expect(screen.queryAllByRole('combobox')).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole('button', { name: /spawn agent/i }));
+    fireEvent.click(screen.getByRole('button', { name: /dispatch agent/i }));
 
     expect(onSpawn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -149,7 +149,7 @@ describe('SpawnAgentDialog permissions', () => {
     fireEvent.click(advancedButton());
     await waitFor(() => expect(permissionSelect().value).toBe('bypassPermissions'));
 
-    fireEvent.click(screen.getByRole('button', { name: /spawn agent/i }));
+    fireEvent.click(screen.getByRole('button', { name: /dispatch agent/i }));
 
     expect(onSpawn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -194,7 +194,7 @@ describe('SpawnAgentDialog permissions', () => {
     fireEvent.click(screen.getByText('Claude Code').closest('button')!);
     await waitFor(() => expect(effortSelect().value).toBe('xhigh'));
 
-    fireEvent.click(screen.getByRole('button', { name: /spawn agent/i }));
+    fireEvent.click(screen.getByRole('button', { name: /dispatch agent/i }));
     expect(onSpawn).toHaveBeenCalledWith(expect.objectContaining({ effort: 'xhigh' }));
   });
 });
@@ -211,7 +211,7 @@ describe('SpawnAgentDialog profiles', () => {
 
     // And the pre-selection is that real row, so a spawn carries the loadout
     // attached to Default in Settings instead of silently skipping it.
-    fireEvent.click(screen.getByRole('button', { name: /spawn agent/i }));
+    fireEvent.click(screen.getByRole('button', { name: /dispatch agent/i }));
     expect(onSpawn).toHaveBeenCalledWith(expect.objectContaining({ profileId: 'default' }));
   });
 
@@ -219,7 +219,7 @@ describe('SpawnAgentDialog profiles', () => {
     const { onSpawn } = renderDialog();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Work' }));
-    fireEvent.click(screen.getByRole('button', { name: /spawn agent/i }));
+    fireEvent.click(screen.getByRole('button', { name: /dispatch agent/i }));
 
     expect(onSpawn).toHaveBeenCalledWith(expect.objectContaining({ profileId: 'work-uuid' }));
   });

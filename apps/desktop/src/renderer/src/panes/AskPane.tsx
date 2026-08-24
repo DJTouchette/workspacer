@@ -228,7 +228,7 @@ const AskPane: React.FC<AskPaneProps> = ({
             lineHeight: 1.5,
           }}
         >
-          Spawn a supervisor agent that inspects your fleet and answers.
+          Dispatch a supervisor agent that inspects your fleet and answers.
         </div>
       </div>
 
@@ -439,7 +439,7 @@ const AskPane: React.FC<AskPaneProps> = ({
               letterSpacing: '0.01em',
             }}
           >
-            {spawning ? 'Spawning…' : 'Ask'}
+            {spawning ? 'Dispatching…' : 'Ask'}
           </button>
         </div>
       </div>
@@ -477,7 +477,7 @@ const AskPane: React.FC<AskPaneProps> = ({
               lineHeight: 1.5,
             }}
           >
-            No supervisor agents yet. Ask a question to spawn one.
+            No supervisor agents yet. Ask a question to dispatch one.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>

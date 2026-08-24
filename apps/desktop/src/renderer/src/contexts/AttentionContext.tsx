@@ -64,7 +64,7 @@ interface AttentionContextValue {
 export type InboxFilter = 'all' | 'needs' | 'review';
 /** Kinds that mean "an agent is waiting on you" (vs. review/informational).
  *  MUST stay in sync with the needsYou tally in useAttentionFeed (counts.needsYou),
- *  or the 'Needs you' / 'Review' tab badges disagree with their contents. */
+ *  or the 'Waiting' / 'Review' tab badges disagree with their contents. */
 const NEEDS_KINDS: ReadonlySet<AttentionKind> = new Set<AttentionKind>([
   'approval',
   'question',

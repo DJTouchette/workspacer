@@ -14,7 +14,7 @@ describe('HomeSpace', () => {
     const onSpawn = vi.fn();
     render(<HomeSpace onSpawn={onSpawn} />);
 
-    const cta = screen.getByRole('button', { name: /Spawn agent/ });
+    const cta = screen.getByRole('button', { name: /Dispatch agent/ });
     fireEvent.click(cta);
     expect(onSpawn).toHaveBeenCalledTimes(1);
   });
@@ -36,6 +36,6 @@ describe('HomeSpace', () => {
     render(<HomeSpace onSpawn={() => {}} />);
     expect(screen.queryByText('ctrl')).not.toBeInTheDocument();
     // The CTA is still there regardless.
-    expect(screen.getByRole('button', { name: /Spawn agent/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Dispatch agent/ })).toBeInTheDocument();
   });
 });

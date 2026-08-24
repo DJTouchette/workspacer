@@ -58,7 +58,7 @@ function stateVisual(s: SessionAmbientState | undefined): StateVisual {
     case 'streaming':
       return {
         color: 'var(--wks-busy)',
-        label: 'Working',
+        label: 'In flight',
         pulse: false,
       };
     case 'background':
@@ -68,7 +68,7 @@ function stateVisual(s: SessionAmbientState | undefined): StateVisual {
         pulse: false,
       };
     case 'idle':
-      return { color: 'var(--wks-success)', label: 'Idle', pulse: false };
+      return { color: 'var(--wks-success)', label: 'Standing by', pulse: false };
     default:
       return { color: 'var(--wks-text-faint)', label: 'Stopped', pulse: false };
   }

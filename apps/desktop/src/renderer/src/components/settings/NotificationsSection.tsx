@@ -27,7 +27,7 @@ const NotificationsSection: React.FC<NotificationsSectionProps> = ({ config, sav
         onChange={(v) => set({ enabled: v })}
       />
       <CheckRow
-        label="Notify when an agent finishes"
+        label="Notify when an agent lands"
         checked={notif.notifyDone}
         disabled={!notif.enabled}
         onChange={(v) => set({ notifyDone: v })}
@@ -50,9 +50,9 @@ const NotificationsSection: React.FC<NotificationsSectionProps> = ({ config, sav
         onChange={(v) => set({ inAppToasts: v })}
       />
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        Alerts when an agent needs approval/input or finishes. Everything also lands in the
+        Alerts when an agent needs approval/input or lands. Everything also collects in the
         notification bell in the top bar; toasts are the transient bottom-right popups. Ctrl+Alt+→
-        jumps to the next agent that needs you.
+        jumps to the next agent that's waiting on you.
       </div>
     </Section>
   );

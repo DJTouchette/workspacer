@@ -12,7 +12,7 @@ const KIND_VISUAL: Record<AttentionKind, { label: string; color: string; glyph: 
   error: { label: 'Error', color: 'var(--wks-error)', glyph: '×' },
   stuck: { label: 'Stuck', color: 'var(--wks-warning)', glyph: '…' },
   bigdiff: { label: 'Review', color: 'var(--wks-warning)', glyph: '±' },
-  done: { label: 'Finished', color: 'var(--wks-success)', glyph: '✓' },
+  done: { label: 'Landed', color: 'var(--wks-success)', glyph: '✓' },
 };
 
 /** Last path segment, for the compact cwd footer (full path stays in the title). */

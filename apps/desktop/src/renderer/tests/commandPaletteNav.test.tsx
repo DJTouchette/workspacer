@@ -131,7 +131,7 @@ describe('CommandPalette — spawn an agent on the typed text', () => {
 
     fireEvent.change(input, { target: { value: 'fix the login redirect' } });
     // Nothing else matches, so the spawn row is the only — and selected — row.
-    expect(screen.getByText('New agent: fix the login redirect')).toBeInTheDocument();
+    expect(screen.getByText('Dispatch agent: fix the login redirect')).toBeInTheDocument();
     fireEvent.keyDown(input, { key: 'Enter' });
 
     expect(onSpawnAgent).toHaveBeenCalledWith({ prompt: 'fix the login redirect' });

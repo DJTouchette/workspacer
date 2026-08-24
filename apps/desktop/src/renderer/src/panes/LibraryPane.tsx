@@ -427,9 +427,9 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
                   <button
                     onClick={() => runLibraryItem(it, 'spawn')}
                     style={miniBtn}
-                    title="Spawn a new agent with this"
+                    title="Dispatch a new agent with this"
                   >
-                    Spawn
+                    Dispatch
                   </button>
                   <button
                     onClick={() => runLibraryItem(it, 'copy')}

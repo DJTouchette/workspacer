@@ -209,7 +209,7 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({
       return emptyState([
         'No agents to watch',
         session
-          ? 'This session hasn’t spawned any subagents yet — they’ll appear here live.'
+          ? 'This session hasn’t dispatched any subagents yet — they’ll appear here live.'
           : 'The owning session isn’t running (it may have ended or the app restarted).',
       ]);
     }

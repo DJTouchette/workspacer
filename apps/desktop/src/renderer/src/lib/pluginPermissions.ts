@@ -38,7 +38,7 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   'fs.write': { label: 'Write & change files', sensitive: true },
   'agents.list': { label: 'See your agents' },
   'agents.sendMessage': { label: 'Send messages to your agents', sensitive: true },
-  'agents.spawn': { label: 'Spawn new agents', sensitive: true },
+  'agents.spawn': { label: 'Dispatch new agents', sensitive: true },
   'agents.kill': { label: 'Terminate agents', sensitive: true },
   'notifications.post': { label: 'Show notifications' },
   'notify.post': { label: 'Show notifications' },

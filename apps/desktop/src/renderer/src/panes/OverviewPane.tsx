@@ -336,7 +336,7 @@ const DirRow: React.FC<{
 }> = ({ dir, fav, projects, onSpawn, onToggleFav }) => (
   <div
     onClick={onSpawn}
-    title={`New agent in ${dir}`}
+    title={`Dispatch agent in ${dir}`}
     style={{
       display: 'flex',
       alignItems: 'center',
@@ -679,30 +679,30 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
                 fontWeight: 600,
               }}
             >
-              ＋ New agent…
+              ＋ Dispatch agent…
             </button>
           </div>
 
-          {/* ── Fleet Manager — cross-project delegation, below New agent ── */}
+          {/* ── Fleet Manager — cross-project delegation, below Dispatch agent ── */}
           <FleetManagerHero />
 
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 26 }}>
             <Stat
               label="Agents"
               value={String(agents)}
-              sub={working ? `${working} working` : 'all idle'}
+              sub={working ? `${working} in flight` : 'all standing by'}
               onClick={() => setViewLevel('fleet')}
               clickTitle="Open the Fleet"
             />
             <Stat
-              label="Working"
+              label="In flight"
               value={String(working)}
               color={working ? 'var(--wks-busy)' : undefined}
               onClick={() => setViewLevel('fleet')}
               clickTitle="Open the Fleet"
             />
             <Stat
-              label="Need you"
+              label="Waiting"
               value={String(needsYou)}
               color={needsYou ? 'var(--wks-warning)' : undefined}
               onClick={openInbox}
@@ -853,7 +853,8 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
           <Section title="Recent directories">
             {recentOnly.length === 0 ? (
               <div style={{ padding: '10px', fontSize: '0.72rem', color: 'var(--wks-text-faint)' }}>
-                No recent directories yet. Spawn an agent and it'll show up here for quick relaunch.
+                No recent directories yet. Dispatch an agent and it'll show up here for quick
+                relaunch.
               </div>
             ) : (
               recentOnly.map((d) => (

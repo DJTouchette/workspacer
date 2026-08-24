@@ -141,8 +141,8 @@ export const ACTION_REGISTRY: ActionMeta[] = [
   // Agents
   { action: 'prev-agent', label: 'Previous agent', section: 'Agents' },
   { action: 'next-agent', label: 'Next agent', section: 'Agents' },
-  { action: 'next-attention', label: 'Agent needing you', section: 'Agents' },
-  { action: 'spawn-agent', label: 'Spawn agent', section: 'Agents' },
+  { action: 'next-attention', label: 'Agent waiting on you', section: 'Agents' },
+  { action: 'spawn-agent', label: 'Dispatch agent', section: 'Agents' },
   // Navigation
   { action: 'jump-tab', label: 'Jump to tab', section: 'Navigation', digitRange: true },
   { action: 'move-tab', label: 'Move tab to slot', section: 'Navigation', digitRange: true },

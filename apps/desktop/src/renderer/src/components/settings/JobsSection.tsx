@@ -350,7 +350,7 @@ const TEMPLATES: Array<{ label: string; hint: string; draft: Partial<Draft> }> =
   },
   {
     label: 'One-off agent',
-    hint: 'Spawn an agent once, at a time you pick',
+    hint: 'Dispatch an agent once, at a time you pick',
     draft: { name: '', triggerKind: 'once', actionKind: 'spawn' },
   },
 ];
@@ -1174,7 +1174,7 @@ const JobEditForm: React.FC<{
         onChange={(e) => set({ actionKind: e.target.value as Draft['actionKind'] })}
         style={selectStyle}
       >
-        <option value="spawn">Spawn an agent with a prompt</option>
+        <option value="spawn">Dispatch an agent with a prompt</option>
         <option value="shell">Run a shell command</option>
         <option value="call">Call a bus capability</option>
       </select>

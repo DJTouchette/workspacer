@@ -86,7 +86,7 @@ export const HomeSpace: React.FC<HomeSpaceProps> = ({ onSpawn, spawnShortcut }) 
         zIndex: 1,
       }}
     >
-      + Spawn agent
+      + Dispatch agent
     </button>
     {spawnShortcut && (
       <div
