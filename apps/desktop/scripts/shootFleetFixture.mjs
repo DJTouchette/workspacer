@@ -22,6 +22,7 @@
  * changes, this fixture follows it instead of silently degrading to a text
  * blob.
  */
+import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { pathToFileURL } from 'url';
@@ -217,10 +218,29 @@ const atlasLines = [
   ),
 ];
 
+// The ledger worker carries the longest log of the staged fleet on purpose: it
+// is the one the `agent-gui` and `ask-question` captures are taken of, and a
+// GUI shot of a single Edit shows nothing about what the pane is for. The
+// three files it touches are the three in LEDGER_RESULT.filesChanged and the
+// three the staged git tree is dirtied with (seedProjectTree), so the work log,
+// the changed-files card, the inspector rail, the Review pane and the result
+// card all agree about what this agent did.
 const ledgerLines = [
   userLine(
     'The fee totals are drifting against the gateway. Find out why and fix it. End with a fenced wks-result block.',
     iso(13 * min),
+  ),
+  asstLine(
+    [
+      text('Reading the fee path before I change anything.'),
+      toolUse('tu_read', 'Read', { file_path: '/tmp/dev/ledger/internal/fees/round.go' }),
+    ],
+    iso(11 * min),
+  ),
+  resultLine(
+    'tu_read',
+    'func InvoiceTotal(inv Invoice) Cents {\n\tvar total Cents\n\tfor _, li := range inv.Lines {\n\t\ttotal += round(li.Fee)\n\t}\n\treturn total\n}',
+    iso(11 * min),
   ),
   asstLine(
     [
@@ -229,13 +249,49 @@ const ledgerLines = [
       ),
       toolUse('tu_fix', 'Edit', {
         file_path: '/tmp/dev/ledger/internal/fees/round.go',
-        old_string: 'for _, li := range inv.Lines {\n\ttotal += round(li.Fee)\n}',
-        new_string: 'for _, li := range inv.Lines {\n\ttotal += li.Fee\n}\ntotal = round(total)',
+        old_string: 'for _, li := range inv.Lines {\n\t\ttotal += round(li.Fee)\n\t}',
+        new_string: 'for _, li := range inv.Lines {\n\t\ttotal += li.Fee\n\t}\n\ttotal = round(total)',
       }),
     ],
-    iso(8 * min),
+    iso(9 * min),
   ),
-  resultLine('tu_fix', 'The file internal/fees/round.go has been updated.', iso(8 * min)),
+  resultLine('tu_fix', 'The file internal/fees/round.go has been updated.', iso(9 * min)),
+  asstLine(
+    [
+      text(
+        'The contract fixture was written from the per-line total, so it pinned the bug. Rewriting it from the gateway side before I trust a green run.',
+      ),
+      toolUse('tu_fixture', 'Edit', {
+        file_path: '/tmp/dev/ledger/contracts/fee-rounding-cases.json',
+        old_string: '"expected_total": 1247',
+        new_string: '"expected_total": 1241',
+      }),
+      toolUse('tu_case', 'Edit', {
+        file_path: '/tmp/dev/ledger/internal/fees/round_test.go',
+        old_string: '\t}\n}',
+        new_string:
+          '\t{name: "twelve lines, one rounding", inv: twelveLine(), want: 1241},\n\t}\n}',
+      }),
+    ],
+    iso(7 * min),
+  ),
+  resultLine('tu_fixture', 'The file contracts/fee-rounding-cases.json has been updated.', iso(7 * min)),
+  resultLine('tu_case', 'The file internal/fees/round_test.go has been updated.', iso(7 * min)),
+  asstLine(
+    [
+      text('Replaying the recorded invoices against the corrected fixture.'),
+      toolUse('tu_test', 'Bash', {
+        command: 'go test ./internal/fees/... && go run ./cmd/replay --corpus invoices.jsonl',
+        description: 'Unit tests, then the 9,412-invoice contract replay',
+      }),
+    ],
+    iso(6 * min),
+  ),
+  resultLine(
+    'tu_test',
+    'ok  \tledger/internal/fees\t0.212s\t41/41\nreplay: 9412 invoices, 0 mismatches (was 138)',
+    iso(6 * min),
+  ),
   asstLine([text(LEDGER_REPLY)], iso(5 * min)),
 ];
 
@@ -318,6 +374,16 @@ export const AGENTS = [
         id: 'tu_fix',
         tool: 'Edit',
         input: { file_path: '/tmp/dev/ledger/internal/fees/round.go' },
+      },
+      {
+        id: 'tu_fixture',
+        tool: 'Edit',
+        input: { file_path: '/tmp/dev/ledger/contracts/fee-rounding-cases.json' },
+      },
+      {
+        id: 'tu_case',
+        tool: 'Edit',
+        input: { file_path: '/tmp/dev/ledger/internal/fees/round_test.go' },
       },
     ],
     statusline: {
@@ -569,4 +635,210 @@ export function seedBriefs(stageHome) {
     dirs[name] = dir;
   }
   return dirs;
+}
+
+// ── A pending question, fired late ───────────────────────────────────────────
+/**
+ * Park an `AskUserQuestion` on the ledger worker.
+ *
+ * Deliberately NOT part of `seedFleet`: a pending question flips that agent
+ * from settled to waiting and moves the fleet's counts, which every earlier
+ * capture in the run is of. Firing it after those are taken means the
+ * `ask-question` and `triage-inbox` frames get the state they need without the
+ * rest of the run having to be re-thought around it.
+ *
+ * The hook is `pre_tool`, not `permission`: an AskUserQuestion pre_tool is
+ * surfaced as a pending picker on both the daemon and desktop paths and is not
+ * gated, so it does not hold the HTTP response open (see shootFixture.mjs).
+ */
+export async function fireQuestion() {
+  await post(`${HOOK}/hook/pre_tool`, {
+    session_id: WORKERS[1].id,
+    cwd: WORKERS[1].cwd,
+    tool_name: 'AskUserQuestion',
+    tool_use_id: 'tu_ask',
+    tool_input: {
+      questions: [
+        {
+          question: '138 invoices already went out with the old total. How do you want them handled?',
+          header: 'Mismatched invoices',
+          multiSelect: false,
+          options: [
+            {
+              label: 'Credit the difference (Recommended)',
+              description:
+                'Issue a credit note for the 1–6 cent delta on each. No re-issue, no new invoice numbers, and the gateway reconciliation lines up on the next run.',
+            },
+            {
+              label: 'Re-issue every invoice',
+              description:
+                'Void and re-issue all 138 with the corrected total. Cleanest ledger, but every affected customer gets a second invoice email.',
+            },
+            {
+              label: 'Leave them and annotate',
+              description:
+                'Write the delta into the reconciliation notes and absorb it. Nothing customer-facing changes.',
+            },
+            {
+              label: 'Show me the 138 first',
+              description:
+                'Dump the affected invoice ids and per-invoice deltas before anything is decided.',
+            },
+          ],
+        },
+      ],
+    },
+  });
+}
+
+// ── A real repository under the staged project ───────────────────────────────
+/**
+ * Give `/tmp/dev/ledger` an actual git tree with actual source in it.
+ *
+ * Two captures need this and neither can be faked from a hook: the Review pane
+ * renders `git status` plus a unified diff, and the editor plugin renders a
+ * file tree and a syntax-highlighted buffer. Both read the real filesystem.
+ *
+ * The tree is committed CLEAN with the bug still in it, then the worker's three
+ * edits are applied on top — so the working tree is dirty in exactly the way
+ * the worker's log, its changed-files card and its `wks-result` all claim.
+ *
+ * IDENTITY IS PINNED HERE ON PURPOSE. This runs in the rig's own process, whose
+ * HOME is the real one, so an unpinned `git commit` would stamp the user's name
+ * and email into a repository that exists to be photographed. `GIT_CONFIG_*`
+ * plus the explicit author/committer env keep the real gitconfig out of it.
+ */
+export function seedProjectTree(stageHome) {
+  const root = path.join(stageHome, 'ledger');
+  const write = (rel, body) => {
+    const abs = path.join(root, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, body);
+  };
+
+  write('go.mod', 'module ledger\n\ngo 1.23\n');
+  write(
+    'README.md',
+    '# ledger\n\nInvoicing and fee arithmetic.\n\nFee totals are pinned by `contracts/fee-rounding-cases.json`.\nThe fixture is not authoritative on its own — it was written from the\nwrong side once already. Verify against the gateway before trusting a\ngreen run.\n',
+  );
+  write(
+    'internal/fees/round.go',
+    `package fees
+
+// Cents is a whole-cent amount. Fees are never carried as floats.
+type Cents int64
+
+type Line struct {
+	SKU string
+	Fee Cents
+}
+
+type Invoice struct {
+	ID    string
+	Lines []Line
+}
+
+// InvoiceTotal sums an invoice's line fees.
+func InvoiceTotal(inv Invoice) Cents {
+	var total Cents
+	for _, li := range inv.Lines {
+		total += round(li.Fee)
+	}
+	return total
+}
+
+func round(c Cents) Cents {
+	if c%1 == 0 {
+		return c
+	}
+	return c + 1
+}
+`,
+  );
+  write(
+    'internal/fees/round_test.go',
+    `package fees
+
+import "testing"
+
+func TestInvoiceTotal(t *testing.T) {
+	cases := []struct {
+		name string
+		inv  Invoice
+		want Cents
+	}{
+		{name: "single line", inv: oneLine(), want: 199},
+		{name: "empty invoice", inv: Invoice{ID: "inv_empty"}, want: 0},
+	}
+	for _, tc := range cases {
+		if got := InvoiceTotal(tc.inv); got != tc.want {
+			t.Errorf("%s: got %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+`,
+  );
+  write(
+    'contracts/fee-rounding-cases.json',
+    JSON.stringify(
+      {
+        source: 'gateway settlement export',
+        cases: [
+          { invoice: 'inv_0041', lines: 12, expected_total: 1247 },
+          { invoice: 'inv_0042', lines: 3, expected_total: 604 },
+        ],
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+
+  const git = (...args) => {
+    const r = spawnSync('git', args, {
+      cwd: root,
+      env: {
+        ...process.env,
+        HOME: stageHome,
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_CONFIG_SYSTEM: '/dev/null',
+        GIT_AUTHOR_NAME: 'ledger',
+        GIT_AUTHOR_EMAIL: 'ledger@example.invalid',
+        GIT_COMMITTER_NAME: 'ledger',
+        GIT_COMMITTER_EMAIL: 'ledger@example.invalid',
+      },
+      encoding: 'utf8',
+    });
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')} -> ${r.stderr || r.stdout}`);
+    return r.stdout;
+  };
+  git('init', '-q', '-b', 'master');
+  git('add', '-A');
+  git('commit', '-qm', 'ledger: invoicing and fee arithmetic');
+
+  // Now dirty it exactly the way the worker's log says it did.
+  write(
+    'internal/fees/round.go',
+    fs
+      .readFileSync(path.join(root, 'internal/fees/round.go'), 'utf8')
+      .replace(
+        '\tfor _, li := range inv.Lines {\n\t\ttotal += round(li.Fee)\n\t}\n\treturn total',
+        '\tfor _, li := range inv.Lines {\n\t\ttotal += li.Fee\n\t}\n\treturn round(total)',
+      ),
+  );
+  write(
+    'internal/fees/round_test.go',
+    fs
+      .readFileSync(path.join(root, 'internal/fees/round_test.go'), 'utf8')
+      .replace(
+        '\t\t{name: "empty invoice", inv: Invoice{ID: "inv_empty"}, want: 0},\n',
+        '\t\t{name: "empty invoice", inv: Invoice{ID: "inv_empty"}, want: 0},\n\t\t{name: "twelve lines, one rounding", inv: twelveLine(), want: 1241},\n',
+      ),
+  );
+  write(
+    'contracts/fee-rounding-cases.json',
+    fs
+      .readFileSync(path.join(root, 'contracts/fee-rounding-cases.json'), 'utf8')
+      .replace('"expected_total": 1247', '"expected_total": 1241'),
+  );
+  return root;
 }

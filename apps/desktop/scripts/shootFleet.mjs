@@ -8,6 +8,11 @@
  *   structured-result — that same wake's validated result, as a card
  *   brief-board       — every brief as swimlanes, mid-drag over Archive
  *   fleet-deck        — the deck, restaged for the Dispatch/In flight rename
+ *   agent-gui         — a worker's own pane: work log, diffs, changed files
+ *   review-pane       — git status + unified diff over the staged repo
+ *   editor            — the sandboxed editor plugin on a real source file
+ *   ask-question      — the same worker with a pending AskUserQuestion
+ *   triage-inbox      — the inbox drawer over the deck
  * The /m phone shots have their own rig: scripts/shootMobile.mjs.
  *
  *   npm run shoot:fleet
@@ -54,7 +59,14 @@
 import { _electron as electron } from 'playwright';
 import * as fs from 'fs';
 import * as path from 'path';
-import { seedFleet, seedBriefs, seedSavedSession, waitForHook } from './shootFleetFixture.mjs';
+import {
+  fireQuestion,
+  seedBriefs,
+  seedFleet,
+  seedProjectTree,
+  seedSavedSession,
+  waitForHook,
+} from './shootFleetFixture.mjs';
 
 const APP = path.resolve(import.meta.dirname, '..');
 // The stage's HOME is also the manager's root and the Board's fleet lane, and
@@ -108,6 +120,11 @@ const yaml = [
 ].join('\n');
 fs.writeFileSync(`${STAGE}/.config/workspacer/config.yaml`, yaml);
 
+// A real git repository with real source under the ledger project. The Review
+// pane and the editor plugin both read the filesystem, so neither can be staged
+// from a hook the way the chat surfaces are.
+seedProjectTree(STAGE);
+
 // The saved layout the app restores at boot: it is what carries the manager's
 // name, its supervisor kind, and each worker's parentId.
 seedSavedSession(STAGE);
@@ -148,6 +165,20 @@ await page.waitForTimeout(6000);
 const shot = async (name) => {
   await page.screenshot({ path: `${OUT}/${name}.png` });
   console.log(`captured ${OUT}/${name}.png`);
+};
+
+/**
+ * Best-effort staging step. A scroll target that never appears is a reason to
+ * look at the frame, not a reason to lose the seven frames already taken and
+ * the four still to come — so it is logged loudly and the run continues. Every
+ * capture is inspected by hand before it ships either way.
+ */
+const soft = async (label, fn) => {
+  try {
+    await fn();
+  } catch (err) {
+    console.error(`STEP FAILED (${label}): ${err.message.split('\n')[0]}`);
+  }
 };
 
 // ── sidebar-nesting: the crew folded under the manager, Overview behind ──
@@ -276,5 +307,110 @@ await page.waitForTimeout(1000);
 await page.getByTitle('Open the Fleet').first().click();
 await page.waitForTimeout(2500);
 await shot('fleet-deck');
+
+// ── agent-gui: one worker's own pane, not the fleet's view of it ───────────
+// The ledger worker, because it is the only one that has finished a piece of
+// work: a read, three edits with inline diffs, a test run, an end-of-turn
+// changed-files card, and three files in the inspector rail. The same three
+// files the Review and editor shots below are of.
+//
+// ORDER MATTERS FROM HERE DOWN, and not for tidiness. Piloting an agent
+// auto-dismisses that agent's inbox items (AttentionContext: you are already
+// looking at it), so the question has to be fired from the FLEET view or the
+// inbox capture is a drawer with one item in it. And ask-question is taken
+// before the Review/editor tabs exist so that frame is a chat pane, not a chat
+// pane with two unrelated tabs beside it.
+
+// The deck is an overlay and it covers the sidebar the card lives in.
+await page.keyboard.press('Escape');
+await page.waitForTimeout(1200);
+const ledgerCard = page.locator('[role="button"][title*="reconcile the fee rounding"]');
+if (!(await ledgerCard.count())) {
+  console.error(
+    'ABORT: no ledger card in the sidebar. Titles present:',
+    JSON.stringify(
+      await page
+        .locator('[role="button"][title]')
+        .evaluateAll((els) => els.map((e) => e.getAttribute('title')).slice(0, 20)),
+    ),
+  );
+  await app.close();
+  process.exit(3);
+}
+await ledgerCard.first().click();
+await page.waitForTimeout(1500);
+const workerGui = page.getByRole('button', { name: 'GUI', exact: true });
+if (await workerGui.count()) await workerGui.first().click();
+await page.getByText('CHANGED FILES', { exact: false }).first().waitFor({ timeout: 20000 });
+// NOT the inspector rail (mod+shift+e). It opens, but it renders "No files
+// changed yet" against a session whose edits arrived as hooks rather than
+// through a live turn, so it costs 340px of frame and says nothing true.
+// Pin the frame to the END of the turn — the last edits and the card that rolls
+// them up — rather than wherever the restore left the scroll.
+await soft('agent-gui scroll to tail', async () => {
+  await page.getByText('Scroll to bottom', { exact: false }).first().click({ timeout: 6000 });
+});
+await page.waitForTimeout(2000);
+await shot('agent-gui');
+
+// ── triage-inbox: the drawer over the deck, from the fleet ─────────────────
+// The question is fired HERE, at fleet altitude, so it reaches the inbox at all.
+await page.locator('[title^="Overview —"]').first().click();
+await page.waitForTimeout(1200);
+await page.getByTitle('Open the Fleet').first().click();
+await page.waitForTimeout(2000);
+await fireQuestion();
+await page.waitForTimeout(3000);
+await soft('inbox open', async () => {
+  await page.keyboard.press('Control+k');
+  await page.waitForTimeout(500);
+  await page.keyboard.type('Toggle Inbox');
+  await page.waitForTimeout(600);
+  await page.keyboard.press('Enter');
+});
+await page.waitForTimeout(2500);
+await shot('triage-inbox');
+
+// ── ask-question: the same question, in the agent's own pane ───────────────
+await page.keyboard.press('Escape');
+await page.waitForTimeout(700);
+await page.keyboard.press('Escape');
+await page.waitForTimeout(1200);
+await ledgerCard.first().click();
+await page.waitForTimeout(2500);
+await soft('ask-question scroll to tail', async () => {
+  await page.getByText('Scroll to bottom', { exact: false }).first().click({ timeout: 6000 });
+});
+await page.waitForTimeout(2000);
+await shot('ask-question');
+
+// ── review-pane: the same three files, as git sees them ────────────────────
+await soft('review pane open', async () => {
+  await page.keyboard.press('Control+k');
+  await page.waitForTimeout(500);
+  await page.keyboard.type('Review Changes');
+  await page.waitForTimeout(600);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(4000);
+});
+// DO NOT click a file in the Review tree to change the selected diff: the tree's
+// click handler is "open in editor", so it opens an editor tab over the pane and
+// the capture becomes a second editor shot. The default selection is the frame.
+await page.waitForTimeout(2500);
+await shot('review-pane');
+
+// ── editor: the sandboxed editor plugin, opened ON a file ──────────────────
+// Through the app's own open-in-editor bus rather than the palette: the palette
+// entry opens the plugin with no file, which is what the shipped capture shows
+// and why it says "No file open" under a caption promising syntax highlighting.
+await page.evaluate(() => {
+  window.dispatchEvent(
+    new CustomEvent('editor:open-file', {
+      detail: { path: '/tmp/dev/ledger/internal/fees/round.go', cwd: '/tmp/dev/ledger' },
+    }),
+  );
+});
+await page.waitForTimeout(6000);
+await shot('editor');
 
 await app.close();
