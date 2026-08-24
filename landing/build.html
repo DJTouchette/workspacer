@@ -493,7 +493,7 @@ go run ./cmd/mcp --addr 127.0.0.1:7897 --hub ws://127.0.0.1:7895/bus
 
     <section id="federation" class="doc">
 <h2>hub federation (hub-of-hubs)</h2>
-<p><em>New in v0.150 (next release; on nightly now).</em> A hub can link <em>upstream</em> to named peer hubs and republish their fleet onto its own bus, so every client keeps its one-bus invariant while the fleet spans machines. Design + implementation notes: <code>docs/hub-federation.md</code>.</p>
+<p><em>Currently nightly-only — federation hasn't reached a tagged stable release yet.</em> A hub can link <em>upstream</em> to named peer hubs and republish their fleet onto its own bus, so every client keeps its one-bus invariant while the fleet spans machines. Design + implementation notes: <code>docs/hub-federation.md</code>.</p>
 <ul>
 <li><strong>Links are ordinary bus clients.</strong> Each peer in <code>~/.config/workspacer/peers.json</code> (<code>{name, url, token}</code>, 0600 — tokens never ride argv or config.yaml) gets an outbound <code>busclient</code> holding a scoped token the peer minted. The peer needs no concept of federation; the token's tier is the ceiling on the whole link.</li>
 <li><strong>Events forward off an allowlist</strong> (<code>agent.*</code>, <code>workflow.*</code>), stamped with the peer name in a new envelope field (<code>hub</code>) — payloads are never rewritten. Deliberately not <code>*</code>: a peer's <code>layout.changed</code> would clobber the local layout document, its <code>plugin.*</code> topics are host-only for a reason, and its <code>command.*</code> events would drive this machine's UI. Loop prevention is a tree invariant: an event that already carries a stamp is dropped, never re-forwarded.</li>

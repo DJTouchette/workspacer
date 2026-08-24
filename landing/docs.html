@@ -558,7 +558,7 @@ workspacer token revoke &lt;token-or-prefix&gt;</code></pre>
 <a href="shots/mobile-chat.webp" target="_blank" style="flex:1;line-height:0"><img src="shots/mobile-chat.webp" width="640" height="1098" loading="lazy" style="width:100%;height:auto;border:1px solid #2a3134;border-radius:12px" alt="An agent transcript opened from a mobile fleet card: collapsible work cards, diff counts, model and permission pills, and the composer" /></a>
 </p>
 <h3>federate two machines (hub-of-hubs)</h3>
-<p><em>New in v0.150 — the next release. It's on the nightly channel now if you'd rather not wait.</em></p>
+<p><em>Currently nightly-only — federation hasn't reached a tagged stable release yet.</em></p>
 <p>Everything above is about reaching <strong>one machine's</strong> fleet from other devices. Federation is the other direction: if you run work{spacer} on <strong>two machines</strong> (a desktop and a laptop, home and work), your hub can link to the other machine's hub and show <strong>both fleets in one UI</strong>. Remote sessions appear beside local ones with a small hub badge naming the machine; approvals, replies, and interrupts route to the right machine automatically; and when the other machine sleeps, its agents don't vanish — they tombstone ("hub offline — last seen 2h ago") and come back live when the link returns.</p>
 <p>Setup is one file. On the machine you want to <em>see into</em>, mint a token: <code>workspacer token create --scope operator</code> (or <code>triage</code> for watch-and-approve without spawning). On the machine you're <em>looking from</em>, write <code>~/.config/workspacer/peers.json</code>:</p>
 <pre><code>[{ "name": "work-pc", "url": "ws://work-pc:7895/bus", "token": "&lt;that token&gt;" }]</code></pre>
