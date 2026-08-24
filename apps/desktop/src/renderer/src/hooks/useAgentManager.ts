@@ -814,6 +814,10 @@ export function useAgentManager() {
         const parent = opts.parentSessionId
           ? prev.find((a) => a.sessionId === opts.parentSessionId)
           : undefined;
+        // Snapshot the dispatcher's manager-ness NOW, while its card still
+        // exists — if that card is later removed, this is the only place that
+        // fact could still be read from (see AgentWorkspace.dispatchedByManager).
+        const dispatchedByManager = parent?.manager === true;
         // Carry the provider so an adopted card (e.g. a Codex session spawned via
         // the MCP facade or the web client) renders the right label/logo instead
         // of defaulting to Claude.
@@ -837,6 +841,7 @@ export function useAgentManager() {
           transport: opts.transport,
           sessionId: opts.sessionId,
           parentId: parent?.id,
+          dispatchedByManager,
           tabs,
           activeTabId,
         };

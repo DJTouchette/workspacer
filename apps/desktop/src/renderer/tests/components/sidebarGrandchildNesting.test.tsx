@@ -155,3 +155,68 @@ describe('SideBar fleet nesting — grandchildren', () => {
     expect(() => render(<Harness />)).not.toThrow();
   });
 });
+
+/**
+ * The "Unwatched" chip surfaces the same dangling-parentId fact `rootOf`
+ * already computes for grouping (see above) — a worker whose dispatcher card
+ * is gone, so nobody is positioned to hear its result. It must appear only
+ * for that exact case, never for an ordinary top-level agent or a normally
+ * nested child whose parent resolves, and it must say something different
+ * depending on whether the dispatcher is a *confirmed* Fleet Manager
+ * (`dispatchedByManager: true`, recorded at adopt time) or merely absent.
+ */
+describe('SideBar — orphaned-worker "Unwatched" chip', () => {
+  it('renders on a worker whose parentId does not resolve to any known agent', () => {
+    const agents = [
+      // a-ghost-manager is never in the agents list — its card is gone.
+      { ...mkAgent('a-worker', 'lone-worker', 'a-ghost-manager'), dispatchedByManager: true },
+    ];
+    const Harness = harnessFor(agents);
+    render(<Harness />);
+
+    expect(screen.getByText('lone-worker')).toBeInTheDocument();
+    expect(screen.getByText('Unwatched')).toBeInTheDocument();
+  });
+
+  it('does NOT render for an ordinary top-level agent with no parentId at all', () => {
+    const agents = [mkAgent('a-standalone', 'standalone')];
+    const Harness = harnessFor(agents);
+    render(<Harness />);
+
+    expect(screen.getByText('standalone')).toBeInTheDocument();
+    // This is the assertion that catches a false-positive implementation
+    // (e.g. flagging any agent without a parentId instead of only a
+    // *dangling* one) — watched it fail before the `!!agent.parentId` guard
+    // was added: it matched Overview/global rows and every plain agent too.
+    expect(screen.queryByText('Unwatched')).not.toBeInTheDocument();
+  });
+
+  it('does NOT render for a child whose parentId resolves to a live agent', () => {
+    const agents = [mkAgent('a-manager', 'manager'), mkAgent('a-worker', 'worker', 'a-manager')];
+    const Harness = harnessFor(agents);
+    render(<Harness />);
+
+    expect(screen.getByText('manager')).toBeInTheDocument();
+    expect(screen.getByText('worker')).toBeInTheDocument();
+    expect(screen.queryByText('Unwatched')).not.toBeInTheDocument();
+  });
+
+  it('distinguishes a confirmed manager from a merely-gone parent in the tooltip', () => {
+    const confirmed = {
+      ...mkAgent('a-confirmed', 'confirmed-worker', 'a-ghost-manager'),
+      dispatchedByManager: true,
+    };
+    const inferred = {
+      ...mkAgent('a-inferred', 'inferred-worker', 'a-ghost-parent'),
+      dispatchedByManager: false,
+    };
+    const Harness = harnessFor([confirmed, inferred]);
+    render(<Harness />);
+
+    const chips = screen.getAllByText('Unwatched');
+    expect(chips).toHaveLength(2);
+    const titles = chips.map((el) => el.closest('span')?.getAttribute('title'));
+    expect(titles.some((t) => t?.includes('manager session ended'))).toBe(true);
+    expect(titles.some((t) => t?.includes('no longer here'))).toBe(true);
+  });
+});
