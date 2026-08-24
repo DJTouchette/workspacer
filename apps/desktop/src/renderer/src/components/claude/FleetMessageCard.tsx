@@ -6,14 +6,17 @@
  * user turns — one giant paragraph each. ConversationMessage recognizes them
  * (shared/fleetMessages.ts parser, same module that BUILDS them) and renders
  * this instead of a user bubble: a kind badge, one row per worker with a
- * clickable session chip, and the worker's last-reply excerpt collapsed
- * behind a toggle. Anything the parser doesn't match stays a raw bubble.
+ * clickable session chip, the worker's structured result (when its dispatch
+ * carried a resultSchema) as a StructuredResultCard, and its last-reply
+ * excerpt collapsed behind a toggle. Anything the parser doesn't match stays a
+ * raw bubble.
  */
 import React, { useState } from 'react';
 import { AlertTriangle, Check, ChevronRight, History, Megaphone, Reply } from 'lucide-react';
 import type { FleetMessage, FleetMessageEntry } from '../../../../main/shared/fleetMessages';
 import { claudeColors as colors } from '../claude-shared';
 import { Surface } from '../Surface';
+import { StructuredResultCard } from './StructuredResultCard';
 import { useAttentionOptional } from '../../contexts/AttentionContext';
 import { TurnStamp } from './ConversationMessage';
 
@@ -297,6 +300,10 @@ const EntryRow: React.FC<{
           {entry.note}
         </div>
       )}
+      {/* The worker's own machine-readable report, when its dispatch asked for
+          one. Above the last-reply toggle on purpose: it is the scannable
+          answer, and the prose excerpt is the backup. */}
+      <StructuredResultCard json={entry.result} error={entry.resultError} cwd={entry.cwd} />
       {entry.lastReply && (
         <div style={{ marginTop: 4 }}>
           <button
