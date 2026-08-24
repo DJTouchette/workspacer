@@ -215,6 +215,37 @@ test.describe('mobile client', () => {
     });
   });
 
+  test('the more sheet offers Stop behind a confirm, distinct from Interrupt', async ({
+    page,
+  }) => {
+    await openClient(page);
+    await page.locator('.agent[data-agent="ws1"] .top').click();
+
+    await page.locator('#moreBtn').click();
+    const stopRow = page.locator('#sheet .opt', { hasText: 'Stop this session' });
+    await expect(stopRow).toBeVisible();
+    await expect(stopRow).toHaveClass(/danger/);
+    // Interrupt stays a separate, non-destructive row in the same sheet.
+    await expect(page.locator('#sheet .opt', { hasText: 'Interrupt this turn' })).toBeVisible();
+
+    // Dismissing the confirm must not fire the signal.
+    page.once('dialog', (d) => d.dismiss());
+    const before = hub.callsTo('claude.signal').length;
+    await stopRow.click();
+    await page.waitForTimeout(300);
+    expect(hub.callsTo('claude.signal').length).toBe(before);
+
+    // Accepting it does, with SIGTERM (not SIGINT — the distinction that matters).
+    await page.locator('#moreBtn').click();
+    page.once('dialog', (d) => d.accept());
+    await page.locator('#sheet .opt', { hasText: 'Stop this session' }).click();
+    await expect.poll(() => hub.callsTo('claude.signal').length).toBeGreaterThan(before);
+    expect(hub.callsTo('claude.signal').at(-1)!.params).toMatchObject({
+      sessionId: 'ws1',
+      signal: 'SIGTERM',
+    });
+  });
+
   test('composer sends a message and switches permission mode', async ({ page }) => {
     await openClient(page);
     await page.locator('.agent[data-agent="ws1"] .top').click();
