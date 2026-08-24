@@ -152,6 +152,10 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   // treatment write access gets.
   'agents.close': { label: 'Dismiss a finished agent session', sensitive: true },
   'agents.notifyWhen': { label: 'Ask to be told when an agent crosses a cost or idle threshold' },
+  // Read-only, and its subject is dead sessions: which managers ended with
+  // workers still pointing at them. What it discloses about one — a label, a
+  // directory, its live children — agents.list already shows while it runs.
+  'agents.orphans': { label: 'See which departed managers left workers behind' },
   // Sensitive for agents.sendMessage's reason — the note lands in a running
   // agent's conversation, where it is read as instruction — even though the
   // recipient is the host's choice, not the caller's.

@@ -81,6 +81,7 @@ const getSnapshot = vi.fn(() => null as unknown);
 const noteRequestedModel = vi.fn();
 const clearPendingQuestions = vi.fn();
 const reparentChildren = vi.fn(() => ({ moved: [] as string[], pending: [] as string[] }));
+const orphanCandidates = vi.fn(() => [] as unknown[]);
 vi.mock('./claudeSessionStore', async (importOriginal) => {
   // Keep the real contextTokensFromStatusLine — it's a pure helper, and the
   // agents.list statusLine-fallback test below needs the real math, not a mock.
@@ -93,6 +94,7 @@ vi.mock('./claudeSessionStore', async (importOriginal) => {
       noteRequestedModel: (...a: unknown[]) => noteRequestedModel(...a),
       clearPendingQuestions: (...a: unknown[]) => clearPendingQuestions(...a),
       reparentChildren: (...a: unknown[]) => reparentChildren(...a),
+      orphanCandidates: (...a: unknown[]) => orphanCandidates(...a),
     },
     contextTokensFromStatusLine: actual.contextTokensFromStatusLine,
   };
@@ -377,6 +379,79 @@ describe('agents.list — statusLine fallback for managed providers', () => {
       (p): p is string => !!p && !live.has(p),
     );
     expect(orphaned).toEqual(['dead-mgr']);
+  });
+
+  // The desktop row LAGGED the brain's on both of these: the brain answers
+  // agents.list with the same enriched snapshots as sessions.snapshots, so it
+  // has served label and isSupervisor since enrichSnapshot (cmd/brain
+  // parity_test.go pins them, because /m titles and nests the fleet on them).
+  // Convergence, not a widening — sessions.snapshots is in the SAME viewMethods
+  // allowlist and already ships both through its full-snapshot spread.
+  it('carries label and isSupervisor, matching the brain’s row', () => {
+    getAllSnapshots.mockReturnValue([
+      {
+        sessionId: 'mgr',
+        cwd: '/work',
+        ambientState: 'idle',
+        label: 'Fleet Manager',
+        isSupervisor: true,
+      },
+      { sessionId: 'w1', cwd: '/proj', ambientState: 'idle', label: 'alpha: parser' },
+      { sessionId: 'bare', cwd: '/proj', ambientState: 'idle' },
+    ] as never);
+    const rows = call('agents.list') as {
+      sessionId: string;
+      label: string | null;
+      isSupervisor: boolean;
+    }[];
+    expect(rows.map((r) => [r.sessionId, r.label, r.isSupervisor])).toEqual([
+      ['mgr', 'Fleet Manager', true],
+      ['w1', 'alpha: parser', false],
+      // Explicit null / false, never absent — the same rule parentSessionId
+      // follows: "unnamed" must be distinguishable from "field not served".
+      ['bare', null, false],
+    ]);
+  });
+});
+
+// The crash case. agents.reparent needs a `fromSessionId`; a manager that
+// crashed wrote no handoff file to read one off and left no row to read one
+// from. agents.orphans is the read that answers it — and its contract is that
+// it REPORTS candidates and never picks one, because adopting the wrong group
+// silently re-points another manager's workers onto the caller.
+describe('agents.orphans — the successor’s read', () => {
+  it('hands back every candidate, ranked, and tells the caller to choose', () => {
+    orphanCandidates.mockReturnValue([
+      {
+        sessionId: 'dead-mgr',
+        label: 'Fleet Manager',
+        cwd: '/work',
+        endedAt: 1_700_000_000_000,
+        confirmedManager: true,
+        children: [{ sessionId: 'w1', label: 'alpha: parser', cwd: '/proj', state: 'idle' }],
+      },
+      {
+        sessionId: 'dangling',
+        label: null,
+        cwd: null,
+        endedAt: null,
+        confirmedManager: false,
+        children: [{ sessionId: 'w2', label: null, cwd: '/proj', state: 'streaming' }],
+      },
+    ] as never);
+    const out = call('agents.orphans') as { candidates: unknown[]; note: string };
+    expect(out.candidates).toHaveLength(2);
+    expect(out.note).toContain('1 are confirmed managers');
+    expect(out.note, 'the ambiguity has to be stated, not implied').toContain('do not guess');
+  });
+
+  it('says so plainly when nothing is orphaned', () => {
+    orphanCandidates.mockReturnValue([]);
+    const out = call('agents.orphans') as { candidates: unknown[]; note: string };
+    expect(out.candidates).toEqual([]);
+    // "None" is the common answer (a clean handover, or a predecessor with
+    // nothing in flight) and must not read as a failure.
+    expect(out.note).toContain('Nothing is orphaned');
   });
 });
 

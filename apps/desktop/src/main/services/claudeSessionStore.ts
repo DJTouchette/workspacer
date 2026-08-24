@@ -393,6 +393,55 @@ export type RemoteSnapshotWire = Partial<ClaudeSessionSnapshot> & {
   conversationUserOffset?: number;
 };
 
+/**
+ * What survives a MANAGER's eviction, so its successor can be told who it is
+ * replacing instead of guessing.
+ *
+ * Deliberately NOT a field on ClaudeSessionSnapshot: a tombstone is not a
+ * session. It renders nowhere, it is not pushed to the renderer, and above all
+ * it must never be reachable as a wake destination (see orphanCandidates) —
+ * three properties a resurrected row would quietly lose.
+ *
+ * Only the four questions succession actually asks: was this a manager, when
+ * did it die, what was it called, where did it work.
+ */
+export interface DeadManagerTombstone {
+  sessionId: string;
+  label?: string;
+  cwd: string;
+  /** ms, when the row was evicted (SessionEnd + grace, or close_session). */
+  endedAt: number;
+  provider?: string;
+}
+
+/**
+ * A dead parent that still has live children — the `fromSessionId`
+ * `agents.reparent` wants, plus what a human or an agent needs to decide
+ * WHICH one was theirs.
+ *
+ * `confirmedManager` is the whole point of the tombstone: false means the id
+ * is merely dangling (derived from the children, as before — it could be a
+ * dead worker that spawned subagents), true means the store watched a session
+ * marked `isSupervisor` die.
+ */
+export interface OrphanCandidate {
+  sessionId: string;
+  label: string | null;
+  cwd: string | null;
+  endedAt: number | null;
+  confirmedManager: boolean;
+  children: Array<{
+    sessionId: string;
+    label: string | null;
+    cwd: string;
+    /** 'pending' = dispatched, not yet registered (spawnMeta only). */
+    state: SessionAmbientState | 'pending';
+  }>;
+}
+
+/** Hard cap on retained tombstones (see pruneManagerTombstones). */
+const MAX_MANAGER_TOMBSTONES = 32;
+
 // ── Store ──
 
 class ClaudeSessionStore {
@@ -446,6 +495,12 @@ class ClaudeSessionStore {
   // opencode) sessions don't fire Claude Stop/SessionEnd hooks, so we snapshot
   // their history off the conversation stream instead (see scheduleManagedHistory).
   private managedHistoryTimers = new Map<string, NodeJS.Timeout>();
+  // Succession: what a MANAGER leaves behind when its row is evicted, keyed by
+  // its (now dead) session id. Written only by evictNow — the one teardown
+  // path — and read only by orphanCandidates. Retention is "still has live
+  // children", so this is bounded by the fleet, not by uptime; see
+  // pruneManagerTombstones for the backstop cap.
+  private managerTombstones = new Map<string, DeadManagerTombstone>();
 
   /** Record name/parent for a session about to be spawned, keyed by its pinned
    *  id. Consumed when the session first registers (see createSession), so an
@@ -568,6 +623,11 @@ class ClaudeSessionStore {
     if (oldManagerId === newManagerId) {
       throw new Error(`reparent_children: ${newManagerId} is already the parent — nothing to move`);
     }
+    // Live rows and pending spawns only — NEVER managerTombstones. A tombstone
+    // proves a manager is DEAD, which is the one thing that disqualifies it as
+    // a destination: nudgeParentOnFinish refuses an ended parent, so adopting
+    // ONTO one would silence the very workers this is rescuing. The tombstones
+    // answer `fromSessionId` and nothing else.
     const successor = this.sessions.get(newManagerId);
     const successorMeta = this.spawnMeta.get(newManagerId);
     if (!successor && !successorMeta) {
@@ -626,7 +686,152 @@ class ClaudeSessionStore {
     // PER_TURN_WAKE_FINDING.md 1b calls noise; its result belongs in the
     // handoff brief. Anything the worker does AFTER the move produces a
     // different reply and wakes the successor normally.
+
+    // The predecessor's tombstone (if it had one) has just lost its children,
+    // so it stops being an orphan candidate immediately rather than at the next
+    // read — "already adopted" and "still waiting" must not look alike.
+    this.pruneManagerTombstones();
     return { moved, pending };
+  }
+
+  /**
+   * The dead parents that still have live children — the successor's half of
+   * `agents.reparent` when there was no handoff file to read an id off.
+   *
+   * A manager that CRASHES writes no handoff, and ~30 s after its SessionEnd
+   * its row is evicted, so all that was left of it was a dangling
+   * `parentSessionId` on the workers. That is enough to find a GROUP and
+   * nothing else: it does not say the parent was a manager (a worker can spawn
+   * agents too), and with two dangling groups it does not say which was yours.
+   * The tombstone recorded at eviction answers the first question outright and
+   * gives the second the only evidence there is — a label, a cwd and a time of
+   * death to match against what the successor was told to take over.
+   *
+   * It REPORTS; it never picks. Automatic adoption was rejected when
+   * `agents.reparent` landed because a wrong guess silently re-points a live
+   * worker's wakes into a conversation that never dispatched it, and the
+   * tombstone weakens that objection without removing it: `confirmedManager`
+   * narrows the candidates to real managers, but two managers can die with
+   * live children, and only the successor knows which brief it was handed.
+   * So this returns every candidate, ranked, and the choice stays a deliberate
+   * call with an id in it.
+   *
+   * Candidates come from two sources on purpose:
+   *   - a tombstone (`confirmedManager: true`) — the store watched an
+   *     `isSupervisor` session die;
+   *   - a bare dangling id (`confirmedManager: false`) — children point at a
+   *     parent this process has no row and no tombstone for. Unprovable, but
+   *     hiding it would lose the orphans that predate the tombstone (a manager
+   *     evicted before this build, or one whose whole life the app missed).
+   *
+   * A parent whose row is still resident but `ended` (inside the eviction
+   * grace) is a candidate too — `nudgeParentOnFinish` already refuses to wake
+   * an ended parent, so those workers are orphaned in every sense that matters,
+   * 30 s before the tombstone exists.
+   *
+   * Federated children are excluded: a remote row's `parentSessionId` names a
+   * session on the PEER, and `reparentChildren` refuses to move it anyway.
+   */
+  orphanCandidates(): OrphanCandidate[] {
+    this.pruneManagerTombstones();
+
+    const byParent = new Map<string, OrphanCandidate['children']>();
+    const addChild = (parentId: string, child: OrphanCandidate['children'][number]): void => {
+      const kids = byParent.get(parentId);
+      if (kids) kids.push(child);
+      else byParent.set(parentId, [child]);
+    };
+    for (const s of this.sessions.values()) {
+      if (!s.parentSessionId || s.hub || s.status === 'ended') continue;
+      addChild(s.parentSessionId, {
+        sessionId: s.sessionId,
+        label: s.label ?? null,
+        cwd: s.cwd,
+        state: s.ambientState,
+      });
+    }
+    // Dispatched but not yet registered — the most orphan-prone case there is,
+    // and the one reparentChildren also moves (its `pending` half).
+    for (const [sessionId, meta] of this.spawnMeta) {
+      if (!meta.parentSessionId) continue;
+      addChild(meta.parentSessionId, {
+        sessionId,
+        label: meta.label ?? null,
+        cwd: '',
+        state: 'pending',
+      });
+    }
+
+    const candidates: OrphanCandidate[] = [];
+    for (const [parentId, children] of byParent) {
+      const row = this.sessions.get(parentId);
+      if (row && row.status !== 'ended') continue; // still alive: nothing is orphaned
+      const tomb = this.managerTombstones.get(parentId);
+      candidates.push({
+        sessionId: parentId,
+        label: tomb?.label ?? row?.label ?? null,
+        cwd: tomb?.cwd ?? row?.cwd ?? null,
+        endedAt: tomb?.endedAt ?? null,
+        confirmedManager: Boolean(tomb) || row?.isSupervisor === true,
+        children,
+      });
+    }
+    // Proven managers first, then the most recent death, then by id so the
+    // order is stable for a caller comparing two reads.
+    return candidates.sort(
+      (a, b) =>
+        Number(b.confirmedManager) - Number(a.confirmedManager) ||
+        (b.endedAt ?? 0) - (a.endedAt ?? 0) ||
+        a.sessionId.localeCompare(b.sessionId),
+    );
+  }
+
+  /**
+   * Retention rule: a tombstone lives exactly as long as something it parented
+   * is still around to be adopted. Nothing else is a bound — by age it would
+   * expire while the workers it explains are still running, and unbounded it is
+   * a map that grows once per manager for the life of the process.
+   *
+   * The cap is a backstop against pathology (a fleet that retires managers
+   * faster than their workers finish), and it drops the OLDEST: a successor
+   * spawning now is replacing one of the recent deaths.
+   *
+   * Note this deliberately re-reads the LIVE rows every time rather than
+   * keeping a child count on the tombstone — a count would go stale the moment
+   * a worker was adopted, and a tombstone that outlives its children starts
+   * re-answering "who was my predecessor" with a manager that has nothing left
+   * to hand over.
+   */
+  /**
+   * How many manager tombstones are retained. Diagnostic, and the ONLY way the
+   * retention rule can be observed at all: a childless tombstone reports
+   * nothing through orphanCandidates (candidates are derived from the children,
+   * so a parent with none is simply absent), which means a map that never
+   * pruned would look identical from the outside while growing once per
+   * manager for the life of the process. A guard has to be able to see it.
+   */
+  managerTombstoneCount(): number {
+    this.pruneManagerTombstones();
+    return this.managerTombstones.size;
+  }
+
+  private pruneManagerTombstones(): void {
+    if (this.managerTombstones.size === 0) return;
+    const parented = new Set<string>();
+    for (const s of this.sessions.values()) {
+      if (s.parentSessionId && !s.hub && s.status !== 'ended') parented.add(s.parentSessionId);
+    }
+    for (const meta of this.spawnMeta.values()) {
+      if (meta.parentSessionId) parented.add(meta.parentSessionId);
+    }
+    for (const id of [...this.managerTombstones.keys()]) {
+      if (!parented.has(id)) this.managerTombstones.delete(id);
+    }
+    if (this.managerTombstones.size <= MAX_MANAGER_TOMBSTONES) return;
+    const oldestFirst = [...this.managerTombstones.values()].sort((a, b) => a.endedAt - b.endedAt);
+    for (const t of oldestFirst.slice(0, this.managerTombstones.size - MAX_MANAGER_TOMBSTONES)) {
+      this.managerTombstones.delete(t.sessionId);
+    }
   }
 
   /**
@@ -1491,6 +1696,22 @@ class ClaudeSessionStore {
    * session start fresh instead of reading its first delta as a gap.
    */
   private evictNow(sessionId: string): void {
+    // The row is the ONLY record that this session was a manager (isSupervisor
+    // and label live in this process's memory — claudemon has no such fields),
+    // so a manager's identity has to be copied out HERE or it is gone. This is
+    // the single teardown path on purpose: the SessionEnd timer and
+    // close_session both come through it, and a manager dismissed by hand
+    // orphans its workers exactly as a crashed one does.
+    const dying = this.sessions.get(sessionId);
+    if (dying?.isSupervisor && !dying.hub) {
+      this.managerTombstones.set(sessionId, {
+        sessionId,
+        label: dying.label,
+        cwd: dying.cwd,
+        endedAt: Date.now(),
+        provider: dying.provider,
+      });
+    }
     this.sessions.delete(sessionId);
     this.usageAccumulator.forget(sessionId);
     this.convSeq.delete(sessionId);
@@ -1513,6 +1734,11 @@ class ClaudeSessionStore {
         timers.delete(sessionId);
       }
     }
+    // This session may have been the last child of an earlier dead manager —
+    // and the tombstone just written is itself pointless unless children of it
+    // survive. Both are the same question, asked here so the map is bounded by
+    // the fleet whether or not anyone ever reads it.
+    this.pruneManagerTombstones();
   }
 
   /**
