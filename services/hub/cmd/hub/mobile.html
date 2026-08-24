@@ -1315,8 +1315,11 @@
       inTok, outTok,
       costUSD: sl.costUSD ?? u.costUSD,
       fiveHourPct: sl.fiveHourPct, fiveHourResetsAt: sl.fiveHourResetsAt,
+      fiveHourWindowMins: sl.fiveHourWindowMins,
       sevenDayPct: sl.sevenDayPct, sevenDayResetsAt: sl.sevenDayResetsAt,
+      sevenDayWindowMins: sl.sevenDayWindowMins,
       monthlyPct: sl.monthlyPct, monthlyResetsAt: sl.monthlyResetsAt,
+      monthlyWindowMins: sl.monthlyWindowMins,
       rateLimitWarning: sl.rateLimitWarning,
     };
   }
@@ -3223,6 +3226,15 @@
     return 'starting…';
   };
 
+  // A window's length, from the `*WindowMins` figure claudemon now carries:
+  // Codex reports its own per window, Claude's is implied by the window's name.
+  // Undefined when nothing reported one, so the caller falls back to the slot.
+  function windowAdjective(mins) {
+    if (!mins || mins <= 0) return undefined;
+    if (mins % 1440 === 0) return (mins / 1440) + '-day';
+    if (mins % 60 === 0) return (mins / 60) + '-hour';
+    return mins + '-minute';
+  }
   function usageSegment(s) {
     const t = stats(s);
     const parts = [];
@@ -3235,18 +3247,25 @@
       </div>`);
     }
     if (t.rateLimitWarning) parts.push(`<div class="warn"><span>⚠</span><span>${esc(t.rateLimitWarning)}</span></div>`);
+    // One row per window the provider actually reported. Codex has no monthly
+    // window and Claude has one only while extra usage is enabled, so the list
+    // is built from the data, and a window with a reset time but no percentage
+    // gets no bar, because an empty track reads as "0% used".
     const windows = [
-      ['5-hour window', t.fiveHourPct, t.fiveHourResetsAt, 'at'],
-      ['7-day window', t.sevenDayPct, t.sevenDayResetsAt, 'in'],
-      ['monthly', t.monthlyPct, t.monthlyResetsAt, 'in'],
+      ['5-hour window', t.fiveHourPct, t.fiveHourResetsAt, 'at', t.fiveHourWindowMins],
+      ['7-day window', t.sevenDayPct, t.sevenDayResetsAt, 'in', t.sevenDayWindowMins],
+      ['monthly', t.monthlyPct, t.monthlyResetsAt, 'in', t.monthlyWindowMins],
     ].filter(([, p, at]) => p !== undefined || at);
-    for (const [label, pct, at, form] of windows) {
+    for (const [label, pct, at, form, mins] of windows) {
       const c = limitColor(pct || 0);
+      // The label carries the duration where it is known ("5-hour window"), so
+      // there is nothing more to add below it.
+      const adj = windowAdjective(mins);
       parts.push(`<div class="limit">
-        <div class="r"><span class="l">${esc(label)}</span><span class="grow"></span>
+        <div class="r"><span class="l">${esc(adj ? adj + ' window' : label)}</span><span class="grow"></span>
           ${pct !== undefined ? `<span class="p" style="color:${c}">${Math.round(pct)}%</span>` : ''}
           <span class="rs">${esc(form === 'at' ? (at ? 'resets ' + fmtResetAt(at) : '') : fmtResetIn(at))}</span></div>
-        <div class="bar" style="height:5px;border-radius:3px"><span style="width:${clamp(pct || 0, 0, 100)}%;background:${c};border-radius:3px"></span></div>
+        ${pct !== undefined ? `<div class="bar" style="height:5px;border-radius:3px"><span style="width:${clamp(pct, 0, 100)}%;background:${c};border-radius:3px"></span></div>` : ''}
       </div>`);
     }
     const tiles = [];

@@ -22,7 +22,7 @@ import {
 import { WorkflowRunCard } from './WorkflowRunCard';
 import { SubagentRow } from './SubagentRow';
 import { fmtTokens } from './agentUtils';
-import { planProgress } from '../../lib/sessionStats';
+import { planProgress, usageWindows, fmtWindowLength } from '../../lib/sessionStats';
 import { requestReviewFile } from '../../lib/reviewBus';
 import { requestAgentWatch, requestContextPane } from '../../lib/watchBus';
 import { ConfigContext } from '../../contexts/ConfigContext';
@@ -1033,27 +1033,23 @@ export const InspectorCard: React.FC<{
                   <UsageBar label="Context window" pct={ctxPct} />
                 </div>
               )}
-              {(sl?.fiveHourPct !== undefined || sl?.fiveHourResetsAt !== undefined) && (
+              {/* One bar per window the provider actually reported. See
+                  `usageWindows`. Codex has no monthly window and Claude has one
+                  only while extra usage is enabled, so the list is built from
+                  the data rather than fixed at three. */}
+              {usageWindows(sl ?? {}).map((w) => (
                 <UsageBar
-                  label="5-hour limit"
-                  pct={sl?.fiveHourPct}
-                  sub={sl?.fiveHourResetsAt ? `resets ${fmtReset(sl.fiveHourResetsAt)}` : undefined}
+                  key={w.key}
+                  label={w.label}
+                  pct={w.pct}
+                  sub={[
+                    fmtWindowLength(w.windowMins),
+                    w.resetsAt ? `resets ${fmtReset(w.resetsAt)}` : undefined,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
                 />
-              )}
-              {(sl?.sevenDayPct !== undefined || sl?.sevenDayResetsAt !== undefined) && (
-                <UsageBar
-                  label="7-day limit"
-                  pct={sl?.sevenDayPct}
-                  sub={sl?.sevenDayResetsAt ? `resets ${fmtReset(sl.sevenDayResetsAt)}` : undefined}
-                />
-              )}
-              {(sl?.monthlyPct !== undefined || sl?.monthlyResetsAt !== undefined) && (
-                <UsageBar
-                  label="Monthly limit"
-                  pct={sl?.monthlyPct}
-                  sub={sl?.monthlyResetsAt ? `resets ${fmtReset(sl.monthlyResetsAt)}` : undefined}
-                />
-              )}
+              ))}
               {sl?.rateLimitWarning && (
                 <div
                   style={{

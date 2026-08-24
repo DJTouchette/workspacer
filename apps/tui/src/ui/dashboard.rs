@@ -94,21 +94,26 @@ pub(super) fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     }
     if let Some(s) = rate {
         let mut spans = vec![Span::styled("rate limit ", Style::default().fg(t.dim))];
+        // Each window wears its own length where the provider reports one, so a
+        // Codex primary that isn't five hours doesn't get mislabelled "5h".
+        let five = window_short(s.five_hour_window_minutes).unwrap_or_else(|| "5h".into());
+        let seven = window_short(s.seven_day_window_minutes).unwrap_or_else(|| "7d".into());
+        let monthly = window_short(s.monthly_window_minutes).unwrap_or_else(|| "Mo".into());
         if let Some(p) = s.five_hour_pct {
             spans.push(Span::styled(
-                format!("5h {p:.0}%"),
+                format!("{five} {p:.0}%"),
                 Style::default().fg(rate_color(t, p)),
             ));
         }
         if let Some(p) = s.seven_day_pct {
             spans.push(Span::styled(
-                format!("   7d {p:.0}%"),
+                format!("   {seven} {p:.0}%"),
                 Style::default().fg(rate_color(t, p)),
             ));
         }
         if let Some(p) = s.monthly_pct {
             spans.push(Span::styled(
-                format!("   Mo {p:.0}%"),
+                format!("   {monthly} {p:.0}%"),
                 Style::default().fg(rate_color(t, p)),
             ));
         }

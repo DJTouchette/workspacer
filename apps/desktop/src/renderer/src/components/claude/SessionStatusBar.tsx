@@ -2,14 +2,19 @@ import React from 'react';
 import type { ClaudeSessionSnapshot } from '../../types/claudeSession';
 import {
   deriveSessionStats,
+  usageWindows,
   planProgress,
   fmtTokens,
   fmtUSD,
   fmtResetAt,
+  fmtResetIn,
+  fmtWindowLength,
   ctxColor,
 } from '../../lib/sessionStats';
 import { IconModel } from '../wksIcons';
 import { HubChip } from '../HubChip';
+import { ConfigContext } from '../../contexts/ConfigContext';
+import { UsageDetailDialog } from './UsageDetailDialog';
 
 /**
  * A compact, single-line status readout — Workspacer's in-app equivalent of
@@ -47,8 +52,20 @@ function baseName(p: string | undefined): string {
   );
 }
 
-/** An account window only earns a spot in the bar above this utilization —
- *  below it the Overview pane is the place to look. */
+/**
+ * Default utilization at which an account window earns its OWN chip in the bar.
+ *
+ * The windows are account-scoped: identical in every open pane and fully charted
+ * on the Overview pane, so listing all of them in every agent's toolbar is pure
+ * duplication. But hiding them entirely below the threshold left the bar silent
+ * about usage most of the time, which read as "workspacer only knows the 5-hour
+ * window". So the bar always shows the single busiest window as one chip, adds
+ * the others once they are genuinely close to a limit, and makes the whole group
+ * open the usage dialog, which lists every window with its length and reset.
+ *
+ * Overridable per install with `ui.usageWindowChipPct` (0 keeps every reported
+ * window in the bar).
+ */
 const WINDOW_WARN_PCT = 70;
 
 /** A thin vertical rule between HUD groups, replacing the ASCII pipe. */
@@ -150,18 +167,17 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
       clearInterval(t);
     };
   }, [activeCwd, remote]);
-  const {
-    model,
-    ctxPct,
-    tokens,
-    costUSD: cost,
-    fiveHourPct: five,
-    fiveHourResetsAt,
-    sevenDayPct: seven,
-    sevenDayResetsAt,
-    monthlyPct: monthly,
-    monthlyResetsAt,
-  } = deriveSessionStats(snapshot);
+  const stats = deriveSessionStats(snapshot);
+  const { model, ctxPct, tokens, costUSD: cost } = stats;
+  // Every window the provider actually reported, in order. Empty for a session
+  // whose provider sends none, where the group renders nothing at all.
+  const windows = usageWindows(stats);
+  // Read the context directly rather than the throwing useConfig hook: this bar
+  // also renders inside inspector and fleet cards, which are mounted in isolated
+  // embeds and tests without a ConfigProvider. No provider means the default.
+  const chipPct =
+    React.useContext(ConfigContext)?.config?.ui?.usageWindowChipPct ?? WINDOW_WARN_PCT;
+  const [usageOpen, setUsageOpen] = React.useState(false);
   // (No re-render clock needed: the only time-based text left is the absolute
   // reset time inside a warning window's tooltip, computed on hover-render.)
 
@@ -184,7 +200,8 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
     snapshot?.compacting ||
     ctxPct !== undefined ||
     tokens !== undefined ||
-    cost !== undefined;
+    cost !== undefined ||
+    windows.length > 0;
   if (!hasAny) return null;
 
   return (
@@ -307,52 +324,79 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
         </>
       )}
       {(() => {
-        // Account windows are warning-only here: account-scoped data that's
-        // identical in every pane and fully charted on the Overview pane, so a
-        // window earns a spot only when it's genuinely close to the limit.
-        // Threshold color + the reset time in the tooltip say the rest.
-        const windows = [
-          { label: '5h', name: '5h window', pct: five, at: fiveHourResetsAt },
-          { label: '7d', name: '7d window', pct: seven, at: sevenDayResetsAt },
-          { label: 'Mo', name: 'Monthly window', pct: monthly, at: monthlyResetsAt },
-        ].filter((w) => w.pct !== undefined && w.pct >= WINDOW_WARN_PCT);
-        if (!windows.length) return null;
+        // Which windows earn a chip: every one at or above the threshold, and
+        // failing that the busiest single window, so the bar is never silent
+        // about usage while the detail is one click away. A window with a reset
+        // time but no percentage can't be ranked or coloured, so it stays in the
+        // dialog only.
+        const measured = windows.filter((w) => w.pct !== undefined);
+        const hot = measured.filter((w) => w.pct! >= chipPct);
+        const shown = hot.length
+          ? hot
+          : measured.length
+            ? [measured.reduce((a, b) => (b.pct! > a.pct! ? b : a))]
+            : [];
+        if (!shown.length && !windows.length) return null;
         return (
           <>
             <Sep />
             <span
+              role="button"
+              tabIndex={0}
+              aria-label="Show usage detail"
+              onClick={() => setUsageOpen(true)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setUsageOpen(true);
+                }
+              }}
+              title="Usage and account limits. Click for detail."
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 9,
                 fontVariantNumeric: 'tabular-nums',
+                cursor: 'pointer',
               }}
             >
-              {windows.map((w) => {
-                const at = fmtResetAt(w.at);
-                const tip = [w.name, `${Math.round(w.pct!)}% used`, at ? `resets ${at}` : undefined]
-                  .filter(Boolean)
-                  .join(' · ');
-                return (
-                  <span
-                    key={w.label}
-                    title={tip}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      color: ctxColor(w.pct!),
-                    }}
-                  >
-                    <span style={{ color: 'var(--wks-text-muted)' }}>{w.label}</span>
-                    {Math.round(w.pct!)}%
-                  </span>
-                );
-              })}
+              {shown.length === 0 ? (
+                <span style={{ color: 'var(--wks-text-muted)' }}>limits</span>
+              ) : (
+                shown.map((w) => {
+                  const at = fmtResetAt(w.resetsAt);
+                  const inS = fmtResetIn(w.resetsAt);
+                  const length = fmtWindowLength(w.windowMins);
+                  const tip = [
+                    length ? `${w.label} (${length} window)` : w.label,
+                    `${Math.round(w.pct!)}% used`,
+                    inS ? `resets in ${inS}` : undefined,
+                    at,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ');
+                  return (
+                    <span
+                      key={w.key}
+                      title={tip}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        color: ctxColor(w.pct!),
+                      }}
+                    >
+                      <span style={{ color: 'var(--wks-text-muted)' }}>{w.short}</span>
+                      {Math.round(w.pct!)}%
+                    </span>
+                  );
+                })
+              )}
             </span>
           </>
         );
       })()}
+      {usageOpen && <UsageDetailDialog snapshot={snapshot} onClose={() => setUsageOpen(false)} />}
     </span>
   );
 };

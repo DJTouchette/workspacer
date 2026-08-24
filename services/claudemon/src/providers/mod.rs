@@ -208,10 +208,16 @@ pub enum AgentUpdate {
     RateLimits {
         five_hour_pct: Option<f64>,
         five_hour_resets_at: Option<i64>,
+        /// The window's length in minutes, when it is known: Codex reports it
+        /// per window, Claude's is implied by the window's name. `None` means
+        /// "not reported", and clients render the window without a duration.
+        five_hour_window_minutes: Option<u64>,
         seven_day_pct: Option<f64>,
         seven_day_resets_at: Option<i64>,
+        seven_day_window_minutes: Option<u64>,
         monthly_pct: Option<f64>,
         monthly_resets_at: Option<i64>,
+        monthly_window_minutes: Option<u64>,
     },
     /// Account rate-limit *status* (distinct from the utilization windows above,
     /// which Claude only sends near a limit). `warning` is a human message when a
@@ -255,8 +261,9 @@ pub(crate) fn rate_limits_from(v: &Value) -> Option<AgentUpdate> {
             pick(["windowDurationMins", "window_minutes"]).and_then(Value::as_u64),
         )
     }
-    let mut five: (Option<f64>, Option<i64>) = (None, None);
-    let mut seven: (Option<f64>, Option<i64>) = (None, None);
+    type Slot = (Option<f64>, Option<i64>, Option<u64>);
+    let mut five: Slot = (None, None, None);
+    let mut seven: Slot = (None, None, None);
     for key in ["primary", "secondary"] {
         let Some(w) = v.get(key).filter(|w| !w.is_null()) else {
             continue;
@@ -267,22 +274,27 @@ pub(crate) fn rate_limits_from(v: &Value) -> Option<AgentUpdate> {
         }
         let is_seven_day = mins.map_or(key == "secondary", |m| m > 720);
         if is_seven_day {
-            seven = (pct, resets);
+            seven = (pct, resets, mins);
         } else {
-            five = (pct, resets);
+            five = (pct, resets, mins);
         }
     }
-    if five == (None, None) && seven == (None, None) {
+    if five == (None, None, None) && seven == (None, None, None) {
         return None;
     }
     Some(AgentUpdate::RateLimits {
         five_hour_pct: five.0,
         five_hour_resets_at: five.1,
+        // Codex's own `windowDurationMins`: a "5h slot" window can be any
+        // length up to 12h, so pass the reported figure rather than assuming.
+        five_hour_window_minutes: five.2,
         seven_day_pct: seven.0,
         seven_day_resets_at: seven.1,
+        seven_day_window_minutes: seven.2,
         // Codex reports only primary/secondary windows; no monthly overage.
         monthly_pct: None,
         monthly_resets_at: None,
+        monthly_window_minutes: None,
     })
 }
 
@@ -448,6 +460,16 @@ pub fn conversation_item(update: &AgentUpdate) -> Option<ConversationItem> {
     }
 }
 
+/// One rolling account window as a provider reported it. Every field is
+/// optional on purpose: providers report different subsets, and "not reported"
+/// has to stay distinguishable from zero all the way to the client.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct WindowReading {
+    pub pct: Option<f64>,
+    pub resets_at: Option<i64>,
+    pub minutes: Option<u64>,
+}
+
 /// Running tally of model/usage/cost across a managed session, for the status
 /// line. How input/output/cached_input/cost fold depends on what the provider's
 /// wire figures mean, selected per-adapter via [`UsageAcc::additive`]:
@@ -472,10 +494,13 @@ pub struct UsageAcc {
     context_window: Option<u64>,
     five_hour_pct: Option<f64>,
     five_hour_resets_at: Option<i64>,
+    five_hour_window_minutes: Option<u64>,
     seven_day_pct: Option<f64>,
     seven_day_resets_at: Option<i64>,
+    seven_day_window_minutes: Option<u64>,
     monthly_pct: Option<f64>,
     monthly_resets_at: Option<i64>,
+    monthly_window_minutes: Option<u64>,
     rate_limit_warning: Option<String>,
     overage_out_of_credits: Option<bool>,
     capabilities: Option<Capabilities>,
@@ -577,33 +602,27 @@ impl UsageAcc {
     /// Field-wise, because the wire doesn't always pair them: Claude's
     /// `rate_limit_event` can carry `resetsAt` without `utilization`, and that
     /// reading must still land instead of being dropped.
+    /// A window's length folds the same way.
     fn merge_rate_limits(
         &mut self,
-        five_hour_pct: Option<f64>,
-        five_hour_resets_at: Option<i64>,
-        seven_day_pct: Option<f64>,
-        seven_day_resets_at: Option<i64>,
-        monthly_pct: Option<f64>,
-        monthly_resets_at: Option<i64>,
+        five: WindowReading,
+        seven: WindowReading,
+        monthly: WindowReading,
     ) {
-        if five_hour_pct.is_some() {
-            self.five_hour_pct = five_hour_pct;
+        fn take<T: Copy>(dst: &mut Option<T>, src: Option<T>) {
+            if src.is_some() {
+                *dst = src;
+            }
         }
-        if five_hour_resets_at.is_some() {
-            self.five_hour_resets_at = five_hour_resets_at;
-        }
-        if seven_day_pct.is_some() {
-            self.seven_day_pct = seven_day_pct;
-        }
-        if seven_day_resets_at.is_some() {
-            self.seven_day_resets_at = seven_day_resets_at;
-        }
-        if monthly_pct.is_some() {
-            self.monthly_pct = monthly_pct;
-        }
-        if monthly_resets_at.is_some() {
-            self.monthly_resets_at = monthly_resets_at;
-        }
+        take(&mut self.five_hour_pct, five.pct);
+        take(&mut self.five_hour_resets_at, five.resets_at);
+        take(&mut self.five_hour_window_minutes, five.minutes);
+        take(&mut self.seven_day_pct, seven.pct);
+        take(&mut self.seven_day_resets_at, seven.resets_at);
+        take(&mut self.seven_day_window_minutes, seven.minutes);
+        take(&mut self.monthly_pct, monthly.pct);
+        take(&mut self.monthly_resets_at, monthly.resets_at);
+        take(&mut self.monthly_window_minutes, monthly.minutes);
     }
 
     /// Fold in a rate-limit *status* reading. Both fields are latest-wins,
@@ -665,10 +684,13 @@ impl UsageAcc {
             cost_usd: cost,
             five_hour_pct: self.five_hour_pct,
             five_hour_resets_at: self.five_hour_resets_at,
+            five_hour_window_minutes: self.five_hour_window_minutes,
             seven_day_pct: self.seven_day_pct,
             seven_day_resets_at: self.seven_day_resets_at,
+            seven_day_window_minutes: self.seven_day_window_minutes,
             monthly_pct: self.monthly_pct,
             monthly_resets_at: self.monthly_resets_at,
+            monthly_window_minutes: self.monthly_window_minutes,
             rate_limit_warning: warning,
             overage_out_of_credits: self.overage_out_of_credits,
             capabilities: self.capabilities.clone(),
@@ -852,18 +874,30 @@ pub fn apply_updates(
             AgentUpdate::RateLimits {
                 five_hour_pct,
                 five_hour_resets_at,
+                five_hour_window_minutes,
                 seven_day_pct,
                 seven_day_resets_at,
+                seven_day_window_minutes,
                 monthly_pct,
                 monthly_resets_at,
+                monthly_window_minutes,
             } => {
                 acc.merge_rate_limits(
-                    *five_hour_pct,
-                    *five_hour_resets_at,
-                    *seven_day_pct,
-                    *seven_day_resets_at,
-                    *monthly_pct,
-                    *monthly_resets_at,
+                    WindowReading {
+                        pct: *five_hour_pct,
+                        resets_at: *five_hour_resets_at,
+                        minutes: *five_hour_window_minutes,
+                    },
+                    WindowReading {
+                        pct: *seven_day_pct,
+                        resets_at: *seven_day_resets_at,
+                        minutes: *seven_day_window_minutes,
+                    },
+                    WindowReading {
+                        pct: *monthly_pct,
+                        resets_at: *monthly_resets_at,
+                        minutes: *monthly_window_minutes,
+                    },
                 );
                 usage_changed = true;
             }
@@ -1006,6 +1040,53 @@ pub(crate) fn spawn_attach_pty(
 mod tests {
     use super::*;
 
+    /// A window's length is data, not a convention: a Codex primary window is
+    /// bucketed into the 5h slot at anything up to 12h, so the slot's name says
+    /// nothing about how long the window actually is. The reported figure has to
+    /// ride through, or a 90-minute window gets labelled "5 hours" downstream.
+    #[test]
+    fn codex_windows_carry_their_reported_length() {
+        let snap = serde_json::json!({
+            "primary": { "usedPercent": 40.0, "windowDurationMins": 90, "resetsAt": 1783121345 },
+            "secondary": { "usedPercent": 3.0, "windowDurationMins": 10080, "resetsAt": 1783708145 }
+        });
+        let AgentUpdate::RateLimits {
+            five_hour_window_minutes,
+            seven_day_window_minutes,
+            monthly_window_minutes,
+            monthly_pct,
+            ..
+        } = rate_limits_from(&snap).expect("windows parse")
+        else {
+            panic!("expected RateLimits");
+        };
+        assert_eq!(five_hour_window_minutes, Some(90));
+        assert_eq!(seven_day_window_minutes, Some(10_080));
+        // Codex has no monthly window at all. Nothing may be invented for it:
+        // an absent window must stay absent rather than become a 0% meter.
+        assert_eq!(monthly_pct, None);
+        assert_eq!(monthly_window_minutes, None);
+    }
+
+    /// A window the provider reports without a duration keeps `None`, so the
+    /// client falls back to the slot's own name instead of a guessed length.
+    #[test]
+    fn codex_window_without_a_duration_reports_none() {
+        let snap = serde_json::json!({
+            "primary": { "usedPercent": 12.0, "resetsAt": 1783121345 }
+        });
+        let AgentUpdate::RateLimits {
+            five_hour_pct,
+            five_hour_window_minutes,
+            ..
+        } = rate_limits_from(&snap).expect("windows parse")
+        else {
+            panic!("expected RateLimits");
+        };
+        assert_eq!(five_hour_pct, Some(12.0));
+        assert_eq!(five_hour_window_minutes, None);
+    }
+
     #[test]
     fn model_cache_ttl_and_stale_fallback() {
         let key = "test-provider:test-bin-abc123"; // unique: MODEL_CACHE is global
@@ -1097,14 +1178,44 @@ mod tests {
         // synthesized once a window crosses 80% — highest window wins — and
         // it clears when the windows roll back under.
         let mut acc = UsageAcc::new();
-        acc.merge_rate_limits(Some(45.0), None, Some(60.0), None, None, None);
+        acc.merge_rate_limits(
+            WindowReading {
+                pct: Some(45.0),
+                ..Default::default()
+            },
+            WindowReading {
+                pct: Some(60.0),
+                ..Default::default()
+            },
+            WindowReading::default(),
+        );
         assert!(acc.status_line().rate_limit_warning.is_none());
-        acc.merge_rate_limits(Some(85.0), None, Some(91.0), None, None, None);
+        acc.merge_rate_limits(
+            WindowReading {
+                pct: Some(85.0),
+                ..Default::default()
+            },
+            WindowReading {
+                pct: Some(91.0),
+                ..Default::default()
+            },
+            WindowReading::default(),
+        );
         assert_eq!(
             acc.status_line().rate_limit_warning.as_deref(),
             Some("You're close to your 7-day usage limit — 91% used")
         );
-        acc.merge_rate_limits(Some(3.0), None, Some(12.0), None, None, None);
+        acc.merge_rate_limits(
+            WindowReading {
+                pct: Some(3.0),
+                ..Default::default()
+            },
+            WindowReading {
+                pct: Some(12.0),
+                ..Default::default()
+            },
+            WindowReading::default(),
+        );
         assert!(acc.status_line().rate_limit_warning.is_none());
         // An explicit provider warning always wins over the synthesized one.
         acc.merge_rate_limit_status(Some("explicit".into()), None);
@@ -1120,8 +1231,22 @@ mod tests {
         // `utilization`) — the reset time must reach the status line anyway,
         // and a later pct-only reading must not clobber it.
         let mut acc = UsageAcc::new();
-        acc.merge_rate_limits(None, Some(1_783_314_600), None, None, None, None);
-        acc.merge_rate_limits(Some(19.0), None, None, None, None, None);
+        acc.merge_rate_limits(
+            WindowReading {
+                resets_at: Some(1_783_314_600),
+                ..Default::default()
+            },
+            WindowReading::default(),
+            WindowReading::default(),
+        );
+        acc.merge_rate_limits(
+            WindowReading {
+                pct: Some(19.0),
+                ..Default::default()
+            },
+            WindowReading::default(),
+            WindowReading::default(),
+        );
         let sl = acc.status_line();
         assert_eq!(sl.five_hour_resets_at, Some(1_783_314_600));
         assert_eq!(sl.five_hour_pct, Some(19.0));
@@ -1133,8 +1258,23 @@ mod tests {
         // The `overage` window is a distinct bucket — it must not land in the
         // 5h/7d fields, and its reset time must survive a later pct-only read.
         let mut acc = UsageAcc::new();
-        acc.merge_rate_limits(None, None, None, None, Some(42.0), Some(1_785_000_000));
-        acc.merge_rate_limits(Some(19.0), None, None, None, None, None);
+        acc.merge_rate_limits(
+            WindowReading::default(),
+            WindowReading::default(),
+            WindowReading {
+                pct: Some(42.0),
+                resets_at: Some(1_785_000_000),
+                ..Default::default()
+            },
+        );
+        acc.merge_rate_limits(
+            WindowReading {
+                pct: Some(19.0),
+                ..Default::default()
+            },
+            WindowReading::default(),
+            WindowReading::default(),
+        );
         let sl = acc.status_line();
         assert_eq!(sl.monthly_pct, Some(42.0));
         assert_eq!(sl.monthly_resets_at, Some(1_785_000_000));

@@ -541,7 +541,8 @@ func TestCompatSnapshotCoversMobileFields(t *testing.T) {
 		"tool_calls":7,
 		"status_line":{"model_display":"Opus","context_used_pct":12.5,"context_window_size":200000,
 			"total_input_tokens":100,"total_output_tokens":50,"cost_usd":0.2,
-			"five_hour_pct":10,"five_hour_resets_at":1234,"seven_day_pct":20,"seven_day_resets_at":5678,
+			"five_hour_pct":10,"five_hour_resets_at":1234,"five_hour_window_minutes":300,
+			"seven_day_pct":20,"seven_day_resets_at":5678,"seven_day_window_minutes":10080,
 			"monthly_pct":30,"monthly_resets_at":9012,"rate_limit_warning":"careful",
 			"received_at":"2026-07-10T12:00:00Z"},
 		"pending":null}`)
@@ -581,12 +582,28 @@ func TestCompatSnapshotCoversMobileFields(t *testing.T) {
 	for _, k := range []string{
 		"modelDisplay", "contextUsedPct", "contextWindowSize", "totalInputTokens",
 		"totalOutputTokens", "costUSD", "fiveHourPct", "fiveHourResetsAt",
-		"sevenDayPct", "sevenDayResetsAt", "monthlyPct", "monthlyResetsAt",
+		"fiveHourWindowMins", "sevenDayPct", "sevenDayResetsAt", "sevenDayWindowMins",
+		"monthlyPct", "monthlyResetsAt", "monthlyWindowMins",
 		"rateLimitWarning", "receivedAt",
 	} {
 		if _, ok := sl[k]; !ok {
 			t.Errorf("statusLine overlay missing %q (mobile stats/progressFingerprint read it)", k)
 		}
+	}
+	// The projection is a hand-written rename with nothing tying it to the Rust
+	// struct, so a present-but-nil key would pass the loop above while the phone
+	// silently showed no window length. Pin the values, not just the keys.
+	for k, want := range map[string]float64{
+		"fiveHourWindowMins": 300, "sevenDayWindowMins": 10080,
+	} {
+		if got, _ := sl[k].(float64); got != want {
+			t.Errorf("statusLine %q = %v, want %v (window length dropped in the projection)", k, sl[k], want)
+		}
+	}
+	// The monthly window has no length from any source. It must project through
+	// as absent rather than as a zero a client would render as a real duration.
+	if v, ok := sl["monthlyWindowMins"]; ok && v != nil {
+		t.Errorf("statusLine monthlyWindowMins = %v, want nil (no source reports one)", v)
 	}
 }
 

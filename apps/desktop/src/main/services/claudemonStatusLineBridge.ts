@@ -83,10 +83,13 @@ export async function startClaudemonStatusLineBridge(): Promise<void> {
           costUSD: sl.cost_usd,
           fiveHourPct: sl.five_hour_pct,
           fiveHourResetsAt: sl.five_hour_resets_at,
+          fiveHourWindowMins: sl.five_hour_window_minutes,
           sevenDayPct: sl.seven_day_pct,
           sevenDayResetsAt: sl.seven_day_resets_at,
+          sevenDayWindowMins: sl.seven_day_window_minutes,
           monthlyPct: sl.monthly_pct,
           monthlyResetsAt: sl.monthly_resets_at,
+          monthlyWindowMins: sl.monthly_window_minutes,
           rateLimitWarning: sl.rate_limit_warning,
           overageOutOfCredits: sl.overage_out_of_credits,
           capabilities: sl.capabilities

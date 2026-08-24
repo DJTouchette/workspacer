@@ -2401,10 +2401,15 @@ mod tests {
             vec![AgentUpdate::RateLimits {
                 five_hour_pct: Some(19.0),
                 five_hour_resets_at: Some(1783121345),
+                // Codex reports each window's own length; it rides through so
+                // clients can say "5 hours" rather than assume the slot's name.
+                five_hour_window_minutes: Some(300),
                 seven_day_pct: Some(3.0),
                 seven_day_resets_at: Some(1783708145),
+                seven_day_window_minutes: Some(10_080),
                 monthly_pct: None,
                 monthly_resets_at: None,
+                monthly_window_minutes: None,
             }]
         );
     }
