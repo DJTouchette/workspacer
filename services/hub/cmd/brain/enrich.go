@@ -174,7 +174,28 @@ func compatSnapshot(snap json.RawMessage) json.RawMessage {
 	} else {
 		m["status"] = "active"
 	}
-	m["ambientState"] = ambientForMode(mode)
+	// Live background work the MODE deliberately does not carry. claudemon
+	// holds "responding" only for an async subagent; a `run_in_background`
+	// shell (a dev server, a watcher, an agent-authored poll loop) rides this
+	// count instead, because treating those as busy latched sessions
+	// "responding" forever (claude_stream.rs's background_tasks_changed says
+	// so, and that reasoning stands). The count was on the wire and NOTHING
+	// consulted it: this overlay never emitted it under the name clients read,
+	// so an agent that left `npm run dev` running reported a flat idle to every
+	// headless consumer. Emit it, and fold it into ambientState the same way
+	// the desktop's applyManagedMode does.
+	bg := backgroundTasksOf(m)
+	if bg > 0 {
+		m["backgroundTasks"] = bg
+	}
+	if ambient, ok := ambientForMode(mode); ok {
+		// "the turn ended but work it spawned is still running" — the one
+		// ambient state that exists precisely so idle stays honest.
+		if ambient == "idle" && mode == "input" && bg > 0 {
+			ambient = "background"
+		}
+		m["ambientState"] = ambient
+	}
 	if ts, ok := m["updated_at"].(string); ok {
 		if t, err := time.Parse(time.RFC3339, ts); err == nil {
 			m["lastActivity"] = t.UnixMilli()
@@ -259,19 +280,66 @@ func compatSnapshot(snap json.RawMessage) json.RawMessage {
 	return out
 }
 
+// backgroundTasksOf reads claudemon's `background_tasks` counter off a raw row.
+// JSON numbers land as float64; anything else (absent, null, a string) reads 0,
+// which is the same "no claim" a pre-field row makes.
+func backgroundTasksOf(m map[string]any) int {
+	switch v := m["background_tasks"].(type) {
+	case float64:
+		if v <= 0 {
+			return 0
+		}
+		return int(v)
+	case int:
+		if v <= 0 {
+			return 0
+		}
+		return v
+	}
+	return 0
+}
+
 // ambientForMode maps claudemon's SessionMode vocabulary onto the desktop's
-// SessionAmbientState one (ipcTypes.ts): the two working states collapse to
-// streaming; approval/question map to the two waiting states; everything else
-// (unknown / input / stopped) reads as idle.
-func ambientForMode(mode string) string {
+// SessionAmbientState one (ipcTypes.ts): the working state becomes streaming;
+// approval/question map to the two waiting states; input and stopped read as
+// idle. The bool is false for a mode this vocabulary CANNOT express, and the
+// caller must then emit no ambientState at all.
+//
+// That second return is the whole point of the function, and it exists because
+// the arm it replaced was `default: return "idle"`.
+//
+// `unknown` is claudemon's #[derive(Default)] variant: no hook and no driver
+// event has arrived yet. A session that is SPAWNING sits in it, and so does one
+// register_spawn just flipped back from Stopped on a resume, and so does a
+// terminal PTY for its whole life (nothing anywhere in workspacer tracks a
+// terminal's busy/idle state, so it never leaves). Reporting any of those as
+// idle is a claim that the session is finished when it has not started, and on
+// the headless path this overlay is the ONLY thing that answers the question:
+// /m, the web renderer and anything reading the bus believe it.
+//
+// The desktop's twin already answers correctly and is the model followed here:
+// claudeSessionStore's applyManagedMode returns early on unknown and leaves the
+// previous ambientState untouched. An overlay holds no previous state, so the
+// equivalent of "leave it alone" is to omit the field — which is also what the
+// sparse-merge contract on the other end means by an absent key (mobile.html's
+// upsert and webBackend's foldSparse both merge rather than replace), and what
+// every renderer that types the field `SessionAmbientState | undefined`
+// already handles.
+func ambientForMode(mode string) (string, bool) {
 	switch mode {
 	case "responding":
-		return "streaming"
+		return "streaming", true
 	case "approval":
-		return "waiting_approval"
+		return "waiting_approval", true
 	case "question":
-		return "waiting_input"
+		return "waiting_input", true
+	case "input":
+		return "idle", true
+	case "stopped":
+		// An ended row: `status` already says so, and idle is the honest
+		// reading of a session that is not going to do anything else.
+		return "idle", true
 	default:
-		return "idle"
+		return "", false
 	}
 }

@@ -173,10 +173,14 @@ func TestCompatSnapshotMapsDesktopFields(t *testing.T) {
 }
 
 func TestCompatSnapshotStatusAndAmbient(t *testing.T) {
+	// `ambient` is the empty string where the desktop vocabulary cannot express
+	// the mode and the overlay must therefore emit NO ambientState — see
+	// TestCompatSnapshotDoesNotCallASpawningSessionIdle for why `unknown` is
+	// one of those and what claiming idle for it cost.
 	cases := []struct{ mode, status, ambient string }{
 		{"stopped", "ended", "idle"},
 		{"input", "active", "idle"},
-		{"unknown", "active", "idle"},
+		{"unknown", "active", ""},
 		{"responding", "active", "streaming"},
 		{"approval", "active", "waiting_approval"},
 		{"question", "active", "waiting_input"},
@@ -185,9 +189,19 @@ func TestCompatSnapshotStatusAndAmbient(t *testing.T) {
 		raw := json.RawMessage(fmt.Sprintf(`{"session_id":"s","mode":%q}`, tc.mode))
 		var m map[string]any
 		_ = json.Unmarshal(compatSnapshot(raw), &m)
-		if m["status"] != tc.status || m["ambientState"] != tc.ambient {
+		ambient, present := m["ambientState"]
+		if tc.ambient == "" {
+			if present {
+				t.Errorf("mode %s emitted ambientState %v, want none", tc.mode, ambient)
+			}
+			if m["status"] != tc.status {
+				t.Errorf("mode %s → status %v, want %s", tc.mode, m["status"], tc.status)
+			}
+			continue
+		}
+		if m["status"] != tc.status || ambient != tc.ambient {
 			t.Errorf("mode %s → status %v ambient %v, want %s/%s",
-				tc.mode, m["status"], m["ambientState"], tc.status, tc.ambient)
+				tc.mode, m["status"], ambient, tc.status, tc.ambient)
 		}
 	}
 }

@@ -463,6 +463,34 @@ describe('normalizeBackgroundAmbient — workflows keep idle honest', () => {
     expect(s.ambientState).toBe('background');
   });
 
+  // A `run_in_background` shell — a dev server, a watcher, an agent-authored
+  // poll loop — is the ONE kind of spawned work the session mode deliberately
+  // does not carry (claudemon latched sessions "responding" forever when it
+  // did), so it rides the daemon's `backgroundTasks` count instead. This
+  // function is the whole reason 'idle' can be trusted, and it read every
+  // source but that one.
+  it('sessionHasBackgroundWork counts the daemon background-task tally', () => {
+    const s = mkSession('stream');
+    expect(sessionHasBackgroundWork(s)).toBe(false);
+    s.backgroundTasks = 0;
+    expect(sessionHasBackgroundWork(s)).toBe(false);
+    s.backgroundTasks = 1;
+    expect(sessionHasBackgroundWork(s)).toBe(true);
+    s.backgroundTasks = 0;
+    expect(sessionHasBackgroundWork(s)).toBe(false);
+  });
+
+  it('a background shell keeps a finished turn off idle', () => {
+    const s = mkSession('stream');
+    s.ambientState = 'idle';
+    s.backgroundTasks = 2;
+    normalizeBackgroundAmbient(s);
+    expect(s.ambientState).toBe('background');
+    s.backgroundTasks = 0;
+    normalizeBackgroundAmbient(s);
+    expect(s.ambientState).toBe('idle');
+  });
+
   it('sessionHasBackgroundWork sees running workflows and running subagents only', () => {
     const s = mkSession('pty');
     expect(sessionHasBackgroundWork(s)).toBe(false);

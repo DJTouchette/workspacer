@@ -1683,7 +1683,13 @@ class ClaudeSessionStore {
         next = 'waiting_input';
         break;
       case 'input':
-        next = 'idle';
+        // Same question applyManagedMode asks two hundred lines above, and for
+        // the same reason: the peer says ready-for-input, but a workflow, an
+        // async subagent or a background shell mirrored onto this row may still
+        // be running. This arm read a bare 'idle' and was the one mode applier
+        // that skipped the check — a federated row went "done" while its work
+        // carried on.
+        next = sessionHasBackgroundWork(session) ? 'background' : 'idle';
         break;
       default:
         return; // 'unknown' / 'stopped' — leave as-is; the snapshot feed owns ends

@@ -520,6 +520,39 @@ describe('the pending slot of a REMOTE row belongs to the peer, not to any local
     expect(claudeSessionStore.getSnapshot('sess-remote-1')?.pendingApproval?.timestamp).toBe(999);
   });
 
+  // applyRemoteStateChange is the LIGHT path: a peer hub's Go claudemon bridge
+  // publishes `agent.state_changed` even where no desktop runs to send full
+  // snapshots. Its `input` arm mapped straight to 'idle' with no background
+  // check, while applyManagedMode two hundred lines above asked the question —
+  // so a mirrored row went "done" while the workflow, subagent or background
+  // shell it started carried on.
+  it('a peer going ready-for-input does not read idle while its work runs', () => {
+    claudeSessionStore.upsertRemoteSession(
+      'laptop',
+      remoteApproval({
+        sessionId: 'sess-remote-bg',
+        pendingApproval: null,
+        ambientState: 'streaming',
+        backgroundTasks: 3,
+      }) as never,
+    );
+    claudeSessionStore.applyRemoteStateChange('laptop', 'sess-remote-bg', 'input');
+    expect(claudeSessionStore.getSnapshot('sess-remote-bg')?.ambientState).toBe('background');
+  });
+
+  it('a peer with nothing left running does read idle', () => {
+    claudeSessionStore.upsertRemoteSession(
+      'laptop',
+      remoteApproval({
+        sessionId: 'sess-remote-quiet',
+        pendingApproval: null,
+        ambientState: 'streaming',
+      }) as never,
+    );
+    claudeSessionStore.applyRemoteStateChange('laptop', 'sess-remote-quiet', 'input');
+    expect(claudeSessionStore.getSnapshot('sess-remote-quiet')?.ambientState).toBe('idle');
+  });
+
   it('an answer the peer ACCEPTED still clears the picker — that write is not a guess', () => {
     // clearPendingQuestions is the one ungated door (acknowledgeAnswer): the
     // user answered and `hub:<peer>/claude.answer` returned, so this resolves
