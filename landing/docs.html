@@ -126,6 +126,8 @@
       <a href="#overview">overview</a>
       <a href="#getting-started">getting started</a>
       <a href="#agents-and-providers">running agents</a>
+      <a href="#fleet-manager">the fleet manager</a>
+      <a href="#briefs">briefs</a>
       <a href="#agent-pane">the agent pane</a>
       <a href="#panes">pane types</a>
       <a href="#layout-and-navigation">layout and navigation</a>
@@ -218,7 +220,7 @@
 <h3>agents started elsewhere show up automatically</h3>
 <p>You don't have to start every agent from the window. A session spawned by a supervisor, by the MCP facade, by the terminal app, or on another machine, gets <strong>auto-adopted</strong>: it appears as its own card as soon as it's running, deduped so you never see the same session twice across clients. If it was spawned as a child of another agent, it nests under that parent in the sidebar.</p>
 <h3>supervisor agents</h3>
-<p>A supervisor is a Claude agent that can see and coordinate the rest of your fleet (it's given the work{spacer} tools). You spawn one from the <strong>Ask</strong> pane ("ask the fleet"). It renders nested under whatever it's watching, fleet-wide, or scoped to a single agent. Use it for things like a cross-fleet standup, a triage sweep, or a cost rollup. See the <a href="#panes">Ask pane</a> for the presets.</p>
+<p>A supervisor is a Claude agent that can see and coordinate the rest of your fleet (it's given the work{spacer} tools). You spawn one from the <strong>Ask</strong> pane ("ask the fleet"). It renders nested under whatever it's watching, fleet-wide, or scoped to a single agent. Use it for things like a cross-fleet standup, a triage sweep, or a cost rollup. See the <a href="#panes">Ask pane</a> for the presets. A supervisor watches the fleet and reports on it; to hand work out instead, see <a href="#fleet-manager">the fleet manager</a>.</p>
 <h3>respawn, terminate, rename</h3>
 <ul>
 <li><strong>Respawn</strong> restarts a stopped agent with the same folder, backend, profile, model, and settings, and resumes the prior conversation when it can. Its panes re-point at the fresh session.</li>
@@ -226,6 +228,123 @@
 <li><strong>Rename</strong> changes the display name (it defaults to the folder name).</li>
 </ul>
 <p>Because sessions live in the background daemon, switching between agents never starts or stops one. Only an explicit terminate (or the agent ending on its own) tears a session down.</p>
+</section>
+
+<section id="fleet-manager" class="doc">
+<h2>the fleet manager</h2>
+<p>The Fleet Manager is one agent session whose whole job is delegation. You tell it what you want done across your projects; it dispatches real agents into them, and comes back to you when they land. It is an ordinary agent session rather than a script: a card in the sidebar, a conversation you can read and type into, and the work{spacer} MCP facade attached at the <strong>operator</strong> tier. What makes it a manager is that tier plus a role doctrine sent as its first message: delegate rather than do, never poll, keep every project's brief current.</p>
+<h3>starting one</h3>
+<p>The entry point is the <strong>Fleet Manager</strong> box at the top of the pinned Overview workspace: type an ask, or click one of the preset chips (<em>What's the state of my projects?</em>, <em>Set up project briefs</em>, <em>Status of dispatched work</em>). The command palette has a <strong>Fleet Manager</strong> entry that sends the project-inventory ask.</p>
+<p>There is only ever one. An ask goes to the running manager as an ordinary message if one is up; a stopped Fleet Manager card is respawned and resumes its old conversation; only with neither does a fresh session start.</p>
+<ul>
+<li><strong>Where it opens.</strong> Its working directory is <code>agents.fleetRoot</code> if you set one, else the common parent of your configured projects, else your home directory. A leading <code>~/</code> is expanded. Every directory under that root is a project it can dispatch into, and that root is also what bounds its brief writes.</li>
+<li><strong>Which harness it runs on.</strong> <code>agents.managerProvider</code>, <code>claude</code> (the default) or <code>codex</code>, in Settings ▸ Supervisor ▸ Fleet Manager. Those two are the harnesses the role is verified on: it needs an MCP client to dispatch at all, and a personal skills directory for its slash commands. It <em>dispatches</em> workers on any of the four backends either way. The setting applies to the next manager you start, since a conversation can't move between harnesses; terminate the existing card to start a fresh manager on the new one.</li>
+<li><strong>How it renders.</strong> Chat-first, on the headless stream transport, so it is a conversation with no terminal view.</li>
+</ul>
+<p>This is a different thing from a <a href="#agents-and-providers">supervisor agent</a>, which watches the fleet and reports. The manager hands work out.</p>
+<h3>how a task gets dispatched</h3>
+<p>Every dispatch is a real session, not a subagent: its own card nested under the manager in the sidebar, its own panes, its own transcript, drivable by you at any point and visible from the phone. The manager picks the shape:</p>
+<ul>
+<li><strong>Ship tasks</strong> change code. They go into an <a href="#agents-and-providers">isolated worktree</a> (<code>worktree: true</code>), so several agents working the same repo never collide on a branch.</li>
+<li><strong>Scout tasks</strong> only investigate. They are dispatched at <code>toolScope: "view"</code> and get a read-only per-session capability token: the worker can observe the fleet and read, and cannot spawn, approve, write config, or touch a terminal. The tier is enforced by the token server-side, so it holds whatever the worker's prompt says.</li>
+<li><strong>Model, effort and harness</strong> are picked per task: a cheap fast model for chores, the strongest for deep design or hard debugging, and another backend when one is rate-limited.</li>
+<li><strong>A worker that drifts</strong> is restarted with <code>respawn_with</code>, which clones the original task, directory, model, provider and parent, and adds only a correction, so the whole task never has to be restated.</li>
+<li><strong>A structured result</strong> can be demanded up front. A dispatch may carry a JSON Schema; the worker is told to end its final message with a fenced <code>wks-result</code> block matching it, and the manager's wake carries that object already parsed and validated, rendered as its own card. If the block is missing or fails the schema, the wake says so explicitly and the prose report still arrives.</li>
+</ul>
+<h3>delivery mode and per-project autonomy</h3>
+<p>Two per-project settings live under Settings ▸ Projects, on each project's <strong>Fleet</strong> row.</p>
+<ul>
+<li><strong>Delivery</strong> (<code>projects[&lt;dir&gt;].delivery</code>): <code>pr</code> (the default) means a worker opens a pull request for you to review; <code>local</code> means it lands changes on a branch for a local merge once you approve. The manager reads it at dispatch and states it in the worker's first message so the instructions and the landing can't diverge. It is <strong>advisory to the manager, not a hard gate</strong>: nothing in git or the hub enforces it, and a worker that ignores it is not stopped. Treat it as a standing instruction the manager relays, not a policy the system applies.</li>
+<li><strong>Yolo</strong> (<code>projects[&lt;dir&gt;].yolo</code>): workers dispatched into this project run with permissions bypassed. Every other project's workers still prompt. <code>agents.fleetFullAccess</code> is the global form of the same thing, and when it is on the manager itself runs bypassed too. Either flag is what mints the bypass grant on the manager's session token, and the hub verifies the grant against config, so a manager cannot talk itself into one.</li>
+</ul>
+<p>Outside a yolo project, a worker's permission prompts come to the manager, which may approve actions that stay inside the repo it dispatched into and is told to escalate anything destructive, cross-repo or credential-touching to you.</p>
+<h3>the wake: why it never polls</h3>
+<p>A manager that loops on "is it done yet" is not monitoring, it is a hang: its turn never ends, so you can't reach it. The doctrine forbids polling, and what makes that rule hold is that the manager never has to check. Four kinds of message are delivered into its conversation for it, as <code>[fleet]</code> lines through one channel:</p>
+<ul>
+<li><strong>A worker finished.</strong> The wake carries the worker's label, session id and directory, an excerpt and its complete final message, and the validated structured result when the dispatch asked for one. A session that was killed or that died on a provider error is marked as such instead of reading like a clean finish.</li>
+<li><strong>A worker is blocked</strong> on an approval or a question. Debounced by about 20 seconds first, because most blocks clear on their own and a wake costs the manager a whole turn of context.</li>
+<li><strong>A threshold it armed was crossed.</strong> <code>notify_when</code> takes a session and one of <code>tokens</code>, <code>usd</code> or <code>idleSeconds</code>, and fires once. This is how a manager keeps an eye on a long or open-ended dispatch without polling it. Watches are <strong>one-shot and in memory</strong>: they fire and are gone, and none survive a restart. That is deliberate, since a watch that re-arms itself is a poll with extra steps, and a recurring one is what <a href="#jobs">jobs</a> are for.</li>
+<li><strong>A worker reported its own progress.</strong> <code>report_progress</code> is the one thing a worker may say to the manager that dispatched it: a single line, in its own words, for what only it knows ("finished phase 1", "the approach you gave me is wrong"). The recipient is never a parameter. The host stamps the caller's own session and delivers to that session's parent, so a worker cannot reach any session but the one that dispatched it. It is available at every tier, read-only scouts included, and it is bounded: about 500 characters, one a minute, twenty for a worker's whole life, with anything over a bound refused out loud rather than silently dropped.</li>
+</ul>
+<p>Wakes for several workers finishing at once coalesce into one message, and a sweep catches a finish whose wake was missed and delivers it late as a catch-up. Nothing here depends on the worker cooperating: the finish and blocked wakes are driven by session state on the host, so a worker with no work{spacer} tools at all still wakes its manager when it lands.</p>
+<h3>slash commands</h3>
+<p>A manager gets three skills, written into its harness's personal skills directory (<code>~/.claude/skills</code>, or <code>$CODEX_HOME/skills</code> for Codex) each time one spawns:</p>
+<ul>
+<li><strong><code>/standup</code></strong>: one status digest, in four sections (in flight, landed recently, waiting on you, next up), composed from the briefs and the live agent list. It reads only. It spawns nothing and changes no brief.</li>
+<li><strong><code>/checkpoint</code></strong>: the considered end-of-session pass. It sweeps the conversation for what would be lost on a restart, files each finding to the most specific home, then prunes the briefs it touched. See <a href="#briefs">briefs</a>.</li>
+<li><strong><code>/handoff</code></strong>: succession, below.</li>
+</ul>
+<p>These files are rewritten to the shipped version every time a manager spawns, so local edits to them do not survive.</p>
+<h3>succession</h3>
+<p>A manager eventually runs out of context, and the workers it dispatched still point at it. Fleet wakes are keyed on a worker's parent, so until they are moved, each one finishes by reporting to a session that is gone.</p>
+<ul>
+<li><strong><code>/handoff</code></strong> runs <code>/checkpoint</code> first, then writes <code>&lt;fleet root&gt;/.workspacer/handoff.md</code>: the live dispatches and what each was told, what is owed to each when it lands, the decisions parked on you, what was established in conversation only, and the one next action. It names its own session id on the first line and drops a <code>HANDOFF PENDING</code> pointer into the fleet brief's <code>## Now</code>. A fresh manager reads both on its first turn and deletes the file once it has absorbed it.</li>
+<li><strong><code>adopt_workers</code></strong> takes <code>fromSessionId</code> (the manager being replaced) and <code>toSessionId</code>, and re-points every still-running worker so they wake the successor instead. "Nothing was still parented" is a real answer, not a failure.</li>
+<li><strong><code>list_orphans</code></strong> is the discovery half for a manager that crashed without writing a handoff. It returns every dead parent that still has live children, with its label, its directory, when it died, whether it was confirmed to be a manager, and the workers still pointing at it. It only reports; the successor picks the id and calls <code>adopt_workers</code> itself. Nothing is ever adopted automatically, because a wrong guess silently re-points another manager's workers.</li>
+</ul>
+<p><strong>None of this survives restarting the app.</strong> A session's parent, its label and its manager flag live only in the desktop process's memory; the session daemon has no such fields. Your sessions themselves survive and stay resumable, but the manager-to-worker graph does not, so after a restart no live session carries a parent at all and <code>list_orphans</code> has nothing to find. Succession is a within-run mechanism. In practice that means running <code>/handoff</code> before you quit, and replacing a spent manager by terminating its card rather than by restarting work{spacer}.</p>
+<p><strong>A manager cannot start its own successor</strong>, and its doctrine says so rather than letting it try. <code>spawn_agent</code> has no manager role: a session it spawned would come up without the doctrine, without the operator grants, without the slash commands, and unregistered as a wake target, which is a manager-shaped agent that is not one. So <code>/handoff</code> ends by handing the job back to you: terminate the Fleet Manager card (right-click ▸ Terminate, which drops the card so nothing resumes it), then open the Fleet Manager again from the Overview.</p>
+<h3>limits worth knowing</h3>
+<ul>
+<li>The manager itself runs on Claude or Codex only. It dispatches to all four backends.</li>
+<li>Armed <code>notify_when</code> watches and the parent graph behind succession are both in memory, by design, and are gone after a restart.</li>
+<li>Delivery mode is relayed, not enforced.</li>
+<li>A <strong>Pi</strong> worker gets no work{spacer} tools at all, since Pi ships no MCP client, so it cannot report its own progress. Its finish still wakes the manager, because that wake is host-side.</li>
+<li>A Codex worker's cost figure is always an estimate from the built-in rate table; Codex's wire carries no dollar amounts. See <a href="#configuration">model pricing</a>.</li>
+</ul>
+</section>
+
+<section id="briefs" class="doc">
+<h2>briefs</h2>
+<p>A brief is one markdown file, <code>.workspacer/brief.md</code>, living in the project it describes. It holds a project's operational state between sessions: what is in flight, where the project is going, what recently landed. The <a href="#fleet-manager">Fleet Manager</a> writes it as work lands and reads it before dispatching, which is how a fresh agent starts with context instead of from zero. It is a plain file in your repo, so you can read it, edit it, diff it, and commit or ignore it as you like.</p>
+<p>The manager keeps one of its own at the same path under its fleet root. That one holds cross-project state only: open dispatches, priorities across projects, dispatch outcomes, and your standing preferences. It is never a copy of the project briefs.</p>
+<h3>the four headings</h3>
+<p>Every brief has the same four headings, and the shape is doing real work: they carry three different retention rules.</p>
+<ul>
+<li><strong><code>## Now</code></strong>: what is in flight, one line each. A live list rather than a log. A line leaves the moment its work lands or is abandoned.</li>
+<li><strong><code>## Direction</code></strong>: durable goals, priorities, sequencing. Written to still be true next month.</li>
+<li><strong><code>## Recently</code></strong>: a dated log, newest first, as <code>- YYYY-MM-DD  &lt;what happened&gt;</code>. The only section that grows.</li>
+<li><strong><code>## User</code></strong> (the fleet brief only): standing preferences you have stated, which the manager honours every turn.</li>
+</ul>
+<p>A project with no brief yet gets one with all four headings the first time anything is appended.</p>
+<h3>brief_append, and why concurrent writes are safe</h3>
+<p>The manager updates a brief with a single tool, <code>brief_append</code>, rather than reading the file and writing it back. It takes a project directory, a section, and one line. Three properties make it safe to point at a file you are also editing:</p>
+<ul>
+<li><strong>Strictly additive.</strong> The result is the input with exactly one line inserted. Nothing else is rewritten, reordered or reflowed, so your own wording is untouched and a diff shows one added line. <code>Recently</code> prepends, since it is newest-first; the other sections append at the end of their own body.</li>
+<li><strong>Serialized.</strong> An advisory lock spans the read, the compute and the write, both in-process and across processes, so N concurrent appends land N lines rather than N minus one.</li>
+<li><strong>Compare-and-swap.</strong> The read that feeds the insert happens inside the lock, immediately before the write. If the file changed in between, because an agent used its own edit tool or you saved in your editor, neither of which takes the lock, the append is retried against the new contents instead of written over them.</li>
+</ul>
+<p>Two writers hit one brief routinely, because the trigger for the manager writing a line and for a worker writing one is the same event: a worker finishing.</p>
+<p>What it does not do: it can only <em>add</em>. Pruning a stale line is a file edit or a drag on the board. The caller also never names a file; it passes a project directory, and the path under it is composed host-side and confined to the same directories a file write is. It is operator-tier, so a read-only scout or a phone token cannot reach it. And one honest limit: an outside writer that renames its own file over the brief between the last read and the rename still wins, which no userspace protocol can prevent without both sides taking part.</p>
+<h3>pruning and the archive</h3>
+<p><code>## Recently</code> grows, and a brief nobody can finish reading stops being read. The manager's <code>/checkpoint</code> skill is the prune pass:</p>
+<ul>
+<li><code>## Now</code> loses every item whose work landed or was abandoned.</li>
+<li><code>## Recently</code> keeps roughly its 20 newest entries. The overflow is not deleted; it is <strong>moved</strong> into <code>.workspacer/brief.archive.md</code> beside the brief, under a heading for the day it was archived. The archive is cold storage, appended and never rewritten, so the live document stays short while the history survives.</li>
+</ul>
+<p><code>/checkpoint</code> also routes what a session learned, most specific home first: knowledge about one repo goes to that project's brief, cross-project outcomes and open escalations to the fleet brief, a preference you stated to <code>## User</code>, and a next step that belongs to one worker straight to that worker. If a project has its own code-context tooling, a durable architectural finding is filed there rather than in the brief, since a brief is operational and dated, and something permanent about how the code is built belongs with the code.</p>
+<h3>the board pane</h3>
+<p>Command palette ▸ <strong>Open Brief Board</strong> opens the Board in the Overview workspace: every brief the fleet keeps, rendered as cards, one swimlane per project plus the manager's own fleet brief. The columns are <strong>Now</strong>, <strong>Direction</strong>, <strong>Recently</strong> and <strong>Archive</strong>; the first three are the brief's own headings, so a column move is a line moving between two headings that already existed.</p>
+<ul>
+<li><strong>The drag is a write.</strong> Moving a card between columns relocates that entry's lines inside the markdown. Dropping one on Archive moves it out of <code>brief.md</code> and into <code>brief.archive.md</code> beside it, which is the <code>/checkpoint</code> chore that otherwise never gets done by hand.</li>
+<li><strong>It never edits your text.</strong> A move splices whole lines, so hand-written wording comes out the far side character for character.</li>
+<li><strong>Every entry gets a card</strong>, including ones under a heading the board has no column for, which land in the lane's footer. Nothing is ranked away or hidden.</li>
+<li><strong>It never invents a status.</strong> A card whose entry says nothing about its own state shows no status chip, instead of borrowing one from the column it sits in. Resolved entries do sit unpruned in <code>## Now</code>, and labelling those "in flight" would hide the rot the board exists to surface.</li>
+<li><strong>Retractions are flagged.</strong> An entry that opens with a retraction marker (a ❌, or <code>WRONG</code> / <code>RETRACTED</code> / <code>SUPERSEDED</code> / <code>OBSOLETE</code> / <code>INCORRECT</code>) is badged, because in that entry the bolded claim is the thing being corrected rather than the finding.</li>
+<li><strong>Archived cards don't drag back.</strong> The archive is append-only, so the board offers no path out of it.</li>
+<li><strong>Its writes take the same lock</strong> and the same compare-and-swap as <code>brief_append</code>, since agents write these files while the board is open. An archive move appends to the archive first and removes from the brief second, so a crash between the two duplicates an entry rather than losing it.</li>
+</ul>
+<p>Lanes come from your registered projects, which get a lane whether or not a brief exists yet (with an invitation to start one), plus directories the fleet has actually worked in, which need a brief already written to earn one. Cards are read from disk on open and re-read after every write, so what you see is the file rather than what the pane hoped the file became. The lane badged <strong>Fleet</strong> is <code>~/.workspacer/brief.md</code>; if you point <code>agents.fleetRoot</code> somewhere else, the manager's own brief shows up as an ordinary lane for that directory.</p>
+<h3>reading briefs from your phone</h3>
+<p>The <strong>Briefs</strong> tab in the <a href="#remote">mobile client</a> lists every project the fleet has an agent in, fleet briefs first, and renders each one's sections in their canonical order. It is read-only on purpose: the phone is where you find out where things stand, not where you rewrite the manager's memory. Reading a file is operator surface, so the tab needs an operator-scoped token; a view or triage token gets a refusal rather than a blank screen. A project with no brief and a host that refused the read are reported differently, since only the first is an invitation to have one written.</p>
+<h3>a brief can be wrong</h3>
+<p>It is written by an agent as work lands, and on a busy fleet it can go stale within hours: an entry describing something that has since been fixed, or a <code>## Now</code> line whose work landed while nobody removed it. That has a cost, because the manager plans dispatches from it. The design answer is correction rather than correctness:</p>
+<ul>
+<li>Every <code>## Recently</code> entry is dated, so the age of a claim is visible on the line that makes it.</li>
+<li>An entry later found wrong is retracted in place with a marker, and the board badges those cards rather than showing the debunked claim as the title.</li>
+<li><code>/checkpoint</code> prunes <code>## Now</code> and archives the <code>## Recently</code> overflow, so the live document stays short enough to be read end to end.</li>
+<li>Your own edits win. The doctrine is inspect-then-edit and never rewrite the user's words, and both the append tool and the board are built so that they cannot.</li>
+</ul>
 </section>
 
 <section id="agent-pane" class="doc">
@@ -345,6 +464,8 @@
 <li>Cross-agent stats and plugin status (the same <code>sidecar.*</code> health colors as the Plugins Manager).</li>
 <li><strong>Favourite and recent projects</strong> to spawn into. Star one to pin it; clicking it publishes a <code>command.spawn_agent</code> on the hub bus to start a new agent there. Both are properties of the project: <code>favourite</code> and <code>lastOpened</code> under <code>config.projects</code>. (The older <code>config.directories.recent</code>/<code>favourites</code> arrays are still read, so nothing is lost on upgrade; they are no longer written.)</li>
 </ul>
+<h3>brief board</h3>
+<p>A kanban over every <code>.workspacer/brief.md</code> the fleet keeps, one swimlane per project plus the manager's own fleet brief, in the pinned global "Overview" workspace. Open it from the command palette ("Open Brief Board"). Dragging a card moves the entry inside the markdown, or archives it out to <code>brief.archive.md</code>. See <a href="#briefs">briefs</a>.</p>
 <h3>agents / agent watch</h3>
 <p>Fleet-monitoring panes. The <strong>Agents</strong> pane is a live timeline of a session's subagents. Clicking a running subagent or workflow in the inspector opens a dedicated <strong>watch pane</strong> that follows just that run, its status and tools and tokens, while the parent keeps working. There's also a standalone <strong>inspector</strong> pane: the same card as the inspector rail, pinnable as a tab (it's what a Fleet Deck card expands into, too).</p>
 <h3>markdown preview</h3>
@@ -794,11 +915,11 @@ workspacer jobs remove &lt;id&gt;</code></pre>
 <li><strong>keybindings</strong>: <code>prefix: ctrl+space</code>, <code>chordHints: true</code>, and a <code>shortcuts</code> map (see keybindings below).</li>
 <li><strong>notifications</strong>: <code>enabled: true</code>, <code>notifyDone: true</code>, <code>onlyWhenUnwatched: true</code>, <code>sound: false</code>, <code>inAppToasts: true</code>.</li>
 <li><strong>claude</strong>: <code>transport: stream</code> (<code>stream</code> = headless stream-json, GUI-only | <code>pty</code> = the classic terminal CLI), <code>defaultModel: 'opus[1m]'</code>, <code>seenModels: []</code> (auto-collected from transcripts to enrich the spawn dropdown), <code>defaultPermissionMode: ''</code> and <code>skipPermissionsDefault: false</code> (a fresh agent asks before privileged actions; set <code>skipPermissionsDefault: true</code> to make bypass the spawn default), <code>defaultView: terminal</code> (<code>gui</code> | <code>terminal</code>, terminal-transport panes only), <code>workLog: cards</code>, <code>showFileReads: true</code> (render the file contents a Read tool call returned inline in the work log; turn it off to keep the transcript to just which file was read), <code>settingsOverlay: false</code> (experimental: pass hooks via a private <code>--settings</code> file instead of editing <code>~/.claude/settings.json</code>), per-session <code>budgets</code> (a cost ceiling that fires a one-shot notification when crossed), and <code>keepWarm</code> (off by default: when an account's 5-hour rate-limit window is expired, send one minimal ping, Haiku for Claude and your default Codex model for Codex, so a fresh window is already running before you sit down; pick accounts via <code>providers: [claude, codex]</code>. <code>mode: auto</code> re-warms whenever the window lapses, <code>interval</code> checks every <code>intervalHours</code>, <code>daily</code> checks at <code>dailyAt</code>; every mode checks usage first and never pings mid-window; runs only while the app is open. Warms run as claudemon "heartbeats" rather than sessions, so they can't clutter your sidebar, and recent ones are listed under the setting).</li>
-<li><strong>agents</strong>: <code>defaultProvider</code>, <code>defaultCwd</code>, and per-provider <code>binaries</code> overrides for the spawn dialog, plus <code>managerProvider</code> (<code>claude</code> or <code>codex</code>), the harness the Fleet Manager itself runs on. It dispatches workers on any harness either way; this is only which one hosts the manager's own conversation, and it applies to the next manager you start.</li>
+<li><strong>agents</strong>: <code>defaultProvider</code>, <code>defaultCwd</code>, and per-provider <code>binaries</code> overrides for the spawn dialog, plus <code>managerProvider</code> (<code>claude</code> or <code>codex</code>), the harness the Fleet Manager itself runs on. It dispatches workers on any harness either way; this is only which one hosts the manager's own conversation, and it applies to the next manager you start. Also <code>fleetRoot: ''</code> (blank derives the manager's directory from your projects' common parent) and <code>fleetFullAccess: false</code> (when on, the manager and the workers it dispatches run with permissions bypassed). See <a href="#fleet-manager">the fleet manager</a>.</li>
 <li><strong>supervisor</strong>: <code>model: ''</code> (app default), <code>summarizerModel: sonnet</code>, <code>pollSeconds: 45</code>, <code>fullAccess: false</code> (when on, a supervisor runs with permissions bypassed and the summarizer workers it spawns inherit the bypass; it is the supervisor counterpart of <code>agents.fleetFullAccess</code>).</li>
 <li><strong>editor</strong>: <code>engine: codemirror</code> (<code>codemirror</code> | <code>terminal</code>), <code>terminalCommand: nvim</code> (the file path is appended as the last arg), optional <code>vim: true</code> for CodeMirror.</li>
 <li><strong>updates</strong>: <code>enabled</code> / <code>channel</code> for the app's update check (Settings ▸ Updates).</li>
-<li><strong>projects</strong>: per-directory project identity and state, keyed by normalized cwd exactly as <code>scripts</code> and <code>widgets</code> are: <code>label</code>, <code>color</code>, <code>icon</code> (an emoji), <code>favicon</code>/<code>iconFile</code> (a pasted icon URL, downloaded once into <code>project-icons/</code> and served over <code>workspacer-icon://</code>), plus <code>favourite</code>, <code>lastOpened</code>, and <code>plugins</code> (per-project settings namespaced by plugin id). Everything is optional: a project with no entry still gets initials from its name and a colour derived from its path, so the fleet is legible before anything is configured.</li>
+<li><strong>projects</strong>: per-directory project identity and state, keyed by normalized cwd exactly as <code>scripts</code> and <code>widgets</code> are: <code>label</code>, <code>color</code>, <code>icon</code> (an emoji), <code>favicon</code>/<code>iconFile</code> (a pasted icon URL, downloaded once into <code>project-icons/</code> and served over <code>workspacer-icon://</code>), plus <code>favourite</code>, <code>lastOpened</code>, <code>plugins</code> (per-project settings namespaced by plugin id), <code>worktreeSetup</code> (the ordered commands a fresh worktree runs), and the two Fleet Manager fields, <code>delivery</code> (<code>pr</code> | <code>local</code>, advisory) and <code>yolo</code> (workers dispatched here skip approvals). Everything is optional: a project with no entry still gets initials from its name and a colour derived from its path, so the fleet is legible before anything is configured.</li>
 <li><strong>directories</strong>: the legacy <code>recent</code> / <code>favourites</code> arrays. Still read for backwards compatibility, superseded by <code>projects</code>.</li>
 <li><strong>scripts</strong>: per-directory script buttons keyed by normalized cwd.</li>
 <li><strong>apps</strong>: your custom external app/site launcher entries (<code>name</code>, <code>url</code>, <code>icon</code>).</li>
