@@ -2,6 +2,14 @@ import { useConfigContext } from '../contexts/ConfigContext';
 import type { AgentProvider } from '../types/pane';
 import type { CustomThemes } from '../themes';
 import type { WidgetPlacement } from '../types/widget';
+import type { ProjectIdentity } from '../../../main/shared/ipcTypes';
+
+// Re-exported so existing `import { ProjectIdentity } from '../hooks/useConfig'`
+// call sites keep working — the type itself is declared once in
+// main/shared/ipcTypes.ts (the main↔renderer contract) and imported here,
+// not redeclared, so this side can't silently drift from configService.ts's
+// copy the way it used to (see the `delivery` field, which existed only here).
+export type { ProjectIdentity };
 
 export interface ShellOption {
   name: string;
@@ -166,64 +174,6 @@ export interface EditorConfig {
 export interface ScriptEntry {
   name: string;
   command: string;
-}
-
-/**
- * How one project should read at a glance. `favicon` wins when it loads, `icon`
- * (an emoji or one or two letters) is next, and initials derived from the name
- * are the floor — so there is always something to draw. Mirrors ProjectIdentity
- * in main/services/configService.ts.
- */
-export interface ProjectIdentity {
-  label?: string;
-  color?: string;
-  icon?: string;
-  favicon?: string;
-  /**
-   * The DOWNLOADED icon's filename under `<configDir>/project-icons/`, served
-   * to the renderer as `workspacer-icon://<iconFile>`. This is what actually
-   * renders; `favicon` is kept as the source it came from, so the field can
-   * show what you pasted and the icon can be re-fetched.
-   */
-  iconFile?: string;
-  /** Pinned by the user. Absent falls back to the legacy `directories.favourites`. */
-  favourite?: boolean;
-  /**
-   * How the Fleet Manager lands work in this project (the standing per-project
-   * delivery policy it reads at dispatch and bakes into each worker's brief):
-   *   'pr'    — open a pull request for review (default, safest).
-   *   'local' — land changes on a branch / local merge after your approval; no PR.
-   * Absent = 'pr'. Advisory to the manager, not a hard gate.
-   */
-  delivery?: 'pr' | 'local';
-  /**
-   * Per-project full-access: workers the manager dispatches INTO this project
-   * run with permissions bypassed (no per-action approvals). The narrower,
-   * per-repo form of agents.fleetFullAccess. Absent = off. When any project
-   * sets this, the manager's token gets the hub-verified yolo grant; the
-   * manager still only bypasses for the flagged project (doctrine-enforced).
-   */
-  yolo?: boolean;
-  /**
-   * Shell commands run (in order) in a fresh agent worktree of this project,
-   * right after `git worktree add` + the automatic node_modules linking. Each
-   * runs with cwd = the worktree root, `$SOURCE` (the source checkout) and
-   * `$WORKTREE` (the new worktree) substituted and exported, under a 5-minute
-   * per-command timeout. `script:<name>` references this project's `scripts`
-   * entry by name. The first failure stops the rest; a failed setup is a
-   * warning, never a refused spawn.
-   */
-  worktreeSetup?: string[];
-  /** Epoch ms this project was last opened. Absent falls back to the legacy
-   *  `directories.recent` ordering. */
-  lastOpened?: number;
-  /**
-   * Per-project settings belonging to plugins, namespaced by plugin id. Only
-   * NON-SECRET values live here: config.yaml is credential-free by design, and
-   * `config.get` is an unguarded bus capability on exactly that basis (see its
-   * entry in capspec.go). A plugin's tokens stay in its own `.settings.json`.
-   */
-  plugins?: Record<string, Record<string, unknown>>;
 }
 
 export interface Config {

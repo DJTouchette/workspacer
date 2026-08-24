@@ -6,6 +6,7 @@ import { CONFIG_DEFAULTS } from './configDefaults.generated';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { withConfigLock } from '../lib/configLock';
 import { WHOLESALE_CONFIG_PATHS } from '../shared/configWholesale';
+import type { ProjectIdentity } from '../shared/ipcTypes';
 
 interface ShellOption {
   name: string;
@@ -43,58 +44,11 @@ interface WidgetPlacementEntry {
   size: 'small' | 'medium' | 'large';
 }
 
-/**
- * How one project should read at a glance. `favicon` wins when it loads,
- * `icon` (an emoji or one or two letters) is next, and initials derived from
- * the directory name are the floor — so there is always something to draw.
- */
-export interface ProjectIdentity {
-  /** Display name. Defaults to the directory's basename. */
-  label?: string;
-  /** Badge tint (any CSS color). Derived from the path when unset. */
-  color?: string;
-  /** An emoji, or one or two letters. */
-  icon?: string;
-  /** http(s) URL of a real icon to fetch and cache. */
-  favicon?: string;
-  /**
-   * The DOWNLOADED icon's filename under `<configDir>/project-icons/`, served
-   * to the renderer as `workspacer-icon://<iconFile>`. This is what actually
-   * renders; `favicon` is kept as the source it came from, so the field can
-   * show what you pasted and the icon can be re-fetched.
-   */
-  iconFile?: string;
-  /** Pinned by the user. Absent falls back to the legacy `directories.favourites`. */
-  favourite?: boolean;
-  /**
-   * Per-project full-access: workers the Fleet Manager dispatches INTO this
-   * project run with permissions bypassed. The narrower, per-repo form of
-   * agents.fleetFullAccess: when ANY project sets it, the manager's session
-   * token needs the hub-verified yolo grant (services/fullAccessGrants), and
-   * the manager bypasses only for the flagged project (doctrine-enforced).
-   */
-  yolo?: boolean;
-  /** Epoch ms this project was last opened. Absent falls back to the legacy
-   *  `directories.recent` ordering. */
-  lastOpened?: number;
-  /**
-   * Shell commands run (in order) in a fresh agent worktree of this project,
-   * right after `git worktree add` + the automatic node_modules linking.
-   * Each runs with cwd = the worktree root, `$SOURCE` (the source checkout)
-   * and `$WORKTREE` (the new worktree) substituted and exported, under a
-   * 5-minute per-command timeout. `script:<name>` references this project's
-   * `scripts` entry by name. The first failure stops the rest; a failed setup
-   * is surfaced as a warning, never a refused spawn (worktreeService).
-   */
-  worktreeSetup?: string[];
-  /**
-   * Per-project settings belonging to plugins, namespaced by plugin id. Only
-   * NON-SECRET values live here: config.yaml is credential-free by design, and
-   * `config.get` is an unguarded bus capability on exactly that basis (see its
-   * entry in capspec.go). A plugin's tokens stay in its own `.settings.json`.
-   */
-  plugins?: Record<string, Record<string, unknown>>;
-}
+// ProjectIdentity (per-project label/color/icon/yolo/delivery/worktreeSetup/…)
+// is declared once in ../shared/ipcTypes.ts — the main↔renderer contract file
+// — and imported here, so this side can't silently drift from the renderer's
+// copy (useConfig.ts) the way it did before (see the `delivery` field, which
+// existed only in the renderer's copy).
 
 interface Config {
   ui: {
