@@ -8,7 +8,7 @@ related_paths:
   - landing/index.html
   - package.json
   - apps/desktop/package.json
-promoted: false
+promoted: true
 ---
 
 # Version source of truth is apps/desktop/package.json (0.149.0); no v0.150 tag exists
@@ -21,3 +21,6 @@ Any future landing-page copy for an in-master-but-unreleased feature should avoi
 
 ## Recommendation
 When federation reaches a stable tagged release, remove the "Currently nightly-only" lines in docs.html and build.html entirely (index.html's line already has no such caveat).
+
+## Disposition
+Not promoted — describes a one-time landing-page copy state (no v0.150 tag yet) tied to a specific release cycle, not a durable codebase fact. Will read as obviously stale the moment a v0.150 tag is cut. Left in the log.

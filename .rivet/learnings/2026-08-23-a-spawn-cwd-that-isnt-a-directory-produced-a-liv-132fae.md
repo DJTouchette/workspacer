@@ -10,7 +10,7 @@ related_paths:
   - apps/desktop/src/renderer/src/lib/fleetManager.ts
   - services/claudemon/src/providers/claude_stream.rs
   - services/claudemon/src/daemon/spawn.rs
-promoted: false
+promoted: true
 ---
 
 # A spawn cwd that isn't a directory produced a live-looking card whose session was already stopped
@@ -25,3 +25,6 @@ Any spawn path (IPC claude:spawn, hub-bus agents.spawn, MCP-facade worker dispat
 
 ## Recommendation
 Two-layer fix now in place: (1) tilde expansion belongs at the point the USER's config is read, not at the spawn boundary — renderer/src/lib/fleetManager.ts `expandHome` inside deriveFleetRoot; leave normalizeSpawnCwd's contract alone. (2) `assertSpawnCwd` (main/lib/spawnCwd.ts) pre-flights the resolved cwd in spawnClaudeAgent, spawnManagedAgent and spawnCodexHybrid, raising a notifySystem banner and throwing before a session id exists. When adding a new spawn entry point, call it after cwd resolution. The remaining gap: claudemon itself still accepts an unusable cwd — a 400 in handle_managed/handle would be the backstop for non-desktop clients.
+
+## Disposition
+Promoted into .rivet/context/domains/agent-spawn.md (hand-authored notes 2026-08-22/23, spawn-cwd trap bullet).

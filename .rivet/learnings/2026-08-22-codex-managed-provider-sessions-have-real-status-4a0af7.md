@@ -9,7 +9,7 @@ related_paths:
   - apps/desktop/src/main/services/thresholdWatcher.ts
   - apps/desktop/src/main/services/sessionStore/analyticsWriter.ts
   - apps/desktop/src/main/services/sessionStore/usageAccumulator.ts
-promoted: false
+promoted: true
 ---
 
 # Codex/managed-provider sessions have real statusLine usage but agents.list + notify_when read the wrong field (s.usage, always null)
@@ -22,3 +22,6 @@ agents.list (the hub capability behind mcp__workspacer__list_agents / the Fleet 
 
 ## Recommendation
 Give WatchableSession (thresholdWatch.ts) and the agents.list mapper (hubCapabilities.ts:210-226) the same statusLine-first-then-usage fallback analyticsWriter.ts already uses (lines 41-43). Also add a statusLine fallback for peakContext in analyticsWriter.ts:44, mirroring the pattern one line above it.
+
+## Disposition
+Not promoted — verified STALE, all three claimed gaps are already fixed in current code: hubCapabilities.ts agents.list already falls back to s.statusLine for model/contextTokens/contextLimit/costUSD (lines ~255-258, with an explicit comment naming the codex/opencode/pi gap); thresholdWatch.ts's WatchableSession already models statusLine and sessionTokens/crossedBy already fall back to it; claudeSessionStore.applyStatusLine already updates session.peakContext from statusLine (comment: "the only other peakContext writer"), and analyticsWriter.ts's recordModels already falls back to statusLine.modelDisplay for the per-model split. This is exactly the kind of already-fixed claim the task warned to check for before promoting.
