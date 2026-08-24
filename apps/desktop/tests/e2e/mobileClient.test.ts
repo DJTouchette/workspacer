@@ -312,9 +312,7 @@ test.describe('mobile client', () => {
     await expect(result).toContainText('3');
     await expect(result).toContainText('tests fixed');
     // The caveats band is never behind a fold — visible with no click.
-    await expect(result.locator('.fcaveats')).toContainText(
-      'Did not check the triage-token path',
-    );
+    await expect(result.locator('.fcaveats')).toContainText('Did not check the triage-token path');
     // A short paths array leads with its count; the list itself is on demand.
     const pathsDisclosure = result.locator('.fdisc');
     await expect(pathsDisclosure).toContainText('2');

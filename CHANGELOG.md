@@ -7,6 +7,69 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.150.0] - 2026-08-23
+
+### Added
+- **The Fleet Manager.** A dedicated orchestrator agent — a real session at
+  operator tier, not a script — that dispatches worker agents, watches them
+  finish or block, and keeps a per-project brief. It runs on Claude or Codex
+  (`agents.managerProvider`) and dispatches to all four supported harnesses.
+  The manager never polls: it is woken on a worker finishing, blocking,
+  hitting a threshold it armed, or reporting its own progress
+  (`agents.reportProgress`), all through one wake channel.
+- **The brief.** A living per-project markdown file the manager writes as
+  work lands, with a shape that encodes decay — a `## Now` list that empties
+  as work finishes, a durable `## Direction`, and a `## Recently` log that
+  records not just what happened but *why*, including retracted decisions
+  and do-not-re-dispatch markers. `/checkpoint` prunes and archives it rather
+  than letting it grow forever; the new Board pane renders it as a kanban
+  with drag-to-archive. `brief_append` is safe for a worker and the manager
+  to write to at the same moment.
+- **Fleet succession, while the app is running.** If a manager crashes or is
+  closed, its workers are discoverable as orphans (`list_orphans`) and can be
+  adopted by a successor (`adopt_workers`, `reparentChildren`); crashed
+  managers leave a tombstone their successor can read.
+  `agents.list` now reports `parentSessionId`, `label`, and `isSupervisor` so
+  the fleet's shape is visible. This bookkeeping lives in memory — it does
+  not survive an app restart.
+- **Structured results.** A dispatch can ask a worker for a JSON-Schema-shaped
+  answer; the worker returns it as a fenced `wks-result` block, which is
+  validated and rendered as a real card — on desktop and on the `/m` phone
+  client — instead of a raw JSON dump in the transcript.
+- **Mobile fleet-wake detection.** `/m` now distinguishes a worker that's
+  merely taking a while from one that's actually stuck: a working agent with
+  no progress for several minutes raises a "Not moving" item, and one whose
+  status line has gone silent raises "No signal" instead.
+- **Tiered dispatch tokens.** Workers can be minted a capability token scoped
+  to view, triage, or operator tools, derived from one allowlist shared by
+  the MCP facade and the hub — so a read-only scout genuinely cannot mutate
+  anything.
+- **Worktree setup hooks + node_modules auto-link.** Project-defined hooks run
+  deterministically when a worktree is created for a dispatched agent, and
+  `node_modules` is auto-linked into it at whatever depth the project needs,
+  so a fresh worktree doesn't need a full reinstall to run.
+
+### Fixed
+- **Security: a federated call could forge caller identity.** `router.call`
+  and the cross-hub `federatedCall` path each maintained their own
+  hand-written list of which fields to strip or stamp for caller identity
+  before dispatch (profile/yolo-grant on `agents.spawn`, `callerSessionId` on
+  `agents.reportProgress`). The two lists could drift, and one gap did: a
+  view-tier token could forge a `callerSessionId` across a federated hop.
+  Both paths now consult a single sanitizer table so they cannot diverge
+  again.
+- **Hardened the pending-message-slot invariant** across the Rust session
+  state machine, the hook feed, and the store, closing several races where a
+  send could be dropped or a parked approval clobbered.
+- Numerous smaller fixes to worker-finished wake reliability, model/profile
+  respawn duplicate cards, and sidebar/grandchild session display.
+
+### Changed
+- `CLAUDE.md` and the `.rivet/context` documentation are now tracked in the
+  repository.
+- The mobile end-to-end suite (`/m`, Playwright) was repaired — it had been
+  silently unrun for two days — and is now wired into CI on every PR.
+
 ## [0.149.0] - 2026-08-14
 
 ### Added
