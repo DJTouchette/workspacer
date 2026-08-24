@@ -129,12 +129,19 @@ describe('node_modules linking', () => {
     nmRepo = makeRepo('nmrepo', 'node_modules\n');
   });
 
-  it('discovers node_modules at depth ≤ 2 only, without descending into them', async () => {
-    // Too deep (parent depth 3) and nested-inside-node_modules must not match.
+  it('discovers node_modules at any depth, without descending into them', async () => {
+    // Deep (parent depth 3, and depth 4 mirroring apps/desktop/src/renderer)
+    // must be found; nested-inside-node_modules must not match.
     fs.mkdirSync(path.join(nmRepo, 'a', 'b', 'c', 'node_modules'), { recursive: true });
+    fs.mkdirSync(path.join(nmRepo, 'a', 'b', 'c', 'd', 'node_modules'), { recursive: true });
     fs.mkdirSync(path.join(nmRepo, 'node_modules', 'dep', 'node_modules'), { recursive: true });
     const found = await discoverNodeModules(nmRepo);
-    expect(found.sort()).toEqual([path.join('apps', 'desktop', 'node_modules'), 'node_modules']);
+    expect(found.sort()).toEqual([
+      path.join('a', 'b', 'c', 'd', 'node_modules'),
+      path.join('a', 'b', 'c', 'node_modules'),
+      path.join('apps', 'desktop', 'node_modules'),
+      'node_modules',
+    ]);
   });
 
   it('symlinks discovered node_modules into a fresh worktree, and the tree stays clean', async () => {
