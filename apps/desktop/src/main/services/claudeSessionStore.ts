@@ -26,6 +26,13 @@ import {
   type ConversationItemWire,
 } from './sessionStore/conversationApplier';
 import { SessionUsageAccumulator } from './sessionStore/usageAccumulator';
+import {
+  acknowledgeAnswer,
+  bornWithEmptyPending,
+  bornWithPending,
+  PendingSlot,
+} from './sessionStore/pendingSlot';
+import type { PendingFencedSession, SessionWithoutPending } from './sessionStore/pendingSlot';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { writeHistory } from './sessionStore/analyticsWriter';
 import { revokeSessionFacadeTokens } from './remoteTokens';
@@ -389,7 +396,14 @@ export type RemoteSnapshotWire = Partial<ClaudeSessionSnapshot> & {
 // ── Store ──
 
 class ClaudeSessionStore {
-  private sessions = new Map<string, ClaudeSessionState>();
+  // The fenced view, not `ClaudeSessionState`: every `this.sessions.get()` in
+  // this class therefore hands back a session whose pending slot is READONLY,
+  // so no method here can park or resolve a card without going through a
+  // `PendingSlot` that has declared which feed it is. `readonly` is invisible
+  // to assignability, so the rows still pass unchanged to the notifier, the
+  // watcher, `applyHookEvent` and `publishSnapshot`. (Those collaborators only
+  // read the slot — see the writer census in ./sessionStore/pendingSlot.)
+  private sessions = new Map<string, PendingFencedSession>();
   private mainWindow: BrowserWindow | null = null;
   // Latest workflow/subagent filesystem state per session, re-merged whenever
   // either the watcher ticks or a hook event mutates the subagent list.
@@ -858,13 +872,14 @@ class ClaudeSessionStore {
     //      protocol (`can_use_tool`) rather than a PermissionRequest hook, so
     //      no hook ever populates pendingApproval for it.
     // Claude PTY keeps the hook-driven path — hookEventRouter owns these fields
-    // for it, and driving them from both sources would race. `undefined` means
-    // the caller carried no pending info (leave state alone); `null` means the
-    // daemon says nothing is pending (clear).
-    const provider = session.provider ?? meta?.provider ?? 'claude';
-    const transport = session.transport ?? meta?.transport;
-    const daemonOwnsPending = provider !== 'claude' || transport === 'stream';
-    if (daemonOwnsPending && meta && meta.pending !== undefined) {
+    // for it, and driving them from both sources would race. Who owns the slot
+    // is decided in ONE place (pendingSlotOwner, via the PendingSlot inside
+    // applyManagedPending), not re-spelled here where it could drift from the
+    // hook feed's answer. What is left for this call site is the orthogonal
+    // question of whether the frame carried any pending info at all:
+    // `undefined` means it did not (leave the slot alone); `null` means the
+    // daemon says nothing is pending (resolve).
+    if (meta && meta.pending !== undefined) {
       this.applyManagedPending(session, meta.pending);
     }
     let next: SessionAmbientState;
@@ -914,42 +929,41 @@ class ClaudeSessionStore {
    * card the user already dismissed (the dock hides on dismissal timestamps).
    */
   private applyManagedPending(
-    session: ClaudeSessionState,
+    session: PendingFencedSession,
     pending: ManagedPendingWire | null,
   ): void {
+    // The ownership check is the slot's, not this call site's: declaring the
+    // feed IS the check. A daemon frame that reaches a hook-owned session (PTY
+    // claude) or a peer's mirrored row writes nothing, and no future edit here
+    // can forget to ask.
+    const slot = new PendingSlot(session, 'daemon');
     if (pending?.kind === 'approval') {
       // Codex/OpenCode approval payloads carry the request params in `raw`
       // (no hook-style `tool_input` envelope); prefer the envelope when a
       // gateway-shaped payload has one, else show the params themselves.
       const raw = pending.raw ?? {};
-      const next: PendingApproval = {
+      // Park, then resolve the other half: the daemon's slot holds ONE thing,
+      // so an approval frame means no question is outstanding. (`parkApproval`
+      // keeps an unchanged card's original timestamp — see PendingSlot.)
+      slot.parkApproval({
         toolName: pending.tool ?? '',
         toolInput: raw.tool_input ?? raw,
         timestamp: Date.now(),
-      };
-      const prev = session.pendingApproval;
-      if (
-        !prev ||
-        prev.toolName !== next.toolName ||
-        JSON.stringify(prev.toolInput) !== JSON.stringify(next.toolInput)
-      ) {
-        session.pendingApproval = next;
-      }
-      session.pendingQuestions = null;
+      });
+      slot.resolveQuestions();
     } else if (pending?.kind === 'question') {
-      const next = (pending.questions ?? []).map((q) => ({
-        question: q.question,
-        header: q.header ?? undefined,
-        multi_select: q.multi_select ?? false,
-        options: q.options ?? [],
-      }));
-      if (JSON.stringify(session.pendingQuestions) !== JSON.stringify(next)) {
-        session.pendingQuestions = next;
-      }
-      session.pendingApproval = null;
+      slot.parkQuestions(
+        (pending.questions ?? []).map((q) => ({
+          question: q.question,
+          header: q.header ?? undefined,
+          multi_select: q.multi_select ?? false,
+          options: q.options ?? [],
+        })),
+      );
+      slot.resolveApproval();
     } else {
-      session.pendingApproval = null;
-      session.pendingQuestions = null;
+      // The daemon says nothing is pending — its `result` frame closed the turn.
+      slot.resolveAll();
     }
   }
 
@@ -1182,7 +1196,11 @@ class ClaudeSessionStore {
     // window push must not truncate the history back to twelve turns. The
     // window still refreshes every state field around it.
     const folded = this.remoteConvSeq.has(sessionId);
-    const session: ClaudeSessionState = {
+    // Typed WITHOUT the pending slot: naming either field in this literal is an
+    // excess property, so the row's card can only come from the intent declared
+    // in `bornWithPending` below. (The `...snap` spread still carries the wire
+    // values at runtime; `bornWithPending` overwrites them before the fill.)
+    const draft: SessionWithoutPending = {
       ...(existing ?? {}),
       ...snap,
       sessionId,
@@ -1199,8 +1217,6 @@ class ClaudeSessionStore {
       activeToolCalls: snap.activeToolCalls ?? [],
       completedToolCalls: snap.completedToolCalls ?? [],
       fileChanges: snap.fileChanges ?? [],
-      pendingApproval: snap.pendingApproval ?? null,
-      pendingQuestions: snap.pendingQuestions ?? null,
       subagents: snap.subagents ?? [],
       workflows: snap.workflows ?? [],
       ambientState: snap.ambientState ?? existing?.ambientState ?? 'idle',
@@ -1212,6 +1228,16 @@ class ClaudeSessionStore {
       hub,
       hubOffline: false,
     };
+    // The peer's slot, mirrored. A full snapshot is authoritative in both
+    // directions: a card it carries is parked, its absence is a resolve.
+    const session = bornWithPending(draft, 'federation', existing, (slot) => {
+      const wire = snap.pendingApproval;
+      if (wire) slot.parkApproval(wire);
+      else slot.resolveApproval();
+      const questions = snap.pendingQuestions;
+      if (questions) slot.parkQuestions(questions);
+      else slot.resolveQuestions();
+    });
     if (folded && existing) this.carryConversationAnchors(existing, session);
     this.sessions.set(sessionId, session);
     this.pushUpdate(session);
@@ -1247,7 +1273,7 @@ class ClaudeSessionStore {
       if (existing) this.dropRemoteSession(existing);
       return;
     }
-    const session: ClaudeSessionState = {
+    const draft: SessionWithoutPending = {
       sessionId,
       cwd: snap.cwd ?? existing?.cwd ?? '',
       ptyId: existing?.ptyId ?? sessionId,
@@ -1257,10 +1283,6 @@ class ClaudeSessionStore {
       activeToolCalls: existing?.activeToolCalls ?? [],
       completedToolCalls: existing?.completedToolCalls ?? [],
       fileChanges: existing?.fileChanges ?? [],
-      pendingApproval: this.sparsePendingApproval(snap, existing),
-      // Brain rows set this explicitly (null = cleared), so a stale question
-      // never lingers; `?? null` also clears when a producer omits the field.
-      pendingQuestions: snap.pendingQuestions ?? null,
       subagents: existing?.subagents ?? [],
       workflows: existing?.workflows ?? [],
       plan: snap.plan ?? existing?.plan,
@@ -1279,37 +1301,32 @@ class ClaudeSessionStore {
       hub,
       hubOffline: false,
     };
+    // The peer's slot, mirrored — same intent as the full path. Brain rows
+    // re-send the same parked approval on unrelated updates and carry no
+    // timestamp of their own, so an unchanged card must keep the one it was
+    // first stamped with or the needs-you dock resurrects cards the user
+    // already dismissed; that is `parkApproval`'s Keep rule, shared now with
+    // the daemon feed instead of hand-rolled a second time here. Questions are
+    // set explicitly by brain rows (null = cleared), so their absence resolves.
+    const session = bornWithPending(draft, 'federation', existing, (slot) => {
+      const wire = snap.pendingApproval;
+      if (wire) {
+        slot.parkApproval({
+          toolName: wire.toolName ?? '',
+          toolInput: wire.toolInput,
+          suggestions: wire.suggestions,
+          timestamp: wire.timestamp ?? Date.now(),
+        });
+      } else {
+        slot.resolveApproval();
+      }
+      const questions = snap.pendingQuestions;
+      if (questions) slot.parkQuestions(questions);
+      else slot.resolveQuestions();
+    });
     if (existing) this.carryConversationAnchors(existing, session);
     this.sessions.set(sessionId, session);
     this.pushUpdate(session);
-  }
-
-  /**
-   * Brain rows re-send the same pending approval on unrelated updates and
-   * carry no timestamp; an unchanged card must keep its original one, or the
-   * needs-you dock resurrects cards the user already dismissed (same rule as
-   * applyManagedPending). A changed/new card gets stamped on arrival.
-   */
-  private sparsePendingApproval(
-    snap: RemoteSnapshotWire,
-    existing: ClaudeSessionState | undefined,
-  ): PendingApproval | null {
-    const wire = snap.pendingApproval;
-    if (!wire) return null;
-    const prev = existing?.pendingApproval;
-    if (
-      prev &&
-      prev.toolName === (wire.toolName ?? '') &&
-      JSON.stringify(prev.toolInput) === JSON.stringify(wire.toolInput)
-    ) {
-      return prev;
-    }
-    return {
-      toolName: wire.toolName ?? '',
-      toolInput: wire.toolInput,
-      suggestions: wire.suggestions,
-      timestamp: wire.timestamp ?? Date.now(),
-    };
   }
 
   /**
@@ -1546,10 +1563,13 @@ class ClaudeSessionStore {
     this.evictionTimers.delete(sessionId);
   }
 
-  private createSession(sessionId: string, cwd: string): ClaudeSessionState {
+  private createSession(sessionId: string, cwd: string): PendingFencedSession {
     // A reused id means the previous life's eviction is still armed.
     this.cancelEviction(sessionId);
-    const session: ClaudeSessionState = {
+    // Typed without the pending slot for the same reason the remote rows are:
+    // the fields cannot be named here, so `bornWithEmptyPending` below is the
+    // only statement in this file of what a new row's slot holds.
+    const draft: SessionWithoutPending = {
       sessionId,
       cwd,
       ptyId: sessionId, // legacy field — renderer keys by this; we make it == sessionId
@@ -1559,8 +1579,6 @@ class ClaudeSessionStore {
       activeToolCalls: [],
       completedToolCalls: [],
       fileChanges: [],
-      pendingApproval: null,
-      pendingQuestions: null,
       subagents: [],
       workflows: [],
       ambientState: 'idle',
@@ -1570,6 +1588,7 @@ class ClaudeSessionStore {
       peakContext: 0,
       usage: null,
     };
+    const session = bornWithEmptyPending(draft);
     // Apply any pre-registered spawn metadata (label, parentSessionId) so the
     // snapshot is enriched before the first push to the renderer.
     const meta = this.spawnMeta.get(sessionId);
@@ -1615,14 +1634,23 @@ class ClaudeSessionStore {
     this.pushUpdate(session);
   }
 
-  /** Optimistically clear the pending question set once a structural answer
-   *  was accepted by the daemon. Without this, the answered questions linger
-   *  on every surface (pane dock, inbox, fleet cards) until the tool's
-   *  PostToolUse hook lands — which reads as the picker re-prompting. */
+  /**
+   * Optimistically clear the pending question set once an answer was ACCEPTED
+   * — by the daemon (`POST /answer` returned) or by the peer that owns a remote
+   * row (`claude.answer` returned). Without it the answered questions linger on
+   * every surface (pane dock, inbox, fleet cards) until the confirmation lands,
+   * which reads as the picker re-prompting.
+   *
+   * The one write to the slot that is deliberately NOT ownership-gated, because
+   * it is not this feed guessing about another's state — it is the resolution
+   * of the exact request that feed parked. `acknowledgeAnswer` is the word for
+   * that, and it is narrow (questions only, no-op when nothing is parked) so
+   * being ungated stays safe; see ./sessionStore/pendingSlot.
+   */
   clearPendingQuestions(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (!session || !session.pendingQuestions) return;
-    session.pendingQuestions = null;
+    acknowledgeAnswer(session);
     this.pushUpdate(session);
   }
 
