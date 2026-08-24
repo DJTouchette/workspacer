@@ -483,6 +483,8 @@ var snapshotFieldsRequired = []string{
 	"usage",
 	"pendingApproval",
 	"pendingQuestions",
+	"statusLine",
+	"totalToolCalls",
 }
 
 // snapshotFieldsDeclined lists desktop-snapshot fields the clients read that
@@ -506,6 +508,12 @@ func TestCompatSnapshotCoversMobileFields(t *testing.T) {
 		"session_id":"s1","mode":"responding","cwd":"/tmp","provider":"claude",
 		"transport":"stream","archived":false,"updated_at":"2026-07-10T12:00:00Z",
 		"usage":{"model":"m","context_tokens":1,"context_limit":2,"cost_usd":0.1},
+		"tool_calls":7,
+		"status_line":{"model_display":"Opus","context_used_pct":12.5,"context_window_size":200000,
+			"total_input_tokens":100,"total_output_tokens":50,"cost_usd":0.2,
+			"five_hour_pct":10,"five_hour_resets_at":1234,"seven_day_pct":20,"seven_day_resets_at":5678,
+			"monthly_pct":30,"monthly_resets_at":9012,"rate_limit_warning":"careful",
+			"received_at":"2026-07-10T12:00:00Z"},
 		"pending":null}`)
 	var m map[string]any
 	if err := json.Unmarshal(compatSnapshot(row), &m); err != nil {
@@ -534,6 +542,20 @@ func TestCompatSnapshotCoversMobileFields(t *testing.T) {
 	for _, k := range []string{"model", "contextTokens", "contextLimit", "costUSD"} {
 		if _, ok := u[k]; !ok {
 			t.Errorf("usage overlay missing %q (mobile ctxPct/fleetCard read it)", k)
+		}
+	}
+	// statusLine sub-shape: mobile reads these camelCase off s.statusLine (stats,
+	// progressFingerprint, statusLineReceivedAt) — claudemon's row carries them
+	// snake_case under status_line, so compatSnapshot must rename every one.
+	sl, _ := m["statusLine"].(map[string]any)
+	for _, k := range []string{
+		"modelDisplay", "contextUsedPct", "contextWindowSize", "totalInputTokens",
+		"totalOutputTokens", "costUSD", "fiveHourPct", "fiveHourResetsAt",
+		"sevenDayPct", "sevenDayResetsAt", "monthlyPct", "monthlyResetsAt",
+		"rateLimitWarning", "receivedAt",
+	} {
+		if _, ok := sl[k]; !ok {
+			t.Errorf("statusLine overlay missing %q (mobile stats/progressFingerprint read it)", k)
 		}
 	}
 }
