@@ -654,12 +654,17 @@ export const WORKING_FINISHED = {
 
 /** A working agent under its own session id, for the stall-detection tests —
  *  distinct from WORKING/ws1 so pushing it doesn't disturb the pristine fleet
- *  those other tests assert against. `receivedAtMs` models the status line's
- *  own tick, independent of the rest of the fingerprint: a test drives time
- *  forward with page.clock and either keeps this fresh (the process is alive,
- *  just not producing observable progress — "Not moving") or lets it go stale
- *  (the process itself has stopped talking to us — "No signal"). Omit it to
- *  model a session with no status line at all — every field it feeds the
+ *  those other tests assert against.
+ *
+ *  It is deliberately Claude on the PTY transport, NOT WORKING's `stream`:
+ *  that is the only session shape whose status line is a heartbeat (the CLI
+ *  re-runs its `statusLine` command on every render and claudemon forwards it),
+ *  so it is the only one where `receivedAt` can separate alive from gone.
+ *  `receivedAtMs` models that tick, independent of the rest of the
+ *  fingerprint: a test drives time forward with page.clock and either keeps it
+ *  fresh (alive, just not producing observable progress — "Not moving") or lets
+ *  it go stale (the process has stopped talking to us — "No signal"). Omit it
+ *  to model a session whose heartbeat never arrived. Every field it feeds the
  *  fingerprint (conversation, tool calls, usage) stays frozen either way. */
 export function stallSnapshot(receivedAtMs?: number) {
   return {
@@ -667,12 +672,29 @@ export function stallSnapshot(receivedAtMs?: number) {
     sessionId: 'stall1',
     cwd: '/home/djtouchette/Work/worky/stall-repo',
     ptyId: 'pty-stall',
+    transport: 'pty',
     workflows: [],
     subagents: [],
     statusLine: {
       ...WORKING.statusLine,
       receivedAt: receivedAtMs === undefined ? undefined : new Date(receivedAtMs).toISOString(),
     },
+  };
+}
+
+/** The same stalled agent, but on a managed provider — codex, whose status line
+ *  claudemon publishes only when a usage frame moves the token totals. That is
+ *  the very thing the progress fingerprint counts, so `receivedAtMs` here is
+ *  ALWAYS as stale as the stall itself. It is not a heartbeat, and the card
+ *  must not read it as one. */
+export function managedStallSnapshot(receivedAtMs: number) {
+  return {
+    ...stallSnapshot(receivedAtMs),
+    sessionId: 'stall2',
+    cwd: '/home/djtouchette/Work/worky/codex-repo',
+    ptyId: 'pty-stall2',
+    provider: 'codex',
+    transport: undefined,
   };
 }
 

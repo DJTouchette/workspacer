@@ -19,6 +19,7 @@ import {
   MULTI_QUESTION_A,
   MULTI_QUESTION_B,
   stallSnapshot,
+  managedStallSnapshot,
   fleetWakeSnapshot,
   FLEET_WAKE_TEXT,
   FLEET_CATCHUP_TEXT,
@@ -184,9 +185,10 @@ test.describe('mobile client', () => {
     page,
   }) => {
     await openClient(page);
-    // ws1 ('workspacer') carries no statusLine.receivedAt, so once it stalls
-    // it reads as alive-but-quiet ("Not moving") rather than silent — the
-    // desktop's own fallback for a session with no status-line signal.
+    // ws1 ('workspacer') is Claude on the stream transport, whose status line
+    // the daemon publishes only when a usage frame moves — no heartbeat to
+    // read — and it carries no receivedAt anyway. So once it stalls it reads
+    // as "Not moving", never as silence we never observed.
     const start = Date.now();
     await page.clock.install({ time: start });
 
@@ -244,6 +246,36 @@ test.describe('mobile client', () => {
     await expect(noSignal.first()).toBeVisible({ timeout: 5000 });
     await expect(noSignal.first().locator('.who')).toHaveText('stall-repo');
     await expect(noSignal.first().locator('.ibd')).toContainText('stopped reporting');
+  });
+
+  test('the same stale status line on a managed provider admits it cannot tell, instead of declaring death', async ({
+    page,
+  }) => {
+    await openClient(page);
+    const start = Date.now();
+    await page.clock.install({ time: start });
+
+    // Byte-for-byte the same status-line age as the "No signal" test above —
+    // only the provider differs. A codex status line is published solely when
+    // a usage frame moves the token totals, which is the very thing the
+    // progress fingerprint counts, so it is stale by construction the instant
+    // the stall fires. Every managed-provider stall used to render "No signal"
+    // off exactly this, which made the card's other half unreachable.
+    hub.pushSnapshot(managedStallSnapshot(start));
+    await expect(page.locator('.agent[data-agent="stall2"]')).toBeVisible({ timeout: 5000 });
+
+    await page.clock.fastForward(6 * 60_000);
+    await page.locator('nav button[data-tab="inbox"]').click();
+
+    const card = page
+      .locator('.item')
+      .filter({ has: page.locator('.who', { hasText: 'codex-repo' }) });
+    await expect(card.first()).toBeVisible({ timeout: 5000 });
+    await expect(card.first().locator('.ibd')).toContainText('Not moving');
+    await expect(card.first().locator('.ibd')).not.toContainText('No signal');
+    // It states what it observed, then admits what it cannot conclude.
+    await expect(card.first().locator('.ibd')).toContainText('nothing has changed for');
+    await expect(card.first().locator('.ibd')).toContainText('no heartbeat');
   });
 
   test('chat renders work cards, flow cards, changed files and the composer', async ({ page }) => {

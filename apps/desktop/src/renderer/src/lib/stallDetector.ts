@@ -16,12 +16,20 @@
  * own agents' progress, because a run whose agents are all parked looks exactly
  * as busy as one that's flying.
  *
- * There is a second, independent signal: the status line. It keeps ticking while
- * the process is alive and deliberately does NOT bump `lastActivity` (see
- * `claudeSessionStore.applyStatusLine`), so it separates "alive but silent" —
+ * There is a second signal, but only for some sessions: the status line. For a
+ * Claude session running the real CLI in a PTY it keeps ticking while the
+ * process is alive — the CLI re-runs its `statusLine` command on every render,
+ * claudemon forwards it from `POST /statusline`, and it deliberately does NOT
+ * bump `lastActivity` (see `claudeSessionStore.applyStatusLine`). That makes it
+ * genuinely independent of progress, so it separates "alive but silent" —
  * probably thinking, possibly wedged on a long API call — from "no signal at
- * all", which is a process that has stopped talking to us. Both are reported;
- * the second is the more damning.
+ * all", which is a process that has stopped talking to us.
+ *
+ * For every other session it is not independent at all, and reading it as
+ * aliveness is a guess wearing a measurement's clothes. See
+ * `statusLineIsHeartbeat` for exactly which sessions those are and why. Those
+ * get a third, honest verdict: `unknown`. A card that admits it cannot tell
+ * beats one that always guesses "dead".
  *
  * Everything here is pure. The caller owns the elapsed-time memory (see
  * `trackProgress`) so this stays unit-testable without a clock.
@@ -140,14 +148,22 @@ export function trackProgress(
   return next;
 }
 
+/**
+ * What we can say about the process behind a stalled agent.
+ *
+ * - `alive` — its status line ticked recently. Quiet, not gone.
+ * - `silent` — its status line stopped. The more serious reading.
+ * - `unknown` — this session has no heartbeat to watch, so the question is not
+ *   answerable from a snapshot. Not a hedge: see `statusLineIsHeartbeat`.
+ */
+export type StallSignal = 'alive' | 'silent' | 'unknown';
+
 export interface StallVerdict {
   /** How long nothing has moved. */
   stalledForMs: number;
-  /**
-   * Whether the process is still talking to us at all (status line ticking).
-   * `false` is the more serious reading: not just quiet, but silent.
-   */
-  alive: boolean;
+  /** Whether the process is still talking to us at all — or whether we can
+   *  tell. */
+  signal: StallSignal;
 }
 
 /**
@@ -166,18 +182,94 @@ export function stallOf(
   if (!mark || !isWorkingState(snap.ambientState)) return null;
   const stalledForMs = now - mark.since;
   if (stalledForMs < thresholdMs) return null;
-  return { stalledForMs, alive: statusLineAlive(snap, now) };
+  return { stalledForMs, signal: stallSignal(snap, now) };
 }
 
-/** True when the status line has ticked recently enough to call the process
- *  alive. Absent status line → unknown, and we don't claim silence we can't
- *  observe (managed providers other than claude publish none). */
-function statusLineAlive(snap: ClaudeSessionSnapshot, now: number): boolean {
+/**
+ * Whether this session's status line is a *heartbeat* — a tick that keeps
+ * arriving for as long as the process lives, independent of whether the agent
+ * is getting anywhere — or merely a by-product of progress.
+ *
+ * Exactly one source is a heartbeat: Claude Code's own `statusLine` command.
+ * The interactive CLI re-runs it on every render, and claudemon installs a
+ * forwarder into `~/.claude/settings.json` that POSTs it to `/statusline`
+ * (`daemon/init.rs`), where `ingest_status_line` stamps a fresh `received_at`.
+ * That needs the real CLI drawing a terminal, so it is a Claude session on the
+ * PTY transport and nothing else. (`transport` absent means PTY — the store's
+ * documented default.)
+ *
+ * Everything else — codex, opencode, pi, AND Claude on the headless `stream`
+ * transport, which is the shipped default — has no such command. Its status
+ * line is synthesized by the daemon's `UsageAcc` and published only from
+ * `providers/mod.rs`'s `if usage_changed { store.apply_status_line(…) }`, off
+ * an adapter event that moved the token totals. No timer stands behind it.
+ *
+ * That makes `receivedAt` useless as aliveness for those sessions, and not by
+ * accident: `progressFingerprint` counts the very same token totals, so a
+ * fingerprint frozen for `STALL_MS` means no usage event arrived for
+ * `STALL_MS`, which means `receivedAt` is at least `STALL_MS` old — already
+ * far past `SILENT_MS`. Read as a liveness check it would answer "silent"
+ * every single time `stallOf` fires. It did, which is the bug this exists to
+ * kill: the two states the card is built to distinguish always collapsed into
+ * the harsher one.
+ *
+ * Nor is a better client-side signal hiding somewhere. Every `AgentUpdate` a
+ * managed adapter emits is event-driven (even `Busy`, which fires at turn and
+ * tool boundaries, not on a clock), and real process death is reported out of
+ * band: the driver task exits, `deregister_managed` marks the row Stopped, and
+ * the session leaves a working state entirely — so it never reaches `stallOf`
+ * at all. Hence `unknown` rather than a coin flip. Making this answerable
+ * means giving the daemon a periodic status-line tick for managed sessions;
+ * until then, say so.
+ */
+function statusLineIsHeartbeat(snap: ClaudeSessionSnapshot): boolean {
+  return (snap.provider ?? 'claude') === 'claude' && snap.transport !== 'stream';
+}
+
+/** How much the status line can tell us about the process right now. Absent or
+ *  unparseable → `unknown`; we claim neither silence nor life we haven't
+ *  observed. */
+export function stallSignal(snap: ClaudeSessionSnapshot, now: number): StallSignal {
+  if (!statusLineIsHeartbeat(snap)) return 'unknown';
   const at = snap.statusLine?.receivedAt;
-  if (!at) return true;
+  if (!at) return 'unknown';
   const ts = Date.parse(at);
-  if (Number.isNaN(ts)) return true;
-  return now - ts < SILENT_MS;
+  if (Number.isNaN(ts)) return 'unknown';
+  return now - ts < SILENT_MS ? 'alive' : 'silent';
+}
+
+/** The card's headline. `silent` is the only one that earns its own word: it is
+ *  a stronger *observation* (a heartbeat was watched and it stopped), not just
+ *  more confidence. `alive` and `unknown` share the same observation — nothing
+ *  has moved — and differ only in what we can add about the process, which
+ *  belongs in the body. */
+export function stallTitle(signal: StallSignal): string {
+  return signal === 'silent' ? 'No signal' : 'Not moving';
+}
+
+/** The card's body: what we observed, then what we can and can't conclude. */
+export function stallDetail(verdict: StallVerdict): string {
+  const d = stalledFor(verdict.stalledForMs);
+  switch (verdict.signal) {
+    case 'silent':
+      return `Nothing for ${d} — the agent has stopped reporting at all.`;
+    case 'unknown':
+      return `Working, but nothing has changed for ${d} — and this session has no heartbeat, so we can't tell a long think from a wedged process.`;
+    default:
+      return `Working, but nothing has changed for ${d}.`;
+  }
+}
+
+/** The extra line the desktop card carries under the detail. */
+export function stallSummary(signal: StallSignal): string {
+  switch (signal) {
+    case 'silent':
+      return 'The process is still there but has gone silent — it may need an interrupt.';
+    case 'unknown':
+      return 'Only Claude in a terminal publishes a status line on a timer; every other session reports only when it acts. Open it to see what it is doing.';
+    default:
+      return 'Still alive (its status line is ticking) — a long think, or a wedged tool call.';
+  }
 }
 
 /** Running workflow runs on this session, for the per-run stall check. */

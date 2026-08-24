@@ -8,7 +8,10 @@ import {
   isWorkingState,
   progressFingerprint,
   runningWorkflows,
+  stallDetail,
   stallOf,
+  stallSummary,
+  stallTitle,
   stalledFor,
   trackProgress,
   workflowFingerprint,
@@ -399,7 +402,6 @@ export function useAttentionFeed(
           // Signature excludes the elapsed time so the card updates in place as
           // the stall lengthens instead of stacking a new one every tick.
           const sig = `${sid}:stalled`;
-          const silent = !stall.alive;
           out.push({
             ...base,
             id: sig,
@@ -408,16 +410,12 @@ export function useAttentionFeed(
             priority: KIND_PRIORITY.stuck,
             createdAt: now - stall.stalledForMs,
             status: 'open',
-            title: silent ? 'No signal' : 'Not moving',
-            detail: silent
-              ? `Nothing for ${stalledFor(stall.stalledForMs)} — the agent has stopped reporting at all.`
-              : `Working, but nothing has changed for ${stalledFor(stall.stalledForMs)}.`,
-            payload: {
-              type: 'summary',
-              summary: silent
-                ? 'The process is still there but has gone silent — it may need an interrupt.'
-                : 'Still alive (its status line is ticking) — a long think, or a wedged tool call.',
-            },
+            // Three verdicts, two headlines — see stallTitle. The PWA renders
+            // the same title/detail pair from its own copy of these strings
+            // (services/hub/cmd/hub/mobile.html); they must stay in step.
+            title: stallTitle(stall.signal),
+            detail: stallDetail(stall),
+            payload: { type: 'summary', summary: stallSummary(stall.signal) },
           });
         }
 

@@ -91,6 +91,9 @@ describe('useAttentionFeed — a working agent that stops making progress', () =
   });
 
   it('says so plainly when the agent has stopped reporting at all', async () => {
+    // Claude in a PTY — the one session shape whose status line is a real
+    // heartbeat, so a stale `receivedAt` genuinely means the process went quiet.
+    // (`working()` sets no provider/transport: absent means claude on PTY.)
     const { result } = renderHook(() =>
       useAttentionFeed(working({ statusLine: { receivedAt: new Date(T0).toISOString() } }), [
         agent('a1', 's1'),
@@ -101,6 +104,32 @@ describe('useAttentionFeed — a working agent that stops making progress', () =
     });
     const item = result.current.items.find((it) => it.kind === 'stuck');
     expect(item?.title).toBe('No signal');
+  });
+
+  /**
+   * The same stale status line on a managed provider means nothing at all: the
+   * daemon publishes that line only when a usage frame moves the token totals,
+   * which is exactly what the progress fingerprint counts. So it is guaranteed
+   * stale the moment the stall fires, and reading it as death made every
+   * managed-provider stall render as "No signal".
+   */
+  it('will not call a managed provider dead off a status line that always freezes', async () => {
+    const { result } = renderHook(() =>
+      useAttentionFeed(
+        working({ provider: 'codex', statusLine: { receivedAt: new Date(T0).toISOString() } }),
+        [agent('a1', 's1')],
+      ),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6 * 60_000);
+    });
+    const item = result.current.items.find((it) => it.kind === 'stuck');
+    expect(item?.title).toBe('Not moving');
+    // …and it says why, rather than quietly borrowing the Claude reading.
+    expect(item?.detail).toMatch(/no heartbeat/);
+    expect(item?.payload).toMatchObject({
+      summary: expect.stringMatching(/reports only when it acts/),
+    });
   });
 
   it('flags a workflow whose agents have all gone quiet', async () => {
