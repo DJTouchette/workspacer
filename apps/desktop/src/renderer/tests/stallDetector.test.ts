@@ -15,7 +15,10 @@ import {
   isWorkingState,
   progressFingerprint,
   runningWorkflows,
+  stallDetail,
   stallOf,
+  stallSummary,
+  stallTitle,
   stalledFor,
   trackProgress,
   workflowFingerprint,
@@ -37,6 +40,16 @@ function snap(over: Partial<ClaudeSessionSnapshot> = {}): ClaudeSessionSnapshot 
     lastActivity: T0,
     ...over,
   } as ClaudeSessionSnapshot;
+}
+
+/**
+ * The only session shape whose status line is a real heartbeat: Claude driving
+ * its own CLI in a PTY, where the CLI re-runs its `statusLine` command on every
+ * render and claudemon forwards it. Everything else publishes a status line
+ * only when it does work, so `receivedAt` says nothing about liveness.
+ */
+function pty(over: Partial<ClaudeSessionSnapshot> = {}): ClaudeSessionSnapshot {
+  return snap({ provider: 'claude', transport: 'pty', ...over });
 }
 
 describe('progressFingerprint', () => {
@@ -144,28 +157,85 @@ describe('stallOf', () => {
   });
 
   /**
-   * The two readings the card has to distinguish: a live process producing
-   * nothing (a long think, or a hung tool) versus one that has stopped
-   * reporting altogether.
+   * The two readings the card exists to distinguish, on the one transport that
+   * can actually tell them apart: a live process producing nothing (a long
+   * think, or a hung tool) versus one that has stopped reporting altogether.
    */
-  it('separates "alive but silent" from "no signal at all"', () => {
-    const ticking = snap({
+  it('separates "alive but silent" from "no signal at all" for Claude in a PTY', () => {
+    const ticking = pty({
       statusLine: { receivedAt: new Date(T0 + STALL_MS).toISOString() } as never,
     });
-    expect(stallOf(ticking, mark, T0 + STALL_MS + 1000)?.alive).toBe(true);
+    expect(stallOf(ticking, mark, T0 + STALL_MS + 1000)?.signal).toBe('alive');
 
-    const gone = snap({ statusLine: { receivedAt: new Date(T0).toISOString() } as never });
-    expect(stallOf(gone, mark, T0 + STALL_MS + 1000)?.alive).toBe(false);
+    const gone = pty({ statusLine: { receivedAt: new Date(T0).toISOString() } as never });
+    expect(stallOf(gone, mark, T0 + STALL_MS + 1000)?.signal).toBe('silent');
   });
 
   it('does not claim silence it cannot observe', () => {
-    // Providers other than claude publish no status line; absent is unknown, and
-    // unknown must not read as dead.
-    expect(stallOf(snap(), mark, T0 + STALL_MS + 1)?.alive).toBe(true);
+    // A heartbeat we expected but never saw, or one we can't parse, is unknown
+    // — and unknown must not read as dead.
+    expect(stallOf(pty(), mark, T0 + STALL_MS + 1)?.signal).toBe('unknown');
     expect(
-      stallOf(snap({ statusLine: { receivedAt: 'not a date' } as never }), mark, T0 + STALL_MS + 1)
-        ?.alive,
-    ).toBe(true);
+      stallOf(pty({ statusLine: { receivedAt: 'not a date' } as never }), mark, T0 + STALL_MS + 1)
+        ?.signal,
+    ).toBe('unknown');
+  });
+
+  /**
+   * The bug this file's `unknown` verdict exists for.
+   *
+   * A managed provider's status line is not a heartbeat — the daemon publishes
+   * it only when an adapter event moves the token totals, and
+   * `progressFingerprint` counts those same totals. So a fingerprint frozen
+   * for STALL_MS *implies* a `receivedAt` frozen for STALL_MS, which is way
+   * past SILENT_MS. Read as aliveness it answered "silent" every single time
+   * `stallOf` fired: every managed-provider stall rendered as "No signal" and
+   * the "Not moving" half of the card was unreachable.
+   *
+   * The realistic snapshot is the point — `receivedAt` here is exactly as old
+   * as the stall, because that is what a real stalled codex session looks
+   * like.
+   */
+  it.each(['codex', 'opencode', 'pi'])(
+    'refuses to read a %s status line as aliveness — it freezes with the fingerprint',
+    (provider) => {
+      const stalled = snap({
+        provider,
+        statusLine: { receivedAt: new Date(T0).toISOString() } as never,
+      });
+      expect(stallOf(stalled, mark, T0 + STALL_MS + 1000)?.signal).toBe('unknown');
+    },
+  );
+
+  it('refuses it for Claude on the stream transport too — same activity-driven source', () => {
+    // The shipped default transport, and it has no `statusLine` command either:
+    // claudemon's UsageAcc synthesizes the line from stream usage frames.
+    const stalled = snap({
+      provider: 'claude',
+      transport: 'stream',
+      statusLine: { receivedAt: new Date(T0).toISOString() } as never,
+    });
+    expect(stallOf(stalled, mark, T0 + STALL_MS + 1000)?.signal).toBe('unknown');
+  });
+
+  it('phrases the three verdicts so only "silent" claims the process is gone', () => {
+    const at = (signal: 'alive' | 'silent' | 'unknown') => ({ stalledForMs: 6 * 60_000, signal });
+
+    expect(stallTitle('silent')).toBe('No signal');
+    expect(stallTitle('alive')).toBe('Not moving');
+    expect(stallTitle('unknown')).toBe('Not moving');
+
+    // The unknown card must not borrow either claim: not "still alive", not
+    // "stopped reporting". It says what it observed and admits the rest.
+    const unknown = stallDetail(at('unknown'));
+    expect(unknown).toContain('nothing has changed for 6m');
+    expect(unknown).toMatch(/no heartbeat/);
+    expect(stallSummary('unknown')).toMatch(/reports only when it acts/);
+    expect(stallSummary('unknown')).not.toMatch(/[Ss]till alive/);
+
+    expect(stallDetail(at('alive'))).toBe('Working, but nothing has changed for 6m.');
+    expect(stallSummary('alive')).toMatch(/Still alive/);
+    expect(stallDetail(at('silent'))).toMatch(/stopped reporting at all/);
   });
 
   it('reports how long it has been stalled', () => {

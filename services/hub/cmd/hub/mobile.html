@@ -1062,21 +1062,46 @@
     const wfMark = wfMarks.get(id);
     if (!wfMark || wfMark.fingerprint !== wfp) wfMarks.set(id, { fingerprint: wfp, since: now });
   }
-  // True when the status line has ticked recently enough to call the process
-  // alive. Absent status line → unknown, and we don't claim silence we can't
-  // observe (managed providers other than claude, and any headless session
-  // claudemon hasn't forwarded a status line for yet, publish none).
   function statusLineReceivedAt(s) {
     if (s.statusLine && s.statusLine.receivedAt) return s.statusLine.receivedAt;
     if (s.status_line && s.status_line.received_at) return s.status_line.received_at;
     return undefined;
   }
-  function statusLineAlive(s, now) {
+  // Whether this session's status line is a HEARTBEAT — a tick that keeps
+  // arriving for as long as the process lives — or just a by-product of
+  // progress. Exactly one source is a heartbeat: Claude Code's own `statusLine`
+  // command, which the interactive CLI re-runs on every render and claudemon
+  // forwards from POST /statusline. That needs the real CLI drawing a terminal,
+  // so: provider claude on the PTY transport, and nothing else. (`transport`
+  // absent means PTY, the store's documented default.)
+  //
+  // Everything else — codex, opencode, pi, AND claude on the headless `stream`
+  // transport, which is the shipped default — has no such command. Its status
+  // line is synthesized by the daemon's UsageAcc and published only from
+  // providers/mod.rs's `if usage_changed { apply_status_line(…) }`, off an
+  // adapter event that moved the token totals. No timer stands behind it, so
+  // `receivedAt` freezes exactly when observable work does — and
+  // progressFingerprint counts those same totals, so it is ALWAYS stale by the
+  // time stallOf fires. Read as aliveness it answered "silent" every single
+  // time, collapsing the two states this card exists to tell apart.
+  //
+  // Nor is a better signal hiding: real process death is reported out of band
+  // (the driver exits, the row goes Stopped, the session leaves a working state
+  // and never reaches stallOf). Hence 'unknown' rather than a coin flip.
+  // Mirrors lib/stallDetector.ts statusLineIsHeartbeat — keep them in step.
+  function statusLineIsHeartbeat(s) {
+    return (s.provider || 'claude') === 'claude' && s.transport !== 'stream';
+  }
+  // How much the status line can tell us about the process right now: 'alive',
+  // 'silent', or 'unknown'. Absent or unparseable → 'unknown'; we claim neither
+  // silence nor life we haven't observed.
+  function stallSignal(s, now) {
+    if (!statusLineIsHeartbeat(s)) return 'unknown';
     const at = statusLineReceivedAt(s);
-    if (!at) return true;
+    if (!at) return 'unknown';
     const ts = Date.parse(at);
-    if (Number.isNaN(ts)) return true;
-    return now - ts < SILENT_MS;
+    if (Number.isNaN(ts)) return 'unknown';
+    return now - ts < SILENT_MS ? 'alive' : 'silent';
   }
   // Whether an agent (or one of its workflow runs) has stalled, and how badly.
   // `null` for an agent that isn't claiming to work, hasn't been tracked yet,
@@ -1085,7 +1110,20 @@
     if (!mark || !isWorking(s)) return null;
     const stalledForMs = now - mark.since;
     if (stalledForMs < thresholdMs) return null;
-    return { stalledForMs, alive: statusLineAlive(s, now) };
+    return { stalledForMs, signal: stallSignal(s, now) };
+  }
+  // The card's headline. 'silent' is the only verdict that earns its own word:
+  // it is a stronger OBSERVATION (a heartbeat was watched and it stopped), not
+  // just more confidence. 'alive' and 'unknown' share the same observation —
+  // nothing has moved — and differ only in what we can add about the process,
+  // which belongs in the body.
+  function stallTitle(signal) { return signal === 'silent' ? 'No signal' : 'Not moving'; }
+  // The card's body: what we observed, then what we can and can't conclude.
+  function stallDetail(stall) {
+    const d = stalledFor(stall.stalledForMs);
+    if (stall.signal === 'silent') return `Nothing for ${d} — the agent has stopped reporting at all.`;
+    if (stall.signal === 'unknown') return `Working, but nothing has changed for ${d} — and this session has no heartbeat, so we can't tell a long think from a wedged process.`;
+    return `Working, but nothing has changed for ${d}.`;
   }
   // Human phrasing for an elapsed stall — "6m", "1h 4m". Plain on purpose: the
   // card states an observation and lets the reader draw the conclusion.
@@ -1576,21 +1614,21 @@
     }
     // stuck — the agent says it's working but nothing observable has moved.
     // Distinct from the pendingQuestions "stuck" above: that one is waiting on
-    // YOU, this one is waiting on nothing anyone can see. Two readings, not
-    // one: "Not moving" (alive — its status line is still ticking, probably a
-    // long think or a wedged tool call) vs "No signal" (the process itself has
-    // stopped talking to us) — collapsing them into one badge would lose
-    // exactly the distinction that makes the card actionable.
+    // YOU, this one is waiting on nothing anyone can see. Three readings, two
+    // headlines: "Not moving" (nothing has changed — and the body says whether
+    // its status line is still ticking, or whether this session has no
+    // heartbeat to read at all) vs "No signal" (a heartbeat was watched and it
+    // stopped). Collapsing them would lose exactly the distinction that makes
+    // the card actionable — which is what shipping "No signal" for every
+    // heartbeat-less session amounted to. Same strings as the desktop card
+    // (renderer/src/lib/stallDetector.ts) — keep the two surfaces in step.
     const stallNow = Date.now();
     const stall = stallOf(s, progressMarks.get(sid), STALL_MS, stallNow);
     if (stall) {
-      const silent = !stall.alive;
       out.push({
         kind: 'stuck', agentId: sid, sig: `${sid}:stalled`,
-        title: silent ? 'No signal' : 'Not moving',
-        detail: silent
-          ? `Nothing for ${stalledFor(stall.stalledForMs)} — the agent has stopped reporting at all.`
-          : `Working, but nothing has changed for ${stalledFor(stall.stalledForMs)}.`,
+        title: stallTitle(stall.signal),
+        detail: stallDetail(stall),
         createdAt: stallNow - stall.stalledForMs,
       });
     }
@@ -2236,11 +2274,13 @@
         </div>`;
     } else if (it.kind === 'stuck') {
       // The stall-detection card (no `questions` — see attentionFor above).
-      // Its title IS the two-state read ("Not moving" vs "No signal", or a
-      // named workflow's own version of the same) that the desktop shows as
-      // its card headline — the generic branch below drops `it.title` in
-      // favour of `it.detail` alone, which would silently erase exactly the
-      // distinction this card exists to preserve.
+      // Its title IS the read ("Not moving" vs "No signal", or a named
+      // workflow's own version of the same) that the desktop shows as its card
+      // headline — the generic branch below drops `it.title` in favour of
+      // `it.detail` alone, which would silently erase exactly the distinction
+      // this card exists to preserve. Both lines matter here: for a session
+      // with no heartbeat the detail is the only place the card admits it
+      // can't tell alive from wedged.
       body = `<div class="txt"><b>${esc(it.title)}</b><br />${esc(it.detail || '')}</div>
         <div class="acts">
           <button class="review" data-open="${sid}">Open dispatch</button>
