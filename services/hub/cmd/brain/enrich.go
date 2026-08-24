@@ -119,7 +119,8 @@ func enrichSnapshot(snap json.RawMessage, meta *metaStore) json.RawMessage {
 // conversation); the brain's store holds claudemon's raw rows (snake_case).
 // The mobile client and the web renderer key everything off the desktop field
 // names, so overlay the ones they read — sessionId / status / ambientState /
-// lastActivity / usage / pendingApproval / pendingQuestions — onto each row.
+// lastActivity / usage / pendingApproval / pendingQuestions / statusLine /
+// totalToolCalls — onto each row.
 // `sparse: true` marks the row as state-only (no conversation) so a client
 // already holding a rich desktop snapshot for the session merges the state in
 // instead of replacing the whole thing (see mobile.html upsert and
@@ -186,6 +187,36 @@ func compatSnapshot(snap json.RawMessage) json.RawMessage {
 			"contextTokens": u["context_tokens"],
 			"contextLimit":  u["context_limit"],
 			"costUSD":       u["cost_usd"],
+		}
+	}
+	// totalToolCalls: claudemon's tool_calls counter, desktop-named.
+	if tc, ok := m["tool_calls"]; ok {
+		m["totalToolCalls"] = tc
+	}
+	// statusLine: claudemon's snake_case StatusLine → the desktop's camelCase
+	// SessionStatusLine shape (claudeSessionStore.ts). Headless (no-desktop)
+	// sessions otherwise carry only the raw `status_line`, so mobile's
+	// stats/progressFingerprint/statusLineAlive read 0/undefined for the phone's
+	// strongest fingerprint signal — see .rivet/learnings 2026-08-23.
+	if sl, ok := m["status_line"].(map[string]any); ok {
+		m["statusLine"] = map[string]any{
+			"modelDisplay":        sl["model_display"],
+			"effort":              sl["effort"],
+			"contextUsedPct":      sl["context_used_pct"],
+			"contextWindowSize":   sl["context_window_size"],
+			"totalInputTokens":    sl["total_input_tokens"],
+			"totalOutputTokens":   sl["total_output_tokens"],
+			"costUSD":             sl["cost_usd"],
+			"fiveHourPct":         sl["five_hour_pct"],
+			"fiveHourResetsAt":    sl["five_hour_resets_at"],
+			"sevenDayPct":         sl["seven_day_pct"],
+			"sevenDayResetsAt":    sl["seven_day_resets_at"],
+			"monthlyPct":          sl["monthly_pct"],
+			"monthlyResetsAt":     sl["monthly_resets_at"],
+			"rateLimitWarning":    sl["rate_limit_warning"],
+			"overageOutOfCredits": sl["overage_out_of_credits"],
+			"capabilities":        sl["capabilities"],
+			"receivedAt":          sl["received_at"],
 		}
 	}
 	// pending → pendingApproval / pendingQuestions. Set both explicitly (null
