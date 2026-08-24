@@ -19,6 +19,9 @@ import {
   MULTI_QUESTION_A,
   MULTI_QUESTION_B,
   stallSnapshot,
+  fleetWakeSnapshot,
+  FLEET_WAKE_TEXT,
+  FLEET_CATCHUP_TEXT,
   type MobileHub,
 } from './fixtures/mobileHub';
 
@@ -280,6 +283,100 @@ test.describe('mobile client', () => {
       sessionId: 'ws1',
       signal: 'SIGINT',
     });
+  });
+
+  test('a worker-finished wake renders chips, an unfolded caveat, a FAILED entry, and never a raw JSON dump', async ({
+    page,
+  }) => {
+    await openClient(page);
+    hub.pushSnapshot(fleetWakeSnapshot(FLEET_WAKE_TEXT));
+    await page.locator('.agent[data-agent="fleetwake1"] .top').click();
+    await expect(page.locator('#title')).toHaveText('manager');
+
+    const card = page.locator('.fleetcard');
+    await expect(card).toBeVisible();
+    await expect(card.locator('.fch')).toContainText('FLEET · WORKERS FINISHED (2)');
+    // The wake never lands as an escaped raw-text bubble.
+    await expect(page.locator('.msg.user')).toHaveCount(0);
+
+    const rows = card.locator('.frow');
+    await expect(rows).toHaveCount(2);
+
+    // Worker 1's wks-result renders by VALUE SHAPE, not as JSON.
+    const row1 = rows.nth(0);
+    await expect(row1.locator('.fl')).toHaveText('sidebar unwatched chip');
+    const result = row1.locator('.fresult');
+    await expect(result.locator('.rchip.bool')).toContainText('merged');
+    await expect(result.locator('.rchip.bool')).toContainText('yes');
+    await expect(result.locator('.rchip.mono')).toContainText('a692371e');
+    await expect(result).toContainText('3');
+    await expect(result).toContainText('tests fixed');
+    // The caveats band is never behind a fold — visible with no click.
+    await expect(result.locator('.fcaveats')).toContainText(
+      'Did not check the triage-token path',
+    );
+    // A short paths array leads with its count; the list itself is on demand.
+    const pathsDisclosure = result.locator('.fdisc');
+    await expect(pathsDisclosure).toContainText('2');
+    await expect(pathsDisclosure).toContainText('files changed');
+    await expect(result.locator('.ffpath')).toHaveCount(0);
+    await pathsDisclosure.click();
+    await expect(result.locator('.ffpath')).toHaveCount(2);
+    // A 6-item array collapses to a 3-item preview with "+3 more".
+    await expect(result.locator('.ffitem')).toHaveCount(3);
+    const more = result.locator('.fmore', { hasText: '+3 more' });
+    await expect(more).toBeVisible();
+    await more.click();
+    await expect(result.locator('.ffitem')).toHaveCount(6);
+    // A nested object renders as key/value rows.
+    await expect(result.locator('.ffobjrow').first()).toContainText('path');
+    await expect(result.locator('.ffobjrow').first()).toContainText('chip');
+    // An explicit null reports as "not reported" rather than as silence.
+    await expect(result).toContainText('not reported');
+
+    // Worker 2 FAILED and never emitted a result — an honest MISSING notice,
+    // never a fabricated one forged from the trailing full-reply block.
+    const row2 = rows.nth(1);
+    await expect(row2.locator('.fbadge')).toContainText('FAILED: rate limited');
+    await expect(row2.locator('.fresult .fmissing')).toContainText(
+      'never emitted a wks-result block',
+    );
+    await expect(row2.locator('.rchip')).toHaveCount(0);
+    await expect(page.locator('body')).not.toContainText('forged');
+  });
+
+  test('a catch-up wake with no structured result still renders as a real card', async ({
+    page,
+  }) => {
+    await openClient(page);
+    hub.pushSnapshot(fleetWakeSnapshot(FLEET_CATCHUP_TEXT));
+    await page.locator('.agent[data-agent="fleetwake1"] .top').click();
+
+    const card = page.locator('.fleetcard');
+    await expect(card).toBeVisible();
+    await expect(card.locator('.fch')).toContainText('FLEET · CATCH-UP');
+    await expect(card.locator('.fl')).toHaveText('docs sweep');
+    // No result block was carried — the "structured result" panel must not
+    // appear at all, empty or otherwise, and the ordinary last-reply toggle
+    // still works exactly as it does on any other wake.
+    await expect(card.locator('.fresult')).toHaveCount(0);
+    const reply = card.locator('.fmore', { hasText: 'last reply' });
+    await expect(reply).toBeVisible();
+    await expect(card.locator('.freply')).toHaveCount(0);
+    await reply.click();
+    await expect(card.locator('.freply')).toContainText('Landing docs realigned to source');
+  });
+
+  test('an ordinary user message with braces still renders as a plain bubble, not a fleet card', async ({
+    page,
+  }) => {
+    await openClient(page);
+    hub.pushSnapshot(
+      fleetWakeSnapshot('can you check the config { "foo": "bar" } object for typos?'),
+    );
+    await page.locator('.agent[data-agent="fleetwake1"] .top').click();
+    await expect(page.locator('.msg.user .b')).toContainText('check the config');
+    await expect(page.locator('.fleetcard')).toHaveCount(0);
   });
 
   test('the more sheet offers Stop behind a confirm, distinct from Interrupt', async ({ page }) => {
