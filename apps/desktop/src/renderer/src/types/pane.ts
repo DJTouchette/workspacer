@@ -205,8 +205,19 @@ export interface AgentWorkspace {
    *  observe and coordinate the other agents. Rendered nested under its parent. */
   kind?: 'supervisor';
   /** For supervisors: the AgentWorkspace.id of the agent this one supervises.
-   *  Used to render it nested in the sidebar. Undefined = fleet-level supervisor. */
+   *  Used to render it nested in the sidebar. Undefined = fleet-level supervisor.
+   *  If this card later disappears (the manager was explicitly removed, or a
+   *  crashed manager was never adopted here at all) `parentId` on any child that
+   *  already resolved it goes dangling — SideBar's `rootOf` falls back to
+   *  rendering that child as its own root rather than dropping it, which is
+   *  also the hook the sidebar's "Unwatched" chip reads. */
   parentId?: string;
+  /** Recorded at adopt time: was `parentId`'s target `manager: true` at that
+   *  moment? True = the dispatcher was a confirmed Fleet Manager, not just any
+   *  parent. Only meaningful once `parentId` has gone dangling (see above) —
+   *  it lets the orphan chip say "its manager ended" instead of the weaker
+   *  "its parent is gone" when the stronger claim is actually known. */
+  dispatchedByManager?: boolean;
   /** Per-agent tabs. Mirrors what a flat workspace used to hold globally. */
   tabs: TabConfig[];
   activeTabId: string;

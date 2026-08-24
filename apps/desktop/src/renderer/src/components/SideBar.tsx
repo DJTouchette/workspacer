@@ -20,6 +20,7 @@ import { shortModelLabel } from '../lib/modelLabel';
 import { agentAttentionScore } from '../lib/attentionRouter';
 import { AgentLogo } from './agentLogos';
 import { HubChip } from './HubChip';
+import { OrphanChip } from './OrphanChip';
 import { hubOfflineLabel } from '../lib/federation';
 import { ProjectMark } from './ProjectMark';
 import type { ProjectIdentity } from '../hooks/useConfig';
@@ -878,6 +879,12 @@ const SideBar: React.FC<SideBarProps> = ({
             // seen …") instead of pretending its last ambient state is live.
             const hub = snap?.hub ?? agent.hub;
             const hubOffline = !!(hub && snap?.hubOffline);
+            // A parentId that doesn't resolve within this render's known agent
+            // ids is exactly what makes `rootOf` (below) fall back to rendering
+            // this card as its own root instead of dropping it — the same
+            // dangling-parent fact, read here per-card instead of for grouping.
+            // `!!agent.parentId` excludes the ordinary case (no parent at all).
+            const isOrphaned = !!agent.parentId && !agentIds.has(agent.parentId);
             const cardState = hubOffline ? ('done' as const) : cardStateOf(agent);
             const stats =
               (agent.sessionId && statsBySession[agent.sessionId]) || deriveSessionStats(snap);
@@ -1232,12 +1239,17 @@ const SideBar: React.FC<SideBarProps> = ({
                   </span>
                 )}
 
-                {/* Footer: provider chip + tokens/cost meta */}
+                {/* Footer: provider chip + tokens/cost meta. Wraps instead of
+                    bleeding past the card edge — at a narrow sidebar width a
+                    federated + orphaned card can carry three badges plus the
+                    tokens/cost meta, more than one line comfortably fits. */}
                 <span
                   style={{
                     display: 'flex',
+                    flexWrap: 'wrap',
                     alignItems: 'center',
                     gap: 6,
+                    rowGap: 4,
                     marginTop: 8,
                     minWidth: 0,
                   }}
@@ -1264,6 +1276,7 @@ const SideBar: React.FC<SideBarProps> = ({
                     {model}
                   </span>
                   {hub && <HubChip name={hub} offline={hubOffline} />}
+                  {isOrphaned && <OrphanChip confirmed={agent.dispatchedByManager === true} />}
                   {(stats.tokens !== undefined || stats.costUSD !== undefined) && (
                     <span
                       style={{
