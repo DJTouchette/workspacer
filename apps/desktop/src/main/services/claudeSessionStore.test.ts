@@ -438,6 +438,10 @@ describe('managed pending → approval/question cards', () => {
   });
 
   it('never drives the cards for claude sessions (hook-owned)', () => {
+    // The ownership check no longer lives at applyManagedMode's call site — it
+    // is the `PendingSlot(session, 'daemon')` inside applyManagedPending, so
+    // this passes because a daemon write to a hook-owned slot is refused, not
+    // because a condition upstream remembered to ask.
     const sid = uniqueId();
     hook(sid, 'UserPromptSubmit');
     claudeSessionStore.applyManagedMode(sid, 'approval', {
@@ -445,6 +449,92 @@ describe('managed pending → approval/question cards', () => {
       pending: { kind: 'approval', tool: 'Bash', raw: { tool_input: { command: 'ls' } } },
     });
     expect(claudeSessionStore.getSnapshot(sid)?.pendingApproval).toBeNull();
+  });
+});
+
+describe('the pending slot of a REMOTE row belongs to the peer, not to any local feed', () => {
+  // A row that arrived from a peer hub is a mirror: the request is parked on
+  // the OTHER machine, and nothing here can answer it. Ownership used to be
+  // read off provider/transport alone, so a local daemon frame that happened to
+  // carry a remote session's id walked straight onto the peer's card — the same
+  // shape as every freeze this invariant exists to stop, one feed further out.
+  const remoteApproval = (over: Record<string, unknown> = {}) => ({
+    sessionId: 'sess-remote-1',
+    cwd: '/peer/proj',
+    status: 'active',
+    ambientState: 'waiting_approval',
+    pendingApproval: { toolName: 'Read', toolInput: { file_path: '/peer/x' }, timestamp: 7 },
+    ...over,
+  });
+
+  it('a local daemon frame cannot RESOLVE the card a peer is holding open', () => {
+    claudeSessionStore.upsertRemoteSession(
+      'laptop',
+      remoteApproval({ provider: 'codex' }) as never,
+    );
+    expect(claudeSessionStore.getSnapshot('sess-remote-1')?.pendingApproval?.toolName).toBe('Read');
+
+    // claudemon on THIS machine says nothing is pending. It is not talking
+    // about the peer's session, and must not empty its slot.
+    claudeSessionStore.applyManagedMode('sess-remote-1', 'responding', {
+      provider: 'codex',
+      pending: null,
+    });
+    expect(claudeSessionStore.getSnapshot('sess-remote-1')?.pendingApproval?.toolName).toBe('Read');
+  });
+
+  it('a local daemon frame cannot PARK a card onto a peer-owned row either', () => {
+    claudeSessionStore.upsertRemoteSession(
+      'laptop',
+      remoteApproval({ provider: 'codex', pendingApproval: null, ambientState: 'idle' }) as never,
+    );
+    claudeSessionStore.applyManagedMode('sess-remote-1', 'approval', {
+      provider: 'codex',
+      pending: { kind: 'approval', tool: 'Bash', raw: { tool_input: { command: 'ls' } } },
+    });
+    // An Approve button here would post the decision to the local daemon, which
+    // has never heard of the request.
+    expect(claudeSessionStore.getSnapshot('sess-remote-1')?.pendingApproval).toBeNull();
+  });
+
+  it('a re-sent identical card keeps its first timestamp (the dock hides on dismissal)', () => {
+    // Peers re-publish the same parked request on unrelated state changes. The
+    // full-snapshot path used to take the wire card verbatim, so a re-stamped
+    // resend resurrected a card the user had already dismissed.
+    claudeSessionStore.upsertRemoteSession('laptop', remoteApproval() as never);
+    expect(claudeSessionStore.getSnapshot('sess-remote-1')?.pendingApproval?.timestamp).toBe(7);
+    claudeSessionStore.upsertRemoteSession(
+      'laptop',
+      remoteApproval({
+        pendingApproval: { toolName: 'Read', toolInput: { file_path: '/peer/x' }, timestamp: 999 },
+      }) as never,
+    );
+    expect(claudeSessionStore.getSnapshot('sess-remote-1')?.pendingApproval?.timestamp).toBe(7);
+    // A genuinely different request is a new card and does get stamped.
+    claudeSessionStore.upsertRemoteSession(
+      'laptop',
+      remoteApproval({
+        pendingApproval: { toolName: 'Bash', toolInput: { command: 'rm -rf /' }, timestamp: 999 },
+      }) as never,
+    );
+    expect(claudeSessionStore.getSnapshot('sess-remote-1')?.pendingApproval?.timestamp).toBe(999);
+  });
+
+  it('an answer the peer ACCEPTED still clears the picker — that write is not a guess', () => {
+    // clearPendingQuestions is the one ungated door (acknowledgeAnswer): the
+    // user answered and `hub:<peer>/claude.answer` returned, so this resolves
+    // the exact request the mirror shows, ahead of the peer's next snapshot.
+    claudeSessionStore.upsertRemoteSession(
+      'laptop',
+      remoteApproval({
+        pendingApproval: null,
+        ambientState: 'waiting_input',
+        pendingQuestions: [{ question: 'Which db?', options: [{ label: 'pg' }] }],
+      }) as never,
+    );
+    expect(claudeSessionStore.getSnapshot('sess-remote-1')?.pendingQuestions).toHaveLength(1);
+    claudeSessionStore.clearPendingQuestions('sess-remote-1');
+    expect(claudeSessionStore.getSnapshot('sess-remote-1')?.pendingQuestions).toBeNull();
   });
 });
 

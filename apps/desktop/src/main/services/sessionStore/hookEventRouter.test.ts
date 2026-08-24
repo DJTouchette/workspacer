@@ -347,12 +347,19 @@ describe('background subagents keep the pane busy past the parent Stop (PTY)', (
     // The daemon's managed mode set this while the background subagent runs.
     s.ambientState = 'streaming';
     startSub(s);
+    applyHookEvent(s, { hook_event_name: 'PreToolUse', tool_use_id: 't1', tool_name: 'Bash' });
     applyStopEvent(s);
     // Must NOT clobber the daemon-driven busy state back to idle.
     expect(s.ambientState).toBe('streaming');
     expect(s.parentTurnEnded).toBeFalsy();
-    // Non-ambient cleanup still applies.
-    expect(s.pendingApproval).toBeNull();
+    // The cleanup Stop DOES own on a stream session: the inline tool rows.
+    // (`pendingApproval` used to be asserted null here — trivially true on a
+    // session that never had a card, and since the slot became ownership-gated
+    // it asserted the opposite of the invariant. What Stop must not do to a
+    // daemon-parked card is pinned in 'turn boundary: Stop sweeps only what
+    // this feed owns' below.)
+    expect(s.activeToolCalls).toHaveLength(0);
+    expect(s.completedToolCalls).toHaveLength(0);
   });
 });
 
@@ -487,12 +494,60 @@ describe('the pending slot has exactly one owner', () => {
     return s;
   }
 
-  it('names the owner the same way round as claudeSessionStore.daemonOwnsPending', () => {
+  it('names the owner from ./pendingSlot — one function, so the feeds cannot disagree', () => {
     expect(pendingSlotOwner({ provider: 'claude', transport: 'pty' })).toBe('hooks');
     expect(pendingSlotOwner({} as ClaudeSessionState)).toBe('hooks'); // default claude/pty
     expect(pendingSlotOwner({ provider: 'claude', transport: 'stream' })).toBe('daemon');
     expect(pendingSlotOwner({ provider: 'codex', transport: 'pty' })).toBe('daemon');
     expect(pendingSlotOwner({ provider: 'pi' } as ClaudeSessionState)).toBe('daemon');
+  });
+
+  describe("a row mirrored from a peer hub is not this feed's either", () => {
+    // It looks exactly like a session the hook feed owns — claude, PTY — but
+    // the request is parked on the OTHER machine. Ownership read off
+    // provider/transport alone said 'hooks' and let hooks write the mirror;
+    // an Approve rendered from that card posts a decision the local daemon has
+    // never heard of, and the peer's request stays open.
+    const remote = (): ClaudeSessionState => {
+      const s = mkSession('pty');
+      s.provider = 'claude';
+      s.hub = 'laptop';
+      return s;
+    };
+
+    it("a PermissionRequest cannot park a card on the peer's row", () => {
+      const s = remote();
+      applyHookEvent(s, {
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'Bash',
+        tool_input: { command: 'ls' },
+      });
+      expect(s.pendingApproval).toBeNull();
+    });
+
+    it("an AskUserQuestion PreToolUse cannot park the peer's picker", () => {
+      const s = remote();
+      applyHookEvent(s, {
+        hook_event_name: 'PreToolUse',
+        tool_use_id: 'q1',
+        tool_name: 'AskUserQuestion',
+        tool_input: { questions: [{ question: 'Which?', options: [] }] },
+      });
+      expect(s.pendingQuestions).toBeNull();
+    });
+
+    it('Stop cannot sweep what the peer is still holding open', () => {
+      const s = remote();
+      s.pendingApproval = {
+        toolName: 'Read',
+        toolInput: { file_path: '/peer/x' },
+        timestamp: 7,
+      } as never;
+      s.pendingQuestions = [{ question: 'Which?', options: [] }] as never;
+      applyStopEvent(s);
+      expect(s.pendingApproval?.toolName).toBe('Read');
+      expect(s.pendingQuestions).toHaveLength(1);
+    });
   });
 
   describe('questions: the hook feed neither parks nor resolves a daemon-owned picker', () => {

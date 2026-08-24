@@ -1,9 +1,4 @@
-import type {
-  ClaudeSessionState,
-  PendingApproval,
-  PendingQuestion,
-  ToolCall,
-} from '../claudeSessionStore';
+import type { ClaudeSessionState, ToolCall } from '../claudeSessionStore';
 import {
   capConversationInPlace,
   capInPlace,
@@ -12,6 +7,8 @@ import {
   MAX_FILE_CHANGES,
   truncateToolInput,
 } from './bounds';
+import { PendingSlot, pendingSlotOwner } from './pendingSlot';
+import type { PendingFencedSession } from './pendingSlot';
 
 // ── HookEventRouter ───────────────────────────────────────────────────────────
 //
@@ -35,115 +32,51 @@ function toolResponseIsError(resp: unknown): boolean {
   return false;
 }
 
-// ── The pending slot ──────────────────────────────────────────────────────────
+// ── The pending slot ────────────────────────────────────────────
 //
 // INVARIANT: exactly one feed owns a session's pending slot (`pendingApproval`
 // + `pendingQuestions`). Other feeds may ENRICH the session, but must never
-// park or resolve that slot. Every worker-freeze this project has shipped came
-// from breaking it: a card nulled by the feed that did not own it, while the
-// owning feed still held the request, leaves a session visibly blocked with
-// nothing to answer and no way out but killing it.
+// park or resolve that slot. The rule, the ownership function and the write
+// vocabulary all live in ./pendingSlot — this file is one of its four callers.
 //
-// Who owns it:
-//   • claude on the PTY transport → THIS feed. `PermissionRequest` /
-//     `AskUserQuestion` hooks are the only source of its cards, and the
-//     matching PostToolUse/Stop are the only thing that clears them.
-//   • everything else (any non-claude provider, or claude on the stream
-//     transport) → the DAEMON, via its single `pending` slot delivered on the
-//     `/events` SSE stream (claudemonEventBridge → applyManagedMode →
-//     applyManagedPending). Approvals there are `can_use_tool` control
-//     requests the daemon parked; questions are `Pending::Question`
-//     (claude_stream.rs parks AskUserQuestion itself), and the daemon resolves
-//     both on the turn-closing `result` frame.
+// This feed owns the slot for claude on the PTY transport only. For a stream
+// session or any non-claude provider the DAEMON owns it (its single `pending`
+// slot on the `/events` SSE stream); for a row that arrived from a peer hub the
+// federation mirror does.
 //
-// The two feeds race: a hook is a `curl` subprocess round-tripping through the
-// hook port, `set_managed_mode` is in-process. So the hook feed's view of the
-// slot is always possibly-stale, in both directions — it can null a live card
-// AND resurrect a dead one.
+// The two local feeds race: a hook is a `curl` subprocess round-tripping
+// through the hook port, `set_managed_mode` is in-process. So the hook feed's
+// view of the slot is always possibly-stale, in both directions — it can null
+// a live card AND resurrect a dead one.
 //
 // claudemon is structurally immune to this on its side: `SessionStore::ingest`
 // returns early for managed/stream sessions before `SessionState::apply` runs,
 // so no hook can reach a driver-owned slot, and since 3064726c a write must
 // state its intent as a `PendingWrite` (`Park` / `Resolve` / `Keep`) that the
-// store can refuse. This file is the desktop's equivalent gate: the router
-// body sees the session through `HookFedSession`, where the pending fields are
-// READONLY, so the only way to touch them is `HookPendingSlot` — which knows
-// who owns them. A new writer cannot forget the check; it will not compile.
+// store can refuse. This file is the desktop's equivalent gate: the router body
+// sees the session through `HookFedSession`, where the pending fields are
+// READONLY, so the only way to touch them is a `PendingSlot` — which knows who
+// owns them. A new writer cannot forget the check; it will not compile.
 
-/** Which feed owns this session's pending slot. The mirror of
- *  claudeSessionStore's `daemonOwnsPending` (`provider !== 'claude' ||
- *  transport === 'stream'`), kept spelled the same way round so the two cannot
- *  drift into disagreeing about who owns the card. */
-export function pendingSlotOwner(
-  session: Pick<ClaudeSessionState, 'provider' | 'transport'>,
-): 'hooks' | 'daemon' {
-  const isClaude = (session.provider ?? 'claude') === 'claude';
-  return isClaude && session.transport !== 'stream' ? 'hooks' : 'daemon';
-}
+export { pendingSlotOwner };
 
-/** A session as the hook feed may mutate it: everything writable EXCEPT the
- *  pending slot, which is readonly here so the compiler routes every write
- *  through {@link HookPendingSlot}. (A mutable object is assignable to this —
- *  `readonly` is not checked in assignability — so callers pass a plain
- *  `ClaudeSessionState`; only this file's body is constrained.) */
-type HookFedSession = Omit<ClaudeSessionState, 'pendingApproval' | 'pendingQuestions'> & {
-  readonly pendingApproval: ClaudeSessionState['pendingApproval'];
-  readonly pendingQuestions: ClaudeSessionState['pendingQuestions'];
-};
+/** The router body's view of a session: everything writable except the pending
+ *  slot. (Callers still pass a plain `ClaudeSessionState`; only this file's
+ *  body is constrained.) */
+type HookFedSession = PendingFencedSession;
 
-/**
- * The hook feed's handle on the pending slot, mirroring claudemon's
- * `PendingWrite` intent: a write either PARKS a decision or RESOLVES one, and
- * "keep it as it is" is expressed by not calling at all. Every write is
- * suppressed unless this feed owns the slot.
- *
- * Each method returns what the slot HOLDS after the call — like
- * `set_managed_mode`, so a caller mirrors the real state rather than assuming
- * its own write landed.
- */
-class HookPendingSlot {
-  private readonly owned: boolean;
-
-  constructor(private readonly session: ClaudeSessionState) {
-    this.owned = pendingSlotOwner(session) === 'hooks';
-  }
-
-  parkApproval(next: PendingApproval): PendingApproval | null {
-    if (this.owned) this.session.pendingApproval = next;
-    return this.session.pendingApproval;
-  }
-
-  parkQuestions(next: PendingQuestion[]): PendingQuestion[] | null {
-    if (this.owned) this.session.pendingQuestions = next;
-    return this.session.pendingQuestions;
-  }
-
-  resolveApproval(): PendingApproval | null {
-    if (this.owned) this.session.pendingApproval = null;
-    return this.session.pendingApproval;
-  }
-
-  resolveQuestions(): PendingQuestion[] | null {
-    if (this.owned) this.session.pendingQuestions = null;
-    return this.session.pendingQuestions;
-  }
-
-  /** Turn-boundary sweep: both halves at once. Still ownership-gated — for a
-   *  daemon-owned session the hook `Stop` is not the owner's turn-end signal
-   *  (the driver's own `result` frame is, and it resolves the slot then), and
-   *  a `Stop` that lands after the driver parked a background subagent's
-   *  request would strand exactly as a late PostToolUse did. */
-  resolveAll(): void {
-    this.resolveApproval();
-    this.resolveQuestions();
-  }
+/** This feed's handle on the slot — a `PendingSlot` that has declared itself
+ *  the hook feed, so every park and resolve is refused on a session the daemon
+ *  or a peer owns. */
+function hookSlot(session: ClaudeSessionState): PendingSlot {
+  return new PendingSlot(session, 'hooks');
 }
 
 export function applyHookEvent(session: ClaudeSessionState, event: any): void {
-  routeHookEvent(session, new HookPendingSlot(session), event);
+  routeHookEvent(session, hookSlot(session), event);
 }
 
-function routeHookEvent(session: HookFedSession, pending: HookPendingSlot, event: any): void {
+function routeHookEvent(session: HookFedSession, pending: PendingSlot, event: any): void {
   const hookName: string = event.hook_event_name ?? event.type ?? '';
 
   // Stream-transport Claude sessions (headless stream-json, managed adapter)
@@ -417,10 +350,10 @@ export function normalizeBackgroundAmbient(session: ClaudeSessionState): void {
 
 /** Apply the Stop event's synchronous state mutations only. */
 export function applyStopEvent(session: ClaudeSessionState): void {
-  applyStopEventTo(session, new HookPendingSlot(session));
+  applyStopEventTo(session, hookSlot(session));
 }
 
-function applyStopEventTo(session: HookFedSession, pending: HookPendingSlot): void {
+function applyStopEventTo(session: HookFedSession, pending: PendingSlot): void {
   // Stream-transport sessions own their working/idle state via the daemon's
   // managed mode (set_managed_mode → applyManagedMode) — the stream driver
   // already holds the turn busy while a background subagent runs
