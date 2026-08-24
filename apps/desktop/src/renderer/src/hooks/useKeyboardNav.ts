@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { PaneType, TabConfig } from '../types/pane';
-import { tilingColumns } from '../lib/layoutUtils';
+import { findAdjacentPaneIndex } from '../lib/layoutUtils';
 import { setLayerArmed } from '../lib/layerArmed';
 import {
   buildChordTree,
@@ -303,7 +303,11 @@ export function useKeyboardNav({
     goToTab(idx < tabs.length - 1 ? idx + 1 : 0);
   }, [tabs, activeTabId, goToTab]);
 
-  // Sub-pane navigation within current tab
+  // Sub-pane navigation within current tab. Uses the same grid geometry
+  // ScrollContainer renders (findAdjacentPaneIndex/computePaneLayouts) so a
+  // spanning cell (the count===3 main-and-stack layout) resolves neighbours
+  // spatially instead of by flat index arithmetic, which assumed every cell
+  // was a uniform 1x1 square.
   const navigatePane = useCallback(
     (direction: 'left' | 'right' | 'up' | 'down') => {
       if (!activeTab || activeTab.panes.length <= 1) return;
@@ -311,16 +315,8 @@ export function useKeyboardNav({
       const currentIdx = panes.findIndex((p) => p.id === activeTab.activePaneId);
       if (currentIdx < 0) return;
 
-      const count = panes.length;
-      const cols = tilingColumns(count);
-      let targetIdx = currentIdx;
-
-      if (direction === 'left') targetIdx = currentIdx - 1;
-      else if (direction === 'right') targetIdx = currentIdx + 1;
-      else if (direction === 'up') targetIdx = currentIdx - cols;
-      else if (direction === 'down') targetIdx = currentIdx + cols;
-
-      if (targetIdx >= 0 && targetIdx < count) {
+      const targetIdx = findAdjacentPaneIndex(panes.length, currentIdx, direction);
+      if (targetIdx >= 0) {
         setActivePane(activeTab.id, panes[targetIdx].id);
       }
     },
