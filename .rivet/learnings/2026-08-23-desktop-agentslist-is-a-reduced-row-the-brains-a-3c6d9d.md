@@ -8,7 +8,7 @@ related_paths:
   - services/hub/cmd/brain/enrich.go
   - services/hub/cmd/brain/handlers.go
   - services/hub/internal/authtoken/authtoken.go
-promoted: false
+promoted: true
 ---
 
 # Desktop agents.list is a REDUCED row; the brain's agents.list returns full enriched snapshots
@@ -21,3 +21,6 @@ Disclosure reviews of `agents.list` that only read hubCapabilities.ts conclude a
 
 ## Recommendation
 Before widening agents.list, check (a) whether the brain already emits the field via enrichSnapshot/compatSnapshot, and (b) whether desktop sessions.snapshots already ships it — both are the same view tier. The desktop agents.list tests use expect.objectContaining, so adding a field does not break them.
+
+## Disposition
+Merged with 039970 and 550869 into .rivet/context/domains/session-lifecycle.md (manager succession is memory-only, 2026-08-23) as the agents.list-shape-parity bullet.

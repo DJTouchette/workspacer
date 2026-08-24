@@ -7,7 +7,7 @@ related_paths:
   - apps/desktop/src/main/services/claudeSpawn.ts
   - apps/desktop/src/main/services/managedSpawn.ts
   - apps/desktop/src/main/services/fullAccessGrants.ts
-promoted: false
+promoted: true
 ---
 
 # Manager full-access mechanically ORs skipPermissions from config, both spawn paths
@@ -17,3 +17,6 @@ claudeSpawn.ts:153 and managedSpawn.ts:214 both compute `const skipPermissions =
 
 ## Impact
 Someone auditing "does fleetFullAccess mechanically add skipPermissions" by grepping claudeSpawn/managedSpawn alone will only find the supervisor path and could wrongly conclude the manager path is unwired.
+
+## Disposition
+Promoted into .rivet/context/domains/agent-spawn.md (hand-authored notes 2026-08-22/23, full-access mechanics bullet).

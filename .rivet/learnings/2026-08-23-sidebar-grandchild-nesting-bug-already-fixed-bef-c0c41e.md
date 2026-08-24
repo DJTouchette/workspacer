@@ -6,7 +6,7 @@ suggested_doc: mission-control-attention
 related_paths:
   - apps/desktop/src/renderer/src/components/SideBar.tsx
   - apps/desktop/src/renderer/tests/components/sidebarGrandchildNesting.test.tsx
-promoted: false
+promoted: true
 ---
 
 # Sidebar grandchild-nesting bug already fixed before this task started
@@ -19,3 +19,6 @@ A task brief cited "SideBar.tsx:1342-1349 only expands children of top-level car
 
 ## Recommendation
 Before acting on a bug report against SideBar.tsx's nesting logic, check git log -- SideBar.tsx first; this area churns fast.
+
+## Disposition
+Not promoted — this is an incident note about one worker's task brief being stale (the bug was already fixed by commit a394bd4d before this task ran), not a durable fact about the codebase. The underlying fix and its test (sidebarGrandchildNesting.test.tsx) are already the durable record; a context doc doesn't need to also say "this was already fixed." Left in the log.

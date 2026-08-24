@@ -6,7 +6,7 @@ suggested_doc: workspacer-serve-cli
 related_paths:
   - apps/desktop/src/main/services/worktreeService.ts
   - apps/desktop/src/main/services/worktreeService.test.ts
-promoted: false
+promoted: true
 ---
 
 # Worktree node_modules auto-link only reached depth ≤2 — renderer's node_modules is 4 levels deep
@@ -19,3 +19,6 @@ Any new nested npm package added anywhere in the repo tree (at any depth) now ge
 
 ## Recommendation
 Fixed by making discoverNodeModules recurse to any depth (still skipping descent into node_modules itself and dot-dirs, so cost stays bounded — measured ~3900 dirs / ~17ms full walk on this repo). Verified with a real scratch worktree: `git worktree add` + the fixed linker + a full renderer vitest run (1142/1142 passing) with zero manual symlinking, then worktree removed. Prefer widening the code's depth handling over adding a per-project worktreeSetup symlink command — a config-only fix wouldn't help a fresh clone and this repo has a documented history of config.yaml being clobbered.
+
+## Disposition
+Promoted into .rivet/context/domains/agent-spawn.md (hand-authored notes 2026-08-22/23, worktree node_modules bullet) rather than the originally suggested workspacer-serve-cli — that module is about the headless CLI launcher, not the desktop's worktree service.

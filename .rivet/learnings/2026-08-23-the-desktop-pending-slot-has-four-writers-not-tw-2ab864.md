@@ -7,7 +7,7 @@ related_paths:
   - apps/desktop/src/main/services/sessionStore/pendingSlot.ts
   - apps/desktop/src/main/services/claudeSessionStore.ts
   - apps/desktop/src/main/services/sessionStore/hookEventRouter.ts
-promoted: false
+promoted: true
 ---
 
 # The desktop pending slot has FOUR writers, not two — and a peer-mirrored row is nobody local's
@@ -24,3 +24,6 @@ Two TypeScript facts that shape the fence: `readonly` is invisible to assignabil
 
 ## Recommendation
 All four feeds now go through apps/desktop/src/main/services/sessionStore/pendingSlot.ts — `pendingSlotOwner` (one function, so hook feed and store cannot drift), `PendingSlot` (park/resolve, gated on the declared feed, each returning what the slot HOLDS), `acknowledgeAnswer` (ungated, questions only), `bornWithPending`/`bornWithEmptyPending` (construction). A new writer that forgets the check does not compile. Note the fence is file-local: `sessions.values()` still hands live rows to supervisorNudge and the notifier, which only read the slot today — if one ever writes it, fence there too.
+
+## Disposition
+Promoted into .rivet/context/domains/session-lifecycle.md (new section: the pending-slot ownership invariant, 2026-08-23).

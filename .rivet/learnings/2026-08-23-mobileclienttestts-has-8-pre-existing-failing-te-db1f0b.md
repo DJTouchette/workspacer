@@ -6,7 +6,7 @@ related_paths:
   - apps/desktop/tests/e2e/mobileClient.test.ts
   - apps/desktop/tests/e2e/fixtures/mobileHub.ts
   - services/hub/cmd/hub/mobile.html
-promoted: false
+promoted: true
 ---
 
 # mobileClient.test.ts has 8 pre-existing failing tests on current master
@@ -19,3 +19,6 @@ Anyone touching services/hub/cmd/hub/mobile.html and running this suite for veri
 
 ## Recommendation
 Someone should investigate why these 8 fail (possibly a snapshot/fixture drift in mobileHub.ts vs mobile.html's current rendering) and fix or skip them; until then, treat them as known-red baseline.
+
+## Disposition
+Not promoted — verified STALE. Commit 9ae25866 ("fix(mobile e2e): repair 8 red mobileClient.test.ts tests, fix a real conv-poll bug, wire the suite into CI"), already an ancestor of HEAD on this branch, fixed exactly these 8 failures and wired the suite into CI. The known-red-baseline warning this learning wanted to leave for future workers no longer applies.

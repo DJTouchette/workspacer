@@ -7,7 +7,7 @@ related_paths:
   - apps/desktop/src/main/services/configService.ts
   - apps/desktop/src/renderer/src/hooks/useConfig.ts
   - apps/desktop/src/renderer/src/lib/fleetManager.ts
-promoted: false
+promoted: true
 ---
 
 # config.yaml projects.<dir>.delivery field exists in renderer type but not main-process type
@@ -17,3 +17,6 @@ The per-project ProjectIdentity interface is duplicated three times (apps/deskto
 
 ## Impact
 A future TS refactor that starts validating config.projects against configService.ts's ProjectIdentity type would silently strip `delivery` on write/normalize, breaking the Fleet Manager's per-project delivery-mode doctrine (rule 6 in fleetManager.ts) without any visible error.
+
+## Disposition
+Superseded same-day by e3b4e2 (a third ProjectIdentity copy), which fixed this drift comprehensively. Consolidated single note promoted into .rivet/context/domains/config.md (ProjectIdentity is now single-sourced, 2026-08-23).

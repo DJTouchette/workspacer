@@ -7,7 +7,7 @@ related_paths:
   - apps/desktop/src/main/shared/ipcTypes.ts
   - apps/desktop/src/main/services/configService.ts
   - apps/desktop/src/renderer/src/hooks/useConfig.ts
-promoted: false
+promoted: true
 ---
 
 # A third ProjectIdentity copy (ipcTypes.ts AppConfig.projects) was also missing yolo+delivery
@@ -20,3 +20,6 @@ Closes the drift class this file's own comment warned about — a future config-
 
 ## Recommendation
 Fixed 2026-08-23: ProjectIdentity is now declared ONCE in main/shared/ipcTypes.ts (exported, all fields incl. yolo/delivery/worktreeSetup/plugins), and both configService.ts and useConfig.ts import it (useConfig.ts re-exports it as `export type { ProjectIdentity }` so existing `from '../hooks/useConfig'` call sites are unaffected). AppConfig.projects now references the same type instead of a separately-hand-kept inline object. Any future per-project field should be added to ipcTypes.ts's ProjectIdentity only.
+
+## Disposition
+Promoted into .rivet/context/domains/config.md (ProjectIdentity is now single-sourced, 2026-08-23), consolidated with 764f0e.
