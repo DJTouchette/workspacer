@@ -497,6 +497,37 @@ type JobView struct {
 	Running   bool  `json:"running,omitempty"`
 }
 
+// Scheduled is one job reduced to its scheduling state, for a caller that
+// needs to know what is about to run without reading the specs (which are
+// persisted argv and stay behind the trusted-only RPCs).
+type Scheduled struct {
+	ID   string
+	Name string
+	// ActionKind is "spawn" | "call" | "shell".
+	ActionKind string
+	// NextRun is zero when the job is not scheduled: disabled, manual, or an
+	// unapproved proposal.
+	NextRun time.Time
+	Running bool
+}
+
+// Schedule reports what every job is about to do. Read-only and in-process:
+// the hub's own quiescence signal asks it "is anything due?", which is a
+// question about timing rather than about the specs themselves.
+func (s *Service) Schedule() []Scheduled {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Scheduled, 0, len(s.jobs))
+	for _, j := range s.jobs {
+		sc := Scheduled{ID: j.ID, Name: j.Name, ActionKind: j.Action.Kind, Running: s.running[j.ID]}
+		if at, ok := s.nextAt[j.ID]; ok {
+			sc.NextRun = at
+		}
+		out = append(out, sc)
+	}
+	return out
+}
+
 // List answers jobs.list.
 func (s *Service) List(json.RawMessage) (any, error) {
 	s.mu.Lock()

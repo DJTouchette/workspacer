@@ -9,8 +9,9 @@
 //
 // `workspacer status` probes what's running; `workspacer jobs` manages the
 // hub's scheduled jobs (the host-authority path for installing a spec written
-// elsewhere — by hand, or by an agent); `workspacer install-cli` puts this
-// binary on PATH.
+// elsewhere — by hand, or by an agent); `workspacer fleet quiescence` reads
+// the hub's "is the fleet at rest" signal, exit-code gated so a script can act
+// on it; `workspacer install-cli` puts this binary on PATH.
 package main
 
 import (
@@ -25,6 +26,8 @@ Usage:
   workspacer plugin dev   boot the stack and hot-reload one plugin on file change
   workspacer status       report what's running on the workspacer ports
   workspacer token        mint / list / revoke capability-scoped bus tokens
+  workspacer jobs         manage the hub's scheduled jobs
+  workspacer fleet        read the fleet's state (quiescence)
   workspacer install-cli  put this binary on your PATH
   workspacer help         show this help
 
@@ -45,6 +48,8 @@ func main() {
 		os.Exit(runStatus(os.Args[2:]))
 	case "token":
 		os.Exit(runToken(os.Args[2:]))
+	case "fleet":
+		os.Exit(runFleet(os.Args[2:]))
 	case "jobs":
 		os.Exit(runJobs(os.Args[2:]))
 	case "install-cli":

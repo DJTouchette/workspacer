@@ -172,6 +172,11 @@ type Server struct {
 	// set by the desktop when it enables the toggle). Empty = no exemption,
 	// i.e. today's shape-only rule.
 	trustedHosts map[string]struct{}
+
+	// internalKey marks the hub's OWN loopback bus client. See
+	// [Server.SetInternalKey] — provenance, not authorization.
+	intMu       sync.RWMutex
+	internalKey string
 }
 
 // SetTrustedHosts declares the hostnames a reverse proxy in front of this hub
@@ -859,7 +864,9 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 		emits: events.Emits, consumes: events.Consumes, provides: events.Provides,
 		scope: scope, scopeMethods: scopeMethods, tokenID: TokenFingerprint(tok),
 		viaScopedToken: viaScoped, profilesAllowed: profilesAllowed, yoloAllowed: yoloAllowed,
+		internal: s.isInternalDial(r),
 	}
+	cn.markActive(time.Now()) // a connection that just opened is in use
 	s.router.addConn(cn)
 	if pluginID != "" {
 		// Tracked under the raw token so revocation can find it. The token itself
@@ -926,6 +933,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 			sub.RemoveTopics(f.Topics...)
 			_ = cn.send(Frame{Op: "unsubscribed", Topics: sub.Topics()})
 		case "publish":
+			cn.markActive(time.Now())
 			if f.Event == nil {
 				_ = cn.send(Frame{Op: "error", Error: "publish missing event"})
 				continue
@@ -951,6 +959,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 			accepted := s.router.register(cn, f.Methods)
 			_ = cn.send(Frame{Op: "registered", Methods: accepted})
 		case "call":
+			cn.markActive(time.Now())
 			s.router.call(cn, f)
 		case "result":
 			s.router.result(cn, f, false)
@@ -1079,6 +1088,25 @@ type conn struct {
 	// socket is refused rather than answered from the handshake-time snapshot.
 	revoked atomic.Bool
 
+	// lastActiveMilli is when this connection last DID something: called a
+	// capability or published an event. Seeded with the connect time.
+	//
+	// Connection presence is deliberately NOT the same question. A phone with
+	// the mobile client open in a background tab holds a socket and reconnects
+	// forever without ever sending a frame, and anything that treated the open
+	// socket as use would conclude the machine is permanently busy. `subscribe`
+	// and `register` are excluded for the same reason: they are what a client
+	// says on the way in, not something it is doing. So is a `result` frame —
+	// that is a provider answering somebody else's call, and the caller is
+	// already counted.
+	lastActiveMilli atomic.Int64
+
+	// internal marks the hub's OWN loopback client (see Server.SetInternalKey).
+	// It is not an authorization bit — it holds the host token like any other
+	// trusted conn — it is a provenance one, so the hub's own machinery does
+	// not register as somebody using the machine.
+	internal bool
+
 	// Frames this connection asked the hub to deliver to OTHER connections,
 	// drained in order by one goroutine started on first use — see [conn.forward].
 	fwdOnce sync.Once
@@ -1146,12 +1174,19 @@ func (cn *conn) dispatchForwards() {
 // "operator" tier for the same reason helloFrame does — a host token and an
 // operator token are the same authority, and the latter is promoted to trusted
 // at the handshake, so the tier name isn't otherwise recoverable.
+// markActive records that this connection just did something. See
+// [conn.lastActiveMilli] for what counts and what deliberately does not.
+func (cn *conn) markActive(now time.Time) {
+	cn.lastActiveMilli.Store(now.UnixMilli())
+}
+
 func (cn *conn) identity() CallerIdentity {
 	id := CallerIdentity{
 		Trusted:  cn.trusted,
 		Scope:    cn.scope,
 		PluginID: cn.pluginID,
 		TokenID:  cn.tokenID,
+		ConnID:   cn.id,
 	}
 	if cn.trusted {
 		id.Scope = "operator"

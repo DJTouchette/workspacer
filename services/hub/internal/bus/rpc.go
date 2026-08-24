@@ -39,6 +39,12 @@ type CallerIdentity struct {
 	// Empty when no token is configured — the loopback default, where there is
 	// no credential to identify.
 	TokenID string
+	// ConnID identifies the calling CONNECTION, not the credential. It exists
+	// for the one shape a fingerprint cannot serve: a handler that must
+	// describe the other live connections and exclude the one asking, since
+	// the caller of "is anything using this machine?" is itself something
+	// using this machine. Zero for a call that arrived without a socket.
+	ConnID uint64
 }
 
 // IsTrusted reports whether the caller holds host authority — the host token, or

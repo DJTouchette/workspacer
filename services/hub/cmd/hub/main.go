@@ -32,6 +32,7 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/parentwatch"
 	"github.com/djtouchette/workspacer-hub/internal/plugin"
 	"github.com/djtouchette/workspacer-hub/internal/push"
+	"github.com/djtouchette/workspacer-hub/internal/quiescence"
 	"github.com/djtouchette/workspacer-hub/internal/sandbox"
 	"github.com/djtouchette/workspacer-hub/internal/supervisor"
 )
@@ -425,11 +426,15 @@ func main() {
 		}
 		peers = append(peers, p)
 	}
+	// Held beyond the block so the quiescence sampler can ask each peer
+	// whether IT is quiet. Nil when no peer is configured.
+	var fedManager *federation.Manager
 	if len(peers) > 0 {
 		fed, err := federation.New(b, peers)
 		if err != nil {
 			log.Fatalf("federation: %v", err)
 		}
+		fedManager = fed
 		srv.SetFederation(fed)
 		// Peer liveness for clients that can't read peers.json (the web
 		// renderer): name + connected + lastSeen, nothing else.
@@ -448,9 +453,26 @@ func main() {
 	// jobs.* RPCs are trusted-only — a job is persisted argv, so plugin
 	// tokens and view/triage tiers are refused outright (a plugin manifest
 	// may still declare jobs.*; the identity gate refuses it at call time).
+	// The hub's own loopback bus client, shared by everything in-process that
+	// needs to CALL a capability: the jobs runner and the quiescence sampler.
+	// The internal key marks its connection so the hub can tell its own
+	// machinery apart from a person using the machine — see
+	// bus.Server.SetInternalKey. It grants nothing; the client holds the host
+	// token either way.
+	internalKey := newInternalKey()
+	srv.SetInternalKey(internalKey)
+	self := busclient.New(bus.InternalDialURL(selfBusURL(*addr), internalKey), *token)
+	go self.Run(ctx)
+
+	// Fleet quiescence: a read-only signal saying whether this machine's fleet
+	// is genuinely at rest, with a named blocker per reason when it is not.
+	// Sampled on a timer so "held continuously" means what it says. It decides
+	// nothing and touches nothing — what to do with the answer is the
+	// operator's, via a job, a timer, or anything else that can make a call.
+	watcher := newFleetWatcher(srv, self)
+	watcher.fed = fedManager
+
 	if *jobsFile != "" {
-		self := busclient.New(selfBusURL(*addr), *token)
-		go self.Run(ctx)
 		runner := &jobs.BusRunner{CallFn: self.Call}
 		jsvc := jobs.New(b, *jobsFile,
 			filepath.Join(filepath.Dir(*jobsFile), "jobs-history.json"), runner)
@@ -500,8 +522,16 @@ func main() {
 			}
 			return jsvc.History(p)
 		})
+		watcher.jobsFn = jsvc.Schedule
 		go jsvc.RunScheduler(ctx)
 	}
+
+	// Registered with the LITERAL method name and through the caller-aware
+	// door, because the handler must know WHICH connection is asking: the
+	// poller is a bus client too, and a question about whether anything is
+	// using the machine must not be its own affirmative answer.
+	srv.RegisterLocalIdent("fleet.quiescence", watcher.answer)
+	go watcher.run(ctx, quiescence.DefaultSampleInterval)
 
 	// Load + supervise plugins; expose their contributions at /plugins. The
 	// manager registers per-plugin bus tokens with srv so capability calls are
