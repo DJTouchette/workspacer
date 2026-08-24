@@ -220,6 +220,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pluginTools?: string[];
     /** Federation: spawn on this peer hub instead of locally. */
     targetHub?: string;
+    /**
+     * The agent's FIRST PROMPT, auto-sent as part of the spawn. claudemon
+     * queues it inside the spawn handler, before the id comes back, so it
+     * cannot race the session coming up — which a `claudeMessage()` fired the
+     * moment `spawnClaude` resolves genuinely can (a managed row is registered
+     * but has no input channel yet, and refuses with a 404).
+     *
+     * The user never presses Enter, so use it only where triggering the spawn
+     * IS the consent to send (a guide tour chip, a Fleet Manager kickoff).
+     */
+    message?: string;
   }): Promise<string> => ipcRenderer.invoke(IPC.CLAUDE_SPAWN, opts),
   /** Config changed in main (its own write, or an external one the watcher
    *  caught). Returns an unsubscribe. */

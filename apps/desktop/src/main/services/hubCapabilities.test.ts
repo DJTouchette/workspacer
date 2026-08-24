@@ -72,6 +72,8 @@ const clientMock = {
   listProviderModels: vi.fn(async () => ['m1', 'm2']),
   answer: vi.fn(async () => ({ ok: true, managed: true })),
   input: vi.fn(async () => undefined),
+  // Delivered by default; the spawn helper is what would flag a failure.
+  takeUndeliveredFirstMessage: vi.fn(() => false),
 };
 vi.mock('./claudemonSessionClient', () => ({ claudemonSessionClient: clientMock }));
 
@@ -558,6 +560,54 @@ describe('agents.spawn — dispatch', () => {
     // "everything was dropped".
     expect(arg.cwd).toBe('/proj');
     expect(res).toEqual({ sessionId: 'claude-session-id' });
+  });
+
+  // The first message rides the SPAWN on all three branches, and the result
+  // ACKNOWLEDGES it. `messageQueued` is what lets a dispatcher (the MCP
+  // facade's confirmFirstMessage) tell "the host took the prompt" from "the
+  // host does not know this field", because the second case looks identical to
+  // a successful spawn while the worker sits with no task.
+  it.each([
+    ['managed provider', { provider: 'codex', cwd: '/proj' }, 'managed-session-id'],
+    [
+      'claude stream',
+      { provider: 'claude', transport: 'stream', cwd: '/proj' },
+      'managed-session-id',
+    ],
+    ['claude pty', { provider: 'claude', cwd: '/proj' }, 'claude-session-id'],
+  ])('forwards `message` as firstMessage and acknowledges it — %s', async (_name, params, id) => {
+    const res = await call('agents.spawn', { ...params, message: 'ship the thing' });
+    const spawner =
+      (params as { transport?: string }).transport === 'stream' ||
+      (params as { provider?: string }).provider === 'codex'
+        ? spawnManagedAgent
+        : spawnClaudeAgent;
+    const arg = spawner.mock.calls[0][0] as { firstMessage?: string };
+    expect(arg.firstMessage).toBe('ship the thing');
+    expect(res).toEqual({ sessionId: id, messageQueued: true });
+  });
+
+  // …and it reports the TRUTH, not "we passed it on". The helper already fell
+  // back to a plain send and banners on total failure; answering true anyway
+  // would leave the dispatcher believing it dispatched a task, which is the one
+  // thing this field exists to prevent.
+  it('answers messageQueued:false when the first message could not be delivered', async () => {
+    clientMock.takeUndeliveredFirstMessage.mockReturnValueOnce(true);
+    const res = await call('agents.spawn', {
+      provider: 'codex',
+      cwd: '/proj',
+      message: 'ship the thing',
+    });
+    expect(res).toEqual({ sessionId: 'managed-session-id', messageQueued: false });
+  });
+
+  // A spawn with no message claims nothing: the result shape stays exactly what
+  // every other spawn has always answered (the assertions above depend on it).
+  it('makes no delivery claim when no message was sent', async () => {
+    const res = await call('agents.spawn', { provider: 'codex', cwd: '/proj' });
+    expect(res).toEqual({ sessionId: 'managed-session-id' });
+    const arg = spawnManagedAgent.mock.calls[0][0] as { firstMessage?: string };
+    expect(arg.firstMessage).toBeUndefined();
   });
 
   it('defaults to the Claude path when no provider is given', async () => {

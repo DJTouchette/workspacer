@@ -919,10 +919,62 @@ func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgent
 	}
 	in.SkipPermissions = &skip
 	m := method
-	if peer := in.takeHub(); peer != "" {
+	peer := in.takeHub()
+	if peer != "" {
 		m = "hub:" + peer + "/" + method
 	}
-	return b.forward(ctx, m, in)
+	res, aux, err := b.forward(ctx, m, in)
+	if err != nil || res == nil || res.IsError {
+		return res, aux, err
+	}
+	return confirmFirstMessage(ctx, b, peer, in.Message, res), aux, nil
+}
+
+// confirmFirstMessage makes a spawn's first message impossible to lose
+// silently, including across a version skew this build cannot see.
+//
+// The provider answers `messageQueued: true` when it TOOK RESPONSIBILITY for
+// delivering the prompt (the desktop hands it to claudemon inside the spawn
+// handler, before the session id is even visible to anyone, and raises a banner
+// if that is not confirmed). A provider that does not know the field — an older
+// federated peer, a headless brain that has not caught up — answers a perfectly
+// normal spawn result with the prompt nowhere, and the dispatcher would never
+// know: the worker just sits there, which is indistinguishable from a wedge.
+//
+// So an unconfirmed spawn falls back to exactly what every dispatch did before
+// this field existed: a plain send_message. Never a downgrade. And if THAT
+// fails, the result says the agent is idle instead of reporting a dispatch that
+// never arrived.
+func confirmFirstMessage(ctx context.Context, b *build, peer, message string, res *mcp.CallToolResult) *mcp.CallToolResult {
+	if strings.TrimSpace(message) == "" {
+		return res
+	}
+	var out struct {
+		MessageQueued bool `json:"messageQueued"`
+	}
+	if json.Unmarshal([]byte(resultText(res)), &out) == nil && out.MessageQueued {
+		return res
+	}
+	sid := sessionIDFrom(res)
+	if sid == "" {
+		return &mcp.CallToolResult{
+			IsError: true,
+			Content: []mcp.Content{&mcp.TextContent{Text: "spawn_agent: the agent started but this host did not confirm its first message, and the result carried no sessionId to deliver it to. Find it with list_agents and send it the task yourself. Spawn result: " + resultText(res)}},
+		}
+	}
+	sendMethod := "agents.sendMessage"
+	if peer != "" {
+		sendMethod = "hub:" + peer + "/" + sendMethod
+	}
+	if _, err := b.call(ctx, sendMethod, map[string]string{"sessionId": sid, "text": message}); err != nil {
+		return &mcp.CallToolResult{
+			IsError: true,
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(
+				"spawn_agent: spawned session:%s but could not deliver its first message (%v). It is idle — send it the task yourself with send_message.", sid, err)}},
+		}
+	}
+	log.Printf("spawn_agent: session:%s did not confirm messageQueued — delivered the first message with a follow-up sendMessage", sid)
+	return res
 }
 
 // addGateTool is addHubTool specialized to set_approval_gate, because the gate
@@ -1166,6 +1218,19 @@ type spawnAgentIn struct {
 	ToolScope       string   `json:"toolScope,omitempty" jsonschema:"give the new agent the workspacer tools at a tier: view (observe-only — right for summarizer workers), triage (view + approve/reply/interrupt), or operator (everything)"`
 	PluginTools     []string `json:"pluginTools,omitempty" jsonschema:"plugin ids whose contributed tools the new agent may use (requires toolScope); omit for none"`
 	Worktree        bool     `json:"worktree,omitempty" jsonschema:"run the new agent in a fresh, ISOLATED git worktree of cwd (its own branch) instead of the checkout itself — use for a ship task that changes code, so parallel work on one repo never collides. The worktree is created for you and used as the agent's cwd; if cwd is not a git repo the spawn falls back to cwd with a note"`
+	// Message is the new agent's FIRST PROMPT, carried by the spawn itself.
+	// Before this existed a dispatch was always two calls — spawn, wait for the
+	// id, then send_message — with a manager turn boundary between them and a
+	// live worker sitting with no instructions in the gap.
+	//
+	// NOT AN AUTHORIZATION SURFACE, for the same reason resultSchema is not,
+	// and here the tier table proves it: `agents.sendMessage` is a TRIAGE
+	// method (authtoken.go triageMethods) while `agents.spawn` is operator-only
+	// and listed there as deliberately absent from triage — so any caller
+	// holding spawn_agent already holds send_message, and could always have
+	// sent this exact text to the session it just created. This removes a round
+	// trip, not a check.
+	Message string `json:"message,omitempty" jsonschema:"the new agent's FIRST MESSAGE — the task itself, sent as soon as it starts, so you do not have to follow the spawn with a separate send_message. Delivered by the host as part of the spawn (it cannot race the agent coming up), and the wks-result contract from resultSchema is prepended to it, so both land in the agent's first turn"`
 	// ResultSchema is the structured-result contract (the Workflow tool's
 	// agent({schema}) shape): a JSON Schema in, a validated object back on the
 	// finished wake. Modelled as map[string]any rather than a typed struct for

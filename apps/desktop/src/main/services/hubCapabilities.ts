@@ -58,6 +58,28 @@ import { appendBriefLine, briefPathFor, parseBriefSection } from './briefService
 import { thresholdWatcher } from './thresholdWatcher';
 import { progressReporter } from './progressReporter';
 
+/**
+ * The `agents.spawn` answer. `messageQueued` is this host's ACKNOWLEDGEMENT
+ * that it took delivery of the first prompt — claudemon queues it inside the
+ * spawn handler, and an unconfirmed queue raises a banner rather than being
+ * swallowed (claudemonSessionClient.deliverFirstMessage). A dispatcher that
+ * does not see it true (an older federated peer, a lagging headless brain)
+ * knows to send the prompt itself instead of assuming it landed.
+ *
+ * Omitted entirely when no message was asked for, so the result shape stays
+ * byte-for-byte what every other spawn has always answered. TWIN: the brain's
+ * `spawnResult` (cmd/brain/handlers.go).
+ */
+function spawnResult(sessionId: string, message?: string): Record<string, unknown> {
+  if (!sessionId || !message?.trim()) return { sessionId };
+  // Not "we passed it on" — whether it actually got there. The helper already
+  // fell back to a plain send and banners on total failure; reporting true
+  // regardless would leave the DISPATCHER (a manager, a peer) believing it
+  // dispatched a task, which is the one thing this field exists to prevent.
+  const failed = claudemonSessionClient.takeUndeliveredFirstMessage(sessionId);
+  return { sessionId, messageQueued: !failed };
+}
+
 // Mirror of ipc.ts's shell detection so a capability-spawned terminal picks the
 // same default shell a UI-spawned one would. Kept local to avoid importing the
 // IPC module (which pulls in Electron BrowserWindow plumbing).
@@ -335,6 +357,7 @@ export function registerHubCapabilities(): void {
       yoloGranted,
       worktree,
       resultSchema,
+      message,
     } = (params ?? {}) as {
       provider?: AgentProvider;
       /** Claude only: 'pty' | 'stream'. Omitted = the config default. */
@@ -394,6 +417,19 @@ export function registerHubCapabilities(): void {
        *  message. Refused (never silently dropped) when malformed or oversized;
        *  see shared/structuredResult. */
       resultSchema?: Record<string, unknown>;
+      /** The agent's FIRST PROMPT, delivered by the spawn instead of by a
+       *  follow-up agents.sendMessage.
+       *
+       *  NOT AN AUTHORIZATION SURFACE, and the evidence is the tier table:
+       *  `agents.sendMessage` sits in TRIAGE (authtoken.go triageMethods) while
+       *  `agents.spawn` is operator-only and deliberately absent from triage —
+       *  so every caller that can reach this capability at all already holds
+       *  the right to send this exact text to the session it just created. The
+       *  hub's sanitizeSpawnParams passes unknown params through untouched,
+       *  which is correct here: there is nothing to strip, because there is no
+       *  privilege to strip it from. What it removes is the round trip and the
+       *  window in between, not a check. */
+      message?: string;
     };
     // SECURITY: this capability is the REMOTE/web/MCP spawn path (the local
     // desktop spawns over IPC). Driving an agent is already code execution on
@@ -541,8 +577,9 @@ export function registerHubCapabilities(): void {
         cols,
         rows,
         resultSchema,
+        firstMessage: message,
       });
-      return { sessionId };
+      return spawnResult(sessionId, message);
     }
     // Claude on the 'stream' transport is managed too (claudemon's headless
     // stream-json adapter, no PTY) — same shared dispatch as the IPC path so
@@ -577,8 +614,9 @@ export function registerHubCapabilities(): void {
         scrubProfileBypass,
         profileGranted: profileGranted === true,
         resultSchema,
+        firstMessage: message,
       });
-      return { sessionId };
+      return spawnResult(sessionId, message);
     }
     const sessionId = await spawnClaudeAgent({
       cwd: spawnCwd,
@@ -602,8 +640,9 @@ export function registerHubCapabilities(): void {
       rows,
       mcpItemIds: busMcpItemIds,
       resultSchema,
+      firstMessage: message,
     });
-    return { sessionId };
+    return spawnResult(sessionId, message);
   });
 
   // Control: open a new shell terminal session. The hub/MCP counterpart of the

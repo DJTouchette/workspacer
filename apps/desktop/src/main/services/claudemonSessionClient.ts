@@ -11,6 +11,11 @@ import { BrowserWindow, MessageChannelMain, MessagePortMain } from 'electron';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { consumeSseStream } from '../lib/sseConsumer';
 import { IPC } from '../shared/ipcChannels';
+import { notifySystem } from './systemNotice';
+
+/** Bound on remembered first-message delivery failures — only the spawn that
+ *  is about to answer reads one, so anything older is already reported. */
+const UNDELIVERED_FIRST_MESSAGE_CAP = 32;
 
 const BACKOFF_INITIAL_MS = 200;
 const BACKOFF_MAX_MS = 5000;
@@ -61,6 +66,13 @@ class ClaudemonSessionClient {
    *  closeAll() can terminate them too (the daemon maps SIGTERM on a managed
    *  session to a provider terminate). */
   private managedIds = new Set<string>();
+  /** Sessions whose spawn-carried first message could NOT be delivered (the
+   *  daemon did not queue it and the fallback send failed too). It exists so
+   *  the spawn's ANSWER can be honest about that, instead of the failure living
+   *  only in a banner the dispatcher never sees. `agents.spawn` consumes an
+   *  entry as it answers; the local IPC path does not (the user already got the
+   *  banner), so the set is capped rather than assumed to drain. */
+  private undeliveredFirstMessages = new Set<string>();
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
@@ -81,13 +93,23 @@ class ClaudemonSessionClient {
     /** Hybrid agents (e.g. 'codex'): the PTY is the agent's TUI and claudemon
      *  also tails its rollout transcript to drive the GUI conversation view. */
     rolloutProvider?: string;
+    /** The agent's first prompt, delivered BY THE SPAWN rather than by a
+     *  separate `message()` after the id comes back. See `deliverFirstMessage`. */
+    firstMessage?: string;
   }): Promise<string> {
-    const { portChannel = 'claude:port', sessionId: pinnedId, rolloutProvider, ...rest } = args;
+    const {
+      portChannel = 'claude:port',
+      sessionId: pinnedId,
+      rolloutProvider,
+      firstMessage,
+      ...rest
+    } = args;
     // claudemon's SpawnPayload uses snake_case.
     const reqBody = {
       ...rest,
       ...(pinnedId ? { session_id: pinnedId } : {}),
       ...(rolloutProvider ? { rollout_provider: rolloutProvider } : {}),
+      ...(firstMessage ? { first_message: firstMessage } : {}),
     };
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/spawn`, {
       method: 'POST',
@@ -97,11 +119,58 @@ class ClaudemonSessionClient {
     if (!res.ok) {
       throw new Error(`spawn failed: HTTP ${res.status} ${await res.text()}`);
     }
-    const resBody = (await res.json()) as { session_id: string };
+    const resBody = (await res.json()) as { session_id: string; first_message_queued?: boolean };
     const sessionId = resBody.session_id;
     this.cwds.set(sessionId, rest.cwd);
     this.attachByteStream(sessionId, sessionId, portChannel, 'owner');
+    await this.deliverFirstMessage(sessionId, firstMessage, resBody.first_message_queued);
     return sessionId;
+  }
+
+  /**
+   * Confirm the spawn actually took the first prompt — and if it did not, say
+   * so instead of leaving a worker sitting idle with no instructions.
+   *
+   * The daemon answers `first_message_queued` when it enqueued the prompt
+   * inside the spawn handler, before the 200. That flag is the point: a plain
+   * 200 from a daemon that predates the field looks identical to a successful
+   * dispatch, and the failure mode — an agent that never got told what to do —
+   * is indistinguishable from a wedged one.
+   *
+   * Unconfirmed, we fall back to the old two-call form (which is what every
+   * caller did before this field existed, so this is never a downgrade) and, if
+   * that fails too, raise a banner naming the session. Nothing here swallows.
+   */
+  private async deliverFirstMessage(
+    sessionId: string,
+    text: string | undefined,
+    queued: boolean | undefined,
+  ): Promise<void> {
+    if (!text?.trim() || queued === true) return;
+    console.error(
+      `[claudemon] spawn of session:${sessionId} did not confirm its first message was queued — ` +
+        'falling back to POST /message (this races a session whose driver is still booting).',
+    );
+    try {
+      const res = await this.message(sessionId, text);
+      if (res.ok) return;
+      throw new Error(`daemon refused the message (mode ${res.mode ?? 'unknown'})`);
+    } catch (err: any) {
+      this.undeliveredFirstMessages.add(sessionId);
+      // Insertion-ordered, so this drops the oldest unread flag first.
+      for (const stale of this.undeliveredFirstMessages) {
+        if (this.undeliveredFirstMessages.size <= UNDELIVERED_FIRST_MESSAGE_CAP) break;
+        this.undeliveredFirstMessages.delete(stale);
+      }
+      notifySystem({
+        level: 'error',
+        key: `first-message-${sessionId}`,
+        title: 'Agent started without its instructions',
+        detail:
+          `session:${sessionId} spawned, but its first message could not be delivered ` +
+          `(${err?.message ?? err}). It is idle — send it the task yourself.`,
+      });
+    }
   }
 
   /** Spawn a *managed* (adapter-driven) session via POST /sessions/spawn-managed.
@@ -136,11 +205,27 @@ class ClaudemonSessionClient {
     env?: Record<string, string>;
     /** Workspacer MCP facade URL to register with the provider (supervisors). */
     mcp?: string;
-    /** Role instructions to prepend to the agent's first turn (supervisors). */
+    /** Role instructions to prepend to the agent's first turn (supervisors).
+     *  NOT the dispatch prompt — this is a passive PREFIX the adapter holds and
+     *  prepends to whatever prompt arrives first; on its own it never starts a
+     *  turn. The prompt itself is `firstMessage`. */
     instructions?: string;
+    /** The agent's first prompt, delivered BY THE SPAWN. The daemon queues it
+     *  before answering, so it is waiting when the provider's driver registers
+     *  its prompt channel — a `message()` sent in that window is refused (404,
+     *  no wrapper attached) because the row exists but nothing can take input
+     *  yet. `instructions` is prepended to it, once, in the same turn. */
+    firstMessage?: string;
     sessionId?: string;
   }): Promise<string> {
-    const { sessionId: pinnedId, permissionMode, resumeSessionId, extraArgs, ...rest } = args;
+    const {
+      sessionId: pinnedId,
+      permissionMode,
+      resumeSessionId,
+      extraArgs,
+      firstMessage,
+      ...rest
+    } = args;
     // claudemon's SpawnManagedPayload uses snake_case for multi-word fields;
     // the resume id rides its `resume` field.
     const reqBody = {
@@ -149,6 +234,7 @@ class ClaudemonSessionClient {
       ...(permissionMode ? { permission_mode: permissionMode } : {}),
       ...(resumeSessionId ? { resume: resumeSessionId } : {}),
       ...(extraArgs?.length ? { extra_args: extraArgs } : {}),
+      ...(firstMessage ? { first_message: firstMessage } : {}),
     };
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/spawn-managed`, {
       method: 'POST',
@@ -158,10 +244,19 @@ class ClaudemonSessionClient {
     if (!res.ok) {
       throw new Error(`spawn-managed failed: HTTP ${res.status} ${await res.text()}`);
     }
-    const resBody = (await res.json()) as { session_id: string };
+    const resBody = (await res.json()) as { session_id: string; first_message_queued?: boolean };
     this.cwds.set(resBody.session_id, rest.cwd);
     this.managedIds.add(resBody.session_id);
+    await this.deliverFirstMessage(resBody.session_id, firstMessage, resBody.first_message_queued);
     return resBody.session_id;
+  }
+
+  /** Whether this session's spawn-carried first message failed to reach it —
+   *  consumed once, by the spawn path that is about to answer its caller. A
+   *  banner already told the local user; this is what lets `agents.spawn` tell
+   *  a REMOTE dispatcher, whose worker is otherwise just sitting there. */
+  takeUndeliveredFirstMessage(sessionId: string): boolean {
+    return this.undeliveredFirstMessages.delete(sessionId);
   }
 
   /** List the models a managed provider can launch with, live-queried from its

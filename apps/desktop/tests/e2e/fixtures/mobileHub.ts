@@ -194,7 +194,15 @@ export async function startMobileHub(): Promise<MobileHub> {
           seen: ['claude-fable-5'],
         });
       case 'agents.spawn':
-        return reply(f.id, { sessionId: 'spawned-1' });
+        // Mirrors a current provider: `messageQueued` acknowledges that the
+        // host took delivery of the spawn's first prompt, which is what tells
+        // the client it does not need the old follow-up sendMessage.
+        return reply(f.id, {
+          sessionId: 'spawned-1',
+          ...(typeof params.message === 'string' && params.message.trim()
+            ? { messageQueued: true }
+            : {}),
+        });
       case 'claude.setPermissionMode':
         return reply(f.id, { ok: true, mode: params.mode });
       case 'claude.setModel':

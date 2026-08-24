@@ -119,12 +119,14 @@ function lastSpawn(): {
   cwd: string;
   env: Record<string, string>;
   sessionId: string;
+  firstMessage?: string;
 } {
   return spawnMock.mock.calls.at(-1)![0] as {
     argv: string[];
     cwd: string;
     env: Record<string, string>;
     sessionId: string;
+    firstMessage?: string;
   };
 }
 
@@ -554,5 +556,36 @@ describe('spawnClaudeAgent — resultSchema', () => {
       spawnClaudeAgent({ cwd: '/proj', resultSchema: 'not an object' as never }),
     ).rejects.toThrow(/JSON Schema object/);
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+});
+
+// ── The first message (spawn_agent / agents.spawn `message`) ─────────────────
+//
+// On the PTY path the two channels are unmistakably different: the result
+// contract is a SYSTEM prompt (`--append-system-prompt`, present for the whole
+// session) while the dispatch is a USER turn (it starts the work). Both reach
+// the worker; only the second one makes it do anything.
+describe('spawnClaudeAgent — firstMessage', () => {
+  it('rides the spawn payload, not the argv', async () => {
+    await spawnClaudeAgent({ cwd: '/proj', firstMessage: 'ship the thing' });
+    expect(lastSpawn().firstMessage).toBe('ship the thing');
+    expect(lastSpawn().argv.join(' ')).not.toContain('ship the thing');
+  });
+
+  it('coexists with the result contract on its own channel', async () => {
+    await spawnClaudeAgent({
+      cwd: '/proj',
+      firstMessage: 'ship the thing',
+      resultSchema: { type: 'object', properties: { commit: { type: 'string' } } },
+    });
+    const appended = lastSpawn().argv.join('\n');
+    expect(appended).toContain('wks-result');
+    expect(appended).not.toContain('ship the thing');
+    expect(lastSpawn().firstMessage).toBe('ship the thing');
+  });
+
+  it('sends no firstMessage key when none was asked for', async () => {
+    await spawnClaudeAgent({ cwd: '/proj' });
+    expect(lastSpawn().firstMessage).toBeUndefined();
   });
 });

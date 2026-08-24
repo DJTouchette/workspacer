@@ -97,6 +97,19 @@ describe('spawnFleetManager', () => {
     claudeMessage.mockResolvedValue(undefined);
   });
 
+  // The delivery mechanism itself, stated once as its own case: a kickoff is
+  // carried BY the spawn, never fired at the session afterwards. The two-call
+  // form is what left a manager live with no doctrine when its provider driver
+  // had not come up yet.
+  it('never fires a separate send after the spawn — the kickoff rides the payload', async () => {
+    const hook = renderHook(() => useAgentManager());
+    await act(async () => {
+      await hook.result.current.spawnFleetManager('status please', '/home/u/Work');
+    });
+    expect(spawnClaude.mock.calls[0][0].message).toBeTruthy();
+    expect(claudeMessage).not.toHaveBeenCalled();
+  });
+
   it('spawns chat-first at operator tier with the manager flag and an auto-sent kickoff', async () => {
     const hook = renderHook(() => useAgentManager());
     await act(async () => {
@@ -110,9 +123,14 @@ describe('spawnFleetManager', () => {
       toolScope: 'operator',
       manager: true,
     });
-    // The kickoff is the doctrine + the ask, auto-sent (kickoffMessage), and
-    // says the load-bearing words.
-    expect(claudeMessage).toHaveBeenCalledWith('mgr-session', buildManagerKickoff('status please'));
+    // The kickoff is the doctrine + the ask, auto-sent — and it rides the SPAWN
+    // (`message`) rather than a separate send fired the moment spawnClaude
+    // resolves. That send raced the session coming up: a manager on the stream
+    // transport is a managed row, registered with no prompt channel yet, and
+    // claudemon refuses a message in that window with a 404 — a Fleet Manager
+    // sitting there with no doctrine and no ask.
+    expect(opts.message).toBe(buildManagerKickoff('status please'));
+    expect(claudeMessage).not.toHaveBeenCalled();
     const kickoff = buildManagerKickoff('status please');
     expect(kickoff).toContain('You DELEGATE');
     expect(kickoff).toContain('.workspacer/brief.md');

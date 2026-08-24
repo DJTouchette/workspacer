@@ -53,6 +53,12 @@ When you reference a session in an answer, write its id as session:<sessionId>
 so the UI renders a clickable link.`),
 	"spawn": strings.TrimSpace(`
 spawn_agent starts a new coding-agent session and returns its sessionId.
+- Pass message: the TASK ITSELF, as the new agent's first turn. Dispatching is
+  one call — you do not spawn, wait for the id, and then send_message. The host
+  hands the prompt to the daemon as part of the spawn, so it cannot race the
+  agent coming up, and the resultSchema contract below is prepended to it, so
+  the contract and the task land together in the first turn. Use send_message
+  for anything AFTER that first turn.
 - Pass label (short human name) and parentSessionId (your own session id) so
   the new agent nests under you in the UI.
 - Give the new agent workspacer tools only when it needs them, at the LOWEST

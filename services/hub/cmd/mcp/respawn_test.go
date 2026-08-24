@@ -90,6 +90,12 @@ type respawnHub struct {
 	snapshot string
 	conv     string
 	spawnErr bool
+	// noMessageQueued makes agents.spawn answer WITHOUT `messageQueued` — a
+	// provider that predates the first-message field (an older federated peer,
+	// a lagging headless brain). The spawn looks perfectly successful and the
+	// prompt went nowhere, which is the skew the fallback exists for.
+	noMessageQueued bool
+	sendErr         bool
 }
 
 type busCall struct {
@@ -111,7 +117,17 @@ func (h *respawnHub) Call(_ context.Context, method string, params any) (json.Ra
 		if h.spawnErr {
 			return nil, errFake
 		}
-		return json.RawMessage(`{"sessionId":"new-1"}`), nil
+		msg, _ := decoded["message"].(string)
+		if h.noMessageQueued || strings.TrimSpace(msg) == "" {
+			return json.RawMessage(`{"sessionId":"new-1"}`), nil
+		}
+		// A current provider acknowledges that it took delivery of the prompt.
+		return json.RawMessage(`{"sessionId":"new-1","messageQueued":true}`), nil
+	case "agents.sendMessage":
+		if h.sendErr {
+			return nil, errFake
+		}
+		return json.RawMessage(`{"ok":true}`), nil
 	case "config.get":
 		return json.RawMessage(`{"claude":{}}`), nil
 	}
@@ -210,11 +226,9 @@ func TestRespawnClonesTheTaskAndAppendsTheCorrection(t *testing.T) {
 		}
 	}
 
-	send := hub.call("agents.sendMessage")
-	if send == nil {
-		t.Fatal("the successor was never sent its task")
-	}
-	text, _ := send.params["text"].(string)
+	// The composed dispatch rides the SPAWN ITSELF now — no round trip, and no
+	// window in which the successor is live with no instructions.
+	text, _ := spawn.params["message"].(string)
 	if !strings.HasPrefix(text, "SHIP TASK — fix the parser") {
 		t.Errorf("the ORIGINAL task must lead the message, got: %q", text)
 	}
@@ -224,8 +238,52 @@ func TestRespawnClonesTheTaskAndAppendsTheCorrection(t *testing.T) {
 	if !strings.Contains(text, "CORRECTION") {
 		t.Errorf("the amendment is not announced as a correction: %q", text)
 	}
+	// And exactly once. Sending again after a spawn that already took the
+	// prompt would make the successor read its whole dispatch twice.
+	if send := hub.call("agents.sendMessage"); send != nil {
+		t.Errorf("the task must not also be sent separately, got %v", send.params)
+	}
+}
+
+// The skew case: a provider that does not know the field answers a normal spawn
+// and drops the prompt. Without the fallback the successor sits idle with no
+// task and nothing says so — indistinguishable from a wedge, and the exact
+// failure class this field was added to remove.
+func TestRespawnFallsBackToSendMessageWhenTheProviderDoesNotConfirm(t *testing.T) {
+	hub := newRespawnHub()
+	hub.noMessageQueued = true
+	res, hub := callRespawn(t, hub, true, map[string]any{
+		"sessionId": "old-1", "amendment": "narrow it",
+	})
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", resultText(res))
+	}
+	send := hub.call("agents.sendMessage")
+	if send == nil {
+		t.Fatal("an unconfirmed spawn must fall back to sending the task")
+	}
 	if id, _ := send.params["sessionId"].(string); id != "new-1" {
 		t.Errorf("task sent to %q, want the NEW session", id)
+	}
+	text, _ := send.params["text"].(string)
+	if !strings.HasPrefix(text, "SHIP TASK — fix the parser") || !strings.Contains(text, "narrow it") {
+		t.Errorf("the fallback must send the SAME composed dispatch, got: %q", text)
+	}
+}
+
+// …and when the fallback itself fails, the tool says the agent is idle rather
+// than reporting a dispatch that never arrived.
+func TestRespawnReportsAnUndeliverableTask(t *testing.T) {
+	hub := newRespawnHub()
+	hub.noMessageQueued, hub.sendErr = true, true
+	res, _ := callRespawn(t, hub, true, map[string]any{
+		"sessionId": "old-1", "amendment": "narrow it",
+	})
+	if !res.IsError {
+		t.Fatalf("want an error result, got: %s", resultText(res))
+	}
+	if !strings.Contains(resultText(res), "idle") {
+		t.Errorf("the failure must say the agent is idle and needs the task, got: %s", resultText(res))
 	}
 }
 

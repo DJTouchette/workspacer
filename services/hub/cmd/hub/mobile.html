@@ -3532,23 +3532,32 @@
     // instead of a directory basename.
     const label = (S.spawn.label || '').trim().slice(0, 80);
     if (label) opts.label = label;
+    // The chosen library prompt rides the SPAWN as the session's first message.
+    // It used to be a second call, made only after seed() had the row — so a
+    // dispatch whose session had not landed in the list yet dropped its prompt
+    // entirely and silently, and even when it did land, a phone dispatch is
+    // transport:'stream' (a managed row registered before its prompt channel
+    // exists), which refuses a message in that window with a 404.
+    const first = spawnPrompts.find((p) => p.id === S.spawn.prompt);
+    const firstText = first ? (first.body || first.title) : '';
+    if (firstText) opts.message = firstText;
     try {
       const r = await call('agents.spawn', opts);
       const id = r && r.sessionId;
       toast('Dispatched');
       S.spawn.label = '';
-      // Send the chosen library prompt as the session's first message, once the
-      // daemon has a session to accept it.
-      const first = spawnPrompts.find((p) => p.id === S.spawn.prompt);
       S.spawn.prompt = '';
       await seed();
-      if (id && sessions.get(id)) {
-        openChat(id);
-        if (first) {
-          try { await call('agents.sendMessage', { sessionId: id, text: first.body || first.title }); }
-          catch (e) { toast('Prompt not sent: ' + errText(e)); }
-        }
-      } else go('fleet');
+      // messageQueued is the host's acknowledgement that it took the prompt. An
+      // older provider answers without it, so fall back to the old second call
+      // rather than leaving a worker with no task and saying nothing.
+      const needsSend = firstText && !(r && r.messageQueued);
+      if (id && needsSend) {
+        try { await call('agents.sendMessage', { sessionId: id, text: firstText }); }
+        catch (e) { toast('Prompt not sent: ' + errText(e)); }
+      }
+      if (id && sessions.get(id)) openChat(id);
+      else go('fleet');
     } catch (e) {
       toast('Dispatch failed: ' + errText(e));
       btn.disabled = false; btn.textContent = 'Dispatch worker';

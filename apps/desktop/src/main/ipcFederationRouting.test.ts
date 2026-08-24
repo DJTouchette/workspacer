@@ -270,6 +270,47 @@ describe('pane housekeeping adopts or no-ops for remote sessions', () => {
   });
 });
 
+// A federated spawn carries its first message to the peer, and — because
+// federation is where version skew actually lives — verifies the peer took it.
+// A peer that predates `message` answers a perfectly ordinary successful spawn
+// with the prompt nowhere, and the worker over there just sits, which is
+// indistinguishable from a wedge.
+describe('a federated spawn delivers its first message', () => {
+  it('forwards `message` to the peer and sends nothing extra when the peer confirms', async () => {
+    callHub.mockResolvedValueOnce({ sessionId: 'peer-1', messageQueued: true });
+    const id = await invoke('claude:spawn', {
+      targetHub: 'work',
+      cwd: '/proj',
+      message: 'ship the thing',
+    });
+    expect(id).toBe('peer-1');
+    expect(callHub).toHaveBeenCalledTimes(1);
+    expect(callHub.mock.calls[0][0]).toBe('hub:work/agents.spawn');
+    expect((callHub.mock.calls[0][1] as { message?: string }).message).toBe('ship the thing');
+  });
+
+  it('falls back to hub:<peer>/agents.sendMessage when the peer does not confirm', async () => {
+    callHub.mockResolvedValueOnce({ sessionId: 'peer-1' });
+    const id = await invoke('claude:spawn', {
+      targetHub: 'work',
+      cwd: '/proj',
+      message: 'ship the thing',
+    });
+    expect(id).toBe('peer-1');
+    expect(callHub).toHaveBeenCalledTimes(2);
+    expect(callHub.mock.calls[1]).toEqual([
+      'hub:work/agents.sendMessage',
+      { sessionId: 'peer-1', text: 'ship the thing' },
+    ]);
+  });
+
+  it('sends nothing extra when there was no first message', async () => {
+    callHub.mockResolvedValueOnce({ sessionId: 'peer-1' });
+    await invoke('claude:spawn', { targetHub: 'work', cwd: '/proj' });
+    expect(callHub).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('federation:peers', () => {
   it('returns the bridge peer list', async () => {
     const res = await invoke('federation:peers');

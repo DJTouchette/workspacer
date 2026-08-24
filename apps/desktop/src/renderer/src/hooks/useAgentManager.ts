@@ -252,11 +252,14 @@ export function useAgentManager() {
       /** Manager only: grant its token full-access dispatch (config
        *  agents.fleetFullAccess) so its workers run with permissions bypassed. */
       fleetFullAccess?: boolean;
-      /** A first message AUTO-SENT once the spawn resolves (claudemon buffers
-       *  it through the settle+verify flush, same as the jobs scheduler and
-       *  respawn continuations). Unlike initialPrompt, the user never has to
-       *  press Enter — use only where clicking the trigger IS the consent to
-       *  send (e.g. a guide tour chip). */
+      /** A first message AUTO-SENT with the spawn. It rides the spawn payload
+       *  now (`message`), so claudemon queues it BEFORE handing back the id and
+       *  delivers it through the settle+verify flush — it used to be a separate
+       *  send fired the moment `spawnClaude` resolved, which races a session
+       *  that is registered but whose provider driver has not come up yet (a
+       *  managed row refuses that send with a 404). Unlike initialPrompt, the
+       *  user never has to press Enter — use only where clicking the trigger IS
+       *  the consent to send (e.g. a guide tour chip, a manager kickoff). */
       kickoffMessage?: string;
       /** Marks this workspace as a supervisor. */
       kind?: 'supervisor';
@@ -320,19 +323,14 @@ export function useAgentManager() {
           manager: opts.manager,
           fleetFullAccess: opts.fleetFullAccess,
           targetHub: opts.targetHub,
+          // Delivered BY the spawn, not after it — see kickoffMessage.
+          message: opts.kickoffMessage,
           cols: 120,
           rows: 32,
         };
         sessionId = await window.electronAPI.spawnClaude(spawnOpts);
       } catch (err) {
         console.error('[Agent] spawn failed:', err);
-      }
-      // Sent AFTER the spawn resolves so the session row exists — claudemon
-      // queues it through the settle+verify flush (see useClaudeSpawn).
-      if (sessionId && opts.kickoffMessage) {
-        window.electronAPI
-          .claudeMessage(sessionId, opts.kickoffMessage)
-          .catch((err) => console.error('[Agent] kickoff message failed:', err));
       }
       const { tabs: agentTabs, activeTabId: agentActiveTab } = defaultAgentTabs(
         sessionId,

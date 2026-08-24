@@ -46,6 +46,36 @@ func (rec *recorder) server() *httptest.Server {
 			if id == "" {
 				id = "generated-id"
 			}
+			// Mirrors the daemon: `first_message_queued` reports whether the
+			// spawn payload's first prompt was accepted, so a caller can tell
+			// "dispatched" from "started with no task".
+			msg, _ := body["first_message"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"session_id":           id,
+				"first_message_queued": strings.TrimSpace(msg) != "",
+			})
+			return
+		}
+		w.Write([]byte(`{"ok":true}`))
+	}))
+}
+
+// serverWithoutFirstMessageSupport is the same fake daemon as `server`, minus
+// any knowledge of `first_message` — i.e. a claudemon from before the field
+// existed. It answers a perfectly normal spawn and drops the prompt on the
+// floor, which is exactly the skew `messageQueued` has to report honestly.
+func (rec *recorder) serverWithoutFirstMessageSupport() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		rec.mu.Lock()
+		rec.hits = append(rec.hits, hit{path: r.URL.Path, body: body})
+		rec.mu.Unlock()
+		if r.URL.Path == "/sessions/spawn" || r.URL.Path == "/sessions/spawn-managed" {
+			id, _ := body["session_id"].(string)
+			if id == "" {
+				id = "generated-id"
+			}
 			_ = json.NewEncoder(w).Encode(map[string]string{"session_id": id})
 			return
 		}

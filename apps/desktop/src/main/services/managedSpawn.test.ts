@@ -495,6 +495,63 @@ describe('spawnManagedAgent — resultSchema', () => {
   });
 });
 
+// ── The first message (spawn_agent / agents.spawn `message`) ─────────────────
+//
+// The dispatch prompt rides the SPAWN. Two-call dispatch has a real window:
+// claudemon's `register_managed` marks the row `Input` while attaching no
+// wrapper, and the provider driver only registers its prompt channel after the
+// spawn handler has answered 200 — so a message posted in between comes back
+// 404 and the worker sits with no task.
+describe('spawnManagedAgent — firstMessage', () => {
+  it('rides the spawn payload as its OWN field', async () => {
+    await spawnManagedAgent({ provider: 'opencode', cwd: '/proj', firstMessage: 'ship the thing' });
+    expect(lastManaged().firstMessage).toBe('ship the thing');
+  });
+
+  it('is NOT folded into instructions — instructions never start a turn', async () => {
+    const schema = { type: 'object', properties: { commit: { type: 'string' } } };
+    await spawnManagedAgent({
+      provider: 'opencode',
+      cwd: '/proj',
+      toolScope: 'operator',
+      resultSchema: schema,
+      firstMessage: 'ship the thing',
+    });
+    // Both reach the worker, on separate fields, and the daemon prepends the
+    // instructions to the prompt — so the contract lands ahead of the task in
+    // one turn. Folding the task into `instructions` would leave it parked in
+    // the adapter's pending-instructions slot waiting for a prompt to prepend
+    // itself to, which is the very thing it was meant to be.
+    const instructions = lastManaged().instructions as string;
+    expect(instructions).toContain('FACADE');
+    expect(instructions).toContain('wks-result');
+    expect(instructions).not.toContain('ship the thing');
+    expect(lastManaged().firstMessage).toBe('ship the thing');
+  });
+
+  it('sends no firstMessage key when none was asked for', async () => {
+    await spawnManagedAgent({ provider: 'opencode', cwd: '/proj' });
+    expect(lastManaged().firstMessage).toBeUndefined();
+  });
+
+  it('rides the codex PTY-hybrid spawn too — the one path with no instructions channel', async () => {
+    const orig = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      await spawnManagedAgent({
+        provider: 'codex',
+        transport: 'stream',
+        cwd: '/proj',
+        firstMessage: 'ship the thing',
+      });
+    } finally {
+      Object.defineProperty(process, 'platform', { value: orig });
+    }
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect((spawnMock.mock.calls.at(-1)![0] as Payload).firstMessage).toBe('ship the thing');
+  });
+});
+
 /**
  * The Fleet Manager ROLE on codex. The IPC managed branch used to drop
  * `manager` entirely, so none of this happened: the session came up unflagged
