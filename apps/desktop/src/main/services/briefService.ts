@@ -36,6 +36,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { withFileLock } from '../lib/fileLock';
+import { isPrependSection, parseBrief } from '../shared/briefBoard';
 
 /** The four headings a brief has. `User` is fleet-brief-only but is accepted on
  *  any brief: refusing it would make the fleet brief a special case at every
@@ -43,18 +44,29 @@ import { withFileLock } from '../lib/fileLock';
 export const BRIEF_SECTIONS = ['Now', 'Direction', 'Recently', 'User'] as const;
 export type BriefSection = (typeof BRIEF_SECTIONS)[number];
 
-/** Sections whose newest entry goes at the TOP. `Recently` is a dated log kept
- *  newest-first (the doctrine in fleetManager.ts and the /checkpoint skill); the
- *  others are lists where a new item belongs at the end. */
-const PREPEND_SECTIONS = new Set<BriefSection>(['Recently']);
-
 /** Where a project's brief lives, relative to the project directory. */
 export const BRIEF_RELATIVE_PATH = path.join('.workspacer', 'brief.md');
 
-/** Cap on one appended line. A brief line is a sentence; a wall of text in one
- *  bullet is a formatting accident that would be tedious to undo by hand, and
- *  this tool can only ADD, never fix. */
-const LINE_MAX = 2000;
+/**
+ * Cap on one appended line, and it REFUSES rather than truncates.
+ *
+ * It used to cut at 2000 characters, append an ellipsis and report success. In
+ * this repo's own brief that had silently guillotined 13 of 45 entries, about
+ * 30 percent, each one mid-sentence. Silence was the defect, not the size, and
+ * the reason a refusal is the right answer is the same property the rest of
+ * this file rests on: the tool is additive-only, so it cannot go back and
+ * repair a line it damaged. A truncated write loses the tail permanently and
+ * needs a human or an Edit to fix; a refused write loses nothing, because the
+ * caller still holds every character it composed and can split the entry.
+ *
+ * 4000 rather than 2000 because a refusal at the old cap would have refused
+ * about 30 percent of the entries the fleet actually writes, which is how you
+ * strand a manager mid-checkpoint. The measured average entry here is ~1200
+ * characters, so this sits at more than three times a normal one: past it, a
+ * line is a wall of text that belongs in two entries, and saying so out loud is
+ * more useful than quietly keeping half of it.
+ */
+export const BRIEF_LINE_MAX = 4000;
 
 /** How long to wait for the lock. Generous next to configLock's 250ms: this
  *  runs on a bus capability (not the Electron main thread's synchronous IPC
@@ -66,6 +78,20 @@ const LOCK_WAIT_MS = 3_000;
 const LOCK_STALE_MS = 15_000;
 /** Compare-and-swap attempts before giving up on an outside writer. */
 const CAS_ATTEMPTS = 5;
+
+export class BriefLineTooLong extends Error {
+  constructor(
+    readonly length: number,
+    readonly max: number,
+  ) {
+    super(
+      `brief.append: the line is ${length} characters and the limit is ${max}. ` +
+        'Nothing was written. Split it into separate entries and append each one, ' +
+        'or shorten it: this tool can only add a line, so it cannot repair one it cut.',
+    );
+    this.name = 'BriefLineTooLong';
+  }
+}
 
 export class BriefLockTimeout extends Error {
   constructor(p: string) {
@@ -83,15 +109,18 @@ export class BriefLockTimeout extends Error {
  *  Interior SPACES are left alone, deliberately. The obvious `\s+ → ' '` also
  *  eats the double space in the doctrine's own dated-log format
  *  (`- YYYY-MM-DD  <what happened>`), so the tool that exists to write those
- *  lines would have been the one thing that could not write one. */
+ *  lines would have been the one thing that could not write one.
+ *
+ *  The length is measured AFTER flattening, so a caller whose sentence arrived
+ *  wrapped is judged on what will actually be written, not on its newlines. */
 export function normalizeBriefLine(line: string): string {
   const flat = (line ?? '')
     .replace(/[ \t\f\v]*[\r\n]+[ \t\f\v]*/g, ' ')
     .replace(/[\t\f\v]+/g, ' ')
     .trim();
   if (!flat) throw new Error('brief.append: line is empty');
-  const capped = flat.length > LINE_MAX ? `${flat.slice(0, LINE_MAX)}…` : flat;
-  return capped.startsWith('- ') || capped.startsWith('#') ? capped : `- ${capped}`;
+  if (flat.length > BRIEF_LINE_MAX) throw new BriefLineTooLong(flat.length, BRIEF_LINE_MAX);
+  return flat.startsWith('- ') || flat.startsWith('#') ? flat : `- ${flat}`;
 }
 
 /** A `## <Section>` heading line, tolerating trailing whitespace and any number
@@ -154,7 +183,7 @@ export function appendToBrief(content: string, section: BriefSection, line: stri
   }
 
   let at: number;
-  if (PREPEND_SECTIONS.has(section)) {
+  if (isPrependSection(section)) {
     // Newest first: straight after the heading, but below a blank line the
     // author put there for spacing (inserting above it would move their blank).
     at = headingAt + 1;
@@ -175,13 +204,54 @@ export function briefPathFor(projectDir: string): string {
   return path.join(projectDir, BRIEF_RELATIVE_PATH);
 }
 
-export interface BriefAppendResult {
+/**
+ * What a section looks like after a write, so a caller learns the brief is over
+ * budget WITHOUT reading it.
+ *
+ * The concrete failure this exists for: a manager could not read this repo's
+ * `## Recently` at all, because 49 entries had grown past a read cap, and it
+ * found out by failing. A count coming back on every append means the next one
+ * knows to run /checkpoint before it hits that wall. Three numbers, deliberately
+ * boring: two for the section the caller just wrote to, one for the file, since
+ * a brief can be over budget as a whole while every single section looks fine.
+ */
+export interface BriefSizeReport {
+  /** Entries under that heading after the write, `###` sub-groups included. */
+  entriesInSection: number;
+  /** Bytes of the section's body (its lines, not the heading). */
+  bytesInSection: number;
+  /** Bytes of the whole brief. */
+  bytesInBrief: number;
+}
+
+export interface BriefAppendResult extends BriefSizeReport {
   path: string;
   section: BriefSection;
   /** The line as it was actually written (normalized). */
   line: string;
   /** True when this call created the brief. */
   created: boolean;
+}
+
+/**
+ * Measure one section of `content`. Uses the board's parser rather than a second
+ * one: `parseBrief` already models a brief as sections and entries with the same
+ * boundary rules `appendToBrief` inserts by, and two counters that disagree
+ * about what an entry is would be worse than no counter.
+ *
+ * A section the brief does not have reports zeroes. That is the honest answer
+ * for a heading `appendToBrief` would have to create.
+ */
+export function briefSectionStats(content: string, section: string): BriefSizeReport {
+  const wanted = section.trim().toLowerCase();
+  const doc = parseBrief(content);
+  const block = doc.sections.find((s) => s.level === 2 && s.title.toLowerCase() === wanted);
+  const body = block ? doc.lines.slice(block.bodyStart, block.bodyEnd).join('\n') : '';
+  return {
+    entriesInSection: doc.entries.filter((e) => e.column.toLowerCase() === wanted).length,
+    bytesInSection: Buffer.byteLength(body, 'utf8'),
+    bytesInBrief: Buffer.byteLength(content, 'utf8'),
+  };
 }
 
 /**
@@ -221,7 +291,16 @@ export function appendBriefLine(
           continue; // recompute against the writer that beat us
         }
         atomicWriteFileSync(briefPath, next);
-        return { path: briefPath, section, line: bullet, created: !before.exists };
+        return {
+          path: briefPath,
+          section,
+          line: bullet,
+          created: !before.exists,
+          // Measured on the bytes just published, not on a re-read: a re-read
+          // would report whatever an outside writer did in between as if this
+          // call had produced it.
+          ...briefSectionStats(next, section),
+        };
       }
       throw new Error(
         `brief.append: ${briefPath} is being rewritten by another writer faster than this ` +

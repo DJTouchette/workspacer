@@ -205,7 +205,18 @@ rewrites, reorders or reformats anything already in the file.
 - section is Now | Direction | Recently | User. A typo is refused, not guessed.
 - Recently PREPENDS (a dated log, newest first); the rest append.
 - The brief is created, with all four sections, if the project has none.
-It can only ADD. Removing a stale line, or archiving, is still a file edit.`),
+- A line over 4000 characters is REFUSED and nothing is written, rather than cut
+  at the limit. Split it into separate entries and append each one.
+- The result carries entriesInSection, bytesInSection and bytesInBrief: the
+  state AFTER your write. That is how you notice a brief going over budget
+  without reading it. Past roughly 20 entries in a section, trim it.
+brief_archive({project, section, keep|count}) is the other half, and the way to
+trim: it moves the OLDEST entries of one section out to
+.workspacer/brief.archive.md in a single call, byte for byte, under the same
+lock. Give keep (leave this many newest, archive the rest; idempotent) or count
+(archive this many oldest), never both. Recently is newest-first, so its oldest
+entries are its last. It returns how many moved plus the same three counts.
+Between the two, do not edit a brief with read_file + write_file.`),
 	"projects": strings.TrimSpace(`
 project_status({}) returns the git state of EVERY configured project in one
 call: branch, upstream, unpushed (commits ahead), behind, and whether the tree

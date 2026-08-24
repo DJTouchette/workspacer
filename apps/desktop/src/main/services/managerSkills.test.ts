@@ -53,9 +53,20 @@ describe('installManagerSkills', () => {
     expect(checkpoint).toContain('## User');
     // Pruning is COLD ARCHIVAL, not deletion — the overflow moves to the
     // archive so the brief stays short but the history survives.
-    expect(checkpoint).toContain('~20 newest');
+    expect(checkpoint).toContain('20 newest');
     expect(checkpoint).toContain('.workspacer/brief.archive.md');
-    expect(checkpoint).toContain('Do NOT delete the overflow');
+    // And it goes through the CAPABILITY, not a shell. A skill body that only
+    // describes the destination is what produced three differently worded
+    // archive headings and four .bak files in one morning.
+    expect(checkpoint).toContain('brief_archive({project, section: "Recently", keep: 20})');
+    expect(checkpoint).toContain('do not do this with');
+    // The judgement stays with the model: which lines are stale is the part a
+    // schema is bad at, and it was right when a model did it by hand.
+    expect(checkpoint).toContain('judgement only you can make');
+    // The two things brief_append reports back, so an over-budget section and a
+    // refused line are both acted on rather than discovered by failing.
+    expect(checkpoint).toContain('entriesInSection');
+    expect(checkpoint).toContain('REFUSED');
     // A durable project finding routes to rivet.learn when the project uses it.
     expect(checkpoint).toContain('rivet.learn');
   });

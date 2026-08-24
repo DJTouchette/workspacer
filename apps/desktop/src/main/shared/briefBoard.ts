@@ -76,11 +76,28 @@ export const BOARD_COLUMN_LABELS: Record<BoardColumn, string> = {
   archive: 'Archive',
 };
 
-/** Sections whose newest entry goes at the TOP. Same rule (and the same reason)
- *  as briefService's PREPEND_SECTIONS: `## Recently` is a dated log kept
- *  newest-first. A card dropped there lands at the top; a card dropped anywhere
- *  else lands at the bottom of its section. */
-const PREPEND_COLUMNS = new Set<string>(['Recently']);
+/** Sections whose newest entry goes at the TOP: `## Recently` is a dated log
+ *  kept newest-first. A card dropped there lands at the top; a card dropped
+ *  anywhere else lands at the bottom of its section.
+ *
+ *  THE ONE COPY. briefService's appendToBrief needs the same rule to decide
+ *  where `brief_append` inserts, and briefBoardService's archiveOldestEntries
+ *  needs it to decide which END of a section holds the OLDEST entries. It used
+ *  to be written out twice and kept in agreement by hand; the two spellings
+ *  disagreeing would put the same entry in two different places depending on
+ *  which door it came through, and would make an archive sweep take the newest
+ *  entries instead of the oldest. Matching is case-insensitive because every
+ *  other heading lookup here already is. */
+const PREPEND_SECTIONS = new Set<string>(['recently']);
+
+/** True when `name` is a section written newest-first. */
+export function isPrependSection(name: string): boolean {
+  return PREPEND_SECTIONS.has(
+    String(name ?? '')
+      .trim()
+      .toLowerCase(),
+  );
+}
 
 // ── Document model ───────────────────────────────────────────────────────────
 
@@ -260,7 +277,7 @@ export function insertPointFor(doc: BriefDoc, column: string): number {
     (s) => s.level === 2 && s.title.toLowerCase() === column.toLowerCase(),
   );
   if (!sec) return -1;
-  if (PREPEND_COLUMNS.has(sec.title) || PREPEND_COLUMNS.has(column)) {
+  if (isPrependSection(sec.title) || isPrependSection(column)) {
     let at = sec.bodyStart;
     while (at < sec.bodyEnd && doc.lines[at].trim() === '') at++;
     return at;

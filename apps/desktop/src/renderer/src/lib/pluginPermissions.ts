@@ -171,6 +171,11 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
     sensitive: true,
   },
   'brief.append': { label: 'Add a line to a project brief', sensitive: true },
+  // brief.archive moves the oldest entries of one section into the brief's
+  // archive file. It cannot rewrite an entry and cannot delete one outright,
+  // since everything it moves lands in brief.archive.md, but it does take lines
+  // out of the user's own document, so it reads as sensitive.
+  'brief.archive': { label: 'Move old brief entries into the brief archive', sensitive: true },
   'config.get': { label: 'Read your app settings' },
   'config.getPath': { label: 'See where your settings file lives' },
   'config.reload': { label: 'Reload your app settings' },

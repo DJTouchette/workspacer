@@ -63,7 +63,7 @@ func TestTierToolFiltering(t *testing.T) {
 		// must not be able to append to the user's briefs, dismiss sessions,
 		// redispatch workers, arm wakes at other sessions, or move another
 		// manager's workers onto itself.
-		"brief_append", "close_session", "respawn_with", "notify_when", "project_status",
+		"brief_append", "brief_archive", "close_session", "respawn_with", "notify_when", "project_status",
 		"adopt_workers", "list_orphans"} {
 		if view[banned] {
 			t.Errorf("view tier must not hold %q", banned)
@@ -81,7 +81,7 @@ func TestTierToolFiltering(t *testing.T) {
 		// and nothing else. respawn_with in particular composes agents.spawn,
 		// so admitting it here would hand triage the spawn it is defined not to
 		// have — its own gate derives from the parts for exactly that reason.
-		"brief_append", "close_session", "respawn_with", "notify_when", "project_status",
+		"brief_append", "brief_archive", "close_session", "respawn_with", "notify_when", "project_status",
 		"adopt_workers", "list_orphans"} {
 		if triage[banned] {
 			t.Errorf("triage tier must not hold %q", banned)
@@ -91,7 +91,7 @@ func TestTierToolFiltering(t *testing.T) {
 	// Operator: everything, help included.
 	for _, want := range []string{"spawn_agent", "write_file", "save_config", "terminal_input", "answer", "help",
 		"list_jobs", "job_history", "propose_job", "run_job", "remove_job",
-		"brief_append", "close_session", "respawn_with", "notify_when", "project_status",
+		"brief_append", "brief_archive", "close_session", "respawn_with", "notify_when", "project_status",
 		"adopt_workers", "list_orphans"} {
 		if !operator[want] {
 			t.Errorf("operator tier missing %q", want)

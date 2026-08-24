@@ -542,6 +542,10 @@ var compositionInert = map[string]InertClaim{
 		Reason:    "appends ONE line to a section of <project>/.workspacer/brief.md and can do nothing else: the caller names the project DIRECTORY, which assertPathAllowed('brief.append', …) confines to the same workspace roots fs.write takes, and the provider composes the basename — so unlike fs.write there is no caller-chosen filename to aim at an interpreted one (.claude/settings.json, .opencode/plugin/*.js, a ripgrep .ignore), which is what all three recorded fs.write pairs turn on. The bytes it writes are prose an AGENT reads, not config, code or argv any host process reads, and that is not a new crossing: influencing what an agent is told is already fully available to the same operator tier through agents.sendMessage, whose own record covers it. It is additive-only by construction (services/briefService), so it cannot even rewrite a line another writer put there",
 		Witnesses: []Witness{pathGuard("brief.append")},
 	},
+	"brief.archive": {
+		Reason:    "moves entries from <project>/.workspacer/brief.md into brief.archive.md beside it, and can do nothing else: the caller names the project DIRECTORY, which assertPathAllowed('brief.archive', …) confines to the same workspace roots brief.append takes, and the provider composes both basenames, so there is no caller-chosen filename to aim at an interpreted one. It cannot even name an entry, since it takes a count off the oldest end of one named section, and the bytes it moves are prose an AGENT reads, unchanged, from one file to another the same agent can already read. Nothing downstream reads either file as config, code or argv",
+		Witnesses: []Witness{pathGuard("brief.archive")},
+	},
 	"git.status": {
 		Reason:    "runs `git status` in a cwd guardGitCwd('git.status', …) confines to the workspace roots, and returns text. Writes nothing; the porcelain output is not read as policy by anything",
 		Witnesses: []Witness{gitCwdGuard("git.status")},

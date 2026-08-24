@@ -3490,6 +3490,19 @@
       "note": "registerCapability, not cat: brief.append is desktop-only (the headless brain has no counterpart), like fs.readImage. The caller's ONLY path input is the project DIRECTORY — the basename is composed by the provider as <project>/.workspacer/brief.md — so within a root it reaches strictly less than fs.write, but the directory is still caller-chosen, which is what this table confines. It deliberately takes the SAME workspace roots as fs.write rather than a wider set of its own: the Fleet Manager's cwd is its projects' common parent and containment is by subtree, so every project it manages is already inside."
     },
     {
+      "method": "brief.archive",
+      "field": "project",
+      "params": {
+        "section": "Recently",
+        "keep": 1
+      },
+      "rootSet": "workspace",
+      "providers": [
+        "main"
+      ],
+      "note": "brief.append's sibling, and confined the same way for the same reason: the caller's only path input is the project DIRECTORY, and the provider composes BOTH basenames under it (.workspacer/brief.md and .workspacer/brief.archive.md). It moves whole entries from the first into the second, so it can remove a line from the brief where brief.append can only add one, and everything it removes is still on disk in the archive. Same workspace roots as brief.append: a Fleet Manager's projects are already inside them."
+    },
+    {
       "method": "providers.listModels",
       "field": "cwd",
       "params": {
