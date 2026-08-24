@@ -15,6 +15,26 @@ use serde_json::Value;
 
 use super::transcript::Transcript;
 
+/// How a session's cumulative prompt tokens divided between fresh input, cache
+/// writes and cache reads.
+///
+/// Only ever present once a provider has actually reported cache fields.
+/// Absence means "not reported", never "zero". Clients must omit the readout
+/// rather than draw a session that cached nothing.
+///
+/// TWIN: `CacheTokenSplit` in apps/desktop/src/main/services/modelUsage.ts. The
+/// field names are identical on the wire, so the hub's camelCase projection
+/// (cmd/brain/enrich.go) passes the object through unchanged.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CacheSplit {
+    /// Prompt tokens processed fresh, at the full input rate.
+    pub fresh: u64,
+    /// Prompt tokens written into the cache this session.
+    pub write: u64,
+    /// Prompt tokens served back from the cache.
+    pub read: u64,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Usage {
     pub model: Option<String>,
@@ -23,11 +43,17 @@ pub struct Usage {
     pub context_limit: u64,
     /// Cumulative cost over the session.
     pub cost_usd: f64,
+    /// Cumulative fresh / cache-write / cache-read split of the prompt side.
+    /// `None` until a turn arrives carrying cache fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache: Option<CacheSplit>,
 }
 
 struct Rates {
-    /// USD per million input tokens. cache-write = 1.25×, cache-read = the
-    /// table's cached rate (0.1× input when the entry has none).
+    /// USD per million input tokens. Cache writes bill at a multiple of this
+    /// (see `CACHE_WRITE_5M_MULTIPLIER` / `CACHE_WRITE_1H_MULTIPLIER`);
+    /// cache-read = the table's cached rate (0.1× input when the entry has
+    /// none).
     input: f64,
     output: f64,
     cached_input: Option<f64>,
@@ -61,20 +87,9 @@ fn rates_for(model: Option<&str>) -> Rates {
 
 /// Tokens occupying the window this turn: input + both cache tiers.
 fn context_tokens_of(usage: &Value) -> u64 {
-    let n = |k: &str| {
-        let v = usage.get(k);
-        match v {
-            None => 0,
-            Some(val) => match val.as_u64() {
-                Some(n) => n,
-                None => {
-                    tracing::warn!(field = k, raw = %val, "usage field present but not a valid u64; treating as 0");
-                    0
-                }
-            },
-        }
-    };
-    n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens")
+    usage_u64(usage, "input_tokens")
+        + usage_u64(usage, "cache_creation_input_tokens")
+        + usage_u64(usage, "cache_read_input_tokens")
 }
 
 /// Window implied by the transcript alone: the rates table for the model id,
@@ -130,25 +145,107 @@ pub fn usage_for_session(state: &super::state::SessionState) -> Usage {
     u
 }
 
-/// USD cost of one turn. Cache writes cost 1.25× input, reads 0.1×.
+// ── Cache multipliers ────────────────────────────────────────────────
+//
+// A cache write costs more than fresh input because the write is kept alive for
+// a chosen lifetime, and the price scales with that lifetime: 1.25× the base
+// input rate at the 5-minute TTL, 2× at the 1-hour TTL. Reads cost 0.1×.
+//
+// These were a single hardcoded 1.25× until 2026-08-24, which is the 5-minute
+// rate. Workspacer's own sessions are almost entirely 1-hour, so every displayed
+// cost charged 1.25× for writes the account was billed 2× for: the real write
+// cost is 1.6× what was shown. The transcript has carried the answer the whole
+// time, in `usage.cache_creation`, which tags each write with its TTL.
+//
+// TWIN: apps/desktop/src/main/services/modelUsage.ts (turnCostUSD). The two are
+// pinned to each other by contracts/model-pricing-cases.json's
+// `cacheMultiplierCases` block. Edit one side and the other's test goes red.
+
+/// Cache writes held for 5 minutes bill at 1.25× the base input rate.
+pub const CACHE_WRITE_5M_MULTIPLIER: f64 = 1.25;
+/// Cache writes held for 1 hour bill at 2× the base input rate.
+pub const CACHE_WRITE_1H_MULTIPLIER: f64 = 2.0;
+/// Cache reads bill at 0.1× the base input rate, absent a per-model rate.
+pub const CACHE_READ_MULTIPLIER: f64 = 0.1;
+
+/// Read a `usage` field as a `u64`, warning (and yielding 0) on a value that is
+/// present but not a number.
+fn usage_u64(usage: &Value, key: &str) -> u64 {
+    match usage.get(key) {
+        None => 0,
+        Some(val) => match val.as_u64() {
+            Some(n) => n,
+            None => {
+                tracing::warn!(field = key, raw = %val, "usage field present but not a valid u64; treating as 0");
+                0
+            }
+        },
+    }
+}
+
+/// The per-TTL cache-write tokens a turn reports, or `None` when it carries no
+/// `cache_creation` block for them to come from.
+fn cache_write_ttl_split(usage: &Value) -> Option<(u64, u64)> {
+    let cc = usage.get("cache_creation")?;
+    let m5 = cc.get("ephemeral_5m_input_tokens");
+    let m1h = cc.get("ephemeral_1h_input_tokens");
+    if m5.is_none() && m1h.is_none() {
+        return None;
+    }
+    Some((
+        m5.and_then(Value::as_u64).unwrap_or(0),
+        m1h.and_then(Value::as_u64).unwrap_or(0),
+    ))
+}
+
+/// USD cost of a turn's cache writes, weighted by the TTL split.
+///
+/// THE NO-SPLIT FALLBACK, stated rather than assumed: when a turn reports writes
+/// but no `cache_creation` block, we cannot tell which lifetime was bought, and
+/// we price the whole amount at the 1-hour rate. Defaulting to the cheaper 5m
+/// rate is the exact bug this function exists to fix. It reads as a lower bill
+/// than the account will see, and a cost readout that is too low is worse than
+/// one that is too high. The same rule covers writes the split does not account
+/// for (`cache_creation_input_tokens` larger than the two TTL fields sum to).
+fn cache_write_cost_usd(input_rate: f64, usage: &Value) -> f64 {
+    let total = usage_u64(usage, "cache_creation_input_tokens");
+    let rate_5m = input_rate * CACHE_WRITE_5M_MULTIPLIER;
+    let rate_1h = input_rate * CACHE_WRITE_1H_MULTIPLIER;
+    let Some((m5, m1h)) = cache_write_ttl_split(usage) else {
+        return total as f64 * rate_1h;
+    };
+    let unattributed = total.saturating_sub(m5.saturating_add(m1h));
+    m5 as f64 * rate_5m + m1h as f64 * rate_1h + unattributed as f64 * rate_1h
+}
+
+/// The fresh / cache-write / cache-read split of one turn's prompt, or `None`
+/// when the turn reports no cache fields at all.
+///
+/// `None` is the honest answer for a turn that says nothing about caching:
+/// folding it in as three zeros would make a provider that does not itemize look
+/// like one that cached nothing, and every surface downstream would draw a 0%
+/// hit rate it has no basis for.
+fn cache_split_of(usage: &Value) -> Option<CacheSplit> {
+    let has_write = usage.get("cache_creation_input_tokens").is_some();
+    let has_read = usage.get("cache_read_input_tokens").is_some();
+    if !has_write && !has_read && usage.get("cache_creation").is_none() {
+        return None;
+    }
+    Some(CacheSplit {
+        fresh: usage_u64(usage, "input_tokens"),
+        write: usage_u64(usage, "cache_creation_input_tokens"),
+        read: usage_u64(usage, "cache_read_input_tokens"),
+    })
+}
+
+/// USD cost of one turn. Cache writes bill per TTL (see
+/// [`cache_write_cost_usd`]), reads 0.1×.
 fn turn_cost_usd(model: Option<&str>, usage: &Value) -> f64 {
     let r = rates_for(model);
-    let n = |k: &str| {
-        let v = usage.get(k);
-        match v {
-            None => 0_f64,
-            Some(val) => match val.as_u64() {
-                Some(n) => n as f64,
-                None => {
-                    tracing::warn!(field = k, raw = %val, "usage field present but not a valid u64; treating as 0");
-                    0_f64
-                }
-            },
-        }
-    };
+    let n = |k: &str| usage_u64(usage, k) as f64;
     let dollars = n("input_tokens") * r.input
-        + n("cache_creation_input_tokens") * (r.input * 1.25)
-        + n("cache_read_input_tokens") * r.cached_input.unwrap_or(r.input * 0.1)
+        + cache_write_cost_usd(r.input, usage)
+        + n("cache_read_input_tokens") * r.cached_input.unwrap_or(r.input * CACHE_READ_MULTIPLIER)
         + n("output_tokens") * r.output;
     dollars / 1_000_000.0
 }
@@ -203,6 +300,12 @@ fn from_transcript_value(tx: &Value) -> Option<Usage> {
             continue;
         }
         usage.cost_usd += turn_cost_usd(row_model.or(usage.model.as_deref()), u);
+        if let Some(split) = cache_split_of(u) {
+            let c = usage.cache.get_or_insert_with(CacheSplit::default);
+            c.fresh += split.fresh;
+            c.write += split.write;
+            c.read += split.read;
+        }
     }
 
     any.then_some(usage)
@@ -307,6 +410,15 @@ fn fold_transcript(
             continue;
         }
         usage.cost_usd += turn_cost_usd(row_model.or(usage.model.as_deref()), u);
+        // The three prompt tiers, kept apart instead of only summed into
+        // `context_tokens`. Folded here (after the dedup `continue`) so a
+        // replayed message cannot double-count them.
+        if let Some(split) = cache_split_of(u) {
+            let c = usage.cache.get_or_insert_with(CacheSplit::default);
+            c.fresh += split.fresh;
+            c.write += split.write;
+            c.read += split.read;
+        }
     }
     any
 }
@@ -595,10 +707,16 @@ mod tests {
         );
     }
 
-    /// cache-write multiplier: 1.25× input rate
+    /// Writes with no TTL split: the documented fallback is the 1-hour rate.
+    ///
+    /// `assistant_msg` builds a usage block with no `cache_creation`, which is
+    /// exactly the turn that cannot say which lifetime it bought. This test used
+    /// to assert $3.75 (the 5-minute rate) because that rate was hardcoded; the
+    /// fallback is now the dearer one, because a cost that reads lower than the
+    /// bill is the failure this whole change exists to remove.
     #[test]
-    fn pricing_cache_write_1_25x() {
-        // sonnet: input=$3/M, so cache-write = $3.75/M
+    fn pricing_cache_write_without_ttl_split_falls_back_to_1h() {
+        // sonnet: input=$3/M, so a 2× write = $6/M.
         let t = tx(vec![assistant_msg(
             "m1",
             "claude-sonnet-4-6",
@@ -609,7 +727,7 @@ mod tests {
         )]);
         let u = from_transcript(&t).unwrap();
         assert!(
-            (u.cost_usd - 3.75).abs() < 1e-9,
+            (u.cost_usd - 6.0).abs() < 1e-9,
             "cache-write cost={}",
             u.cost_usd
         );
@@ -633,6 +751,215 @@ mod tests {
             "cache-read cost={}",
             u.cost_usd
         );
+    }
+
+    /// A turn whose cache writes carry a TTL split, for the multiplier tests.
+    fn assistant_msg_ttl(
+        id: &str,
+        model: &str,
+        cache_write: u64,
+        ephemeral_5m: Option<u64>,
+        ephemeral_1h: Option<u64>,
+    ) -> TranscriptMessage {
+        let mut usage = serde_json::json!({
+            "input_tokens": 0,
+            "cache_creation_input_tokens": cache_write,
+            "cache_read_input_tokens": 0,
+            "output_tokens": 0
+        });
+        // Both absent ⇒ no `cache_creation` block at all. That absence is the
+        // no-split case and must not be faked with zeros: a pair of zeros is a
+        // turn that split its writes and wrote none, which is a different turn.
+        if ephemeral_5m.is_some() || ephemeral_1h.is_some() {
+            let mut cc = serde_json::Map::new();
+            if let Some(v) = ephemeral_5m {
+                cc.insert("ephemeral_5m_input_tokens".into(), v.into());
+            }
+            if let Some(v) = ephemeral_1h {
+                cc.insert("ephemeral_1h_input_tokens".into(), v.into());
+            }
+            usage["cache_creation"] = Value::Object(cc);
+        }
+        TranscriptMessage {
+            role: "assistant".into(),
+            content: Value::Null,
+            raw: serde_json::json!({
+                "type": "assistant",
+                "message": { "id": id, "model": model, "usage": usage }
+            }),
+        }
+    }
+
+    /// THE BUG. A 1-hour cache write bills at 2× the input rate, not 1.25×.
+    /// This project's sessions are almost entirely 1-hour, so the hardcoded
+    /// 1.25× understated the write component of every displayed cost.
+    #[test]
+    fn pricing_cache_write_1h_is_2x() {
+        // opus: input=$5/M ⇒ 1-hour write = $10/M.
+        let t = tx(vec![assistant_msg_ttl(
+            "m1",
+            "claude-opus-4-8",
+            1_000_000,
+            Some(0),
+            Some(1_000_000),
+        )]);
+        let u = from_transcript(&t).unwrap();
+        assert!(
+            (u.cost_usd - 10.0).abs() < 1e-9,
+            "1h cache-write cost={}",
+            u.cost_usd
+        );
+    }
+
+    /// A 5-minute cache write bills at 1.25x, the rate that used to be applied
+    /// to every write regardless of lifetime.
+    #[test]
+    fn pricing_cache_write_5m_is_1_25x() {
+        let t = tx(vec![assistant_msg_ttl(
+            "m1",
+            "claude-opus-4-8",
+            1_000_000,
+            Some(1_000_000),
+            Some(0),
+        )]);
+        let u = from_transcript(&t).unwrap();
+        assert!(
+            (u.cost_usd - 6.25).abs() < 1e-9,
+            "5m cache-write cost={}",
+            u.cost_usd
+        );
+    }
+
+    /// A turn carrying both lifetimes pays each portion at its own rate. No
+    /// single blended multiplier reproduces this, which is why the split is read
+    /// rather than a rate being chosen for the turn as a whole.
+    #[test]
+    fn pricing_cache_write_mixed_ttl_prices_each_portion() {
+        let t = tx(vec![assistant_msg_ttl(
+            "m1",
+            "claude-opus-4-8",
+            1_000_000,
+            Some(400_000),
+            Some(600_000),
+        )]);
+        let u = from_transcript(&t).unwrap();
+        // 400k * $6.25/M + 600k * $10/M = $2.50 + $6.00.
+        assert!(
+            (u.cost_usd - 8.5).abs() < 1e-9,
+            "mixed cache-write cost={}",
+            u.cost_usd
+        );
+    }
+
+    /// Writes the TTL split does not account for take the same 1-hour fallback
+    /// as a turn with no split at all.
+    #[test]
+    fn pricing_cache_write_unattributed_remainder_falls_back_to_1h() {
+        let t = tx(vec![assistant_msg_ttl(
+            "m1",
+            "claude-opus-4-8",
+            1_000_000,
+            Some(250_000),
+            Some(250_000),
+        )]);
+        let u = from_transcript(&t).unwrap();
+        // 250k * $6.25/M + 250k * $10/M + the unattributed 500k * $10/M.
+        assert!(
+            (u.cost_usd - 9.0625).abs() < 1e-9,
+            "unattributed cache-write cost={}",
+            u.cost_usd
+        );
+    }
+
+    /// The cache-multiplier half of `contracts/model-pricing-cases.json`, which
+    /// a TS test (modelPricingContract.test.ts) reads row for row. This is the
+    /// drift guard between `turn_cost_usd` here and `turnCostUSD` there.
+    #[test]
+    fn matches_shared_cache_multiplier_contract() {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Case {
+            name: String,
+            model: String,
+            cache_write_tokens: u64,
+            ephemeral5m: Option<u64>,
+            ephemeral1h: Option<u64>,
+            cache_read_tokens: Option<u64>,
+            input_tokens: Option<u64>,
+            output_tokens: Option<u64>,
+            #[serde(rename = "expectedUSD")]
+            expected_usd: f64,
+            #[allow(dead_code)]
+            note: String,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Contract {
+            cache_multiplier_cases: Vec<Case>,
+        }
+
+        const FIXTURE: &str = include_str!("../../../../contracts/model-pricing-cases.json");
+        let contract: Contract =
+            serde_json::from_str(FIXTURE).expect("model-pricing-cases.json parses");
+        assert!(
+            contract.cache_multiplier_cases.len() >= 9,
+            "cacheMultiplierCases lost rows: {}",
+            contract.cache_multiplier_cases.len()
+        );
+        for case in &contract.cache_multiplier_cases {
+            let mut usage = serde_json::json!({
+                "input_tokens": case.input_tokens.unwrap_or(0),
+                "cache_creation_input_tokens": case.cache_write_tokens,
+                "cache_read_input_tokens": case.cache_read_tokens.unwrap_or(0),
+                "output_tokens": case.output_tokens.unwrap_or(0),
+            });
+            if case.ephemeral5m.is_some() || case.ephemeral1h.is_some() {
+                let mut cc = serde_json::Map::new();
+                if let Some(v) = case.ephemeral5m {
+                    cc.insert("ephemeral_5m_input_tokens".into(), v.into());
+                }
+                if let Some(v) = case.ephemeral1h {
+                    cc.insert("ephemeral_1h_input_tokens".into(), v.into());
+                }
+                usage["cache_creation"] = Value::Object(cc);
+            }
+            let got = turn_cost_usd(Some(&case.model), &usage);
+            assert!(
+                (got - case.expected_usd).abs() < 1e-9,
+                "{}: expected ${}, got ${got}",
+                case.name,
+                case.expected_usd
+            );
+        }
+    }
+
+    /// The three prompt tiers survive the fold as distinct numbers, and a
+    /// provider that reports none of them yields `None` rather than three zeros.
+    #[test]
+    fn cache_split_is_carried_and_absent_when_unreported() {
+        let t = tx(vec![
+            assistant_msg("m1", "claude-opus-4-8", 10, 400, 90, 5),
+            assistant_msg("m2", "claude-opus-4-8", 2, 100, 900, 7),
+        ]);
+        let c = from_transcript(&t).unwrap().cache.expect("cache split");
+        assert_eq!(c.fresh, 12);
+        assert_eq!(c.write, 500);
+        assert_eq!(c.read, 990);
+
+        // A turn with no cache fields at all reports nothing, not zero.
+        let bare = TranscriptMessage {
+            role: "assistant".into(),
+            content: Value::Null,
+            raw: serde_json::json!({
+                "type": "assistant",
+                "message": {
+                    "id": "m1",
+                    "model": "claude-opus-4-8",
+                    "usage": { "input_tokens": 10, "output_tokens": 5 }
+                }
+            }),
+        };
+        assert!(from_transcript(&tx(vec![bare])).unwrap().cache.is_none());
     }
 
     /// 200k→1M context window heuristic: if context_tokens > 200_000, limit = 1_000_000

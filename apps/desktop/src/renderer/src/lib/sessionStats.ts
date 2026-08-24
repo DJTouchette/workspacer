@@ -221,6 +221,66 @@ export function deriveSessionStats(snapshot?: SessionStatsSource | null): Derive
   };
 }
 
+// ── Prompt cache ─────────────────────────────────────────────────────────────
+//
+// Every request re-reads the whole conversation before the model answers, and
+// the providers report how that prompt divided: processed fresh, written into
+// the cache, or served back from it. Workspacer priced those three tiers and
+// then summed them away, so the split existed only inside the cost arithmetic.
+//
+// Same rule as `usageWindows` below: a figure appears only when a provider
+// actually reported it. There is no zero-filling here, because "this provider
+// does not itemize cache writes" and "this session wrote nothing to cache" are
+// different claims and only one of them is ours to make.
+
+/** A session's prompt-cache split, ready to render. */
+export interface CacheBreakdown {
+  /** Prompt tokens processed fresh, at the full input rate. */
+  fresh: number;
+  /** Prompt tokens written into the cache. Undefined when the provider counts
+   *  cache reads but never itemizes writes (Codex reports a cached subset of
+   *  its input and nothing about writes). A 0 would claim it wrote nothing. */
+  write?: number;
+  /** Prompt tokens served back from the cache. */
+  read: number;
+  /** Prompt tokens across every tier the provider reported. */
+  total: number;
+  /** Share of the prompt served from cache, 0-100. Undefined when `total` is 0:
+   *  a hit rate over an empty prompt is undefined, not 0%, and 0% would read as
+   *  a cache that never hit. */
+  hitRatePct?: number;
+}
+
+/**
+ * The prompt-cache split for a session, from whichever source actually has it.
+ *
+ * Claude's itemized transcript split wins, because it is the only source that
+ * separates writes from reads. Codex has no such itemization, but its status
+ * line does carry a cache-read subset of the cumulative input, which is enough
+ * for the fresh/read halves. Null when neither source reported anything, so
+ * callers omit the section rather than draw an all-zero one.
+ *
+ * TWIN: `cache_report` in apps/tui/src/types.rs.
+ */
+export function cacheBreakdown(snapshot?: SessionStatsSource | null): CacheBreakdown | null {
+  const withTotals = (fresh: number, write: number | undefined, read: number): CacheBreakdown => {
+    const total = fresh + (write ?? 0) + read;
+    return {
+      fresh,
+      write,
+      read,
+      total,
+      hitRatePct: total > 0 ? (read / total) * 100 : undefined,
+    };
+  };
+  const c = snapshot?.usage?.cache;
+  if (c) return withTotals(c.fresh, c.write, c.read);
+  const sl = snapshot?.statusLine;
+  if (sl?.cachedInputTokens === undefined || sl.totalInputTokens === undefined) return null;
+  const read = Math.min(sl.cachedInputTokens, sl.totalInputTokens);
+  return withTotals(sl.totalInputTokens - read, undefined, read);
+}
+
 // ── Account rate-limit windows ───────────────────────────────────────────────
 //
 // Every surface that draws windows (the status bar chip, its detail modal, the

@@ -18,6 +18,16 @@
  * OAuth usage payload claudemon polls does carry some, but the field names come
  * from a checked-in capture and could not be re-verified against the live
  * endpoint, so showing them would risk a confidently wrong number.
+ *
+ * Cost is labelled an estimate everywhere it appears here, because that is what
+ * it is: a local rate table applied to token counts. It is not a billed figure
+ * and must not be read as one.
+ *
+ * The prompt-cache section follows the same omit-rather-than-zero rule as the
+ * windows. Codex reports a cache-read subset of its input and nothing about
+ * writes, so its breakdown carries no write row at all rather than a 0 that
+ * would claim it wrote nothing, and a session whose provider itemizes nothing
+ * gets no section.
  */
 
 import React from 'react';
@@ -25,6 +35,7 @@ import { createPortal } from 'react-dom';
 import { BarChart3, X, AlertTriangle } from 'lucide-react';
 import {
   deriveSessionStats,
+  cacheBreakdown,
   usageWindows,
   fmtWindowLength,
   fmtResetAt,
@@ -57,6 +68,34 @@ const Meter: React.FC<{ pct: number }> = ({ pct }) => {
           width: `${clamped > 0 ? Math.max(2, clamped) : 0}%`,
           borderRadius: 'var(--wks-radius-pill)',
           background: ctxColor(clamped),
+        }}
+      />
+    </div>
+  );
+};
+
+/** Flat accent bar for a share that has no good/bad direction.
+ *  {@link Meter} colours by threshold, which is right for a limit being consumed
+ *  and wrong for a cache hit rate: it would paint an excellent 95% red. There is
+ *  no defensible threshold for "a good hit rate", so this one states the share
+ *  and claims nothing about it. */
+const ShareBar: React.FC<{ pct: number }> = ({ pct }) => {
+  const clamped = Math.max(0, Math.min(100, pct));
+  return (
+    <div
+      style={{
+        height: 6,
+        borderRadius: 'var(--wks-radius-pill)',
+        background: 'var(--wks-border-subtle)',
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        style={{
+          height: '100%',
+          width: `${clamped > 0 ? Math.max(2, clamped) : 0}%`,
+          borderRadius: 'var(--wks-radius-pill)',
+          background: 'var(--wks-accent)',
         }}
       />
     </div>
@@ -131,6 +170,7 @@ export const UsageDetailDialog: React.FC<{
 
   const stats = deriveSessionStats(snapshot);
   const windows = usageWindows(stats);
+  const cache = scope === 'session' ? cacheBreakdown(snapshot) : null;
   const sl = snapshot?.statusLine;
   const provider = (snapshot?.provider as AgentProvider | undefined) ?? 'claude';
 
@@ -157,7 +197,7 @@ export const UsageDetailDialog: React.FC<{
   if (sessionScoped && stats.tokens !== undefined)
     facts.push({ label: 'Total tokens', value: fmtTokens(stats.tokens) });
   if (sessionScoped && stats.costUSD !== undefined)
-    facts.push({ label: 'Session cost', value: fmtUSD(stats.costUSD) });
+    facts.push({ label: 'Estimated cost', value: fmtUSD(stats.costUSD) });
 
   const received = sl?.receivedAt ? new Date(sl.receivedAt) : undefined;
 
@@ -321,6 +361,44 @@ export const UsageDetailDialog: React.FC<{
           </div>
         )}
 
+        {/* ── Prompt cache ───────────────────────────────────────────── */}
+        {cache && (
+          <div style={{ marginTop: 16 }}>
+            <SectionTitle>Prompt cache</SectionTitle>
+            <Fact label="Fresh input" value={fmtTokens(cache.fresh)} />
+            {/* Omitted, not zeroed, when the provider never itemizes writes. */}
+            {cache.write !== undefined && (
+              <Fact label="Written to cache" value={fmtTokens(cache.write)} />
+            )}
+            <Fact label="Read from cache" value={fmtTokens(cache.read)} />
+            {/* A hit rate needs a prompt to be a share of. With nothing counted
+                yet the denominator is zero and the rate is undefined, not 0%. */}
+            {cache.hitRatePct !== undefined && (
+              <>
+                <Fact
+                  label="Cache hit rate"
+                  value={`${Math.round(cache.hitRatePct)}% of ${fmtTokens(cache.total)}`}
+                />
+                <div style={{ marginTop: 4 }}>
+                  <ShareBar pct={cache.hitRatePct} />
+                </div>
+              </>
+            )}
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: '0.66rem',
+                color: 'var(--wks-text-muted)',
+                lineHeight: 1.5,
+              }}
+            >
+              {cache.write === undefined
+                ? 'Cumulative over the session. This provider reports how much of the prompt came from cache but not how much was written to it, so writes are not counted here.'
+                : 'Cumulative over the session. The hit rate is cache reads over the whole prompt.'}
+            </div>
+          </div>
+        )}
+
         <div
           style={{
             marginTop: 14,
@@ -332,6 +410,9 @@ export const UsageDetailDialog: React.FC<{
           {received
             ? `Reading from ${received.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Account limits are shared by every session on the account.`
             : 'Account limits are shared by every session on the account.'}
+          {sessionScoped && stats.costUSD !== undefined
+            ? ' Cost is estimated locally from a published rate table, not a billed figure.'
+            : ''}
         </div>
       </div>
     </div>,

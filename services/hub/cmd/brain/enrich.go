@@ -182,12 +182,21 @@ func compatSnapshot(snap json.RawMessage) json.RawMessage {
 	}
 	// usage: claudemon's snake_case counters → the desktop's camelCase shape.
 	if u, ok := m["usage"].(map[string]any); ok {
-		m["usage"] = map[string]any{
+		usage := map[string]any{
 			"model":         u["model"],
 			"contextTokens": u["context_tokens"],
 			"contextLimit":  u["context_limit"],
 			"costUSD":       u["cost_usd"],
 		}
+		// The fresh/write/read prompt-cache split, when claudemon reported one.
+		// Its sub-keys are already the names the desktop uses, so it passes
+		// through whole. Set only when present: a key mapped to nil here would
+		// tell mobile and web that nothing was cached, which is a different
+		// claim from "the provider did not say".
+		if c, ok := u["cache"]; ok && c != nil {
+			usage["cache"] = c
+		}
+		m["usage"] = usage
 	}
 	// totalToolCalls: claudemon's tool_calls counter, desktop-named.
 	if tc, ok := m["tool_calls"]; ok {
@@ -206,6 +215,7 @@ func compatSnapshot(snap json.RawMessage) json.RawMessage {
 			"contextWindowSize":   sl["context_window_size"],
 			"totalInputTokens":    sl["total_input_tokens"],
 			"totalOutputTokens":   sl["total_output_tokens"],
+			"cachedInputTokens":   sl["cached_input_tokens"],
 			"costUSD":             sl["cost_usd"],
 			"fiveHourPct":         sl["five_hour_pct"],
 			"fiveHourResetsAt":    sl["five_hour_resets_at"],

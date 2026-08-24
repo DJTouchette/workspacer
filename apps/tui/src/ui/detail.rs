@@ -60,7 +60,22 @@ pub(super) fn render_detail(f: &mut Frame, area: Rect, app: &App) {
         lines.push(kv(t, "context", &format!("{p:.0}%")));
     }
     if let Some(c) = stats.cost {
-        lines.push(kv(t, "cost", &format!("${c:.2}")));
+        // "est" is not decoration: this is a local rate-table estimate, not a
+        // billed figure, and it should never be read as one.
+        lines.push(kv(t, "cost", &format!("${c:.2} est")));
+    }
+    // Prompt cache, when the provider reported it. A provider that itemizes
+    // nothing gets no line at all rather than a row of zeros.
+    if let Some(cache) = cache_report(a, app.status_lines.get(&a.session_id)) {
+        let mut parts = vec![format!("{} fresh", fmt_tokens(cache.fresh))];
+        if let Some(w) = cache.write {
+            parts.push(format!("{} written", fmt_tokens(w)));
+        }
+        parts.push(format!("{} read", fmt_tokens(cache.read)));
+        if let Some(pct) = cache.hit_rate_pct() {
+            parts.push(format!("{pct:.0}% hit"));
+        }
+        lines.push(kv(t, "cache", &parts.join(" · ")));
     }
     // Account-wide rate-limit windows, when Claude reports them (Pro/Max).
     if let Some(sl) = app.status_lines.get(&a.session_id) {

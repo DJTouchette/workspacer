@@ -1,4 +1,10 @@
-import { contextTokensOf, contextLimitFor, turnCostUSD, emptyUsage } from '../modelUsage';
+import {
+  contextTokensOf,
+  contextLimitFor,
+  turnCostUSD,
+  cacheSplitOf,
+  emptyUsage,
+} from '../modelUsage';
 import { configService } from '../configService';
 import type { PendingReadOnlySession } from './pendingSlot';
 
@@ -69,6 +75,17 @@ export class SessionUsageAccumulator {
     const turnModel = (placeholder ? null : model) ?? u.model;
     const inputTokens = contextTokensOf(usage);
     const outputTokens = usage.output_tokens ?? 0;
+    // The three prompt tiers, kept apart instead of only summed. `inputTokens`
+    // above is their total and stays the number every existing surface reads;
+    // this is the split behind it, and it exists only once a provider has
+    // actually reported cache fields (see cacheSplitOf: null, not zeros).
+    const split = cacheSplitOf(usage);
+    if (split) {
+      const c = (u.cache ??= { fresh: 0, write: 0, read: 0 });
+      c.fresh += split.fresh;
+      c.write += split.write;
+      c.read += split.read;
+    }
     const costUSD = turnCostUSD(turnModel, usage);
     u.totalInputTokens += inputTokens;
     u.totalOutputTokens += outputTokens;

@@ -23,6 +23,24 @@ pub struct Usage {
     /// Cumulative cost (USD) for the session.
     #[serde(default)]
     pub cost_usd: f64,
+    /// Fresh / cache-write / cache-read split of the prompt side, cumulative.
+    /// Absent when the provider reported no cache fields. That is "not
+    /// reported", not "nothing was cached", so the detail pane omits the line
+    /// rather than printing zeros.
+    #[serde(default)]
+    pub cache: Option<CacheSplit>,
+}
+
+/// The prompt-cache split claudemon carries on `usage.cache`. Mirrors
+/// `CacheSplit` in services/claudemon/src/session/usage.rs, field for field.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+pub struct CacheSplit {
+    #[serde(default)]
+    pub fresh: u64,
+    #[serde(default)]
+    pub write: u64,
+    #[serde(default)]
+    pub read: u64,
 }
 
 /// Claude's authoritative statusLine telemetry, streamed from claudemon's
@@ -39,6 +57,14 @@ pub struct StatusLine {
     /// Claude's own authoritative session cost.
     #[serde(default)]
     pub cost_usd: Option<f64>,
+    /// Cumulative input tokens, when the provider reports them.
+    #[serde(default)]
+    pub total_input_tokens: Option<u64>,
+    /// The cache-read subset of `total_input_tokens`. Codex reports it; Claude's
+    /// statusLine does not, and there the itemized [`Usage::cache`] is the
+    /// source instead.
+    #[serde(default)]
+    pub cached_input_tokens: Option<u64>,
     /// 5h rate-limit window used %, 0–100 (Pro/Max only).
     #[serde(default)]
     pub five_hour_pct: Option<f64>,
@@ -75,6 +101,83 @@ pub struct DerivedStats {
     pub model: Option<String>,
     pub context_pct: Option<f64>,
     pub cost: Option<f64>,
+}
+
+/// Compact token count: `142k`, `1.2M`, `12M`. Mirrors the desktop's
+/// `fmtTokens` so the same session reads the same in both clients.
+pub fn fmt_tokens(n: u64) -> String {
+    if n >= 1_000_000 {
+        let m = n as f64 / 1_000_000.0;
+        return if n >= 10_000_000 {
+            format!("{m:.0}M")
+        } else {
+            format!("{m:.1}M")
+        };
+    }
+    if n >= 1_000 {
+        let k = (n as f64 / 1_000.0).round() as u64;
+        // 999_500..=999_999 rounds to 1000k; carry it to M like the twin does.
+        if k >= 1_000 {
+            return "1.0M".to_string();
+        }
+        return format!("{k}k");
+    }
+    n.to_string()
+}
+
+/// A session's prompt-cache split, as a client should render it.
+///
+/// TWIN: `cacheBreakdown` in apps/desktop/src/renderer/src/lib/sessionStats.ts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheReport {
+    /// Prompt tokens processed fresh.
+    pub fresh: u64,
+    /// Prompt tokens written into the cache. `None` when the provider counts
+    /// cache reads but never itemizes writes. Codex reports a cached subset of
+    /// its input and nothing at all about writes, and a 0 there would claim it
+    /// wrote nothing.
+    pub write: Option<u64>,
+    /// Prompt tokens served back from the cache.
+    pub read: u64,
+}
+
+impl CacheReport {
+    /// Prompt tokens across every tier the provider reported.
+    pub fn total(&self) -> u64 {
+        self.fresh + self.write.unwrap_or(0) + self.read
+    }
+
+    /// Share of the prompt served from cache, 0-100. `None` when the reported
+    /// tiers sum to zero. A hit rate over an empty prompt is not 0%, it is
+    /// undefined, and printing 0% would read as a cache that never hit.
+    pub fn hit_rate_pct(&self) -> Option<f64> {
+        let total = self.total();
+        (total > 0).then(|| self.read as f64 / total as f64 * 100.0)
+    }
+}
+
+/// The prompt-cache split for a session, from whichever source actually has it.
+///
+/// Claude's itemized transcript split wins: it is the only source that separates
+/// writes from reads. Codex has no such itemization, but its status line does
+/// carry a cache-read subset of the cumulative input, which is enough for the
+/// fresh/read halves. `None` when neither source reported anything, so callers
+/// omit the readout rather than draw an all-zero one.
+pub fn cache_report(agent: &Agent, sl: Option<&StatusLine>) -> Option<CacheReport> {
+    if let Some(c) = agent.usage.as_ref().and_then(|u| u.cache) {
+        return Some(CacheReport {
+            fresh: c.fresh,
+            write: Some(c.write),
+            read: c.read,
+        });
+    }
+    let sl = sl?;
+    let (input, cached) = (sl.total_input_tokens?, sl.cached_input_tokens?);
+    Some(CacheReport {
+        fresh: input.saturating_sub(cached),
+        write: None,
+        read: cached.min(input),
+    })
 }
 
 pub fn derive_stats(agent: &Agent, sl: Option<&StatusLine>) -> DerivedStats {
@@ -1665,6 +1768,61 @@ mod tests {
         assert_eq!(d.model.as_deref(), Some("Opus 4.8"));
         assert_eq!(d.context_pct, Some(73.0));
         assert_eq!(d.cost, Some(12.5));
+    }
+
+    #[test]
+    fn cache_report_prefers_the_itemized_split_and_omits_what_is_unreported() {
+        let agent: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s",
+            "mode": "responding",
+            "usage": { "model": "claude-opus-5", "context_tokens": 40_984,
+                       "context_limit": 200_000, "cost_usd": 1.0,
+                       "cache": { "fresh": 2, "write": 23_393, "read": 17_589 } }
+        }))
+        .unwrap();
+        let c = cache_report(&agent, None).expect("itemized split");
+        assert_eq!((c.fresh, c.write, c.read), (2, Some(23_393), 17_589));
+        assert_eq!(c.total(), 40_984);
+        let pct = c.hit_rate_pct().unwrap();
+        assert!(
+            (pct - 17_589.0 / 40_984.0 * 100.0).abs() < 1e-9,
+            "pct={pct}"
+        );
+
+        // Codex: a cache-read subset of the input, and nothing about writes.
+        // `write` stays None so the detail pane drops the figure rather than
+        // claiming the session wrote nothing.
+        let bare: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s", "mode": "responding"
+        }))
+        .unwrap();
+        let sl = StatusLine {
+            total_input_tokens: Some(4_402_946),
+            cached_input_tokens: Some(3_733_376),
+            ..Default::default()
+        };
+        let c = cache_report(&bare, Some(&sl)).expect("codex split");
+        assert_eq!((c.fresh, c.write, c.read), (669_570, None, 3_733_376));
+
+        // Nothing reported → no readout at all.
+        assert!(cache_report(&bare, None).is_none());
+        assert!(cache_report(
+            &bare,
+            Some(&StatusLine {
+                total_input_tokens: Some(50_000),
+                ..Default::default()
+            })
+        )
+        .is_none());
+
+        // A reported-but-empty split has no hit rate: the denominator is zero,
+        // which makes the share undefined rather than 0%.
+        let empty = CacheReport {
+            fresh: 0,
+            write: Some(0),
+            read: 0,
+        };
+        assert!(empty.hit_rate_pct().is_none());
     }
 
     #[test]

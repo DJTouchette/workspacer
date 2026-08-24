@@ -681,6 +681,7 @@ impl UsageAcc {
             context_window_size: window,
             total_input_tokens: self.input,
             total_output_tokens: self.output,
+            cached_input_tokens: self.cached_input,
             cost_usd: cost,
             five_hour_pct: self.five_hour_pct,
             five_hour_resets_at: self.five_hour_resets_at,

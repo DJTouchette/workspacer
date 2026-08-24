@@ -1,5 +1,5 @@
 {
-  "_comment": "Cross-language pricing contract. input/output are USD per million tokens. Both modelUsage.ts (MODEL_RATES) and pricing.rs (BUILTIN) must price every id here identically via longest-prefix match. Regression cases below caught a real Rust drift bug (dated Opus 4.0 + Claude 3 Opus mispriced).",
+  "_comment": "Cross-language pricing contract. input/output are USD per million tokens. Both modelUsage.ts (MODEL_RATES) and pricing.rs (BUILTIN) must price every id here identically via longest-prefix match. Regression cases below caught a real Rust drift bug (dated Opus 4.0 + Claude 3 Opus mispriced). cacheMultiplierCases pins the OTHER half of costing: what a cache write costs, which is a multiple of the input rate chosen by the write's TTL. That multiplier was a hardcoded 1.25 in both engines until 2026-08-24 -- the 5-minute rate -- while workspacer's own sessions are almost entirely 1-hour, which bills at 2x.",
   "vocabulary": {
     "_comment": [
       "THE BLOCK REGISTRY. Every array-of-objects block in this file must be declared",
@@ -23,6 +23,27 @@
         "loaders": [
           "services/claudemon/src/session/pricing.rs::model-pricing-cases.json",
           "apps/desktop/src/main/services/modelPricingContract.test.ts::model pricing contract (shared with Rust pricing.rs)"
+        ]
+      },
+      "cacheMultiplierCases": {
+        "why": "A turn's total USD, given the tokens it reports. Pins the cache-write TTL multipliers (1.25x at 5 minutes, 2x at 1 hour), the cache-read multiplier (0.1x), and the no-split fallback, identically in turnCostUSD (TS) and turn_cost_usd (Rust).",
+        "required": [
+          "name",
+          "model",
+          "cacheWriteTokens",
+          "expectedUSD",
+          "note"
+        ],
+        "optional": [
+          "ephemeral5m",
+          "ephemeral1h",
+          "cacheReadTokens",
+          "inputTokens",
+          "outputTokens"
+        ],
+        "loaders": [
+          "services/claudemon/src/session/usage.rs::model-pricing-cases.json",
+          "apps/desktop/src/main/services/modelPricingContract.test.ts::cacheMultiplierCases"
         ]
       }
     }
@@ -93,6 +114,86 @@
       "input": 10,
       "output": 50,
       "note": "Mythos"
+    }
+  ],
+  "cacheMultiplierCases": [
+    {
+      "name": "5-minute write bills at 1.25x input",
+      "model": "claude-opus-4-8-20260101",
+      "cacheWriteTokens": 1000000,
+      "ephemeral5m": 1000000,
+      "ephemeral1h": 0,
+      "expectedUSD": 6.25,
+      "note": "opus input 5/M; the 5m TTL is the rate both engines used to hardcode"
+    },
+    {
+      "name": "1-hour write bills at 2x input",
+      "model": "claude-opus-4-8-20260101",
+      "cacheWriteTokens": 1000000,
+      "ephemeral5m": 0,
+      "ephemeral1h": 1000000,
+      "expectedUSD": 10.0,
+      "note": "THE BUG: this priced at 6.25 while every 1-hour session was billed 10.0"
+    },
+    {
+      "name": "a turn holding both TTLs prices each portion at its own rate",
+      "model": "claude-opus-4-8-20260101",
+      "cacheWriteTokens": 1000000,
+      "ephemeral5m": 400000,
+      "ephemeral1h": 600000,
+      "expectedUSD": 8.5,
+      "note": "400k at 6.25/M + 600k at 10/M -- no single blended multiplier gets this right"
+    },
+    {
+      "name": "writes with no TTL split fall back to the 1-hour rate",
+      "model": "claude-opus-4-8-20260101",
+      "cacheWriteTokens": 1000000,
+      "expectedUSD": 10.0,
+      "note": "no cache_creation block at all; the cheaper rate is the bug being fixed, so the documented fallback is the dearer one"
+    },
+    {
+      "name": "writes the TTL split does not account for fall back to the 1-hour rate",
+      "model": "claude-opus-4-8-20260101",
+      "cacheWriteTokens": 1000000,
+      "ephemeral5m": 250000,
+      "ephemeral1h": 250000,
+      "expectedUSD": 9.0625,
+      "note": "250k at 6.25/M + 250k at 10/M + the unattributed 500k at 10/M"
+    },
+    {
+      "name": "cache reads bill at 0.1x input",
+      "model": "claude-opus-4-8-20260101",
+      "cacheWriteTokens": 0,
+      "cacheReadTokens": 1000000,
+      "expectedUSD": 0.5,
+      "note": "reads are the cheap tier and the multiplier is unchanged by this work"
+    },
+    {
+      "name": "fresh input and output are untouched by the cache multipliers",
+      "model": "claude-opus-4-8-20260101",
+      "cacheWriteTokens": 0,
+      "inputTokens": 1000000,
+      "outputTokens": 1000000,
+      "expectedUSD": 30.0,
+      "note": "1M input at 5/M + 1M output at 25/M"
+    },
+    {
+      "name": "1-hour write at the sonnet rate",
+      "model": "claude-sonnet-4-5-20260101",
+      "cacheWriteTokens": 1000000,
+      "ephemeral5m": 0,
+      "ephemeral1h": 1000000,
+      "expectedUSD": 6.0,
+      "note": "sonnet input 3/M -> 2x = 6/M; the multiplier rides the model's own rate"
+    },
+    {
+      "name": "5-minute write at the haiku rate",
+      "model": "claude-haiku-4-5-20251001",
+      "cacheWriteTokens": 1000000,
+      "ephemeral5m": 1000000,
+      "ephemeral1h": 0,
+      "expectedUSD": 1.25,
+      "note": "haiku input 1/M -> 1.25x = 1.25/M"
     }
   ]
 }

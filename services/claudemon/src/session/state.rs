@@ -424,6 +424,18 @@ pub struct StatusLine {
     pub total_input_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_output_tokens: Option<u64>,
+    /// The cache-read subset of `total_input_tokens`, when the provider reports
+    /// one. Codex does (`cachedInputTokens` on both its wire shapes, and
+    /// `cached_input_tokens` in the rollout file), and the daemon already used
+    /// it to discount the cost estimate; carrying it here is what lets a client
+    /// SHOW the split rather than only be billed by it.
+    ///
+    /// Claude's statusLine payload carries no cache figures at all, so this
+    /// stays `None` there and the desktop reads the itemized transcript split
+    /// (`Usage::cache`) instead. `None` means "not reported", never "nothing
+    /// was cached".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_input_tokens: Option<u64>,
     /// `cost.total_cost_usd` — Claude's own authoritative session cost.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_usd: Option<f64>,
@@ -518,6 +530,13 @@ impl StatusLine {
                 .and_then(Value::as_u64),
             total_input_tokens: cw
                 .and_then(|c| c.get("total_input_tokens"))
+                .and_then(Value::as_u64),
+            // Claude's statusLine payload carries no cache figures. Read the
+            // field best-effort so we pick it up if that ever changes, and stay
+            // `None` meanwhile. The desktop reads the itemized transcript
+            // split for Claude, which the status line could not supply anyway.
+            cached_input_tokens: cw
+                .and_then(|c| c.get("cache_read_input_tokens"))
                 .and_then(Value::as_u64),
             total_output_tokens: cw
                 .and_then(|c| c.get("total_output_tokens"))

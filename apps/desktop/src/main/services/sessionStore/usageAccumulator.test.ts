@@ -284,3 +284,56 @@ describe('SessionUsageAccumulator.rememberModel — external seenModels not clob
     expect(saved).toContain('opus'); // FAILS on current code ('opus' dropped)
   });
 });
+
+describe('SessionUsageAccumulator.applyUsage: prompt-cache split', () => {
+  let acc: SessionUsageAccumulator;
+  beforeEach(() => {
+    acc = new SessionUsageAccumulator();
+  });
+
+  it('carries fresh / write / read through as distinct cumulative numbers', () => {
+    const s = mkSession();
+    acc.applyUsage(
+      s,
+      'claude-opus-4-8',
+      { input_tokens: 2, cache_creation_input_tokens: 400, cache_read_input_tokens: 90 },
+      'm1',
+    );
+    acc.applyUsage(
+      s,
+      'claude-opus-4-8',
+      { input_tokens: 10, cache_creation_input_tokens: 100, cache_read_input_tokens: 900 },
+      'm2',
+    );
+    expect(s.usage!.cache).toEqual({ fresh: 12, write: 500, read: 990 });
+    // The flat total every existing surface reads is unchanged.
+    expect(s.usage!.totalInputTokens).toBe(1502);
+  });
+
+  it('leaves the split absent when no turn reported cache fields', () => {
+    const s = mkSession();
+    acc.applyUsage(s, 'claude-opus-4-8', { input_tokens: 100, output_tokens: 20 }, 'm1');
+    expect(s.usage!.cache).toBeUndefined();
+    expect(s.usage!.totalInputTokens).toBe(100);
+  });
+
+  it('does not double-count the split on a replayed message', () => {
+    const s = mkSession();
+    const turn = { input_tokens: 2, cache_creation_input_tokens: 400, cache_read_input_tokens: 90 };
+    acc.applyUsage(s, 'claude-opus-4-8', turn, 'm1');
+    acc.applyUsage(s, 'claude-opus-4-8', turn, 'm1');
+    expect(s.usage!.cache).toEqual({ fresh: 2, write: 400, read: 90 });
+  });
+
+  it('counts a subagent turn toward the split, like it counts toward cost', () => {
+    const s = mkSession();
+    acc.applyUsage(
+      s,
+      'claude-haiku-4-5',
+      { input_tokens: 5, cache_creation_input_tokens: 50, cache_read_input_tokens: 500 },
+      'm1',
+      true,
+    );
+    expect(s.usage!.cache).toEqual({ fresh: 5, write: 50, read: 500 });
+  });
+});

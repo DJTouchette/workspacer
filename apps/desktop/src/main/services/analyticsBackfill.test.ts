@@ -246,8 +246,9 @@ describe('backfillAnalyticsFromTranscripts', () => {
     expect(fake.deleteRun.mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(sessionHistory.recordModels).mock.invocationCallOrder[0],
     );
-    // Marker written as v2 (re-runs the pass over v1-era rows).
-    expect(fake.markerRun).toHaveBeenCalledWith('transcript-usage-v2', expect.any(String));
+    // Marker written as v3 (re-runs the pass over v1/v2-era rows, whose cache
+    // writes were priced at the 5-minute rate).
+    expect(fake.markerRun).toHaveBeenCalledWith('transcript-usage-v3', expect.any(String));
   });
 
   it('is idempotent — the marker short-circuits a second run', async () => {

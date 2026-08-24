@@ -78,10 +78,11 @@ describe('model rate overrides', () => {
       6,
     );
     // Plain input + cache-write are unaffected by the cached_input override.
+    // The write carries no TTL split, so it takes the 1-hour fallback: 3 * 2.
     expect(turnCostUSD('claude-sonnet-4-5', { input_tokens: 1_000_000 })).toBeCloseTo(3, 6);
     expect(
       turnCostUSD('claude-sonnet-4-5', { cache_creation_input_tokens: 1_000_000 }),
-    ).toBeCloseTo(3.75, 6);
+    ).toBeCloseTo(6, 6);
   });
 
   it('without a cached_input override, cache reads still fall back to 0.1× input', () => {

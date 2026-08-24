@@ -138,6 +138,11 @@ export interface SessionUsage {
   costUSD: number; // cumulative
   /** Per-model split (main thread + subagent turns), keyed by model id. */
   models?: Record<string, { inputTokens: number; outputTokens: number; costUSD: number }>;
+  /** Cumulative fresh / cache-write / cache-read split of `totalInputTokens`.
+   *  Absent when the provider reported no cache fields at all. That is "not
+   *  reported", not "nothing was cached", and surfaces must omit rather than
+   *  draw zeros. */
+  cache?: { fresh: number; write: number; read: number };
 }
 
 /**
@@ -156,6 +161,10 @@ export interface SessionStatusLine {
   contextWindowSize?: number;
   totalInputTokens?: number;
   totalOutputTokens?: number;
+  /** The cache-read subset of `totalInputTokens`, when the provider reports one.
+   *  Codex does; Claude's statusLine carries no cache figures at all, and there
+   *  the itemized transcript split (`SessionUsage.cache`) is the source. */
+  cachedInputTokens?: number;
   costUSD?: number;
   fiveHourPct?: number;
   fiveHourResetsAt?: number;
