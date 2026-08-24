@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, FolderOpen, Play, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronRight, FolderOpen, Play, X } from 'lucide-react';
 import { Section, SmallButton, inputStyle } from './primitives';
 import type {
   HubJob,
@@ -265,9 +265,14 @@ const EMPTY_STEP: DraftStep = {
   ignoreExitCode: false,
 };
 
-interface Draft {
+export interface Draft {
   id: string;
   name: string;
+  /** Whether Create arms the job. A template that pre-fills a command the user
+   *  still has to finish sets this false, so the job lands switched off and
+   *  turning it on stays a deliberate second act. Ignored when editing an
+   *  existing job, whose own enabled state is authoritative. */
+  enabledOnCreate: boolean;
   triggerKind: 'interval' | 'daily' | 'once' | 'manual';
   everyMinutes: string;
   at: string;
@@ -285,9 +290,10 @@ interface Draft {
   shellCwd: string;
 }
 
-const EMPTY_DRAFT: Draft = {
+export const EMPTY_DRAFT: Draft = {
   id: '',
   name: '',
+  enabledOnCreate: true,
   triggerKind: 'daily',
   everyMinutes: '60',
   at: '09:00',
@@ -305,9 +311,31 @@ const EMPTY_DRAFT: Draft = {
   shellCwd: '',
 };
 
-/** Empty-state starters: one click pre-fills the editor with a sensible shape
- *  (nothing is saved until the user hits Create). */
-const TEMPLATES: Array<{ label: string; hint: string; draft: Partial<Draft> }> = [
+/** The blank left in the power-down template's command. Deliberately not a
+ *  path. The docs show `/opt/wks/power-down.sh` because a worked example needs
+ *  to look like one, but no such script exists on anyone's machine, and a
+ *  plausible path in a pre-filled form is exactly the thing someone saves
+ *  without reading. work{spacer} powers nothing down itself: the script is the
+ *  user's to write, and what it does is their call.
+ *  tests/jobsPreset.test.ts pins this to contracts/job-preset-power-down.json,
+ *  and through it to the documented example in landing/docs.html. */
+export const POWER_DOWN_PLACEHOLDER = 'REPLACE-WITH-YOUR-OWN-SHUTDOWN-SCRIPT';
+
+/** `workspacer fleet quiescence --quiet` exits 0 only when the fleet is
+ *  genuinely at rest, so the `&&` chain reaches the user's script on a quiet
+ *  poll and stops short on a busy one. */
+export const POWER_DOWN_COMMAND = `workspacer fleet quiescence --quiet && ${POWER_DOWN_PLACEHOLDER}`;
+
+/** Is this command still carrying the unfilled blank? Asked while editing AND
+ *  before enabling: arriving disabled is the guarantee, and this is what stops
+ *  one checkbox click undoing it. */
+export function hasUnfilledScript(command: string | undefined): boolean {
+  return !!command && command.includes(POWER_DOWN_PLACEHOLDER);
+}
+
+/** Starters: one click pre-fills the editor with a sensible shape (nothing is
+ *  saved until the user hits Create). */
+export const TEMPLATES: Array<{ label: string; hint: string; draft: Partial<Draft> }> = [
   {
     label: 'Morning triage agent',
     hint: 'Weekdays at 9:00, an agent triages the repo and leaves a summary',
@@ -353,12 +381,27 @@ const TEMPLATES: Array<{ label: string; hint: string; draft: Partial<Draft> }> =
     hint: 'Dispatch an agent once, at a time you pick',
     draft: { name: '', triggerKind: 'once', actionKind: 'spawn' },
   },
+  {
+    label: 'Power down when quiet',
+    hint: 'Every 5 minutes, run a shutdown script of your own, but only when the fleet is at rest. Arrives switched off, with the script path left blank for you to fill in.',
+    draft: {
+      name: 'Power down when the fleet is quiet',
+      // Off on arrival, and the command is unfinished on purpose. See
+      // POWER_DOWN_PLACEHOLDER.
+      enabledOnCreate: false,
+      triggerKind: 'interval',
+      everyMinutes: '5',
+      actionKind: 'shell',
+      command: POWER_DOWN_COMMAND,
+    },
+  },
 ];
 
 function toDraft(j: HubJobView): Draft {
   return {
     id: j.id,
     name: j.name,
+    enabledOnCreate: j.enabled,
     triggerKind: j.trigger.kind,
     everyMinutes: String(j.trigger.everyMinutes ?? 60),
     at: j.trigger.at ?? '09:00',
@@ -400,7 +443,7 @@ function isoToLocalInput(iso: string): string {
 
 /** What still blocks saving, or null when the draft is complete. Mirrors the
  *  hub's Validate loosely — the hub stays authoritative. */
-function draftProblem(d: Draft): string | null {
+export function draftProblem(d: Draft): string | null {
   if (d.triggerKind === 'interval' && !(Number(d.everyMinutes) >= 1))
     return 'Interval needs a minute count.';
   if (d.triggerKind === 'daily' && !d.at) return 'Pick a time of day.';
@@ -446,7 +489,7 @@ function draftProblem(d: Draft): string | null {
 }
 
 /** Draft → wire job. Callers gate on draftProblem() first. */
-function toJob(d: Draft, enabled: boolean): HubJob | Omit<HubJob, 'id'> {
+export function toJob(d: Draft, enabled: boolean): HubJob | Omit<HubJob, 'id'> {
   const trigger: HubJob['trigger'] = { kind: d.triggerKind };
   if (d.triggerKind === 'interval') trigger.everyMinutes = Math.max(1, Number(d.everyMinutes) || 0);
   if (d.triggerKind === 'daily') {
@@ -491,6 +534,35 @@ function toWireStep(st: DraftStep): HubJobContextStep {
   return out;
 }
 
+/** The starter row. Rendered in the empty state and, once there are jobs,
+ *  above the Add Job button. It used to be an empty-state affordance only, so
+ *  it went out of reach the moment you owned one job, which is the point at
+ *  which people start wanting a second. */
+const TemplateChips: React.FC<{ onPick: (draft: Partial<Draft>) => void }> = ({ onPick }) => (
+  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+    {TEMPLATES.map((tpl) => (
+      <button
+        key={tpl.label}
+        title={tpl.hint}
+        onClick={() => onPick(tpl.draft)}
+        style={{
+          padding: '4px 10px',
+          fontSize: '0.66rem',
+          fontFamily: 'inherit',
+          fontWeight: 500,
+          background: 'var(--wks-bg-surface)',
+          color: 'var(--wks-text-secondary)',
+          border: '1px solid var(--wks-border-input)',
+          borderRadius: 'var(--wks-radius-pill)',
+          cursor: 'pointer',
+        }}
+      >
+        {tpl.label}
+      </button>
+    ))}
+  </div>
+);
+
 const JobsSection: React.FC = () => {
   const [jobs, setJobs] = useState<HubJobView[]>([]);
   const [available, setAvailable] = useState(true);
@@ -528,7 +600,9 @@ const JobsSection: React.FC = () => {
     setError(null);
     try {
       const existing = jobs.find((j) => j.id === d.id);
-      await window.electronAPI.jobsUpsert(toJob(d, existing ? existing.enabled : true));
+      await window.electronAPI.jobsUpsert(
+        toJob(d, existing ? existing.enabled : d.enabledOnCreate),
+      );
       setEditing(null);
       load();
     } catch (err) {
@@ -541,6 +615,15 @@ const JobsSection: React.FC = () => {
     void nextRunAt;
     void lastRun;
     void running;
+    // Created switched off is the guarantee; this is what stops one checkbox
+    // click undoing it while the command is still a fill-in-the-blank.
+    if (!j.enabled && hasUnfilledScript(j.action.shell?.command)) {
+      setError(
+        `This job still runs ${POWER_DOWN_PLACEHOLDER}. Edit it and put in the path to your own script before turning it on.`,
+      );
+      return;
+    }
+    setError(null);
     await window.electronAPI.jobsUpsert({ ...job, enabled: !j.enabled }).catch(() => {});
     load();
   };
@@ -788,45 +871,36 @@ const JobsSection: React.FC = () => {
           />
         )}
 
-        {!editing && jobs.length === 0 && (
+        {!editing && (
           <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 6,
-              padding: '10px 12px',
-              borderRadius: 'var(--wks-radius-md)',
-              border: '1px dashed var(--wks-border-input)',
-            }}
+            style={
+              jobs.length === 0
+                ? {
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                    padding: '10px 12px',
+                    borderRadius: 'var(--wks-radius-md)',
+                    border: '1px dashed var(--wks-border-input)',
+                  }
+                : { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }
+            }
           >
-            <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-secondary)' }}>
-              No jobs yet. Start from a template:
+            <div
+              style={
+                jobs.length === 0
+                  ? { fontSize: '0.72rem', color: 'var(--wks-text-secondary)' }
+                  : { fontSize: '0.66rem', color: 'var(--wks-text-faint)' }
+              }
+            >
+              {jobs.length === 0 ? 'No jobs yet. Start from a template:' : 'Start from a template:'}
             </div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {TEMPLATES.map((tpl) => (
-                <button
-                  key={tpl.label}
-                  title={tpl.hint}
-                  onClick={() => {
-                    setError(null);
-                    setEditing({ ...EMPTY_DRAFT, ...tpl.draft });
-                  }}
-                  style={{
-                    padding: '4px 10px',
-                    fontSize: '0.66rem',
-                    fontFamily: 'inherit',
-                    fontWeight: 500,
-                    background: 'var(--wks-bg-surface)',
-                    color: 'var(--wks-text-secondary)',
-                    border: '1px solid var(--wks-border-input)',
-                    borderRadius: 'var(--wks-radius-pill)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {tpl.label}
-                </button>
-              ))}
-            </div>
+            <TemplateChips
+              onPick={(draft) => {
+                setError(null);
+                setEditing({ ...EMPTY_DRAFT, ...draft });
+              }}
+            />
           </div>
         )}
 
@@ -1061,6 +1135,40 @@ const CheckLabel: React.FC<{
   </label>
 );
 
+/** Shown while a command still carries the fill-in-the-blank. The point of the
+ *  copy is that the shutdown is the user's own script and work{spacer} is not
+ *  going to power anything down for them. */
+const UnfilledScriptNote: React.FC = () => (
+  <div
+    style={{
+      display: 'flex',
+      gap: 6,
+      alignItems: 'flex-start',
+      padding: '6px 8px',
+      borderRadius: 'var(--wks-radius-sm)',
+      background: 'color-mix(in srgb, var(--wks-warning) 10%, transparent)',
+      color: 'var(--wks-warning)',
+      fontSize: '0.66rem',
+      lineHeight: 1.5,
+    }}
+  >
+    <span style={{ display: 'flex', alignItems: 'center', paddingTop: 2, flexShrink: 0 }}>
+      <AlertTriangle size={12} strokeWidth={2} />
+    </span>
+    <span>
+      Put the path to a script of your own where{' '}
+      <code style={{ fontFamily: 'var(--wks-font-mono)' }}>{POWER_DOWN_PLACEHOLDER}</code> is.
+      Nothing here powers a machine down for you:{' '}
+      <code style={{ fontFamily: 'var(--wks-font-mono)' }}>
+        workspacer fleet quiescence --quiet
+      </code>{' '}
+      only exits 0 when the fleet is genuinely at rest, and what runs after the{' '}
+      <code style={{ fontFamily: 'var(--wks-font-mono)' }}>&amp;&amp;</code> is yours to write. The
+      job is created switched off and stays off until you fill this in and turn it on.
+    </span>
+  </div>
+);
+
 const JobEditForm: React.FC<{
   draft: Draft;
   onChange: (d: Draft) => void;
@@ -1223,6 +1331,7 @@ const JobEditForm: React.FC<{
             placeholder="Command (runs through the shell on the hub's machine)"
             style={{ ...inputStyle, fontFamily: 'var(--wks-font-mono)' }}
           />
+          {hasUnfilledScript(draft.command) && <UnfilledScriptNote />}
           <CwdInput
             value={draft.shellCwd}
             placeholder="Working directory (optional)"
@@ -1250,10 +1359,17 @@ const JobEditForm: React.FC<{
       )}
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'flex-end' }}>
-        {problem && (
+        {problem ? (
           <span style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', flex: 1 }}>
             {problem}
           </span>
+        ) : (
+          !draft.id &&
+          !draft.enabledOnCreate && (
+            <span style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', flex: 1 }}>
+              Created switched off. Turn it on from the list once the command is what you want.
+            </span>
+          )
         )}
         <SmallButton label="Cancel" onClick={onCancel} />
         <SmallButton

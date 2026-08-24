@@ -52,6 +52,7 @@ const NO_BLOCK_FIXTURES = new Set([
   'session-schema.json',
   'config-lock.json',
   'wholesale-config-paths.json',
+  'job-preset-power-down.json',
 ]);
 
 /** How many case-carrying fixtures contracts/ holds today. */

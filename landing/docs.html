@@ -796,6 +796,7 @@ workspacer token revoke &lt;token-or-prefix&gt;</code></pre>
   }
 }</code></pre>
 <p>Poll as often as you like; the check is cheap and the dwell, not your polling interval, is what decides how long the fleet must have been quiet. Use <code>--json</code> in a script that wants the blockers, and log them: the fastest way to find out what is really keeping a machine up is a week of "not at rest" reasons.</p>
+<p><strong>Settings &rarr; Jobs has this as a starter.</strong> The <strong>Power down when quiet</strong> template fills the editor with the job above, with two differences that are the point of it: it arrives <strong>switched off</strong>, and where the example shows <code>/opt/wks/power-down.sh</code> the template leaves a blank for you to replace with the path to your own script. It stays off until you do; turning it on with the blank still in it is refused.</p>
 
 <h3>writing a job spec by hand (or having an agent write one)</h3>
 <p>The editor in Settings covers every field, but a job is just JSON, and the shape below is the whole language, enough for you (or an LLM you ask) to write one from scratch. Anything the hub doesn't accept is refused at save time with a message naming the problem. The <code>//</code> notes below are annotations for you, not syntax: JSON has no comments, so strip them.</p>
