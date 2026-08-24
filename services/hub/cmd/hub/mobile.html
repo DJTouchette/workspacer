@@ -420,6 +420,62 @@
   .trace .q { font-size:13px; color:var(--muted); line-height:1.4; }
   .trace .a { font-size:13.5px; color:var(--text2); font-weight:600; line-height:1.4; }
 
+  /* A [fleet]/[supervisor] wake, ported from FleetMessageCard.tsx — arrives as
+     a plain user turn (claudemon has no side channel), recognized by header
+     and rendered as this card instead of a raw paragraph. */
+  .fleetcard { border:1px solid var(--line2); border-left:2px solid var(--green);
+    background:rgba(255,255,255,.015); border-radius:12px; overflow:hidden; }
+  .fleetcard .fch { display:flex; align-items:center; gap:6px; padding:9px 12px 7px;
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; font-weight:600; }
+  .fleetcard .frows { border-top:1px solid var(--line); }
+  .frow { padding:9px 12px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:5px; }
+  .frow:first-child { border-top:none; }
+  .fr1 { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+  .fl { font-size:13.5px; font-weight:600; color:var(--text2); }
+  .fsid { font-family:var(--mono); font-size:10.5px; color:var(--faint); }
+  .fbadge { padding:1px 6px; border-radius:999px; font-size:10px; font-weight:600; white-space:nowrap; }
+  .fcwd { font-family:var(--mono); font-size:10.5px; color:var(--faint); overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; max-width:160px; }
+  .fnote { padding:6px 9px; border-left:2px solid var(--blue); font-size:13px; line-height:1.5; color:var(--text2); }
+  .freply { margin-top:2px; padding:6px 9px; border-left:2px solid var(--line3); font-size:13px;
+    line-height:1.5; color:var(--text2); word-break:break-word; }
+  .fmore { display:inline-flex; align-items:center; gap:3px; padding:0; border:none; background:none;
+    font-family:inherit; font-size:11px; font-weight:600; color:var(--muted); }
+
+  /* A worker's own wks-result JSON, classified and rendered by VALUE SHAPE —
+     see structuredResultFields.ts, ported below in the script. */
+  .fresult { margin-top:2px; border:1px solid var(--line2); border-radius:10px; padding:7px 10px 8px;
+    background:var(--inner); }
+  .fresult .frh { font-family:var(--mono); font-size:9.5px; letter-spacing:.07em; color:var(--dim); margin-bottom:5px; }
+  .fmissing { display:flex; flex-direction:column; gap:2px; font-size:12.5px; color:var(--text3); }
+  .fraw { margin:5px 0 0; padding:6px 8px; border-left:2px solid var(--line3); font-family:var(--mono);
+    font-size:11px; line-height:1.4; color:var(--text3); white-space:pre-wrap; word-break:break-word;
+    max-height:200px; overflow:auto; }
+  .fchips { display:flex; flex-wrap:wrap; gap:5px; margin-top:2px; }
+  .rchip { display:inline-flex; align-items:center; gap:4px; padding:2px 7px; border-radius:999px;
+    border:1px solid var(--line3); font-size:11px; white-space:nowrap; background:none;
+    font-family:inherit; color:var(--text3); }
+  .rchip.bool { border:none; font-weight:600; }
+  .rchip.mono { font-family:var(--mono); }
+  .rchip .cp { font-weight:600; }
+  .fcaveats { margin-top:6px; padding:6px 9px; border-left:2px solid var(--amber); }
+  .fclabel { font-family:var(--mono); font-size:9.5px; letter-spacing:.07em; color:var(--amber); margin-bottom:2px; }
+  .fctext { font-size:12.5px; line-height:1.5; color:var(--text2); }
+  .fbody { display:flex; flex-direction:column; gap:8px; margin-top:6px; }
+  .ffield { min-width:0; }
+  .fflabel { font-family:var(--mono); font-size:9.5px; letter-spacing:.07em; color:var(--dim);
+    margin-bottom:2px; text-transform:uppercase; }
+  .ffempty { font-size:12.5px; color:var(--dim); }
+  .ffitem { font-size:12.5px; line-height:1.5; color:var(--text2); margin:2px 0; word-break:break-word; }
+  .ffobj { display:flex; flex-direction:column; gap:2px; }
+  .ffobjrow { display:flex; gap:6px; font-size:12px; }
+  .ffobjrow .k { color:var(--dim); flex:none; }
+  .ffobjrow .v { color:var(--text2); word-break:break-word; }
+  .ffpath { font-family:var(--mono); font-size:11px; color:var(--text3); word-break:break-all; padding:2px 0; }
+  .fdisc { display:inline-flex; align-items:center; gap:4px; padding:0; border:none; background:none;
+    font-family:inherit; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase;
+    letter-spacing:.05em; }
+
   /* ── inspector ────────────────────────────────────────────────────────── */
   .run { border:1px solid var(--line2); background:var(--card); border-radius:14px; overflow:hidden; }
   .run .rh { padding:13px 14px; display:flex; flex-direction:column; gap:10px; width:100%; text-align:left; }
@@ -775,6 +831,7 @@
     sessionId: '',            // chat / inspector subject
     openWork: new Set(),      // expanded work cards (by key)
     openRuns: new Set(),      // expanded workflow runs (by runId)
+    openFleet: new Set(),     // expanded fleet-wake sub-disclosures (by key, see fleetEntryHtml)
     picks: new Map(),         // sessionId:questionSetHash:index -> 1-based option
     briefOpen: new Set(),     // expanded project briefs (by brief key)
     spawn: { cwd: '', provider: '', permissionMode: '', prompt: '', label: '' },
@@ -1121,7 +1178,7 @@
     for (const sig of [...dismissed]) if (!live.has(sidOf(sig))) dismissed.delete(sig);
     const now = Date.now();
     for (const [sig, until] of [...snoozed]) if (until <= now || !live.has(sidOf(sig))) snoozed.delete(sig);
-    for (const set of [S.openWork, S.openRuns]) {
+    for (const set of [S.openWork, S.openRuns, S.openFleet]) {
       for (const k of [...set]) if (k.includes(':') && !live.has(k.split(':')[0])) set.delete(k);
     }
     for (const k of [...S.picks.keys()]) if (!live.has(String(k).split(':')[0])) S.picks.delete(k);
@@ -2291,6 +2348,362 @@
       <span class="grow"></span><button data-cancel>Cancel</button></div>`;
   }
 
+  // ══ fleet wakes ═══════════════════════════════════════════════════════════
+  // [fleet]/[supervisor] wakes reach a manager's conversation through
+  // claudemon's plain-text /message endpoint — no side-band metadata survives
+  // the round trip, so they land as an ordinary user turn (one paragraph) and
+  // must be recognized from the text alone. Ported from
+  // main/shared/fleetMessages.ts (parser) — same header/bullet grammar, kept
+  // in sync by hand since this file can't import it. Only the current
+  // line-based format is recognized; a legacy pre-bullet wake (if one is still
+  // sitting in an old transcript) falls back to the plain user bubble like any
+  // other unmatched message, same as it does today.
+  const FLEET_HEADERS = {
+    'worker-finished': '[fleet] Worker finished:',
+    'catch-up':
+      '[fleet] Catch-up — these workers finished while you were idle and you may have missed the wake:',
+    blocked: '[supervisor] An agent is now blocked on a decision:',
+    threshold: '[fleet] A threshold you asked to be told about has been crossed:',
+    progress:
+      '[fleet] Progress update from a worker — it is STILL RUNNING; this is NOT a completion:',
+  };
+  const FLEET_ALT_HEADERS = { 'worker-finished': '[fleet] Worker FAILED — did not complete:' };
+  const FLEET_ENTRY_RE =
+    /^(.+?) \(session:([\w-]+), (?:cwd (.+?)|(approval|question))\)(?: — (stopped\/killed))?(?: — FAILED: ((?:(?! — ).)+))?(?: — crossed: ((?:(?! — ).)+))?(?: — (NEEDS A DECISION))?(?: — (?:last reply: (.*)|reports: (.*)))?$/;
+
+  function parseFleetEntry(body) {
+    const m = FLEET_ENTRY_RE.exec(body);
+    if (!m) return null;
+    const [, label, sessionId, cwd, blockedOn, stopped, failed, crossed, decision, lastReply, note] = m;
+    const e = { label, sessionId };
+    if (cwd !== undefined) e.cwd = cwd;
+    if (blockedOn) e.blockedOn = blockedOn;
+    if (stopped) e.stopped = true;
+    if (failed) e.failed = failed;
+    if (crossed) e.crossed = crossed;
+    if (decision) e.needsDecision = true;
+    if (lastReply) e.lastReply = lastReply;
+    if (note) e.note = note;
+    return e;
+  }
+
+  const FLEET_RESULT_RE = /^Structured result — .+? \(session:([\w-]+)\):\n([\s\S]+)$/;
+  const FLEET_RESULT_MISSING_RE =
+    /^Structured result MISSING — .+? \(session:([\w-]+)\): ([\s\S]+?)\. Read the prose report below\/above instead\.$/;
+  // buildFleetMessage emits every structured-result block BEFORE the first
+  // full-reply block, and a full reply is arbitrary worker prose that may
+  // contain blank lines — so its own paragraphs would otherwise be scanned as
+  // blocks and could forge a result. Stopping here is the same guard the
+  // desktop parser (attachResultBlocks) uses.
+  const FLEET_FULL_REPLY_MARK = 'Full final message — ';
+
+  function attachFleetResultBlocks(tailLines, entries) {
+    const byId = new Map(entries.map((e) => [e.sessionId, e]));
+    for (const raw of tailLines.join('\n').split('\n\n')) {
+      const block = raw.trim();
+      if (block.startsWith(FLEET_FULL_REPLY_MARK)) return;
+      const ok = FLEET_RESULT_RE.exec(block);
+      if (ok) { const entry = byId.get(ok[1]); if (entry) entry.result = ok[2]; continue; }
+      const missing = FLEET_RESULT_MISSING_RE.exec(block);
+      if (missing) { const entry = byId.get(missing[1]); if (entry) entry.resultError = missing[2]; }
+    }
+  }
+
+  /** Recognize an injected fleet/supervisor wake. Returns null for anything
+   *  that doesn't match EXACTLY — a card missing its fields is worse than the
+   *  raw-text fallback, so every bullet must parse or none do. */
+  function parseFleetMessage(text) {
+    const trimmed = String(text || '').trim();
+    for (const kind of Object.keys(FLEET_HEADERS)) {
+      const header = [FLEET_HEADERS[kind], FLEET_ALT_HEADERS[kind]].find((h) => h && trimmed.startsWith(h));
+      if (!header) continue;
+      const rest = trimmed.slice(header.length);
+      if (!rest.startsWith('\n')) return null;
+      const lines = rest.split('\n').slice(1);
+      const entries = [];
+      let i = 0;
+      for (; i < lines.length; i++) {
+        if (!lines[i].startsWith('- ')) break;
+        const e = parseFleetEntry(lines[i].slice(2));
+        if (!e) return null;
+        entries.push(e);
+      }
+      if (entries.length === 0) return null;
+      attachFleetResultBlocks(lines.slice(i), entries);
+      return { kind, entries };
+    }
+    return null;
+  }
+
+  // ── a worker's structured wks-result JSON, ported from
+  // structuredResultFields.ts. The schema is authored per-dispatch by the
+  // manager and is therefore arbitrary, so fields are classified by VALUE
+  // SHAPE, not by key: a boolean is a badge, a number a counter chip, a
+  // SHA-shaped string a commit chip, an array of path-shaped strings a file
+  // list, an array of records key/value rows, an object nested rows.
+  // null/""/[]/{} render as an explicit "none"/"not reported" so an empty
+  // answer reads as an answer rather than as silence. No field is ever
+  // dropped — a key nobody anticipated still renders, labelled from its key.
+  const RESULT_KNOWN_ORDER = ['merged', 'commit', 'caveats', 'filesChanged', 'checksRun', 'followUps'];
+  const RESULT_CAVEAT_KEYS = new Set(['caveat', 'caveats']);
+  const RESULT_ARRAY_PREVIEW = 3;
+  const RESULT_ARRAY_COLLAPSE_MIN = 5;
+  const RESULT_TEXT_CLAMP = 280;
+  const RESULT_CAVEATS_CLAMP = 700;
+  const RESULT_SHA_RE = /^[0-9a-f]{7,40}$/i;
+  const RESULT_COMMIT_KEY_RE = /(^|[^a-z])(commit|sha|revision|rev)s?$/i;
+  const RESULT_PATH_RE = /^[^\s:]*[/\\][^\s]*$/;
+
+  function humanizeResultKey(key) {
+    const words = key.replace(/[_-]+/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').trim();
+    return words ? words.toLowerCase() : key;
+  }
+  function looksLikeResultCommit(key, value) {
+    if (typeof value !== 'string') return false;
+    const v = value.trim();
+    if (!v) return false;
+    if (RESULT_COMMIT_KEY_RE.test(key)) return v.length <= 64 && !/\s/.test(v);
+    return RESULT_SHA_RE.test(v);
+  }
+  const isPlainResultObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
+  const isResultScalar = (v) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
+
+  function classifyResultValue(key, value) {
+    if (value === null || value === undefined) return 'empty';
+    if (typeof value === 'boolean') return 'boolean';
+    if (typeof value === 'number') return Number.isFinite(value) ? 'number' : 'empty';
+    if (typeof value === 'string') {
+      if (!value.trim()) return 'empty';
+      return looksLikeResultCommit(key, value) ? 'commit' : 'text';
+    }
+    if (Array.isArray(value)) {
+      if (value.length === 0) return 'empty';
+      if (!value.every(isResultScalar)) return 'list';
+      const strings = value.filter((v) => typeof v === 'string');
+      if (strings.length === value.length && strings.every((v) => RESULT_PATH_RE.test(v))) return 'paths';
+      return 'strings';
+    }
+    if (isPlainResultObject(value)) return Object.keys(value).length === 0 ? 'empty' : 'object';
+    return 'empty';
+  }
+  function resultSlotFor(key, kind) {
+    if (RESULT_CAVEAT_KEYS.has(key.toLowerCase())) return 'caveats';
+    if (kind === 'boolean' || kind === 'number' || kind === 'commit') return 'summary';
+    return 'body';
+  }
+  function describeResultField(key, value) {
+    const kind = classifyResultValue(key, value);
+    return { key, label: humanizeResultKey(key), kind, value, slot: resultSlotFor(key, kind) };
+  }
+  function orderResultKeys(keys) {
+    const rank = (k) => { const i = RESULT_KNOWN_ORDER.indexOf(k); return i < 0 ? RESULT_KNOWN_ORDER.length : i; };
+    return keys.map((k, i) => ({ k, i })).sort((a, b) => rank(a.k) - rank(b.k) || a.i - b.i).map((x) => x.k);
+  }
+  /** Nothing here throws. A result that is not parseable JSON (the wake caps
+   *  the object and appends a `[truncated: …]` marker, which makes it invalid
+   *  on purpose), or is JSON but not an object, comes back as a `fallback`
+   *  shown as raw text with the reason — never an empty card. */
+  function buildResultView(json) {
+    const text = String(json ?? '').trim();
+    if (!text) return { fields: [], fallback: { text: '', reason: 'the result block was empty' } };
+    let parsed;
+    try { parsed = JSON.parse(text); }
+    catch {
+      const truncated = /\[truncated:/.test(text);
+      return {
+        fields: [],
+        fallback: {
+          text,
+          reason: truncated
+            ? 'the result was too large for the wake and arrived truncated'
+            : 'the result is not valid JSON',
+        },
+      };
+    }
+    if (!isPlainResultObject(parsed)) return { fields: [describeResultField('result', parsed)] };
+    const fields = orderResultKeys(Object.keys(parsed)).map((k) => describeResultField(k, parsed[k]));
+    return { fields };
+  }
+  const resultFieldsInSlot = (view, slot) => view.fields.filter((f) => f.slot === slot);
+  const shortResultCommit = (value) => {
+    const v = String(value).trim();
+    return RESULT_SHA_RE.test(v) && v.length > 12 ? v.slice(0, 8) : v;
+  };
+  const formatResultNumber = (value) => (Number.isInteger(value) ? value.toLocaleString('en-US') : String(value));
+  function resultItemText(item) {
+    if (typeof item === 'string') return item;
+    if (typeof item === 'number' || typeof item === 'boolean') return String(item);
+    if (item === null || item === undefined) return '—';
+    try { return JSON.stringify(item); } catch { return String(item); }
+  }
+  function resultEmptyLabel(value) {
+    if (Array.isArray(value)) return 'none';
+    if (value === null || value === undefined) return 'not reported';
+    if (typeof value === 'string') return 'empty';
+    if (typeof value === 'number') return 'not a number';
+    return 'none';
+  }
+  function clampFleetText(text, limit) {
+    const t = String(text ?? '');
+    return { shown: t.length > limit ? t.slice(0, limit).trimEnd() + '…' : t, long: t.length > limit };
+  }
+
+  const isRowResultObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
+  function resultObjectRowsHtml(value) {
+    return `<div class="ffobj">${Object.entries(value).map(([k, v]) =>
+      `<div class="ffobjrow"><span class="k">${esc(k)}</span><span class="v">${esc(clampFleetText(resultItemText(v), RESULT_TEXT_CLAMP).shown)}</span></div>`
+    ).join('')}</div>`;
+  }
+  /** A list: shown whole when short, head + "+N more" when long. Items that
+   *  are themselves objects get the key/value treatment rather than raw JSON —
+   *  an array of records is a shape a per-dispatch schema reaches for often. */
+  function resultStringListHtml(items, fieldKey, msgKey) {
+    const collapsible = items.length >= RESULT_ARRAY_COLLAPSE_MIN;
+    const openKey = `${msgKey}:l:${fieldKey}`;
+    const open = collapsible && S.openFleet.has(openKey);
+    const shown = collapsible && !open ? items.slice(0, RESULT_ARRAY_PREVIEW) : items;
+    const rows = shown.map((item) => isRowResultObject(item)
+      ? `<div class="ffitem">${resultObjectRowsHtml(item)}</div>`
+      : `<div class="ffitem">· ${esc(clampFleetText(resultItemText(item), RESULT_TEXT_CLAMP).shown)}</div>`
+    ).join('');
+    const more = collapsible
+      ? `<button class="fmore" data-ftoggle="${esc(openKey)}">${open ? 'show fewer' : `+${items.length - RESULT_ARRAY_PREVIEW} more`}</button>`
+      : '';
+    return rows + more;
+  }
+  /** File paths: the count is the headline, the list is on demand. */
+  function resultPathListHtml(field, fieldKey, msgKey) {
+    const paths = field.value;
+    const openKey = `${msgKey}:p:${fieldKey}`;
+    const open = S.openFleet.has(openKey);
+    const head = `<button class="fdisc" data-ftoggle="${esc(openKey)}"><span class="chev${open ? ' open' : ''}">›</span><b>${paths.length}</b> ${esc(field.label)}</button>`;
+    if (!open) return head;
+    return head + `<div>${paths.map((p) => `<div class="ffpath">${esc(p)}</div>`).join('')}</div>`;
+  }
+  function resultBodyFieldHtml(field, msgKey) {
+    if (field.kind === 'paths') return `<div class="ffield">${resultPathListHtml(field, field.key, msgKey)}</div>`;
+    let inner;
+    if (field.kind === 'empty') {
+      inner = `<span class="ffempty">${esc(resultEmptyLabel(field.value))}</span>`;
+    } else if (field.kind === 'text') {
+      const { shown, long } = clampFleetText(String(field.value), RESULT_TEXT_CLAMP);
+      const openKey = `${msgKey}:t:${field.key}`;
+      const open = S.openFleet.has(openKey);
+      inner = `<span class="ffitem">${esc(open ? String(field.value) : shown)}</span>`
+        + (long ? ` <button class="fmore" data-ftoggle="${esc(openKey)}">${open ? 'less' : 'more'}</button>` : '');
+    } else if (field.kind === 'strings' || field.kind === 'list') {
+      inner = resultStringListHtml(field.value, field.key, msgKey);
+    } else {
+      inner = resultObjectRowsHtml(field.value);
+    }
+    return `<div class="ffield"><div class="fflabel">${esc(field.label)}</div>${inner}</div>`;
+  }
+  /** The band that must never be behind a fold — a caveat nobody reads defeats
+   *  the point of the card. Caveats get a much longer clamp than any other
+   *  field: the field must be READABLE without a click. */
+  function resultCaveatsBandHtml(field) {
+    const body = field.kind === 'empty'
+      ? esc(field.value === null || field.value === undefined ? 'not reported' : 'none reported')
+      : esc(clampFleetText(resultItemText(field.value), RESULT_CAVEATS_CLAMP).shown);
+    return `<div class="fcaveats"><div class="fclabel">⚠ ${esc(field.label)}</div><div class="fctext">${body}</div></div>`;
+  }
+  function resultChipHtml(field) {
+    if (field.kind === 'boolean') {
+      const yes = field.value === true;
+      return `<span class="rchip bool" style="color:${yes ? C.green : C.dim};background:${yes ? '#18251d' : 'rgba(255,255,255,.05)'}" title="${esc(field.label)}: ${yes ? 'yes' : 'no'}">${yes ? '✓' : '✗'} ${esc(field.label)} <b>${yes ? 'yes' : 'no'}</b></span>`;
+    }
+    if (field.kind === 'number') {
+      return `<span class="rchip" title="${esc(field.label)}: ${esc(String(field.value))}"><b style="color:var(--text)">${esc(formatResultNumber(field.value))}</b> ${esc(field.label)}</span>`;
+    }
+    const full = String(field.value).trim();
+    return `<button class="rchip mono" data-copy="${esc(full)}" title="${esc(field.label)} ${esc(full)} — tap to copy"><b>${esc(shortResultCommit(full))}</b>${field.key !== 'commit' ? ' ' + esc(field.label) : ''}<span class="cp"></span></button>`;
+  }
+  /** The card. `entry.result` is the validated object as the wake carried it;
+   *  `entry.resultError` is why one could not be read. Rendering either is
+   *  additive — the worker's prose (note/lastReply) sits above it untouched. */
+  function structuredResultHtml(entry, msgKey) {
+    const json = entry.result, error = entry.resultError;
+    if (!json && !error) return '';
+    const view = json ? buildResultView(json) : { fields: [] };
+    const summary = resultFieldsInSlot(view, 'summary');
+    const caveats = resultFieldsInSlot(view, 'caveats');
+    const body = resultFieldsInSlot(view, 'body');
+    let html = `<div class="fresult"><div class="frh">◧ STRUCTURED RESULT</div>`;
+    if (error) html += `<div class="fmissing">⚠ no structured result<br />${esc(error)}</div>`;
+    if (view.fallback) {
+      html += `<div class="fmissing">⚠ ${esc(view.fallback.reason)} — showing it as it arrived</div>`;
+      if (view.fallback.text) html += `<pre class="fraw">${esc(view.fallback.text)}</pre>`;
+    }
+    if (summary.length) html += `<div class="fchips">${summary.map(resultChipHtml).join('')}</div>`;
+    for (const f of caveats) html += resultCaveatsBandHtml(f);
+    if (body.length) html += `<div class="fbody">${body.map((f) => resultBodyFieldHtml(f, msgKey)).join('')}</div>`;
+    return html + `</div>`;
+  }
+
+  // ── the fleet card itself, ported from FleetMessageCard.tsx ────────────────
+  const FLEET_KIND_META = {
+    'worker-finished': { badge: 'FLEET · WORKER FINISHED', badgePlural: 'FLEET · WORKERS FINISHED', icon: '✓', color: C.green },
+    'catch-up': { badge: 'FLEET · CATCH-UP', badgePlural: 'FLEET · CATCH-UP', icon: '↻', color: C.green },
+    threshold: { badge: 'FLEET · THRESHOLD CROSSED', badgePlural: 'FLEET · THRESHOLDS CROSSED', icon: '⚠', color: C.amber },
+    progress: { badge: 'FLEET · PROGRESS UPDATE', badgePlural: 'FLEET · PROGRESS UPDATES', icon: '▶', color: C.blue },
+    blocked: { badge: 'SUPERVISOR · AGENT BLOCKED', badgePlural: 'SUPERVISOR · AGENTS BLOCKED', icon: '⚠', color: C.amber },
+  };
+  // Honest face for a worker-finished wake whose every entry FAILED: a green
+  // check reading "finished" over an out-of-credits crash would be the same
+  // lie the wake header used to tell. Mixed wakes keep the normal face, and
+  // each failed row still carries its own FAILED chip.
+  const FLEET_FAILED_META = { badge: 'FLEET · WORKER FAILED', badgePlural: 'FLEET · WORKERS FAILED', icon: '⚠', color: C.red };
+  const FLEET_BLOCKED_ON_COLOR = { approval: C.red, question: C.amber };
+
+  const fleetChip = (text, color, title) =>
+    `<span class="fbadge" style="color:${color};background:color-mix(in srgb, ${color} 16%, transparent)"${title ? ` title="${esc(title)}"` : ''}>${esc(text)}</span>`;
+
+  function fleetEntryHtml(entry, msgKey) {
+    const short = entry.sessionId.length > 10 ? entry.sessionId.slice(0, 8) + '…' : entry.sessionId;
+    const chips = [];
+    if (entry.stopped) chips.push(fleetChip('stopped/killed', C.red));
+    if (entry.failed) chips.push(fleetChip(`FAILED: ${oneLine(entry.failed, 60)}`, C.red, entry.failed));
+    if (entry.crossed) chips.push(fleetChip(entry.crossed, C.amber, entry.crossed));
+    if (entry.needsDecision) chips.push(fleetChip('needs a decision', C.amber));
+    if (entry.blockedOn) chips.push(fleetChip(entry.blockedOn === 'approval' ? 'needs approval' : 'has a question', FLEET_BLOCKED_ON_COLOR[entry.blockedOn]));
+    const cwdChip = entry.cwd && entry.cwd !== '?'
+      ? `<span class="fcwd" title="${esc(entry.cwd)}">${esc((entry.cwd.replace(/[/\\]+$/, '').split(/[/\\]/).pop()) || entry.cwd)}</span>`
+      : '';
+    let html = `<div class="frow">
+      <div class="fr1">
+        <span class="fl">${esc(entry.label)}</span>
+        <span class="fsid">session:${esc(short)}</span>
+        ${chips.join('')}
+        ${cwdChip}
+      </div>`;
+    // A worker's own mid-task progress line is shown OPEN — it's already
+    // capped to a couple of sentences, and a self-report you have to tap to
+    // read is one that gets skipped.
+    if (entry.note) html += `<div class="fnote">${esc(entry.note)}</div>`;
+    html += structuredResultHtml(entry, msgKey);
+    if (entry.lastReply) {
+      const openKey = `${msgKey}:${entry.sessionId}:reply`;
+      const open = S.openFleet.has(openKey);
+      html += `<button class="fmore" data-ftoggle="${esc(openKey)}"><span class="chev${open ? ' open' : ''}">›</span> last reply</button>`;
+      if (open) html += `<div class="freply">${esc(entry.lastReply)}</div>`;
+    }
+    return html + `</div>`;
+  }
+
+  /** The card face for a parsed fleet wake — kind badge, one row per worker.
+   *  `msgKey` anchors this message's disclosure state (S.openFleet) so
+   *  toggles survive a re-render but don't leak into any other wake. */
+  function fleetCardHtml(msg, msgKey) {
+    const allFailed = msg.kind === 'worker-finished' && msg.entries.length > 0 && msg.entries.every((e) => e.failed);
+    const meta = allFailed ? FLEET_FAILED_META : FLEET_KIND_META[msg.kind];
+    const badge = msg.entries.length > 1 ? meta.badgePlural : meta.badge;
+    return `<div class="fleetcard" style="border-left-color:${meta.color}">
+      <div class="fch" style="color:${meta.color}">${meta.icon} <span>${esc(badge)}${msg.entries.length > 1 ? ` (${msg.entries.length})` : ''}</span></div>
+      <div class="frows">${msg.entries.map((e) => fleetEntryHtml(e, msgKey)).join('')}</div>
+    </div>`;
+  }
+
   /**
    * Fold the turn list into the design's chat blocks: user bubbles, assistant
    * prose, collapsible work cards (a run of tool calls), the flow cards for any
@@ -2346,7 +2759,11 @@
       const t = turns[i];
       if (t.role === 'user') {
         flushGroup();
-        out.push(userTurnHtml(t));
+        // A wake has no side-band marker (see the fleet wakes section above)
+        // — it's recognized purely from its text, same as the desktop parser.
+        // Anything that doesn't match EXACTLY falls back to the plain bubble.
+        const fleetMsg = parseFleetMessage(t.content);
+        out.push(fleetMsg ? fleetCardHtml(fleetMsg, `${s.sessionId}:${i}`) : userTurnHtml(t));
         continue;
       }
       const content = String(t.content || '').trim();
@@ -2462,6 +2879,20 @@
     if (fb) fb.onclick = () => { const el = [...root.querySelectorAll('[data-fileshere]')].pop(); if (el) el.scrollIntoView({ block: 'center' }); };
     const cb = root.querySelector('[data-cancel]');
     if (cb) cb.onclick = () => interrupt(S.sessionId);
+    // Fleet-wake card disclosures (last reply, long text, arrays, paths).
+    for (const b of root.querySelectorAll('[data-ftoggle]')) {
+      b.onclick = () => { const k = b.dataset.ftoggle; S.openFleet.has(k) ? S.openFleet.delete(k) : S.openFleet.add(k); render(); };
+    }
+    // A commit chip's tap-to-copy — mutated in place rather than through
+    // render(), since there is nothing else about the card a copy changes.
+    for (const b of root.querySelectorAll('[data-copy]')) {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        navigator.clipboard?.writeText(b.dataset.copy).catch(() => {});
+        const cp = b.querySelector('.cp');
+        if (cp) { cp.textContent = ' ✓'; setTimeout(() => { cp.textContent = ''; }, 1400); }
+      };
+    }
   }
 
   // ══ composer ══════════════════════════════════════════════════════════════
