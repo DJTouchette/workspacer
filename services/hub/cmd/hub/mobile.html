@@ -240,6 +240,9 @@
   .opt.amber .n { color:var(--amber); background:#2a2418; }
   .opt.amber .l { color:var(--amber-text); }
   .opt.amber.on { border-color:var(--amber); }
+  .opt.danger { background:var(--red-bg); border-color:var(--red-line); }
+  .opt.danger:active { background:#2a1917; }
+  .opt.danger .l { color:var(--red); }
 
   /* Section rule: ── RECENT · RESUMABLE ── */
   .rule { display:flex; align-items:center; gap:10px; padding:6px 4px 0; }
@@ -2447,6 +2450,11 @@
     if (s) {
       if (can('files.upload')) rows.push({ label: 'Attach photo', run: () => fileEl.click() });
       if (isWorking(s)) rows.push({ label: 'Interrupt this turn', run: () => interrupt(s.sessionId) });
+      // SIGTERM, not SIGKILL: ends the process (Stopped, resumable later) rather
+      // than just cancelling the in-flight turn like Interrupt does above — kept
+      // one level down in this sheet, with its own confirm, so a mis-tap on the
+      // small screen can't reach it the way a composer button could.
+      if (isLive(s)) rows.push({ label: 'Stop this session', danger: true, run: () => stopSession(s.sessionId) });
       rows.push({ label: 'Open inspector', run: () => { S.seg = 'flows'; go('flows'); } });
       rows.push({ label: 'Insert saved prompt', run: () => openLibrarySheet() });
       rows.push({ label: 'Copy working directory', run: () => copyText(agentPath(s)) });
@@ -3022,6 +3030,12 @@
     call(qualify(id, 'claude.signal'), { sessionId: id, signal: 'SIGINT' })
       .then(() => toast('Interrupted')).catch((e) => toast('Failed: ' + errText(e)));
   }
+  function stopSession(id) {
+    if (hubGone(id)) { toast('Hub offline'); return; }
+    if (!window.confirm('Stop this session? Unlike Interrupt, this ends the process (SIGTERM) — the current turn is lost. The session becomes Stopped and can be resumed later.')) return;
+    call(qualify(id, 'claude.signal'), { sessionId: id, signal: 'SIGTERM' })
+      .then(() => toast('Stopped')).catch((e) => toast('Failed: ' + errText(e)));
+  }
   function setPermissionMode(id, mode) {
     call(qualify(id, 'claude.setPermissionMode'), { sessionId: id, mode })
       .then((r) => toast(r && r.ok === false ? (r.error || 'Could not switch mode') : 'Mode: ' + mode))
@@ -3158,7 +3172,7 @@
   function showSheet(title, rows) {
     sheetGen++;
     sheet.innerHTML = `<div class="grip"></div><div class="st">${esc(title)}</div><div class="rows">${
-      rows.map((r, i) => `<button class="opt${r.on ? ' on' : ''}" data-row="${i}"${r.disabled ? ' disabled style="opacity:.65"' : ''}>
+      rows.map((r, i) => `<button class="opt${r.on ? ' on' : ''}${r.danger ? ' danger' : ''}" data-row="${i}"${r.disabled ? ' disabled style="opacity:.65"' : ''}>
         <span class="l">${esc(r.label)}</span></button>`).join('')}</div>`;
     for (const b of sheet.querySelectorAll('[data-row]')) {
       const r = rows[Number(b.dataset.row)];
