@@ -840,7 +840,18 @@ export function useAgentManager() {
           hub: opts.hub,
           transport: opts.transport,
           sessionId: opts.sessionId,
-          parentId: parent?.id,
+          // A dead parent that never got its own card here (the crashed-manager
+          // case the "Unwatched" chip exists for) must NOT be dropped just
+          // because the local lookup above found nothing — that would silence
+          // the chip for exactly the worker it's meant to flag. Fall back to
+          // the deterministic id any card FOR that session would use, so the
+          // dangling reference is preserved (and self-heals into real nesting
+          // if that parent is ever adopted here later under the same id).
+          parentId: parent
+            ? parent.id
+            : opts.parentSessionId
+              ? agentIdForSession(opts.parentSessionId)
+              : undefined,
           dispatchedByManager,
           tabs,
           activeTabId,
@@ -988,9 +999,16 @@ export function useAgentManager() {
       // manager already relayed its result via the [fleet] wake, and its
       // transcript stays reachable from History — a lingering Stopped sub-card
       // is just clutter the user has to dismiss. Top-level cards still tombstone
-      // (they are the sessions the user actually resumes).
+      // (they are the sessions the user actually resumes). `parentId` alone
+      // is no longer sufficient to prove that: adoptAgent now preserves a
+      // DANGLING parentId (see its comment) so the orphan chip can render even
+      // when the dispatcher's own card never existed here — and for exactly
+      // that worker, nobody relayed its result anywhere, so dropping the card
+      // would erase the one place the user could notice and follow up.
+      // Require the parent to actually resolve to a known card before treating
+      // this as the ordinary "the manager already has it" case.
       const dying = prev.find((a) => a.sessionId === sessionId);
-      if (dying?.parentId) {
+      if (dying?.parentId && prev.some((a) => a.id === dying.parentId)) {
         // The worker also had a disposable worktree (ship-task isolation): tear
         // it down now that the worker is gone. Guarded + fail-closed in main —
         // a non-worktree cwd or a dirty tree is a no-op, and the branch (its

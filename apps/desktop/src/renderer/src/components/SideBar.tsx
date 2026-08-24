@@ -1276,7 +1276,22 @@ const SideBar: React.FC<SideBarProps> = ({
                     {model}
                   </span>
                   {hub && <HubChip name={hub} offline={hubOffline} />}
-                  {isOrphaned && <OrphanChip confirmed={agent.dispatchedByManager === true} />}
+                  {isOrphaned && (
+                    <OrphanChip
+                      // The daemon's own truth (recomputed live from
+                      // managerTombstones, see claudeSessionStore.refreshOrphanStatus)
+                      // wins whenever it's available — it covers the crashed-manager
+                      // case dispatchedByManager can't (a parent that was already
+                      // dead when this card was adopted, so no local card ever
+                      // existed to read `.manager` off of). Fall back to the
+                      // renderer-local snapshot for federated/edge cases the
+                      // daemon's field deliberately stays silent on (see `orphan`'s
+                      // doc comment).
+                      confirmed={
+                        snap?.orphan?.confirmedManager ?? agent.dispatchedByManager === true
+                      }
+                    />
+                  )}
                   {(stats.tokens !== undefined || stats.costUSD !== undefined) && (
                     <span
                       style={{
