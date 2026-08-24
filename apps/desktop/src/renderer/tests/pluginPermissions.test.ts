@@ -254,7 +254,7 @@ describe('CAP_LABELS drift guard', () => {
     expect(
       new Set(registered).size,
       'the hub-native registry regex found fewer methods than the hub registers — has RegisterLocal been renamed or the registrations moved?',
-    ).toBeGreaterThanOrEqual(7);
+    ).toBeGreaterThanOrEqual(8);
     for (const must of ['layout.get', 'layout.set']) {
       expect(
         registered,

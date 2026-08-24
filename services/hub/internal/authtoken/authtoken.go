@@ -88,6 +88,11 @@ var viewMethods = []string{
 	//                          renderer seed the federated fleet from it, and the
 	//                          names are already stamped on every agent.* event
 	//                          this same tier receives
+	"fleet.quiescence", // is this machine's fleet at rest, and if not, what is
+	//                     holding it up. A read the phone and the web renderer
+	//                     could already assemble one poll at a time from the
+	//                     snapshot feed this tier receives; nothing in the answer
+	//                     names a credential, an address, or a job's argv
 	"push.key", // VAPID public key — needed before subscribing, discloses nothing
 	// The one method in this list that WRITES anywhere, admitted so the facade's
 	// tool set derives from this allowlist again rather than sitting beside it.

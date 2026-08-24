@@ -278,3 +278,119 @@ func TestCompatSnapshotCarriesCachedInputTokens(t *testing.T) {
 		t.Errorf("cachedInputTokens = %v, want 3733376", sl["cachedInputTokens"])
 	}
 }
+
+// ── unknown is not idle, and background work is not idle ─────────────────────
+
+// A session that is SPAWNING sits in claudemon's `unknown` mode: no hook and no
+// driver event has arrived yet. So does a resume the moment register_spawn
+// flips a Stopped row back, and so does a terminal PTY for its whole life.
+//
+// `ambientForMode` used to answer all three with `default: return "idle"`, and
+// the headless path is the ONLY thing that answers the question for /m, the web
+// renderer, and anything else reading the bus with no desktop present. A
+// starting agent therefore reported "finished" on the wire.
+//
+// The desktop's twin (claudeSessionStore.applyManagedMode) returns early on
+// unknown and leaves the previous state alone. A stateless overlay's equivalent
+// is to emit NO ambientState, which the sparse-merge on the other end reads as
+// "nothing new to say" rather than as a claim.
+func TestCompatSnapshotDoesNotCallASpawningSessionIdle(t *testing.T) {
+	for _, mode := range []string{"unknown", "", "some_mode_from_a_newer_daemon"} {
+		row := mustJSONBytes(t, map[string]any{"session_id": "s1", "mode": mode})
+		var m map[string]any
+		if err := json.Unmarshal(compatSnapshot(row), &m); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if got, present := m["ambientState"]; present {
+			t.Errorf("mode %q emitted ambientState %q — a session nobody has heard from is not in any ambient state, and calling it idle tells every headless client a starting agent has finished", mode, got)
+		}
+		// The row must still be a live one: only `stopped` ends a session.
+		if m["status"] != "active" {
+			t.Errorf("mode %q gave status %v, want active", mode, m["status"])
+		}
+	}
+}
+
+// The four modes the desktop vocabulary CAN express still map, so omitting the
+// unknown ones did not quietly cost the overlay its actual job.
+func TestCompatSnapshotMapsTheKnownModes(t *testing.T) {
+	for mode, want := range map[string]string{
+		"responding": "streaming",
+		"approval":   "waiting_approval",
+		"question":   "waiting_input",
+		"input":      "idle",
+		"stopped":    "idle",
+	} {
+		row := mustJSONBytes(t, map[string]any{"session_id": "s1", "mode": mode})
+		var m map[string]any
+		if err := json.Unmarshal(compatSnapshot(row), &m); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if m["ambientState"] != want {
+			t.Errorf("mode %q → ambientState %v, want %q", mode, m["ambientState"], want)
+		}
+	}
+}
+
+// `run_in_background` shells (a dev server, a watcher, an agent-authored poll
+// loop) deliberately do NOT hold the session mode busy — claudemon latched
+// sessions "responding" forever when they did. They ride the wire as
+// `background_tasks` instead, and the overlay consulted it nowhere: the count
+// never reached clients under the name they read, and mode `input` produced a
+// flat "idle" while a build was running.
+func TestCompatSnapshotSurfacesBackgroundWork(t *testing.T) {
+	row := mustJSONBytes(t, map[string]any{
+		"session_id": "s1", "mode": "input", "background_tasks": 2,
+	})
+	var m map[string]any
+	if err := json.Unmarshal(compatSnapshot(row), &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if m["ambientState"] != "background" {
+		t.Errorf("ambientState = %v, want background — the agent's own turn ended but the work it started is still running", m["ambientState"])
+	}
+	if got := m["backgroundTasks"]; got != float64(2) {
+		t.Errorf("backgroundTasks = %v (%T), want 2 — the count clients read is camelCase", got, got)
+	}
+}
+
+// Zero background tasks must not manufacture a claim: no count, and idle stays
+// idle. An absent `backgroundTasks` is what every pre-field row means.
+func TestCompatSnapshotOmitsAnEmptyBackgroundCount(t *testing.T) {
+	for _, row := range []json.RawMessage{
+		mustJSONBytes(t, map[string]any{"session_id": "s1", "mode": "input"}),
+		mustJSONBytes(t, map[string]any{"session_id": "s1", "mode": "input", "background_tasks": 0}),
+	} {
+		var m map[string]any
+		if err := json.Unmarshal(compatSnapshot(row), &m); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if _, present := m["backgroundTasks"]; present {
+			t.Errorf("emitted backgroundTasks for a row with none: %v", m["backgroundTasks"])
+		}
+		if m["ambientState"] != "idle" {
+			t.Errorf("ambientState = %v, want idle", m["ambientState"])
+		}
+	}
+}
+
+// Background work does not outrank being blocked on a human, or being busy:
+// the fold applies to mode `input` only.
+func TestCompatSnapshotBackgroundDoesNotMaskTheMode(t *testing.T) {
+	for mode, want := range map[string]string{
+		"responding": "streaming",
+		"approval":   "waiting_approval",
+		"question":   "waiting_input",
+	} {
+		row := mustJSONBytes(t, map[string]any{
+			"session_id": "s1", "mode": mode, "background_tasks": 3,
+		})
+		var m map[string]any
+		if err := json.Unmarshal(compatSnapshot(row), &m); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if m["ambientState"] != want {
+			t.Errorf("mode %q with background work → %v, want %q", mode, m["ambientState"], want)
+		}
+	}
+}

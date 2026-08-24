@@ -325,12 +325,22 @@ function routeHookEvent(session: HookFedSession, pending: PendingSlot, event: an
 }
 
 /** True when work the agent spawned is still running after its own turn:
- *  an async background subagent, or a Workflow run (which detaches from the
- *  turn immediately — its parent Stop fires while the workflow grinds on). */
+ *  an async background subagent, a Workflow run (which detaches from the
+ *  turn immediately — its parent Stop fires while the workflow grinds on), or
+ *  a `run_in_background` shell.
+ *
+ *  That last one is the daemon's `backgroundTasks` count, and it was the gap:
+ *  claudemon deliberately does NOT hold the session mode busy for a background
+ *  shell (a dev server, a watcher, an agent-authored poll loop), because doing
+ *  so latched sessions "responding" forever — see claude_stream.rs's
+ *  background_tasks_changed. The count rides the wire in its place, and this
+ *  function, the one consumer whose whole job is keeping 'idle' honest, did not
+ *  read it. An agent that left `npm run dev` running showed a flat idle. */
 export function sessionHasBackgroundWork(session: PendingReadOnlySession): boolean {
   return (
     session.subagents.some((s) => s.status === 'running') ||
-    session.workflows.some((w) => w.status === 'running')
+    session.workflows.some((w) => w.status === 'running') ||
+    (session.backgroundTasks ?? 0) > 0
   );
 }
 

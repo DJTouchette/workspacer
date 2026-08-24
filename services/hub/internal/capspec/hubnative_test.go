@@ -32,7 +32,7 @@ var hubLocalCapRe = regexp.MustCompile(`RegisterLocal(?:Ident)?\(\s*"([a-zA-Z][\
 //
 // Raise it when the surface grows. Lowering it is the change that has to be
 // argued for.
-const hubNativeFloor = 7
+const hubNativeFloor = 8
 
 // TestHubNativeCapabilitiesAllClassified is the METHOD-level completeness check
 // for the registry nobody was reading.

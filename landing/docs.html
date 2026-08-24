@@ -771,6 +771,32 @@ workspacer token revoke &lt;token-or-prefix&gt;</code></pre>
 }</code></pre>
 <p>Most mornings that job runs <code>go test</code>, sees no <code>FAIL</code>, and stops without spending anything. On the mornings something broke, an agent is already reading the failures when you sit down.</p>
 
+<h3>acting on an idle fleet</h3>
+<p>The hub publishes one read-only signal, <code>fleet.quiescence</code>, answering whether this machine's fleet is <strong>genuinely at rest</strong>. It exists so a job can act on "nothing is happening here" without you having to reimplement the safety logic in a shell script. Read it from a terminal or a script with <code>workspacer fleet quiescence</code>, which is exit-code gated: <strong>0</strong> at rest, <strong>1</strong> not at rest, <strong>2</strong> could not ask. Those last two are different answers and only the first two are knowledge, so a script that acts on success should never treat 2 as 1.</p>
+<p>The rule is <strong>refuse when unsure</strong>. It answers yes only when every one of these holds, and has held continuously for a dwell of several minutes:</p>
+<ul>
+<li>every session that has not stopped is ready for input. A session that is <em>spawning</em> or resuming has not reported a state yet and does <strong>not</strong> count as idle;</li>
+<li>no session has a background task running, which is what a <code>run_in_background</code> shell (a dev server, a watcher, a poll loop) rides on: the session mode deliberately stays idle for those, so the count is the only sign they exist;</li>
+<li>nothing is waiting on a permission decision or an answer to a question;</li>
+<li><strong>no terminal is open.</strong> Nothing anywhere in work{spacer} tracks whether a terminal's shell is running a long command, so a live terminal blocks on presence alone, and keeps blocking until it is closed;</li>
+<li>no bus client is in use. Connection presence is not the test, or a phone with the mobile client parked in a background tab would hold the machine up forever; a client counts as in use until it has been <em>silent</em> for several minutes;</li>
+<li>no job is due to fire soon, and none is running;</li>
+<li>every federated peer is reachable and its own sessions are at rest. A peer that <em>cannot</em> be reached blocks: unreachable is unknown, not quiet.</li>
+</ul>
+<p>When the answer is no it comes with a <strong>blocker per reason</strong>, each naming the session, job or peer responsible and saying what it is doing, so an unexpected no is something you can go and deal with rather than a bare false.</p>
+<p>Two limits worth knowing. <strong>A shell job does not count as a job about to fire</strong>, because a shell action is how you run this check, and a poller that counted itself would block forever; work you need protected belongs behind a spawn or call action. And an agent whose process has wedged mid-turn never reports its turn ending, so it reads as busy indefinitely and holds the machine up. That is the direction this is meant to fail in: it costs uptime rather than work.</p>
+<p>Wiring it up is an ordinary job. Nothing in work{spacer} powers anything down; the script is yours, and what it does with a yes is entirely your call.</p>
+<pre data-job-example><code>{
+  "name": "Power down when the fleet is quiet",
+  "enabled": true,
+  "trigger": { "kind": "interval", "everyMinutes": 5 },
+  "action": {
+    "kind": "shell",
+    "shell": { "command": "workspacer fleet quiescence --quiet &amp;&amp; /opt/wks/power-down.sh" }
+  }
+}</code></pre>
+<p>Poll as often as you like; the check is cheap and the dwell, not your polling interval, is what decides how long the fleet must have been quiet. Use <code>--json</code> in a script that wants the blockers, and log them: the fastest way to find out what is really keeping a machine up is a week of "not at rest" reasons.</p>
+
 <h3>writing a job spec by hand (or having an agent write one)</h3>
 <p>The editor in Settings covers every field, but a job is just JSON, and the shape below is the whole language, enough for you (or an LLM you ask) to write one from scratch. Anything the hub doesn't accept is refused at save time with a message naming the problem. The <code>//</code> notes below are annotations for you, not syntax: JSON has no comments, so strip them.</p>
 <pre data-job-spec><code>{
