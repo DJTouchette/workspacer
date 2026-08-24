@@ -14,12 +14,28 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import * as path from 'path';
 import { turnCostUSD } from './modelUsage';
+import type { RawUsage } from './modelUsage';
 
 interface PricingCase {
   model: string;
   input: number;
   output: number;
   note?: string;
+}
+
+/** One `cacheMultiplierCases` row. The tokens a turn reports, and what the whole
+ *  turn must cost. See the block's `why` in the fixture. */
+interface CacheMultiplierCase {
+  name: string;
+  model: string;
+  cacheWriteTokens: number;
+  ephemeral5m?: number;
+  ephemeral1h?: number;
+  cacheReadTokens?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  expectedUSD: number;
+  note: string;
 }
 
 // This file lives at apps/desktop/src/main/services/ — five levels below the
@@ -35,7 +51,29 @@ const fixturePath = path.resolve(
   'contracts',
   'model-pricing-cases.json',
 );
-const fixture = JSON.parse(readFileSync(fixturePath, 'utf-8')) as { cases: PricingCase[] };
+const fixture = JSON.parse(readFileSync(fixturePath, 'utf-8')) as {
+  cases: PricingCase[];
+  cacheMultiplierCases: CacheMultiplierCase[];
+};
+
+/** Rebuild the raw transcript `usage` block a case describes. Omitting BOTH
+ *  ephemeral fields omits `cache_creation` entirely. That is the no-split case,
+ *  and it has to be a genuine absence rather than a pair of zeros, because zeros
+ *  are a turn that split its writes and wrote none. */
+function usageFor(c: CacheMultiplierCase): RawUsage {
+  const usage: RawUsage = {
+    input_tokens: c.inputTokens ?? 0,
+    output_tokens: c.outputTokens ?? 0,
+    cache_creation_input_tokens: c.cacheWriteTokens,
+    cache_read_input_tokens: c.cacheReadTokens ?? 0,
+  };
+  if (c.ephemeral5m !== undefined || c.ephemeral1h !== undefined) {
+    usage.cache_creation = {};
+    if (c.ephemeral5m !== undefined) usage.cache_creation.ephemeral_5m_input_tokens = c.ephemeral5m;
+    if (c.ephemeral1h !== undefined) usage.cache_creation.ephemeral_1h_input_tokens = c.ephemeral1h;
+  }
+  return usage;
+}
 
 describe('model pricing contract (shared with Rust pricing.rs)', () => {
   it('the fixture loads and has cases', () => {
@@ -57,4 +95,25 @@ describe('model pricing contract (shared with Rust pricing.rs)', () => {
     });
   }
   itSweptTheWholeCorpus(tally, 'the model-pricing corpus', 11, { allow: 0, deny: 0 });
+});
+
+// The other half of costing: a cache write costs a multiple of the input rate,
+// and the multiplier depends on how long the write is kept alive. Both engines
+// hardcoded 1.25 (the 5-minute rate) until 2026-08-24 while this project's
+// sessions ran on the 1-hour TTL, which bills at 2x, so every displayed cost
+// understated its write component. The Rust twin reads these exact rows.
+describe('cache multiplier contract (shared with Rust usage.rs)', () => {
+  it('the fixture loads and has cases', () => {
+    expect(Array.isArray(fixture.cacheMultiplierCases)).toBe(true);
+    expect(fixture.cacheMultiplierCases.length).toBeGreaterThan(0);
+  });
+
+  const tally = new SweepTally();
+  for (const c of fixture.cacheMultiplierCases) {
+    it(`${c.name} (${c.note})`, () => {
+      tally.ran('other');
+      expect(turnCostUSD(c.model, usageFor(c))).toBeCloseTo(c.expectedUSD, 6);
+    });
+  }
+  itSweptTheWholeCorpus(tally, 'the cache-multiplier corpus', 9, { allow: 0, deny: 0 });
 });

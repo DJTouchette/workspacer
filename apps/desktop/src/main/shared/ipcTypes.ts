@@ -217,6 +217,10 @@ export interface SessionUsage {
   totalOutputTokens: number;
   /** Cumulative USD. */
   costUSD: number;
+  /** Cumulative fresh / cache-write / cache-read split of `totalInputTokens`.
+   *  Absent when the provider reported no cache fields. Absent means "not
+   *  reported", never "nothing was cached". */
+  cache?: { fresh: number; write: number; read: number };
 }
 
 /** Serialisable snapshot sent over IPC (claude-session:get / getAll / update). */

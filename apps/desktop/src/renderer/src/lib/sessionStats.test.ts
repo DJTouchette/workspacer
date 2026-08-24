@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  cacheBreakdown,
   deriveSessionStats,
   fmtTokens,
   fmtWindowLength,
@@ -191,5 +192,59 @@ describe('usageWindows', () => {
 
   it('is empty when no window reported anything', () => {
     expect(usageWindows({})).toEqual([]);
+  });
+});
+
+// ── cacheBreakdown ───────────────────────────────────────────────────────────
+//
+// The same degrade rule usageWindows established: a figure appears only when a
+// provider actually reported it, and a share with a zero denominator is
+// undefined rather than 0%.
+describe('cacheBreakdown', () => {
+  it("reads Claude's itemized transcript split, writes included", () => {
+    const b = cacheBreakdown({
+      usage: usage({ cache: { fresh: 2, write: 23_393, read: 17_589 } }),
+    });
+    expect(b).toMatchObject({ fresh: 2, write: 23_393, read: 17_589, total: 40_984 });
+    expect(b!.hitRatePct).toBeCloseTo((17_589 / 40_984) * 100, 6);
+  });
+
+  it('returns null when the provider reported no cache data at all', () => {
+    // Not a zeroed breakdown: "did not say" and "cached nothing" are different
+    // claims, and only one of them is ours to make.
+    expect(cacheBreakdown({ usage: usage({}) })).toBeNull();
+    expect(cacheBreakdown({ statusLine: { totalInputTokens: 50_000 } })).toBeNull();
+    expect(cacheBreakdown({})).toBeNull();
+    expect(cacheBreakdown(null)).toBeNull();
+  });
+
+  it('derives fresh/read from a Codex status line, and omits writes entirely', () => {
+    // Codex reports a cache-read subset of its input and nothing about writes.
+    // `write` stays undefined so the dialog drops the row rather than claiming
+    // the session wrote nothing to cache.
+    const b = cacheBreakdown({
+      statusLine: { totalInputTokens: 4_402_946, cachedInputTokens: 3_733_376 },
+    });
+    expect(b).toMatchObject({ fresh: 669_570, read: 3_733_376, total: 4_402_946 });
+    expect(b!.write).toBeUndefined();
+    expect(b!.hitRatePct).toBeCloseTo((3_733_376 / 4_402_946) * 100, 6);
+  });
+
+  it('leaves the hit rate undefined when the denominator is zero', () => {
+    // A session that reported cache fields but has counted nothing yet has no
+    // hit rate. 0% would read as a cache that never hit, which is a claim the
+    // numbers do not support.
+    const b = cacheBreakdown({ usage: usage({ cache: { fresh: 0, write: 0, read: 0 } }) });
+    expect(b).toMatchObject({ fresh: 0, write: 0, read: 0, total: 0 });
+    expect(b!.hitRatePct).toBeUndefined();
+  });
+
+  it('prefers the itemized split over the status line when both are present', () => {
+    // Only the transcript split separates writes from reads, so it wins.
+    const b = cacheBreakdown({
+      usage: usage({ cache: { fresh: 10, write: 20, read: 30 } }),
+      statusLine: { totalInputTokens: 999, cachedInputTokens: 111 },
+    });
+    expect(b).toMatchObject({ fresh: 10, write: 20, read: 30, total: 60 });
   });
 });

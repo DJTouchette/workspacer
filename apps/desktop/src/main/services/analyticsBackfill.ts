@@ -9,6 +9,13 @@
  *     Sonnet) — costs were accumulated at write time, so the rows kept the
  *     wrong numbers even after the table was fixed.
  *
+ * v3 (2026-08-24) re-runs it for a third reason of the same shape: cache writes
+ * were priced at a flat 1.25x the input rate, which is the 5-minute-TTL rate,
+ * while these sessions ran on the 1-hour TTL that bills at 2x. Costs are
+ * accumulated at write time here too, so fixing turnCostUSD does nothing for
+ * rows already on disk. The transcripts carry the TTL split per turn, so a
+ * re-derivation prices them correctly.
+ *
  * Recomputes tokens / cost / peak context / per-model split for every Claude
  * session whose transcript still exists, and rewrites session_history +
  * session_model_usage. Sessions whose transcripts Claude Code already cleaned
@@ -29,7 +36,7 @@ import { contextTokensOf, turnCostUSD, type ModelUsageSlice } from './modelUsage
 // matched them, and it left stale session_model_usage slices behind (rows for
 // model keys the recompute no longer produced survived and double-counted in
 // the by-model analytics).
-const BACKFILL_NAME = 'transcript-usage-v2';
+const BACKFILL_NAME = 'transcript-usage-v3';
 
 export interface RecomputedUsage {
   /** Last main-thread model ('' when the transcript never named one). */

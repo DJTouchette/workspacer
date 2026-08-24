@@ -28,7 +28,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::app::AppMsg;
 use crate::bus::BusClient;
-use crate::types::{Agent, AgentMode, Pending, Question, Usage};
+use crate::types::{Agent, AgentMode, CacheSplit, Pending, Question, Usage};
 
 // ── the per-hub session store ───────────────────────────────────────────────
 
@@ -223,6 +223,15 @@ pub fn agent_from_snapshot(hub: &str, row: &Value) -> Option<Agent> {
         context_tokens: u.get("contextTokens").and_then(Value::as_u64).unwrap_or(0),
         context_limit: u.get("contextLimit").and_then(Value::as_u64).unwrap_or(0),
         cost_usd: u.get("costUSD").and_then(Value::as_f64).unwrap_or(0.0),
+        // The hub passes the prompt-cache split through under its own key with
+        // its sub-keys unchanged, so it maps straight across. Absent stays
+        // absent: a remote peer that reported no cache data must not arrive
+        // looking like one whose cache never hit.
+        cache: u.get("cache").filter(|v| !v.is_null()).map(|c| CacheSplit {
+            fresh: c.get("fresh").and_then(Value::as_u64).unwrap_or(0),
+            write: c.get("write").and_then(Value::as_u64).unwrap_or(0),
+            read: c.get("read").and_then(Value::as_u64).unwrap_or(0),
+        }),
     });
 
     Some(Agent {

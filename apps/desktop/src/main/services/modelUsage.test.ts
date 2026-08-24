@@ -8,6 +8,7 @@ import {
   contextLimitFor,
   requestedWindowFor,
   turnCostUSD,
+  cacheSplitOf,
   emptyUsage,
   type RawUsage,
   type SessionUsage,
@@ -175,7 +176,14 @@ describe('contextLimitFor — hints', () => {
 // ---------------------------------------------------------------------------
 describe('turnCostUSD', () => {
   // Helper: turn 1M tokens into a cost to verify the formula
-  // USD = (input * r.input + cacheWrite * r.input*1.25 + cacheRead * r.input*0.1 + output * r.output) / 1_000_000
+  //   USD = (input * r.input
+  //          + cacheWrite priced per TTL (1.25× at 5m, 2× at 1h)
+  //          + cacheRead * r.input*0.1
+  //          + output * r.output) / 1_000_000
+  //
+  // A `cache_creation_input_tokens` count with no `cache_creation` block cannot
+  // say which lifetime it bought, and takes the documented 1-hour fallback, so
+  // the cases below that pass writes alone are fallback cases, not 5m cases.
 
   describe('claude-opus rates (input=5, output=25)', () => {
     const model = 'claude-opus-4-8';
@@ -190,10 +198,10 @@ describe('turnCostUSD', () => {
       expect(cost).toBeCloseTo(25, 6);
     });
 
-    it('cache-write tokens cost 1.25× input rate', () => {
-      // 1M cache-write tokens at opus: 5 * 1.25 = 6.25
+    it('cache-write tokens with no TTL split fall back to the 1-hour rate', () => {
+      // 1M cache-write tokens at opus: 5 * 2 = 10
       const cost = turnCostUSD(model, { cache_creation_input_tokens: 1_000_000 });
-      expect(cost).toBeCloseTo(6.25, 6);
+      expect(cost).toBeCloseTo(10, 6);
     });
 
     it('cache-read tokens cost 0.1× input rate', () => {
@@ -209,10 +217,11 @@ describe('turnCostUSD', () => {
         cache_creation_input_tokens: 300,
         cache_read_input_tokens: 400,
       };
-      // (100*5 + 300*6.25 + 400*0.5 + 200*25) / 1_000_000
-      // = (500 + 1875 + 200 + 5000) / 1_000_000
-      // = 7575 / 1_000_000
-      const expected = 7_575 / 1_000_000;
+      // The writes carry no TTL split, so they take the 1-hour fallback ($10/M).
+      // (100*5 + 300*10 + 400*0.5 + 200*25) / 1_000_000
+      // = (500 + 3000 + 200 + 5000) / 1_000_000
+      // = 8700 / 1_000_000
+      const expected = 8_700 / 1_000_000;
       expect(turnCostUSD(model, usage)).toBeCloseTo(expected, 10);
     });
   });
@@ -285,8 +294,8 @@ describe('turnCostUSD', () => {
       expect(turnCostUSD(model, { output_tokens: 1_000_000 })).toBeCloseTo(15, 6);
     });
 
-    it('cache-write tokens cost 1.25× sonnet input rate (3.75)', () => {
-      expect(turnCostUSD(model, { cache_creation_input_tokens: 1_000_000 })).toBeCloseTo(3.75, 6);
+    it('cache-write tokens with no TTL split fall back to 2× sonnet input (6)', () => {
+      expect(turnCostUSD(model, { cache_creation_input_tokens: 1_000_000 })).toBeCloseTo(6, 6);
     });
 
     it('cache-read tokens cost 0.1× sonnet input rate (0.3)', () => {
@@ -305,8 +314,8 @@ describe('turnCostUSD', () => {
       expect(turnCostUSD(model, { output_tokens: 1_000_000 })).toBeCloseTo(5, 6);
     });
 
-    it('cache-write tokens cost 1.25× haiku input rate (1.25)', () => {
-      expect(turnCostUSD(model, { cache_creation_input_tokens: 1_000_000 })).toBeCloseTo(1.25, 6);
+    it('cache-write tokens with no TTL split fall back to 2× haiku input (2)', () => {
+      expect(turnCostUSD(model, { cache_creation_input_tokens: 1_000_000 })).toBeCloseTo(2, 6);
     });
 
     it('cache-read tokens cost 0.1× haiku input rate (0.1)', () => {
@@ -356,6 +365,94 @@ describe('turnCostUSD', () => {
 
 // ---------------------------------------------------------------------------
 // emptyUsage — shape and zero values
+// ---------------------------------------------------------------------------
+// cache-write TTL multipliers
+// ---------------------------------------------------------------------------
+//
+// A cache write costs a multiple of the input rate, and the multiple depends on
+// how long the write is kept alive. Both costing engines hardcoded 1.25 (the
+// 5-minute rate) until 2026-08-24 while this project's sessions ran on the
+// 1-hour TTL, which bills at 2x, so the write component of every displayed
+// cost was understated. `usage.cache_creation` has carried the answer all along.
+describe('turnCostUSD cache-write TTL multipliers', () => {
+  const opus = 'claude-opus-4-8'; // input $5/M
+
+  it('prices a 1-hour write at 2× the input rate', () => {
+    // THE BUG: this returned $6.25 while the account was billed $10.
+    const cost = turnCostUSD(opus, {
+      cache_creation_input_tokens: 1_000_000,
+      cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 1_000_000 },
+    });
+    expect(cost).toBeCloseTo(10, 6);
+  });
+
+  it('prices a 5-minute write at 1.25× the input rate', () => {
+    const cost = turnCostUSD(opus, {
+      cache_creation_input_tokens: 1_000_000,
+      cache_creation: { ephemeral_5m_input_tokens: 1_000_000, ephemeral_1h_input_tokens: 0 },
+    });
+    expect(cost).toBeCloseTo(6.25, 6);
+  });
+
+  it('prices each portion of a mixed-TTL turn at its own rate', () => {
+    // 400k at $6.25/M + 600k at $10/M. No single blended multiplier gets here.
+    const cost = turnCostUSD(opus, {
+      cache_creation_input_tokens: 1_000_000,
+      cache_creation: { ephemeral_5m_input_tokens: 400_000, ephemeral_1h_input_tokens: 600_000 },
+    });
+    expect(cost).toBeCloseTo(8.5, 6);
+  });
+
+  it('falls back to the 1-hour rate when a turn reports writes but no TTL split', () => {
+    // The cheaper rate is exactly the bug being fixed, so the fallback is the
+    // dearer one: a cost that reads lower than the bill is the worse failure.
+    expect(turnCostUSD(opus, { cache_creation_input_tokens: 1_000_000 })).toBeCloseTo(10, 6);
+  });
+
+  it('takes the same fallback for writes the TTL split does not account for', () => {
+    // 250k at $6.25/M + 250k at $10/M + the unattributed 500k at $10/M.
+    const cost = turnCostUSD(opus, {
+      cache_creation_input_tokens: 1_000_000,
+      cache_creation: { ephemeral_5m_input_tokens: 250_000, ephemeral_1h_input_tokens: 250_000 },
+    });
+    expect(cost).toBeCloseTo(9.0625, 6);
+  });
+
+  it('leaves the cache-read multiplier at 0.1× input', () => {
+    expect(turnCostUSD(opus, { cache_read_input_tokens: 1_000_000 })).toBeCloseTo(0.5, 6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cacheSplitOf
+// ---------------------------------------------------------------------------
+describe('cacheSplitOf', () => {
+  it('splits a turn that reports cache fields', () => {
+    expect(
+      cacheSplitOf({
+        input_tokens: 2,
+        cache_creation_input_tokens: 23_393,
+        cache_read_input_tokens: 17_589,
+      }),
+    ).toEqual({ fresh: 2, write: 23_393, read: 17_589 });
+  });
+
+  it('returns null for a turn that reports no cache fields at all', () => {
+    // Null, not three zeros: a provider that itemizes nothing must not read as
+    // one whose cache never hit.
+    expect(cacheSplitOf({ input_tokens: 100, output_tokens: 20 })).toBeNull();
+    expect(cacheSplitOf({})).toBeNull();
+  });
+
+  it('treats a reported zero as reported', () => {
+    expect(cacheSplitOf({ input_tokens: 100, cache_read_input_tokens: 0 })).toEqual({
+      fresh: 100,
+      write: 0,
+      read: 0,
+    });
+  });
+});
+
 // ---------------------------------------------------------------------------
 describe('emptyUsage', () => {
   it('returns an object with the correct shape', () => {

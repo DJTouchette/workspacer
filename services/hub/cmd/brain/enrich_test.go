@@ -194,3 +194,87 @@ func mustJSONBytes(t *testing.T, v any) []byte {
 	}
 	return b
 }
+
+// The prompt-cache split has to survive the camelCase projection, or the
+// desktop shows it and every hub client (mobile /m, web /app, wks-tui) does
+// not. That is the exact silent starvation this projection produced before with
+// statusLine. It is passed through whole because claudemon already names its
+// sub-keys the way the desktop reads them.
+func TestCompatSnapshotCarriesTheCacheSplit(t *testing.T) {
+	row := mustJSONBytes(t, map[string]any{
+		"session_id": "s1",
+		"usage": map[string]any{
+			"model":          "claude-opus-5",
+			"context_tokens": 40984,
+			"context_limit":  200000,
+			"cost_usd":       1.5,
+			"cache":          map[string]any{"fresh": 2, "write": 23393, "read": 17589},
+		},
+	})
+
+	var m map[string]any
+	if err := json.Unmarshal(compatSnapshot(row), &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	u, ok := m["usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("no usage in %v", m)
+	}
+	c, ok := u["cache"].(map[string]any)
+	if !ok {
+		t.Fatalf("cache split dropped from the projection: %#v", u)
+	}
+	for key, want := range map[string]float64{"fresh": 2, "write": 23393, "read": 17589} {
+		if got, _ := c[key].(float64); got != want {
+			t.Errorf("cache.%s = %v, want %v", key, c[key], want)
+		}
+	}
+	// The camelCase counters still land alongside it.
+	if got, _ := u["contextTokens"].(float64); got != 40984 {
+		t.Errorf("contextTokens = %v", u["contextTokens"])
+	}
+}
+
+// A session whose provider reported no cache data must not arrive carrying a
+// null `cache` key: "did not say" and "cached nothing" are different claims,
+// and a present-but-null key invites a client to render the second.
+func TestCompatSnapshotOmitsAnUnreportedCacheSplit(t *testing.T) {
+	row := mustJSONBytes(t, map[string]any{
+		"session_id": "s1",
+		"usage":      map[string]any{"model": "gpt-5-codex", "context_tokens": 10},
+	})
+
+	var m map[string]any
+	if err := json.Unmarshal(compatSnapshot(row), &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	u, _ := m["usage"].(map[string]any)
+	if _, present := u["cache"]; present {
+		t.Errorf("usage.cache present for a session that reported none: %#v", u)
+	}
+}
+
+// The Codex half of the same journey: the cache-read subset claudemon already
+// used to discount the cost estimate now has to reach a client too.
+func TestCompatSnapshotCarriesCachedInputTokens(t *testing.T) {
+	row := mustJSONBytes(t, map[string]any{
+		"session_id": "s1",
+		"status_line": map[string]any{
+			"model_display":       "gpt-5-codex",
+			"total_input_tokens":  4402946,
+			"cached_input_tokens": 3733376,
+		},
+	})
+
+	var m map[string]any
+	if err := json.Unmarshal(compatSnapshot(row), &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	sl, ok := m["statusLine"].(map[string]any)
+	if !ok {
+		t.Fatalf("no statusLine in %v", m)
+	}
+	if got, _ := sl["cachedInputTokens"].(float64); got != 3733376 {
+		t.Errorf("cachedInputTokens = %v, want 3733376", sl["cachedInputTokens"])
+	}
+}

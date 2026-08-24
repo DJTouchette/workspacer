@@ -16,11 +16,38 @@ import os from 'os';
 import path from 'path';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 
+/** The TTL split Claude reports alongside `cache_creation_input_tokens`.
+ *  Each cache write is tagged with the lifetime it was written for, and the
+ *  two lifetimes bill at different multiples of the base input rate. */
+export interface RawCacheCreation {
+  ephemeral_5m_input_tokens?: number;
+  ephemeral_1h_input_tokens?: number;
+}
+
 export interface RawUsage {
   input_tokens?: number;
   output_tokens?: number;
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;
+  /** Per-TTL breakdown of `cache_creation_input_tokens`. Present on every
+   *  modern Claude transcript turn that wrote to cache; absent on older ones
+   *  and on providers that do not itemize writes. */
+  cache_creation?: RawCacheCreation;
+}
+
+/** How a session's cumulative prompt tokens divided between fresh input, cache
+ *  writes and cache reads.
+ *
+ *  Present only once a provider has actually reported cache fields. Absence
+ *  means "not reported", never "zero". A provider that itemizes nothing must
+ *  not be drawn as one that cached nothing. */
+export interface CacheTokenSplit {
+  /** Prompt tokens processed fresh, at the full input rate. */
+  fresh: number;
+  /** Prompt tokens written into the cache this session. */
+  write: number;
+  /** Prompt tokens served back from the cache. */
+  read: number;
 }
 
 /** Cumulative tokens/cost attributed to one model within a session. */
@@ -40,10 +67,14 @@ export interface SessionUsage {
   /** Per-model split of the cumulative figures — main thread and subagent
    *  (sidechain) turns alike, keyed by concrete model id. */
   models: Record<string, ModelUsageSlice>;
+  /** Fresh / cache-write / cache-read split of `totalInputTokens`, cumulative.
+   *  Undefined until a turn arrives carrying cache fields. */
+  cache?: CacheTokenSplit;
 }
 
 interface ModelRates {
-  /** USD per million input tokens. cache-write = 1.25×, cache-read = 0.1×. */
+  /** USD per million input tokens. Cache writes bill at a multiple of this
+   *  (see CACHE_WRITE_5M/1H_MULTIPLIER), cache reads at 0.1×. */
   input: number;
   output: number;
   /** USD per million cache-read tokens. Undefined ⇒ 0.1× input (the built-in
@@ -264,19 +295,91 @@ export function contextLimitFor(
   return base;
 }
 
-/** USD cost of a single turn. Cache writes cost 1.25× input, reads 0.1×. */
+// ── Cache multipliers ────────────────────────────────────────────────
+//
+// A cache write costs more than fresh input because the write is kept alive for
+// a chosen lifetime, and the price scales with that lifetime: 1.25× the base
+// input rate at the 5-minute TTL, 2× at the 1-hour TTL. Reads cost 0.1×.
+//
+// These were a single hardcoded 1.25× until 2026-08-24, which is the 5-minute
+// rate. Workspacer's own sessions are almost entirely 1-hour, so every displayed
+// cost charged 1.25× for writes the account was billed 2× for: the real write
+// cost is 1.6× what was shown. The transcript has carried the answer the whole
+// time, in `usage.cache_creation`, which tags each write with its TTL.
+//
+// TWIN: services/claudemon/src/session/usage.rs (turn_cost_usd). The two are
+// pinned to each other by contracts/model-pricing-cases.json's
+// cacheMultiplierCases block. Edit one side and the other's test goes red.
+
+/** Cache writes held for 5 minutes bill at 1.25× the base input rate. */
+export const CACHE_WRITE_5M_MULTIPLIER = 1.25;
+/** Cache writes held for 1 hour bill at 2× the base input rate. */
+export const CACHE_WRITE_1H_MULTIPLIER = 2;
+/** Cache reads bill at 0.1× the base input rate, absent a per-model rate. */
+export const CACHE_READ_MULTIPLIER = 0.1;
+
+/**
+ * A turn's cache-write cost, weighted by the TTL split.
+ *
+ * Returned in the same pre-division units as the rest of {@link turnCostUSD}:
+ * tokens times a USD-per-million rate, divided by a million once at the end. A
+ * turn holding both lifetimes pays each portion at its own rate rather than one
+ * blended guess.
+ *
+ * THE NO-SPLIT FALLBACK, stated rather than assumed: when a turn reports writes
+ * but no `cache_creation` block, we cannot tell which lifetime was bought, and
+ * we price the whole amount at the 1-hour rate. Defaulting to the cheaper 5m
+ * rate is the exact bug this function exists to fix. It reads as a lower bill
+ * than the account will see, and a cost readout that is too low is worse than
+ * one that is too high. The same rule covers writes the split does not account
+ * for (`cache_creation_input_tokens` larger than the two TTL fields sum to).
+ */
+export function cacheWriteCostUSD(inputRate: number, usage: RawUsage): number {
+  const total = usage.cache_creation_input_tokens ?? 0;
+  const m5 = usage.cache_creation?.ephemeral_5m_input_tokens;
+  const m1h = usage.cache_creation?.ephemeral_1h_input_tokens;
+  const rate5m = inputRate * CACHE_WRITE_5M_MULTIPLIER;
+  const rate1h = inputRate * CACHE_WRITE_1H_MULTIPLIER;
+  if (m5 === undefined && m1h === undefined) return total * rate1h;
+  const split = (m5 ?? 0) + (m1h ?? 0);
+  const unattributed = Math.max(0, total - split);
+  return (m5 ?? 0) * rate5m + (m1h ?? 0) * rate1h + unattributed * rate1h;
+}
+
+/** USD cost of a single turn. Cache writes bill per TTL (see
+ *  {@link cacheWriteCostUSD}), reads at 0.1× input. */
 export function turnCostUSD(model: string | null | undefined, usage: RawUsage): number {
   const r = ratesFor(model);
-  const cacheWrite = r.input * 1.25;
   // Cache reads default to 0.1× input, but a user override (cached_input) wins —
   // matching the Rust engine's `cached_input.unwrap_or(input * 0.1)`.
-  const cacheRead = typeof r.cachedInput === 'number' ? r.cachedInput : r.input * 0.1;
+  const cacheRead =
+    typeof r.cachedInput === 'number' ? r.cachedInput : r.input * CACHE_READ_MULTIPLIER;
   const dollars =
     (usage.input_tokens ?? 0) * r.input +
-    (usage.cache_creation_input_tokens ?? 0) * cacheWrite +
+    cacheWriteCostUSD(r.input, usage) +
     (usage.cache_read_input_tokens ?? 0) * cacheRead +
     (usage.output_tokens ?? 0) * r.output;
   return dollars / 1_000_000;
+}
+
+/**
+ * The fresh / cache-write / cache-read split of one turn's prompt, or null when
+ * the provider reported no cache fields at all.
+ *
+ * Null is the honest answer for a turn that says nothing about caching: folding
+ * it in as three zeros would make a provider that does not itemize look like one
+ * that cached nothing, and every surface downstream would draw a 0% hit rate it
+ * has no basis for.
+ */
+export function cacheSplitOf(usage: RawUsage): CacheTokenSplit | null {
+  const write = usage.cache_creation_input_tokens;
+  const read = usage.cache_read_input_tokens;
+  if (write === undefined && read === undefined && usage.cache_creation === undefined) return null;
+  return {
+    fresh: usage.input_tokens ?? 0,
+    write: write ?? 0,
+    read: read ?? 0,
+  };
 }
 
 export function emptyUsage(): SessionUsage {

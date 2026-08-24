@@ -80,6 +80,9 @@ export async function startClaudemonStatusLineBridge(): Promise<void> {
           contextWindowSize: sl.context_window_size,
           totalInputTokens: sl.total_input_tokens,
           totalOutputTokens: sl.total_output_tokens,
+          // Cache-read subset of the input, when the provider reports one
+          // (Codex does; Claude's statusLine carries no cache figures).
+          cachedInputTokens: sl.cached_input_tokens,
           costUSD: sl.cost_usd,
           fiveHourPct: sl.five_hour_pct,
           fiveHourResetsAt: sl.five_hour_resets_at,

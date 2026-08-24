@@ -212,6 +212,10 @@ export interface SessionStatusLine {
   contextWindowSize?: number;
   totalInputTokens?: number;
   totalOutputTokens?: number;
+  /** Cache-read subset of `totalInputTokens`, when the provider reports one.
+   *  Codex does; Claude's statusLine carries no cache figures at all, and there
+   *  the itemized transcript split (`SessionUsage.cache`) is the source. */
+  cachedInputTokens?: number;
   costUSD?: number;
   fiveHourPct?: number;
   fiveHourResetsAt?: number;
