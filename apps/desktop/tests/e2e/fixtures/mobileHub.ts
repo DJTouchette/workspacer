@@ -651,3 +651,27 @@ export const WORKING_FINISHED = {
   activeToolCalls: [],
   lastActivity: Date.now(),
 };
+
+/** A working agent under its own session id, for the stall-detection tests —
+ *  distinct from WORKING/ws1 so pushing it doesn't disturb the pristine fleet
+ *  those other tests assert against. `receivedAtMs` models the status line's
+ *  own tick, independent of the rest of the fingerprint: a test drives time
+ *  forward with page.clock and either keeps this fresh (the process is alive,
+ *  just not producing observable progress — "Not moving") or lets it go stale
+ *  (the process itself has stopped talking to us — "No signal"). Omit it to
+ *  model a session with no status line at all — every field it feeds the
+ *  fingerprint (conversation, tool calls, usage) stays frozen either way. */
+export function stallSnapshot(receivedAtMs?: number) {
+  return {
+    ...WORKING,
+    sessionId: 'stall1',
+    cwd: '/home/djtouchette/Work/worky/stall-repo',
+    ptyId: 'pty-stall',
+    workflows: [],
+    subagents: [],
+    statusLine: {
+      ...WORKING.statusLine,
+      receivedAt: receivedAtMs === undefined ? undefined : new Date(receivedAtMs).toISOString(),
+    },
+  };
+}
