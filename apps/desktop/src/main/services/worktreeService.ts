@@ -116,9 +116,11 @@ export async function worktreeInfo(cwd: string): Promise<WorktreeInfo> {
 
 /**
  * Relative paths (posix-joined with path.join, so platform separators) of
- * `node_modules` directories in `srcRoot` whose parent sits at depth ≤ 2
- * (`node_modules`, `<a>/node_modules`, `<a>/<b>/node_modules`). Never descends
- * into `node_modules` itself or dot-directories. Never throws.
+ * `node_modules` directories anywhere under `srcRoot`, at any depth (e.g. this
+ * repo's own `apps/desktop/src/renderer/node_modules`, 4 levels down — an
+ * earlier depth-≤2 cap missed it and left it to be hand-symlinked). Never
+ * descends into a `node_modules` directory itself (so a nested dependency's
+ * own `node_modules` is never walked) or into dot-directories. Never throws.
  */
 export async function discoverNodeModules(srcRoot: string): Promise<string[]> {
   const subdirs = async (dir: string): Promise<string[]> => {
@@ -131,11 +133,14 @@ export async function discoverNodeModules(srcRoot: string): Promise<string[]> {
       return [];
     }
   };
-  const parents: string[] = [''];
-  for (const a of await subdirs(srcRoot)) {
-    parents.push(a);
-    for (const b of await subdirs(path.join(srcRoot, a))) parents.push(path.join(a, b));
-  }
+  const parents: string[] = [];
+  const walk = async (rel: string): Promise<void> => {
+    parents.push(rel);
+    for (const name of await subdirs(path.join(srcRoot, rel))) {
+      await walk(rel ? path.join(rel, name) : name);
+    }
+  };
+  await walk('');
   const found: string[] = [];
   for (const parent of parents) {
     const rel = path.join(parent, 'node_modules');
@@ -150,7 +155,7 @@ export async function discoverNodeModules(srcRoot: string): Promise<string[]> {
 }
 
 /**
- * Best-effort: symlink the source checkout's node_modules dirs (depth ≤ 2)
+ * Best-effort: symlink the source checkout's node_modules dirs (any depth)
  * into a fresh worktree so agents come up with dependencies installed instead
  * of an `npm install`-less tree. Fail-safe on tree cleanliness: a link is kept
  * only if git ignores it IN THE WORKTREE — an untracked entry would both dirty

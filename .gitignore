@@ -47,9 +47,3 @@ apps/desktop/test-results/
 .recon/
 .rivet/embeddings/
 .rivet/recon/
-
-# Stray nested .rivet/ (rivet was run once with cwd set here by mistake) —
-# not the project's real context root; left in place, untracked, for a human
-# to fold into /.rivet/learnings or delete. See CLAUDE.md's .rivet/ for the
-# real tracked context.
-apps/desktop/src/renderer/.rivet/

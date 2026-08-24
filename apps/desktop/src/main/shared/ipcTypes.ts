@@ -397,6 +397,71 @@ export interface InAppNotification {
   silent?: boolean;
 }
 
+/**
+ * How one project should read at a glance. `favicon` wins when it loads, `icon`
+ * (an emoji or one or two letters) is next, and initials derived from the name
+ * are the floor — so there is always something to draw. The single definition
+ * for `config.projects.<dir>`: configService's `Config.projects` and the
+ * renderer's `Config.projects` (useConfig.ts) both import this type instead of
+ * declaring their own, so a field added on one side can't silently miss the
+ * other.
+ */
+export interface ProjectIdentity {
+  /** Display name. Defaults to the directory's basename. */
+  label?: string;
+  /** Badge tint (any CSS color). Derived from the path when unset. */
+  color?: string;
+  /** An emoji, or one or two letters. */
+  icon?: string;
+  /** http(s) URL of a real icon to fetch and cache. */
+  favicon?: string;
+  /**
+   * The DOWNLOADED icon's filename under `<configDir>/project-icons/`, served
+   * to the renderer as `workspacer-icon://<iconFile>`. This is what actually
+   * renders; `favicon` is kept as the source it came from, so the field can
+   * show what you pasted and the icon can be re-fetched.
+   */
+  iconFile?: string;
+  /** Pinned by the user. Absent falls back to the legacy `directories.favourites`. */
+  favourite?: boolean;
+  /**
+   * How the Fleet Manager lands work in this project (the standing per-project
+   * delivery policy it reads at dispatch and bakes into each worker's brief):
+   *   'pr'    — open a pull request for review (default, safest).
+   *   'local' — land changes on a branch / local merge after your approval; no PR.
+   * Absent = 'pr'. Advisory to the manager, not a hard gate.
+   */
+  delivery?: 'pr' | 'local';
+  /**
+   * Per-project full-access: workers the Fleet Manager dispatches INTO this
+   * project run with permissions bypassed. The narrower, per-repo form of
+   * agents.fleetFullAccess: when ANY project sets it, the manager's session
+   * token needs the hub-verified yolo grant (services/fullAccessGrants), and
+   * the manager bypasses only for the flagged project (doctrine-enforced).
+   */
+  yolo?: boolean;
+  /** Epoch ms this project was last opened. Absent falls back to the legacy
+   *  `directories.recent` ordering. */
+  lastOpened?: number;
+  /**
+   * Shell commands run (in order) in a fresh agent worktree of this project,
+   * right after `git worktree add` + the automatic node_modules linking.
+   * Each runs with cwd = the worktree root, `$SOURCE` (the source checkout)
+   * and `$WORKTREE` (the new worktree) substituted and exported, under a
+   * 5-minute per-command timeout. `script:<name>` references this project's
+   * `scripts` entry by name. The first failure stops the rest; a failed setup
+   * is surfaced as a warning, never a refused spawn (worktreeService).
+   */
+  worktreeSetup?: string[];
+  /**
+   * Per-project settings belonging to plugins, namespaced by plugin id. Only
+   * NON-SECRET values live here: config.yaml is credential-free by design, and
+   * `config.get` is an unguarded bus capability on exactly that basis (see its
+   * entry in capspec.go). A plugin's tokens stay in its own `.settings.json`.
+   */
+  plugins?: Record<string, Record<string, unknown>>;
+}
+
 export interface AppConfig {
   ui: {
     animations: boolean;
@@ -484,26 +549,14 @@ export interface AppConfig {
   };
   scripts: Record<string, Array<{ name: string; command: string }>>;
   /** Per-directory project identity and state, keyed by normalized cwd exactly
-   *  as `scripts` is. Declared here because this file is the main↔renderer
-   *  contract and is kept in sync BY HAND — a field that lives only in
-   *  configService's own `Config` is invisible to every consumer of AppConfig
-   *  (the web backend included), which is the drift this type exists to prevent. */
-  projects: Record<
-    string,
-    {
-      label?: string;
-      color?: string;
-      icon?: string;
-      favicon?: string;
-      iconFile?: string;
-      favourite?: boolean;
-      lastOpened?: number;
-      /** Setup commands run in a fresh agent worktree of this project (see
-       *  configService.ProjectIdentity.worktreeSetup for full semantics). */
-      worktreeSetup?: string[];
-      plugins?: Record<string, Record<string, unknown>>;
-    }
-  >;
+   *  as `scripts` is. `ProjectIdentity` is declared here because this file is
+   *  the main↔renderer contract — a field that lived only in configService's
+   *  own copy (or only in the renderer's) was invisible to the other side
+   *  (the web backend included), which is the drift this shared type exists
+   *  to prevent. Both configService's `Config.projects` and the renderer's
+   *  `Config.projects` (useConfig.ts) import THIS type rather than declaring
+   *  their own. */
+  projects: Record<string, ProjectIdentity>;
   apps: Array<{ name: string; url: string; icon?: string }>;
   agents?: {
     defaultProvider?: string;
