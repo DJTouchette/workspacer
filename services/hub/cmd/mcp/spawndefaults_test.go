@@ -173,3 +173,53 @@ func TestSpawnAgentExplicitFalseBeatsTheConfigDefault(t *testing.T) {
 		t.Fatalf("explicit false must beat the config default, got present=%v value=%v", present, v)
 	}
 }
+
+// Omitted-model default resolution. A dispatch that names no model must
+// resolve to the workspacer config default (claude.defaultModel) — the same
+// value the desktop spawn dialog pre-fills — so a worker a Fleet Manager
+// dispatches plainly inherits the SAME model (including a configured `[1m]`
+// 1M-context variant) the manager itself is likely running on. Before this,
+// an omitted model reached the provider as "", `claude` picked its own
+// default with no `--model` flag at all, and a fleet's workers silently ran
+// on a smaller context window than their manager.
+
+// TestSpawnAgentOmittedModelResolvesConfigDefault: the plain case — no model
+// named, config has one — the omitted field must resolve to it.
+func TestSpawnAgentOmittedModelResolvesConfigDefault(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	cs := spawnDefaultsSession(t, ctx, false, map[string]any{"defaultModel": "opus[1m]"})
+	params := spawnEchoParams(t, ctx, cs, map[string]any{"cwd": "/tmp"})
+	if params["model"] != "opus[1m]" {
+		t.Fatalf("omitted model must resolve to the config default %q, got %v", "opus[1m]", params)
+	}
+}
+
+// TestSpawnAgentExplicitModelBeatsTheConfigDefault: a caller that names a
+// model — including one without a `[1m]` marker, e.g. for a deliberately
+// cheaper/smaller worker — always wins over the config default. The default
+// resolution must never overwrite an explicit request.
+func TestSpawnAgentExplicitModelBeatsTheConfigDefault(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	cs := spawnDefaultsSession(t, ctx, false, map[string]any{"defaultModel": "opus[1m]"})
+	params := spawnEchoParams(t, ctx, cs, map[string]any{"cwd": "/tmp", "model": "claude-haiku-4-5"})
+	if params["model"] != "claude-haiku-4-5" {
+		t.Fatalf("explicit model must beat the config default, got %v", params)
+	}
+}
+
+// TestSpawnAgentOmittedModelWithNoConfigDefaultStaysEmpty: no config default
+// set — the omitted field must forward as absent, not manufacture a model id.
+func TestSpawnAgentOmittedModelWithNoConfigDefaultStaysEmpty(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	cs := spawnDefaultsSession(t, ctx, false, map[string]any{})
+	params := spawnEchoParams(t, ctx, cs, map[string]any{"cwd": "/tmp"})
+	if v, present := params["model"]; present && v != "" {
+		t.Fatalf("no config default: omitted model must stay empty, got present=%v value=%v", present, v)
+	}
+}
