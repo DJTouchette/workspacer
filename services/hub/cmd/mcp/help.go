@@ -134,28 +134,88 @@ across a project. Use these to inspect or brief work, not to do the coding
 yourself — spawn an agent in the directory instead.`),
 	"jobs": strings.TrimSpace(`
 Jobs are recurring or one-off tasks the HUB runs unattended: spawn an agent
-with a prompt, run a shell command, or call a capability — on an interval, at a
+with a prompt, run a shell command, or call a capability, on an interval, at a
 daily time, once, or manually. They keep firing with the app closed.
 You can read them (list_jobs, job_history), run or delete an existing one, and
-PROPOSE new ones — you cannot arm one. A proposal is saved disabled with your
-name on it and never runs until the user approves it in Settings → Jobs, so
+PROPOSE new ones. You cannot arm one. A proposal is saved disabled with your
+name on it and never runs until the user approves it in Settings -> Jobs, so
 tell the user it is waiting for review; do not report it as scheduled.
-A spec is {"name","enabled","trigger","action"}:
-- trigger: {"kind":"interval","everyMinutes":60} | {"kind":"daily","at":"09:00",
-  "days":[1,2,3,4,5]} (0=Sunday, omit for every day) | {"kind":"once","once":
-  "<RFC3339>"} | {"kind":"manual"}
-- action: {"kind":"spawn","spawn":{"cwd","prompt","provider","model"}} |
-  {"kind":"shell","shell":{"command","cwd"}} |
-  {"kind":"call","call":{"method","params"}}
-A spawn action may run CONTEXT STEPS first — code whose output is fed to the
-agent, and whose guards can cancel the run so no model is woken:
-  "context":[{"kind":"shell","shell":{"command":"go test ./..."},
+propose_job forces enabled:false and mints a fresh id whatever you send, so do
+not bother setting either and do not tell the user that a value you sent for
+them took effect.
+
+THE SPEC. A job is {"name","enabled","trigger","action"}; leave "id" out or
+blank to create. The hub validates on save and refuses with a message naming
+the problem, so the constraints below are hard, not style.
+- name: required, and blank after trimming counts as missing.
+- trigger, exactly one kind, and there are only these four. There is no event
+  trigger and no bus-topic trigger; do not invent one.
+    {"kind":"interval","everyMinutes":60}   everyMinutes >= 1
+    {"kind":"daily","at":"09:00","days":[1,2,3,4,5]}
+        at is 24-hour HH:MM in the HUB's local time. days are 0=Sunday through
+        6=Saturday, and omitting days means every day.
+    {"kind":"once","once":"2026-09-01T09:00:00Z"}   RFC3339
+    {"kind":"manual"}                       fires only when someone runs it
+- action, exactly one kind:
+    {"kind":"spawn","spawn":{"cwd","prompt","provider","model","effort",
+                             "permissionMode","context"}}
+        cwd and prompt are both REQUIRED and both refused when blank. cwd is
+        an absolute path. provider is claude | codex | opencode | pi; blank
+        model or effort means the provider's default. permissionMode is
+        clamped for jobs whatever you ask for: an unattended agent gets no
+        permission bypass, no pre-approved MCP servers and no account-profile
+        config dir.
+    {"kind":"shell","shell":{"command","cwd"}}
+        command required; runs through /bin/sh -c (cmd /C on Windows). cwd
+        optional.
+    {"kind":"call","call":{"method","params"}}
+        method required. It may NOT start with jobs. (that recurses into this
+        surface) or hub: (that would run the call on another machine; job
+        state is host-local and deliberately does not federate).
+Runs are capped at 15 minutes. A fire that lands while the previous run is
+still going is skipped, never queued. A once job disables itself when it
+fires. A failed run raises a notification carrying the output tail.
+
+CONTEXT STEPS are the part worth reaching for. A spawn action may run up to
+FOUR steps first: code whose output is fed to the agent, and whose guards can
+cancel the run so no model is woken at all.
+  "context":[{"kind":"shell","shell":{"command":"go test ./...","cwd":""},
               "skipIfEmpty":true,"skipUnlessMatch":"FAIL","ignoreExitCode":true}]
-Their output is substituted into the prompt at {{output}} (or {{output.1}},
-{{output.2}}… with several steps). Prefer a guarded spawn over an unguarded
-one: a job that wakes a model nightly to answer "nothing to do" is waste the
-user pays for. Calls may not target jobs.* or hub:<peer>/, and there is a
-maximum of four context steps.`),
+A step is kind shell or call, and a call step obeys the same jobs. / hub: rule
+as a call action. Output is substituted into the prompt at {{output}}, or at
+{{output.1}}, {{output.2}} and so on when several steps run; a prompt naming
+neither gets the outputs appended as fenced blocks rather than dropped. Each
+step's output is capped at 12000 characters and elided in the MIDDLE, so both
+what ran and how it ended survive. The guards:
+  skipIfEmpty      nothing came back, so skip the run. For a call step, {},
+                   [], null and "" all count as nothing.
+  skipUnlessMatch  RE2, compiled when the job is SAVED, so a bad pattern is
+                   refused then rather than silently never matching at 3am.
+  ignoreExitCode   a nonzero exit code is data, not failure (grep finding
+                   nothing, a test runner reporting failures). Only an exit
+                   CODE is forgiven: a timeout or an unstartable command still
+                   fails the run.
+A guarded run records as skipped and, unlike a failure, stays silent. Prefer a
+guarded spawn over an unguarded one: a job that wakes a model nightly to
+answer "nothing to do" is waste the user pays for.
+
+IS THE MACHINE IDLE? The hub answers fleet.quiescence, a read-only signal for
+whether this machine's fleet is genuinely at rest, and the CLI over it is
+"workspacer fleet quiescence" (exit 0 at rest, 1 not at rest, 2 could not ask;
+2 is not a no). It refuses when unsure, so a session that is spawning, a live
+background shell, an open terminal, a pending approval, a job due soon and an
+unreachable federated peer all count as busy. It is what a shell job should
+ask before doing anything that assumes nothing is happening, powering the
+machine down being the obvious one:
+  trigger {"kind":"interval","everyMinutes":5}
+  action  {"kind":"shell","shell":{"command":
+             "workspacer fleet quiescence --quiet && /path/to/their/script.sh"}}
+A shell action does not count as a job due soon, because a shell action is how
+this check gets run and a poller that counted itself would block forever.
+Do not write the shutdown half for the user. work{spacer} powers nothing down
+itself, the script is theirs, and Settings -> Jobs ships this as a template
+that arrives switched off with the script path left blank. Send them there
+rather than proposing a job that runs a script nobody has written.`),
 	"lifecycle": strings.TrimSpace(`
 Stopping a worker is TWO steps, and both are verbs now:
 1. signal({sessionId, signal:"SIGTERM"}) stops the process. (SIGINT just

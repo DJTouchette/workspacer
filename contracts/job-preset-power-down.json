@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "The 'Power down when the fleet is quiet' job, in one place.",
+    "Two copies exist and neither may drift: the documented <pre data-job-example>",
+    "block in landing/docs.html, and the template chip in Settings -> Jobs that",
+    "pre-fills the editor with it. This fixture is what both are pinned to.",
+    "The two deliberate differences between the docs and the shipped preset are",
+    "pinned here too, because they are the safety rule, not an oversight:",
+    "the preset is DISABLED, and where the docs show a plausible script path the",
+    "preset ships an obvious blank. /opt/wks/power-down.sh exists on nobody's",
+    "machine; a preset that installed and armed it would schedule a command that",
+    "fails every five minutes at best, and powers down an unintended machine at",
+    "worst. work{spacer} powers nothing down itself. The script is the user's."
+  ],
+  "docsExampleName": "Power down when the fleet is quiet",
+  "quiescenceCheck": "workspacer fleet quiescence --quiet",
+  "placeholder": "REPLACE-WITH-YOUR-OWN-SHUTDOWN-SCRIPT",
+  "spec": {
+    "name": "Power down when the fleet is quiet",
+    "enabled": false,
+    "trigger": { "kind": "interval", "everyMinutes": 5 },
+    "action": {
+      "kind": "shell",
+      "shell": {
+        "command": "workspacer fleet quiescence --quiet && REPLACE-WITH-YOUR-OWN-SHUTDOWN-SCRIPT"
+      }
+    }
+  }
+}

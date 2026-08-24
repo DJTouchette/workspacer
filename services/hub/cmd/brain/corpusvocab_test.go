@@ -420,9 +420,10 @@ func TestEveryFixtureBlockIsDeclaredAndClosed(t *testing.T) {
 	var tally sweepguard.Tally
 	for name, doc := range fixtures {
 		t.Run(name, func(t *testing.T) {
-			// Two fixtures carry no case blocks at all (a JSON schema, a lock
-			// file); they are declared exempt HERE rather than skipped silently,
-			// so adding cases to one of them fails until it is registered.
+			// A few fixtures carry no case blocks at all (a JSON schema, a lock
+			// file, a single job spec); they are declared exempt HERE rather
+			// than skipped silently, so adding cases to one of them fails until
+			// it is registered.
 			if vocabExempt[name] {
 				if _, ok := doc["vocabulary"]; ok {
 					t.Fatalf("%s is on the no-blocks exemption list but now declares a vocabulary — take it off the list", name)
@@ -449,6 +450,7 @@ var vocabExempt = map[string]bool{
 	"session-schema.json":         true,
 	"config-lock.json":            true,
 	"wholesale-config-paths.json": true,
+	"job-preset-power-down.json":  true,
 }
 
 // contractsFixtureFloor is how many case-carrying fixtures contracts/ holds.
