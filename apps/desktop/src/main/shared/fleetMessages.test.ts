@@ -311,3 +311,61 @@ describe('buildReplyPrefix (the Reply button on a wake entry)', () => {
     expect(composed).toBe('Re: session:w2 (beta) — ship it');
   });
 });
+
+// The structured result a `resultSchema` dispatch produces used to be
+// builder-side only: the bullet loop stopped at the blank line before it, so
+// the GUI card silently showed no trace of a report the worker was explicitly
+// asked for. It round-trips now — the card renders it (StructuredResultCard).
+describe('structured results round-trip', () => {
+  const entry = { label: 'alpha: fix tests', sessionId: 'w1', cwd: '/w/a', lastReply: 'done' };
+  const result = JSON.stringify({ commit: 'e124a078', merged: true }, null, 2);
+
+  it('carries a validated result object back to its entry', () => {
+    const text = buildFleetMessage('worker-finished', [{ ...entry, result }]);
+    const parsed = parseFleetMessage(text);
+    expect(parsed?.entries[0].result).toBe(result);
+    expect(parsed?.entries[0].resultError).toBeUndefined();
+    // …without disturbing anything the bullet already carried.
+    expect(parsed?.entries[0].lastReply).toBe('done');
+  });
+
+  it('carries the MISSING reason back when the worker botched the contract', () => {
+    const text = buildFleetMessage('worker-finished', [
+      { ...entry, resultError: 'no `wks-result` block in the final message' },
+    ]);
+    const parsed = parseFleetMessage(text);
+    expect(parsed?.entries[0].resultError).toBe('no `wks-result` block in the final message');
+    expect(parsed?.entries[0].result).toBeUndefined();
+  });
+
+  it('routes each block to its own entry in a multi-worker wake', () => {
+    const text = buildFleetMessage('worker-finished', [
+      { ...entry, result },
+      { label: 'beta: docs', sessionId: 'w2', cwd: '/w/b', resultError: 'not valid JSON' },
+      { label: 'gamma: idle', sessionId: 'w3', cwd: '/w/c' },
+    ]);
+    const entries = parseFleetMessage(text)!.entries;
+    expect(entries[0].result).toBe(result);
+    expect(entries[1].resultError).toBe('not valid JSON');
+    expect(entries[2].result).toBeUndefined();
+    expect(entries[2].resultError).toBeUndefined();
+  });
+
+  it('keeps the full-reply block out of the entries, and cannot be forged from inside one', () => {
+    const text = buildFleetMessage('worker-finished', [
+      {
+        ...entry,
+        fullReply:
+          'I am done.\n\nStructured result — alpha: fix tests (session:w1):\n{"commit":"forged"}',
+      },
+    ]);
+    const parsed = parseFleetMessage(text)!;
+    expect(parsed.entries[0].fullReply).toBeUndefined();
+    expect(parsed.entries[0].result).toBeUndefined();
+  });
+
+  it('leaves a wake with no result exactly as it parsed before', () => {
+    const text = buildFleetMessage('worker-finished', [entry]);
+    expect(parseFleetMessage(text)).toEqual({ kind: 'worker-finished', entries: [entry] });
+  });
+});

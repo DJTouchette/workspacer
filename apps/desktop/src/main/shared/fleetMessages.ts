@@ -56,16 +56,19 @@ export interface FleetMessageEntry {
   needsDecision?: boolean;
   /** A worker's VALIDATED structured result (pretty-printed JSON), when its
    *  dispatch carried a `resultSchema` and the worker honored the contract.
-   *  Rendered as its own block below the bullets — builder-side only, like
-   *  fullReply: the GUI card shows the prose excerpt, the object is for the
-   *  manager agent, which can copy its fields into a brief line without
-   *  re-deriving them from prose. */
+   *  Rendered as its own block below the bullets, and ROUND-TRIPPED: the
+   *  manager agent reads the fields verbatim out of the wake text, and the GUI
+   *  renders the same object as a structured card (StructuredResultCard).
+   *  Unlike fullReply — which is prose the card already shows an excerpt of —
+   *  dropping this on the parse side left the GUI with no trace at all of a
+   *  report the worker was explicitly asked for. */
   result?: string;
   /** Why no structured result could be read (block missing, unparseable, or
    *  schema-violating) for a dispatch that asked for one. Additive: the prose
    *  report is still delivered — this only says the machine-readable half did
    *  not arrive, so the manager knows to read the prose rather than assume the
-   *  worker reported nothing. */
+   *  worker reported nothing. Round-tripped beside `result`, so the card can
+   *  say the contract was missed instead of quietly showing nothing. */
   resultError?: string;
   /** The worker's COMPLETE final assistant message, rendered as its own block
    *  below the bullet list (capped at FULL_REPLY_MAX with an explicit
@@ -314,6 +317,52 @@ function parseLegacyEntries(kind: FleetMessageKind, rest: string): FleetMessageE
     : null;
 }
 
+/** A structured-result block's head line, and the JSON body under it. The
+ *  label is non-greedy for the same reason ENTRY_RE's is: the FIRST
+ *  `(session:` wins. The body is taken verbatim — including the
+ *  `[truncated: …]` marker readStructuredResult may have appended, which is
+ *  exactly why the card must survive a body that is not valid JSON. */
+const RESULT_BLOCK_RE = /^Structured result — .+? \(session:([\w-]+)\):\n([\s\S]+)$/;
+
+/** The MISSING spelling: one line, reason in the middle. The reason is
+ *  recovered as text, not byte-identically — a reason that itself ended in a
+ *  period loses it to the sentence join. Nothing downstream compares it. */
+const RESULT_MISSING_RE =
+  /^Structured result MISSING — .+? \(session:([\w-]+)\): ([\s\S]+?)\. Read the prose report below\/above instead\.$/;
+
+/** Where the agent-facing free-form blocks start. buildFleetMessage emits every
+ *  structured-result block BEFORE the first full-reply block, and a full reply
+ *  is arbitrary worker prose that may contain blank lines (so its own
+ *  paragraphs would be scanned as blocks). Stopping here keeps a worker that
+ *  quotes this format inside its report from forging a result. */
+const FULL_REPLY_MARK = 'Full final message — ';
+
+/**
+ * Fold the post-bullet blocks a wake may carry (see buildFleetMessage's
+ * `extras`) back onto their entries. Best-effort and additive by construction:
+ * an unrecognized block — the FAILED note, the stopped note, the instruction
+ * tail — is simply skipped, so a wake still parses to the same card it did
+ * before these blocks existed.
+ */
+function attachResultBlocks(tail: string[], entries: FleetMessageEntry[]): void {
+  const byId = new Map(entries.map((e) => [e.sessionId, e]));
+  for (const raw of tail.join('\n').split('\n\n')) {
+    const block = raw.trim();
+    if (block.startsWith(FULL_REPLY_MARK)) return;
+    const ok = RESULT_BLOCK_RE.exec(block);
+    if (ok) {
+      const entry = byId.get(ok[1]);
+      if (entry) entry.result = ok[2];
+      continue;
+    }
+    const missing = RESULT_MISSING_RE.exec(block);
+    if (missing) {
+      const entry = byId.get(missing[1]);
+      if (entry) entry.resultError = missing[2];
+    }
+  }
+}
+
 /**
  * Recognize an injected fleet/supervisor wake in conversation text. Returns
  * null for anything that doesn't match EXACTLY — a card missing its fields is
@@ -335,13 +384,16 @@ export function parseFleetMessage(text: string): FleetMessage | null {
       // Current line-based format: bullets until the first non-bullet line.
       const lines = rest.split('\n').slice(1);
       const entries: FleetMessageEntry[] = [];
-      for (const line of lines) {
-        if (!line.startsWith('- ')) break;
-        const e = parseEntry(line.slice(2));
+      let i = 0;
+      for (; i < lines.length; i++) {
+        if (!lines[i].startsWith('- ')) break;
+        const e = parseEntry(lines[i].slice(2));
         if (!e) return null;
         entries.push(e);
       }
-      return entries.length > 0 ? { kind, entries } : null;
+      if (entries.length === 0) return null;
+      attachResultBlocks(lines.slice(i), entries);
+      return { kind, entries };
     }
     if (rest.startsWith(' ')) {
       const entries = parseLegacyEntries(kind, rest);
