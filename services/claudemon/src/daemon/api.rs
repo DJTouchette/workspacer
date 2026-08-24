@@ -1395,7 +1395,7 @@ async fn status_line_stream(
 mod tests {
     use super::*;
     use crate::session::conversation::ConversationItem;
-    use crate::session::state::PendingWrite;
+    use crate::session::state::{PendingOwner, PendingWrite};
     use crate::session::store::WrapperHandle;
     use crate::session::ModelSwitch;
     use axum::body::Body;
@@ -1944,9 +1944,11 @@ mod tests {
     async fn post_approve_bad_decision_is_400() {
         let state = test_state();
         state.store.register_managed("sess-1", "/tmp/proj", "codex");
-        state
-            .store
-            .set_managed_mode("sess-1", SessionMode::Approval, PendingWrite::Resolve);
+        state.store.set_managed_mode(
+            "sess-1",
+            SessionMode::Approval,
+            PendingWrite::Resolve(PendingOwner::Primary),
+        );
         let req = post_json("/sessions/sess-1/approve", json!({ "decision": "maybe" }));
         let (status, body) = request(state, req).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -1957,9 +1959,11 @@ mod tests {
     async fn post_approve_routes_to_managed_decision_channel() {
         let state = test_state();
         state.store.register_managed("sess-1", "/tmp/proj", "codex");
-        state
-            .store
-            .set_managed_mode("sess-1", SessionMode::Approval, PendingWrite::Resolve);
+        state.store.set_managed_mode(
+            "sess-1",
+            SessionMode::Approval,
+            PendingWrite::Resolve(PendingOwner::Primary),
+        );
         let (tx, mut rx) = mpsc::unbounded_channel::<bool>();
         state.store.register_managed_decision("sess-1", tx);
         let req = post_json("/sessions/sess-1/approve", json!({ "decision": "yes" }));
@@ -2052,9 +2056,11 @@ mod tests {
     async fn post_answer_option_out_of_range_is_400() {
         let state = test_state();
         state.store.register_managed("sess-1", "/tmp/proj", "codex");
-        state
-            .store
-            .set_managed_mode("sess-1", SessionMode::Question, PendingWrite::Resolve);
+        state.store.set_managed_mode(
+            "sess-1",
+            SessionMode::Question,
+            PendingWrite::Resolve(PendingOwner::Primary),
+        );
         let (h, _rx) = wrapper();
         state.store.attach_pty("sess-1", h);
         let req = post_json("/sessions/sess-1/answer", json!({ "option": 10 }));
@@ -2067,9 +2073,11 @@ mod tests {
     async fn post_answer_option_forwards_keystrokes() {
         let state = test_state();
         state.store.register_managed("sess-1", "/tmp/proj", "codex");
-        state
-            .store
-            .set_managed_mode("sess-1", SessionMode::Question, PendingWrite::Resolve);
+        state.store.set_managed_mode(
+            "sess-1",
+            SessionMode::Question,
+            PendingWrite::Resolve(PendingOwner::Primary),
+        );
         let (h, mut rx) = wrapper();
         state.store.attach_pty("sess-1", h);
         let req = post_json("/sessions/sess-1/answer", json!({ "option": 2 }));

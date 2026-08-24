@@ -150,14 +150,46 @@ pub enum Pending {
     },
 }
 
+/// Which feed a pending-slot write speaks for.
+///
+/// The slot holds one card, but a *managed* session can genuinely have two
+/// requests outstanding at once, raised by two independent feeds:
+///
+/// * [`Self::Primary`] — the session's own state machine. For a PTY session
+///   that is the hook feed ([`SessionState::apply`]); for a managed session it
+///   is the driver task (`providers::{codex,opencode,pi,claude_stream}`), which
+///   keeps its own FIFO of parked requests and re-surfaces the next one from
+///   its decision arm. Exactly one of these exists per session.
+/// * [`Self::Ask`] — the `AskUserQuestion` MCP shim (`daemon::mcp_ask`),
+///   registered for codex, opencode and pi because they have no native
+///   structured-question tool. It runs in an axum handler, entirely outside
+///   the driver, and blocks an agent tool call for up to six hours.
+///
+/// Naming the feed is what lets the store keep the *older* request instead of
+/// destroying it: a park displaces, a resolve releases only what it owns.
+/// Before that, `mcp_ask` parked over a driver's approval card and then
+/// cleared the slot when its question was answered — while the driver's FIFO
+/// still held the approval and only re-surfaces it when a decision arrives for
+/// a card the user can no longer see. That is the unresolvable-approval shape,
+/// reached across two feeds rather than within one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingOwner {
+    /// The session's own feed: the hook state machine (PTY) or the managed
+    /// driver task (stream/codex/opencode/pi).
+    Primary,
+    /// The out-of-band `AskUserQuestion` MCP shim, `daemon::mcp_ask`.
+    Ask,
+}
+
 /// What a managed-mode write intends to do with a session's single `pending`
-/// slot.
+/// slot, and which feed it speaks for.
 ///
 /// This is the type form of the invariant that has produced the worst bugs on
-/// this project (see `docs/unresolvable-approval-findings.md`): **exactly one
-/// feed owns a session's pending slot; the others may enrich it but must never
-/// clear it.** Before this existed, `set_managed_mode` took a bare
-/// `Option<Pending>` and every caller re-derived the guard by hand —
+/// this project (see `docs/unresolvable-approval-findings.md`): **a session's
+/// pending slot may only be written by the feed that raised what is on it;
+/// another feed may displace it, but must never destroy it.** Before this
+/// existed, `set_managed_mode` took a bare `Option<Pending>` and every caller
+/// re-derived the guard by hand —
 ///
 /// ```ignore
 /// if cur_mode != SessionMode::Approval && cur_mode != SessionMode::Question {
@@ -171,25 +203,45 @@ pub enum Pending {
 /// `can_use_tool` that lives only inside the driver, so nothing outside could
 /// repair it. The session wedged silently.
 ///
-/// Passing an intent instead of a value moves the guard into
+/// The first pass at this type said "exactly one feed owns the slot" and fenced
+/// only [`Self::Keep`]. That claim was false for codex, opencode and pi, which
+/// carry a second writer — the `AskUserQuestion` MCP shim, `daemon::mcp_ask` —
+/// whose unattributed `Park`/`Resolve` pair could overwrite a driver's approval
+/// card and then clear the slot, reaching the very shape above across two feeds.
+/// So [`Park`](Self::Park) and [`Resolve`](Self::Resolve) now name their
+/// [`PendingOwner`]: not another condition to remember, but a payload the
+/// compiler demands at every call site, old and new.
+///
+/// Passing an intent instead of a value moves the whole guard into
 /// [`SessionStore::set_managed_mode`](crate::session::SessionStore::set_managed_mode),
 /// where it cannot be forgotten: a new call site must say which of the three
-/// things it is doing, and only two of them are allowed to touch the slot.
+/// things it is doing and on whose behalf, and the store — not the caller —
+/// decides what that is allowed to touch.
 #[derive(Debug, Clone)]
 pub enum PendingWrite {
-    /// Park a request for the user (an approval card, a question picker). The
-    /// caller is the slot's owner announcing a new block; always applied.
-    Park(Pending),
-    /// The parked request is over — the user answered it, or a genuine turn
-    /// boundary (a `result` frame, session start/stop) means nothing can still
-    /// be waiting. Clears the slot.
-    Resolve,
+    /// Park a request for the user (an approval card, a question picker) on
+    /// behalf of `owner`. Always applied: the newest block is what the user is
+    /// shown. If the *other* feed's request held the card it is displaced —
+    /// kept, and restored the moment this one is released — so the two feeds
+    /// can block on the user at the same time without either being lost.
+    Park(PendingOwner, Pending),
+    /// `owner`'s parked request is over — the user answered it, or a genuine
+    /// turn boundary (a `result` frame, session start/stop) means nothing that
+    /// feed raised can still be waiting.
+    ///
+    /// Clears only what `owner` owns. A feed that finds the *other* feed's
+    /// request on the card leaves it, and the mode, exactly as it found them
+    /// (dropping only its own displaced request, whose block is over). A feed
+    /// releasing its own card restores the other's displaced request if there
+    /// is one, and otherwise takes the requested mode.
+    Resolve(PendingOwner),
     /// Liveness / enrichment only: a busy ping, a message written to stdin, a
     /// background-task count changing. Such a write says nothing about whether
     /// the user is still blocking the agent, so it is suppressed **entirely**
-    /// while a request is parked — mode included, because reporting
+    /// while any request is parked — mode included, because reporting
     /// `Responding` for a session that is actually waiting on a human is the
-    /// other half of the same bug.
+    /// other half of the same bug. It needs no owner: it may never touch the
+    /// slot, whoever sends it.
     Keep,
 }
 
@@ -507,8 +559,24 @@ pub struct SessionState {
     pub session_id: String,
     pub cwd: Option<String>,
     pub mode: SessionMode,
-    #[serde(skip_deserializing)]
-    pub pending: Option<Pending>,
+    /// What the user is being asked for right now — the single displayed card.
+    ///
+    /// Private on purpose: this is the field whose unattributed writes wedged
+    /// real sessions. Read it with [`SessionState::pending`]; write it only
+    /// through [`SessionState::write_pending`] / [`SessionState::clear_pending`],
+    /// which keep [`Self::pending_owner`] and [`Self::displaced_pending`] in
+    /// step. A feed that cannot name itself cannot touch it.
+    #[serde(skip_deserializing, rename = "pending")]
+    pending_card: Option<Pending>,
+    /// Which feed raised [`Self::pending_card`]; `None` when the slot is empty.
+    /// Bookkeeping for the write funnel, never sent to clients.
+    #[serde(skip)]
+    pending_owner: Option<PendingOwner>,
+    /// The other feed's request, displaced by the one currently on the card,
+    /// with the mode it was parked under. Restored when the card is released.
+    /// At most one, because each feed has at most one request outstanding.
+    #[serde(skip)]
+    displaced_pending: Option<(PendingOwner, Pending, SessionMode)>,
     #[serde(with = "time::serde::rfc3339")]
     pub started_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -608,7 +676,9 @@ impl SessionState {
             session_id,
             cwd,
             mode: SessionMode::Unknown,
-            pending: None,
+            pending_card: None,
+            pending_owner: None,
+            displaced_pending: None,
             started_at: now,
             updated_at: now,
             tool_calls: 0,
@@ -627,6 +697,117 @@ impl SessionState {
             parent_turn_ended: false,
             requested_model: None,
         }
+    }
+
+    /// What the user is being asked for right now, or `None`. The single card
+    /// every client renders — the displayed head of a slot that may have one
+    /// more request from the other feed waiting behind it (see
+    /// [`PendingOwner`]).
+    pub fn pending(&self) -> Option<&Pending> {
+        self.pending_card.as_ref()
+    }
+
+    /// Apply a [`PendingWrite`] to the slot and to `mode`, and report whether
+    /// anything changed (a suppressed write has nothing to broadcast).
+    ///
+    /// **This is the only place the pending slot is ever written.** Every
+    /// rule the slot has lives here rather than at its call sites, which is
+    /// the whole point: the four wedged-session bugs were all a call site
+    /// forgetting a rule it had to restate by hand.
+    ///
+    /// * [`PendingWrite::Keep`] — refused outright while any request is
+    ///   parked, mode included.
+    /// * [`PendingWrite::Park`] — always applied. The other feed's card, if it
+    ///   held the slot, is displaced rather than dropped; this feed's own
+    ///   displaced request is superseded (each feed has one outstanding
+    ///   request at a time — the drivers' FIFOs surface only their head).
+    /// * [`PendingWrite::Resolve`] — releases only what the named feed owns.
+    ///   With the other feed's request on the card, the card and the mode are
+    ///   left untouched and only this feed's displaced request is dropped.
+    ///   Releasing its own card restores the other feed's displaced request,
+    ///   under the mode it was parked with, instead of the requested mode.
+    #[must_use]
+    pub(crate) fn write_pending(&mut self, mode: SessionMode, write: PendingWrite) -> bool {
+        match write {
+            // A parked request is a PAUSE: the agent is blocked on the user,
+            // not working. A liveness write knows nothing about that and must
+            // not speak for it.
+            PendingWrite::Keep
+                if self.mode == SessionMode::Approval || self.mode == SessionMode::Question =>
+            {
+                false
+            }
+            PendingWrite::Keep => {
+                self.mode = mode;
+                self.pending_card = None;
+                self.pending_owner = None;
+                self.displaced_pending = None;
+                true
+            }
+            PendingWrite::Park(owner, pending) => {
+                if let (Some(held), Some(holder)) = (self.pending_card.take(), self.pending_owner) {
+                    if holder != owner {
+                        self.displaced_pending = Some((holder, held, self.mode));
+                    }
+                }
+                // A displaced request is always the OTHER feed's — it is only
+                // ever set from the card this feed just took over — so there
+                // is never one of ours here to supersede.
+                debug_assert!(
+                    self.displaced_pending.as_ref().map(|(o, _, _)| *o) != Some(owner),
+                    "a feed's own request cannot be the displaced one"
+                );
+                self.mode = mode;
+                self.pending_card = Some(pending);
+                self.pending_owner = Some(owner);
+                true
+            }
+            PendingWrite::Resolve(owner) => {
+                if matches!(self.pending_owner, Some(holder) if holder != owner) {
+                    // Someone else's request is on the card. Our own block is
+                    // over, so drop what we had displaced behind it — but the
+                    // card, and the mode that reports it, are not ours to
+                    // touch. Nothing visible changed.
+                    if self.displaced_pending.as_ref().map(|(o, _, _)| *o) == Some(owner) {
+                        self.displaced_pending = None;
+                    }
+                    return false;
+                }
+                self.pending_card = None;
+                self.pending_owner = None;
+                match self.displaced_pending.take() {
+                    // The other feed is still blocked on the user: put its
+                    // request back on the card instead of declaring the
+                    // session free.
+                    Some((holder, pending, parked_mode)) => {
+                        self.mode = parked_mode;
+                        self.pending_card = Some(pending);
+                        self.pending_owner = Some(holder);
+                    }
+                    None => self.mode = mode,
+                }
+                true
+            }
+        }
+    }
+
+    /// Wipe the slot — card, owner and anything displaced — without asking who
+    /// owns what. Only for the paths where the session itself is over or
+    /// starting fresh (session start/end, a resumed row leaving `Stopped`, the
+    /// ghost sweep): every feed's block really is void, so there is nothing to
+    /// preserve for anyone.
+    pub(crate) fn clear_pending(&mut self) {
+        self.pending_card = None;
+        self.pending_owner = None;
+        self.displaced_pending = None;
+    }
+
+    /// Park a request from the session's own feed (hooks, or a driver) — the
+    /// [`PendingOwner::Primary`] spelling of [`PendingWrite::Park`]. Public
+    /// because it is also the only honest way to build a parked fixture: with
+    /// the card private, a caller cannot mint one without naming a feed.
+    pub fn park_pending(&mut self, mode: SessionMode, pending: Pending) {
+        let _ = self.write_pending(mode, PendingWrite::Park(PendingOwner::Primary, pending));
     }
 
     /// The Claude config root serving this session, `""` = the daemon's
@@ -698,14 +879,14 @@ impl SessionState {
         match kind {
             HookEventKind::SessionStart => {
                 self.mode = SessionMode::Input;
-                self.pending = None;
+                self.clear_pending();
                 self.live_subagents = 0;
                 self.background_tasks = 0;
                 self.parent_turn_ended = false;
             }
             HookEventKind::SessionEnd => {
                 self.mode = SessionMode::Stopped;
-                self.pending = None;
+                self.clear_pending();
                 self.live_subagents = 0;
                 self.background_tasks = 0;
                 self.parent_turn_ended = false;
@@ -714,7 +895,7 @@ impl SessionState {
             HookEventKind::UserPromptSubmit => {
                 self.mode = SessionMode::Responding;
                 self.user_prompts = self.user_prompts.saturating_add(1);
-                self.pending = None;
+                self.clear_pending();
                 // A fresh user turn supersedes any prior turn's background work.
                 self.live_subagents = 0;
                 self.background_tasks = 0;
@@ -739,15 +920,14 @@ impl SessionState {
                         .cloned()
                         .and_then(|v| serde_json::from_value::<Vec<PendingQuestion>>(v).ok())
                         .unwrap_or_default();
-                    self.mode = SessionMode::Question;
-                    self.pending = Some(Pending::Question { questions, raw });
+                    self.park_pending(SessionMode::Question, Pending::Question { questions, raw });
                 } else if self.mode != SessionMode::Approval && self.mode != SessionMode::Question {
                     self.mode = SessionMode::Responding;
                 }
             }
             HookEventKind::PostToolUse | HookEventKind::PostToolUseFailure => {
                 self.mode = SessionMode::Responding;
-                self.pending = None;
+                self.clear_pending();
             }
 
             HookEventKind::PermissionRequest => {
@@ -763,8 +943,10 @@ impl SessionState {
                     .and_then(Value::as_str)
                     .map(str::to_owned);
                 let raw = Value::Object(event.payload.clone());
-                self.mode = SessionMode::Approval;
-                self.pending = Some(Pending::Approval { tool, summary, raw });
+                self.park_pending(
+                    SessionMode::Approval,
+                    Pending::Approval { tool, summary, raw },
+                );
             }
 
             HookEventKind::SubagentStart => {
@@ -788,7 +970,7 @@ impl SessionState {
                     // own turn had already ended: the real idle rides in now.
                     self.parent_turn_ended = false;
                     self.mode = SessionMode::Input;
-                    self.pending = None;
+                    self.clear_pending();
                 } else {
                     // Parent still working, or more subagents outstanding.
                     self.mode = SessionMode::Responding;
@@ -806,7 +988,7 @@ impl SessionState {
                     }
                 } else {
                     self.mode = SessionMode::Input;
-                    self.pending = None;
+                    self.clear_pending();
                 }
             }
 
@@ -974,21 +1156,53 @@ mod tests {
     // apply() — characterization tests for every event arm                //
     // ------------------------------------------------------------------ //
 
+    /// The desktop, the web client and `/m` all read `pending` off this
+    /// struct's JSON. Privatising the field and adding the ownership
+    /// bookkeeping beside it must not have moved one byte of that wire shape:
+    /// the card still serialises as `pending`, and the bookkeeping is not
+    /// client state and must not leak.
+    #[test]
+    fn the_pending_card_still_serialises_under_its_own_name_and_nothing_else_does() {
+        let mut state = SessionState::new("s".into(), None);
+        state.park_pending(
+            SessionMode::Approval,
+            Pending::Approval {
+                tool: Some("Bash".into()),
+                summary: Some("ls".into()),
+                raw: Value::Null,
+            },
+        );
+
+        let wire = serde_json::to_value(&state).expect("serialize");
+        assert_eq!(wire["pending"]["kind"], "approval");
+        assert_eq!(wire["pending"]["tool"], "Bash");
+        assert!(
+            wire.get("pending_owner").is_none() && wire.get("displaced_pending").is_none(),
+            "slot bookkeeping must never reach a client: {wire}"
+        );
+        assert!(
+            wire.get("pending_card").is_none(),
+            "the field rename must not have leaked: {wire}"
+        );
+    }
+
     #[test]
     fn apply_user_prompt_submit_sets_responding_clears_pending() {
         let mut state = SessionState::new("s".into(), None);
         // Precondition: put state in Approval to confirm the arm always overrides it.
-        state.mode = SessionMode::Approval;
-        state.pending = Some(Pending::Approval {
-            tool: Some("Bash".into()),
-            summary: None,
-            raw: Value::Null,
-        });
+        state.park_pending(
+            SessionMode::Approval,
+            Pending::Approval {
+                tool: Some("Bash".into()),
+                summary: None,
+                raw: Value::Null,
+            },
+        );
 
         state.apply(&make_event("UserPromptSubmit"));
 
         assert_eq!(state.mode, SessionMode::Responding);
-        assert!(state.pending.is_none());
+        assert!(state.pending().is_none());
         assert_eq!(state.last_event.as_deref(), Some("UserPromptSubmit"));
     }
 
@@ -1011,8 +1225,8 @@ mod tests {
         state.apply(&make_event_with_payload("PreToolUse", payload));
 
         assert_eq!(state.mode, SessionMode::Question);
-        assert!(state.pending.is_some());
-        match state.pending.as_ref().unwrap() {
+        assert!(state.pending().is_some());
+        match state.pending().as_ref().unwrap() {
             Pending::Question { questions, .. } => {
                 assert_eq!(questions.len(), 1);
                 assert_eq!(questions[0].question, "Which approach?");
@@ -1035,7 +1249,7 @@ mod tests {
         state.apply(&make_event_with_payload("PreToolUse", payload));
 
         assert_eq!(state.mode, SessionMode::Question);
-        match state.pending.as_ref().unwrap() {
+        match state.pending().as_ref().unwrap() {
             Pending::Question { questions, .. } => {
                 assert!(questions.is_empty(), "no questions parsed from empty input");
             }
@@ -1052,7 +1266,7 @@ mod tests {
         state.apply(&make_event_with_payload("PreToolUse", payload));
 
         assert_eq!(state.mode, SessionMode::Responding);
-        assert!(state.pending.is_none());
+        assert!(state.pending().is_none());
         assert_eq!(state.tool_calls, 1);
     }
 
@@ -1060,12 +1274,14 @@ mod tests {
     fn apply_pre_tool_use_other_tool_does_not_override_approval() {
         // When mode is Approval, a non-AskUserQuestion PreToolUse must NOT change the mode.
         let mut state = SessionState::new("s".into(), None);
-        state.mode = SessionMode::Approval;
-        state.pending = Some(Pending::Approval {
-            tool: Some("Write".into()),
-            summary: Some("overwrite /etc/passwd".into()),
-            raw: Value::Null,
-        });
+        state.park_pending(
+            SessionMode::Approval,
+            Pending::Approval {
+                tool: Some("Write".into()),
+                summary: Some("overwrite /etc/passwd".into()),
+                raw: Value::Null,
+            },
+        );
 
         let payload = serde_json::json!({ "tool_name": "Read", "tool_input": {"file_path": "/x"} });
         state.apply(&make_event_with_payload("PreToolUse", payload));
@@ -1090,17 +1306,19 @@ mod tests {
     #[test]
     fn apply_post_tool_use_sets_responding_clears_pending() {
         let mut state = SessionState::new("s".into(), None);
-        state.mode = SessionMode::Approval;
-        state.pending = Some(Pending::Approval {
-            tool: Some("Bash".into()),
-            summary: None,
-            raw: Value::Null,
-        });
+        state.park_pending(
+            SessionMode::Approval,
+            Pending::Approval {
+                tool: Some("Bash".into()),
+                summary: None,
+                raw: Value::Null,
+            },
+        );
 
         state.apply(&make_event("PostToolUse"));
 
         assert_eq!(state.mode, SessionMode::Responding);
-        assert!(state.pending.is_none());
+        assert!(state.pending().is_none());
     }
 
     #[test]
@@ -1110,7 +1328,7 @@ mod tests {
         state.apply(&make_event("PostToolUseFailure"));
 
         assert_eq!(state.mode, SessionMode::Responding);
-        assert!(state.pending.is_none());
+        assert!(state.pending().is_none());
     }
 
     #[test]
@@ -1125,7 +1343,7 @@ mod tests {
         state.apply(&make_event_with_payload("PermissionRequest", payload));
 
         assert_eq!(state.mode, SessionMode::Approval);
-        match state.pending.as_ref().unwrap() {
+        match state.pending().as_ref().unwrap() {
             Pending::Approval { tool, summary, raw } => {
                 assert_eq!(tool.as_deref(), Some("Write"));
                 assert_eq!(summary.as_deref(), Some("Overwrite config file"));
@@ -1147,7 +1365,7 @@ mod tests {
         state.apply(&make_event_with_payload("PermissionRequest", payload));
 
         assert_eq!(state.mode, SessionMode::Approval);
-        match state.pending.as_ref().unwrap() {
+        match state.pending().as_ref().unwrap() {
             Pending::Approval { summary, .. } => {
                 assert_eq!(summary.as_deref(), Some("Run dangerous command"));
             }
@@ -1162,7 +1380,7 @@ mod tests {
         state.apply(&make_event_with_payload("PermissionRequest", payload));
 
         assert_eq!(state.mode, SessionMode::Approval);
-        match state.pending.as_ref().unwrap() {
+        match state.pending().as_ref().unwrap() {
             Pending::Approval { tool, .. } => assert!(tool.is_none()),
             other => panic!("expected Pending::Approval, got {:?}", other),
         }
@@ -1226,7 +1444,7 @@ mod tests {
                 "mode for case {:?}",
                 case.name
             );
-            match state.pending.as_ref() {
+            match state.pending().as_ref() {
                 Some(Pending::Approval { tool, summary, raw }) => {
                     assert_eq!(
                         case.claudemon.pending_kind, "approval",
@@ -1363,33 +1581,37 @@ mod tests {
     #[test]
     fn apply_stop_sets_input_clears_pending() {
         let mut state = SessionState::new("s".into(), None);
-        state.mode = SessionMode::Responding;
-        state.pending = Some(Pending::Approval {
-            tool: None,
-            summary: None,
-            raw: Value::Null,
-        });
+        state.park_pending(
+            SessionMode::Responding,
+            Pending::Approval {
+                tool: None,
+                summary: None,
+                raw: Value::Null,
+            },
+        );
 
         state.apply(&make_event("Stop"));
 
         assert_eq!(state.mode, SessionMode::Input);
-        assert!(state.pending.is_none());
+        assert!(state.pending().is_none());
     }
 
     #[test]
     fn apply_session_end_sets_stopped_clears_pending() {
         let mut state = SessionState::new("s".into(), None);
-        state.mode = SessionMode::Responding;
-        state.pending = Some(Pending::Approval {
-            tool: None,
-            summary: None,
-            raw: Value::Null,
-        });
+        state.park_pending(
+            SessionMode::Responding,
+            Pending::Approval {
+                tool: None,
+                summary: None,
+                raw: Value::Null,
+            },
+        );
 
         state.apply(&make_event("SessionEnd"));
 
         assert_eq!(state.mode, SessionMode::Stopped);
-        assert!(state.pending.is_none());
+        assert!(state.pending().is_none());
     }
 
     #[test]

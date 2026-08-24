@@ -36,7 +36,7 @@ use tokio::sync::mpsc;
 
 use super::{apply_updates, note_user_send, set_mode, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::session::conversation::ConversationItem;
-use crate::session::state::{PendingWrite, SessionMode};
+use crate::session::state::{PendingOwner, PendingWrite, SessionMode};
 use crate::session::{ConversationStore, ModelSwitch, SessionStore};
 
 /// List the models Pi can launch with (cached; see [`super::cached_or_fetch`]).
@@ -777,7 +777,11 @@ async fn run_tui_session(
     let tui = super::spawn_attach_pty(store, session_id, &argv, cwd).context("spawning pi TUI")?;
 
     // Ready for input as soon as the TUI is up (mode-gates the GUI composer).
-    store.set_managed_mode(session_id, SessionMode::Input, PendingWrite::Resolve);
+    store.set_managed_mode(
+        session_id,
+        SessionMode::Input,
+        PendingWrite::Resolve(PendingOwner::Primary),
+    );
 
     // Drive the GUI from the session file (background; best-effort).
     {
@@ -1121,7 +1125,7 @@ fn resolve_dialog(
             store,
             session_id,
             SessionMode::Responding,
-            PendingWrite::Resolve,
+            PendingWrite::Resolve(PendingOwner::Primary),
             cur_mode,
         ),
     }
@@ -1666,7 +1670,7 @@ mod tests {
         assert_eq!(pending.len(), 2, "both dialogs must stay parked");
         let state = store.get(sid).expect("session state");
         assert_eq!(state.mode, SessionMode::Approval);
-        match state.pending {
+        match state.pending() {
             Some(Pending::Approval { summary, .. }) => assert_eq!(
                 summary.as_deref(),
                 Some("first"),
@@ -1706,7 +1710,7 @@ mod tests {
         );
         let state = store.get(sid).expect("session state");
         assert_eq!(state.mode, SessionMode::Approval);
-        match state.pending {
+        match state.pending() {
             Some(Pending::Approval { summary, .. }) => {
                 assert_eq!(summary.as_deref(), Some("second"))
             }
@@ -1734,6 +1738,6 @@ mod tests {
         assert_eq!(cur_mode, SessionMode::Responding);
         let state = store.get(sid).expect("session state");
         assert_eq!(state.mode, SessionMode::Responding);
-        assert!(state.pending.is_none());
+        assert!(state.pending().is_none());
     }
 }

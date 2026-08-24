@@ -77,7 +77,7 @@ fn pending_banner_height(app: &App, chat: &ChatState) -> u16 {
     let Some(state) = app.sessions.get(&chat.session_id) else {
         return 0;
     };
-    if state.pending.is_some() {
+    if state.pending().is_some() {
         4
     } else {
         0
@@ -180,7 +180,7 @@ fn draw_pending_banner(frame: &mut Frame, area: Rect, app: &App, chat: &ChatStat
         frame.render_widget(Paragraph::new(""), area);
         return;
     };
-    match &state.pending {
+    match state.pending() {
         Some(Pending::Approval { tool, summary, .. }) => {
             let mut body: Vec<Line> = Vec::new();
             body.push(Line::from(vec![

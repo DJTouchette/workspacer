@@ -13,7 +13,8 @@ pub use conversation::ConversationStore;
 pub use permission_mode::{PermissionMode, PermissionSwitchError};
 #[allow(unused_imports)]
 pub use state::{
-    HookEvent, Pending, PendingWrite, SessionMode, SessionState, StatusLine, Transport,
+    HookEvent, Pending, PendingOwner, PendingWrite, SessionMode, SessionState, StatusLine,
+    Transport,
 };
 pub use store::{
     ManagedAnswer, ManagedPermissionSwitch, MessageOutcome, ModelSwitch, SessionStore,

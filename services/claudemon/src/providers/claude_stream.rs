@@ -37,8 +37,8 @@ use tokio::sync::mpsc;
 use super::{apply_updates, note_user_send, set_mode, AgentUpdate, Facade, UsageAcc};
 use crate::session::conversation::ConversationItem;
 use crate::session::state::{
-    Capabilities, ContextInventory, ContextItem, Pending, PendingQuestion, PendingWrite,
-    SessionMode,
+    Capabilities, ContextInventory, ContextItem, Pending, PendingOwner, PendingQuestion,
+    PendingWrite, SessionMode,
 };
 use crate::session::store::{ManagedAnswer, ManagedPermissionSwitch};
 use crate::session::transcript::{blocks, flatten_tool_result, Block};
@@ -1073,11 +1073,14 @@ fn surface_approval(
         store,
         session_id,
         SessionMode::Approval,
-        PendingWrite::Park(Pending::Approval {
-            tool: parked.tool.clone(),
-            summary: parked.summary.clone(),
-            raw: parked.raw.clone(),
-        }),
+        PendingWrite::Park(
+            PendingOwner::Primary,
+            Pending::Approval {
+                tool: parked.tool.clone(),
+                summary: parked.summary.clone(),
+                raw: parked.raw.clone(),
+            },
+        ),
         cur_mode,
     );
 }
@@ -1322,7 +1325,7 @@ async fn run_session(
                                 store,
                                 &session_id,
                                 SessionMode::Responding,
-                                PendingWrite::Resolve,
+                                PendingWrite::Resolve(PendingOwner::Primary),
                                 &mut cur_mode,
                             ),
                         }
@@ -1348,7 +1351,7 @@ async fn run_session(
                                 store,
                                 &session_id,
                                 SessionMode::Responding,
-                                PendingWrite::Resolve,
+                                PendingWrite::Resolve(PendingOwner::Primary),
                                 &mut cur_mode,
                             ),
                         }
@@ -1564,10 +1567,13 @@ fn handle_line(
                     store,
                     session_id,
                     SessionMode::Question,
-                    PendingWrite::Park(Pending::Question {
-                        questions,
-                        raw: input.clone(),
-                    }),
+                    PendingWrite::Park(
+                        PendingOwner::Primary,
+                        Pending::Question {
+                            questions,
+                            raw: input.clone(),
+                        },
+                    ),
                     cur_mode,
                 );
                 *pending_question = Some(ParkedCanUse {
@@ -2583,9 +2589,9 @@ mod tests {
             "store's displayed mode must stay Question"
         );
         assert!(
-            matches!(state.pending, Some(Pending::Question { .. })),
+            matches!(state.pending(), Some(Pending::Question { .. })),
             "store's pending slot must still hold the Question, got {:?}",
-            state.pending
+            state.pending()
         );
     }
 
@@ -2663,7 +2669,7 @@ mod tests {
                 "a user send must not report work while the CLI is blocked on the user"
             );
             assert!(
-                state.pending.is_some(),
+                state.pending().is_some(),
                 "the pending card must survive — the parked request lives only in this \
                  driver, so without the card nothing can answer it and the session wedges"
             );
@@ -2677,7 +2683,11 @@ mod tests {
         let store = SessionStore::new();
         let sid = "sid-send-idle";
         store.register_managed(sid, "/w", "claude");
-        store.set_managed_mode(sid, SessionMode::Input, PendingWrite::Resolve);
+        store.set_managed_mode(
+            sid,
+            SessionMode::Input,
+            PendingWrite::Resolve(PendingOwner::Primary),
+        );
         let mut cur_mode = SessionMode::Input;
 
         note_user_send(&store, sid, &mut cur_mode);
@@ -2976,7 +2986,7 @@ done
             store.get(sid).map(|s| s.mode)
         );
         assert!(
-            store.get(sid).and_then(|s| s.pending).is_some(),
+            store.get(sid).is_some_and(|s| s.pending().is_some()),
             "a parked approval must carry the card that answers it"
         );
 
@@ -3006,7 +3016,7 @@ done
              `responding` here is the lying-state half of the wedge"
         );
         assert!(
-            blocked.pending.is_some(),
+            blocked.pending().is_some(),
             "the approval card must survive the nudge — it lives only inside this driver, \
              so once it is gone nothing can answer the CLI and the worker wedges silently"
         );
@@ -3022,7 +3032,7 @@ done
             store.get(sid).map(|s| s.mode)
         );
         assert!(
-            store.get(sid).and_then(|s| s.pending).is_none(),
+            store.get(sid).is_some_and(|s| s.pending().is_none()),
             "a finished turn leaves no phantom card"
         );
 

@@ -43,7 +43,7 @@ use tokio_tungstenite::tungstenite::Message;
 use super::{apply_updates, note_user_send, set_mode, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::protocol::Signal;
 use crate::session::conversation::ConversationItem;
-use crate::session::state::{Pending, PendingWrite, SessionMode};
+use crate::session::state::{Pending, PendingOwner, PendingWrite, SessionMode};
 use crate::session::{ConversationStore, SessionStore};
 use crate::wrapper::pty;
 
@@ -494,11 +494,14 @@ fn surface_approval(
         store,
         session_id,
         SessionMode::Approval,
-        PendingWrite::Park(Pending::Approval {
-            tool: parked.tool.clone(),
-            summary: parked.summary.clone(),
-            raw: parked.raw.clone(),
-        }),
+        PendingWrite::Park(
+            PendingOwner::Primary,
+            Pending::Approval {
+                tool: parked.tool.clone(),
+                summary: parked.summary.clone(),
+                raw: parked.raw.clone(),
+            },
+        ),
         cur_mode,
     );
 }
@@ -528,7 +531,7 @@ fn resolve_approval(
             store,
             session_id,
             SessionMode::Responding,
-            PendingWrite::Resolve,
+            PendingWrite::Resolve(PendingOwner::Primary),
             cur_mode,
         ),
     }
@@ -2558,8 +2561,8 @@ mod tests {
 
     /// The store's pending approval summary, for asserting which card is shown.
     fn pending_summary(store: &SessionStore, session_id: &str) -> Option<String> {
-        match store.get(session_id).unwrap().pending {
-            Some(Pending::Approval { summary, .. }) => summary,
+        match store.get(session_id).unwrap().pending() {
+            Some(Pending::Approval { summary, .. }) => summary.clone(),
             _ => None,
         }
     }
