@@ -928,26 +928,7 @@ workspacer jobs remove &lt;id&gt;</code></pre>
 <p>Open it with <code>Ctrl+,</code>. There's a filter box at the top. The pane renders these sections, each one writing straight into <code>config.yaml</code> (the plugins section is contributed by installed plugins, and Claude profiles write to <code>claude-profiles.json</code>):</p>
 <p>appearance (including the theme maker), layout, terminal, keybindings, notifications, session, browser, editor, apps, Claude profiles, supervisor, updates, command line, plugins.</p>
 <h3>default keybindings</h3>
-<p>Bindings are either direct combos (terminal-safe keys) or prefix chords. A chord is the workspace prefix (<code>Ctrl+Space</code> by default) followed by one or more keys. Remap them under <code>keybindings.shortcuts</code>. Direct defaults:</p>
-<ul>
-<li><code>command-palette</code>, <code>ctrl+shift+p</code></li>
-<li><code>next-agent</code> / <code>prev-agent</code>, <code>ctrl+tab</code> / <code>ctrl+shift+tab</code></li>
-<li><code>next-attention</code>, <code>ctrl+shift+space</code></li>
-<li><code>toggle-ui-mode</code>, <code>ctrl+shift+m</code></li>
-<li><code>spawn-agent</code>, <code>ctrl+shift+n</code></li>
-<li><code>settings</code>, <code>ctrl+,</code></li>
-<li><code>save-session</code>, <code>ctrl+shift+s</code></li>
-<li><code>open-file</code>, <code>ctrl+shift+o</code></li>
-<li><code>toggle-help</code>, <code>f1</code></li>
-<li><code>toggle-terminal</code>, `<code> ctrl+</code> ``</li>
-<li><code>toggle-sidebar</code>, <code>ctrl+shift+b</code></li>
-<li><code>toggle-inbox</code>, <code>ctrl+shift+i</code></li>
-<li><code>toggle-fleet</code>, <code>ctrl+shift+f</code></li>
-<li><code>toggle-inspector</code>, <code>ctrl+shift+e</code></li>
-<li><code>library-picker</code>, <code>ctrl+shift+l</code></li>
-<li><code>open-review</code>, <code>ctrl+shift+g</code></li>
-</ul>
-<p>Prefix chords (press <code>Ctrl+Space</code>, then the keys): <code>new-terminal</code> (<code>n t</code>), <code>new-claude</code> (<code>n c</code>), <code>new-browser</code> (<code>n b</code>); <code>prev-tab</code>/<code>next-tab</code> (<code>t [</code> / <code>t ]</code>), <code>move-tab-left</code>/<code>move-tab-right</code> (<code>t ,</code> / <code>t .</code>), <code>rename-tab</code> (<code>t r</code>), <code>close-pane</code> (<code>t w</code>); <code>split</code> (<code>p s</code>), <code>quick-split</code> (<code>p c</code>), pane nav <code>nav-left/down/up/right</code> (<code>p h/j/k/l</code>).</p>
+<p>See <a href="#layout-and-navigation">layout and navigation</a> for the full list of default direct bindings, digit-range bindings, and prefix chords. Remap any of them under <code>keybindings.shortcuts</code>.</p>
 <p>On upgrade, an old keybindings schema (the <code>mode</code>/<code>leader</code> style) is migrated once to this prefix scheme. If you had Vim keybinding mode on, it carries over as the editor's <code>vim: true</code>.</p>
 <h3>Claude profiles</h3>
 <p>Profiles live in <code>claude-profiles.json</code> and are managed in the Settings pane's Claude profiles section. Each profile has:</p>
