@@ -56,7 +56,7 @@ const InboxDrawer: React.FC = () => {
   }, [feed, dismiss]);
   const TABS: { key: typeof inboxFilter; label: string; count: number }[] = [
     { key: 'all', label: 'All', count: counts.total },
-    { key: 'needs', label: 'Needs you', count: counts.needsYou },
+    { key: 'needs', label: 'Waiting', count: counts.needsYou },
     { key: 'review', label: 'Review', count: reviewCount },
   ];
   const listRef = useRef<HTMLDivElement>(null);
@@ -252,7 +252,7 @@ const InboxDrawer: React.FC = () => {
           </button>
         </div>
 
-        {/* Filter tabs — All / Needs you / Review. `feed` is filtered in context,
+        {/* Filter tabs — All / Waiting / Review. `feed` is filtered in context,
             so keyboard triage operates on exactly what's shown. */}
         <div style={{ display: 'flex', gap: 4, padding: '0 16px 8px' }}>
           {TABS.map((t) => {
@@ -366,8 +366,8 @@ const InboxDrawer: React.FC = () => {
                   marginInline: 'auto',
                 }}
               >
-                No agent needs you right now. Approvals, questions, and finished runs will surface
-                here.
+                No agent is waiting on you right now. Approvals, questions, and finished runs will
+                surface here.
               </div>
             </div>
           ) : (

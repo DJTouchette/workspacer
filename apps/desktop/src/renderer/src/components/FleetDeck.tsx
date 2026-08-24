@@ -778,7 +778,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
         </div>
         <button
           onClick={spawnAgent}
-          title="Spawn a new agent"
+          title="Dispatch a new agent"
           style={{
             display: 'inline-flex',
             alignItems: 'center',
@@ -802,7 +802,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
             (e.currentTarget as HTMLElement).style.filter = '';
           }}
         >
-          <span style={{ fontSize: '0.95rem', lineHeight: 1 }}>+</span> Spawn agent
+          <span style={{ fontSize: '0.95rem', lineHeight: 1 }}>+</span> Dispatch agent
         </button>
         <button
           onClick={() => setViewLevel('piloting')}
@@ -815,7 +815,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
             fontFamily: 'inherit',
             fontWeight: 600,
             cursor: 'pointer',
-            // Border only — it sits on --wks-bg-base beside the filled Spawn
+            // Border only — it sits on --wks-bg-base beside the filled Dispatch
             // button, and the contrast between them is the hierarchy.
             border: '1px solid var(--wks-glass-border)',
             borderRadius: 'var(--wks-radius-md)',
@@ -872,7 +872,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
               No agents in the fleet
             </div>
             <div style={{ fontSize: '0.8rem', marginTop: 6, maxWidth: 300 }}>
-              Spawn an agent and it'll appear here as a live card.
+              Dispatch an agent and it'll appear here as a live card.
             </div>
             <button
               onClick={spawnAgent}
@@ -890,7 +890,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                 boxShadow: '0 1px 3px var(--wks-shadow)',
               }}
             >
-              + Spawn agent
+              + Dispatch agent
             </button>
           </div>
         </div>
@@ -1335,7 +1335,7 @@ function listStateVisual(s: string | undefined): { color: string; label: string;
         glow: true,
       };
     case 'streaming':
-      return { color: 'var(--wks-busy)', label: 'Working', glow: true };
+      return { color: 'var(--wks-busy)', label: 'In flight', glow: true };
     case 'background':
       return {
         color: 'var(--wks-busy)',
@@ -1343,7 +1343,7 @@ function listStateVisual(s: string | undefined): { color: string; label: string;
         glow: false,
       };
     case 'idle':
-      return { color: 'var(--wks-success)', label: 'Idle', glow: false };
+      return { color: 'var(--wks-success)', label: 'Standing by', glow: false };
     default:
       return { color: 'var(--wks-text-faint)', label: 'Stopped', glow: false };
   }

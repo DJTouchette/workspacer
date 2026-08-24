@@ -315,13 +315,13 @@ describe('Inbox tab badges match tab contents', () => {
     );
   }
 
-  it('lists an error item under the tab whose badge counts it (Needs you)', () => {
+  it('lists an error item under the tab whose badge counts it (Waiting)', () => {
     render(<InboxOnly />);
-    const needsTab = screen.getByRole('button', { name: /Needs you/ });
+    const needsTab = screen.getByRole('button', { name: /Waiting/ });
     expect(needsTab).toHaveTextContent('1');
     expect(screen.getByText('boom')).toBeInTheDocument();
 
-    // Switching to the "Needs you" tab must list the very item its badge counted.
+    // Switching to the "Waiting" tab must list the very item its badge counted.
     fireEvent.click(needsTab);
     expect(screen.getByText('boom')).toBeInTheDocument();
   });

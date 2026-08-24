@@ -204,7 +204,7 @@ const Onboarding: React.FC<{
             padding: '11px 22px',
           }}
         >
-          + Spawn your first agent
+          + Dispatch your first agent
           <Keys combo={k('spawn-agent', 'ctrl+shift+n')} onAccent />
         </button>
       </div>

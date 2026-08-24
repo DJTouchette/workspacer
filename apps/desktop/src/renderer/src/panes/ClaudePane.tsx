@@ -2136,7 +2136,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                   </span>
                 ) : (
                   <span>
-                    This profile's account isn't logged in yet. Spawn it once on the Terminal
+                    This profile's account isn't logged in yet. Dispatch it once on the Terminal
                     transport (or run{' '}
                     <code style={{ fontFamily: 'var(--wks-font-mono)' }}>claude</code> with this
                     profile in any terminal) to sign in.

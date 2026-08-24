@@ -28,7 +28,7 @@ describe('<PluginPermissions>', () => {
     // Plain-English capability labels + a rendered scope.
     expect(screen.getByText('Write & change files')).toBeTruthy();
     expect(screen.getByText(/in the agent's folder/)).toBeTruthy();
-    expect(screen.getByText('Spawn new agents')).toBeTruthy();
+    expect(screen.getByText('Dispatch new agents')).toBeTruthy();
 
     // The app-driving emit is surfaced verbatim with its warning detail.
     expect(screen.getByText('command.*')).toBeTruthy();

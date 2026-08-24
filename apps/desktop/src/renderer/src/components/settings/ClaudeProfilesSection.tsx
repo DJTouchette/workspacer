@@ -192,7 +192,7 @@ const ClaudeProfilesSection: React.FC = () => {
       const res = await window.electronAPI.claudeProfilesAddAccount!(name);
       setAccountNote(
         `“${name}” shares this machine's memories, history, skills and settings. ` +
-          `Spawn an agent with it — the pane will walk you through a one-time /login ` +
+          `Dispatch an agent with it — the pane will walk you through a one-time /login ` +
           `in its terminal, then both accounts run side by side.` +
           (res.warnings.length > 0 ? ` (${res.warnings.join('; ')})` : ''),
       );
@@ -366,7 +366,7 @@ const ClaudeProfilesSection: React.FC = () => {
                           marginLeft: 6,
                         }}
                       >
-                        {loginStatus[p.id] ? 'signed in' : 'log in on first spawn'}
+                        {loginStatus[p.id] ? 'signed in' : 'log in on first dispatch'}
                       </span>
                     )}
                   </div>
@@ -450,8 +450,8 @@ const ClaudeProfilesSection: React.FC = () => {
             />
             <div style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)', lineHeight: 1.5 }}>
               Creates a profile with its own Claude login that shares this machine's memories,
-              session history, skills and settings. You'll log in inside the first agent you spawn
-              with it.
+              session history, skills and settings. You'll log in inside the first agent you
+              dispatch with it.
             </div>
             <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
               <SmallButton label="Cancel" onClick={() => setAddingAccount(false)} />

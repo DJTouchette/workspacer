@@ -88,8 +88,8 @@ export const builtInActions: PaletteItem[] = [
     id: 'new-claude',
     name: 'New Claude Code',
     description: 'AI-powered coding assistant',
-    // The sidebar calls this button "New agent", so that's what people type.
-    keywords: ['agent', 'new agent', 'spawn'],
+    // The sidebar calls this button "Dispatch agent", so that's what people type.
+    keywords: ['agent', 'new agent', 'spawn', 'dispatch'],
     icon: <PaneIcon type="claude" size={16} />,
     category: 'action',
     paneType: 'claude',
@@ -197,7 +197,7 @@ interface CommandPaletteProps {
   prefix?: string;
   /**
    * Spawn a new agent. Called three ways:
-   *  - no args — open the spawn dialog, exactly as the sidebar's New agent button does.
+   *  - no args — open the spawn dialog, exactly as the sidebar's Dispatch agent button does.
    *  - `{ prompt }` — spawn immediately on the configured defaults, composer pre-filled.
    *  - `{ prompt, openDialog: true }` — open the dialog carrying that prompt.
    */
@@ -700,9 +700,9 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     onSpawnAgent && spawnPrompt && !restrictTo
       ? {
           id: SPAWN_PROMPT_ID,
-          name: `New agent: ${spawnPrompt}`,
+          name: `Dispatch agent: ${spawnPrompt}`,
           description:
-            'Spawn on your defaults with this as the first message · ⌘/Ctrl+↵ for options',
+            'Dispatch on your defaults with this as the first message · ⌘/Ctrl+↵ for options',
           icon: <PaneIcon type="claude" size={16} />,
           category: 'spawn',
         }

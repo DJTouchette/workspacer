@@ -341,7 +341,7 @@ export function useAttentionFeed(
             priority: KIND_PRIORITY.done,
             createdAt: doneAt,
             status: 'open',
-            title: 'Finished',
+            title: 'Landed',
             detail: lastAssistant(snap) || 'Agent is idle and ready for review',
             payload: { type: 'summary', summary: lastAssistant(snap) },
           });

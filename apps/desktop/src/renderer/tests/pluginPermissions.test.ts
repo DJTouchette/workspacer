@@ -51,7 +51,7 @@ describe('pluginPermissions', () => {
     const bySeverity = Object.fromEntries(call.lines.map((l) => [l.label, l.severity]));
     expect(bySeverity['Read files']).toBe('normal');
     expect(bySeverity['Write & change files']).toBe('sensitive');
-    expect(bySeverity['Spawn new agents']).toBe('sensitive');
+    expect(bySeverity['Dispatch new agents']).toBe('sensitive');
   });
 
   it('renders path scopes with friendly binding names', () => {

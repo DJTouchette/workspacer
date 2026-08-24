@@ -50,11 +50,11 @@ function statusVisual(state: SessionAmbientState | undefined): { color: string; 
     case 'thinking':
       return { color: 'var(--wks-busy)', label: 'Thinking' };
     case 'streaming':
-      return { color: 'var(--wks-busy)', label: 'Working' };
+      return { color: 'var(--wks-busy)', label: 'In flight' };
     case 'background':
       return { color: 'var(--wks-busy)', label: 'Background work' };
     case 'idle':
-      return { color: 'var(--wks-success)', label: 'Idle' };
+      return { color: 'var(--wks-success)', label: 'Standing by' };
     default:
       return { color: 'var(--wks-text-faint)', label: 'Stopped' };
   }
@@ -83,7 +83,7 @@ const KIND_VISUAL_LABEL: Record<AttentionKind, string> = {
   error: 'Error',
   stuck: 'Stuck',
   bigdiff: 'Review changes',
-  done: 'Finished',
+  done: 'Landed',
 };
 
 // ── Live-feed cards (sidebar spec 2a) ────────────────────────────────────────
@@ -152,9 +152,9 @@ const IconAction: React.FC<{
 );
 
 /**
- * The app-level action cluster: new agent, notifications, mobile client. One
+ * The app-level action cluster: dispatch agent, notifications, mobile client. One
  * definition, two mount points (header row and collapsed rail column) in the
- * same order, so nothing jumps when the sidebar collapses. Spawn is an icon
+ * same order, so nothing jumps when the sidebar collapses. Dispatch is an icon
  * here — it used to be a full-width pill pinned to the bottom, which spent the
  * sidebar's scarcest space on a once-per-session action.
  */
@@ -172,7 +172,7 @@ const ActionCluster: React.FC<{
       flexShrink: 0,
     }}
   >
-    <IconAction title="New agent (Ctrl+Shift+N)" label="New agent" onClick={onSpawnAgent}>
+    <IconAction title="Dispatch agent (Ctrl+Shift+N)" label="Dispatch agent" onClick={onSpawnAgent}>
       <Plus size={15} strokeWidth={2} />
     </IconAction>
     {/* The bell's history lives with the agents, where what it records happened. */}
@@ -791,7 +791,7 @@ const SideBar: React.FC<SideBarProps> = ({
               lineHeight: 1.6,
             }}
           >
-            No agents yet. Spawn one to start a session.
+            No agents yet. Dispatch one to start a session.
           </div>
         )}
 
@@ -941,7 +941,7 @@ const SideBar: React.FC<SideBarProps> = ({
               // Resting card — the last two things it did, muted.
               pushActivity(activity.slice(-2));
             } else {
-              log.push({ text: 'Idle', color: 'var(--wks-text-faint)' });
+              log.push({ text: 'Standing by', color: 'var(--wks-text-faint)' });
             }
 
             const age = snap
@@ -956,9 +956,9 @@ const SideBar: React.FC<SideBarProps> = ({
                   ? KIND_VISUAL_LABEL[top.kind]
                   : 'Waiting on you'
                 : cardState === 'working'
-                  ? 'Working'
+                  ? 'In flight'
                   : agent.sessionId
-                    ? 'Idle'
+                    ? 'Standing by'
                     : hub
                       ? 'Stopped'
                       : 'Stopped — click to respawn';

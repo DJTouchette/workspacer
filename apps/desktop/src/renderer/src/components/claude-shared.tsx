@@ -40,7 +40,7 @@ export const badgeColors: Record<string, string> = {
 };
 
 export const badgeLabels: Record<string, string> = {
-  idle: 'Idle',
+  idle: 'Standing by',
   thinking: 'Thinking...',
   streaming: 'Streaming',
   waiting_input: 'Waiting for input',

@@ -1134,7 +1134,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               color: 'var(--wks-text-primary)',
             }}
           >
-            New agent
+            Dispatch agent
           </div>
           <div style={{ marginTop: 5, fontSize: '0.72rem', color: 'var(--wks-text-muted)' }}>
             Give it a home directory and set it loose.
@@ -1423,8 +1423,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                       onClick={() => setProfileId(p.id)}
                       title={
                         p.isDefault
-                          ? 'Spawn under the default login — plus whatever MCP loadout Default carries.'
-                          : 'Spawn with this Claude profile — pre-fills its MCP loadout and settings.'
+                          ? 'Dispatch under the default login — plus whatever MCP loadout Default carries.'
+                          : 'Dispatch with this Claude profile — pre-fills its MCP loadout and settings.'
                       }
                       style={{
                         fontSize: '0.7rem',
@@ -1659,13 +1659,13 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 padding: '9px 26px',
               }}
             >
-              Spawn agent
+              Dispatch agent
             </button>
           </div>
           <div style={{ marginTop: 14, fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>
             {defaultPrompt !== undefined
-              ? '⌘/ctrl+enter to spawn · esc to cancel'
-              : 'enter to spawn · esc to cancel'}
+              ? '⌘/ctrl+enter to dispatch · esc to cancel'
+              : 'enter to dispatch · esc to cancel'}
           </div>
         </div>
       </div>
