@@ -10,11 +10,6 @@ use claudemon::session::transcript::{Transcript, TranscriptMessage};
 use claudemon::session::{SessionMode, SessionState};
 use claudemon::tui::preview::{snapshot_chat, snapshot_dashboard, ScenarioBuilder};
 use serde_json::json;
-use time::OffsetDateTime;
-
-fn now() -> OffsetDateTime {
-    OffsetDateTime::now_utc()
-}
 
 fn print_titled(title: &str, s: &str) {
     let bar = "═".repeat(78);
@@ -33,78 +28,42 @@ fn preview_dashboard_empty() {
 #[test]
 fn preview_dashboard_three_sessions() {
     let b = ScenarioBuilder::new()
-        .session(SessionState {
-            session_id: "0a1b2c3d-1111-2222-3333-444455556666".into(),
-            cwd: Some("/home/dev/proj-frontend".into()),
-            mode: SessionMode::Input,
-            pending: None,
-            started_at: now(),
-            updated_at: now(),
-            tool_calls: 2,
-            user_prompts: 0,
-            last_event: Some("Stop".into()),
-            transcript_path: None,
-            status_line: None,
-            provider: "claude".into(),
-            transport: Default::default(),
-            plan: None,
-            compacting: false,
-            last_compact_at: None,
-            compaction_count: 0,
-            live_subagents: 0,
-            background_tasks: 0,
-            parent_turn_ended: false,
-            requested_model: None,
+        .session({
+            let mut s = SessionState::new(
+                "0a1b2c3d-1111-2222-3333-444455556666".into(),
+                Some("/home/dev/proj-frontend".into()),
+            );
+            s.mode = SessionMode::Input;
+            s.tool_calls = 2;
+            s.last_event = Some("Stop".into());
+            s
         })
-        .session(SessionState {
-            session_id: "9e8d7c6b-aaaa-bbbb-cccc-dddddddddddd".into(),
-            cwd: Some("/home/dev/proj-api".into()),
-            mode: SessionMode::Responding,
-            pending: None,
-            started_at: now(),
-            updated_at: now(),
-            tool_calls: 7,
-            user_prompts: 0,
-            last_event: Some("PreToolUse".into()),
-            transcript_path: None,
-            status_line: None,
-            provider: "claude".into(),
-            transport: Default::default(),
-            plan: None,
-            compacting: false,
-            last_compact_at: None,
-            compaction_count: 0,
-            live_subagents: 0,
-            background_tasks: 0,
-            parent_turn_ended: false,
-            requested_model: None,
+        .session({
+            let mut s = SessionState::new(
+                "9e8d7c6b-aaaa-bbbb-cccc-dddddddddddd".into(),
+                Some("/home/dev/proj-api".into()),
+            );
+            s.mode = SessionMode::Responding;
+            s.tool_calls = 7;
+            s.last_event = Some("PreToolUse".into());
+            s
         })
-        .session(SessionState {
-            session_id: "11223344-eeee-ffff-0000-987654321000".into(),
-            cwd: Some("/home/dev/scratch".into()),
-            mode: SessionMode::Approval,
-            pending: Some(Pending::Approval {
-                tool: Some("Bash".into()),
-                summary: Some("rm -rf node_modules".into()),
-                raw: json!({}),
-            }),
-            started_at: now(),
-            updated_at: now(),
-            tool_calls: 12,
-            user_prompts: 0,
-            last_event: Some("PreToolUse".into()),
-            transcript_path: None,
-            status_line: None,
-            provider: "claude".into(),
-            transport: Default::default(),
-            plan: None,
-            compacting: false,
-            last_compact_at: None,
-            compaction_count: 0,
-            live_subagents: 0,
-            background_tasks: 0,
-            parent_turn_ended: false,
-            requested_model: None,
+        .session({
+            let mut s = SessionState::new(
+                "11223344-eeee-ffff-0000-987654321000".into(),
+                Some("/home/dev/scratch".into()),
+            );
+            s.tool_calls = 12;
+            s.last_event = Some("PreToolUse".into());
+            s.park_pending(
+                SessionMode::Approval,
+                Pending::Approval {
+                    tool: Some("Bash".into()),
+                    summary: Some("rm -rf node_modules".into()),
+                    raw: json!({}),
+                },
+            );
+            s
         })
         .connected();
     let snap = snapshot_dashboard(b, 100, 24);
@@ -114,28 +73,11 @@ fn preview_dashboard_three_sessions() {
 #[test]
 fn preview_chat_empty() {
     let b = ScenarioBuilder::new()
-        .session(SessionState {
-            session_id: "demo-session-id".into(),
-            cwd: Some("/home/dev/proj".into()),
-            mode: SessionMode::Input,
-            pending: None,
-            started_at: now(),
-            updated_at: now(),
-            tool_calls: 0,
-            user_prompts: 0,
-            last_event: Some("SessionStart".into()),
-            transcript_path: None,
-            status_line: None,
-            provider: "claude".into(),
-            transport: Default::default(),
-            plan: None,
-            compacting: false,
-            last_compact_at: None,
-            compaction_count: 0,
-            live_subagents: 0,
-            background_tasks: 0,
-            parent_turn_ended: false,
-            requested_model: None,
+        .session({
+            let mut s = SessionState::new("demo-session-id".into(), Some("/home/dev/proj".into()));
+            s.mode = SessionMode::Input;
+            s.last_event = Some("SessionStart".into());
+            s
         })
         .connected()
         .chat_for("demo-session-id");
@@ -146,28 +88,12 @@ fn preview_chat_empty() {
 #[test]
 fn preview_chat_with_text_and_tool_calls() {
     let b = ScenarioBuilder::new()
-        .session(SessionState {
-            session_id: "demo-session-id".into(),
-            cwd: Some("/home/dev/proj".into()),
-            mode: SessionMode::Responding,
-            pending: None,
-            started_at: now(),
-            updated_at: now(),
-            tool_calls: 3,
-            user_prompts: 0,
-            last_event: Some("PreToolUse".into()),
-            transcript_path: None,
-            status_line: None,
-            provider: "claude".into(),
-            transport: Default::default(),
-            plan: None,
-            compacting: false,
-            last_compact_at: None,
-            compaction_count: 0,
-            live_subagents: 0,
-            background_tasks: 0,
-            parent_turn_ended: false,
-            requested_model: None,
+        .session({
+            let mut s = SessionState::new("demo-session-id".into(), Some("/home/dev/proj".into()));
+            s.mode = SessionMode::Responding;
+            s.tool_calls = 3;
+            s.last_event = Some("PreToolUse".into());
+            s
         })
         .connected()
         .chat_for_with_transcript("demo-session-id", Transcript {
@@ -212,32 +138,16 @@ fn preview_chat_with_text_and_tool_calls() {
 #[test]
 fn preview_chat_with_pending_approval() {
     let b = ScenarioBuilder::new()
-        .session(SessionState {
-            session_id: "demo-session-id".into(),
-            cwd: Some("/home/dev/proj".into()),
-            mode: SessionMode::Approval,
-            pending: Some(Pending::Approval {
+        .session({
+            let mut s = SessionState::new("demo-session-id".into(), Some("/home/dev/proj".into()));
+            s.tool_calls = 5;
+            s.last_event = Some("PreToolUse".into());
+            s.park_pending(SessionMode::Approval, Pending::Approval {
                 tool: Some("Bash".into()),
                 summary: Some("rm -rf node_modules && npm install".into()),
                 raw: json!({}),
-            }),
-            started_at: now(),
-            updated_at: now(),
-            tool_calls: 5,
-            user_prompts: 0,
-            last_event: Some("PreToolUse".into()),
-            transcript_path: None,
-            status_line: None,
-            provider: "claude".into(),
-            transport: Default::default(),
-            plan: None,
-            compacting: false,
-            last_compact_at: None,
-            compaction_count: 0,
-            live_subagents: 0,
-            background_tasks: 0,
-            parent_turn_ended: false,
-            requested_model: None,
+            });
+            s
         })
         .connected()
         .chat_for_with_transcript("demo-session-id", Transcript {
@@ -263,49 +173,36 @@ fn preview_chat_with_pending_approval() {
 #[test]
 fn preview_chat_with_pending_question() {
     let b = ScenarioBuilder::new()
-        .session(SessionState {
-            session_id: "demo-session-id".into(),
-            cwd: Some("/home/dev/proj".into()),
-            mode: SessionMode::Question,
-            pending: Some(Pending::Question {
-                questions: vec![PendingQuestion {
-                    question: "Which date library should we use?".into(),
-                    header: Some("Library".into()),
-                    multi_select: false,
-                    options: vec![
-                        PendingOption {
-                            label: "date-fns".into(),
-                            description: Some("Functional".into()),
-                        },
-                        PendingOption {
-                            label: "dayjs".into(),
-                            description: Some("Tiny".into()),
-                        },
-                        PendingOption {
-                            label: "luxon".into(),
-                            description: Some("Rich (i18n, zones)".into()),
-                        },
-                    ],
-                }],
-                raw: json!({}),
-            }),
-            started_at: now(),
-            updated_at: now(),
-            tool_calls: 1,
-            user_prompts: 0,
-            last_event: Some("PreToolUse".into()),
-            transcript_path: None,
-            status_line: None,
-            provider: "claude".into(),
-            transport: Default::default(),
-            plan: None,
-            compacting: false,
-            last_compact_at: None,
-            compaction_count: 0,
-            live_subagents: 0,
-            background_tasks: 0,
-            parent_turn_ended: false,
-            requested_model: None,
+        .session({
+            let mut s = SessionState::new("demo-session-id".into(), Some("/home/dev/proj".into()));
+            s.tool_calls = 1;
+            s.last_event = Some("PreToolUse".into());
+            s.park_pending(
+                SessionMode::Question,
+                Pending::Question {
+                    questions: vec![PendingQuestion {
+                        question: "Which date library should we use?".into(),
+                        header: Some("Library".into()),
+                        multi_select: false,
+                        options: vec![
+                            PendingOption {
+                                label: "date-fns".into(),
+                                description: Some("Functional".into()),
+                            },
+                            PendingOption {
+                                label: "dayjs".into(),
+                                description: Some("Tiny".into()),
+                            },
+                            PendingOption {
+                                label: "luxon".into(),
+                                description: Some("Rich (i18n, zones)".into()),
+                            },
+                        ],
+                    }],
+                    raw: json!({}),
+                },
+            );
+            s
         })
         .connected()
         .chat_for("demo-session-id");
@@ -316,28 +213,11 @@ fn preview_chat_with_pending_question() {
 #[test]
 fn preview_chat_with_input_typed() {
     let b = ScenarioBuilder::new()
-        .session(SessionState {
-            session_id: "demo-session-id".into(),
-            cwd: Some("/home/dev/proj".into()),
-            mode: SessionMode::Input,
-            pending: None,
-            started_at: now(),
-            updated_at: now(),
-            tool_calls: 0,
-            user_prompts: 0,
-            last_event: Some("SessionStart".into()),
-            transcript_path: None,
-            status_line: None,
-            provider: "claude".into(),
-            transport: Default::default(),
-            plan: None,
-            compacting: false,
-            last_compact_at: None,
-            compaction_count: 0,
-            live_subagents: 0,
-            background_tasks: 0,
-            parent_turn_ended: false,
-            requested_model: None,
+        .session({
+            let mut s = SessionState::new("demo-session-id".into(), Some("/home/dev/proj".into()));
+            s.mode = SessionMode::Input;
+            s.last_event = Some("SessionStart".into());
+            s
         })
         .connected()
         .chat_for("demo-session-id")
@@ -349,28 +229,11 @@ fn preview_chat_with_input_typed() {
 #[test]
 fn preview_chat_with_multiline_input() {
     let b = ScenarioBuilder::new()
-        .session(SessionState {
-            session_id: "demo-session-id".into(),
-            cwd: Some("/home/dev/proj".into()),
-            mode: SessionMode::Input,
-            pending: None,
-            started_at: now(),
-            updated_at: now(),
-            tool_calls: 0,
-            user_prompts: 0,
-            last_event: Some("SessionStart".into()),
-            transcript_path: None,
-            status_line: None,
-            provider: "claude".into(),
-            transport: Default::default(),
-            plan: None,
-            compacting: false,
-            last_compact_at: None,
-            compaction_count: 0,
-            live_subagents: 0,
-            background_tasks: 0,
-            parent_turn_ended: false,
-            requested_model: None,
+        .session({
+            let mut s = SessionState::new("demo-session-id".into(), Some("/home/dev/proj".into()));
+            s.mode = SessionMode::Input;
+            s.last_event = Some("SessionStart".into());
+            s
         })
         .connected()
         .chat_for("demo-session-id")

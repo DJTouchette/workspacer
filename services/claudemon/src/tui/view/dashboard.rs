@@ -138,7 +138,7 @@ fn session_row<'a>(app: &App, i: usize, s: &'a crate::session::SessionState) -> 
 
     let badge = mode_badge_padded(s.mode);
 
-    let context = match &s.pending {
+    let context = match s.pending() {
         Some(Pending::Approval { tool, summary, .. }) => {
             let t = tool.as_deref().unwrap_or("tool");
             match summary.as_deref() {
@@ -153,7 +153,7 @@ fn session_row<'a>(app: &App, i: usize, s: &'a crate::session::SessionState) -> 
         None => s.cwd.clone().unwrap_or_else(|| "—".into()),
     };
 
-    let context_style = match &s.pending {
+    let context_style = match s.pending() {
         Some(Pending::Approval { .. }) => Style::default().fg(Color::Yellow),
         Some(Pending::Question { .. }) => Style::default().fg(Color::Magenta),
         None => Style::default().fg(Color::White),
@@ -221,7 +221,7 @@ fn draw_details(frame: &mut Frame, area: Rect, app: &App) {
         },
     ]));
 
-    if let Some(pending) = &s.pending {
+    if let Some(pending) = s.pending() {
         lines.push(Line::from(""));
         match pending {
             Pending::Approval { tool, summary, .. } => {

@@ -28,7 +28,7 @@ use tokio::sync::mpsc;
 use super::{apply_updates, note_user_send, set_mode, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::protocol::Signal;
 use crate::session::conversation::ConversationItem;
-use crate::session::state::{Pending, PendingWrite, SessionMode};
+use crate::session::state::{Pending, PendingOwner, PendingWrite, SessionMode};
 use crate::session::{ConversationStore, ModelSwitch, SessionStore};
 use crate::wrapper::pty;
 
@@ -401,11 +401,14 @@ fn surface_permission(
         store,
         session_id,
         SessionMode::Approval,
-        PendingWrite::Park(Pending::Approval {
-            tool: parked.tool.clone(),
-            summary: parked.summary.clone(),
-            raw: parked.raw.clone(),
-        }),
+        PendingWrite::Park(
+            PendingOwner::Primary,
+            Pending::Approval {
+                tool: parked.tool.clone(),
+                summary: parked.summary.clone(),
+                raw: parked.raw.clone(),
+            },
+        ),
         cur_mode,
     );
 }
@@ -448,7 +451,7 @@ fn resolve_permission(
             store,
             session_id,
             SessionMode::Responding,
-            PendingWrite::Resolve,
+            PendingWrite::Resolve(PendingOwner::Primary),
             cur_mode,
         ),
     }
@@ -819,7 +822,7 @@ mod tests {
 
         let state = store.get(sid).expect("session state");
         assert_eq!(state.mode, SessionMode::Approval);
-        match state.pending {
+        match state.pending() {
             Some(Pending::Approval { ref summary, .. }) => assert_eq!(
                 summary.as_deref(),
                 Some("rm -rf a"),
@@ -845,7 +848,7 @@ mod tests {
             SessionMode::Approval,
             "the queued permission must re-surface, not be dropped"
         );
-        match state.pending {
+        match state.pending() {
             Some(Pending::Approval { ref summary, .. }) => {
                 assert_eq!(summary.as_deref(), Some("rm -rf b"))
             }

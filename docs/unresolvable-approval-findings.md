@@ -120,12 +120,16 @@ they are dead ends.
 | B — `Busy` demotes a parked approval | `providers/mod.rs::apply_updates`: `Busy` no longer raises `Responding` out of `Approval`/`Question` | `busy_never_demotes_a_parked_approval_or_question`, `approval_still_lands_and_a_real_turn_end_still_clears_it` |
 | C — `PermissionRequest` never registered | `session/state.rs`: added to `HookEventKind::REGISTERABLE`, so `daemon/init.rs` installs it | `contracts/permission-request-hook-cases.json`, read by `permission_request_contract_cases` (Rust) and `permissionRequestContract.test.ts` (TS) |
 
-The invariant the three share, and the thing to preserve: **exactly one feed
-owns a session's `pending` slot, and the other feeds may enrich it but never
-clear it.** For a stream-transport claude session (and every non-claude
-provider) that owner is the daemon's `/events` managed-mode stream; for a PTY
-claude session it is the hook feed. Mixing them is what made a blocked session
-unanswerable rather than merely mislabelled.
+The invariant the three share, and the thing to preserve: **a session's
+`pending` slot may only be cleared by the feed that raised what is on it;
+another feed may enrich or displace it, but never destroy it.** For a
+stream-transport claude session that owner is the daemon's `/events`
+managed-mode stream; for a PTY claude session it is the hook feed. Mixing them
+is what made a blocked session unanswerable rather than merely mislabelled.
+
+*(The stronger form — "exactly one feed owns the slot" — was how this was
+written until 2026-08-23. It is false for codex, opencode and pi, which carry a
+second writer by design; see "The second writer" below.)*
 
 ### The class, swept (2026-08-23)
 
@@ -162,14 +166,18 @@ shape reached through pi.
 `SessionStore::set_managed_mode` no longer takes a bare `Option<Pending>`; it
 takes a [`PendingWrite`] saying what the write MEANS:
 
-* `Park(pending)` — the owner raising a block. Always applies.
-* `Resolve` — the user answered, or a genuine turn boundary arrived. Clears.
+* `Park(owner, pending)` — `owner` raising a block. Always applies.
+* `Resolve(owner)` — `owner`'s request is over (the user answered, or a genuine
+  turn boundary arrived). Clears only what `owner` raised.
 * `Keep` — liveness/enrichment (a busy ping, a message written to stdin, a
   background-task count). Suppressed **entirely** while a request is parked,
-  mode included.
+  mode included; it carries no owner because it may never touch the slot
+  whoever sends it.
 
 The guard now lives in one place and cannot be forgotten: a new call site must
-say which of the three it is, and the compiler asks. `set_managed_mode` returns
+say which of the three it is and on whose behalf, and the compiler asks. (The
+`owner` argument arrived later, on 2026-08-23 — see below. The first version of
+this type fenced only `Keep`.) `set_managed_mode` returns
 what the store actually holds (not what was asked for), and drivers mirror
 their `cur_mode` from it via `providers::set_mode`, so a suppressed write can't
 leave a driver believing a mode the store never adopted. The four drivers' send
@@ -178,6 +186,70 @@ arms are now one shared `providers::note_user_send`.
 `ingest`'s existing rule — hooks are enrichment-only for a managed/stream
 session, `session/store.rs` — turns out to be why items 1 and 2 below do NOT
 hold inside claudemon. It had no test; it has three now.
+
+### The second writer: `mcp_ask` (2026-08-23)
+
+The `Keep`-only fence above closed the class **for claude**. For **codex,
+opencode and pi it did not**, because those three have a second feed writing
+the same slot: `daemon/mcp_ask.rs`, the `AskUserQuestion` MCP endpoint spawned
+for them (`codex.rs` `--config mcp_servers`, `opencode.rs` `ask_mcp_entry`,
+`pi.rs` `ask_extension_source`) because they have no native structured-question
+tool. It parked and resolved unconditionally, since `PendingWrite` only fenced
+`Keep`.
+
+Reachable shape, verified by test before the fix (both assertions read
+`pending is None`):
+
+1. the driver parks an approval card and holds the request id in its own FIFO;
+2. the agent calls `AskUserQuestion` in the same turn — the question's `Park`
+   overwrites the approval card;
+3. `QuestionGuard::finish` (or its `Drop`, on a killed agent) `Resolve`s and
+   clears the slot.
+
+The driver's FIFO still holds the approval, and it only re-surfaces a queued
+card from its `/approve` decision arm — a decision that can only arrive for a
+card the user can still see. Session wedged: the exact shape of this document,
+reached across two feeds rather than within one. Narrow (needs a concurrent
+approval and question) and pre-existing, not caused by the refactor — but the
+refactor's own doc comments asserted the class was closed.
+
+**Fix: the write intent names its feed.** `PendingWrite::Park` and
+`::Resolve` now carry a `PendingOwner` (`Primary` = the hook feed or the
+session's driver task; `Ask` = the MCP shim), so the store can tell "my request
+is over" from "someone else's request is on the card":
+
+* a park by the other feed **displaces** the card instead of overwriting it,
+  and the displaced request is restored — under the mode it was parked with —
+  when the displacing one is released;
+* a resolve clears only what its own feed raised; finding the other feed's card
+  it changes nothing visible (and drops only its own displaced request, whose
+  block is genuinely over), so the mode keeps reporting the block that is
+  actually live.
+
+Structural again, not a fourth condition: the owner is a payload the compiler
+demands at every call site, old and new. The slot itself is now **private**
+(`SessionState::pending_card`, read via `pending()`), so the only way to write
+it at all is `write_pending`, which is where every rule lives. That privacy
+turned up one more writer the earlier censuses had missed —
+`SessionStore::park_decision`, the PTY hook gateway — which now parks through
+the funnel as `Primary`. It had no rival feed (no `mcp_ask` is registered for a
+PTY session), so it was not a live defect; going through the funnel is what
+keeps that true rather than merely observed.
+
+Tests: `an_answered_ask_leaves_a_driver_approval_it_did_not_park_intact` and
+`an_aborted_ask_leaves_a_driver_approval_it_did_not_park_intact` (mcp_ask.rs),
+`a_park_from_the_other_feed_displaces_the_card_and_its_resolve_restores_it`,
+`a_resolve_from_a_feed_that_owns_nothing_leaves_the_card_and_mode_alone`,
+`a_foreign_resolve_still_drops_the_releasing_feeds_displaced_request`,
+`a_same_feed_park_replaces_without_displacing` (store.rs). The drop-guard test
+also settles an earlier open question — "what if a non-question request is
+parked when `QuestionGuard` drops" — as **reachable today, and now harmless**.
+
+Still open, same feed rather than across feeds: two *concurrent* asks on one
+session share one answer channel (`register_managed_answer` is
+last-writer-wins), so the earlier ask waits out its six-hour timeout. No
+supported agent emits parallel `AskUserQuestion` calls today, and closing it
+needs a per-ask channel, not an ownership rule.
 
 ### Known remaining asymmetries
 

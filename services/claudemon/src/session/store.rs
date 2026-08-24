@@ -598,17 +598,25 @@ impl SessionStore {
         // in `pending` so clients can render the right picker.
         let updated = {
             if let Some(mut state) = self.states.get_mut(session_id) {
-                state.mode = SessionMode::Approval;
                 let summary = raw
                     .get("tool_input")
                     .and_then(|ti| ti.get("command").or_else(|| ti.get("description")))
                     .and_then(Value::as_str)
                     .map(str::to_owned);
-                state.pending = Some(Pending::Approval {
-                    tool: tool.clone(),
-                    summary,
-                    raw,
-                });
+                // The PTY hook gateway is this session's primary feed — the
+                // same feed `SessionState::apply` speaks for — so it parks
+                // through the same funnel rather than writing the slot behind
+                // it. (No `mcp_ask` shim is registered for a PTY session, so
+                // this park has never had a rival; going through the funnel is
+                // what keeps that true rather than merely observed.)
+                state.park_pending(
+                    SessionMode::Approval,
+                    Pending::Approval {
+                        tool: tool.clone(),
+                        summary,
+                        raw,
+                    },
+                );
                 Some(state.clone())
             } else {
                 None
@@ -990,7 +998,7 @@ impl SessionStore {
             // so waiting for SessionStart to flip the mode loses the race.
             if entry.mode == SessionMode::Stopped {
                 entry.mode = SessionMode::Unknown;
-                entry.pending = None;
+                entry.clear_pending();
                 entry.updated_at = OffsetDateTime::now_utc();
             }
             entry.clone()
@@ -1078,18 +1086,26 @@ impl SessionStore {
     /// Returns None if the session isn't registered.
     ///
     /// **This is the single guarded place every pending-slot write goes
-    /// through.** `write` says what the caller means to do with the slot (see
-    /// [`PendingWrite`]); a [`PendingWrite::Keep`] write — liveness or
-    /// enrichment — is suppressed outright while an approval or a question is
-    /// parked, mode included. That is the invariant from
+    /// through.** `write` says what the caller means to do with the slot and
+    /// on whose behalf (see [`PendingWrite`] and [`PendingOwner`]); the rules
+    /// live in [`SessionState::write_pending`], not here and not at the call
+    /// sites. A [`PendingWrite::Keep`] write — liveness or enrichment — is
+    /// suppressed outright while an approval or a question is parked, mode
+    /// included; a [`PendingWrite::Resolve(PendingOwner::Primary)`] releases only the request its own
+    /// feed raised. That is the invariant from
     /// `docs/unresolvable-approval-findings.md` enforced structurally rather
     /// than by a hand-written condition at each of a dozen call sites, four of
     /// which forgot it and wedged real sessions.
     ///
+    /// A suppressed write broadcasts nothing and does not bump `updated_at`:
+    /// there is no change to announce.
+    ///
     /// The returned state is what the store actually holds afterwards, NOT
     /// what was asked for. A driver mirroring the mode locally must take it
     /// from here (see [`crate::providers::set_mode`]) or its mirror drifts
-    /// from the store the first time a write is suppressed.
+    /// from the store the first time a write is suppressed — or the first time
+    /// releasing its own card restores the *other* feed's, which leaves the
+    /// session legitimately parked on a request the driver never raised.
     pub fn set_managed_mode(
         &self,
         session_id: &str,
@@ -1098,26 +1114,8 @@ impl SessionStore {
     ) -> Option<SessionState> {
         let state = {
             let mut entry = self.states.get_mut(session_id)?;
-            match write {
-                // A parked request is a PAUSE: the agent is blocked on the
-                // user, not working. A liveness write knows nothing about that
-                // and must not speak for it — return the parked state
-                // unchanged, and broadcast nothing (there is no change to
-                // announce).
-                PendingWrite::Keep
-                    if entry.mode == SessionMode::Approval
-                        || entry.mode == SessionMode::Question =>
-                {
-                    return Some(entry.clone());
-                }
-                PendingWrite::Park(pending) => {
-                    entry.mode = mode;
-                    entry.pending = Some(pending);
-                }
-                PendingWrite::Resolve | PendingWrite::Keep => {
-                    entry.mode = mode;
-                    entry.pending = None;
-                }
+            if !entry.write_pending(mode, write) {
+                return Some(entry.clone());
             }
             entry.updated_at = OffsetDateTime::now_utc();
             entry.clone()
@@ -1436,7 +1434,7 @@ impl SessionStore {
                     continue;
                 }
                 entry.mode = SessionMode::Stopped;
-                entry.pending = None;
+                entry.clear_pending();
                 entry.background_tasks = 0;
                 entry.updated_at = OffsetDateTime::now_utc();
                 entry.clone()
@@ -2137,6 +2135,7 @@ impl Default for SessionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::state::PendingOwner;
 
     fn hook(event: &str, session_id: &str, cwd: &str) -> HookEvent {
         HookEvent {
@@ -3753,7 +3752,11 @@ mod tests {
         ] {
             let store = SessionStore::new();
             store.register_managed("s-keep", "/w", "claude");
-            store.set_managed_mode("s-keep", parked_mode, PendingWrite::Park(parked));
+            store.set_managed_mode(
+                "s-keep",
+                parked_mode,
+                PendingWrite::Park(PendingOwner::Primary, parked),
+            );
             let mut rx = store.subscribe();
 
             let returned = store
@@ -3768,7 +3771,7 @@ mod tests {
             let row = store.get("s-keep").expect("session state");
             assert_eq!(row.mode, parked_mode, "mode must not be demoted");
             assert!(
-                row.pending.is_some(),
+                row.pending().is_some(),
                 "the pending card must survive a liveness write"
             );
             assert!(
@@ -3785,7 +3788,11 @@ mod tests {
     fn a_keep_write_applies_when_nothing_is_parked() {
         let store = SessionStore::new();
         store.register_managed("s-live", "/w", "claude");
-        store.set_managed_mode("s-live", SessionMode::Input, PendingWrite::Resolve);
+        store.set_managed_mode(
+            "s-live",
+            SessionMode::Input,
+            PendingWrite::Resolve(PendingOwner::Primary),
+        );
 
         let returned = store
             .set_managed_mode("s-live", SessionMode::Responding, PendingWrite::Keep)
@@ -3808,14 +3815,18 @@ mod tests {
         store.set_managed_mode(
             "s-resolve",
             SessionMode::Approval,
-            PendingWrite::Park(approval("Bash")),
+            PendingWrite::Park(PendingOwner::Primary, approval("Bash")),
         );
 
-        store.set_managed_mode("s-resolve", SessionMode::Responding, PendingWrite::Resolve);
+        store.set_managed_mode(
+            "s-resolve",
+            SessionMode::Responding,
+            PendingWrite::Resolve(PendingOwner::Primary),
+        );
 
         let row = store.get("s-resolve").expect("session state");
         assert_eq!(row.mode, SessionMode::Responding);
-        assert!(row.pending.is_none());
+        assert!(row.pending().is_none());
     }
 
     /// `Park` replaces the card even when the mode is unchanged — a second
@@ -3827,19 +3838,200 @@ mod tests {
         store.set_managed_mode(
             "s-park",
             SessionMode::Approval,
-            PendingWrite::Park(approval("Read")),
+            PendingWrite::Park(PendingOwner::Primary, approval("Read")),
         );
         store.set_managed_mode(
             "s-park",
             SessionMode::Approval,
-            PendingWrite::Park(approval("Bash")),
+            PendingWrite::Park(PendingOwner::Primary, approval("Bash")),
         );
 
         let row = store.get("s-park").expect("session state");
-        match row.pending {
+        match row.pending() {
             Some(Pending::Approval { tool, .. }) => assert_eq!(tool.as_deref(), Some("Bash")),
             other => panic!("expected the newer approval card, got {other:?}"),
         }
+    }
+
+    fn question(text: &str) -> Pending {
+        Pending::Question {
+            questions: serde_json::from_value(serde_json::json!([
+                { "question": text, "options": [{ "label": "yes" }] }
+            ]))
+            .expect("question fixture"),
+            raw: serde_json::Value::Null,
+        }
+    }
+
+    /// The cross-feed rule. A managed session has TWO feeds that can block the
+    /// user at once — the driver (approval cards, held in its own FIFO) and the
+    /// `AskUserQuestion` MCP shim (`daemon::mcp_ask`, registered for codex,
+    /// opencode and pi). The slot shows one card, so the newer park takes it —
+    /// but the older request is displaced, not destroyed, and comes back the
+    /// moment the newer one is released. Dropping it instead is what strands
+    /// the session: the driver only re-surfaces a queued approval from its own
+    /// decision arm, and a decision can only arrive for a card the user can see.
+    #[test]
+    fn a_park_from_the_other_feed_displaces_the_card_and_its_resolve_restores_it() {
+        let store = SessionStore::new();
+        store.register_managed("s-two-feeds", "/w", "codex");
+        store.set_managed_mode(
+            "s-two-feeds",
+            SessionMode::Approval,
+            PendingWrite::Park(PendingOwner::Primary, approval("Bash")),
+        );
+
+        store.set_managed_mode(
+            "s-two-feeds",
+            SessionMode::Question,
+            PendingWrite::Park(PendingOwner::Ask, question("Which db?")),
+        );
+        let row = store.get("s-two-feeds").expect("session state");
+        assert!(
+            matches!(row.pending(), Some(Pending::Question { .. })),
+            "the newer request is the one the user is shown, got {:?}",
+            row.pending()
+        );
+        assert_eq!(row.mode, SessionMode::Question);
+
+        store.set_managed_mode(
+            "s-two-feeds",
+            SessionMode::Responding,
+            PendingWrite::Resolve(PendingOwner::Ask),
+        );
+        let row = store.get("s-two-feeds").expect("session state");
+        match row.pending() {
+            Some(Pending::Approval { tool, .. }) => assert_eq!(tool.as_deref(), Some("Bash")),
+            other => panic!("the displaced approval must come back, got {other:?}"),
+        }
+        assert_eq!(
+            row.mode,
+            SessionMode::Approval,
+            "and the mode must report the block that is actually still live, \
+             not the `Responding` the releasing feed asked for"
+        );
+    }
+
+    /// A feed may only release what it raised. `mcp_ask`'s drop guard fires on
+    /// every ended ask — including one that ends with a driver approval on the
+    /// card — and an unattributed clear there is the unresolvable-approval
+    /// shape reached across feeds.
+    #[test]
+    fn a_resolve_from_a_feed_that_owns_nothing_leaves_the_card_and_mode_alone() {
+        let store = SessionStore::new();
+        store.register_managed("s-foreign", "/w", "codex");
+        store.set_managed_mode(
+            "s-foreign",
+            SessionMode::Approval,
+            PendingWrite::Park(PendingOwner::Primary, approval("Write")),
+        );
+        let mut rx = store.subscribe();
+
+        let returned = store
+            .set_managed_mode(
+                "s-foreign",
+                SessionMode::Responding,
+                PendingWrite::Resolve(PendingOwner::Ask),
+            )
+            .expect("registered session");
+
+        assert_eq!(
+            returned.mode,
+            SessionMode::Approval,
+            "returned state is what the store HOLDS"
+        );
+        let row = store.get("s-foreign").expect("session state");
+        assert_eq!(row.mode, SessionMode::Approval);
+        match row.pending() {
+            Some(Pending::Approval { tool, .. }) => assert_eq!(tool.as_deref(), Some("Write")),
+            other => panic!("a foreign resolve destroyed the card, got {other:?}"),
+        }
+        assert!(
+            rx.try_recv().is_err(),
+            "a write that changed nothing must not broadcast"
+        );
+    }
+
+    /// The other direction, and the reason a foreign resolve is not simply a
+    /// no-op: the releasing feed's OWN request — sitting displaced behind the
+    /// other's card — really is over and must not be restored later.
+    #[test]
+    fn a_foreign_resolve_still_drops_the_releasing_feeds_displaced_request() {
+        let store = SessionStore::new();
+        store.register_managed("s-drop", "/w", "codex");
+        // Driver parks an approval; the ask displaces it with a question.
+        store.set_managed_mode(
+            "s-drop",
+            SessionMode::Approval,
+            PendingWrite::Park(PendingOwner::Primary, approval("Bash")),
+        );
+        store.set_managed_mode(
+            "s-drop",
+            SessionMode::Question,
+            PendingWrite::Park(PendingOwner::Ask, question("Which db?")),
+        );
+
+        // The user approves through `/approve` while the question is up: the
+        // driver answers its FIFO head and releases. Its own displaced card is
+        // spent; the question is not its to touch.
+        store.set_managed_mode(
+            "s-drop",
+            SessionMode::Responding,
+            PendingWrite::Resolve(PendingOwner::Primary),
+        );
+        let row = store.get("s-drop").expect("session state");
+        assert!(
+            matches!(row.pending(), Some(Pending::Question { .. })),
+            "the ask's question is still live and still displayed, got {:?}",
+            row.pending()
+        );
+
+        // Now the question is answered too — and the spent approval must NOT
+        // come back as a card nothing can answer.
+        store.set_managed_mode(
+            "s-drop",
+            SessionMode::Responding,
+            PendingWrite::Resolve(PendingOwner::Ask),
+        );
+        let row = store.get("s-drop").expect("session state");
+        assert!(
+            row.pending().is_none(),
+            "an already-answered approval must not be resurrected, got {:?}",
+            row.pending()
+        );
+        assert_eq!(row.mode, SessionMode::Responding);
+    }
+
+    /// A feed replacing its OWN card (a driver surfacing the next request in
+    /// its FIFO) is not a displacement — there is nothing of the other feed's
+    /// to preserve, and the superseded card is spent.
+    #[test]
+    fn a_same_feed_park_replaces_without_displacing() {
+        let store = SessionStore::new();
+        store.register_managed("s-same", "/w", "codex");
+        store.set_managed_mode(
+            "s-same",
+            SessionMode::Approval,
+            PendingWrite::Park(PendingOwner::Primary, approval("Read")),
+        );
+        store.set_managed_mode(
+            "s-same",
+            SessionMode::Approval,
+            PendingWrite::Park(PendingOwner::Primary, approval("Bash")),
+        );
+        store.set_managed_mode(
+            "s-same",
+            SessionMode::Responding,
+            PendingWrite::Resolve(PendingOwner::Primary),
+        );
+
+        let row = store.get("s-same").expect("session state");
+        assert!(
+            row.pending().is_none(),
+            "the replaced card was spent, not stashed, got {:?}",
+            row.pending()
+        );
+        assert_eq!(row.mode, SessionMode::Responding);
     }
 
     fn hook_with(event: &str, session_id: &str, payload: serde_json::Value) -> HookEvent {
@@ -3883,7 +4075,7 @@ mod tests {
             store.set_managed_mode(
                 "s-hooked",
                 SessionMode::Approval,
-                PendingWrite::Park(approval("Read")),
+                PendingWrite::Park(PendingOwner::Primary, approval("Read")),
             );
 
             store.ingest(hook_with(event, "s-hooked", payload));
@@ -3894,7 +4086,7 @@ mod tests {
                 SessionMode::Approval,
                 "a {event} hook must not drive the mode of a driver-owned session"
             );
-            match row.pending {
+            match row.pending() {
                 Some(Pending::Approval { tool, .. }) => assert_eq!(
                     tool.as_deref(),
                     Some("Read"),
@@ -3944,7 +4136,7 @@ mod tests {
 
         let row = store.get("s-pty").expect("session state");
         assert_eq!(row.mode, SessionMode::Approval);
-        match row.pending {
+        match row.pending() {
             Some(Pending::Approval { tool, .. }) => assert_eq!(tool.as_deref(), Some("Read")),
             other => panic!("the PTY hook feed must raise an approvable card, got {other:?}"),
         }

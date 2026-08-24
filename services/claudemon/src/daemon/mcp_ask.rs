@@ -12,6 +12,25 @@
 //! render), block until `/answer` resolves it through the store's managed
 //! answer channel, and hand the chosen options back as the tool result.
 //!
+//! Ownership note (this endpoint is a SECOND writer of the session's pending
+//! slot): the driver task for codex/opencode/pi parks approval cards on the
+//! same slot, holds the request id in its own FIFO, and re-surfaces a queued
+//! card only from its `/approve` decision arm. So this shim must never destroy
+//! what it did not raise — it parks and releases as
+//! [`PendingOwner::Ask`](crate::session::state::PendingOwner::Ask), which makes
+//! the store displace a driver's card rather than overwrite it and restore it
+//! when the question ends. Until 2026-08-23 both writes here were unattributed:
+//! a question raised beside a parked approval overwrote the card and then
+//! cleared the slot, leaving the agent blocked on an approval nothing could
+//! answer. The `PendingWrite` intent is the fence; do not reach past it.
+//!
+//! Known limit, same feed rather than across feeds: two *concurrent* asks on
+//! one session still collapse onto one answer channel
+//! (`register_managed_answer` is last-writer-wins), so the earlier ask waits
+//! out its timeout. Parallel `AskUserQuestion` calls are not something the
+//! supported agents emit today, and fixing it needs a per-ask channel rather
+//! than an ownership rule.
+//!
 //! Transport notes: this is the "streamable HTTP" MCP transport in its
 //! simplest legal form — one JSON-RPC request per POST, one JSON response, no
 //! SSE stream (we never need server-initiated messages). The session identity
@@ -27,7 +46,7 @@ use axum::{
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
-use crate::session::state::{Pending, PendingQuestion, PendingWrite};
+use crate::session::state::{Pending, PendingOwner, PendingQuestion, PendingWrite};
 use crate::session::{ManagedAnswer, SessionMode, SessionStore};
 
 /// How long a question may sit unanswered before we give up and unblock the
@@ -152,13 +171,18 @@ impl QuestionGuard {
         self.defused = true;
         self.store
             .unregister_managed_answer_if(&self.session_id, &self.tx);
-        // `Resolve`: this guard is the slot's owner — it parked the question
-        // and is the one thing that knows it is over (answered, or timed out
-        // with the tool call already returning an error to the agent).
+        // `Resolve(Ask)`: this guard owns the *question* — it parked it, and it
+        // is the one thing that knows the question is over (answered, or timed
+        // out with the tool call already returning an error to the agent). It
+        // owns nothing else. Naming the feed is what keeps this from clearing
+        // a driver's approval card that the question merely displaced (or that
+        // arrived while the question was up): the store restores that card
+        // instead of dropping it, and `Responding` is only adopted when
+        // nothing else is still blocking the user.
         self.store.set_managed_mode(
             &self.session_id,
             SessionMode::Responding,
-            PendingWrite::Resolve,
+            PendingWrite::Resolve(PendingOwner::Ask),
         );
     }
 }
@@ -219,10 +243,13 @@ async fn tools_call(store: &SessionStore, session_id: &str, id: Value, req: &Val
     store.set_managed_mode(
         session_id,
         SessionMode::Question,
-        PendingWrite::Park(Pending::Question {
-            questions: questions.clone(),
-            raw: arguments,
-        }),
+        PendingWrite::Park(
+            PendingOwner::Ask,
+            Pending::Question {
+                questions: questions.clone(),
+                raw: arguments,
+            },
+        ),
     );
 
     match tokio::time::timeout(ANSWER_TIMEOUT, rx.recv()).await {
@@ -573,7 +600,7 @@ mod tests {
         // question left for the GUI to render.
         let restored = state.store.get("sess-1").unwrap();
         assert_eq!(restored.mode, SessionMode::Responding);
-        assert!(restored.pending.is_none(), "no orphaned question card");
+        assert!(restored.pending().is_none(), "no orphaned question card");
         // And the answer channel was unregistered, not leaked: /answer falls
         // through (false) instead of feeding a dead question.
         assert!(!state.store.submit_managed_answer(
@@ -585,6 +612,127 @@ mod tests {
                 answer_kinds: None,
             },
         ));
+    }
+
+    /// A driver-owned approval card, exactly as `codex::surface_approval` /
+    /// `opencode::surface_permission` / `pi::surface_dialog` park it.
+    fn park_driver_approval(store: &SessionStore, session_id: &str, tool: &str) {
+        store.set_managed_mode(
+            session_id,
+            SessionMode::Approval,
+            PendingWrite::Park(
+                PendingOwner::Primary,
+                Pending::Approval {
+                    tool: Some(tool.to_string()),
+                    summary: Some(format!("run {tool}")),
+                    raw: json!({ "tool": tool }),
+                },
+            ),
+        );
+    }
+
+    /// Spawn a `tools/call` and wait until it has parked the question.
+    async fn ask_and_wait(state: &ApiState, id: i64) -> tokio::task::JoinHandle<Value> {
+        let call_state = state.clone();
+        let call = tokio::spawn(async move {
+            rpc(
+                call_state,
+                "sess-1",
+                json!({
+                    "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                    "params": { "name": "AskUserQuestion", "arguments": {
+                        "questions": [{
+                            "question": "Which db?",
+                            "options": [{ "label": "sqlite" }, { "label": "postgres" }],
+                        }],
+                    }},
+                }),
+            )
+            .await
+        });
+        for _ in 0..200 {
+            if state.store.get("sess-1").map(|s| s.mode) == Some(SessionMode::Question) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(
+            state.store.get("sess-1").map(|s| s.mode),
+            Some(SessionMode::Question),
+            "the ask must have parked its question"
+        );
+        call
+    }
+
+    /// This shim is a SECOND writer on a managed session's single pending slot:
+    /// the driver (codex/opencode/pi) parks approval cards there, and the ask
+    /// parks questions. The driver holds the approval's JSON-RPC id in its own
+    /// FIFO and only re-surfaces the card from its `/approve` decision arm — so
+    /// an ask that clears a slot it never parked destroys the only record the
+    /// user could act on, while the CLI stays blocked on the approval forever.
+    /// That is the unresolvable-approval shape, reached across two feeds.
+    #[tokio::test]
+    async fn an_answered_ask_leaves_a_driver_approval_it_did_not_park_intact() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        park_driver_approval(&state.store, "sess-1", "Bash");
+
+        let call = ask_and_wait(&state, 8).await;
+        assert!(state.store.submit_managed_answer(
+            "sess-1",
+            ManagedAnswer {
+                option: Some(1),
+                text: None,
+                answers: None,
+                answer_kinds: None,
+            },
+        ));
+        let v = call.await.expect("call task");
+        assert_eq!(v["result"]["isError"], false, "the ask itself succeeds");
+
+        let row = state.store.get("sess-1").expect("session state");
+        match row.pending() {
+            Some(Pending::Approval { ref tool, .. }) => assert_eq!(
+                tool.as_deref(),
+                Some("Bash"),
+                "the driver's approval card must come back once the ask is over"
+            ),
+            ref other => panic!(
+                "the ask cleared an approval it never parked: pending is {other:?} — \
+                 the driver's FIFO still holds that request and only re-surfaces it \
+                 from its own decision arm, so nothing can answer it now"
+            ),
+        }
+        assert_eq!(
+            row.mode,
+            SessionMode::Approval,
+            "and the session must report the block it is actually under"
+        );
+    }
+
+    /// The same across `QuestionGuard::drop` — the arm that runs when the agent
+    /// dies mid-ask. A previous pass flagged "a non-question request is parked
+    /// when the guard drops" as not-reachable-today; it is reachable the moment
+    /// a driver parks an approval beside a live ask.
+    #[tokio::test]
+    async fn an_aborted_ask_leaves_a_driver_approval_it_did_not_park_intact() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        park_driver_approval(&state.store, "sess-1", "Write");
+
+        let call = ask_and_wait(&state, 9).await;
+        call.abort();
+        let err = call.await.expect_err("the aborted call never completes");
+        assert!(err.is_cancelled());
+
+        let row = state.store.get("sess-1").expect("session state");
+        match row.pending() {
+            Some(Pending::Approval { ref tool, .. }) => {
+                assert_eq!(tool.as_deref(), Some("Write"))
+            }
+            ref other => panic!("the drop guard cleared a foreign approval: pending is {other:?}"),
+        }
+        assert_eq!(row.mode, SessionMode::Approval);
     }
 
     #[test]

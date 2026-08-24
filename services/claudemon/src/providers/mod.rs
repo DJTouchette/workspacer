@@ -40,7 +40,8 @@ use tokio::sync::mpsc;
 use crate::protocol::{Signal, WrapperMessage};
 use crate::session::conversation::ConversationItem;
 use crate::session::state::{
-    Capabilities, Pending, PendingWrite, Plan, PlanStatus, PlanStep, SessionMode, StatusLine,
+    Capabilities, Pending, PendingOwner, PendingWrite, Plan, PlanStatus, PlanStep, SessionMode,
+    StatusLine,
 };
 use crate::session::store::WrapperHandle;
 use crate::session::{ConversationStore, SessionStore};
@@ -731,11 +732,21 @@ pub(crate) fn set_mode(
 /// wedges silently and its transcript stops growing.
 ///
 /// This is the same invariant as `apply_updates`' `Busy` arm and the
-/// `background_tasks_changed` paths in `handle_line`: exactly one feed owns a
-/// session's pending slot; others may enrich but never clear. It is no longer
-/// re-derived here — the write goes in as [`PendingWrite::Keep`] and the store
-/// is what refuses it. Only the state write is suppressed: the message itself
-/// already went down stdin and still queues in the CLI.
+/// `background_tasks_changed` paths in `handle_line`: a parked request may only
+/// be written by the feed that raised it, and enrichment may not touch it at
+/// all. It is no longer re-derived here — the write goes in as
+/// [`PendingWrite::Keep`], which carries no owner precisely because it may
+/// never touch the slot whoever sends it, and the store is what refuses it.
+/// Only the state write is suppressed: the message itself already went down
+/// stdin and still queues in the CLI.
+///
+/// Note "one feed" is not the same as "one request": on codex, opencode and pi
+/// the `AskUserQuestion` MCP shim (`daemon::mcp_ask`) can have a question
+/// blocking the agent at the same time as this driver has an approval, and the
+/// store keeps both (see [`PendingOwner`]). A driver must therefore take its
+/// `cur_mode` from what `set_managed_mode` returns, never from what it asked
+/// for — releasing its own card can legitimately leave the session parked on
+/// the other feed's.
 pub(crate) fn note_user_send(store: &SessionStore, session_id: &str, cur_mode: &mut SessionMode) {
     if *cur_mode != SessionMode::Responding {
         set_mode(
@@ -776,7 +787,12 @@ pub fn apply_updates(
             // A genuine turn end (a `result` frame) really is the CLI saying
             // the turn is over, so it is allowed to clear a parked request —
             // unlike `Busy`, which is only a liveness ping.
-            AgentUpdate::Idle => new_mode = Some((SessionMode::Input, PendingWrite::Resolve)),
+            AgentUpdate::Idle => {
+                new_mode = Some((
+                    SessionMode::Input,
+                    PendingWrite::Resolve(PendingOwner::Primary),
+                ))
+            }
             AgentUpdate::Busy => {
                 // A parked approval/question is a PAUSE: the agent is blocked
                 // on the user, not working. `Busy` is a liveness ping and says
@@ -803,11 +819,14 @@ pub fn apply_updates(
                 // API is a follow-up (Phase 4).
                 new_mode = Some((
                     SessionMode::Approval,
-                    PendingWrite::Park(Pending::Approval {
-                        tool: tool.clone(),
-                        summary: summary.clone(),
-                        raw: raw.clone(),
-                    }),
+                    PendingWrite::Park(
+                        PendingOwner::Primary,
+                        Pending::Approval {
+                            tool: tool.clone(),
+                            summary: summary.clone(),
+                            raw: raw.clone(),
+                        },
+                    ),
                 ));
             }
             AgentUpdate::Usage {
@@ -1371,7 +1390,11 @@ mod tests {
             let store = SessionStore::new();
             let conv = ConversationStore::new();
             store.register_managed("s-block", "/tmp/proj", "claude");
-            store.set_managed_mode("s-block", mode, PendingWrite::Park(pending));
+            store.set_managed_mode(
+                "s-block",
+                mode,
+                PendingWrite::Park(PendingOwner::Primary, pending),
+            );
             let mut cur = mode;
             let mut acc = UsageAcc::new();
 
@@ -1391,7 +1414,7 @@ mod tests {
             );
             assert_eq!(cur, mode, "the driver's own mode tracker must agree");
             assert!(
-                state.pending.is_some(),
+                state.pending().is_some(),
                 "the pending card must survive — without it the block is unanswerable"
             );
         }
@@ -1426,7 +1449,7 @@ mod tests {
             &mut acc,
         );
         assert_eq!(cur, SessionMode::Approval);
-        assert!(store.get("s-mix").and_then(|s| s.pending).is_some());
+        assert!(store.get("s-mix").is_some_and(|s| s.pending().is_some()));
 
         // A `result` frame is the CLI saying the turn is over — that must
         // still be able to release the pause, or a session could never leave
@@ -1440,7 +1463,7 @@ mod tests {
             &mut acc,
         );
         assert_eq!(cur, SessionMode::Input);
-        assert!(store.get("s-mix").and_then(|s| s.pending).is_none());
+        assert!(store.get("s-mix").is_some_and(|s| s.pending().is_none()));
     }
 
     #[test]

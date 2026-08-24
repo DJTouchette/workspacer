@@ -587,29 +587,10 @@ mod tests {
 
     fn build_chat_app(messages: Vec<TranscriptMessage>) -> App {
         let mut app = App::new("http://test".into());
-        let session = crate::session::SessionState {
-            session_id: "test-session-id".into(),
-            cwd: Some("/tmp/x".into()),
-            mode: SessionMode::Input,
-            pending: None,
-            started_at: time::OffsetDateTime::now_utc(),
-            updated_at: time::OffsetDateTime::now_utc(),
-            tool_calls: 0,
-            user_prompts: 0,
-            last_event: Some("SessionStart".into()),
-            transcript_path: None,
-            status_line: None,
-            provider: "claude".into(),
-            transport: Default::default(),
-            plan: None,
-            compacting: false,
-            last_compact_at: None,
-            compaction_count: 0,
-            background_tasks: 0,
-            live_subagents: 0,
-            parent_turn_ended: false,
-            requested_model: None,
-        };
+        let mut session =
+            crate::session::SessionState::new("test-session-id".into(), Some("/tmp/x".into()));
+        session.mode = SessionMode::Input;
+        session.last_event = Some("SessionStart".into());
         app.sessions.insert(session.session_id.clone(), session);
         app.order.push("test-session-id".into());
         app.view = View::Chat(ChatState {
@@ -715,12 +696,14 @@ mod tests {
     fn pending_approval_banner_appears_with_yellow_treatment() {
         let mut app = build_chat_app(vec![]);
         if let Some(s) = app.sessions.get_mut("test-session-id") {
-            s.mode = SessionMode::Approval;
-            s.pending = Some(crate::session::state::Pending::Approval {
-                tool: Some("Bash".into()),
-                summary: Some("rm -rf /tmp/x".into()),
-                raw: json!({}),
-            });
+            s.park_pending(
+                SessionMode::Approval,
+                crate::session::state::Pending::Approval {
+                    tool: Some("Bash".into()),
+                    summary: Some("rm -rf /tmp/x".into()),
+                    raw: json!({}),
+                },
+            );
         }
         let s = snapshot(&app, 80, 24);
         assert!(s.contains("approval needed"), "banner title missing\n{s}");
@@ -736,25 +719,27 @@ mod tests {
     fn pending_question_banner_lists_options() {
         let mut app = build_chat_app(vec![]);
         if let Some(state) = app.sessions.get_mut("test-session-id") {
-            state.mode = SessionMode::Question;
-            state.pending = Some(crate::session::state::Pending::Question {
-                questions: vec![crate::session::state::PendingQuestion {
-                    question: "Pick one?".into(),
-                    header: Some("Pick".into()),
-                    multi_select: false,
-                    options: vec![
-                        crate::session::state::PendingOption {
-                            label: "alpha".into(),
-                            description: None,
-                        },
-                        crate::session::state::PendingOption {
-                            label: "beta".into(),
-                            description: None,
-                        },
-                    ],
-                }],
-                raw: json!({}),
-            });
+            state.park_pending(
+                SessionMode::Question,
+                crate::session::state::Pending::Question {
+                    questions: vec![crate::session::state::PendingQuestion {
+                        question: "Pick one?".into(),
+                        header: Some("Pick".into()),
+                        multi_select: false,
+                        options: vec![
+                            crate::session::state::PendingOption {
+                                label: "alpha".into(),
+                                description: None,
+                            },
+                            crate::session::state::PendingOption {
+                                label: "beta".into(),
+                                description: None,
+                            },
+                        ],
+                    }],
+                    raw: json!({}),
+                },
+            );
         }
         let s = snapshot(&app, 80, 24);
         assert!(s.contains("Pick one?"), "question text missing\n{s}");
