@@ -93,6 +93,26 @@ jobs:
           CI: 'true'
         run: npm test
 
+      # mobileClient.test.ts (the /m PWA e2e suite) went unnoticed at 8/22 red
+      # for two days because nothing ran it — `npm test` above is vitest only,
+      # and test:e2e was never wired into CI. It needs its own Go toolchain
+      # (the fixture builds and runs the real hub binary on a scratch port —
+      # see tests/e2e/fixtures/mobileHub.ts) and a Chromium binary; it needs
+      # neither claudemon nor a built Electron app, unlike the other two e2e
+      # specs in this directory, so it alone is cheap enough to run on every
+      # PR without inheriting their build cost.
+      - name: Set up Go (mobile e2e's fake hub)
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.4'
+          cache-dependency-path: services/hub/go.sum
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Mobile client e2e (Playwright)
+        run: npx playwright test tests/e2e/mobileClient.test.ts
+
   # ---------------------------------------------------------------------------
   # claudemon (Rust): cargo test + clippy. Same Swatinem cache as release.yml.
   # ---------------------------------------------------------------------------

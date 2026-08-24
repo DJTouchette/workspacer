@@ -60,15 +60,15 @@ test.describe('mobile client', () => {
 
     // The working card carries its live tool line and telemetry.
     const working = page.locator('.agent[data-agent="ws1"]');
-    await expect(working.locator('.pill')).toHaveText('Working');
-    await expect(working.locator('.doing .txt')).toHaveText('Edit(AgentCard.tsx)');
+    await expect(working.locator('.pill')).toHaveText('In flight');
+    await expect(working.locator('.state .txt')).toHaveText('Edit(AgentCard.tsx)');
     await expect(working.locator('.tele')).toContainText('fable-5');
     await expect(working.locator('.tele')).toContainText('33%');
     await expect(working.locator('.tele')).toContainText('$49.30');
     await expect(working.locator('.tele')).toContainText('flow: mobile-audit');
 
     // The status pill summarises the fleet and the recent/resumable rail exists.
-    await expect(page.locator('#statusLabel')).toHaveText(/needs? you/);
+    await expect(page.locator('#statusLabel')).toHaveText(/waiting/);
     await expect(page.locator('.rule .t')).toHaveText('RECENT · RESUMABLE');
     await expect(page.locator('.recent')).toHaveCount(2);
   });
@@ -77,11 +77,11 @@ test.describe('mobile client', () => {
     await openClient(page);
     const total = await page.locator('.agent').count();
 
-    await page.locator('#filters button', { hasText: 'Working' }).click();
+    await page.locator('#filters button', { hasText: 'In flight' }).click();
     await expect(page.locator('.agent')).toHaveCount(1);
-    await expect(page.locator('.agent .pill')).toHaveText('Working');
+    await expect(page.locator('.agent .pill')).toHaveText('In flight');
 
-    await page.locator('#filters button', { hasText: 'Needs you' }).click();
+    await page.locator('#filters button', { hasText: 'Waiting' }).click();
     const needs = await page.locator('.agent').count();
     expect(needs).toBeGreaterThanOrEqual(2);
 
@@ -140,7 +140,7 @@ test.describe('mobile client', () => {
   test('needs-you inbox lists items by priority with working actions', async ({ page }) => {
     await openClient(page);
     await page.locator('nav button[data-tab="inbox"]').click();
-    await expect(page.locator('#title')).toHaveText('Needs You');
+    await expect(page.locator('#title')).toHaveText('Waiting');
 
     // approval (100) outranks question (95), which outranks bigdiff (40).
     const glyphs = await page.locator('.item .glyph').allTextContents();
@@ -215,9 +215,7 @@ test.describe('mobile client', () => {
     });
   });
 
-  test('the more sheet offers Stop behind a confirm, distinct from Interrupt', async ({
-    page,
-  }) => {
+  test('the more sheet offers Stop behind a confirm, distinct from Interrupt', async ({ page }) => {
     await openClient(page);
     await page.locator('.agent[data-agent="ws1"] .top').click();
 
@@ -319,7 +317,7 @@ test.describe('mobile client', () => {
     // The working card's ring must ROTATE — the old translateY base transform
     // reduced the animation to matrix interpolation with rotate(360°) ≡
     // identity, i.e. a 2px jiggle. A rotated matrix has b = sin(θ) ≠ 0.
-    const spin = page.locator('.agent[data-agent="ws1"] .doing .spin');
+    const spin = page.locator('.agent[data-agent="ws1"] .state .spin');
     await expect(spin).toBeVisible();
     let rotated = false;
     for (let i = 0; i < 5 && !rotated; i++) {
@@ -347,7 +345,7 @@ test.describe('mobile client', () => {
     await openClient(page);
     await page.locator('.agent[data-agent="riv"] .neutral').click();
     await expect(page.locator('#title')).toHaveText('rivet');
-    await expect(page.locator('#askDock')).toContainText('NEEDS YOU · QUESTION');
+    await expect(page.locator('#askDock')).toContainText('WAITING ON YOU · QUESTION');
     await expect(page.locator('#askDock .opt')).toHaveCount(3);
 
     const before = hub.callsTo('claude.answer').length;
@@ -401,7 +399,7 @@ test.describe('mobile client', () => {
   test('spawn offers real directories and providers, and spawns', async ({ page }) => {
     await openClient(page);
     await page.locator('nav button[data-tab="new"]').click();
-    await expect(page.locator('#title')).toHaveText('New agent');
+    await expect(page.locator('#title')).toHaveText('Dispatch');
 
     // Directories come from config.get, favourites starred first.
     await expect(page.locator('.dirrow[data-dir]')).toHaveCount(4);
@@ -453,7 +451,7 @@ test.describe('mobile client', () => {
     // ?agent= is what a tapped push notification lands on.
     await page.goto(`${hub.url}/m?token=${HOST_TOKEN}&agent=riv`);
     await expect(page.locator('#title')).toHaveText('rivet', { timeout: 10000 });
-    await expect(page.locator('#askDock')).toContainText('NEEDS YOU · QUESTION');
+    await expect(page.locator('#askDock')).toContainText('WAITING ON YOU · QUESTION');
   });
 
   test('an agent with an empty conversation log does not re-render forever', async ({ page }) => {
