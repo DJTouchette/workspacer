@@ -499,6 +499,15 @@
 
   /* the counter-evidence block. Two columns: what went wrong, what the system
      does about it. It sits *inside* the brief section on purpose. */
+  /* The brief's two other faces, side by side: the board you drag it on, and
+     the phone tab you read it from. Its own class rather than a reuse of .duo
+     — that one is the surfaces section's desktop+phones split and carries a
+     flex basis this row has no use for. */
+  .brief-faces { display: grid; grid-template-columns: minmax(0, 1fr) 216px;
+                 gap: 18px; align-items: start; margin-top: 26px; }
+  .brief-faces .phone { display: block; line-height: 0; text-decoration: none; }
+  .brief-faces .phone img { width: 100%; height: auto; border: 1px solid var(--line);
+                            border-radius: 14px; }
   .counter { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; padding: 30px; margin-top: 26px; }
   .counter h4 { color: var(--fg); font-size: 18px; font-weight: 500; letter-spacing: -0.02em; }
   .counter p { font-size: 14.5px; color: var(--fg-muted); margin-top: 12px; }
@@ -557,6 +566,10 @@
        or the desktop shot collapses to nothing */
     .duo .d { flex: none; width: 100%; }
     .duo .phones { flex-basis: auto; width: 76%; }
+    /* The phone stops being a sidecar and becomes its own figure. Capped so a
+       1098px-tall capture doesn't take over a tablet page. */
+    .brief-faces { grid-template-columns: 1fr; justify-items: center; }
+    .brief-faces .phone { width: min(260px, 70%); }
     .proof-item { flex-basis: 50%; min-width: 0; }
   }
   @media (max-width: 560px) {
@@ -824,6 +837,22 @@
     </div>
   </div>
 
+  <!-- The two claims the closing note makes ("a board you can drag, and a tab
+       on your phone"), shown rather than asserted. Both captures are of the
+       same fabricated fleet, so the board and the phone are reading the same
+       four briefs. -->
+  <div class="brief-faces">
+    <a class="frame" href="shots/brief-board.webp" target="_blank">
+      <img width="1600" height="862" src="shots/brief-board.webp" loading="lazy"
+        alt="The Board pane: one swimlane per project plus the manager's own fleet lane, each split into Now, Direction, Recently and Archive columns, with disposition chips on the cards — and a card mid-drag over the fleet lane's Archive, which is highlighted to accept it" />
+      <div class="frame-cap">every brief as a board — drag between sections, or onto Archive to file it away</div>
+    </a>
+    <a class="phone" href="shots/mobile-briefs.webp" target="_blank">
+      <img width="640" height="1098" src="shots/mobile-briefs.webp" loading="lazy"
+        alt="The phone PWA Briefs tab: the fleet brief expanded to its Now, Direction, Recently and User sections, with a collapsed card per project below it" />
+    </a>
+  </div>
+
   <!-- The counter-evidence belongs on the page, not in a FAQ. A brief that is
        claimed to be reliable and isn't costs more trust than one that says
        where it fails. -->
@@ -882,6 +911,15 @@
     <div class="row"><span class="name">progress</span><span class="desc">the worker's own mid-task note, in its own words: “finished phase 1”, “the approach you gave me is wrong”. Rendered as a report, never as a finish</span></div>
   </div>
   <p class="sec-note">Wakes are parent-keyed, so replacing a manager means the successor adopts its in-flight workers as its first act. Otherwise their results report to a session that's gone. One limit: that manager→worker graph lives in the desktop app's memory. <b>Sessions survive a restart; the parentage doesn't.</b></p>
+
+  <!-- One turn of a manager, end to end: what you asked, what it dispatched,
+       and the wake coming back. The three things the section claims are all
+       visible in the one frame, which is why it is one frame. -->
+  <a class="frame" style="margin-top:26px;" href="shots/fleet-manager.webp" target="_blank">
+    <img width="1600" height="862" src="shots/fleet-manager.webp" loading="lazy"
+      alt="The Fleet Manager pane mid-conversation: a one-sentence ask, the manager's dispatch summary naming each worker by session id and worktree, and a [fleet] worker-finished wake card below it carrying that worker's structured result" />
+    <div class="frame-cap">you ask in a sentence; it dispatches, stops, and is woken when the work lands</div>
+  </a>
 </div></section>
 
 <section id="dispatch" class="alt"><div class="wrap">
@@ -911,6 +949,14 @@
       <p>A dispatch can carry a JSON Schema. The worker ends with a fenced result block, it's validated before the manager ever sees it, and you get a card. If it doesn't parse, the wake says so, instead of leaving the manager to guess that the worker reported nothing.</p>
     </div>
   </div>
+  <!-- The fourth node above promises a parsed result; this is one. Same wake as
+       the manager shot, scrolled to the card it carried. -->
+  <a class="frame" style="margin-top:26px;" href="shots/structured-result.webp" target="_blank">
+    <img width="1600" height="862" src="shots/structured-result.webp" loading="lazy"
+      alt="A validated wks-result rendered as a card in the manager's transcript: a merged flag and commit, the worker's own caveat called out, a changed-files disclosure, and its checks, follow-ups and root cause each under their own heading" />
+    <div class="frame-cap">a worker's <code>wks-result</code>, validated before the manager sees it and rendered as a card</div>
+  </a>
+
   <p class="sec-note">You stay in the loop by default: the manager may approve a worker's prompts while the action stays inside the repo it dispatched to, and must escalate anything destructive, cross-repo or credential-touching to you. Per-project <code>yolo</code> turns prompts off for <em>that</em> project's workers only.</p>
 </div></section>
 
@@ -942,6 +988,15 @@
         alt="The Review pane: staged file tree beside a unified diff, with commit and push controls" /></a>
     </div>
   </div>
+
+  <!-- Where "real session" is visible rather than argued: the manager's crew
+       sits indented under it in the same column, in the same card shape, as the
+       agent you started yourself. -->
+  <a class="frame" style="margin-top:26px;" href="shots/sidebar-nesting.webp" target="_blank">
+    <img width="1600" height="862" src="shots/sidebar-nesting.webp" loading="lazy"
+      alt="The sidebar with three dispatched workers indented under the Fleet Manager that dispatched them — one mid-tool-call, one finished, one holding an approval with inline Approve and Reply buttons — and an unrelated agent at top level below them" />
+    <div class="frame-cap">a manager's crew nests under it, and an agent you started yourself sits beside it</div>
+  </a>
 </div></section>
 
 <section id="agents" class="alt"><div class="wrap">
@@ -1044,7 +1099,7 @@
           <a class="d" href="shots/web-remote.webp" target="_blank"><img width="1600" height="859" src="shots/web-remote.webp" loading="lazy"
             alt="The full workspacer renderer running in Chrome over Tailscale: same fleet, same panes, served by the hub" /></a>
           <div class="phones">
-            <a class="m" href="shots/mobile-fleet.webp" target="_blank"><img width="640" height="859" src="shots/mobile-fleet.webp" loading="lazy"
+            <a class="m" href="shots/mobile-fleet.webp" target="_blank"><img width="640" height="1098" src="shots/mobile-fleet.webp" loading="lazy"
               alt="The phone PWA Fleet tab: All / Waiting / In flight / Landed filters, and a card per agent with a static identity row (project, task, role) and a separate state row (status, model, context meter, cost)" /></a>
             <a class="m" href="shots/mobile-chat.webp" target="_blank"><img width="640" height="1098" src="shots/mobile-chat.webp" loading="lazy"
               alt="The phone PWA agent transcript, opened from a fleet card: collapsible work cards, diff counts, model and permission pills, and a composer" /></a>
