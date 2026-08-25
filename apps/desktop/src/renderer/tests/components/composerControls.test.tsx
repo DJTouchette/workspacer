@@ -483,3 +483,119 @@ describe('ComposerControls — managed provider (codex)', () => {
     await waitFor(() => expect(onRestartWith).toHaveBeenCalledWith({ model: 'o3' }));
   });
 });
+
+/**
+ * A live switch that REJECTS — the promise never resolves at all — is a
+ * different failure from a daemon that answers `{ok:false}`, and it used to be
+ * the invisible one: every catch was a bare `console.warn`, the pill snapped
+ * back to the old label, and the user was left believing the agent had moved
+ * to the mode they picked. On a headless hub that is the NORMAL case, not an
+ * edge case: `claude.setPermissionMode` / `setModel` / `setEffort` are
+ * registered by the desktop main process only, so `/app` against
+ * `workspacer serve` gets "no provider for …" every single time. Someone
+ * tightening a remote worker's permission mode has to be told it did not take.
+ *
+ * The fix is the degradation this component already has for a refusal: reopen
+ * the menu as the restart confirm carrying the reason — restarting DOES work
+ * headless — and post to the notification center so the failure outlives the
+ * menu.
+ */
+describe('ComposerControls — a rejected live switch fails loudly', () => {
+  const posted: any[] = [];
+  const capture = (e: Event) => posted.push((e as CustomEvent).detail);
+  beforeEach(() => {
+    posted.length = 0;
+    window.addEventListener('wks:notify-post', capture);
+  });
+  afterEach(() => window.removeEventListener('wks:notify-post', capture));
+
+  it('permission mode: shows the reason instead of writing it to the console', async () => {
+    api.claudeSetPermissionMode = vi
+      .fn()
+      .mockRejectedValue(new Error('no provider for claude.setPermissionMode'));
+    const { onRestartWith } = renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ settings: { permissionMode: 'default' } }),
+    });
+    fireEvent.click(screen.getByText('Ask to approve'));
+    fireEvent.click(await screen.findByText('Plan mode'));
+
+    expect(
+      await screen.findByText(/no provider for claude\.setPermissionMode/),
+      'the rejection must reach the screen',
+    ).toBeInTheDocument();
+    // …and the way forward that DOES work headless is offered.
+    fireEvent.click(await screen.findByText(/Restart with Plan mode/));
+    expect(onRestartWith).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: 'plan' }));
+  });
+
+  it('permission mode: posts to the notification center so it outlives the menu', async () => {
+    api.claudeSetPermissionMode = vi.fn().mockRejectedValue(new Error('bus is not connected'));
+    renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ settings: { permissionMode: 'default' } }),
+    });
+    fireEvent.click(screen.getByText('Ask to approve'));
+    fireEvent.click(await screen.findByText('Plan mode'));
+
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(posted[0].level).toBe('error');
+    expect(String(posted[0].title)).toMatch(/permission mode/i);
+    expect(String(posted[0].body)).toMatch(/bus is not connected/);
+  });
+
+  it('permission mode: the pill never keeps showing the mode it failed to reach', async () => {
+    api.claudeSetPermissionMode = vi.fn().mockRejectedValue(new Error('no provider'));
+    renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ settings: { permissionMode: 'default' } }),
+    });
+    fireEvent.click(screen.getByText('Ask to approve'));
+    fireEvent.click(await screen.findByText('Plan mode'));
+    await waitFor(() => expect(screen.queryByText('Plan mode…')).not.toBeInTheDocument());
+  });
+
+  it('effort: a rejection degrades to the restart confirm with the reason', async () => {
+    api.claudeSetEffort = vi.fn().mockRejectedValue(new Error('no provider for claude.setEffort'));
+    const { onRestartWith } = renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ settings: { effort: 'low' } }),
+    });
+    fireEvent.click(screen.getByText('Low'));
+    fireEvent.click(await screen.findByText('High'));
+
+    expect(await screen.findByText(/no provider for claude\.setEffort/)).toBeInTheDocument();
+    fireEvent.click(await screen.findByText(/Restart with High effort/));
+    expect(onRestartWith).toHaveBeenCalledWith(expect.objectContaining({ effort: 'high' }));
+  });
+
+  it('model (managed provider): a rejection degrades to the restart confirm', async () => {
+    api.claudeSetModel = vi.fn().mockRejectedValue(new Error('no provider for claude.setModel'));
+    const { onRestartWith } = renderControls({
+      provider: 'codex',
+      snapshot: snapshot({ settings: { model: 'gpt-5-codex' } }),
+    });
+    fireEvent.click(screen.getByText('gpt-5-codex'));
+    fireEvent.click(await screen.findByText('o3'));
+
+    expect(await screen.findByText(/no provider for claude\.setModel/)).toBeInTheDocument();
+    fireEvent.click(await screen.findByText(/Restart with o3/));
+    expect(onRestartWith).toHaveBeenCalledWith(expect.objectContaining({ model: 'o3' }));
+  });
+
+  it('model (claude slash-command path): a rejected send is not swallowed either', async () => {
+    api.claudeMessage = vi
+      .fn()
+      .mockRejectedValue(new Error('hub call timeout: agents.sendMessage'));
+    const { onRestartWith } = renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ settings: { model: 'sonnet' } }),
+    });
+    fireEvent.click(screen.getByText('sonnet'));
+    fireEvent.click(await screen.findByText('Opus'));
+
+    expect(await screen.findByText(/hub call timeout/)).toBeInTheDocument();
+    fireEvent.click(await screen.findByText(/Restart with Opus/));
+    expect(onRestartWith).toHaveBeenCalledWith(expect.objectContaining({ model: 'opus' }));
+  });
+});

@@ -55,6 +55,10 @@ function relTime(ms: number): string {
 interface SessionsPaneProps {
   /** Resumable daemon sessions (already filtered against the live layout). */
   sessions: RecentAgentSession[];
+  /** Why the daemon's list couldn't be read, or null when it could. Headless
+   *  hubs have no `sessions.recent` provider, and answering [] made this pane
+   *  state — confidently, in prose — that the user had no past sessions. */
+  unavailable?: string | null;
   /** Session ids the layout holds or the daemon reports live — transcript
    *  rows for these are hidden (resuming one would double-drive it). */
   excludeSessionIds?: string[];
@@ -62,7 +66,12 @@ interface SessionsPaneProps {
   onResume?: (session: RecentAgentSession) => void;
 }
 
-const SessionsPane: React.FC<SessionsPaneProps> = ({ sessions, excludeSessionIds, onResume }) => {
+const SessionsPane: React.FC<SessionsPaneProps> = ({
+  sessions,
+  unavailable,
+  excludeSessionIds,
+  onResume,
+}) => {
   const [query, setQuery] = useState('');
   const { config } = useConfigContext();
 
@@ -205,7 +214,9 @@ const SessionsPane: React.FC<SessionsPaneProps> = ({ sessions, excludeSessionIds
               ? 'Reading session transcripts…'
               : query
                 ? `No sessions match “${query.trim()}”`
-                : 'No past sessions — everything is already in your workspace.'}
+                : unavailable
+                  ? `This server can’t list past sessions (${unavailable}) — so this is what could not be read, not what isn’t there.`
+                  : 'No past sessions — everything is already in your workspace.'}
           </div>
         )}
         {visible.map((g) => (

@@ -38,9 +38,9 @@ var (
 var headlessGaps = map[string]string{
 	// Live-agent control the desktop implements against its own claudemon
 	// session client.
-	"claude.setModel":          "the model switcher in /m and /app fails; mobile.html handles this one explicitly and loudly",
-	"claude.setPermissionMode": "same — mobile.html surfaces it; /app's control silently no-ops",
-	"claude.setEffort":         "the reasoning-effort control is inert",
+	"claude.setModel":          "the model switcher in /m and /app fails; BOTH clients now surface the rejection (mobile.html toasts + latches the chips; /app reopens the restart confirm carrying the reason and posts to the notification center)",
+	"claude.setPermissionMode": "same — and the restart path both clients fall back to DOES work headless (agents.spawn has a provider), so the mode is still reachable, just not live",
+	"claude.setEffort":         "the reasoning-effort control cannot switch live; same visible degradation and same restart fallback",
 	"claude.handoffBrief":      "cross-provider handoff is unavailable",
 	"claude.handoffAgentBrief": "same, for a subagent",
 	// Host filesystem/VCS surfaces that only the Electron main process has.
@@ -66,7 +66,7 @@ var headlessGaps = map[string]string{
 	"git.push":          "pushing is unavailable; deliberately not ported — see above",
 	// Session history. (replay.* is desktop-IPC only — no shipped headless
 	// client calls it, so it is not a gap here.)
-	"sessions.recent": "the phone's resume-a-recent-agent list renders EMPTY (mobile.html catches and sets recents = []), which reads as 'no history'",
+	"sessions.recent": "the phone's resume-a-recent-agent list renders EMPTY (mobile.html catches and sets recents = []), which reads as 'no history'. /app no longer swallows it: useRecentSessions keeps the reason and the Sessions pane says it could not be read rather than that there is none",
 }
 
 func headlessProviders(t *testing.T) map[string]bool {

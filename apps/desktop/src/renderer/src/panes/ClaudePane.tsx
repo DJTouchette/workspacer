@@ -29,6 +29,7 @@ import { requestHandoff } from '../lib/watchBus';
 import { bracketedPasteSubmit } from '../lib/bracketedPaste';
 import { quoteFontFamily, isTermVisible, refitAndRepaint } from '../lib/terminalUtils';
 import { createRemoteConversationSync } from '../lib/federation';
+import { uploadAttachments, reportAttachmentFailures } from '../lib/attachmentUpload';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { clearMdCache, MarkdownFileCwdProvider } from '../components/markdown';
 import { clearTokenCache } from '../lib/diff/highlight';
@@ -964,6 +965,45 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     container?.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
   }, []);
 
+  /**
+   * Attach files that have no host path by uploading their bytes.
+   *
+   * The three gestures converge here — picker (through the backend's own
+   * pickFiles), drop, and paste — because on a browser client they are all the
+   * same problem: the file is on the viewer's machine and the agent is on the
+   * host's, so the bytes have to travel before a path can exist. The hub writes
+   * them on the AGENT'S machine (`sessionId` qualifies the call, so a session
+   * living on a federated peer is written by that peer) and the path it returns
+   * flows through the identical `[Image: /path]` prefix the desktop builds.
+   *
+   * The chip keeps the name the user recognises, not the hub's generated
+   * basename, and any failure is reported — attaching nothing in silence is the
+   * behaviour this replaced.
+   */
+  const uploadAndAttach = useCallback(
+    async (files: File[]): Promise<void> => {
+      if (files.length === 0) return;
+      const { attached, errors } = await uploadAttachments(files, {
+        sessionId: sessionId ?? undefined,
+      });
+      reportAttachmentFailures(errors);
+      if (attached.length === 0) return;
+      setAttachedFiles((prev) =>
+        mergeAttachments(
+          prev,
+          attached.map((a) => ({ ...classifyFile(a.path), name: a.name })),
+        ),
+      );
+      setViewMode('gui');
+    },
+    [sessionId],
+  );
+  // The drop listeners are registered once (deps: []) so they can't churn on
+  // every render; they reach the current callback through a ref rather than
+  // re-subscribing to pick up a new sessionId.
+  const uploadAndAttachRef = useRef(uploadAndAttach);
+  uploadAndAttachRef.current = uploadAndAttach;
+
   // ── File drag & drop ──
 
   // Scoped to this pane's own element: a file dropped on a browser pane or the
@@ -1007,7 +1047,16 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         if (paths.length > 0) {
           setAttachedFiles((prev) => mergeAttachments(prev, paths.map(classifyFile)));
           setViewMode('gui');
+          return;
         }
+        // No host path resolved. On the desktop that means a drag source with
+        // nothing on disk behind it and there is nothing to attach — but on the
+        // web (and in remote-client mode) it is the NORMAL case: the file is on
+        // the viewer's machine. Send the bytes instead of dropping the gesture.
+        // Files must be captured synchronously; the DataTransfer is neutered
+        // once this handler returns.
+        const files = Array.from(e.dataTransfer.files ?? []);
+        if (files.length > 0) void uploadAndAttachRef.current(files);
       }
     };
 
@@ -1055,12 +1104,23 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       );
     if (hasImage) {
       e.preventDefault();
+      // Captured synchronously: clipboard items are neutered the moment this
+      // handler returns, so the Files must be taken before any await.
+      const pastedImages = Array.from(e.clipboardData.items ?? [])
+        .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+        .map((it) => it.getAsFile())
+        .filter((f): f is File => !!f);
       void window.electronAPI
         .saveClipboardImage()
         .then((saved) => {
-          if (!saved) return;
-          setAttachedFiles((prev) => mergeAttachments(prev, [classifyFile(saved.path)]));
-          setViewMode('gui');
+          if (saved) {
+            setAttachedFiles((prev) => mergeAttachments(prev, [classifyFile(saved.path)]));
+            setViewMode('gui');
+            return;
+          }
+          // null = there is no host clipboard to spill (web / remote-client).
+          // The browser handed us the bytes directly, so upload those.
+          return uploadAndAttachRef.current(pastedImages);
         })
         .catch((err) => console.warn('[ClaudePane] saving pasted image failed:', err));
       return;
@@ -1090,12 +1150,19 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   }, []);
 
   const openFilePicker = useCallback(async () => {
-    const paths = await window.electronAPI.pickFiles(effectiveCwd);
+    // `attachment` is what makes this work off the desktop: a client with no
+    // host filesystem opens the browser's own picker and uploads the bytes to
+    // the agent's machine (sessionId qualifies that for federation), instead of
+    // trying to name a file on a host it cannot see.
+    const paths = await window.electronAPI.pickFiles(effectiveCwd, {
+      attachment: true,
+      sessionId: sessionId ?? undefined,
+    });
     if (paths.length > 0) {
       setAttachedFiles((prev) => mergeAttachments(prev, paths.map(classifyFile)));
       if (viewMode === 'terminal') setViewMode('gui');
     }
-  }, [effectiveCwd, viewMode]);
+  }, [effectiveCwd, viewMode, sessionId]);
 
   const handleApprovalRespond = useCallback(
     (response: 'yes' | 'no') => {
