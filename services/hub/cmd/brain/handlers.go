@@ -24,8 +24,18 @@ type registry struct {
 	store *sessionStore // live session store (full scope only); nil → proxy claudemon
 	meta  *metaStore    // spawn metadata (label/parent/supervisor) for enrichment
 	term  *terminalHub  // PTY-over-bus forwarders (full scope only)
-	vis   *visibility   // shared desktop fleet-visibility rule; nil → show everything
-	scope string        // registration scope this brain was started with
+	// publish puts an event on the bus. Set in full scope only; terminals.open
+	// REFUSES rather than reporting success when it is nil, because the whole
+	// request is that a client make something visible.
+	publish func(string, json.RawMessage)
+	vis     *visibility // shared desktop fleet-visibility rule; nil → show everything
+	scope   string      // registration scope this brain was started with
+
+	// The agent-facing fleet verbs' own state: per-worker progress budgets and
+	// armed threshold watches (agentops.go). In-memory and per-process by
+	// design, matching the desktop — a budget or a watch is a within-session
+	// intention, and persisting one would make it the jobs system.
+	fleetState
 }
 
 // visibleSnapshots is the live store filtered by the shared desktop visibility
@@ -68,6 +78,13 @@ func (r *registry) methods() []string {
 		"claude.answer",
 		"claude.signal",
 		"claude.gate",
+		// Live control of an already-running agent (livecontrol.go). Desktop-only
+		// until now, which is why /app's mode pill and model switcher were inert
+		// on a headless node and /m's were loud-but-broken.
+		"claude.setPermissionMode",
+		"claude.setEffort",
+		"claude.setModel",
+		"claude.handoffBrief",
 		"sessions.transcript",
 		"sessions.conversation",
 		"sessions.snapshots",
@@ -77,6 +94,20 @@ func (r *registry) methods() []string {
 		"sessions.attachTerminal",
 		"sessions.terminalKeepalive",
 		"sessions.detachTerminal",
+		// The resumable-session list. Its two shipped callers swallow a failure
+		// into an empty list, so having no provider read as "no history".
+		"sessions.recent",
+		// THE FLEET MANAGER'S OWN TOOLBOX (agentops.go, brief.go, visibleterm.go).
+		// Desktop-main-only until now, so a manager on a headless node could not
+		// report progress, watch a worker, dismiss one, adopt orphans, write to a
+		// brief, or open a terminal the user can SEE.
+		"agents.reportProgress",
+		"agents.notifyWhen",
+		"agents.close",
+		"agents.orphans",
+		"agents.reparent",
+		"brief.append",
+		"terminals.open",
 		// catalogs + config (file-backed)
 		"claude.profiles.list",
 		"claude.profiles.add",
@@ -107,6 +138,7 @@ func (r *registry) methods() []string {
 		"fs.listDir",
 		"fs.listEntries",
 		"fs.read",
+		"fs.readImage",
 		"fs.write",
 		"search.project",
 		// The READ-ONLY half of the desktop's git.* block (git.go). The write
@@ -187,6 +219,14 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		return r.signal(ctx, params)
 	case "claude.gate":
 		return r.gate(ctx, params)
+	case "claude.setPermissionMode":
+		return r.setPermissionMode(ctx, params)
+	case "claude.setEffort":
+		return r.setEffort(ctx, params)
+	case "claude.setModel":
+		return r.setModel(ctx, params)
+	case "claude.handoffBrief":
+		return r.handoffBrief(ctx, params)
 	case "sessions.transcript":
 		return r.transcript(ctx, params)
 	case "sessions.conversation":
@@ -198,6 +238,24 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		return r.cm.listSessions(ctx)
 	case "sessions.snapshot":
 		return r.snapshot(ctx, params)
+	case "sessions.recent":
+		return r.recentSessions(ctx, params)
+	case "agents.reportProgress":
+		return r.reportProgress(ctx, params)
+	case "agents.notifyWhen":
+		return r.notifyWhen(ctx, params)
+	case "agents.close":
+		return r.closeAgent(ctx, params)
+	case "agents.orphans":
+		return r.orphans(ctx, params)
+	case "agents.reparent":
+		return r.reparent(ctx, params)
+	case "brief.append":
+		return r.briefAppendCall(ctx, params)
+	case "terminals.open":
+		return r.terminalsOpen(ctx, params)
+	case "fs.readImage":
+		return r.readImage(ctx, params)
 	case "sessions.terminalInput":
 		return r.terminalInput(ctx, params)
 	case "sessions.terminalResize":

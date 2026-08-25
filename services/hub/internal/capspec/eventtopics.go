@@ -122,6 +122,24 @@ var eventTopics = []EventTopic{
 		Reason:      "end-of-stream for the same guarded stream: it names a sessionId and tells a credential that may not watch the terminal exactly when that terminal died",
 	},
 	{
+		// The VISIBLE-terminal request. terminals.open does not start a process:
+		// it asks a CLIENT to open a terminal pane so the user can watch one.
+		// The desktop provider does that with emitToRenderer over IPC, which
+		// never touches the bus; the headless brain has no renderer, so this
+		// topic IS its only way to be answered (cmd/brain/visibleterm.go).
+		//
+		// Guarded by the method that publishes it, because the payload is a HOST
+		// COMMAND LINE — `command`, plus the cwd it runs in — and receiving one
+		// is the same disclosure as composing one. capspec's own entry for
+		// terminals.open says that line executes inside the host's default login
+		// shell exactly as a user-typed command would; a view or triage token
+		// holds neither the method nor, therefore, the feed.
+		Pattern:     "facade.openTerminal",
+		Disposition: TopicGuardedBy,
+		Method:      "terminals.open",
+		Reason:      "carries the cwd and the shell COMMAND LINE an agent asked to be run in a visible pane, so receiving it discloses exactly what sending it composes. It is the headless provider's only delivery path (the desktop emits the identical payload to its renderer over IPC and never publishes it), which is why the topic exists at all rather than the capability simply returning ok",
+	},
+	{
 		Pattern:     "pty.desync",
 		Disposition: TopicGuardedBy,
 		Method:      "sessions.attachTerminal",

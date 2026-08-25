@@ -361,6 +361,22 @@ export const EVENT_TOPIC_RULES: EventTopicRule[] = [
     disposition: 'guarded-by-capability',
     method: 'sessions.snapshot',
   },
+  // The visible-terminal request: a cwd and a shell COMMAND LINE an agent asked
+  // to be run in a pane the user can watch. Guarded by the method that composes
+  // it — see capspec's eventtopics.go row.
+  {
+    pattern: 'facade.openTerminal',
+    disposition: 'guarded-by-capability',
+    method: 'terminals.open',
+  },
+  // The visible-terminal request: a cwd and a shell COMMAND LINE an agent asked
+  // to be run in a pane the user can watch. Guarded by the method that composes
+  // it — see capspec's eventtopics.go row.
+  {
+    pattern: 'facade.openTerminal',
+    disposition: 'guarded-by-capability',
+    method: 'terminals.open',
+  },
   { pattern: 'fs.changed', disposition: 'guarded-by-capability', method: 'fs.watch' },
   // hub.peer.* — federation-link reachability (peer name + last-seen only).
   { pattern: 'hub.peer.connected', disposition: 'open-by-decision' },
