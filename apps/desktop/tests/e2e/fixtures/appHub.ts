@@ -362,10 +362,9 @@ export async function startAppHub(opts: AppHubOptions = {}): Promise<AppHub> {
       if (callWaiters[i].method === f.method) callWaiters.splice(i, 1)[0].resolve(rec);
     }
 
-    // Headless-gap methods are ROUTED (so the call reaches us and is recorded)
-    // but answered with an error, reproducing a hub whose only provider is the
-    // brain — which registers none of them. A test that wants the fixed
-    // behaviour stubs them.
+    // These are ROUTED (so the call reaches us and is recorded) but answered
+    // with an error, so the refusing case is what a spec gets unless it stubs
+    // otherwise. See HEADLESS_GAP_METHODS for why that is the useful default.
     if (HEADLESS_GAP_METHODS.includes(f.method as never) && !stubs.has(f.method)) {
       return fail(f.id, `no provider for ${f.method}`);
     }
@@ -611,11 +610,18 @@ const METHODS = [
 ];
 
 /**
- * Methods `/app` calls that a headless hub has NO provider for, so the fixture
- * answers them with an error by default — the live failure mode a browser hits
- * against `workspacer serve` today. A spec that wants the fixed behaviour
- * overrides one with `hub.stub()`.
- * See `services/hub/cmd/brain/headless_completeness_test.go:41-43`.
+ * Methods the fixture answers with an ERROR by default, so a spec meets the
+ * refusing case without arranging it.
+ *
+ * These three were the live headless gap when this rig was written — the brain
+ * registered no provider, so the promise rejected and `/app` swallowed it. web-4
+ * has since ported them (`brain/claudemon.go:402-408`), which changes who is
+ * refusing but not whether a refusal happens: claudemon still answers
+ * `{ok:false}` when it cannot switch a running session live, a federated peer
+ * can be offline, and a provider can simply be down. A rejected live-control
+ * call is a permanent shape of this system, and the client must stay loud about
+ * it — so the default here stays "refuse", and a spec that wants success
+ * overrides it with `hub.stub()`.
  */
 export const HEADLESS_GAP_METHODS = [
   'claude.setPermissionMode',
