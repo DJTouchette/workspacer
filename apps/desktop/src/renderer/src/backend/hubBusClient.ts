@@ -62,6 +62,11 @@ export class HubBusClient {
   /** Wall-clock ms of the last inbound frame; drives the staleness check. */
   private lastActivity = 0;
   private readonly reconnectHandlers = new Set<() => void>();
+  /** The tier this connection authenticated as, off the `hello` frame the hub
+   *  sends the moment the token resolves. Host and operator tokens report
+   *  `operator` + `["*"]`; a scoped token reports its own allowlist. Empty
+   *  until hello arrives — see [[can]] for why that answers optimistically. */
+  private scopeMethods: string[] = [];
 
   /**
    * @param token  bearer secret for the `/bus` gate.
@@ -235,6 +240,28 @@ export class HubBusClient {
     return this.connected;
   }
 
+  /**
+   * May this connection's tier call `method`?
+   *
+   * Mirrors /m's `can()` (cmd/hub/mobile.html), including the wildcard forms
+   * the hub actually sends: `*` for an operator/host token and `prefix.*` in a
+   * tier allowlist. Before `hello` lands the list is empty and this answers
+   * TRUE — the same optimistic default /m uses, because a legacy hub sends no
+   * scope at all and gating everything off would break it.
+   *
+   * A caveat that matters: this is a PERMISSION check, and a permission check
+   * is not a feature check. `nodes.list` is in the view tier unconditionally,
+   * so this says yes on a hub that has no node registry whatsoever. Use it to
+   * decide whether to offer an ACTION; use the router's "no provider" error to
+   * decide whether the feature exists at all.
+   */
+  can(method: string): boolean {
+    if (!this.scopeMethods.length) return true;
+    return this.scopeMethods.some(
+      (p) => p === '*' || p === method || (p.endsWith('.*') && method.startsWith(p.slice(0, -1))),
+    );
+  }
+
   onStatus(handler: StatusHandler): () => void {
     this.statusHandlers.add(handler);
     handler(this.connected);
@@ -246,10 +273,24 @@ export class HubBusClient {
   private onFrame(raw: unknown): void {
     // Any inbound frame proves the socket is alive — feeds the staleness check.
     this.lastActivity = Date.now();
-    let f: { op?: string; id?: string; result?: unknown; error?: string; event?: HubEventEnvelope };
+    let f: {
+      op?: string;
+      id?: string;
+      result?: unknown;
+      error?: string;
+      event?: HubEventEnvelope;
+      scope?: string;
+      methods?: string[];
+    };
     try {
       f = JSON.parse(typeof raw === 'string' ? raw : '');
     } catch {
+      return;
+    }
+    if (f.op === 'hello') {
+      // The hub greets every connection with the tier it holds, so the UI can
+      // gate itself UP FRONT instead of offering a control that dies on tap.
+      this.scopeMethods = Array.isArray(f.methods) ? f.methods : [];
       return;
     }
     if (f.op === 'result') {
