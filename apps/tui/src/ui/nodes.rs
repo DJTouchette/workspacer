@@ -7,10 +7,11 @@
 //! Two rules govern everything drawn here, both from
 //! `.workspacer/reports/2026-08-24-fly-wake-contract.md`:
 //!
-//!  - **`waking` is not `unreachable`.** A machine takes real seconds to boot;
-//!    a state that reads the same as a hang is what makes someone give up. The
-//!    four states get four marks, four words and four colours, and `waking`
-//!    wears the ACCENT (working) tone a thinking agent uses.
+//!  - **`waking` is not `unreachable`, and neither is `stopping`.** A machine
+//!    takes real seconds to boot and real seconds to drain; a state that reads
+//!    the same as a hang is what makes someone give up. The five states get
+//!    five marks and five words, and the two transitional ones wear the ACCENT
+//!    (working) tone a thinking agent uses.
 //!  - **The cost goes on the screen.** There is no hover in a terminal, so
 //!    every reason — why a wake is offered, why it is refused, what it will
 //!    spend — is a visible line, never a tooltip.
@@ -23,13 +24,14 @@
 use super::*;
 use crate::nodes::{crash_notice, detail_line, wake_affordance, wake_failure_notice, NodeState};
 
-/// The colour a state paints with. `waking` deliberately shares the accent
-/// (working) tone rather than the warning one — a booting machine that paints
-/// like a failure is the whole bug.
+/// The colour a state paints with. `waking` and `stopping` deliberately share
+/// the accent (working) tone rather than the warning one — a booting machine
+/// that paints like a failure is the whole bug, and a shutdown somebody just
+/// asked for painted as a fault is the same bug in the other direction.
 fn state_style(t: &Theme, state: NodeState) -> Style {
     Style::default().fg(match state {
         NodeState::Available => t.ok,
-        NodeState::Waking => t.accent,
+        NodeState::Waking | NodeState::Stopping => t.accent,
         NodeState::Stopped => t.dim,
         NodeState::Unreachable => t.warn,
     })
@@ -139,7 +141,7 @@ pub(super) fn render_nodes(f: &mut Frame, area: Rect, app: &App) {
                 )));
             }
         }
-        // Failed wakes, priced honestly: each one left a machine running.
+        // Failed wakes: a machine that started and never became usable.
         if let Some(notice) = wake_failure_notice(node) {
             for l in wrap(&notice, body_w) {
                 lines.push(Line::from(Span::styled(
