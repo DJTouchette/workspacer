@@ -70,37 +70,55 @@ type fleetWatcher struct {
 	jobsFn func() []jobs.Scheduled
 	fed    *federation.Manager
 
-	// askedAt records, per connection, when it last asked this question.
+	// askedSeq records, per connection, the bus activity sequence number ITS OWN
+	// call to this question produced (see bus.ClientInfo.ActivitySeq).
 	//
 	// The poller is itself a bus client, so without this the signal would
 	// defeat itself: a script checking every minute whether anything is using
 	// the machine would show up in the next reading as something using the
 	// machine. A connection whose most recent act was asking has therefore
 	// done nothing, and only counts again once it does something else.
-	mu      sync.Mutex
-	askedAt map[uint64]int64
+	//
+	// This has to be a sequence number, not a timestamp. Two calls from one
+	// connection on a loopback socket, such as an ask immediately followed by
+	// real work, routinely land in the same wall-clock millisecond, and
+	// bus.ClientInfo.LastActive only has millisecond resolution. A comparison
+	// built on that clock cannot tell "asked, then nothing" from "asked, then
+	// something, in the same millisecond" apart, and answers the second one
+	// wrong. The sequence number is exact regardless of timing.
+	mu       sync.Mutex
+	askedSeq map[uint64]uint64
 	// lastAsk is when anybody last asked, at all. See sampleIdleAfter.
 	lastAsk time.Time
 }
 
 func newFleetWatcher(srv *bus.Server, self *busclient.Client) *fleetWatcher {
 	return &fleetWatcher{
-		srv:     srv,
-		self:    self,
-		mon:     quiescence.NewMonitor(quiescence.Tunables{}),
-		askedAt: map[uint64]int64{},
+		srv:      srv,
+		self:     self,
+		mon:      quiescence.NewMonitor(quiescence.Tunables{}),
+		askedSeq: map[uint64]uint64{},
 	}
 }
 
-// noteAsk records that a connection just asked the question.
+// noteAsk records that a connection just asked the question. Reading the
+// connection's activity sequence back from the bus, rather than stamping our
+// own clock, is what makes this exact: it captures the number THIS call
+// produced, so any later act on the same connection is guaranteed a different
+// one, however close together the two land.
 func (w *fleetWatcher) noteAsk(connID uint64) {
 	now := time.Now()
 	w.mu.Lock()
 	w.lastAsk = now
-	if connID != 0 {
-		w.askedAt[connID] = now.UnixMilli()
-	}
 	w.mu.Unlock()
+	if connID == 0 {
+		return
+	}
+	if seq, ok := w.srv.ConnActivitySeq(connID); ok {
+		w.mu.Lock()
+		w.askedSeq[connID] = seq
+		w.mu.Unlock()
+	}
 }
 
 // sampling reports whether anybody is currently using the signal.
@@ -173,7 +191,8 @@ func (w *fleetWatcher) localSessions(ctx context.Context) ([]quiescence.Session,
 // USING this machine. Providers, plugin sidecars and the hub's own loopback
 // client are infrastructure and are dropped by bus.ClientInfo.UserFacing; a
 // connection whose most recent act was asking this very question is dropped
-// here (see askedAt).
+// here (see askedSeq) — exactly while its ActivitySeq still matches the one
+// its own ask produced, and not a tick longer.
 func (w *fleetWatcher) clients() []quiescence.Client {
 	live := w.srv.Clients()
 	seen := make(map[uint64]bool, len(live))
@@ -184,16 +203,16 @@ func (w *fleetWatcher) clients() []quiescence.Client {
 		if !c.UserFacing() {
 			continue
 		}
-		if asked, ok := w.askedAt[c.ConnID]; ok && asked >= c.LastActive.UnixMilli() {
+		if asked, ok := w.askedSeq[c.ConnID]; ok && asked == c.ActivitySeq {
 			continue
 		}
 		out = append(out, quiescence.Client{Label: c.Label, LastActive: c.LastActive})
 	}
 	// Forget connections that have gone away, so the map cannot grow without
 	// bound across a long uptime of reconnecting clients.
-	for id := range w.askedAt {
+	for id := range w.askedSeq {
 		if !seen[id] {
-			delete(w.askedAt, id)
+			delete(w.askedSeq, id)
 		}
 	}
 	w.mu.Unlock()

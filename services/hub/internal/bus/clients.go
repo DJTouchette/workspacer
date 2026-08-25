@@ -28,6 +28,12 @@ type ClientInfo struct {
 	// LastActive is when this connection last called a capability or published
 	// an event, or when it connected, whichever is later.
 	LastActive time.Time
+	// ActivitySeq counts the same events as LastActive, one per act, as a
+	// strictly increasing integer. A caller that needs to tell "this exact act"
+	// from "anything since" needs this rather than LastActive: two acts on a
+	// loopback connection routinely share a millisecond, and the wall clock
+	// cannot tell them apart where this counter always can.
+	ActivitySeq uint64
 	// Provider is true when this connection answers capability calls for
 	// somebody — the Electron main process, the headless brain, a plugin
 	// sidecar that registered a method. A provider is infrastructure: it is
@@ -54,17 +60,34 @@ func (s *Server) Clients() []ClientInfo {
 	out := make([]ClientInfo, 0, len(s.router.conns))
 	for id, cn := range s.router.conns {
 		out = append(out, ClientInfo{
-			ConnID:     id,
-			Label:      cn.describe(),
-			LastActive: time.UnixMilli(cn.lastActiveMilli.Load()),
-			Provider:   providers[id],
-			Plugin:     cn.pluginID != "",
-			Internal:   cn.internal,
+			ConnID:      id,
+			Label:       cn.describe(),
+			LastActive:  time.UnixMilli(cn.lastActiveMilli.Load()),
+			ActivitySeq: cn.activitySeq.Load(),
+			Provider:    providers[id],
+			Plugin:      cn.pluginID != "",
+			Internal:    cn.internal,
 		})
 	}
 	s.router.mu.Unlock()
 	sort.Slice(out, func(i, j int) bool { return out[i].ConnID < out[j].ConnID })
 	return out
+}
+
+// ConnActivitySeq reads one connection's current [ClientInfo.ActivitySeq]. For a
+// local handler that just recorded a caller's ConnID and needs to know exactly
+// which act that was, so it can tell whether the connection has done anything
+// ELSE the next time it is asked — see fleet.quiescence's askedSeq for why the
+// wall clock cannot serve that comparison.
+func (s *Server) ConnActivitySeq(connID uint64) (uint64, bool) {
+	rt := s.router
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	cn, ok := rt.conns[connID]
+	if !ok {
+		return 0, false
+	}
+	return cn.activitySeq.Load(), true
 }
 
 // describe names the other end of a connection without naming its credential.

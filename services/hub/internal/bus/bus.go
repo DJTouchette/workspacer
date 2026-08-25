@@ -1101,6 +1101,15 @@ type conn struct {
 	// already counted.
 	lastActiveMilli atomic.Int64
 
+	// activitySeq counts the same events as lastActiveMilli, one per call, but
+	// as a strictly increasing integer rather than a wall-clock millisecond. A
+	// caller that needs to tell "this exact act" from "anything since" cannot
+	// use the millisecond clock for that: two of this connection's own frames,
+	// dispatched back to back on a loopback socket, routinely land in the same
+	// millisecond, and a comparison built on that clock cannot tell them apart.
+	// The sequence number always can.
+	activitySeq atomic.Uint64
+
 	// internal marks the hub's OWN loopback client (see Server.SetInternalKey).
 	// It is not an authorization bit — it holds the host token like any other
 	// trusted conn — it is a provenance one, so the hub's own machinery does
@@ -1178,6 +1187,7 @@ func (cn *conn) dispatchForwards() {
 // [conn.lastActiveMilli] for what counts and what deliberately does not.
 func (cn *conn) markActive(now time.Time) {
 	cn.lastActiveMilli.Store(now.UnixMilli())
+	cn.activitySeq.Add(1)
 }
 
 func (cn *conn) identity() CallerIdentity {
