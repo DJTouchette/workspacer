@@ -1,10 +1,12 @@
 package push
 
 import (
+	"bytes"
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -33,6 +35,20 @@ func newTestManager(t *testing.T) (*Manager, *[]string) {
 		fired = append(fired, ev.SessionID+":"+ev.Title+":"+ev.Body)
 	}
 	return m, &fired
+}
+
+// seedVAPID writes a real keypair into dir, standing in for the one a previous
+// run of this hub persisted.
+func seedVAPID(t *testing.T, dir string) {
+	t.Helper()
+	priv, pub, err := webpush.GenerateVAPIDKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, _ := json.Marshal(vapidKeys{PublicKey: pub, PrivateKey: priv})
+	if err := os.WriteFile(filepath.Join(dir, "vapid.json"), blob, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func snap(sessionID, cwd, ambient, status string) json.RawMessage {
@@ -220,6 +236,13 @@ func TestRevokedTokenStopsReceivingPushes(t *testing.T) {
 // switch off notifications for existing installs.
 func TestUnattributedSubscriptionsStillReceive(t *testing.T) {
 	dir := t.TempDir()
+	// The keypair has to be seeded alongside the subscriptions. There is no real
+	// state where one exists without the other — New writes vapid.json before
+	// anybody can subscribe — and a subs file with no keypair is now read as
+	// exactly what it would be in production: the keypair went missing and these
+	// subscriptions are dead. This fixture means "an OLD subscription", not "a
+	// lost keypair", so it must say so.
+	seedVAPID(t, dir)
 	old := `[{"endpoint":"https://push.example/legacy","keys":{"p256dh":"pk","auth":"au"}}]`
 	if err := os.WriteFile(filepath.Join(dir, "push-subscriptions.json"), []byte(old), 0o600); err != nil {
 		t.Fatal(err)
@@ -1017,5 +1040,85 @@ func TestCheckpointsFireOncePerMarkAndAreOptIn(t *testing.T) {
 	yes := true
 	if !(Prefs{Checkpoints: &yes}).wants(KindCheckpoint) {
 		t.Fatal("enabling checkpoints must turn them on")
+	}
+}
+
+// A VANISHED VAPID KEYPAIR IS NOT A FIRST RUN.
+//
+// The keypair is generate-once by design — New's own doc says it is persisted
+// "so the public key the phone subscribed against stays stable across hub
+// restarts". loadVAPID nevertheless regenerated on ANY read failure and logged
+// it as a routine "generated VAPID keypair", so a hub whose state dir lost
+// vapid.json comes back signing with a key the push services will not accept
+// for the stored endpoints. Every phone still shows itself subscribed; the
+// notifications just stop.
+//
+// push-subscriptions.json is the exact evidence: a subscription in it was
+// negotiated against the key that is gone, so it is dead by construction.
+func TestLostVAPIDKeypairIsLoudAndDropsTheDeadSubscriptions(t *testing.T) {
+	dir := t.TempDir()
+
+	// A hub that ran before: two phones subscribed against a keypair that is
+	// now missing from the volume.
+	subs := []storedSub{
+		{Subscription: webpush.Subscription{Endpoint: "https://push.example/aaa"}},
+		{Subscription: webpush.Subscription{Endpoint: "https://push.example/bbb"}},
+	}
+	blob, _ := json.Marshal(subs)
+	if err := os.WriteFile(filepath.Join(dir, "push-subscriptions.json"), blob, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var logged bytes.Buffer
+	restore := log.Writer()
+	log.SetOutput(&logged)
+	defer log.SetOutput(restore)
+
+	m, err := New(dir)
+	if err != nil {
+		t.Fatalf("New must still come up — push is one subsystem, and taking the whole hub "+
+			"down over notification keys is a bigger outage than the one it reports: %v", err)
+	}
+	if m.PublicKey() == "" {
+		t.Fatal("no key at all: push would be dead rather than re-establishable")
+	}
+
+	if n := len(m.subs); n != 0 {
+		t.Errorf("kept %d subscription(s) that were negotiated against the lost keypair — the "+
+			"hub will go on signing pushes those endpoints reject, and `push.list` will keep "+
+			"reporting devices as subscribed when they can no longer receive anything", n)
+	}
+	// The truth has to reach disk too, or the next boot re-reads the dead set.
+	onDisk, _ := os.ReadFile(filepath.Join(dir, "push-subscriptions.json"))
+	var still []storedSub
+	_ = json.Unmarshal(onDisk, &still)
+	if len(still) != 0 {
+		t.Errorf("push-subscriptions.json still holds %d dead subscription(s)", len(still))
+	}
+
+	out := logged.String()
+	for _, want := range []string{"vapid.json", "2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log %q does not mention %q — the operator needs the path and how many "+
+				"devices just went silent", out, want)
+		}
+	}
+	if !strings.Contains(out, "push: STATE LOSS") {
+		t.Errorf("log %q reads like a routine first-run generation; this is state loss", out)
+	}
+}
+
+// First run must stay quiet and normal: no subscriptions file, nothing lost.
+func TestFirstRunVAPIDGenerationIsNotReportedAsLoss(t *testing.T) {
+	var logged bytes.Buffer
+	restore := log.Writer()
+	log.SetOutput(&logged)
+	defer log.SetOutput(restore)
+
+	if _, err := New(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(logged.String(), "STATE LOSS") {
+		t.Errorf("a virgin state dir must not be reported as state loss: %q", logged.String())
 	}
 }

@@ -12,24 +12,29 @@ import (
 // process: resolved binary paths, ports, bind host, token. Kept as a plain
 // struct so buildServePlan is a pure function tests can drive table-style.
 type serveOptions struct {
-	Host          string // hub bind host; claudemon always stays on loopback
-	HubPort       int
-	APIPort       int // claudemon API / session control
-	HookPort      int // claudemon hook ingestion
-	Token         string
-	ClaudemonBin  string
-	HubBin        string
-	BrainBin      string // "" = let the hub auto-detect its own sibling
-	PluginsDir    string // "" = hub runs without plugins
-	WebappDir     string // "" = hub falls back to $WORKSPACER_WEBAPP_DIR
-	AdvertiseHost string // host to print in client URLs (differs from Host when binding 0.0.0.0)
-	TrustedHosts  string // comma-separated reverse-proxy hostname(s) for the hub's --trusted-host
-	DevStreamLogs bool   // pass --plugins-stream-logs to the hub (plugin dev only)
+	Host              string // hub bind host; claudemon always stays on loopback
+	HubPort           int
+	APIPort           int // claudemon API / session control
+	HookPort          int // claudemon hook ingestion
+	Token             string
+	ClaudemonBin      string
+	HubBin            string
+	BrainBin          string // "" = let the hub auto-detect its own sibling
+	PluginsDir        string // "" = hub runs without plugins
+	WebappDir         string // "" = hub falls back to $WORKSPACER_WEBAPP_DIR
+	AdvertiseHost     string // host to print in client URLs (differs from Host when binding 0.0.0.0)
+	TrustedHosts      string // comma-separated reverse-proxy hostname(s) for the hub's --trusted-host
+	DevStreamLogs     bool   // pass --plugins-stream-logs to the hub (plugin dev only)
+	SkipClaudemonInit bool   // skip the `claudemon init` pre-flight (operator owns ~/.claude/settings.json)
 }
 
 // servePlan is the fully-wired launch plan: the child specs to supervise and
 // the endpoints/token to report once healthy.
 type servePlan struct {
+	// Init is the one-shot pre-flight, run to completion BEFORE the daemons:
+	// `claudemon init` merges claudemon's hook + statusLine forwarders into
+	// ~/.claude/settings.json. A zero childSpec means the step is off.
+	Init      childSpec
 	Claudemon childSpec
 	Hub       childSpec
 
@@ -66,6 +71,40 @@ type bannerInfo struct {
 // here authenticates the whole tree.
 func buildServePlan(opts serveOptions) servePlan {
 	apiURL := fmt.Sprintf("http://127.0.0.1:%d", opts.APIPort)
+
+	// THE HOOK-REGISTRATION PRE-FLIGHT. `claudemon init` is a peer subcommand of
+	// `serve` (services/claudemon/src/cli.rs), and until this existed the only
+	// caller in the whole project was the desktop's Electron main
+	// (apps/desktop/src/main/index.ts). `workspacer serve` inherited working
+	// hooks on any machine where the desktop had run — they share one
+	// ~/.claude/settings.json — and registered nothing at all on a state
+	// directory where it had not: a container, a fresh volume, a CI box.
+	//
+	// What a hookless PTY session does is worse than "no telemetry". A session
+	// is born SessionMode::Unknown and ONLY hooks move it (session/state.rs),
+	// while a spawn's `first_message` is held until the `Input` transition
+	// (session/store.rs, queue_first_message → schedule_pending_flush). So a
+	// dispatched worker never receives its prompt: it sits at an empty composer,
+	// alive and idle-looking, forever. Permission prompts produce no approvable
+	// record either (the note on HookEventKind::PermissionRequest).
+	//
+	// Note what does NOT break: fleet.quiescence reads `mode: "unknown"` as a
+	// blocker, not as rest (internal/quiescence stateBlocker), so the machine
+	// stays awake rather than powering down under live work. Failing safe on
+	// that axis is why this stayed invisible.
+	//
+	// Run on every boot, not just the first: init is idempotent — it prints
+	// "already up to date" and writes nothing when the merge is a no-op — and
+	// the desktop already runs it on every launch, so the cost of matching it is
+	// one process that exits immediately.
+	initStep := childSpec{
+		Name: "claudemon init",
+		Bin:  opts.ClaudemonBin,
+		Args: []string{"init", "--hook-port", fmt.Sprintf("%d", opts.HookPort)},
+	}
+	if opts.SkipClaudemonInit {
+		initStep = childSpec{}
+	}
 
 	claudemon := childSpec{
 		Name: "claudemon",
@@ -119,6 +158,7 @@ func buildServePlan(opts serveOptions) servePlan {
 	q := "?token=" + url.QueryEscape(opts.Token)
 
 	return servePlan{
+		Init:            initStep,
 		Claudemon:       claudemon,
 		Hub:             hub,
 		ClaudemonHealth: apiURL + "/health",

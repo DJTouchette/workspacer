@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/djtouchette/workspacer-hub/internal/statelost"
 	yaml "gopkg.in/yaml.v3"
 )
 
@@ -145,6 +146,41 @@ func (c *configService) loadFromDisk() map[string]any {
 				return c.current
 			}
 			// Genuine first run — no config file yet: seed it with defaults.
+			//
+			// …unless the directory around it says otherwise. This was the one
+			// silent arm left in this function: the three above all block
+			// persistence and say why, while THIS one reseeded factory defaults
+			// and reported nothing, because from here a first boot and a boot
+			// whose state directory came back without config.yaml are the same
+			// read. On a machine where <config> is a mounted volume, the second
+			// is the every-boot case whenever the mount is wrong, and the brain
+			// comes up healthy on a configuration nobody chose: no projects,
+			// agents.binaries empty (so provider resolution silently falls back
+			// to PATH), supervisor.fullAccess off, budgets and keybindings gone.
+			//
+			// WARN AND CONTINUE rather than refuse, unlike `workspacer serve`'s
+			// remote-token. The brain is a SUPERVISED CHILD of the hub: exiting
+			// here does not produce one clear error, it produces a restart
+			// crash-loop that takes the node's whole capability plane down over
+			// one missing file. A brain running on defaults is degraded but
+			// functional and recoverable by writing the file; a brain that will
+			// not start is neither. And unlike a credential, defaults are not a
+			// wrong IDENTITY — nothing is silently rejected downstream.
+			//
+			// Persistence is deliberately NOT blocked: a config dir can hold
+			// other state without ever having held a config.yaml (someone who
+			// only ran `workspacer token create`), and turning every save in
+			// that install into a silent no-op would trade this bug for a worse
+			// one. The loss is made loud; what runs is unchanged.
+			if statelost.Suspected(configDir(), "config.yaml") {
+				log.Printf("brain: STATE LOSS: %s is missing, but %s still holds the rest of "+
+					"this install. Reseeding factory defaults — projects, agents.binaries, "+
+					"transport, supervisor.fullAccess, budgets and keybindings are all back to "+
+					"their shipped values, and this process will run on them. If the file is "+
+					"recoverable (a backup, or a volume that failed to mount), restore it and "+
+					"restart before anything writes over the seed.",
+					configPath(), configDir())
+			}
 			c.writeDefaults(defaults)
 			return defaults
 		}

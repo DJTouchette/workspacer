@@ -236,10 +236,13 @@ func New(dir string) (*Manager, error) {
 	m := &Manager{dir: dir, subs: map[string]storedSub{}, states: map[string]sessionState{}, now: time.Now}
 	m.notify = m.sendAll
 	m.send = m.sendOneResult
+	// Subscriptions BEFORE the keypair, because they are the evidence loadVAPID
+	// needs: a stored subscription was negotiated against the key that is
+	// missing, so it is the measure of what a regeneration would cost.
+	m.loadSubs()
 	if err := m.loadVAPID(); err != nil {
 		return nil, err
 	}
-	m.loadSubs()
 	return m, nil
 }
 
@@ -254,6 +257,28 @@ func (m *Manager) loadVAPID() error {
 			return nil
 		}
 	}
+	// GENERATING IS RIGHT EXACTLY ONCE. The keypair is generate-once by design
+	// (see New): the public key is what the phone's PushSubscription was
+	// negotiated against, and a push signed by a different key is refused by the
+	// push service for those endpoints. Regenerating therefore does not restore
+	// push — it ends it, for everyone, while every client still reports itself
+	// subscribed and nothing surfaces an error.
+	//
+	// The stored subscriptions are the evidence and the damage report in one: if
+	// there are none, nobody has subscribed yet and this is a first run. If
+	// there are, they were negotiated against the key that just vanished and are
+	// dead by construction.
+	//
+	// Why this WARNS AND CONTINUES rather than refusing, unlike `workspacer
+	// serve`'s remote-token: push.New's error is fatal to the whole hub, and
+	// stopping the bus, the sessions and federation because a notifications
+	// keypair went missing is a far larger outage than the one being reported.
+	// So the hub comes up with a working key for new subscribers, and the dead
+	// subscriptions are DROPPED rather than kept — a subscription that cannot
+	// receive anything is not state worth preserving, keeping it makes push.list
+	// lie about which devices are reachable, and every send to it is a
+	// guaranteed rejection.
+	lost := len(m.subs)
 	priv, pub, err := webpush.GenerateVAPIDKeys()
 	if err != nil {
 		return err
@@ -263,7 +288,18 @@ func (m *Manager) loadVAPID() error {
 	if err := os.WriteFile(m.vapidPath(), blob, 0o600); err != nil {
 		return err
 	}
-	log.Printf("push: generated VAPID keypair at %s", m.vapidPath())
+	if lost == 0 {
+		log.Printf("push: generated VAPID keypair at %s", m.vapidPath())
+		return nil
+	}
+	log.Printf("push: STATE LOSS: %s was missing or unreadable, so a NEW VAPID keypair was "+
+		"generated. The %d stored subscription(s) were negotiated against the OLD public key and "+
+		"can no longer receive anything, so they have been dropped — each device re-subscribes on "+
+		"its next visit. If %s is recoverable (a backup, or a volume that failed to mount), "+
+		"restore it and restart instead.",
+		m.vapidPath(), lost, m.vapidPath())
+	m.subs = map[string]storedSub{}
+	m.persistSubs()
 	return nil
 }
 

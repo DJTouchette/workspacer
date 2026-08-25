@@ -21,6 +21,7 @@ import { app } from 'electron';
 import { CLAUDEMON_API_URL, isClaudemonAdopted } from './claudemonDaemon';
 import { DELEGATE_CATALOG_TO_BRAIN, DESKTOP_RENDERER_USES_BUS } from './brainDelegation';
 import { getRemoteServer } from './remoteServer';
+import { suspectedStateLoss } from '../lib/stateLoss';
 import {
   killStaleListener,
   waitForHealth as waitForHealthShared,
@@ -246,12 +247,35 @@ export async function setHubTrustedHosts(names: string[]): Promise<boolean> {
  * Remote sharing reuses the same token as the bearer secret.
  */
 function loadOrCreateToken(): string {
-  const file = path.join(getConfigDir(), 'remote-token');
+  const dir = getConfigDir();
+  const file = path.join(dir, 'remote-token');
   try {
     const existing = fs.readFileSync(file, 'utf-8').trim();
     if (existing) return existing;
   } catch {
     /* not created yet */
+  }
+  // MINTING A FRESH TOKEN IS NOT A RECOVERY, IT IS A NEW IDENTITY. Everything
+  // paired against the old value — phones, saved share/webview URLs, the
+  // federating hub that reaches this machine — is refused from this moment, and
+  // the app comes up looking perfectly healthy. On a virgin config dir that is
+  // simply first run; on a config dir that still holds the rest of the install,
+  // the file was taken away and this is state loss.
+  //
+  // The CLI twin (services/hub/cmd/workspacer/token.go) REFUSES to start in this
+  // case, because `workspacer serve` is a foreground process whose exit is the
+  // loudest signal it has and its operator has --token/--allow-new-token to hand.
+  // Here we only warn: an Electron app that refuses to boot leaves nobody able to
+  // read the message, and unlike a headless node the user is present and can
+  // re-pair. Loud is the whole point either way.
+  if (suspectedStateLoss(dir, 'remote-token')) {
+    console.error(
+      `[hub] STATE LOSS: ${file} is missing, but ${dir} still holds the rest of this install. ` +
+        'Minting a NEW pairing token — every phone, saved share/webview URL and federation peer ' +
+        'paired against the old one is refused from now on and must be re-paired. If that file is ' +
+        'recoverable (a backup, or a volume that failed to mount), quit, restore it, and reopen ' +
+        'before anything writes over the new one.',
+    );
   }
   const token = crypto.randomBytes(24).toString('base64url');
   try {
