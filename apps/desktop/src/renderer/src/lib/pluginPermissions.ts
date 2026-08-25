@@ -143,7 +143,10 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   // sensitive: waking starts a billable cloud machine, and this hub has no way
   // to stop one. It is trusted-only at call time (nodesTrusted in cmd/hub), so
   // a plugin that declares it gets an honest consent line and then a refusal.
-  'nodes.wake': { label: 'Wake a sleeping remote node (starts a billable machine)', sensitive: true },
+  'nodes.wake': {
+    label: 'Wake a sleeping remote node (starts a billable machine)',
+    sensitive: true,
+  },
   // jobs.* are trusted-only at call time (a job is persisted argv) — a plugin
   // that declares them gets an honest consent label and then a runtime refusal.
   'jobs.list': { label: 'See scheduled jobs' },
@@ -365,6 +368,14 @@ export const EVENT_TOPIC_RULES: EventTopicRule[] = [
     pattern: 'agent.statusline',
     disposition: 'guarded-by-capability',
     method: 'sessions.snapshot',
+  },
+  // The visible-terminal request: a cwd and a shell COMMAND LINE an agent asked
+  // to be run in a pane the user can watch. Guarded by the method that composes
+  // it — see capspec's eventtopics.go row.
+  {
+    pattern: 'facade.openTerminal',
+    disposition: 'guarded-by-capability',
+    method: 'terminals.open',
   },
   { pattern: 'fs.changed', disposition: 'guarded-by-capability', method: 'fs.watch' },
   // hub.peer.* — federation-link reachability (peer name + last-seen only).

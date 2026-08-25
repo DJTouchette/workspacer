@@ -84,6 +84,13 @@ func main() {
 		term := newTerminalHub(cm, bus.publish)
 		reg.term = term
 		go term.sweep(ctx)
+		// terminals.open asks a CLIENT to open a visible terminal pane; it has
+		// no pane of its own to open, so the bus is its only way to be answered.
+		reg.publish = bus.publish
+		// agents.notifyWhen's one-shot watches are evaluated on a sweep rather
+		// than on every snapshot push — a threshold on spend is not a real-time
+		// signal, and a sweep cannot be starved by a chatty session.
+		go reg.runThresholdSweeps(ctx)
 	}
 
 	log.Printf("brain: scope=%s, provider for %d capabilities → hub %s, claudemon %s",

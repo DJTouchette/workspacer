@@ -49,6 +49,9 @@ vi.mock('../../src/backend/hubBusClient', () => ({
     subscribe() {
       return () => {};
     }
+    can() {
+      return true;
+    }
   },
 }));
 
@@ -134,6 +137,15 @@ const BUS_BACKED = [
   'layoutSet',
   'onLayoutChanged',
   'hubPublish',
+  // The brain has no renderer to push FACADE_OPEN_TERMINAL over IPC to, so it
+  // publishes the identical payload as facade.openTerminal on the bus instead;
+  // the topic is TopicGuardedBy terminals.open, enforced hub-side.
+  'onFacadeOpenTerminal',
+  // Remote worker nodes. nodes.list is VIEW tier so the web mirror reads it
+  // straight off the bus; nodes.wake is host-authority only and the backend
+  // gates the BUTTON on the connection's own tier rather than stubbing it out.
+  'nodesList',
+  'nodesWake',
   // Hub jobs (trusted-only hub-local RPCs — see HUB_CORE below)
   'jobsList',
   'jobsUpsert',
@@ -161,7 +173,6 @@ const KNOWN_STUBS = [
   'saveClipboardImage', // the host clipboard isn't the browser user's clipboard → null
   'agentSuggestTitle', // one-shot completion on the agent's own provider CLI; null on web (the desktop titles the agent and the layout syncs)
   'onConfigChanged', // main-process config watcher; the bus has no equivalent event yet
-  'onFacadeOpenTerminal', // facade-opened terminals are a desktop-pane affordance; the browser mirror has no PTY pane → no-op
   'federationPeers', // the web mirror talks to one hub directly; no peer link → [] (could ride hub.peer.* later)
   'federationConversation', // IMPLEMENTED on web (qualified sessions.conversation); listed here because local sessions answer null by design
   'federationPeersConfig', // peers.json lives on the hub machine; web answers null → settings render read-only
@@ -339,6 +350,13 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
       'layout.set',
       '__publish',
       'federation.peers',
+      // Hub-owned remote-node registry (services/hub internal/nodes). Like
+      // federation.peers these are provided by the HUB itself, not by a
+      // desktop capability — and they are registered only when a nodes.json
+      // exists, which is what makes "no provider for nodes.list" the
+      // feature-absent signal the strip reads.
+      'nodes.list',
+      'nodes.wake',
       // Hub-owned job system (services/hub/internal/jobs), trusted-only RPCs.
       'jobs.list',
       'jobs.upsert',

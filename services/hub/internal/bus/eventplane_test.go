@@ -77,6 +77,19 @@ var topicDeliveryKey = []topicDelivery{
 	{topic: "pty.desync", term: true,
 		why: "synthesized from a DROPPED pty.bytes.<id>, so its payload is the identity of a stream this connection was refused"},
 
+	// ---- the visible-terminal request ---------------------------------------
+	// Every column false, so this row LOOKS like a host-only one — and the
+	// reason it is not is worth stating, because the shape is the file's own
+	// stated tell for host-only. It is guarded by terminals.open, and NO
+	// credential in this fixture holds that capability: the three
+	// single-capability plugins hold attachTerminal / fs.watch /
+	// sessions.snapshot, and neither scoped tier lists terminals.open. So the
+	// delivery set really is "operator only", by the guard rather than by
+	// disposition. Granting a test plugin terminals.open would flip this row to
+	// its own column, which is the mutation that would tell the two apart.
+	{topic: "facade.openTerminal",
+		why: "the cwd and shell COMMAND LINE an agent asked to run in a visible pane. terminals.open is in neither scoped tier and in no fixture plugin's grant set, so nothing below operator is entitled to it"},
+
 	// ---- filesystem --------------------------------------------------------
 	{topic: "fs.changed", watch: true,
 		why: "a change feed on a path — an activity oracle on files whose contents may be unreadable. fs.watch installs the watcher and is in no scoped tier"},

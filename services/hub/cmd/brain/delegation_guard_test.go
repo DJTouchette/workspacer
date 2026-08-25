@@ -172,6 +172,33 @@ func TestMainOwnedCapabilitiesDoNotCollideWithTheBrain(t *testing.T) {
 		"git.log":     {false, "same — the brain's parseGitLog is a port of gitService.ts's parseLog, same --pretty format and same 1..50 clamp"},
 		"git.diff":    {false, "same, including anchorGitPathspec: `path` is anchored on the derived work-tree root and the untracked leg is additionally held to the workspace roots on BOTH providers"},
 		"git.numstat": {false, "same, including the core.quotepath=false prefix so unicode paths match the ones git.status printed"},
+
+		// LIVE CONTROL (livecontrol.go). The switch itself is equivalent on all
+		// three — both providers POST the same claudemon endpoints, and the
+		// brain applies the SAME escalation clamp on setPermissionMode
+		// (isPermissionEscalation, pinned to lib/permissionBypass.ts) — but the
+		// desktop ALSO writes an optimistic note into its own in-memory session
+		// store, and the brain has no way to reach that store. So the adopted
+		// configuration keeps the behaviour and loses the eagerness.
+		"claude.setPermissionMode": {true, "both POST claudemon /sessions/:id/permission-mode under the same bypass clamp, but the brain cannot call claudeSessionStore.notePermissionMode — the desktop's livePermissionMode follows the daemon's telemetry instead of flipping on the confirmed reply"},
+		"claude.setModel":          {true, "both POST claudemon /sessions/:id/model; the brain cannot call noteRequestedModel, so the desktop's context-window figure does not follow an `opus[1m]` switch until the status line confirms it"},
+		"claude.setEffort":         {true, "same mechanism on both (claude: the `/effort <level>` message; managed: the /model endpoint) — but noteEffort is the CLAUDE pill's only truth (effective effort appears in no hook, status line or init frame), so an adopted hub's effort pill does not move at all"},
+		"claude.handoffBrief":      {false, "both POST claudemon /sessions/:id/handoff and return its markdown+path verbatim; the daemon composes the brief and chooses the filename on either side"},
+
+		// THE AGENT-FACING FLEET VERBS (agentops.go, brief.go, visibleterm.go).
+		// Every one of these is DEGRADED when the brain wins, and for one shared
+		// reason worth stating once: each desktop implementation reaches into
+		// claudeSessionStore, which is authoritative on the desktop and does not
+		// exist here. The brain answers from its own projection of claudemon.
+		"agents.reportProgress": {true, "same bounds (500 chars, 1/60s, 20 per session) and the same host-derived recipient, but the brain routes on the parent recorded by its OWN spawn metadata. A session the DESKTOP spawned has no entry there, so its worker's report is refused with 'not a tracked session' where main would have delivered it."},
+		"agents.notifyWhen":     {true, "same one-shot predicate and the same 15s sweep, but evaluated over the brain's snapshot projection: the desktop's numbers come from its own accounting, the brain's from claudemon's status line. A watch armed on a session the brain has no row for is refused at arm time rather than firing later."},
+		"agents.close":          {true, "same refusal for a WORKING session and the same daemon teardown, but 'forgotten' means removed from the BRAIN's store — the desktop's own row (and therefore its sidebar) is untouched, so an adopted desktop still shows the card it was asked to dismiss."},
+		"agents.orphans":        {true, "the brain needs no tombstone store (claudemon keeps ended rows), but it can only see parents it recorded itself. A manager the DESKTOP spawned and that then died is not reported as an orphan candidate at all — the answer is narrower, not wrong."},
+		"agents.reparent":       {true, "moves the parent link in the brain's spawn metadata, which is what the brain's own wakes route on. The desktop's claudeSessionStore is NOT updated, so in the adopted configuration a desktop-originated wake still goes to the retired manager."},
+		"brief.append":          {false, "byte-for-byte the same additive insert (appendToBrief), the same O_EXCL lock and compare-and-swap, and the same assertPathAllowed(workspaceRoots) guard over `project` with the basename composed by the provider. The file on disk is the same file; nothing about which process writes it changes the result."},
+		"terminals.open":        {true, "main emits FACADE_OPEN_TERMINAL straight to ITS renderer; the brain has no renderer and publishes `facade.openTerminal` on the bus instead. A desktop that adopts a hub does not subscribe to that topic, so an agent's open_terminal reaches a WEB client and not the Electron window."},
+		"fs.readImage":          {true, "same path guard and the same extension allowlist, but the brain has no image decoder: it inlines the original bytes under the twin's own MAX_INLINE_BYTES fallback rather than returning a downscaled thumbnail, and refuses an image over that cap where main would have resized it."},
+		"sessions.recent":       {true, "same daemon list and the same merge, but the desktop's SQLite session-history join is unavailable headless: `model` and `costUSD` come back empty and `title` is never transcript-derived. The rows and their order are identical; three columns are blank."},
 	}
 	for _, scope := range []string{"catalog", "full"} {
 		brain := brainScopeSet(scope)

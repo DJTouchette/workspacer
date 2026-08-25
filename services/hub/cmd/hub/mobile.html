@@ -334,6 +334,26 @@
   .pushrow button { flex:none; padding:8px 13px; border-radius:9px; font-size:12.5px; font-weight:600;
     background:var(--blue-bg); border:1px solid var(--blue-line); color:var(--blue-text); }
 
+  /* Remote worker nodes — a machine that can be off ON PURPOSE, and the
+     Connect button that starts it. Renders only when this hub HAS a node
+     registry and something in it is worth saying. `waking` gets the blue
+     in-flight treatment and a spinner; the whole point is that a booting
+     machine must not look like a dead one. */
+  .node { display:flex; flex-direction:column; gap:6px; padding:11px 13px; border-radius:12px;
+    border:1px solid var(--line3); background:var(--raised); }
+  .node .hd { display:flex; align-items:center; gap:7px; }
+  .node .nm { flex:1; min-width:0; font-size:13.5px; font-weight:600; color:var(--text2);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .node .st { flex:none; font-size:10.5px; font-weight:600; letter-spacing:.04em;
+    text-transform:uppercase; font-variant-numeric:tabular-nums; }
+  .node .d { font-size:12.5px; color:var(--text3); line-height:1.45; }
+  .node .warn { font-size:12.5px; color:var(--amber-text); line-height:1.45; }
+  .node .err { font-size:12.5px; color:var(--red); line-height:1.45; }
+  .node .cost { font-size:11.5px; color:var(--faint); line-height:1.4; }
+  .node button { width:100%; padding:10px 13px; border-radius:9px; font-size:13px; font-weight:600;
+    background:var(--blue-bg); border:1px solid var(--blue-line); color:var(--blue-text); }
+  .node button[disabled] { background:transparent; border-color:var(--line4); color:var(--disabled); }
+
   /* ── chat ─────────────────────────────────────────────────────────────── */
   .pills { display:flex; gap:7px; overflow-x:auto; padding-bottom:2px; }
   .pills button { flex:none; display:flex; align-items:center; gap:6px; padding:7px 11px;
@@ -1185,6 +1205,151 @@
       }
     }));
   }
+  // ══ remote worker nodes ═══════════════════════════════════════════════════
+  // A "node" is a machine that can be off ON PURPOSE — claudemon + brain
+  // running on a cloud box the hub can start. Before this, a machine that was
+  // asleep and one that had died looked identical from the phone: nothing.
+  //
+  // Contract: .workspacer/reports/2026-08-24-fly-wake-contract.md. Seed from
+  // nodes.list, patch from node.state_changed, NEVER poll.
+  //
+  // `nodes` is null until we know, and STAYS null on a hub with no registry —
+  // which is every ordinary install, and which must render as no change at all.
+  let nodes = null;
+  const nodePending = new Set();   // ids we asked to wake and the hub hasn't answered for
+  const nodeErrors = new Map();    // id -> the last refusal, until its state moves
+
+  const NODE_META = {
+    available:   { label: 'Connected',   color: C.green, spin: false,
+                   d: 'This machine is on the bus and answering.' },
+    waking:      { label: 'Starting',    color: C.blue,  spin: true,
+                   d: 'The machine is booting — usually ready in about 20 seconds.' },
+    stopped:     { label: 'Asleep',      color: C.dim,   spin: false,
+                   d: 'Switched off. Connecting will start it.' },
+    unreachable: { label: "Can't reach", color: C.amber, spin: false,
+                   d: "The hub can't get a working machine out of this one." },
+  };
+  // A wake starts a meter, and this hub deliberately has no way to stop one.
+  // Someone tapping this on a phone is spending money — say so on the screen,
+  // not in a tooltip a phone cannot show.
+  const NODE_COST = 'Starts a real machine. It bills from boot, and nothing here can stop it again yet.';
+
+  /** THE gotcha: can('nodes.list') is TRUE even on a hub with no node registry,
+   *  because the method sits in the view tier unconditionally while the hub only
+   *  REGISTERS it when a nodes.json exists. So a permission check cannot answer
+   *  "does this hub have nodes" — the router's own "no provider" wording is the
+   *  only honest signal, and it means FEATURE ABSENT, never an error to show. */
+  async function loadNodes() {
+    try {
+      const list = await call('nodes.list', {});
+      nodes = (list || []).filter((n) => n && n.id);
+    } catch (e) {
+      // Absent → stay silent. Anything else is a real failure, and the status
+      // pill already owns "this hub is unreachable" — a toast per reconnect
+      // blip would be worse than saying nothing.
+      nodes = null;
+    }
+    render();
+  }
+
+  /** Patch one node from node.state_changed. The hub publishes only on a real
+   *  change, so every event that arrives is worth acting on. */
+  function applyNodeState(n) {
+    if (!n || !n.id) return;
+    nodePending.delete(n.id);
+    nodeErrors.delete(n.id);   // the hub has spoken; our stale refusal is moot
+    if (!nodes) { nodes = [n]; render(); return; }
+    const i = nodes.findIndex((x) => x.id === n.id);
+    if (i < 0) nodes.push(n); else nodes[i] = n;
+    render();
+  }
+
+  /** Is this node's last run a CRASH it is telling us about? A missing lastExit
+   *  means nobody knows, NOT that it ended cleanly — so say nothing then. */
+  function nodeCrash(n) {
+    const e = n.lastExit;
+    if (!e || !e.reason || String(e.reason).indexOf('signal-') === 0) return '';
+    const code = e.exitCode !== undefined ? ` (exit ${e.exitCode})` : '';
+    const at = e.at ? ` at ${e.at}` : '';
+    return `Its previous run did not end cleanly: ${e.reason}${code}${at}.`;
+  }
+
+  function nodesHtml() {
+    if (!nodes || !nodes.length) return '';
+    // A node that is quietly fine says nothing. One that came back from a crash
+    // is `available` AND carrying the only notice of that crash — so it counts.
+    const shown = nodes.filter((n) => n.state !== 'available' || nodeCrash(n));
+    if (!shown.length) return '';
+    // nodes.wake is HOST AUTHORITY ONLY. A view- or triage-tier phone sees the
+    // state and does not get the button — showing one the bus is certain to
+    // refuse is exactly the silent failure this whole feature removes.
+    const mayWake = can('nodes.wake');
+    return shown.map((n) => {
+      const meta = NODE_META[n.state] || NODE_META.unreachable;
+      const pending = nodePending.has(n.id);
+      const crash = nodeCrash(n);
+      const fails = n.wakeFailures > 0
+        ? `${n.wakeFailures} wake${n.wakeFailures === 1 ? '' : 's'} failed. A failed wake leaves the machine running and billing — check the cloud console.`
+        : '';
+      const err = nodeErrors.get(n.id) || '';
+      let btn = '';
+      if (n.state !== 'available') {
+        if (n.state === 'waking' || pending) {
+          btn = `<button disabled>Starting…</button>`;
+        } else if (!n.wakeable) {
+          btn = `<button disabled>Connect</button>
+                 <div class="cost">This hub holds no cloud credentials for this machine.</div>`;
+        } else if (!mayWake) {
+          btn = `<button disabled>Connect</button>
+                 <div class="cost">Starting a machine spends money — it needs an operator token.</div>`;
+        } else {
+          btn = `<button data-wake="${esc(n.id)}">Connect</button>
+                 <div class="cost">${esc(NODE_COST)}</div>`;
+        }
+      }
+      return `<div class="node" data-node="${esc(n.id)}" data-node-state="${esc(n.state)}">
+        <div class="hd">
+          ${meta.spin ? '<span class="spin" style="top:0"></span>' : `<span class="mark" style="background:${meta.color}"></span>`}
+          <span class="nm">${esc(n.label || n.id)}</span>
+          <span class="st" style="color:${meta.color}">${esc(meta.label)}</span>
+        </div>
+        <div class="d">${esc(n.detail || meta.d)}</div>
+        ${crash ? `<div class="warn">${esc(crash)}</div>` : ''}
+        ${fails ? `<div class="warn">${esc(fails)}</div>` : ''}
+        ${err ? `<div class="err">${esc(err)}</div>` : ''}
+        ${btn}
+      </div>`;
+    }).join('');
+  }
+
+  async function wakeNode(id) {
+    // A wake spends real money and this hub has no way to stop the machine
+    // again from here — the same confirm idiom stopSession() already uses.
+    if (!window.confirm(NODE_COST)) return;
+    nodePending.add(id);
+    nodeErrors.delete(id);
+    render();
+    try {
+      const n = await call('nodes.wake', { id });
+      // Returns IMMEDIATELY with state:"waking" — the rest arrives on
+      // node.state_changed. That is what makes a real waking state possible
+      // instead of a spinner on a held request.
+      if (n && n.id) applyNodeState(n);
+      else { nodePending.delete(id); render(); }
+    } catch (e) {
+      nodePending.delete(id);
+      const msg = String((e && e.message) || '');
+      nodeErrors.set(id, /requires host authority/.test(msg)
+        ? 'Starting a machine needs an operator token.'
+        : /unknown node|naming a registered node is required/.test(msg)
+        ? 'This machine is no longer in the registry.'
+        : /has no cloud coordinates or credential/.test(msg)
+        ? 'This hub holds no cloud credentials for this machine.'
+        : msg || "Couldn't start the machine.");
+      render();
+    }
+  }
+
   /** A peer's link came back: replace its fleet wholesale — reseed, then drop
    *  the sessions the reseed no longer returned. */
   async function reseedPeer(name) {
@@ -2031,7 +2196,9 @@
     // Fleet is where the app LANDS, and the push banner used to live only on
     // Needs You — so the one affordance for turning notifications on sat on a
     // tab you had no reason to open until you already had a notification.
-    const parts = [pushBannerHtml()];
+    // The node strip sits ABOVE the fleet: a machine you can't reach is the
+    // reason dispatches are missing from the list under it.
+    const parts = [nodesHtml(), pushBannerHtml()];
     if (!roster.length) {
       parts.push(emptyHtml('▦', C.dim, sessions.size ? 'Nothing here' : 'No dispatches yet',
         sessions.size ? 'Try another filter.' : 'Dispatch one from the Dispatch tab, or from the desktop.'));
@@ -2051,6 +2218,7 @@
     }
     main.innerHTML = `<div class="body">${parts.join('')}</div>`;
     bindAgentCards(main);
+    for (const b of main.querySelectorAll('[data-wake]')) b.onclick = () => wakeNode(b.dataset.wake);
     for (const b of main.querySelectorAll('[data-resume]')) b.onclick = () => resume(b.dataset.resume);
   }
 
@@ -4037,7 +4205,7 @@
     sock.onopen = () => {
       clearTimeout(watchdog);
       backoff = 500; attempt = 0; lastActivity = Date.now(); connected = true;
-      sock.send(JSON.stringify({ op: 'subscribe', topics: ['agent.snapshot', 'workflow.*', 'hub.peer.*'] }));
+      sock.send(JSON.stringify({ op: 'subscribe', topics: ['agent.snapshot', 'workflow.*', 'hub.peer.*', 'node.state_changed'] }));
       // Everything else waits for `hello` — see onDiscover. Firing the optional
       // lookups here would run their can() guards before we know our scope,
       // when can() answers true for everything, so a view/triage token would
@@ -4059,6 +4227,12 @@
       // config.get costs labels and custom colours, never legibility.
       if (!cfg && can('config.get')) call('config.get', {}).then((c) => { cfg = c; render(); }).catch(() => {});
       if (can('sessions.recent')) call('sessions.recent', {}).then((r) => { recents = r || []; render(); }).catch(() => { recents = []; });
+      // Remote nodes: seeded on every (re)connect, because the hub keeps NO
+      // node state across a restart — a reconnect is exactly when our copy is
+      // most likely wrong. can('nodes.list') is deliberately NOT consulted: it
+      // says yes on a hub with no registry at all, so the call itself is the
+      // feature check (see loadNodes).
+      loadNodes();
       loadSpawnExtras();
     };
     sock.onmessage = (ev) => {
@@ -4094,6 +4268,9 @@
           const d = f.event.data || {};
           if (d.peer) { offlineHubs.set(d.peer, Date.parse(d.lastSeen || '') || Date.now()); afterData(); }
         }
+        // A remote machine changed state. Patch by id — the hub publishes only
+        // on a real change, so this never needs a poll behind it.
+        else if (t === 'node.state_changed') applyNodeState((f.event.data || {}).node);
         else if (t === 'hub.peer.connected') {
           const d = f.event.data || {};
           if (d.peer) { offlineHubs.delete(d.peer); reseedPeer(d.peer); }

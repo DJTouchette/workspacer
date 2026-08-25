@@ -115,3 +115,38 @@ func snapshotID(snap json.RawMessage) string {
 	_ = json.Unmarshal(snap, &x)
 	return x.SessionID
 }
+
+// remove forgets one session. The ONE caller is agents.close, and it exists
+// because claudemon does not forget: the daemon keeps a stopped session as a
+// resumable row on purpose, so a dismissal that only signalled would leave
+// agents.list unchanged and the verb would do nothing a caller could see.
+//
+// Silent (no onChange): the row is gone, and publishing an agent.snapshot for a
+// session that no longer exists would ask every client to render it again.
+func (s *sessionStore) remove(id string) {
+	s.mu.Lock()
+	delete(s.m, id)
+	s.mu.Unlock()
+}
+
+// restamp re-runs enrichment over a row already in the store, in place.
+//
+// The overlay (label / parentSessionId / isSupervisor) is applied when a
+// snapshot LANDS, so a change to the spawn metadata behind it — the one
+// agents.reparent makes — is invisible until claudemon next pushes that
+// session. A manager that adopts a fleet and immediately lists it would see the
+// state before its own move. This closes that window without inventing a second
+// source of truth: it re-enriches the row the store already holds.
+//
+// Silent for the same reason remove is: a parent link is not a state change the
+// fleet needs pushed, and re-publishing a row the visibility rule might hide is
+// a separate decision from making the read correct.
+func (s *sessionStore) restamp(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snap, ok := s.m[id]
+	if !ok || s.enrich == nil {
+		return
+	}
+	s.m[id] = s.enrich(snap)
+}
