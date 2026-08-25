@@ -54,15 +54,49 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
     let mut out = Vec::new();
     match method {
         "turn/started" => out.push(AgentUpdate::Busy),
-        "turn/completed" => out.push(AgentUpdate::Idle),
+        // A FAILED turn arrives here, not on `turn/failed`. The app-server
+        // protocol has no `turn/failed` notification at all (checked against
+        // `codex app-server generate-json-schema`): every turn ends on
+        // `turn/completed`, carrying `turn.status` ∈ {completed, interrupted,
+        // failed, inProgress} and, when failed, a `turn.error.message`.
+        // Translating this to a bare `Idle` discarded the whole failure — an
+        // API-rejected turn (a wrong model id, an auth or quota refusal) left
+        // the session sitting idle with no assistant text, no error, and
+        // nothing anywhere saying why. That is what made a delivered-and-
+        // rejected dispatch indistinguishable from a message that never
+        // arrived. `Idle` still follows the error, so the turn is over either
+        // way.
+        "turn/completed" => {
+            if let Some(msg) = turn_failure(params) {
+                out.push(AgentUpdate::Error(msg));
+            }
+            out.push(AgentUpdate::Idle);
+        }
+        // `error` is the app-server's out-of-band failure notification
+        // (`{ error: TurnError, threadId, turnId, willRetry }`) — a retryable
+        // one is noise, so only a terminal one is surfaced. It does NOT end
+        // the turn (the `turn/completed` above does), hence no `Idle` here.
+        "error" => {
+            if params.get("willRetry").and_then(Value::as_bool) != Some(true) {
+                if let Some(msg) = error_message(params.get("error")) {
+                    out.push(AgentUpdate::Error(msg));
+                }
+            }
+        }
+        // Kept for older app-servers that may still send it. Harmless where
+        // the method does not exist, and the vocabulary is version-fragile
+        // enough (see the model-list note in the providers doc) that dropping
+        // a handler for a build we cannot check is not worth the saving.
         "turn/failed" => {
-            let msg = params
-                .get("error")
-                .and_then(|e| e.get("message").or_else(|| e.get("data")))
-                .and_then(Value::as_str)
-                .or_else(|| params.get("message").and_then(Value::as_str))
-                .unwrap_or("turn failed");
-            out.push(AgentUpdate::Error(msg.to_string()));
+            let msg = error_message(params.get("error"))
+                .or_else(|| {
+                    params
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .unwrap_or_else(|| "turn failed".to_string());
+            out.push(AgentUpdate::Error(msg));
             out.push(AgentUpdate::Idle);
         }
         // Streamed assistant text. Reasoning/command-output deltas are skipped
@@ -416,6 +450,41 @@ fn file_change_input(item: &Value) -> Value {
         return input;
     }
     json!({ "path": item.get("path").cloned().unwrap_or(Value::Null) })
+}
+
+/// Pull the human-readable message out of a `TurnError`
+/// (`{ message, additionalDetails?, codexErrorInfo? }`). `data` is accepted as
+/// an alias because a JSON-RPC error object spells the same thing that way,
+/// and both shapes reach this helper.
+fn error_message(err: Option<&Value>) -> Option<String> {
+    let err = err?;
+    let msg = err
+        .get("message")
+        .or_else(|| err.get("data"))
+        .and_then(Value::as_str)?
+        .trim();
+    if msg.is_empty() {
+        return None;
+    }
+    Some(msg.to_string())
+}
+
+/// The failure message of a `turn/completed` whose turn FAILED, or `None` for
+/// a turn that completed or was interrupted.
+///
+/// Keyed on the error being present rather than on `status == "failed"`: the
+/// status is a closed enum today, but an error attached under a spelling this
+/// build does not know still has to be shown rather than swallowed. An
+/// interrupt is not a failure and carries no error, so it stays quiet.
+fn turn_failure(params: &Value) -> Option<String> {
+    let turn = params.get("turn")?;
+    let msg = error_message(turn.get("error"));
+    if msg.is_none() && turn.get("status").and_then(Value::as_str) == Some("failed") {
+        // Failed with no message attached — still worth saying so, since the
+        // alternative is a session that answers nothing and explains nothing.
+        return Some("turn failed".to_string());
+    }
+    msg
 }
 
 /// Flatten a completed `mcpToolCall`'s `result` / `error` into display text +
@@ -2166,6 +2235,88 @@ mod tests {
             translate("turn/completed", &json!({})),
             vec![AgentUpdate::Idle]
         );
+    }
+
+    // REGRESSION. A turn the API rejected ends on `turn/completed` with
+    // `turn.status: "failed"` and a `turn.error.message` — this build's
+    // app-server has no `turn/failed` notification at all. Translating that to
+    // a bare `Idle` threw the reason away, and the operator saw a codex
+    // session that opened, produced no assistant turn and ended: exactly what
+    // "the initial message never reached it" looks like, for a message that
+    // was in fact delivered verbatim. This is the REAL payload, from the
+    // rollout of the reproduction probe.
+    #[test]
+    fn a_failed_turn_on_turn_completed_surfaces_the_error() {
+        let p = json!({
+            "threadId": "01a0395f",
+            "turn": {
+                "id": "01a0395f-e9fd",
+                "items": [],
+                "status": "failed",
+                "error": {
+                    "message": "The 'opus[1m]' model is not supported when using Codex with a ChatGPT account.",
+                    "codexErrorInfo": "other"
+                }
+            }
+        });
+        assert_eq!(
+            translate("turn/completed", &p),
+            vec![
+                AgentUpdate::Error(
+                    "The 'opus[1m]' model is not supported when using Codex with a ChatGPT account."
+                        .into()
+                ),
+                AgentUpdate::Idle
+            ]
+        );
+    }
+
+    // A failed turn with no message attached still says something — silence is
+    // the failure mode being fixed.
+    #[test]
+    fn a_failed_turn_with_no_message_still_reports_a_failure() {
+        let p = json!({ "turn": { "id": "t", "items": [], "status": "failed" } });
+        assert_eq!(
+            translate("turn/completed", &p),
+            vec![AgentUpdate::Error("turn failed".into()), AgentUpdate::Idle]
+        );
+    }
+
+    // The ordinary paths stay quiet: a normal completion and an interrupt are
+    // not errors, and must not start showing a ⚠️ item.
+    #[test]
+    fn a_completed_or_interrupted_turn_reports_no_error() {
+        for status in ["completed", "interrupted"] {
+            let p = json!({ "turn": { "id": "t", "items": [], "status": status } });
+            assert_eq!(
+                translate("turn/completed", &p),
+                vec![AgentUpdate::Idle],
+                "status {status} must not surface an error"
+            );
+        }
+    }
+
+    // The out-of-band `error` notification: terminal ones surface, retryable
+    // ones stay quiet, and neither ends the turn (`turn/completed` does).
+    #[test]
+    fn a_terminal_error_notification_surfaces_without_ending_the_turn() {
+        let p = json!({
+            "threadId": "t", "turnId": "u", "willRetry": false,
+            "error": { "message": "stream disconnected" }
+        });
+        assert_eq!(
+            translate("error", &p),
+            vec![AgentUpdate::Error("stream disconnected".into())]
+        );
+    }
+
+    #[test]
+    fn a_retryable_error_notification_is_not_surfaced() {
+        let p = json!({
+            "threadId": "t", "turnId": "u", "willRetry": true,
+            "error": { "message": "transient" }
+        });
+        assert_eq!(translate("error", &p), vec![]);
     }
 
     #[test]
