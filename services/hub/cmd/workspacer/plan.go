@@ -26,6 +26,7 @@ type serveOptions struct {
 	TrustedHosts      string // comma-separated reverse-proxy hostname(s) for the hub's --trusted-host
 	DevStreamLogs     bool   // pass --plugins-stream-logs to the hub (plugin dev only)
 	SkipClaudemonInit bool   // skip the `claudemon init` pre-flight (operator owns ~/.claude/settings.json)
+	DBPath            string // claudemon's SQLite session store; resolved by resolveDBPath, never empty by the time buildServePlan sees it
 }
 
 // servePlan is the fully-wired launch plan: the child specs to supervise and
@@ -115,6 +116,16 @@ func buildServePlan(opts serveOptions) servePlan {
 			"--hook-port", fmt.Sprintf("%d", opts.HookPort),
 			"--api-port", fmt.Sprintf("%d", opts.APIPort),
 		},
+	}
+	// PIN THE DATABASE LIKE A PORT. Every port claudemon binds was named here
+	// and the one piece of persistent state it opens was not, so the daemon
+	// resolved it privately (store/mod.rs default_db_path) and nothing in the
+	// plan — or in the banner, or in a test — could say which file a stack was
+	// about to write. That is how two stacks on alternate ports came to share
+	// one `sessions`/`events` table in silence. resolveDBPath has already
+	// decided (and refused the sharing case); this only carries the answer.
+	if opts.DBPath != "" {
+		claudemon.Args = append(claudemon.Args, "--db-path", opts.DBPath)
 	}
 	// Match the desktop's default daemon verbosity, but let the user's own
 	// RUST_LOG win (childSpec env is appended after os.Environ, overriding it,

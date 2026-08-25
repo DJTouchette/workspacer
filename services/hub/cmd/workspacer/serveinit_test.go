@@ -92,11 +92,15 @@ func TestServeRegistersClaudeCodeHooksBeforeStartingTheDaemons(t *testing.T) {
 	ports := freePorts(t, 3)
 
 	opts := serveOptions{
-		Host:         "127.0.0.1",
-		HubPort:      ports[0],
-		APIPort:      ports[1],
-		HookPort:     ports[2],
-		Token:        "tok",
+		Host:     "127.0.0.1",
+		HubPort:  ports[0],
+		APIPort:  ports[1],
+		HookPort: ports[2],
+		Token:    "tok",
+		// Alternate ports mean a second claudemon, which now requires its own
+		// database — see resolveDBPath. A scratch one keeps this test off the
+		// machine's real session store as well as off its real ports.
+		DBPath:       filepath.Join(dir, "scratch", "state.db"),
 		ClaudemonBin: fakeDaemon(t, dir, "claudemon", logPath),
 		HubBin:       fakeDaemon(t, dir, "hub", logPath),
 	}
