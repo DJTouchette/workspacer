@@ -220,7 +220,13 @@ assert_no_file "$C2/workspacer/remote-token"
 # Prove the marker alone is sufficient by emptying the directory around the file.
 D3="$TMP/lost-token-bare"; C3="$D3/home/.config"
 cp -a "$D" "$D3"
-rm -f "$C3/workspacer/"*
+# -rf, not -f. `rm -f` does not remove directories, so plugins/, library/,
+# layouts/, sessions/ and logs/ survived it, and this assertion is precisely
+# the one claiming the marker works WITHOUT the directory inference. With five
+# subdirectories still standing, the neighbours were still there and the test
+# passed for a weaker reason than it stated (and printed five rm errors doing
+# it). Emptying it for real is what makes the marker the only evidence left.
+rm -rf "${C3:?}/workspacer/"*
 out="$(run_bootstrap "$D3")"; rc=$?
 assert_rc "$rc" 2 "still refuses when the whole config dir was emptied — the marker outlives the directory"
 assert_grep "$out" "this volume has held it before" "cites the marker, not the neighbours"

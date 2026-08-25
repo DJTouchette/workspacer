@@ -2,6 +2,11 @@
 
 **Written:** 2026-08-24. **Artifacts:** `deploy/fly/node/`.
 
+> **Provisioning both machines? Start at [`../RUNBOOK.md`](../RUNBOOK.md).** This
+> document is the reference for *why the node is shaped the way it is*, and its
+> prerequisites assume a hub that already exists. The combined runbook is the
+> order, and it gathers the steps only a human can do into one sitting.
+
 This is the exact sequence a human runs **once**, in order, to turn an empty Fly
 account into a sleeping worker node that the always-on hub can wake. It includes
 the three interactive logins that cannot be scripted, and — more importantly —
@@ -156,9 +161,20 @@ a capability *provider*, so it needs whatever scope your hub requires for that �
 if in doubt, the operator tier.
 
 ```sh
-# on the hub
-workspacer token create --name fly-node --scope operator
+# on the hub, AS THE USER THAT OWNS ITS CONFIG DIR (on a Fly hub: `su - wks`)
+workspacer token create --label fly-node --scope operator
 ```
+
+The flag is `--label`, not `--name`; `--name` exits 2 with "flag provided but
+not defined". No hub restart is needed, because the hub re-reads `tokens.json`
+on every new connection.
+
+> **An operator-tier scoped token is TRUSTED on the bus**, exactly like the host
+> pairing token, and that includes `nodes.wake`. Verified by calling it: an
+> operator-scoped token drove a real `POST /v1/apps/…/machines/…/start`. So this
+> credential can spend money, and it lives on the node. It is still the right
+> choice, because unlike the host token it can be revoked, but do not read
+> "scoped" as "limited" here.
 
 Then, back in this repo:
 
