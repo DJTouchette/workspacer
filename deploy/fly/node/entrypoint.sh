@@ -318,17 +318,26 @@ log "  (this address must be IDENTICAL across a stop/start cycle. If it changed,
 tailscale --socket="$TS_SOCKET" status --peers=false 2>/dev/null | sed 's/^/    /' || true
 
 # --------------------------------------------------------------------------
-# 6. claudemon init — the step nothing in the serve path performs.
+# 6. claudemon init — this entrypoint drives claudemon directly, not `serve`.
 # --------------------------------------------------------------------------
-# `claudemon init` is a sibling subcommand of `serve`, never a step inside it.
+# As of 9b061244, `workspacer serve` runs `claudemon init` itself (and pins
+# --db-path). This entrypoint does NOT go through `serve` — it drives
+# `claudemon` and `brain` directly (step 7 below) — so it still needs this
+# explicit call, and it stays correct as written. It would only become
+# redundant if this entrypoint switched to shelling out to `workspacer serve`
+# instead.
 # On a fresh volume ~/.claude/settings.json does not exist, so without this the
-# hook forwarder and statusLine forwarder are absent and PTY sessions produce
-# no hook events — they read as permanently idle. Idempotent: prints "already
-# up to date" and writes nothing when the merge is a no-op.
+# hook forwarder and statusLine forwarder are absent. The symptom is NOT idle
+# sessions — the opposite: internal/quiescence treats mode: "unknown" as a
+# blocker, so a hookless session fails safe and pins the machine awake. A PTY
+# session never leaves SessionMode::Unknown, and a spawn's first_message is
+# held until the Input transition, so a dispatched PTY worker never receives
+# its prompt — it just sits there looking alive and doing nothing. Idempotent:
+# prints "already up to date" and writes nothing when the merge is a no-op.
 log "running claudemon init (hook port ${CLAUDEMON_HOOK_PORT})"
 as_wks env HOME="$WKS_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_DATA_HOME="$XDG_DATA_HOME" \
   claudemon init --hook-port "$CLAUDEMON_HOOK_PORT" ||
-  log "WARNING: claudemon init failed — PTY sessions on this node may read as permanently idle"
+  log "WARNING: claudemon init failed — PTY sessions on this node may pin the machine awake without ever receiving a prompt"
 
 # --------------------------------------------------------------------------
 # 7. claudemon, then brain.

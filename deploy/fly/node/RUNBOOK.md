@@ -593,13 +593,28 @@ accrues **while the machine is stopped** — stopped machines are not free.
 
 These artifacts assume the following land. None of it is implemented here.
 
-1. **`claudemon init` in the boot path.** The entrypoint runs it explicitly,
+1. **`claudemon init` in the boot path.** ~~The entrypoint runs it explicitly,
    because `init` is a *sibling* subcommand of `serve` and nothing in the serve
-   path ever invokes it. On a fresh volume `~/.claude/settings.json` does not
-   exist, so without it the hook and statusLine forwarders are absent and PTY
-   sessions read as permanently idle. It is idempotent. **If the `claudemon init`
-   fix changes its flags or makes `serve` run it, remove the explicit call from
-   `entrypoint.sh` step 6.**
+   path ever invokes it.~~ **UPDATE (as of `9b061244`): `workspacer serve` now
+   runs `claudemon init` itself and pins `--db-path` (also new:
+   `--claudemon-db-path`, `--no-claudemon-init`, `--allow-new-token`).** That
+   fix does not change anything here, though: `entrypoint.sh` drives
+   `claudemon` directly rather than going through `workspacer serve` (step 7
+   below), so it never gets that pre-flight for free — it still needs its own
+   explicit `claudemon init` call and its own explicit `--db-path`, and both
+   are correct as written. The workarounds would only become redundant if this
+   entrypoint ever switched from driving `claudemon`/`brain` directly to
+   shelling out to `workspacer serve` instead.
+   On a fresh volume `~/.claude/settings.json` does not exist, so without
+   `claudemon init` the hook and statusLine forwarders are absent. The
+   symptom is **not** idle sessions — quite the opposite: `internal/quiescence`
+   treats `mode: "unknown"` as a blocker, so a hookless session fails safe and
+   **pins the machine awake**. The concrete failure is that a PTY session never
+   leaves `SessionMode::Unknown`, and a spawn's `first_message` is held until
+   the `Input` transition, so **a dispatched PTY worker never receives its
+   prompt** — it just sits there looking alive and doing nothing. `claudemon
+   init` is idempotent (prints "already up to date" and writes nothing when the
+   merge is a no-op).
 2. **The git port to the brain.** `git.status`, `git.diff`, `git.log`,
    `git.stage`, `git.commit`, `git.push` — the entire git surface — is a
    *declared* headless gap. Until it lands, this node can run agents but cannot

@@ -519,6 +519,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener(IPC.UPDATES_STATUS, handler);
   },
 
+  // ── Remote worker nodes (machines that can be off ON PURPOSE) ──
+  /** The node registry, or NULL when this hub has none — which is every
+   *  ordinary install, and must render as no change at all. `canWake` is the
+   *  caller's own authority: the desktop holds the host token and always may,
+   *  a view/triage phone never does. */
+  nodesList: (): Promise<{ nodes: unknown[]; canWake: boolean } | null> =>
+    ipcRenderer.invoke(IPC.NODES_LIST),
+  /** Start a stopped node. Returns immediately with state:"waking"; the rest
+   *  arrives on onHubEvent as `node.state_changed`. A refusal comes back as
+   *  `{ok:false, error}` rather than a rejection. */
+  nodesWake: (id: string): Promise<{ ok: boolean; node?: unknown; error?: string }> =>
+    ipcRenderer.invoke(IPC.NODES_WAKE, id),
+
   // ── Shared layout document (hub-owned; tmux-style mirror) ──
   // Hub jobs (recurring/one-off tasks the hub runs) — see hub internal/jobs.
   jobsList: (): Promise<{ jobs: unknown[] }> => ipcRenderer.invoke(IPC.JOBS_LIST),

@@ -225,6 +225,15 @@ var eventTopics = []EventTopic{
 		Disposition: TopicOpenByDecision,
 		Reason:      "peer name + last-seen timestamp. The signal every client needs to tombstone that hub's sessions instead of letting them silently vanish — which reads to a user as 'my agent died'",
 	},
+	// node.state_changed — remote worker node reachability (internal/nodes).
+	// The same tombstone argument as hub.peer.*, one step further: a node can
+	// be off ON PURPOSE, and a client that cannot hear this renders a machine
+	// that is one button away from working as one that has died.
+	{
+		Pattern:     "node.state_changed",
+		Disposition: TopicOpenByDecision,
+		Reason:      "carries the same nodes.NodeView the view tier already reads from nodes.list, plus the state it came from: a node id, a label, one of four states, two timestamps, a sentence of detail, a wakeable bit and a failed-wake count. It is an allowlist PROJECTION of the registry record, so the credential-bearing half — the cloud API token, the file holding it, the app name, the machine id, the endpoint — is absent by construction and not by a strip list. Receiving it discloses strictly nothing beyond the read the same tier holds; what it buys is that a wake shows progress instead of a spinner. Publishing it is the hub's own (the topic is refused to every non-trusted publisher by the publish-ownership half of this registry), which matters because a forged \"available\" would send a client typing at a machine that is not there",
+	},
 	{
 		Pattern:     "layout.changed",
 		Disposition: TopicOpenByDecision,

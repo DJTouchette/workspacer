@@ -39,8 +39,14 @@ var headlessGaps = map[string]string{
 	// claude.setModel / setPermissionMode / setEffort / handoffBrief were here
 	// and are now PROVIDED (livecontrol.go): the mode pill, the model switcher,
 	// the effort control and cross-provider handoff work on a headless node.
-	// setPermissionMode carries the spawn path's escalation clamp with it —
-	// a bus caller can TIGHTEN a running agent's mode and cannot loosen it.
+	// setPermissionMode carries the spawn path's escalation clamp with it — a
+	// bus caller can TIGHTEN a running agent's mode and cannot loosen it.
+	//
+	// The entries these replace were rewritten a moment earlier to describe the
+	// loud-failure work on the two clients (both now surface the rejection
+	// rather than swallowing it). That work is not wasted by this: it is what a
+	// user sees when the DAEMON refuses a live switch, which is still a real
+	// answer — ok:false with a reason, and the restart path behind it.
 	//
 	// claude.handoffAgentBrief stays a gap ON PURPOSE. It is not a relay like
 	// its sibling: main/services/agentHandoff.ts injects a write-this-brief
@@ -86,6 +92,12 @@ var headlessGaps = map[string]string{
 	// resumable-row list, so an empty list finally means "no sessions" rather
 	// than "no provider". (replay.* is desktop-IPC only — no shipped headless
 	// client calls it, so it is not a gap here.)
+	//
+	// sessions.recent is PROVIDED too (recent.go). The entry it replaces
+	// recorded that /app had just stopped swallowing the failure — the Sessions
+	// pane now says it could not be READ rather than that there is none — and
+	// that distinction still matters: with a provider in place, an empty list
+	// finally means "no sessions" and an error means the daemon is unreachable.
 	//
 	// brief.archive is NOT listed, for the same reason replay.* is not: no
 	// shipped client calls it (it is an agent-facing MCP tool), so

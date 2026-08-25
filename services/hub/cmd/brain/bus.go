@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,6 +41,26 @@ type envelope struct {
 	Data   json.RawMessage `json:"data,omitempty"`
 }
 
+// registerRetryInterval is how often the brain re-sends its `register` frame
+// while the hub is still withholding capabilities it asked for.
+//
+// THIS IS THE SECOND HALF OF THE ZOMBIE-PROVIDER FIX. The hub's registration
+// guard is first-registration-wins and a slot is released only when the owning
+// connection's read loop returns, so a machine that stops without severing its
+// TCP connection cleanly leaves a dead provider holding every capability it
+// registered. When that machine wakes, this brain dials back in and the hub
+// REFUSES the whole registration — and, before this loop existed, the brain
+// sent `register` exactly once per connect and never read the ack, so it sat
+// there logging "registered 60 method(s)" while owning none of them.
+//
+// The hub's own eviction (bus.Server.EvictConn, driven by the node
+// supervisor's liveness poll) is the primary fix and is faster. This is the
+// belt: it recovers even when the eviction has not happened yet, and it
+// recovers against a hub too old to have one.
+//
+// A var, not a const, so tests can drive it.
+var registerRetryInterval = 5 * time.Second
+
 const source = "workspacer.brain"
 
 // callHandler answers an incoming capability call. It returns the result JSON,
@@ -56,6 +77,10 @@ type busClient struct {
 
 	mu   sync.Mutex
 	conn *websocket.Conn
+	// withheld is the set of methods the hub did NOT accept on the current
+	// connection's most recent `register` ack. Non-empty means something else
+	// still owns them; see registerRetryInterval.
+	withheld []string
 
 	// Outbound calls we made as a *caller* (e.g. the hub-local layout.get),
 	// keyed by our own frame id, each waiting on its reply frame.
@@ -125,10 +150,19 @@ func (b *busClient) session(ctx context.Context) error {
 		conn.CloseNow()
 	}()
 
+	// The ack is read by dispatch, which records anything the hub withheld;
+	// this goroutine keeps asking for as long as something does. It lives and
+	// dies with THIS connection.
+	sessCtx, endSession := context.WithCancel(ctx)
+	defer endSession()
+	b.mu.Lock()
+	b.withheld = nil
+	b.mu.Unlock()
 	if err := b.write(ctx, frame{Op: "register", Methods: b.methods}); err != nil {
 		return err
 	}
-	log.Printf("brain: connected to bus, registered %d method(s)", len(b.methods))
+	log.Printf("brain: connected to bus, asked for %d method(s)", len(b.methods))
+	go b.reclaimWithheld(sessCtx)
 
 	for {
 		_, data, err := conn.Read(ctx)
@@ -162,7 +196,24 @@ func (b *busClient) dispatch(ctx context.Context, f frame) {
 			default:
 			}
 		}
-	case "registered", "hello":
+	case "registered":
+		// The ack names what the hub ACTUALLY accepted. Anything missing is a
+		// capability somebody else still owns — on a remote node that is
+		// almost always this same brain's own dead predecessor. Record it so
+		// reclaimWithheld keeps asking, and say so out loud: a node providing
+		// nothing while reporting a healthy connection is the exact failure
+		// this whole path exists to prevent.
+		missing := missingMethods(b.methods, f.Methods)
+		b.mu.Lock()
+		b.withheld = missing
+		b.mu.Unlock()
+		if len(missing) == 0 {
+			log.Printf("brain: registered %d method(s)", len(f.Methods))
+			return
+		}
+		log.Printf("brain: hub WITHHELD %d of %d method(s) (still owned by another connection — a stale predecessor?): %s; retrying every %s",
+			len(missing), len(b.methods), strings.Join(clipMethods(missing, 6), ", "), registerRetryInterval)
+	case "hello":
 		// ack; nothing to do
 	}
 }
@@ -239,4 +290,55 @@ func (b *busClient) write(ctx context.Context, f frame) error {
 	wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return conn.Write(wctx, websocket.MessageText, data)
+}
+
+// missingMethods returns the entries of want that accepted does not contain.
+func missingMethods(want, accepted []string) []string {
+	got := make(map[string]bool, len(accepted))
+	for _, m := range accepted {
+		got[m] = true
+	}
+	var out []string
+	for _, m := range want {
+		if !got[m] {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// clipMethods renders at most n entries, with a count for the rest, so a log line
+// about 60 withheld methods stays readable.
+func clipMethods(ss []string, n int) []string {
+	if len(ss) <= n {
+		return ss
+	}
+	return append(append([]string(nil), ss[:n]...), fmt.Sprintf("… and %d more", len(ss)-n))
+}
+
+// reclaimWithheld re-sends the full register frame while the hub is still
+// withholding anything, until this connection ends. Re-registering a method
+// this connection already owns is idempotent at the hub (ownerID == cn.id
+// falls through the hijack guard), so there is no need to ask for only the
+// missing subset — and asking for the whole set means a slot released between
+// two ticks is taken on the next one without any bookkeeping.
+func (b *busClient) reclaimWithheld(ctx context.Context) {
+	t := time.NewTicker(registerRetryInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			b.mu.Lock()
+			n := len(b.withheld)
+			b.mu.Unlock()
+			if n == 0 {
+				continue
+			}
+			if err := b.write(ctx, frame{Op: "register", Methods: b.methods}); err != nil {
+				return // the connection is gone; run() will reconnect
+			}
+		}
+	}
 }

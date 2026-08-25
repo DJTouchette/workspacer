@@ -456,11 +456,13 @@ describe('ClaudePane cancel routing', () => {
 function clipboard(opts: {
   text?: string;
   files?: File[];
-  items?: { kind: string; type: string }[];
+  items?: { kind: string; type: string; getAsFile?: () => File | null }[];
 }): any {
   return {
     files: opts.files ?? [],
-    items: opts.items ?? [],
+    // A real DataTransferItem always has getAsFile — the pane reads it to get
+    // the bytes when there is no host clipboard to spill (web / remote-client).
+    items: (opts.items ?? []).map((it) => ({ getAsFile: () => null, ...it })),
     getData: (type: string) => (type === 'text/plain' ? (opts.text ?? '') : ''),
   };
 }
@@ -671,5 +673,128 @@ describe('ClaudePane paste regressions', () => {
     fireEvent.drop(container.firstChild as Element, { dataTransfer: data() });
 
     expect(await screen.findAllByText('shot.png')).toHaveLength(1);
+  });
+});
+
+/**
+ * Attachments when there is NO host path — a browser tab on /app, and the
+ * desktop shell in remote-client mode, which is the same bus backend inside an
+ * Electron window. Both report `getPathForFile() === ''` and
+ * `saveClipboardImage() === null`, because the file is on the viewer's machine
+ * and the agent is on the host's. That emptiness IS the signal: the bytes go up
+ * through the hub's files.upload capability (the one /m has used for photos
+ * since it shipped) and come back as a path on the machine running the agent,
+ * which then flows through the identical `[Image: /path]` prefix.
+ *
+ * Deliberately NOT keyed off `platform === 'web'`: remote-client mode keeps the
+ * genuine host platform string (remoteBackend.ts), so that check would send it
+ * down the host-path branch and attach paths belonging to the wrong machine.
+ */
+describe('ClaudePane attachments with no host path (web / remote-client)', () => {
+  let uploadAttachment: any;
+  const posted: any[] = [];
+  const capture = (e: Event) => posted.push((e as CustomEvent).detail);
+
+  beforeEach(() => {
+    mockSession = makeSnapshot();
+    posted.length = 0;
+    window.addEventListener('wks:notify-post', capture);
+    (window.electronAPI.getPathForFile as any) = vi.fn().mockReturnValue('');
+    (window.electronAPI.saveClipboardImage as any) = vi.fn().mockResolvedValue(null);
+    uploadAttachment = vi
+      .fn()
+      .mockImplementation(({ name }: { name: string }) =>
+        Promise.resolve({ path: `/tmp/workspacer-uploads/m-1-ab-${name}`, size: 3 }),
+      );
+    (window.electronAPI as any).uploadAttachment = uploadAttachment;
+  });
+
+  afterEach(() => {
+    window.removeEventListener('wks:notify-post', capture);
+    delete (window.electronAPI as any).uploadAttachment;
+  });
+
+  it('uploads a dropped file and attaches the path the hub wrote it to', async () => {
+    const { container } = render(<ClaudePane paneId="w1" title="Claude" isActive cwd="/repo" />);
+    fireEvent.drop(container.firstChild as Element, {
+      dataTransfer: {
+        files: [new File(['abc'], 'diagram.png', { type: 'image/png' })],
+        items: [],
+        types: ['Files'],
+        getData: () => '',
+      },
+    });
+    await waitFor(() => expect(uploadAttachment).toHaveBeenCalled());
+    expect(uploadAttachment.mock.calls[0][0].name).toBe('diagram.png');
+    expect(uploadAttachment.mock.calls[0][0].dataBase64).toBe(btoa('abc'));
+    expect(await screen.findByText('diagram.png')).toBeInTheDocument();
+  });
+
+  it('uploads a pasted screenshot when the host clipboard has nothing to spill', async () => {
+    const file = new File(['abc'], 'image.png', { type: 'image/png' });
+    render(<ClaudePane paneId="w2" title="Claude" isActive cwd="/repo" />);
+    fireEvent.paste(composer(), {
+      clipboardData: {
+        files: [],
+        items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }],
+        getData: () => '',
+      },
+    });
+    await waitFor(() => expect(uploadAttachment).toHaveBeenCalled());
+    expect(await screen.findByText('image.png')).toBeInTheDocument();
+  });
+
+  it('sends the uploaded path as the attachment prefix, exactly like the desktop', async () => {
+    (window.electronAPI.claudeMessage as any) = vi.fn().mockResolvedValue({ ok: true });
+    const { container } = render(<ClaudePane paneId="w3" title="Claude" isActive cwd="/repo" />);
+    fireEvent.drop(container.firstChild as Element, {
+      dataTransfer: {
+        files: [new File(['abc'], 'diagram.png', { type: 'image/png' })],
+        items: [],
+        types: ['Files'],
+        getData: () => '',
+      },
+    });
+    await screen.findByText('diagram.png');
+    fireEvent.change(composer(), { target: { value: 'what is wrong here?' } });
+    fireEvent.keyDown(composer(), { key: 'Enter' });
+    await waitFor(() =>
+      expect(window.electronAPI.claudeMessage).toHaveBeenCalledWith(
+        'sess-1',
+        '[Image: /tmp/workspacer-uploads/m-1-ab-diagram.png] what is wrong here?',
+      ),
+    );
+  });
+
+  it('says so when the upload fails, instead of attaching nothing in silence', async () => {
+    uploadAttachment.mockRejectedValue(new Error('no provider for files.upload'));
+    const { container } = render(<ClaudePane paneId="w4" title="Claude" isActive cwd="/repo" />);
+    fireEvent.drop(container.firstChild as Element, {
+      dataTransfer: {
+        files: [new File(['abc'], 'diagram.png', { type: 'image/png' })],
+        items: [],
+        types: ['Files'],
+        getData: () => '',
+      },
+    });
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(posted[0].level).toBe('error');
+    expect(String(posted[0].body)).toMatch(/no provider for files\.upload/);
+    expect(screen.queryByText('diagram.png')).not.toBeInTheDocument();
+  });
+
+  it('leaves the desktop host-path flow alone when a path IS available', async () => {
+    (window.electronAPI.getPathForFile as any) = vi.fn().mockReturnValue('/repo/local.png');
+    const { container } = render(<ClaudePane paneId="w5" title="Claude" isActive cwd="/repo" />);
+    fireEvent.drop(container.firstChild as Element, {
+      dataTransfer: {
+        files: [new File(['abc'], 'local.png', { type: 'image/png' })],
+        items: [],
+        types: ['Files'],
+        getData: () => '',
+      },
+    });
+    expect(await screen.findByText('local.png')).toBeInTheDocument();
+    expect(uploadAttachment).not.toHaveBeenCalled();
   });
 });

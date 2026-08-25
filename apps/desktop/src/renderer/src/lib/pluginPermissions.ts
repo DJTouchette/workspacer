@@ -139,6 +139,11 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   'plugins.tools': { label: 'List the agent tools installed plugins contribute' },
   'federation.peers': { label: 'See linked peer machines' },
   'fleet.quiescence': { label: 'See whether the fleet is idle' },
+  'nodes.list': { label: 'See your remote worker nodes and whether each is awake' },
+  // sensitive: waking starts a billable cloud machine, and this hub has no way
+  // to stop one. It is trusted-only at call time (nodesTrusted in cmd/hub), so
+  // a plugin that declares it gets an honest consent line and then a refusal.
+  'nodes.wake': { label: 'Wake a sleeping remote node (starts a billable machine)', sensitive: true },
   // jobs.* are trusted-only at call time (a job is persisted argv) — a plugin
   // that declares them gets an honest consent label and then a runtime refusal.
   'jobs.list': { label: 'See scheduled jobs' },
@@ -369,18 +374,13 @@ export const EVENT_TOPIC_RULES: EventTopicRule[] = [
     disposition: 'guarded-by-capability',
     method: 'terminals.open',
   },
-  // The visible-terminal request: a cwd and a shell COMMAND LINE an agent asked
-  // to be run in a pane the user can watch. Guarded by the method that composes
-  // it — see capspec's eventtopics.go row.
-  {
-    pattern: 'facade.openTerminal',
-    disposition: 'guarded-by-capability',
-    method: 'terminals.open',
-  },
   { pattern: 'fs.changed', disposition: 'guarded-by-capability', method: 'fs.watch' },
   // hub.peer.* — federation-link reachability (peer name + last-seen only).
   { pattern: 'hub.peer.connected', disposition: 'open-by-decision' },
   { pattern: 'hub.peer.disconnected', disposition: 'open-by-decision' },
+  // node.state_changed — remote worker node reachability (available / waking /
+  // stopped / unreachable). The same tombstone argument as hub.peer.*.
+  { pattern: 'node.state_changed', disposition: 'open-by-decision' },
   { pattern: 'layout.changed', disposition: 'open-by-decision' },
   { pattern: 'library.changed', disposition: 'open-by-decision' },
   // notify.post — free-text notification bodies (a hub job failure carries a

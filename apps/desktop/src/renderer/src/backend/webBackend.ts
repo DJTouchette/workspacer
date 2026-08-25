@@ -28,6 +28,13 @@ import type {
 } from '../../../main/shared/ipcTypes';
 import { HubBusClient, type HubEventEnvelope } from './hubBusClient';
 import { mergeConversationWindow } from '../../../main/shared/mergeConversationWindow';
+import {
+  openBrowserFilePicker,
+  reportAttachmentFailures,
+  uploadAttachments,
+  UPLOAD_TIMEOUT_MS,
+} from '../lib/attachmentUpload';
+import { postNotification } from '../lib/notificationBus';
 
 /** Decode a base64 PTY chunk into a binary string (1 char = 1 byte), matching
  *  the MessagePort contract the desktop's onTerminalOutput delivers. */
@@ -349,6 +356,42 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
   // stays bounded by the live fleet.
   const { foldSparse, foldConversation, seedFull } = createSnapshotFold(client);
 
+  /**
+   * `pickFiles` without `attachment` means the caller wants a path ON THE HOST
+   * — the editor's fallback open, the custom-binary browsers in the spawn
+   * dialog and settings. A browser cannot produce one, and the answer this
+   * replaced (a `window.prompt` captioned "on the host") was a lie dressed as a
+   * feature: whatever was typed went through unchecked as if a dialog had
+   * returned it. Refuse, say why, and leave the text field those callers sit
+   * next to as the way to enter a path deliberately.
+   */
+  const refuseHostFilePick = (): Promise<string[]> => {
+    postNotification({
+      level: 'warn',
+      title: 'Choosing a file on the server needs the desktop app',
+      body: 'A browser can only see files on this machine. Type the path on the server instead.',
+    });
+    return Promise.resolve([]);
+  };
+
+  /**
+   * The `pickFiles` implementation for clients with no host filesystem: the
+   * browser's own picker, then `files.upload` per file. Refusals and failures
+   * are reported rather than returned, because `pickFiles` answers a `string[]`
+   * and a shorter-than-expected array is precisely the silent failure this
+   * replaces.
+   */
+  const pickAndUpload = async (sessionId?: string): Promise<string[]> => {
+    const files = await openBrowserFilePicker();
+    if (files.length === 0) return [];
+    const { attached, errors } = await uploadAttachments(files, {
+      sessionId,
+      upload: (input) => api.uploadAttachment!(input),
+    });
+    reportAttachmentFailures(errors);
+    return attached.map((a) => a.path);
+  };
+
   const api: ElectronAPI = {
     platform: 'web' as unknown as NodeJS.Platform,
 
@@ -609,10 +652,13 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         // peers' fleets are fetched over their links and arrive hub-stamped.
         .then(withPeerFleets),
     // The daemon's full resumable-session list, enriched host-side (history DB
-    // names/cost + provider auto-titles). Errors resolve to [] to match the
-    // desktop handler: the Sessions pane shows nothing rather than breaking.
-    listRecentAgentSessions: () =>
-      client.call<RecentAgentSession[]>('sessions.recent', {}).catch(() => []),
+    // names/cost + provider auto-titles). The rejection is DELIBERATELY not
+    // swallowed: `sessions.recent` has no provider on a headless hub, and
+    // answering [] made the Sessions pane say "No past sessions — everything is
+    // already in your workspace", which is a confident wrong answer about
+    // someone's history rather than an admission that we cannot see it.
+    // useRecentSessions turns the rejection into an honest empty state.
+    listRecentAgentSessions: () => client.call<RecentAgentSession[]>('sessions.recent', {}),
     // Null = "can't tell" — the web client never reconciles/auto-respawns
     // agents against the daemon; the desktop owns that.
     listLiveClaudeSessionIds: () => Promise.resolve(null),
@@ -700,6 +746,36 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // Hub jobs — trusted-only hub-local RPCs, so these work for a
     // full-control pairing and error cleanly for view/triage tokens (the
     // settings section feature-detects by the first list failing).
+    // Remote worker nodes. `nodes.list` is in the bus's VIEW tier, so any
+    // token can read the state — but the hub only REGISTERS the method when a
+    // nodes.json exists, so "no provider" is the feature-absent signal and is
+    // normalised to null here (identical to main's handler). Anything else
+    // rethrows: a broken hub must not render as a hub with no nodes.
+    //
+    // `canWake` is this connection's OWN tier off the hello frame. nodes.wake
+    // is host-authority only, so a view/triage phone gets the state and no
+    // button — never a button the bus is certain to refuse.
+    nodesList: async () => {
+      try {
+        const nodes = await client.call<unknown>('nodes.list', {});
+        return {
+          nodes: Array.isArray(nodes) ? nodes : [],
+          canWake: client.can('nodes.wake'),
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/no provider for nodes\.list\b/.test(msg)) return null;
+        throw err;
+      }
+    },
+    nodesWake: async (id: string) => {
+      try {
+        const node = await client.call<unknown>('nodes.wake', { id });
+        return { ok: true, node };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
     jobsList: () => client.call('jobs.list', {}),
     jobsUpsert: (job) => client.call('jobs.upsert', job),
     jobsRemove: (id) => client.call('jobs.remove', { id }),
@@ -868,23 +944,36 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
           new CustomEvent('web:pick-folder', { detail: { defaultPath, resolve } }),
         );
       }),
-    pickFiles: () => {
-      const p = window.prompt('File paths to attach (comma-separated, on the host):', '');
-      if (!p || !p.trim()) return Promise.resolve([]);
-      return Promise.resolve(
-        p
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean),
-      );
-    },
-    // A browser has no host path for a dropped file — the file is on the
-    // client machine, the agent runs on the host. Drops degrade to nothing
-    // attached rather than to a path that doesn't exist over there.
+    // The browser's own file picker, then the bytes over `files.upload` — the
+    // path that comes back is on the machine RUNNING the agent, which is the
+    // only kind of path an attachment prefix can mean. This used to be a
+    // `window.prompt` asking the viewer to type paths "on the host": it looked
+    // like a feature and attached files that existed on neither machine.
+    //
+    // Desktop (bus mode) never reaches this — `pickFiles` is HOST_ONLY, so the
+    // native dialog and its real host paths still win there. Desktop
+    // REMOTE-CLIENT mode does reach it, and must: its host is not the agent's.
+    pickFiles: (_defaultPath?: string, opts?: { attachment?: boolean; sessionId?: string }) =>
+      opts?.attachment ? pickAndUpload(opts.sessionId) : refuseHostFilePick(),
+    // Land bytes from this client on the agent's machine. Qualified for
+    // federation exactly like agents.sendMessage, so an attachment for a
+    // session living on a peer hub is written by that peer's own hub — the
+    // path in the prefix has to resolve where the agent will open it.
+    uploadAttachment: ({ name, dataBase64, sessionId }) =>
+      client.call<{ path: string; size: number }>(
+        sessionId ? qualify(sessionId, 'files.upload') : 'files.upload',
+        { name, dataBase64 },
+        UPLOAD_TIMEOUT_MS,
+      ),
+    // A browser has no host path for a dropped file — the file is on the client
+    // machine, the agent runs on the host. '' is not just a degraded answer, it
+    // is the SIGNAL the composer keys its upload fallback off (see
+    // lib/attachmentUpload): a platform check would be wrong in remote-client
+    // mode, which reports the genuine host platform but has the wrong host.
     getPathForFile: () => '',
     // The host's clipboard is not the one the browser user pasted from, so
-    // there is nothing to spill. (Attaching a browser-side paste would mean
-    // uploading the bytes to the host — a different feature.)
+    // there is nothing to spill. null sends the paste handler down the upload
+    // path with the bytes the browser itself gave it.
     saveClipboardImage: () => Promise.resolve(null),
     importChromeCookies: () =>
       Promise.resolve({ imported: 0, skipped: 0, errors: ['not available on web'] }),
@@ -929,6 +1018,15 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
       return () => {
         if (notificationActivateCb === callback) notificationActivateCb = null;
       };
+    },
+    // The host's default browser is unreachable from a tab — but the viewer is
+    // sitting in one. Leaving this undefined made every notification carrying a
+    // url a dead click (NotificationsContext feature-detects it). The url is
+    // already scheme-checked at the notification chokepoint (notificationStore
+    // safeUrl), so http(s) is all that reaches here.
+    openExternalUrl: async (url: string) => {
+      window.open(url, '_blank', 'noopener,noreferrer');
+      return { ok: true as const };
     },
     openLogsFolder: () => {
       warnOnce('openLogsFolder');

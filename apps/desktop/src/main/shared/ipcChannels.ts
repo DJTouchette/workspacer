@@ -128,6 +128,17 @@ export const IPC = {
   // hub.peer.connected / hub.peer.disconnected — re-invoke this on those.
   FEDERATION_PEERS: 'federation:peers',
 
+  // ── Remote worker nodes (the hub's node registry) ──
+  /** `nodes.list`, or null when this hub has NO registry — which is every
+   *  ordinary install. The absence is read off the router's "no provider"
+   *  error, not off a permission check: `nodes.list` is in the view tier
+   *  unconditionally, so `can()` says yes on a hub that has no nodes at all. */
+  NODES_LIST: 'nodes:list',
+  /** `nodes.wake` — starts a billable machine. Host authority only on the hub;
+   *  main's connection presents the host token, so the desktop always may.
+   *  Live state follows on the generic HUB_EVENT feed as node.state_changed. */
+  NODES_WAKE: 'nodes:wake',
+
   // ── Hub jobs (passthroughs to the hub's trusted-only jobs.* RPCs) ──
   JOBS_LIST: 'jobs:list',
   JOBS_UPSERT: 'jobs:upsert',

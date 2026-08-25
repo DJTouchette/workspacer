@@ -20,6 +20,7 @@ import { shortModelLabel } from '../lib/modelLabel';
 import { agentAttentionScore } from '../lib/attentionRouter';
 import { AgentLogo } from './agentLogos';
 import { HubChip } from './HubChip';
+import { RemoteNodesBar } from './RemoteNodesBar';
 import { OrphanChip } from './OrphanChip';
 import { hubOfflineLabel } from '../lib/federation';
 import { ProjectMark } from './ProjectMark';
@@ -744,6 +745,13 @@ const SideBar: React.FC<SideBarProps> = ({
           </button>
         )}
       </div>
+
+      {/* Remote worker nodes. Renders NOTHING unless this hub has a node
+          registry AND something in it is worth saying — asleep, starting,
+          unreachable, or back from a crash. That is why it sits here, above
+          the fleet: a machine you can't reach is the reason agents are missing
+          from the list below it, and the Connect button is the fix. */}
+      <RemoteNodesBar />
 
       {/* Filter — only worth showing once there's a handful of agents. */}
       {agents.filter((a) => !a.global).length > 4 && (

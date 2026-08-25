@@ -199,7 +199,28 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		if scope == "" {
 			scope = "full"
 		}
-		return jsonResult(map[string]any{"scope": scope, "provider": "brain"})
+		info := map[string]any{"scope": scope, "provider": "brain"}
+		// WKS_NODE_ID lets a brain running on a REMOTE NODE say which node it
+		// is, so the hub's node registry can attribute liveness to the right
+		// row instead of guessing. Unset everywhere else, and the hub falls
+		// back to "there is only one node registered, so it must be that one"
+		// — which is the truth for a single-node deployment, and refuses to
+		// guess for a multi-node one.
+		//
+		// It is an ID, never a credential: it names a row in the hub's own
+		// nodes.json and grants nothing. The hub ignores a name it does not
+		// recognise rather than trusting the claim.
+		if id := strings.TrimSpace(os.Getenv("WKS_NODE_ID")); id != "" {
+			info["node"] = id
+		}
+		// How this node's PREVIOUS run ended, from the node's own record. The
+		// hub cannot get this from a cloud API — a machine that crash-looped
+		// and one an operator put to sleep are both `stopped` there. See
+		// lastexit.go. Absent on anything that is not a node.
+		if rec := lastExit(); rec != nil {
+			info["lastExit"] = rec
+		}
+		return jsonResult(info)
 	case "agents.list":
 		if r.store != nil {
 			return jsonResult(r.visibleSnapshots(ctx))
