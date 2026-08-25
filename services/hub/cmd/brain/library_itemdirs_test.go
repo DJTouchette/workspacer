@@ -28,6 +28,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 )
 
 // itemDirSandbox builds a home-as-cwd layout: HOME and the config dir both
@@ -208,4 +210,202 @@ func TestLibraryListDoesNotLaunderHomeFilesThroughAnItemDirectory(t *testing.T) 
 			}
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// contracts/path-containment-cases.json → libraryItemDirs
+//
+// The hand-written cases above pin THIS copy. This loader pins the copy on the
+// other side of the same call with the same cases: the desktop's
+// hubCapabilities.ts had libraryItemRoots and no item-DIRECTORY test, so a
+// library.list with cwd=$HOME and a `.workspacer/library -> ~/.ssh` symlink was
+// refused here and served there — and the desktop is the copy the
+// DELEGATE_CATALOG_TO_BRAIN kill switch puts back on the bus. Agreement between
+// two providers about one call is not something either side's own tests can
+// see, which is what the shared fixture is for.
+//
+// TWIN LOADER: apps/desktop/src/main/services/hubCapabilitiesKillSwitch.test.ts,
+// "library item directories — cross-language contract".
+// ---------------------------------------------------------------------------
+
+type libraryItemDirCase struct {
+	Name string `json:"name"`
+	// Cwd is the caller's directory, sandbox-relative. The loader canonicalizes
+	// it exactly as the handler does before the gate is reached — passing the
+	// raw string would test a different function.
+	Cwd  string `json:"cwd"`
+	Item string `json:"item"`
+	// Expect is accept|refuse; RefusedBy names WHICH of the two halves refused,
+	// recomputed by an oracle below that shares no code with the gate. A bare
+	// "refuse" is satisfied by a gate that refuses everything, and the accept
+	// cases alone cannot say whether the roots half or the directory half did
+	// the work.
+	Expect        string       `json:"expect"`
+	RefusedBy     string       `json:"refusedBy"`
+	ResolvesTo    string       `json:"resolvesTo"`
+	NeedsSymlinks bool         `json:"needsSymlinks"`
+	Tree          contractTree `json:"tree"`
+	Why           string       `json:"why"`
+}
+
+type libraryItemDirFixture struct {
+	LibraryItemDirs struct {
+		Cases []libraryItemDirCase `json:"cases"`
+	} `json:"libraryItemDirs"`
+}
+
+// libraryItemRefusalReason recomputes which half refused, WITHOUT calling
+// either half: containment is decided with filepath.EvalSymlinks and a plain
+// prefix test, so a bug in canonicalizePath or containsPath cannot talk this
+// oracle into agreeing with the thing it is checking.
+func libraryItemRefusalReason(item, canonicalCwd string) string {
+	real, err := filepath.EvalSymlinks(item)
+	if err != nil {
+		return "outside-item-roots" // unresolvable never reaches the dirs test
+	}
+	under := func(root string) bool {
+		rr, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			return false
+		}
+		return real == rr || strings.HasPrefix(real, strings.TrimSuffix(rr, string(filepath.Separator))+string(filepath.Separator))
+	}
+	inRoots := under(libraryGlobalDir()) || under(canonicalCwd)
+	if !inRoots {
+		return "outside-item-roots"
+	}
+	// LEXICAL, matching the gate's own deliberate choice: the two cwd-derived
+	// directories are compared as written, never resolved.
+	for _, dir := range []string{
+		filepath.Join(canonicalCwd, ".workspacer", "library"),
+		filepath.Join(canonicalCwd, ".claude"),
+	} {
+		if real == dir || strings.HasPrefix(real, dir+string(filepath.Separator)) {
+			return ""
+		}
+	}
+	if under(libraryGlobalDir()) {
+		return ""
+	}
+	return "outside-item-dirs"
+}
+
+func TestLibraryItemDirContractCases(t *testing.T) {
+	raw := readContractFixtureBytes(t)
+	var fx libraryItemDirFixture
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatalf("parse %s: %v", contractFixtureRel, err)
+	}
+	cases := fx.LibraryItemDirs.Cases
+	if len(cases) == 0 {
+		t.Fatalf("%s decoded to zero libraryItemDirs cases — a silently empty corpus guards nothing", contractFixtureRel)
+	}
+
+	// EXECUTED, not enumerated: a needsSymlinks case skips itself on a host
+	// without the privilege, and counting the fixture's length instead would
+	// report a full sweep for a run that asserted nothing.
+	var tally sweepguard.Tally
+
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			t.Cleanup(func() {
+				if t.Skipped() {
+					if c.NeedsSymlinks {
+						tally.Skip("needsSymlinks")
+					} else {
+						tally.Skip("unexplained (the case declares no host requirement)")
+					}
+				}
+			})
+			sandbox, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			configHome := filepath.Join(sandbox, "config")
+			for _, d := range []string{"home", "outside", filepath.Join("config", "workspacer", "library")} {
+				if err := os.MkdirAll(filepath.Join(sandbox, d), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			setHome(t, filepath.Join(sandbox, "home"))
+			t.Setenv("USERPROFILE", filepath.Join(sandbox, "home"))
+			setConfigHome(t, configHome)
+			t.Setenv("APPDATA", configHome)
+			resetCwdCacheForTest()
+
+			for _, d := range c.Tree.Dirs {
+				if err := os.MkdirAll(filepath.Join(sandbox, d), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for rel, body := range c.Tree.Files {
+				full := filepath.Join(sandbox, rel)
+				if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for rel, dest := range c.Tree.Symlinks {
+				full := filepath.Join(sandbox, rel)
+				if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(sandbox, dest), full); err != nil {
+					if c.NeedsSymlinks {
+						t.Skipf("needsSymlinks: cannot create symlinks here: %v", err)
+					}
+					t.Fatal(err)
+				}
+			}
+
+			// Past the only skip gate (the symlink leg of the tree above).
+			tally.Ran(c.Expect)
+
+			canonicalCwd, err := canonicalizePath(filepath.Join(sandbox, c.Cwd))
+			if err != nil {
+				t.Fatalf("canonicalize the case cwd %q: %v", c.Cwd, err)
+			}
+			item := filepath.Join(sandbox, c.Item)
+			got, err := assertLibraryItemPath("library.list", item, canonicalCwd)
+
+			if c.Expect == "accept" {
+				if err != nil {
+					t.Fatalf("assertLibraryItemPath(%q) refused a legitimate item: %v\n  why: %s", item, err, c.Why)
+				}
+				want := filepath.Join(sandbox, c.ResolvesTo)
+				if got != want {
+					t.Fatalf("assertLibraryItemPath(%q) = %q, want %q — the string that was checked must be the string that is opened\n  why: %s",
+						item, got, want, c.Why)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("assertLibraryItemPath(%q) returned %q, want a refusal\n  why: %s", item, got, c.Why)
+			}
+			if reason := libraryItemRefusalReason(item, canonicalCwd); reason != c.RefusedBy {
+				t.Fatalf("refused for the WRONG REASON: the oracle says %q, the fixture says %q\n  item: %q\n  why: %s",
+					reason, c.RefusedBy, item, c.Why)
+			}
+		})
+	}
+
+	// RequireCorpus, not Require: the enumerated floor is what catches a corpus
+	// that SHRANK (host-independent), while the two verdict floors answer "did
+	// this host prove anything about each class" and stay on what executed. Both
+	// are derived from the fixture, so adding a case raises the floor with it and
+	// deleting one goes red.
+	var wantAllow, wantDeny int
+	for _, c := range cases {
+		if c.Expect == "accept" {
+			wantAllow++
+		} else if !c.NeedsSymlinks {
+			wantDeny++
+		}
+	}
+	if err := tally.RequireCorpus("the libraryItemDirs corpus sweep", len(cases), wantAllow, wantDeny); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("libraryItemDirs: %s", tally.String())
 }

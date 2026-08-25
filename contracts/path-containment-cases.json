@@ -287,6 +287,10 @@
       "outside-roots": "The target canonicalized cleanly and landed at or inside NO granted root. The secret gate is never reached.",
       "secret": "The target canonicalized INSIDE a granted root, and the secret gate refused it."
     },
+    "libraryItemRefuseReasons": {
+      "outside-item-roots": "Refused by the FIRST half, assertPathAllowed over libraryItemRoots (the global store plus the caller's CANONICAL cwd): the derived file canonicalized outside both, so the item-directory test is never reached. This is the half both providers always had.",
+      "outside-item-dirs": "Refused by the SECOND half: the derived file canonicalized INSIDE an item root and does not sit in a directory a library item lives in (<cwd>/.workspacer/library, <cwd>/.claude, or the resolved global store). This is the half that matters when the cwd IS the root — library.list takes the BROWSE roots, so a caller may name $HOME and the roots test then admits the whole home tree. The desktop copy shipped without it and answered yes to a `$HOME/.workspacer/library/a.md -> $HOME/.ssh/id_rsa` symlink that the brain refused, for a call whose bytes come back as an item body while fs.read of the same path is denied."
+    },
     "sessionRefuseReasons": {
       "not-a-basename": "Refused by the FIRST rule, before the filesystem is touched: the name is empty, '.', '..', absolute, or carries a separator. Most of this block lands here, including 'esc/loot.yaml' — whose NAME says 'traverses a symlink' but which never reaches the symlink, because a multi-segment name is refused outright. Saying so is the point: the lexical copy that shipped accepted it.",
       "escapes-sessions-dir": "Refused by the SECOND rule: a legal bare basename whose per-component canonicalization lands outside <configDir>/sessions. This is the only reason a plain basename can be refused for, and 'escape.yaml' (a session file that IS a symlink out of the dir) is the whole reason the second rule exists."
@@ -430,6 +434,53 @@
         "loaders": [
           "services/hub/cmd/brain/stores_test.go::TestSessionFilenameContractCases(",
           "apps/desktop/src/main/services/sessionService.test.ts::session filenames — cross-language contract"
+        ]
+      },
+      "libraryItemDirs.cases": {
+        "why": "The library derived-path gate: where a file COMPOSED under a guarded cwd is allowed to live. Two halves, and a case names which one refused it.",
+        "required": [
+          "name",
+          "cwd",
+          "item",
+          "expect",
+          "why"
+        ],
+        "verdictField": "expect",
+        "verdicts": {
+          "accept": {
+            "requires": [
+              "resolvesTo"
+            ],
+            "forbids": [
+              "refusedBy"
+            ]
+          },
+          "refuse": {
+            "requires": [
+              "refusedBy"
+            ],
+            "forbids": [
+              "resolvesTo"
+            ],
+            "reasons": "libraryItemRefuseReasons"
+          }
+        },
+        "optional": [
+          "tree",
+          "needsSymlinks",
+          "refusedBy",
+          "resolvesTo"
+        ],
+        "nested": {
+          "tree": [
+            "dirs",
+            "files",
+            "symlinks"
+          ]
+        },
+        "loaders": [
+          "services/hub/cmd/brain/library_itemdirs_test.go::TestLibraryItemDirContractCases(",
+          "apps/desktop/src/main/services/hubCapabilitiesKillSwitch.test.ts::library item directories — cross-language contract"
         ]
       },
       "paramShapes": {
@@ -3752,6 +3803,159 @@
         },
         "resolvesTo": "config/workspacer/sessions/real.yaml",
         "why": "Refusing every symlink is not the rule, and `resolvesTo` is the RESOLVED file rather than the link — the same check-path/opened-path property `checkUse` records for the fs.* guard."
+      }
+    ]
+  },
+  "libraryItemDirs": {
+    "_comment": [
+      "THE LIBRARY DERIVED-PATH GATE — the second guard on a capability whose",
+      "caller names a DIRECTORY and whose provider composes the file.",
+      "",
+      "library.list/save/remove take a `cwd`. Every path they then open, write or",
+      "unlink is COMPOSED under it — <cwd>/.workspacer/library/<slug>.md,",
+      "<cwd>/.claude/skills/<id>/SKILL.md — so confining the cwd says nothing",
+      "about the file: 'the caller cannot name the file' bounds the BASENAME and",
+      "is silent about the directories on the way to it. Both copies learned that",
+      "half (the corpus's `methods` block records it as `derivedRootSet: item`).",
+      "",
+      "This block is the half AFTER that one. libraryItemRoots is",
+      "[<configDir>/library, <the caller's canonical cwd>], and library.list",
+      "checks its cwd against the BROWSE roots because the New Agent dialog lists",
+      "a directory no agent runs in yet — so a caller may name $HOME, and then",
+      "'the project the caller named' IS the whole home tree and the narrowing",
+      "evaporates. A `$HOME/.workspacer/library/a.md -> $HOME/.ssh/id_rsa`",
+      "symlink (the ordinary form: git stores symlinks verbatim and a clone",
+      "carries one) canonicalizes inside that root, passes, and comes back as an",
+      "item BODY — while fs.read of the identical path is refused for the same",
+      "caller. The answer is to require the RESOLVED file to sit in a directory a",
+      "library item actually lives in.",
+      "",
+      "TWO OWNERS, and they disagreed. services/hub/cmd/brain/library.go has had",
+      "both halves (libraryItemDirs + assertLibraryItemPath) since library.*",
+      "became bus-reachable. apps/desktop/src/main/services/hubCapabilities.ts",
+      "had only the roots, so the same call was refused by the brain and served",
+      "by the desktop — and the desktop is the copy the DELEGATE_CATALOG_TO_BRAIN",
+      "kill switch puts back on the bus. Nothing held the two to each other until",
+      "this block.",
+      "",
+      "LEXICAL ON PURPOSE, and that is a case below rather than a comment:",
+      "canonicalizing the two cwd-derived directories would resolve the very link",
+      "the gate exists to see and hand the escape straight back. The global store",
+      "is the one entry that must be RESOLVED, because a config dir is routinely",
+      "a symlinked path (XDG_CONFIG_HOME on a linked volume, /var -> /private/var",
+      "on macOS) and a lexical comparison there would reject every global item.",
+      "",
+      "SANDBOX. One realpath'd temp dir per case, with `home/` and",
+      "`config/workspacer/library/` and `outside/` pre-created, $HOME pointed at",
+      "<sandbox>/home and the implementation's config dir at",
+      "<sandbox>/config/workspacer. Then `tree` is materialized in this order —",
+      "`dirs` (creating missing parents), `files` (creating missing parents),",
+      "`symlinks` (value is sandbox-relative and the loader makes it absolute) —",
+      "and `cwd` and `item` are resolved against the sandbox. `cwd` is what the",
+      "caller passes and is canonicalized by the loader exactly as the handler",
+      "does before the gate sees it; `item` is the path the PROVIDER composed.",
+      "On accept, `resolvesTo` pins the string the gate must return, which is the",
+      "string that then gets opened (BINDING DECISION 2)."
+    ],
+    "cases": [
+      {
+        "name": "an ordinary project prompt",
+        "cwd": "home",
+        "item": "home/.workspacer/library/a.md",
+        "expect": "accept",
+        "tree": {
+          "files": {
+            "home/.workspacer/library/a.md": "---\ntitle: A\n---\n\nbody\n"
+          }
+        },
+        "resolvesTo": "home/.workspacer/library/a.md",
+        "why": "The regression floor. Every library.list of a project looks exactly like this, and a gate that refused everything would satisfy every refuse case below."
+      },
+      {
+        "name": "a project claude skill",
+        "cwd": "home",
+        "item": "home/.claude/skills/x/SKILL.md",
+        "expect": "accept",
+        "tree": {
+          "files": {
+            "home/.claude/skills/x/SKILL.md": "---\nname: x\n---\n\nbody\n"
+          }
+        },
+        "resolvesTo": "home/.claude/skills/x/SKILL.md",
+        "why": "The second item directory, and the one nested deeper than the first: a gate that only knew <cwd>/.workspacer/library would take every claude-scoped skill, agent and command out of the pane."
+      },
+      {
+        "name": "an item in the global store",
+        "cwd": "home",
+        "item": "config/workspacer/library/shared.md",
+        "expect": "accept",
+        "tree": {
+          "files": {
+            "config/workspacer/library/shared.md": "---\ntitle: S\n---\n\nbody\n"
+          }
+        },
+        "resolvesTo": "config/workspacer/library/shared.md",
+        "why": "The global store is the other place items live, and it sits INSIDE the config dir the secret gate otherwise refuses whole — so this case also pins that the library/ carve-out survives both halves."
+      },
+      {
+        "name": "an item directory is compared lexically, never resolved",
+        "cwd": "home",
+        "item": "home/.workspacer/library/id_rsa.md",
+        "expect": "refuse",
+        "refusedBy": "outside-item-dirs",
+        "needsSymlinks": true,
+        "tree": {
+          "dirs": [
+            "home/.ssh"
+          ],
+          "files": {
+            "home/.ssh/id_rsa.md": "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+          },
+          "symlinks": {
+            "home/.workspacer/library": "home/.ssh"
+          }
+        },
+        "why": "THE ESCAPE, and the reason the comparison must not canonicalize the two cwd-derived directories: resolving them turns the planted link into the item directory itself, so the derived file lands 'inside' a library directory that is really ~/.ssh. The cwd is $HOME, which library.list's browse roots accept, so the roots half passes and this is the only thing left."
+      },
+      {
+        "name": "a sibling whose name starts with an item directory's is not inside it",
+        "cwd": "home",
+        "item": "home/.workspacer/library-backup/a.md",
+        "expect": "refuse",
+        "refusedBy": "outside-item-dirs",
+        "tree": {
+          "files": {
+            "home/.workspacer/library-backup/a.md": "---\ntitle: B\n---\n\nbody\n"
+          }
+        },
+        "why": "The separator boundary. A bare prefix test makes <cwd>/.workspacer/library-backup a member of <cwd>/.workspacer/library, and the same mutation makes <cwd>/.claude.json — the Claude OAuth blob — a member of <cwd>/.claude wherever the secret gate does not already refuse that basename."
+      },
+      {
+        "name": "an ancestor of an item directory is not inside it",
+        "cwd": "home",
+        "item": "home/.claude/skills/boom",
+        "expect": "refuse",
+        "refusedBy": "outside-item-dirs",
+        "needsSymlinks": true,
+        "tree": {
+          "symlinks": {
+            "home/.claude/skills/boom": "home"
+          }
+        },
+        "why": "Argument order. Comparing the other way round makes every ANCESTOR of an item directory pass, and library.remove's sink is a recursive delete — so the whole agent cwd goes, through a call whose cwd check was impeccable."
+      },
+      {
+        "name": "a derived path outside every item root",
+        "cwd": "home",
+        "item": "outside/loot.md",
+        "expect": "refuse",
+        "refusedBy": "outside-item-roots",
+        "tree": {
+          "files": {
+            "outside/loot.md": "---\ntitle: L\n---\n\nbody\n"
+          }
+        },
+        "why": "The FIRST half, kept in the block so a copy that deleted assertPathAllowed and kept only the lexical directory test would still go red. It is refused before the item-directory question is asked, which is why the reason is named."
       }
     ]
   },
