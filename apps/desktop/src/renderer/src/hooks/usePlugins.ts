@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PluginManifest, PluginPane, PluginWidget, PluginHotkey } from '../types/plugin';
 import { pluginPaneURL, pluginWidgetURL, widgetSizesOf } from '../types/plugin';
+import { resolvePluginFrameOrigin } from '../lib/pluginOrigin';
 
 /**
  * Loads the hub's plugin list and keeps it fresh: refetches whenever a
@@ -14,14 +15,36 @@ import { pluginPaneURL, pluginWidgetURL, widgetSizesOf } from '../types/plugin';
  * plugin-less until a reinstall emitted a fresh event. So an unreachable hub
  * (list === null) is retried with backoff, and every hub `connected` status —
  * including the first — triggers a refetch.
+ *
+ * It also resolves, once, WHICH ORIGIN a browser should frame hub-served plugin
+ * UI from (see lib/pluginOrigin): same-origin-with-/app costs the plugin its bus
+ * link, and a second spelling of the same hub gets it back without loosening
+ * anything. `''` — the desktop's answer and the fallback — means "use the base
+ * the manifest was stamped with".
  */
 export function usePlugins(): {
   plugins: PluginManifest[];
   panes: PluginPane[];
   widgets: PluginWidget[];
   hotkeys: PluginHotkey[];
+  frameOrigin: string;
 } {
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
+  const [frameOrigin, setFrameOrigin] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    resolvePluginFrameOrigin()
+      .then((origin) => {
+        if (live && origin) setFrameOrigin(origin);
+      })
+      .catch(() => {
+        /* no override — same-origin framing, which the pane explains */
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   // Sequence counter so only the latest in-flight fetch's result is applied.
   const fetchSeqRef = useRef(0);
@@ -99,12 +122,12 @@ export function usePlugins(): {
             type: pane.type,
             title: pane.title,
             icon: pane.icon,
-            url: pluginPaneURL(p, pane),
+            url: pluginPaneURL(p, pane, frameOrigin),
             scope: pane.scope ?? 'both',
             busToken: p.busToken,
           })),
         ),
-    [plugins],
+    [plugins, frameOrigin],
   );
 
   const widgets = useMemo<PluginWidget[]>(
@@ -118,12 +141,12 @@ export function usePlugins(): {
             id: w.id,
             title: w.title,
             icon: w.icon,
-            url: pluginWidgetURL(p, w),
+            url: pluginWidgetURL(p, w, frameOrigin),
             sizes: widgetSizesOf(w),
             busToken: p.busToken,
           })),
         ),
-    [plugins],
+    [plugins, frameOrigin],
   );
 
   const hotkeys = useMemo<PluginHotkey[]>(
@@ -141,5 +164,5 @@ export function usePlugins(): {
     [plugins],
   );
 
-  return { plugins, panes, widgets, hotkeys };
+  return { plugins, panes, widgets, hotkeys, frameOrigin };
 }

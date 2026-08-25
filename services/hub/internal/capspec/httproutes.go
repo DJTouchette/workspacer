@@ -209,6 +209,10 @@ var httpRoutes = []HTTPRoute{
 		Reason: "the mobile PWA shell. Deliberately unguarded: an installed PWA launches at start_url with no token available, so the shell must load and then gate on its own stored token. The document carries no host state",
 	},
 	{
+		Server: "hub", Pattern: "/plugins/origin", Disposition: RoutePublic,
+		Reason: "the second origin the OPERATOR declared for this hub (--plugin-origin), which browser clients must read before they can frame a plugin cross-origin — necessarily before they have shown anything. It is a URL the operator chose to publish (it is about to appear in every plugin iframe's src), not host state: no plugin is named, no port is disclosed, and it answers {\"origin\":\"\"} when undeclared",
+	},
+	{
 		Server: "hub", Pattern: "/plugins/sdk.js", Disposition: RoutePublic,
 		Reason: "the host-owned plugin SDK (window.workspacer): static library code with no host state, injected into every plugin webview by a <script> tag that cannot carry a token",
 	},

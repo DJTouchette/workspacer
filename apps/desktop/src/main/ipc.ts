@@ -360,10 +360,17 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       } catch {
         /* tokens unavailable — degrade to no webview capability calls */
       }
-      // Tell the renderer where to load webview-only plugins' static UI from
-      // (it serves at <hub>/plugins/ui/<id>/). main knows the hub address.
+      // Tell the renderer where to load each plugin's UI from — it must never
+      // guess (see renderer types/plugin.ts). A webview-only plugin is served by
+      // the hub at <hub>/plugins/ui/<id>/; a sidecar serves its own port. Both
+      // are on THIS machine here by construction: main spawned the hub, and the
+      // hub spawned the sidecars. (A desktop pointed at a REMOTE hub never
+      // reaches this handler — remote-client mode runs the web backend.)
+      const base = hubHttpUrl();
       for (const p of plugins) {
-        if ((p as { ui?: string }).ui) (p as { uiBase?: string }).uiBase = hubHttpUrl();
+        if ((p as { ui?: string }).ui) (p as { uiBase?: string }).uiBase = base;
+        const port = (p as { server?: { port?: number } }).server?.port;
+        if (port) (p as { serverBase?: string }).serverBase = `http://127.0.0.1:${port}`;
       }
       return plugins;
     } catch {

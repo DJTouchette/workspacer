@@ -35,6 +35,8 @@ import {
   UPLOAD_TIMEOUT_MS,
 } from '../lib/attachmentUpload';
 import { postNotification } from '../lib/notificationBus';
+import { isLoopbackOrigin } from '../lib/pluginOrigin';
+import type { PluginManifest } from '../types/plugin';
 
 /** Decode a base64 PTY chunk into a binary string (1 char = 1 byte), matching
  *  the MessagePort contract the desktop's onTerminalOutput delivers. */
@@ -268,6 +270,15 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
   // http[s]://host origin from it. The token authorizes the guarded routes.
   const hubHttpBase = busUrl ? busUrl.replace(/^ws/, 'http').replace(/\/bus\/?(\?.*)?$/, '') : '';
   const hubAuth = { Authorization: `Bearer ${token}` };
+  // The same endpoint spelled absolutely — what a plugin's guest URL has to be
+  // built against, since a relative base means nothing inside an <iframe>/<webview>
+  // that isn't ours. Empty base ⇒ the hub served this very page.
+  const hubOrigin = hubHttpBase || (typeof location !== 'undefined' ? location.origin : '');
+  // Is the hub on THIS machine? The one observable fact that decides whether a
+  // sidecar's loopback port is reachable from here — not `platform === 'web'`,
+  // which is also true of a browser on the hub host and false for a desktop
+  // remote client pointed at someone else's machine.
+  const hubIsThisMachine = isLoopbackOrigin(hubOrigin);
 
   // Claude panes key their byte stream + input by a "viewerKey": the sessionId
   // for a pane that spawned the session, but the *paneId* for a pane attached to
@@ -798,9 +809,58 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         ok: false as const,
         error: 'Icons can only be downloaded in the desktop app',
       }),
-    listHubPlugins: () => {
-      warnOnce('listHubPlugins');
-      return Promise.resolve([]);
+    // The plugin catalogue. Not host-owned: main's IPC handler is itself a thin
+    // proxy over GET /plugins + GET /plugins/tokens, and this client holds the
+    // same bearer token, so it asks the hub directly. Without it `/app` (and the
+    // desktop's remote-client mode, which is this backend) knew of no plugins at
+    // all — no palette entries, no pane menu, no widgets — and a plugin pane
+    // could only be reached by restoring a layout some desktop client wrote.
+    //
+    // It also stamps the two bases the renderer must never guess (types/plugin.ts):
+    // where this client reaches the hub, and — only when the hub is this very
+    // machine — where it reaches a sidecar's own loopback port. A browser
+    // elsewhere gets no serverBase, because `127.0.0.1:<port>` from there is the
+    // VIEWER's computer.
+    listHubPlugins: async () => {
+      try {
+        const res = await fetch(`${hubHttpBase}/plugins`, {
+          headers: hubAuth,
+          signal: AbortSignal.timeout(5000),
+        });
+        // null, never []: usePlugins reads null as "hub not answering" and
+        // retries with backoff, and [] as "no plugins installed".
+        if (!res.ok) return null;
+        // The hub serves either the full manifest (this client is authorized) or
+        // the PUBLIC projection, which withholds `ui`/`server` on purpose — so
+        // treat every field as optional and stamp only what is there.
+        const plugins = (await res.json()) as PluginManifest[];
+        // Per-plugin bus tokens ride a separate token-guarded route (never the
+        // public /plugins projection). Best-effort, exactly as main does it: no
+        // tokens → the guests can't call capabilities, but the list still renders.
+        try {
+          const tokRes = await fetch(`${hubHttpBase}/plugins/tokens`, {
+            headers: hubAuth,
+            signal: AbortSignal.timeout(5000),
+          });
+          if (tokRes.ok) {
+            const tokens = (await tokRes.json()) as Record<string, string>;
+            for (const p of plugins) {
+              if (tokens[p.id]) p.busToken = tokens[p.id];
+            }
+          }
+        } catch {
+          /* tokens unavailable — degrade to no capability calls from the guest */
+        }
+        for (const p of plugins) {
+          if (p.ui) p.uiBase = hubOrigin;
+          if (hubIsThisMachine && p.server?.port) {
+            p.serverBase = `http://127.0.0.1:${p.server.port}`;
+          }
+        }
+        return plugins;
+      } catch {
+        return null;
+      }
     },
     hubPublish: (event) =>
       client

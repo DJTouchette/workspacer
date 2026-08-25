@@ -19,6 +19,10 @@ export interface PluginsContextValue {
   panes: PluginPane[];
   widgets: PluginWidget[];
   hotkeys: PluginHotkey[];
+  /** Origin a browser frames hub-served plugin UI from, or `''` for "the base
+   *  the manifest was stamped with" (see lib/pluginOrigin). A pane restored from
+   *  the shared layout needs it to rehome a URL another client resolved. */
+  frameOrigin: string;
 }
 
 /**
@@ -31,7 +35,13 @@ export interface PluginsContextValue {
  * have to be wrapped to be rendered — the inspector rail is mounted bare by its
  * own tests, and panes are lazy-loaded into trees this provider doesn't own.
  */
-const EMPTY: PluginsContextValue = { plugins: [], panes: [], widgets: [], hotkeys: [] };
+const EMPTY: PluginsContextValue = {
+  plugins: [],
+  panes: [],
+  widgets: [],
+  hotkeys: [],
+  frameOrigin: '',
+};
 
 // Exported so a test or a harness can provide a fabricated plugin set. The
 // PROVIDER owns the real fetch (usePlugins), so injecting through it is the
