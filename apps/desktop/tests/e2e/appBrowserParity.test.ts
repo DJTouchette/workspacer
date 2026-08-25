@@ -1,33 +1,32 @@
 /**
- * `/app`'s KNOWN GAPS — the specs that are red on master today, on purpose.
+ * The three things that stopped `/app` being a primary interface — now closed,
+ * and guarded so they stay closed.
  *
- * Each one is written against the behaviour the user should get, not the
- * behaviour they get now, and each is annotated `test.fail()` with the worker
- * whose in-flight change closes it. So:
+ * `.workspacer/reports/2026-08-24-web-client-completeness.md` §0 ranked them,
+ * and each is a failure a browser tab can have that an Electron shell cannot:
  *
- *   • today   — the annotation makes the run GREEN while the assertion fails,
- *               and the annotation itself is the documentation of the gap;
- *   • on fix  — Playwright reports "expected to fail but passed", which is a
- *               loud instruction to delete the annotation line. The spec then
- *               becomes an ordinary regression guard.
+ *   1. **Every `<webview>`-backed pane painted nothing.** Plugin panes, the
+ *      Browser pane and the widget board are Electron `<webview>` elements;
+ *      in Chromium that is an unknown element, so it exists, takes the right
+ *      `src`, sizes itself normally — and loads nothing. The whole plugin
+ *      catalogue was unreachable from a browser. Closed by web-1's iframe
+ *      fallback (`72ab9a4d`).
+ *   2. **A live permission-mode switch failed silently.** The rejection landed
+ *      in a bare `console.warn` (`ComposerControls.tsx:474-477`), so the pill
+ *      just cleared and the user learned nothing. Closed by web-2 (`a0ef7e0e`).
+ *   3. **Attaching a file was a `window.prompt` asking you to type HOST
+ *      paths** (`webBackend.ts:871-883`) — not a degraded experience, a
+ *      non-functional one, since a browser cannot know paths on someone else's
+ *      machine. Closed by web-2 over `files.upload`.
  *
- * You can watch a fix land without touching the file: set the env flag named on
- * the annotation (e.g. `WKS_E2E_WEBVIEW_FIXED=1`) and the spec is asserted for
- * real.
+ * These specs were written against master BEFORE those fixes landed and all
+ * three failed; they pass now. That order matters — a spec written after the
+ * fix proves only that it can describe what it sees.
  *
- * Nothing here is weakened to pass. The three gaps are the top three findings
- * of `.workspacer/reports/2026-08-24-web-client-completeness.md` §0, in its
- * order:
- *
- *   1. every `<webview>`-backed pane (plugin panes, the Browser pane, the
- *      widget board) paints NOTHING in a browser — the report's number one
- *      blocker, and the reason this whole harness exists: it would have caught
- *      it on day one;
- *   2. a live permission-mode switch fails with nothing but a `console.warn`
- *      (`ComposerControls.tsx:474-477`);
- *   3. attaching a file is a `window.prompt` asking you to type HOST paths
- *      (`webBackend.ts:871-883`), while `/m` has had a working upload for
- *      weeks.
+ * Each asserts the USER-VISIBLE property and stays agnostic about the
+ * mechanism: "content from the pane's URL is on screen" rather than
+ * "an <iframe> exists", "something legible says the switch failed" rather than
+ * a specific toast. A spec that pins the mechanism fails a correct rewrite.
  */
 import { test, expect, type Page } from '@playwright/test';
 import { startAppHub, layoutOf, workspace, pane, type AppHub } from './fixtures/appHub';
@@ -66,7 +65,7 @@ async function openApp(page: Page): Promise<void> {
   await expect(page.getByText('Reading the current route')).toBeVisible({ timeout: 30_000 });
 }
 
-// ═══ gap 1 — webview panes paint nothing ════════════════════════════════════
+// ═══ 1 — panes that load a URL must actually load it ════════════════════════
 
 test.describe('panes that load a URL', () => {
   /** Swap the whole layout for one holding a single URL-loading pane, then
@@ -105,9 +104,6 @@ test.describe('panes that load a URL', () => {
   }
 
   test('a plugin pane renders the plugin, not a blank box', async ({ page }) => {
-    // ── Expected to fail until web-1's iframe fallback for webview panes lands.
-    test.fail(!process.env.WKS_E2E_WEBVIEW_FIXED);
-
     await openPaneOfType(page, 'plugin', { pluginId: 'demo' });
 
     // Assert on CONTENT, not on the element. `<webview>` is an unknown element
@@ -115,8 +111,6 @@ test.describe('panes that load a URL', () => {
     // and loads nothing. Every check short of reading across the frame boundary
     // passes against a blank pane, which is exactly why this gap survived a
     // parity guard that checks API methods and a DOM that looks fine.
-    // 8s is generous for a loopback frame and keeps this failing-by-design case
-    // from dominating the suite's runtime.
     await expect
       .poll(() => paneContentLoaded(page), {
         timeout: 8_000,
@@ -126,14 +120,6 @@ test.describe('panes that load a URL', () => {
   });
 
   test('the Browser pane is either usable or honest — never a silent blank', async ({ page }) => {
-    // ── Expected to fail until web-1 lands. The audit's recommendation is that
-    // the ARBITRARY-URL Browser pane may legitimately stay desktop-only on web
-    // (`<webview>`'s partition/allowpopups isolation has no iframe equivalent,
-    // and X-Frame-Options blocks many sites) — so this accepts either outcome.
-    // What it refuses is the current one: a pane that looks fine and shows
-    // nothing, with no explanation anywhere on screen.
-    test.fail(!process.env.WKS_E2E_WEBVIEW_FIXED);
-
     await openPaneOfType(page, 'browser');
 
     if (await paneContentLoaded(page)) return; // rendered for real — fine.
@@ -147,22 +133,22 @@ test.describe('panes that load a URL', () => {
   });
 });
 
-// ═══ gap 2 — a failed permission-mode switch is silent ══════════════════════
+// ═══ 2 — a failure the user cannot see is a failure twice ═══════════════════
 
 test.describe('failures the user should see', () => {
   test('a rejected permission-mode switch is surfaced, not just console.warn-ed', async ({
     page,
   }) => {
-    // ── Expected to fail until web-2 surfaces the rejection.
-    test.fail(!process.env.WKS_E2E_LOUD_FAILURES_FIXED);
-
     await openApp(page);
 
-    // The fixture answers claude.setPermissionMode with an error by default,
-    // reproducing a headless hub exactly: the brain registers no provider for
-    // it (`headless_completeness_test.go:41-43`), so the promise REJECTS — and
-    // a rejection never reaches the `res.ok === false` branch that would show
-    // the restart confirm. It lands in a bare console.warn instead.
+    // The fixture answers claude.setPermissionMode with an error by default
+    // (`HEADLESS_GAP_METHODS`), reproducing a headless hub exactly: the brain
+    // registers no provider for it (`headless_completeness_test.go:41-43`), so
+    // the promise REJECTS. That is the branch that used to vanish — a rejection
+    // never reaches the `res.ok === false` path that shows the restart confirm.
+    // Keeping the fixture in the FAILING state is the point: this spec has to
+    // keep working against a hub that genuinely cannot switch modes, which is
+    // what a Fly node is.
     const before = await page.locator('body').innerText();
 
     await page.getByText('Ask to approve').first().click();
@@ -175,7 +161,7 @@ test.describe('failures the user should see', () => {
     // …so something must appear on screen saying so. Deliberately loose about
     // HOW — a toast, an inline error, the restart-confirm dialog with a reason
     // all count. What must not happen is the pill quietly reverting while the
-    // only trace is in devtools.
+    // only trace is in devtools, which is what it did until web-2's change.
     await expect
       .poll(
         async () => {
@@ -197,13 +183,10 @@ test.describe('failures the user should see', () => {
   });
 });
 
-// ═══ gap 3 — attachments are a window.prompt for host paths ═════════════════
+// ═══ 3 — attachments must use the browser's own picker ═════════════════════
 
 test.describe('composer attachments', () => {
   test('the attach control opens a file picker, not a prompt for host paths', async ({ page }) => {
-    // ── Expected to fail until web-2's attachment work lands.
-    test.fail(!process.env.WKS_E2E_ATTACHMENTS_FIXED);
-
     await openApp(page);
 
     const prompts: string[] = [];
@@ -215,9 +198,11 @@ test.describe('composer attachments', () => {
     const attach = page.locator('button[title*="ttach" i], button[aria-label*="ttach" i]').first();
     await expect(attach).toBeVisible({ timeout: 10_000 });
 
-    // A real picker is the whole point: a browser cannot type a path on someone
-    // else's machine, so `pickFiles`'s window.prompt is not a degraded
-    // experience, it is a non-functional one.
+    // A real picker is the whole point: a browser cannot know paths on someone
+    // else's machine, so the old `window.prompt` was not a degraded experience,
+    // it was a non-functional one. Assert BOTH halves — no prompt, and a real
+    // chooser — because dropping the prompt without adding a picker would look
+    // like progress and still leave you unable to attach anything.
     const chooser = page.waitForEvent('filechooser', { timeout: 5_000 }).catch(() => null);
     await attach.click();
     const got = await chooser;

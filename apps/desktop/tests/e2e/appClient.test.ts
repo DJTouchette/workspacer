@@ -18,9 +18,10 @@
  * regression guards on working behaviour, which is the most valuable kind to
  * own — the features nobody notices breaking.
  *
- * The panes that are BROKEN on `/app` today, and the silent failures, live in
- * `appKnownGaps.test.ts` so a red result there means "the known gap is still open"
- * rather than "the critical path regressed".
+ * The pane/attachment/silent-failure gaps the audit ranked above this — the
+ * ones a browser tab can have that an Electron shell cannot — live in
+ * `appBrowserParity.test.ts`, so a red result there is a different diagnosis
+ * from a red result here.
  *
  * SAFETY: every byte of state this suite writes is in a scratch directory and
  * every port is ephemeral — see `fixtures/scratchState.ts` for why that is not

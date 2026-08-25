@@ -1,11 +1,17 @@
 /**
  * The blast shield for every E2E fixture that boots a real workspacer binary.
  *
- * Why this file exists, in one sentence: `workspacer serve` does NOT pass
- * `--db-path` to claudemon (`services/hub/cmd/workspacer/plan.go:70-79`), so a
- * second stack started without `XDG_DATA_HOME` opens the developer's LIVE
- * `state.db` — the same SQLite file the app they are running right now is
- * writing to. A test suite that can do that is worse than no test suite.
+ * Why this file exists: a second stack on this machine can silently open the
+ * developer's LIVE state — the same files the app they are running right now is
+ * writing to — and a test suite that can do that is worse than no test suite.
+ *
+ * The sharpest instance of that has since been closed on master (`105a5f25`
+ * pins claudemon's `--db-path` in the serve plan and refuses to share it), but
+ * the SHAPE of the hazard is structural and still live: every persistent path
+ * these binaries touch is derived from `$HOME` / `os.UserConfigDir()` when it
+ * is not passed, the desktop's own claudemon spawn still omits `--db-path`, and
+ * a fixture is exactly the caller most likely to forget a flag. So this file
+ * assumes nothing about which flags a binary happens to pin today.
  *
  * The defence is three layers, in increasing strength:
  *

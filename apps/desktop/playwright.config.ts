@@ -34,7 +34,7 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   projects: [
-    { name: 'app', testMatch: /(appClient|appKnownGaps|stateIsolation)\.test\.ts$/ },
+    { name: 'app', testMatch: /(appClient|appBrowserParity|stateIsolation)\.test\.ts$/ },
     { name: 'mobile', testMatch: /mobileClient\.test\.ts$/ },
     { name: 'renderer', testMatch: /chatTailPin\.test\.ts$/ },
     { name: 'electron', testMatch: /libraryPane\.test\.ts$/ },

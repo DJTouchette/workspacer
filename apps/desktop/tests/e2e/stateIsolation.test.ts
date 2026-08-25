@@ -1,15 +1,16 @@
 /**
  * The safety proof for the `/app` E2E harness.
  *
- * The hazard is concrete, not theoretical. `workspacer serve` does not pass
- * `--db-path` to claudemon (`services/hub/cmd/workspacer/plan.go:70-79`), and
- * the hub derives `--tokens-file`, `--layout-file`, `--push-dir`,
- * `--peers-file` and `--jobs-file` from `os.UserConfigDir()` when they are not
- * given (`cmd/hub/main.go:217-245`). A fixture that spawns either binary with
- * an un-redirected environment therefore reads and writes the developer's REAL
- * `~/.config/workspacer` and their live `state.db` — the same files the app
- * they are running right now is writing to. A test suite that can corrupt a
- * live session database is worse than no test suite.
+ * The hazard is concrete, not theoretical. The hub derives `--tokens-file`,
+ * `--layout-file`, `--push-dir`, `--peers-file` and `--jobs-file` from
+ * `os.UserConfigDir()` when they are not given (`cmd/hub/main.go:217-245`), and
+ * claudemon resolves its SQLite database from `XDG_DATA_HOME`/`$HOME` when
+ * `--db-path` is not passed (`store/mod.rs:315-323`; the serve plan pins it
+ * since `105a5f25`, the desktop's spawn still does not). A fixture that spawns
+ * either binary with an un-redirected environment therefore reads and writes
+ * the developer's REAL `~/.config/workspacer` and their live `state.db` — the
+ * same files the app they are running right now is writing to. A test suite
+ * that can corrupt a live session database is worse than no test suite.
  *
  * `fixtures/scratchState.ts` defends against that in three layers. This file
  * proves all three, and — the part that matters — proves the guards are
