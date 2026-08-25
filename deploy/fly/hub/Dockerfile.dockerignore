@@ -1,0 +1,29 @@
+# Build context is the repo root. The hub image needs services/hub (for the
+# `hub` binary) and apps/desktop (for the /app web build) and nothing else.
+#
+# Note this is a WIDER context than the node's, because of the web build alone.
+# apps/desktop is large, so the exclusions below are load-bearing for build time
+# rather than tidiness — and node_modules is excluded because the build runs its
+# own `npm ci`, which must resolve from package-lock.json rather than inherit
+# whatever a developer's tree happens to hold.
+*
+!services/hub
+!apps/desktop
+!deploy/fly/hub
+
+services/hub/hub
+services/hub/brain
+services/hub/mcp
+services/hub/workspacer
+services/hub/claudemon
+services/hub/web
+
+apps/desktop/dist
+apps/desktop/release
+apps/desktop/out
+apps/desktop/test-results
+apps/desktop/playwright-report
+
+**/.git
+**/node_modules
+**/*.log

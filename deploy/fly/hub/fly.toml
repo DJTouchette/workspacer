@@ -1,0 +1,187 @@
+# Workspacer ALWAYS-ON HUB.
+#
+#   fly deploy --config deploy/fly/hub/fly.toml \
+#              --dockerfile deploy/fly/hub/Dockerfile .
+#
+# Provisioning is a one-time, order-dependent procedure. Read RUNBOOK.md before
+# running anything here — in particular, DO NOT use `fly launch`: it allocates
+# public IPs, and this app is deliberately not publicly routable.
+#
+# ---------------------------------------------------------------------------
+# WHAT THIS MACHINE IS FOR
+# ---------------------------------------------------------------------------
+# The worker node sleeps. Something has to be awake to receive "wake node X"
+# from a phone, hold the Fly API token, and run the node registry. That cannot
+# be the node — a sleeping hub cannot wake anything — and it should not be a
+# desktop, because then waking from a phone only works while the desktop is on.
+#
+# It runs ONE process: `hub --brain-scope off`. No claudemon, no brain, no
+# Claude Code. The machine that is always on and holds a credential which spends
+# money is deliberately the machine with the least on it.
+
+app = "workspacer-hub"
+
+# Same region as the node, for the same measured reason: 35.4ms median from
+# Calgary, ahead of yyz (~40ms) with no overlap in the min/max ranges. It also
+# keeps the hub↔node hop inside one Fly region, which is the latency that shows
+# up on every capability call the node serves.
+#
+# `sea` and `den` NO LONGER EXIST — Fly retired them in the September 2025
+# Region Consolidation Project. Confirmed against `flyctl platform regions`.
+#
+# THIS IS A ONE-WAY DOOR. The volume below is pinned to this region.
+primary_region = "ord"
+
+# No swap. The node sets 4GB because it compiles Go; this machine runs a single
+# static Go binary with no build workload, and a swapfile would only add a way
+# for the box to get slow instead of getting killed.
+
+kill_signal  = "SIGINT"
+kill_timeout = 30
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # --- persistence -------------------------------------------------------
+  # $HOME lives on the volume. That is the whole persistence strategy: with HOME
+  # on /data, ~/.config/workspacer (remote-token, tokens.json, peers.json,
+  # nodes.json, config.yaml) and ~/.config/workspacer-hub (vapid.json,
+  # push-subscriptions.json, jobs.json, layout.json) are persistent by
+  # construction and NOT ONE OF THEM IS A SYMLINK. A tmp-file-plus-rename write
+  # replaces a FILE symlink with a regular file on the ephemeral rootfs — it
+  # works for that boot and is gone on the next restart. There are no file
+  # symlinks here to destroy.
+  WKS_DATA = "/data"
+  WKS_HOME = "/data/home"
+  HOME = "/data/home"
+
+  # XDG pinned HOME-relative rather than to separate /data paths. One variable
+  # moves five state locations: authtoken.ConfigDir() reads $XDG_CONFIG_HOME
+  # directly, and Go's os.UserConfigDir() — which defaultPushDir, defaultJobsFile
+  # and defaultLayoutFile all use — reads it too. Pinning it anywhere but
+  # $HOME/.config would also split config.yaml's two writers, since the TS half
+  # hardcodes ~/.config/workspacer.
+  XDG_CONFIG_HOME = "/data/home/.config"
+  XDG_DATA_HOME   = "/data/home/.local/share"
+  XDG_STATE_HOME  = "/data/home/.local/state"
+  XDG_CACHE_HOME  = "/data/cache/xdg"
+  HISTFILE        = "/data/home/.bash_history"
+
+  # --- hub identity ------------------------------------------------------
+  WKS_TS_HOSTNAME = "workspacer-hub"
+  # The auth key should already carry the tag; this is belt and braces. Tagging
+  # is load-bearing, not cosmetic: node keys expire after 180 days by default,
+  # but a device tagged at first authentication has key expiry disabled. Without
+  # it this works for six months and then silently stops.
+  WKS_TS_TAGS = "tag:workspacer-hub"
+
+  # --- reachability ------------------------------------------------------
+  # LOOPBACK ON PURPOSE. This is the single most consequential line in the file.
+  #
+  # The hub is reached only through `tailscale serve`, which terminates TLS with
+  # a real Let's Encrypt certificate for the MagicDNS name and forwards to
+  # 127.0.0.1. Two things follow, and both are wanted:
+  #
+  #   1. /m is a PWA whose whole value here is background Web Push. Service
+  #      workers and PushManager REQUIRE a secure context, so HTTPS is not
+  #      optional — and this gets it with no public IP and no certificate to
+  #      renew.
+  #   2. The Fly proxy CANNOT reach a loopback listener. Public exposure is
+  #      therefore structurally impossible rather than merely un-configured:
+  #      turning it on takes a bind change AND an IP allocation, not one
+  #      forgotten flag. See RUNBOOK.md §5 for the reachability argument in
+  #      full, and §11 for the deliberate opt-in if you want it anyway.
+  WKS_HUB_BIND = "127.0.0.1"
+  WKS_HUB_PORT = "7895"
+  WKS_HUB_SERVE_ENABLED = "1"
+  WKS_HUB_SERVE_PORT    = "443"
+  # A SECOND origin that also routes here, so a browser at /app can frame a
+  # hub-served plugin cross-origin and that plugin keeps its bus link. Without
+  # one the browser must sandbox a same-origin plugin opaque — it could
+  # otherwise read the app's host token — and the plugin paints but can talk to
+  # nothing. Tailscale permits serve on 443, 8443 and 10000.
+  WKS_HUB_PLUGIN_ORIGIN_ENABLED = "1"
+  WKS_HUB_PLUGIN_ORIGIN_PORT    = "8443"
+
+  # Plugin sidecars run confined; `enforce` refuses to start one on a platform
+  # with no confinement mechanism (fail closed). See the Dockerfile on why
+  # bubblewrap is installed and RUNBOOK.md §9 on why no plugin ships here.
+  WORKSPACER_PLUGIN_SANDBOX = "enforce"
+
+# Secrets — NOT here, `fly secrets set` (see RUNBOOK.md step 4):
+#   TAILSCALE_AUTHKEY  non-ephemeral, reusable, pre-authorized, tagged
+#   HUB_TOKEN          the pairing credential. Optional: bootstrap.sh mints one
+#                      on first run. Supplying it is better — it then outlives
+#                      the volume, and rotating it is `fly secrets set`.
+#   FLY_API_TOKEN      the Machines API token that wakes the node. Preferred
+#                      over an inline `token` in nodes.json: it stays out of the
+#                      volume, so a volume snapshot does not copy it, and
+#                      rotation does not mean editing a file inside a running
+#                      machine. nodes.ResolveToken checks it last, after each
+#                      entry's own `token` and `tokenFile`.
+
+[[mounts]]
+  source       = "wks_hub_data"
+  destination  = "/data"
+  initial_size = "1gb"
+  # 1GB is the Fly minimum and it is ample: this volume holds config files, a
+  # capped 5MiB boot log, and the tailnet identity — no repos, no module caches,
+  # no transcripts. Volumes grow but NEVER shrink.
+  #
+  # THIS VOLUME IS THE FLEET'S SINGLE POINT OF FAILURE. It holds the pairing
+  # credential every client is paired against, the Web Push keypair every phone
+  # subscribed to, the node registry that is the only wake path, and the tailnet
+  # identity the node's HUB_BUS_URL resolves to. A Fly volume is pinned to one
+  # physical host, attaches to exactly one machine, and is not reschedulable.
+  # Set snapshot retention deliberately:
+  #   fly volumes update <vol_id> --snapshot-retention 30
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "1gb"
+  # The brief's budget, and it is the right shape for this workload. shared-cpu-1x
+  # gets a BASELINE of 5ms per 80ms period — 6.25% of one core sustained once the
+  # burst balance drains — which would be crippling for the node (whose job is
+  # compiling Go) and is irrelevant here: the hub relays bus messages and polls
+  # brain.info every 30 seconds. 256MB is the preset default; 1GB is set
+  # explicitly because the hub holds the full session snapshot for every attached
+  # provider in memory, which grows with fleet size rather than with CPU.
+
+[[restart]]
+  # `always`, and this is the OPPOSITE of the node's `on-failure` — deliberately.
+  #
+  # The node's whole design is that `stopped` is a legitimate, wanted state, so
+  # `always` would defeat it. This machine has no legitimate stopped state at
+  # all: it is the wake path, and a hub that is off cannot be woken by anything,
+  # including itself. Anything that stops it must be undone automatically.
+  #
+  # The one interaction to know about: bootstrap.sh exits 2 when a create-once
+  # file has vanished from a volume that held it, so a genuinely lost volume
+  # produces a CRASH LOOP rather than a running hub. That is the intended
+  # outcome — a hub that starts on lost state does not fail, it silently becomes
+  # a different hub and refuses every client while looking healthy. The loop is
+  # the loudest signal this machine has; /data/logs/boot.log and `fly logs` both
+  # name the file. RUNBOOK.md §10.
+  policy = "always"
+
+# NO [http_service] BLOCK, AND NO PUBLIC IP. This is not an omission.
+#
+# The node has one because it needs a doorbell the Fly proxy can ring to wake it.
+# This machine is always on: an inbound request starts nothing, so there is
+# nothing a doorbell would buy. What a public endpoint WOULD buy is exposure of
+# the one machine holding a credential that spends money — and, concretely, the
+# pairing token in a `?token=` query string traversing Fly's proxy logs, because
+# browsers cannot set headers on a WebSocket handshake.
+#
+# So the node's reasoning ("the proxy wakes it before authenticating, so a
+# doorbell spends money") does NOT transfer, and a different, stronger reason
+# takes its place. RUNBOOK.md §5 works through both, and §11 is the deliberate
+# opt-in — bind change, IP allocation and `--trusted-host`, in that order — for
+# an operator who wants phone access without Tailscale installed.
+#
+# Consequence to know: with a loopback bind, Fly's own [[http_service.checks]]
+# could never reach the hub and would report every healthy boot as dead. The
+# compensating control is in entrypoint.sh, which polls /health from inside and
+# kills a hub that is alive but not answering, so `restart.policy = "always"`
+# recovers a wedged process as well as a dead one.
