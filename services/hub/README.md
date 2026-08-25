@@ -336,7 +336,11 @@ Sibling binaries (`claudemon`, `hub`, `brain`) are resolved next to the
 `workspacer` binary first, then PATH; `--claudemon-bin` / `--hub-bin` /
 `--brain-bin` override. Ports default to the desktop's (7890/7891 claudemon,
 7895 hub) with `--claudemon-hook-port` / `--claudemon-api-port` / `--hub-port`
-to move them. The hub always runs with auth: the token comes from `--token` /
+to move them — but moving claudemon's ports starts a SECOND session daemon, and
+`serve` then requires `--claudemon-db-path` too, because both daemons would
+otherwise open the one `$XDG_DATA_HOME/claudemon/state.db` (else
+`~/.claudemon/state.db`) and share every session and event row. The hub always
+runs with auth: the token comes from `--token` /
 `$HUB_TOKEN`, else the same persisted `<config>/workspacer/remote-token` the
 desktop app mints — so clients paired against one keep working against the
 other. claudemon stays loopback-only regardless of `--host`; remote clients go

@@ -3472,8 +3472,10 @@
       "params": {},
       "rootSet": "workspace",
       "providers": [
+        "brain",
         "main"
       ],
+      "note": "Two providers since the read-only git.* port: the desktop's guardGitCwd (hubCapabilities.ts) and the brain's (cmd/brain/git.go), both assertPathAllowed over the workspace roots. `cwd` is the field, not `path`: `path` is a pathspec git resolves INSIDE that repo, and the provider anchors it on the derived work-tree root itself (anchorGitPathspec) rather than leaving it to the bus.",
       "note": "git.diff carries a SECOND guard with a different boundary — the git work-tree root, because with `untracked` the optional `path` becomes a filesystem operand of `git diff --no-index`. This block models one rootSet per method and deliberately does not express that; it stays the hand-written test it is today."
     },
     {

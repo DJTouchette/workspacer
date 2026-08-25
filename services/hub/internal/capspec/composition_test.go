@@ -94,6 +94,7 @@ var closureMechanisms = map[string][]string{
 	"scrubBootDocumentAgents":      {"services", "hub", "cmd", "brain", "bootdoc.go"},
 	"validatePushEndpoint":         {"services", "hub", "internal", "push", "endpoint.go"},
 	"jobsTrusted":                  {"services", "hub", "cmd", "hub", "main.go"},
+	"nodesTrusted":                 {"services", "hub", "cmd", "hub", "nodes.go"},
 }
 
 // TestClosedCompositionsNameALiveMechanism is the anti-prose check: a ClosedBy

@@ -99,6 +99,10 @@ var topicDeliveryKey = []topicDelivery{
 	{topic: "hub.peer.disconnected", view: true, bare: true, term: true, watch: true, snap: true,
 		why: "peer name + last-seen — the tombstone signal; withholding it makes remote agents silently vanish for exactly the clients that watch them"},
 
+	// ---- remote worker node reachability ------------------------------------
+	{topic: "node.state_changed", view: true, bare: true, term: true, watch: true, snap: true,
+		why: "the same nodes.NodeView the view tier already reads from nodes.list, plus the state it came from. It is the tombstone signal one step further than hub.peer.*: a node can be off ON PURPOSE, and a client that cannot hear this renders a machine one button away from working as a dead one"},
+
 	// ---- UI navigation commands (MCP facade ui tools → the renderer) --------
 	{topic: "command.focus_agent", view: true, bare: true, term: true, watch: true, snap: true,
 		why: "a navigation REQUEST carrying only the session id to focus — an id the fleet feed already delivers to every one of these credentials"},

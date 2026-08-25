@@ -130,8 +130,10 @@ var (
 	brainFsguardFile  = []string{"services", "hub", "cmd", "brain", "fsguard.go"}
 	brainSearchFile   = []string{"services", "hub", "cmd", "brain", "search.go"}
 	brainProvFile     = []string{"services", "hub", "cmd", "brain", "providers.go"}
+	brainGitFile      = []string{"services", "hub", "cmd", "brain", "git.go"}
 	hubLayoutFile     = []string{"services", "hub", "internal", "layout", "layout.go"}
 	hubMainFile       = []string{"services", "hub", "cmd", "hub", "main.go"}
+	hubNodesFile      = []string{"services", "hub", "cmd", "hub", "nodes.go"}
 	hubPluginMgrFile  = []string{"services", "hub", "internal", "plugin", "manager.go"}
 	hubPushFile       = []string{"services", "hub", "internal", "push", "push.go"}
 	hubPushEndptFile  = []string{"services", "hub", "internal", "push", "endpoint.go"}
@@ -501,6 +503,32 @@ func gitCwdGuard(method string) Witness {
 	return guarded(argBearing("guardGitCwd", method, desktopCapsFile))
 }
 
+// brainGitCwdGuard is the SAME claim about the SECOND provider, and it exists
+// because the sentence "provider-confined to the workspace roots (guardGitCwd)"
+// stopped being about one file.
+//
+// The read-only half of git.* was ported into cmd/brain so a headless node can
+// answer it, and that provider has its own guardGitCwd over its own
+// assertPathAllowed. With only the desktop bearing on record, the brain's guard
+// could be deleted with every capspec test green while the reason above still
+// read as proven — for the provider that actually answers on an internet-facing
+// box.
+//
+// The ByArg form cannot express it (Go puts ctx first, so the call is not
+// `guardGitCwd("git.status", …)`), so the chain is entered at the handler that
+// answers this one method and nothing else, which the dispatcher check
+// distinguishes from cmd/brain's `handle` switch.
+func brainGitCwdGuard(method, handler string) Witness {
+	return guarded(Bearing{
+		Kind: BearsAtCallSite, On: method, Symbol: "guardGitCwd",
+		Entry: Site{handler, brainHandlersFile},
+		Chain: []Site{
+			{handler, brainHandlersFile},
+			{"guardGitCwd", brainGitFile},
+		},
+	})
+}
+
 // compositionInert is the written record of "considered, and it cannot be half
 // of a composition", with the evidence each sentence rests on.
 var compositionInert = map[string]InertClaim{
@@ -548,15 +576,15 @@ var compositionInert = map[string]InertClaim{
 	},
 	"git.status": {
 		Reason:    "runs `git status` in a cwd guardGitCwd('git.status', …) confines to the workspace roots, and returns text. Writes nothing; the porcelain output is not read as policy by anything",
-		Witnesses: []Witness{gitCwdGuard("git.status")},
+		Witnesses: []Witness{gitCwdGuard("git.status"), brainGitCwdGuard("git.status", "gitStatusCall")},
 	},
 	"git.log": {
 		Reason:    "reads commit metadata out of a repo guardGitCwd('git.log', …) confines, and returns it. Writes nothing, changes no state, and no guard in the system consults commit history when deciding anything",
-		Witnesses: []Witness{gitCwdGuard("git.log")},
+		Witnesses: []Witness{gitCwdGuard("git.log"), brainGitCwdGuard("git.log", "gitLogCall")},
 	},
 	"git.numstat": {
 		Reason:    "reads per-file change counts for a commit range in a repo guardGitCwd('git.numstat', …) confines. Numbers to a UI: nothing is written, and nothing downstream reads the result as configuration or argv",
-		Witnesses: []Witness{gitCwdGuard("git.numstat")},
+		Witnesses: []Witness{gitCwdGuard("git.numstat"), brainGitCwdGuard("git.numstat", "gitNumstatCall")},
 	},
 	"git.commitDiff": {
 		Reason:    "reads one commit's patch text out of a repo guardGitCwd('git.commitDiff', …) confines, under the same result-path secret gate git.diff has, so it cannot return bytes fs.read would refuse. Writes nothing",
@@ -653,6 +681,12 @@ var compositionInert = map[string]InertClaim{
 		Witnesses: []Witness{guarded(argBearing("jobsTrusted", "jobs.history", hubMainFile))},
 	},
 
+	// ── nodes.* — the remote node registry (internal/nodes) ────────────────
+	"nodes.wake": {
+		Reason:    "the only caller value is an `id` SELECTING a row the hub already holds in nodes.json. Everything the call then acts on — the cloud app, the machine id, the API endpoint, the credential — comes from that file, so there is no caller path to confine and no caller argv to interpret. Nothing it writes is read back as config, code or policy by anything: it writes nothing at all, and the state it changes (a node's state field, in memory only, never persisted) is CONSULTED by exactly one thing, nodes.list, which reports it to a human. The widen-then-use shape it does have is honest and bounded: a woken node becomes a capability PROVIDER, and everything that provider then serves is governed by the same bus authorization every other provider is — first-registration-wins, per-caller tiers, per-method allowlists — with nothing about it derived from who pressed wake. What the call really is, is an act with a BILL attached, and the answer to that is identity rather than confinement: nodesTrusted refuses plugin tokens and the view/triage tiers, and the method is admitted to no scoped tier",
+		Witnesses: []Witness{guarded(argBearing("nodesTrusted", "nodes.wake", hubNodesFile))},
+	},
+
 	"claude.profiles.add": {
 		Reason:    "persists a profile whose configDir becomes CLAUDE_CONFIG_DIR and whose extraArgs become argv — both classified per-parameter, alongside mcpItemIds. The interpreter is real, and it is closed by scrubProfileBypass at write time on BOTH providers, with agents.spawn refusing a bypassing profileId from a bus caller as the second half",
 		Witnesses: []Witness{paramsClassified("configDir", "extraArgs", "mcpItemIds")},
@@ -736,7 +770,7 @@ var compositionInert = map[string]InertClaim{
 	},
 	"git.diff": {
 		Reason:    "reads file contents out of the repo at a cwd guardGitCwd('git.diff', …) confines, and its result-path secret gate is the recorded fs.write→search.project pair's closer applied to the same read-set invariant",
-		Witnesses: []Witness{gitCwdGuard("git.diff")},
+		Witnesses: []Witness{gitCwdGuard("git.diff"), brainGitCwdGuard("git.diff", "gitDiffCall")},
 	},
 	"fs.watch": {
 		Reason:    "installs a change watcher on a path assertPathAllowed('fs.watch', …) confines. Its OUTPUT is the fs.changed topic, and that is where its composition lives: the event registry names this capability as that topic's gate, so a credential refused fs.watch is refused the change feed it produces. The call itself writes nothing and no guard consults the watcher set",
