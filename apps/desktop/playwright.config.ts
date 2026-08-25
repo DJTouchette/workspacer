@@ -33,9 +33,15 @@ export default defineConfig({
   use: {
     trace: 'on-first-retry',
   },
+  // Matched by PREFIX, not by an enumeration of filenames: a new `app*` or
+  // `mobile*` spec joins the right project by being named, with no second edit
+  // to remember. `appSuiteCoverage.test.ts` fails if a spec matches no project
+  // at all, because a project split turns "forgot to wire it up" from a loud
+  // problem into a silent one — a spec nobody runs looks exactly like a spec
+  // that passes.
   projects: [
-    { name: 'app', testMatch: /(appClient|appBrowserParity|stateIsolation)\.test\.ts$/ },
-    { name: 'mobile', testMatch: /mobileClient\.test\.ts$/ },
+    { name: 'app', testMatch: /(app[A-Z][A-Za-z]*|stateIsolation)\.test\.ts$/ },
+    { name: 'mobile', testMatch: /mobile[A-Z][A-Za-z]*\.test\.ts$/ },
     { name: 'renderer', testMatch: /chatTailPin\.test\.ts$/ },
     { name: 'electron', testMatch: /libraryPane\.test\.ts$/ },
   ],
