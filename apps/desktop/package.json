@@ -35,6 +35,8 @@
     "test:main": "vitest run",
     "test:renderer": "cd src/renderer && npx vitest run",
     "test:e2e": "npm run build && npx playwright test",
+    "test:e2e:ci": "npx playwright test --project=app --project=mobile --project=renderer",
+    "test:e2e:app": "npx playwright test --project=app",
     "shoot": "unshare -Urn --map-root-user bash -c 'ip link set lo up; WKS_SHOOT_NETNS=1 node scripts/shoot.mjs'",
     "shoot:fleet": "unshare -Urn --map-root-user bash -c 'ip link set lo up; WKS_SHOOT_NETNS=1 node scripts/shootFleet.mjs'",
     "shoot:mobile": "node scripts/shootMobile.mjs",

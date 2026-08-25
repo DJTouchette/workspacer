@@ -93,15 +93,21 @@ jobs:
           CI: 'true'
         run: npm test
 
-      # mobileClient.test.ts (the /m PWA e2e suite) went unnoticed at 8/22 red
-      # for two days because nothing ran it — `npm test` above is vitest only,
-      # and test:e2e was never wired into CI. It needs its own Go toolchain
-      # (the fixture builds and runs the real hub binary on a scratch port —
-      # see tests/e2e/fixtures/mobileHub.ts) and a Chromium binary; it needs
-      # neither claudemon nor a built Electron app, unlike the other two e2e
-      # specs in this directory, so it alone is cheap enough to run on every
-      # PR without inheriting their build cost.
-      - name: Set up Go (mobile e2e's fake hub)
+      # Playwright e2e. `npm test` above is vitest only, and test:e2e used to be
+      # "build everything, then run every spec", so nothing here could ride a PR
+      # — mobileClient.test.ts sat red for two days for exactly that reason.
+      # playwright.config.ts now splits the specs into projects by what they
+      # NEED, and the three cheap ones run here:
+      #
+      #   app       /app (the full React renderer in a browser) against a real
+      #             hub binary on an ephemeral port with a scratch state dir.
+      #   mobile    the /m PWA, same shape.
+      #   renderer  the chat tail-pin, on its own Vite server.
+      #
+      # All three need a Go toolchain (app + mobile build and run the real hub)
+      # and Chromium. None needs claudemon, a built Electron app, or xvfb — the
+      # `electron` project (libraryPane.test.ts) does, and stays opt-in.
+      - name: Set up Go (the e2e fixtures build and run the real hub)
         uses: actions/setup-go@v5
         with:
           go-version: '1.25.4'
@@ -110,8 +116,8 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Mobile client e2e (Playwright)
-        run: npx playwright test tests/e2e/mobileClient.test.ts
+      - name: Web + mobile client e2e (Playwright)
+        run: npm run test:e2e:ci
 
   # ---------------------------------------------------------------------------
   # claudemon (Rust): cargo test + clippy. Same Swatinem cache as release.yml.
