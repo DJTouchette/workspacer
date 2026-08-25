@@ -135,9 +135,22 @@ export interface PluginManifest {
   /** Webview-only plugins: the subdirectory of static assets the hub serves at
    *  /plugins/ui/<id>/ (set instead of `server`). */
   ui?: string;
-  /** Origin of the hub serving this plugin's `ui` assets, attached by main
-   *  (it knows the hub address). The renderer builds the pane URL against it. */
+  /**
+   * Origin of the hub serving this plugin's `ui` assets, stamped by whoever
+   * fetched the manifest — main on the desktop, `webBackend` on `/app` and in
+   * remote-client mode. Only the fetcher knows which hub this client is
+   * actually talking to, and it is never safe to guess (see pluginContentURL).
+   */
   uiBase?: string;
+  /**
+   * Base URL of a SIDECAR plugin's own HTTP server, as reachable BY THIS CLIENT
+   * — stamped by the same fetcher. A sidecar listens on the hub machine's
+   * loopback, so this is `http://127.0.0.1:<port>` when the hub is this machine
+   * and ABSENT when it is not: from a browser elsewhere, that address is the
+   * viewer's own computer, and framing whatever answers there is worse than
+   * showing nothing. Absent ⇒ the pane explains itself instead.
+   */
+  serverBase?: string;
 }
 
 /** Result of checking one installed plugin against its install source, from the
@@ -218,39 +231,99 @@ export interface PluginHotkey {
   command: string;
 }
 
-/** Default hub origin (loopback) when main hasn't attached one — matches the
- *  hub's default --addr. */
-const DEFAULT_HUB_ORIGIN = 'http://127.0.0.1:7895';
-
 /**
- * Resolve one of a plugin's declared paths to a concrete webview URL. A sidecar
- * plugin loads from its own server port; a webview-only plugin (no server, has
- * `ui`) loads from the hub's /plugins/ui/<id>/ route. The directory form
- * (trailing slash) is used so the hub serves index.html directly without a
- * redirect that would drop the busToken query.
+ * Resolve one of a plugin's declared paths to a concrete guest URL.
+ *
+ * Both bases used to be constants: a sidecar got `http://127.0.0.1:<its port>`
+ * and a hub-served `ui` plugin `http://127.0.0.1:7895`. On the desktop that is
+ * true by construction — main spawns the hub and every sidecar on this machine.
+ * From a browser on ANOTHER machine, which is the entire point of `/app`, both
+ * spellings name **the viewer's own loopback**: the pane loads nothing, or
+ * frames some unrelated service that happens to answer on that port on the
+ * user's own computer.
+ *
+ * So neither base is guessed here any more. `uiBase` and `serverBase` are
+ * stamped by whoever fetched the manifest — the only party that knows which hub
+ * this client is talking to and whether it is local — and a base that could not
+ * be established yields `''`, which the pane renders as an explanation. The
+ * directory form (trailing slash) is kept so the hub serves index.html without
+ * a redirect that would drop the busToken query.
+ *
+ * `frameOrigin` overrides the hub-served base with a second spelling of the
+ * SAME hub, so a browser can frame the plugin cross-origin instead of opaque —
+ * see lib/pluginOrigin.ts for why that is the whole ballgame in a browser.
  *
  * Shared by panes and widgets so a plugin's two surfaces always resolve against
  * the same origin — which is also what lets their webviews share a renderer
  * process.
  */
-function pluginContentURL(m: PluginManifest, path: string | undefined): string {
+function pluginContentURL(
+  m: PluginManifest,
+  path: string | undefined,
+  frameOrigin?: string,
+): string {
+  const sub = path && path !== '/' ? (path.startsWith('/') ? path : `/${path}`) : '/';
   if (m.server?.port) {
-    return `http://127.0.0.1:${m.server.port}${path || '/'}`;
+    // No serverBase ⇒ this client cannot reach the sidecar's loopback port.
+    return m.serverBase ? `${m.serverBase}${sub}` : '';
   }
   if (m.ui) {
-    const base = m.uiBase || DEFAULT_HUB_ORIGIN;
-    const sub = path && path !== '/' ? (path.startsWith('/') ? path : `/${path}`) : '/';
-    return `${base}/plugins/ui/${encodeURIComponent(m.id)}${sub}`;
+    const base = frameOrigin || m.uiBase;
+    return base ? `${base}/plugins/ui/${encodeURIComponent(m.id)}${sub}` : '';
   }
-  return 'about:blank';
+  // Neither: an unauthenticated caller gets the PUBLIC projection of a manifest
+  // (plugin.PublicManifests), which withholds `server` and `ui` deliberately —
+  // it names the contributions, never where they are served from.
+  return '';
 }
 
-/** Resolve a pane contribution's webview URL. */
-export function pluginPaneURL(m: PluginManifest, pane: PluginPaneContribution): string {
-  return pluginContentURL(m, pane.path);
+/** Resolve a pane contribution's guest URL. */
+export function pluginPaneURL(
+  m: PluginManifest,
+  pane: PluginPaneContribution,
+  frameOrigin?: string,
+): string {
+  return pluginContentURL(m, pane.path, frameOrigin);
 }
 
-/** Resolve a widget contribution's webview URL. */
-export function pluginWidgetURL(m: PluginManifest, widget: PluginWidgetContribution): string {
-  return pluginContentURL(m, widget.path);
+/** Resolve a widget contribution's guest URL. */
+export function pluginWidgetURL(
+  m: PluginManifest,
+  widget: PluginWidgetContribution,
+  frameOrigin?: string,
+): string {
+  return pluginContentURL(m, widget.path, frameOrigin);
+}
+
+/**
+ * Rehome a plugin URL that was resolved by SOME OTHER CLIENT onto the origin
+ * this one can reach, keeping its path and query.
+ *
+ * A pane's URL is baked at open time and persisted in the shared layout
+ * document, so a pane opened on the desktop carries that machine's loopback
+ * (`http://127.0.0.1:7895/plugins/ui/…`, `http://127.0.0.1:9211/…`). Restore
+ * that layout in a browser on another machine and the URL points at the
+ * VIEWER's loopback — the exact hazard pluginContentURL now refuses to create.
+ * Rewriting only the origin keeps everything the opener chose (which pane path,
+ * which sessionId/cwd) while making the address true here.
+ *
+ * An unknown plugin (list still loading) is left alone rather than blanked: the
+ * stored URL is the best guess available until the manifest lands.
+ */
+export function relocatePluginURL(
+  url: string,
+  m: PluginManifest | undefined,
+  frameOrigin?: string,
+): string {
+  if (!url || !m) return url;
+  const base = m.server?.port ? m.serverBase : frameOrigin || m.uiBase;
+  if (!base) return m.server?.port || m.ui ? '' : url;
+  try {
+    const target = new URL(url);
+    // Rebuild rather than assign `host`: assigning a host with no port leaves
+    // the old port in place, which silently keeps the other machine's :7895.
+    return new URL(`${target.pathname}${target.search}${target.hash}`, base).toString();
+  } catch {
+    return url;
+  }
 }

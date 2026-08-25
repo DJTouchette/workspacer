@@ -146,6 +146,26 @@ func TestBuildServePlanWiring(t *testing.T) {
 	}
 }
 
+// A declared second origin has to reach the hub as a flag, or the operator sets
+// it on `workspacer serve` (the product face of headless mode, and the only
+// entry point a fly.io deployment uses) and every plugin pane in the browser
+// silently stays same-origin — framed opaque, bus-less, with nothing to say why.
+func TestServePlanForwardsPluginOrigin(t *testing.T) {
+	base := serveOptions{
+		Host: "127.0.0.1", HubPort: 7895, APIPort: 7891, HookPort: 7890,
+		Token: "tok", ClaudemonBin: "/bin/claudemon", HubBin: "/bin/hub",
+	}
+	if got := argsAfter(buildServePlan(base).Hub.Args, "--plugin-origin"); got != "" {
+		t.Fatalf("undeclared plugin origin still reached the hub as %q", got)
+	}
+	opts := base
+	opts.PluginOrigin = "https://plugins.example:8443"
+	got := argsAfter(buildServePlan(opts).Hub.Args, "--plugin-origin")
+	if got != "https://plugins.example:8443" {
+		t.Fatalf("--plugin-origin = %q, want the declared origin", got)
+	}
+}
+
 func TestAdvertiseHost(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -143,7 +143,10 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   // sensitive: waking starts a billable cloud machine, and this hub has no way
   // to stop one. It is trusted-only at call time (nodesTrusted in cmd/hub), so
   // a plugin that declares it gets an honest consent line and then a refusal.
-  'nodes.wake': { label: 'Wake a sleeping remote node (starts a billable machine)', sensitive: true },
+  'nodes.wake': {
+    label: 'Wake a sleeping remote node (starts a billable machine)',
+    sensitive: true,
+  },
   // jobs.* are trusted-only at call time (a job is persisted argv) — a plugin
   // that declares them gets an honest consent label and then a runtime refusal.
   'jobs.list': { label: 'See scheduled jobs' },

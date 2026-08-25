@@ -24,6 +24,7 @@ type serveOptions struct {
 	WebappDir         string // "" = hub falls back to $WORKSPACER_WEBAPP_DIR
 	AdvertiseHost     string // host to print in client URLs (differs from Host when binding 0.0.0.0)
 	TrustedHosts      string // comma-separated reverse-proxy hostname(s) for the hub's --trusted-host
+	PluginOrigin      string // second origin routed to this hub, for framing plugin UI cross-origin
 	DevStreamLogs     bool   // pass --plugins-stream-logs to the hub (plugin dev only)
 	SkipClaudemonInit bool   // skip the `claudemon init` pre-flight (operator owns ~/.claude/settings.json)
 	DBPath            string // claudemon's SQLite session store; resolved by resolveDBPath, never empty by the time buildServePlan sees it
@@ -152,6 +153,13 @@ func buildServePlan(opts serveOptions) servePlan {
 	}
 	if opts.DevStreamLogs {
 		hubArgs = append(hubArgs, "--plugins-stream-logs")
+	}
+	if opts.PluginOrigin != "" {
+		// A browser cannot be served /app and a plugin's UI on ONE origin without
+		// handing that plugin the app document, so /app frames a same-origin
+		// plugin opaque and the plugin loses its bus link. A second origin the
+		// operator already routes here dissolves that without loosening anything.
+		hubArgs = append(hubArgs, "--plugin-origin", opts.PluginOrigin)
 	}
 	if opts.TrustedHosts != "" {
 		// A TLS front-end (tailscale serve, nginx, Caddy) terminates elsewhere

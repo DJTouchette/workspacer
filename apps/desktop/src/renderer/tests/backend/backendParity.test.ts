@@ -137,6 +137,10 @@ const BUS_BACKED = [
   'layoutSet',
   'onLayoutChanged',
   'hubPublish',
+  // The brain has no renderer to push FACADE_OPEN_TERMINAL over IPC to, so it
+  // publishes the identical payload as facade.openTerminal on the bus instead;
+  // the topic is TopicGuardedBy terminals.open, enforced hub-side.
+  'onFacadeOpenTerminal',
   // Remote worker nodes. nodes.list is VIEW tier so the web mirror reads it
   // straight off the bus; nodes.wake is host-authority only and the backend
   // gates the BUTTON on the connection's own tier rather than stubbing it out.
@@ -169,7 +173,6 @@ const KNOWN_STUBS = [
   'saveClipboardImage', // the host clipboard isn't the browser user's clipboard → null
   'agentSuggestTitle', // one-shot completion on the agent's own provider CLI; null on web (the desktop titles the agent and the layout syncs)
   'onConfigChanged', // main-process config watcher; the bus has no equivalent event yet
-  'onFacadeOpenTerminal', // facade-opened terminals are a desktop-pane affordance; the browser mirror has no PTY pane → no-op
   'federationPeers', // the web mirror talks to one hub directly; no peer link → [] (could ride hub.peer.* later)
   'federationConversation', // IMPLEMENTED on web (qualified sessions.conversation); listed here because local sessions answer null by design
   'federationPeersConfig', // peers.json lives on the hub machine; web answers null → settings render read-only

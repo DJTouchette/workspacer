@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -115,6 +116,80 @@ func pluginSDKHandler() http.HandlerFunc {
 		w.Header().Set("Cache-Control", "public, max-age=300")
 		_, _ = w.Write(sdkJS)
 	}
+}
+
+// pluginOriginHandler advertises the second origin the operator routed to this
+// hub, or "" when there is none.
+//
+// It exists because of a wall the browser puts up and we will not lower. `/app`
+// and a hub-served plugin UI (/plugins/ui/<id>/) come from the SAME origin, so
+// framing that plugin with allow-same-origin would hand it parent.document,
+// window.electronAPI and the host token in sessionStorage — total control of the
+// plane the per-pane token deliberately scopes. The renderer therefore frames it
+// opaque, and an opaque document sends `Origin: null`, which the bus's
+// DNS-rebinding guard refuses. The plugin paints and can talk to nothing.
+//
+// A second origin for the same hub dissolves that without touching either rule:
+// the guest becomes genuinely cross-origin, so the browser's own same-origin
+// policy is the wall, allow-same-origin is safe, and its /bus socket presents
+// `Origin == Host`, which originAllowed already accepts. The hub cannot discover
+// such a mapping by itself (it is the operator's proxy/DNS/port choice), so the
+// operator declares it and this route publishes it.
+//
+// Unguarded and always 200: a client must read it BEFORE it holds anything, the
+// value is a URL the operator chose to publish, and answering 404 when unset
+// would make "no second origin" indistinguishable from "hub not answering".
+func pluginOriginHandler(origin string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-cache")
+		_ = json.NewEncoder(w).Encode(map[string]string{"origin": origin})
+	}
+}
+
+// warnIfPluginOriginUntrusted says out loud when a declared plugin origin names
+// a host the bus's own Host/Origin pins will refuse behind a TLS front end. The
+// symptom is otherwise silent and baffling: plugin pages load from the second
+// origin and every one of them reports "bus disconnected".
+func warnIfPluginOriginUntrusted(origin string, trusted []string) {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return
+	}
+	host := u.Hostname()
+	if host == "localhost" || net.ParseIP(host) != nil {
+		return // loopback / literal IP: originAllowed handles these already
+	}
+	for _, t := range trusted {
+		if strings.EqualFold(t, host) {
+			return
+		}
+	}
+	log.Printf("WARNING: --plugin-origin %s names a host that is not in --trusted-host; if a TLS front end terminates there and forwards to our loopback socket, /bus will refuse those plugin pages (add -trusted-host %s)", origin, host)
+}
+
+// normalizePluginOrigin validates --plugin-origin down to a bare scheme://host[:port].
+//
+// The value ends up as an iframe `src` prefix in every browser client, so a
+// non-http(s) scheme (javascript:, data:) is a script-injection shape and is
+// refused at startup rather than published to everyone. A path is dropped
+// rather than kept, so clients can concatenate onto it blindly.
+func normalizePluginOrigin(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("plugin-origin %q: %w", raw, err)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", fmt.Errorf("plugin-origin %q: must be an absolute http:// or https:// origin", raw)
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("plugin-origin %q: no host", raw)
+	}
+	return scheme + "://" + strings.ToLower(u.Host), nil
 }
 
 // readHTMLDoc reads name (relative to dir) through http.Dir so path confinement
@@ -292,6 +367,7 @@ func main() {
 	brainScope := flag.String("brain-scope", "off", "supervise the brain capability provider: off | full (whole surface, headless) | catalog (file-backed subset, when the desktop app owns the live caps)")
 	brainBin := flag.String("brain-bin", "", "path to the brain binary to supervise; empty = auto-detect (sibling of the hub binary, then PATH)")
 	claudemonURL := flag.String("claudemon", "http://127.0.0.1:7891", "claudemon API base URL the supervised brain talks to")
+	pluginOrigin := flag.String("plugin-origin", os.Getenv("WORKSPACER_PLUGIN_ORIGIN"), "a SECOND origin (scheme://host[:port]) that also routes to this hub, used by browser clients to frame plugin UI cross-origin — e.g. a fly.io service on :8443, or `tailscale serve --https=8443`. Without one, /app must frame a hub-served plugin same-origin, which the browser sandboxes opaque and which costs that plugin its bus link. Advertised publicly at /plugins/origin; empty = same-origin framing")
 	trustedHosts := flag.String("trusted-host", os.Getenv("HUB_TRUSTED_HOSTS"), "comma-separated hostname(s) a reverse proxy in front of this hub presents (e.g. the `tailscale serve` MagicDNS name). Required for any TLS front-end: it terminates elsewhere and forwards to our loopback socket, which is the DNS-rebinding shape the Host/Origin pins refuse. Empty = no exemption")
 	var peerFlags multiFlag
 	flag.Var(&peerFlags, "peer", "federate with a peer hub (repeatable): name=work,url=ws://host:7895/bus,token=… — tests/dev only; a token here rides argv, which /proc makes world-readable. Durable peers belong in -peers-file")
@@ -303,8 +379,22 @@ func main() {
 	b := broker.New()
 	srv := bus.NewServer(b)
 	srv.SetToken(*token)
-	if hosts := configureTrustedHosts(srv, *trustedHosts); len(hosts) > 0 {
-		log.Printf("bus: trusting reverse-proxy host(s) %v (Host/Origin pins exempt these names)", hosts)
+	trusted := configureTrustedHosts(srv, *trustedHosts)
+	if len(trusted) > 0 {
+		log.Printf("bus: trusting reverse-proxy host(s) %v (Host/Origin pins exempt these names)", trusted)
+	}
+	// The second origin browser clients frame plugin UI from (see
+	// pluginOriginHandler). Fatal on a malformed value rather than serving a bad
+	// iframe prefix to every client, and loud when it names a host the bus will
+	// then refuse — declaring it here does NOT exempt it from the Host/Origin
+	// pins; that is --trusted-host's job, deliberately kept a separate decision.
+	declaredPluginOrigin, err := normalizePluginOrigin(*pluginOrigin)
+	if err != nil {
+		log.Fatalf("hub: %v", err)
+	}
+	if declaredPluginOrigin != "" {
+		log.Printf("plugin UI framed from %s (advertised at /plugins/origin)", declaredPluginOrigin)
+		warnIfPluginOriginUntrusted(declaredPluginOrigin, trusted)
 	}
 	if *token != "" {
 		log.Printf("bus auth enabled (token required on /bus, /remote, /plugins/install, /plugins/remove)")
@@ -691,6 +781,11 @@ func main() {
 	// and the identical broadcast — plugin.settings.changed — is TopicHostOnly.
 	srv.AddRoute("/plugins/ui/", pluginUIHandler(mgr,
 		pluginSettingsForRequest(srv.AuthorizedForPlugin, mgr.GetSettings)))
+	// Where a browser should frame plugin UI from, when the operator gave this
+	// hub a second origin (--plugin-origin). See pluginOriginHandler: this is a
+	// URL the operator chose to publish, not a credential, and a client cannot
+	// frame anything cross-origin until it knows it.
+	srv.AddRoute("/plugins/origin", pluginOriginHandler(declaredPluginOrigin))
 	// Host-owned plugin SDK: defines window.workspacer (bus call/publish/subscribe
 	// + reconnect + settings), auto-injected into every plugin webview by the
 	// handler above. Public library code — <script> tags can't carry the bus
