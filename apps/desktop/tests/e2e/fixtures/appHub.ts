@@ -32,7 +32,7 @@ import * as http from 'http';
 import * as path from 'path';
 import {
   assertNoLiveStateHandles,
-  scratchRoot,
+  withBuildLock,
   assertScratchEnv,
   assertScratchPath,
   freePort,
@@ -173,33 +173,16 @@ async function waitForHealth(url: string, timeoutMs = 20000): Promise<void> {
  * thing under test, so a stale bundle would mean the suite tests nothing. But
  * rebuilding unconditionally costs ~5s on every spec file, and Playwright runs
  * spec files in parallel workers that would race each other writing the same
- * `dist/web`. So:
+ * outputs. So:
  *
- *   - a cross-process lock (an atomically-created directory) serialises it, and
+ *   - `withBuildLock` serialises it across worker processes, and
  *   - the bundle is only rebuilt when a renderer source file is newer than it.
  *
  * `WKS_E2E_SKIP_WEB_BUILD=1` skips the vite step entirely for a fast iteration
  * loop on the specs themselves.
  */
 function build(): void {
-  const lock = path.join(scratchRoot(), 'build.lock');
-  fs.mkdirSync(path.dirname(lock), { recursive: true });
-  const deadline = Date.now() + 300_000;
-  for (;;) {
-    try {
-      fs.mkdirSync(lock);
-      break;
-    } catch {
-      if (Date.now() > deadline) {
-        // A crashed worker left the lock behind rather than a live one holding
-        // it. Take it over rather than failing the whole run.
-        fs.rmSync(lock, { recursive: true, force: true });
-        continue;
-      }
-      spawnSync('sleep', ['0.25']);
-    }
-  }
-  try {
+  withBuildLock(() => {
     const hub = spawnSync('go', ['build', '-o', 'hub', './cmd/hub'], {
       cwd: HUB_DIR,
       encoding: 'utf8',
@@ -215,9 +198,7 @@ function build(): void {
         throw new Error('failed to build the web bundle: ' + (web.stderr || web.stdout));
       }
     }
-  } finally {
-    fs.rmSync(lock, { recursive: true, force: true });
-  }
+  });
 
   if (!fs.existsSync(path.join(WEB_DIR, 'index.html'))) {
     throw new Error(
