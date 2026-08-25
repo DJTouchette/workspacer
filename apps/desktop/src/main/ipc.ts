@@ -384,6 +384,39 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // hub.peer.connected / hub.peer.disconnected — re-invoke this on those.
   ipcMain.handle(IPC.FEDERATION_PEERS, () => listFederationPeers());
 
+  // ── Remote worker nodes ──
+  // The hub only REGISTERS nodes.* when a nodes.json exists, so "no provider
+  // for nodes.list" means this hub has no remote nodes — a feature-absent
+  // signal, not a failure. It is normalised to null here rather than left as a
+  // rejection, so the renderer never has to tell a missing feature from a
+  // broken hub by parsing an Electron IPC error string.
+  //
+  // canWake is true on the desktop because main's bus connection presents the
+  // HOST token, which is the host authority nodes.wake requires. The web mirror
+  // answers this from its own tier (see webBackend) — a view/triage phone gets
+  // the state and no button.
+  ipcMain.handle(IPC.NODES_LIST, async () => {
+    try {
+      const nodes = await callHub('nodes.list', {});
+      return { nodes: Array.isArray(nodes) ? nodes : [], canWake: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/no provider for nodes\.list\b/.test(msg)) return null;
+      throw err;
+    }
+  });
+  ipcMain.handle(IPC.NODES_WAKE, async (_event, id: string) => {
+    try {
+      const node = await callHub('nodes.wake', { id });
+      return { ok: true, node };
+    } catch (err) {
+      // A refused wake is an ANSWER, not a crash: the strip renders the reason
+      // on the row. Rejecting would surface it as an unhandled IPC error with
+      // the electron wrapper text glued to the front.
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   // ── Hub jobs ──
   // Thin passthroughs to the hub's jobs.* RPCs (trusted-only there; main's
   // bus connection presents the host token). The hub owns storage, validation

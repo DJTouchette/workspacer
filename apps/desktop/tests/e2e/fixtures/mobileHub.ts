@@ -70,7 +70,20 @@ async function waitForHealth(url: string, timeoutMs = 15000): Promise<void> {
   throw new Error('hub did not become healthy at ' + url);
 }
 
-export async function startMobileHub(): Promise<MobileHub> {
+/** Optional shape for a hub that has REMOTE NODES. Omitted (the default) means
+ *  no `nodes.json` is written and the hub never registers `nodes.*` at all —
+ *  which is every ordinary install, and the case the node strip must render as
+ *  no change whatsoever. */
+export interface MobileHubOptions {
+  /** Written verbatim to a 0600 nodes.json and passed as --nodes-file. */
+  nodes?: Array<{
+    id: string;
+    label?: string;
+    fly?: { app: string; machineId: string; token?: string; baseUrl?: string };
+  }>;
+}
+
+export async function startMobileHub(opts: MobileHubOptions = {}): Promise<MobileHub> {
   // Always rebuild. mobile.html is go:embed'd into the binary, so a stale hub
   // would serve a stale client and the whole suite would be testing nothing.
   // Go's build cache makes the no-op case cheap.
@@ -89,11 +102,22 @@ export async function startMobileHub(): Promise<MobileHub> {
     ]),
   );
 
+  // The node registry, when the test asked for one. Mode 0600 on purpose: the
+  // hub warns (loudly, and rightly) if a file holding a cloud credential is
+  // readable beyond its owner, and that warning in the log would be noise.
+  let nodesArgs: string[] = [];
+  if (opts.nodes?.length) {
+    const nodesFile = path.join(dir, 'nodes.json');
+    fs.writeFileSync(nodesFile, JSON.stringify(opts.nodes), { mode: 0o600 });
+    nodesArgs = ['--nodes-file', nodesFile];
+  }
+
   const port = await freePort();
   const url = `http://127.0.0.1:${port}`;
   const proc: ChildProcess = spawn(
     HUB_BIN,
     [
+      ...nodesArgs,
       '--addr',
       `127.0.0.1:${port}`,
       '--token',

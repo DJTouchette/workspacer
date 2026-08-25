@@ -746,6 +746,36 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // Hub jobs — trusted-only hub-local RPCs, so these work for a
     // full-control pairing and error cleanly for view/triage tokens (the
     // settings section feature-detects by the first list failing).
+    // Remote worker nodes. `nodes.list` is in the bus's VIEW tier, so any
+    // token can read the state — but the hub only REGISTERS the method when a
+    // nodes.json exists, so "no provider" is the feature-absent signal and is
+    // normalised to null here (identical to main's handler). Anything else
+    // rethrows: a broken hub must not render as a hub with no nodes.
+    //
+    // `canWake` is this connection's OWN tier off the hello frame. nodes.wake
+    // is host-authority only, so a view/triage phone gets the state and no
+    // button — never a button the bus is certain to refuse.
+    nodesList: async () => {
+      try {
+        const nodes = await client.call<unknown>('nodes.list', {});
+        return {
+          nodes: Array.isArray(nodes) ? nodes : [],
+          canWake: client.can('nodes.wake'),
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/no provider for nodes\.list\b/.test(msg)) return null;
+        throw err;
+      }
+    },
+    nodesWake: async (id: string) => {
+      try {
+        const node = await client.call<unknown>('nodes.wake', { id });
+        return { ok: true, node };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
     jobsList: () => client.call('jobs.list', {}),
     jobsUpsert: (job) => client.call('jobs.upsert', job),
     jobsRemove: (id) => client.call('jobs.remove', { id }),
