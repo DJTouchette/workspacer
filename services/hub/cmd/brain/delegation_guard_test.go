@@ -136,6 +136,42 @@ func TestMainOwnedCapabilitiesDoNotCollideWithTheBrain(t *testing.T) {
 		"search.project":             {false, "both run the same ripgrep/walker over the same roots"},
 		"app.getCwd":                 {false, "each answers its own process's cwd; both are the server's cwd"},
 		"app.supervisorHome":         {false, "both compose the same fixed ~/.workspacer path"},
+
+		// The READ-ONLY git.* port. These four now have two providers, and this
+		// is the entry the guard demanded when the brain started registering
+		// them — so record what first-registration-wins actually means here.
+		//
+		// In the deployment this port exists for (a node running claudemon +
+		// `brain --hub <ws>`, with the always-on hub started `--brain-scope
+		// off`) there is no second provider at all: the brain is the only
+		// answerer and the alternative was "no provider for git.status".
+		//
+		// In the ADOPTED configuration (a desktop attaching to a `workspacer
+		// serve` hub on the same machine) the brain registers first and wins.
+		// That is `equivalent` rather than `degraded`: same git binary, same
+		// wire shapes (ipcTypes.ts GitStatus/GitLogEntry/GitNumstatEntry), same
+		// confinement — assertPathAllowed over the same workspace roots, with
+		// the same anchorGitPathspec treatment of git.diff's `path`. What each
+		// side calls a workspace root is derived from the same claudemon, so the
+		// allow-lists agree.
+		//
+		// AND THE ASYMMETRY THAT IS NOT A COLLISION, because it is the thing a
+		// reader will look for: the brain is read-only ON PURPOSE, so
+		// git.commitDiff / git.commitNumstat / git.stage / git.unstage /
+		// git.commit / git.push are not method names it claims at all. The
+		// desktop keeps those, and an adopted Review pane therefore reads
+		// through the brain and writes through main, with no method owned twice.
+		// The router is per-METHOD, so this split is stable rather than a race.
+		//
+		// The one case worth knowing when debugging a REMOTE node: if a desktop
+		// is attached to the same hub and happens to win the race, its guard
+		// confines to ITS OWN workspace roots, so a node path fails with
+		// "outside the allowed workspace" rather than "no provider". Different
+		// message, same blank chip — and it fails safe either way.
+		"git.status":  {false, "both shell out to the same git binary through the same assertPathAllowed(workspaceRoots) guard; identical wire shape"},
+		"git.log":     {false, "same — the brain's parseGitLog is a port of gitService.ts's parseLog, same --pretty format and same 1..50 clamp"},
+		"git.diff":    {false, "same, including anchorGitPathspec: `path` is anchored on the derived work-tree root and the untracked leg is additionally held to the workspace roots on BOTH providers"},
+		"git.numstat": {false, "same, including the core.quotepath=false prefix so unicode paths match the ones git.status printed"},
 	}
 	for _, scope := range []string{"catalog", "full"} {
 		brain := brainScopeSet(scope)

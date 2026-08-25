@@ -109,6 +109,15 @@ func (r *registry) methods() []string {
 		"fs.read",
 		"fs.write",
 		"search.project",
+		// The READ-ONLY half of the desktop's git.* block (git.go). The write
+		// half — stage/unstage/commit/push — is deliberately NOT here: this
+		// provider is the one that runs on a remote, internet-facing node, and a
+		// read-only surface cannot mutate or publish a repository. They stay
+		// declared gaps in headless_completeness_test.go.
+		"git.status",
+		"git.log",
+		"git.diff",
+		"git.numstat",
 		"notifications.post",
 		// analytics: the desktop owns the real data (a local SQLite session-history
 		// store fed by the app's hook accounting). Headless, there's no such store,
@@ -345,6 +354,14 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		return r.fsWrite(ctx, params)
 	case "search.project":
 		return r.searchProject(ctx, params)
+	case "git.status":
+		return r.gitStatusCall(ctx, params)
+	case "git.log":
+		return r.gitLogCall(ctx, params)
+	case "git.diff":
+		return r.gitDiffCall(ctx, params)
+	case "git.numstat":
+		return r.gitNumstatCall(ctx, params)
 	case "notifications.post":
 		return r.notify(params)
 	case "analytics.summary":
@@ -1375,6 +1392,137 @@ func (r *registry) fsWrite(ctx context.Context, raw json.RawMessage) (json.RawMe
 		return nil, err
 	}
 	return okResult()
+}
+
+// ── git (read-only) ─────────────────────────────────────────────────────────
+//
+// Each handler guards the caller's `cwd` FIRST and runs git in the canonical
+// answer, never in the string it was handed. TWIN: the git block of
+// hubCapabilities.ts; the implementation and the reasoning live in git.go.
+
+func (r *registry) gitStatusCall(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	var p struct {
+		Cwd string `json:"cwd"`
+	}
+	if err := unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if p.Cwd == "" {
+		return nil, fmt.Errorf("git.status requires { cwd }")
+	}
+	cwd, err := r.guardGitCwd(ctx, "git.status", p.Cwd)
+	if err != nil {
+		return nil, err
+	}
+	res, err := gitStatus(ctx, cwd)
+	if err != nil {
+		return nil, err
+	}
+	return jsonResult(res)
+}
+
+func (r *registry) gitLogCall(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	var p struct {
+		Cwd   string `json:"cwd"`
+		Limit int    `json:"limit"`
+	}
+	if err := unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if p.Cwd == "" {
+		return nil, fmt.Errorf("git.log requires { cwd }")
+	}
+	cwd, err := r.guardGitCwd(ctx, "git.log", p.Cwd)
+	if err != nil {
+		return nil, err
+	}
+	commits, err := gitLog(ctx, cwd, p.Limit)
+	if err != nil {
+		return nil, err
+	}
+	return jsonResult(map[string]any{"commits": commits})
+}
+
+// gitDiffCall is the leg the port had to be careful with.
+//
+// Guarding `cwd` alone is not enough. For a TRACKED diff `path` is a repo
+// pathspec git resolves inside the work tree, but with `untracked` it becomes an
+// operand of `git diff --no-index -- /dev/null <path>`, where git reads it as a
+// plain FILESYSTEM path — so an absolute or ../-laden value renders any readable
+// file on the host as an all-added diff, straight past the cwd confinement.
+//
+// The yardstick is the work-tree root on both counts: git runs every command
+// from `rev-parse --show-toplevel`, so resolving against `cwd` would check a
+// different file than git opens whenever the agent cwd is a subdirectory (the
+// ordinary monorepo case), and the root is also the right BOUNDARY for a tracked
+// pathspec — the review pane diffs the paths `git.status` printed, which are
+// root-relative and routinely name files in a sibling subtree of the agent cwd,
+// while confining to the repo concedes nothing a path-less `git.diff` (the whole
+// tree's diff) does not already hand over.
+//
+// …but that last argument is only true for a TRACKED pathspec. `--no-index`
+// renders ANY readable file as an all-added diff — gitignored, untracked, and
+// tracked-but-unmodified alike, none of which appear in a path-less diff. That
+// turns the DERIVED work-tree root — a directory nothing ever checked against
+// the allow-list — into an arbitrary reader: an agent cwd of <repo>/frontend
+// reading <repo>/backend/.env, or a $HOME that happens to be a dotfiles repo
+// reading ~/.ssh/id_rsa, both of which fs.read refuses for the same caller. So
+// this one leg is held to the ordinary workspace roots as well.
+func (r *registry) gitDiffCall(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	var p struct {
+		Cwd       string `json:"cwd"`
+		Path      string `json:"path"`
+		Staged    bool   `json:"staged"`
+		Untracked bool   `json:"untracked"`
+	}
+	if err := unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if p.Cwd == "" {
+		return nil, fmt.Errorf("git.diff requires { cwd }")
+	}
+	cwd, err := r.guardGitCwd(ctx, "git.diff", p.Cwd)
+	if err != nil {
+		return nil, err
+	}
+	operand := p.Path
+	if p.Path != "" {
+		var extra [][]string
+		if p.Untracked {
+			extra = append(extra, r.workspaceRoots(ctx))
+		}
+		operand, err = r.anchorGitPathspec(ctx, "git.diff", cwd, p.Path, extra)
+		if err != nil {
+			return nil, err
+		}
+	}
+	diff, err := gitDiff(ctx, cwd, operand, p.Staged, p.Untracked)
+	if err != nil {
+		return nil, err
+	}
+	return jsonResult(map[string]any{"diff": diff})
+}
+
+func (r *registry) gitNumstatCall(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	var p struct {
+		Cwd    string `json:"cwd"`
+		Staged bool   `json:"staged"`
+	}
+	if err := unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if p.Cwd == "" {
+		return nil, fmt.Errorf("git.numstat requires { cwd }")
+	}
+	cwd, err := r.guardGitCwd(ctx, "git.numstat", p.Cwd)
+	if err != nil {
+		return nil, err
+	}
+	files, err := gitNumstat(ctx, cwd, p.Staged)
+	if err != nil {
+		return nil, err
+	}
+	return jsonResult(map[string]any{"files": files})
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────

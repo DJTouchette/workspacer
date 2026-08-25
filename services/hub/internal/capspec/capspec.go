@@ -55,6 +55,9 @@ var PathParam = map[string]string{
 	// *inside* that repo (a repo-relative coordinate, meaningless to resolve
 	// against a host root), while `cwd` is the absolute location the command
 	// actually runs in — the one a plugin could aim at someone else's checkout.
+	// `path` is confined too, by the PROVIDER rather than by the bus, because
+	// only the provider knows the derived work-tree root git will resolve it in:
+	// anchorGitPathspec, in hubCapabilities.ts and in cmd/brain/git.go.
 	"git.diff": "cwd",
 	// brief.append writes into <project>/.workspacer/brief.md. The caller's
 	// only path input is `project`, and the BASENAME is composed by the
@@ -166,14 +169,22 @@ var unscopedByDecision = map[string]string{
 	"agents.reportProgress": "`note` is prompt text for an agent that is already running — agents.sendMessage's reach — and the containment is that the caller cannot choose WHO reads it. There is no recipient param: the caller supplies `callerSessionId`, the host looks that session up in its own store and delivers to its parentSessionId or refuses, so the only pair this can ever connect is (a tracked session, whatever dispatched it). `callerSessionId` is not a caller value on the path an agent actually uses either — the MCP facade stamps it from the per-request token record's `session:<id>` label, and the hub bus deletes it from every untrusted caller's params (sanitizeReportProgressParams), so a scoped or plugin token cannot name a session at all and lands on the no-identity refusal. Bounded in volume as well as reach: one line, flattened, capped at 500 chars, one per 60s, 20 per session for life",
 	"agents.sendMessage":    "text is a prompt for an agent that is already running; there is no path to confine, so holding the capability is the gate. The older wording — 'the agent's own tool approvals are the gate' — named a bound that only holds for a caller which cannot also RESOLVE those approvals, and the triage tier holds claude.approve. See Compositions(): agents.sendMessage + claude.approve is recorded, accepted for triage, and machine-checked against every other tier",
 	// The rest of git.*: every one takes a mandatory absolute `cwd` and the
-	// desktop provider already contains it to the workspace roots (guardGitCwd).
+	// provider already contains it to the workspace roots (guardGitCwd). There
+	// are now TWO providers of the read-only half — the desktop's
+	// hubCapabilities.ts and the headless brain's cmd/brain/git.go, the one that
+	// answers on a remote node — and both spell that guard the same way over the
+	// same assertPathAllowed. Compositions() carries a bearing for each, so the
+	// sentence below is checked against both files rather than whichever one
+	// happens to still exist.
+	//
 	// Per-plugin root confinement is the right end state, but two shipped
-	// catalog plugins declare git.status / git.numstat with no `paths`, so
-	// speccing the namespace today would deny calls that work now. Retire these
-	// entries once those manifests declare their roots.
-	"git.status":        "provider-confined to the workspace roots (guardGitCwd); per-plugin scoping pending a catalog manifest update",
-	"git.log":           "provider-confined to the workspace roots (guardGitCwd); per-plugin scoping pending a catalog manifest update",
-	"git.numstat":       "provider-confined to the workspace roots (guardGitCwd); per-plugin scoping pending a catalog manifest update",
+	// catalog plugins declare git.status / git.numstat with no `paths`
+	// (ci-watcher and standup-digest — they CALL these methods, they do not
+	// provide them), so speccing the namespace today would deny calls that work
+	// now. Retire these entries once those manifests declare their roots.
+	"git.status":        "provider-confined to the workspace roots (guardGitCwd, in both the desktop and the brain); per-plugin scoping pending a catalog manifest update",
+	"git.log":           "provider-confined to the workspace roots (guardGitCwd, in both the desktop and the brain); per-plugin scoping pending a catalog manifest update",
+	"git.numstat":       "provider-confined to the workspace roots (guardGitCwd, in both the desktop and the brain); per-plugin scoping pending a catalog manifest update",
 	"git.commitDiff":    "provider-confined to the workspace roots (guardGitCwd); per-plugin scoping pending a catalog manifest update",
 	"git.commitNumstat": "provider-confined to the workspace roots (guardGitCwd); per-plugin scoping pending a catalog manifest update",
 	"git.stage":         "provider-confined to the workspace roots (guardGitCwd); per-plugin scoping pending a catalog manifest update",
