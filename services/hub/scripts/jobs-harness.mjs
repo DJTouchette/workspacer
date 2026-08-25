@@ -29,6 +29,12 @@
  *   - a failing shell job → error run + a notify.post event on the bus;
  *   - overlap: run-now on a still-running job answers started:false;
  *   - a daily job lists a future nextRunAt;
+ *   - hand-editing: jobs.json is rewritten from OUTSIDE the hub, the way a
+ *     person with an editor does it, and the running hub picks the edit up
+ *     without a restart — a hand-added job gets an id and a next run, actually
+ *     FIRES on the scheduler's own tick, survives an unrelated hub write,
+ *     disappears when deleted by hand, and a malformed edit leaves the running
+ *     schedule alone;
  *   - persistence: the hub is killed and restarted on the same state dir and
  *     the jobs (and run history) come back.
  *
@@ -445,6 +451,64 @@ try {
   const armed2 = (await caller.call('jobs.list', {})).jobs.find((j) => j.id === proposal2.id);
   check('the approved row is armed on the hub', armed2?.enabled === true && !armed2?.proposedBy);
   check('jobs remove deletes it', wks(`remove ${proposal2.id}`).code === 0);
+
+  console.log('\nhand-editing jobs.json against the RUNNING hub:');
+  // Everything below writes the spec file directly, with no RPC, exactly as a
+  // person with an editor would. The hub is a separate live process throughout.
+  const jobsFile = path.join(tmp, 'jobs.json');
+  const marker = path.join(tmp, 'hand-edit-fired');
+  const readSpecs = () => JSON.parse(fs.readFileSync(jobsFile, 'utf8')).jobs;
+  const writeSpecs = (jobs) => fs.writeFileSync(jobsFile, JSON.stringify({ jobs }, null, 2));
+
+  // Written the way a person writes it: no id, no timestamps. `once` in the
+  // past so it is due at once and the very next tick has to fire it.
+  const handName = 'Typed into jobs.json';
+  writeSpecs([
+    ...readSpecs(),
+    {
+      name: handName,
+      enabled: true,
+      trigger: { kind: 'once', once: new Date(Date.now() - 60_000).toISOString() },
+      action: { kind: 'shell', shell: { command: `touch ${marker}` } },
+    },
+  ]);
+
+  const seen = (await caller.call('jobs.list', {})).jobs.find((j) => j.name === handName);
+  check('a hand-added job shows up on a running hub, no restart', !!seen && seen.nextRunAt > 0);
+  check('the hub minted an id and wrote it back to the file',
+    !!readSpecs().find((j) => j.name === handName)?.id);
+
+  // A hub write for an unrelated reason must not erase what was typed by hand.
+  await caller.call('jobs.upsert', { ...cliJob, name: 'CLI installed (renamed)' });
+  check('a hub write does not clobber the hand-added job',
+    !!readSpecs().find((j) => j.name === handName));
+
+  // And it runs, on the hub's own 30s tick, with nobody asking it to.
+  process.stdout.write('  … waiting for the scheduler tick (up to 40s)');
+  for (let i = 0; i < 40 && !fs.existsSync(marker); i++) {
+    process.stdout.write('.');
+    await sleep(1000);
+  }
+  process.stdout.write('\n');
+  check('the hand-added job FIRED on the scheduler tick', fs.existsSync(marker));
+
+  // Deleted by hand: gone from the running hub too.
+  const before = (await caller.call('jobs.list', {})).jobs.length;
+  writeSpecs(readSpecs().filter((j) => j.name !== handName));
+  const afterDelete = (await caller.call('jobs.list', {})).jobs;
+  check('a job deleted by hand disappears from the running hub',
+    !afterDelete.some((j) => j.name === handName) && afterDelete.length === before - 1);
+
+  // A half-typed edit costs nothing: the schedule already running stays.
+  const goodBytes = fs.readFileSync(jobsFile);
+  fs.writeFileSync(jobsFile, '{ "jobs": [ { "name": "half typ');
+  const duringBreakage = (await caller.call('jobs.list', {})).jobs;
+  check('a malformed edit leaves the running schedule alone',
+    duringBreakage.length === afterDelete.length);
+  fs.writeFileSync(jobsFile, goodBytes);
+  const recovered = (await caller.call('jobs.list', {})).jobs;
+  check('and the file is picked up again as soon as it parses',
+    recovered.length === afterDelete.length);
 
   console.log('\npersistence across a hub restart:');
   // Snapshot HERE, not from an earlier list: every section above adds jobs, and

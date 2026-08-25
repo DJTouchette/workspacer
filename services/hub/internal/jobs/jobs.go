@@ -11,6 +11,15 @@
 // enforces on bus callers — no permission bypass, no mcpItemIds, profile
 // configDir scrubbed — applies to jobs automatically.
 //
+// The spec file is HAND-EDITABLE, and that is a supported way to use it rather
+// than an accident: the scheduler polls it on its existing tick and reloads on
+// any change, so an edit made in an editor takes effect on a running hub within
+// one tick, and every hub write re-reads the file first so it cannot overwrite
+// one. The poll lives here, in the hub, because the hub is the only process
+// present in both desktop mode and `workspacer serve` — a watcher in the
+// desktop main process would leave headless installs unable to notice their own
+// jobs file changing. See landing/docs.html#jobs, pinned by docs_test.go.
+//
 // SECURITY: a persisted job is persisted argv (the scrubBypassProfile lesson),
 // so the spec lives in a hub-owned 0600 file, NOT the library (agent-writable
 // by design) and NOT the layout (world-readable, client-broadcast). Every
@@ -26,6 +35,7 @@ package jobs
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -365,52 +375,212 @@ type Service struct {
 	runner   Runner
 	loc      *time.Location
 	now      func() time.Time
+	// tickEvery is the scheduler's poll interval, a field rather than the
+	// constant so a test can drive the REAL scheduler loop instead of a
+	// stand-in for it.
+	tickEvery time.Duration
+
+	// specHash fingerprints the spec file's bytes as this service last saw
+	// them, whether it read them or wrote them. Change detection compares
+	// CONTENT rather than mtime on purpose: mtime granularity is a genuine
+	// source of missed changes (a same-size write landing inside one timestamp
+	// tick), the file is small enough that hashing it on a 30-second tick costs
+	// nothing, and hashing what we wrote is also how the service tells its own
+	// writes apart from a person's.
+	specHash [sha256.Size]byte
+	// haveSpecHash stays false until the file has been read or written once, so
+	// the first look at an existing file is not mistaken for "unchanged".
+	haveSpecHash bool
+	// readErrLogged keeps an unreadable file from logging on every single tick;
+	// it resets as soon as a read succeeds.
+	readErrLogged bool
 }
 
 // New builds the service, seeding jobs and run history from disk. path and
 // histPath name the hub-owned 0600 files ("" disables persistence — tests).
 func New(b *broker.Broker, path, histPath string, runner Runner) *Service {
 	s := &Service{
-		history:  map[string][]Run{},
-		nextAt:   map[string]time.Time{},
-		running:  map[string]bool{},
-		path:     path,
-		histPath: histPath,
-		b:        b,
-		runner:   runner,
-		loc:      time.Local,
-		now:      time.Now,
+		history:   map[string][]Run{},
+		nextAt:    map[string]time.Time{},
+		running:   map[string]bool{},
+		path:      path,
+		histPath:  histPath,
+		b:         b,
+		runner:    runner,
+		loc:       time.Local,
+		now:       time.Now,
+		tickEvery: defaultTickEvery,
 	}
-	s.load()
+	// Boot is just the first reload: same parse, same per-row validation, same
+	// scheduling, one code path. Nothing else is running yet, but the lock is
+	// taken anyway so the locked-suffix contract holds everywhere.
+	s.mu.Lock()
+	s.reloadIfChangedLocked()
+	s.mu.Unlock()
 	s.loadHistory()
-	for i := range s.jobs {
-		s.rescheduleLocked(&s.jobs[i])
-	}
 	return s
 }
 
-func (s *Service) load() {
+// reloadIfChangedLocked re-reads the spec file whenever its contents differ
+// from what this service last read or wrote, and reports whether it did. The
+// caller must hold s.mu.
+//
+// This is the whole hand-editing story. Open jobs.json in an editor, save it,
+// and the next scheduler tick picks it up: a job added by hand starts getting a
+// next run, an edited trigger re-anchors, a deleted one stops. No restart, and
+// no fsnotify either — the hub module is deliberately zero-dependency and
+// cmd/workspacer's plugin dev loop already settled polling as the house answer,
+// so the poll rides the tick that was already there.
+//
+// The failure policy matters more than the happy path: a file that cannot be
+// read, or that does not parse, leaves the running schedule EXACTLY as it was
+// and logs. A half-typed edit, an editor unlinking the file for a moment during
+// its own atomic save, or a backup tool moving it must not silently disarm
+// every job on the machine. Clearing the schedule has one spelling and it is
+// deliberate: a document that parses, with an empty jobs array.
+func (s *Service) reloadIfChangedLocked() bool {
 	if s.path == "" {
-		return
+		return false
 	}
 	raw, err := os.ReadFile(s.path)
 	if err != nil {
-		return // first run
+		if !s.readErrLogged {
+			s.readErrLogged = true
+			if len(s.jobs) > 0 {
+				log.Printf("[jobs] %s cannot be read — keeping the %d job(s) already scheduled: %v",
+					s.path, len(s.jobs), err)
+			}
+		}
+		return false
 	}
+	s.readErrLogged = false
+	sum := sha256.Sum256(raw)
+	if s.haveSpecHash && sum == s.specHash {
+		return false
+	}
+	// Recorded before the parse, so a file that is broken the same way every
+	// tick is complained about once rather than thirty times an hour. Any
+	// further edit changes the bytes, and therefore gets another look.
+	s.specHash, s.haveSpecHash = sum, true
+
+	loaded, err := parseSpecs(raw)
+	if err != nil {
+		if len(s.jobs) == 0 {
+			log.Printf("[jobs] %s unreadable, starting empty: %v", s.path, err)
+		} else {
+			log.Printf("[jobs] %s is not valid JSON — keeping the %d job(s) already scheduled: %v",
+				s.path, len(s.jobs), err)
+		}
+		return false
+	}
+	filled := normalizeLoaded(loaded, s.now().UnixMilli())
+	s.applyLoadedLocked(loaded)
+	if filled {
+		// An id minted only in memory would be minted again on the next reload,
+		// re-anchoring the job's next run every time, so the completed rows go
+		// straight back to disk.
+		s.saveLocked()
+	}
+	return true
+}
+
+// parseSpecs turns the file's bytes into the jobs it names. A document that
+// does not parse at all is an error and the caller keeps what it had; a single
+// row that does not validate is dropped with a log line, which is what boot has
+// always done — one broken job must not take the others down with it.
+func parseSpecs(raw []byte) ([]Job, error) {
 	var doc struct {
 		Jobs []Job `json:"jobs"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
-		log.Printf("[jobs] %s unreadable, starting empty: %v", s.path, err)
-		return
+		return nil, err
 	}
+	out := make([]Job, 0, len(doc.Jobs))
 	for _, j := range doc.Jobs {
 		if err := Validate(&j); err != nil {
-			log.Printf("[jobs] dropping invalid persisted job %q: %v", j.Name, err)
+			log.Printf("[jobs] dropping invalid job %q: %v", j.Name, err)
 			continue
 		}
-		s.jobs = append(s.jobs, j)
+		out = append(out, j)
 	}
+	return out, nil
+}
+
+// normalizeLoaded fills in the two things the hub owns and a hand-written row
+// will not have: an id and the creation/update stamps. It also splits duplicate
+// ids apart, which is exactly what copy-pasting a job block in an editor
+// produces, and which would otherwise leave two jobs sharing one schedule slot
+// and one delete. Reports whether it filled anything in, so the caller can put
+// the completed rows back on disk.
+func normalizeLoaded(jobs []Job, nowMs int64) bool {
+	seen := make(map[string]bool, len(jobs))
+	filled := false
+	for i := range jobs {
+		j := &jobs[i]
+		if j.ID == "" || seen[j.ID] {
+			j.ID = newID()
+			filled = true
+		}
+		seen[j.ID] = true
+		if j.CreatedAt == 0 {
+			j.CreatedAt = nowMs
+			filled = true
+		}
+		if j.UpdatedAt == 0 {
+			j.UpdatedAt = nowMs
+			filled = true
+		}
+	}
+	return filled
+}
+
+// applyLoadedLocked swaps in the specs just read and repairs the schedule
+// around them. A job whose arming and trigger are untouched KEEPS the next run
+// it already had: rescheduling everything on every reload would re-anchor every
+// interval job whenever anyone saved the file, so renaming one job would
+// quietly restart the clock on all the others.
+func (s *Service) applyLoadedLocked(loaded []Job) {
+	prev := make(map[string]Job, len(s.jobs))
+	for _, j := range s.jobs {
+		prev[j.ID] = j
+	}
+	s.jobs = loaded
+	live := make(map[string]bool, len(loaded))
+	for i := range s.jobs {
+		j := &s.jobs[i]
+		live[j.ID] = true
+		if old, had := prev[j.ID]; had && sameSchedule(old, *j) {
+			continue
+		}
+		s.rescheduleLocked(j)
+	}
+	for id := range s.nextAt {
+		if !live[id] {
+			delete(s.nextAt, id)
+		}
+	}
+}
+
+// sameSchedule reports whether two versions of a job would produce the same
+// next run: the arming flags and the trigger, and nothing else. Rewriting a
+// prompt or a name must not move the clock.
+func sameSchedule(a, b Job) bool {
+	if a.Enabled != b.Enabled || a.ProposedBy != b.ProposedBy {
+		return false
+	}
+	x, y := a.Trigger, b.Trigger
+	if x.Kind != y.Kind || x.EveryMinutes != y.EveryMinutes || x.At != y.At || x.Once != y.Once {
+		return false
+	}
+	if len(x.Days) != len(y.Days) {
+		return false
+	}
+	for i := range x.Days {
+		if x.Days[i] != y.Days[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) loadHistory() {
@@ -431,6 +601,15 @@ func (s *Service) loadHistory() {
 
 // saveLocked persists the specs: 0600 (prompts and shell commands are the
 // user's business), atomic tmp+rename like the layout store.
+//
+// CLOBBER: every caller re-reads the file first (reloadIfChangedLocked), so
+// what gets marshalled here is the caller's change applied ON TOP of whatever
+// is on disk, rather than on top of a snapshot the service took at boot. That
+// is the whole fix for "your hand edit vanished when the Settings pane saved
+// something else". It is the same refresh-then-write shape config.yaml's two
+// writers use, minus their lock: the hub is the only program writing this file,
+// and the other writer is a person with an editor, so the window between the
+// re-read and the rename is the thing to keep small rather than to serialize.
 func (s *Service) saveLocked() {
 	if s.path == "" {
 		return
@@ -441,7 +620,13 @@ func (s *Service) saveLocked() {
 	if err != nil {
 		return
 	}
-	s.writeAtomic(s.path, raw)
+	if s.writeAtomic(s.path, raw) {
+		// Remember what we put there, so the next poll recognises this write as
+		// our own instead of reporting it as an external edit. Only on success:
+		// if the write failed, the bytes on disk are still someone else's and
+		// still need reading.
+		s.specHash, s.haveSpecHash = sha256.Sum256(raw), true
+	}
 }
 
 func (s *Service) saveHistoryLocked() {
@@ -457,19 +642,22 @@ func (s *Service) saveHistoryLocked() {
 	s.writeAtomic(s.histPath, raw)
 }
 
-func (s *Service) writeAtomic(path string, raw []byte) {
+// writeAtomic replaces path with raw, and reports whether it got there.
+func (s *Service) writeAtomic(path string, raw []byte) bool {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		log.Printf("[jobs] mkdir for %s: %v", path, err)
-		return
+		return false
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
 		log.Printf("[jobs] write %s: %v", path, err)
-		return
+		return false
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		log.Printf("[jobs] rename %s: %v", path, err)
+		return false
 	}
+	return true
 }
 
 // rescheduleLocked recomputes a job's next fire time from now.
@@ -532,6 +720,9 @@ func (s *Service) Schedule() []Scheduled {
 func (s *Service) List(json.RawMessage) (any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Read paths reload too, so the Jobs UI (which polls this every 10s while
+	// open) shows what is actually on disk rather than a snapshot from boot.
+	s.reloadIfChangedLocked()
 	views := make([]JobView, 0, len(s.jobs))
 	for _, j := range s.jobs {
 		v := JobView{Job: j, Running: s.running[j.ID]}
@@ -558,6 +749,9 @@ func (s *Service) Upsert(p json.RawMessage) (any, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Apply this change on top of the file as it is NOW: a hand-added job must
+	// survive someone saving an unrelated one from Settings.
+	s.reloadIfChangedLocked()
 	nowMs := s.now().UnixMilli()
 	j.UpdatedAt = nowMs
 	if j.ID == "" {
@@ -614,6 +808,7 @@ func (s *Service) Propose(p json.RawMessage) (any, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reloadIfChangedLocked()
 	pending := 0
 	for i := range s.jobs {
 		if s.jobs[i].IsProposal() {
@@ -662,6 +857,7 @@ func (s *Service) Remove(p json.RawMessage) (any, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reloadIfChangedLocked()
 	kept := s.jobs[:0]
 	for _, j := range s.jobs {
 		if j.ID != req.ID {
@@ -685,6 +881,9 @@ func (s *Service) RunNow(p json.RawMessage) (any, error) {
 		return nil, errors.New("jobs.run requires {id}")
 	}
 	s.mu.Lock()
+	// So a job someone has just written by hand can be fired immediately,
+	// rather than after the next tick notices it.
+	s.reloadIfChangedLocked()
 	var job *Job
 	for i := range s.jobs {
 		if s.jobs[i].ID == req.ID {

@@ -19,13 +19,14 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/event"
 )
 
-// tickEvery is deliberately coarse: minute-level triggers, second-level
-// precision is not a goal.
-const tickEvery = 30 * time.Second
+// defaultTickEvery is deliberately coarse: minute-level triggers, second-level
+// precision is not a goal. It is also the poll interval for the spec file, so
+// a hand edit is picked up within one tick of saving it.
+const defaultTickEvery = 30 * time.Second
 
 // RunScheduler ticks until ctx ends. Call once, in a goroutine.
 func (s *Service) RunScheduler(ctx context.Context) {
-	t := time.NewTicker(tickEvery)
+	t := time.NewTicker(s.tickEvery)
 	defer t.Stop()
 	for {
 		select {
@@ -43,6 +44,12 @@ func (s *Service) tick() {
 	now := s.now()
 	var due []Job
 	s.mu.Lock()
+	// The hand-editing poll. The tick is the only thing in the hub guaranteed
+	// to be running in both desktop and `workspacer serve` mode, which is why
+	// the watcher lives here and not in the desktop main process: a watcher
+	// that only exists when Electron does would leave headless installs unable
+	// to notice their own jobs file changing.
+	s.reloadIfChangedLocked()
 	for i := range s.jobs {
 		j := &s.jobs[i]
 		at, ok := s.nextAt[j.ID]

@@ -205,6 +205,16 @@ var authored = map[string]string{
 	  "trigger":{"kind":"interval","everyMinutes":15},
 	  "action":{"kind":"call","call":{"method":"notifications.post","params":{"title":"tick"}}}
 	}`,
+	"points at a script instead of inlining one": `{
+	  "name":"Nightly tests","enabled":true,
+	  "trigger":{"kind":"daily","at":"02:00"},
+	  "action":{"kind":"shell","shell":{"command":"~/.workspacer/scripts/nightly-tests"}}
+	}`,
+	"hand-written, no id and no timestamps": `{
+	  "name":"Typed straight into jobs.json","enabled":true,
+	  "trigger":{"kind":"interval","everyMinutes":90},
+	  "action":{"kind":"shell","shell":{"command":"~/.workspacer/scripts/sweep"}}
+	}`,
 	"regex guard": `{
 	  "name":"CI watch","enabled":true,
 	  "trigger":{"kind":"interval","everyMinutes":30},
@@ -226,5 +236,95 @@ func TestSpecsWrittenFromTheDocsAreAccepted(t *testing.T) {
 		if err := Validate(&j); err != nil {
 			t.Errorf("%s: hub REFUSED a spec written from the docs: %v", name, err)
 		}
+	}
+}
+
+// --- the hand-editing docs -------------------------------------------------
+//
+// Hand-editing jobs.json is a feature whose entire interface is a page of
+// prose: there is no dialog to discover it from and no error message that
+// teaches it. So the page carries the same weight as the validator, and the
+// facts below are pinned rather than trusted. Each one exists because getting
+// it wrong costs the reader something real: a job that silently never fires, an
+// edit they believe was lost, or a machine they were not expecting to have put
+// on a timer.
+
+// docsMustSay fails naming the phrase, so a doc rewrite that drops a load-
+// bearing fact says which one.
+func docsMustSay(t *testing.T, docs string, why string, phrases ...string) {
+	t.Helper()
+	for _, p := range phrases {
+		if !strings.Contains(docs, p) {
+			t.Errorf("the docs no longer say %q — %s", p, why)
+		}
+	}
+}
+
+func TestHandEditingIsDocumented(t *testing.T) {
+	docs := loadDocs(t)
+
+	docsMustSay(t, docs, "an author has no other way to learn the file is watched at all",
+		"editing jobs.json by hand", "re-reads it by itself", "30-second tick",
+		"nothing restarted")
+
+	// Where the file is and how to tell an edit took. Without these the
+	// procedure is "edit it and hope".
+	docsMustSay(t, docs, "the reader cannot find the file or confirm the edit landed",
+		"~/.config/workspacer-hub/jobs.json", "workspacer jobs list")
+
+	// enabled defaults to false. A job that quietly never runs is the most
+	// expensive documentation failure available here.
+	docsMustSay(t, docs, "a job written without it will silently never fire",
+		`"enabled": true`)
+
+	// The failure policy. A reader who does not know a broken file is ignored
+	// will assume their schedule is gone and start over.
+	docsMustSay(t, docs, "the reader needs to know a typo is survivable",
+		"does not parse", "keeps the schedule it is already running")
+	docsMustSay(t, docs, "clearing the schedule has exactly one spelling",
+		`{"jobs": []}`)
+
+	// Mixing hand edits with the UI, which is the case the reload was built for.
+	docsMustSay(t, docs, "the reader will otherwise avoid the UI after editing by hand",
+		"re-reads the file first")
+
+	// The scripts convention: documentation only, no spec field. Stated here so
+	// nobody later "implements" it and breaks the specs written against it.
+	docsMustSay(t, docs, "the scripts convention is the docs' whole implementation",
+		"~/.workspacer/scripts/", "it is a convention, not a feature")
+
+	// The observed failure mode: models copy the annotated reference verbatim.
+	docsMustSay(t, docs, "the annotated reference block above it uses // notes",
+		"JSON has no comments")
+
+	// The security framing, in one sentence a reader already understands.
+	docsMustSay(t, docs, "an unattended timer deserves one plain sentence about what it is",
+		"equivalent to writing a crontab", "unattended")
+
+	// And the instruction this replaced. Telling someone to restart the hub
+	// after an edit is now wrong, and following it would hide the feature.
+	if strings.Contains(docs, "restart the hub") {
+		t.Error("the docs still tell the reader to restart the hub after editing jobs.json — " +
+			"the file is re-read on the scheduler tick now")
+	}
+}
+
+func TestWhereEverythingGoesIsDocumented(t *testing.T) {
+	docs := loadDocs(t)
+
+	docsMustSay(t, docs, "the three directories are named alike and get confused",
+		"where everything goes", "~/.workspacer/", "&lt;project&gt;/.workspacer/",
+		"~/.config/workspacer-hub/")
+
+	// The two facts a reader would otherwise have to infer wrongly.
+	docsMustSay(t, docs, "a reader on a second hub would assume one shared job list",
+		"per hub")
+	docsMustSay(t, docs, "the rule is easier to trust with an existing example under it",
+		"model-rates.json")
+
+	// The jobs section has to point at the convention, or the convention is a
+	// page nobody reaches from the thing it explains.
+	if !strings.Contains(docs, `See <a href="#configuration">where everything goes</a>`) {
+		t.Error("the jobs section no longer links to the directory convention")
 	}
 }
