@@ -9,8 +9,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -73,6 +75,8 @@ type commonServeFlags struct {
 	trustedHost                    *string
 	hubPort, apiPort, hookPort     *int
 	claudemonBin, hubBin, brainBin *string
+	noClaudemonInit                *bool
+	allowNewToken                  *bool
 }
 
 func registerCommonServeFlags(fs *flag.FlagSet) *commonServeFlags {
@@ -87,6 +91,10 @@ func registerCommonServeFlags(fs *flag.FlagSet) *commonServeFlags {
 		brainBin:     fs.String("brain-bin", "", "path to the brain binary the hub supervises (default: sibling of this binary, then the hub auto-detects its own sibling / PATH)"),
 		trustedHost: fs.String("trusted-host", os.Getenv("HUB_TRUSTED_HOSTS"),
 			"comma-separated hostname(s) a reverse proxy in front of the hub presents (e.g. the `tailscale serve` MagicDNS name). A TLS front-end terminates elsewhere and forwards to our loopback socket, which is the DNS-rebinding shape the hub's Host/Origin pins refuse, so it must be named or every route behind it answers 403"),
+		noClaudemonInit: fs.Bool("no-claudemon-init", false,
+			"skip the claudemon-init pre-flight that registers Claude Code's hooks + statusLine in ~/.claude/settings.json. Only for an operator who writes that file themselves (or ships it read-only): without those hooks a PTY session never leaves mode=unknown, and a spawn's first message — held until the Input transition — is never delivered"),
+		allowNewToken: fs.Bool("allow-new-token", os.Getenv("WORKSPACER_ALLOW_NEW_TOKEN") == "1",
+			"mint a NEW <config>/workspacer/remote-token even though the config dir holds other state. Say this once, deliberately, when the old pairing credential is gone for good: every client, phone and federation peer paired against it must be re-paired (default: $WORKSPACER_ALLOW_NEW_TOKEN=1)"),
 		token: fs.String("token", os.Getenv("HUB_TOKEN"),
 			"bus auth token / pairing credential (default: $HUB_TOKEN, else the persisted <config>/workspacer/remote-token, minted on first run)"),
 	}
@@ -110,6 +118,8 @@ func (f *commonServeFlags) resolveOptions() (serveOptions, bool) {
 		BrainBin:      resolveBin("brain", *f.brainBin, sib),
 		AdvertiseHost: advertiseHost(*f.host, localIPv4s()),
 		TrustedHosts:  *f.trustedHost,
+
+		SkipClaudemonInit: *f.noClaudemonInit,
 	}
 	if opts.ClaudemonBin == "" {
 		fmt.Fprintln(os.Stderr, "workspacer: claudemon binary not found next to this binary or on PATH (build it with `make build-claudemon`, or pass --claudemon-bin)")
@@ -128,9 +138,9 @@ func (f *commonServeFlags) resolveOptions() (serveOptions, bool) {
 	// The token is what makes a headless server pairable *and* safe: unlike the
 	// desktop-spawned hub there is no trusted local UI, so we never run open.
 	if opts.Token == "" {
-		tok, err := loadOrCreateToken(configDir())
+		tok, err := loadOrCreateTokenAllowingNew(configDir(), *f.allowNewToken)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "workspacer: cannot create auth token: %v\n", err)
+			fmt.Fprintf(os.Stderr, "workspacer: %v\n", err)
 			return opts, false
 		}
 		opts.Token = tok
@@ -180,6 +190,11 @@ func bootStack(ctx context.Context, opts serveOptions, logw io.Writer) (*stack, 
 	}
 
 	plan := buildServePlan(opts)
+
+	// Before the daemons, not beside them: a session spawned in the window
+	// before the hooks land comes up hookless and stays that way for its whole
+	// life. See servePlan.Init.
+	runInitStep(ctx, plan.Init, logw)
 
 	fmt.Fprintln(logw, "[workspacer] starting claudemon + hub (brain-scope full)…")
 	claudemon := startChild(ctx, plan.Claudemon, logw, newRestartBackoff())
@@ -246,4 +261,52 @@ func resolveWebappDir(flag, sib string) string {
 		return flag
 	}
 	return defaultWebappDir(sib)
+}
+
+// initStepTimeout bounds the pre-flight. It merges one small JSON file, so a
+// claudemon that wedges here must not hold the whole server hostage.
+const initStepTimeout = 15 * time.Second
+
+// runInitStep runs the hook-registration pre-flight to completion and reports
+// what happened. A zero spec is the --no-claudemon-init opt-out and does
+// nothing.
+//
+// NON-FATAL on purpose, and loudly so. The two ways this fails are an
+// unparseable ~/.claude/settings.json and a read-only home, and in both cases a
+// server that still comes up is strictly more useful than one that does not:
+// stream-transport sessions (the default — see config_defaults.json) do not
+// depend on these hooks at all, so the degradation is real but partial. What
+// must not happen is that it degrades QUIETLY, which is the whole failure this
+// step exists to end — so the warning names the consequence rather than the
+// exit code.
+func runInitStep(ctx context.Context, spec childSpec, logw io.Writer) {
+	if spec.Bin == "" {
+		return
+	}
+	cctx, cancel := context.WithTimeout(ctx, initStepTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(cctx, spec.Bin, spec.Args...)
+	if len(spec.Env) > 0 {
+		cmd.Env = append(os.Environ(), spec.Env...)
+	}
+	out, err := cmd.CombinedOutput()
+	trimmed := strings.TrimSpace(string(out))
+	if err != nil {
+		fmt.Fprintf(logw, "[workspacer] WARNING: `%s %s` failed: %v\n",
+			spec.Bin, strings.Join(spec.Args, " "), err)
+		if trimmed != "" {
+			fmt.Fprintf(logw, "[workspacer]   %s\n", trimmed)
+		}
+		fmt.Fprintln(logw, "[workspacer] WARNING: Claude Code's hooks are NOT registered in ~/.claude/settings.json.")
+		fmt.Fprintln(logw, "[workspacer]   PTY sessions will report mode=unknown for their whole life, a spawn's first")
+		fmt.Fprintln(logw, "[workspacer]   message is never delivered, and permission prompts produce no approvable")
+		fmt.Fprintln(logw, "[workspacer]   record. Stream-transport sessions are unaffected. Fix by running")
+		fmt.Fprintf(logw, "[workspacer]   `%s %s` by hand, or pass --no-claudemon-init if that file is yours to own.\n",
+			spec.Bin, strings.Join(spec.Args, " "))
+		return
+	}
+	if trimmed != "" {
+		fmt.Fprintf(logw, "[workspacer] claudemon init: %s\n", trimmed)
+	}
 }
