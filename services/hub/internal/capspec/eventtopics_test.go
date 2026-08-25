@@ -44,13 +44,13 @@ import (
 // runs zero times, and the guard reports ok — the failure mode this whole family
 // of tests keeps re-learning. Raise them when a topic is added.
 const (
-	goTopicFloor = 13
+	goTopicFloor = 14
 	tsTopicFloor = 7
 	// publishSiteFloor is the number of publish CALL SITES the scan must
 	// account for across both languages. It catches the other direction: a
 	// scanner that still resolves the topics it knows while a new call site
 	// slips past the regex entirely.
-	publishSiteFloor = 20
+	publishSiteFloor = 22
 )
 
 // goPublishRe finds the topic argument of a Go publish site.
@@ -95,6 +95,8 @@ var passthroughSites = map[string]string{
 	"internal/broker/broker.go:func (b *Broker) Publish(":       "the broker's own fan-out entry point.",
 	"cmd/brain/bus.go:func (b *busClient) publish(":             "brain's publish helper. Every caller passes a literal, and those are scanned at their call sites.",
 	"cmd/mcp/ui.go:b.c.Publish(ctx, ev(in))":                    "the facade's UI-tool publish forwarder. Every tool builds its envelope with a topic literal at an event.New site in addUiTools (same file), and those are scanned there.",
+	"internal/nodes/supervisor.go:s.publish(*c)":                "the node registry's INJECTED publish callback: internal/nodes constructs no envelope at all, it hands a nodes.Change to whatever the hub supplied. The envelope — and its node.state_changed literal — is built in cmd/hub/nodes.go, and is scanned at that event.New site.",
+	"internal/nodes/supervisor.go:Publish func(Change)":         "the Options field declaration, not a call.",
 	"internal/federation/federation.go:l.pub.Publish(ev)":       "the federation republish path: a PEER's envelope forwarded verbatim with the Hub field stamped. Its type is whatever the peer published, bounded by ForwardTopics (an allowlist of already-classified fleet topics) — classifying the family here would duplicate the rows that already govern those topics locally.",
 	"cmd/brain/events.go:publish(u.SessionID, u.StatusLine)":    "invokes the injected callback whose topic literal (agent.statusline) is at cmd/brain/main.go, scanned there. The parameter is a func, not a topic.",
 	"cmd/brain/library.go:workspacer.publish(type, data)":       "a line of DOCUMENTATION inside a generated skill file describing the plugin API to an agent — text, not a call.",

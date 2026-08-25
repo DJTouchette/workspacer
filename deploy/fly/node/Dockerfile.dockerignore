@@ -1,0 +1,18 @@
+# Build context is the repo root; the node image needs only the two Go/Rust
+# services. Everything else is weight or, worse, a credential.
+*
+!services/hub
+!services/claudemon
+!deploy/fly/node
+
+services/hub/hub
+services/hub/brain
+services/hub/mcp
+services/hub/workspacer
+services/hub/claudemon
+services/hub/web
+services/claudemon/target
+services/claudemon/vitest-out.txt
+**/.git
+**/node_modules
+**/*.log

@@ -716,7 +716,9 @@ const (
 	// this brain both provides and dispatches. Checked against EXECUTED
 	// subtests: nothing here is host-gated, so a shortfall is drift between
 	// capspec, the corpus and the registry.
-	brainMethodFloor = 8
+	// Raised from 8 when the read-only git.* port added git.diff, capspec's one
+	// path-scoped git method, to the brain's dispatch.
+	brainMethodFloor = 9
 	// asciiFoldFloor is the size of the `asciiFold.cases` block.
 	asciiFoldFloor = 10
 	// sessionFilenameFloor is the size of the `sessionFilenames.cases` block.
@@ -724,7 +726,7 @@ const (
 	// The rootSet column, split by the verdict each arm demands of the $HOME
 	// probe: browse must accept it, workspace must refuse it.
 	browseRootSetFloor    = 2
-	workspaceRootSetFloor = 6
+	workspaceRootSetFloor = 7
 )
 
 // methodDenyFloor is how many corpus deny cases one method's sweep must

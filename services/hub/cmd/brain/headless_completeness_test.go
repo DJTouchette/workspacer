@@ -44,19 +44,26 @@ var headlessGaps = map[string]string{
 	"claude.handoffBrief":      "cross-provider handoff is unavailable",
 	"claude.handoffAgentBrief": "same, for a subagent",
 	// Host filesystem/VCS surfaces that only the Electron main process has.
-	"fs.readImage":      "image thumbnails in chat render as broken",
-	"fs.watch":          "the editor pane does not live-reload",
-	"fs.unwatch":        "no-op counterpart of fs.watch",
-	"git.status":        "the branch chip and Review pane are empty; useGitBranch swallows it to null",
-	"git.diff":          "no diffs in the Review pane",
-	"git.log":           "no commit list",
-	"git.numstat":       "no per-file stats",
+	"fs.readImage": "image thumbnails in chat render as broken",
+	"fs.watch":     "the editor pane does not live-reload",
+	"fs.unwatch":   "no-op counterpart of fs.watch",
+	// git.status / git.log / git.diff / git.numstat were here and are now
+	// PROVIDED (git.go): the READ-ONLY half of the git surface was ported into
+	// the brain so a remote node's branch chip, Review pane, rail widget,
+	// per-turn line counts and project_status work headless.
+	//
+	// The four below stay gaps ON PURPOSE, not for want of effort. This brain is
+	// the provider that runs on an internet-facing node; a read-only surface
+	// cannot mutate or publish a repository, so a bus token cannot commit or
+	// push from a machine the user is not sitting at. Agents on the node still
+	// commit through their own Bash tool, which is how work actually lands
+	// there — the UI buttons are convenience, not capability.
 	"git.commitDiff":    "no diff for a past commit",
 	"git.commitNumstat": "no stats for a past commit",
-	"git.stage":         "staging is unavailable",
-	"git.unstage":       "unstaging is unavailable",
-	"git.commit":        "committing is unavailable",
-	"git.push":          "pushing is unavailable",
+	"git.stage":         "staging is unavailable; deliberately not ported — see above",
+	"git.unstage":       "unstaging is unavailable; deliberately not ported — see above",
+	"git.commit":        "committing is unavailable; deliberately not ported — see above",
+	"git.push":          "pushing is unavailable; deliberately not ported — see above",
 	// Session history. (replay.* is desktop-IPC only — no shipped headless
 	// client calls it, so it is not a gap here.)
 	"sessions.recent": "the phone's resume-a-recent-agent list renders EMPTY (mobile.html catches and sets recents = []), which reads as 'no history'. /app no longer swallows it: useRecentSessions keeps the reason and the Sessions pane says it could not be read rather than that there is none",
