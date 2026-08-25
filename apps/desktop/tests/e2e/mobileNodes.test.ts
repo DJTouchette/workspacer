@@ -202,8 +202,8 @@ test.describe('/m with a node registry', () => {
     const den = page.locator('.node[data-node="den"]');
     await expect(den).toHaveAttribute('data-node-state', 'stopped', { timeout: 10000 });
 
-    // A wake spends real money and this hub has no stop verb — confirming is
-    // what actually reaches nodes.wake.
+    // A wake spends real money and the meter runs until something switches the
+    // machine off — confirming is what actually reaches nodes.wake.
     page.once('dialog', (d) => d.accept());
     const before = fly.starts.length;
     await den.locator('button').click();

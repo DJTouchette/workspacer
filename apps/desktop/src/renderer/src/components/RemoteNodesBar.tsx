@@ -62,9 +62,8 @@ import { ensureKeyframes } from './claude-shared';
  *
  * The button is never offered where it would be refused — a view- or triage-tier
  * client sees the state and gets a disabled control WITH THE REASON BESIDE IT,
- * not a button that dies on tap. And because a wake starts a billable machine
- * that this hub deliberately has no way to stop, the cost is printed on the
- * screen rather than hidden in a tooltip.
+ * not a button that dies on tap. And because a wake starts a billable machine,
+ * the cost is printed on the screen rather than hidden in a tooltip.
  *
  * Seeded once from `nodes.list` (and again on every bus reconnect, like every
  * other snapshot seed) and patched from `node.state_changed`. It does not poll.
@@ -104,8 +103,8 @@ export const RemoteNodesBar: React.FC<{ style?: React.CSSProperties }> = ({ styl
   /** node id → the last wake or sleep failure, shown on the row until it
    *  changes state. */
   const [errors, setErrors] = useState<Record<string, string>>({});
-  /** The one node currently asking "are you sure?" — a wake spends real money
-   *  and this hub has no stop verb, so a tap opens this step rather than
+  /** The one node currently asking "are you sure?" — a wake spends real money,
+   *  so a tap opens this step rather than
    *  firing `nodes.wake` directly. Same idiom as the composer's restart
    *  confirm: an anchored ContextMenu, not a fourth kind of dialog. */
   const [confirm, setConfirm] = useState<{
@@ -433,7 +432,8 @@ const NodeRow: React.FC<{
         </div>
       )}
 
-      {/* Failed wakes, priced honestly: each one left a machine running. */}
+      {/* Failed wakes, priced honestly. Not "left billing": the hub stops a
+          machine whose wake never produced a provider. */}
       {failures && (
         <div style={{ fontSize: '0.66rem', lineHeight: 1.5, color: 'var(--wks-warning)' }}>
           {failures}
@@ -493,8 +493,9 @@ const NodeRow: React.FC<{
               {affordance.reason}
             </div>
           )}
-          {/* Tapping this spends money and nothing here can stop it again yet.
-              That belongs on the screen, not in a title attribute. */}
+          {/* Tapping this spends money, and the meter runs until something
+              switches the machine off. That belongs on the screen, not in a
+              title attribute. */}
           {affordance.enabled && (
             <div
               style={{

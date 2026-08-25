@@ -334,6 +334,29 @@ describe('never offer a button that will be refused', () => {
     expect(wakeAffordance(den(), true, true).enabled).toBe(false);
   });
 
+  it('refuses a wake on a machine that is draining, even one it could otherwise start', () => {
+    // THE MONEY CASE. Somebody pressed sleep, the machine is draining, and the
+    // hub WILL accept a wake here — it just cancels the shutdown and restarts
+    // the meter they were closing. So the refusal is the client's job.
+    const a = wakeAffordance(den({ state: 'stopping' }), true);
+    expect(a.visible).toBe(true);
+    expect(a.enabled).toBe(false);
+    // The reason survives without a hover, same as every other disabled arm.
+    expect(a.reason).toMatch(/shutting down/i);
+    expect(a.title).toMatch(/cancel the stop/i);
+
+    // The guard sits BEFORE the optimistic `pending` flag, because the hub's
+    // state outranks a local one: a client that had just fired a wake and then
+    // learned the node was stopping must still refuse, not fall through to a
+    // "Starting…" that lies about which direction the machine is going.
+    expect(wakeAffordance(den({ state: 'stopping' }), true, true).enabled).toBe(false);
+    expect(wakeAffordance(den({ state: 'stopping' }), true, true).label).toBe('Connect');
+
+    // And a viewer who could not wake it anyway still sees the drain, not a
+    // token complaint about a button that should not be armed regardless.
+    expect(wakeAffordance(den({ state: 'stopping' }), false).enabled).toBe(false);
+  });
+
   it('shows the state and disables the button on a view/triage tier', () => {
     const a = wakeAffordance(den(), false);
     expect(a.visible).toBe(true);
