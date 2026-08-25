@@ -701,6 +701,31 @@ workspacer token revoke &lt;token-or-prefix&gt;</code></pre>
 <li><strong>Terminals stream on demand.</strong> A live terminal is only mirrored to a client while that client is actually watching it, so you're not streaming build logs to a phone in your pocket.</li>
 <li><strong>No window needed.</strong> Remote clients keep working even with the desktop app closed, the background daemons serve them on their own.</li>
 </ul>
+
+<h3>remote worker nodes (Fly Machines)</h3>
+<p>You can also run agents on separate Fly Machines that you control independently. A remote node is a machine in your Fly organization that runs <code>workspacer serve</code> and connects back to the hub on another machine. Sessions on that node appear in your fleet alongside local ones, with a small hub badge naming the machine. When you close the window or power off the machine running the hub, remote sessions stay resumable on the node itself.</p>
+<p>The use case is splitting work across machines without splitting the fleet view. One desktop machine runs the hub and shows every agent; several smaller or off-by-default machines run the agents themselves and connect in. You pay only while a node is running.</p>
+
+<h3>setting up a remote node</h3>
+<p>A remote node is a headless <code>workspacer serve</code> on a Fly Machine, pointed at the hub on another machine. The hub needs to authenticate the connection and reach the node to wake it if it is asleep.</p>
+<ul>
+<li><strong>Get a Fly API token.</strong> <code>fly auth token</code> in the Fly CLI (you can <code>fly auth login</code> if needed). Copy that token.</li>
+<li><strong>Save it to nodes.json.</strong> On the hub machine (the one running the app or <code>workspacer serve</code>), create or edit <code>~/.config/workspacer/nodes.json</code>. It should be owned by you with mode <code>0600</code> (readable by you only). The format is an array of node objects, one per machine. Each object has an <code>id</code> (a Fly Machine id), <code>label</code> (a short name like "worker-1"), and <code>org</code> (the Fly organization it lives in). The Fly token is read from the file and kept secure; it is never shown in the UI or sent to clients.</li>
+<li><strong>Deploy or boot the node.</strong> Use the Fly CLI or dashboard to create and start a Machine, or start a stopped one. Run <code>workspacer serve</code> on it with access to a working directory (or reuse the hub's by mounting <code>~/.config/workspacer</code> read-only if the directory layouts match), so it can restore its session store and pick up the config. The node will connect to the hub using the environment setup (the hub's address and the node's own auth; federation-style tokens are how the two find each other).</li>
+<li><strong>The hub registers the node.</strong> Once running, the node phones home to the hub with its own session store. The hub adds it to the registry. A node that crashes or stops stays registered; the hub knows it is asleep and shows a <strong>Connect</strong> button.</li>
+</ul>
+
+<h3>waking a node from the UI</h3>
+<p>On the desktop app, the web app, or mobile, a small badge shows any remote nodes and their state. A stopped or sleeping node has a <strong>Connect</strong> button. Click it and the hub wakes the Machine using the Fly Machines API.</p>
+<p>A <strong>stopped node needs a Fly API token to wake.</strong> The hub holds the token you saved to nodes.json and uses it to start the Machine. A node with no stored token shows a <strong>Connect</strong> button that is disabled, with a reason shown. The hub never exposes the token to any client, not even one with full operator access; waking is a hub-only action. Your permission mode and token scope decide whether you personally can wake the machine from the UI.</p>
+
+<h3>limits worth knowing</h3>
+<ul>
+<li><strong>Waking costs money.</strong> Each wake starts a billable Fly Machine. Do not wire it into an automatic job or polling loop unless you mean to spend money every few minutes.</li>
+<li><strong>No stop verb.</strong> The hub has no way to put a node back to sleep from inside the app. You stop it from the Fly dashboard, the CLI, or a shell job with your own script. The only way to keep costs down is manual discipline or a recurring job that stops the Machine on a schedule.</li>
+<li><strong>Deploy once, then manage from here.</strong> The feature assumes you deploy the node once using Fly tooling and then control it from work{spacer}. There is no "provision machine and deploy app" automation in work{spacer}; the Machines API wakes only. Your own CI/CD or infrastructure code is the right place for the deploy step.</li>
+</ul>
+
 <h3>a server with no desktop: workspacer serve</h3>
 <p>You can also run the whole fleet on a machine that never opens a window: a home server, a VM, a box you only reach over Tailscale. Each release ships a standalone server bundle (<code>workspacer-server-&lt;os&gt;-&lt;arch&gt;.tar.gz</code>, zip on Windows) with the binaries and the web build. Two lines:</p>
 <pre><code>tar xzf workspacer-server-linux-x64.tar.gz
