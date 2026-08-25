@@ -87,6 +87,15 @@ func (c *claudemonClient) listSessions(ctx context.Context) (json.RawMessage, er
 // transcript fetches a session's parsed transcript. A non-empty cwd lets
 // claudemon resolve sessions it isn't tracking from the on-disk JSONL under
 // ~/.claude/projects (historical transcripts).
+// listSessionsIncludingArchived is the resumable-session list: every row the
+// daemon still holds, stopped and archived ones included. The plain
+// listSessions above omits archived rows, which is right for the live fleet and
+// wrong for a history list — an archived session is exactly the kind a user
+// resumes. TWIN: the `?include_archived=true` query in recentSessions.ts.
+func (c *claudemonClient) listSessionsIncludingArchived(ctx context.Context) (json.RawMessage, error) {
+	return c.getRaw(ctx, "/sessions?include_archived=true")
+}
+
 func (c *claudemonClient) transcript(ctx context.Context, id, cwd string) (json.RawMessage, error) {
 	path := "/sessions/" + id + "/transcript"
 	if cwd != "" {
@@ -379,4 +388,74 @@ func (c *claudemonClient) resize(ctx context.Context, id string, cols, rows int)
 
 func (c *claudemonClient) signal(ctx context.Context, id, signal string) error {
 	return c.postJSON(ctx, "/sessions/"+id+"/signal", map[string]any{"signal": signal}, nil)
+}
+
+// permissionModeResult is claudemon's answer to a live permission-mode switch.
+// `mode` is the mode the DAEMON confirmed (it drives and verifies the switch —
+// claude by cycling shift+tab against the screen, codex by the adapter's
+// approval flag), which is not necessarily the one that was asked for.
+type permissionModeResult struct {
+	Mode  string `json:"mode"`
+	Error string `json:"error"`
+}
+
+// setPermissionMode live-switches a running session's permission mode.
+// TWIN: claudemonSessionClient.setPermissionMode.
+//
+// A non-2xx is an ERROR here, not an ok:false — the CALLER (registry
+// .setPermissionMode) turns it into the `{ok:false, error}` envelope the
+// desktop's handler answers with, so this client stays the thin HTTP twin.
+func (c *claudemonClient) setPermissionMode(ctx context.Context, id, mode string) (permissionModeResult, error) {
+	var out json.RawMessage
+	if err := c.postRaw(ctx, "/sessions/"+id+"/permission-mode", map[string]any{"mode": mode}, &out); err != nil {
+		return permissionModeResult{}, err
+	}
+	var res permissionModeResult
+	_ = json.Unmarshal(out, &res)
+	return res, nil
+}
+
+// setModel live-switches a managed session's model and/or reasoning effort
+// (codex applies it to the running thread via thread/settings/update). Empty
+// fields are OMITTED rather than sent as "": the daemon reads a present-but-
+// empty model as a request to switch to a model with no name.
+// TWIN: claudemonSessionClient.setModel.
+func (c *claudemonClient) setModel(ctx context.Context, id, model, effort string) error {
+	body := map[string]any{}
+	if model != "" {
+		body["model"] = model
+	}
+	if effort != "" {
+		body["effort"] = effort
+	}
+	return c.postJSON(ctx, "/sessions/"+id+"/model", body, nil)
+}
+
+// handoffResult is claudemon's cross-provider handoff brief: the markdown and
+// the path it was persisted at (~/.workspacer/handoffs/). The daemon composes
+// both — no caller string reaches either.
+type handoffResult struct {
+	Markdown string `json:"markdown"`
+	Path     string `json:"path"`
+}
+
+// handoff builds and persists a session's handoff brief.
+// TWIN: claudemonSessionClient.handoffBrief.
+func (c *claudemonClient) handoff(ctx context.Context, id string) (handoffResult, error) {
+	var out json.RawMessage
+	if err := c.postRaw(ctx, "/sessions/"+id+"/handoff", map[string]any{}, &out); err != nil {
+		return handoffResult{}, err
+	}
+	var res handoffResult
+	_ = json.Unmarshal(out, &res)
+	return res, nil
+}
+
+// closeSession asks the daemon to terminate a session's child process. TWIN:
+// claudemonSessionClient.close, whose only escalation beyond stopping its own
+// viewers is exactly this SIGTERM — the same one claude.signal already offers.
+// The session row stays in the daemon as a resumable Stopped row; that is
+// intended, and it is why agents.close ALSO forgets the row locally.
+func (c *claudemonClient) closeSession(ctx context.Context, id string) error {
+	return c.signal(ctx, id, "SIGTERM")
 }

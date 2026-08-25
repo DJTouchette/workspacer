@@ -138,6 +138,11 @@
    "disposition": "open-by-decision"
   },
   {
+   "pattern": "facade.openTerminal",
+   "disposition": "guarded-by-capability",
+   "method": "terminals.open"
+  },
+  {
    "pattern": "fs.changed",
    "disposition": "guarded-by-capability",
    "method": "fs.watch"

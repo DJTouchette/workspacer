@@ -44,13 +44,17 @@ import (
 // runs zero times, and the guard reports ok — the failure mode this whole family
 // of tests keeps re-learning. Raise them when a topic is added.
 const (
-	goTopicFloor = 14
+	// Raised twice in one merge, so the arithmetic is worth writing down:
+	// master's Connect-button work added a topic, and cmd/brain/visibleterm.go
+	// publishes facade.openTerminal — the headless provider's only way to
+	// answer terminals.open.
+	goTopicFloor = 15
 	tsTopicFloor = 7
 	// publishSiteFloor is the number of publish CALL SITES the scan must
 	// account for across both languages. It catches the other direction: a
 	// scanner that still resolves the topics it knows while a new call site
 	// slips past the regex entirely.
-	publishSiteFloor = 22
+	publishSiteFloor = 23
 )
 
 // goPublishRe finds the topic argument of a Go publish site.
