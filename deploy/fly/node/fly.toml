@@ -1,0 +1,179 @@
+# Workspacer headless worker node.
+#
+#   fly deploy --config deploy/fly/node/fly.toml \
+#              --dockerfile deploy/fly/node/Dockerfile .
+#
+# Provisioning is a one-time, order-dependent procedure. Read RUNBOOK.md before
+# running anything here — in particular, DO NOT use `fly launch`: it allocates
+# public IPs, and step 3 of the runbook deliberately does not want them.
+
+app = "workspacer-node"
+
+# ord (Chicago), measured. 35.4ms median from Calgary, clearly ahead of yyz
+# (~40ms) with no overlap in the min/max ranges; sjc and lax tie around 60-63ms.
+# Chicago is geographically FARTHER than San Jose and still won, which is
+# ordinary for Alberta ISPs backhauling through Chicago-area exchanges.
+#
+# `sea` and `den` — the two regions in the original brief — NO LONGER EXIST.
+# Fly retired them in the September 2025 Region Consolidation Project. The
+# eighteen survivors are ams arn bom cdg dfw ewr fra gru iad jnb lax lhr nrt
+# ord sin sjc syd yyz. Confirmed against `flyctl platform regions` on 2026-08-24.
+#
+# THIS IS A ONE-WAY DOOR. The volume below is pinned to this region and cannot
+# move; changing regions later means forking the volume into the new one.
+primary_region = "ord"
+
+# Swap: insurance against Go link spikes and parallel test runs.
+# It also permanently disqualifies this machine from `suspend` — but suspend
+# was already unavailable, because suspend requires <= 2GB memory AND no swap
+# and this machine is 8GB. Do not set auto_stop_machines = "suspend"; it is not
+# a risk here, it is ineligible.
+swap_size_mb = 4096
+
+# SIGINT first, then 60s of drain. `kill_timeout` is a drain window, not a
+# "let the job finish" knob: max 300, default 5.
+#
+# GOTCHA: this governs a PLATFORM stop. A hub calling the Machines API stop
+# endpoint passes its OWN `signal` and `timeout` and never reads this file, so
+# the hub must send them explicitly or it gets the API defaults. Also, Fly's
+# docs disagree with themselves about the second signal (configuration
+# reference says SIGTERM, the long-running-tasks blueprint says SIGTERM to
+# PID 1) — the entrypoint traps both INT and TERM and does not care which.
+kill_signal  = "SIGINT"
+kill_timeout = 60
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # --- persistence -------------------------------------------------------
+  # $HOME lives on the volume. That is the whole persistence strategy: with
+  # HOME on /data, ~/.claude, ~/.claude.json, ~/.claudemon, ~/.config/workspacer,
+  # ~/.workspacer, ~/.ssh, ~/.gitconfig and ~/.codex are all persistent by
+  # construction and NOT ONE OF THEM IS A SYMLINK. A tmp-file-plus-rename write
+  # replaces a FILE symlink with a regular file on the ephemeral rootfs — it
+  # works for that boot and is gone on the next wake. There are no file
+  # symlinks here to destroy.
+  WKS_DATA = "/data"
+  WKS_HOME = "/data/home"
+  HOME = "/data/home"
+
+  # XDG pinned to HOME-relative values rather than to separate /data paths.
+  # config.yaml has two writers: the Go half reads $XDG_CONFIG_HOME/workspacer,
+  # the TS half hardcodes ~/.config/workspacer. Pinning XDG under HOME keeps
+  # them pointing at the same file. Pinning it somewhere else would split them.
+  XDG_CONFIG_HOME = "/data/home/.config"
+  XDG_DATA_HOME   = "/data/home/.local/share"
+  XDG_STATE_HOME  = "/data/home/.local/state"
+  XDG_CACHE_HOME  = "/data/cache/xdg"
+
+  # --- toolchain caches --------------------------------------------------
+  # Caches on the volume, toolchains in the image. Package caches in the image
+  # would mean rebuilding it on every dependency bump; toolchains on the volume
+  # would make the volume unreproducible.
+  GOPATH                = "/data/go"
+  GOMODCACHE            = "/data/go/pkg/mod"
+  GOCACHE               = "/data/go/cache"
+  BUNDLE_PATH           = "/data/bundle"
+  BUN_INSTALL_CACHE_DIR = "/data/bun"
+  npm_config_cache      = "/data/npm"
+  HISTFILE              = "/data/home/.bash_history"
+
+  # --- node identity -----------------------------------------------------
+  WKS_TS_HOSTNAME = "workspacer-node"
+  # The auth key should already carry the tag; this is belt and braces.
+  # Tagging is load-bearing, not cosmetic: node keys expire after 180 days by
+  # default and a sleeping machine cannot reauthenticate itself, but a device
+  # tagged at first authentication has key expiry disabled by default.
+  WKS_TS_TAGS = "tag:workspacer-node"
+
+  WKS_BRAIN_SCOPE      = "full"
+  WKS_DOORBELL_ENABLED = "1"
+  WKS_DOORBELL_PORT    = "8080"
+
+# Secrets — NOT here, `fly secrets set` (see RUNBOOK.md step 4):
+#   TAILSCALE_AUTHKEY   non-ephemeral, reusable, pre-authorized, tagged
+#   HUB_BUS_URL         wss://<hub>/bus — a secret only to keep the tailnet
+#                       name out of git
+#   HUB_TOKEN           the scoped bus token the always-on hub issued
+
+[[mounts]]
+  source        = "wks_data"
+  destination   = "/data"
+  initial_size  = "30gb"
+  # Volumes grow but NEVER shrink, so 30GB errs high on purpose. They also bill
+  # while the machine is stopped ($0.15/GB/mo = $4.50), are pinned to one
+  # physical host in one region, attach to exactly one machine, and are not
+  # reschedulable. Everything irreplaceable in this design is on this one
+  # volume: Claude OAuth, SSH keys, working checkouts, the tailnet identity.
+  # Set a snapshot retention deliberately (`fly volumes update --snapshot-retention`).
+
+[[vm]]
+  size   = "shared-cpu-4x"
+  memory = "8gb"    # the cap for a 4x shared preset: 2GB per shared CPU
+  # Shared vCPUs get a BASELINE of 5ms per 80ms period each. shared-cpu-4x =
+  # 20ms/80ms = 25% of one core sustained, once the burst balance (max 500s of
+  # CPU time, accrued while idle) drains. For a box whose job is compiling Go
+  # that is the number most likely to make it feel broken, and stepping to
+  # shared-cpu-8x only doubles the baseline to half a core. If builds are the
+  # point, the real answer is a `performance` preset. Measure steal first.
+
+[[restart]]
+  # DELIBERATE, and neither default is right:
+  #
+  #   "always"      would never let the machine enter `stopped`, defeating the
+  #                 entire sleep design.
+  #   "on-failure"  (the fly launch/deploy default, spelled `on-fail` in the
+  #                 Machines API) retries up to `retries` times inside a
+  #                 5-minute window and then leaves the machine STOPPED — which
+  #                 is indistinguishable via the Machines API from a healthy
+  #                 sleeping node.
+  #
+  # on-failure is still the least-bad option: a genuine transient failure
+  # should self-heal. What makes the ambiguity survivable is that the
+  # entrypoint writes /data/state/last-exit.json on every exit, so "asleep
+  # because the hub said so" and "stopped because it crashed ten times" are
+  # distinguishable from the volume even when the API cannot tell them apart.
+  #
+  # retries is 3 rather than the default 10 so a broken boot does not thrash
+  # for five minutes burning shared-CPU burst balance before giving up.
+  policy  = "on-failure"
+  retries = 3
+
+# The token-free wake backstop.
+#
+# auto_start_machines and auto_stop_machines are two INDEPENDENT keys (verified
+# against flyctl's own config schema), so `start = true` with `stop = "off"` is
+# legal and is exactly the policy wanted here: THE PROXY MAY WAKE IT, ONLY THE
+# HUB MAY SLEEP IT. It costs nothing and it means an expired or revoked Fly API
+# token cannot strand the node asleep forever.
+#
+# It does not fight the hub-driven design, because autostop stays off. Fly's
+# own docs make the case against autostop for this workload: the proxy looks at
+# inbound traffic, not inside the container, so an idle websocket registers as
+# occupied capacity while a busy-but-quiet agent looks like nothing.
+#
+# READ THIS BEFORE ALLOCATING AN IP. The proxy starts the machine BEFORE
+# routing the request, so no application-level auth on the doorbell can stop a
+# stranger from spending money — the wake has already happened. The only real
+# control is whether this app has a public IP at all, which is why RUNBOOK.md
+# step 3 provisions WITHOUT one and treats turning the doorbell on as a
+# separate, deliberate act.
+[http_service]
+  internal_port      = 8080
+  force_https        = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type       = "requests"
+    soft_limit = 50
+    hard_limit = 100
+
+# No [[http_service.checks]] on purpose. An unhealthy machine can be stopped by
+# the platform, and a health check that fires during the tailscaled reconnect
+# would let Fly decide a slow-booting node is a dead node. With no checks
+# defined, "healthy" means the doorbell's TCP port accepts a connection, which
+# the entrypoint arranges within a second or two of boot. Readiness of the NODE
+# is a different question and is answered by the brain registering with the hub.
