@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Check, ChevronDown, ChevronRight, FolderOpen, Play, X } from 'lucide-react';
 import { Section, SmallButton, inputStyle } from './primitives';
+import DraftWithAgentButton from './DraftWithAgentButton';
 import type {
   HubJob,
   HubJobContextStep,
@@ -901,6 +902,12 @@ const JobsSection: React.FC = () => {
                 setEditing({ ...EMPTY_DRAFT, ...draft });
               }}
             />
+            {/* The other way in, for a job no template covers. The agent works
+                out the spec with you and calls propose_job; what comes back is
+                a row in the list ABOVE, disarmed, with its real trigger and
+                action on show. Nothing here renders the agent's description of
+                what it proposed — the amber row is the spec itself. */}
+            <DraftWithAgentButton briefId="jobs" />
           </div>
         )}
 

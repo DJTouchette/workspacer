@@ -58,6 +58,7 @@ import CommandPalette from './components/CommandPalette';
 import LayoutsDialog from './components/LayoutsDialog';
 import { saveLayoutTemplate } from './lib/saveLayoutTemplate';
 import LibraryHost from './components/LibraryHost';
+import DraftWithAgentHost from './components/DraftWithAgentHost';
 import LibrarySidePanel from './components/LibrarySidePanel';
 import BottomTerminalPanel from './components/BottomTerminalPanel';
 import InboxDrawer from './components/InboxDrawer';
@@ -2519,10 +2520,20 @@ function App() {
         const agent = agents.find((a) => a.sessionId === sessionId);
         if (agent) handleSelectAgent(agent.id);
       }}
-      onOpenPane={(paneType) => {
+      onOpenPane={(paneType, section) => {
         const pane = pluginPanes.find((p) => p.type === paneType);
-        if (pane) handleOpenPlugin(pane);
-        else handleAddTab(paneType as PaneType);
+        if (pane) {
+          handleOpenPlugin(pane);
+          return;
+        }
+        handleAddTab(paneType as PaneType);
+        // The last hop of a notification's click target. handleAddTab opens
+        // the Settings pane on whatever section it last showed, so a
+        // "review this proposal" notification landed the user in Settings and
+        // left them to find the section themselves. settingsBus holds the
+        // request across the pane's mount, so firing it right after the tab
+        // is added is fine.
+        if (section) requestSettingsSection(section);
       }}
     >
       <PaneMenuProvider value={paneMenuValue}>
@@ -2836,6 +2847,17 @@ function App() {
                 void spawnAgent(opts);
               }}
               recordRecentDir={recordRecentDir}
+            />
+
+            {/* Settings' "draft this with an agent" buttons. Given the agent
+                list (for reuse-by-name) and spawn, and deliberately NOT the
+                focused agent — see lib/draftAgent.ts. */}
+            <DraftWithAgentHost
+              agents={agents}
+              spawnAgent={(opts) => {
+                void spawnAgent(opts);
+              }}
+              onSelectAgent={handleSelectAgent}
             />
 
             {showInstallPlugin && (

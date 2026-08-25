@@ -61,6 +61,23 @@ describe('normalizeNotification', () => {
     expect(n.body!.length).toBeLessThanOrEqual(600);
   });
 
+  // The click target that lands a "review this" notification on the right
+  // Settings section rather than on Settings-in-general.
+  it('carries paneSection alongside a paneType', () => {
+    const n = normalizeNotification(
+      { title: 'Job proposed', paneType: 'settings', paneSection: 'jobs' },
+      'bus',
+    )!;
+    expect(n.paneType).toBe('settings');
+    expect(n.paneSection).toBe('jobs');
+  });
+
+  it('drops a paneSection with no pane to open', () => {
+    expect(normalizeNotification({ title: 'a', paneSection: 'jobs' }, 'x')!.paneSection).toBe(
+      undefined,
+    );
+  });
+
   it('generates unique ids when none is provided', () => {
     const a = normalizeNotification({ title: 'a' }, 'x')!;
     const b = normalizeNotification({ title: 'b' }, 'x')!;

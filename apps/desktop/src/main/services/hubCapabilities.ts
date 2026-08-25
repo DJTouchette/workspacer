@@ -5,6 +5,7 @@
  */
 
 import { Notification, shell } from 'electron';
+import { randomUUID } from 'crypto';
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -702,9 +703,12 @@ export function registerHubCapabilities(): void {
 
   // Surface a notification: recorded in the in-app notification center, and —
   // unless `inAppOnly` or the user disabled notifications — also shown as a
-  // clickable OS notification. Clicking focuses the target agent when
-  // `sessionId` is given, opens `url` externally when given, else just brings
-  // the window forward. `source` labels the sender in the center ("plugin:ci").
+  // clickable OS notification. Clicking routes through the renderer's activate
+  // path, which follows the entry's click target — the agent named by
+  // `sessionId`, else the pane named by `paneType` (landing on `paneSection`
+  // when it is a Settings section), else `url` externally — and brings the
+  // window forward when there is none. `source` labels the sender in the
+  // center ("plugin:ci").
   registerCapability('notifications.post', (params: unknown) => {
     const p = (params ?? {}) as {
       title?: string;
@@ -713,6 +717,7 @@ export function registerHubCapabilities(): void {
       source?: string;
       sessionId?: string;
       paneType?: string;
+      paneSection?: string;
       url?: string;
       key?: string;
       silent?: boolean;
@@ -722,17 +727,23 @@ export function registerHubCapabilities(): void {
     const body = p.body || '';
     const level = (['info', 'success', 'warn', 'error'] as const).find((l) => l === p.level);
 
-    agentNotifier.postInApp({
+    // Built once and shared with the OS notification's click handler below, so
+    // the two surfaces can never disagree about where this thing points.
+    const entry = {
+      id: randomUUID(),
       level: level ?? 'info',
       title,
       body: body || undefined,
       source: typeof p.source === 'string' && p.source ? p.source : 'plugin',
       sessionId: p.sessionId,
       paneType: p.paneType,
+      paneSection: p.paneSection,
       url: p.url,
       key: p.key,
       silent: p.silent === true,
-    });
+      createdAt: Date.now(),
+    };
+    agentNotifier.postInApp(entry);
 
     const notifCfg =
       (configService.getConfig() as { notifications?: { enabled?: boolean; sound?: boolean } })
@@ -754,12 +765,26 @@ export function registerHubCapabilities(): void {
       silent: notifCfg.sound !== true,
     });
     notification.on('click', () => {
-      if (p.sessionId) agentNotifier.focusAgent(p.sessionId);
-      // The url comes from whoever posted the notification — a plugin, or a
-      // remote client — so it gets the same scheme check as the renderer's own
-      // open-external path rather than being handed straight to the OS.
-      else if (p.url) void openExternalUrl(p.url);
-      else agentNotifier.focusWindow();
+      // An agent/pane target goes to the renderer's own activate path, which
+      // resolves both in one place — including `paneSection`, the field that
+      // lands a "review this" notification on the right Settings section
+      // rather than on Settings-in-general — and marks the center entry read.
+      // Branching on paneType HERE instead is how that target came to be
+      // accepted by this capability and then silently dropped at the click.
+      if (entry.sessionId || entry.paneType) {
+        agentNotifier.activateInRenderer(entry);
+        return;
+      }
+      // A url stays on the host. It comes from whoever posted the notification
+      // — a plugin, or a remote client — so it gets the same scheme check as
+      // the renderer's own open-external path rather than being handed
+      // straight to the OS, and it gets it whether or not a window is alive to
+      // route through.
+      if (entry.url) {
+        void openExternalUrl(entry.url);
+        return;
+      }
+      agentNotifier.focusWindow();
     });
     notification.on('failed', (_e, err) =>
       console.warn(

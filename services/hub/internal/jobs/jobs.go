@@ -633,11 +633,20 @@ func (s *Service) Propose(p json.RawMessage) (any, error) {
 	if s.b != nil {
 		// Ride the existing notify.post — a proposal nobody hears about is a
 		// proposal nobody reviews.
+		//
+		// The click TARGET is the other half of that: the body used to spell
+		// out "Review it in Settings → Jobs" and leave the user to navigate
+		// there themselves. paneType alone opens the Settings pane wherever it
+		// was last, so paneSection is what makes the click land on the review
+		// surface itself. Both are honoured by the desktop notification center
+		// and its OS-notification escalation (InAppNotification.paneSection).
 		s.b.Publish(event.New("notify.post", "jobs", map[string]any{
-			"title": "Job proposed: " + j.Name,
-			"body":  j.ProposedBy + " suggested a job. Review it in Settings → Jobs; it won't run until you approve it.",
-			"level": "info",
-			"key":   "job-proposal-" + j.ID,
+			"title":       "Job proposed: " + j.Name,
+			"body":        j.ProposedBy + " suggested a job. It won't run until you approve it — click to read the trigger and the action.",
+			"level":       "info",
+			"key":         "job-proposal-" + j.ID,
+			"paneType":    "settings",
+			"paneSection": "jobs",
 		}))
 	}
 	return j, nil

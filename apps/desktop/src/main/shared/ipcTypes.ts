@@ -391,6 +391,11 @@ export interface InAppNotification {
   sessionId?: string;
   /** …or open this pane type (plugins use their plugin pane type)… */
   paneType?: string;
+  /** With `paneType: 'settings'`, the section the click lands on ('jobs',
+   *  'appearance', …). Without it the Settings pane opens on whatever section
+   *  it was last showing, which for a "review this" notification means the
+   *  user still has to go looking. Ignored for every other pane type. */
+  paneSection?: string;
   /** …or open an external URL. First present wins: sessionId → paneType → url. */
   url?: string;
   /** Stable key: a later notification with the same key replaces the earlier
