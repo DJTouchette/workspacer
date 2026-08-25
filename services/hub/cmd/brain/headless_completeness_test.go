@@ -36,17 +36,40 @@ var (
 // answers under `workspacer serve`, each with the degradation the user gets.
 // Adding one is a decision; the empty value is what this guard refuses.
 var headlessGaps = map[string]string{
-	// Live-agent control the desktop implements against its own claudemon
-	// session client.
-	"claude.setModel":          "the model switcher in /m and /app fails; BOTH clients now surface the rejection (mobile.html toasts + latches the chips; /app reopens the restart confirm carrying the reason and posts to the notification center)",
-	"claude.setPermissionMode": "same — and the restart path both clients fall back to DOES work headless (agents.spawn has a provider), so the mode is still reachable, just not live",
-	"claude.setEffort":         "the reasoning-effort control cannot switch live; same visible degradation and same restart fallback",
-	"claude.handoffBrief":      "cross-provider handoff is unavailable",
-	"claude.handoffAgentBrief": "same, for a subagent",
-	// Host filesystem/VCS surfaces that only the Electron main process has.
-	"fs.readImage": "image thumbnails in chat render as broken",
-	"fs.watch":     "the editor pane does not live-reload",
-	"fs.unwatch":   "no-op counterpart of fs.watch",
+	// claude.setModel / setPermissionMode / setEffort / handoffBrief were here
+	// and are now PROVIDED (livecontrol.go): the mode pill, the model switcher,
+	// the effort control and cross-provider handoff work on a headless node.
+	// setPermissionMode carries the spawn path's escalation clamp with it — a
+	// bus caller can TIGHTEN a running agent's mode and cannot loosen it.
+	//
+	// The entries these replace were rewritten a moment earlier to describe the
+	// loud-failure work on the two clients (both now surface the rejection
+	// rather than swallowing it). That work is not wasted by this: it is what a
+	// user sees when the DAEMON refuses a live switch, which is still a real
+	// answer — ok:false with a reason, and the restart path behind it.
+	//
+	// claude.handoffAgentBrief stays a gap ON PURPOSE. It is not a relay like
+	// its sibling: main/services/agentHandoff.ts injects a write-this-brief
+	// instruction into the live agent, waits for the file to appear, and falls
+	// back to the mechanical brief on timeout. That orchestration has no
+	// claudemon endpoint behind it, so porting it means porting the whole
+	// service, not registering a method.
+	"claude.handoffAgentBrief": "the agent-AUTHORED handoff brief is unavailable; the deterministic one (claude.handoffBrief) works, so a handoff still succeeds with a mechanically composed brief",
+	// fs.readImage was here and is now PROVIDED (readimage.go), so chat
+	// thumbnails render on a headless node — with the twin's own inline-bytes
+	// fallback rather than a decoded thumbnail, since there is no image decoder
+	// in this daemon.
+	//
+	// fs.watch / fs.unwatch stay gaps. They are not a relay or a read: the
+	// desktop's pair drives a live host watcher whose emit sink mirrors every
+	// change onto the bus as `fs.changed`, so a headless counterpart is a
+	// filesystem-watcher subsystem (a new dependency, a new published topic,
+	// per-path lifecycle and teardown) rather than a handler. The degradation is
+	// narrow and additive — the editor pane shows what it read, it just does not
+	// notice an outside edit — which is why it did not outrank the agent-facing
+	// set in this pass.
+	"fs.watch":   "the editor pane does not live-reload; an outside edit is noticed on the next open, not live",
+	"fs.unwatch": "no-op counterpart of fs.watch",
 	// git.status / git.log / git.diff / git.numstat were here and are now
 	// PROVIDED (git.go): the READ-ONLY half of the git surface was ported into
 	// the brain so a remote node's branch chip, Review pane, rail widget,
@@ -64,9 +87,22 @@ var headlessGaps = map[string]string{
 	"git.unstage":       "unstaging is unavailable; deliberately not ported — see above",
 	"git.commit":        "committing is unavailable; deliberately not ported — see above",
 	"git.push":          "pushing is unavailable; deliberately not ported — see above",
-	// Session history. (replay.* is desktop-IPC only — no shipped headless
+	// sessions.recent was here and is now PROVIDED (recent.go): the Sessions
+	// pane and the phone's resume list are answered from claudemon's own
+	// resumable-row list, so an empty list finally means "no sessions" rather
+	// than "no provider". (replay.* is desktop-IPC only — no shipped headless
 	// client calls it, so it is not a gap here.)
-	"sessions.recent": "the phone's resume-a-recent-agent list renders EMPTY (mobile.html catches and sets recents = []), which reads as 'no history'. /app no longer swallows it: useRecentSessions keeps the reason and the Sessions pane says it could not be read rather than that there is none",
+	//
+	// sessions.recent is PROVIDED too (recent.go). The entry it replaces
+	// recorded that /app had just stopped swallowing the failure — the Sessions
+	// pane now says it could not be READ rather than that there is none — and
+	// that distinction still matters: with a provider in place, an empty list
+	// finally means "no sessions" and an error means the daemon is unreachable.
+	//
+	// brief.archive is NOT listed, for the same reason replay.* is not: no
+	// shipped client calls it (it is an agent-facing MCP tool), so
+	// TestHeadlessGapsAreReachableFromAShippedClient would refuse the entry.
+	// Its absence is recorded in brief.go's header instead.
 }
 
 func headlessProviders(t *testing.T) map[string]bool {

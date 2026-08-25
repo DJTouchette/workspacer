@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Cloud, CloudOff, Loader2, Moon, type LucideIcon } from 'lucide-react';
+import { ContextMenu, ContextMenuItem, ContextMenuNote, ContextMenuSeparator } from './ContextMenu';
 import { Surface } from './Surface';
 import {
   NODE_PRESENTATION,
@@ -78,6 +79,11 @@ export const RemoteNodesBar: React.FC<{ style?: React.CSSProperties }> = ({ styl
   const [pending, setPending] = useState<Record<string, true>>({});
   /** node id → the last wake failure, shown on the row until it changes state. */
   const [errors, setErrors] = useState<Record<string, string>>({});
+  /** The one node currently asking "are you sure?" — a wake spends real money
+   *  and this hub has no stop verb, so a tap opens this step rather than
+   *  firing `nodes.wake` directly. Same idiom as the composer's restart
+   *  confirm: an anchored ContextMenu, not a fourth kind of dialog. */
+  const [confirm, setConfirm] = useState<{ id: string; x: number; y: number } | null>(null);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -190,6 +196,18 @@ export const RemoteNodesBar: React.FC<{ style?: React.CSSProperties }> = ({ styl
     }
   }, []);
 
+  const requestWake = useCallback((id: string, x: number, y: number) => {
+    setConfirm({ id, x, y });
+  }, []);
+  const cancelWake = useCallback(() => setConfirm(null), []);
+  const confirmWake = useCallback(
+    (id: string) => {
+      setConfirm(null);
+      void wake(id);
+    },
+    [wake],
+  );
+
   if (!nodes) return null;
   // A node that is quietly fine says nothing. One that came back from a crash
   // is `available` AND carrying the only notice of that crash — so it counts.
@@ -213,7 +231,10 @@ export const RemoteNodesBar: React.FC<{ style?: React.CSSProperties }> = ({ styl
           canWake={canWake}
           pending={!!pending[node.id]}
           error={errors[node.id]}
-          onWake={wake}
+          confirming={confirm?.id === node.id ? confirm : null}
+          onRequestWake={requestWake}
+          onCancelWake={cancelWake}
+          onConfirmWake={confirmWake}
         />
       ))}
     </div>
@@ -225,14 +246,18 @@ const NodeRow: React.FC<{
   canWake: boolean;
   pending: boolean;
   error?: string;
-  onWake: (id: string) => void;
-}> = ({ node, canWake, pending, error, onWake }) => {
+  confirming: { id: string; x: number; y: number } | null;
+  onRequestWake: (id: string, x: number, y: number) => void;
+  onCancelWake: () => void;
+  onConfirmWake: (id: string) => void;
+}> = ({ node, canWake, pending, error, confirming, onRequestWake, onCancelWake, onConfirmWake }) => {
   const p = NODE_PRESENTATION[node.state];
   const tone = nodeToneVar(p.tone);
   const Icon = STATE_ICON[node.state];
   const affordance = wakeAffordance(node, canWake, pending);
   const crash = nodeCrashNotice(node);
   const failures = nodeWakeFailureNotice(node);
+  const btnRef = useRef<HTMLButtonElement>(null);
 
   return (
     <Surface
@@ -330,10 +355,18 @@ const NodeRow: React.FC<{
       {affordance.visible && (
         <>
           <button
+            ref={btnRef}
             type="button"
             disabled={!affordance.enabled}
             title={affordance.title}
-            onClick={() => affordance.enabled && onWake(node.id)}
+            onClick={() => {
+              // A disabled control never reaches here at all, so there is no
+              // path from "refused" to "confirmable" — the guard that keeps
+              // view/triage tiers and credential-less nodes safe stays intact.
+              if (!affordance.enabled) return;
+              const r = btnRef.current?.getBoundingClientRect();
+              onRequestWake(node.id, r ? r.left : 0, r ? r.bottom + 4 : 0);
+            }}
             style={{
               width: '100%',
               padding: '5px 10px',
@@ -380,6 +413,17 @@ const NodeRow: React.FC<{
             </div>
           )}
         </>
+      )}
+      {/* The confirm step: names the consequence, not the action. Same idiom
+          as the composer's restart confirm — an anchored ContextMenu with the
+          reason as prose, one confirming item, one cancel. */}
+      {confirming && (
+        <ContextMenu x={confirming.x} y={confirming.y} onClose={onCancelWake} minWidth={230}>
+          <ContextMenuNote>{WAKE_COST_NOTE}</ContextMenuNote>
+          <ContextMenuItem label={`Connect ${node.label}`} onClick={() => onConfirmWake(node.id)} />
+          <ContextMenuSeparator />
+          <ContextMenuItem label="Cancel" onClick={onCancelWake} />
+        </ContextMenu>
       )}
     </Surface>
   );

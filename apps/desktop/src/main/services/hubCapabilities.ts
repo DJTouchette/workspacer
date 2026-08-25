@@ -214,6 +214,57 @@ export function registerHubCapabilities(): void {
   //     "doesn't provide analytics headlessly": it does, it wins the race, and
   //     main's real SQLite session-history store is never asked.
   //   ADOPTED-DEGRADED: analytics.recent — same stub, an empty row list.
+  //   ADOPTED-DEGRADED: claude.setPermissionMode — the switch itself is
+  //     identical (both POST claudemon's /permission-mode), but the brain
+  //     cannot call claudeSessionStore.notePermissionMode, so THIS process's
+  //     `livePermissionMode` is not updated eagerly. The mode pill follows the
+  //     daemon's own telemetry instead of flipping on the confirmed reply.
+  //   ADOPTED-DEGRADED: claude.setModel — same shape: the requested model is
+  //     not noted eagerly (noteRequestedModel), so the context-window figure
+  //     does not follow an `opus[1m]` switch until the status line confirms it.
+  //   ADOPTED-DEGRADED: claude.setEffort — same again for noteEffort, and this
+  //     one is the most visible: for a CLAUDE session that note is the pill's
+  //     ONLY truth (effective effort appears in no hook, status line or init
+  //     frame), so an adopted hub's effort pill does not move at all.
+  //
+  // And the agent-facing fleet verbs, which the brain now provides too
+  // (cmd/brain/agentops.go, brief.go, readimage.go, recent.go, visibleterm.go).
+  // ONE REASON COVERS MOST OF THEM: each implementation below reaches into
+  // claudeSessionStore, which is authoritative HERE and does not exist in the
+  // brain — it answers from its own projection of claudemon plus the spawn
+  // metadata it recorded itself. So in the adopted configuration these keep
+  // working and see a narrower world.
+  //
+  //   ADOPTED-DEGRADED: agents.reportProgress — the brain routes to the parent
+  //     in ITS spawn metadata, so a worker THIS process spawned is refused with
+  //     "not a tracked session" instead of reaching its manager.
+  //   ADOPTED-DEGRADED: agents.notifyWhen — armed against the brain's snapshot
+  //     projection; a session it has no row for is refused at arm time.
+  //   ADOPTED-DEGRADED: agents.close — "forgotten" means removed from the
+  //     BRAIN's store. This process's own row, and therefore the sidebar card,
+  //     is untouched.
+  //   ADOPTED-DEGRADED: agents.orphans — it can only report parents it recorded
+  //     itself, so a manager THIS process spawned and that then died is not
+  //     listed as a candidate at all.
+  //   ADOPTED-DEGRADED: agents.reparent — moves the link in the brain's spawn
+  //     metadata only; claudeSessionStore is not updated, so a wake raised HERE
+  //     still goes to the retired manager.
+  //   ADOPTED-DEGRADED: terminals.open — the brain has no renderer to emit to
+  //     and publishes a `facade.openTerminal` bus event instead, which this app
+  //     does not subscribe to. An agent's open_terminal reaches a WEB client,
+  //     not this window.
+  //   ADOPTED-DEGRADED: fs.readImage — same guard and same extension
+  //     allowlist, but the brain has no image decoder: it inlines the original
+  //     bytes (the fallback branch imagePreview already has) and refuses an
+  //     image too large to inline, where this side would have downscaled it.
+  //   ADOPTED-DEGRADED: sessions.recent — same daemon rows in the same order,
+  //     but the SQLite session-history join is unavailable to the brain, so
+  //     `model` and `costUSD` come back empty and `title` is never
+  //     transcript-derived.
+  //
+  // brief.append is the one that is NOT degraded: the brain's port is the same
+  // additive insert under the same lock and compare-and-swap, writing the same
+  // file through the same path guard.
   //
   // The full classification (every overlapping method, equivalent vs degraded,
   // with the reason) is enumerated and enforced by
@@ -1741,7 +1792,23 @@ export function registerHubCapabilities(): void {
     // caller's string is what stops a symlinked project dir from being
     // re-interpreted after the check.
     const dir = assertPathAllowed('brief.append', project, workspaceRoots());
-    return appendBriefLine(briefPathFor(dir), parseBriefSection(section), line);
+    // AND GUARD THE COMPOSED PATH, which the line above does not cover.
+    //
+    // "The caller cannot name a file" bounds the BASENAME and says nothing
+    // about the DIRECTORIES composed on the way to it. `project` can be a
+    // perfectly legitimate allowed directory — an agent's own cwd — while
+    // `<project>/.workspacer` is a SYMLINK pointing out of every workspace
+    // root: the guard above resolves the directory it was handed and answers
+    // yes, truthfully, about a path that is not the one being written.
+    //
+    // Found by construction in the Go port of this capability
+    // (services/hub/cmd/brain/brief.go), whose
+    // TestBriefAppendDoesNotFollowASymlinkedWorkspacerDirectory caught the
+    // identical shape here. assertPathAllowed resolves per component and
+    // tolerates a leaf that does not exist yet, which is what fs.write already
+    // relies on, so the composed path can be asserted before it is created.
+    const briefPath = assertPathAllowed('brief.append', briefPathFor(dir), workspaceRoots());
+    return appendBriefLine(briefPath, parseBriefSection(section), line);
   });
 
   // The other half of the same document: trim a section by moving its OLDEST
@@ -1769,6 +1836,16 @@ export function registerHubCapabilities(): void {
     };
     if (!project || isAsciiBlank(project)) throw new Error('brief.archive requires { project }');
     const dir = assertPathAllowed('brief.archive', project, workspaceRoots());
+    // Both composed paths, for the reason spelled out on brief.append above: a
+    // symlinked `<project>/.workspacer` escapes a guard that only ever resolved
+    // `project`. This one moves entries BETWEEN the two files, so an unguarded
+    // compose could both read a brief and write an archive outside every root.
+    // The guarded answers are discarded rather than threaded through
+    // archiveOldestEntries — which takes the directory and composes both
+    // basenames itself — because the assertion is the point: it throws on an
+    // escape, and past it the directory really does contain both files.
+    assertPathAllowed('brief.archive', briefPathFor(dir), workspaceRoots());
+    assertPathAllowed('brief.archive', path.join(dir, '.workspacer', 'brief.archive.md'), workspaceRoots());
     return archiveOldestEntries({ dir, section: parseBriefSection(section), count, keep });
   });
 

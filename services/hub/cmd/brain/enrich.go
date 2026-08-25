@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
@@ -22,6 +23,14 @@ type spawnMeta struct {
 	Label           string
 	ParentSessionID string
 	IsSupervisor    bool
+
+	// Live switches this brain confirmed with the daemon (livecontrol.go). No
+	// hook, status line or init frame reports the switch itself, so without
+	// these the composer pill reads the pre-switch value until the provider's
+	// own telemetry catches up. See noteLiveControl.
+	LivePermissionMode string
+	RequestedModel     string
+	LiveEffort         string
 }
 
 // metaStore holds spawn metadata keyed by session id. Populated by the spawn
@@ -97,6 +106,27 @@ func enrichSnapshot(snap json.RawMessage, meta *metaStore) json.RawMessage {
 			}
 			if sm.IsSupervisor {
 				m["isSupervisor"] = true
+			}
+			// The desktop field names the composer pills read
+			// (ComposerControls.tsx: `snapshot?.livePermissionMode ??
+			// settings?.permissionMode`, and the effort pill's own
+			// `liveEffort`). `settings.model` is a nested merge rather than an
+			// overwrite: claudemon's row does not carry a settings block, and
+			// replacing one that a richer desktop snapshot merged in would drop
+			// its siblings.
+			if sm.LivePermissionMode != "" {
+				m["livePermissionMode"] = sm.LivePermissionMode
+			}
+			if sm.LiveEffort != "" {
+				m["liveEffort"] = sm.LiveEffort
+			}
+			if sm.RequestedModel != "" {
+				settings, _ := m["settings"].(map[string]any)
+				if settings == nil {
+					settings = map[string]any{}
+				}
+				settings["model"] = sm.RequestedModel
+				m["settings"] = settings
 			}
 		}
 	}
@@ -342,4 +372,76 @@ func ambientForMode(mode string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// reparentChildren re-points every session whose recorded parent is
+// `fromID` onto `toID`, and reports what moved.
+//
+// TWIN: claudeSessionStore.reparentChildren. The desktop splits its answer into
+// `moved` (live sessions) and `pending` (spawns it recorded before the daemon
+// registered them, plus a finish sitting in its coalesce window). The brain has
+// the same split for a different reason: its spawn metadata is written the
+// moment a spawn returns, while the live row only appears once claudemon's
+// event stream catches up — so `isLive` decides which list an id lands in, and
+// a metadata entry with no row yet is PENDING rather than dropped. Dropping it
+// is what would silently orphan the newest dispatch, which is the one most
+// likely to still be in flight.
+//
+// The parent field is the only thing touched; a label and the supervisor flag
+// belong to the session, not to whoever dispatched it.
+func (s *metaStore) reparentChildren(fromID, toID string, isLive func(string) bool) (moved, pending []string) {
+	moved, pending = []string{}, []string{}
+	s.mu.Lock()
+	for id, m := range s.m {
+		if m.ParentSessionID != fromID || id == toID {
+			continue
+		}
+		m.ParentSessionID = toID
+		s.m[id] = m
+		if isLive != nil && isLive(id) {
+			moved = append(moved, id)
+		} else {
+			pending = append(pending, id)
+		}
+	}
+	s.mu.Unlock()
+	sort.Strings(moved)
+	sort.Strings(pending)
+	return moved, pending
+}
+
+// noteLiveControl records a live switch this brain confirmed with the daemon —
+// the brain's counterpart of claudeSessionStore's notePermissionMode /
+// noteRequestedModel / noteEffort.
+//
+// WHY IT IS NEEDED AND WHY IT LIVES HERE. There is no hook, status line or init
+// frame for the switch itself, so between the daemon's confirmation and the
+// provider's own telemetry catching up the composer pill still reads the OLD
+// value: the user tightens a remote worker to plan mode, gets no error, and the
+// pill says `default`. On a safety control that is the wrong kind of silence.
+//
+// It goes in the SPAWN METADATA rather than being merged into the stored
+// snapshot because the store's rows are replaced wholesale on the next
+// claudemon event — an overlay written into the row would survive for as long
+// as the fleet happened to be quiet. Metadata is re-applied by enrichSnapshot
+// to every row that lands, which is exactly the lifetime "the last confirmed
+// switch, until another one" needs. Empty values are ignored so a partial
+// setModel (effort only) does not blank the model.
+func (s *metaStore) noteLiveControl(id string, permissionMode, model, effort string) {
+	if id == "" {
+		return
+	}
+	s.mu.Lock()
+	m := s.m[id]
+	if permissionMode != "" {
+		m.LivePermissionMode = permissionMode
+	}
+	if model != "" {
+		m.RequestedModel = model
+	}
+	if effort != "" {
+		m.LiveEffort = effort
+	}
+	s.m[id] = m
+	s.mu.Unlock()
 }

@@ -3355,9 +3355,10 @@
       "params": {},
       "rootSet": "workspace",
       "providers": [
+        "brain",
         "main"
       ],
-      "note": "registerCapability, not cat: the brain has no fs.readImage counterpart, so routing it through the catalog door made every remote thumbnail fail with 'no provider'."
+      "note": "registerCapability, not cat: routing it through the catalog door made every remote thumbnail fail with 'no provider', because the brain had no counterpart. It has one now (cmd/brain/readimage.go), so both providers answer and both are held to this corpus. They differ in what they RETURN, not in what they confine: the desktop decodes with nativeImage and downscales, while the brain has no image decoder and serves the twin's own verbatim-bytes fallback under the same inline cap. The EXTENSION ALLOWLIST is the second half of the confinement on both — without it, a method named readImage is a general-purpose file reader with a data: URL wrapper for anything inside a workspace root."
     },
     {
       "method": "fs.write",
@@ -3487,9 +3488,10 @@
       },
       "rootSet": "workspace",
       "providers": [
+        "brain",
         "main"
       ],
-      "note": "registerCapability, not cat: brief.append is desktop-only (the headless brain has no counterpart), like fs.readImage. The caller's ONLY path input is the project DIRECTORY — the basename is composed by the provider as <project>/.workspacer/brief.md — so within a root it reaches strictly less than fs.write, but the directory is still caller-chosen, which is what this table confines. It deliberately takes the SAME workspace roots as fs.write rather than a wider set of its own: the Fleet Manager's cwd is its projects' common parent and containment is by subtree, so every project it manages is already inside."
+      "note": "Both providers answer it now (cmd/brain/brief.go); it was desktop-only, which left a headless Fleet Manager with no way to write the brief that IS its memory across restarts. The caller's ONLY path input is the project DIRECTORY — the basename is composed by the provider as <project>/.workspacer/brief.md — so within a root it reaches strictly less than fs.write, but the directory is still caller-chosen, which is what this table confines. It deliberately takes the SAME workspace roots as fs.write rather than a wider set of its own: the Fleet Manager's cwd is its projects' common parent and containment is by subtree, so every project it manages is already inside."
     },
     {
       "method": "brief.archive",

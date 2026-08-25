@@ -1,0 +1,199 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+// THE CLAMP. agents.spawn refuses to start a bypassing agent for a bus caller;
+// claude.setPermissionMode reaches an agent that is ALREADY running and does no
+// ownership check on the sessionId, so without the same refusal the spawn clamp
+// is one extra call away from being irrelevant.
+//
+// The assertion that matters is not the error — it is that claudemon was NEVER
+// CONTACTED. A refusal that still posted the mode and then reported failure
+// would have already switched the agent.
+func TestSetPermissionModeRefusesEveryEscalationBeforeItTravels(t *testing.T) {
+	for _, mode := range []string{
+		"bypassPermissions", // claude's spelling
+		"yolo",              // codex/opencode/pi's spelling
+		"auto",              // claudemon's stream endpoint accepts it; no menu shows it
+		"dontAsk",
+		"BYPASSPERMISSIONS", // the allowlist is exact — a case variant is unknown, so refused
+		"acceptedits",       // and so is a lowercased spelling of an ALLOWED mode
+	} {
+		t.Run(mode, func(t *testing.T) {
+			rec := newRecorder()
+			srv := rec.server()
+			defer srv.Close()
+			reg := newRegistry(newClaudemonClient(srv.URL))
+
+			params, _ := json.Marshal(map[string]any{"sessionId": "s1", "mode": mode})
+			_, err := reg.handle(context.Background(), "claude.setPermissionMode", params)
+			if err == nil {
+				t.Fatalf("claude.setPermissionMode(%q) was ACCEPTED — a bus caller can turn the host's approvals off on a running agent", mode)
+			}
+			if !strings.Contains(err.Error(), "claude.setPermissionMode") {
+				t.Errorf("refusal does not name the capability: %v", err)
+			}
+			if hits := rec.calls("/sessions/s1/permission-mode"); len(hits) != 0 {
+				t.Fatalf("claudemon was contacted %d time(s) for a REFUSED mode — the switch already happened", len(hits))
+			}
+		})
+	}
+}
+
+// The refusal is asymmetric on purpose: tightening is not an escalation, and a
+// remote operator has to be able to put a runaway worker back into ask mode.
+func TestSetPermissionModeAllowsTighteningAndNeutralModes(t *testing.T) {
+	for _, mode := range []string{"default", "ask", "acceptEdits", "plan", "manual"} {
+		t.Run(mode, func(t *testing.T) {
+			rec := newRecorder()
+			srv := rec.server()
+			defer srv.Close()
+			reg := newRegistry(newClaudemonClient(srv.URL))
+
+			params, _ := json.Marshal(map[string]any{"sessionId": "s1", "mode": mode})
+			res, err := reg.handle(context.Background(), "claude.setPermissionMode", params)
+			if err != nil {
+				t.Fatalf("mode %q was refused: %v", mode, err)
+			}
+			hits := rec.calls("/sessions/s1/permission-mode")
+			if len(hits) != 1 {
+				t.Fatalf("expected one POST to claudemon, got %d", len(hits))
+			}
+			// The CHECKED string is the one that travels.
+			if hits[0].body["mode"] != mode {
+				t.Errorf("claudemon received mode %v, want %q", hits[0].body["mode"], mode)
+			}
+			var out liveControlResult
+			if err := json.Unmarshal(res, &out); err != nil {
+				t.Fatal(err)
+			}
+			if !out.OK {
+				t.Errorf("result not ok: %+v", out)
+			}
+		})
+	}
+}
+
+// A daemon that cannot do the switch live is `{ok:false, error}` — NOT a
+// transport error — so the client can offer the restart path. The desktop
+// handler answers the same shape.
+func TestSetPermissionModeReportsADaemonRefusalAsOkFalse(t *testing.T) {
+	rec := newRecorder()
+	rec.status["/sessions/s1/permission-mode"] = 409
+	srv := rec.server()
+	defer srv.Close()
+	reg := newRegistry(newClaudemonClient(srv.URL))
+
+	res, err := reg.handle(context.Background(), "claude.setPermissionMode",
+		json.RawMessage(`{"sessionId":"s1","mode":"plan"}`))
+	if err != nil {
+		t.Fatalf("a daemon 409 became a call error: %v", err)
+	}
+	var out liveControlResult
+	_ = json.Unmarshal(res, &out)
+	if out.OK || out.Error == "" {
+		t.Fatalf("want ok:false with a reason, got %+v", out)
+	}
+}
+
+// setEffort BRANCHES ON PROVIDER — the whole reason the desktop factored it
+// into one shared body. A claude session takes `/effort <level>` through the
+// queued message path (there is no set_effort in the stream control protocol);
+// a managed one takes the structural /model endpoint.
+func TestSetEffortBranchesOnProvider(t *testing.T) {
+	t.Run("claude uses the message path", func(t *testing.T) {
+		rec := newRecorder()
+		srv := rec.server()
+		defer srv.Close()
+		reg := newRegistry(newClaudemonClient(srv.URL))
+		reg.store = newSessionStore()
+		reg.store.set("s1", json.RawMessage(`{"session_id":"s1","provider":"claude"}`))
+
+		if _, err := reg.handle(context.Background(), "claude.setEffort",
+			json.RawMessage(`{"sessionId":"s1","effort":"high"}`)); err != nil {
+			t.Fatal(err)
+		}
+		msgs := rec.calls("/sessions/s1/message")
+		if len(msgs) != 1 || msgs[0].body["text"] != "/effort high" {
+			t.Fatalf("want one `/effort high` message, got %+v", msgs)
+		}
+		if n := len(rec.calls("/sessions/s1/model")); n != 0 {
+			t.Errorf("a claude session hit the /model endpoint %d time(s)", n)
+		}
+	})
+
+	t.Run("codex uses the model endpoint", func(t *testing.T) {
+		rec := newRecorder()
+		srv := rec.server()
+		defer srv.Close()
+		reg := newRegistry(newClaudemonClient(srv.URL))
+		reg.store = newSessionStore()
+		reg.store.set("s2", json.RawMessage(`{"session_id":"s2","provider":"codex"}`))
+
+		if _, err := reg.handle(context.Background(), "claude.setEffort",
+			json.RawMessage(`{"sessionId":"s2","effort":"xhigh"}`)); err != nil {
+			t.Fatal(err)
+		}
+		models := rec.calls("/sessions/s2/model")
+		if len(models) != 1 || models[0].body["effort"] != "xhigh" {
+			t.Fatalf("want one /model post carrying the effort, got %+v", models)
+		}
+		// Empty fields are OMITTED, not sent as "": a present-but-empty model is
+		// a request to switch to a model with no name.
+		if _, present := models[0].body["model"]; present {
+			t.Errorf("an empty model was sent to the daemon: %+v", models[0].body)
+		}
+		if n := len(rec.calls("/sessions/s2/message")); n != 0 {
+			t.Errorf("a managed session went through the message path %d time(s)", n)
+		}
+	})
+}
+
+// setModel omits what it was not given, for the same reason.
+func TestSetModelOmitsFieldsItWasNotGiven(t *testing.T) {
+	rec := newRecorder()
+	srv := rec.server()
+	defer srv.Close()
+	reg := newRegistry(newClaudemonClient(srv.URL))
+
+	if _, err := reg.handle(context.Background(), "claude.setModel",
+		json.RawMessage(`{"sessionId":"s1","model":"gpt-5.5"}`)); err != nil {
+		t.Fatal(err)
+	}
+	hits := rec.calls("/sessions/s1/model")
+	if len(hits) != 1 || hits[0].body["model"] != "gpt-5.5" {
+		t.Fatalf("want one /model post, got %+v", hits)
+	}
+	if _, present := hits[0].body["effort"]; present {
+		t.Errorf("an empty effort was sent: %+v", hits[0].body)
+	}
+	// And a call naming neither is refused rather than posting an empty object.
+	if _, err := reg.handle(context.Background(), "claude.setModel",
+		json.RawMessage(`{"sessionId":"s1"}`)); err == nil {
+		t.Error("claude.setModel accepted a call naming neither a model nor an effort")
+	}
+}
+
+// handoffBrief is a pure relay: the caller names a session and never a path.
+func TestHandoffBriefRelaysAndNamesNoPath(t *testing.T) {
+	rec := newRecorder()
+	srv := rec.server()
+	defer srv.Close()
+	reg := newRegistry(newClaudemonClient(srv.URL))
+
+	if _, err := reg.handle(context.Background(), "claude.handoffBrief",
+		json.RawMessage(`{"sessionId":"s1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(rec.calls("/sessions/s1/handoff")); n != 1 {
+		t.Fatalf("expected one POST to the daemon's handoff endpoint, got %d", n)
+	}
+	if _, err := reg.handle(context.Background(), "claude.handoffBrief", json.RawMessage(`{}`)); err == nil {
+		t.Error("claude.handoffBrief accepted a call with no session id")
+	}
+}

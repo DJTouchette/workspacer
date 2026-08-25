@@ -154,11 +154,30 @@ test.describe('/m with a node registry', () => {
     expect(await page.content()).not.toContain('fm2_TEST_TOKEN');
   });
 
+  test('a tap alone does not start the machine — it only opens the confirm', async ({ page }) => {
+    await openFleet(page, hub);
+    const den = page.locator('.node[data-node="den"]');
+    await expect(den).toHaveAttribute('data-node-state', 'stopped', { timeout: 10000 });
+
+    // Dismiss the confirm rather than accept it. window.confirm() blocks the
+    // page's JS until answered, so the handler must be armed before the tap.
+    page.once('dialog', (d) => d.dismiss());
+    const before = fly.starts.length;
+    await den.locator('button').click();
+    await page.waitForTimeout(300);
+
+    expect(fly.starts.length).toBe(before);
+    await expect(den).toHaveAttribute('data-node-state', 'stopped');
+  });
+
   test('Connect really starts the machine, and waking reads as progress', async ({ page }) => {
     await openFleet(page, hub);
     const den = page.locator('.node[data-node="den"]');
     await expect(den).toHaveAttribute('data-node-state', 'stopped', { timeout: 10000 });
 
+    // A wake spends real money and this hub has no stop verb — confirming is
+    // what actually reaches nodes.wake.
+    page.once('dialog', (d) => d.accept());
     const before = fly.starts.length;
     await den.locator('button').click();
 
