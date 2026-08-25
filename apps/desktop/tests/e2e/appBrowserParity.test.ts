@@ -14,6 +14,8 @@
  *   2. **A live permission-mode switch failed silently.** The rejection landed
  *      in a bare `console.warn` (`ComposerControls.tsx:474-477`), so the pill
  *      just cleared and the user learned nothing. Closed by web-2 (`a0ef7e0e`).
+ *      web-4 has since given the brain a provider for the switch itself, but
+ *      the rejection path stays reachable — see the spec's own comment.
  *   3. **Attaching a file was a `window.prompt` asking you to type HOST
  *      paths** (`webBackend.ts:871-883`) — not a degraded experience, a
  *      non-functional one, since a browser cannot know paths on someone else's
@@ -142,13 +144,12 @@ test.describe('failures the user should see', () => {
     await openApp(page);
 
     // The fixture answers claude.setPermissionMode with an error by default
-    // (`HEADLESS_GAP_METHODS`), reproducing a headless hub exactly: the brain
-    // registers no provider for it (`headless_completeness_test.go:41-43`), so
-    // the promise REJECTS. That is the branch that used to vanish — a rejection
-    // never reaches the `res.ok === false` path that shows the restart confirm.
-    // Keeping the fixture in the FAILING state is the point: this spec has to
-    // keep working against a hub that genuinely cannot switch modes, which is
-    // what a Fly node is.
+    // (`HEADLESS_GAP_METHODS`). A REJECTION is the case that used to vanish: it
+    // never reaches the `res.ok === false` path that shows the restart confirm,
+    // so it fell through to a bare console.warn. web-4 has since given the brain
+    // a provider, but a rejection is still reachable in a dozen ways — claudemon
+    // refusing a live switch, a federated peer offline, a provider down — and
+    // this spec exists to keep the client loud in every one of them.
     const before = await page.locator('body').innerText();
 
     await page.getByText('Ask to approve').first().click();
