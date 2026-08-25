@@ -199,7 +199,7 @@ chown "${WKS_UID}:${WKS_GID}" "${WKS_HOME}/.wks-env" 2>/dev/null || true
 # Code refuses --dangerously-skip-permissions when euid is 0, and this fleet
 # leans on full-access grants. setpriv is util-linux, already in the image.
 as_wks() {
-  setpriv --reuid="$WKS_UID" --regid="$WKS_GID" --init-groups --inherit-caps=-all -- "$@"
+  setpriv --reuid="$WKS_UID" --regid="$WKS_GID" --init-groups --inh-caps=-all -- "$@"
 }
 
 # --------------------------------------------------------------------------
