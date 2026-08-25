@@ -192,7 +192,47 @@ describe('RemoteNodesBar — never offer a button that will be refused', () => {
     await act(async () => {
       fireEvent.click(btn);
     });
+    // A single tap opens the confirm step — it does not fire the wake yet.
+    expect(nodesWake).not.toHaveBeenCalled();
+    // Confirming is what actually spends the money.
+    const confirmBtn = await screen.findByRole('menuitem', { name: /connect/i });
+    await act(async () => {
+      fireEvent.click(confirmBtn);
+    });
     expect(nodesWake).toHaveBeenCalledWith('den');
+  });
+
+  it('does not wake on a tap alone — a single click only opens the confirm step', async () => {
+    await mount({ nodes: [node()], canWake: true });
+    const row = await screen.findByTestId('remote-node-den');
+    const btn = row.querySelector('button')!;
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(nodesWake).not.toHaveBeenCalled();
+  });
+
+  it('names the consequence in the confirm step, reusing the cost note', async () => {
+    await mount({ nodes: [node()], canWake: true });
+    const row = await screen.findByTestId('remote-node-den');
+    await act(async () => {
+      fireEvent.click(row.querySelector('button')!);
+    });
+    expect(await screen.findByRole('menu')).toHaveTextContent(/bills from boot/i);
+  });
+
+  it('cancelling the confirm step starts nothing', async () => {
+    await mount({ nodes: [node()], canWake: true });
+    const row = await screen.findByTestId('remote-node-den');
+    await act(async () => {
+      fireEvent.click(row.querySelector('button')!);
+    });
+    const cancelBtn = await screen.findByRole('menuitem', { name: /cancel/i });
+    await act(async () => {
+      fireEvent.click(cancelBtn);
+    });
+    expect(nodesWake).not.toHaveBeenCalled();
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 
   it('surfaces a refused wake instead of swallowing it', async () => {
@@ -201,6 +241,9 @@ describe('RemoteNodesBar — never offer a button that will be refused', () => {
     nodesWake.mockResolvedValueOnce({ ok: false, error: 'the cloud API is rate-limiting' });
     await act(async () => {
       fireEvent.click(row.querySelector('button')!);
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('menuitem', { name: /connect/i }));
     });
     await waitFor(() =>
       expect(screen.getByTestId('remote-node-den')).toHaveTextContent(/rate-limiting/i),
