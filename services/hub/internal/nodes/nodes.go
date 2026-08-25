@@ -226,13 +226,7 @@ func ValidID(s string) bool {
 	return true
 }
 
-// FileLooksExposed reports whether the registry file is readable by anyone
-// beyond its owner. It holds a credential that spends money; a caller should
-// say so loudly rather than fix it silently under the user.
-func FileLooksExposed(path string) bool {
-	st, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return st.Mode().Perm()&0o077 != 0
-}
+// Who can read this file is answered by [FileExposure], in exposure.go — a
+// THREE-valued answer, because the obvious one-liner
+// (os.Stat(path).Mode().Perm()&0o077 != 0) is a constant on Windows and said
+// "exposed" about every file that existed. See exposure.go.

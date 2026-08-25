@@ -151,8 +151,15 @@ func startNodes(ctx context.Context, srv *bus.Server, b *broker.Broker, self *bu
 	if len(entries) == 0 {
 		return nil
 	}
-	if nodes.FileLooksExposed(path) {
-		log.Printf("nodes: WARNING %s is readable beyond its owner and may hold a cloud API token that can spend money — chmod 600 it", path)
+	// Three outcomes, not two. "The hub could not tell" is printed as itself
+	// rather than collapsed into either a warning or silence — on Windows the
+	// permissions are ACLs and a domain group in the DACL is a question this
+	// process cannot answer. See internal/nodes/exposure.go.
+	switch exposure, why := nodes.FileExposure(path); exposure {
+	case nodes.ExposureLoose:
+		log.Printf("nodes: WARNING %s holds a cloud API token that can spend money, and %s", path, why)
+	case nodes.ExposureUnknown:
+		log.Printf("nodes: NOTE %s holds a cloud API token that can spend money. The hub could NOT confirm only you can read it: %s. This is not a clean bill of health — check it yourself", path, why)
 	}
 	// The registry's liveness probe is brain.info, and it cannot tell a REMOTE
 	// brain from a local one. A hub supervising its own brain would report a
