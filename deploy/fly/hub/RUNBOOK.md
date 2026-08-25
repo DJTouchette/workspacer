@@ -2,6 +2,11 @@
 
 **Written:** 2026-08-25. **Artifacts:** `deploy/fly/hub/`.
 
+> **Provisioning both machines? Start at [`../RUNBOOK.md`](../RUNBOOK.md).** This
+> document is the reference for *why the hub is shaped the way it is*, and §8
+> assumes a node that already exists. The combined runbook is the order, and it
+> gathers the steps only a human can do into one sitting.
+
 The exact sequence a human runs **once**, in order, to turn an empty Fly account
 into an always-on hub that a sleeping worker node attaches to and a phone can
 wake it from.
@@ -158,8 +163,9 @@ things, in order of how concrete they are:
 2. **This is the only machine holding a credential that spends money.** The node's
    worst case for a public doorbell was "a stranger burns $0.06/hr". The hub's is
    "a stranger is talking to the control plane". `nodes.wake` is host-authority
-   only — `nodesTrusted` refuses even an operator-tier scoped token — so the token
-   is a real boundary, but it is one boundary, and the failure is expensive.
+   only — `nodesTrusted` refuses the view and triage tiers, though **not** an
+   operator-tier scoped token, which `bus.go` marks trusted (see §11) — so the
+   token is a real boundary, but it is one boundary, and the failure is expensive.
 3. **The unguarded surface is real, if small.** `/m`, the PWA manifest, the service
    worker, the icons, `/plugins/origin` and `/plugins/ui/<id>/` are served without
    the host token by design (a `<script>` URL cannot carry it). None of them
@@ -455,7 +461,7 @@ fly ips allocate-v4 --shared --app workspacer-hub
 |---|---|
 | `/bus` | `Server.Authorized` — the host token, or a scoped token whose grant is operator. Plus `originAllowed`. **This is the real boundary.** |
 | `/app/` entry | `Authorized`. View/triage scoped tokens are refused. |
-| `nodes.wake` | `nodesTrusted` — **host authority only**. A scoped operator token is refused, so a leaked phone-tier token cannot spend money. |
+| `nodes.wake` | `nodesTrusted` — **host authority**. A view- or triage-tier token is refused, so a leaked phone-tier token cannot spend money. **An OPERATOR-tier scoped token is NOT refused**: `bus.go` marks operator-tier as `trusted`, and `nodesTrusted` asks `IsTrusted()`. Verified 2026-08-25 by calling `nodes.wake` with an operator-scoped token and watching the hub issue a real `POST /v1/apps/…/machines/…/start`. Mint operator tokens accordingly. |
 | `nodes.list` | View tier. Discloses a label, a state and a timestamp — deliberately not the app, the machine id, the endpoint or the token. |
 | `/m`, manifest, `sw.js`, icons, `/plugins/origin`, `/plugins/ui/<id>/` | **Unguarded by design.** Static shells; none discloses session state. This is the surface you are adding to the internet. |
 
