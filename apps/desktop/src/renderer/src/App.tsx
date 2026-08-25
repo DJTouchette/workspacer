@@ -225,6 +225,9 @@ interface AgentWorkspaceViewProps {
   /** Resumable daemon sessions — for the Sessions pane. Changes only on the
    *  recent-sessions poll/burst, so the memo still holds between ticks. */
   recentSessions: RecentAgentSession[];
+  /** Why the daemon's session list couldn't be read (null when it could), so
+   *  the Sessions pane says "can't see it" instead of "there is none". */
+  recentSessionsUnavailable: string | null;
   /** Session ids the Sessions pane must not offer as transcript rows: already
    *  in the layout, or live under another client per the daemon. */
   historyExcludeIds: string[];
@@ -253,6 +256,7 @@ const AgentWorkspaceView = memo(function AgentWorkspaceView({
   appCwd,
   allAgents,
   recentSessions,
+  recentSessionsUnavailable,
   historyExcludeIds,
   handlers,
 }: AgentWorkspaceViewProps) {
@@ -286,6 +290,7 @@ const AgentWorkspaceView = memo(function AgentWorkspaceView({
           spawnGuide={handlers.spawnGuide}
           onJumpToAgent={handlers.onJumpToAgent}
           recentSessions={recentSessions}
+          recentSessionsUnavailable={recentSessionsUnavailable}
           onResumeRecentSession={handlers.onResumeRecentSession}
           historyExcludeIds={historyExcludeIds}
         />
@@ -537,7 +542,9 @@ function App() {
   // Resumable daemon sessions (all providers, incl. archived) with no card in
   // the current layout. Uncapped: the Sessions pane browses the full list and
   // the sidebar's History footer row shows the true count.
-  const allDaemonSessions = useRecentSessions(sessionPhase === 'active');
+  const { sessions: allDaemonSessions, unavailable: recentSessionsUnavailable } = useRecentSessions(
+    sessionPhase === 'active',
+  );
   const recentSessions = useMemo(
     () => filterResumableSessions(allDaemonSessions, agents, ptyMapping, Infinity),
     [allDaemonSessions, agents, ptyMapping],
@@ -2683,6 +2690,7 @@ function App() {
                     appCwd={appCwd}
                     allAgents={agents}
                     recentSessions={recentSessions}
+                    recentSessionsUnavailable={recentSessionsUnavailable}
                     historyExcludeIds={historyExcludeIds}
                     handlers={agentViewHandlers}
                   />

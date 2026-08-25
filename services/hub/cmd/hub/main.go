@@ -29,6 +29,7 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/jobobject"
 	"github.com/djtouchette/workspacer-hub/internal/jobs"
 	"github.com/djtouchette/workspacer-hub/internal/layout"
+	"github.com/djtouchette/workspacer-hub/internal/nodes"
 	"github.com/djtouchette/workspacer-hub/internal/parentwatch"
 	"github.com/djtouchette/workspacer-hub/internal/plugin"
 	"github.com/djtouchette/workspacer-hub/internal/push"
@@ -295,6 +296,7 @@ func main() {
 	var peerFlags multiFlag
 	flag.Var(&peerFlags, "peer", "federate with a peer hub (repeatable): name=work,url=ws://host:7895/bus,token=… — tests/dev only; a token here rides argv, which /proc makes world-readable. Durable peers belong in -peers-file")
 	peersFile := flag.String("peers-file", federation.DefaultPeersPath(), "federation peers file (JSON array of {name,url,token}, 0600 — tokens are scoped tokens minted ON each peer via `workspacer token create`). Curated fleet topics republish locally stamped with the peer name; peer capabilities become callable as hub:<name>/<method>")
+	nodesFile := flag.String("nodes-file", nodes.DefaultPath(), "remote node registry (JSON array of {id,label,fly:{app,machineId,token}}, 0600 — the Fly token can start machines, i.e. spend money, so it lives here and NEVER in config.yaml or a flag). Empty = the node registry is disabled")
 	jobsFile := flag.String("jobs-file", defaultJobsFile(), "hub job specs file (recurring/one-off jobs: spawn an agent, call a capability, run a shell command; persisted 0600 — a job is persisted argv). Empty = jobs disabled")
 	flag.Parse()
 
@@ -532,6 +534,29 @@ func main() {
 	// using the machine must not be its own affirmative answer.
 	srv.RegisterLocalIdent("fleet.quiescence", watcher.answer)
 	go watcher.run(ctx, quiescence.DefaultSampleInterval)
+
+	// Remote node registry: which machines exist, whether each is available,
+	// waking, stopped or unreachable, and the one call that starts a stopped
+	// one. Registered only when a nodes.json exists, so an ordinary desktop
+	// install carries neither the methods nor the poll.
+	//
+	// Registered with LITERAL method names — the brain's headless-completeness
+	// guard parses RegisterLocal names out of THIS file, and capspec's
+	// composition bearings grep it for the nodesTrusted("nodes.<x>", …) call
+	// shape, so a name behind a variable is invisible to both.
+	//
+	// nodes.list goes through the plain door (no params, no caller identity
+	// needed) and is admitted to the VIEW tier: it discloses a label, a state
+	// and a timestamp, and deliberately not the app, the machine id, the
+	// endpoint or — obviously — the token.
+	//
+	// nodes.wake goes through the caller-aware door because the handler must
+	// know WHO is asking. Starting a machine spends money and this hub has no
+	// way to stop one, so it is host-authority only: see nodesTrusted.
+	if sup := startNodes(ctx, srv, b, self, *nodesFile, *brainScope); sup != nil {
+		srv.RegisterLocal("nodes.list", nodesList(sup))
+		srv.RegisterLocalIdent("nodes.wake", nodesWake(ctx, sup))
+	}
 
 	// Load + supervise plugins; expose their contributions at /plugins. The
 	// manager registers per-plugin bus tokens with srv so capability calls are

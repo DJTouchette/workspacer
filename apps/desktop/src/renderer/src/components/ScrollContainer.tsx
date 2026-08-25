@@ -117,6 +117,9 @@ interface ScrollContainerProps {
   spawnGuide?: (question: string) => Promise<string>;
   /** Resumable daemon sessions + resume — forwarded to the Sessions pane. */
   recentSessions?: RecentAgentSession[];
+  /** Why that list couldn't be read (null when it could) — so the pane can say
+   *  "can't see it" rather than "there is none". */
+  recentSessionsUnavailable?: string | null;
   onResumeRecentSession?: (session: RecentAgentSession) => void;
   /** Session ids the layout holds or the daemon reports live — the Sessions
    *  pane hides its transcript-sourced rows for these. */
@@ -167,6 +170,9 @@ interface PaneCallbacks {
   ownerAgentId?: string;
   /** Resumable daemon sessions + resume — for the Sessions pane. */
   recentSessions?: RecentAgentSession[];
+  /** Why that list couldn't be read (null when it could) — so the pane can say
+   *  "can't see it" rather than "there is none". */
+  recentSessionsUnavailable?: string | null;
   onResumeRecentSession?: (session: RecentAgentSession) => void;
   /** In-layout / daemon-live session ids the Sessions pane must not re-offer. */
   historyExcludeIds?: string[];
@@ -389,6 +395,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
         <Suspense fallback={<PaneFallback />}>
           <SessionsPane
             sessions={callbacks.recentSessions ?? []}
+            unavailable={callbacks.recentSessionsUnavailable ?? null}
             excludeSessionIds={callbacks.historyExcludeIds}
             onResume={callbacks.onResumeRecentSession}
           />
@@ -583,6 +590,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       onJumpToAgent,
       spawnGuide,
       recentSessions,
+      recentSessionsUnavailable,
       onResumeRecentSession,
       historyExcludeIds,
     },
@@ -753,6 +761,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
             spawnGuide,
             ownerAgentId,
             recentSessions,
+            recentSessionsUnavailable,
             onResumeRecentSession,
             historyExcludeIds,
           };

@@ -93,6 +93,20 @@ var viewMethods = []string{
 	//                     could already assemble one poll at a time from the
 	//                     snapshot feed this tier receives; nothing in the answer
 	//                     names a credential, an address, or a job's argv
+	"nodes.list", // the remote-node registry: which machines exist and whether
+	//                each is available, waking, stopped or unreachable. Admitted
+	//                for the same reason federation.peers is — it is a TOMBSTONE
+	//                signal, and a client that cannot read it renders a node that
+	//                is asleep on purpose as one that has died. What it hands back
+	//                is nodes.NodeView, an allowlist projection: a label, a state,
+	//                two timestamps and a sentence. It names no credential, no
+	//                cloud app, no machine id and no endpoint.
+	//
+	//                Its acting twin, nodes.wake, is deliberately NOT here or in
+	//                triage: waking starts a billable machine and this hub has no
+	//                way to stop one, so it is host-authority only (nodesTrusted in
+	//                cmd/hub). A phone on this tier SEES the state and does not get
+	//                the button — which /m already renders gracefully via can().
 	"push.key", // VAPID public key — needed before subscribing, discloses nothing
 	// The one method in this list that WRITES anywhere, admitted so the facade's
 	// tool set derives from this allowlist again rather than sitting beside it.
