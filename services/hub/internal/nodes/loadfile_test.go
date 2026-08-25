@@ -105,20 +105,9 @@ func TestResolveTokenPrefersInlineThenFileThenEnv(t *testing.T) {
 	}
 }
 
-// The registry holds a credential that spends money. A caller must be able to
-// notice it is world-readable.
-func TestFileLooksExposedNoticesLoosePermissions(t *testing.T) {
-	p := write(t, `[]`)
-	if FileLooksExposed(p) {
-		t.Fatal("a 0600 file was reported exposed")
-	}
-	if err := os.Chmod(p, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if !FileLooksExposed(p) {
-		t.Fatal("a 0644 file holding a Fly token was not reported exposed")
-	}
-}
+// Who can READ the registry is exposure_test.go's subject, and it is not one
+// test but a platform split: the mode-bit check that used to live here is a
+// constant on Windows, where permissions are ACLs. See exposure.go.
 
 // DefaultPath sits beside peers.json and tokens.json, and is nodes.json.
 func TestDefaultPathIsNodesJSONInTheConfigDir(t *testing.T) {
