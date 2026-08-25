@@ -120,7 +120,8 @@ export const HOST_ONLY = [
   'tailscaleSetServe',
   'setRemoteServer', // rewrites this desktop's own server target, then relaunches
   'appRelaunch', // Electron app lifecycle
-  'openExternalUrl', // hands a URL to the host's default browser
+  'openExternalUrl', // hands a URL to the host's default browser (the web backend
+  //                    has its own window.open fallback for browser tabs)
   'claudeProfilesAddAccount', // builds a linked CLAUDE_CONFIG_DIR on the host fs
   'claudeProfilesLoginStatus', // probes host credential files
   // The brief board. Main resolves every path itself from the host's config and

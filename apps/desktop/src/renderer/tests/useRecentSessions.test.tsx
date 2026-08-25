@@ -48,7 +48,7 @@ describe('useRecentSessions — refresh burst', () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(list).toHaveBeenCalledTimes(1);
-    expect(result.current[0]?.mode).toBe('responding');
+    expect(result.current.sessions[0]?.mode).toBe('responding');
 
     act(() => {
       requestRecentSessionsRefresh();
@@ -58,7 +58,7 @@ describe('useRecentSessions — refresh burst', () => {
       await vi.advanceTimersByTimeAsync(11_000);
     });
     expect(list.mock.calls.length).toBeGreaterThanOrEqual(4);
-    expect(result.current[0]?.mode).toBe('stopped');
+    expect(result.current.sessions[0]?.mode).toBe('stopped');
   });
 
   it('keeps the regular 60s poll alive after a burst', async () => {
@@ -80,5 +80,55 @@ describe('useRecentSessions — refresh burst', () => {
       await vi.advanceTimersByTimeAsync(60_000);
     });
     expect(list.mock.calls.length).toBeGreaterThan(afterBurst);
+  });
+});
+
+/**
+ * `sessions.recent` has no provider on a headless hub (it is registered by the
+ * desktop main process, which enriches the daemon's list from its own history
+ * DB). The web backend used to answer `[]` on that rejection, and the Sessions
+ * pane then said "No past sessions — everything is already in your workspace":
+ * a confident, wrong answer about someone's history. "I cannot see it" and
+ * "there is none" have to be different states.
+ */
+describe('useRecentSessions — an unreadable list is not an empty one', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('reports the failure instead of presenting [] as the truth', async () => {
+    (window.electronAPI.listRecentAgentSessions as any) = vi
+      .fn()
+      .mockRejectedValue(new Error('no provider for sessions.recent'));
+    const { result } = renderHook(() => useRecentSessions());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.sessions).toEqual([]);
+    expect(result.current.unavailable).toMatch(/no provider for sessions\.recent/);
+  });
+
+  it('clears the flag once the list can be read again', async () => {
+    const list = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('no provider for sessions.recent'))
+      .mockResolvedValue([row('S1', 'stopped')]);
+    (window.electronAPI.listRecentAgentSessions as any) = list;
+    const { result } = renderHook(() => useRecentSessions());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.unavailable).toBeTruthy();
+    act(() => {
+      requestRecentSessionsRefresh();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(result.current.unavailable).toBeNull();
+    expect(result.current.sessions).toHaveLength(1);
   });
 });

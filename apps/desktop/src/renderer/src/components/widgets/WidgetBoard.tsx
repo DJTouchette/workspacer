@@ -18,6 +18,7 @@ import { claudeColors as colors } from '../claude-shared';
 import { Surface } from '../Surface';
 import { useWidgetBoard } from '../../hooks/useWidgetBoard';
 import { usePluginWebview } from '../../hooks/usePluginWebview';
+import GuestFrame from '../GuestFrame';
 import { HOST_WIDGETS, hostWidget } from './hostWidgets';
 
 /**
@@ -305,9 +306,10 @@ const WidgetCell: React.FC<{
 /**
  * A plugin widget's guest.
  *
- * Same `<webview>` mechanism and same `persist:browser` partition as a plugin
- * pane, so a plugin's pane and widgets are same-origin and Chromium can reuse
- * one renderer process across them. Measured marginal cost of a guest is ~30MB
+ * Same guest mechanism and same `persist:browser` partition as a plugin pane
+ * (`<webview>` on the desktop, a sandboxed `<iframe>` on /app — see
+ * `lib/guestFrame.ts`), so a plugin's pane and widgets are same-origin and
+ * Chromium can reuse one renderer process across them. Measured marginal cost of a guest is ~30MB
  * private — real but affordable at a board-sized count, and reclaimed entirely
  * when the rail closes and this unmounts.
  *
@@ -335,12 +337,13 @@ const PluginWidgetView: React.FC<{ widget: PluginWidget; cwd: string }> = ({ wid
   }, [widget.url, widget.busToken, cwd]);
 
   return (
-    <webview
+    <GuestFrame
       // Remount on url change rather than mutating src — a guest that has
       // already navigated ignores a changed src attribute.
       key={src}
-      ref={ref as never}
+      ref={ref}
       src={src}
+      title={widget.title}
       style={{ flex: 1, width: '100%', height: '100%', border: 'none' }}
       partition="persist:browser"
     />

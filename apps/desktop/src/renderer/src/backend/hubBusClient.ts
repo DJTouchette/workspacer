@@ -322,7 +322,17 @@ export class HubBusClient {
 
   // ── RPC ───────────────────────────────────────────────────────────────
 
-  call<T = unknown>(method: string, params: unknown = {}): Promise<T> {
+  /**
+   * @param timeoutMs overrides the default for calls whose payload, not whose
+   * work, is the slow part — `files.upload` ships megabytes over whatever link
+   * the viewer is on, and timing that out at 15s is a FALSE failure: the hub
+   * writes the file regardless, so the user is told it failed and it didn't.
+   */
+  call<T = unknown>(
+    method: string,
+    params: unknown = {},
+    timeoutMs: number = CALL_TIMEOUT_MS,
+  ): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const id = 'c' + ++this.callSeq;
       const timer = setTimeout(() => {
@@ -336,7 +346,7 @@ export class HubBusClient {
           this.sendQueue = this.sendQueue.filter((q) => q.id !== id);
           reject(new Error(`hub call timeout: ${method}`));
         }
-      }, CALL_TIMEOUT_MS);
+      }, timeoutMs);
       this.calls.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
       const frame = JSON.stringify({ op: 'call', id, method, params });
       // Send now if connected, else queue until onopen. The pending call's

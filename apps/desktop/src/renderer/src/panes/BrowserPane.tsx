@@ -1,10 +1,13 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { AlertTriangle, X } from 'lucide-react';
 import { useConfig, DEFAULT_CONFIG } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
 import { webviewThemeCSS, webviewThemeJS } from '../lib/webviewTheme';
 import { webviewSettingsJS } from '../lib/webviewSettings';
 import { resolveLeader, resolveMod } from '../lib/shortcuts';
 import { isLayerArmed } from '../lib/layerArmed';
+import { guestHost, guestFramePolicy } from '../lib/guestFrame';
+import GuestFrame from '../components/GuestFrame';
 
 interface BrowserPaneProps {
   paneId: string;
@@ -22,6 +25,10 @@ interface Bookmark {
   name: string;
   url: string;
 }
+
+/** Why back/forward are dead in a browser — shown as the buttons' tooltip. */
+const BROWSER_HISTORY_UNAVAILABLE =
+  'Page history needs the desktop app — an embedded frame does not expose its own back/forward to the page around it';
 
 function normalizeUrl(input: string): string {
   const trimmed = input.trim();
@@ -63,6 +70,20 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
   const [syncMsg, setSyncMsg] = useState<{ text: string; isError: boolean } | null>(null);
   const syncMsgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [urlFocused, setUrlFocused] = useState(false);
+  // ── Guest host ──
+  //
+  // `<webview>` on the desktop, `<iframe>` on /app. Constant for the life of the
+  // build (it reads the installed backend's platform), so it can be resolved
+  // once here and read from effects with empty deps.
+  const isIframe = guestHost() === 'iframe';
+  /** Where the iframe has been navigated since mount; '' = still on startUrl. */
+  const [frameSrc, setFrameSrc] = useState('');
+  /** Bumped to remount the iframe, which is the only way to force it to reload. */
+  const [reloadNonce, setReloadNonce] = useState(0);
+  /** The generic-browsing framing caveat is dismissible — on a site that frames
+   *  fine it has already said everything it has to say. The plugin-pane notice
+   *  is not: that loss is permanent for as long as the pane is open. */
+  const [noticeDismissed, setNoticeDismissed] = useState(false);
   const webviewRef = useRef<HTMLElement | null>(null);
   const readyRef = useRef(false);
   const onUrlChangeRef = useRef(onUrlChange);
@@ -392,6 +413,14 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
     wv.addEventListener('did-fail-load', handleFailLoad);
     wv.addEventListener('did-finish-load', handleFinishLoad);
 
+    // An <iframe> fires none of the events above, but it does fire a plain
+    // `load` — enough to clear the progress bar. It is deliberately NOT wired to
+    // `guestError`: a frame refused by X-Frame-Options also fires `load`, so
+    // treating load as success would be a lie, and there is no event that
+    // reports the refusal (see the embedded-view notice in the toolbar).
+    const handleFrameLoad = () => setLoading(false);
+    if (isIframe) wv.addEventListener('load', handleFrameLoad);
+
     wv.addEventListener('dom-ready', handleDomReady);
     wv.addEventListener('did-start-loading', handleStartLoading);
     wv.addEventListener('did-stop-loading', handleStopLoading);
@@ -399,6 +428,7 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
     wv.addEventListener('did-navigate-in-page', handleNavigateInPage);
 
     return () => {
+      if (isIframe) wv.removeEventListener('load', handleFrameLoad);
       wv.removeEventListener('dom-ready', handleDomReady);
       wv.removeEventListener('before-input-event', handleBeforeInput);
       wv.removeEventListener('console-message', handleConsoleMessage);
@@ -411,20 +441,42 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
       wv.removeEventListener('did-fail-load', handleFailLoad);
       wv.removeEventListener('did-finish-load', handleFinishLoad);
     };
-  }, []);
+    // reloadNonce is the iframe refresh: it REMOUNTS the element (the only way
+    // to reload a cross-origin frame), so the listeners have to re-attach to the
+    // new one or the progress bar never clears again. It never changes on the
+    // desktop, where refresh is wv.reload() and the element survives.
+  }, [reloadNonce]);
 
   // Compute the start URL once for the webview src attribute
   const startUrl = normalizeUrl(initialUrl || browserCfg.homepage || 'https://google.com');
+  /** What the guest is actually showing — the source of the framing policy. */
+  const guestSrc = frameSrc || startUrl;
+  const framePolicy = useMemo(
+    () => guestFramePolicy(guestSrc, isIframe ? 'iframe' : 'webview'),
+    [guestSrc, isIframe],
+  );
 
-  const navigate = useCallback((targetUrl: string) => {
-    const normalized = normalizeUrl(targetUrl);
-    if (!normalized) return;
-    setUrl(normalized);
-    const wv = webviewRef.current as any;
-    if (wv && wv.loadURL) {
-      wv.loadURL(normalized);
-    }
-  }, []);
+  const navigate = useCallback(
+    (targetUrl: string) => {
+      const normalized = normalizeUrl(targetUrl);
+      if (!normalized) return;
+      setUrl(normalized);
+      // An iframe has no loadURL; it navigates by having its src replaced. The
+      // guest also can't tell us where it went afterwards (cross-origin), so the
+      // omnibox is authoritative rather than reflective here.
+      if (isIframe) {
+        setFrameSrc(normalized);
+        setLoading(true);
+        onUrlChangeRef.current?.(normalized);
+        return;
+      }
+      const wv = webviewRef.current as any;
+      if (wv && wv.loadURL) {
+        wv.loadURL(normalized);
+      }
+    },
+    [isIframe],
+  );
 
   const handleGo = useCallback(() => {
     navigate(url);
@@ -441,9 +493,17 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
   );
 
   const handleRefresh = useCallback(() => {
+    // Remounting is the only reliable reload for a cross-origin iframe: setting
+    // src to the value it already has is a no-op, and reload() lives on the
+    // guest's contentWindow, which same-origin policy keeps out of reach.
+    if (isIframe) {
+      setLoading(true);
+      setReloadNonce((n) => n + 1);
+      return;
+    }
     const wv = webviewRef.current as any;
     if (wv && wv.reload) wv.reload();
-  }, []);
+  }, [isIframe]);
 
   const handleStopLoad = useCallback(() => {
     const wv = webviewRef.current as any;
@@ -540,17 +600,29 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
               borderBottom: '1px solid var(--wks-border-subtle)',
             }}
           >
-            <NavButton onClick={handleBack} title="Back" disabled={!canGoBack}>
+            {/* Back/forward/stop drive the guest's own session history, which an
+                iframe does not expose to its embedder. Disabled with a reason —
+                a live button that silently does nothing is the failure mode this
+                fallback exists to remove. */}
+            <NavButton
+              onClick={handleBack}
+              title={isIframe ? BROWSER_HISTORY_UNAVAILABLE : 'Back'}
+              disabled={isIframe || !canGoBack}
+            >
               <IconBack />
             </NavButton>
-            <NavButton onClick={handleForward} title="Forward" disabled={!canGoForward}>
+            <NavButton
+              onClick={handleForward}
+              title={isIframe ? BROWSER_HISTORY_UNAVAILABLE : 'Forward'}
+              disabled={isIframe || !canGoForward}
+            >
               <IconForward />
             </NavButton>
             <NavButton
-              onClick={loading ? handleStopLoad : handleRefresh}
-              title={loading ? 'Stop loading' : 'Refresh'}
+              onClick={loading && !isIframe ? handleStopLoad : handleRefresh}
+              title={loading && !isIframe ? 'Stop loading' : 'Refresh'}
             >
-              {loading ? <IconStop /> : <IconRefresh />}
+              {loading && !isIframe ? <IconStop /> : <IconRefresh />}
             </NavButton>
 
             {/* Omnibox pill */}
@@ -630,8 +702,12 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
             </NavButton>
             <NavButton
               onClick={handleSyncChromeCookies}
-              title="Sync sign-in cookies from Chrome (fixes stubborn OAuth flows)"
-              disabled={syncing}
+              title={
+                isIframe
+                  ? 'Cookie sync needs the desktop app — it writes into Electron’s browser session, which a browser tab has no equivalent of'
+                  : 'Sync sign-in cookies from Chrome (fixes stubborn OAuth flows)'
+              }
+              disabled={isIframe || syncing}
               spinning={syncing}
             >
               <IconCookie />
@@ -718,19 +794,57 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
           </span>
         </div>
       ) : (
-        <div style={{ flex: 1, position: 'relative', display: 'flex', minWidth: 0 }}>
-          <webview
-            ref={webviewRef as any}
-            src={startUrl}
+        <div
+          style={{
+            flex: 1,
+            position: 'relative',
+            display: 'flex',
+            minWidth: 0,
+            flexDirection: 'column',
+          }}
+        >
+          {/* What the iframe genuinely cannot do, said out loud. Two different
+              losses, so two different sentences — a generic "limited on the web"
+              would leave the user guessing which one they just hit. */}
+          {isIframe && appMode && !framePolicy.canReachBus && (
+            <GuestNotice>
+              This plugin&rsquo;s UI is served from the same address as workspacer, so the browser
+              runs it sandboxed and it cannot open its hub connection. It will show its static
+              interface only — open this pane in the desktop app for the live version.
+            </GuestNotice>
+          )}
+          {isIframe && !appMode && !noticeDismissed && (
+            <GuestNotice onDismiss={() => setNoticeDismissed(true)}>
+              Embedded view. Sites that refuse to be framed (most large ones) stay blank here — use{' '}
+              <button
+                onClick={handleOpenExternal}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                  font: 'inherit',
+                  color: 'var(--wks-accent-text)',
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                }}
+              >
+                open in system browser
+              </button>{' '}
+              for those.
+            </GuestNotice>
+          )}
+          <GuestFrame
+            key={reloadNonce}
+            ref={webviewRef}
+            src={isIframe ? guestSrc : startUrl}
+            title={title}
             style={{
               flex: 1,
               width: '100%',
               border: 'none',
             }}
-            // @ts-ignore
             partition="persist:browser"
-            // @ts-ignore
-            allowpopups="true"
+            allowPopups
           />
           {guestError && (
             <div
@@ -800,6 +914,51 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
     </div>
   );
 };
+
+/** A slim strip above the guest stating what this host cannot do for it. */
+const GuestNotice: React.FC<{ children: React.ReactNode; onDismiss?: () => void }> = ({
+  children,
+  onDismiss,
+}) => (
+  <div
+    style={{
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: 6,
+      flexShrink: 0,
+      padding: '6px 10px',
+      fontSize: '0.66rem',
+      lineHeight: 1.45,
+      color: 'var(--wks-text-secondary)',
+      backgroundColor: 'color-mix(in srgb, var(--wks-warning) 10%, transparent)',
+      borderBottom: '1px solid var(--wks-border-subtle)',
+    }}
+  >
+    <AlertTriangle
+      size={12}
+      strokeWidth={2}
+      style={{ flexShrink: 0, marginTop: 2, color: 'var(--wks-warning)' }}
+    />
+    <span style={{ flex: 1 }}>{children}</span>
+    {onDismiss && (
+      <button
+        onClick={onDismiss}
+        title="Dismiss"
+        style={{
+          display: 'flex',
+          flexShrink: 0,
+          padding: 0,
+          background: 'none',
+          border: 'none',
+          color: 'var(--wks-text-muted)',
+          cursor: 'pointer',
+        }}
+      >
+        <X size={12} strokeWidth={2} />
+      </button>
+    )}
+  </div>
+);
 
 /** Flat toolbar icon button — borderless, hover-raised, like the composer controls. */
 const NavButton: React.FC<{

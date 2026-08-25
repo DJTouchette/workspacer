@@ -508,7 +508,29 @@ export interface ElectronAPI {
 
   // Dialog
   pickFolder: (defaultPath?: string) => Promise<string | null>;
-  pickFiles: (defaultPath?: string) => Promise<string[]>;
+  /**
+   * Pick files, answering absolute paths on the machine the agent runs on.
+   *
+   * `defaultPath` is the native dialog's starting directory. `attachment` says
+   * what the caller means, and it matters off the desktop: a client with no
+   * host filesystem (a browser, or the desktop in remote-client mode) answers
+   * an attachment pick by opening the BROWSER's picker and uploading the bytes
+   * — `sessionId` tells it which machine they have to land on — and refuses a
+   * host-path pick out loud, because it genuinely cannot make one.
+   */
+  pickFiles: (
+    defaultPath?: string,
+    opts?: { attachment?: boolean; sessionId?: string },
+  ) => Promise<string[]>;
+  /** Land bytes from this client on the agent's machine and answer with the
+   *  path, so a browser (or a desktop in remote-client mode) can attach a file
+   *  that only exists locally. Backed by the hub's `files.upload`; ABSENT on a
+   *  pure-IPC desktop, where a real host path is available and better. */
+  uploadAttachment?: (input: {
+    name: string;
+    dataBase64: string;
+    sessionId?: string;
+  }) => Promise<{ path: string; size?: number }>;
   /** Host path of a dropped/pasted File (Electron's webUtils, bridged through
    *  preload since `File.path` was removed in Electron 32). Returns '' when the
    *  File isn't backed by a file on disk — and always on web, where the file

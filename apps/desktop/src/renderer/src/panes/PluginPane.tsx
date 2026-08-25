@@ -31,10 +31,18 @@ interface PluginPaneProps {
  * revoked when the pane unmounts (closed, tab removed, agent terminated — every
  * path runs the cleanup), and the hub also sweeps it if the plugin unloads.
  *
- * If minting is unavailable (the web build, or the hub momentarily down) we
- * render the URL as-is: with its baked-in static token when the pane was opened
- * locally, and unauthenticated when it came from the shared layout — the webview
- * loads either way and reports its own bus state. Scoping is an upgrade, not a gate.
+ * If minting is unavailable (the hub momentarily down) we render the URL as-is:
+ * with its baked-in static token when the pane was opened locally, and
+ * unauthenticated when it came from the shared layout — the guest loads either
+ * way and reports its own bus state. Scoping is an upgrade, not a gate.
+ *
+ * On /app the guest is a sandboxed `<iframe>` rather than a `<webview>` (see
+ * `lib/guestFrame.ts`). Minting itself works there — `webBackend.pluginPaneToken`
+ * goes over the hub's guarded HTTP route — but whether the plugin can USE the
+ * token depends on where its UI is served from: a sidecar plugin
+ * (`127.0.0.1:<port>`) is cross-origin with /app and keeps its bus link, while a
+ * hub-served `ui` plugin is same-origin and is framed opaque, which costs it the
+ * bus. BrowserPane says so on the pane rather than leaving it looking broken.
  */
 const PluginPane: React.FC<PluginPaneProps> = ({
   paneId,
