@@ -256,6 +256,7 @@ fn node_rows() -> Vec<crate::nodes::NodeView> {
     crate::nodes::nodes_from_rows(&serde_json::json!([
         { "id": "den", "label": "Fly node (den)", "state": "stopped", "wakeable": true },
         { "id": "waker", "label": "waker", "state": "waking", "wakeable": true },
+        { "id": "draining", "label": "draining", "state": "stopping", "wakeable": true },
         { "id": "broken", "label": "broken", "state": "unreachable", "wakeable": true,
           "wakeFailures": 2 },
         { "id": "fine", "label": "fine", "state": "available", "wakeable": true,
@@ -292,12 +293,12 @@ fn the_nodes_overlay_lists_every_machine_the_hub_knows_about() {
     let out = joined(&mut app);
     assert_ne!(base, out, "nodes overlay did not render");
     assert!(out.contains("remote nodes"), "titled: {out}");
-    for id in ["Fly node (den)", "waker", "broken", "fine"] {
+    for id in ["Fly node (den)", "waker", "draining", "broken", "fine"] {
         assert!(out.contains(id), "{id} missing from: {out}");
     }
 }
 
-/// The whole point of the four-state model: a booting machine and a broken one
+/// The whole point of the five-state model: a booting machine and a broken one
 /// must not read the same. Pinned on the rendered text, not just the helpers.
 #[test]
 fn the_overlay_draws_waking_and_unreachable_as_different_things() {
@@ -318,8 +319,54 @@ fn the_overlay_draws_waking_and_unreachable_as_different_things() {
     );
 }
 
-/// A wake spends real money and this hub has no verb to stop a machine, so the
-/// price is on the screen — a terminal has no hover to hide it behind.
+/// The state this client learned late. A machine draining on purpose used to
+/// coerce to `unreachable` here — so the row said "can't reach" and wore the
+/// warning mark for a shutdown the person had just asked for.
+#[test]
+fn the_overlay_draws_a_machine_shutting_down_as_work_in_progress() {
+    let mut app = app_with_nodes();
+    app.nodes_view = Some(nodes_state(None));
+    let out = joined(&mut app);
+    assert!(out.contains("shutting down"), "it says so: {out}");
+    assert!(
+        out.contains("stops billing once it is off"),
+        "and says what that means for the meter: {out}"
+    );
+    // It carries the progress mark `waking` wears, not the warning triangle.
+    assert!(out.contains("◑ draining"), "a progress mark: {out}");
+    assert!(!out.contains("▲ draining"), "not a warning one: {out}");
+    // And it is counted in the title's collapsed reading rather than dropped.
+    assert!(out.contains("1 shutting down"), "counted: {out}");
+}
+
+/// The bug in full, on the screen. The hub ACCEPTS a wake on a `stopping` node
+/// and cancels the stop, so offering one here would let a person undo their own
+/// shutdown with a single key — and be billed for it.
+#[test]
+fn no_wake_is_offered_on_a_machine_that_is_already_shutting_down() {
+    let mut app = app_with_nodes();
+    app.nodes_view = Some(nodes_state(None));
+    let out = joined(&mut app);
+    assert!(
+        out.contains("already shutting down"),
+        "the row explains itself: {out}"
+    );
+    // The wake IS on offer elsewhere on this screen (den is asleep), so the
+    // absence has to be read per row rather than off the whole frame.
+    let draining = out
+        .lines()
+        .skip_while(|l| !l.contains("draining"))
+        .take_while(|l| !l.contains("broken"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !draining.contains("w  wake"),
+        "and offers no wake: {draining}"
+    );
+}
+
+/// A wake spends real money and this client cannot spend it back, so the price
+/// is on the screen — a terminal has no hover to hide it behind.
 #[test]
 fn the_overlay_prints_what_a_wake_costs_beside_the_action() {
     let mut app = app_with_nodes();
@@ -329,6 +376,12 @@ fn the_overlay_prints_what_a_wake_costs_beside_the_action() {
     assert!(
         out.contains("bills from boot"),
         "the cost is printed: {out}"
+    );
+    // `nodes.sleep` exists now, so the note names who can stop the machine
+    // rather than claiming — as it used to — that nobody can.
+    assert!(
+        out.contains("not this one"),
+        "and says who can stop it: {out}"
     );
 }
 
@@ -359,7 +412,7 @@ fn the_confirmation_step_names_the_consequence_and_the_one_key_that_commits() {
 
 /// The two notices a person only ever gets here: the node's own crash record
 /// (which arrives one wake late by construction) and failed wakes, each of
-/// which left a machine running and billing.
+/// which left a machine that started and never became usable.
 #[test]
 fn the_overlay_surfaces_a_crash_record_and_failed_wakes() {
     let mut app = app_with_nodes();
@@ -368,8 +421,8 @@ fn the_overlay_surfaces_a_crash_record_and_failed_wakes() {
     assert!(out.contains("did not end cleanly"), "crash notice: {out}");
     assert!(out.contains("2 wakes failed"), "failed wakes: {out}");
     assert!(
-        out.contains("running and billing"),
-        "priced honestly: {out}"
+        out.contains("never became usable"),
+        "described honestly — the hub stopped it again: {out}"
     );
 }
 

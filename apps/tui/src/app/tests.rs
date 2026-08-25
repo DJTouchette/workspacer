@@ -247,8 +247,8 @@ async fn methods_called(calls: &mut tokio::sync::mpsc::UnboundedReceiver<String>
     out
 }
 
-/// **The safety property.** A wake starts a billable machine and this hub has
-/// no verb to stop one, so `w` may only ARM the action. One keypress must
+/// **The safety property.** A wake starts a billable machine and this client
+/// has no verb to stop one, so `w` may only ARM the action. One keypress must
 /// never reach `nodes.wake`.
 #[tokio::test]
 async fn one_keypress_arms_a_wake_and_spends_nothing() {
@@ -336,6 +336,57 @@ async fn a_scoped_token_is_told_why_rather_than_offered_a_dead_confirmation() {
         app.toast()
     );
     assert!(methods_called(&mut calls).await.is_empty());
+}
+
+/// A machine already shutting down is the one refusal the HUB would not make:
+/// `nodes.wake` there is accepted and CANCELS the stop. So the whole guard is
+/// this client's, and it has to hold at both steps — the arm, and the confirm a
+/// re-seed can land underneath.
+#[tokio::test]
+async fn a_machine_shutting_down_is_never_armed_and_never_confirmed() {
+    let draining = serde_json::json!([
+        { "id": "den", "label": "Fly node (den)", "state": "stopping", "wakeable": true }
+    ]);
+
+    // The arm: `w` refuses and says why, rather than offering a confirmation
+    // that would spend money undoing somebody's own shutdown.
+    let (mut app, mut calls) = app_at_the_node_overlay("operator").await;
+    app.set_nodes(Some(crate::nodes::nodes_from_rows(&draining)));
+    press(&mut app, 'w');
+    assert!(
+        app.nodes_view.as_ref().unwrap().confirm.is_none(),
+        "nothing to confirm"
+    );
+    assert!(
+        app.toast()
+            .is_some_and(|t| t.contains("already shutting down")),
+        "the reason is said out loud: {:?}",
+        app.toast()
+    );
+    assert!(methods_called(&mut calls).await.is_empty());
+
+    // The confirm: armed while the node was asleep, then a re-seed moves it to
+    // `stopping` underneath. `set_nodes` is the refresh path and deliberately
+    // does NOT clear the confirmation — the re-check in `confirm_wake` is what
+    // has to catch this, and it is why that re-check exists.
+    let (mut app, mut calls) = app_at_the_node_overlay("operator").await;
+    press(&mut app, 'w');
+    assert_eq!(
+        app.nodes_view.as_ref().unwrap().confirm.as_deref(),
+        Some("den"),
+        "armed while it was still asleep"
+    );
+    app.set_nodes(Some(crate::nodes::nodes_from_rows(&draining)));
+    press(&mut app, 'y');
+    assert!(
+        methods_called(&mut calls).await.is_empty(),
+        "the confirm must not reach the bus once the node started shutting down"
+    );
+    assert!(
+        app.toast().is_some_and(|t| t.contains("can no longer be")),
+        "and it says so: {:?}",
+        app.toast()
+    );
 }
 
 /// A hub that never greeted, or greeted without a tier, is NOT an operator.

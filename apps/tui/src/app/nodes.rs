@@ -2,8 +2,9 @@
 //! cursor, and the two-step wake.
 //!
 //! **The two-step wake is the point of this file.** `nodes.wake` starts a
-//! billable machine and the hub deliberately has no verb to stop one, so an
-//! accidental wake cannot be undone from inside the app at all. The desktop
+//! billable machine, and while the hub has a stop verb now (`nodes.sleep`) this
+//! client does not offer it — so an accidental wake still cannot be undone from
+//! inside the TUI at all. The desktop
 //! and `/m` both shipped a confirmation step for that reason; a vim-modal TUI
 //! needs it more, not less, because a stray keystroke in normal mode is its
 //! native failure. So [`App::request_wake`] only ARMS the action — it fires
@@ -135,7 +136,9 @@ impl App {
     /// It refuses outright wherever [`crate::nodes::wake_affordance`] says the
     /// hub would — a view/triage tier, a node with no credential on this hub,
     /// one already starting, one already up — and toasts that reason instead of
-    /// arming a confirmation that could only end in a refusal.
+    /// arming a confirmation that could only end in a refusal. It also refuses
+    /// where the hub WOULD accept: a wake on a `stopping` node cancels the stop,
+    /// and one keystroke must not silently undo somebody's shutdown.
     pub(in crate::app) fn request_wake(&mut self) {
         let Some(node) = self.selected_node().cloned() else {
             self.set_toast("no node selected");
