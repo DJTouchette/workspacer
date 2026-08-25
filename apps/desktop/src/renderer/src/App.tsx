@@ -872,13 +872,15 @@ function App() {
 
       // Default: the editor plugin. PluginPane mints a bus token scoped to `dir`.
       const editorPane = pluginPanesRef.current.find((p) => p.pluginId === 'workspacer.editor');
-      if (!editorPane) {
+      if (!editorPane || !editorPane.url) {
         // The editor plugin isn't loaded (not installed, or the hub is down /
-        // mid plugin-install). Ctrl+P must never be a silent no-op — fall back
-        // to a native file pick + the OS default editor so the chord always
-        // does something visible, even with plugin land on fire.
+        // mid plugin-install), or it resolved to no address this client can
+        // reach — a sidecar editor on a hub that is not this machine. Ctrl+P
+        // must never be a silent no-op — fall back to a native file pick + the
+        // OS default editor so the chord always does something visible, even
+        // with plugin land on fire.
         console.warn(
-          '[editor] the workspacer.editor plugin is not loaded; falling back to the system editor.',
+          '[editor] the workspacer.editor plugin is not loaded (or not reachable from this client); falling back to the system editor.',
         );
         const file = target ?? (await window.electronAPI.pickFiles())?.[0];
         if (file) void window.electronAPI.fileOpenExternal?.(file);
@@ -1198,7 +1200,11 @@ function App() {
       const params = new URLSearchParams();
       if (plug.busToken) params.set('busToken', plug.busToken);
       const sep = plug.url.includes('?') ? '&' : '?';
-      const url = params.toString() ? `${plug.url}${sep}${params.toString()}` : plug.url;
+      const url = !plug.url
+        ? ''
+        : params.toString()
+          ? `${plug.url}${sep}${params.toString()}`
+          : plug.url;
       tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'plugin', 'Analytics', url, undefined, plug.pluginId);
     } else {
       tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'analytics', 'Analytics');
@@ -2233,6 +2239,11 @@ function App() {
   // its page can connect to the hub bus scoped to its capabilities), plus the
   // target agent's session/cwd for scoped panes.
   const buildPluginPaneUrl = useCallback((pane: PluginPane, target?: AgentWorkspace) => {
+    // No resolved address (a sidecar on a hub this client isn't on, a manifest
+    // seen only through the public projection): open the pane anyway — it
+    // explains itself — but never glue query params onto an empty URL, which
+    // would make a relative one that resolves against /app.
+    if (!pane.url) return '';
     const params = new URLSearchParams();
     if (pane.busToken) params.set('busToken', pane.busToken);
     if (target?.sessionId) params.set('sessionId', target.sessionId);

@@ -336,6 +336,30 @@ const PluginWidgetView: React.FC<{ widget: PluginWidget; cwd: string }> = ({ wid
     }
   }, [widget.url, widget.busToken, cwd]);
 
+  // No address to load from: the widget's sidecar lives on a machine this
+  // client can't reach (see types/plugin.ts). An empty <iframe src> would load
+  // the app document into the widget frame, so say it instead.
+  if (!src) {
+    return (
+      <div
+        data-testid="widget-unreachable"
+        style={{
+          flex: 1,
+          display: 'grid',
+          placeItems: 'center',
+          padding: 12,
+          textAlign: 'center',
+          fontSize: '0.62rem',
+          lineHeight: 1.5,
+          color: 'var(--wks-text-faint)',
+        }}
+      >
+        Served by this plugin&rsquo;s sidecar on the workspacer host — not reachable from this
+        browser.
+      </div>
+    );
+  }
+
   return (
     <GuestFrame
       // Remount on url change rather than mutating src — a guest that has

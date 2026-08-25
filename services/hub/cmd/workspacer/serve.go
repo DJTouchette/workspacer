@@ -85,6 +85,7 @@ type commonServeFlags struct {
 	trustedHost                    *string
 	hubPort, apiPort, hookPort     *int
 	claudemonBin, hubBin, brainBin *string
+	pluginOrigin                   *string
 	dbPath                         *string
 	noClaudemonInit                *bool
 	allowNewToken                  *bool
@@ -102,6 +103,8 @@ func registerCommonServeFlags(fs *flag.FlagSet) *commonServeFlags {
 		brainBin:     fs.String("brain-bin", "", "path to the brain binary the hub supervises (default: sibling of this binary, then the hub auto-detects its own sibling / PATH)"),
 		trustedHost: fs.String("trusted-host", os.Getenv("HUB_TRUSTED_HOSTS"),
 			"comma-separated hostname(s) a reverse proxy in front of the hub presents (e.g. the `tailscale serve` MagicDNS name). A TLS front-end terminates elsewhere and forwards to our loopback socket, which is the DNS-rebinding shape the hub's Host/Origin pins refuse, so it must be named or every route behind it answers 403"),
+		pluginOrigin: fs.String("plugin-origin", os.Getenv("WORKSPACER_PLUGIN_ORIGIN"),
+			"a SECOND origin (scheme://host[:port]) that also routes to this hub, e.g. a second `tailscale serve --https=8443` rule or a second fly.io service. Browser clients frame plugin UI from it, which is what lets a hub-served plugin keep its bus connection: same-origin with /app, the browser must sandbox it opaque (it could otherwise read the app's host token). Loopback browsers get this for free; a REMOTE one needs this flag. Pair with --trusted-host when TLS terminates in front (default: $WORKSPACER_PLUGIN_ORIGIN)"),
 		dbPath: fs.String("claudemon-db-path", "",
 			"path to claudemon's SQLite session store (default: $XDG_DATA_HOME/claudemon/state.db, else ~/.claudemon/state.db — the same file the desktop app uses, deliberately). REQUIRED when you change claudemon's ports: that means a second daemon, and two daemons on one state.db share every session and event row"),
 		noClaudemonInit: fs.Bool("no-claudemon-init", false,
@@ -131,6 +134,7 @@ func (f *commonServeFlags) resolveOptions() (serveOptions, bool) {
 		BrainBin:      resolveBin("brain", *f.brainBin, sib),
 		AdvertiseHost: advertiseHost(*f.host, localIPv4s()),
 		TrustedHosts:  *f.trustedHost,
+		PluginOrigin:  *f.pluginOrigin,
 
 		SkipClaudemonInit: *f.noClaudemonInit,
 		DBPath:            *f.dbPath,
