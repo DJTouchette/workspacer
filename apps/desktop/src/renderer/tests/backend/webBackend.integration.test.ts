@@ -140,6 +140,27 @@ describe('web backend bus integration', () => {
     unsubscribe();
   });
 
+  it('opens a terminal pane when the brain publishes facade.openTerminal', () => {
+    const api = createWebBackend('token', 'ws://host.test/bus');
+    const opened = vi.fn();
+
+    const unsubscribe = api.onFacadeOpenTerminal(opened);
+    client().emit('facade.openTerminal', {
+      cwd: '/p',
+      command: 'npm run dev',
+      label: 'dev',
+      parentSessionId: 'mgr',
+    });
+
+    expect(opened).toHaveBeenCalledWith({
+      cwd: '/p',
+      command: 'npm run dev',
+      label: 'dev',
+      parentSessionId: 'mgr',
+    });
+    unsubscribe();
+  });
+
   it('routes attention resolution over the bus and applies the resulting snapshot', async () => {
     const api = createWebBackend('token', 'ws://host.test/bus');
     const snapshots = vi.fn();
