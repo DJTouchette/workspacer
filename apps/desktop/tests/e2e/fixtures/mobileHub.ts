@@ -14,9 +14,17 @@
 import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as net from 'net';
-import * as os from 'os';
 import * as path from 'path';
-import { withBuildLock } from './scratchState';
+import {
+  assertNoLiveStateHandles,
+  assertScratchEnv,
+  assertScratchPath,
+  freePort as scratchFreePort,
+  makeScratchDir,
+  removeScratchDir,
+  scratchEnv,
+  withBuildLock,
+} from './scratchState';
 
 const REPO = path.resolve(__dirname, '../../../../..');
 const HUB_DIR = path.join(REPO, 'services/hub');
@@ -46,15 +54,9 @@ export interface MobileHub {
   stop(): Promise<void>;
 }
 
+/** The kernel picks the port, and scratchState refuses the live stack's. */
 async function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.on('error', reject);
-    srv.listen(0, '127.0.0.1', () => {
-      const port = (srv.address() as net.AddressInfo).port;
-      srv.close(() => resolve(port));
-    });
-  });
+  return scratchFreePort();
 }
 
 async function waitForHealth(url: string, timeoutMs = 15000): Promise<void> {
@@ -100,7 +102,18 @@ export async function startMobileHub(opts: MobileHubOptions = {}): Promise<Mobil
   );
   if (built.status !== 0) throw new Error('failed to build hub: ' + built.stderr);
 
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-m-e2e-'));
+  // Scratch state, isolated the same way the /app rig is (see scratchState.ts).
+  // This used to be an os.tmpdir() mkdtemp with three of the hub's five path
+  // flags passed — which left `--peers-file` and `--jobs-file` on their
+  // defaults, i.e. the developer's REAL ~/.config/workspacer. Nothing bad had
+  // happened yet; the fix is that nothing can.
+  const dir = makeScratchDir('wks-m-e2e');
+  const env = scratchEnv(dir);
+  assertScratchEnv(env);
+  const scratch = (...p: string[]) => assertScratchPath(path.join(dir, ...p), p.join('/'));
+  fs.mkdirSync(path.join(dir, 'config', 'workspacer'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'config', 'workspacer-hub'), { recursive: true });
+
   const tokensFile = path.join(dir, 'tokens.json');
   fs.writeFileSync(
     tokensFile,
@@ -135,12 +148,18 @@ export async function startMobileHub(opts: MobileHubOptions = {}): Promise<Mobil
       path.join(dir, 'layout.json'),
       '--push-dir',
       path.join(dir, 'push'),
+      // Pinned for the same reason as the three above: unset, these default to
+      // <user-config-dir>/workspacer{,-hub} (cmd/hub/main.go:217-245).
+      '--peers-file',
+      scratch('config', 'workspacer', 'peers.json'),
+      '--jobs-file',
+      scratch('config', 'workspacer-hub', 'jobs.json'),
       '--brain-scope',
       'off',
     ],
     // stdin must stay OPEN: the hub's parentwatch treats a closed stdin as "my
     // parent died" and shuts down immediately.
-    { stdio: ['pipe', 'pipe', 'pipe'] },
+    { stdio: ['pipe', 'pipe', 'pipe'], env },
   );
   proc.stderr?.on('data', (b) => {
     const s = String(b);
@@ -148,6 +167,9 @@ export async function startMobileHub(opts: MobileHubOptions = {}): Promise<Mobil
   });
 
   await waitForHealth(url);
+  // Measured, not assumed: the hub is up and has opened its files, so prove it
+  // holds none of the developer's.
+  assertNoLiveStateHandles(proc.pid!);
 
   const snapshots = new Map<string, any>(FIXTURE_SESSIONS.map((s) => [s.sessionId, s]));
   const calls: CallRecord[] = [];
@@ -272,7 +294,7 @@ export async function startMobileHub(opts: MobileHubOptions = {}): Promise<Mobil
       }
       proc.kill('SIGKILL');
       await new Promise((r) => setTimeout(r, 100));
-      fs.rmSync(dir, { recursive: true, force: true });
+      removeScratchDir(dir);
     },
   };
 }
