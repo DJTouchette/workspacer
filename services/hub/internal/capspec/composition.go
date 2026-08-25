@@ -130,6 +130,7 @@ var (
 	brainFsguardFile  = []string{"services", "hub", "cmd", "brain", "fsguard.go"}
 	brainSearchFile   = []string{"services", "hub", "cmd", "brain", "search.go"}
 	brainProvFile     = []string{"services", "hub", "cmd", "brain", "providers.go"}
+	brainGitFile      = []string{"services", "hub", "cmd", "brain", "git.go"}
 	hubLayoutFile     = []string{"services", "hub", "internal", "layout", "layout.go"}
 	hubMainFile       = []string{"services", "hub", "cmd", "hub", "main.go"}
 	hubPluginMgrFile  = []string{"services", "hub", "internal", "plugin", "manager.go"}
@@ -501,6 +502,32 @@ func gitCwdGuard(method string) Witness {
 	return guarded(argBearing("guardGitCwd", method, desktopCapsFile))
 }
 
+// brainGitCwdGuard is the SAME claim about the SECOND provider, and it exists
+// because the sentence "provider-confined to the workspace roots (guardGitCwd)"
+// stopped being about one file.
+//
+// The read-only half of git.* was ported into cmd/brain so a headless node can
+// answer it, and that provider has its own guardGitCwd over its own
+// assertPathAllowed. With only the desktop bearing on record, the brain's guard
+// could be deleted with every capspec test green while the reason above still
+// read as proven — for the provider that actually answers on an internet-facing
+// box.
+//
+// The ByArg form cannot express it (Go puts ctx first, so the call is not
+// `guardGitCwd("git.status", …)`), so the chain is entered at the handler that
+// answers this one method and nothing else, which the dispatcher check
+// distinguishes from cmd/brain's `handle` switch.
+func brainGitCwdGuard(method, handler string) Witness {
+	return guarded(Bearing{
+		Kind: BearsAtCallSite, On: method, Symbol: "guardGitCwd",
+		Entry: Site{handler, brainHandlersFile},
+		Chain: []Site{
+			{handler, brainHandlersFile},
+			{"guardGitCwd", brainGitFile},
+		},
+	})
+}
+
 // compositionInert is the written record of "considered, and it cannot be half
 // of a composition", with the evidence each sentence rests on.
 var compositionInert = map[string]InertClaim{
@@ -548,15 +575,15 @@ var compositionInert = map[string]InertClaim{
 	},
 	"git.status": {
 		Reason:    "runs `git status` in a cwd guardGitCwd('git.status', …) confines to the workspace roots, and returns text. Writes nothing; the porcelain output is not read as policy by anything",
-		Witnesses: []Witness{gitCwdGuard("git.status")},
+		Witnesses: []Witness{gitCwdGuard("git.status"), brainGitCwdGuard("git.status", "gitStatusCall")},
 	},
 	"git.log": {
 		Reason:    "reads commit metadata out of a repo guardGitCwd('git.log', …) confines, and returns it. Writes nothing, changes no state, and no guard in the system consults commit history when deciding anything",
-		Witnesses: []Witness{gitCwdGuard("git.log")},
+		Witnesses: []Witness{gitCwdGuard("git.log"), brainGitCwdGuard("git.log", "gitLogCall")},
 	},
 	"git.numstat": {
 		Reason:    "reads per-file change counts for a commit range in a repo guardGitCwd('git.numstat', …) confines. Numbers to a UI: nothing is written, and nothing downstream reads the result as configuration or argv",
-		Witnesses: []Witness{gitCwdGuard("git.numstat")},
+		Witnesses: []Witness{gitCwdGuard("git.numstat"), brainGitCwdGuard("git.numstat", "gitNumstatCall")},
 	},
 	"git.commitDiff": {
 		Reason:    "reads one commit's patch text out of a repo guardGitCwd('git.commitDiff', …) confines, under the same result-path secret gate git.diff has, so it cannot return bytes fs.read would refuse. Writes nothing",
@@ -736,7 +763,7 @@ var compositionInert = map[string]InertClaim{
 	},
 	"git.diff": {
 		Reason:    "reads file contents out of the repo at a cwd guardGitCwd('git.diff', …) confines, and its result-path secret gate is the recorded fs.write→search.project pair's closer applied to the same read-set invariant",
-		Witnesses: []Witness{gitCwdGuard("git.diff")},
+		Witnesses: []Witness{gitCwdGuard("git.diff"), brainGitCwdGuard("git.diff", "gitDiffCall")},
 	},
 	"fs.watch": {
 		Reason:    "installs a change watcher on a path assertPathAllowed('fs.watch', …) confines. Its OUTPUT is the fs.changed topic, and that is where its composition lives: the event registry names this capability as that topic's gate, so a credential refused fs.watch is refused the change feed it produces. The call itself writes nothing and no guard consults the watcher set",
