@@ -40,6 +40,7 @@
  * `os.tmpdir()`. /tmp on this project's dev boxes is a per-user-quota tmpfs and
  * leaked test dirs have exhausted it before. Override with `WKS_E2E_SCRATCH`.
  */
+import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as net from 'net';
 import * as os from 'os';
@@ -197,6 +198,46 @@ export function assertNoLiveStateHandles(pid: number): boolean {
     );
   }
   return true;
+}
+
+/**
+ * Serialise a build step across Playwright worker PROCESSES.
+ *
+ * Every e2e fixture here rebuilds the hub binary before booting it, because a
+ * stale binary would mean the suite tests nothing. Playwright runs spec files
+ * in parallel workers, so two fixtures can reach `go build -o hub ./cmd/hub`
+ * for the SAME output path at the same moment and one of them ends up
+ * launching a half-written file. That is not theoretical: it is what
+ * `mobileClient` + `mobileNodes` did to each other the first time both ran.
+ *
+ * A directory is the mutex — `mkdir` is atomic on every filesystem we care
+ * about, unlike "check then create".
+ */
+export function withBuildLock<T>(fn: () => T): T {
+  const lock = path.join(scratchRoot(), 'build.lock');
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  const deadline = Date.now() + 300_000;
+  for (;;) {
+    try {
+      fs.mkdirSync(lock);
+      break;
+    } catch {
+      if (Date.now() > deadline) {
+        // Five minutes means a crashed worker left the lock behind rather than
+        // a live one holding it. Take it over rather than failing the run.
+        fs.rmSync(lock, { recursive: true, force: true });
+        continue;
+      }
+      // Synchronous on purpose: the callers are synchronous build steps, and an
+      // async wait here would let a second worker into the critical section.
+      spawnSync('sleep', ['0.25']);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    fs.rmSync(lock, { recursive: true, force: true });
+  }
 }
 
 /** Delete a scratch directory, refusing anything outside the scratch root. */
