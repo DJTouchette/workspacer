@@ -85,8 +85,10 @@ export function useNotificationsIfAvailable(): NotificationsApi | null {
 interface NotificationsProviderProps {
   /** Select the agent owning this session (sidebar click equivalent). */
   onFocusSession?: (sessionId: string) => void;
-  /** Open a pane by type (plugin panes use their plugin pane type). */
-  onOpenPane?: (paneType: string) => void;
+  /** Open a pane by type (plugin panes use their plugin pane type). `section`
+   *  rides along for Settings, whose pane otherwise opens on whatever section
+   *  it last showed — see InAppNotification.paneSection. */
+  onOpenPane?: (paneType: string, section?: string) => void;
   children: React.ReactNode;
 }
 
@@ -209,7 +211,7 @@ export const NotificationsProvider: React.FC<NotificationsProviderProps> = ({
       dismissToast(n.id);
       setPanelOpen(false);
       if (n.sessionId && focusSessionRef.current) focusSessionRef.current(n.sessionId);
-      else if (n.paneType && openPaneRef.current) openPaneRef.current(n.paneType);
+      else if (n.paneType && openPaneRef.current) openPaneRef.current(n.paneType, n.paneSection);
       else if (n.url) {
         if (window.electronAPI.openExternalUrl) void window.electronAPI.openExternalUrl(n.url);
         else window.open(n.url, '_blank', 'noopener');

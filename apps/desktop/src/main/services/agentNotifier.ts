@@ -274,10 +274,23 @@ class AgentNotifier {
     const cfg = this.cfg();
     if (!cfg.enabled || !Notification.isSupported()) return;
 
-    this.showOsNotification(n.title, n.body ?? '', () => {
-      const win = this.focusWindow();
-      win?.webContents.send(IPC.NOTIFY_ACTIVATE, n);
-    });
+    this.showOsNotification(n.title, n.body ?? '', () => this.activateInRenderer(n));
+  }
+
+  /**
+   * Bring the window forward and hand a notification to the renderer's
+   * activate path, which marks it read in the center and follows its click
+   * target (sessionId → paneType/paneSection → url).
+   *
+   * Public because main raises OS notifications from two places — here, and
+   * the `notifications.post` capability — and both want the same click
+   * behaviour. The capability used to branch on sessionId/url itself, which
+   * meant it silently did nothing for a pane target and never marked the
+   * center entry read.
+   */
+  activateInRenderer(n: InAppNotification): void {
+    const win = this.focusWindow();
+    win?.webContents.send(IPC.NOTIFY_ACTIVATE, n);
   }
 
   /** Create + show an OS notification, guarded against GC until it closes. */
@@ -312,11 +325,13 @@ class AgentNotifier {
 
   /** Deliver a notification to the renderer's notification center. Buffered
    *  until the renderer finishes loading so early raises aren't lost. */
-  postInApp(n: Omit<InAppNotification, 'id' | 'createdAt'> & { id?: string }): void {
+  postInApp(
+    n: Omit<InAppNotification, 'id' | 'createdAt'> & { id?: string; createdAt?: number },
+  ): void {
     const full: InAppNotification = {
       ...n,
       id: n.id ?? randomUUID(),
-      createdAt: Date.now(),
+      createdAt: n.createdAt ?? Date.now(),
     };
     this.pendingInApp.push(full);
     this.flushInApp();

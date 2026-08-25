@@ -27,6 +27,7 @@ export interface NotificationInput {
   source?: string;
   sessionId?: string;
   paneType?: string;
+  paneSection?: string;
   url?: string;
   key?: string;
   silent?: boolean;
@@ -100,6 +101,12 @@ export function normalizeNotification(
         : fallbackSource,
     sessionId: typeof input.sessionId === 'string' ? input.sessionId : undefined,
     paneType: typeof input.paneType === 'string' ? input.paneType : undefined,
+    // Only meaningful beside a paneType, and dropped on its own: a section
+    // with no pane to open is not a click target, it is a stray string.
+    paneSection:
+      typeof input.paneType === 'string' && typeof input.paneSection === 'string'
+        ? input.paneSection
+        : undefined,
     url: safeUrl(input.url),
     key: typeof input.key === 'string' && input.key ? input.key : undefined,
     createdAt: Date.now(),

@@ -439,6 +439,16 @@ func TestProposalNotifiesSoItGetsReviewed(t *testing.T) {
 		if ev.Type != "notify.post" {
 			t.Fatalf("unexpected event %s", ev.Type)
 		}
+		// And it says WHERE to go, rather than describing the route in prose.
+		// paneType alone opens Settings on whatever section it last showed;
+		// paneSection is what lands the click on the review surface itself.
+		var data map[string]any
+		if err := json.Unmarshal(ev.Data, &data); err != nil {
+			t.Fatalf("notify payload is not an object: %v", err)
+		}
+		if data["paneType"] != "settings" || data["paneSection"] != "jobs" {
+			t.Errorf("proposal notify has no click target: %+v", data)
+		}
 	default:
 		t.Fatal("a proposal nobody hears about is a proposal nobody reviews")
 	}

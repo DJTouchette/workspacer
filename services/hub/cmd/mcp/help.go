@@ -321,7 +321,22 @@ from your own credential, and there is no session id in the call.
   your reply instead.`),
 	"notify": strings.TrimSpace(`
 notify shows a desktop notification on the workspacer machine — use it to
-surface something that needs the user's attention.`),
+surface something that needs the user's attention.
+
+GIVE IT A CLICK TARGET whenever there is somewhere to go. A notification that
+describes the route in prose ("review it in Settings") makes the user navigate
+by hand; one that carries a target takes them there.
+- sessionId: select that agent. Highest priority — use it for anything about
+  one agent.
+- paneType (+ paneSection): open a pane. With paneType "settings", paneSection
+  names the section, e.g. {"paneType":"settings","paneSection":"jobs"} for a
+  job you just proposed. Without the section the Settings pane opens wherever
+  the user last left it.
+- url: opened in their browser. http(s) only; anything else is dropped.
+
+Other fields: level (info/success/warn/error), key (a later notification with
+the same key REPLACES this one instead of stacking), silent (record it in the
+notification center without interrupting), inAppOnly (no OS notification).`),
 	"ui": strings.TrimSpace(`
 These steer the user's DESKTOP screen — use them deliberately.
 - Right for guided tours ("show me around workspacer", first-time onboarding):

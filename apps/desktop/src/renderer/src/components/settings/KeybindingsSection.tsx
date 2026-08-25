@@ -18,6 +18,7 @@ import {
   isPresetId,
 } from '../../lib/keybindingPresets';
 import { Section, Row, ModeButton } from './primitives';
+import DraftWithAgentButton from './DraftWithAgentButton';
 
 // ── Shortcut Editor ──
 
@@ -401,6 +402,11 @@ const KeybindingsSection: React.FC<KeybindingsSectionProps> = ({ config, save })
           </>
         )}
       </div>
+
+      {/* Direct write, no proposal step — the same reasoning as Appearance.
+          The undo is the two resets above (one action, or all of them back to
+          the preset), which is why this sits right under them. */}
+      <DraftWithAgentButton briefId="keybindings" />
 
       <Row label="Prefix">
         <input

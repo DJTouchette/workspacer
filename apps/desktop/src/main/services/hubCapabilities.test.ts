@@ -160,9 +160,13 @@ vi.mock('../lib/appIcon', () => ({ appIconPath: () => undefined }));
 vi.mock('./claudeModels', () => ({ listClaudeModels: vi.fn(() => []) }));
 const libraryMock = { list: vi.fn(() => []), save: vi.fn(), remove: vi.fn() };
 vi.mock('./libraryService', () => ({ libraryService: libraryMock }));
-vi.mock('./agentNotifier', () => ({
-  agentNotifier: { postInApp: vi.fn(), focusAgent: vi.fn(), focusWindow: vi.fn() },
-}));
+const notifier = {
+  postInApp: vi.fn(),
+  focusAgent: vi.fn(),
+  focusWindow: vi.fn(),
+  activateInRenderer: vi.fn(),
+};
+vi.mock('./agentNotifier', () => ({ agentNotifier: notifier }));
 vi.mock('./sessionService', () => ({ sessionService: {} }));
 vi.mock('./sessionHistory', () => ({ sessionHistory: {} }));
 vi.mock('./layoutService', () => ({ layoutService: {} }));
@@ -1391,6 +1395,34 @@ describe('notifications.post — external URL scheme check', () => {
 
   it('refuses a custom-protocol URL', () => {
     clickWith('vscode://file/etc/shadow');
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+});
+
+describe('notifications.post — click targets', () => {
+  // The capability has always ACCEPTED a pane target; until the facade could
+  // send one, nothing exercised it, and the click handler quietly ignored it.
+  it('routes a pane target (with its section) to the renderer', () => {
+    call('notifications.post', {
+      title: 'Job proposed: Nightly sync',
+      paneType: 'settings',
+      paneSection: 'jobs',
+    });
+    notificationHandlers.get('click')!();
+
+    expect(notifier.activateInRenderer).toHaveBeenCalledTimes(1);
+    const n = notifier.activateInRenderer.mock.calls[0][0];
+    expect(n.paneType).toBe('settings');
+    expect(n.paneSection).toBe('jobs');
+    // Same object the center holds, so the two can't disagree about where it
+    // points, and clicking marks it read.
+    expect(notifier.postInApp.mock.calls[0][0].id).toBe(n.id);
+  });
+
+  it('routes a session target to the renderer', () => {
+    call('notifications.post', { title: 't', sessionId: 's1' });
+    notificationHandlers.get('click')!();
+    expect(notifier.activateInRenderer).toHaveBeenCalledTimes(1);
     expect(openExternal).not.toHaveBeenCalled();
   });
 });

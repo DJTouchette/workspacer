@@ -705,7 +705,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	// ── Notify ─────────────────────────────────────────────────────────────
 	b.group = "notify"
 	addTool[notifyIn](b, "notify",
-		"Show a desktop notification on the workspacer machine.",
+		"Show a desktop notification on the workspacer machine. Give it a click target (sessionId, or paneType plus paneSection) whenever there is somewhere for the user to go — a notification that says \"go and look in Settings\" in prose makes them navigate by hand.",
 		"notifications.post")
 
 	// ── Jobs (operator only — jobs.* matches no scoped tier's allowlist) ───
@@ -1357,7 +1357,27 @@ type briefArchiveIn struct {
 	Count   int    `json:"count,omitempty" jsonschema:"archive exactly this many of the section's OLDEST entries, 1 or more. Give this or keep, never both"`
 }
 
+// notifyIn carries the notification's CLICK TARGET as well as its text.
+//
+// It used to be title + body only, while the capability behind it
+// (notifications.post, hubCapabilities.ts) has always accepted a session, a
+// pane, a url, a level, a replace-key and the two quiet flags. The effect of
+// the gap was that an agent could raise a toast and then had to spend a
+// sentence telling the user where to go and look — the notification knew where
+// it was pointing and had no way to say so.
+//
+// Field names are the contract with the capability: an `...In` json tag that
+// does not match its destructure there is forwarded and silently ignored, so
+// cross-check both ends when adding one.
 type notifyIn struct {
-	Title string `json:"title,omitempty" jsonschema:"notification title"`
-	Body  string `json:"body,omitempty" jsonschema:"notification body"`
+	Title       string `json:"title,omitempty" jsonschema:"notification title"`
+	Body        string `json:"body,omitempty" jsonschema:"notification body"`
+	Level       string `json:"level,omitempty" jsonschema:"info (the default), success, warn or error. Colors the entry in the notification center; anything else is read as info"`
+	SessionID   string `json:"sessionId,omitempty" jsonschema:"click target: select this agent session. Use it whenever the notification is about one agent. Highest priority of the three targets"`
+	PaneType    string `json:"paneType,omitempty" jsonschema:"click target: open this pane type, e.g. settings, usage, sessions, or a plugin pane type. Used when no sessionId is given"`
+	PaneSection string `json:"paneSection,omitempty" jsonschema:"with paneType settings, the section the click lands on: jobs, appearance, keybindings, session, profiles, projects, notifications, plugins, tools and so on. Without it the Settings pane opens wherever it was last, which for a review-this notification means the user still has to go looking"`
+	URL         string `json:"url,omitempty" jsonschema:"click target: open this http(s) URL in the user's browser. Lowest priority of the three; any other scheme is dropped"`
+	Key         string `json:"key,omitempty" jsonschema:"stable key: a later notification with the same key REPLACES the earlier one instead of stacking. Use it for repeated alerts about the same condition"`
+	Silent      bool   `json:"silent,omitempty" jsonschema:"record it in the notification center only — no toast and no OS notification. For things worth logging that are not worth interrupting for"`
+	InAppOnly   bool   `json:"inAppOnly,omitempty" jsonschema:"skip the OS notification but still show the in-app toast"`
 }

@@ -14,6 +14,11 @@ import PromptVarsDialog from './PromptVarsDialog';
 interface Props {
   activeAgent?: AgentWorkspace;
   appCwd: string;
+  /**
+   * PRE-FILL ONLY. This signature has no `kickoffMessage` (useAgentManager's
+   * auto-send field) and must not grow one — see the spawn branch below for
+   * why. Widening it here is how the safety property would be lost quietly.
+   */
   spawnAgent: (opts: { cwd: string; name?: string; initialPrompt?: string }) => void;
   recordRecentDir: (cwd?: string) => void;
 }
@@ -56,6 +61,23 @@ const LibraryHost: React.FC<Props> = ({ activeAgent, appCwd, spawnAgent, recordR
         const target = cwd || appCwd;
         if (!target) return;
         recordRecentDir(target);
+        // `initialPrompt` PRE-FILLS the composer. The user reads the text and
+        // presses Enter. Do NOT change this to `kickoffMessage` (auto-send).
+        //
+        // This is load-bearing, not a style choice. Library items have a
+        // PROJECT scope that lives at `<cwd>/.workspacer/library/*.md`, per
+        // repo and committable, and the Library pane and command palette both
+        // render a Dispatch button on every item. So a cloned repo can already
+        // put a prompt of its choosing one click away. What keeps that safe is
+        // exactly this line: the click opens a session with the text sitting
+        // in the composer, where a person reads it, rather than running it.
+        //
+        // The app's own auto-send call sites (spawnGuide, spawnFleetManager)
+        // are safe for a reason that does not transfer here: they send text
+        // the APP composed in code, around a question the USER typed. Nothing
+        // in this path is app-owned — `text` came off disk.
+        //
+        // Pinned by tests/libraryHostAutoSend.test.tsx.
         spawnAgent({ cwd: target, initialPrompt: text });
         return;
       }

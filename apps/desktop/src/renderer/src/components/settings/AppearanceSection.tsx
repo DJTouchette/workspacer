@@ -23,6 +23,7 @@ import {
   inputStyle,
 } from './primitives';
 import ThemeMaker from './ThemeMaker';
+import DraftWithAgentButton from './DraftWithAgentButton';
 
 interface AppearanceSectionProps {
   config: Config;
@@ -215,6 +216,11 @@ const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) =
       {isCustomThemeId(config.ui.theme) && customThemes[config.ui.theme] && (
         <ThemeMaker config={config} save={save} themeId={config.ui.theme} />
       )}
+      {/* No proposal step here, and that is the point: a theme is a direct
+          config write that applies live and is undone by picking another one.
+          The review step jobs has is earned by argv that runs later
+          unattended; a colour scheme has not earned it. */}
+      <DraftWithAgentButton briefId="appearance" />
       <Row label="Font">
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <SearchableSelect
