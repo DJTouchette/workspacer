@@ -15,9 +15,19 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 )
 
 const readyTimeout = 20 * time.Second
+
+// claudemon's default ports, named once so the flag defaults and the
+// shared-database guard cannot drift apart. Changing either of these is the
+// gesture that means "a SECOND claudemon on this machine" — see resolveDBPath.
+const (
+	defaultClaudemonAPIPort  = 7891
+	defaultClaudemonHookPort = 7890
+)
 
 // runServe is the product face of headless mode: resolve the sibling daemons,
 // wire them together, supervise them, and tell the operator how to connect.
@@ -75,6 +85,7 @@ type commonServeFlags struct {
 	trustedHost                    *string
 	hubPort, apiPort, hookPort     *int
 	claudemonBin, hubBin, brainBin *string
+	dbPath                         *string
 	noClaudemonInit                *bool
 	allowNewToken                  *bool
 }
@@ -84,13 +95,15 @@ func registerCommonServeFlags(fs *flag.FlagSet) *commonServeFlags {
 		host: fs.String("host", "127.0.0.1",
 			"bind host for the hub (bus + /remote + /m). The default is loopback-only; binding wider (e.g. 0.0.0.0 or a tailnet IP) is your explicit opt-in to remote access — pair it with a private network like Tailscale, never the open internet"),
 		hubPort:      fs.Int("hub-port", 7895, "hub port (event bus + web clients)"),
-		apiPort:      fs.Int("claudemon-api-port", 7891, "claudemon API port (session state + control)"),
-		hookPort:     fs.Int("claudemon-hook-port", 7890, "claudemon hook-ingestion port (Claude Code hooks post here)"),
+		apiPort:      fs.Int("claudemon-api-port", defaultClaudemonAPIPort, "claudemon API port (session state + control)"),
+		hookPort:     fs.Int("claudemon-hook-port", defaultClaudemonHookPort, "claudemon hook-ingestion port (Claude Code hooks post here)"),
 		claudemonBin: fs.String("claudemon-bin", "", "path to the claudemon binary (default: sibling of this binary, then PATH)"),
 		hubBin:       fs.String("hub-bin", "", "path to the hub binary (default: sibling of this binary, then PATH)"),
 		brainBin:     fs.String("brain-bin", "", "path to the brain binary the hub supervises (default: sibling of this binary, then the hub auto-detects its own sibling / PATH)"),
 		trustedHost: fs.String("trusted-host", os.Getenv("HUB_TRUSTED_HOSTS"),
 			"comma-separated hostname(s) a reverse proxy in front of the hub presents (e.g. the `tailscale serve` MagicDNS name). A TLS front-end terminates elsewhere and forwards to our loopback socket, which is the DNS-rebinding shape the hub's Host/Origin pins refuse, so it must be named or every route behind it answers 403"),
+		dbPath: fs.String("claudemon-db-path", "",
+			"path to claudemon's SQLite session store (default: $XDG_DATA_HOME/claudemon/state.db, else ~/.claudemon/state.db — the same file the desktop app uses, deliberately). REQUIRED when you change claudemon's ports: that means a second daemon, and two daemons on one state.db share every session and event row"),
 		noClaudemonInit: fs.Bool("no-claudemon-init", false,
 			"skip the claudemon-init pre-flight that registers Claude Code's hooks + statusLine in ~/.claude/settings.json. Only for an operator who writes that file themselves (or ships it read-only): without those hooks a PTY session never leaves mode=unknown, and a spawn's first message — held until the Input transition — is never delivered"),
 		allowNewToken: fs.Bool("allow-new-token", os.Getenv("WORKSPACER_ALLOW_NEW_TOKEN") == "1",
@@ -120,6 +133,7 @@ func (f *commonServeFlags) resolveOptions() (serveOptions, bool) {
 		TrustedHosts:  *f.trustedHost,
 
 		SkipClaudemonInit: *f.noClaudemonInit,
+		DBPath:            *f.dbPath,
 	}
 	if opts.ClaudemonBin == "" {
 		fmt.Fprintln(os.Stderr, "workspacer: claudemon binary not found next to this binary or on PATH (build it with `make build-claudemon`, or pass --claudemon-bin)")
@@ -188,6 +202,16 @@ func bootStack(ctx context.Context, opts serveOptions, logw io.Writer) (*stack, 
 			return nil, fmt.Errorf("%s %d is already in use (%v) — is a workspacer server or the desktop app already running? Try `workspacer status`", p.what, p.port, err)
 		}
 	}
+
+	// Decide which session database this stack opens BEFORE probing a port or
+	// starting a process: it is the one refusal that must happen before any
+	// side effect, since the damage it prevents is done the moment a second
+	// claudemon opens the file.
+	dbPath, err := resolveDBPath(opts)
+	if err != nil {
+		return nil, err
+	}
+	opts.DBPath = dbPath
 
 	plan := buildServePlan(opts)
 
@@ -309,4 +333,89 @@ func runInitStep(ctx context.Context, spec childSpec, logw io.Writer) {
 	if trimmed != "" {
 		fmt.Fprintf(logw, "[workspacer] claudemon init: %s\n", trimmed)
 	}
+}
+
+// resolveDBPath decides which SQLite session store this stack opens, and refuses
+// the one combination that means "a second stack quietly sharing the live one".
+//
+// THE DEFAULT MUST NOT MOVE. `workspacer serve` and the desktop app share one
+// session store on purpose — they adopt each other rather than coexisting (see
+// claudemonDaemon.ts "adopted external daemon") — so the derived path mirrors
+// claudemon's own default_db_path (services/claudemon/src/store/mod.rs) exactly.
+// Pinning it is about making the choice VISIBLE and testable, not about changing
+// it: a relocation here would strand every existing install's sessions.
+//
+// Two things the mirror deliberately does NOT copy:
+//
+//   - claudemon's third fallback, the RELATIVE ".claudemon/state.db" under the
+//     process CWD. On a container that is the rootfs that gets rebuilt on every
+//     start, so a session store landing there is total silent loss. We refuse
+//     and name the fix instead of laundering it into a real-looking path.
+//   - `std::env::var("XDG_DATA_HOME")` returning Ok("") for a set-but-empty
+//     variable, which sends the Rust side to a relative path too. Same refusal.
+//
+// THE GUARD: bootStack already refuses ports that are busy, so the ONLY way to
+// get a second claudemon on this machine is to ask for one by changing its
+// ports. Doing that while leaving the database alone is not a configuration
+// anybody wants — the two daemons then share the `sessions` and `events` tables,
+// the newcomer's boot hydration adopts the live stack's sessions as resumable
+// rows of its own, its clients can resume and act on them, and its
+// fleet.quiescence sampler counts them. So alternate ports REQUIRE an explicit
+// --claudemon-db-path. Refusing (rather than warning) matches the rest of this
+// command: `serve` is a foreground CLI whose exit is the loudest signal it has,
+// the damage is silent and to live agent state, and the way past is one flag —
+// including passing the shared default explicitly if that is genuinely wanted.
+func resolveDBPath(opts serveOptions) (string, error) {
+	if opts.DBPath != "" {
+		return opts.DBPath, nil
+	}
+	secondDaemon := opts.APIPort != defaultClaudemonAPIPort || opts.HookPort != defaultClaudemonHookPort
+
+	derived, err := deriveClaudemonDBPath()
+	if err != nil {
+		return "", err
+	}
+	if secondDaemon {
+		return "", fmt.Errorf(
+			"refusing to open the shared session database from a second claudemon.\n"+
+				"  You changed claudemon's ports (--claudemon-api-port %d, --claudemon-hook-port %d), which starts a\n"+
+				"  SECOND daemon — but its database would still be %s, the same file the stack on the\n"+
+				"  default ports uses. Two daemons on one store share every session and event row: the newcomer\n"+
+				"  lists the live stack's agents as its own resumable sessions, its clients can resume and act on\n"+
+				"  them, and its fleet signal counts them.\n"+
+				"  Give this stack its own: --claudemon-db-path /some/scratch/state.db (or set XDG_DATA_HOME).\n"+
+				"  If sharing really is what you want, pass --claudemon-db-path %s explicitly",
+			opts.APIPort, opts.HookPort, derived, derived)
+	}
+	return derived, nil
+}
+
+// deriveClaudemonDBPath mirrors services/claudemon/src/store/mod.rs
+// default_db_path(). Kept in lockstep with it by TestResolveDBPath; if that
+// function ever moves, this must move with it or `serve` silently relocates
+// every existing install's sessions.
+func deriveClaudemonDBPath() (string, error) {
+	if xdg, ok := os.LookupEnv("XDG_DATA_HOME"); ok {
+		p := filepath.Join(xdg, "claudemon", "state.db")
+		if !filepath.IsAbs(p) {
+			return "", fmt.Errorf(
+				"XDG_DATA_HOME=%q is not an absolute path, so claudemon's session database would land at %q —\n"+
+					"  a path relative to whatever this process's working directory happens to be, which on a container\n"+
+					"  is the rootfs that is rebuilt on every start. Set XDG_DATA_HOME to an absolute path, or pass\n"+
+					"  --claudemon-db-path", xdg, p)
+		}
+		return p, nil
+	}
+	if home := authtoken.HomeDir(); home != "" {
+		p := filepath.Join(home, ".claudemon", "state.db")
+		if !filepath.IsAbs(p) {
+			return "", fmt.Errorf("home directory %q is not absolute; pass --claudemon-db-path", home)
+		}
+		return p, nil
+	}
+	return "", fmt.Errorf(
+		"cannot work out where claudemon's session database belongs: neither $XDG_DATA_HOME nor a home\n" +
+			"  directory is resolvable. Leaving it to the daemon would put it at a path relative to this\n" +
+			"  process's working directory, where it is lost on the next restart. Set $HOME, or pass\n" +
+			"  --claudemon-db-path")
 }
