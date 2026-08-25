@@ -787,9 +787,23 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
       client.subscribe('layout.changed', (ev) =>
         callback(ev.data as { version: number; data: unknown }),
       ),
-    // Facade-opened terminals are a desktop-pane affordance (they need a real
-    // PTY pane); the browser mirror has none, so this is a no-op subscription.
-    onFacadeOpenTerminal: () => () => {},
+    // The brain (headless provider) has no renderer to push IPC.
+    // FACADE_OPEN_TERMINAL to, so it publishes the identical payload as
+    // facade.openTerminal on the bus instead (visibleterm.go). The topic is
+    // TopicGuardedBy terminals.open (eventtopics.go) — the hub itself refuses
+    // this subscription for a connection that doesn't hold that capability,
+    // so no client-side gating is needed here.
+    onFacadeOpenTerminal: (callback) =>
+      client.subscribe('facade.openTerminal', (ev) =>
+        callback(
+          (ev.data ?? {}) as {
+            cwd?: string;
+            command?: string;
+            label?: string;
+            parentSessionId?: string;
+          },
+        ),
+      ),
     getHubStatus: () => Promise.resolve({ connected: client.isConnected() }),
     getRemoteInfo: () =>
       Promise.resolve({

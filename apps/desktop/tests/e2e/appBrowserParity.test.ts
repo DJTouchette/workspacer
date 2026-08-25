@@ -212,3 +212,26 @@ test.describe('composer attachments', () => {
     expect(got, 'clicking attach opened no file chooser').not.toBeNull();
   });
 });
+
+// ═══ 4 — a fourth gap, closed by web-8: the headless open_terminal delivery ═
+//
+// `terminals.open` (the VISIBLE-terminal tool — "bring up the dev server so
+// the user can watch it") has no renderer to push IPC to when the provider is
+// the headless brain, so it publishes the identical payload as
+// `facade.openTerminal` on the bus instead (`visibleterm.go`). Before this fix
+// `webBackend.ts`'s `onFacadeOpenTerminal` was a hard no-op, so the brain
+// published into silence and an agent's "open a terminal I can see" request
+// on `/app` did nothing, with no error anywhere.
+test.describe('facade-opened terminals', () => {
+  test('a published facade.openTerminal opens a visible terminal pane', async ({ page }) => {
+    await openApp(page);
+
+    hub.publish('facade.openTerminal', {
+      cwd: '/tmp',
+      command: 'npm run dev',
+      label: 'e2e-dev-server',
+    });
+
+    await expect(page.getByText('e2e-dev-server').first()).toBeVisible({ timeout: 8_000 });
+  });
+});
