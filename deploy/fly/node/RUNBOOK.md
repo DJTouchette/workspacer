@@ -191,6 +191,12 @@ fly deploy \
 The build context is the repo root deliberately: the image builds `brain` and
 `workspacer` from `services/hub` and `claudemon` from `services/claudemon`.
 
+**This deploys the BASE image**, which is workspacer and nothing else — no Go,
+Ruby, bun or python3 for application code. That is a working node; it is not a
+development box. To put project toolchains on it, build a small image `FROM` this
+one and deploy that instead. [BASE_IMAGE.md](BASE_IMAGE.md) is the contract, and
+`example.Dockerfile` is a buildable skeleton.
+
 The `[[mounts]] initial_size = "30gb"` creates `wks_data` in `ord` on first
 deploy. **Volumes never shrink**, so 30 GB errs high on purpose; they also bill
 while the machine is stopped ($0.15/GB/mo = $4.50), are pinned to one physical
@@ -516,10 +522,32 @@ Everything here that *can* be checked without deploying, is:
 ./deploy/fly/node/test-bootstrap.sh                       # 63 assertions, ~1s, no root/docker/fly
 python3 -c "import tomllib;tomllib.load(open('deploy/fly/node/fly.toml','rb'))"
 docker run --rm -v "$PWD/deploy/fly/node:/mnt:ro" -w /mnt koalaman/shellcheck:stable \
-  -s bash -S style entrypoint.sh bootstrap.sh test-bootstrap.sh
+  -s bash -S style entrypoint.sh bootstrap.sh test-bootstrap.sh verify-image.sh
 docker run --rm -i hadolint/hadolint hadolint --failure-threshold info - < deploy/fly/node/Dockerfile
+docker run --rm -i hadolint/hadolint hadolint --failure-threshold info - < deploy/fly/node/example.Dockerfile
 docker build --check -f deploy/fly/node/Dockerfile .      # BuildKit lint, no image built
 ```
+
+And the image itself now builds, which is stronger than any of the above:
+
+```sh
+# the base — daemons, tailscale, Claude Code, no project toolchains
+docker build -f deploy/fly/node/Dockerfile -t workspacer-node-base:dev .
+
+# a downstream project image, proving the base extends
+docker build -f deploy/fly/node/example.Dockerfile \
+  --build-arg WKS_BASE=workspacer-node-base:dev \
+  -t workspacer-node-example:dev deploy/fly/node
+
+# the 63 assertions again, this time inside the image, as wks, on an empty volume
+docker run --rm -v /tmp/fakevol:/data -u 10001:10001 -e HOME=/data/home \
+  --entrypoint /bin/bash workspacer-node-base:dev -c /usr/local/lib/wks/test-bootstrap.sh
+```
+
+Both builds end in `RUN /usr/local/lib/wks/verify-image.sh`, which asserts the
+image contract: nothing installed under a home directory, `/data` empty, no
+stateful `ENV`, daemons still on `PATH`, `wks` still 10001:10001, still building
+as root. See [BASE_IMAGE.md](BASE_IMAGE.md).
 
 `test-bootstrap.sh` runs `bootstrap.sh` against a temp directory standing in for
 `/data` and covers: refusing an unmounted volume, first boot on an empty volume,
@@ -534,9 +562,15 @@ upgrade, and the ownership marker's first-boot/later-boot split.
 
 Stated plainly so nobody mistakes silence for verification.
 
-1. **The image has never been built.** Lint and base-image resolution pass;
-   `apt-get`, `cargo build --release`, `npm install -g @anthropic-ai/claude-code`
-   and the bun installer have not run.
+1. ~~**The image has never been built.**~~ **It builds.** On 2026-08-24 both the
+   base and a downstream project image built clean on amd64: `apt-get`,
+   `go build`, `cargo build --release` and
+   `npm install -g @anthropic-ai/claude-code` all ran for real. Base is 900 MB.
+   `test-bootstrap.sh` passes 63/63 *inside* the image, as `wks`, with an empty
+   volume mounted at `/data`, and every binary the node needs resolves under
+   those conditions. What that does **not** prove: arm64, a Fly remote builder,
+   and `bundle install` against a real Gemfile (no network-bound gem install was
+   exercised).
 2. **Nothing has been deployed.** No machine, no volume, no `fly.toml` server-side
    validation. The TOML is syntactically valid and every key and enum was checked
    against flyctl v0.4.59's own config struct tags, which is not the same as Fly
