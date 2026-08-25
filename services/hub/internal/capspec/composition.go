@@ -133,6 +133,7 @@ var (
 	brainGitFile      = []string{"services", "hub", "cmd", "brain", "git.go"}
 	hubLayoutFile     = []string{"services", "hub", "internal", "layout", "layout.go"}
 	hubMainFile       = []string{"services", "hub", "cmd", "hub", "main.go"}
+	hubNodesFile      = []string{"services", "hub", "cmd", "hub", "nodes.go"}
 	hubPluginMgrFile  = []string{"services", "hub", "internal", "plugin", "manager.go"}
 	hubPushFile       = []string{"services", "hub", "internal", "push", "push.go"}
 	hubPushEndptFile  = []string{"services", "hub", "internal", "push", "endpoint.go"}
@@ -678,6 +679,12 @@ var compositionInert = map[string]InertClaim{
 	"jobs.history": {
 		Reason:    "returns run records (shell output tails included — disclosure, which is what jobsTrusted gates) for a stored job id; writes nothing and executes nothing",
 		Witnesses: []Witness{guarded(argBearing("jobsTrusted", "jobs.history", hubMainFile))},
+	},
+
+	// ── nodes.* — the remote node registry (internal/nodes) ────────────────
+	"nodes.wake": {
+		Reason:    "the only caller value is an `id` SELECTING a row the hub already holds in nodes.json. Everything the call then acts on — the cloud app, the machine id, the API endpoint, the credential — comes from that file, so there is no caller path to confine and no caller argv to interpret. Nothing it writes is read back as config, code or policy by anything: it writes nothing at all, and the state it changes (a node's state field, in memory only, never persisted) is CONSULTED by exactly one thing, nodes.list, which reports it to a human. The widen-then-use shape it does have is honest and bounded: a woken node becomes a capability PROVIDER, and everything that provider then serves is governed by the same bus authorization every other provider is — first-registration-wins, per-caller tiers, per-method allowlists — with nothing about it derived from who pressed wake. What the call really is, is an act with a BILL attached, and the answer to that is identity rather than confinement: nodesTrusted refuses plugin tokens and the view/triage tiers, and the method is admitted to no scoped tier",
+		Witnesses: []Witness{guarded(argBearing("nodesTrusted", "nodes.wake", hubNodesFile))},
 	},
 
 	"claude.profiles.add": {
