@@ -88,6 +88,24 @@ func (s *Supervisor) Reconcile(ctx context.Context) {
 
 	for _, n := range s.nodes {
 		st := s.st[n.ID]
+		// A sleep in flight owns this node's state until it finishes or times
+		// out, exactly as a wake does. Without this the poll would find the
+		// machine still `started` mid-drain and call it unreachable, turning a
+		// deliberate shutdown into a warning on the user's screen.
+		if st.stopping {
+			if s.now().Before(st.stopDeadline) {
+				continue
+			}
+			// The watcher should have cleared this. If it did not, do not
+			// leave a node parked in `stopping` forever — and say the
+			// expensive thing, because a stop that never completed means a
+			// machine that is probably still billing.
+			st.stopping = false
+			changes = append(changes, s.setLocked(n.ID, StateUnreachable,
+				"the sleep timed out: the machine was asked to shut down and never reported stopped — "+
+					"it may still be running and billing; check the cloud console", upYes))
+			continue
+		}
 		// A wake in flight owns this node's state until it finishes or times
 		// out; the poll must not race it back to `stopped` between the start
 		// call and the boot.
@@ -101,7 +119,7 @@ func (s *Supervisor) Reconcile(ctx context.Context) {
 			st.waking = false
 			st.wakeFailures++
 			changes = append(changes, s.setLocked(n.ID, StateUnreachable,
-				"the wake timed out: the machine was started but its provider never registered"))
+				"the wake timed out: the machine was started but its provider never registered", upYes))
 			continue
 		}
 		if attachedTo == n.ID {
@@ -124,7 +142,7 @@ func (s *Supervisor) Reconcile(ctx context.Context) {
 			if !st.lastExit.Clean() && st.lastExit != nil {
 				detail = st.lastExit.Describe()
 			}
-			changes = append(changes, s.setLocked(n.ID, StateAvailable, detail))
+			changes = append(changes, s.setLocked(n.ID, StateAvailable, detail, upYes))
 			continue
 		}
 		changes = append(changes, s.reconcileOneLocked(ctx, n))
@@ -199,14 +217,29 @@ func (s *Supervisor) reconcileOneLocked(ctx context.Context, n Node) *Change {
 		// `stopped` on a guess is precisely the thing that makes a remote node
 		// feel broken — a wake button that appears for a machine nobody can
 		// wake.
+		// NO CREDENTIAL means no reading, so no opinion about the power either —
+		// which is upUnknown and not upNo. Saying "it is off" here is the same
+		// guess this branch exists to refuse.
 		return s.setLocked(n.ID, StateUnreachable,
 			"its provider is not on the bus, and the hub holds no cloud credentials for this node, "+
-				"so it cannot tell a sleeping machine from a broken one")
+				"so it cannot tell a sleeping machine from a broken one", upUnknown)
 	}
 	st := s.st[n.ID]
 	fs, err := cli.State(ctx, n.Fly.App, n.Fly.MachineID)
 	if err != nil {
-		return s.setLocked(n.ID, StateUnreachable, "could not read the machine's state — "+describeFlyError(err))
+		// The cloud API did not answer. We learned nothing about the power, so
+		// the previous belief stands rather than being overwritten by a guess.
+		return s.setLocked(n.ID, StateUnreachable, "could not read the machine's state — "+describeFlyError(err), upUnknown)
+	}
+	// THE HELD EXIT RECORD IS NOW TWO RUNS OLD. lastExit is read off brain.info
+	// while a node is UP and describes the run BEFORE the one answering; once
+	// the machine is confirmed off, it no longer describes the ending that just
+	// happened. Keeping it would show a crash notice from a previous life
+	// beside a machine that has since been slept, which is the same class of
+	// quiet wrongness this package exists to remove. Absent means NOBODY KNOWS,
+	// and nobody does — until the next wake, when the node says so itself.
+	if fs == flyapi.StateStopped || fs == flyapi.StateSuspended {
+		st.lastExit = nil
 	}
 	switch fs {
 	case flyapi.StateStarted:
@@ -217,25 +250,63 @@ func (s *Supervisor) reconcileOneLocked(ctx context.Context, n Node) *Change {
 		// start — and it is certainly not `available`.
 		return s.setLocked(n.ID, StateUnreachable,
 			"the machine is running but its provider has not registered with the hub — "+
-				"check the node's brain (--hub URL, token) and its boot log")
+				"check the node's brain (--hub URL, token) and its boot log", upYes)
 	case flyapi.StateStarting, flyapi.StateReplacing:
-		return s.setLocked(n.ID, StateWaking, "the machine is starting")
+		return s.setLocked(n.ID, StateWaking, "the machine is starting", upYes)
 	case flyapi.StateStopped, flyapi.StateSuspended:
-		// A machine that crash-loops on boot exhausts its restart policy and
-		// ends up STOPPED, which through the cloud API is byte-for-byte a
-		// healthy sleeping node. The hub must not call that "asleep and fine".
-		// The one thing it knows that the API does not is its own history.
+		// THE ONE QUESTION THE CLOUD API CANNOT ANSWER, and where the sleep
+		// path finally gives the hub a first-hand answer to it.
+		//
+		// `stopped` is what a machine somebody put to sleep looks like AND what
+		// a machine looks like after the on-failure restart policy retried it
+		// and gave up (`on-fail` on this side of the wire — flyapi records both
+		// spellings). Byte-for-byte identical over the API, opposite meanings.
+		// Three things tell them apart, in descending order of authority, and
+		// each covers a case the others cannot:
+		//
+		//  1. THE HUB ISSUED THE STOP ITSELF (sleptByHub). First-hand, and the
+		//     only one of the three readable while the machine is OFF — which
+		//     is exactly when the question gets asked. In memory only, so a
+		//     restarted hub falls through to 2 and 3, which is honest: it did
+		//     not issue that stop and has no standing to claim it did.
+		//  2. THE HUB'S OWN WAKE HISTORY (wakeFailures). Catches the crash
+		//     LOOP: a node that never gets far enough to register.
+		//  3. THE NODE'S OWN EXIT RECORD (lastExit). Catches the node that ran
+		//     fine and then died — but it lives on the node's volume, so it
+		//     only arrives on the NEXT successful wake. See lastexit.go.
+		//
+		// The order matters where 1 and 2 disagree: a node that failed to wake
+		// and was then stopped BY THIS HUB to stop the bleeding has both bits
+		// set, and it is not a healthy sleeper — the failure is the news, so
+		// wakeFailures is checked first.
 		if st.wakeFailures > 0 {
+			slept := ""
+			if st.sleptByHub {
+				slept = " (the hub stopped it again so it would not keep billing)"
+			}
 			return s.setLocked(n.ID, StateUnreachable, fmt.Sprintf(
-				"the machine is stopped, but %s did not end with its provider registering — "+
+				"the machine is stopped, but %s did not end with its provider registering%s — "+
 					"it may be failing on boot rather than sleeping",
-				plural(st.wakeFailures, "the last wake attempt", "the last %d wake attempts")))
+				plural(st.wakeFailures, "the last wake attempt", "the last %d wake attempts"), slept), upNo)
 		}
-		return s.setLocked(n.ID, StateStopped, "")
+		if st.sleptByHub {
+			return s.setLocked(n.ID, StateStopped, "this hub put it to sleep; nothing is billing", upNo)
+		}
+		// NOBODY KNOWS WHY THIS IS OFF, and that is a different sentence from
+		// the one above rather than the same state with a blank detail. This
+		// hub did not stop it and has no failed wakes to blame, so it is
+		// either somebody else's deliberate stop or a crash whose account is
+		// sitting on a volume that is not running. The node's own record
+		// settles it one wake later.
+		return s.setLocked(n.ID, StateStopped, "", upNo)
 	case flyapi.StateDestroyed:
-		return s.setLocked(n.ID, StateUnreachable, "the machine has been destroyed")
+		return s.setLocked(n.ID, StateUnreachable, "the machine has been destroyed", upNo)
 	default:
-		return s.setLocked(n.ID, StateUnreachable, "the cloud API reports an unfamiliar state: "+oneLine(fs))
+		// An unrecognised state string. It is surfaced rather than coerced, and
+		// the power is left as UNKNOWN for the same reason: guessing either way
+		// about a machine whose state we do not understand is how a client ends
+		// up with a button that does nothing.
+		return s.setLocked(n.ID, StateUnreachable, "the cloud API reports an unfamiliar state: "+oneLine(fs), upUnknown)
 	}
 }
 

@@ -146,6 +146,7 @@ const BUS_BACKED = [
   // gates the BUTTON on the connection's own tier rather than stubbing it out.
   'nodesList',
   'nodesWake',
+  'nodesSleep',
   // Hub jobs (trusted-only hub-local RPCs — see HUB_CORE below)
   'jobsList',
   'jobsUpsert',
@@ -357,6 +358,7 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
       // feature-absent signal the strip reads.
       'nodes.list',
       'nodes.wake',
+      'nodes.sleep',
       // Hub-owned job system (services/hub/internal/jobs), trusted-only RPCs.
       'jobs.list',
       'jobs.upsert',

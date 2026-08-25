@@ -100,8 +100,13 @@ match.
 > machine *before* routing the request**, so no application-level auth on the
 > doorbell can stop a stranger from spending your money — the wake has already
 > happened by the time your code sees anything. The only real control is whether
-> the app is publicly routable at all. Step 9 turns it on deliberately, once the
-> hub's sleep path exists to turn the machine off again.
+> the app is publicly routable at all. Step 9 turns it on deliberately.
+>
+> **The sleep path now exists** (`nodes.sleep`, plus an automatic stop for a wake
+> whose provider never registered), so the precondition that gated step 9 is met.
+> The doorbell is still off by default and the decision to allocate an IP is still
+> a deliberate one — a hub that can turn the machine off does not make a public
+> doorbell safe, it only makes it recoverable.
 
 ---
 
@@ -653,13 +658,17 @@ These artifacts assume the following land. None of it is implemented here.
    `git.stage`, `git.commit`, `git.push` — the entire git surface — is a
    *declared* headless gap. Until it lands, this node can run agents but cannot
    show you a diff. Nothing in these artifacts changes when it does.
-3. **The Fly control plane.** `nodes.status` / `nodes.wake`, the Fly Machines API
-   client, the four-state model, and the hub-side stop that puts the machine back
-   to sleep. Two hooks are left for it: `/data/state/last-exit.json`
-   (distinguishes a hub-driven sleep from a crash loop, which the Machines API
-   cannot) and the doorbell (a token-free wake that needs no hub at all). It must
-   pass `signal` and `timeout` explicitly on every API stop call — `fly.toml`'s
-   `kill_timeout` does not govern a hub-issued stop.
+3. **The Fly control plane — BUILT.** `nodes.list` / `nodes.wake` /
+   `nodes.sleep`, the Fly Machines API client, the five-state model, and the
+   hub-side stop that puts the machine back to sleep. Both hooks left for it are
+   in use: `/data/state/last-exit.json` (which distinguishes a hub-driven sleep
+   from a crash loop, as the Machines API cannot) is read on `brain.info`, and
+   the doorbell remains deliberately off. Every API stop passes `signal` and
+   `timeout` explicitly — `fly.toml`'s `kill_timeout` does not govern a
+   hub-issued stop, and `flyapi.Client.Stop` refuses a call that omits either.
+   The one thing the entrypoint must keep doing is trapping the signal the hub
+   sends (`SIGTERM`) and writing the exit record, because a stop that leaves no
+   record is one the next wake cannot tell from a crash.
 4. **The hub has its own volume.** Not this machine's problem, but it is the
    hazard most likely to strand the fleet: the hub owns `tokens.json`,
    `remote-token`, `vapid.json` and `push-subscriptions.json`, and on Fly the

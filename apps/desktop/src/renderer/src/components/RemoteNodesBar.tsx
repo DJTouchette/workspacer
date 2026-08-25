@@ -1,19 +1,22 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Cloud, CloudOff, Loader2, Moon, type LucideIcon } from 'lucide-react';
+import { Cloud, CloudOff, Loader2, Moon, PowerOff, type LucideIcon } from 'lucide-react';
 import { ContextMenu, ContextMenuItem, ContextMenuNote, ContextMenuSeparator } from './ContextMenu';
 import { Surface } from './Surface';
 import {
   NODE_PRESENTATION,
+  SLEEP_NOTE,
   WAKE_COST_NOTE,
   applyNodeStateChange,
+  describeSleepError,
   describeWakeError,
   isNodeRegistryAbsent,
   nodeCrashNotice,
   nodeDetailLine,
   nodeToneVar,
   nodeWakeFailureNotice,
-  nodesNeedingAttention,
+  nodesWorthShowing,
   normalizeNode,
+  sleepAffordance,
   wakeAffordance,
   type NodeState,
   type RemoteNodeView,
@@ -40,11 +43,22 @@ import { ensureKeyframes } from './claude-shared';
  *     report is rendered as nothing; a permanent "all good" strip is chrome
  *     nobody asked for.
  *
- * The four states get four presentations, and `waking` is deliberately the
- * only one that reads as PROGRESS (the busy token, a spinner, "Starting…").
- * Collapsing it into `unreachable` is the single most likely reason this would
- * feel broken to use: a machine takes real seconds to boot, and a spinner that
- * looks identical to a hang is what makes someone give up.
+ * The five states get five presentations, and the two transitional ones —
+ * `waking` and `stopping` — are deliberately the only ones that read as
+ * PROGRESS (the busy token, a spinner, "Starting…" / "Shutting down…").
+ * Collapsing either into `unreachable` is the single most likely reason this
+ * would feel broken to use: a machine takes real seconds to boot and real
+ * seconds to drain, and a spinner that looks identical to a hang is what makes
+ * someone give up.
+ *
+ * THE SLEEP HALF, and why a connected machine now appears here at all. A wake
+ * starts a meter. Until the sleep path there was no way to stop one from inside
+ * the app, so an `available` node was "quietly fine" and rendering it would have
+ * been chrome. It is not quietly fine — it is billing — and the off switch has
+ * to live somewhere. So a connected node shows WHEN AND ONLY WHEN there is
+ * something the viewer could do about it: the hub holds the credential and this
+ * caller holds the authority (`nodesWorthShowing`). A view/triage phone, or a
+ * node this hub merely observes, sees exactly what it saw before.
  *
  * The button is never offered where it would be refused — a view- or triage-tier
  * client sees the state and gets a disabled control WITH THE REASON BESIDE IT,
@@ -61,6 +75,9 @@ import { ensureKeyframes } from './claude-shared';
 interface NodesApi {
   nodesList?: () => Promise<{ nodes: unknown; canWake?: boolean } | null>;
   nodesWake?: (id: string) => Promise<{ ok?: boolean; node?: unknown; error?: string }>;
+  /** Absent on an older preload — the sleep control simply is not offered,
+   *  which is the same shape the whole feature uses for "not there". */
+  nodesSleep?: (id: string) => Promise<{ ok?: boolean; node?: unknown; error?: string }>;
   onHubEvent?: (cb: (ev: { type: string; data?: unknown }) => void) => () => void;
   onHubStatus?: (cb: (s: { connected: boolean }) => void) => () => void;
 }
@@ -68,6 +85,9 @@ interface NodesApi {
 const STATE_ICON: Record<NodeState, LucideIcon> = {
   available: Cloud,
   waking: Loader2,
+  // The same spinner as `waking`: shutting down on purpose is work in progress,
+  // and the animation is what keeps it from reading as a hang.
+  stopping: Loader2,
   stopped: Moon,
   unreachable: CloudOff,
 };
@@ -77,13 +97,23 @@ export const RemoteNodesBar: React.FC<{ style?: React.CSSProperties }> = ({ styl
   const [canWake, setCanWake] = useState(false);
   /** node id → the wake we fired and the hub hasn't answered for yet. */
   const [pending, setPending] = useState<Record<string, true>>({});
-  /** node id → the last wake failure, shown on the row until it changes state. */
+  /** node id → the sleep we fired and the hub hasn't answered for yet. Separate
+   *  from `pending` so the two controls disable independently — a node
+   *  mid-shutdown must not render as one mid-start. */
+  const [sleepPending, setSleepPending] = useState<Record<string, true>>({});
+  /** node id → the last wake or sleep failure, shown on the row until it
+   *  changes state. */
   const [errors, setErrors] = useState<Record<string, string>>({});
   /** The one node currently asking "are you sure?" — a wake spends real money
    *  and this hub has no stop verb, so a tap opens this step rather than
    *  firing `nodes.wake` directly. Same idiom as the composer's restart
    *  confirm: an anchored ContextMenu, not a fourth kind of dialog. */
-  const [confirm, setConfirm] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [confirm, setConfirm] = useState<{
+    id: string;
+    x: number;
+    y: number;
+    act: 'wake' | 'sleep';
+  } | null>(null);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -135,6 +165,12 @@ export const RemoteNodesBar: React.FC<{ style?: React.CSSProperties }> = ({ styl
       // The hub has spoken about this node; our optimistic pending flag and any
       // stale wake error are both superseded.
       setPending((p) => {
+        if (!p[incoming.id]) return p;
+        const next = { ...p };
+        delete next[incoming.id];
+        return next;
+      });
+      setSleepPending((p) => {
         if (!p[incoming.id]) return p;
         const next = { ...p };
         delete next[incoming.id];
@@ -196,22 +232,63 @@ export const RemoteNodesBar: React.FC<{ style?: React.CSSProperties }> = ({ styl
     }
   }, []);
 
-  const requestWake = useCallback((id: string, x: number, y: number) => {
-    setConfirm({ id, x, y });
+  /** Put a node to sleep. Only an id crosses the seam — the signal and the
+   *  drain window are the hub's, and there is deliberately nothing here that
+   *  could name either. */
+  const sleep = useCallback(async (id: string) => {
+    const api = window.electronAPI as unknown as NodesApi | undefined;
+    if (!api?.nodesSleep) return;
+    setSleepPending((p) => ({ ...p, [id]: true }));
+    setErrors((e) => {
+      const next = { ...e };
+      delete next[id];
+      return next;
+    });
+    try {
+      const res = await api.nodesSleep(id);
+      if (!mounted.current) return;
+      const node = normalizeNode(res?.node);
+      if (node) {
+        setNodes((prev) => (prev === null ? [node] : applyNodeStateChange(prev, node)));
+      }
+      if (res && res.ok === false) {
+        setErrors((e) => ({ ...e, [id]: describeSleepError(res.error) }));
+      }
+    } catch (err) {
+      if (!mounted.current) return;
+      setErrors((e) => ({ ...e, [id]: describeSleepError(err) }));
+    } finally {
+      if (mounted.current) {
+        setSleepPending((p) => {
+          const next = { ...p };
+          delete next[id];
+          return next;
+        });
+      }
+    }
   }, []);
-  const cancelWake = useCallback(() => setConfirm(null), []);
-  const confirmWake = useCallback(
-    (id: string) => {
+
+  const requestAct = useCallback((id: string, act: 'wake' | 'sleep', x: number, y: number) => {
+    setConfirm({ id, x, y, act });
+  }, []);
+  const cancelAct = useCallback(() => setConfirm(null), []);
+  const confirmAct = useCallback(
+    (id: string, act: 'wake' | 'sleep') => {
       setConfirm(null);
-      void wake(id);
+      if (act === 'sleep') void sleep(id);
+      else void wake(id);
     },
-    [wake],
+    [wake, sleep],
   );
 
   if (!nodes) return null;
-  // A node that is quietly fine says nothing. One that came back from a crash
-  // is `available` AND carrying the only notice of that crash — so it counts.
-  const shown = nodesNeedingAttention(nodes);
+  // A node that is quietly fine says nothing — except that a CONNECTED machine
+  // this caller can switch off is not quietly fine, it is billing, and the off
+  // switch has to live somewhere. One that came back from a crash is
+  // `available` AND carrying the only notice of that crash, so it counts too.
+  const canSleep =
+    canWake && typeof (window.electronAPI as unknown as NodesApi)?.nodesSleep === 'function';
+  const shown = nodesWorthShowing(nodes, canSleep);
   if (!shown.length) return null;
 
   return (
@@ -229,12 +306,14 @@ export const RemoteNodesBar: React.FC<{ style?: React.CSSProperties }> = ({ styl
           key={node.id}
           node={node}
           canWake={canWake}
+          canSleep={canSleep}
           pending={!!pending[node.id]}
+          sleepPending={!!sleepPending[node.id]}
           error={errors[node.id]}
           confirming={confirm?.id === node.id ? confirm : null}
-          onRequestWake={requestWake}
-          onCancelWake={cancelWake}
-          onConfirmWake={confirmWake}
+          onRequestAct={requestAct}
+          onCancelAct={cancelAct}
+          onConfirmAct={confirmAct}
         />
       ))}
     </div>
@@ -244,29 +323,35 @@ export const RemoteNodesBar: React.FC<{ style?: React.CSSProperties }> = ({ styl
 const NodeRow: React.FC<{
   node: RemoteNodeView;
   canWake: boolean;
+  canSleep: boolean;
   pending: boolean;
+  sleepPending: boolean;
   error?: string;
-  confirming: { id: string; x: number; y: number } | null;
-  onRequestWake: (id: string, x: number, y: number) => void;
-  onCancelWake: () => void;
-  onConfirmWake: (id: string) => void;
+  confirming: { id: string; x: number; y: number; act: 'wake' | 'sleep' } | null;
+  onRequestAct: (id: string, act: 'wake' | 'sleep', x: number, y: number) => void;
+  onCancelAct: () => void;
+  onConfirmAct: (id: string, act: 'wake' | 'sleep') => void;
 }> = ({
   node,
   canWake,
+  canSleep,
   pending,
+  sleepPending,
   error,
   confirming,
-  onRequestWake,
-  onCancelWake,
-  onConfirmWake,
+  onRequestAct,
+  onCancelAct,
+  onConfirmAct,
 }) => {
   const p = NODE_PRESENTATION[node.state];
   const tone = nodeToneVar(p.tone);
   const Icon = STATE_ICON[node.state];
   const affordance = wakeAffordance(node, canWake, pending);
+  const sleepable = sleepAffordance(node, canSleep, sleepPending);
   const crash = nodeCrashNotice(node);
   const failures = nodeWakeFailureNotice(node);
   const btnRef = useRef<HTMLButtonElement>(null);
+  const sleepBtnRef = useRef<HTMLButtonElement>(null);
 
   return (
     <Surface
@@ -374,7 +459,7 @@ const NodeRow: React.FC<{
               // view/triage tiers and credential-less nodes safe stays intact.
               if (!affordance.enabled) return;
               const r = btnRef.current?.getBoundingClientRect();
-              onRequestWake(node.id, r ? r.left : 0, r ? r.bottom + 4 : 0);
+              onRequestAct(node.id, 'wake', r ? r.left : 0, r ? r.bottom + 4 : 0);
             }}
             style={{
               width: '100%',
@@ -423,15 +508,82 @@ const NodeRow: React.FC<{
           )}
         </>
       )}
+      {/* The off switch. Only ever rendered for a machine that is actually up —
+          a connected node, or an `unreachable` one the hub says may STILL be
+          running, which is the case with a meter attached and the precise
+          reason this button exists. */}
+      {sleepable.visible && (
+        <>
+          <button
+            ref={sleepBtnRef}
+            type="button"
+            disabled={!sleepable.enabled}
+            title={sleepable.title}
+            data-testid={`node-sleep-${node.id}`}
+            onClick={() => {
+              if (!sleepable.enabled) return;
+              const r = sleepBtnRef.current?.getBoundingClientRect();
+              onRequestAct(node.id, 'sleep', r ? r.left : 0, r ? r.bottom + 4 : 0);
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 5,
+              width: '100%',
+              padding: '5px 10px',
+              fontFamily: 'inherit',
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              borderRadius: 'var(--wks-radius-md)',
+              // Deliberately NOT the accent treatment the Connect button wears.
+              // This one ends work; it should not read as the inviting action
+              // on the card, and it must not sit one mis-tap away from looking
+              // like the same button.
+              border: `1px solid ${
+                sleepable.enabled ? 'var(--wks-border-strong)' : 'var(--wks-border-subtle)'
+              }`,
+              background: 'transparent',
+              color: sleepable.enabled ? 'var(--wks-text-secondary)' : 'var(--wks-text-disabled)',
+              cursor: sleepable.enabled ? 'pointer' : 'not-allowed',
+              transition: 'border-color 0.12s, color 0.12s',
+            }}
+          >
+            <PowerOff size={11} strokeWidth={2} style={{ flexShrink: 0 }} />
+            {sleepable.label}
+          </button>
+          {sleepable.reason && (
+            <div
+              style={{
+                fontSize: '0.6rem',
+                lineHeight: 1.5,
+                textAlign: 'center',
+                color: 'var(--wks-text-faint)',
+              }}
+            >
+              {sleepable.reason}
+            </div>
+          )}
+        </>
+      )}
       {/* The confirm step: names the consequence, not the action. Same idiom
           as the composer's restart confirm — an anchored ContextMenu with the
-          reason as prose, one confirming item, one cancel. */}
+          reason as prose, one confirming item, one cancel.
+
+          The sleep copy names the WORK rather than the saving, because the
+          money is why somebody presses it and the work is what they need to be
+          warned about. */}
       {confirming && (
-        <ContextMenu x={confirming.x} y={confirming.y} onClose={onCancelWake} minWidth={230}>
-          <ContextMenuNote>{WAKE_COST_NOTE}</ContextMenuNote>
-          <ContextMenuItem label={`Connect ${node.label}`} onClick={() => onConfirmWake(node.id)} />
+        <ContextMenu x={confirming.x} y={confirming.y} onClose={onCancelAct} minWidth={230}>
+          <ContextMenuNote>
+            {confirming.act === 'sleep' ? SLEEP_NOTE : WAKE_COST_NOTE}
+          </ContextMenuNote>
+          <ContextMenuItem
+            label={confirming.act === 'sleep' ? `Shut down ${node.label}` : `Connect ${node.label}`}
+            onClick={() => onConfirmAct(node.id, confirming.act)}
+          />
           <ContextMenuSeparator />
-          <ContextMenuItem label="Cancel" onClick={onCancelWake} />
+          <ContextMenuItem label="Cancel" onClick={onCancelAct} />
         </ContextMenu>
       )}
     </Surface>

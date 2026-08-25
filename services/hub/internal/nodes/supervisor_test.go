@@ -69,14 +69,27 @@ func (f *fakeBus) evictionCount() int {
 
 // fakeFly is a Fly Machines API that costs nothing.
 type fakeFly struct {
-	mu         sync.Mutex
-	state      string
-	starts     int
-	startErr   error
-	waitErr    error
-	stateErr   error
-	onStart    func()
-	waitCalled int
+	mu       sync.Mutex
+	state    string
+	starts   int
+	startErr error
+	waitErr  error
+	stateErr error
+	onStart  func()
+	// stopWaitErr, when set, is what WaitForState returns for a stop wait
+	// specifically — a wake wait and a sleep wait fail for different reasons
+	// and the tests need to drive them apart.
+	stopWaitErr error
+	waitCalled  int
+
+	// The stop half. `stopSignals` and `stopTimeouts` record what the caller
+	// actually put on the wire, because "it called Stop" and "it called Stop
+	// with a drain window the deployment chose" are different claims.
+	stops        int
+	stopErr      error
+	stopSignals  []string
+	stopTimeouts []time.Duration
+	onStop       func()
 }
 
 func (f *fakeFly) Start(context.Context, string, string) error {
@@ -92,19 +105,44 @@ func (f *fakeFly) Start(context.Context, string, string) error {
 	}
 	return err
 }
+func (f *fakeFly) Stop(_ context.Context, _, _, signal string, timeout time.Duration) error {
+	f.mu.Lock()
+	f.stops++
+	f.stopSignals = append(f.stopSignals, signal)
+	f.stopTimeouts = append(f.stopTimeouts, timeout)
+	err, hook := f.stopErr, f.onStop
+	if err == nil {
+		f.state = flyapi.StateStopped
+	}
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return err
+}
+
 func (f *fakeFly) State(context.Context, string, string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.state, f.stateErr
 }
-func (f *fakeFly) WaitForState(context.Context, string, string, string, time.Duration) error {
+func (f *fakeFly) WaitForState(_ context.Context, _, _, want string, _ time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.waitCalled++
+	if want == flyapi.StateStopped {
+		return f.stopWaitErr
+	}
 	return f.waitErr
 }
 func (f *fakeFly) startCount() int   { f.mu.Lock(); defer f.mu.Unlock(); return f.starts }
+func (f *fakeFly) stopCount() int    { f.mu.Lock(); defer f.mu.Unlock(); return f.stops }
 func (f *fakeFly) setState(s string) { f.mu.Lock(); f.state = s; f.mu.Unlock() }
+func (f *fakeFly) stopArgs() ([]string, []time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.stopSignals...), append([]time.Duration(nil), f.stopTimeouts...)
+}
 
 func flyNode(id string) Node {
 	return Node{ID: id, Label: id + " label", Fly: &Fly{App: "app-" + id, MachineID: "m-" + id, Token: secretToken}}

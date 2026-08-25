@@ -687,6 +687,11 @@ var compositionInert = map[string]InertClaim{
 		Witnesses: []Witness{guarded(argBearing("nodesTrusted", "nodes.wake", hubNodesFile))},
 	},
 
+	"nodes.sleep": {
+		Reason:    "the inverse of nodes.wake and the half that closes its bill: the only caller value is an `id` SELECTING a row the hub already holds in nodes.json, and everything the call acts on — the cloud app, the machine id, the API endpoint, the credential — comes from that file. It writes nothing, and the state it changes (a node's state field, in memory only, never persisted) is CONSULTED by exactly one thing, nodes.list, which reports it to a human. What it has that its twin does not is two values with real authority in them, the stop SIGNAL and the drain window, and neither is on the wire: both are the supervisor's own tunables, so a caller cannot name SIGKILL and thereby destroy the exit record that distinguishes this deliberate stop from a crash on the next wake. The composition worth naming is with nodes.wake itself and it is bounded rather than open: sleep can only stop a machine wake could start, both are refused to the same callers by the same gate, and neither reads anything the other wrote — the state field is not config, code or policy to anything. The act with consequences here is not a widening at all, it is a DESTRUCTION: it ends work in flight on a machine somebody may be using. The answer to that is identity, and nodesTrusted is it",
+		Witnesses: []Witness{guarded(argBearing("nodesTrusted", "nodes.sleep", hubNodesFile))},
+	},
+
 	"claude.profiles.add": {
 		Reason:    "persists a profile whose configDir becomes CLAUDE_CONFIG_DIR and whose extraArgs become argv — both classified per-parameter, alongside mcpItemIds. The interpreter is real, and it is closed by scrubProfileBypass at write time on BOTH providers, with agents.spawn refusing a bypassing profileId from a bus caller as the second half",
 		Witnesses: []Witness{paramsClassified("configDir", "extraArgs", "mcpItemIds")},

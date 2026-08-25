@@ -1,5 +1,5 @@
 /**
- * E2E for the /m Connect button — the remote-node strip.
+ * E2E for the /m Connect and Put-to-sleep buttons — the remote-node strip.
  *
  * Everything below the client is REAL: the hub binary, its node registry read
  * off a real `nodes.json`, its reconcile loop, its `nodes.list` / `nodes.wake`
@@ -16,7 +16,12 @@
  *  - a triage token sees the state and gets no live button;
  *  - a node the hub has no credential for gets a disabled button with a reason;
  *  - tapping Connect really reaches `nodes.wake`, which really starts the
- *    (fake) machine, and the state follows on the event — no polling.
+ *    (fake) machine, and the state follows on the event — no polling;
+ *  - AND THE SLEEP HALF: a machine the hub reports as RUNNING AND PROVIDING
+ *    NOTHING is the case with a meter attached, and tapping Put to sleep really
+ *    reaches `nodes.sleep`, which really stops the (fake) machine — with an
+ *    explicit signal and drain window on the wire, because fly.toml's
+ *    kill_timeout does not govern an API stop.
  */
 import * as http from 'http';
 import { test, expect, type Page } from '@playwright/test';
@@ -29,11 +34,13 @@ const IPHONE = { width: 390, height: 844 };
 function startFakeFly(): Promise<{
   url: string;
   starts: string[];
+  stops: Array<{ signal?: string; timeout?: string }>;
   setState(s: string): void;
   stop(): Promise<void>;
 }> {
   let machineState = 'stopped';
   const starts: string[] = [];
+  const stops: Array<{ signal?: string; timeout?: string }> = [];
   const srv = http.createServer((req, res) => {
     const url = req.url || '';
     res.setHeader('content-type', 'application/json');
@@ -41,6 +48,25 @@ function startFakeFly(): Promise<{
       starts.push(url);
       machineState = 'started';
       res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+    // The stop endpoint takes its OWN signal and timeout — fly.toml's
+    // kill_signal / kill_timeout govern a PLATFORM stop and are never read
+    // here — so the body is recorded and asserted rather than discarded.
+    if (req.method === 'POST' && /\/stop$/.test(url)) {
+      let body = '';
+      req.on('data', (c) => {
+        body += c;
+      });
+      req.on('end', () => {
+        try {
+          stops.push(JSON.parse(body || '{}'));
+        } catch {
+          stops.push({});
+        }
+        machineState = 'stopped';
+        res.end(JSON.stringify({ ok: true }));
+      });
       return;
     }
     if (/\/wait\?/.test(url)) {
@@ -55,6 +81,7 @@ function startFakeFly(): Promise<{
       resolve({
         url: `http://127.0.0.1:${port}`,
         starts,
+        stops,
         setState: (s) => {
           machineState = s;
         },
@@ -130,7 +157,7 @@ test.describe('/m with a node registry', () => {
     await fly?.stop();
   });
 
-  test('renders the four states honestly, and never leaks the Fly token', async ({ page }) => {
+  test('renders the states honestly, and never leaks the Fly token', async ({ page }) => {
     await openFleet(page, hub);
 
     const den = page.locator('.node[data-node="den"]');
@@ -242,5 +269,78 @@ test.describe('/m on a triage token', () => {
     await den.locator('button').click({ force: true });
     await page.waitForTimeout(500);
     expect(fly.starts).toEqual([]);
+  });
+});
+
+// ── the case with a meter attached ─────────────────────────────────────────
+//
+// A machine that is RUNNING and providing nothing is the shape a failed wake
+// leaves behind, and before the sleep path it billed until somebody opened the
+// cloud console. Its own hub, because the reconcile has to find the machine
+// already `started`.
+test.describe('/m against a machine that is running and providing nothing', () => {
+  let hub: MobileHub;
+  let fly: Awaited<ReturnType<typeof startFakeFly>>;
+
+  test.beforeAll(async () => {
+    fly = await startFakeFly();
+    fly.setState('started'); // up, and no brain will ever dial in
+    hub = await startMobileHub({
+      nodes: [
+        {
+          id: 'den',
+          label: 'Fly node (den)',
+          fly: {
+            app: 'wks-node-den',
+            machineId: '17811944b12345',
+            token: 'FlyV1 fm2_TEST_TOKEN_MUST_NEVER_REACH_A_CLIENT',
+            baseUrl: fly.url,
+          },
+        },
+      ],
+    });
+  });
+  test.afterAll(async () => {
+    await hub?.stop();
+    await fly?.stop();
+  });
+
+  test('offers Put to sleep, and really stops the machine with an explicit signal', async ({
+    page,
+  }) => {
+    await openFleet(page, hub);
+    const den = page.locator('.node[data-node="den"]');
+    // Running with no provider is UNREACHABLE — never `available`, and never
+    // `stopped`. The cloud API saying `started` says nothing about whether
+    // workspacer is running on the box.
+    await expect(den).toHaveAttribute('data-node-state', 'unreachable', { timeout: 10000 });
+    await expect(den).toContainText(/is running/i);
+
+    const btn = den.locator('button');
+    await expect(btn).toBeEnabled();
+    await expect(btn).toContainText(/put to sleep/i);
+    // The copy names the WORK, not the saving.
+    await expect(den).toContainText(/anything still running on it stops/i);
+
+    // A tap alone opens the confirm and stops nothing.
+    page.once('dialog', (d) => d.dismiss());
+    await btn.click();
+    await page.waitForTimeout(300);
+    expect(fly.stops).toEqual([]);
+
+    page.once('dialog', (d) => d.accept());
+    await btn.click();
+    await expect(den).toHaveAttribute('data-node-state', 'stopped', { timeout: 15000 });
+
+    // THE ONE API DETAIL THAT IS EXPENSIVE TO GET WRONG: a stop issued through
+    // the Machines API never reads fly.toml, so the signal and the drain window
+    // have to be on the wire. A stop without them SIGKILLs the node mid-flush,
+    // and a SIGKILLed node writes no exit record for the next wake to read.
+    expect(fly.stops.length).toBe(1);
+    expect(fly.stops[0].signal).toBe('SIGTERM');
+    expect(fly.stops[0].timeout).toBeTruthy();
+
+    // …and the credential never went anywhere near the page.
+    expect(await page.content()).not.toContain('fm2_TEST_TOKEN');
   });
 });

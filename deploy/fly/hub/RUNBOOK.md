@@ -157,9 +157,11 @@ things, in order of how concrete they are:
    every client you own, in a third party's logs, on every visit.
 2. **This is the only machine holding a credential that spends money.** The node's
    worst case for a public doorbell was "a stranger burns $0.06/hr". The hub's is
-   "a stranger is talking to the control plane". `nodes.wake` is host-authority
-   only — `nodesTrusted` refuses even an operator-tier scoped token — so the token
-   is a real boundary, but it is one boundary, and the failure is expensive.
+   "a stranger is talking to the control plane". `nodes.wake` and `nodes.sleep`
+   are host-authority only — `nodesTrusted` refuses even an operator-tier scoped
+   token — so the token is a real boundary, but it is one boundary, and the
+   failure is expensive. Note that the sleep verb does not soften this: whoever
+   can turn a machine on can also turn one off underneath whoever is using it.
 3. **The unguarded surface is real, if small.** `/m`, the PWA manifest, the service
    worker, the icons, `/plugins/origin` and `/plugins/ui/<id>/` are served without
    the host token by design (a `<script>` URL cannot carry it). None of them
@@ -456,6 +458,7 @@ fly ips allocate-v4 --shared --app workspacer-hub
 | `/bus` | `Server.Authorized` — the host token, or a scoped token whose grant is operator. Plus `originAllowed`. **This is the real boundary.** |
 | `/app/` entry | `Authorized`. View/triage scoped tokens are refused. |
 | `nodes.wake` | `nodesTrusted` — **host authority only**. A scoped operator token is refused, so a leaked phone-tier token cannot spend money. |
+| `nodes.sleep` | `nodesTrusted`, the same gate — and refused for a reason of its own rather than by symmetry: a stop lands on a machine somebody may be typing at and ends the work in flight on it. "It only turns things off" is destructive, not smaller. |
 | `nodes.list` | View tier. Discloses a label, a state and a timestamp — deliberately not the app, the machine id, the endpoint or the token. |
 | `/m`, manifest, `sw.js`, icons, `/plugins/origin`, `/plugins/ui/<id>/` | **Unguarded by design.** Static shells; none discloses session state. This is the surface you are adding to the internet. |
 
@@ -555,8 +558,10 @@ Unusually for `deploy/fly/`, the first list is not empty.
 2. **`hub` is not in the base.** The base builds `brain`, `workspacer` and
    `claudemon`, because a worker node runs no hub. This image adds its own Go
    builder stage for it. If the base ever ships `hub`, that stage can be deleted.
-3. **The client wake buttons.** `nodes.list`, `nodes.wake` and `node.state_changed`
-   are built and this hub serves them. The desktop, `/app` and `/m` buttons are
-   another worker's; nothing here changes when they land.
+3. **The client wake and sleep buttons.** `nodes.list`, `nodes.wake`,
+   `nodes.sleep` and `node.state_changed` are built and this hub serves them, and
+   the desktop, `/app` and `/m` buttons all exist. Note for anyone reading a
+   `stopped` node: `sleptByHub` on the node view is IN-MEMORY ONLY, so a hub that
+   has restarted honestly stops claiming it put the machine to sleep.
 4. **A leaner hub base.** See README.md — this image carries `claudemon`, `brain`
    and Claude Code because the base does, and never runs any of them.

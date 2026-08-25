@@ -16,10 +16,17 @@
  *     Every existing workspacer install must see no change whatsoever, so the
  *     absent case renders NOTHING rather than an empty state or a toast.
  *
- *  2. **`waking` is not `unreachable`.** A machine takes real seconds to boot,
- *     and a spinner that looks the same as a hang is what makes someone give
- *     up. The four states get four distinct presentations — tone, verb and
- *     copy — and `waking` is the only one that reads as progress.
+ *  2. **`waking` is not `unreachable`, and neither is `stopping`.** A machine
+ *     takes real seconds to boot and real seconds to drain, and a spinner that
+ *     looks the same as a hang is what makes someone give up. The five states
+ *     get five distinct presentations — tone, verb and copy — and the two
+ *     transitional ones are the only ones that read as progress.
+ *
+ *  3. **Sleeping is not the harmless direction of waking.** A wake spends
+ *     money and is undone by waiting; a stop ends the work in flight on a
+ *     machine somebody may be using, so it is host-authority-only on the hub
+ *     for a reason of its own, and its confirm copy names the WORK rather than
+ *     the saving. See [[SLEEP_NOTE]].
  *
  * The states themselves are the hub's answer, never inferred here: running with
  * no provider is `unreachable` (not `available`), stopped-after-a-failed-wake is
@@ -27,10 +34,20 @@
  * `stopped` because the hub genuinely cannot tell.
  */
 
-/** The four states. The distinction between the last three is the whole point. */
-export type NodeState = 'available' | 'waking' | 'stopped' | 'unreachable';
+/** The five states. The distinction between the last four is the whole point.
+ *  `stopping` is the sleep path's mirror of `waking`: a machine takes real
+ *  seconds to drain, and rendering that as `unreachable` turns a deliberate act
+ *  into a warning. It is also what stops a Connect button reappearing mid-drain
+ *  and racing the stop. */
+export type NodeState = 'available' | 'waking' | 'stopping' | 'stopped' | 'unreachable';
 
-const NODE_STATES: readonly string[] = ['available', 'waking', 'stopped', 'unreachable'];
+const NODE_STATES: readonly string[] = [
+  'available',
+  'waking',
+  'stopping',
+  'stopped',
+  'unreachable',
+];
 
 /** The node's own exit record, read off its volume via `brain.info`. Absent
  *  means NOBODY KNOWS — the hub never fabricates an empty one. */
@@ -57,6 +74,19 @@ export interface RemoteNodeView {
    *  RUNNING, because this hub has no stop verb. */
   wakeFailures?: number;
   lastExit?: NodeLastExit;
+  /** THIS hub process issued the stop that put the machine to sleep. The only
+   *  account of a stop that is readable while the machine is OFF — `lastExit`
+   *  lives on the node's volume and only arrives one wake later. Absent means
+   *  "this hub did not do it", NEVER "somebody else did": it is in-memory only,
+   *  so a restarted hub honestly stops claiming it. */
+  sleptByHub?: boolean;
+  /** The hub's belief about the MACHINE's power, which is a different question
+   *  from whether its provider answers — and the one a stop button needs.
+   *  `unreachable` covers both "running and providing nothing" (a meter) and
+   *  "off and broken" (nothing to switch off). READ THIS; never infer it from
+   *  `detail`, whose text for an already-stopped machine says "…would not keep
+   *  billing". Prose is not an API. */
+  mayBeRunning?: boolean;
 }
 
 /** What a backend hands back for `nodesList()`. `null` (not `{nodes: []}`) is
@@ -65,6 +95,14 @@ export interface RemoteNodeView {
 export interface RemoteNodesSnapshot {
   nodes: RemoteNodeView[];
   canWake: boolean;
+}
+
+/** The result of a sleep attempt. Same shape as a wake — a refusal is an
+ *  ANSWER rendered on the row, not a rejection. */
+export interface NodeSleepResult {
+  ok: boolean;
+  node?: RemoteNodeView;
+  error?: string;
 }
 
 /** The result of a wake attempt. `ok:false` carries a rendered reason. */
@@ -88,7 +126,7 @@ export interface NodeWakeResult {
  */
 export function isNodeRegistryAbsent(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
-  return /no provider for nodes\.(list|wake)\b/.test(msg);
+  return /no provider for nodes\.(list|wake|sleep)\b/.test(msg);
 }
 
 /** Is this the tier refusal? A view/triage token asking to spend money. */
@@ -121,6 +159,8 @@ export function normalizeNode(raw: unknown): RemoteNodeView | null {
   if (typeof r.lastSeen === 'number' && Number.isFinite(r.lastSeen)) node.lastSeen = r.lastSeen;
   if (typeof r.detail === 'string' && r.detail) node.detail = r.detail;
   if (typeof r.wakeFailures === 'number' && r.wakeFailures > 0) node.wakeFailures = r.wakeFailures;
+  if (r.sleptByHub === true) node.sleptByHub = true;
+  if (r.mayBeRunning === true) node.mayBeRunning = true;
   if (r.lastExit && typeof r.lastExit === 'object') {
     const e = r.lastExit as Record<string, unknown>;
     const exit: NodeLastExit = {};
@@ -194,11 +234,20 @@ export const NODE_PRESENTATION: Record<NodeState, NodePresentation> = {
     progress: true,
     fallbackDetail: 'The machine is booting — usually ready in about 20 seconds.',
   },
+  // The busy tone again, not a warning: shutting down on purpose is work in
+  // progress, not a fault. This is the whole reason the state exists rather
+  // than being folded into `unreachable`.
+  stopping: {
+    label: 'Shutting down…',
+    tone: 'busy',
+    progress: true,
+    fallbackDetail: 'The machine is shutting down cleanly. It stops billing once it is off.',
+  },
   stopped: {
     label: 'Asleep',
     tone: 'muted',
     progress: false,
-    fallbackDetail: 'Switched off. Connecting will start it.',
+    fallbackDetail: 'Switched off, and nothing is billing. Connecting will start it.',
   },
   unreachable: {
     label: "Can't reach",
@@ -252,13 +301,27 @@ export function nodeCrashNotice(node: RemoteNodeView): string | null {
  * say so rather than reading like a refresh icon.
  */
 export const WAKE_COST_NOTE =
-  'Starts a real machine. It bills from boot, and nothing here can stop it again yet.';
+  'Starts a real machine. It bills from boot until you put it back to sleep.';
+
+/**
+ * The sleep sentence, and it names the consequence rather than the saving.
+ *
+ * Stopping a machine is not the harmless direction of waking one. It ends
+ * whatever is running on it — an agent mid-turn, a build, an unflushed
+ * transcript — and the shutdown is graceful but it is not a pause. The money is
+ * the reason somebody presses it; the work is what they need to be told about.
+ */
+export const SLEEP_NOTE =
+  'Shuts the machine down. Anything still running on it stops, and it stops billing.';
 
 /** Failed wakes, priced honestly. Null when there have been none. */
 export function nodeWakeFailureNotice(node: RemoteNodeView): string | null {
   const n = node.wakeFailures ?? 0;
   if (n <= 0) return null;
-  return `${n} wake${n === 1 ? '' : 's'} failed. A failed wake leaves the machine running and billing — check the cloud console.`;
+  // The hub now stops a machine whose wake never produced a provider, so this
+  // no longer has to warn about a machine left billing — the hub's own `detail`
+  // says whether that stop worked, and it is rendered above this line.
+  return `${n} wake${n === 1 ? '' : 's'} failed. The machine started and never became usable — check its boot log.`;
 }
 
 // ── the button ──────────────────────────────────────────────────────────────
@@ -329,6 +392,99 @@ export function wakeAffordance(
 }
 
 /**
+ * Should this node get a Sleep button, and may this caller press it?
+ *
+ * The same rule as [[wakeAffordance]] — never show a button that will be
+ * refused — applied to the other direction, plus one it does not need:
+ *
+ *   - only an `available` node gets the control. A node that is already
+ *     `stopped` has nothing to stop; one that is `waking` is mid-transition and
+ *     a stop pressed there would race the start (the hub does handle it, but a
+ *     button that fights the button beside it is not an interface); one that is
+ *     `unreachable` is the interesting case and it is handled separately below.
+ *   - `unreachable` DOES get it when the hub says the machine may still be
+ *     running, because that is the case with a meter attached and it is the
+ *     precise reason this button exists.
+ *
+ * `wakeable` answers both directions — the coordinates and credential a stop
+ * needs are the ones a start needs — so it gates this too.
+ */
+export function sleepAffordance(
+  node: RemoteNodeView,
+  canSleep: boolean,
+  pending = false,
+): WakeAffordance {
+  // `waking` is excluded EXPLICITLY and not by accident of the running check —
+  // a booting machine IS `mayBeRunning` (the hub asked for it to be up), and
+  // showing an off switch there would put a button that fights the one beside
+  // it on the screen. The transition owns the row until it settles.
+  if (node.state === 'waking' || !nodeMayStillBeRunning(node)) {
+    return { visible: false, enabled: false, label: 'Put to sleep', title: '' };
+  }
+  if (node.state === 'stopping' || pending) {
+    return {
+      visible: true,
+      enabled: false,
+      label: 'Shutting down…',
+      title: 'This machine is already shutting down.',
+    };
+  }
+  if (!node.wakeable) {
+    return {
+      visible: true,
+      enabled: false,
+      label: 'Put to sleep',
+      title: 'This hub holds no cloud credentials for this machine, so it cannot stop it.',
+      reason: 'no credentials on this hub',
+    };
+  }
+  if (!canSleep) {
+    return {
+      visible: true,
+      enabled: false,
+      label: 'Put to sleep',
+      title: `Stopping a machine ends the work running on it, so it needs an operator token. ${SLEEP_NOTE}`,
+      reason: 'needs an operator token',
+    };
+  }
+  return { visible: true, enabled: true, label: 'Put to sleep', title: SLEEP_NOTE };
+}
+
+/**
+ * Is the hub telling us this machine is probably STILL UP, and therefore still
+ * billing?
+ *
+ * One field, read verbatim. `unreachable` covers both "running and providing
+ * nothing" and "off and something is wrong", and offering an off switch for the
+ * second is offering a button that does nothing — so the state alone cannot
+ * answer this and the hub sends the answer.
+ *
+ * THE FIRST VERSION OF THIS SNIFFED THE HUB'S `detail` FOR "billing" AND WAS
+ * WRONG ON ITS FIRST REAL INPUT: the sentence for a machine the hub had already
+ * stopped reads "…so it would not keep billing", which a regex reads as a
+ * running machine. A fact the hub holds belongs in a field.
+ */
+export function nodeMayStillBeRunning(node: RemoteNodeView): boolean {
+  return node.state === 'available' || node.mayBeRunning === true;
+}
+
+/** A `nodes.sleep` failure, in words a person can act on. Same categories as
+ *  [[describeWakeError]] — the hub renders cloud failures by category rather
+ *  than by quoting the API, so its own text is safe to show. */
+export function describeSleepError(err: unknown): string {
+  const msg = (err instanceof Error ? err.message : typeof err === 'string' ? err : '').trim();
+  if (isHostAuthorityRefusal(err)) return 'Stopping a machine needs an operator token.';
+  if (/unknown node/.test(msg)) return 'This machine is no longer in the registry.';
+  if (/cannot be put to sleep from here|has no cloud coordinates or credential/.test(msg))
+    return 'This hub holds no cloud credentials for this machine.';
+  if (/naming a registered node is required/.test(msg))
+    return 'This machine is no longer in the registry.';
+  if (isNodeRegistryAbsent(err)) return 'This hub no longer has a node registry.';
+  if (!msg) return "Couldn't stop the machine.";
+  return msg.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, '');
+}
+
+/**
  * A `nodes.wake` failure, in words a person can act on.
  *
  * The hub already renders cloud-API failures by CATEGORY rather than quoting
@@ -359,14 +515,36 @@ export function nodesNeedingAttention(nodes: RemoteNodeView[]): RemoteNodeView[]
   return nodes.filter((n) => n.state !== 'available' || nodeCrashNotice(n) !== null);
 }
 
+/**
+ * Which nodes the strip actually renders.
+ *
+ * [[nodesNeedingAttention]] answers "which of these is not quietly fine", and
+ * that stays exactly what it means. This adds the one case the sleep path
+ * creates: **a connected machine that this caller can switch off is a machine
+ * that is billing right now, and the off switch has to live somewhere.** So it
+ * shows when — and only when — there is something the viewer could actually do
+ * about it: the hub holds the credential AND this caller holds the authority.
+ *
+ * A phone on the view or triage tier passes `canSleep:false` and gets byte-for-
+ * byte the old behaviour, as does any hub that merely observes a node it cannot
+ * power. An ordinary install has no registry at all and renders nothing either
+ * way.
+ */
+export function nodesWorthShowing(nodes: RemoteNodeView[], canSleep: boolean): RemoteNodeView[] {
+  return nodes.filter(
+    (n) => n.state !== 'available' || nodeCrashNotice(n) !== null || (canSleep && n.wakeable),
+  );
+}
+
 /** One line for a collapsed strip: "2 machines · 1 asleep". */
 export function nodesSummary(nodes: RemoteNodeView[]): string {
   if (!nodes.length) return '';
   const counts = new Map<NodeState, number>();
   for (const n of nodes) counts.set(n.state, (counts.get(n.state) ?? 0) + 1);
-  const order: NodeState[] = ['waking', 'unreachable', 'stopped', 'available'];
+  const order: NodeState[] = ['waking', 'stopping', 'unreachable', 'stopped', 'available'];
   const words: Record<NodeState, string> = {
     waking: 'starting',
+    stopping: 'shutting down',
     unreachable: 'unreachable',
     stopped: 'asleep',
     available: 'connected',

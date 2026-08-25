@@ -102,11 +102,15 @@ var viewMethods = []string{
 	//                two timestamps and a sentence. It names no credential, no
 	//                cloud app, no machine id and no endpoint.
 	//
-	//                Its acting twin, nodes.wake, is deliberately NOT here or in
-	//                triage: waking starts a billable machine and this hub has no
-	//                way to stop one, so it is host-authority only (nodesTrusted in
-	//                cmd/hub). A phone on this tier SEES the state and does not get
-	//                the button — which /m already renders gracefully via can().
+	//                Its two ACTING twins, nodes.wake and nodes.sleep, are
+	//                deliberately NOT here or in triage. Waking starts a billable
+	//                machine; sleeping ends the work in flight on one somebody may
+	//                be typing at. Both are host-authority only (nodesTrusted in
+	//                cmd/hub), and note that the second is refused for a reason of
+	//                its OWN rather than by symmetry — "it only turns things off"
+	//                is a destructive act, not a smaller one. A phone on this tier
+	//                SEES the state and gets neither button, which /m already
+	//                renders gracefully via can().
 	"push.key", // VAPID public key — needed before subscribing, discloses nothing
 	// The one method in this list that WRITES anywhere, admitted so the facade's
 	// tool set derives from this allowlist again rather than sitting beside it.

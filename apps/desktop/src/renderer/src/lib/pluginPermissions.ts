@@ -147,6 +147,15 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
     label: 'Wake a sleeping remote node (starts a billable machine)',
     sensitive: true,
   },
+  // sensitive for a reason of its OWN rather than by symmetry with the wake:
+  // stopping a machine ends whatever is running on it. It saves money and it is
+  // destructive, and "it only turns things off" earns it nothing. Trusted-only
+  // at call time (nodesTrusted in cmd/hub), so a plugin that declares it gets an
+  // honest consent line and then a refusal.
+  'nodes.sleep': {
+    label: 'Shut down a remote node (stops whatever is running on it)',
+    sensitive: true,
+  },
   // jobs.* are trusted-only at call time (a job is persisted argv) — a plugin
   // that declares them gets an honest consent label and then a runtime refusal.
   'jobs.list': { label: 'See scheduled jobs' },
