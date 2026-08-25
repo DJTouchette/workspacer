@@ -121,6 +121,11 @@ const BUS_BACKED = [
   'getCwd',
   'getSupervisorHome',
   'fsListDir',
+  // Composer attachments from a client with no host filesystem: the bytes ride
+  // the hub's files.upload (qualified for federation) and come back as a path
+  // on the agent's machine. Absent from the preload — a pure-IPC desktop has a
+  // real host path and never needs it.
+  'uploadAttachment',
   // Hub plumbing (event streams, shared layout doc, publish, status)
   'onHubEvent',
   'onHubStatus',

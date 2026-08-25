@@ -57,6 +57,7 @@ import {
   ContextMenuSeparator,
 } from '../ContextMenu';
 import { IconModel } from '../wksIcons';
+import { postNotification } from '../../lib/notificationBus';
 
 export interface RestartOverrides {
   model?: string;
@@ -260,6 +261,41 @@ export const ComposerControls: React.FC<{
     [],
   );
 
+  /**
+   * A live switch whose promise REJECTED — as opposed to a daemon that answered
+   * `{ok:false}`, which the pills have always degraded gracefully.
+   *
+   * This used to be a bare `console.warn`: the pill snapped back to its old
+   * label and the user was left believing the agent had moved to the mode they
+   * picked. Against a headless hub that is not an edge case but the NORMAL
+   * outcome — `claude.setPermissionMode` / `setModel` / `setEffort` are
+   * registered by the desktop main process alone, so `/app` and `/m` on a
+   * `workspacer serve` node get "no provider for …" every time. Someone
+   * tightening a remote worker's permission mode has to be told it did not
+   * take; silently believing you are in plan mode when you are not is a safety
+   * problem, not a cosmetic one.
+   *
+   * So a rejection now lands exactly where a refusal lands — the restart
+   * confirm, carrying the reason, offering the route that DOES work headless
+   * (a respawn: `agents.spawn` has a provider) — and posts to the notification
+   * center so it outlives the menu the user is about to dismiss. This is the
+   * shape /m already had (its toast + `noteSwitchFailure` latch).
+   */
+  const noteSwitchFailure = useCallback(
+    (what: string, err: unknown): string => {
+      const reason = err instanceof Error ? err.message : String(err);
+      postNotification({
+        level: 'error',
+        title: `Could not switch ${what}`,
+        body: `${reason}. Nothing changed on the agent — restarting it applies the change instead.`,
+        source: 'workspacer',
+        sessionId: sessionId ?? undefined,
+      });
+      return reason;
+    },
+    [sessionId],
+  );
+
   const loadModels = useCallback(async () => {
     setModels(await loadModelOptions(provider, caps.modelSource, cwd));
   }, [caps.modelSource, provider, cwd]);
@@ -327,8 +363,17 @@ export const ComposerControls: React.FC<{
             recordSwitch();
           })
           .catch((err) => {
-            console.warn('[ComposerControls] live model switch failed:', err);
             setSwitching(null);
+            setMenu({
+              kind: 'model',
+              x: at.x,
+              y: at.y,
+              confirm: {
+                overrides: { model: id },
+                label,
+                reason: noteSwitchFailure('model', err),
+              },
+            });
           });
         return;
       }
@@ -348,11 +393,20 @@ export const ComposerControls: React.FC<{
           recordSwitch();
         })
         .catch((err) => {
-          console.warn('[ComposerControls] live model switch failed:', err);
           setSwitching(null);
+          setMenu({
+            kind: 'model',
+            x: at.x,
+            y: at.y,
+            confirm: {
+              overrides: { model: id },
+              label,
+              reason: noteSwitchFailure('model', err),
+            },
+          });
         });
     },
-    [sessionId, stats.model, caps.modelSource, transport],
+    [sessionId, stats.model, caps.modelSource, transport, noteSwitchFailure],
   );
 
   const pickRestart = (overrides: RestartOverrides, label: string, reason?: string) => {
@@ -443,11 +497,20 @@ export const ComposerControls: React.FC<{
           }
         })
         .catch((err) => {
-          console.warn('[ComposerControls] live effort switch failed:', err);
+          setMenu({
+            kind: 'effort',
+            x: at.x,
+            y: at.y,
+            confirm: {
+              overrides: { effort: id },
+              label: `${label} effort`,
+              reason: noteSwitchFailure('effort', err),
+            },
+          });
         })
         .finally(() => setEffortSwitching(null));
     },
-    [sessionId],
+    [sessionId, noteSwitchFailure],
   );
 
   // Live permission switch: claudemon drives and verifies it (claude:
@@ -472,11 +535,20 @@ export const ComposerControls: React.FC<{
           }
         })
         .catch((err) => {
-          console.warn('[ComposerControls] live permission switch failed:', err);
+          setMenu({
+            kind: 'permission',
+            x: at.x,
+            y: at.y,
+            confirm: {
+              overrides: { permissionMode: id },
+              label,
+              reason: noteSwitchFailure('permission mode', err),
+            },
+          });
         })
         .finally(() => setPermSwitching(null));
     },
-    [sessionId],
+    [sessionId, noteSwitchFailure],
   );
 
   // ── Pill labels ──
