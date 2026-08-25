@@ -65,12 +65,50 @@ full-control pairing) is a thin editor over the `jobs.*` RPCs.
   themselves AT FIRE TIME so a failed run can't refire forever. A due time
   missed while asleep fires once on wake, then reanchors (no catch-up storm).
 
+## The spec file is hand-editable (2026-08-24)
+`jobs.json` is a supported editing surface, not just storage. The scheduler
+**polls it on its existing 30s tick** and reloads on change, so an edit made in
+an editor takes effect on a running hub with no restart — desktop mode and
+`workspacer serve` alike. The watcher is in the HUB deliberately: a watcher in
+desktop main would silently not exist headless (the same hole `library.changed`
+has — the brain publishes no such event, so library hot-reload is Electron-only).
+- **Change detection is a content hash, not mtime** (`specHash`/`haveSpecHash`
+  in `Service`). Same hash also suppresses the service's own write echo. mtime
+  was rejected because a same-size write inside one timestamp tick is missable,
+  and this repo has already shipped one millisecond-collision bug.
+- **Clobber fix = re-read before marshal.** `reloadIfChangedLocked()` runs at
+  the top of the locked section of `tick`, `List`, `Upsert`, `Propose`,
+  `Remove` and `RunNow`, so every write lands on top of the file rather than on
+  top of a boot-time snapshot. The alternative (move bookkeeping to the history
+  sidecar) was rejected: the ONLY spec-file bookkeeping write is the `once`
+  trigger's self-disarm flipping `enabled`, and hiding that in a sidecar would
+  make the file the human reads say `"enabled": true` for a job that will never
+  fire again. Interval reschedules touch `nextAt` only and never write.
+- **Bad parse keeps the last good schedule** and logs (once per distinct
+  content). Same for a file that cannot be read at all — editors unlink during
+  their own atomic saves. Clearing everything has one explicit spelling,
+  `{"jobs": []}`. A single row that fails `Validate` is still dropped alone.
+- **Hand-written rows get completed and written back**: missing `id` minted,
+  duplicate ids split (copy-pasting a block is the obvious way to write a
+  second job), `createdAt`/`updatedAt` stamped. In-memory-only ids would be
+  re-minted every reload and walk the next run forward each time.
+- **Only jobs whose arming/trigger changed are rescheduled** (`sameSchedule`);
+  a rename must not re-anchor every interval job on the machine.
+- Proven by `internal/jobs/handedit_e2e_test.go` (real `RunScheduler`
+  goroutine, real file, written from outside) and by the harness's
+  hand-editing section against a real hub process, including the job firing on
+  the real 30s tick.
+
 ## Security decisions (the load-bearing ones)
 - **A job is persisted argv** (the scrubBypassProfile lesson), so specs live in
   the hub-owned `<user-config-dir>/workspacer-hub/jobs.json` (0600, atomic
   tmp+rename; history sidecar `jobs-history.json`) — NEVER the library
   (agent-writable by design) and NEVER the layout doc (world-readable,
-  client-broadcast).
+  client-broadcast). The file is 0600 and out of reach of BUS callers; it is
+  not out of reach of a local agent with `Bash`, and the docs say so in one
+  sentence: writing `jobs.json` is equivalent to writing a crontab. What is new
+  next to a live session is persistence and unattendedness, not the shell
+  primitive.
 - **All five `jobs.*` RPCs are trusted-only** (`CallerIdentity.IsTrusted()` at
   the registration site in cmd/hub): host token or operator-tier pairing may
   manage jobs; plugin tokens and view/triage tiers are refused at call time
@@ -136,7 +174,8 @@ full-control pairing) is a thin editor over the `jobs.*` RPCs.
 `cmd/workspacer/jobscmd.go` — host authority (reads `<config>/remote-token`),
 so it reaches `jobs.upsert`, which the facade withholds. `add -f <file>|-`
 installs a spec written anywhere (the point: an LLM-written spec no longer has
-to be retyped into the UI or hand-merged into jobs.json + restart), plus
+to be retyped into the UI; editing jobs.json directly is now a first-class
+route too, see above), plus
 list/show/history/run/approve/enable/disable/remove with unique-prefix ids and
 local `jobs.Validate` before dialling.
 **Gotcha that bit once:** Go's `flag` stops parsing at the first positional, so

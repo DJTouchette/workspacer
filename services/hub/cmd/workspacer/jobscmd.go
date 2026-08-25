@@ -5,8 +5,10 @@ package main
 // This is the surface that closes the loop for a spec written somewhere else:
 // an agent (or you, from the docs) writes the JSON, and `workspacer jobs add -f
 // spec.json` installs it. Before it existed, an off-app spec could only be
-// retyped into Settings → Jobs or hand-merged into jobs.json with a hub
-// restart.
+// retyped into Settings → Jobs. Editing jobs.json directly is now a supported
+// route too (the hub re-reads it on the scheduler tick), so this command is the
+// convenience for a spec that lives in another file, and `jobs list` is how you
+// confirm a hand edit landed.
 //
 // It holds HOST authority on purpose: it reads the same <config>/remote-token
 // the desktop persists, so `jobs add` reaches jobs.upsert — the method the MCP
