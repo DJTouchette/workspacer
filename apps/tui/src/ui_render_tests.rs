@@ -248,6 +248,171 @@ fn every_overlay_changes_what_is_drawn() {
     assert_ne!(base, joined(&mut notes), "notes did not render");
 }
 
+// ── remote nodes ─────────────────────────────────────────────────────────────
+
+/// One node of every state, plus the two notices that only ever show up on a
+/// row (a crash record, and failed wakes that left money burning).
+fn node_rows() -> Vec<crate::nodes::NodeView> {
+    crate::nodes::nodes_from_rows(&serde_json::json!([
+        { "id": "den", "label": "Fly node (den)", "state": "stopped", "wakeable": true },
+        { "id": "waker", "label": "waker", "state": "waking", "wakeable": true },
+        { "id": "broken", "label": "broken", "state": "unreachable", "wakeable": true,
+          "wakeFailures": 2 },
+        { "id": "fine", "label": "fine", "state": "available", "wakeable": true,
+          "lastExit": { "reason": "claudemon-died", "exitCode": 1 } },
+    ]))
+}
+
+/// The overlay, optionally with a wake armed for `confirm`.
+fn nodes_state(confirm: Option<&str>) -> crate::app::NodesState {
+    crate::app::NodesState {
+        selected: 0,
+        confirm: confirm.map(String::from),
+        pending: std::collections::HashSet::new(),
+        errors: std::collections::HashMap::new(),
+    }
+}
+
+/// An app holding the registry above, as an operator (so the wake is on offer).
+fn app_with_nodes() -> App {
+    let mut app = app_with_agents();
+    app.nodes = Some(crate::nodes::NodeRegistry::new(node_rows()));
+    app.bus_scope = Some("operator".into());
+    app
+}
+
+/// The overlay reaches the screen and names every machine — including the
+/// healthy one, which the dashboard line deliberately stays quiet about. An
+/// explicitly opened surface answers in full.
+#[test]
+fn the_nodes_overlay_lists_every_machine_the_hub_knows_about() {
+    let base = joined(&mut app_with_nodes());
+    let mut app = app_with_nodes();
+    app.nodes_view = Some(nodes_state(None));
+    let out = joined(&mut app);
+    assert_ne!(base, out, "nodes overlay did not render");
+    assert!(out.contains("remote nodes"), "titled: {out}");
+    for id in ["Fly node (den)", "waker", "broken", "fine"] {
+        assert!(out.contains(id), "{id} missing from: {out}");
+    }
+}
+
+/// The whole point of the four-state model: a booting machine and a broken one
+/// must not read the same. Pinned on the rendered text, not just the helpers.
+#[test]
+fn the_overlay_draws_waking_and_unreachable_as_different_things() {
+    let mut app = app_with_nodes();
+    app.nodes_view = Some(nodes_state(None));
+    let out = joined(&mut app);
+    assert!(
+        out.contains("starting"),
+        "a booting machine reads as progress: {out}"
+    );
+    assert!(
+        out.contains("can't reach"),
+        "a broken one reads as a warning: {out}"
+    );
+    assert!(
+        out.contains("asleep"),
+        "and a sleeping one as neither: {out}"
+    );
+}
+
+/// A wake spends real money and this hub has no verb to stop a machine, so the
+/// price is on the screen — a terminal has no hover to hide it behind.
+#[test]
+fn the_overlay_prints_what_a_wake_costs_beside_the_action() {
+    let mut app = app_with_nodes();
+    app.nodes_view = Some(nodes_state(None));
+    let out = joined(&mut app);
+    assert!(out.contains("w  wake"), "the action is offered: {out}");
+    assert!(
+        out.contains("bills from boot"),
+        "the cost is printed: {out}"
+    );
+}
+
+/// Never render a control that will be refused: a view/triage token gets the
+/// STATE and the reason, never a verb that dies on press.
+#[test]
+fn a_scoped_token_sees_the_state_and_is_told_why_it_gets_no_wake() {
+    let mut app = app_with_nodes();
+    app.bus_scope = Some("triage".into());
+    app.nodes_view = Some(nodes_state(None));
+    let out = joined(&mut app);
+    assert!(out.contains("asleep"), "the state is still shown: {out}");
+    assert!(out.contains("operator token"), "with the reason: {out}");
+    assert!(!out.contains("w  wake"), "and no live action: {out}");
+}
+
+/// The confirmation step names the CONSEQUENCE, and says which single key
+/// commits. Nothing else on this screen leads to a bus call.
+#[test]
+fn the_confirmation_step_names_the_consequence_and_the_one_key_that_commits() {
+    let mut app = app_with_nodes();
+    app.nodes_view = Some(nodes_state(Some("den")));
+    let out = joined(&mut app);
+    assert!(out.contains("wake Fly node (den)?"), "it asks: {out}");
+    assert!(out.contains("bills from boot"), "and prices it: {out}");
+    assert!(out.contains("confirm"), "and names the confirm key: {out}");
+}
+
+/// The two notices a person only ever gets here: the node's own crash record
+/// (which arrives one wake late by construction) and failed wakes, each of
+/// which left a machine running and billing.
+#[test]
+fn the_overlay_surfaces_a_crash_record_and_failed_wakes() {
+    let mut app = app_with_nodes();
+    app.nodes_view = Some(nodes_state(None));
+    let out = joined(&mut app);
+    assert!(out.contains("did not end cleanly"), "crash notice: {out}");
+    assert!(out.contains("2 wakes failed"), "failed wakes: {out}");
+    assert!(
+        out.contains("running and billing"),
+        "priced honestly: {out}"
+    );
+}
+
+/// An explicitly requested overlay always answers — including with the answer
+/// that is true for almost every install.
+#[test]
+fn the_overlay_says_so_when_this_hub_has_no_remote_nodes() {
+    let mut app = app_with_agents();
+    app.nodes_view = Some(nodes_state(None));
+    let out = joined(&mut app);
+    assert!(out.contains("no remote nodes"), "it answers: {out}");
+}
+
+/// The dashboard, by contrast, stays SILENT about a fleet that is quietly fine
+/// — a permanent "all good" row is chrome nobody asked for — and speaks the
+/// moment one machine is asleep, unreachable, or back from a crash.
+#[test]
+fn the_dashboard_line_is_silent_until_a_node_is_not_quietly_fine() {
+    let healthy = crate::nodes::nodes_from_rows(&serde_json::json!([
+        { "id": "fine", "label": "fine", "state": "available", "wakeable": true }
+    ]));
+    let mut quiet = app_with_agents();
+    quiet.selected = 0;
+    quiet.nodes = Some(crate::nodes::NodeRegistry::new(healthy));
+    let out = joined(&mut quiet);
+    assert!(
+        !out.contains("nodes "),
+        "nothing to report renders nothing: {out}"
+    );
+
+    let mut loud = app_with_nodes();
+    loud.selected = 0;
+    let out = joined(&mut loud);
+    assert!(
+        out.contains("asleep"),
+        "a sleeping machine is on the overview: {out}"
+    );
+    assert!(
+        out.contains("can't reach"),
+        "so is an unreachable one: {out}"
+    );
+}
+
 // ── resilience ───────────────────────────────────────────────────────────────
 
 // ── small terminals ──────────────────────────────────────────────────────────
@@ -296,6 +461,11 @@ fn overlays() -> Vec<Overlay> {
         }),
         ("whichkey", |a: &mut App| {
             a.pending_keys = vec![a.keymap.leader()]
+        }),
+        ("nodes", |a: &mut App| {
+            a.nodes = Some(crate::nodes::NodeRegistry::new(node_rows()));
+            a.bus_scope = Some("operator".into());
+            a.nodes_view = Some(nodes_state(Some("den")));
         }),
     ]
 }

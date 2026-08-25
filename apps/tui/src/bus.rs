@@ -42,6 +42,15 @@ pub struct BusEvent {
 /// silent about its own connection state.
 pub const TOPIC_BUS_CONNECTED: &str = "_bus.connected";
 
+/// Synthetic topic carrying the hub's `hello` greeting — the TIER this
+/// connection authenticated as (`scope`, plus the method allowlist a scoped
+/// token holds). Not a real bus topic either; the hub sends `hello` once the
+/// token resolves, and republishing it here is what lets the app gate a
+/// control it would otherwise offer and have refused. `nodes.wake` is
+/// host-authority only, so the remote-node surface needs this to know whether
+/// to offer a wake at all — see [`crate::nodes::wake_affordance`].
+pub const TOPIC_BUS_HELLO: &str = "_bus.hello";
+
 enum Command {
     Call {
         method: String,
@@ -232,7 +241,18 @@ fn handle_frame(
                 let _ = event_tx.send(BusEvent { topic, data, hub });
             }
         }
-        _ => {} // hello / subscribed / unsubscribed acks
+        // The greeting names the tier this token holds. A trusted (host or
+        // operator) conn reports "operator"; a scoped one reports its own tier;
+        // a plugin token reports none at all. Absent therefore means "not
+        // operator", which is the safe reading for anything that spends money.
+        Some("hello") => {
+            let _ = event_tx.send(BusEvent {
+                topic: TOPIC_BUS_HELLO.to_string(),
+                data: v.clone(),
+                hub: None,
+            });
+        }
+        _ => {} // subscribed / unsubscribed acks
     }
 }
 
@@ -632,6 +652,13 @@ mod tests {
             .expect("event within 3s")
             .expect("event channel open");
         assert_eq!(ev.topic, TOPIC_BUS_CONNECTED);
+        // …followed by the hub's greeting, republished so the app can read the
+        // tier it authenticated as before offering anything that spends money.
+        let ev = tokio::time::timeout(Duration::from_secs(3), events.recv())
+            .await
+            .expect("event within 3s")
+            .expect("event channel open");
+        assert_eq!(ev.topic, TOPIC_BUS_HELLO);
         let ev = tokio::time::timeout(Duration::from_secs(3), events.recv())
             .await
             .expect("event within 3s")
@@ -639,6 +666,37 @@ mod tests {
         assert_eq!(ev.topic, "agent.snapshot");
         assert_eq!(ev.data["session_id"], json!("s1"));
         assert_eq!(ev.hub, None, "no envelope stamp means local");
+    }
+
+    /// The greeting names the tier this token holds, and the app gates the
+    /// remote-node wake on it (`nodes.wake` is host-authority only). A hello
+    /// frame that arrived and was dropped would leave a scoped client offering
+    /// a control the hub refuses — so the scope must survive the republish
+    /// verbatim.
+    #[tokio::test]
+    async fn the_hello_greeting_is_republished_with_its_tier() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let (mut write, _read) = ws.split();
+            let _ = write
+                .send(Message::Text(
+                    json!({ "op": "hello", "scope": "triage", "methods": ["agents.list"] })
+                        .to_string(),
+                ))
+                .await;
+            // Hold the socket open so the client doesn't reconnect mid-assert.
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+
+        let (_client, mut events) = BusClient::connect(format!("ws://{addr}/bus"), None);
+        assert_eq!(next_event(&mut events).await.topic, TOPIC_BUS_CONNECTED);
+        let ev = next_event(&mut events).await;
+        assert_eq!(ev.topic, TOPIC_BUS_HELLO);
+        assert_eq!(ev.data["scope"], json!("triage"));
+        assert_eq!(ev.hub, None, "the greeting is never a peer's");
     }
 
     // A fake hub that answers every call with `result` and records (method,

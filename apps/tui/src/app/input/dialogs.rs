@@ -1,6 +1,7 @@
 //! Modal forms: rename, the notes scratchpad, and the spawn form with the
 //! agent-launch paths behind it.
 
+use super::dispatch::is_ctrl_c;
 use super::*;
 
 impl App {
@@ -135,6 +136,49 @@ impl App {
                 }
             }
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('h') => self.close_notes(),
+            _ => {}
+        }
+    }
+
+    /// The remote-nodes overlay.
+    ///
+    /// **The confirmation branch is the safety property, not decoration.** A
+    /// wake starts a billable machine that this hub has no verb to stop, so
+    /// while a confirmation is armed EVERY key that is not the confirm key
+    /// stands it down — including `j`/`k`, `enter` and `w` itself. That is
+    /// deliberately stricter than "esc cancels": the failure this guards
+    /// against is a keystroke aimed at something else landing here, and a
+    /// navigation key that silently left the confirmation armed would be
+    /// exactly that trap. `y` is the confirm key because `y` already means
+    /// approve everywhere else in this TUI.
+    pub(in crate::app) fn handle_nodes_key(&mut self, key: KeyEvent) {
+        // Ctrl-C still quits, so an overlay can never trap the user — and it
+        // reads as "get me out", never as consent.
+        if is_ctrl_c(&key) {
+            self.cancel_wake();
+            self.should_quit = true;
+            return;
+        }
+        if self
+            .nodes_view
+            .as_ref()
+            .is_some_and(|n| n.confirm.is_some())
+        {
+            match key.code {
+                KeyCode::Char('y') => self.confirm_wake(),
+                _ => self.cancel_wake(),
+            }
+            return;
+        }
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => self.nodes_select_next(),
+            KeyCode::Char('k') | KeyCode::Up => self.nodes_select_prev(),
+            // Arms the confirmation; spends nothing. See `App::request_wake`.
+            KeyCode::Char('w') => self.request_wake(),
+            KeyCode::Char('r') => self.seed_nodes(),
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('h') | KeyCode::Char('N') => {
+                self.close_nodes()
+            }
             _ => {}
         }
     }

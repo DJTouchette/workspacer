@@ -1,0 +1,720 @@
+//! Remote worker nodes: machines that can be OFF ON PURPOSE.
+//!
+//! A "node" is `claudemon` + `brain --hub …` running somewhere else (today, a
+//! Fly machine). The hub owns the registry and the state machine; this module
+//! owns everything the TUI needs to read one honestly, and the two async tasks
+//! that talk to the bus. The wire contract is
+//! `.workspacer/reports/2026-08-24-fly-wake-contract.md`, and this is the Rust
+//! twin of the renderer's `apps/desktop/src/renderer/src/lib/remoteNodes.ts` —
+//! same states, same words, same refusals.
+//!
+//! Three things here are load-bearing and none is obvious:
+//!
+//!  1. **A permission check is NOT a feature check.** `nodes.list` sits in the
+//!     bus's VIEW tier, so every token may call it — but the hub only
+//!     REGISTERS the method when a `nodes.json` exists, which is to say never
+//!     on an ordinary install. `no provider for nodes.list` therefore means
+//!     "this hub has no remote nodes", not "something broke"; see
+//!     [`is_registry_absent`]. Any OTHER error is a real failure and must not
+//!     be folded into it, or a broken hub renders as a hub with no nodes.
+//!
+//!  2. **`waking` is not `unreachable`.** A machine takes real seconds to
+//!     boot, and a state that reads the same as a hang is what makes someone
+//!     give up. The four states get four presentations and `waking` is the
+//!     only one that reads as progress.
+//!
+//!  3. **A wake spends real money and this hub has no verb to stop a
+//!     machine.** So [`WAKE_COST_NOTE`] is printed beside the action rather
+//!     than hidden, the action is never offered where it would be refused
+//!     ([`wake_affordance`]), and — the TUI's own share of this — no single
+//!     keypress starts one. See `App::request_wake` / `App::confirm_wake`.
+//!
+//! Mirrors [`crate::federation`] in shape: a small store the app folds events
+//! into, a wire→model adapter, and free async task bodies that post [`AppMsg`]s
+//! back to the loop. Seed from the call plane on every (re)connect, patch from
+//! `node.state_changed`, never poll.
+
+use serde_json::{json, Value};
+use tokio::sync::mpsc::UnboundedSender;
+
+use crate::app::AppMsg;
+use crate::bus::BusClient;
+
+// ── the state machine ───────────────────────────────────────────────────────
+
+/// The four node states. The distinction between the last three is the whole
+/// point of the feature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeState {
+    /// Its provider is on the bus and answering.
+    Available,
+    /// The hub asked the cloud API to start it and is waiting for the provider.
+    Waking,
+    /// Switched off, deliberately, and wakeable.
+    Stopped,
+    /// The hub does not know how to get a working node out of this one.
+    Unreachable,
+}
+
+impl NodeState {
+    /// Read the wire string. An unknown state is [`NodeState::Unreachable`]
+    /// rather than rendered raw: a state this client cannot presume to
+    /// understand is, by definition, one it does not know how to act on.
+    pub fn from_wire(s: &str) -> NodeState {
+        match s {
+            "available" => NodeState::Available,
+            "waking" => NodeState::Waking,
+            "stopped" => NodeState::Stopped,
+            _ => NodeState::Unreachable,
+        }
+    }
+
+    /// The state in a word, for the row's right-hand chip.
+    pub fn label(self) -> &'static str {
+        match self {
+            NodeState::Available => "connected",
+            NodeState::Waking => "starting…",
+            NodeState::Stopped => "asleep",
+            NodeState::Unreachable => "can't reach",
+        }
+    }
+
+    /// The dot in front of the row. `waking` shares the accent (working) mark
+    /// a thinking agent uses — a booting machine that paints like a failure is
+    /// the whole bug this feature exists to remove.
+    pub fn marker(self) -> &'static str {
+        match self {
+            NodeState::Available => "●",
+            NodeState::Waking => "◐",
+            NodeState::Stopped => "○",
+            NodeState::Unreachable => "▲",
+        }
+    }
+
+    /// The line under the chip when the hub sent no `detail` of its own.
+    pub fn fallback_detail(self) -> &'static str {
+        match self {
+            NodeState::Available => "this machine is on the bus and answering.",
+            NodeState::Waking => "the machine is booting — usually ready in about 20 seconds.",
+            NodeState::Stopped => "switched off. waking will start it.",
+            NodeState::Unreachable => "the hub can't get a working machine out of this one.",
+        }
+    }
+}
+
+/// The node's own exit record, read off its volume via `brain.info`. ABSENT
+/// means nobody knows — never that it ended cleanly. The hub does not
+/// fabricate an empty one, and neither does this.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NodeLastExit {
+    /// `signal-TERM` / `signal-INT` = a deliberate stop. Anything else = a crash.
+    pub reason: Option<String>,
+    pub exit_code: Option<i64>,
+    /// RFC3339, on the NODE's clock. Display only — never compute with it.
+    pub at: Option<String>,
+}
+
+/// `nodes.NodeView` — the one payload `nodes.list`, `nodes.wake` and
+/// `node.state_changed` all carry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeView {
+    pub id: String,
+    pub label: String,
+    pub state: NodeState,
+    /// One human sentence, written to be read. Empty is normal for `available`.
+    pub detail: Option<String>,
+    pub wakeable: bool,
+    /// Consecutive failed wakes. Each one LEFT A MACHINE RUNNING, because this
+    /// hub has no stop verb.
+    pub wake_failures: u64,
+    pub last_exit: Option<NodeLastExit>,
+}
+
+/// Coerce one wire row into a [`NodeView`], or `None` if it is not one — a row
+/// without an `id` can't be keyed, let alone woken.
+pub fn node_from_row(raw: &Value) -> Option<NodeView> {
+    let id = raw
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())?;
+    let label = raw
+        .get("label")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(id);
+    let last_exit = raw.get("lastExit").and_then(|e| {
+        let exit = NodeLastExit {
+            reason: e
+                .get("reason")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(String::from),
+            exit_code: e.get("exitCode").and_then(Value::as_i64),
+            at: e
+                .get("at")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(String::from),
+        };
+        // An all-empty record is no record: `Clean()` is false for one the hub
+        // does not hold, and an empty struct here would read as "ended fine".
+        (exit != NodeLastExit::default()).then_some(exit)
+    });
+    Some(NodeView {
+        id: id.to_string(),
+        label: label.to_string(),
+        state: raw
+            .get("state")
+            .and_then(Value::as_str)
+            .map(NodeState::from_wire)
+            .unwrap_or(NodeState::Unreachable),
+        detail: raw
+            .get("detail")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(String::from),
+        wakeable: raw.get("wakeable").and_then(Value::as_bool) == Some(true),
+        wake_failures: raw.get("wakeFailures").and_then(Value::as_u64).unwrap_or(0),
+        last_exit,
+    })
+}
+
+/// Coerce a whole `nodes.list` answer, dropping rows that aren't nodes.
+pub fn nodes_from_rows(raw: &Value) -> Vec<NodeView> {
+    raw.as_array()
+        .map(|rows| rows.iter().filter_map(node_from_row).collect())
+        .unwrap_or_default()
+}
+
+// ── the store ───────────────────────────────────────────────────────────────
+
+/// The hub's node registry as this client holds it. Registry order is the
+/// hub's order and is preserved: `nodes.list` returns the order the nodes are
+/// written in `nodes.json`, and a list that reshuffles under a cursor — with a
+/// money button on it — is its own bug.
+#[derive(Debug, Default, Clone)]
+pub struct NodeRegistry {
+    nodes: Vec<NodeView>,
+}
+
+impl NodeRegistry {
+    pub fn new(nodes: Vec<NodeView>) -> NodeRegistry {
+        NodeRegistry { nodes }
+    }
+
+    /// Adopt a `nodes.list` answer wholesale — it is the authoritative roster.
+    pub fn seed(&mut self, nodes: Vec<NodeView>) {
+        self.nodes = nodes;
+    }
+
+    /// Patch one row from `node.state_changed` (or a `nodes.wake` answer). An
+    /// id we don't hold is appended: the registry is hand-edited and can grow
+    /// under a long-lived client.
+    pub fn apply_change(&mut self, incoming: NodeView) {
+        match self.nodes.iter_mut().find(|n| n.id == incoming.id) {
+            Some(slot) => *slot = incoming,
+            None => self.nodes.push(incoming),
+        }
+    }
+
+    pub fn nodes(&self) -> &[NodeView] {
+        &self.nodes
+    }
+
+    pub fn get(&self, id: &str) -> Option<&NodeView> {
+        self.nodes.iter().find(|n| n.id == id)
+    }
+
+    /// Nodes that are NOT quietly fine — the ones worth putting in front of
+    /// someone unasked. `available` WITH a crash notice counts: a node back
+    /// from a crash is available and carrying the only notice of that crash.
+    pub fn needing_attention(&self) -> Vec<&NodeView> {
+        self.nodes
+            .iter()
+            .filter(|n| n.state != NodeState::Available || crash_notice(n).is_some())
+            .collect()
+    }
+
+    /// One line for the dashboard: `"2 machines · 1 asleep"`-shaped, in the
+    /// order that matters most first. Empty when the registry is.
+    pub fn summary(&self) -> String {
+        if self.nodes.is_empty() {
+            return String::new();
+        }
+        [
+            (NodeState::Waking, "starting"),
+            (NodeState::Unreachable, "unreachable"),
+            (NodeState::Stopped, "asleep"),
+            (NodeState::Available, "connected"),
+        ]
+        .iter()
+        .filter_map(|(state, word)| {
+            let n = self.nodes.iter().filter(|x| x.state == *state).count();
+            (n > 0).then(|| format!("{n} {word}"))
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+    }
+}
+
+// ── the sentences ───────────────────────────────────────────────────────────
+
+/// The cost sentence. A wake starts a meter and — deliberately, for now — this
+/// hub has no way to stop one, so a FAILED wake leaves the machine running and
+/// billing. Printed beside the action on every client, this one included.
+pub const WAKE_COST_NOTE: &str =
+    "starts a real machine. it bills from boot, and nothing here can stop it again yet.";
+
+/// The sentence under a node's chip: the hub's own `detail` when it wrote one
+/// (it is written to be read by a person), else the state's fallback.
+pub fn detail_line(node: &NodeView) -> &str {
+    node.detail
+        .as_deref()
+        .unwrap_or_else(|| node.state.fallback_detail())
+}
+
+/// The node telling you its last run crashed — the only notice anyone gets,
+/// and it arrives one wake LATE by construction (the file lives on the node's
+/// volume, so the hub cannot read it while the node is off).
+///
+/// `None` for a `signal-` reason (a deliberate stop) and for a missing record,
+/// which means NOBODY KNOWS rather than "it ended cleanly".
+pub fn crash_notice(node: &NodeView) -> Option<String> {
+    let exit = node.last_exit.as_ref()?;
+    let reason = exit.reason.as_deref()?;
+    if reason.starts_with("signal-") {
+        return None;
+    }
+    let code = exit
+        .exit_code
+        .map(|c| format!(" (exit {c})"))
+        .unwrap_or_default();
+    let when = exit
+        .at
+        .as_deref()
+        .map(|a| format!(" at {a}"))
+        .unwrap_or_default();
+    Some(format!(
+        "its previous run did not end cleanly: {reason}{code}{when}."
+    ))
+}
+
+/// Failed wakes, priced honestly. `None` when there have been none.
+pub fn wake_failure_notice(node: &NodeView) -> Option<String> {
+    let n = node.wake_failures;
+    if n == 0 {
+        return None;
+    }
+    let s = if n == 1 { "" } else { "s" };
+    Some(format!(
+        "{n} wake{s} failed. a failed wake leaves the machine running and billing — check the cloud console."
+    ))
+}
+
+// ── the action ──────────────────────────────────────────────────────────────
+
+/// Whether this node gets a wake affordance, and whether this caller may press
+/// it. See [`wake_affordance`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeAffordance {
+    /// Show anything at all? `false` = no control, not a dead one.
+    pub visible: bool,
+    /// May it actually fire? A visible-but-refused control still explains itself.
+    pub enabled: bool,
+    /// What the row offers, e.g. `"w  wake"`.
+    pub label: &'static str,
+    /// Why it can't fire (or, when it can, what it will cost). Always a
+    /// sentence — there is no hover in a terminal, so a tooltip is not an
+    /// option and everything has to be on the screen.
+    pub reason: &'static str,
+}
+
+/// Should this node offer a wake, and may this caller press it?
+///
+/// The rule that matters: **never offer an action that will be refused.**
+/// `nodes.wake` is host-authority-only, so a view- or triage-tier connection
+/// gets the STATE and not the verb — that silent-failure class is what this
+/// feature exists to remove. Same for `wakeable:false`, which is the hub
+/// saying it holds no cloud coordinates or credential for this node: the wake
+/// would fail every single time, and each failure leaves money burning.
+pub fn wake_affordance(node: &NodeView, can_wake: bool, pending: bool) -> WakeAffordance {
+    if node.state == NodeState::Available {
+        return WakeAffordance {
+            visible: false,
+            enabled: false,
+            label: "",
+            reason: "",
+        };
+    }
+    if node.state == NodeState::Waking || pending {
+        return WakeAffordance {
+            visible: true,
+            enabled: false,
+            label: "starting…",
+            reason: "already starting — waking it again would do nothing.",
+        };
+    }
+    if !node.wakeable {
+        return WakeAffordance {
+            visible: true,
+            enabled: false,
+            label: "wake",
+            reason: "this hub holds no cloud credentials for this machine, so it cannot start it.",
+        };
+    }
+    if !can_wake {
+        return WakeAffordance {
+            visible: true,
+            enabled: false,
+            label: "wake",
+            reason: "starting a machine spends money, so it needs an operator token.",
+        };
+    }
+    WakeAffordance {
+        visible: true,
+        enabled: true,
+        label: "w  wake",
+        reason: WAKE_COST_NOTE,
+    }
+}
+
+// ── error reading ───────────────────────────────────────────────────────────
+
+/// Is this "the hub has no node registry" rather than a failure?
+///
+/// The bus router's own words for an unregistered method are `no provider for
+/// <method>`, and that is the definitive signal. Anything else (a dropped
+/// socket, a timeout, a malformed answer) is a real error and must NOT be
+/// swallowed into "feature absent".
+pub fn is_registry_absent(err: &str) -> bool {
+    err.contains("no provider for nodes.list") || err.contains("no provider for nodes.wake")
+}
+
+/// Is this the tier refusal — a view/triage token asking to spend money?
+pub fn is_host_authority_refusal(err: &str) -> bool {
+    err.contains("requires host authority")
+}
+
+/// A `nodes.wake` failure in words a person can act on. The hub already
+/// renders cloud-API failures BY CATEGORY rather than quoting the API's
+/// response body, so its own text is safe to pass through; these cases are the
+/// ones where the hub's wording describes a client bug.
+pub fn describe_wake_error(err: &str) -> String {
+    let msg = err.trim();
+    if is_host_authority_refusal(msg) {
+        return "starting a machine needs an operator token.".into();
+    }
+    if msg.contains("unknown node") || msg.contains("naming a registered node is required") {
+        return "this machine is no longer in the registry.".into();
+    }
+    if msg.contains("has no cloud coordinates or credential") {
+        return "this hub holds no cloud credentials for this machine.".into();
+    }
+    if is_registry_absent(msg) {
+        return "this hub no longer has a node registry.".into();
+    }
+    if msg.is_empty() {
+        return "couldn't start the machine.".into();
+    }
+    msg.to_string()
+}
+
+// ── the async tasks ─────────────────────────────────────────────────────────
+
+/// Seed the registry from `nodes.list`. Called on every bus (re)connect and
+/// when the overlay is opened — the hub keeps no node state across a restart,
+/// so a reconnect is exactly when our copy is most likely wrong.
+///
+/// Sends [`AppMsg::Nodes`] with `None` ONLY for the feature-absent answer. Any
+/// other failure sends nothing at all and leaves whatever we hold in place: a
+/// hub outage is not this surface's to own, and blanking the list on a
+/// reconnect blip would render a broken hub as a hub with no nodes.
+pub async fn seed_nodes(bus: BusClient, tx: UnboundedSender<AppMsg>) {
+    match bus.call("nodes.list", json!({})).await {
+        Ok(v) => {
+            let _ = tx.send(AppMsg::Nodes(Some(nodes_from_rows(&v))));
+        }
+        Err(e) => {
+            if is_registry_absent(&e.to_string()) {
+                let _ = tx.send(AppMsg::Nodes(None));
+            }
+        }
+    }
+}
+
+/// Fire `nodes.wake` for one node and post the outcome back.
+///
+/// The call returns as soon as the cloud API has accepted the start —
+/// normally `state:"waking"` — and the rest arrives on `node.state_changed`.
+/// That is the design, not a missing await: a real `waking` state beats a
+/// spinner on a held request, and it is why there is no queue for input typed
+/// during a wake.
+pub async fn wake_node(bus: BusClient, id: String, tx: UnboundedSender<AppMsg>) {
+    let msg = match bus.call("nodes.wake", json!({ "id": id })).await {
+        Ok(v) => AppMsg::NodeWake {
+            id,
+            node: node_from_row(&v).map(Box::new),
+            error: None,
+        },
+        Err(e) => AppMsg::NodeWake {
+            id,
+            node: None,
+            error: Some(describe_wake_error(&e.to_string())),
+        },
+    };
+    let _ = tx.send(msg);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(state: NodeState) -> NodeView {
+        NodeView {
+            id: "den".into(),
+            label: "Fly node (den)".into(),
+            state,
+            detail: None,
+            wakeable: true,
+            wake_failures: 0,
+            last_exit: None,
+        }
+    }
+
+    #[test]
+    fn a_minimal_row_parses_and_a_row_without_an_id_does_not() {
+        let n = node_from_row(&json!({
+            "id": "den", "state": "available", "wakeable": false
+        }))
+        .expect("a minimal NodeView is a node");
+        assert_eq!(n.id, "den");
+        // label ALWAYS present on the wire, but falling back to the id keeps a
+        // sparse row renderable rather than blank.
+        assert_eq!(n.label, "den");
+        assert_eq!(n.state, NodeState::Available);
+        assert!(!n.wakeable);
+        assert!(node_from_row(&json!({ "state": "stopped" })).is_none());
+        assert!(node_from_row(&json!({ "id": "" })).is_none());
+    }
+
+    /// A state we cannot presume to understand is one we do not know how to get
+    /// a working node out of — which is the definition of `unreachable`.
+    #[test]
+    fn an_unknown_state_reads_as_unreachable_not_as_available() {
+        let n =
+            node_from_row(&json!({ "id": "x", "state": "hibernating", "wakeable": true })).unwrap();
+        assert_eq!(n.state, NodeState::Unreachable);
+        // …and so does a row that names no state at all.
+        let n = node_from_row(&json!({ "id": "x", "wakeable": true })).unwrap();
+        assert_eq!(n.state, NodeState::Unreachable);
+    }
+
+    /// `wakeable` is a positive assertion. Anything that is not literally
+    /// `true` — absent, null, the string "true" — means the hub did not say
+    /// yes, and offering a wake on it would fail every time.
+    #[test]
+    fn wakeable_is_only_true_when_the_hub_said_true() {
+        for raw in [json!(null), json!("true"), json!(1), json!(false)] {
+            let n =
+                node_from_row(&json!({ "id": "x", "state": "stopped", "wakeable": raw })).unwrap();
+            assert!(!n.wakeable, "{raw} must not read as wakeable");
+        }
+        assert!(
+            node_from_row(&json!({ "id": "x", "state": "stopped", "wakeable": true }))
+                .unwrap()
+                .wakeable
+        );
+    }
+
+    #[test]
+    fn an_empty_last_exit_is_no_last_exit() {
+        // The hub never fabricates an empty record, and neither may we: a
+        // present-but-empty one would read as "it ended cleanly".
+        let n = node_from_row(&json!({ "id": "x", "state": "available", "lastExit": {} })).unwrap();
+        assert!(n.last_exit.is_none());
+        assert!(crash_notice(&n).is_none());
+    }
+
+    #[test]
+    fn a_crash_notice_is_rendered_and_a_deliberate_stop_is_not() {
+        let crashed = node_from_row(&json!({
+            "id": "x", "state": "available", "wakeable": true,
+            "lastExit": { "reason": "claudemon-died", "exitCode": 1, "at": "2026-08-24T21:00:00Z" }
+        }))
+        .unwrap();
+        let notice = crash_notice(&crashed).expect("a crash is news");
+        assert!(notice.contains("did not end cleanly"), "{notice}");
+        assert!(notice.contains("claudemon-died"), "{notice}");
+        assert!(notice.contains("exit 1"), "{notice}");
+
+        let stopped = node_from_row(&json!({
+            "id": "x", "state": "stopped", "wakeable": true,
+            "lastExit": { "reason": "signal-TERM", "at": "2026-08-24T21:00:00Z" }
+        }))
+        .unwrap();
+        assert!(
+            crash_notice(&stopped).is_none(),
+            "a deliberate stop is not news"
+        );
+    }
+
+    #[test]
+    fn failed_wakes_are_reported_as_money_still_burning() {
+        let mut n = node(NodeState::Unreachable);
+        assert!(wake_failure_notice(&n).is_none());
+        n.wake_failures = 2;
+        let notice = wake_failure_notice(&n).unwrap();
+        assert!(notice.contains("2 wakes failed"), "{notice}");
+        assert!(notice.contains("running and billing"), "{notice}");
+    }
+
+    /// The whole point of the four-state model: a booting machine and a broken
+    /// one must not read the same.
+    #[test]
+    fn waking_is_not_unreachable() {
+        assert_ne!(
+            NodeState::Waking.label(),
+            NodeState::Unreachable.label(),
+            "distinct words"
+        );
+        assert_ne!(
+            NodeState::Waking.marker(),
+            NodeState::Unreachable.marker(),
+            "distinct marks"
+        );
+        // …and a machine already starting must not offer a second wake.
+        let a = wake_affordance(&node(NodeState::Waking), true, false);
+        assert!(a.visible && !a.enabled);
+        assert!(a.reason.contains("already starting"), "{}", a.reason);
+    }
+
+    #[test]
+    fn a_connected_node_offers_nothing_at_all() {
+        let a = wake_affordance(&node(NodeState::Available), true, false);
+        assert!(!a.visible, "a healthy machine is not news");
+    }
+
+    /// Never offer an action that will be refused: the two refusals the hub
+    /// would issue are both pre-empted here, WITH the reason on the screen.
+    #[test]
+    fn a_wake_is_never_offered_where_the_hub_would_refuse_it() {
+        let view_tier = wake_affordance(&node(NodeState::Stopped), false, false);
+        assert!(view_tier.visible && !view_tier.enabled);
+        assert!(
+            view_tier.reason.contains("operator token"),
+            "{}",
+            view_tier.reason
+        );
+
+        let mut credentialless = node(NodeState::Unreachable);
+        credentialless.wakeable = false;
+        let a = wake_affordance(&credentialless, true, false);
+        assert!(a.visible && !a.enabled);
+        assert!(a.reason.contains("no cloud credentials"), "{}", a.reason);
+    }
+
+    /// The cost is beside the action, not hidden behind a hover a terminal
+    /// does not have.
+    #[test]
+    fn an_enabled_wake_prints_what_it_costs() {
+        let a = wake_affordance(&node(NodeState::Stopped), true, false);
+        assert!(a.enabled);
+        assert_eq!(a.reason, WAKE_COST_NOTE);
+        assert!(a.reason.contains("bills from boot"), "{}", a.reason);
+        assert!(
+            a.reason.contains("nothing here can stop it"),
+            "{}",
+            a.reason
+        );
+        // A wake already in flight closes the affordance the same way `waking`
+        // does — three keystrokes must not become three cloud API calls.
+        assert!(!wake_affordance(&node(NodeState::Stopped), true, true).enabled);
+    }
+
+    /// A permission check is not a feature check: the ONLY honest signal that a
+    /// hub has no registry is the router's own "no provider" sentence.
+    #[test]
+    fn only_no_provider_reads_as_feature_absent() {
+        assert!(is_registry_absent("no provider for nodes.list"));
+        assert!(is_registry_absent("no provider for nodes.wake"));
+        for real in [
+            "bus disconnected",
+            "bus write failed",
+            "requires host authority",
+            "no provider for agents.spawn",
+            "",
+        ] {
+            assert!(!is_registry_absent(real), "{real} is a real failure");
+        }
+    }
+
+    #[test]
+    fn wake_errors_are_rendered_for_a_person() {
+        assert_eq!(
+            describe_wake_error("nodes.wake requires host authority"),
+            "starting a machine needs an operator token."
+        );
+        assert_eq!(
+            describe_wake_error("unknown node \"den\""),
+            "this machine is no longer in the registry."
+        );
+        assert_eq!(
+            describe_wake_error("den has no cloud coordinates or credential on this hub"),
+            "this hub holds no cloud credentials for this machine."
+        );
+        assert_eq!(describe_wake_error("   "), "couldn't start the machine.");
+        // The hub renders cloud failures BY CATEGORY, never quoting the API —
+        // so its own sentence passes through untouched.
+        assert_eq!(
+            describe_wake_error("the cloud API is rate-limiting this machine"),
+            "the cloud API is rate-limiting this machine"
+        );
+    }
+
+    #[test]
+    fn the_registry_keeps_the_hubs_order_and_patches_by_id() {
+        let mut reg = NodeRegistry::new(nodes_from_rows(&json!([
+            { "id": "a", "state": "available", "wakeable": true },
+            { "id": "b", "state": "stopped", "wakeable": true },
+        ])));
+        assert_eq!(reg.nodes().len(), 2);
+        reg.apply_change(
+            node_from_row(&json!({ "id": "b", "state": "waking", "wakeable": true })).unwrap(),
+        );
+        assert_eq!(reg.get("b").unwrap().state, NodeState::Waking);
+        // Order is the hub's, and patching must not reshuffle it.
+        assert_eq!(
+            reg.nodes()
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
+        // A node the registry grew under us appends rather than being dropped.
+        reg.apply_change(
+            node_from_row(&json!({ "id": "c", "state": "stopped", "wakeable": true })).unwrap(),
+        );
+        assert_eq!(reg.nodes().len(), 3);
+        assert_eq!(reg.nodes()[2].id, "c");
+    }
+
+    #[test]
+    fn only_nodes_worth_interrupting_someone_for_need_attention() {
+        let reg = NodeRegistry::new(nodes_from_rows(&json!([
+            { "id": "fine", "state": "available", "wakeable": true },
+            { "id": "asleep", "state": "stopped", "wakeable": true },
+            { "id": "crashed", "state": "available", "wakeable": true,
+              "lastExit": { "reason": "brain-died", "exitCode": 2 } },
+        ])));
+        let ids: Vec<&str> = reg
+            .needing_attention()
+            .iter()
+            .map(|n| n.id.as_str())
+            .collect();
+        // A healthy machine says nothing; a machine back from a crash carries
+        // the only notice of that crash, so it counts even though it is up.
+        assert_eq!(ids, vec!["asleep", "crashed"]);
+        assert_eq!(reg.summary(), "1 asleep · 2 connected");
+        assert!(NodeRegistry::default().summary().is_empty());
+    }
+}

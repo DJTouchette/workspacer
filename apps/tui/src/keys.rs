@@ -35,6 +35,10 @@ pub enum Action {
     OpenRuns,
     OpenChanges,
     OpenNotes,
+    /// The remote-node surface: which machines the hub knows about, and the
+    /// (confirmed) wake. Opens a read-only overlay — nothing here spends money
+    /// until a second, explicit keypress inside it.
+    RemoteNodes,
     RenameAgent,
     Respawn,
     // agent / tabs
@@ -101,6 +105,7 @@ impl Action {
             OpenRuns => "open_runs",
             OpenChanges => "open_changes",
             OpenNotes => "open_notes",
+            RemoteNodes => "remote_nodes",
             RenameAgent => "rename_agent",
             Respawn => "respawn",
             NewAgent => "new_agent",
@@ -157,6 +162,7 @@ impl Action {
             "open_runs" => OpenRuns,
             "open_changes" => OpenChanges,
             "open_notes" => OpenNotes,
+            "remote_nodes" => RemoteNodes,
             "rename_agent" => RenameAgent,
             "respawn" => Respawn,
             "new_agent" => NewAgent,
@@ -689,6 +695,13 @@ impl Keymap {
             ("i", JumpForward),
             // Toggle showing stopped/history sessions in the sidebar.
             ("x", ToggleStopped),
+            // Remote worker nodes: which machines the hub knows about, and the
+            // wake. Deliberately NOT a top-level letter — a wake starts a
+            // billable machine this hub cannot switch off again, so it lives
+            // behind the leader (discoverable in which-key) and behind a
+            // confirmation inside the overlay. Nothing about `<leader> N`
+            // itself spends anything.
+            ("N", RemoteNodes),
             // Cross-agent transcript content search.
             ("/", OpenSearch),
             // Provider parity: live model switch, permission-mode cycle, handoff.
@@ -883,6 +896,67 @@ mod tests {
         // Bad action / chord are reported, not fatal.
         assert!(!km.set(Context::List, "z", "frobnicate"));
         assert!(!km.set(Context::List, "nonsense-key", "quit"));
+    }
+
+    /// The remote-node surface is discoverable and costs nothing to reach.
+    ///
+    /// It sits behind the leader ON PURPOSE rather than on a top-level letter:
+    /// the overlay it opens is where a wake lives, a wake starts a billable
+    /// machine this hub cannot switch off again, and a bare letter in a modal
+    /// app is the keystroke you press by accident. The leader also means it
+    /// shows up in which-key, which is the only way anyone finds it.
+    #[test]
+    fn the_remote_node_surface_hangs_off_the_leader_and_shows_in_which_key() {
+        let km = Keymap::default();
+        let leader = km.leader();
+        let n = Chord::parse("N").expect("valid chord");
+
+        // Not a top-level binding in any context — reaching it takes the leader.
+        for ctx in [
+            Context::Global,
+            Context::List,
+            Context::AgentTerminal,
+            Context::AgentTranscript,
+        ] {
+            assert_ne!(
+                km.action(ctx, n),
+                Some(Action::RemoteNodes),
+                "{ctx:?} must not reach the node surface on one key"
+            );
+        }
+        assert_eq!(
+            km.resolve(&[Context::Global], &[leader, n]),
+            KeyMatch::Action(Action::RemoteNodes)
+        );
+
+        // …and which-key lists it as a leaf under the leader, so it is findable.
+        let found = km
+            .continuations(&[Context::Global, Context::List], &[leader])
+            .into_iter()
+            .find(|c| c.chord == n);
+        assert_eq!(
+            found.and_then(|c| c.action),
+            Some(Action::RemoteNodes),
+            "which-key must offer it under the leader"
+        );
+    }
+
+    /// `name`/`from_name` are hand-maintained parallel match arms: a variant
+    /// added to one and not the other breaks config round-tripping SILENTLY.
+    #[test]
+    fn the_new_action_round_trips_through_its_config_name() {
+        assert_eq!(Action::RemoteNodes.name(), "remote_nodes");
+        assert_eq!(
+            Action::from_name(Action::RemoteNodes.name()),
+            Some(Action::RemoteNodes)
+        );
+        // …and it is remappable like every other action.
+        let mut km = Keymap::default();
+        assert!(km.set(Context::List, "ctrl+n", "remote_nodes"));
+        assert_eq!(
+            km.action(Context::List, Chord::parse("ctrl+n").unwrap()),
+            Some(Action::RemoteNodes)
+        );
     }
 
     #[test]

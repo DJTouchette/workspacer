@@ -16,6 +16,7 @@ mod federation;
 mod keys;
 mod library;
 mod names;
+mod nodes;
 mod notes;
 mod pins;
 mod profiles;
@@ -152,6 +153,9 @@ async fn main() -> Result<()> {
                 // Federation: peer hubs' lifecycle. Their agent.* events arrive
                 // on the subscriptions above, hub-stamped on the envelope.
                 "hub.peer.*".into(),
+                // Remote worker nodes: follow a wake without polling. The hub
+                // publishes only on a real change (see `crate::nodes`).
+                "node.state_changed".into(),
             ]);
             (Some(client), Some(events))
         }
