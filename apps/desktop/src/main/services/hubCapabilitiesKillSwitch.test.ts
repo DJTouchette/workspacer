@@ -507,6 +507,12 @@ describe('library.* cwd confinement', () => {
     getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
   });
 
+  // $HOME relocations made by withFakeHome below, undone after each test.
+  const homeRestores: Array<() => void> = [];
+  afterEach(() => {
+    while (homeRestores.length) homeRestores.pop()!();
+  });
+
   it('library.save is denied for a cwd outside the workspace', () => {
     expect(() =>
       call('library.save', {
@@ -679,6 +685,131 @@ describe('library.* cwd confinement', () => {
   }
 
   itRanEveryGatedTest(perFileGate, "the per-file guard's canonical-answer tests", 3);
+
+  // ── The ITEM-DIRECTORY half of the derived-path gate ────────────────────
+  //
+  // Confining the cwd and confining the DERIVED path are two checks, and this
+  // file already asserts the second one exists. What it did not assert is how
+  // WIDE it is: `libraryItemRoots(canonicalCwd)` is `[<configDir>/library,
+  // canonicalCwd]`, and library.list checks its cwd against the BROWSE roots —
+  // so a caller may name $HOME itself, and then "the project the caller named"
+  // is the whole home tree and the narrowing evaporates. A
+  // `$HOME/.workspacer/library/a.md -> $HOME/.ssh/id_rsa` symlink canonicalizes
+  // inside that root, passes, and comes back as an item BODY, while fs.read of
+  // the identical path is refused for the same caller.
+  //
+  // The brain has refused exactly this since library.* became bus-reachable
+  // (libraryItemDirs + containsPath in cmd/brain/library.go, pinned by
+  // TestLibraryItemDirsRefuseEveryShapeOfTheComparison). This copy had only the
+  // roots, so the two providers disagreed about the same call — and this is the
+  // copy the kill switch puts back on the bus.
+  //
+  // Each case below is the shape of one surviving mutation of the two lines the
+  // fix adds, and is the TWIN of the Go case with the same name.
+  //
+  // BOTH HALVES ARE ASSERTED, because they are different claims: the guard must
+  // REFUSE, and the call must not carry the planted bytes back. A guard that
+  // returns the path while libraryService happens not to read it satisfies
+  // neither, and a guard that throws while the body still reaches the caller
+  // satisfies only the first.
+  const itemDirGate = { ran: 0 };
+  const itItemDirs = gatedIt(CAN_SYMLINK, itemDirGate);
+  const PLANTED_SECRET = 'SWEEP-PLANTED-ITEM-DIR-SECRET';
+
+  /** Relocate $HOME for one test (browseRoots reads os.homedir(), which honours
+   *  it) so the cwd a case names is the widest one library.list accepts without
+   *  writing anything into the developer's real home. */
+  const withFakeHome = (): string => {
+    const home = mkTmp('wks-lib-home-');
+    const prev = process.env.HOME;
+    const prevProfile = process.env.USERPROFILE;
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    homeRestores.push(() => {
+      if (prev === undefined) delete process.env.HOME;
+      else process.env.HOME = prev;
+      if (prevProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = prevProfile;
+    });
+    return home;
+  };
+
+  const link = (target: string, alias: string): void => {
+    fs.mkdirSync(path.dirname(alias), { recursive: true });
+    fs.symlinkSync(target, alias);
+  };
+
+  for (const tc of [
+    {
+      name: 'an item directory is compared lexically, never resolved',
+      why:
+        'canonicalizing the project item dirs resolves the very link the gate exists to see, ' +
+        'so the derived file lands "inside" a library directory that is really ~/.ssh',
+      plant: (home: string): string => {
+        fs.mkdirSync(path.join(home, '.ssh'), { recursive: true });
+        fs.writeFileSync(path.join(home, '.ssh', 'id_rsa.md'), PLANTED_SECRET, 'utf-8');
+        link(path.join(home, '.ssh'), path.join(home, '.workspacer', 'library'));
+        return path.join(home, '.workspacer', 'library', 'id_rsa.md');
+      },
+    },
+    {
+      // NOT <cwd>/.claude.json, which the Go twin uses: the secret gate already
+      // refuses that basename on this side, so the case would pass with the
+      // item-dir half deleted and prove nothing. A directory whose name merely
+      // STARTS with an item directory's is refused by nothing else.
+      name: 'a sibling whose name starts with an item directory’s is not inside it',
+      why:
+        'dropping the separator boundary (a bare startsWith instead of containsCanonical) ' +
+        'makes <cwd>/.workspacer/library-backup a member of the <cwd>/.workspacer/library ' +
+        'item directory',
+      plant: (home: string): string => {
+        fs.writeFileSync(path.join(home, 'loot.md'), PLANTED_SECRET, 'utf-8');
+        link(path.join(home, 'loot.md'), path.join(home, '.workspacer', 'library-backup', 'a.md'));
+        return path.join(home, '.workspacer', 'library-backup', 'a.md');
+      },
+    },
+    {
+      name: 'an ancestor of an item directory is not inside it',
+      why:
+        'flipping the argument order makes every ANCESTOR of an item dir pass — and ' +
+        "library.remove's sink is fs.rmSync({ recursive: true }), so the whole cwd goes",
+      plant: (home: string): string => {
+        fs.writeFileSync(path.join(home, 'loot.md'), PLANTED_SECRET, 'utf-8');
+        link(home, path.join(home, '.claude', 'skills', 'boom'));
+        return path.join(home, '.claude', 'skills', 'boom');
+      },
+    },
+  ]) {
+    itItemDirs(
+      `library.list refuses a derived path outside the library directories — ${tc.name}`,
+      async () => {
+        const home = withFakeHome();
+        const derived = tc.plant(home);
+
+        // cwd = $HOME: accepted by the browse roots, and the widest cwd
+        // library.list takes, so libraryItemRoots is at its weakest and the item
+        // DIRS are the only thing left.
+        call('library.list', { cwd: home });
+        const guard = libraryMock.list.mock.calls[0]![1] as (p: string) => string | null;
+
+        // 1. REFUSED.
+        expect(guard(derived), `${derived} must be refused — ${tc.why}`).toBeNull();
+
+        // 2. AND NOT LEAKED. "It errored" and "it did not leak" are different
+        // claims, so drive the REAL service with the guard the handler built and
+        // look for the planted bytes in what a bus caller would receive.
+        const { libraryService: realLibrary } =
+          await vi.importActual<typeof import('./libraryService')>('./libraryService');
+        const items = realLibrary.list(home, guard);
+        expect(
+          JSON.stringify(items),
+          'the refusal must also mean the planted bytes never reach the caller',
+        ).not.toContain(PLANTED_SECRET);
+      },
+    );
+  }
+
+  itRanEveryGatedTest(itemDirGate, 'the library item-directory gate', 3);
 });
 
 // ── Fixture-driven sweep over every kill-switch-only path capability ────────
@@ -1268,5 +1399,167 @@ describe('boot-restore documents are scrubbed by every writer, not just layout.s
     const pane = doc.agents[0].tabs[0].panes[0];
     expect(pane).not.toHaveProperty('pluginId');
     expect(pane).toMatchObject({ id: 'p1', type: 'plugin' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// contracts/path-containment-cases.json → libraryItemDirs
+//
+// The hand-written item-directory cases above pin THIS copy. This loader pins
+// it against the OTHER copy of the same call with the same cases: the brain's
+// cmd/brain/library.go has had both halves of the derived-path gate since
+// library.* became bus-reachable, and this side had only the roots — so a
+// library.list with cwd=$HOME and a `.workspacer/library -> ~/.ssh` symlink was
+// refused there and served here, and here is the copy the kill switch puts back
+// on the bus. Agreement between two providers about one call is not something
+// either side's own tests can see, which is what the shared fixture is for.
+//
+// TWIN LOADER: services/hub/cmd/brain/library_itemdirs_test.go,
+// TestLibraryItemDirContractCases.
+// ---------------------------------------------------------------------------
+interface ItemDirCase {
+  name: string;
+  cwd: string;
+  item: string;
+  expect: 'accept' | 'refuse';
+  refusedBy?: string;
+  resolvesTo?: string;
+  needsSymlinks?: boolean;
+  tree?: {
+    dirs?: string[];
+    files?: Record<string, string>;
+    symlinks?: Record<string, string>;
+  };
+  why: string;
+}
+
+const itemDirFixture: { libraryItemDirs: { cases: ItemDirCase[] } } = JSON.parse(
+  fs.readFileSync(
+    path.join(__dirname, '../../../../../contracts/path-containment-cases.json'),
+    'utf-8',
+  ),
+);
+
+describe('library item directories — cross-language contract', () => {
+  const cases = itemDirFixture.libraryItemDirs.cases;
+  const realHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  const sweep = new SweepTally();
+  // Derived from the fixture, so adding a case raises the floor with it. The
+  // deny floor counts only the cases that are NOT host-gated: a machine without
+  // symlink privilege legitimately skips the rest, and a floor that counted them
+  // would go red on that host for the wrong reason.
+  const wantAllow = cases.filter((c) => c.expect === 'accept').length;
+  const wantDeny = cases.filter((c) => c.expect === 'refuse' && !c.needsSymlinks).length;
+
+  beforeEach(() => {
+    getAllSnapshots.mockReturnValue([] as never);
+  });
+  afterEach(() => {
+    process.env.HOME = realHome.HOME;
+    process.env.USERPROFILE = realHome.USERPROFILE;
+    getConfigDirMock.mockImplementation(() => cfg.dir);
+  });
+
+  it('the fixture block loads', () => {
+    expect(
+      cases.length,
+      'a silently empty corpus guards nothing — the block was renamed or dropped',
+    ).toBeGreaterThan(0);
+  });
+
+  /**
+   * Which half refused, recomputed WITHOUT calling either half: containment is
+   * decided with fs.realpathSync and a plain prefix test, so a bug in the
+   * confinement helpers cannot talk this oracle into agreeing with the thing it
+   * is checking. TWIN: libraryItemRefusalReason in library_itemdirs_test.go.
+   */
+  const refusalReason = (item: string, canonicalCwd: string, configDir: string): string => {
+    let real: string;
+    try {
+      real = fs.realpathSync(item);
+    } catch {
+      return 'outside-item-roots'; // unresolvable never reaches the dirs test
+    }
+    const under = (root: string): boolean => {
+      let rr: string;
+      try {
+        rr = fs.realpathSync(root);
+      } catch {
+        return false;
+      }
+      return real === rr || real.startsWith(rr.replace(/[/\\]+$/, '') + path.sep);
+    };
+    const globalStore = path.join(configDir, 'library');
+    if (!under(globalStore) && !under(canonicalCwd)) return 'outside-item-roots';
+    // LEXICAL, matching the gate's own deliberate choice: the two cwd-derived
+    // directories are compared as written, never resolved.
+    for (const dir of [
+      path.join(canonicalCwd, '.workspacer', 'library'),
+      path.join(canonicalCwd, '.claude'),
+    ]) {
+      if (real === dir || real.startsWith(dir + path.sep)) return '';
+    }
+    return under(globalStore) ? '' : 'outside-item-dirs';
+  };
+
+  for (const c of cases) {
+    if (c.needsSymlinks && !CAN_SYMLINK) {
+      // Filed as a SKIP with its reason rather than dropped: enumerated stays
+      // equal to the fixture's length on every host, so the ratchet below still
+      // catches a corpus that shrank even where half of it cannot run.
+      sweep.skip('needsSymlinks');
+      it.skip(c.name, () => {});
+      continue;
+    }
+    it(c.name, () => {
+      const sandbox = mkTmp('wks-itemdir-');
+      const home = path.join(sandbox, 'home');
+      const configDir = path.join(sandbox, 'config', 'workspacer');
+      for (const d of [home, path.join(sandbox, 'outside'), path.join(configDir, 'library')]) {
+        fs.mkdirSync(d, { recursive: true });
+      }
+      process.env.HOME = home;
+      process.env.USERPROFILE = home;
+      getConfigDirMock.mockImplementation(() => configDir);
+
+      for (const d of c.tree?.dirs ?? []) fs.mkdirSync(path.join(sandbox, d), { recursive: true });
+      for (const [rel, body] of Object.entries(c.tree?.files ?? {})) {
+        const full = path.join(sandbox, rel);
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, body, 'utf-8');
+      }
+      for (const [rel, dest] of Object.entries(c.tree?.symlinks ?? {})) {
+        const full = path.join(sandbox, rel);
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.symlinkSync(path.join(sandbox, dest), full);
+      }
+
+      // The gate lives inside the handler's closure, so it is reached the way a
+      // bus caller reaches it: register, call, take the guard the handler built.
+      const cwd = path.join(sandbox, c.cwd);
+      call('library.list', { cwd });
+      const guard = libraryMock.list.mock.calls[0]![1] as (p: string) => string | null;
+      const canonicalCwd = libraryMock.list.mock.calls[0]![0] as string;
+      const item = path.join(sandbox, c.item);
+      const got = guard(item);
+      sweep.ran(c.expect);
+
+      if (c.expect === 'accept') {
+        expect(got, `${item} must be accepted — ${c.why}`).toBe(path.join(sandbox, c.resolvesTo!));
+        return;
+      }
+      expect(got, `${item} must be refused — ${c.why}`).toBeNull();
+      // THE RIGHT REASON: a bare refusal is satisfied by a gate that refuses
+      // everything, and the two halves are different guards.
+      expect(
+        refusalReason(item, canonicalCwd, configDir),
+        `refused, but not by the half the fixture names — ${c.why}`,
+      ).toBe(c.refusedBy);
+    });
+  }
+
+  itSweptTheWholeCorpus(sweep, 'the libraryItemDirs corpus sweep', cases.length, {
+    allow: wantAllow,
+    deny: wantDeny,
   });
 });

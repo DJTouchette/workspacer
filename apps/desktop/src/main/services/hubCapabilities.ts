@@ -31,7 +31,12 @@ import { registerCapability, callHub, emitToRenderer } from './hubClient';
 import { agentNotifier } from './agentNotifier';
 import { appIconPath } from '../lib/appIcon';
 import { dropHostTrusted } from '../lib/hostTrustedConfig';
-import { assertPathAllowed, canonicalRoot, configStoreRoots } from '../lib/pathConfinement';
+import {
+  assertPathAllowed,
+  canonicalRoot,
+  configStoreRoots,
+  containsCanonical,
+} from '../lib/pathConfinement';
 import { snapshotGrantsFsRoot } from '../lib/snapshotLiveness';
 import { DELEGATE_CATALOG_TO_BRAIN } from './brainDelegation';
 import { configService, getConfigDir } from './configService';
@@ -1456,10 +1461,10 @@ export function registerHubCapabilities(): void {
   // is handed to the service and applied per file; a refusal skips that item
   // rather than failing the call.
   const guardLibraryFile =
-    (cap: string, roots: string[]): LibraryFileGuard =>
+    (cap: string, canonicalCwd?: string): LibraryFileGuard =>
     (filePath: string) => {
       try {
-        return assertPathAllowed(cap, filePath, roots);
+        return assertLibraryItemPath(cap, filePath, canonicalCwd);
       } catch {
         return null;
       }
@@ -1477,6 +1482,57 @@ export function registerHubCapabilities(): void {
     if (canonicalCwd) roots.push(canonicalCwd);
     return roots;
   };
+  /**
+   * The directories a library item may actually LIVE in, composed from the
+   * canonical cwd and compared LEXICALLY against the already-canonical derived
+   * path.
+   *
+   * This is the second half of the derived-path gate, and it exists because
+   * libraryItemRoots alone is only as narrow as the cwd the caller named. The
+   * cwd for library.list is checked against the BROWSE roots, so a caller may
+   * name $HOME itself — and then "the project the caller named" IS the whole
+   * home tree and the narrowing evaporates: a
+   * `$HOME/.workspacer/library/a.md -> $HOME/.ssh/id_rsa` symlink (the ordinary
+   * form, since git stores symlinks verbatim and a clone carries them) resolves
+   * inside the root and comes back as an item body, while fs.read of the
+   * identical path is refused. Requiring the RESOLVED file to sit in a library
+   * directory says the thing the roots test was only approximating: a library
+   * item lives in a library directory.
+   *
+   * Lexical on purpose. Canonicalizing these would resolve a
+   * `<cwd>/.workspacer/library -> <projB>` link and hand the escape back.
+   *
+   * TWIN: libraryItemDirs in services/hub/cmd/brain/library.go. The brain has
+   * had this half since library.* became bus-reachable; this copy had only the
+   * roots, so the two providers disagreed about the same call — and the copy
+   * that was wide is the one the kill switch puts back on the bus.
+   */
+  const libraryItemDirs = (canonicalCwd?: string): string[] => {
+    const dirs: string[] = [];
+    // The global store is the one entry that must be RESOLVED: the config dir
+    // itself is routinely a symlinked path (XDG_CONFIG_HOME on a linked volume,
+    // /var -> /private/var on macOS), so a lexical comparison against it would
+    // reject every global item.
+    const global = canonicalRoot(path.join(getConfigDir(), 'library'));
+    if (global !== null) dirs.push(global);
+    if (canonicalCwd) {
+      dirs.push(path.join(canonicalCwd, '.workspacer', 'library'));
+      dirs.push(path.join(canonicalCwd, '.claude'));
+    }
+    return dirs;
+  };
+  /** The whole derived-path gate for a library file: assertPathAllowed over the
+   *  item roots, then the item-directory requirement above. Returns the
+   *  canonical path to open (BINDING DECISION 2).
+   *  TWIN: assertLibraryItemPath in services/hub/cmd/brain/library.go. */
+  const assertLibraryItemPath = (cap: string, full: string, canonicalCwd?: string): string => {
+    const canonical = assertPathAllowed(cap, full, libraryItemRoots(canonicalCwd));
+    for (const dir of libraryItemDirs(canonicalCwd)) {
+      if (containsCanonical(dir, canonical)) return canonical;
+    }
+    // Same non-echoing message as every other refusal on this surface.
+    throw new Error(`${cap}: path is outside the allowed workspace (agent cwds + config stores)`);
+  };
   cat('library.list', (params: unknown) => {
     const { cwd } = (params ?? {}) as { cwd?: string };
     // The read-only list gets browseRoots, not workspaceRoots, for the same
@@ -1490,10 +1546,7 @@ export function registerHubCapabilities(): void {
     const canonicalCwd = cwd ? assertPathAllowed('library.list', cwd, roots) : undefined;
     // The FILES get the item roots, not the browse roots: this call returns file
     // bodies, while the browse widening exists for a picker that returns names.
-    return libraryService.list(
-      canonicalCwd,
-      guardLibraryFile('library.list', libraryItemRoots(canonicalCwd)),
-    );
+    return libraryService.list(canonicalCwd, guardLibraryFile('library.list', canonicalCwd));
   });
   cat('library.save', (params: unknown) => {
     const input = (params ?? {}) as { cwd?: string };
@@ -1506,7 +1559,7 @@ export function registerHubCapabilities(): void {
     // copy did not, so the two providers disagreed about the same call.
     return libraryService.save(
       { ...input, cwd: canonicalCwd } as any,
-      guardLibraryFile('library.save', libraryItemRoots(canonicalCwd)),
+      guardLibraryFile('library.save', canonicalCwd),
     );
   });
   cat('library.remove', (params: unknown) => {
@@ -1530,7 +1583,7 @@ export function registerHubCapabilities(): void {
       // nothing, which is what a caller asking to delete a plugin's skill needs
       // to hear.
       origin,
-      guardLibraryFile('library.remove', libraryItemRoots(canonicalCwd)),
+      guardLibraryFile('library.remove', canonicalCwd),
     );
     return { ok: true };
   });
