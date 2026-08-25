@@ -399,9 +399,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // broken hub by parsing an Electron IPC error string.
   //
   // canWake is true on the desktop because main's bus connection presents the
-  // HOST token, which is the host authority nodes.wake requires. The web mirror
-  // answers this from its own tier (see webBackend) — a view/triage phone gets
-  // the state and no button.
+  // HOST token, which is the host authority nodes.wake AND nodes.sleep require.
+  // The web mirror answers this from its own tier (see webBackend) — a
+  // view/triage phone gets the state and neither button.
   ipcMain.handle(IPC.NODES_LIST, async () => {
     try {
       const nodes = await callHub('nodes.list', {});
@@ -420,6 +420,20 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       // A refused wake is an ANSWER, not a crash: the strip renders the reason
       // on the row. Rejecting would surface it as an unhandled IPC error with
       // the electron wrapper text glued to the front.
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+  // The stop half. ONLY an id crosses this seam, and that is the whole
+  // confinement: the machine, the endpoint, the credential, the signal and the
+  // drain window are all the hub's, out of nodes.json and the supervisor's
+  // tunables. There is deliberately nothing here to pass through — a renderer
+  // that could name the signal could name SIGKILL, and a SIGKILLed node writes
+  // no exit record for the next wake to read.
+  ipcMain.handle(IPC.NODES_SLEEP, async (_event, id: string) => {
+    try {
+      const node = await callHub('nodes.sleep', { id });
+      return { ok: true, node };
+    } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   });

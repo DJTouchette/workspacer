@@ -3,8 +3,11 @@ package flyapi
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -223,20 +226,172 @@ func TestATransportFailureDoesNotCarryTheToken(t *testing.T) {
 	}
 }
 
-// The client cannot express destroy/stop at all. This is a scope test, not a
-// style one: the hub v1 owns waking a node and nothing else, and a client that
-// has no verb for destroying a machine cannot be persuaded into one by a bug
-// in the layer above it.
-func TestClientInterfaceOffersNoDestructiveVerb(t *testing.T) {
+// The client cannot express an IRREVERSIBLE verb, and that is the line this
+// package draws — not "read only", which stopped being true the day the sleep
+// path landed.
+//
+// Start and Stop are each other's undo. Destroy and Delete have no undo at
+// all, so a bug in the layer above cannot be talked into one: there is no
+// method to reach.
+func TestClientInterfaceOffersNoIrreversibleVerb(t *testing.T) {
 	var c Client = New("x")
-	switch any(c).(type) {
-	case interface {
-		Stop(context.Context, string, string) error
-	}:
-		t.Error("flyapi grew a Stop verb; the hub's v1 scope is wake only")
-	case interface {
+	if _, ok := any(c).(interface {
 		Destroy(context.Context, string, string) error
-	}:
+	}); ok {
 		t.Error("flyapi grew a Destroy verb; nothing in this hub may delete a machine")
+	}
+	if _, ok := any(c).(interface {
+		Delete(context.Context, string, string) error
+	}); ok {
+		t.Error("flyapi grew a Delete verb; nothing in this hub may delete a machine")
+	}
+	if _, ok := any(c).(interface {
+		Create(context.Context, string, string) error
+	}); ok {
+		t.Error("flyapi grew a Create verb; nothing in this hub may create a machine (it would create a bill nobody asked for)")
+	}
+}
+
+// THE MUTATION GUARD FOR THE ONE API DETAIL THAT IS EXPENSIVE TO GET WRONG.
+//
+// fly.toml's kill_signal / kill_timeout govern a PLATFORM stop. A stop issued
+// through the Machines API never reads that file and takes its own `signal`
+// and `timeout`, so a Stop that lets a caller omit them is a Stop that
+// silently substitutes the API's defaults for the deployment's drain window —
+// and a node SIGKILLed mid-flush writes no exit record, which is precisely the
+// signal the reconciler needs to tell a deliberate sleep from a crash.
+//
+// This test fails if Stop is ever given a default to fall through to.
+func TestEveryStopTakesAnExplicitSignalAndTimeout(t *testing.T) {
+	var calls int
+	c := stub(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+	})
+	if err := c.Stop(context.Background(), "app", "m1", "", 30*time.Second); err == nil {
+		t.Error("Stop accepted an EMPTY SIGNAL — fly.toml's kill_signal does not govern an API stop, so there is nothing for it to fall back to")
+	}
+	if err := c.Stop(context.Background(), "app", "m1", "SIGTERM", 0); err == nil {
+		t.Error("Stop accepted a ZERO TIMEOUT — fly.toml's kill_timeout does not govern an API stop, so a zero here is the API's default drain window and not the deployment's")
+	}
+	if err := c.Stop(context.Background(), "app", "m1", "SIGTERM", -1); err == nil {
+		t.Error("Stop accepted a NEGATIVE timeout")
+	}
+	if calls != 0 {
+		t.Errorf("a refused Stop still issued %d request(s) — it must refuse BEFORE it spends an action against the rate limit", calls)
+	}
+}
+
+func TestStopPostsSignalAndTimeoutToTheMachineStopPath(t *testing.T) {
+	var gotPath, gotMethod, gotAuth, gotQuery, gotBody, gotType string
+	c := stub(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod, gotAuth, gotQuery = r.URL.Path, r.Method, r.Header.Get("Authorization"), r.URL.RawQuery
+		gotType = r.Header.Get("Content-Type")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusOK)
+	})
+	if err := c.Stop(context.Background(), "wks-node", "17811944b12345", "SIGTERM", 45*time.Second); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if want := "/v1/apps/wks-node/machines/17811944b12345/stop"; gotPath != want {
+		t.Errorf("path = %q, want %q", gotPath, want)
+	}
+	if want := "Bearer " + fakeToken; gotAuth != want {
+		t.Errorf("Authorization = %q, want %q", gotAuth, want)
+	}
+	if gotType != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", gotType)
+	}
+	// The signal and the drain window must actually be ON THE WIRE. A Stop
+	// that validates them and then does not send them is the same bug with a
+	// green unit test in front of it.
+	if !strings.Contains(gotBody, `"signal":"SIGTERM"`) {
+		t.Errorf("the stop body did not carry the signal: %s", gotBody)
+	}
+	if !strings.Contains(gotBody, `"timeout":"45s"`) {
+		t.Errorf("the stop body did not carry the drain timeout: %s", gotBody)
+	}
+	// Same rule as Start: the credential is a header, never a URL.
+	if strings.Contains(gotQuery, fakeToken) || strings.Contains(gotPath, fakeToken) {
+		t.Errorf("the token appeared in the request URL (%q %q)", gotPath, gotQuery)
+	}
+	if strings.Contains(gotBody, fakeToken) {
+		t.Errorf("the token appeared in the request BODY: %s", gotBody)
+	}
+}
+
+// A failing stop is an error path like any other, and it goes through the same
+// scrub. Written against the stub that echoes the request headers back — the
+// shape a debug proxy or captive portal actually produces.
+func TestAFailingStopDoesNotCarryTheToken(t *testing.T) {
+	c := stub(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":"upstream refused","request":{"headers":{"authorization":"` +
+			r.Header.Get("Authorization") + `"}}}`))
+	})
+	err := c.Stop(context.Background(), "app", "m1", "SIGTERM", 30*time.Second)
+	if err == nil {
+		t.Fatal("expected an error from a 502")
+	}
+	if strings.Contains(err.Error(), fakeToken) {
+		t.Errorf("a failed Stop LEAKED THE FLY TOKEN: %s", err.Error())
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && strings.Contains(apiErr.Body, fakeToken) {
+		t.Errorf("APIError.Body carried the token: %s", apiErr.Body)
+	}
+}
+
+// A stop is an ACTION, so it is gated at one per second per machine like every
+// other action — not at the 5/s read rate. Three stops in a row must wait.
+func TestStopIsRateGatedAsAnAction(t *testing.T) {
+	var waits []time.Duration
+	c := stub(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	c.sleep = func(_ context.Context, d time.Duration) { waits = append(waits, d) }
+	for i := 0; i < 3; i++ {
+		if err := c.Stop(context.Background(), "app", "m1", "SIGTERM", time.Second); err != nil {
+			t.Fatalf("stop %d: %v", i, err)
+		}
+	}
+	if len(waits) < 2 {
+		t.Fatalf("three stops in a row waited %d time(s); Fly allows one action per second per machine and a 429 on this path reads as \"the button does nothing\"", len(waits))
+	}
+	// The gate schedules cumulatively (each call reserves its own slot), so
+	// the waits grow — what matters is that every one of them is at the ACTION
+	// interval's granularity and not the 200ms read one.
+	for i, w := range waits {
+		if w <= readMinInterval*2 {
+			t.Errorf("stop %d waited %s, which is the READ interval's order (%s) and not the action interval's (%s) — a stop has been gated as a read", i, w, readMinInterval, actionMinInterval)
+		}
+	}
+}
+
+// THE TWO SPELLINGS. fly.toml says `on-failure`; the Machines API says
+// `on-fail`. They are the same setting and they are not the same string, and
+// a machine that will not stay up is an expensive place to discover that.
+//
+// This holds the constants against the deployment file itself, so the pair
+// cannot drift into agreement (which would be wrong) or out of the file's
+// prose (which would be worse — the file is where the next person looks).
+func TestTheTwoRestartPolicySpellingsAreBothRecorded(t *testing.T) {
+	if RestartPolicyOnFailureTOML == RestartPolicyOnFailAPI {
+		t.Fatal("the two restart-policy spellings have been collapsed into one; fly.toml says on-failure and the Machines API says on-fail, and they are not interchangeable")
+	}
+	// ../../../../deploy/fly/node/fly.toml from services/hub/internal/flyapi.
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "deploy", "fly", "node", "fly.toml"))
+	if err != nil {
+		t.Skipf("node fly.toml not readable from here: %v", err)
+	}
+	toml := string(raw)
+	if !strings.Contains(toml, `policy  = "`+RestartPolicyOnFailureTOML+`"`) &&
+		!strings.Contains(toml, `policy = "`+RestartPolicyOnFailureTOML+`"`) {
+		t.Errorf("deploy/fly/node/fly.toml no longer sets policy = %q — either the deployment changed its restart policy (in which case internal/nodes' crash-vs-sleep reasoning needs re-reading) or this constant is now a lie", RestartPolicyOnFailureTOML)
+	}
+	if !strings.Contains(toml, RestartPolicyOnFailAPI) {
+		t.Errorf("deploy/fly/node/fly.toml no longer mentions the API spelling %q; the difference between the two is exactly the thing that file's comment exists to record", RestartPolicyOnFailAPI)
 	}
 }

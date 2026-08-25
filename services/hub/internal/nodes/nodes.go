@@ -30,29 +30,42 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 )
 
-// State is what the hub currently believes about a node. Four values, and the
-// distinction between the last three is the point:
+// State is what the hub currently believes about a node. Five values, and the
+// distinction between the last four is the point:
 //
 //   - available   — its provider is on the bus and answering.
 //   - waking      — the hub has asked the cloud API to start it and is waiting
 //     for the provider to register. Intentional, bounded, and the state a
 //     client should render as "starting, ~20s" with a disabled composer.
+//   - stopping    — the hub has asked the cloud API to stop it and is waiting
+//     for the machine to drain. The exact mirror of waking, added with the
+//     sleep path and for the same reason: a machine takes real seconds to shut
+//     down, and rendering that as `unreachable` is what makes a deliberate act
+//     read as a failure. It is also what stops a Connect button from appearing
+//     mid-drain and racing the stop.
 //   - stopped     — it is switched off, deliberately, and can be woken.
 //   - unreachable — the hub does not know how to get a working node out of
 //     this, and a person should look. NOT the same as stopped.
+//
+// COMPATIBILITY NOTE FOR A CLIENT OLDER THAN THE SLEEP PATH: every shipped
+// client coerces a state string it does not recognise to `unreachable` rather
+// than rendering it raw, so an old client shows a draining machine with a
+// warning tone and the hub's own detail sentence beside it. Degraded, honest,
+// and not silent.
 type State string
 
 const (
 	StateAvailable   State = "available"
 	StateWaking      State = "waking"
+	StateStopping    State = "stopping"
 	StateStopped     State = "stopped"
 	StateUnreachable State = "unreachable"
 )
 
-// Valid reports whether s is one of the four states.
+// Valid reports whether s is one of the five states.
 func (s State) Valid() bool {
 	switch s {
-	case StateAvailable, StateWaking, StateStopped, StateUnreachable:
+	case StateAvailable, StateWaking, StateStopping, StateStopped, StateUnreachable:
 		return true
 	}
 	return false
@@ -107,7 +120,14 @@ type Node struct {
 	Fly *Fly `json:"fly,omitempty"`
 }
 
-// Wakeable reports whether the hub holds enough to start this node itself.
+// Wakeable reports whether the hub holds enough to act on this node's POWER
+// itself — to start it and, since the sleep path, to stop it again.
+//
+// One predicate for both directions because it is literally one question: the
+// coordinates and the credential a stop needs are the coordinates and the
+// credential a start needs. A node this returns false for is one the hub can
+// observe and cannot switch either way, and NodeView.Wakeable says so under
+// that name for wire-compatibility with every client already reading it.
 func (n Node) Wakeable() bool {
 	return n.Fly != nil && n.Fly.App != "" && n.Fly.MachineID != ""
 }

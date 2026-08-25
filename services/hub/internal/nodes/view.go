@@ -40,7 +40,10 @@ type NodeView struct {
 	ID string `json:"id"`
 	// Label is the human name; always populated (it falls back to ID).
 	Label string `json:"label"`
-	// State is one of the four [State] values, as a string.
+	// State is one of the five [State] values, as a string. A client that does
+	// not recognise one must render it as `unreachable` rather than raw — a
+	// state it cannot presume to understand is, by definition, one it does not
+	// know how to get a working node out of.
 	State string `json:"state"`
 	// Since is unix MILLISECONDS of when this node entered State. Zero when
 	// unknown. Milliseconds, matching federation.PeerInfo.LastSeen — note
@@ -55,8 +58,14 @@ type NodeView struct {
 	// a token file or an endpoint.
 	Detail string `json:"detail,omitempty"`
 	// Wakeable reports whether the hub holds enough (coordinates AND a
-	// credential) to start this node itself. A client should not offer a wake
-	// button for a node that says false — it would fail every time.
+	// credential) to act on this node's POWER itself. A client should not offer
+	// a wake button for a node that says false — it would fail every time.
+	//
+	// It answers BOTH directions and the name is historical: the coordinates
+	// and credential a stop needs are the ones a start needs, so a sleep
+	// button reads this same bit. It was not renamed because it is on the wire
+	// and every shipped client already reads it under this name; what a client
+	// must not do is infer a DIRECTION from it — that comes from State.
 	Wakeable bool `json:"wakeable"`
 	// LastExit is the node's own account of how its PREVIOUS run ended, when
 	// the hub has been able to read it. It is the only thing that can tell a
@@ -64,6 +73,32 @@ type NodeView struct {
 	// the cloud API reports both as `stopped`. Absent when unknown — which is
 	// most of the time, including for every node the hub has not yet seen up.
 	LastExit *ExitRecord `json:"lastExit,omitempty"`
+	// SleptByHub says THIS HUB PROCESS issued the stop that put this machine
+	// to sleep. It is the third answer to the question no cloud API can
+	// answer — a machine `stopped` by a deliberate sleep and one `stopped`
+	// after the on-failure restart policy gave up are the same string there —
+	// and it is the only one available while the node is OFF, because the
+	// node's own lastExit record lives on a volume that is not running.
+	//
+	// It is IN MEMORY ONLY and therefore says nothing after a hub restart,
+	// which is honest rather than a gap to paper over: a hub that has just
+	// booted genuinely did not issue that stop and has no business claiming
+	// it did. Absent means "this hub did not do it", NOT "somebody else did".
+	SleptByHub bool `json:"sleptByHub,omitempty"`
+	// MayBeRunning is the hub's belief about the MACHINE's power, which is a
+	// different question from whether its provider answers.
+	//
+	// It exists because `unreachable` covers two opposite situations: a machine
+	// that is RUNNING and providing nothing — which is a meter, and the case a
+	// stop button exists for — and a machine that is off and broken, where a
+	// stop button would do nothing. A client that cannot tell them apart offers
+	// a dead control for the second, which is the class of silent failure this
+	// whole feature removes.
+	//
+	// Omitted when false. A client should read it, never infer it from Detail:
+	// the detail for a machine the hub has ALREADY stopped says "…so it would
+	// not keep billing", and prose is not an API.
+	MayBeRunning bool `json:"mayBeRunning,omitempty"`
 	// WakeFailures counts consecutive wake attempts that did not end with the
 	// node's provider registering. It exists because a Fly machine that
 	// crash-loops on boot ends up `stopped`, which is INDISTINGUISHABLE

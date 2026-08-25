@@ -373,6 +373,13 @@ func main() {
 	flag.Var(&peerFlags, "peer", "federate with a peer hub (repeatable): name=work,url=ws://host:7895/bus,token=… — tests/dev only; a token here rides argv, which /proc makes world-readable. Durable peers belong in -peers-file")
 	peersFile := flag.String("peers-file", federation.DefaultPeersPath(), "federation peers file (JSON array of {name,url,token}, 0600 — tokens are scoped tokens minted ON each peer via `workspacer token create`). Curated fleet topics republish locally stamped with the peer name; peer capabilities become callable as hub:<name>/<method>")
 	nodesFile := flag.String("nodes-file", nodes.DefaultPath(), "remote node registry (JSON array of {id,label,fly:{app,machineId,token}}, 0600 — the Fly token can start machines, i.e. spend money, so it lives here and NEVER in config.yaml or a flag). Empty = the node registry is disabled")
+	// OFF BY DEFAULT, and the default is the one that does not bill. A wake
+	// whose provider never registers leaves a machine RUNNING; the hub now
+	// stops what its own wake started. This flag turns that one automatic stop
+	// off, for the one case where leaving a broken boot up is the point —
+	// reading its logs. It is NOT an idle timer and there is none: nothing in
+	// this hub powers a working machine down on a clock.
+	nodesKeepFailedWakesRunning := flag.Bool("nodes-keep-failed-wakes-running", false, "do NOT stop a machine whose wake never produced a provider (default: the hub stops it again so it does not keep billing). For debugging a node that dies on boot")
 	jobsFile := flag.String("jobs-file", defaultJobsFile(), "hub job specs file (recurring/one-off jobs: spawn an agent, call a capability, run a shell command; persisted 0600 — a job is persisted argv). Empty = jobs disabled")
 	flag.Parse()
 
@@ -643,9 +650,16 @@ func main() {
 	// nodes.wake goes through the caller-aware door because the handler must
 	// know WHO is asking. Starting a machine spends money and this hub has no
 	// way to stop one, so it is host-authority only: see nodesTrusted.
-	if sup := startNodes(ctx, srv, b, self, *nodesFile, *brainScope); sup != nil {
+	// nodes.sleep goes through the caller-aware door for the same reason
+	// nodes.wake does, and for one of its own: a stop lands on a machine
+	// somebody may be typing at, so it is host-authority only AND destructive.
+	// It is what closes the wake-only hole — a wake whose provider never
+	// registered used to leave the machine running and billing with nothing in
+	// the app able to switch it off.
+	if sup := startNodes(ctx, srv, b, self, *nodesFile, *brainScope, *nodesKeepFailedWakesRunning); sup != nil {
 		srv.RegisterLocal("nodes.list", nodesList(sup))
 		srv.RegisterLocalIdent("nodes.wake", nodesWake(ctx, sup))
+		srv.RegisterLocalIdent("nodes.sleep", nodesSleep(ctx, sup))
 	}
 
 	// Load + supervise plugins; expose their contributions at /plugins. The

@@ -1217,6 +1217,7 @@
   // which is every ordinary install, and which must render as no change at all.
   let nodes = null;
   const nodePending = new Set();   // ids we asked to wake and the hub hasn't answered for
+  const nodeSleeping = new Set();  // ids we asked to SLEEP and the hub hasn't answered for
   const nodeErrors = new Map();    // id -> the last refusal, until its state moves
 
   const NODE_META = {
@@ -1224,15 +1225,21 @@
                    d: 'This machine is on the bus and answering.' },
     waking:      { label: 'Starting',    color: C.blue,  spin: true,
                    d: 'The machine is booting — usually ready in about 20 seconds.' },
+    // The busy colour and the spinner again, NOT amber: shutting down on
+    // purpose is work in progress, not a fault. Same argument as `waking`.
+    stopping:    { label: 'Shutting down', color: C.blue, spin: true,
+                   d: 'The machine is shutting down cleanly. It stops billing once it is off.' },
     stopped:     { label: 'Asleep',      color: C.dim,   spin: false,
-                   d: 'Switched off. Connecting will start it.' },
+                   d: 'Switched off, and nothing is billing. Connecting will start it.' },
     unreachable: { label: "Can't reach", color: C.amber, spin: false,
                    d: "The hub can't get a working machine out of this one." },
   };
-  // A wake starts a meter, and this hub deliberately has no way to stop one.
-  // Someone tapping this on a phone is spending money — say so on the screen,
-  // not in a tooltip a phone cannot show.
-  const NODE_COST = 'Starts a real machine. It bills from boot, and nothing here can stop it again yet.';
+  // A wake starts a meter. Someone tapping this on a phone is spending money —
+  // say so on the screen, not in a tooltip a phone cannot show.
+  const NODE_COST = 'Starts a real machine. It bills from boot until you put it back to sleep.';
+  // And the other direction. It names the WORK rather than the saving: the
+  // money is why somebody presses it, the work is what they need warning about.
+  const NODE_SLEEP = 'Shuts the machine down. Anything still running on it stops, and it stops billing.';
 
   /** THE gotcha: can('nodes.list') is TRUE even on a hub with no node registry,
    *  because the method sits in the view tier unconditionally while the hub only
@@ -1257,6 +1264,7 @@
   function applyNodeState(n) {
     if (!n || !n.id) return;
     nodePending.delete(n.id);
+    nodeSleeping.delete(n.id);
     nodeErrors.delete(n.id);   // the hub has spoken; our stale refusal is moot
     if (!nodes) { nodes = [n]; render(); return; }
     const i = nodes.findIndex((x) => x.id === n.id);
@@ -1274,29 +1282,67 @@
     return `Its previous run did not end cleanly: ${e.reason}${code}${at}.`;
   }
 
+  /** Is the hub telling us this machine is probably STILL UP, and so still
+   *  billing? One field, read verbatim — `unreachable` covers both "running and
+   *  providing nothing" and "off and broken", and an off switch for the second
+   *  does nothing. NEVER sniff `detail` for this: the sentence for a machine the
+   *  hub has already stopped says "…would not keep billing". */
+  function nodeMayStillBeRunning(n) {
+    return n.state === 'available' || n.mayBeRunning === true;
+  }
+
   function nodesHtml() {
     if (!nodes || !nodes.length) return '';
-    // A node that is quietly fine says nothing. One that came back from a crash
-    // is `available` AND carrying the only notice of that crash — so it counts.
-    const shown = nodes.filter((n) => n.state !== 'available' || nodeCrash(n));
-    if (!shown.length) return '';
-    // nodes.wake is HOST AUTHORITY ONLY. A view- or triage-tier phone sees the
-    // state and does not get the button — showing one the bus is certain to
-    // refuse is exactly the silent failure this whole feature removes.
+    // nodes.wake and nodes.sleep are BOTH host-authority only. A view- or
+    // triage-tier phone sees the state and gets neither button — showing one
+    // the bus is certain to refuse is exactly the silent failure this whole
+    // feature removes.
     const mayWake = can('nodes.wake');
+    const maySleep = can('nodes.sleep');
+    // A node that is quietly fine says nothing — except that a CONNECTED
+    // machine this phone can switch off is not quietly fine, it is billing, and
+    // the off switch has to live somewhere. A phone that cannot press it sees
+    // exactly what it saw before.
+    const shown = nodes.filter((n) =>
+      n.state !== 'available' || nodeCrash(n) || (maySleep && n.wakeable));
+    if (!shown.length) return '';
     return shown.map((n) => {
       const meta = NODE_META[n.state] || NODE_META.unreachable;
       const pending = nodePending.has(n.id);
       const crash = nodeCrash(n);
+      // The hub now stops a machine whose wake never produced a provider, so
+      // this no longer warns about one left billing — the hub's own `detail`,
+      // rendered above, says whether that stop worked.
       const fails = n.wakeFailures > 0
-        ? `${n.wakeFailures} wake${n.wakeFailures === 1 ? '' : 's'} failed. A failed wake leaves the machine running and billing — check the cloud console.`
+        ? `${n.wakeFailures} wake${n.wakeFailures === 1 ? '' : 's'} failed. The machine started and never became usable — check its boot log.`
         : '';
       const err = nodeErrors.get(n.id) || '';
+      const sleeping = nodeSleeping.has(n.id);
       let btn = '';
-      if (n.state !== 'available') {
-        if (n.state === 'waking' || pending) {
-          btn = `<button disabled>Starting…</button>`;
-        } else if (!n.wakeable) {
+      // The off switch, only for a machine that is actually up: connected, or
+      // `unreachable` while the hub says it may STILL be running — which is the
+      // case with a meter attached and the reason this button exists.
+      // A MACHINE MID-TRANSITION SHOWS THE TRANSITION AND NOTHING ELSE. Both
+      // arms come first, because a booting machine is `mayBeRunning` too — the
+      // hub asked for it to be up — and offering an off switch there would put
+      // a button that fights the one beside it on the screen.
+      if (n.state === 'stopping' || sleeping) {
+        btn = `<button disabled>Shutting down…</button>`;
+      } else if (n.state === 'waking' || pending) {
+        btn = `<button disabled>Starting…</button>`;
+      } else if (nodeMayStillBeRunning(n)) {
+        if (!n.wakeable) {
+          btn = `<button disabled>Put to sleep</button>
+                 <div class="cost">This hub holds no cloud credentials for this machine.</div>`;
+        } else if (!maySleep) {
+          btn = `<button disabled>Put to sleep</button>
+                 <div class="cost">Stopping a machine ends the work running on it — it needs an operator token.</div>`;
+        } else {
+          btn = `<button data-sleep="${esc(n.id)}">Put to sleep</button>
+                 <div class="cost">${esc(NODE_SLEEP)}</div>`;
+        }
+      } else if (n.state !== 'available') {
+        if (!n.wakeable) {
           btn = `<button disabled>Connect</button>
                  <div class="cost">This hub holds no cloud credentials for this machine.</div>`;
         } else if (!mayWake) {
@@ -1346,6 +1392,37 @@
         : /has no cloud coordinates or credential/.test(msg)
         ? 'This hub holds no cloud credentials for this machine.'
         : msg || "Couldn't start the machine.");
+      render();
+    }
+  }
+
+  async function sleepNode(id) {
+    // Stopping ends whatever is running on the machine, so it gets the same
+    // confirm step a wake does — and copy that names the work, not the saving.
+    if (!window.confirm(NODE_SLEEP)) return;
+    nodeSleeping.add(id);
+    nodeErrors.delete(id);
+    render();
+    try {
+      // ONLY an id goes out. The machine, the credential, the signal and the
+      // drain window are all the hub's own — there is deliberately nothing here
+      // that could name a signal, and a phone naming SIGKILL would destroy the
+      // exit record the next wake reads.
+      const n = await call('nodes.sleep', { id });
+      // Returns IMMEDIATELY with state:"stopping"; the rest arrives on
+      // node.state_changed.
+      if (n && n.id) applyNodeState(n);
+      else { nodeSleeping.delete(id); render(); }
+    } catch (e) {
+      nodeSleeping.delete(id);
+      const msg = String((e && e.message) || '');
+      nodeErrors.set(id, /requires host authority/.test(msg)
+        ? 'Stopping a machine needs an operator token.'
+        : /unknown node|naming a registered node is required/.test(msg)
+        ? 'This machine is no longer in the registry.'
+        : /cannot be put to sleep from here|has no cloud coordinates or credential/.test(msg)
+        ? 'This hub holds no cloud credentials for this machine.'
+        : msg || "Couldn't stop the machine.");
       render();
     }
   }
@@ -2219,6 +2296,7 @@
     main.innerHTML = `<div class="body">${parts.join('')}</div>`;
     bindAgentCards(main);
     for (const b of main.querySelectorAll('[data-wake]')) b.onclick = () => wakeNode(b.dataset.wake);
+    for (const b of main.querySelectorAll('[data-sleep]')) b.onclick = () => sleepNode(b.dataset.sleep);
     for (const b of main.querySelectorAll('[data-resume]')) b.onclick = () => resume(b.dataset.resume);
   }
 

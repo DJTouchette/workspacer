@@ -138,6 +138,11 @@ export const IPC = {
    *  main's connection presents the host token, so the desktop always may.
    *  Live state follows on the generic HUB_EVENT feed as node.state_changed. */
   NODES_WAKE: 'nodes:wake',
+  /** `nodes.sleep` — stops a running machine. Host authority only on the hub,
+   *  same gate as the wake and for a reason of its own: a stop ends the work in
+   *  flight on a machine somebody may be using. Live state follows on the
+   *  generic HUB_EVENT feed as node.state_changed. */
+  NODES_SLEEP: 'nodes:sleep',
 
   // ── Hub jobs (passthroughs to the hub's trusted-only jobs.* RPCs) ──
   JOBS_LIST: 'jobs:list',

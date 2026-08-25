@@ -8,13 +8,18 @@
 // API — and that is the entire reason this package is the first code in this
 // repository that talks to a cloud provider.
 //
-// It is deliberately tiny and deliberately read/start only. There is no stop,
-// no create, no destroy and no delete here: the hub's job in v1 is to WAKE a
-// node, and a client that cannot express "destroy this machine" cannot be
-// talked into it by a bug upstream of it.
+// It is deliberately tiny, and the line it draws is REVERSIBILITY rather than
+// "read only". Start and Stop are here, because a hub that can wake a machine
+// and cannot put it back to sleep leaves a failed wake billing forever — that
+// was the known cost of the wake-only v1 and this package closing it is what
+// the sleep path is. Create, Destroy and Delete are NOT here and must not be:
+// every verb in this file is undone by another verb in this file, and a client
+// that cannot express "destroy this machine" cannot be talked into it by a bug
+// upstream of it. TestClientInterfaceOffersNoIrreversibleVerb keeps that line.
 package flyapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -45,6 +50,31 @@ const (
 	StateDestroyed = "destroyed"
 )
 
+// The restart policy is spelled DIFFERENTLY on the two surfaces Fly gives you
+// for the same setting, and the two are byte-for-byte incompatible:
+//
+//	fly.toml        [[restart]] policy = "on-failure"
+//	Machines API    {"restart":{"policy":"on-fail"}}
+//
+// Nothing in this package reads or writes a restart policy — the machine
+// STATE strings are spelled the same on both sides and those are all this
+// client touches. The constants exist because the difference is the kind of
+// thing that is expensive to discover from a machine that will not stay up,
+// and because TestTheTwoRestartPolicySpellingsAreBothRecorded holds the pair
+// against deploy/fly/node/fly.toml so a change to one is not silently a change
+// to the other.
+//
+// It matters HERE, in a file with a stop verb, for one reason: the on-failure
+// policy retries a crashing machine and then leaves it `stopped`, which
+// through this API is byte-for-byte a machine [HTTP.Stop] just put to sleep.
+// The API cannot tell them apart. See internal/nodes for what does.
+const (
+	// RestartPolicyOnFailureTOML is the spelling fly.toml takes.
+	RestartPolicyOnFailureTOML = "on-failure"
+	// RestartPolicyOnFailAPI is the spelling the Machines API takes.
+	RestartPolicyOnFailAPI = "on-fail"
+)
+
 // waitMaxTimeout is the ceiling Fly puts on one /wait call. Asking for more is
 // not an error we want to discover in production, so the client clamps.
 const waitMaxTimeout = 60 * time.Second
@@ -70,6 +100,18 @@ type Client interface {
 	// Start asks Fly to start a machine. It returns as soon as Fly has
 	// accepted the request; the machine is not running yet.
 	Start(ctx context.Context, app, machineID string) error
+	// Stop asks Fly to stop a machine. It returns as soon as Fly has accepted
+	// the request; the machine is still draining.
+	//
+	// SIGNAL AND TIMEOUT ARE PARAMETERS AND NOT OPTIONS, and that is the whole
+	// shape of this method. fly.toml's kill_signal / kill_timeout govern a
+	// PLATFORM stop; a stop issued through this API never reads that file and
+	// takes its own, so a caller that omits them silently gets the API's
+	// defaults instead of the drain window the deployment was designed around
+	// — which is how you SIGKILL a node mid-flush and then wonder why its exit
+	// record says nothing. There is no default here to fall through to:
+	// [HTTP.Stop] refuses an empty signal and a non-positive timeout.
+	Stop(ctx context.Context, app, machineID, signal string, timeout time.Duration) error
 	// State reports the machine's current state string (see the State*
 	// constants).
 	State(ctx context.Context, app, machineID string) (string, error)
@@ -153,9 +195,26 @@ func (c *HTTP) machinePath(app, machineID, suffix string) string {
 }
 
 func (c *HTTP) do(ctx context.Context, method, urlStr string, wantJSON any) error {
-	req, err := http.NewRequestWithContext(ctx, method, urlStr, nil)
+	return c.doBody(ctx, method, urlStr, nil, wantJSON)
+}
+
+// doBody is do with a JSON request body. Separate only because every other
+// call on this client sends none.
+func (c *HTTP) doBody(ctx context.Context, method, urlStr string, sendJSON, wantJSON any) error {
+	var rdr io.Reader
+	if sendJSON != nil {
+		enc, err := json.Marshal(sendJSON)
+		if err != nil {
+			return c.scrub(err)
+		}
+		rdr = bytes.NewReader(enc)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, urlStr, rdr)
 	if err != nil {
 		return c.scrub(err)
+	}
+	if sendJSON != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
@@ -190,6 +249,34 @@ func (c *HTTP) Start(ctx context.Context, app, machineID string) error {
 	}
 	c.gate(ctx, "start:"+app+"/"+machineID, actionMinInterval)
 	return c.do(ctx, http.MethodPost, c.machinePath(app, machineID, "/start"), nil)
+}
+
+// Stop implements Client.
+//
+// POST /v1/apps/{app}/machines/{id}/stop with {"signal":…,"timeout":…}. The
+// timeout is sent as a Go duration STRING ("30s"), which is what flyctl's own
+// api.Duration marshals to.
+//
+// Both are REQUIRED, and refusing them is the point rather than an ergonomic
+// slip — see [Client.Stop]. `timeout` here is the machine's drain window on
+// Fly's side (how long the platform waits after the signal before it SIGKILLs),
+// NOT a deadline on this HTTP call; that one is ctx's, as everywhere else.
+func (c *HTTP) Stop(ctx context.Context, app, machineID, signal string, timeout time.Duration) error {
+	if err := requireIDs(app, machineID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(signal) == "" {
+		return fmt.Errorf("fly: a stop must name its signal explicitly (fly.toml's kill_signal does not govern an API stop)")
+	}
+	if timeout <= 0 {
+		return fmt.Errorf("fly: a stop must give an explicit drain timeout (fly.toml's kill_timeout does not govern an API stop)")
+	}
+	body := struct {
+		Signal  string `json:"signal"`
+		Timeout string `json:"timeout"`
+	}{Signal: strings.TrimSpace(signal), Timeout: timeout.String()}
+	c.gate(ctx, "stop:"+app+"/"+machineID, actionMinInterval)
+	return c.doBody(ctx, http.MethodPost, c.machinePath(app, machineID, "/stop"), body, nil)
 }
 
 // State implements Client.
