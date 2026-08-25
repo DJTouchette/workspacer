@@ -18,7 +18,7 @@
  *    work on the machine, so its confirm copy names the WORK, not the saving.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act, waitFor, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, act, waitFor, fireEvent, cleanup, within } from '@testing-library/react';
 import React from 'react';
 import type { RemoteNodesSnapshot, RemoteNodeView } from '../../src/lib/remoteNodes';
 
@@ -273,6 +273,26 @@ describe('RemoteNodesBar — never offer a button that will be refused', () => {
     await waitFor(() =>
       expect(screen.getByTestId('remote-node-den')).toHaveTextContent(/rate-limiting/i),
     );
+  });
+});
+
+describe('RemoteNodesBar — a draining machine cannot be woken by accident', () => {
+  it('renders a dead Connect button, with its reason, while the node is stopping', async () => {
+    // The hub ACCEPTS a wake mid-drain, so one click here would cancel a
+    // shutdown somebody just asked for and start paying again. The row has to
+    // refuse it, and say why where a phone can read it.
+    await mount({
+      nodes: [node({ state: 'stopping', mayBeRunning: true })],
+      canWake: true,
+    });
+    const row = await screen.findByTestId('remote-node-den');
+    const connect = within(row).getByRole('button', { name: /^connect$/i });
+    expect(connect).toBeDisabled();
+    expect(row).toHaveTextContent(/shutting down/i);
+
+    fireEvent.click(connect);
+    expect(nodesWake).not.toHaveBeenCalled();
+    expect(screen.queryByRole('menuitem', { name: /connect/i })).toBeNull();
   });
 });
 

@@ -70,8 +70,10 @@ export interface RemoteNodeView {
   /** One human sentence, written to be read. Empty is normal for `available`. */
   detail?: string;
   wakeable: boolean;
-  /** Consecutive failed wakes. Omitted when 0 — and each one LEFT A MACHINE
-   *  RUNNING, because this hub has no stop verb. */
+  /** Consecutive failed wakes. Omitted when 0. A failed wake no longer leaves a
+   *  machine billing: the hub stops one whose wake never produced a provider
+   *  (`stopAfterFailedWake`), and its own `detail` says whether that stop
+   *  worked. */
   wakeFailures?: number;
   lastExit?: NodeLastExit;
   /** THIS hub process issued the stop that put the machine to sleep. The only
@@ -295,10 +297,11 @@ export function nodeCrashNotice(node: RemoteNodeView): string | null {
 }
 
 /**
- * The cost sentence. A wake starts a meter, and — deliberately, for now — this
- * hub has no way to stop one, so a failed wake leaves the machine RUNNING and
- * BILLING. Someone tapping this on a phone is spending money; the copy has to
- * say so rather than reading like a refresh icon.
+ * The cost sentence. A wake starts a meter. The hub CAN stop one now — that is
+ * what `nodes.sleep` is, and a wake that never produces a provider gets stopped
+ * for you — but the meter still runs from boot until something switches the
+ * machine off. Someone tapping this on a phone is spending money; the copy has
+ * to say so rather than reading like a refresh icon.
  */
 export const WAKE_COST_NOTE =
   'Starts a real machine. It bills from boot until you put it back to sleep.';
@@ -356,6 +359,22 @@ export function wakeAffordance(
 ): WakeAffordance {
   if (node.state === 'available') {
     return { visible: false, enabled: false, label: 'Connect', title: '' };
+  }
+  // The mirror of [[sleepAffordance]]'s own transitional guard, and it comes
+  // BEFORE the pending check for the same reason: the hub's state outranks a
+  // local optimistic flag. A `stopping` node is draining because somebody just
+  // asked it to, and the hub accepts a wake there — which is exactly why the
+  // button has to refuse. One click would silently cancel the shutdown and put
+  // the meter back on.
+  if (node.state === 'stopping') {
+    return {
+      visible: true,
+      enabled: false,
+      label: 'Connect',
+      title:
+        'This machine is shutting down. Starting it now would cancel the stop you just asked for and put it back on the meter, so wait until it is off.',
+      reason: 'shutting down',
+    };
   }
   if (node.state === 'waking' || pending) {
     return {

@@ -1369,8 +1369,8 @@
   }
 
   async function wakeNode(id) {
-    // A wake spends real money and this hub has no way to stop the machine
-    // again from here — the same confirm idiom stopSession() already uses.
+    // A wake spends real money, and the meter runs until something switches
+    // the machine off — the same confirm idiom stopSession() already uses.
     if (!window.confirm(NODE_COST)) return;
     nodePending.add(id);
     nodeErrors.delete(id);
