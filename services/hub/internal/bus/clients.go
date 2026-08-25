@@ -160,3 +160,61 @@ func InternalDialURL(busURL, key string) string {
 	}
 	return busURL + sep + internalDialParam + "=" + key
 }
+
+// ProviderConnID returns the id of the connection currently registered as the
+// provider for method. Its one caller is the node supervisor's liveness poll:
+// to decide that a provider has gone away without saying so, you first have to
+// be able to name the connection you are accusing.
+func (s *Server) ProviderConnID(method string) (uint64, bool) {
+	rt := s.router
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	id, ok := rt.providers[method]
+	if !ok {
+		return 0, false
+	}
+	if _, live := rt.conns[id]; !live {
+		return 0, false
+	}
+	return id, true
+}
+
+// EvictConn force-closes a connection and releases everything it owned,
+// returning whether there was anything to evict.
+//
+// THIS IS THE ZOMBIE-PROVIDER RELEASE, and it exists because the ordinary one
+// cannot be relied on. Provider ownership is first-registration-wins and is
+// released by dropConn, which runs when the hub's READ LOOP returns — i.e.
+// when the socket is observed to close. A provider that never subscribes to a
+// topic is never written to unprompted, so a failed write can never reveal a
+// dead far end either. Put those together and a machine that stops without its
+// TCP connection being severed cleanly leaves the hub holding a registration
+// slot forever, and REFUSES the same machine's re-registration when it comes
+// back up: the node boots and provides nothing.
+//
+// So the hub is given a way to decide for itself. The caller establishes the
+// far end is gone (the node supervisor calls brain.info and gets no answer
+// inside a deadline) and evicts.
+//
+// Ownership is released SYNCHRONOUSLY, before this returns, rather than being
+// left to the read loop's deferred dropConn: a wake path evicts and then
+// starts a machine, and the machine's brain may dial in within a second. The
+// deferred dropConn still runs when the read loop unwinds; it finds nothing
+// left to do, which is harmless.
+//
+// It grants nothing and is not reachable over the bus: no capability method is
+// wired to it. It is an in-process decision by the hub about its own sockets.
+func (s *Server) EvictConn(connID uint64) bool {
+	rt := s.router
+	rt.mu.Lock()
+	cn, ok := rt.conns[connID]
+	rt.mu.Unlock()
+	if !ok {
+		return false
+	}
+	// Close first so a far end that IS alive cannot re-register into the slot
+	// between the release below and the socket going away.
+	_ = cn.ws.CloseNow()
+	rt.dropConn(cn)
+	return true
+}

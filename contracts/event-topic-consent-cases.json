@@ -159,6 +159,10 @@
    "disposition": "open-by-decision"
   },
   {
+   "pattern": "node.state_changed",
+   "disposition": "open-by-decision"
+  },
+  {
    "pattern": "notify.post",
    "disposition": "host-only"
   },
