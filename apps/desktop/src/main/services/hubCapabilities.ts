@@ -1845,7 +1845,11 @@ export function registerHubCapabilities(): void {
     // basenames itself — because the assertion is the point: it throws on an
     // escape, and past it the directory really does contain both files.
     assertPathAllowed('brief.archive', briefPathFor(dir), workspaceRoots());
-    assertPathAllowed('brief.archive', path.join(dir, '.workspacer', 'brief.archive.md'), workspaceRoots());
+    assertPathAllowed(
+      'brief.archive',
+      path.join(dir, '.workspacer', 'brief.archive.md'),
+      workspaceRoots(),
+    );
     return archiveOldestEntries({ dir, section: parseBriefSection(section), count, keep });
   });
 

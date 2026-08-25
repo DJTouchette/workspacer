@@ -250,7 +250,16 @@ const NodeRow: React.FC<{
   onRequestWake: (id: string, x: number, y: number) => void;
   onCancelWake: () => void;
   onConfirmWake: (id: string) => void;
-}> = ({ node, canWake, pending, error, confirming, onRequestWake, onCancelWake, onConfirmWake }) => {
+}> = ({
+  node,
+  canWake,
+  pending,
+  error,
+  confirming,
+  onRequestWake,
+  onCancelWake,
+  onConfirmWake,
+}) => {
   const p = NODE_PRESENTATION[node.state];
   const tone = nodeToneVar(p.tone);
   const Icon = STATE_ICON[node.state];
