@@ -16,6 +16,7 @@ import * as fs from 'fs';
 import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
+import { withBuildLock } from './scratchState';
 
 const REPO = path.resolve(__dirname, '../../../../..');
 const HUB_DIR = path.join(REPO, 'services/hub');
@@ -87,10 +88,16 @@ export async function startMobileHub(opts: MobileHubOptions = {}): Promise<Mobil
   // Always rebuild. mobile.html is go:embed'd into the binary, so a stale hub
   // would serve a stale client and the whole suite would be testing nothing.
   // Go's build cache makes the no-op case cheap.
-  const built = spawnSync('go', ['build', '-o', 'hub', './cmd/hub'], {
-    cwd: HUB_DIR,
-    encoding: 'utf8',
-  });
+  // Under the build lock: two spec files in this project (mobileClient and
+  // mobileNodes) both call this, Playwright runs them in parallel workers, and
+  // an unsynchronised `go build -o hub` for the same output path lets one
+  // worker launch a half-written binary.
+  const built = withBuildLock(() =>
+    spawnSync('go', ['build', '-o', 'hub', './cmd/hub'], {
+      cwd: HUB_DIR,
+      encoding: 'utf8',
+    }),
+  );
   if (built.status !== 0) throw new Error('failed to build hub: ' + built.stderr);
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-m-e2e-'));
