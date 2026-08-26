@@ -936,6 +936,8 @@ mod node_view_contract {
             wakeable: true,
             wake_failures: 0,
             last_exit: None,
+            slept_by_hub: false,
+            may_be_running: false,
         }
     }
 
@@ -977,10 +979,14 @@ mod node_view_contract {
                 "state {state:?}: the contract says wakeOffered={offered}"
             );
             let transitional = row["transitional"].as_bool().expect("transitional");
-            // The working marker, shared with a thinking agent. It is what
-            // keeps a machine in motion from painting like a failure.
+            // The working markers, shared with a thinking agent: the two
+            // halves of one filling circle, `waking` filling one way and
+            // `stopping` the other. They are what keep a machine in motion
+            // from painting like a failure, and the assertion bites hardest on
+            // the other three states, which must NOT borrow a progress mark.
+            let progress = ["◐", "◑"];
             assert_eq!(
-                NodeState::from_wire(state).marker() == "◐",
+                progress.contains(&NodeState::from_wire(state).marker()),
                 transitional,
                 "state {state:?}: the contract says transitional={transitional}"
             );

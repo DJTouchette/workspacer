@@ -273,10 +273,10 @@
         "desktopLabel": "Shutting down…",
         "mobileLabel": "Shutting down",
         "fallbackDetail": "The machine is shutting down cleanly. It stops billing once it is off.",
-        "tuiLabel": null,
-        "tuiMarker": null,
-        "tuiFallbackDetail": null,
-        "why": "THE DECLARED GAP. The sleep path shipped this state to the hub, the desktop and /m and not to the TUI, which still coerces it to `unreachable` — the warning marker, the 'can't reach' chip and an offer to start a machine that is in the middle of stopping. The nulls are what make the omission a failing assertion rather than a thing somebody has to notice."
+        "tuiLabel": "shutting down…",
+        "tuiMarker": "◑",
+        "tuiFallbackDetail": "the machine is shutting down cleanly. it stops billing once it is off.",
+        "why": "THE GAP THIS FIXTURE OPENED, NOW CLOSED. The sleep path shipped this state to the hub, the desktop and /m and not to the TUI, which coerced it to `unreachable` — the warning marker, the 'can't reach' chip and an offer to start a machine in the middle of stopping. The TUI learned it, so the nulls that made that omission a failing assertion are filled in. The marker is the mirrored half of `waking`'s, filling the other way, because a machine draining on purpose is busy and not broken."
       },
       {
         "state": "stopped",
@@ -287,7 +287,7 @@
         "fallbackDetail": "Switched off, and nothing is billing. Connecting will start it.",
         "tuiLabel": "asleep",
         "tuiMarker": "○",
-        "tuiFallbackDetail": "switched off. waking will start it.",
+        "tuiFallbackDetail": "switched off, and nothing is billing. waking will start it.",
         "why": "MUTED, not a warning: this is the state a node is SUPPOSED to spend most of its life in, and painting it as a problem is how the feature would have felt broken by design."
       },
       {
