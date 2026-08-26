@@ -901,7 +901,22 @@ func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgent
 	// 1M-context variant (e.g. `opus[1m]`) on every worker a Fleet Manager
 	// dispatches plainly. An explicit caller value always wins — including
 	// one that deliberately omits the `[1m]` marker for a cheaper worker.
-	if in.Model == "" {
+	//
+	// CLAUDE ONLY, and the config key names why: `claude.defaultModel` holds a
+	// Claude model id ("opus[1m]" by default). Codex, OpenCode and Pi have
+	// their own model vocabularies and their own configured defaults, so
+	// handing them this value is not a default — it is a wrong model id, and
+	// the failure is ugly: codex accepts the spawn, starts a thread, sends the
+	// dispatch, and the API rejects the TURN ("The 'opus[1m]' model is not
+	// supported when using Codex with a ChatGPT account"). The session opens,
+	// answers nothing, and ends, which reads exactly like "the initial message
+	// never arrived" even though it was delivered verbatim. The desktop spawn
+	// dialog has always done this correctly — picking a managed provider
+	// clears the model selection (SpawnAgentDialog.tsx) — so the facade was
+	// the only spawn surface leaking a Claude id into a non-Claude provider.
+	// Omitted here means omitted on the wire: the provider's own CLI default
+	// applies, which is what a caller who named no model asked for.
+	if in.Model == "" && providerIsClaude(in.Provider) {
 		in.Model = configDefaultModel(ctx, b)
 	}
 	// Full-access grant, enforced HERE for the SAME structural reason as
@@ -1099,6 +1114,20 @@ func configSkipPermissionsDefault(ctx context.Context, b *build) bool {
 	return cfg.Claude.SkipPermissionsDefault || permissionModeMeansBypass(cfg.Claude.DefaultPermissionMode)
 }
 
+// providerIsClaude reports whether a spawn's `provider` field names the Claude
+// family — the only provider `claude.defaultModel` speaks for. An empty string
+// is claude (spawnAgentIn documents claude as the default), and the comparison
+// is case/space-tolerant because the field is free text on the wire.
+//
+// Deliberately a positive test for claude rather than a blocklist of the
+// managed providers: a provider added later must fall on the "not claude"
+// side by default, since a new backend certainly does not share Claude's
+// model ids either.
+func providerIsClaude(provider string) bool {
+	p := strings.ToLower(strings.TrimSpace(provider))
+	return p == "" || p == "claude"
+}
+
 // configDefaultModel resolves what a spawn_agent call that OMITTED model is
 // asking for: the workspacer config default (claude.defaultModel) the desktop
 // spawn dialog pre-fills — e.g. "opus[1m]". Read through the hub's config.get,
@@ -1247,7 +1276,7 @@ type spawnAgentIn struct {
 	Provider        string   `json:"provider,omitempty" jsonschema:"coding-agent backend to run: claude (default), codex, opencode, or pi"`
 	Transport       string   `json:"transport,omitempty" jsonschema:"claude/codex only: 'stream' runs headless (GUI-only); omit for the default"`
 	Cwd             string   `json:"cwd,omitempty" jsonschema:"working directory for the new agent (defaults to the user's home)"`
-	Model           string   `json:"model,omitempty" jsonschema:"model id to use (optional; provider-specific). Omit to inherit the workspacer config default (claude.defaultModel), the SAME model — including any 1M-context '[1m]' variant, e.g. 'opus[1m]' — this session itself is likely running on. A bare id with no '[1m]' suffix (e.g. claude-opus-4-8) gets the STANDARD 200K context window even if this session has a 1M one; append '[1m]' (e.g. claude-opus-4-8[1m]) to request the larger window explicitly"`
+	Model           string   `json:"model,omitempty" jsonschema:"model id to use (optional; provider-specific). For a CLAUDE spawn, omit to inherit the workspacer config default (claude.defaultModel), the SAME model — including any 1M-context '[1m]' variant, e.g. 'opus[1m]' — this session itself is likely running on; a bare id with no '[1m]' suffix (e.g. claude-opus-4-8) gets the STANDARD 200K context window even if this session has a 1M one, so append '[1m]' to request the larger window explicitly. For codex/opencode/pi, omit to get THAT provider's own configured default — the claude config default is never applied to them, since a Claude model id is not a model those providers can run"`
 	Effort          string   `json:"effort,omitempty" jsonschema:"reasoning-effort level: low, medium, high, xhigh, or max (claude/codex)"`
 	ProfileID       string   `json:"profileId,omitempty" jsonschema:"workspacer Claude profile id to dispatch under (optional; refused unless your session token's profilesAllowed grant lists this exact id — see list_profiles for ids)"`
 	SkipPermissions *bool    `json:"skipPermissions,omitempty" jsonschema:"start the agent with --dangerously-skip-permissions; omit and it resolves to a bypass when your session carries the full-access grant (the operator turned on full access for the fleet/supervisor, whose stated meaning is that the agents you dispatch skip approvals), else to the workspacer config default (claude.skipPermissionsDefault / a bypass defaultPermissionMode). An explicit true/false always wins — pass false to dispatch one worker with approvals on. Honored — whether requested, granted or config-defaulted — only when your session's token carries the full-access grant (the hub verifies and stamps it; ungranted requests spawn with approvals on, and remote/federated peer spawns are re-judged by the peer's own hub)"`

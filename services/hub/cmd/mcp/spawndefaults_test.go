@@ -223,3 +223,56 @@ func TestSpawnAgentOmittedModelWithNoConfigDefaultStaysEmpty(t *testing.T) {
 		t.Fatalf("no config default: omitted model must stay empty, got present=%v value=%v", present, v)
 	}
 }
+
+// The config default is CLAUDE'S, and it must not ride a managed provider's
+// spawn. `claude.defaultModel` holds a Claude model id ("opus[1m]"); codex,
+// opencode and pi have their own model vocabularies. Handing one of them this
+// value does not fail at spawn — the session opens, the dispatch is delivered
+// verbatim, the provider starts a turn, and the API rejects THE TURN ("The
+// 'opus[1m]' model is not supported when using Codex with a ChatGPT account").
+// What the operator sees is an agent that opened, answered nothing and ended,
+// which reads as "the initial message never reached it" while the message was
+// never the problem. The desktop spawn dialog already clears the model when a
+// managed provider is picked; this pins the facade to the same rule.
+func TestSpawnAgentConfigDefaultModelIsNotAppliedToManagedProviders(t *testing.T) {
+	for _, provider := range []string{"codex", "opencode", "pi"} {
+		t.Run(provider, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+
+			cs := spawnDefaultsSession(t, ctx, false, map[string]any{"defaultModel": "opus[1m]"})
+			params := spawnEchoParams(t, ctx, cs, map[string]any{"cwd": "/tmp", "provider": provider})
+			if v, present := params["model"]; present && v != "" {
+				t.Fatalf("%s spawn must not inherit claude.defaultModel (got %v) — the provider's own default applies when no model is named", provider, v)
+			}
+		})
+	}
+}
+
+// The claude arm of the same rule, spelled with an EXPLICIT provider rather
+// than the omitted one TestSpawnAgentOmittedModelResolvesConfigDefault covers,
+// so a fix that gated on "provider was omitted" instead of "provider is
+// claude" fails here.
+func TestSpawnAgentConfigDefaultModelStillAppliesToAnExplicitClaudeProvider(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	cs := spawnDefaultsSession(t, ctx, false, map[string]any{"defaultModel": "opus[1m]"})
+	params := spawnEchoParams(t, ctx, cs, map[string]any{"cwd": "/tmp", "provider": "claude"})
+	if params["model"] != "opus[1m]" {
+		t.Fatalf("an explicit claude provider must still resolve the config default, got %v", params)
+	}
+}
+
+// An explicitly named model always wins, for a managed provider too — the gate
+// above must not become "managed providers never get a model".
+func TestSpawnAgentExplicitModelSurvivesForAManagedProvider(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	cs := spawnDefaultsSession(t, ctx, false, map[string]any{"defaultModel": "opus[1m]"})
+	params := spawnEchoParams(t, ctx, cs, map[string]any{"cwd": "/tmp", "provider": "codex", "model": "gpt-5.1-codex"})
+	if params["model"] != "gpt-5.1-codex" {
+		t.Fatalf("explicit model must survive for a managed provider, got %v", params)
+	}
+}
