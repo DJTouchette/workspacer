@@ -944,11 +944,12 @@ mod node_view_contract {
     #[test]
     fn node_view_contract_states() {
         let fx = fixture();
-        let taught_states: std::collections::HashSet<String> = rows(&fx, &["presentation", "cases"])
-            .iter()
-            .filter(|r| taught(r))
-            .map(|r| str_of(r, "state").to_string())
-            .collect();
+        let taught_states: std::collections::HashSet<String> =
+            rows(&fx, &["presentation", "cases"])
+                .iter()
+                .filter(|r| taught(r))
+                .map(|r| str_of(r, "state").to_string())
+                .collect();
 
         // A state string this client does not recognise becomes `unreachable`
         // and is never rendered raw: a state it cannot presume to understand is
@@ -1035,7 +1036,10 @@ mod node_view_contract {
             }
             if row["clean"].as_bool().expect("clean") {
                 cleans += 1;
-                assert!(got.is_none(), "{name}: a deliberate stop got a crash notice");
+                assert!(
+                    got.is_none(),
+                    "{name}: a deliberate stop got a crash notice"
+                );
             }
             if want_notice {
                 crashes += 1;
@@ -1076,8 +1080,16 @@ mod node_view_contract {
             let s = NodeState::from_wire(state);
             // The labels are unique per variant, so matching all three pins the
             // variant as well as the words.
-            assert_eq!(s.label(), str_of(row, "tuiLabel"), "state {state:?}: chip label");
-            assert_eq!(s.marker(), str_of(row, "tuiMarker"), "state {state:?}: row marker");
+            assert_eq!(
+                s.label(),
+                str_of(row, "tuiLabel"),
+                "state {state:?}: chip label"
+            );
+            assert_eq!(
+                s.marker(),
+                str_of(row, "tuiMarker"),
+                "state {state:?}: row marker"
+            );
             assert_eq!(
                 s.fallback_detail(),
                 str_of(row, "tuiFallbackDetail"),
