@@ -296,6 +296,14 @@ fly volumes list --app workspacer-hub
 fly volumes update <vol_id> --snapshot-retention 30
 ```
 
+**A green `fly deploy` will not tell you this machine booted.** Observed on the
+node's first real deploy: flyctl printed `update finished: success` and exited 0
+for a machine whose entrypoint then died. The node has no
+`[[http_service.checks]]` and this machine has no `[http_service]` block at all,
+so in both cases flyctl waits only for the machine to reach `started` — the VM
+is running, and nothing more is claimed. Read the boot log below before you
+believe the deploy.
+
 ### Read the boot log
 
 ```sh
@@ -650,8 +658,11 @@ Unusually for `deploy/fly/`, the first list is not empty.
    whether a **tagged** device in your tailnet may fetch a Let's Encrypt
    certificate, and whether your `tailscale` build wants `--bg --https=443
    <target>` or the older `serve https:443 / <target>` syntax.
-3. **Kernel-mode tailscaled on Fly** — inherited from the node's design, and
-   settled by `ip link show tailscale0` on the first boot.
+3. ~~**Kernel-mode tailscaled on Fly**~~ — inherited from the node's design, and
+   **settled on 2026-08-25**: the node's first real deploy came up on machine
+   `1857645df24448` with a real `tailscale0` tun device, kernel mode rather than
+   userspace netstack. `ip link show tailscale0` stays worth running on this
+   machine's first boot as a confirmation.
 4. **Tailnet IP and MagicDNS stability across a restart.** §10 checks 1 and 2.
 5. **Web Push end to end.** §10 check 9. A dead subscription is silent on both
    ends; this is the check most worth actually doing.

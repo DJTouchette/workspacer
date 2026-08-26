@@ -33,9 +33,15 @@ swap_size_mb = 4096
 # SIGINT first, then 60s of drain. `kill_timeout` is a drain window, not a
 # "let the job finish" knob: max 300, default 5.
 #
-# GOTCHA: this governs a PLATFORM stop. A hub calling the Machines API stop
-# endpoint passes its OWN `signal` and `timeout` and never reads this file, so
-# the hub must send them explicitly or it gets the API defaults. Also, Fly's
+# These reach the machine. The first real deploy read the config back as
+# stop_config {"signal":"SIGINT","timeout":"1m0s"}, so this file is where the
+# machine's stop DEFAULT comes from — an earlier edition of this comment said
+# the Machines API never reads these keys, and that was wrong.
+#
+# GOTCHA, and the advice is unchanged: a default is not a guarantee. A hub
+# calling the Machines API stop endpoint passes its OWN `signal` and `timeout`,
+# which override these, so the hub sends both explicitly rather than inheriting
+# whatever default a machine happens to carry. Also, Fly's
 # docs disagree with themselves about the second signal (configuration
 # reference says SIGTERM, the long-running-tasks blueprint says SIGTERM to
 # PID 1) — the entrypoint traps both INT and TERM and does not care which.
@@ -153,11 +159,10 @@ kill_timeout = 60
   #
   #   "always"      would never let the machine enter `stopped`, defeating the
   #                 entire sleep design.
-  #   "on-failure"  (the fly launch/deploy default, spelled `on-fail` in the
-  #                 Machines API) retries up to `retries` times inside a
-  #                 5-minute window and then leaves the machine STOPPED — which
-  #                 is indistinguishable via the Machines API from a healthy
-  #                 sleeping node.
+  #   "on-failure"  (the fly launch/deploy default) retries up to `retries`
+  #                 times inside a 5-minute window and then leaves the machine
+  #                 STOPPED — which is indistinguishable via the Machines API
+  #                 from a healthy sleeping node.
   #
   # on-failure is still the least-bad option: a genuine transient failure
   # should self-heal. What makes the ambiguity survivable is that the
@@ -169,6 +174,10 @@ kill_timeout = 60
   # for five minutes burning shared-CPU burst balance before giving up.
   policy  = "on-failure"
   retries = 3
+  # An earlier edition of this comment warned that the Machines API spells this
+  # `on-fail`, so the two could drift. The first real deploy read the machine
+  # config back and it says {"policy":"on-failure","max_retries":3} — the same
+  # spelling as this file. There is nothing here to translate.
 
 # The token-free wake backstop.
 #
@@ -207,3 +216,8 @@ kill_timeout = 60
 # defined, "healthy" means the doorbell's TCP port accepts a connection, which
 # the entrypoint arranges within a second or two of boot. Readiness of the NODE
 # is a different question and is answered by the brain registering with the hub.
+#
+# The cost of that choice, observed on the first real deploy: with no checks
+# defined, `fly deploy` waits only for the machine to reach `started`, so it
+# exits 0 and prints "update finished: success" for a machine whose entrypoint
+# then died. Deploy success is not boot success — read `fly logs`.

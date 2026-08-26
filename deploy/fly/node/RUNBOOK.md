@@ -267,6 +267,17 @@ a machine that could not boot (the `setpriv` flag, see
 image you deploy is the image that was rehearsed. Recovery is a redeploy with the
 flag, so the cost is one more upload, not a broken fleet.
 
+**A green `fly deploy` does not mean this node booted.** The first real deploy
+printed `update finished: success` and exited 0 for a machine whose entrypoint
+then died. That is a consequence of a decision made two screens down in
+`fly.toml`: there is deliberately **no `[[http_service.checks]]`** block,
+because a health check firing during the tailscaled reconnect would let the
+platform decide a slow-booting node is a dead node. With no checks defined,
+flyctl waits only for the machine to reach `started` — the VM is running,
+nothing more. So the deploy is green whether the node came up or not, and
+**`fly logs` is the only verdict**: read the boot log below and require
+`BOOT COMPLETE` before you trust the machine.
+
 The build context is the repo root deliberately: the image builds `brain` and
 `workspacer` from `services/hub` and `claudemon` from `services/claudemon`.
 
@@ -373,6 +384,13 @@ Read it in this order:
 older log, and the verdict lines deliberately avoid the string `BOOT COMPLETE`,
 so `fly logs | grep 'BOOT COMPLETE'` still answers about *this* boot only.
 
+**This has now happened for real, which is the only reason it is worth the
+code.** On the first real deploy the node failed to boot; the entrypoint wrote
+`{"reason":"boot-failure","exitCode":1}` to `last-exit.json`, and the next boot
+replayed that failed boot to stdout, where `fly logs` picked it up. The machine
+in question could not be shelled into — it was not staying up — so the replay
+was the whole diagnosis.
+
 Bounded at 40 lines and 16 KiB (`WKS_BOOT_REPLAY_LINES`, `WKS_BOOT_REPLAY_BYTES`)
 so a long log cannot bury the boot you are actually looking at. The replay is
 written to stdout only, never back into `boot.log`, otherwise each boot would
@@ -380,8 +398,14 @@ quote its predecessor's quote, forever.
 
 ### Confirm kernel-mode Tailscale actually came up
 
-Thirty seconds of checking buys certainty about the one inference in the design
-that rests on two facts joined rather than a quoted sentence:
+**Settled on 2026-08-25:** machine `1857645df24448` came up with a real
+`tailscale0` **tun** device — kernel mode, not userspace netstack. The design
+inferred this from two facts joined (a Firecracker microVM has its own kernel,
+and Tailscale's own Fly guide uses kernel mode) rather than from a quoted
+sentence, and the inference held.
+
+Run it on your own machine anyway; thirty seconds tells you which mode you
+actually got, and the answer is different if the tun device is missing:
 
 ```sh
 fly ssh console --app workspacer-node -C 'ip link show tailscale0'
@@ -516,6 +540,14 @@ markers, and if any is missing, the file it names is not there, go back to §7.
 mechanism you will want on the day the node does not come up, and the day it does
 not come up is the day you cannot test it.
 
+**Checks 12 and 16 have both fired on real hardware.** They are no longer
+expectations. On the first real deploy the node failed to boot: `last-exit.json`
+recorded `{"reason":"boot-failure","exitCode":1}` — a reason this table does not
+list, and a better one than either example below, because it says the machine
+never got as far as running — and the following boot replayed that failed boot
+to `fly logs`, on a machine nobody could have shelled into. Both halves worked
+first time, in the situation they were written for rather than in a rehearsal.
+
 **Check 4 is the one people skip and the one that bites.** Only a project
 directory the node has never seen exercises the trust map in `~/.claude.json`.
 
@@ -531,8 +563,9 @@ Spawn one session and confirm the cost is non-zero before trusting it.
 **Check 12 is what makes `stopped` legible.** Fly's `on-failure` policy retries
 and then leaves the machine `stopped`, which the Machines API cannot distinguish
 from a healthy sleeping node. The entrypoint writes `last-exit.json` on every
-exit, so `"reason":"signal-TERM"` (the hub put it to sleep) and
-`"reason":"claudemon-died"` (it crashed) are distinguishable from the volume.
+exit, so `"reason":"signal-TERM"` (the hub put it to sleep),
+`"reason":"claudemon-died"` (it crashed) and `"reason":"boot-failure"` (observed
+live: it never finished coming up) are distinguishable from the volume.
 
 **And the second half of check 12 is why you look in the log rather than at the
 file.** That record is written by a **trap**, and the exits most worth knowing
@@ -832,13 +865,19 @@ Stated plainly so nobody mistakes silence for verification.
    those conditions. What that does **not** prove: arm64, a Fly remote builder,
    and `bundle install` against a real Gemfile (no network-bound gem install was
    exercised).
-2. **Nothing has been deployed.** No machine, no volume, no `fly.toml` server-side
-   validation. The TOML is syntactically valid and every key and enum was checked
-   against flyctl v0.4.59's own config struct tags, which is not the same as Fly
-   accepting it.
-3. **Kernel-mode tailscaled on Fly.** Rests on two facts joined — a Firecracker
-   microVM has its own kernel, and Tailscale's Fly guide uses kernel mode — not on
-   one quoted sentence. Step 6's `ip link show tailscale0` settles it.
+2. ~~**Nothing has been deployed.**~~ **It has.** On 2026-08-25 this app was
+   deployed for real: Fly accepted `fly.toml` server-side and created the volume
+   (the failed boot below still wrote `/data/state/last-exit.json` to it), and
+   the machine config reads back agreeing with the file
+   (`{"policy":"on-failure","max_retries":3}`, stop_config
+   `{"signal":"SIGINT","timeout":"1m0s"}`). What is still not proven is
+   everything that needs the node to be *used* rather than merely to exist —
+   most of step 8, and the items below.
+3. ~~**Kernel-mode tailscaled on Fly.**~~ **SETTLED 2026-08-25, and it works.**
+   It rested on two facts joined — a Firecracker microVM has its own kernel, and
+   Tailscale's Fly guide uses kernel mode — rather than on one quoted sentence.
+   Machine `1857645df24448` came up with a real `tailscale0` tun device, kernel
+   mode, not netstack. Step 6 keeps the check as a confirmation.
 4. **Tailnet IP stability across stop/start.** The whole design assumes it.
    Step 8 check 1.
 5. **tailscaled cold-reconnect time.** Neither vendor publishes a figure. The
@@ -863,7 +902,12 @@ Stated plainly so nobody mistakes silence for verification.
    box whose job is compiling Go this is the number most likely to make it feel
    broken, and it is easily mistaken for noisy neighbours. Measure steal in
    week one.
-10. **Everything in step 8.** The checklist is written; it has not been run.
+10. **Most of step 8.** The checklist is written and has not been walked — with
+    two exceptions, both proven on the first real deploy rather than expected:
+    **check 12** (`last-exit.json` recorded
+    `{"reason":"boot-failure","exitCode":1}`) and **check 16** (the next boot
+    replayed the failed boot to `fly logs`). They fired on a node that would not
+    stay up long enough to shell into, which is the case they exist for.
 
 ### Day-one measurements
 
@@ -922,8 +966,14 @@ These artifacts assume the following land. None of it is implemented here.
    though the entrypoint now consumes the record at boot, so that field reads as
    "no record" until the consumption moves into the brain; see §8 check 12, and
    the doorbell remains deliberately off. Every API stop passes `signal` and
-   `timeout` explicitly — `fly.toml`'s `kill_timeout` does not govern a
-   hub-issued stop, and `flyapi.Client.Stop` refuses a call that omits either.
+   `timeout` explicitly. The premise for that used to be that `fly.toml`'s
+   `kill_signal`/`kill_timeout` never reach the Machines API, and **that was
+   wrong**: the first real deploy read the machine config back as `stop_config
+   {"signal":"SIGINT","timeout":"1m0s"}`, which is exactly what `fly.toml` says.
+   The practice is unchanged and the reason is better — those are the machine's
+   *defaults*, an API stop that names its own values overrides them, and
+   `flyapi.Client.Stop` refuses a call that omits either, so a hub-issued stop
+   never inherits whatever default a particular machine happens to carry.
    The one thing the entrypoint must keep doing is trapping the signal the hub
    sends (`SIGTERM`) and writing the exit record, because a stop that leaves no
    record is one the next wake cannot tell from a crash.

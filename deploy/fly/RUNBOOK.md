@@ -14,6 +14,13 @@ This document is the sequence. It also states honestly which steps have been
 rehearsed and which have not, because a runbook nobody has walked is worth
 very little.
 
+**Amended 2026-08-25, after the first real deploy.** The dry run got most of it
+right and seven claims wrong. Each correction is marked where it lives rather
+than collected here; the ones worth knowing before you start are that a green
+`fly deploy` does not mean the node booted (B6), that B5b does not apply to a
+fresh fleet, and that kernel-mode Tailscale on Fly is now settled rather than
+assumed.
+
 ---
 
 ## The shape of it
@@ -390,11 +397,14 @@ Two lines you will also see and should not worry about:
   accepted; the rehearsal checked this directly rather than assuming it.
 
 **Jobs are off on this machine, deliberately.** The entrypoint passes
-`--jobs-file ""`. The node's token is operator-tier, operator tier is `trusted`,
-and the `jobs.*` gate is a bare `IsTrusted()`, so with jobs on, the node could
-schedule a shell job and get `/bin/sh` inside the hub process, which is the
-process holding `$FLY_API_TOKEN`. Nothing here schedules a job, so the subsystem
-is switched off rather than argued about. Do not turn it on without reading
+`--jobs-file ""`. The `jobs.*` gate is a bare `IsTrusted()`, and operator tier
+is `trusted`, so with jobs on, an operator-tier node could schedule a shell job
+and get `/bin/sh` inside the hub process, which is the process holding
+`$FLY_API_TOKEN`. Since B5 mints the node at `--scope provider`, which is not
+trusted and cannot create `jobs.*` at all, that particular path is already
+closed at the tier — but operator-tier tokens still exist, nothing here
+schedules a job, and a subsystem nobody uses is cheaper switched off than
+argued about. Do not turn it on without reading
 [`hub/RUNBOOK.md` §9a](hub/RUNBOOK.md).
 
 **The `REACHABLE:` line is the one to actually check.** `tailscale serve`
@@ -485,6 +495,13 @@ true of the hub's own `HUB_TOKEN` from B4.
 
 ## B5b. Moving a deployed node from an operator token to a provider token
 
+**Skip this step if you are following this runbook in order.** It applies only
+to a node that is *already deployed* and holding an operator-tier token from an
+earlier edition of these instructions. B5 mints with `--scope provider`, so on a
+fresh fleet the node never holds an operator token and there is nothing to swap:
+the first real deploy went B5 → B6 and B5b never happened. It is kept here as
+the migration for fleets that predate the provider tier.
+
 **No code, image, `fly.toml` or entrypoint change — a secret swap and this
 paragraph.** The brain dials with whatever `HUB_TOKEN` it is handed and never
 inspects its own tier.
@@ -542,6 +559,17 @@ the contract and `node/example.Dockerfile` is a buildable skeleton.
 
 Second long upload.
 
+**`fly deploy` exiting 0 does not mean the node booted.** The first real deploy
+proved this the hard way: flyctl printed `update finished: success` for a
+machine whose entrypoint then died. It is not a flyctl bug — `node/fly.toml`
+deliberately defines no `[[http_service.checks]]`, because a health check firing
+during the tailscaled reconnect would let the platform decide a slow-booting
+node is a dead node. With no checks defined, flyctl waits only for the machine
+to reach `started`, which means the VM is running, not that anything inside it
+worked. **A green deploy and a dead node look identical from the terminal you
+deployed from.** The boot log below is the verdict; do not go on to B7 until you
+have seen `BOOT COMPLETE` in `fly logs`.
+
 ### Read the boot log
 
 ```sh
@@ -596,9 +624,19 @@ verdict line saying whether it completed. Lines prefixed `  | ` or `  ! ` are
 quoted from that older boot, never this one. Full detail in `node/RUNBOOK.md`
 §6, "Where the boot log lives, and why the first line is a replay".
 
-Then confirm kernel-mode Tailscale really came up. Thirty seconds against the
-one inference in this design that rests on two facts joined rather than a
-quoted sentence:
+**That mechanism is no longer theoretical.** On the first real deploy the node
+failed to boot, the entrypoint recorded
+`{"reason":"boot-failure","exitCode":1}` in `last-exit.json`, and the next boot
+replayed the failed boot to stdout where `fly logs` picked it up — which is
+exactly the situation it was built for, and the only reason the failure was
+diagnosable at all from outside a machine that would not stay up.
+
+Then confirm kernel-mode Tailscale really came up. **This is settled rather than
+open**: on 2026-08-25 machine `1857645df24448` came up with a real `tailscale0`
+tun device — kernel mode, not netstack — which is what the design inferred from
+two facts joined rather than from a quoted sentence. Run it anyway on your own
+machine; it costs thirty seconds and it is the check that tells you which mode
+you actually got:
 
 ```sh
 fly ssh console --app workspacer-node -C 'ip link show tailscale0'
@@ -810,10 +848,25 @@ back from a snapshot, and taking the whole thing down. None of it is hard, and
 all of it is the kind of thing you would rather read now than derive at 2am
 against a machine holding your only Claude login.
 
-The `fly` flags below have **not** been walked end to end the way Part B has.
-Check the exact spelling with `fly <command> --help` before you lean on one; the
-shape of each procedure is the part that matters and the part that is hard to
-work out under pressure.
+**The flags below were checked against flyctl v0.4.59 on 2026-08-25** and exist
+and spell the way this document spells them: `machine stop -s/--timeout`,
+`machine restart --time`, `machine destroy`, `machine update
+--mount-point/--restart`, `secrets unset`, `volumes snapshots list`, `volumes
+create --snapshot-id/--snapshot-retention`, `volumes destroy`, `apps destroy`,
+`ips release`. What has **not** been walked end to end, the way Part B now has,
+is the *procedures*: the shape of each is the part that matters and the part
+that is hard to work out under pressure.
+
+**Two flags do not spell the way you would guess, and both bite in the middle of
+a restart.** `fly machine restart` takes **`--time`**, not `--timeout` — which
+is the spelling `fly machine stop` uses for the same idea — and it has **no
+`--signal` flag at all**, so a restart cannot be told which signal to send. If
+you need a specific signal, do it in two steps:
+
+```sh
+fly machine stop <machine_id> --app <app> -s SIGINT --timeout 60
+fly machine start <machine_id> --app <app>
+```
 
 ## D1. Redeploying after a code change
 
@@ -947,15 +1000,22 @@ a new id, and the machine has to be pointed at it.
 fly volumes list --app workspacer-hub
 fly volumes snapshots list <vol_id>
 fly volumes create wks_data --app workspacer-hub --snapshot-id <snap_id> \
-  --region ord --size 1
+  --region ord --size 1 --snapshot-retention 30
 ```
+
+**`--snapshot-retention` is not optional here, and leaving it off is silent.**
+`fly volumes create` defaults it to **5 days**, not to whatever the volume you
+are replacing was set to. Restore without it and the hub's 30 days from B4
+becomes 5 on the new volume — which is now the only copy of the pairing
+credential, the VAPID keypair and the node registry, and the one you are least
+likely to check again. The same applies to the node's 14 from B6.
 
 The name must match the `[[mounts]] source` in the app's `fly.toml` (`wks_data`
 for both apps) and the region must be `ord`, because the volume pins the machine
 to a physical host and `primary_region` is `ord` in both `fly.toml` files. Then
 destroy the machine and redeploy so it mounts the new volume, or update the
-machine's mount in place if your flyctl offers that; check `fly machine update
---help`.
+machine's mount in place: `fly machine update --mount-point` exists on flyctl
+v0.4.59, as does `--restart`.
 
 **Two things a restored hub volume will not fix by itself.** The Web Push
 keypair is one: if the snapshot predates the current `vapid.json`, or the volume
@@ -965,9 +1025,17 @@ Until the client compares its stored key against the server's, the only cure is
 to clear the site data or reinstall the PWA on each phone. The second is the
 tailnet identity: see D4.
 
-For the **node** volume, the same procedure with `--size 10` and
-`--app workspacer-node`. What you get back is the Claude OAuth session, the SSH
-key, the folder-trust map in `~/.claude.json` and anything under `/data/repos`.
+For the **node** volume, the same procedure with `--size 10`,
+`--app workspacer-node` and `--snapshot-retention 14` — again explicitly, or the
+restore quietly drops B6's 14 days to the 5-day default:
+
+```sh
+fly volumes create wks_data --app workspacer-node --snapshot-id <snap_id> \
+  --region ord --size 10 --snapshot-retention 14
+```
+
+What you get back is the Claude OAuth session, the SSH key, the folder-trust map
+in `~/.claude.json` and anything under `/data/repos`.
 What a snapshot from before those existed gets you is a node that boots green and
 hangs on a login prompt no headless machine can answer, which is why the node's
 state guard writes `state/seen` markers: after a restore, read the boot log for
@@ -1088,7 +1156,10 @@ makes the request 502 **after** the boot, which still woke the machine.
 # What this rehearsal actually verified
 
 Walked on 2026-08-25 against the current worktree, on a machine with docker, a
-logged-in `flyctl` and a live tailnet. Nothing was deployed, created or billed.
+logged-in `flyctl` and a live tailnet. Nothing was deployed, created or billed
+**by the rehearsal itself**. The node was deployed for real later the same day,
+and what that settled or corrected is marked inline above and summarised at the
+end of this section.
 
 **Verified by running it:**
 
@@ -1126,17 +1197,37 @@ logged-in `flyctl` and a live tailnet. Nothing was deployed, created or billed.
 - `fly` flags used above exist on flyctl v0.4.59: `--stage`, `--local-only`,
   `--snapshot-retention`, `tokens create deploy --app/--expiry/--name`,
   `ips allocate-v6 --private`. `ord` exists; `sea` and `den` do not.
+- **Part D's flags, checked the same way on 2026-08-25**, so Part D is no longer
+  the unwalked half of this document as far as spelling goes: `machine stop
+  -s/--timeout`, `machine restart --time` (**not** `--timeout`, and there is no
+  `--signal`), `machine destroy`, `machine update --mount-point/--restart`,
+  `secrets unset`, `volumes snapshots list`, `volumes create
+  --snapshot-id/--snapshot-retention` (which **defaults to 5 days**), `volumes
+  destroy`, `apps destroy`, `ips release`.
+
+**Corrected by the first real deploy, on 2026-08-25:** kernel-mode Tailscale is
+settled (open question 2 below), `fly deploy` exits 0 on a node that cannot boot
+(B6), `fly.toml`'s `kill_signal`/`kill_timeout` do reach the machine as its stop
+defaults, the Machines API spells the restart policy `on-failure` exactly as
+`fly.toml` does, B5b never applies to a fresh fleet, and `node/RUNBOOK.md` §8
+checks 12 and 16 fired on real hardware.
 
 ## What a real machine still has to settle
 
 Stated plainly so nobody mistakes silence for verification.
 
-1. **Nothing has been deployed.** No machine, no Fly volume, no server-side
-   `fly.toml` validation. The TOML parses and every key was checked against
-   flyctl's own struct tags, which is not the same as Fly accepting it.
-2. **Kernel-mode `tailscaled` on Fly.** UNPROVEN. The rehearsal shimmed it,
-   because a build host has no tun device and no tailnet. `ip link show
-   tailscale0` in B6 settles it.
+1. **Partly answered: the node has been deployed for real.** Fly accepted
+   `node/fly.toml` server-side and the machine config reads back matching what
+   the file says (`{"policy":"on-failure","max_retries":3}`, stop_config
+   `{"signal":"SIGINT","timeout":"1m0s"}`). What this document does **not**
+   record is a real hub deploy, so the hub's `fly.toml`, its volume and
+   `tailscale serve` remain in the same position they were: parsed, never
+   accepted by Fly.
+2. ~~**Kernel-mode `tailscaled` on Fly.**~~ **SETTLED, and it works.** The
+   rehearsal had to shim it, because a build host has no tun device and no
+   tailnet. The first real deploy ran `ip link show tailscale0` on machine
+   `1857645df24448` and got a real `tailscale0` **tun** device: kernel mode, not
+   userspace netstack. The inference the design rested on was correct.
 3. **`tailscale up` with a real key.** UNPROVEN, and it is user gate 1. Whether
    a *tagged* device in your tailnet may fetch a Let's Encrypt certificate is
    specifically unconfirmed.
