@@ -34,6 +34,24 @@ func loadDocs(t *testing.T) string {
 	return string(raw)
 }
 
+// jobsSection returns just the <h2>jobs</h2> section of the page. Positive
+// pins ("the docs must SAY x") can read the whole file, but a negative pin has
+// to be scoped: the rest of the page documents other files with other rules,
+// and a phrase that is wrong about jobs.json can be right about them.
+func jobsSection(t *testing.T, docs string) string {
+	t.Helper()
+	const start = "<h2>jobs</h2>"
+	i := strings.Index(docs, start)
+	if i < 0 {
+		t.Fatal(`no "<h2>jobs</h2>" heading in the docs — did the page structure change?`)
+	}
+	rest := docs[i+len(start):]
+	if j := strings.Index(rest, "<h2"); j >= 0 {
+		rest = rest[:j]
+	}
+	return rest
+}
+
 var exampleRe = regexp.MustCompile(`(?s)<pre data-job-example><code>(.*?)</code></pre>`)
 
 func TestDocumentedJobExamplesAreValid(t *testing.T) {
@@ -303,7 +321,10 @@ func TestHandEditingIsDocumented(t *testing.T) {
 
 	// And the instruction this replaced. Telling someone to restart the hub
 	// after an edit is now wrong, and following it would hide the feature.
-	if strings.Contains(docs, "restart the hub") {
+	// Scoped to the jobs section deliberately: elsewhere the same page
+	// documents nodes.json, which genuinely IS read once at hub startup, so a
+	// whole-file grep for this phrase fails on a sentence that is correct.
+	if strings.Contains(jobsSection(t, docs), "restart the hub") {
 		t.Error("the docs still tell the reader to restart the hub after editing jobs.json — " +
 			"the file is re-read on the scheduler tick now")
 	}
