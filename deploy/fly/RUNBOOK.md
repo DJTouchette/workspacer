@@ -400,6 +400,14 @@ the opposite, and does need one.)
 > token is not), but do not treat "scoped" as "limited" here.
 > `hub/RUNBOOK.md` §11 currently claims a scoped operator token is refused for
 > `nodes.wake`. It is not. See the rehearsal report.
+>
+> **What it can NOT do, as of 2026-08-25:** install a plugin. `POST
+> /plugins/install`, `/plugins/examples/install` and `/plugins/reload` run code
+> on the HUB's own machine, so they now require the hub's host token and answer
+> 403 to every scoped token, operator tier included. That is why this step mints
+> a **scoped** token and never copies the hub's `remote-token` onto the node: the
+> refusal is keyed on the credential, so a node handed the host token would be
+> the host, and this gate would see nothing.
 
 ## B6. Set the node's secrets and deploy it
 

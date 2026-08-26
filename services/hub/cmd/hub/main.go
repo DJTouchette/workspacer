@@ -277,7 +277,7 @@ func pluginReloadHandler(add pluginAdder) http.HandlerFunc {
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
-		// An explicit, operator-guarded reload of a directory the caller named is
+		// An explicit, host-authority reload of a directory the caller named is
 		// a human act on this manifest — `workspacer plugin dev` is the caller —
 		// so it re-baselines the consented authority. A BOOT load does not.
 		plugin.RebaselineGrantPin(m)
@@ -404,7 +404,7 @@ func main() {
 		warnIfPluginOriginUntrusted(declaredPluginOrigin, trusted)
 	}
 	if *token != "" {
-		log.Printf("bus auth enabled (token required on /bus, /remote, /plugins/install, /plugins/remove)")
+		log.Printf("bus auth enabled (token required on /bus, /remote, /plugins/*; the plugin install family additionally requires the HOST token — a scoped operator token, e.g. a remote node's, is refused)")
 	}
 
 	// RPC authorization is per connection: the bus tags each caller at handshake
@@ -429,6 +429,9 @@ func main() {
 			return bus.ScopedIdent{
 				Scope:   string(rec.Scope),
 				Methods: rec.Scope.Methods(),
+				// Carried so a host-authority refusal can NAME the token it
+				// turned away in the hub log (hostOnlyRoute). Authorizes nothing.
+				Label: rec.Label,
 				// The spawn grants ride the ident so the router can enforce
 				// them per call (agents.spawn profileId strip/stamp, and the
 				// full-access `yoloGranted` stamp).
@@ -494,6 +497,13 @@ func main() {
 			}
 			h(w, r)
 		}
+	}
+	// hostOnly is guard() plus the one thing guard() cannot say: an operator-tier
+	// SCOPED token — the credential every remote worker node carries — is refused.
+	// It wraps the three routes that end in a process running on this host (the
+	// plugin install family). See hostonly.go for why that tier is the exposure.
+	hostOnly := func(what string, h http.HandlerFunc) http.HandlerFunc {
+		return hostOnlyRoute(srv, what, h)
 	}
 
 	// Windows: confine ourselves (and thus the brain + every plugin sidecar we
@@ -888,8 +898,9 @@ func main() {
 	}
 	// Inspect a plugin before installing: download + read its manifest so the UI
 	// can show what it is and what it requires (Go/Rust/Python/Node) up front. No
-	// code is run and nothing is installed. Token-guarded like install — it makes
-	// the hub fetch an arbitrary URL.
+	// code is run and nothing is installed. Token-guarded — it makes the hub
+	// fetch an arbitrary URL — but NOT host-only like install: reading a manifest
+	// is the SSRF-shaped half, and it is install that runs the argv.
 	srv.AddRoute("/plugins/inspect", guard(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		var body struct{ URL string }
@@ -916,7 +927,7 @@ func main() {
 		_ = json.NewEncoder(w).Encode(plugin.CheckUpdates(mgr.List()))
 	}))
 	// Install a plugin from a GitHub URL: download → extract → load → supervise.
-	srv.AddRoute("/plugins/install", guard(func(w http.ResponseWriter, r *http.Request) {
+	srv.AddRoute("/plugins/install", hostOnly("plugin install", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		var body struct {
 			URL string
@@ -972,14 +983,16 @@ func main() {
 	// and re-Add it, which idempotently stops the old sidecar, restarts it with
 	// fresh manifest/token, and emits plugin.loaded. This backs `workspacer plugin
 	// dev`'s file-watch loop — the dev command POSTs the plugin's real directory
-	// here after each change (and after its build step, if any). Token-guarded
-	// like its /plugins/* siblings.
+	// here after each change (and after its build step, if any). HOST-ONLY, like
+	// install: it starts a sidecar from a directory the caller named. `workspacer
+	// plugin dev` boots its own hub and presents the host token, so it is
+	// unaffected.
 	//
 	// The dir must contain plugin.json. mgr.Add reloads paths (sidecar cwd, ui
 	// assets, per-plugin token file) from the manifest's own Dir, and plugin.Load
 	// sets Dir to the directory we pass — so passing the developer's real plugin
 	// dir (not the symlink the hub scanned) keeps every relative path resolving.
-	srv.AddRoute("/plugins/reload", guard(pluginReloadHandler(mgr)))
+	srv.AddRoute("/plugins/reload", hostOnly("plugin reload", pluginReloadHandler(mgr)))
 	// Remove a plugin: stop its sidecar + delete its directory.
 	srv.AddRoute("/plugins/remove", guard(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1037,8 +1050,9 @@ func main() {
 	}, srv.Authorized))
 	// Add one bundled example by manifest id: copy it from the examples dir into
 	// the writable plugins dir, run its install step, and supervise it. No
-	// network — the source ships in the app. Token-guarded like /plugins/install.
-	srv.AddRoute("/plugins/examples/install", guard(func(w http.ResponseWriter, r *http.Request) {
+	// network — the source ships in the app. Host-only like /plugins/install: the
+	// install step still runs on this machine.
+	srv.AddRoute("/plugins/examples/install", hostOnly("installing a bundled example plugin", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		var body struct{ ID string }
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == "" {

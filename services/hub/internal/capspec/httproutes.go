@@ -52,6 +52,17 @@ const (
 	// guard() / srv.Authorized: the host token or an operator-scoped token.
 	RouteGuarded RouteDisposition = "guarded"
 
+	// RouteHostOnly — guarded, and then some: the route requires the HOST's own
+	// credential, and an operator-tier SCOPED token is refused with 403 even
+	// though it passes srv.Authorized. Reserved for the acts that make this
+	// machine run code (the plugin install family), because the operator tier is
+	// what a remote worker node carries — see cmd/hub/hostonly.go. A row of this
+	// kind is a STRONGER claim than RouteGuarded, not a different one, so the
+	// completeness guard checks it in both directions: the site must apply
+	// hostOnly(), and a site that applies hostOnly() may not be recorded as
+	// merely guarded.
+	RouteHostOnly RouteDisposition = "host-only"
+
 	// RouteTieredPayload — anyone may call it, but WHAT comes back depends on
 	// the caller's credential. The disposition exists because guarding some of
 	// these routes outright would break a client that legitimately cannot carry
@@ -172,14 +183,14 @@ var httpRoutes = []HTTPRoute{
 		Reason: "re-fetches every installed plugin's manifest from its recorded Source — the same outbound fetch as inspect, once per plugin",
 	},
 	{
-		Server: "hub", Pattern: "/plugins/install", Disposition: RouteGuarded,
-		Reason:   "download, extract, run the manifest's install argv under explicit consent, re-baseline the grant pin, start the sidecar. plugin.install.progress is host-only precisely because it echoes this route's operator-only input",
+		Server: "hub", Pattern: "/plugins/install", Disposition: RouteHostOnly,
+		Reason:   "download, extract, run the manifest's install argv under explicit consent, re-baseline the grant pin, start the sidecar. The install argv runs on the HUB's own host, so the token guard alone is not the gate: an operator-tier scoped token passes Authorized and every remote worker node carries one, which made a node's bearer string arbitrary code execution here. plugin.install.progress is host-only precisely because it echoes this route's input",
 		Twin:     "plugin.install.progress",
 		TwinKind: TwinEvent,
 	},
 	{
-		Server: "hub", Pattern: "/plugins/reload", Disposition: RouteGuarded,
-		Reason: "re-reads plugin.json from a CALLER-NAMED directory and re-baselines the consented authority, so a reload can widen a plugin's grants",
+		Server: "hub", Pattern: "/plugins/reload", Disposition: RouteHostOnly,
+		Reason: "re-reads plugin.json from a CALLER-NAMED directory, re-baselines the consented authority (so a reload can widen a plugin's grants) and starts that directory's sidecar — install-equivalent code execution on this host, from a path the caller chose",
 	},
 	{
 		Server: "hub", Pattern: "/plugins/remove", Disposition: RouteGuarded,
@@ -190,8 +201,8 @@ var httpRoutes = []HTTPRoute{
 		Reason: "starts or stops a sidecar and withholds or restores its contributions",
 	},
 	{
-		Server: "hub", Pattern: "/plugins/examples/install", Disposition: RouteGuarded,
-		Reason: "copies a bundled example into the writable plugins dir and runs its install step — install with no network, guarded like install",
+		Server: "hub", Pattern: "/plugins/examples/install", Disposition: RouteHostOnly,
+		Reason: "copies a bundled example into the writable plugins dir and runs its install step — install with no network, and gated like install: the step runs on this host, so a scoped operator token (a remote node's) is refused",
 	},
 
 	// ---- the hub: clients and static assets ------------------------------

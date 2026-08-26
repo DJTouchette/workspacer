@@ -318,7 +318,7 @@ var eventTopics = []EventTopic{
 	{
 		Pattern:     "plugin.install.progress",
 		Disposition: TopicHostOnly,
-		Reason:      "echoes body.URL VERBATIM from the operator-guarded POST /plugins/install request, with no normalization before the echo. Operator-only input must not become view-visible output just because the progress of a long operation is convenient to broadcast",
+		Reason:      "echoes body.URL VERBATIM from the host-authority POST /plugins/install request (hostOnlyRoute: not even an operator-tier scoped token may call it), with no normalization before the echo. Host-only input must not become view-visible output just because the progress of a long operation is convenient to broadcast",
 	},
 }
 

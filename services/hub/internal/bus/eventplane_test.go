@@ -164,7 +164,7 @@ var topicDeliveryKey = []topicDelivery{
 	{topic: "plugin.unsandboxed",
 		why: "announces which sidecars run with NO filesystem confinement, and why: it names the process to attack and states that nothing will contain it"},
 	{topic: "plugin.install.progress",
-		why: "echoes body.URL VERBATIM from the operator-guarded POST /plugins/install, unnormalized"},
+		why: "echoes body.URL VERBATIM from the host-authority POST /plugins/install, unnormalized"},
 
 	// ---- the default -------------------------------------------------------
 	// Not in the registry, and that is the point: a scoped user token is refused
