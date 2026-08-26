@@ -157,8 +157,12 @@ simply be unreachable while every Machines API call succeeded. A device that is
      console). `tailscale up` fails, the entrypoint refuses to continue, Fly
      retries three times and leaves the machine `stopped`, which the Machines
      API cannot tell apart from a node you put to sleep. From a client it reads
-     `waking` → `unreachable`. Mint a new key and
-     `fly secrets set --app workspacer-node --stage TAILSCALE_AUTHKEY=…`.
+     `waking` → `unreachable`. Mint a new key,
+     `fly secrets set --app workspacer-node --stage TAILSCALE_AUTHKEY=…`, and
+     then **apply it**, which is a step of its own: a staged secret is picked up
+     by `fly secrets deploy --app workspacer-node` (or by a full deploy) and
+     **never by a restart**. Restarting a node that is down for this exact reason
+     just boots it on the same dead key, quietly, as often as you try.
 
 3. After first boot, **confirm in the admin console that the device shows key
    expiry as disabled.** If it does not, disable it explicitly from the Machines
@@ -235,7 +239,12 @@ fly secrets set --app workspacer-node --stage \
   HUB_TOKEN='…'
 ```
 
-`--stage` holds them until the first deploy rather than triggering one.
+`--stage` holds them until the first deploy rather than triggering one — **a
+deploy, and only a deploy.** `fly machine restart` boots on the old secret set
+while `fly secrets list` reports the new value as `Staged`; `fly secrets deploy
+--app workspacer-node` is what applies a staged value without a full image
+deploy. §6's deploy is the next step here, so this bites during rotation rather
+than now. `../RUNBOOK.md` Part D has the sequence.
 
 `HUB_BUS_URL` is not really a secret; it is set as one to keep your tailnet name
 out of git. If the hub's TLS is terminated by `tailscale serve`, remember the
@@ -278,6 +287,13 @@ nothing more. So the deploy is green whether the node came up or not, and
 **`fly logs` is the only verdict**: read the boot log below and require
 `BOOT COMPLETE` before you trust the machine.
 
+**And a green deploy does not even prove the machine was started.** Neither
+`fly deploy` nor `fly secrets deploy` starts a machine that is currently stopped:
+both exit 0 and leave it `stopped`, which is the correct thing for a node you
+deliberately put to sleep and a confusing one when you are waiting for a boot log
+that is never going to arrive. `fly machine start <machine_id>` is a separate
+command; `fly machine status` after a deploy is the habit that catches it.
+
 The build context is the repo root deliberately: the image builds `brain` and
 `workspacer` from `services/hub` and `claudemon` from `services/claudemon`.
 
@@ -286,6 +302,21 @@ Ruby, bun or python3 for application code. That is a working node; it is not a
 development box. To put project toolchains on it, build a small image `FROM` this
 one and deploy that instead. [BASE_IMAGE.md](BASE_IMAGE.md) is the contract, and
 `example.Dockerfile` is a buildable skeleton.
+
+**Which makes the command above the wrong one for a node that already runs a
+project image — and wrong silently.** `--dockerfile deploy/fly/node/Dockerfile`
+builds the base, so pointing it at a node whose image was layered on the base
+discards your layer and ships roughly 900 MB of base in its place, with flyctl
+reporting an entirely ordinary green deploy. **The symptom is a node that comes
+back up healthy having lost its toolchains**: `go`, `bun`, `python3` and anything
+else your image installed are gone, and a build that worked yesterday fails with
+`command not found`. Nothing warns you, because from Fly's side you asked for
+precisely this.
+
+So treat this section as the **bootstrap for a bare base-image node**. If you
+maintain your own project image and its own `fly.toml`, redeploy from **your**
+project directory with **your** config and **your** Dockerfile — rebuilding the
+base first, since your `FROM` points at it.
 
 The `[[mounts]] initial_size = "10gb"` creates `wks_data` in `ord` on first
 deploy. **Volumes never shrink**, but 10 GB is not a guess: the container image
@@ -390,6 +421,12 @@ code.** On the first real deploy the node failed to boot; the entrypoint wrote
 replayed that failed boot to stdout, where `fly logs` picked it up. The machine
 in question could not be shelled into — it was not staying up — so the replay
 was the whole diagnosis.
+
+**It earned its keep again on the full bring-up**, in the other direction: a
+`FATAL` that read as the current boot's turned out to be the previous boot's,
+replayed. So the margins are load-bearing rather than decorative. **Trust the
+prefix over your reading of the line.** At the left margin is this boot;
+behind `  ! ` or `  | ` is not, however current it looks.
 
 Bounded at 40 lines and 16 KiB (`WKS_BOOT_REPLAY_LINES`, `WKS_BOOT_REPLAY_BYTES`)
 so a long log cannot bury the boot you are actually looking at. The replay is
@@ -789,6 +826,13 @@ fly secrets set WKS_ALLOW_STATE_LOSS=1 --app workspacer-node   # accepts ALL los
 fly secrets unset WKS_ALLOW_STATE_LOSS --app workspacer-node
 ```
 
+**No `--stage` on that first line, deliberately** — a staged value would sit in
+the pending set and the machine would boot on the old one, which here means
+booting into the same refusal. And *start* the machine rather than restarting it:
+mid-crash-loop, `fly machine restart` answers `failed_precondition: machine still
+active, refusing to start` even while `fly machine status` says `stopped`.
+`fly machine stop` then `fly machine start` is the pair that works.
+
 That is also how you get a shell back on a node that will not boot.
 
 **What the guard cannot see: a whole-volume rollback.** The evidence lives on the
@@ -895,8 +939,11 @@ Stated plainly so nobody mistakes silence for verification.
    A `call` writes to the connection, so a dead one fails inside the 5 s write
    timeout and gets dropped — and the same poll is the `available`/`unreachable`
    signal the registry needs anyway. **Flagged for the control-plane worker.**
-8. **Whether `fly deploy` starts a currently-stopped machine.** Undocumented.
-   A deploy also resets the rootfs. Deploy deliberately; test it once on day one.
+8. ~~**Whether `fly deploy` starts a currently-stopped machine.**~~ **ANSWERED
+   on 2026-08-25: it does not**, and neither does `fly secrets deploy`. Both exit
+   0 against a machine that stays `stopped`, so `fly machine start` is always a
+   separate command. A deploy still resets the rootfs, so deploy deliberately —
+   just not out of fear that it will wake something.
 9. **Shared-CPU throttling under real builds.** `shared-cpu-4x` gets 20 ms per
    80 ms = 25 % of one core sustained once the 500 s burst balance drains. For a
    box whose job is compiling Go this is the number most likely to make it feel

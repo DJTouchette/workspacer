@@ -21,6 +21,16 @@ than collected here; the ones worth knowing before you start are that a green
 fresh fleet, and that kernel-mode Tailscale on Fly is now settled rather than
 assumed.
 
+**Amended again the same evening, after the first full hub+node bring-up.** Four
+more, and three of them are flyctl behaving unlike its own vocabulary: a
+`--stage`d secret is applied by `fly secrets deploy` and **not** by a restart, no
+form of deploy **starts** a stopped machine, and `fly machine restart` refuses on
+a crash-looping machine that `fly machine status` calls stopped. All three are in
+Part D's preamble, "Three commands that look like a deploy, and are not". The
+fourth is B6: its node deploy command ships the **base** image, so running it
+against a node built on a project image on top of the base silently takes that
+node's toolchains away.
+
 ---
 
 ## The shape of it
@@ -108,7 +118,7 @@ every row is minted in a step below.
 |---|---|---|---|
 | **Fly deploy token** (`FLY_API_TOKEN`, B3) | Fly secret on the **hub** | **90 days**, because B3 sets `--expiry 2160h` | Loud and legible. The hub's reconcile loop flips every node to `unreachable` within 30s, with the detail *"the cloud API rejected this hub's credential (expired, revoked, or scoped to a different app)"*. Note that the hub still logs `(1 wakeable)` at boot: **wakeable means a token resolved, never that it works.** Fix: re-run B3 and `fly secrets set FLY_API_TOKEN=…` on the hub. |
 | **Tailscale auth key, hub** (B1) | Fly secret on the hub | **90 days**, the maximum B1 tells you to pick | Nothing happens, for months. Normal boots reuse `tailscaled.state` and never touch the key. It only fires on a boot that needs to re-authenticate: a wiped volume, a restored snapshot, a device deleted from the admin console. Then `tailscale up` fails and the entrypoint `die`s, and the hub, whose restart policy is `always`, crash-loops. **The credential you need in a disaster is the one that quietly went dead months ago.** Fix: mint a new key per B1, `fly secrets set TAILSCALE_AUTHKEY=…`. |
-| **Tailscale auth key, node** (B1) | Fly secret on the node | **90 days**, same as the hub's | Same latent shape, different ending: the node retries three times and is left `stopped`, which the Machines API cannot distinguish from a node you put to sleep. From a client it reads `waking` → `unreachable`. Fix is the same, minus the crash loop. |
+| **Tailscale auth key, node** (B1) | Fly secret on the node | **90 days**, same as the hub's | Same latent shape, different ending: the node retries three times and is left `stopped`, which the Machines API cannot distinguish from a node you put to sleep. From a client it reads `waking` → `unreachable`. Fix is the same, minus the crash loop — with one extra step, because the node's key is set with `--stage`: a staged secret is applied by `fly secrets deploy`, **never by a restart**. Part D. |
 | **`HUB_TOKEN` / `remote-token`**, the pairing credential (B4) | hub volume, mode `0600`, optionally also a Fly secret | **never** | n/a. It has no expiry field, so nothing forces it to rotate. Two things worth knowing rather than discovering: the boot that mints it also writes it in cleartext into `/data/logs/boot.log`, and every volume snapshot copies that log. Rotation is in Part D. |
 | **The node's bus token** (B5, provider tier) | hub `tokens.json`, and a Fly secret on the node | **never**. `authtoken.Mint` takes a scope and a label and has no expiry field | n/a. Provider tier is the reason this is acceptable: the token can register capabilities and answer calls, and it cannot call `nodes.wake` or `nodes.sleep`, so reading it off the node does not let anyone spend your money. Rotation is in Part D, and it is a two-value swap rather than a cutover. |
 
@@ -331,7 +341,10 @@ fly secrets set --app workspacer-hub --stage \
   FLY_API_TOKEN='FlyV1 fm2_…'
 ```
 
-`--stage` holds them until the first deploy instead of triggering one.
+`--stage` holds them until the first deploy instead of triggering one — until a
+**deploy**, and nothing else. Not until a restart, and not until the next boot.
+Here that is exactly what you want, because the deploy is the next command. It is
+a trap during rotation, and Part D's preamble spells out why.
 
 `HUB_TOKEN` is deliberately **not** set here. Let `bootstrap.sh` mint it on
 first boot so you can read it out of the boot log, then decide whether to move
@@ -542,6 +555,10 @@ fly secrets set --app workspacer-node --stage \
   HUB_TOKEN='<the provider token from B5>'
 ```
 
+`--stage` again holds these for the deploy immediately below. If you ever stage a
+secret and then *restart* rather than deploy, the machine boots on the old value;
+see Part D.
+
 ```sh
 fly deploy \
   --config deploy/fly/node/fly.toml \
@@ -557,6 +574,21 @@ development box. To put project toolchains on it, build a small image `FROM`
 this one and deploy that instead; [`node/BASE_IMAGE.md`](node/BASE_IMAGE.md) is
 the contract and `node/example.Dockerfile` is a buildable skeleton.
 
+**Which makes the command above the wrong one for a node that already runs a
+project image, and wrong silently.** `--dockerfile deploy/fly/node/Dockerfile`
+builds and ships the **base** — so running it against a node whose image was
+layered on top of the base ships roughly 900 MB of base in place of the image
+that was running and discards the layer you added, while flyctl reports a
+perfectly ordinary green deploy. **The symptom is a node that comes back up healthy having lost its
+toolchains**: `go`, `bun`, `python3`, and whatever else your image installed are
+simply gone, and a build that worked yesterday fails with `command not found`.
+Nothing warns you, because from Fly's side you asked for exactly this.
+
+So: **B6's command is the bootstrap for a bare base-image node.** If you maintain
+your own project image and its own `fly.toml`, redeploy from **your** project
+directory with **your** config and **your** Dockerfile. Rebuild the base first
+(`preflight.sh` does it), because your `FROM` points at it; then deploy yours.
+
 Second long upload.
 
 **`fly deploy` exiting 0 does not mean the node booted.** The first real deploy
@@ -567,7 +599,14 @@ during the tailscaled reconnect would let the platform decide a slow-booting
 node is a dead node. With no checks defined, flyctl waits only for the machine
 to reach `started`, which means the VM is running, not that anything inside it
 worked. **A green deploy and a dead node look identical from the terminal you
-deployed from.** The boot log below is the verdict; do not go on to B7 until you
+deployed from.**
+
+**And it claims even less than that: a green deploy does not prove the machine
+was started.** Neither `fly deploy` nor `fly secrets deploy` starts a machine
+that is currently stopped — both exit 0 and leave it `stopped` (Part D). What a
+green deploy establishes is that the image was uploaded and the machine config
+updated. Whether anything is running is a separate question with a separate
+command. The boot log below is the verdict; do not go on to B7 until you
 have seen `BOOT COMPLETE` in `fly logs`.
 
 ### Read the boot log
@@ -630,6 +669,12 @@ failed to boot, the entrypoint recorded
 replayed the failed boot to stdout where `fly logs` picked it up — which is
 exactly the situation it was built for, and the only reason the failure was
 diagnosable at all from outside a machine that would not stay up.
+
+It has since earned its keep a second time, on the full bring-up: the prefixes
+did the work they were designed for, and a `FATAL` line that read as this boot's
+was in fact the previous boot's, replayed. **Trust the `  ! ` and `  | ` margins
+over your reading of the log.** A line at the left margin is this boot; a line
+behind either prefix is not, however current it looks.
 
 Then confirm kernel-mode Tailscale really came up. **This is settled rather than
 open**: on 2026-08-25 machine `1857645df24448` came up with a real `tailscale0`
@@ -868,9 +913,55 @@ fly machine stop <machine_id> --app <app> -s SIGINT --timeout 60
 fly machine start <machine_id> --app <app>
 ```
 
+### Three commands that look like a deploy, and are not
+
+All three were observed on flyctl v0.4.59 during the first full hub+node
+bring-up, on 2026-08-25. Each of them prints success. None of them does the thing
+its name suggests, and between them they account for most of an evening.
+
+**1. A staged secret is applied by a DEPLOY, and a restart is not a deploy.**
+`fly secrets set --stage` puts the value in the app's *pending* set and stops
+there. `fly machine restart` then boots the machine with the **old** secret set —
+twice in a row, if you let it — while `fly secrets list` reports the new value as
+`Staged`, which reads like "present" and means "not applied". The symptom is a
+machine re-hitting the same missing-key `FATAL` on every restart with the secret
+apparently sitting right there. The command that applies staged secrets without
+a full image deploy is:
+
+```sh
+fly secrets deploy --app <app>
+```
+
+**flyctl tells you this itself, and the footer is authoritative.** `fly secrets
+set --stage` prints a line to the effect of *"Deploy with `fly secrets deploy`…"*
+under the confirmation. It is not advice about what to do next; it is a statement
+about what has and has not been applied. Read it every time.
+
+**2. Neither `fly secrets deploy` nor `fly deploy` starts a stopped machine.**
+Both print success against a machine that stays `stopped` — the right behaviour
+for a node you deliberately put to sleep, and a baffling one at 1am. Starting it
+is a separate command:
+
+```sh
+fly machine start <machine_id> --app <app>
+```
+
+This is the sharper edge of B6's warning that a green deploy does not prove the
+node booted: **it does not even prove the machine was started.** Check
+`fly machine status` after every deploy — the same habit D1 asks for below, for
+the opposite reason.
+
+**3. `fly machine restart` refuses on a crash-looping machine.** It exits
+`failed_precondition: machine still active, refusing to start`, and it says that
+**while `fly machine status` reports the machine as `stopped`** — the platform is
+still unwinding a restart-policy attempt it has not finished. That is the restart
+policy working, not a stuck machine and not something to force. Wait for it to
+settle, or drive the two steps yourself, `fly machine stop` then `fly machine
+start`, which is the same pair the `--signal` workaround above uses.
+
 ## D1. Redeploying after a code change
 
-Three traps, all of them from reading first-deploy instructions as if they were
+Four traps, all of them from reading first-deploy instructions as if they were
 repeatable.
 
 **Run `preflight.sh` first, every time.** Not because the code changed, but
@@ -891,15 +982,28 @@ fly deploy --config deploy/fly/node/fly.toml --dockerfile deploy/fly/node/Docker
 **`--local-only` is as required here as it was in B4 and B6**, and for the node
 it is still the one that fails quietly rather than loudly.
 
-**Check the machine afterwards.** Whether `fly deploy` starts a currently-stopped
-machine is not something this repo has confirmed, so assume it might:
+**The node line above deploys the base image, which may not be your node's
+image.** If this node runs a project image layered on the base, redeploying it
+with this repo's `node/Dockerfile` swaps your image for the base one and reports
+success — see B6 for the symptom. Rebuild the base here, which `preflight.sh`
+already does, and then run your own deploy from your own project directory with
+your own `fly.toml`. This repo's command updates a bare base-image node and
+nothing else.
+
+**Check the machine afterwards — and expect it down, not up.** This is settled
+now rather than assumed: **`fly deploy` does not start a stopped machine**, and
+neither does `fly secrets deploy`. Both exit 0 and leave it `stopped`.
 
 ```sh
 fly machine status <machine_id> --app workspacer-node
 ```
 
-If it came up, stop it again. This is the cheapest habit in Part D and it is the
-one that prevents a deploy on a Tuesday from billing until Friday.
+So the check runs in both directions. If the node was asleep and you wanted the
+new image *running*, `fly machine start <machine_id>` is a separate command and
+nothing will remind you it is missing, because the deploy already said success.
+If the node was asleep and you want it to stay that way, this is still the
+cheapest habit in Part D — the one that stops a deploy on a Tuesday billing
+until Friday.
 
 **Deploying the node ends whatever was running on it.** It replaces the machine.
 Time it like a restart, not like a background task.
@@ -931,10 +1035,26 @@ fly secrets set --app workspacer-node --stage TAILSCALE_AUTHKEY='tskey-auth-…'
 ```
 
 **Use `--stage` on the node.** Without it, setting the secret restarts the app,
-which wakes a sleeping machine and leaves it running and billing. `--stage` holds
-the value until the next deploy or the next boot, which is when the key is read
-anyway. A running machine will not notice either way: the key is only presented
-at re-auth.
+which wakes a sleeping machine and leaves it running and billing.
+
+**Then know what `--stage` defers to.** It holds the value until a **deploy** —
+not until the next boot, which is what this paragraph used to claim and what the
+first full bring-up disproved. A staged secret plus a `fly machine restart` gives
+you a machine booting on the *old* key, as many times as you care to restart it,
+while `fly secrets list` shows the new one as `Staged`. So the sequence for a
+node you are not otherwise redeploying is stage, apply, and only then start:
+
+```sh
+fly secrets set --app workspacer-node --stage TAILSCALE_AUTHKEY='tskey-auth-…'
+fly secrets deploy --app workspacer-node               # applies the staged set
+fly machine start <machine_id> --app workspacer-node   # only if you want it awake now
+```
+
+The middle command is the one that does not start the machine, and the last is
+the one that does. A machine already running and already authenticated notices
+none of this: the key is only presented at re-auth. That is the case `--stage`
+exists for — and it is also why the trap is easy to walk into, because the
+rotation you actually need to *apply* is the one on a node that is down.
 
 **The node's bus token** (never expires). It is a two-value swap, not a cutover,
 because the old token stays valid until you revoke it:
@@ -1204,6 +1324,17 @@ end of this section.
   `secrets unset`, `volumes snapshots list`, `volumes create
   --snapshot-id/--snapshot-retention` (which **defaults to 5 days**), `volumes
   destroy`, `apps destroy`, `ips release`.
+- **What three of those commands actually do, observed during the first full
+  hub+node bring-up later on 2026-08-25**: a `--stage`d secret is applied by
+  `fly secrets deploy` or a full `fly deploy` and **not** by `fly machine
+  restart`, which boots on the old set; **neither** `fly secrets deploy` nor
+  `fly deploy` starts a stopped machine, both exit 0 and leave it `stopped`; and
+  `fly machine restart` exits `failed_precondition: machine still active,
+  refusing to start` against a crash-looping machine that `fly machine status`
+  simultaneously calls `stopped`. Part D's preamble carries all three.
+- **The hub's TLS certificate is real.** Its first boot fetched a **dns-01**
+  Let's Encrypt certificate for the MagicDNS name, and the second boot served the
+  cached one instead of re-issuing.
 
 **Corrected by the first real deploy, on 2026-08-25:** kernel-mode Tailscale is
 settled (open question 2 below), `fly deploy` exits 0 on a node that cannot boot
@@ -1212,6 +1343,15 @@ defaults, the Machines API spells the restart policy `on-failure` exactly as
 `fly.toml` does, B5b never applies to a fresh fleet, and `node/RUNBOOK.md` §8
 checks 12 and 16 fired on real hardware.
 
+**Corrected by the first full bring-up, later the same day:** a staged secret is
+not applied by a restart, no form of deploy starts a stopped machine, `fly
+machine restart` refuses on a crash-looper (all three: Part D and B6), and B6's
+node deploy command ships the base image over any project image layered on it
+(B6, D1). **Confirmed rather than corrected**, where the text above used to
+hedge: the staged-secret footer flyctl prints is authoritative, the previous-boot
+replay caught a real misread of which boot a line came from, and the hub's dns-01
+certificate provisioned on first boot and was cached for the second.
+
 ## What a real machine still has to settle
 
 Stated plainly so nobody mistakes silence for verification.
@@ -1219,18 +1359,22 @@ Stated plainly so nobody mistakes silence for verification.
 1. **Partly answered: the node has been deployed for real.** Fly accepted
    `node/fly.toml` server-side and the machine config reads back matching what
    the file says (`{"policy":"on-failure","max_retries":3}`, stop_config
-   `{"signal":"SIGINT","timeout":"1m0s"}`). What this document does **not**
-   record is a real hub deploy, so the hub's `fly.toml`, its volume and
-   `tailscale serve` remain in the same position they were: parsed, never
-   accepted by Fly.
+   `{"signal":"SIGINT","timeout":"1m0s"}`). **And the hub has since been deployed too**, later
+   the same day: Fly accepted `hub/fly.toml`, the machine booted, and its
+   dns-01 Let's Encrypt certificate was issued on the first boot and served from
+   cache on the second. What is still unwalked on the hub is `hub/RUNBOOK.md`
+   §12, the stop/start proof — the checks that a casual "does it come up?" test
+   passes while being completely broken.
 2. ~~**Kernel-mode `tailscaled` on Fly.**~~ **SETTLED, and it works.** The
    rehearsal had to shim it, because a build host has no tun device and no
    tailnet. The first real deploy ran `ip link show tailscale0` on machine
    `1857645df24448` and got a real `tailscale0` **tun** device: kernel mode, not
    userspace netstack. The inference the design rested on was correct.
-3. **`tailscale up` with a real key.** UNPROVEN, and it is user gate 1. Whether
-   a *tagged* device in your tailnet may fetch a Let's Encrypt certificate is
-   specifically unconfirmed.
+3. ~~**`tailscale up` with a real key.**~~ **ANSWERED on the part that worried
+   us.** A *tagged* device in the tailnet may indeed fetch a Let's Encrypt
+   certificate: the hub's first boot provisioned one over **dns-01** for its
+   MagicDNS name, and its second boot served the cached certificate rather than
+   re-issuing. That was user gate 1, and it is through.
 4. **`tailscale serve`.** UNPROVEN, and it is the largest single unknown on the
    hub, which is unreachable if it fails. Also unconfirmed: whether your
    `tailscale` build wants `--bg --https=443 <target>` or the older
@@ -1247,8 +1391,11 @@ Stated plainly so nobody mistakes silence for verification.
    fails silently as zeroed usage. Part C.
 9. **Whether a stopped Fly machine severs its TCP connection cleanly.** The
    measurement described in Part C.
-10. **Whether `fly deploy` starts a currently-stopped machine.** Undocumented. A
-    deploy also resets the rootfs. Deploy deliberately; test it once on day one.
+10. ~~**Whether `fly deploy` starts a currently-stopped machine.**~~
+    **ANSWERED: it does not**, and neither does `fly secrets deploy`. Both exit 0
+    against a machine that stays `stopped`; `fly machine start` is a separate
+    command. A deploy still resets the rootfs, so deploy deliberately — just not
+    out of fear that it will wake something.
 11. **Whether `bwrap` works in a Firecracker guest.** Needs unprivileged user
     namespaces. Fails closed, so a wrong answer surfaces as a clear refusal the
     first time someone installs a plugin.

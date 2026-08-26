@@ -217,7 +217,12 @@ fly secrets set --app workspacer-hub --stage \
   FLY_API_TOKEN='FlyV1 fm2_…'
 ```
 
-`--stage` holds them until the first deploy rather than triggering one.
+`--stage` holds them until the first deploy rather than triggering one — **until
+a deploy specifically.** A `fly machine restart` boots on the *old* secret set
+while `fly secrets list` shows the new value as `Staged`; the command that
+applies a staged value without a full image deploy is `fly secrets deploy --app
+workspacer-hub`. Here §7's deploy is the next step, so it never bites. It bites
+during rotation, and `../RUNBOOK.md` Part D says so at length.
 
 **`HUB_TOKEN` is optional and you have a choice to make.** If you do not set it,
 `bootstrap.sh` mints one on first boot and prints it in the boot log. If you set
@@ -301,8 +306,16 @@ node's first real deploy: flyctl printed `update finished: success` and exited 0
 for a machine whose entrypoint then died. The node has no
 `[[http_service.checks]]` and this machine has no `[http_service]` block at all,
 so in both cases flyctl waits only for the machine to reach `started` — the VM
-is running, and nothing more is claimed. Read the boot log below before you
-believe the deploy.
+is running, and nothing more is claimed.
+
+**It does not even prove the machine was started.** Neither `fly deploy` nor
+`fly secrets deploy` starts a machine that is currently stopped: both exit 0 and
+leave it `stopped`, so `fly machine start <machine_id>` is a separate command
+nothing will remind you about. On this always-on machine that mostly means
+running `fly machine status` after a deploy; on the node it is the difference
+between a fleet and a `fly.toml`.
+
+Read the boot log below before you believe the deploy.
 
 ### Read the boot log
 
@@ -550,6 +563,13 @@ restarts. If it is unreachable, `fly machine stop`, then `fly machine start` aft
 restoring — or set `WKS_ALLOW_STATE_LOSS=1` as a secret to get a shell, and unset
 it immediately after.)*
 
+**Expect `fly machine restart` to refuse while the loop is running.** It exits
+`failed_precondition: machine still active, refusing to start`, and it says that
+even when `fly machine status` reports the machine as `stopped` — the platform is
+still unwinding a restart-policy attempt. Observed on flyctl v0.4.59. That is the
+`always` policy working rather than a stuck machine: wait for it to settle, or
+use the `stop` then `start` pair above, which does not have the precondition.
+
 **Checks 3, 4 and the refusal are the ones that matter**, and they are the ones a
 casual "does it come up?" test passes while being completely broken. A hub that
 re-minted its token comes up healthy and refuses everything; a hub that regenerated
@@ -648,16 +668,22 @@ Unusually for `deploy/fly/`, the first list is not empty.
 
 ### NOT verified, because it needs a real machine
 
-1. **Nothing has been deployed.** No machine, no Fly volume, no server-side
-   `fly.toml` validation. The TOML parses and every key was checked against the
-   node's working file, which is not the same as Fly accepting it.
-2. **`tailscale serve` has never run here.** It cannot: it needs a real tailnet
-   and a real certificate. This is the largest single unknown, and the hub is
+1. ~~**Nothing has been deployed.**~~ **This hub has now been deployed for
+   real**, on 2026-08-25: Fly accepted `fly.toml` server-side, the machine took
+   the first-boot path, and a second boot followed it. What is **not** recorded
+   here is §12 — the stop/start proof — so the checks that a casual "does it come
+   up?" test passes while being completely broken are still unwalked.
+2. **`tailscale serve` was never exercised by the dry run**, and this document
+   does not record the probe's verdict on a real one. The dry run could not: it
+   needs a real tailnet and a real certificate, and a build host has neither.
+   This is the largest single unknown, and the hub is
    **unreachable if it fails** — which is why `entrypoint.sh` treats a serve
-   failure as fatal and names the three likely causes. Specifically unconfirmed:
-   whether a **tagged** device in your tailnet may fetch a Let's Encrypt
-   certificate, and whether your `tailscale` build wants `--bg --https=443
-   <target>` or the older `serve https:443 / <target>` syntax.
+   failure as fatal and names the three likely causes. **The certificate half of
+   this is now answered**: a *tagged* device may fetch a Let's Encrypt
+   certificate, and this hub's first boot provisioned one over **dns-01** for its
+   MagicDNS name while the second boot served it from cache. Still unconfirmed on
+   your machine: whether your `tailscale` build wants `--bg --https=443 <target>`
+   or the older `serve https:443 / <target>` syntax.
 3. ~~**Kernel-mode tailscaled on Fly**~~ — inherited from the node's design, and
    **settled on 2026-08-25**: the node's first real deploy came up on machine
    `1857645df24448` with a real `tailscale0` tun device, kernel mode rather than

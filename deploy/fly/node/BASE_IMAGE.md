@@ -240,6 +240,15 @@ docker build -f Dockerfile -t my-node:dev --build-arg WKS_BASE=workspacer-node-b
 The project build needs **no repo context at all** — it only runs `apt-get` and
 copies from public images — so its context can be its own directory.
 
+**And deploy it from there too, every time.** Once a node runs a project image,
+`RUNBOOK.md` §6's deploy command — the one with
+`--dockerfile deploy/fly/node/Dockerfile` — is no longer that node's deploy
+command: it builds the **base** and ships it, replacing your layer with roughly
+900 MB of base while flyctl reports an ordinary green deploy. **The symptom is a
+node that comes back up healthy having lost its toolchains**, with `command not
+found` for tools that worked yesterday. Two directories, two roles: this repo
+builds and tags the base, and your project directory deploys the node.
+
 ---
 
 ## Identity and tagging
