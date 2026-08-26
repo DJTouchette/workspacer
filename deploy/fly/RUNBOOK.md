@@ -162,10 +162,29 @@ browser tab, not a command.
 | hub | `shared-cpu-1x` / 1 GB, always on | about $6/month (the brief's figure, not one this rehearsal verified) |
 | hub volume | 1 GB | about $0.15/month |
 | node | `shared-cpu-4x` / 8 GB, asleep by default | $0.0617/hr while awake, so about $9.26 at 150 active hours |
-| node volume | 30 GB | $4.50/month, billed **while the machine is stopped** |
+| node volume | 10 GB | $1.50/month, billed **while the machine is stopped** |
 
 Stopped machines are not free: the volume bills continuously and there is a
 small rootfs charge on top.
+
+**The node volume is sized at 10 GB, not the container image size.** The node's
+container image (about 900 MB base, up to ~2.3 GB with project toolchains
+layered on) unpacks to the machine's own ephemeral rootfs and never touches
+this volume. What actually lands on `/data` is `$HOME` (dotfiles, SSH keys,
+Claude OAuth, a few MB total), the Go/bundle/bun/npm toolchain caches (empty at
+first boot, grow with use), and whatever repos and worktrees the operator
+clones under `/data/repos`. Nothing in this repo's rehearsal or runbooks
+projects a `/data` footprint anywhere near 10 GB. Volumes never shrink, so if a
+particular fleet's repos and caches genuinely outgrow it, grow the volume
+later rather than guessing high now.
+
+**Set a spend alert before you deploy anything.** There is no way to do this
+from `fly.toml` or the CLI: open the Fly dashboard for the org you noted above,
+go to its billing settings, and set a spend alert threshold. This is an
+account-level setting, so only you can do it, and it is easy to skip because
+nothing above forces it. It is a five-minute, one-time step and it is the only
+guardrail against a runaway machine or a mistaken deploy costing more than
+expected before anyone notices.
 
 ## B1. GATE 2: mint two Tailscale auth keys
 

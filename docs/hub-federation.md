@@ -302,6 +302,21 @@ capabilities that can't act on it are hidden rather than failing on click.
   *control*, not filesystems. Phase 5 draws that line deliberately; erasing it
   is a much larger project with a much weaker case.
 
+## Known limitation: a peer's remote nodes are invisible
+
+Federation only forwards two event prefixes, `agent.*` and `workflow.*`
+(`ForwardTopics` in `services/hub/internal/federation/federation.go`), and no
+client issues a qualified `hub:<peer>/nodes.list` call to a peer hub. A remote
+worker node, such as a Fly node registered in a hub's `nodes.json`, is tracked
+by the hub that owns it, and its state never rides those two event prefixes,
+so it never appears in a federated fleet view. This is silent: there is no
+error and no tombstone, the node simply is not there. If you need to see or
+wake a specific hub's nodes, do not rely on a federation link for it. Connect
+a client to that hub directly instead: on desktop, use remote-client mode
+(the "Connect to Server…" entry in the Remote Share dialog) to point the app
+at that hub, or open that hub's own `/app` URL from a browser. Either way you
+are now looking at that one hub on its own rather than the merged fleet, but
+its nodes are visible again.
 
 ## Implementation notes (2026-08-15, post-build)
 

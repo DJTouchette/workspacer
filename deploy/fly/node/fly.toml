@@ -120,12 +120,22 @@ kill_timeout = 60
 [[mounts]]
   source        = "wks_data"
   destination   = "/data"
-  initial_size  = "30gb"
-  # Volumes grow but NEVER shrink, so 30GB errs high on purpose. They also bill
-  # while the machine is stopped ($0.15/GB/mo = $4.50), are pinned to one
-  # physical host in one region, attach to exactly one machine, and are not
-  # reschedulable. Everything irreplaceable in this design is on this one
-  # volume: Claude OAuth, SSH keys, working checkouts, the tailnet identity.
+  initial_size  = "10gb"
+  # Volumes grow but NEVER shrink, so this number is deliberate, not a
+  # placeholder. Nothing that lands on /data approaches 10GB: the node's
+  # container image (about 900MB, or up to ~2.3GB for a downstream image with
+  # project toolchains) is unpacked to the machine's own ephemeral rootfs, not
+  # to this volume, so it never counts against this size. What actually lands
+  # here is $HOME (dotfiles, SSH keys, Claude OAuth, a few MB total), the Go/bundle/
+  # bun/npm toolchain caches (start empty, grow with use), and whatever repos
+  # and worktrees the operator clones under /data/repos. See
+  # deploy/fly/RUNBOOK.md for the sizing rationale.
+  #
+  # Volumes bill while the machine is stopped ($0.15/GB/mo = $1.50 at this
+  # size), are pinned to one physical host in one region, attach to exactly
+  # one machine, and are not reschedulable. Everything irreplaceable in this
+  # design is on this one volume: Claude OAuth, SSH keys, working checkouts,
+  # the tailnet identity.
   # Set a snapshot retention deliberately (`fly volumes update --snapshot-retention`).
 
 [[vm]]

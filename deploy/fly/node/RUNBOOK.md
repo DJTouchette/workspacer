@@ -218,10 +218,16 @@ development box. To put project toolchains on it, build a small image `FROM` thi
 one and deploy that instead. [BASE_IMAGE.md](BASE_IMAGE.md) is the contract, and
 `example.Dockerfile` is a buildable skeleton.
 
-The `[[mounts]] initial_size = "30gb"` creates `wks_data` in `ord` on first
-deploy. **Volumes never shrink**, so 30 GB errs high on purpose; they also bill
-while the machine is stopped ($0.15/GB/mo = $4.50), are pinned to one physical
-host, attach to exactly one machine, and are not reschedulable.
+The `[[mounts]] initial_size = "10gb"` creates `wks_data` in `ord` on first
+deploy. **Volumes never shrink**, but 10 GB is not a guess: the container image
+(about 900 MB base, up to ~2.3 GB for a downstream image with project
+toolchains) unpacks to the machine's ephemeral rootfs, not to this volume, so
+it never counts against the 10 GB. What lands on the volume is `$HOME`
+(dotfiles, SSH keys, Claude OAuth, a few MB total), the toolchain caches (empty at
+first boot, grow with use), and whatever repos and worktrees the operator
+clones under `/data/repos`. They also bill while the machine is stopped
+($0.15/GB/mo = $1.50 at this size), are pinned to one physical host, attach to
+exactly one machine, and are not reschedulable.
 
 Set snapshot retention deliberately rather than accepting the default —
 everything irreplaceable in this design lives on this one volume:
@@ -627,7 +633,7 @@ intermittent failure:
 
 The ownership split matters for wake latency. A Fly volume mounts root-owned and
 every state file this stack writes is 0600 or 0700, so a uid mismatch is fatal
-rather than degraded — but `chown -R` across a 30 GB volume with a populated Go
+rather than degraded — but `chown -R` across a 10 GB volume with a populated Go
 module cache is minutes against a ~15 s wake budget. The deep pass runs on first
 boot, and again whenever the marker is missing or stale (a restored volume, a
 rebuilt image with a different uid), and is skipped otherwise.
@@ -798,7 +804,7 @@ Stated plainly so nobody mistakes silence for verification.
 
 Costs, current as of 2026-08-24: `shared-cpu-4x`/8 GB is **$0.0617/hr,
 $44.44/mo** always-on (the brief's $0.059/$43 was ~4 % low). At 150 active
-hours that is $9.26, plus $4.50 for the volume, plus a small rootfs charge that
+hours that is $9.26, plus $1.50 for the volume, plus a small rootfs charge that
 accrues **while the machine is stopped** — stopped machines are not free.
 
 ---
