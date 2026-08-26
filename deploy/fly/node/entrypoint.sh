@@ -208,8 +208,8 @@ log "  app=${FLY_APP_NAME:-<none>} machine=${FLY_MACHINE_ID:-<none>} region=${FL
 # CONSUME the record, do not merely read it.
 # --------------------------------------------------------------------------
 # last-exit.json is written by a TRAP (see record_exit below), and the exits that
-# matter most run no trap. A host eviction, an OOM kill of PID 1, a plain SIGKILL
-#, all of them end the machine with nothing written. The file then still holds
+# matter most run no trap. A host eviction, an OOM kill of PID 1, a plain
+# SIGKILL: all of them end the machine with nothing written. The file then holds
 # the record from an EARLIER run, and there is no way to tell:
 #
 #   The entrypoint writes a bootId into it. cmd/brain/lastexit.go's exitRecord

@@ -636,13 +636,14 @@ rebuilt image with a different uid), and is skipped otherwise.
 
 Everything irreplaceable in this design is on this one volume, and every one of
 those files is read by code shaped "read it; if it is not there, carry on". That
-is right the first time and wrong every time after. Lose
-`~/.claude/.credentials.json` to a snapshot restored from before the login and
-this node boots green, registers 67 capabilities, reports `available`, and every
-session dispatched to it parks on a login prompt no headless machine can answer.
-Nothing errors. Nothing logs. That is the failure this guard exists to end, and
-it is the same mechanism the hub uses, deliberately, so the two machines can be
-debugged the same way.
+is right the first time and wrong every time after. Take
+`~/.claude/.credentials.json` off this volume by any means, a stray `rm`, a
+restore that brought back part of the tree, a truncation, and this node boots
+green, registers 67 capabilities, reports `available`, and every session
+dispatched to it parks on a login prompt no headless machine can answer. Nothing
+errors. Nothing logs. That is the failure this guard exists to end, and it is the
+same mechanism the hub uses, deliberately, so the two machines can be debugged
+the same way.
 
 The evidence is a marker file under `/data/state/seen/`, one per guarded file,
 written the first time that file is seen. "This has existed on this volume
@@ -675,6 +676,21 @@ fly secrets unset WKS_ALLOW_STATE_LOSS --app workspacer-node
 ```
 
 That is also how you get a shell back on a node that will not boot.
+
+**What the guard cannot see: a whole-volume rollback.** The evidence lives on the
+volume it is evidence about. Restore a snapshot taken before §7's interactive
+logins and `/data/state/seen/` comes back as it was then, empty, so a credential
+that really is gone reads as a first run and the guard says nothing. No on-volume
+bookkeeping can close that; the evidence would have to outlive the volume. The
+guard covers every case that removes a file while leaving the volume otherwise
+intact, which is every other way this has gone wrong.
+
+So **after any volume restore, run check 14 by hand before trusting the node.**
+`ls /data/state/seen` on a node that has been through §7 shows at least
+`claude_.credentials.json`, `claude.json`, `ssh_id_ed25519` and
+`tailscale_tailscaled.state`. An empty or short list after a restore means the
+snapshot predates the logins: redo §7 rather than waiting for a symptom, because
+the symptom is a session that hangs with no error anywhere.
 
 ---
 

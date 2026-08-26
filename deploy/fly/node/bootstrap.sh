@@ -37,16 +37,39 @@
 # The always-on hub holds config and a pairing credential. This machine holds
 # the Claude OAuth session, the SSH key, ~/.claude.json's folder-trust map and
 # the tailnet identity, and every one of them is loaded by code shaped "read it;
-# if it is not there, carry on". Lose ~/.claude/.credentials.json to a snapshot
-# restored from before the login and this node boots green, registers its 67
-# capabilities, reports `available`, and every session dispatched to it parks on
-# a login prompt no headless machine can answer. Nothing errors. Nothing logs.
+# if it is not there, carry on". Take ~/.claude/.credentials.json off this volume
+# by any means, a stray rm, a botched restore that brought back some of the tree,
+# a truncation, and this node boots green, registers its 67 capabilities, reports
+# `available`, and every session dispatched to it parks on a login prompt no
+# headless machine can answer. Nothing errors. Nothing logs.
 #
 # So the hub's guard is ported here rather than reinvented: a per-file marker
 # under $WKS_DATA/state/seen records the FACT that a file has existed on this
 # volume before, and absence is only a problem once that marker exists. A first
 # boot, where none of these files exists yet and the operator has not done the
 # interactive logins, stays quiet. See bs_guard.
+#
+# WHAT THIS DOES NOT CATCH, said here rather than discovered later, because the
+# hub's bootstrap states its own version of this gap and these two must be read
+# the same way:
+#
+#   *** A WHOLE-VOLUME ROLLBACK IS INVISIBLE TO THIS GUARD. ***
+#
+# The evidence lives ON the volume it is evidence about. Restore a snapshot taken
+# before the interactive logins and $SEEN comes back exactly as it was then, with
+# no markers in it, so a genuinely lost credential reads as a first run and this
+# file says nothing. That is the failure mode described above, arriving by the
+# one route the marker cannot see, and no amount of on-volume bookkeeping closes
+# it: the evidence would have to outlive the volume.
+#
+# What the marker DOES catch is everything that removes a file while leaving the
+# volume otherwise intact, which is every other way this has gone wrong: a stray
+# rm, a partial or interrupted restore, a truncation to zero bytes (bs_present
+# checks size, not existence), a wipe of one subtree. Those are the common cases.
+# The rollback is the rare one, and the answer to it is the snapshot-retention
+# discipline in RUNBOOK.md plus §8 check 14, which is there so that an operator
+# who has just restored a volume looks at `ls /data/state/seen` and sees an empty
+# directory on a node that should have four markers.
 #
 # ---------------------------------------------------------------------------
 # CONTRACT

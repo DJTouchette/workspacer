@@ -290,7 +290,7 @@ Want, in order:
 entrypoint: BOOT <id>
 bootstrap: FIRST BOOT on this volume — created 12 directories, layout v1.
 bootstrap: state guard: checking the create-once files
-bootstrap:   remote-token: absent, and nothing on this volume says it ever existed — first run.
+bootstrap:   remote-token: absent, and nothing on this volume says it ever existed. First run.
   … one line per create-once file …
 bootstrap: state guard: no losses detected
 bootstrap: FIRST RUN: minted a new pairing credential at /data/home/.config/workspacer/remote-token
