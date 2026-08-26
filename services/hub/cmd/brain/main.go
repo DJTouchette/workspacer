@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/parentwatch"
+	"github.com/djtouchette/workspacer-hub/internal/redact"
 )
 
 func main() {
@@ -94,7 +95,7 @@ func main() {
 	}
 
 	log.Printf("brain: scope=%s, provider for %d capabilities → hub %s, claudemon %s",
-		*scope, len(methods), *hubURL, *claudemonURL)
+		*scope, len(methods), redact.URL(*hubURL), *claudemonURL)
 	bus.run(ctx)
 	log.Printf("brain: shutting down")
 }

@@ -44,6 +44,7 @@ import (
 	"github.com/coder/websocket/wsjson"
 	"github.com/djtouchette/workspacer-hub/internal/event"
 	"github.com/djtouchette/workspacer-hub/internal/plugin"
+	"github.com/djtouchette/workspacer-hub/internal/redact"
 )
 
 const pluginUsage = `workspacer plugin — plugin development tools
@@ -365,7 +366,8 @@ func watchBusEvents(ctx context.Context, hubBase, token string, logw io.Writer) 
 	}
 	c, _, err := websocket.Dial(ctx, wsURL, nil)
 	if err != nil {
-		fmt.Fprintf(logw, "[plugin-dev] bus event stream unavailable (%v) — relying on [hub] logs for lifecycle\n", err)
+		// wsURL carries ?token=; the dial error quotes it back in full.
+		fmt.Fprintf(logw, "[plugin-dev] bus event stream unavailable (%v) — relying on [hub] logs for lifecycle\n", redact.Error(err))
 		return
 	}
 	defer c.CloseNow()

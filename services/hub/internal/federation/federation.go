@@ -36,6 +36,7 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 	"github.com/djtouchette/workspacer-hub/internal/busclient"
 	"github.com/djtouchette/workspacer-hub/internal/event"
+	"github.com/djtouchette/workspacer-hub/internal/redact"
 )
 
 // ForwardTopics is the curated set of peer topics republished locally: the
@@ -234,12 +235,12 @@ func (l *link) run(ctx context.Context) {
 			continue
 		}
 		if up {
-			log.Printf("federation: peer %q connected (%s)", l.peer.Name, l.peer.URL)
+			log.Printf("federation: peer %q connected (%s)", l.peer.Name, redact.URL(l.peer.URL))
 			l.pub.Publish(event.New("hub.peer.connected", "federation", map[string]any{
 				"peer": l.peer.Name,
 			}))
 		} else {
-			log.Printf("federation: peer %q disconnected (%s)", l.peer.Name, l.peer.URL)
+			log.Printf("federation: peer %q disconnected (%s)", l.peer.Name, redact.URL(l.peer.URL))
 			l.pub.Publish(event.New("hub.peer.disconnected", "federation", map[string]any{
 				"peer":     l.peer.Name,
 				"lastSeen": lastSeen.UTC().Format(time.RFC3339),

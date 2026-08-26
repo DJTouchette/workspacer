@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/djtouchette/workspacer-hub/internal/redact"
 )
 
 // frame mirrors the hub's wire format (internal/bus/bus.go). We keep only the
@@ -117,7 +119,11 @@ func (b *busClient) run(ctx context.Context) {
 			return
 		}
 		if err := b.session(ctx); err != nil && ctx.Err() == nil {
-			log.Printf("brain: bus disconnected (%v); reconnecting in %s", err, backoff)
+			// redact.Error, not err: a dial failure embeds the request URL, and
+			// dialURL() puts the hub token in it as ?token=. Without this the
+			// brain published its own credential once per reconnect attempt —
+			// dozens of lines into a Fly node's log pipeline during one outage.
+			log.Printf("brain: bus disconnected (%v); reconnecting in %s", redact.Error(err), backoff)
 		}
 		select {
 		case <-ctx.Done():
@@ -136,7 +142,9 @@ func (b *busClient) session(ctx context.Context) error {
 	defer cancel()
 	conn, _, err := websocket.Dial(dialCtx, b.dialURL(), nil)
 	if err != nil {
-		return err
+		// Scrubbed HERE, at the only place a tokened URL can enter an error, so
+		// no future caller of session() has to remember to redact.
+		return redact.Error(err)
 	}
 	conn.SetReadLimit(8 << 20) // transcripts/conversations can be large
 

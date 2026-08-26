@@ -35,6 +35,7 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/busclient"
 	"github.com/djtouchette/workspacer-hub/internal/event"
 	"github.com/djtouchette/workspacer-hub/internal/parentwatch"
+	"github.com/djtouchette/workspacer-hub/internal/redact"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -98,7 +99,7 @@ func main() {
 	httpSrv := &http.Server{Addr: *addr, Handler: servedHandler(*addr, mux)}
 	go func() {
 		log.Printf("mcp facade listening on %s (streamable: http://%s/mcp, sse: http://%s/sse)", *addr, *addr, *addr)
-		log.Printf("bridging to hub %s", *hubURL)
+		log.Printf("bridging to hub %s", redact.URL(*hubURL))
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("mcp: %v", err)
 		}
