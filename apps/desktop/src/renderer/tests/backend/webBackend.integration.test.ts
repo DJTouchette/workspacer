@@ -292,4 +292,84 @@ describe('web backend bus integration', () => {
     expect(call('sessions.detachTerminal').at(-1)?.params).toEqual({ sessionId: 's1' });
     vi.useRealTimers();
   });
+  /**
+   * A headless node publishes a session row when the session's STATE changes,
+   * and for a stream-transport session claudemon only broadcasts one on a mode
+   * transition — a reply growing is not one. Measured against a local
+   * `workspacer serve`: a 22-second turn produced 33 conversation deltas inside
+   * the daemon and exactly two bus snapshots (`responding`, then `input`), so a
+   * purely edge-triggered client rendered ONCE, a median 11.3s behind. These
+   * two tests pin the clock that fixes it, and pin that it costs nothing while
+   * nothing is streaming.
+   */
+  describe('conversation cadence for a headless (conversation-less) session', () => {
+    /** Answer the two calls the transcript sync makes, keeping `calls` honest. */
+    function withHeadlessSession(ambientState: string) {
+      const c = client();
+      const inner = c.call.bind(c);
+      c.call = (method: string, params: unknown = {}) => {
+        void inner(method, params);
+        if (method === 'sessions.snapshot')
+          return Promise.resolve({ sessionId: 's1', id: 's1', status: 'active', ambientState });
+        if (method === 'sessions.conversation')
+          return Promise.resolve({ seq: 1, first_seq: 1, items: [] });
+        return Promise.resolve({});
+      };
+      return c;
+    }
+
+    it('ticks a streaming session on its own 500ms clock and stops the moment it goes idle', async () => {
+      vi.useFakeTimers();
+      const api = createWebBackend('token', 'ws://host.test/bus');
+      const c = withHeadlessSession('streaming');
+      // The renderer always has this subscribed; it is what routes agent.snapshot.
+      const unsubscribe = api.onClaudeSessionUpdate(vi.fn());
+
+      // A pane opening the session primes it once — that is today's behaviour.
+      await api.getClaudeSession('s1');
+      expect(call('sessions.conversation')).toHaveLength(1);
+
+      // …and from there the pane no longer waits on the node to say something.
+      await vi.advanceTimersByTimeAsync(500);
+      expect(call('sessions.conversation')).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(call('sessions.conversation')).toHaveLength(5);
+
+      // The turn ends: the state tick still triggers one fetch (the edge is the
+      // fastest signal there is), and then the clock stops dead.
+      c.emit('agent.snapshot', {
+        sessionId: 's1',
+        id: 's1',
+        status: 'active',
+        ambientState: 'idle',
+        sparse: true,
+      });
+      const settled = call('sessions.conversation').length;
+      expect(settled).toBe(6);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(call('sessions.conversation')).toHaveLength(settled);
+      unsubscribe();
+      vi.useRealTimers();
+    });
+
+    it('runs no clock for a streaming session no pane has opened', async () => {
+      vi.useFakeTimers();
+      const api = createWebBackend('token', 'ws://host.test/bus');
+      const c = withHeadlessSession('streaming');
+      const unsubscribe = api.onClaudeSessionUpdate(vi.fn());
+
+      // A fleet of forty agents needs status on its cards, not forty transcripts.
+      c.emit('agent.snapshot', {
+        sessionId: 's1',
+        id: 's1',
+        status: 'active',
+        ambientState: 'streaming',
+        sparse: true,
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(call('sessions.conversation')).toHaveLength(0);
+      unsubscribe();
+      vi.useRealTimers();
+    });
+  });
 });

@@ -451,6 +451,77 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
       for (const cb of sessionUpdateCbs) cb(sessionId, merged);
     },
   );
+  // ── Streaming cadence ──────────────────────────────────────────────────
+  // Fetching on every `agent.snapshot` is the right TRIGGER and, on its own,
+  // far too coarse a CLOCK. A headless node publishes a session row when the
+  // session's STATE changes, and for a managed (stream-transport) session
+  // claudemon only broadcasts a SessionUpdate on a mode transition — reply
+  // text growing is not one. Measured against a local `workspacer serve`: a
+  // 22-second turn produced 33 conversation deltas inside claudemon and
+  // exactly TWO bus snapshots, one at `responding` (7ms after the send) and
+  // one at `input`. The client therefore rendered ONCE, at the end: median
+  // 11.3s behind the daemon, worst case 21.8s — the whole turn. Short replies
+  // land fast and long ones look dead, which is exactly the "some are fast,
+  // some are slow" the report described.
+  //
+  // So while a watched session is actually streaming, tick on our own clock.
+  // Frequency was the whole problem: the `?since` anchor was already carrying
+  // one item per fetch, not the transcript. Same turn, on the clock below:
+  // median 222ms behind the daemon, worst case 499ms, 30 renders instead of 1.
+  //
+  // What it costs, measured rather than assumed: 46 fetches / 62 KB where the
+  // edge trigger alone did 5 / 4.7 KB, for a 2.6 KB reply. The amplification is
+  // structural, not a bug in the anchor — claudemon coalesces a streaming reply
+  // into ONE item that grows in place, and `/conversation` answers with items,
+  // so each fetch re-sends the whole in-progress message. It is therefore
+  // quadratic in reply length, and the only way off that curve is a real delta
+  // feed on the bus (claudemon HAS one, `/conversation/stream`, which the
+  // desktop and the TUI consume; the brain does not forward it). That is a new
+  // plane to design — subscribe/unsubscribe per open pane, or the sparse-row
+  // bandwidth rationale goes out the window — and this is bounded meanwhile:
+  // only sessions a pane opened, only while a turn is actually running.
+  //
+  // Idle sessions get NO timer: the mode transition that starts a turn is
+  // published within single-digit milliseconds (7ms, measured, after the send
+  // acks), so the edge trigger already covers "a turn began", and ticking on
+  // idle panes would re-download that last large item forever for nothing.
+  const STREAMING_POLL_MS = 500;
+  const pollTimers = new Map<string, { timer: ReturnType<typeof setTimeout>; every: number }>();
+  const stopPolling = (sessionId: string): void => {
+    const cur = pollTimers.get(sessionId);
+    if (!cur) return;
+    clearTimeout(cur.timer);
+    pollTimers.delete(sessionId);
+  };
+  /**
+   * Bring the session's own poll clock in line with the snapshot we just saw.
+   * Idempotent: a snapshot that doesn't change the pace leaves the pending
+   * timer alone, so a burst of state ticks can't restart (and so defer) it.
+   */
+  const pacePolling = (sessionId: string): void => {
+    const snap = lastSnaps.get(sessionId);
+    // A session no pane opened, one that ended, or one whose row carries its
+    // own transcript (a rich desktop publisher is on the bus for it) has
+    // nothing for this clock to do.
+    const wanted =
+      watchedSessions.has(sessionId) && snap && !Array.isArray(snap.conversation)
+        ? snap.ambientState === 'streaming' || snap.ambientState === 'thinking'
+          ? STREAMING_POLL_MS
+          : 0
+        : 0;
+    if (!wanted) return stopPolling(sessionId);
+    const cur = pollTimers.get(sessionId);
+    if (cur?.every === wanted) return;
+    if (cur) clearTimeout(cur.timer);
+    const timer = setTimeout(() => {
+      pollTimers.delete(sessionId);
+      if (!watchedSessions.has(sessionId)) return;
+      void conversations.poke(sessionId);
+      pacePolling(sessionId);
+    }, wanted);
+    pollTimers.set(sessionId, { timer, every: wanted });
+  };
+
   /** Remember a snapshot on its way to the renderer and overlay the folded
    *  transcript when the row brought none. */
   const withConversation = (snap: ClaudeSessionSnapshot): ClaudeSessionSnapshot => {
@@ -464,6 +535,9 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
       watchedSessions.delete(snap.sessionId);
       conversations.forget(snap.sessionId);
       lastSnaps.delete(snap.sessionId);
+      stopPolling(snap.sessionId);
+    } else {
+      pacePolling(snap.sessionId);
     }
     return merged;
   };
@@ -824,6 +898,9 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
       // and dropped them on the floor, so a peer's session rendered as empty a
       // chat as a headless local one.
       watchedSessions.add(sessionId);
+      // A peer's session that is mid-turn when the pane opens gets its own
+      // clock straight away, rather than waiting for the next stamped push.
+      pacePolling(sessionId);
       return conversations
         .poke(sessionId)
         .then((res: ConversationSnapWire | null) =>
