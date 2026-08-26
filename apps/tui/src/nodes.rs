@@ -718,3 +718,216 @@ mod tests {
         assert!(NodeRegistry::default().summary().is_empty());
     }
 }
+
+// ── the cross-language contract ─────────────────────────────────────────────
+//
+// A SEPARATE module, appended at the end of the file on purpose: this client's
+// state vocabulary is under active edit, and a self-contained block is the
+// cheapest thing to merge.
+//
+// `contracts/node-view-cases.json` is the corpus. The other loaders are
+// `services/hub/internal/nodes/view_test.go` (the side that WRITES the payload)
+// and `apps/desktop/src/renderer/tests/remoteNodes.test.ts`.
+//
+// THE POINT OF THE `null` COLUMN. This client is BEHIND the contract: the sleep
+// path added `stopping` to the hub, the desktop and /m and not here, so
+// `from_wire` still coerces it to `Unreachable` — the warning marker, the
+// "can't reach" chip, and a `w  wake` offer for a machine in the middle of
+// stopping. The fixture records that as a null tui* triple, and the tests below
+// hold this client to the DOCUMENTED FALLBACK for exactly those states rather
+// than to a presentation it does not have. So teaching this client a state is a
+// failing test until the fixture is filled in, which is the whole mechanism.
+#[cfg(test)]
+mod node_view_contract {
+    use super::*;
+
+    const FIXTURE: &str = include_str!("../../../contracts/node-view-cases.json");
+
+    fn fixture() -> Value {
+        serde_json::from_str(FIXTURE).expect("contracts/node-view-cases.json does not parse")
+    }
+
+    fn rows<'a>(v: &'a Value, block: &[&str]) -> &'a Vec<Value> {
+        let mut cur = v;
+        for k in block {
+            cur = cur.get(k).unwrap_or_else(|| {
+                panic!("contracts/node-view-cases.json has no {k:?} — a block was renamed and this test is asserting nothing")
+            });
+        }
+        cur.as_array().expect("block is not an array")
+    }
+
+    fn str_of<'a>(row: &'a Value, key: &str) -> &'a str {
+        row.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("case is missing the string field {key:?}"))
+    }
+
+    /// Has this client been taught the state? The fixture's tui* column is the
+    /// answer, so nothing here re-declares the vocabulary a third time.
+    fn taught(row: &Value) -> bool {
+        !row.get("tuiLabel").map(Value::is_null).unwrap_or(true)
+    }
+
+    fn node(state: &str) -> NodeView {
+        NodeView {
+            id: "ord".into(),
+            label: "ord".into(),
+            state: NodeState::from_wire(state),
+            detail: None,
+            wakeable: true,
+            wake_failures: 0,
+            last_exit: None,
+        }
+    }
+
+    #[test]
+    fn node_view_contract_states() {
+        let fx = fixture();
+        let taught_states: std::collections::HashSet<String> = rows(&fx, &["presentation", "cases"])
+            .iter()
+            .filter(|r| taught(r))
+            .map(|r| str_of(r, "state").to_string())
+            .collect();
+
+        // A state string this client does not recognise becomes `unreachable`
+        // and is never rendered raw: a state it cannot presume to understand is
+        // one it does not know how to get a working node out of.
+        for s in fx["unknownStates"].as_array().expect("unknownStates") {
+            let s = s.as_str().expect("unknownStates entry is not a string");
+            assert_eq!(
+                NodeState::from_wire(s),
+                NodeState::Unreachable,
+                "the contract says {s:?} must coerce to `unreachable`"
+            );
+        }
+
+        let mut checked = 0;
+        for row in rows(&fx, &["states"]) {
+            let state = str_of(row, "state");
+            if !taught_states.contains(state) {
+                continue; // the declared gap; node_view_contract_presentation owns it
+            }
+            checked += 1;
+            let offered = row["wakeOffered"].as_bool().expect("wakeOffered");
+            // THE MONEY COLUMN. `w  wake` starts a real machine, and the states
+            // that must NOT offer it are the ones where a wake would fight
+            // something already in flight.
+            assert_eq!(
+                wake_affordance(&node(state), true, false).enabled,
+                offered,
+                "state {state:?}: the contract says wakeOffered={offered}"
+            );
+            let transitional = row["transitional"].as_bool().expect("transitional");
+            // The working marker, shared with a thinking agent. It is what
+            // keeps a machine in motion from painting like a failure.
+            assert_eq!(
+                NodeState::from_wire(state).marker() == "◐",
+                transitional,
+                "state {state:?}: the contract says transitional={transitional}"
+            );
+        }
+        assert!(
+            checked >= 4,
+            "only {checked} contract states were checked — the tui* columns went null and this test stopped asserting anything"
+        );
+    }
+
+    #[test]
+    fn node_view_contract_last_exit() {
+        let fx = fixture();
+        assert_eq!(
+            fx["lastExit"]["cleanPrefix"].as_str(),
+            Some("signal-"),
+            "the prefix this client tests for is hard-coded in crash_notice"
+        );
+        let (mut cleans, mut crashes) = (0, 0);
+        for row in rows(&fx, &["lastExit", "cases"]) {
+            let name = str_of(row, "name");
+            let reason = str_of(row, "reason");
+            let absent = row
+                .get("recordAbsent")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let mut n = node("stopped");
+            if !absent {
+                n.last_exit = Some(NodeLastExit {
+                    reason: (!reason.is_empty()).then(|| reason.to_string()),
+                    exit_code: row.get("exitCode").and_then(Value::as_i64),
+                    at: row.get("at").and_then(Value::as_str).map(String::from),
+                });
+            }
+            let want_notice = row["notice"].as_bool().expect("notice");
+            let got = crash_notice(&n);
+            assert_eq!(
+                got.is_some(),
+                want_notice,
+                "{name}: reason {reason:?} — the contract says notice={want_notice}, this client said {got:?}"
+            );
+            if let Some(line) = &got {
+                // A notice that does not name the ending tells a person to look
+                // without saying at what.
+                assert!(line.contains(reason), "{name}: the notice omits the reason");
+            }
+            if row["clean"].as_bool().expect("clean") {
+                cleans += 1;
+                assert!(got.is_none(), "{name}: a deliberate stop got a crash notice");
+            }
+            if want_notice {
+                crashes += 1;
+            }
+        }
+        // A corpus that drifted to all-clean or all-crash would satisfy every
+        // assertion above while pinning one arm of the rule.
+        assert!(
+            cleans > 0 && crashes > 0,
+            "the corpus exercises {cleans} clean and {crashes} crash endings — one arm is unpinned"
+        );
+    }
+
+    #[test]
+    fn node_view_contract_presentation() {
+        let fx = fixture();
+        let mut rendered = 0;
+        let mut gaps = Vec::new();
+        for row in rows(&fx, &["presentation", "cases"]) {
+            let state = str_of(row, "state");
+            if !taught(row) {
+                // The declared gap. This client coerces the state, and the
+                // contract is what says so out loud — including that the
+                // coercion target itself can never be a gap.
+                assert_ne!(
+                    state, "unreachable",
+                    "`unreachable` is the coercion target; it cannot be a declared gap"
+                );
+                assert_eq!(
+                    NodeState::from_wire(state),
+                    NodeState::Unreachable,
+                    "the contract records {state:?} as not yet taught to this client, and from_wire resolves it — fill in the tuiLabel/tuiMarker/tuiFallbackDetail columns in contracts/node-view-cases.json"
+                );
+                gaps.push(state.to_string());
+                continue;
+            }
+            rendered += 1;
+            let s = NodeState::from_wire(state);
+            // The labels are unique per variant, so matching all three pins the
+            // variant as well as the words.
+            assert_eq!(s.label(), str_of(row, "tuiLabel"), "state {state:?}: chip label");
+            assert_eq!(s.marker(), str_of(row, "tuiMarker"), "state {state:?}: row marker");
+            assert_eq!(
+                s.fallback_detail(),
+                str_of(row, "tuiFallbackDetail"),
+                "state {state:?}: the line under the chip"
+            );
+            assert_eq!(
+                detail_line(&node(state)),
+                str_of(row, "tuiFallbackDetail"),
+                "state {state:?}: detail_line must fall back to it when the hub sent no detail"
+            );
+        }
+        assert!(
+            rendered >= 4,
+            "only {rendered} states have a presentation here (gaps: {gaps:?}) — this client has fallen further behind the contract than the corpus records"
+        );
+    }
+}

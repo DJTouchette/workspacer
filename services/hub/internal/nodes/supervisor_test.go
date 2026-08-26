@@ -531,6 +531,67 @@ func TestAnAnonymousBrainIsAttributedWhenThereIsOnlyOneNode(t *testing.T) {
 	}
 }
 
+// THE WAKE PATH IS HELD TO THE SAME REFUSAL, and it did not used to be.
+//
+// watchWake's poll condition carried an `|| pr.NodeID == ""` clause beside the
+// attribution call. With one node it changed nothing — `attribute("")` already
+// answers that node — so it was load-bearing in EXACTLY the multi-node case,
+// which is the case where guessing is wrong. Two anonymous nodes, A up and B
+// woken: the watcher read A's answer, matched the empty-id clause, and settled
+// B as `available` with `wakeFailures` reset to 0 and A's exit record copied
+// onto B's row, for a machine that may never have booted.
+//
+// Reconcile has refused to guess since the beginning (see the test above); this
+// is the same refusal on the one path that spends money.
+func TestAWakeIsNotSettledByANONYMOUSBrainWhenSeveralNodesExist(t *testing.T) {
+	h := newHarness(t, []Node{flyNode("ord"), flyNode("iad")}, Tunables{
+		RegisterTimeout:      80 * time.Millisecond,
+		ProbeTimeout:         20 * time.Millisecond,
+		RegisterPollInterval: 5 * time.Millisecond,
+	})
+	// ord is up, and its brain does NOT name itself — which is what every node
+	// under deploy/ was before WKS_NODE_ID reached node/fly.toml's [env].
+	h.bus.set("", nil, true)
+	h.bus.setExit(&ExitRecord{Reason: "signal-TERM", At: "2026-08-25T10:00:00Z"})
+
+	if _, err := h.sup.Wake(context.Background(), "iad"); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	v := h.waitForState(t, "iad", StateUnreachable)
+	if v.WakeFailures != 1 {
+		t.Errorf("wakeFailures = %d, want 1 — the counter this arc names as the mitigation for a node that will not boot was reset by the anonymous answer", v.WakeFailures)
+	}
+	if v.LastSeen != 0 {
+		t.Error("iad was credited with a liveness answer that belongs to ord")
+	}
+	if v.LastExit != nil {
+		t.Errorf("iad carries lastExit %+v — that record is ord's, read off ord's volume, and it is now the only account of a machine that may never have booted", v.LastExit)
+	}
+}
+
+// The other half, and it is why the clause could not simply be deleted without
+// one: a node that DOES name itself still completes a wake with several nodes
+// registered. WKS_NODE_ID is what buys this back, which is why it is now set in
+// deploy/fly/node/fly.toml.
+func TestAWakeCompletesWithSeveralNodesWhenTheBrainNamesItself(t *testing.T) {
+	h := newHarness(t, []Node{flyNode("ord"), flyNode("iad")}, Tunables{
+		RegisterTimeout:      time.Second,
+		ProbeTimeout:         20 * time.Millisecond,
+		RegisterPollInterval: 5 * time.Millisecond,
+	})
+	h.fly.onStart = func() { h.bus.set("iad", nil, true) }
+	if _, err := h.sup.Wake(context.Background(), "iad"); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	v := h.waitForState(t, "iad", StateAvailable)
+	if v.WakeFailures != 0 {
+		t.Errorf("wakeFailures = %d after a wake that succeeded, want 0", v.WakeFailures)
+	}
+	if got := h.view(t, "ord").State; got == string(StateAvailable) {
+		t.Error("ord was reported available off the brain that named iad")
+	}
+}
+
 // ---- events --------------------------------------------------------------
 
 func TestStateChangesArePublishedWithTheirPreviousState(t *testing.T) {

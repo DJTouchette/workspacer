@@ -1,0 +1,307 @@
+{
+  "_comment": [
+    "THE NODE PAYLOAD: `nodes.NodeView`, the one object `nodes.list`, `nodes.wake`,",
+    "`nodes.sleep` and the `node.state_changed` event all carry, and the three",
+    "things every reader of it re-derives BY HAND.",
+    "",
+    "There are five independent readers. services/hub/internal/nodes/view.go",
+    "PRODUCES it; apps/desktop/.../lib/remoteNodes.ts, apps/tui/src/nodes.rs and",
+    "the inline client in services/hub/cmd/hub/mobile.html each re-declare the",
+    "state vocabulary, the `signal-` prefix rule and the cost sentence in their",
+    "own language, and webBackend.ts / ipc.ts pass the object through untouched.",
+    "Nothing pinned them to each other until this file.",
+    "",
+    "IT HAD ALREADY BITTEN, ONCE, BEFORE THIS FILE EXISTED. The sleep path added",
+    "a FIFTH state (`stopping`) and two wire fields (`sleptByHub`,",
+    "`mayBeRunning`) and merged. It reached the hub, the desktop and /m; the TUI",
+    "still coerces `stopping` to `unreachable`, which paints a machine somebody",
+    "deliberately told to stop with the warning marker and offers to start it",
+    "again. Every client's unknown-state fallback is individually correct and",
+    "well-argued. What was missing was anything that TELLS the person adding a",
+    "sixth state that four clients will silently mislabel it.",
+    "",
+    "The `signal-` rule is the sharper edge of the same problem: that string is",
+    "produced by a shell printf in deploy/fly/node/entrypoint.sh and re-parsed by",
+    "four independent startsWith checks. Spell it `sigterm` on either side and",
+    "every client reports a clean sleep as a crash, loudly, forever."
+  ],
+  "vocabulary": {
+    "_comment": [
+      "THE BLOCK REGISTRY. Every array-of-objects block in this file must be",
+      "declared here and everything here must be a block — closure in both",
+      "directions. Held by cmd/brain/corpusvocab_test.go and",
+      "apps/desktop/src/main/services/contractsVocabulary.test.ts."
+    ],
+    "blocks": {
+      "states": {
+        "why": "The state vocabulary itself: the five strings a NodeView.state may hold, whether each one reads as work in progress, and whether a client offers an ENABLED wake control in it. The hub-side loader checks only the vocabulary (State.Valid) — `wakeOffered` is a CLIENT rule and the hub deliberately does not share it: Supervisor.Wake accepts a wake mid-`stopping` on purpose (it abandons the stop, because the thing somebody just asked for wins). The clients' job is not to invite that race, not to make it impossible.",
+        "required": [
+          "state",
+          "transitional",
+          "wakeOffered",
+          "why"
+        ],
+        "loaders": [
+          "services/hub/internal/nodes/view_test.go::TestTheStateVocabularyMatchesTheContract",
+          "apps/desktop/src/renderer/tests/remoteNodes.test.ts::the state vocabulary (contracts/node-view-cases.json)",
+          "apps/tui/src/nodes.rs::node_view_contract_states"
+        ]
+      },
+      "lastExit.cases": {
+        "why": "One `lastExit.reason` and the verdict every reader must reach from it: `clean` is the hub's ExitRecord.Clean(), and `notice` is whether a client puts a crash line on the row. The rule is a PREFIX TEST on a string a shell wrote, which is why the near-miss spellings are pinned beside the real ones.",
+        "required": [
+          "name",
+          "reason",
+          "clean",
+          "notice",
+          "why"
+        ],
+        "optional": [
+          "exitCode",
+          "at",
+          "recordAbsent"
+        ],
+        "loaders": [
+          "services/hub/internal/nodes/view_test.go::TestTheExitRecordVerdictsMatchTheContract",
+          "apps/desktop/src/renderer/tests/remoteNodes.test.ts::lastExit verdicts (contracts/node-view-cases.json)",
+          "apps/tui/src/nodes.rs::node_view_contract_last_exit"
+        ]
+      },
+      "presentation.cases": {
+        "why": "How each state is PRESENTED, per client. `fallbackDetail` is the one string that must be byte-identical everywhere it appears (the desktop and /m both ship it verbatim); the chip labels deliberately differ — /m drops the ellipsis, the TUI is lower-case house style — so they are pinned per copy rather than merged. A null `tui*` triple means THIS CLIENT HAS NOT BEEN TAUGHT THE STATE YET, and the Rust loader then asserts the documented fallback (coerce to Unreachable) instead of a presentation. That is what makes a fifth state a failing test on the client that skipped it rather than a quiet mislabelling.",
+        "required": [
+          "state",
+          "tone",
+          "progress",
+          "desktopLabel",
+          "mobileLabel",
+          "fallbackDetail",
+          "tuiLabel",
+          "tuiMarker",
+          "tuiFallbackDetail",
+          "why"
+        ],
+        "loaders": [
+          "services/hub/internal/nodes/view_test.go::TestEveryContractStateReachedTheMobileClient",
+          "apps/desktop/src/renderer/tests/remoteNodes.test.ts::presentation (contracts/node-view-cases.json)",
+          "apps/tui/src/nodes.rs::node_view_contract_presentation"
+        ]
+      }
+    }
+  },
+  "states": [
+    {
+      "state": "available",
+      "transitional": false,
+      "wakeOffered": false,
+      "why": "Its provider is on the bus and answering. There is nothing to start, so no client shows the control at all — a visible-but-dead button is the failure class this whole feature exists to remove."
+    },
+    {
+      "state": "waking",
+      "transitional": true,
+      "wakeOffered": false,
+      "why": "The hub asked the cloud API to start the machine and is waiting for the provider to register. Bounded and intentional, so it reads as progress; the control is VISIBLE and disabled rather than hidden, because a control that vanishes mid-action reads as a click that did nothing."
+    },
+    {
+      "state": "stopping",
+      "transitional": true,
+      "wakeOffered": false,
+      "why": "The sleep path's mirror of `waking`, and the state that proved this fixture was needed. A machine takes real seconds to drain; rendering that as `unreachable` turns a deliberate act into a warning, and offering an enabled Connect beside a disabled 'Shutting down…' puts two buttons that fight each other on one row. The transition owns the row until it settles."
+    },
+    {
+      "state": "stopped",
+      "transitional": false,
+      "wakeOffered": true,
+      "why": "Switched off, deliberately, and one button away. This is the state the whole package exists to separate from `unreachable`: collapsing 'asleep on purpose' into 'broken' is what makes a remote node feel broken to use."
+    },
+    {
+      "state": "unreachable",
+      "transitional": false,
+      "wakeOffered": true,
+      "why": "The hub does not know how to get a working node out of this, and a person should look. A wake is still offered because it is the one action that can help, and because this state also covers a machine that is RUNNING and providing nothing. It is also the mandated coercion target for any state string a client does not recognise."
+    }
+  ],
+  "unknownStates": [
+    "sleeping",
+    "suspended",
+    "started",
+    "Stopped",
+    "stopping ",
+    ""
+  ],
+  "lastExit": {
+    "cleanPrefix": "signal-",
+    "_comment": [
+      "`clean`  — the hub's ExitRecord.Clean(): did this ending read as a",
+      "           deliberate stop? Anything unrecognised is NOT clean, which is",
+      "           the direction that errs toward telling the user to look.",
+      "`notice` — does a client render the crash line? It is not simply !clean:",
+      "           a MISSING record means nobody knows, and saying nothing is not",
+      "           the same as reassuring somebody."
+    ],
+    "cases": [
+      {
+        "name": "a deliberate stop, SIGTERM",
+        "reason": "signal-TERM",
+        "exitCode": 0,
+        "at": "2026-08-25T10:00:00Z",
+        "clean": true,
+        "notice": false,
+        "why": "The ordinary sleep. This is what the entrypoint writes when the hub's stop lands, and every client must stay silent about it."
+      },
+      {
+        "name": "a deliberate stop, SIGINT",
+        "reason": "signal-INT",
+        "clean": true,
+        "notice": false,
+        "why": "node/fly.toml sets kill_signal = SIGINT, so this is the spelling a PLATFORM stop produces. A reader that recognised only signal-TERM would report every platform-initiated sleep as a crash."
+      },
+      {
+        "name": "the prefix is the whole rule, so signal-KILL is clean too",
+        "reason": "signal-KILL",
+        "clean": true,
+        "notice": false,
+        "why": "Pinned because it is surprising and because it is what the code does: the test is HasPrefix, not a list of graceful signals. A reader that special-cased KILL as a crash would disagree with the other three on a record they all receive."
+      },
+      {
+        "name": "the near-miss spelling is NOT a deliberate stop",
+        "reason": "sigterm",
+        "clean": false,
+        "notice": true,
+        "why": "THE FAILURE THIS BLOCK EXISTS FOR. The reason string is produced by a shell printf on the node and re-parsed by four independent startsWith checks. Drop or rename the prefix on the writing side and every client flips a clean sleep into a crash notice, on every row, forever."
+      },
+      {
+        "name": "case is not folded",
+        "reason": "SIGNAL-TERM",
+        "clean": false,
+        "notice": true,
+        "why": "Go's HasPrefix, JavaScript's startsWith and Rust's starts_with are all byte-exact, so all three agree here — and they must keep agreeing if anyone is tempted to lower-case one side."
+      },
+      {
+        "name": "claudemon died under it",
+        "reason": "claudemon-died",
+        "exitCode": 137,
+        "clean": false,
+        "notice": true,
+        "why": "One of the entrypoint's own words for a failure. 137 is the OOM shape, and the exit code has to survive to the row: 'it died' and 'it was killed for memory' are different next actions."
+      },
+      {
+        "name": "the brain died under it",
+        "reason": "brain-died",
+        "clean": false,
+        "notice": true,
+        "why": "The other half: the machine was fine and the thing that makes it a NODE was not. It is the case where the cloud API says `stopped` and means something entirely different from sleep."
+      },
+      {
+        "name": "it never got up",
+        "reason": "boot-failure",
+        "clean": false,
+        "notice": true,
+        "why": "The crash-loop shape. Fly's on-failure policy retries and then leaves the machine `stopped`, byte-for-byte identical over the API to a healthy sleeper; this record is one of the three things that tell them apart."
+      },
+      {
+        "name": "the entrypoint could not say why",
+        "reason": "unknown",
+        "clean": false,
+        "notice": true,
+        "why": "THE UNKNOWN-REASON CASE. The entrypoint writes this literal word when it cannot classify the ending, and it must land as a crash rather than as silence — an ending nobody can account for is the one most worth a person's attention."
+      },
+      {
+        "name": "a reason nobody has coined yet",
+        "reason": "kernel-panic",
+        "clean": false,
+        "notice": true,
+        "why": "The forward-compatible half of the same rule: a reason a client has never seen is a crash, not a shrug. This is what lets the entrypoint grow a new word without a client release."
+      },
+      {
+        "name": "no record at all",
+        "reason": "",
+        "recordAbsent": true,
+        "clean": false,
+        "notice": false,
+        "why": "ABSENT MEANS NOBODY KNOWS, and it is most of the time — the file lives on the node's volume, so the hub cannot read it while the node is off. Not clean, and no notice either: a client that rendered a crash line here would warn about every node it has not yet seen up."
+      },
+      {
+        "name": "a record with an empty reason",
+        "reason": "",
+        "clean": false,
+        "notice": false,
+        "why": "The same answer by a different road: a record whose reason did not survive is not an account of anything, so it is not clean and it is not worth a sentence."
+      }
+    ]
+  },
+  "presentation": {
+    "_comment": [
+      "`fallbackDetail` is the sentence a client shows when the hub sent no",
+      "`detail` of its own. It is BYTE-IDENTICAL on the desktop and /m today and",
+      "must stay that way; the TUI's is its own lower-case copy.",
+      "",
+      "A null tuiLabel/tuiMarker/tuiFallbackDetail is a DECLARED GAP, not a",
+      "blank to fill in later with anything. It says this client coerces the",
+      "state to `unreachable`, and the Rust loader asserts exactly that — so the",
+      "commit that teaches the TUI the state fails until it fills these in."
+    ],
+    "cases": [
+      {
+        "state": "available",
+        "tone": "success",
+        "progress": false,
+        "desktopLabel": "Connected",
+        "mobileLabel": "Connected",
+        "fallbackDetail": "This machine is on the bus and answering.",
+        "tuiLabel": "connected",
+        "tuiMarker": "●",
+        "tuiFallbackDetail": "this machine is on the bus and answering.",
+        "why": "The only state with no control on the row at all."
+      },
+      {
+        "state": "waking",
+        "tone": "busy",
+        "progress": true,
+        "desktopLabel": "Starting…",
+        "mobileLabel": "Starting",
+        "fallbackDetail": "The machine is booting — usually ready in about 20 seconds.",
+        "tuiLabel": "starting…",
+        "tuiMarker": "◐",
+        "tuiFallbackDetail": "the machine is booting — usually ready in about 20 seconds.",
+        "why": "The BUSY tone, never a warning: it is the same tone a thinking agent uses, and it is what keeps a booting machine from reading as a broken one. The ~20s figure is in the copy on purpose — a wait with a number is a wait people sit through."
+      },
+      {
+        "state": "stopping",
+        "tone": "busy",
+        "progress": true,
+        "desktopLabel": "Shutting down…",
+        "mobileLabel": "Shutting down",
+        "fallbackDetail": "The machine is shutting down cleanly. It stops billing once it is off.",
+        "tuiLabel": null,
+        "tuiMarker": null,
+        "tuiFallbackDetail": null,
+        "why": "THE DECLARED GAP. The sleep path shipped this state to the hub, the desktop and /m and not to the TUI, which still coerces it to `unreachable` — the warning marker, the 'can't reach' chip and an offer to start a machine that is in the middle of stopping. The nulls are what make the omission a failing assertion rather than a thing somebody has to notice."
+      },
+      {
+        "state": "stopped",
+        "tone": "muted",
+        "progress": false,
+        "desktopLabel": "Asleep",
+        "mobileLabel": "Asleep",
+        "fallbackDetail": "Switched off, and nothing is billing. Connecting will start it.",
+        "tuiLabel": "asleep",
+        "tuiMarker": "○",
+        "tuiFallbackDetail": "switched off. waking will start it.",
+        "why": "MUTED, not a warning: this is the state a node is SUPPOSED to spend most of its life in, and painting it as a problem is how the feature would have felt broken by design."
+      },
+      {
+        "state": "unreachable",
+        "tone": "warning",
+        "progress": false,
+        "desktopLabel": "Can't reach",
+        "mobileLabel": "Can't reach",
+        "fallbackDetail": "The hub can't get a working machine out of this one.",
+        "tuiLabel": "can't reach",
+        "tuiMarker": "▲",
+        "tuiFallbackDetail": "the hub can't get a working machine out of this one.",
+        "why": "The one state that is a warning, and the coercion target for anything unrecognised. Its wording is deliberately about the HUB's inability rather than the machine's condition, because it covers both a machine that is off and broken and one that is up and providing nothing."
+      }
+    ]
+  }
+}
