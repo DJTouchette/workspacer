@@ -971,7 +971,12 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 		emits: events.Emits, consumes: events.Consumes, provides: provides,
 		scope: scope, scopeMethods: scopeMethods, tokenID: TokenFingerprint(tok),
 		viaScopedToken: viaScoped, profilesAllowed: profilesAllowed, yoloAllowed: yoloAllowed,
-		internal: s.isInternalDial(r),
+		// Self-asserted and downgrade-only — see [conn.federated]. Read as a
+		// plain query param rather than a header because a peer link dials the
+		// same WebSocket handshake every other client does, where the token
+		// already rides the query string for the same reason.
+		federated: r.URL.Query().Get(PeerLinkParam) == "1",
+		internal:  s.isInternalDial(r),
 	}
 	cn.markActive(time.Now()) // a connection that just opened is in use
 	s.router.addConn(cn)
@@ -1180,6 +1185,18 @@ type conn struct {
 	// yoloAllowed is the scoped record's full-access grant, snapshotted at
 	// handshake under the same revalidation contract as profilesAllowed.
 	yoloAllowed bool
+	// federated marks a connection opened by another hub's FEDERATION LINK
+	// (internal/federation dials with ?peer=1). It is a DOWNGRADE-ONLY bit and
+	// deliberately self-asserted: a client can only ever use it to claim LESS
+	// authority than its credential carries, so there is nothing to forge.
+	//
+	// It exists because a forwarded `hub:<peer>/agents.spawn` re-enters this
+	// router on the link's own connection, and the link's credential is chosen
+	// by whoever wrote peers.json — routinely the far hub's HOST token. Without
+	// this bit, "the link is authenticated" silently became "every spawn this
+	// peer forwards runs with host-level full access", regardless of who
+	// originated it on the other side. See [conn.mayBypassPermissions].
+	federated bool
 	// Event-side grants (empty for a trusted conn, which bypasses these): which
 	// event types this plugin may publish / receive, and which capability methods
 	// it may register as a provider of. Patterns are matched with event.Matches.

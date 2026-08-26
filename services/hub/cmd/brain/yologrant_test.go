@@ -128,3 +128,76 @@ func TestUngrantedSpawnStillClampsEveryBypass(t *testing.T) {
 		t.Errorf("an unstamped bypass permissionMode must drop to default, got %q", gotManaged.PermissionMode)
 	}
 }
+
+// NO SILENT DOWNGRADES, provider half (2026-08-26). Every agents.spawn answer
+// says what the session ACTUALLY runs with (`fullAccess`), and names anything
+// the caller asked for that did not survive (`escalationScrubbed`) — folding in
+// what the hub router already took. Before this, a remote "full access" click
+// came back indistinguishable from an ask-mode spawn, and the only record was a
+// log line on the host.
+func TestSpawnResultReportsEveryEscalationItRefused(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body spawnReq
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewEncoder(w).Encode(map[string]string{"session_id": body.SessionID})
+	}))
+	defer srv.Close()
+	reg := newSpawnTestRegistry(t, srv.URL)
+
+	result := func(params string) map[string]any {
+		t.Helper()
+		raw, err := reg.handle(context.Background(), "agents.spawn", []byte(params))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	has := func(m map[string]any, want string) bool {
+		list, _ := m["escalationScrubbed"].([]any)
+		for _, v := range list {
+			if v == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	// UNGRANTED, asked for everything: both spellings reported, fullAccess false.
+	m := result(`{"cwd":"/tmp","transport":"pty","skipPermissions":true,"permissionMode":"bypassPermissions"}`)
+	if m["fullAccess"] != false {
+		t.Errorf("an ungranted spawn must report fullAccess:false, got %v", m)
+	}
+	if !has(m, "skipPermissions") || !has(m, "permissionMode") {
+		t.Errorf("an ungranted spawn must NAME what it refused, got %v", m)
+	}
+
+	// GRANTED: honored, and nothing is claimed to have been taken.
+	m = result(`{"cwd":"/tmp","transport":"pty","skipPermissions":true,"yoloGranted":true}`)
+	if m["fullAccess"] != true {
+		t.Errorf("a hub-stamped spawn must report fullAccess:true, got %v", m)
+	}
+	if _, reported := m["escalationScrubbed"]; reported {
+		t.Errorf("a fully honored spawn must not claim a downgrade, got %v", m)
+	}
+
+	// The ROUTER's half rides through: it alone knows it dropped profileId.
+	m = result(`{"cwd":"/tmp","transport":"pty","escalationScrubbed":["profileId"]}`)
+	if !has(m, "profileId") {
+		t.Errorf("the router's escalationScrubbed stamp must reach the caller's answer, got %v", m)
+	}
+
+	// An ordinary ask-mode spawn that asked for nothing must not claim a
+	// downgrade — a config default that never resolves is the operator's own
+	// setting, not something this caller lost.
+	m = result(`{"cwd":"/tmp","transport":"pty"}`)
+	if _, reported := m["escalationScrubbed"]; reported {
+		t.Errorf("a spawn that requested no escalation must report none, got %v", m)
+	}
+	if m["fullAccess"] != false {
+		t.Errorf("a plain spawn runs without full access, got %v", m)
+	}
+}

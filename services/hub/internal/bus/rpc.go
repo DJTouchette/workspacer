@@ -279,18 +279,73 @@ func (cn *conn) mayUseProfile(id string) bool {
 	if cn.pluginID != "" {
 		return false
 	}
+	if cn.federated {
+		// Same reasoning as mayBypassPermissions: a forwarded spawn arrives on
+		// the link's connection, and peers.json routinely holds the far hub's
+		// HOST token. Naming an ACCOUNT to burn is a grant the far hub must have
+		// recorded on the link's own record, not one the link inherits from
+		// being authenticated.
+		return cn.viaScopedToken && slices.Contains(cn.profilesAllowed, id)
+	}
 	if cn.viaScopedToken {
+		// DELIBERATELY NOT WIDENED to "operator tier may name any profile", even
+		// though mayBypassPermissions now is (2026-08-26). The two look alike
+		// and are not: yoloAllowed is a PERMISSION LEVEL, profilesAllowed is an
+		// ACCOUNT ALLOWLIST, and operator-tier tokens are exactly what the
+		// account allowlist is enforced against today — every per-session facade
+		// token the desktop mints (claudeSpawn.ts mintSessionFacadeToken) is
+		// operator-scoped, and only a `manager` gets a profile list at all. So
+		// "operator ⇒ any profile" would erase the fleet-manager grant wholesale
+		// and let any facade worker spawn as any of the user's Claude accounts.
+		// A profile is which identity/billing account runs the work; a bypass is
+		// how much the work may do without asking. The host token and an
+		// explicitly-granted record keep naming profiles; everyone else is told
+		// it was dropped (see sanitizeSpawnParams' escalationScrubbed stamp)
+		// rather than silently spawned under the default account.
 		return slices.Contains(cn.profilesAllowed, id)
 	}
 	return cn.trusted
 }
 
+// PeerLinkParam is the query param a FEDERATION LINK sets on its bus handshake
+// (`?peer=1`) to declare itself one. internal/federation sets it; every other
+// client (desktop, brain, MCP facade, plugin sidecar, phone) does not.
+//
+// Self-asserted on purpose. It is read ONLY to WITHHOLD authority — see
+// [conn.mayBypassPermissions] — so the worst a client can do by lying is give
+// itself less than its credential carries, which needs no proof. The honest
+// half (a link that does NOT set it) is covered by the far hub minting the link
+// a token whose grants it actually means, which was always the ceiling.
+const PeerLinkParam = "peer"
+
 // mayBypassPermissions reports whether this connection holds the full-access
 // grant: whether an agents.spawn it sends may have its skipPermissions request
-// honored by the provider. Identical trust rules to mayUseProfile — host token
-// yes (the control plane's own credential), scoped user token only when its
-// record carries yoloAllowed (operator promotion grants METHODS, not the
-// bypass), plugin token never.
+// honored by the provider.
+//
+// THE TOKEN IS THE TRUST BOUNDARY. The product rule this encodes (2026-08-26)
+// is that a remote client should feel like sitting at the machine, so the
+// credential decides — not the fact of being remote:
+//
+//   - plugin token: never. A plugin's consent dialog never offered this, and a
+//     plugin is third-party code, not the user.
+//   - FEDERATION LINK (`?peer=1`): only when the link's own token record
+//     carries an explicit yoloAllowed grant. A peer's forwarded spawn re-enters
+//     this router on the link connection, and peers.json routinely holds the
+//     far hub's HOST token — so without this clause "the link is authenticated"
+//     would silently mean "every spawn any peer forwards runs bypassed",
+//     inheriting host trust nobody granted per-call. The far hub must mint the
+//     link a token that SAYS full access before it means it.
+//   - operator-tier token (viaScopedToken && trusted): YES. ScopeOperator is
+//     documented as "everything — equivalent to the host remote-token", so
+//     clamping it was the silent downgrade the user hit: a full-access spawn
+//     from the phone came up in ask-mode with only a server log to say so.
+//   - any other scoped token: only with yoloAllowed. (view/triage cannot reach
+//     agents.spawn at all; the clause is the belt for a hand-edited record.)
+//   - host token: yes — the control plane's own credential.
+//
+// PROFILE dispatch (mayUseProfile) deliberately does NOT follow this widening;
+// see the note there for why an account allowlist is the one grant an operator
+// token must still hold per-token.
 func (cn *conn) mayBypassPermissions() bool {
 	if cn.revoked.Load() {
 		return false
@@ -298,8 +353,14 @@ func (cn *conn) mayBypassPermissions() bool {
 	if cn.pluginID != "" {
 		return false
 	}
+	if cn.federated {
+		return cn.viaScopedToken && cn.yoloAllowed
+	}
 	if cn.viaScopedToken {
-		return cn.yoloAllowed
+		// trusted && viaScopedToken is exactly the operator tier: the handshake
+		// promotes ScopeOperator to trusted and nothing else in the scoped
+		// branch sets it (bus.go handleBus, si.operator()).
+		return cn.yoloAllowed || cn.trusted
 	}
 	return cn.trusted
 }
@@ -320,6 +381,14 @@ func (cn *conn) mayBypassPermissions() bool {
 //     `skipPermissions` itself passes through untouched either way — callers
 //     keep requesting it, the stamp says the provider may honor it, and an
 //     unstamped request keeps today's clamp.
+//  4. `escalationScrubbed` is DELETED from every incoming call (hub-stamped
+//     only, same as the two above) and re-stamped with what THIS router took
+//     away — today just `profileId`. NO SILENT DOWNGRADES: the provider folds
+//     the stamp together with its own clamps and returns the union as the spawn
+//     result's `escalationScrubbed`, so a caller that asked for full access and
+//     did not get it learns so from the ANSWER instead of from a log line on a
+//     machine it cannot read. An empty/absent stamp means "the hub took
+//     nothing".
 //
 // Non-object params pass through untouched — there is no field to smuggle in a
 // shape the provider's own decoder would reject anyway. The provider keeps its
@@ -336,11 +405,20 @@ func sanitizeSpawnParams(caller *conn, raw json.RawMessage) json.RawMessage {
 	}
 	delete(m, "profileGranted")
 	delete(m, "yoloGranted")
+	delete(m, "escalationScrubbed")
 	if caller.mayBypassPermissions() {
 		m["yoloGranted"] = json.RawMessage("true")
+	} else if caller.federated {
+		// Said out loud, and with the remedy in it: this is the ONE denial a
+		// correctly-credentialled operator can hit without having done anything
+		// wrong, because the ceiling is the LINK's token rather than theirs.
+		log.Printf("SECURITY: agents.spawn: full access withheld from federation link %s — a peer link inherits no host trust; mint its token with `workspacer token create --scope operator --full-access` on this machine and put THAT token in the peer's peers.json entry", caller.tokenID)
 	}
+	var scrubbed []string
 	var pid string
+	hadProfile := false
 	if r, ok := m["profileId"]; ok {
+		hadProfile = true
 		if json.Unmarshal(r, &pid) != nil {
 			pid = "" // non-string spelling: strip rather than interpret
 		}
@@ -349,6 +427,14 @@ func sanitizeSpawnParams(caller *conn, raw json.RawMessage) json.RawMessage {
 		m["profileGranted"] = json.RawMessage("true")
 	} else {
 		delete(m, "profileId")
+		if hadProfile {
+			scrubbed = append(scrubbed, "profileId")
+		}
+	}
+	if len(scrubbed) > 0 {
+		if raw, err := json.Marshal(scrubbed); err == nil {
+			m["escalationScrubbed"] = raw
+		}
 	}
 	out, err := json.Marshal(m)
 	if err != nil {

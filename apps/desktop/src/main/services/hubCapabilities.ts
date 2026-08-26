@@ -77,14 +77,28 @@ import { progressReporter } from './progressReporter';
  * byte-for-byte what every other spawn has always answered. TWIN: the brain's
  * `spawnResult` (cmd/brain/handlers.go).
  */
-function spawnResult(sessionId: string, message?: string): Record<string, unknown> {
-  if (!sessionId || !message?.trim()) return { sessionId };
+function spawnResult(
+  sessionId: string,
+  message: string | undefined,
+  escalation: { fullAccess: boolean; scrubbed: string[] },
+): Record<string, unknown> {
+  // NO SILENT DOWNGRADES (2026-08-26). `fullAccess` is what the session ACTUALLY
+  // runs with — not what was requested — and rides EVERY spawn answer, so a
+  // client whose user clicked "full access" can see it did not happen without
+  // knowing which fields exist. `escalationScrubbed` then names what was taken
+  // away (by the hub router or by the clamps below); omitted when nothing was,
+  // so an ordinary spawn keeps exactly today's shape.
+  // TWIN: cmd/brain/handlers.go spawnResult.
+  const out: Record<string, unknown> = { sessionId, fullAccess: escalation.fullAccess };
+  if (escalation.scrubbed.length) out.escalationScrubbed = escalation.scrubbed;
+  if (!sessionId || !message?.trim()) return out;
   // Not "we passed it on" — whether it actually got there. The helper already
   // fell back to a plain send and banners on total failure; reporting true
   // regardless would leave the DISPATCHER (a manager, a peer) believing it
   // dispatched a task, which is the one thing this field exists to prevent.
   const failed = claudemonSessionClient.takeUndeliveredFirstMessage(sessionId);
-  return { sessionId, messageQueued: !failed };
+  out.messageQueued = !failed;
+  return out;
 }
 
 // Mirror of ipc.ts's shell detection so a capability-spawned terminal picks the
@@ -413,6 +427,7 @@ export function registerHubCapabilities(): void {
       mcpItemIds,
       profileGranted,
       yoloGranted,
+      escalationScrubbed: hubScrubbed,
       worktree,
       resultSchema,
       message,
@@ -462,6 +477,13 @@ export function registerHubCapabilities(): void {
        *  HONORED instead of clamped — the fleet-manager full-access path.
        *  TWIN: rpc.go sanitizeSpawnParams. */
       yoloGranted?: boolean;
+      /** HUB-STAMPED, never caller-supplied (same guarantee as the two above —
+       *  sanitizeSpawnParams deletes any incoming copy): the spawn-escalation
+       *  fields the ROUTER already removed before this call arrived, today just
+       *  `profileId` when the calling token may not name that account. Folded
+       *  together with this handler's OWN clamps into the result's
+       *  `escalationScrubbed`, so no downgrade is silent. */
+      escalationScrubbed?: string[];
       /** Run the new agent in a fresh isolated git worktree of `cwd` (its own
        *  branch) instead of the checkout — the fleet manager's ship-task
        *  isolation so parallel work on one repo never collides. Created here in
@@ -531,6 +553,19 @@ export function registerHubCapabilities(): void {
       );
     }
     const skipPermissions = yoloOK ? wantSkip : false;
+    // NO SILENT DOWNGRADES: everything this handler refuses is named to the
+    // caller in the result, seeded with what the hub router already took.
+    // Only an EXPLICIT request counts — a config default that never resolves is
+    // the operator's setting not applying to an ungranted token, not something
+    // the caller asked for and lost, and counting it would make every ordinary
+    // ask-mode spawn claim it was scrubbed.
+    const escalationDropped: string[] = [...(Array.isArray(hubScrubbed) ? hubScrubbed : [])];
+    if (!yoloOK && !skipDefaulted && wantSkip) escalationDropped.push('skipPermissions');
+    if (!yoloOK && isPermissionEscalation(reqMode)) escalationDropped.push('permissionMode');
+    /** The escalation verdict every return path reports. `fullAccess` is what
+     *  the session actually runs with, read AFTER the clamp rather than from
+     *  the request. */
+    const escalation = () => ({ fullAccess: skipPermissions, scrubbed: escalationDropped });
     // …and the same clamp on `mcpItemIds`, for the same reason and with a
     // sharper edge. A library item of kind `mcp` carries a `command`, `args` and
     // `env` verbatim into a `--mcp-config` file, and the spawn then passes
@@ -542,6 +577,7 @@ export function registerHubCapabilities(): void {
     // of the SPAWNER is the only thing left to gate on: a locally-initiated spawn
     // (ipc.ts) still honours the selection, a bus one does not.
     if (mcpItemIds && mcpItemIds.length) {
+      escalationDropped.push('mcpItemIds');
       console.warn(
         '[hub] agents.spawn: ignoring mcpItemIds from a bus client — an MCP server definition is argv[0] of a host process, and it is pre-approved via --allowedTools.',
       );
@@ -603,6 +639,7 @@ export function registerHubCapabilities(): void {
       // reaching spawnManagedAgent, per this path's own no-silent-drop rule
       // (see the mcpItemIds warning just above).
       if (profileId) {
+        escalationDropped.push('profileId');
         console.warn(
           `[hub] agents.spawn: ignoring profileId for provider "${provider}" — Claude accounts (CLAUDE_CONFIG_DIR) have no equivalent on this provider.`,
         );
@@ -637,7 +674,7 @@ export function registerHubCapabilities(): void {
         resultSchema,
         firstMessage: message,
       });
-      return spawnResult(sessionId, message);
+      return spawnResult(sessionId, message, escalation());
     }
     // Claude on the 'stream' transport is managed too (claudemon's headless
     // stream-json adapter, no PTY) — same shared dispatch as the IPC path so
@@ -674,7 +711,7 @@ export function registerHubCapabilities(): void {
         resultSchema,
         firstMessage: message,
       });
-      return spawnResult(sessionId, message);
+      return spawnResult(sessionId, message, escalation());
     }
     const sessionId = await spawnClaudeAgent({
       cwd: spawnCwd,
@@ -700,7 +737,7 @@ export function registerHubCapabilities(): void {
       resultSchema,
       firstMessage: message,
     });
-    return spawnResult(sessionId, message);
+    return spawnResult(sessionId, message, escalation());
   });
 
   // Control: open a new shell terminal session. The hub/MCP counterpart of the
@@ -1318,7 +1355,7 @@ export function registerHubCapabilities(): void {
       const { agents, dropped } = scrubBootDocumentAgents(data.agents as any[]);
       if (dropped.length) {
         console.warn(
-          `[security] sessions.save: dropping spawn-escalation field(s) ${dropped.join(', ')} from a bus client — the desktop respawns this document's agents verbatim on its next launch`,
+          `[security] sessions.save: dropping spawn-escalation field(s) ${dropped.join(', ')} from a bus client — full access is LIVE-ONLY: a live agents.spawn honors it for a host/operator token, but this document is respawned verbatim on every launch and outlives any revocation. Each record carries an escalationScrubbed note so the caller sees this too`,
         );
       }
       return sessionService.saveSession({

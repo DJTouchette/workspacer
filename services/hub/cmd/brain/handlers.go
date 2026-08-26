@@ -511,6 +511,14 @@ type spawnParams struct {
 	// the request's own SkipPermissions / bypass PermissionMode may be honored
 	// instead of clamped.
 	YoloGranted bool `json:"yoloGranted"`
+	// EscalationScrubbed is stamped by the HUB ROUTER and only by it (it deletes
+	// any incoming copy first, same contract as the two stamps above): the
+	// spawn-escalation fields the ROUTER already took away before this call
+	// arrived — today just `profileId`, when the caller's token may not name
+	// that account. spawn() folds it together with its OWN clamps and returns
+	// the union in the result, so a caller that asked for full access and did
+	// not get it learns so from the answer. See internal/bus sanitizeSpawnParams.
+	EscalationScrubbed []string `json:"escalationScrubbed"`
 	// Claude permission mode (default/acceptEdits/plan/…). Bypass modes are
 	// clamped off for bus callers — see the security rule in spawn().
 	PermissionMode string `json:"permissionMode"`
@@ -566,6 +574,22 @@ type spawnParams struct {
 	// config default, then clamped by spawn()'s grant gate. Unexported so it can
 	// never arrive on the wire; the spawn legs read this, not SkipPermissions.
 	skip bool
+	// scrubbed accumulates what spawn() itself clamped, seeded from the router's
+	// EscalationScrubbed stamp. Unexported for the same reason as skip: it is an
+	// ANSWER, and a caller must not be able to seed it. Read by spawnResult.
+	scrubbed []string
+}
+
+// escalationScrubbed is the union of what the hub router took away before this
+// call arrived and what spawn() clamped here — the full answer to "did the
+// escalation I asked for survive?", which is what makes the downgrade visible
+// to the caller instead of only to this process's log.
+func (p spawnParams) escalationScrubbed() []string {
+	if len(p.EscalationScrubbed) == 0 {
+		return p.scrubbed
+	}
+	out := append([]string(nil), p.EscalationScrubbed...)
+	return append(out, p.scrubbed...)
 }
 
 type sessionParam struct {
@@ -629,8 +653,17 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 			}
 			log.Printf("brain: agents.spawn: ignoring permission bypass %s — remote spawns never auto-bypass approvals without the hub-verified full-access grant.", source)
 		}
+		// NO SILENT DOWNGRADES. Only an EXPLICIT request counts as a downgrade:
+		// a config default that never resolves is the operator's own setting not
+		// applying to an ungranted token, not something the caller asked for and
+		// lost, and reporting it would make every ordinary ask-mode spawn claim
+		// it was scrubbed.
+		if !skipDefaulted && p.skip {
+			p.scrubbed = append(p.scrubbed, "skipPermissions")
+		}
 		p.skip = false
 		if isPermissionEscalation(p.PermissionMode) {
+			p.scrubbed = append(p.scrubbed, "permissionMode")
 			p.PermissionMode = ""
 		}
 	}
@@ -704,7 +737,7 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	return jsonResult(spawnResult(id, p.Message, queued))
+	return jsonResult(spawnResult(id, p.Message, queued, p))
 }
 
 // spawnResult is the agents.spawn answer both legs return. `messageQueued` is
@@ -714,10 +747,20 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 // confirmFirstMessage) sends the prompt itself instead of leaving a worker idle
 // with no task. Omitted entirely when no message was asked for, so the shape
 // stays exactly today's for every other spawn.
-func spawnResult(id, message string, queued bool) map[string]any {
+func spawnResult(id, message string, queued bool, p spawnParams) map[string]any {
 	out := map[string]any{"sessionId": id}
 	if strings.TrimSpace(message) != "" {
 		out["messageQueued"] = queued
+	}
+	// NO SILENT DOWNGRADES (2026-08-26). `fullAccess` is what the session
+	// ACTUALLY runs with, not what was asked for, and it is present on every
+	// spawn — a caller reading `false` after clicking "full access" has its
+	// answer without having to know which fields exist. `escalationScrubbed`
+	// then names what was taken and by whom it was not honored; omitted when
+	// nothing was, so an ordinary spawn's shape is exactly today's.
+	out["fullAccess"] = p.skip
+	if scrubbed := p.escalationScrubbed(); len(scrubbed) > 0 {
+		out["escalationScrubbed"] = scrubbed
 	}
 	return out
 }
@@ -797,7 +840,7 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 	if err != nil {
 		return nil, err
 	}
-	return jsonResult(spawnResult(id, p.Message, queued))
+	return jsonResult(spawnResult(id, p.Message, queued, p))
 }
 
 // claudeTransportDefault reads config.claude.transport — the same default the

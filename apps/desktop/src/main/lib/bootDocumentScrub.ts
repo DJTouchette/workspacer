@@ -28,6 +28,21 @@
  * the SESSION_* IPC handlers rather than through this capability — so every
  * caller that arrives here is a remote/plugin/MCP one, exactly the population
  * layout.set scrubs.
+ *
+ * STILL UNCONDITIONAL AFTER THE 2026-08-26 FULL-ACCESS DECISION, deliberately.
+ * A live agents.spawn now honors skipPermissions / a bypass permissionMode for a
+ * host or operator-tier token — the token is the trust boundary. Persistence is
+ * a different question, decided by one property: A LIVE SPAWN DIES WITH THE
+ * PROCESS; A PERSISTED DOCUMENT OUTLIVES THE TOKEN. Revoking a credential closes
+ * its socket and stops nothing that is already on disk, and this document is
+ * respawned through the LOCAL IPC door — which scrubs nothing and asks nobody —
+ * on EVERY launch thereafter. Persisting the fields behind a provenance stamp
+ * was considered and rejected: the stamp would live in the same file as the
+ * fields it authorizes, forgeable by exactly the writer it exists to stop,
+ * unless it became an HMAC under a host secret. So full access is LIVE-ONLY, and
+ * a restart brings the agent back in ask-mode — saying so (see
+ * ESCALATION_SCRUBBED_KEY) rather than coming back quietly weaker. The long form
+ * of this reasoning lives in cmd/brain/bootdoc.go.
  */
 
 /** The four fields, spelled the same as internal/layout's spawnEscalationKeys. */
@@ -72,6 +87,20 @@ export const SPAWN_ESCALATION_KEYS = [
 export const PANE_ESCALATION_KEYS = ['shell', 'initialCommand', 'pluginId'] as const;
 
 /**
+ * The per-agent note a scrub leaves behind: the keys THAT record lost on THIS
+ * write. Hub-stamped only — every writer deletes an incoming copy before
+ * deciding whether to add its own — so it can neither be forged into a document
+ * nor left stale on a record that came back clean.
+ *
+ * It is the boot-document half of the no-silent-downgrade rule; the live spawn
+ * path spells the same key in its RESULT (hubCapabilities.ts agents.spawn,
+ * cmd/brain spawnResult, internal/bus sanitizeSpawnParams). TWINS:
+ * internal/layout/layout.go and cmd/brain/bootdoc.go, all three held equal with
+ * the two key lists by TestBootDocumentWritersScrubTheSameFields.
+ */
+export const ESCALATION_SCRUBBED_KEY = 'escalationScrubbed';
+
+/**
  * Returns a copy of `agents` with the spawn-escalation fields removed from every
  * entry, and the list of keys that were actually dropped (for logging).
  *
@@ -86,10 +115,14 @@ export function scrubBootDocumentAgents<T>(agents: T): { agents: T; dropped: str
   const out = agents.map((entry) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
     const copy: Record<string, unknown> = { ...(entry as Record<string, unknown>) };
+    // Hub-stamped, never caller-supplied: dropped first so a writer cannot plant
+    // a false note, and so a record that came back clean loses a stale one.
+    delete copy[ESCALATION_SCRUBBED_KEY];
+    const mine: string[] = [];
     for (const key of SPAWN_ESCALATION_KEYS) {
       if (key in copy) {
         delete copy[key];
-        dropped.push(key);
+        mine.push(key);
       }
     }
     // Recurse into tabs[].panes[]: a restored terminal pane's `shell` /
@@ -105,7 +138,7 @@ export function scrubBootDocumentAgents<T>(agents: T): { agents: T; dropped: str
             for (const key of PANE_ESCALATION_KEYS) {
               if (key in paneCopy) {
                 delete paneCopy[key];
-                dropped.push(`pane.${key}`);
+                mine.push(`pane.${key}`);
               }
             }
             return paneCopy;
@@ -113,6 +146,14 @@ export function scrubBootDocumentAgents<T>(agents: T): { agents: T; dropped: str
         }
         return tabCopy;
       });
+    }
+    if (mine.length) {
+      // NO SILENT DOWNGRADES: the persisted record itself carries what it lost,
+      // so sessions.load / layouts.list show a client the downgrade instead of
+      // leaving it in this process's log. Per AGENT — that is the granularity of
+      // the loss.
+      copy[ESCALATION_SCRUBBED_KEY] = mine;
+      dropped.push(...mine);
     }
     return copy;
   });

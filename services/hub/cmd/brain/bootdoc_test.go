@@ -38,10 +38,25 @@ func TestSessionsSaveStripsSpawnEscalationFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc := string(raw)
+	// Matched as an object KEY (`"skipPermissions":`) rather than as a bare
+	// substring, because the record now also carries the no-silent-downgrade
+	// note — escalationScrubbed:["skipPermissions",…] — which NAMES the fields
+	// it removed. A bare Contains would read that confession as the crime.
 	for _, field := range spawnEscalationKeys {
-		if strings.Contains(doc, field) {
+		if strings.Contains(doc, `"`+field+`":`) {
 			t.Errorf("the persisted boot-restore document still carries %q:\n%s\nThe desktop's next launch hands this record to respawnFromRecord, which forwards it to window.electronAPI.spawnClaude — the LOCAL IPC spawn door, which scrubs nothing.", field, doc)
 		}
+	}
+	// NO SILENT DOWNGRADES: the record must SAY it was scrubbed, or a client
+	// that asked for full access and got ask-mode has only this host's log —
+	// on a machine it may not be able to read — to find out.
+	for _, field := range spawnEscalationKeys {
+		if !strings.Contains(doc, `"`+field+`"`) {
+			t.Errorf("the persisted record does not report losing %q; escalationScrubbed is how a restore-time downgrade stops being silent:\n%s", field, doc)
+		}
+	}
+	if !strings.Contains(doc, `"escalationScrubbed"`) {
+		t.Errorf("no escalationScrubbed note on a scrubbed record:\n%s", doc)
 	}
 	// FLOOR: the document must still be a usable session, or the fix is a
 	// deletion of the feature.
@@ -69,7 +84,7 @@ func TestLayoutsSaveStripsSpawnEscalationFields(t *testing.T) {
 	}
 	doc := string(raw)
 	for _, field := range spawnEscalationKeys {
-		if strings.Contains(doc, field) {
+		if strings.Contains(doc, `"`+field+`":`) {
 			t.Errorf("layouts.save persisted %q:\n%s", field, doc)
 		}
 	}
@@ -191,5 +206,82 @@ func TestBootDocumentWritersScrubTheSameFields(t *testing.T) {
 	}
 	if len(paneEscalationKeys) < 3 {
 		t.Fatalf("the pane scrub list holds %d fields — it shrank, and every loop above passes on a shorter list", len(paneEscalationKeys))
+	}
+}
+
+// THE PERSISTENCE DECISION, pinned (2026-08-26). Live agents.spawn now honors a
+// bypass for a host or operator-tier token — the token is the trust boundary.
+// This door deliberately did NOT move with it, and the asymmetry is the design,
+// not an omission: A LIVE SPAWN DIES WITH THE PROCESS; A PERSISTED DOCUMENT
+// OUTLIVES THE TOKEN. Revoking a credential closes its socket and reaches
+// nothing already on disk, while this document is respawned through the LOCAL
+// IPC door — which scrubs nothing and asks nobody — on every launch thereafter.
+//
+// So a full-access session saved from a remote client comes back in ASK MODE,
+// and the record says so out loud. If a future change wants persisted full
+// access, it needs a provenance stamp that is not forgeable by the same writer
+// that plants the fields (i.e. not one living in this 0644 file), and it must
+// change this test on purpose. See bootdoc.go for the long form.
+func TestFullAccessIsLiveOnlyAndTheRecordSaysSo(t *testing.T) {
+	tempConfigHome(t)
+	r := &registry{}
+
+	params := json.RawMessage(`{"name":"restored","agents":[
+	  {"id":"a1","cwd":"/proj","skipPermissions":true,"permissionMode":"bypassPermissions"},
+	  {"id":"a2","cwd":"/proj","model":"opus"}
+	]}`)
+	if _, err := r.savedSessionSave(params); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := r.savedSessionLoad(json.RawMessage(`{"filename":"restored.yaml"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Agents []map[string]any `json:"agents"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Agents) != 2 {
+		t.Fatalf("expected both agents to survive, got %d: %s", len(doc.Agents), raw)
+	}
+	if _, still := doc.Agents[0]["skipPermissions"]; still {
+		t.Error("a persisted boot document kept skipPermissions — full access must be LIVE-ONLY, because the local respawn door scrubs nothing and revocation cannot reach this file")
+	}
+	scrubbed, _ := doc.Agents[0]["escalationScrubbed"].([]any)
+	if len(scrubbed) != 2 {
+		t.Errorf("the downgraded record must name what it lost, got %v", doc.Agents[0])
+	}
+	// …and a record that lost NOTHING must not carry the note, or every restored
+	// agent reads as downgraded and the signal means nothing.
+	if _, noted := doc.Agents[1]["escalationScrubbed"]; noted {
+		t.Errorf("an untouched record must not claim a downgrade: %v", doc.Agents[1])
+	}
+	if doc.Agents[1]["model"] != "opus" {
+		t.Errorf("the scrub damaged an unrelated record: %v", doc.Agents[1])
+	}
+}
+
+// A stale note must not survive a clean write: the stamp is hub-owned, so an
+// incoming copy is deleted before the scrub decides whether to add its own.
+// Otherwise a record scrubbed once would report a downgrade forever, including
+// after the write that restored it.
+func TestEscalationScrubbedNoteIsNeverCallerSupplied(t *testing.T) {
+	tempConfigHome(t)
+	r := &registry{}
+
+	params := json.RawMessage(`{"name":"restored","agents":[
+	  {"id":"a1","cwd":"/proj","escalationScrubbed":["skipPermissions"]}
+	]}`)
+	if _, err := r.savedSessionSave(params); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := r.savedSessionLoad(json.RawMessage(`{"filename":"restored.yaml"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "escalationScrubbed") {
+		t.Errorf("a caller-planted escalationScrubbed survived a clean write: %s", raw)
 	}
 }

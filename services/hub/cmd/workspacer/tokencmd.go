@@ -22,7 +22,7 @@ import (
 const tokenUsage = `workspacer token — capability-scoped bus tokens
 
 Usage:
-  workspacer token create --scope view|triage|operator|provider [--label <text>]
+  workspacer token create --scope view|triage|operator|provider [--label <text>] [--full-access]
   workspacer token list
   workspacer token revoke <token-or-prefix>
 
@@ -113,6 +113,13 @@ func runTokenCreate(args []string) int {
 	fs := flag.NewFlagSet("workspacer token create", flag.ExitOnError)
 	scopeFlag := fs.String("scope", "", "grant tier: view | triage | operator | provider (required)")
 	label := fs.String("label", "", "human-readable label (e.g. \"dana's phone\")")
+	// The full-access grant, mint-time only and never claimable by the holder.
+	// Needed by a FEDERATION LINK above all: a peer link inherits no host trust
+	// from being authenticated, so a peer that should be able to dispatch
+	// full-access work needs a token that says so (internal/bus
+	// conn.mayBypassPermissions).
+	fullAccess := fs.Bool("full-access", false,
+		"let agents spawned with this token skip approval prompts (--dangerously-skip-permissions)")
 	path := tokensPathFlag(fs)
 	_ = fs.Parse(args)
 
@@ -125,7 +132,15 @@ func runTokenCreate(args []string) int {
 		fmt.Fprintf(os.Stderr, "workspacer token create: %v\n", err)
 		return 2
 	}
-	rec, err := authtoken.Mint(*path, scope, *label)
+	if *fullAccess && scope != authtoken.ScopeOperator {
+		// view/triage cannot reach agents.spawn at all and a provider token may
+		// only ANSWER calls, so the grant would be inert — and an inert security
+		// flag that reports success is how someone concludes a link is granted
+		// when it is not.
+		fmt.Fprintf(os.Stderr, "workspacer token create: --full-access needs --scope operator (a %s token may not spawn at all)\n", scope)
+		return 2
+	}
+	rec, err := authtoken.MintGranted(*path, scope, *label, *fullAccess)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "workspacer token create: %v\n", err)
 		return 1
@@ -133,6 +148,11 @@ func runTokenCreate(args []string) int {
 	fmt.Printf("%s\n", rec.Token)
 	fmt.Fprintf(os.Stderr, "minted %s token%s — connect with ?token=… or Authorization: Bearer …\n",
 		rec.Scope, labelSuffix(rec.Label))
+	if rec.YoloAllowed {
+		fmt.Fprintln(os.Stderr,
+			"  FULL ACCESS: agents spawned with this token may skip every approval prompt.\n"+
+				"  Put it in the peer's peers.json entry to let that peer dispatch full-access work here.")
+	}
 	if rec.Scope == authtoken.ScopeProvider {
 		// There is deliberately no --provides flag. A grant narrower than what
 		// the provider registers puts the brain in a permanent 5s re-register

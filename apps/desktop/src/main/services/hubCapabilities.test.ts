@@ -532,7 +532,7 @@ describe('agents.spawn — dispatch', () => {
     expect(arg.provider).toBe('codex');
     expect(arg.cwd).toBe('/proj');
     expect(arg.model).toBe('o1');
-    expect(res).toEqual({ sessionId: 'managed-session-id' });
+    expect(res).toEqual({ sessionId: 'managed-session-id', fullAccess: false });
   });
 
   // mcpItemIds is CLAMPED on this path, the same way skipPermissions is, and for
@@ -563,7 +563,13 @@ describe('agents.spawn — dispatch', () => {
     // The rest of the call still rides through, so the clamp cannot be
     // "everything was dropped".
     expect(arg.cwd).toBe('/proj');
-    expect(res).toEqual({ sessionId: 'claude-session-id' });
+    // The mcpItemIds clamp is now REPORTED rather than only logged — see the
+    // no-silent-downgrade rule in spawnResult.
+    expect(res).toEqual({
+      sessionId: 'claude-session-id',
+      fullAccess: false,
+      escalationScrubbed: ['mcpItemIds'],
+    });
   });
 
   // The first message rides the SPAWN on all three branches, and the result
@@ -588,7 +594,7 @@ describe('agents.spawn — dispatch', () => {
         : spawnClaudeAgent;
     const arg = spawner.mock.calls[0][0] as { firstMessage?: string };
     expect(arg.firstMessage).toBe('ship the thing');
-    expect(res).toEqual({ sessionId: id, messageQueued: true });
+    expect(res).toEqual({ sessionId: id, fullAccess: false, messageQueued: true });
   });
 
   // …and it reports the TRUTH, not "we passed it on". The helper already fell
@@ -602,14 +608,18 @@ describe('agents.spawn — dispatch', () => {
       cwd: '/proj',
       message: 'ship the thing',
     });
-    expect(res).toEqual({ sessionId: 'managed-session-id', messageQueued: false });
+    expect(res).toEqual({
+      sessionId: 'managed-session-id',
+      fullAccess: false,
+      messageQueued: false,
+    });
   });
 
   // A spawn with no message claims nothing: the result shape stays exactly what
   // every other spawn has always answered (the assertions above depend on it).
   it('makes no delivery claim when no message was sent', async () => {
     const res = await call('agents.spawn', { provider: 'codex', cwd: '/proj' });
-    expect(res).toEqual({ sessionId: 'managed-session-id' });
+    expect(res).toEqual({ sessionId: 'managed-session-id', fullAccess: false });
     const arg = spawnManagedAgent.mock.calls[0][0] as { firstMessage?: string };
     expect(arg.firstMessage).toBeUndefined();
   });
@@ -640,7 +650,7 @@ describe('agents.spawn — dispatch', () => {
     expect(arg.transport).toBe('stream');
     expect(arg.cwd).toBe('/proj');
     expect(arg.model).toBe('opus');
-    expect(res).toEqual({ sessionId: 'managed-session-id' });
+    expect(res).toEqual({ sessionId: 'managed-session-id', fullAccess: false });
   });
 
   it("forwards profileId but CLAMPS mcpItemIds on the claude 'stream' branch", async () => {
@@ -780,6 +790,58 @@ describe('agents.spawn — dispatch', () => {
     };
     expect(arg.skipPermissions).toBe(true);
     expect(arg.permissionMode).toBe('bypassPermissions');
+  });
+
+  // NO SILENT DOWNGRADES (2026-08-26). The clamps above stay, but they stop
+  // being invisible: every spawn answer says what the session ACTUALLY runs
+  // with, and names anything the caller asked for that did not survive —
+  // including what the HUB ROUTER took before the call arrived. This is the
+  // fix for the reported symptom: a remote "full access" click came back
+  // indistinguishable from an ask-mode spawn, with only a host log line to say
+  // otherwise.
+  it('REPORTS a clamped bypass in the spawn result instead of only logging it', async () => {
+    const res = (await call('agents.spawn', {
+      cwd: '/proj',
+      skipPermissions: true,
+      permissionMode: 'bypassPermissions',
+    })) as { fullAccess: boolean; escalationScrubbed?: string[] };
+    expect(res.fullAccess).toBe(false);
+    expect(res.escalationScrubbed).toEqual(['skipPermissions', 'permissionMode']);
+  });
+
+  it('reports fullAccess:true and claims no downgrade when the hub stamped the grant', async () => {
+    const res = (await call('agents.spawn', {
+      cwd: '/proj',
+      skipPermissions: true,
+      permissionMode: 'bypassPermissions',
+      yoloGranted: true,
+    })) as { fullAccess: boolean; escalationScrubbed?: string[] };
+    expect(res.fullAccess).toBe(true);
+    expect(res.escalationScrubbed).toBeUndefined();
+  });
+
+  it("folds the ROUTER's own escalationScrubbed stamp into the answer", async () => {
+    // Only the hub knows it dropped `profileId` (the calling token may not name
+    // that Claude account); the provider just sees a spawn without one. The
+    // stamp is how that reaches the caller.
+    const res = (await call('agents.spawn', {
+      cwd: '/proj',
+      escalationScrubbed: ['profileId'],
+    })) as { escalationScrubbed?: string[] };
+    expect(res.escalationScrubbed).toEqual(['profileId']);
+  });
+
+  it('claims no downgrade for a spawn that asked for no escalation', async () => {
+    // A config default that never resolves is the operator's own setting not
+    // applying to an ungranted token — not something this caller lost. Counting
+    // it would make every ordinary ask-mode spawn read as scrubbed.
+    getConfig.mockReturnValueOnce({ claude: { skipPermissionsDefault: true } });
+    const res = (await call('agents.spawn', { cwd: '/proj' })) as {
+      fullAccess: boolean;
+      escalationScrubbed?: string[];
+    };
+    expect(res.fullAccess).toBe(false);
+    expect(res.escalationScrubbed).toBeUndefined();
   });
 
   it('a truthy-but-not-true yoloGranted does NOT unlock bypass (hub stamps a real boolean)', async () => {
