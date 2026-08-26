@@ -164,10 +164,10 @@ things, in order of how concrete they are:
 2. **This is the only machine holding a credential that spends money.** The node's
    worst case for a public doorbell was "a stranger burns $0.06/hr". The hub's is
    "a stranger is talking to the control plane". `nodes.wake` and `nodes.sleep`
-   are host-authority only — `nodesTrusted` refuses the view and triage tiers,
-   though **not** an operator-tier scoped token, which `bus.go` marks trusted
-   (see §11) — so the token is a real boundary, but it is one boundary, and the
-   failure is expensive. Note that the sleep verb does not soften this: whoever
+   are host-authority only — `nodesTrusted` refuses the view, triage and provider
+   tiers, though **not** an operator-tier scoped token, which `bus.go` marks
+   trusted (see §11) — so the token is a real boundary, but it is one boundary,
+   and the failure is expensive. Note that the sleep verb does not soften this: whoever
    can turn a machine on can also turn one off underneath whoever is using it.
 3. **The unguarded surface is real, if small.** `/m`, the PWA manifest, the service
    worker, the icons, `/plugins/origin` and `/plugins/ui/<id>/` are served without
@@ -558,9 +558,9 @@ fly ips allocate-v4 --shared --app workspacer-hub
 |---|---|
 | `/bus` | `Server.Authorized` — the host token, or a scoped token whose grant is operator. Plus `originAllowed`. **This is the real boundary.** |
 | `/app/` entry | `Authorized`. View/triage scoped tokens are refused. |
-| `nodes.wake` | `nodesTrusted` — **host authority**. A view- or triage-tier token is refused, so a leaked phone-tier token cannot spend money. **An OPERATOR-tier scoped token is NOT refused**: `bus.go` marks operator-tier as `trusted`, and `nodesTrusted` asks `IsTrusted()`. Verified 2026-08-25 by calling `nodes.wake` with an operator-scoped token and watching the hub issue a real `POST /v1/apps/…/machines/…/start`. Mint operator tokens accordingly. |
-| `nodes.sleep` | `nodesTrusted`, the same gate — and refused for a reason of its own rather than by symmetry: a stop lands on a machine somebody may be typing at and ends the work in flight on it. "It only turns things off" is destructive, not smaller. An operator-tier scoped token is likewise **not** refused, for the same reason as `nodes.wake`. |
-| `/plugins/install`, `/plugins/examples/install`, `/plugins/reload` | `hostOnlyRoute` — **the host token itself**, not merely `Authorized`. These three run code on this machine (the manifest's install argv; a reload starts a sidecar from a caller-named directory), and an operator-tier scoped token — what every worker node carries — is answered 403. Interim gate: the durable fix is a provider tier so attaching as a capability provider stops implying host authority. |
+| `nodes.wake` | `nodesTrusted` — **host authority**. A view-, triage- or provider-tier token is refused, so neither a leaked phone-tier token nor the credential living on a remote node can spend money. **An OPERATOR-tier scoped token is NOT refused**: `bus.go` marks operator-tier as `trusted`, and `nodesTrusted` asks `IsTrusted()`. Verified 2026-08-25 by calling `nodes.wake` with an operator-scoped token and watching the hub issue a real `POST /v1/apps/…/machines/…/start`. Mint operator tokens accordingly — and mint a **`provider`** token for a node (`--scope provider`), which registers capabilities without being trusted at all. |
+| `nodes.sleep` | `nodesTrusted`, the same gate — and refused for a reason of its own rather than by symmetry: a stop lands on a machine somebody may be typing at and ends the work in flight on it. "It only turns things off" is destructive, not smaller. An operator-tier scoped token is likewise **not** refused, for the same reason as `nodes.wake`; a provider-tier one is. |
+| `/plugins/install`, `/plugins/examples/install`, `/plugins/reload` | `hostOnlyRoute` — **the host token itself**, not merely `Authorized`. These three run code on this machine (the manifest's install argv; a reload starts a sidecar from a caller-named directory), and an operator-tier scoped token is answered 403. A node minted at `--scope provider` (B5 in `../RUNBOOK.md`) does not pass `Authorized` at all, so it never reaches this gate — but the gate stays, because operator-tier tokens still exist and are still `trusted` on the bus. |
 | `nodes.list` | View tier. Discloses a label, a state and a timestamp — deliberately not the app, the machine id, the endpoint or the token. |
 | `/m`, manifest, `sw.js`, icons, `/plugins/origin`, `/plugins/ui/<id>/` | **Unguarded by design.** Static shells; none discloses session state. This is the surface you are adding to the internet. |
 

@@ -162,31 +162,52 @@ simply be unreachable while every Machines API call succeeded. A device that is
 ## 5. Mint the hub-side bus token, then set the secrets
 
 On the **always-on hub**, mint a scoped token for the node. The node attaches as
-a capability *provider*, so it needs whatever scope your hub requires for that —
-if in doubt, the operator tier.
+a capability *provider*, and there is now a tier that means exactly that.
 
 ```sh
 # on the hub, AS THE USER THAT OWNS ITS CONFIG DIR (on a Fly hub: `su - wks`)
-workspacer token create --label fly-node --scope operator
+workspacer token create --label fly-node --scope provider
 ```
 
 The flag is `--label`, not `--name`; `--name` exits 2 with "flag provided but
 not defined". No hub restart is needed, because the hub re-reads `tokens.json`
 on every new connection.
 
-> **An operator-tier scoped token is TRUSTED on the bus**, exactly like the host
-> pairing token, and that includes `nodes.wake`. Verified by calling it: an
-> operator-scoped token drove a real `POST /v1/apps/…/machines/…/start`. So this
-> credential can spend money, and it lives on the node. It is still the right
-> choice, because unlike the host token it can be revoked, but do not read
-> "scoped" as "limited" here.
+> **What a `provider` token is, and what it is not.** It may **register
+> capabilities and answer calls** — the node's entire job — and publish the
+> topics carrying the output of what it registered: the fleet feed, statuslines,
+> the PTY stream, visible-terminal requests. Its whole *outbound* call surface is
+> one method, `layout.get`.
 >
-> **One thing it is refused, since 2026-08-25: plugin install.**
-> `/plugins/install`, `/plugins/examples/install` and `/plugins/reload` build and
-> run code on the *hub's* host, so they require the hub's own host token and 403
-> every scoped token. Use a **scoped** token here, as this step says, and never
-> put the hub's `remote-token` on a node — the gate is keyed on the credential,
-> so a node holding the host token simply is the host.
+> It cannot call `nodes.wake` or `nodes.sleep` (host authority — so the
+> credential living on the node cannot spend your money, and cannot stop a
+> machine somebody is typing at), cannot spawn agents, cannot write config or
+> files, cannot create `jobs.*`, cannot subscribe to **any** event, and does not
+> pass the HTTP token guard — so `POST /plugins/install`, which clones a repo and
+> runs its build step **on the hub**, is refused structurally.
+>
+> That family is **host-only** in its own right, since 2026-08-25:
+> `/plugins/install`, `/plugins/examples/install` and `/plugins/reload` require
+> the hub's own host token and 403 *every* scoped token, operator tier included.
+> So use a scoped token here, as this step says, and never put the hub's
+> `remote-token` on a node — the gate is keyed on the credential, so a node
+> holding the host token simply *is* the host.
+>
+> **This used to say `--scope operator`, and the difference is the point.** An
+> operator-tier scoped token is `trusted` on the bus, exactly like the host
+> pairing token: verified by calling it, an operator-scoped token drove a real
+> `POST /v1/apps/…/machines/…/start`. The node held nine authorities and used
+> one and a sliver of a second. Both tiers are revocable; only one of them is
+> the size of the job.
+>
+> **Already deployed on an operator token?** It keeps working — this is additive,
+> not a flag day. Swap it with `fly secrets set --app workspacer-node
+> HUB_TOKEN='<new provider token>'` (which restarts the machine, so time it),
+> confirm the node with `nodes.list`, then `workspacer token revoke <old>`.
+> Rollback is re-setting the old secret; it stays valid until you revoke it.
+> Nothing in `deploy/fly/node` changes — no Dockerfile, entrypoint, `fly.toml` or
+> brain code — because the brain dials with whatever `HUB_TOKEN` it is handed and
+> never inspects its own tier.
 
 Then, back in this repo:
 

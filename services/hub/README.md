@@ -145,7 +145,7 @@ per-method too. Besides the host token (full access) and per-plugin tokens
 the CLI:
 
 ```sh
-workspacer token create --scope view|triage|operator [--label "dana's phone"]
+workspacer token create --scope view|triage|operator|provider [--label "dana's phone"]
 workspacer token list
 workspacer token revoke <token-or-prefix>
 ```
@@ -158,12 +158,41 @@ call; enforced at the router's single dispatch point in `internal/bus`):
 | `view` | read-only: `agents.list`, `sessions.snapshots`/`snapshot`/`transcript`/`conversation`, `layout.get`, `config.get`, `app.getCwd`, `push.key` — plus event/stream subscriptions | dashboards, fleet monitors |
 | `triage` | view + acting on attention: `claude.approve`/`answer`/`signal`, `agents.sendMessage`, `push.subscribe`/`unsubscribe` | a phone on `/m` that approves and chats but can't spawn, open terminals, touch git, or administer plugins |
 | `operator` | everything (`*`) — trusted like the host token, including provider registration and the token-guarded HTTP routes | full remote control |
+| `provider` | `layout.get`, and the right to **register capabilities** per the record's own `provides` grant | a headless capability provider — `brain --hub wss://…` on a remote node |
+
+`provider` is **not a rung on that ladder.** The other three are a ladder of a
+*person's* authority, each rung a bigger set of methods a human client may call.
+This is an orthogonal axis: it holds one method (which `view` holds too, so its
+call surface is a strict *subset* of the smallest human tier) and adds one
+authority no human tier has — being the *answerer* of a call.
+
+|  | `provider` |
+| --- | --- |
+| register capabilities | yes, per the record's `provides` grant |
+| publish | only a topic whose *publishing capability* it provides (`capspec.EventTopic.Publisher`); never an unclassified one, never one the host alone owns |
+| consume | **nothing**, fail-closed — including topics guarded by a capability it provides. A provider answers calls; it does not watch the fleet |
+| call | `layout.get`, and nothing else |
+| `Server.Authorized` (HTTP) | **no** — so `POST /plugins/install`, `/plugins/remove`, `/plugins/settings` and `/app` are refused structurally |
+| `nodes.wake` / `nodes.sleep`, `jobs.*` | no — both gates ask `IsTrusted()`, and a provider is not trusted |
+| profile dispatch / full-access spawn stamp | no |
+
+It exists because before it, `mayProvide` had exactly two arms — `trusted`, and
+a *plugin manifest*. A remote node is not a plugin (no manifest, no
+install-consent dialog, no per-capability fs roots), so the only credential
+shape that let it *register* was `operator`, which also handed it eight
+authorities it never used. `Record.Provides` is the second source that ends
+that; the mint default is `["*"]` (the whole register surface) and there is
+deliberately **no `--provides` flag**, because a grant narrower than what the
+provider registers puts the brain in a permanent 5-second re-register loop — the
+`registered` ack says *what* was accepted and never *why* the rest was withheld,
+so the retry cannot tell "owned by another live connection" from "refused".
 
 The tiers are explicit allowlists, so **any method not listed — including ones
-added later — fails closed** for `view`/`triage`; a denied call gets a JSON-RPC
-error naming the token's scope and the method. Scoped tokens may subscribe to
-events (that's the view tier's stream side) but never publish or register as
-providers. Tokens persist in `<config>/workspacer/tokens.json` (0600), next to
+added later — fails closed** for `view`/`triage`/`provider`; a denied call gets a
+JSON-RPC error naming the token's scope and the method. `view`/`triage` tokens
+may subscribe to events (that's the view tier's stream side) but never publish or
+register as providers; a `provider` token is the mirror image — it registers and
+publishes what it registered, and subscribes to nothing. Tokens persist in `<config>/workspacer/tokens.json` (0600), next to
 the `remote-token`; the hub re-reads the file when it changes, so
 minting/revoking takes effect on the next connection without a restart (an
 already-open connection keeps its grants until it drops).

@@ -420,7 +420,7 @@ await say(session_id, 'Read the README and summarize the architecture.');</code>
 <li><strong>Bounded bodies.</strong> 16 MB request-body cap, so a buggy or hostile local client can't push an unbounded payload through the fan-out and into SQLite.</li>
 <li><strong>Path-traversal-proof ids.</strong> Session ids are validated (≤128 chars, ASCII alphanumeric plus <code>-</code> <code>_</code> <code>.</code>, no <code>..</code>) before touching the filesystem, <code>%2e%2e%2f</code> included, since axum decodes first.</li>
 </ul>
-<div class="callout"><strong>Don't put claudemon on a network.</strong> There's no auth to turn on. If you need remote reach, put the <strong>hub</strong> there instead. It has token auth, capability-scoped tokens (<code>view</code> / <code>triage</code> / <code>operator</code>), and is designed to be reachable over a Tailscale tailnet. Your remote client talks to the hub; the hub talks to claudemon over loopback. See <a href="build.html#architecture">the internals page</a>.</div>
+<div class="callout"><strong>Don't put claudemon on a network.</strong> There's no auth to turn on. If you need remote reach, put the <strong>hub</strong> there instead. It has token auth, capability-scoped tokens (<code>view</code> / <code>triage</code> / <code>operator</code>, plus <code>provider</code> for a headless node), and is designed to be reachable over a Tailscale tailnet. Your remote client talks to the hub; the hub talks to claudemon over loopback. See <a href="build.html#architecture">the internals page</a>.</div>
     </section>
 
     <section id="stability" class="doc">

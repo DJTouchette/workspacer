@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Check, Copy, Eye, EyeOff, KeyRound } from 'lucide-react';
-import type { RemoteTokenRecord, RemoteTokenScope } from '../../../main/shared/ipcTypes';
+import type { PairingScope, RemoteTokenRecord } from '../../../main/shared/ipcTypes';
 
 /**
  * "Linked machines" — the federation peers editor inside the Remote Control
@@ -38,7 +38,9 @@ interface LivePeer {
 /** Twin of main's validation (federationPeersConfig.ts ← federation.go). */
 const PEER_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
-const LINK_SCOPES: Array<{ scope: RemoteTokenScope; label: string; hint: string }> = [
+// PairingScope: `provider` is a headless node's credential (see ipcTypes), not
+// a tier one PC links to another with.
+const LINK_SCOPES: Array<{ scope: PairingScope; label: string; hint: string }> = [
   { scope: 'view', label: 'Read-only', hint: 'The other PC can watch this fleet, not control it.' },
   {
     scope: 'triage',
@@ -453,7 +455,7 @@ function AddPeerForm({
 
 /** The inbound direction: what the OTHER PC needs to add THIS machine. */
 function LinkThisMachine({ busUrl, sharingOn }: { busUrl?: string; sharingOn: boolean }) {
-  const [scope, setScope] = useState<RemoteTokenScope>('operator');
+  const [scope, setScope] = useState<PairingScope>('operator');
   const [minted, setMinted] = useState<RemoteTokenRecord | null>(null);
   const [minting, setMinting] = useState(false);
   const [mintError, setMintError] = useState<string | null>(null);
@@ -558,7 +560,7 @@ function LinkThisMachine({ busUrl, sharingOn }: { busUrl?: string; sharingOn: bo
             <select
               value={scope}
               onChange={(e) => {
-                setScope(e.target.value as RemoteTokenScope);
+                setScope(e.target.value as PairingScope);
                 setMinted(null);
               }}
               style={{

@@ -290,3 +290,105 @@ describe('full-access grant reconciliation (config flips applied live)', () => {
     expect(reconcileSessionFacadeToken('nope', 'manager', true)).toBe(false);
   });
 });
+
+describe("provider-tier records (a remote node's credential, minted by the Go CLI)", () => {
+  const rawTokens = () =>
+    JSON.parse(fs.readFileSync(tokensFile(), 'utf-8')) as Array<Record<string, unknown>>;
+
+  /** A record exactly as `workspacer token create --scope provider` writes it. */
+  function writeNodeRecord(): Record<string, unknown> {
+    const rec = {
+      token: 'NODE-TOKEN-abcdefghijklmnopqrstuvwx',
+      scope: 'provider',
+      label: 'fly-node',
+      created: new Date(0).toISOString(),
+      provides: ['*'],
+    };
+    fs.writeFileSync(tokensFile(), `${JSON.stringify([rec], null, 2)}\n`);
+    return rec;
+  }
+
+  // THE SILENT CREDENTIAL DELETION. The desktop and the Go store share
+  // tokens.json: normalizeRecord returns null for an unknown scope, readTokens
+  // filters those nulls out, and mint writes `[...readTokens(), next]` back. So
+  // without 'provider' in VALID_SCOPES, the next token the desktop mints on a
+  // machine that also runs the hub REMOVES the node's record — the node 401s on
+  // its next reconnect and nothing anywhere says why.
+  it('survives a desktop mint round-trip with its register grant intact', () => {
+    const node = writeNodeRecord();
+
+    // Any desktop write path: a pairing mint, a session-token mint, a sweep.
+    getOrCreateRemoteToken('triage', 'Phone pairing');
+    mintSessionFacadeToken('sess-1', 'view');
+    sweepSessionFacadeTokens(['sess-1']);
+
+    const kept = rawTokens().find((r) => r.token === node.token);
+    expect(kept, "the node's provider record was deleted by a desktop mint").toBeDefined();
+    expect(kept).toMatchObject({ scope: 'provider', label: 'fly-node' });
+    // The grant itself, not just the row: normalizeRecord rebuilds records field
+    // by field, so a preserved row with a stripped `provides` is a node that
+    // reconnects, registers nothing, and re-sends `register` every 5 seconds
+    // forever — the hub's ack cannot say why a method was withheld.
+    // TWIN: authtoken.Record.Provides (services/hub/internal/authtoken).
+    expect(kept!.provides).toEqual(['*']);
+  });
+
+  it('keeps a narrowed provides grant verbatim and drops only junk entries', () => {
+    fs.writeFileSync(
+      tokensFile(),
+      `${JSON.stringify(
+        [
+          {
+            token: 'NODE-TOKEN-narrow-aaaaaaaaaaaaaaaa',
+            scope: 'provider',
+            created: new Date(0).toISOString(),
+            provides: ['sessions.snapshots', '  ', 42, 'terminals.open'],
+          },
+        ],
+        null,
+        2,
+      )}\n`,
+    );
+    getOrCreateRemoteToken('view', 'Dashboard');
+    expect(rawTokens().find((r) => r.scope === 'provider')!.provides).toEqual([
+      'sessions.snapshots',
+      'terminals.open',
+    ]);
+  });
+
+  it('is hidden from nothing it should be visible in, and minted by nobody here', () => {
+    const node = writeNodeRecord();
+    // It is a real pairing-list record (not a session token), so it lists — the
+    // user must be able to SEE and revoke the credential their node holds.
+    expect(listRemoteTokens().map((r) => r.token)).toContain(node.token);
+    expect(revokeRemoteToken(node.token)).toMatchObject({ scope: 'provider' });
+    expect(rawTokens()).toEqual([]);
+  });
+
+  // Reading a provider record and MINTING one are different questions. The
+  // grant that makes a provider token useful is written by the hub-side CLI;
+  // one minted here would carry none, register nothing, and look like it works.
+  it('refuses to mint a provider token from the desktop', () => {
+    expect(() => getOrCreateRemoteToken('provider', 'fly-node')).toThrow(
+      /unknown remote token scope/,
+    );
+    expect(fs.existsSync(tokensFile())).toBe(false);
+  });
+
+  it('still fails closed on a genuinely unknown scope', () => {
+    fs.writeFileSync(
+      tokensFile(),
+      `${JSON.stringify(
+        [
+          { token: 'A'.repeat(32), scope: 'admin', created: new Date(0).toISOString() },
+          { token: 'B'.repeat(32), scope: 'provider', created: new Date(0).toISOString() },
+        ],
+        null,
+        2,
+      )}\n`,
+    );
+    // Widening VALID_SCOPES must not have made it permissive: an unrecognized
+    // scope is still dropped.
+    expect(listRemoteTokens().map((r) => r.scope)).toEqual(['provider']);
+  });
+});

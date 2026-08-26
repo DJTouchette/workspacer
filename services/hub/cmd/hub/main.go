@@ -412,7 +412,7 @@ func main() {
 	// scoped user token → its tier's method allowlist) and gates calls
 	// accordingly. The plugin manager registers per-plugin tokens with srv below.
 
-	// Capability-scoped user tokens (view / triage / operator), persisted next to
+	// Capability-scoped user tokens (view / triage / operator / provider), persisted next to
 	// the host remote-token and minted with `workspacer token create`. The store
 	// re-reads the file when it changes, so minting/revoking takes effect on the
 	// next connection without restarting the hub — no minting endpoint needed.
@@ -437,6 +437,12 @@ func main() {
 				// full-access `yoloGranted` stamp).
 				ProfilesAllowed: rec.ProfilesAllowed,
 				YoloAllowed:     rec.YoloAllowed,
+				// The REGISTER grant, for the provider tier — a headless node
+				// that must answer capability calls without being promoted to
+				// trusted. ProvidesGrant, not the raw field: the tier is the
+				// gate, so a `provides` sitting on a view record (a hand edit, a
+				// bad merge of two token stores) grants nothing.
+				Provides: rec.ProvidesGrant(),
 			}, true
 		})
 	}

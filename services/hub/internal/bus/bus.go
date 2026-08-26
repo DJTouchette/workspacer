@@ -124,11 +124,39 @@ type ScopedIdent struct {
 	// stamps hub-only `yoloGranted` for a granted caller — see
 	// sanitizeSpawnParams.
 	YoloAllowed bool
+	// Provides is the token record's REGISTER grant
+	// (authtoken.Record.ProvidesGrant): the capability-method patterns this
+	// connection may register as the provider of. Non-nil only for the
+	// provider tier; nil for view / triage / operator.
+	//
+	// It is a SEPARATE list from Methods and must stay one. Methods is scanned
+	// for "*" by operator() and a "*" there means host identity; a provider
+	// record's Provides is ["*"] by default and means "may answer any call".
+	// Merging the two lists — or "simplifying" operator() to look at both —
+	// silently hands every node token full host authority, which is the exact
+	// over-grant this tier exists to end.
+	Provides []string
 }
+
+// providerScope is the tier name whose connections may register capabilities
+// without holding host authority, and which consumes nothing.
+//
+// Spelled as a literal rather than imported: internal/bus is a pure policy
+// point that is handed a ScopedIdent and deliberately does not depend on where
+// tiers are defined. TWIN: authtoken.ScopeProvider, pinned by
+// TestProviderScopeNameMatchesAuthtoken.
+const providerScope = "provider"
 
 // operator reports whether the ident grants everything — such a token is
 // treated exactly like the host token (trusted: may also register providers,
 // publish, and pass Authorized for token-guarded HTTP routes).
+//
+// It reads si.Methods and NOTHING ELSE. A provider-tier ident carries a "*" in
+// its Provides — the register grant — and that star must never reach this scan:
+// Provides says "may answer any call", Methods' star says "is the host". They
+// are different questions with the same spelling, which is why they live in
+// different fields and why widening this loop is a privilege escalation rather
+// than a refactor.
 func (si ScopedIdent) operator() bool {
 	for _, m := range si.Methods {
 		if m == "*" {
@@ -421,9 +449,11 @@ func (s *Server) Authorized(r *http.Request) bool {
 //
 // That single difference is the whole point. An operator-tier scoped token is
 // promoted to `trusted` at the handshake, so on the bus it is indistinguishable
-// from the host — and a remote worker node holds exactly such a token, because
-// it attaches as a capability PROVIDER and providing requires trust
-// (conn.mayProvide). The node's credential therefore passes Authorized, which
+// from the host — and a remote worker node held exactly such a token for as
+// long as attaching as a capability PROVIDER required trust (conn.mayProvide).
+// The provider tier ended that requirement, but not the exposure: the tier is
+// additive, so a node deployed before it still presents an operator token until
+// its secret is swapped. Such a credential passes Authorized, which
 // means it passes every guard()ed HTTP route, which includes the plugin-install
 // routes — and installing a plugin runs the manifest's build argv on the HUB's
 // host. A node that is compromised, or a token read off one, is then arbitrary
@@ -436,9 +466,11 @@ func (s *Server) Authorized(r *http.Request) bool {
 // keyed on the caller's live bus connection — there is nothing to drop or
 // spoof: a bare HTTP POST carrying the node's token is refused just the same.
 //
-// It is deliberately NOT a fix for "operator tier means host authority"; that
-// is a bus-level tier redesign. This is the smallest true statement available
-// today: code execution on the host needs the host's own credential.
+// It is deliberately NOT the fix for "operator tier means host authority" —
+// that is the tier redesign that became ScopeProvider, whose connections may
+// register capabilities without being trusted and do not pass Authorized at
+// all. This predicate is the statement that stays true regardless of how the
+// tiers are cut: code execution on the host needs the host's own credential.
 //
 // Always true when no token is configured — the loopback-only default, where
 // there is no credential to hold and Authorized already says the same thing.
@@ -828,8 +860,15 @@ func (s *Server) revalidateScoped(ctx context.Context, cn *conn, tok, authScope 
 			return
 		case <-t.C:
 			si, ok := s.lookupScoped(tok)
+			// Provides joins the comparison for the same reason the spawn
+			// grants did: it is a per-token grant SNAPSHOTTED at handshake
+			// (cn.provides), and a snapshot nothing re-checks is a grant that
+			// only narrows on restart. Leave it out and revoking a node's right
+			// to answer claude.approve applies to every future connection and to
+			// nothing that is currently answering — which is the one situation
+			// narrowing a register grant is for.
 			if ok && si.Scope == authScope && slices.Equal(si.ProfilesAllowed, cn.profilesAllowed) &&
-				si.YoloAllowed == cn.yoloAllowed {
+				si.YoloAllowed == cn.yoloAllowed && slices.Equal(si.Provides, cn.provides) {
 				continue
 			}
 			// Both halves, exactly as UnregisterPluginToken applies them: the
@@ -839,7 +878,7 @@ func (s *Server) revalidateScoped(ctx context.Context, cn *conn, tok, authScope 
 			cn.revoked.Store(true)
 			_ = cn.ws.CloseNow()
 			if ok && si.Scope == authScope {
-				log.Printf("[bus] scoped token %s: spawn grant (profiles/full-access) changed while connected; connection closed (reconnect picks up the new grant)", cn.tokenID)
+				log.Printf("[bus] scoped token %s: grant (profiles/full-access/provides) changed while connected; connection closed (reconnect picks up the new grant)", cn.tokenID)
 			} else if ok {
 				log.Printf("[bus] scoped token %s: tier changed %q -> %q while connected; connection closed", cn.tokenID, authScope, si.Scope)
 			} else {
@@ -879,8 +918,13 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	var authScope string
 	var profilesAllowed []string
 	var yoloAllowed bool
+	// provides is the REGISTER grant. Two sources, never merged: a plugin's
+	// manifest (below, via capspec.EventGrants) and — new — a provider-tier
+	// token record. Everything else about the two identities stays separate.
+	var provides []string
 	if pi, ok := s.lookupPluginToken(tok); ok {
 		caps, pluginID, events = pi.caps, pi.id, pi.events
+		provides = events.Provides
 	} else if s.token == "" || tok == s.token {
 		trusted = true
 	} else if si, ok := s.lookupScoped(tok); ok {
@@ -891,6 +935,11 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 			trusted = true
 		} else {
 			scope, scopeMethods = si.Scope, si.Methods
+			// The provider tier's whole point. si.Provides is nil for every
+			// other tier, so this line widens nothing else — and it is read
+			// only by mayProvide / mayPublish, never by mayCall, which stays
+			// governed by scopeMethods alone.
+			provides = si.Provides
 			if scopeMethods == nil {
 				// A record with no grants must still be a real deny-all identity,
 				// not accidentally mistaken for "unscoped" downstream.
@@ -919,7 +968,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	cn := &conn{
 		ws: ws, ctx: ctx, trusted: trusted, caps: caps, pluginID: pluginID,
-		emits: events.Emits, consumes: events.Consumes, provides: events.Provides,
+		emits: events.Emits, consumes: events.Consumes, provides: provides,
 		scope: scope, scopeMethods: scopeMethods, tokenID: TokenFingerprint(tok),
 		viaScopedToken: viaScoped, profilesAllowed: profilesAllowed, yoloAllowed: yoloAllowed,
 		internal: s.isInternalDial(r),
@@ -1315,8 +1364,35 @@ func (cn *conn) mayPublish(typ string) bool {
 	if cn.trusted {
 		return true
 	}
-	if capspec.EventTopicIsHostOwned(typ) {
-		return false
+	// Classified == host-owned: the registry is derived from this repo's own
+	// publish sites, so recording a topic as host state and forgetting to say
+	// who may write it is not expressible (see capspec.EventTopicIsHostOwned).
+	if spec, classified := capspec.EventTopicSpec(typ); classified {
+		// HOST STATE — and the one credential that is not forging it when it
+		// publishes is the PROVIDER of the capability whose output the topic
+		// carries. That is what being the provider means: a headless node that
+		// registered sessions.attachTerminal IS the terminal, so pty.bytes.<id>
+		// from it is not a forgery, it is the stream. Nobody else, and no topic
+		// whose row leaves Publisher empty (see capspec.EventTopic.Publisher —
+		// an unset Publisher is a deliberate "the host says this, nobody
+		// answers for it", e.g. layout.changed and plugin.settings.changed).
+		//
+		// This cannot widen a plugin: internal/plugin's validateProvides
+		// confines a manifest's `provides` to the plugin's own namespace, so no
+		// plugin can hold a core capability like sessions.attachTerminal to
+		// begin with — a host-side grant would be needed, which a manifest
+		// cannot give itself. It cannot widen view/triage either: their
+		// Provides is nil and MatchesAny(nil, …) is false.
+		//
+		// mayProvide, deliberately, and NOT "is the registered owner of". The
+		// question is the GRANT, not the live router slot, because the router
+		// slot is first-registration-wins: on a hub that also has a desktop,
+		// the desktop owns sessions.snapshots and the node's own register of it
+		// is withheld — under an ownership test that node would go silently
+		// MUTE while continuing to answer everything else. The grant is what
+		// the host decided this credential is for; ownership is a race between
+		// two honest providers.
+		return spec.Publisher != "" && cn.mayProvide(spec.Publisher)
 	}
 	return event.MatchesAny(cn.emits, typ)
 }
@@ -1367,6 +1443,23 @@ func (cn *conn) mayConsume(typ string) bool {
 	if cn.trusted {
 		return true
 	}
+	if cn.providerTier() {
+		// A PROVIDER ANSWERS CALLS; IT DOES NOT WATCH THE FLEET. Hard false,
+		// before any topic is classified, including topics guarded by a
+		// capability this connection provides.
+		//
+		// The symmetric rule was available and was deliberately refused: "may
+		// consume a topic guarded by what it provides" would let a node that
+		// provides sessions.attachTerminal consume pty.bytes.* for sessions on
+		// the DESKTOP — a machine it has nothing to do with. Providing a
+		// capability says what you can answer for, not what you may watch.
+		//
+		// The floor for this being free rather than a limitation: cmd/brain
+		// contains no `subscribe` frame at all. If a headless provider ever
+		// needs a topic, that is an explicit consumes grant on the record and a
+		// decision made then, not a default granted now.
+		return false
+	}
 	spec, classified := capspec.EventTopicSpec(typ)
 	if cn.scopeMethods != nil {
 		if !classified {
@@ -1401,10 +1494,36 @@ func (cn *conn) mayConsume(typ string) bool {
 }
 
 // mayProvide reports whether this connection may register as the provider of a
-// capability method. Trusted conns (the host) provide the built-in capabilities;
-// a plugin may register only methods matched by its manifest's `provides`.
+// capability method. Trusted conns (the host) provide the built-in
+// capabilities; everyone else registers only what their `provides` grant
+// matches — for a plugin that grant comes from its manifest (bounded by
+// install-time consent AND by validateProvides, which confines a plugin to its
+// OWN namespace), and for a provider-tier token from the token record.
+//
+// The revocation check is not symmetry with mayCall/mayConsume for its own
+// sake. Without it, a socket whose credential was revoked mid-flight could
+// still CLAIM a capability slot — and first-registration-wins means the claim
+// outlives the frame: every subsequent caller's params (prompts, file contents,
+// approval decisions) route to the revoked connection until it actually drops.
 func (cn *conn) mayProvide(method string) bool {
-	return cn.trusted || event.MatchesAny(cn.provides, method)
+	if cn.revoked.Load() {
+		return false
+	}
+	if cn.trusted {
+		return true
+	}
+	return event.MatchesAny(cn.provides, method)
+}
+
+// providerTier reports whether this is a provider-tier connection: a scoped
+// user token that may register capabilities without holding host authority.
+//
+// Keyed on the tier NAME rather than on "has a non-empty provides", because the
+// consume rule below must hold for a provider token whatever its register grant
+// says — including a grant narrowed to nothing. A record with an empty
+// `provides` is still a headless answerer, not a fleet watcher.
+func (cn *conn) providerTier() bool {
+	return cn.scopeMethods != nil && cn.scope == providerScope
 }
 
 // mayCall reports whether this connection is allowed to invoke method at all

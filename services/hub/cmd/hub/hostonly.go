@@ -13,9 +13,10 @@ package main
 //
 // guard() is not a strong enough gate for that, because guard() is
 // srv.Authorized, and Authorized admits an OPERATOR-TIER SCOPED TOKEN as well
-// as the host token. A remote worker node (deploy/fly/node) holds exactly such
-// a token: it attaches as a capability provider, providing requires trust on
-// the bus, and the operator tier is the tier that carries it. So the node's
+// as the host token. That tier is what a remote worker node (deploy/fly/node)
+// was minted at until the provider tier landed, and what an already-deployed
+// node still carries until somebody performs the swap in deploy/fly/RUNBOOK.md
+// §B5b — the tier is additive, so nothing migrates a node on its own. Such a
 // credential — a bearer string sitting in a Fly secret on a machine a thousand
 // miles away, readable by anything that gets a shell there — could POST
 // /plugins/install and have this host build and run whatever it named. The
@@ -25,15 +26,21 @@ package main
 //
 // So these three routes ask for the HOST's own credential (bus.HostAuthorized).
 // The distinction is real rather than a guess about who is calling: a node
-// token is minted with `workspacer token create --scope operator` and lives in
-// tokens.json, while the host token is a file on the hub that no node is ever
-// handed. Nothing here depends on the caller's live bus connection, so a bare
+// token is minted with `workspacer token create --scope provider` (or, before
+// that tier, `--scope operator`) and lives in tokens.json, while the host token
+// is a file on the hub that no node is ever handed. Nothing here depends on the caller's live bus connection, so a bare
 // POST carrying a node token is refused the same as one from an attached node.
 //
 // WHAT THIS IS NOT. It is not the fix for "operator tier is promoted to host
-// authority" — that is a bus-level tier redesign (a provider tier, so
-// conn.mayProvide stops forcing trust), and it is being designed separately.
-// This is the smallest true statement available today, and it costs the user's
+// authority". That fix is the bus-level tier redesign this route guard called
+// for and has since HAD: authtoken.ScopeProvider, where conn.mayProvide stops
+// forcing trust, so a node registers capabilities without being trusted and no
+// longer passes Authorized at all — reaching this wrapper's 401 rather than its
+// 403. This guard is not thereby redundant. The operator tier still exists, is
+// still promoted to trusted, and is still what a node deployed before the swap
+// presents; a route that runs code on this host should ask for host authority
+// on its own terms and not because of how some other tier happens to be
+// scoped. It costs the user's
 // own local install nothing: the desktop, `workspacer plugin dev` and the CLI
 // all present the host token (hubAuthHeaders → getHubToken → remote-token).
 //
@@ -59,7 +66,8 @@ import (
 //   - 401 for a caller that would not pass guard() either — no token, a view /
 //     triage tier, an unknown string. Unchanged from every other guarded route.
 //   - 403 for a caller that IS authorized on this hub but does not hold host
-//     authority — an operator-tier scoped token, i.e. a node. 403 is the honest
+//     authority — an operator-tier scoped token. (A provider-tier one does not
+//     pass guard() at all and takes the 401 above.) 403 is the honest
 //     answer: the credential is real and the act is not available to it, and
 //     answering 401 would send an operator hunting for a token problem.
 //
@@ -78,7 +86,7 @@ func hostOnlyRoute(srv *bus.Server, what string, h http.HandlerFunc) http.Handle
 				if label == "" {
 					label = "(unlabelled)"
 				}
-				log.Printf("refused %s: the %s-tier scoped token %q does not hold host authority. %s runs code on this host, so it needs the host's own credential; a remote node's token is not one",
+				log.Printf("refused %s: the %s-tier scoped token %q does not hold host authority. %s runs code on this host, so it needs the host's own credential; no scoped token is one",
 					what, si.Scope, label, what)
 			} else {
 				log.Printf("refused %s: caller does not hold host authority", what)
@@ -86,7 +94,7 @@ func hostOnlyRoute(srv *bus.Server, what string, h http.HandlerFunc) http.Handle
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
 			_ = json.NewEncoder(w).Encode(map[string]string{
-				"error": what + " requires host authority: it runs code on the hub's own machine, so it is refused to every scoped bus token — including the operator tier, which is what a remote worker node carries. Run it from the machine that owns the hub.",
+				"error": what + " requires host authority: it runs code on the hub's own machine, so it is refused to every scoped bus token, the operator tier included. Run it from the machine that owns the hub.",
 			})
 			return
 		}

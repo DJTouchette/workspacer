@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Smartphone, Copy, Check, Eye, EyeOff, Link2, Server } from 'lucide-react';
-import type { RemoteTokenRecord, RemoteTokenScope } from '../../../main/shared/ipcTypes';
+import type { PairingScope, RemoteTokenRecord } from '../../../main/shared/ipcTypes';
 import LinkedMachinesSection from './LinkedMachinesSection';
 
 interface RemoteInfo {
@@ -32,8 +32,11 @@ interface TailscaleInfoUI {
   hint?: string;
 }
 
+// PairingScope, not RemoteTokenScope: the record type also admits `provider`,
+// a headless node's credential minted on the hub by the CLI. It drives no
+// client (one method, no events) and must never appear in a pairing picker.
 const SCOPE_OPTIONS: Array<{
-  scope: RemoteTokenScope;
+  scope: PairingScope;
   label: string;
   badge?: string;
   description: string;
@@ -56,7 +59,7 @@ const SCOPE_OPTIONS: Array<{
   },
 ];
 
-function scopeCopy(scope: RemoteTokenScope): string {
+function scopeCopy(scope: PairingScope): string {
   switch (scope) {
     case 'view':
       return 'This QR is read-only. It can view fleet state and transcripts, but cannot control agents.';
@@ -741,7 +744,7 @@ function EnabledState({
   const hasApp = !!info.appUrl;
   // Pair phones with a constrained token by default. Full-control is an
   // explicit scope choice and uses a revocable operator token from tokens.json.
-  const [scope, setScope] = useState<RemoteTokenScope>('triage');
+  const [scope, setScope] = useState<PairingScope>('triage');
   const [pairingToken, setPairingToken] = useState<RemoteTokenRecord | null>(null);
   const [pairingTokens, setPairingTokens] = useState<RemoteTokenRecord[]>([]);
   const [tokenBusy, setTokenBusy] = useState(false);
@@ -814,7 +817,13 @@ function EnabledState({
 
   const httpsOn = !!(ts && ts.serveActive && ts.magicName);
   const activeToken = pairingToken?.token || (canManageTokens ? '' : info.token);
-  const activeScope = pairingToken?.scope || (canManageTokens ? scope : 'operator');
+  // Narrowed to PairingScope rather than switched on: a record's scope may be
+  // `provider` (a headless node's credential, minted on the hub by the CLI and
+  // never by this dialog), and this UI has no pairing copy for it because there
+  // is no pairing to describe.
+  const tokenScope = pairingToken?.scope;
+  const activeScope: PairingScope =
+    tokenScope && tokenScope !== 'provider' ? tokenScope : canManageTokens ? scope : 'operator';
   const hasPairingToken = !!activeToken;
   const fullAppAvailable = hasApp && activeScope === 'operator';
   const tokenQ = activeToken ? `?token=${encodeURIComponent(activeToken)}` : '';

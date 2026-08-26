@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 	"github.com/djtouchette/workspacer-hub/internal/broker"
 	"github.com/djtouchette/workspacer-hub/internal/bus"
 )
@@ -16,8 +17,10 @@ import (
 // THE NODE-TOKEN REFUSAL, end to end through the wrapper the routes are
 // registered with.
 //
-// A remote worker node holds an operator-tier scoped token (deploy/fly/node,
-// `workspacer token create --scope operator`). That token is trusted on the bus
+// A remote worker node deployed before the provider tier holds an operator-tier
+// scoped token (deploy/fly/node's earlier `--scope operator`), and keeps holding
+// it until its secret is swapped — the tier is additive, nothing migrates it.
+// That token is trusted on the bus
 // and therefore passes guard() on every /plugins/* route — and POST
 // /plugins/install runs the manifest's install argv on THIS host. These tests
 // pin the interim gate: the install family answers a node's token with 403 and
@@ -38,6 +41,15 @@ func hostOnlyFixture(t *testing.T) (srv *bus.Server, h http.HandlerFunc, ran *bo
 			return bus.ScopedIdent{Scope: "operator", Methods: []string{"*"}, Label: "fly-node"}, true
 		case "phone-token":
 			return bus.ScopedIdent{Scope: "triage", Methods: []string{"claude.approve"}}, true
+		case "provider-token":
+			// A node minted the way the runbooks now mint one: it may register
+			// every capability and answers calls, and holds NO host authority.
+			return bus.ScopedIdent{
+				Scope:    string(authtoken.ScopeProvider),
+				Methods:  authtoken.ScopeProvider.Methods(),
+				Label:    "fly-node",
+				Provides: []string{"*"},
+			}, true
 		}
 		return bus.ScopedIdent{}, false
 	})
@@ -90,6 +102,38 @@ func TestHostOnlyRouteRefusesANodesOperatorToken(t *testing.T) {
 	}
 	if strings.Contains(body, "fly-node") || strings.Contains(body, "node-token") {
 		t.Errorf("refusal body %q names the presented credential; that belongs in the hub's log, not in the answer", body)
+	}
+}
+
+// TestHostOnlyRouteRefusesAProviderTierNodeToken pins the SEAM between the two
+// changes that met in this merge: the host-only install gate, and the provider
+// tier that stopped a node needing host authority to attach.
+//
+// A provider-tier token is refused EARLIER than an operator one — it does not
+// pass guard() at all, so it takes the 401 and never reaches the host-authority
+// check. That is the stronger answer, not a weaker one, and it is worth pinning
+// precisely because it is structural: nothing about hostOnlyRoute produced it,
+// so nothing about hostOnlyRoute would notice if a future widening of
+// ScopedIdent.operator() (say, one that scanned Provides for its "*") quietly
+// promoted every node back to a caller this route admits.
+func TestHostOnlyRouteRefusesAProviderTierNodeToken(t *testing.T) {
+	srv, h, ran := hostOnlyFixture(t)
+
+	authReq := httptest.NewRequest(http.MethodPost, "/plugins/install", nil)
+	authReq.Header.Set("Authorization", "Bearer provider-token")
+	if srv.Authorized(authReq) {
+		t.Fatal("a provider-tier token passed srv.Authorized: registering capabilities has been confused with host authority again, which is the whole thing the tier exists to separate")
+	}
+	if srv.HostAuthorized(authReq) {
+		t.Fatal("a provider-tier token passed srv.HostAuthorized — a scoped token is never the host credential")
+	}
+
+	rec := postInstall(h, "provider-token")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("install with a provider-tier node token = %d, want 401: it is refused by guard() before host authority is ever consulted", rec.Code)
+	}
+	if *ran {
+		t.Fatal("the install handler RAN for a provider-tier node token — a remote node just built and ran code on this host")
 	}
 }
 
@@ -151,7 +195,7 @@ func TestTheInstallFamilyIsRegisteredHostOnly(t *testing.T) {
 	for _, route := range []string{"/plugins/install", "/plugins/examples/install", "/plugins/reload"} {
 		re := regexp.MustCompile(`AddRoute\(\s*"` + regexp.QuoteMeta(route) + `"\s*,\s*hostOnly\(`)
 		if !re.MatchString(src) {
-			t.Errorf("main.go does not register %q with hostOnly(...). That route runs code on the hub's own machine, and guard() alone admits the operator-tier scoped token every remote worker node carries.", route)
+			t.Errorf("main.go does not register %q with hostOnly(...). That route runs code on the hub's own machine, and guard() alone admits any operator-tier scoped token — which is what a worker node deployed before the provider tier still carries.", route)
 		}
 	}
 	// And the wrapper must still be the composed one — a hostOnly that forgot

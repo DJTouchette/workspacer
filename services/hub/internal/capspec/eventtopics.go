@@ -99,6 +99,25 @@ type EventTopic struct {
 	Disposition EventTopicDisposition
 	Method      string
 	Reason      string
+	// Publisher names the capability whose PROVIDER emits this topic. It answers
+	// a DIFFERENT question from Method: Method is "who may HEAR this",
+	// Publisher is "who may SAY it".
+	//
+	// They coincide on the rows a headless provider emits — the provider of
+	// sessions.attachTerminal IS the terminal, so its pty.bytes.<id> is the
+	// stream and not a forgery — and they deliberately do not in general.
+	// plugin.log is guarded on the consume side and published only by the hub's
+	// own sidecar supervisor, so no capability answers for it and its Publisher
+	// is empty. An empty Publisher is a real answer, not an unfilled field: it
+	// means "the host says this and nobody may say it on the host's behalf",
+	// which is the correct reading for layout.changed (whose forged form
+	// carries the four spawn-escalation fields layout.set scrubs) and for
+	// plugin.settings.changed.
+	//
+	// Read by the bus's mayPublish, which is the ONLY widening in the provider
+	// tier: a non-trusted connection may publish a classified topic exactly
+	// when it registered the capability named here.
+	Publisher string
 }
 
 // eventTopics is the registry. Every topic any publish site in this repo emits
@@ -113,7 +132,10 @@ var eventTopics = []EventTopic{
 		Pattern:     "pty.bytes.*",
 		Disposition: TopicGuardedBy,
 		Method:      "sessions.attachTerminal",
-		Reason:      "the session's raw PTY byte stream with the ring-buffer replay — as sessions.attachTerminal's own capspec reason says, \"what it grants is the OUTPUT side of sessions.terminalInput\"",
+		// The provider of the terminal is the thing the bytes come OUT of:
+		// cmd/brain/terminal.go publishes this from the PTY it owns.
+		Publisher: "sessions.attachTerminal",
+		Reason:    "the session's raw PTY byte stream with the ring-buffer replay — as sessions.attachTerminal's own capspec reason says, \"what it grants is the OUTPUT side of sessions.terminalInput\"",
 	},
 	{
 		Pattern:     "pty.exit",
@@ -137,7 +159,13 @@ var eventTopics = []EventTopic{
 		Pattern:     "facade.openTerminal",
 		Disposition: TopicGuardedBy,
 		Method:      "terminals.open",
-		Reason:      "carries the cwd and the shell COMMAND LINE an agent asked to be run in a visible pane, so receiving it discloses exactly what sending it composes. It is the headless provider's only delivery path (the desktop emits the identical payload to its renderer over IPC and never publishes it), which is why the topic exists at all rather than the capability simply returning ok",
+		// Method and Publisher are the same name here for a reason worth
+		// stating: this topic IS how the headless provider answers
+		// terminals.open (cmd/brain/visibleterm.go — it has no renderer to emit
+		// to over IPC), so whoever answers the call is by construction whoever
+		// emits the event.
+		Publisher: "terminals.open",
+		Reason:    "carries the cwd and the shell COMMAND LINE an agent asked to be run in a visible pane, so receiving it discloses exactly what sending it composes. It is the headless provider's only delivery path (the desktop emits the identical payload to its renderer over IPC and never publishes it), which is why the topic exists at all rather than the capability simply returning ok",
 	},
 	{
 		Pattern:     "pty.desync",
@@ -159,12 +187,22 @@ var eventTopics = []EventTopic{
 		Pattern:     "agent.statusline",
 		Disposition: TopicGuardedBy,
 		Method:      "sessions.snapshot",
-		Reason:      "status_line is merged into the session snapshot (cmd/brain/store.go), so this is sessions.snapshot's output arriving by event. Guarding it is only half the fix: every OTHER fleet read runs through registry.visibleSnapshots / vis.visible and runStatusLines published unconditionally, disclosing the id, model, cost_usd and rate-limit state of a session the layout deliberately hides — and sessions.snapshot(id) is view-callable and unfiltered by id, so the leaked id completed the read. cmd/brain now applies the same visibility rule to this publish",
+		// status_line is merged into the session snapshot, so the provider of
+		// the snapshot is the publisher of this (cmd/brain/events.go).
+		Publisher: "sessions.snapshot",
+		Reason:    "status_line is merged into the session snapshot (cmd/brain/store.go), so this is sessions.snapshot's output arriving by event. Guarding it is only half the fix: every OTHER fleet read runs through registry.visibleSnapshots / vis.visible and runStatusLines published unconditionally, disclosing the id, model, cost_usd and rate-limit state of a session the layout deliberately hides — and sessions.snapshot(id) is view-callable and unfiltered by id, so the leaked id completed the read. cmd/brain now applies the same visibility rule to this publish",
 	},
 	{
 		Pattern:     "agent.snapshot",
 		Disposition: TopicOpenByDecision,
-		Reason:      "the fleet feed the view tier exists for — /m, the web renderer and the TUI are all projections of it, and sessions.snapshot / sessions.snapshots are in the view tier already, so the event discloses nothing the call plane withholds. It is filtered by the SAME fleet-visibility rule as those reads before publication (cmd/brain/events.go store.onChange -> vis.visible)",
+		// The fleet feed, published by whoever provides the fleet read
+		// (cmd/brain/main.go, off the same store). Open on the CONSUME side and
+		// still owned on the PUBLISH side — internal/push treats this topic as
+		// authoritative input, so a forged one puts attacker-chosen text on a
+		// phone's lock screen AND suppresses the genuine alert. Open to hear is
+		// not open to say.
+		Publisher: "sessions.snapshots",
+		Reason:    "the fleet feed the view tier exists for — /m, the web renderer and the TUI are all projections of it, and sessions.snapshot / sessions.snapshots are in the view tier already, so the event discloses nothing the call plane withholds. It is filtered by the SAME fleet-visibility rule as those reads before publication (cmd/brain/events.go store.onChange -> vis.visible)",
 	},
 	{
 		Pattern:     "agent.state_changed",
