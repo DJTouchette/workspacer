@@ -107,6 +107,12 @@ type capGrant struct {
 type ScopedIdent struct {
 	Scope   string
 	Methods []string
+	// Label is the record's human name (`workspacer token create --label`).
+	// Carried for one purpose: a REFUSAL can name the credential it turned away
+	// in the hub's log ("fly-node"), which is the difference between an operator
+	// finding a compromised node and reading "403" forever. It authorizes
+	// nothing and is never echoed to the caller.
+	Label string
 	// ProfilesAllowed is the token record's profile-dispatch grant
 	// (authtoken.Record.ProfilesAllowed): the Claude profile ids an
 	// agents.spawn from this connection may keep. The router strips profileId
@@ -385,7 +391,12 @@ func (s *Server) SetToken(t string) {
 // host token, or a scoped token whose grant is operator (`*`). Guarded HTTP
 // routes (plugin admin, /remote, /app entry) are operator surface, so view /
 // triage tokens do not pass — the /m PWA they pair with is served unguarded
-// and the real boundary stays /bus. Always true when no token is configured.
+// and the real boundary stays /bus.
+//
+// This is the CEILING for a scoped token, not for the hub: the routes that make
+// the host run code (the plugin-install family) require [Server.HostAuthorized]
+// on top of this, because an operator-tier token is what a remote worker node
+// carries. Always true when no token is configured.
 // Accepts either `Authorization: Bearer <token>` or a `?token=<token>` query
 // param — browsers can't set headers on a WebSocket handshake, so the query
 // form is what the mobile client uses.
@@ -401,6 +412,53 @@ func (s *Server) Authorized(r *http.Request) bool {
 		return true
 	}
 	return false
+}
+
+// HostAuthorized reports whether a request carries HOST authority: the hub's own
+// host token (the pairing credential in <config>/workspacer/remote-token), and
+// nothing else. It is STRICTLY STRONGER than [Server.Authorized], and the one
+// thing it refuses that Authorized admits is an operator-tier scoped token.
+//
+// That single difference is the whole point. An operator-tier scoped token is
+// promoted to `trusted` at the handshake, so on the bus it is indistinguishable
+// from the host — and a remote worker node holds exactly such a token, because
+// it attaches as a capability PROVIDER and providing requires trust
+// (conn.mayProvide). The node's credential therefore passes Authorized, which
+// means it passes every guard()ed HTTP route, which includes the plugin-install
+// routes — and installing a plugin runs the manifest's build argv on the HUB's
+// host. A node that is compromised, or a token read off one, is then arbitrary
+// code execution on the machine the fleet is run from.
+//
+// The distinction this predicate rests on is a REAL one and not a heuristic: a
+// node token is minted by `workspacer token create --scope operator` and lives
+// in tokens.json, while the host token is a file on the hub that no node is
+// ever given. The check is on the presented CREDENTIAL, so — unlike anything
+// keyed on the caller's live bus connection — there is nothing to drop or
+// spoof: a bare HTTP POST carrying the node's token is refused just the same.
+//
+// It is deliberately NOT a fix for "operator tier means host authority"; that
+// is a bus-level tier redesign. This is the smallest true statement available
+// today: code execution on the host needs the host's own credential.
+//
+// Always true when no token is configured — the loopback-only default, where
+// there is no credential to hold and Authorized already says the same thing.
+func (s *Server) HostAuthorized(r *http.Request) bool {
+	if s.token == "" {
+		return true
+	}
+	return presentedToken(r) == s.token
+}
+
+// ScopedIdentFor resolves the SCOPED token a request presents, if it presents
+// one: false for the host token, for a plugin token, and for anything unknown.
+// It exists so a refusal can say which credential it turned away (scope + label)
+// in a log line, without the refusing code reaching into the token store.
+func (s *Server) ScopedIdentFor(r *http.Request) (ScopedIdent, bool) {
+	tok := presentedToken(r)
+	if tok == "" || (s.token != "" && tok == s.token) {
+		return ScopedIdent{}, false
+	}
+	return s.lookupScoped(tok)
 }
 
 // AuthorizedForPlugin reports whether a request may see ONE plugin's own

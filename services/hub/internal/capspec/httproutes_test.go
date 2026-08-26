@@ -44,6 +44,10 @@ type routeSite struct {
 	line    int
 	// wrapperGuarded: the site wraps its handler in guard(…) / requireBearer(…).
 	wrapperGuarded bool
+	// hostOnlyWrapped: the site wraps its handler in hostOnly(…), the
+	// host-authority gate — a strictly stronger check than guard(), applied to
+	// the routes that make this host run code.
+	hostOnlyWrapped bool
 	// handlerGuarded: the site names a handler whose own body refuses with 401.
 	// /bus is the case this exists for — its credential check is the handshake
 	// inside handleBus, not a wrapper — and a route may not be recorded
@@ -77,7 +81,7 @@ func TestEveryHTTPRouteIsClassified(t *testing.T) {
 		seen[key] = true
 		row, ok := HTTPRouteSpec(s.server, s.pattern)
 		if !ok {
-			t.Errorf("%s:%d registers %s %q and internal/capspec/httproutes.go says nothing about it. Every route on this plane must be classified before it ships: guarded, tiered-payload (naming the gate), public-by-decision, or loopback-confined — with the reason. The bytes a new route serves are exactly what the call plane and the event plane already decide for the same payload, and this is where those three answers are made to agree.",
+			t.Errorf("%s:%d registers %s %q and internal/capspec/httproutes.go says nothing about it. Every route on this plane must be classified before it ships: guarded, host-only, tiered-payload (naming the gate), public-by-decision, or loopback-confined — with the reason. The bytes a new route serves are exactly what the call plane and the event plane already decide for the same payload, and this is where those three answers are made to agree.",
 				s.file, s.line, s.server, s.pattern)
 			continue
 		}
@@ -87,9 +91,23 @@ func TestEveryHTTPRouteIsClassified(t *testing.T) {
 		// the IN-HANDLER form (the named handler's own body refuses with 401).
 		// A route with neither may not be recorded RouteGuarded — that is the
 		// drift this file exists to catch, and it is the direction that leaks.
-		if s.wrapperGuarded && row.Disposition != RouteGuarded {
+		if s.wrapperGuarded && !credentialRequired(row.Disposition) {
 			t.Errorf("%s:%d wraps %s %q in a credential check, and the registry classifies it %q. A row that understates the code is how a guard gets deleted without anyone noticing the row still says 'public'.",
 				s.file, s.line, s.server, s.pattern, row.Disposition)
+		}
+		// THE HOST-AUTHORITY PIN, both directions. hostOnly() is what keeps a
+		// remote worker node's operator-tier token — which passes srv.Authorized,
+		// and therefore passes guard() — from reaching the routes that run code on
+		// this host. Downgrading such a site back to guard() while the row still
+		// reads "host-only" is precisely the silent re-opening this plane exists
+		// to refuse, and so is quietly relabelling the row while the code holds.
+		if s.hostOnlyWrapped && row.Disposition != RouteHostOnly {
+			t.Errorf("%s:%d wraps %s %q in hostOnly(), the host-authority gate, and the registry classifies it %q. Record the stronger gate: a row that reads %q says an operator-tier scoped token may call it, and the code says it may not.",
+				s.file, s.line, s.server, s.pattern, row.Disposition, row.Disposition)
+		}
+		if !s.hostOnlyWrapped && row.Disposition == RouteHostOnly {
+			t.Errorf("%s:%d registers %s %q with no hostOnly() wrapper, and the registry records it %q. That row is the claim that a node's operator-tier token is refused here; without the wrapper it is refused nothing, and this route runs code on the hub's own machine.",
+				s.file, s.line, s.server, s.pattern, RouteHostOnly)
 		}
 		// The IN-HANDLER form understates in exactly the same direction. /bus is
 		// the whole reason handlerGuarded exists — its credential check is the
@@ -99,11 +117,11 @@ func TestEveryHTTPRouteIsClassified(t *testing.T) {
 		// while the code still refuses with 401, and then the deletion of that 401
 		// would ALSO pass, because line 94 won't fire once the row already reads
 		// non-guarded. Pinning the handler form closes that two-step.
-		if s.handlerGuarded && row.Disposition != RouteGuarded {
+		if s.handlerGuarded && !credentialRequired(row.Disposition) {
 			t.Errorf("%s:%d registers %s %q with a handler that refuses unauthenticated callers (a 401 in its own body), and the registry classifies it %q. A route the code guards in-handler must stay RouteGuarded — understating it is how the guard, and then the 401 itself, get removed with the row still reading non-guarded.",
 				s.file, s.line, s.server, s.pattern, row.Disposition)
 		}
-		if !s.wrapperGuarded && !s.handlerGuarded && row.Disposition == RouteGuarded {
+		if !s.wrapperGuarded && !s.handlerGuarded && credentialRequired(row.Disposition) {
 			t.Errorf("%s:%d registers %s %q with no credential check the scanner can see — neither a guard()/requireBearer() wrapper nor a 401 in the handler it names — and the registry records it as %q. The classification says a credential is required and the code hands the bytes to anybody.",
 				s.file, s.line, s.server, s.pattern, RouteGuarded)
 		}
@@ -136,8 +154,9 @@ func TestUnguardedRoutesAgreeWithTheirBusTwin(t *testing.T) {
 		}
 		checked++
 		switch row.Disposition {
-		case RouteGuarded:
-			// The strictest answer: the route requires the same trust the topic does.
+		case RouteGuarded, RouteHostOnly:
+			// The strictest answer: the route requires the same trust the topic
+			// does (host-only requires strictly more).
 		case RouteTieredPayload:
 			if row.Gate == "" {
 				t.Errorf("%s %q serves the payload of %q, which the event registry refuses every scoped tier, and it is classified %q with NO gate named. 'Some callers get less' is a claim about a mechanism; name the mechanism.",
@@ -180,11 +199,15 @@ func TestHTTPRouteRegistryIsWellFormed(t *testing.T) {
 		if r.Disposition == RouteGuarded {
 			min = 40
 		}
+		// A host-only row does not get the guarded row's shorter minimum: it
+		// claims a gate above the token, and the reason has to say what the act
+		// is and why a credential that passes every other guarded route is
+		// nonetheless refused here.
 		if len(strings.TrimSpace(r.Reason)) < min {
 			t.Errorf("%s has no real reason (%q). For a guarded route, what it does and why that needs the token; for every other disposition, what an uncredentialed caller receives and why that is acceptable.", key, r.Reason)
 		}
 		switch r.Disposition {
-		case RouteGuarded, RoutePublic, RouteLoopbackConfined:
+		case RouteGuarded, RouteHostOnly, RoutePublic, RouteLoopbackConfined:
 			if r.Gate != "" {
 				t.Errorf("%s is %q and also names gate %q — a gate splits a TIERED payload; on any other disposition it is a mechanism nothing consults", key, r.Disposition, r.Gate)
 			}
@@ -195,7 +218,7 @@ func TestHTTPRouteRegistryIsWellFormed(t *testing.T) {
 				t.Errorf("%s names gate %q and no such identifier exists in the hub's route sources — a gate nobody calls is prose", key, r.Gate)
 			}
 		default:
-			t.Errorf("%s has disposition %q, which is not one of the four", key, r.Disposition)
+			t.Errorf("%s has disposition %q, which is not one of the five", key, r.Disposition)
 		}
 
 		// A twin has to resolve, or the agreement test above compares nothing.
@@ -219,10 +242,12 @@ func TestHTTPRouteRegistryIsWellFormed(t *testing.T) {
 			t.Errorf("%s has TwinKind %q, which is not one of the three", key, r.TwinKind)
 		}
 	}
-	// All four dispositions must stay in use. If tiered-payload ever empties,
+	// All five dispositions must stay in use. If tiered-payload ever empties,
 	// the plane has collapsed back to "guarded or open", under which /plugins is
-	// unclassifiable and therefore open — which is exactly where it started.
-	for _, d := range []RouteDisposition{RouteGuarded, RouteTieredPayload, RoutePublic, RouteLoopbackConfined} {
+	// unclassifiable and therefore open — which is exactly where it started; and
+	// if host-only empties, the plugin install family has been handed back to
+	// every operator-tier token, i.e. to every remote node.
+	for _, d := range []RouteDisposition{RouteGuarded, RouteHostOnly, RouteTieredPayload, RoutePublic, RouteLoopbackConfined} {
 		if byDisposition[d] == 0 {
 			t.Errorf("no row uses disposition %q — the registry has collapsed to a vocabulary that cannot express every route", d)
 		}
@@ -277,6 +302,16 @@ func TestLoopbackConfinedRoutesActuallyHaveTheirConfinement(t *testing.T) {
 	}
 }
 
+// credentialRequired reports whether a disposition claims the route needs a
+// credential at all. Both members of the family qualify: RouteGuarded (the bus
+// token) and RouteHostOnly (the host's own token, refusing the operator-tier
+// scoped tokens guard() admits). The drift checks ask this rather than comparing
+// to RouteGuarded, so promoting a route to the stronger gate does not read as
+// "the registry claims a guard the code does not apply".
+func credentialRequired(d RouteDisposition) bool {
+	return d == RouteGuarded || d == RouteHostOnly
+}
+
 // ---- scanning ---------------------------------------------------------
 
 func scanRouteSites(t *testing.T) []routeSite {
@@ -322,7 +357,10 @@ func scanGoRoutes(t *testing.T, server, rel string) []routeSite {
 			continue
 		}
 		site := routeSite{server: server, pattern: m[1], file: rel, line: i + 1}
-		site.wrapperGuarded = strings.Contains(line, "guard(") || strings.Contains(line, "requireBearer(") || strings.Contains(line, "requireScope(")
+		site.wrapperGuarded = strings.Contains(line, "guard(") || strings.Contains(line, "requireBearer(") || strings.Contains(line, "requireScope(") || strings.Contains(line, "hostOnly(")
+		// hostOnly() is guard() plus a host-authority check, and the registry has
+		// to record the STRONGER of the two or the row understates the code.
+		site.hostOnlyWrapped = strings.Contains(line, "hostOnly(")
 		site.handlerGuarded = handlerRefuses401(body, line)
 		out = append(out, site)
 	}

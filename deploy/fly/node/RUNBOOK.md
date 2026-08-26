@@ -180,6 +180,13 @@ on every new connection.
 > credential can spend money, and it lives on the node. It is still the right
 > choice, because unlike the host token it can be revoked, but do not read
 > "scoped" as "limited" here.
+>
+> **One thing it is refused, since 2026-08-25: plugin install.**
+> `/plugins/install`, `/plugins/examples/install` and `/plugins/reload` build and
+> run code on the *hub's* host, so they require the hub's own host token and 403
+> every scoped token. Use a **scoped** token here, as this step says, and never
+> put the hub's `remote-token` on a node — the gate is keyed on the credential,
+> so a node holding the host token simply is the host.
 
 Then, back in this repo:
 
