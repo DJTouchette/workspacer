@@ -357,7 +357,15 @@ export function wakeAffordance(
   canWake: boolean,
   pending = false,
 ): WakeAffordance {
-  if (node.state === 'available') {
+  // `stopping` is excluded here for the same reason `waking` is excluded from
+  // [[sleepAffordance]], and it was MISSING: the sleep path added the state and
+  // this function never learned it, so a draining machine fell through to the
+  // final branch and got an ENABLED Connect — rendered beside the disabled
+  // "Shutting down…" the sleep affordance was already showing. Two buttons that
+  // fight each other on one row, and the enabled one spends money by racing a
+  // stop the user just asked for. The transition owns the row until it settles;
+  // pinned by contracts/node-view-cases.json's `wakeOffered` column.
+  if (node.state === 'available' || node.state === 'stopping') {
     return { visible: false, enabled: false, label: 'Connect', title: '' };
   }
   // The mirror of [[sleepAffordance]]'s own transitional guard, and it comes

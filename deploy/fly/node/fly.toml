@@ -87,6 +87,26 @@ kill_timeout = 60
   # tagged at first authentication has key expiry disabled by default.
   WKS_TS_TAGS = "tag:workspacer-node"
 
+  # WHICH NODE THIS IS, and the hub's node registry is the only reader.
+  #
+  # The brain surfaces it on `brain.info` (cmd/brain/handlers.go), and the hub
+  # attributes an answering brain to a node with it. Without it a brain answers
+  # ANONYMOUSLY, and the hub then attributes it only when exactly one node is
+  # registered — it refuses to guess between several, on the wake path as well
+  # as the poll. So a second node added to a registry of anonymous nodes cannot
+  # be woken at all: the wake times out and the hub stops the machine again.
+  #
+  # IT MUST MATCH THE `id` OF THIS MACHINE'S ROW IN THE HUB's nodes.json. A
+  # name the hub does not recognise is IGNORED (logged, and then treated as
+  # anonymous) rather than trusted — it names a row the hub already holds and
+  # grants nothing — so a typo degrades to the anonymous behaviour above rather
+  # than to a node impersonating another. That degradation is SILENT on a
+  # single-node hub, which is why the value is written next to the file it has
+  # to agree with: `fly-node` is the id deploy/fly/RUNBOOK.md §B7 and
+  # deploy/fly/hub/RUNBOOK.md §8 both write into nodes.json. Change one, change
+  # all three.
+  WKS_NODE_ID = "fly-node"
+
   WKS_BRAIN_SCOPE      = "full"
   WKS_DOORBELL_ENABLED = "1"
   WKS_DOORBELL_PORT    = "8080"

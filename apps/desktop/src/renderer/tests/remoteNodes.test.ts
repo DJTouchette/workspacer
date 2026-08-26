@@ -8,6 +8,8 @@
  * only reads the one the hub sent.
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import {
   NODE_PRESENTATION,
   applyNodeStateChange,
@@ -29,6 +31,8 @@ import {
   nodesWorthShowing,
   describeSleepError,
   nodeMayStillBeRunning,
+  type NodeState,
+  type NodeTone,
 } from '../src/lib/remoteNodes';
 
 const den = (over: Partial<RemoteNodeView> = {}): RemoteNodeView => ({
@@ -411,5 +415,141 @@ describe('nodesSummary', () => {
       ]),
     ).toBe('1 starting · 1 asleep · 1 connected');
     expect(nodesSummary([])).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE CROSS-LANGUAGE CORPUS.
+//
+// Everything above pins this copy against itself, which is exactly how five
+// readers of one payload drifted: each one was individually well-tested and
+// nothing held them to each other. contracts/node-view-cases.json is that
+// thing. The other loaders are services/hub/internal/nodes/view_test.go (the
+// side that WRITES the payload, plus a substring sweep over the inline /m
+// client) and a #[test] in apps/tui/src/nodes.rs.
+// ---------------------------------------------------------------------------
+
+const NODE_FIXTURE = JSON.parse(
+  readFileSync(
+    join(__dirname, '..', '..', '..', '..', '..', 'contracts', 'node-view-cases.json'),
+    'utf8',
+  ),
+) as {
+  states: { state: NodeState; transitional: boolean; wakeOffered: boolean; why: string }[];
+  unknownStates: string[];
+  lastExit: {
+    cleanPrefix: string;
+    cases: {
+      name: string;
+      reason: string;
+      exitCode?: number;
+      at?: string;
+      clean: boolean;
+      notice: boolean;
+      recordAbsent?: boolean;
+    }[];
+  };
+  presentation: {
+    cases: {
+      state: NodeState;
+      tone: NodeTone;
+      progress: boolean;
+      desktopLabel: string;
+      mobileLabel: string;
+      fallbackDetail: string;
+      tuiLabel: string | null;
+      why: string;
+    }[];
+  };
+};
+
+describe('the state vocabulary (contracts/node-view-cases.json)', () => {
+  it('knows every state the contract declares, and no others', () => {
+    // BOTH directions. "every contract state is known here" alone would pass a
+    // renderer that had grown a sixth state the hub never sends and no other
+    // client renders — the same drift, walked the other way.
+    const fromContract = NODE_FIXTURE.states.map((s) => s.state).sort();
+    expect(Object.keys(NODE_PRESENTATION).sort()).toEqual(fromContract);
+    for (const c of NODE_FIXTURE.states) {
+      expect(normalizeNode({ id: 'ord', state: c.state, wakeable: true })?.state).toBe(c.state);
+    }
+  });
+
+  it('coerces a state it does not recognise to `unreachable`, never renders it raw', () => {
+    for (const s of NODE_FIXTURE.unknownStates) {
+      expect(normalizeNode({ id: 'ord', state: s, wakeable: true })?.state).toBe('unreachable');
+    }
+  });
+
+  it('offers an enabled wake in exactly the states the contract says', () => {
+    // The money column. A `stopping` node used to fall through to the final
+    // branch here and get an ENABLED Connect, rendered beside the disabled
+    // "Shutting down…" the sleep affordance was already showing — two buttons
+    // fighting over one row, and the enabled one races a stop the user asked
+    // for.
+    for (const c of NODE_FIXTURE.states) {
+      const a = wakeAffordance(den({ state: c.state, wakeable: true }), true);
+      expect(`${c.state}:${a.enabled}`).toBe(`${c.state}:${c.wakeOffered}`);
+    }
+  });
+
+  it('animates exactly the transitional states', () => {
+    for (const c of NODE_FIXTURE.states) {
+      expect(`${c.state}:${NODE_PRESENTATION[c.state].progress}`).toBe(
+        `${c.state}:${c.transitional}`,
+      );
+    }
+  });
+});
+
+describe('lastExit verdicts (contracts/node-view-cases.json)', () => {
+  it('reaches the contract verdict for every ending', () => {
+    for (const c of NODE_FIXTURE.lastExit.cases) {
+      const node = den({
+        state: 'available',
+        lastExit: c.recordAbsent
+          ? undefined
+          : { reason: c.reason || undefined, exitCode: c.exitCode, at: c.at },
+      });
+      const notice = nodeCrashNotice(node);
+      expect(`${c.name}: ${notice !== null}`).toBe(`${c.name}: ${c.notice}`);
+      if (c.notice) {
+        // The reason is the whole content of the line — a notice that does not
+        // name the ending tells a person to look without saying at what.
+        expect(notice).toContain(c.reason);
+      }
+      if (c.clean) {
+        expect(notice).toBeNull();
+      }
+    }
+  });
+
+  it('exercises both arms, so a corpus that drifted to one would fail here', () => {
+    const clean = NODE_FIXTURE.lastExit.cases.filter((c) => c.clean).length;
+    const crash = NODE_FIXTURE.lastExit.cases.filter((c) => c.notice).length;
+    expect(clean).toBeGreaterThan(0);
+    expect(crash).toBeGreaterThan(0);
+    expect(NODE_FIXTURE.lastExit.cleanPrefix).toBe('signal-');
+  });
+});
+
+describe('presentation (contracts/node-view-cases.json)', () => {
+  it('renders each state with the words the contract carries', () => {
+    for (const c of NODE_FIXTURE.presentation.cases) {
+      const p = NODE_PRESENTATION[c.state];
+      expect(p.label).toBe(c.desktopLabel);
+      expect(p.tone).toBe(c.tone);
+      expect(p.progress).toBe(c.progress);
+      // The one string that must be byte-identical across copies: /m ships it
+      // verbatim too, and the Go loader checks that side.
+      expect(p.fallbackDetail).toBe(c.fallbackDetail);
+      expect(nodeDetailLine(den({ state: c.state }))).toBe(c.fallbackDetail);
+    }
+  });
+
+  it('covers every state in the vocabulary', () => {
+    expect(NODE_FIXTURE.presentation.cases.map((c) => c.state).sort()).toEqual(
+      NODE_FIXTURE.states.map((s) => s.state).sort(),
+    );
   });
 });

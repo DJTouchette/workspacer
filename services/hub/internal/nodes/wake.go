@@ -211,7 +211,29 @@ func (s *Supervisor) watchWake(ctx context.Context, n Node, cli flyapi.Client, g
 		pctx, pcancel := context.WithTimeout(wctx, s.tun.ProbeTimeout)
 		pr, err := s.bus.ProbeBrain(pctx)
 		pcancel()
-		if err == nil && (s.attribute(pr.NodeID) == n.ID || pr.NodeID == "") {
+		// ATTRIBUTION IS THE WHOLE CHECK, and there is no anonymous shortcut
+		// beside it. This condition used to read
+		//
+		//	err == nil && (s.attribute(pr.NodeID) == n.ID || pr.NodeID == "")
+		//
+		// and that trailing clause was load-bearing in EXACTLY the case where
+		// it was wrong. With one node registered `attribute("")` already
+		// returns that node's id, so the clause changed nothing; with two, it
+		// let ANY anonymous brain — including one belonging to a node that was
+		// already up — end this node's wake. The result was the node marked
+		// `available` with `wakeFailures` reset to 0 and the other node's exit
+		// record copied onto its row, for a machine that may never have
+		// booted. wakeFailures is this arc's stated mitigation for a node that
+		// keeps failing to boot, and that path RESET it.
+		//
+		// The consequence, stated plainly because it is a real cost: a
+		// multi-node deployment whose nodes do not set WKS_NODE_ID can no
+		// longer complete a wake at all — the watcher will time out and
+		// failWake will stop the machine again. That is the same refusal
+		// Reconcile has always made (see attribute's own comment), arriving on
+		// the path that spends money, and the fix for it is to set
+		// WKS_NODE_ID: deploy/fly/node/fly.toml's [env] now does.
+		if err == nil && s.attribute(pr.NodeID) == n.ID {
 			s.mu.Lock()
 			st := s.st[n.ID]
 			// SOMEBODY ELSE OWNS THIS NODE NOW — most likely a Sleep pressed
