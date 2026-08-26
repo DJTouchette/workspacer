@@ -159,6 +159,102 @@ describe('ComposerControls — pill labels reflect session state', () => {
   });
 });
 
+/**
+ * The permission pill is a SAFETY indicator, and until 2026-08-26 it answered
+ * an absent mode with the provider's first one — "Ask to approve". On the
+ * remote path that was reliably the wrong answer: a full-access session spawned
+ * from /app against a headless hub arrives as a sparse row carrying no
+ * permission fields, so the pane showed maximum caution for a session running
+ * with every approval bypassed. These pin the three states the bar has to tell
+ * apart.
+ */
+describe('ComposerControls — the permission pill never invents a mode', () => {
+  it('says Full access for a session the hub confirmed runs bypassed', () => {
+    renderControls({
+      provider: 'claude',
+      // What webBackend folds on from the spawn result's `fullAccess: true`,
+      // and what the brain overlays onto the sparse row for every other client.
+      snapshot: snapshot({
+        settings: { permissionMode: 'bypassPermissions', bypassAvailable: true },
+      }),
+    });
+    expect(screen.getByText('Full access')).toBeInTheDocument();
+    expect(screen.queryByText('Ask to approve')).not.toBeInTheDocument();
+    expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
+  });
+
+  it('says Unknown — not the provider default — when nothing reported the mode', () => {
+    // A sparse row from a headless node the hub never watched spawn: no
+    // livePermissionMode, no settings at all.
+    renderControls({ provider: 'claude', snapshot: snapshot() });
+    expect(screen.getByText('Unknown')).toBeInTheDocument();
+    expect(screen.queryByText('Ask to approve')).not.toBeInTheDocument();
+  });
+
+  it('still lets an unknown session be switched, and says why it is unknown', async () => {
+    renderControls({ provider: 'claude', snapshot: snapshot() });
+    const pill = screen.getByText('Unknown').closest('button')!;
+    expect(pill.title).toMatch(/unknown/i);
+    // Admitting ignorance must not disable the control that fixes it.
+    fireEvent.click(pill);
+    fireEvent.click(await screen.findByText('Plan mode'));
+    expect(api.claudeSetPermissionMode).toHaveBeenCalledWith('sess-1', 'plan');
+  });
+
+  it('uses the managed vocabulary for a managed provider', () => {
+    renderControls({
+      provider: 'codex',
+      snapshot: snapshot({ settings: { permissionMode: 'yolo' } }),
+    });
+    expect(screen.getByText('Full access')).toBeInTheDocument();
+  });
+});
+
+/**
+ * NO SILENT DOWNGRADES. The hub answers every spawn with `escalationScrubbed` —
+ * what was asked for and refused — and nothing in the UI read it: a clamped
+ * full-access click looked exactly like an ask-mode spawn, and the only record
+ * was a log line on the host. The chip is that record, put where the person who
+ * clicked can see it.
+ */
+describe('ComposerControls — a refused escalation is shown, not logged', () => {
+  it('flags a full-access request the hub clamped, beside the mode it settled on', () => {
+    renderControls({
+      provider: 'claude',
+      snapshot: snapshot({
+        settings: { permissionMode: 'default', bypassAvailable: false },
+        escalationScrubbed: ['skipPermissions'],
+      }),
+    });
+    // The pill tells the truth about what is running…
+    expect(screen.getByText('Ask to approve')).toBeInTheDocument();
+    // …and the chip tells the truth about what was asked for.
+    const chip = screen.getByText('Full access refused');
+    expect(chip).toBeInTheDocument();
+    expect(chip.closest('span')?.title).toMatch(/running as/i);
+  });
+
+  it('names a non-permission refusal differently', () => {
+    renderControls({
+      provider: 'claude',
+      snapshot: snapshot({
+        settings: { permissionMode: 'default' },
+        escalationScrubbed: ['profileId'],
+      }),
+    });
+    expect(screen.getByText('Request refused')).toBeInTheDocument();
+    expect(screen.getByText('Request refused').closest('span')?.title).toMatch(/account profile/i);
+  });
+
+  it('shows nothing at all when nothing was refused', () => {
+    renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ settings: { permissionMode: 'bypassPermissions' } }),
+    });
+    expect(screen.queryByText(/refused/i)).not.toBeInTheDocument();
+  });
+});
+
 describe('ComposerControls — claude live switches', () => {
   it('switching a claude model sends "/model <id>" through the message path', async () => {
     renderControls({ provider: 'claude', snapshot: snapshot({ settings: { model: 'sonnet' } }) });

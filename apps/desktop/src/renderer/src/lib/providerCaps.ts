@@ -204,13 +204,60 @@ const EXTRA_MODE_LABELS: Record<string, string> = {
   dontAsk: "Don't ask",
 };
 
-/** Display label for a permission-mode id ('acceptEdits' → 'Accept edits'). */
+/**
+ * What the mode pill says about a session whose permission mode NOTHING has
+ * reported — no live telemetry, no recorded launch.
+ *
+ * It used to say "Ask to approve", because an absent id fell through to the
+ * provider's first mode. That is a guess wearing the clothes of a fact, and on
+ * the remote path it was reliably the WRONG guess: a headless node's sparse row
+ * carried no permission fields at all, so a session running with permissions
+ * bypassed displayed as the safest mode there is. A permission indicator that
+ * invents a default is worse than one that admits ignorance — the user acts on
+ * what it says.
+ */
+export const UNKNOWN_PERMISSION_LABEL = 'Unknown';
+
+/** Display label for a permission-mode id ('acceptEdits' → 'Accept edits').
+ *  An absent id is UNKNOWN, never the provider's default — see above. */
 export function permissionModeLabel(
   provider: AgentProvider | undefined,
   id: string | undefined,
 ): string {
+  if (!id) return UNKNOWN_PERMISSION_LABEL;
   const caps = capsFor(provider);
-  const fallback = caps.permissionModes[0];
-  if (!id) return fallback?.label ?? 'Ask to approve';
   return caps.permissionModes.find((m) => m.id === id)?.label ?? EXTRA_MODE_LABELS[id] ?? id;
 }
+
+/**
+ * The mode id a session LAUNCHES with, spelled in its provider's own
+ * vocabulary: Claude keeps its four modes, every managed provider has only
+ * ask/yolo.
+ *
+ * TWIN of the two places that resolve the same thing where the session is
+ * actually started — main/services/claudeSpawn.ts + managedSpawn.ts for a local
+ * spawn, and the brain's `launchPermissionMode` (cmd/brain/handlers.go) for a
+ * headless one. This copy exists because the WEB backend learns the answer from
+ * the spawn result's `fullAccess` boolean and has to spell it as the id the
+ * pill reads, without a main process to ask.
+ */
+export function launchPermissionMode(
+  provider: AgentProvider | undefined,
+  fullAccess: boolean,
+  requested?: string,
+): string {
+  if ((provider ?? 'claude') === 'claude') {
+    if (fullAccess) return 'bypassPermissions';
+    // `fullAccess: false` OVERRULES the request. This is the refused-escalation
+    // case: the caller asked for bypassPermissions and the hub clamped it, so
+    // echoing the request back would reprint the exact lie being fixed — the
+    // pill would read "Full access" for a session running with approvals on.
+    return requested && !BYPASS_MODE_IDS.has(requested) ? requested : 'default';
+  }
+  return fullAccess ? 'yolo' : 'ask';
+}
+
+/** The spellings of "approvals off" across the providers. TWIN:
+ *  main/lib/permissionBypass.ts's CONFIG_BYPASS_PERMISSION_MODES, and
+ *  permissionModeMeansBypass in the brain + the MCP facade. */
+const BYPASS_MODE_IDS: ReadonlySet<string> = new Set(['bypassPermissions', 'yolo']);

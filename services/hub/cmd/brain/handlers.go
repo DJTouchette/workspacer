@@ -716,6 +716,11 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.isWakeTarget()) {
 		r.meta.set(sessionID, spawnMeta{Label: p.Label, ParentSessionID: p.ParentSessionID, IsSupervisor: p.isWakeTarget()})
 	}
+	// AFTER the wholesale set above, which would otherwise erase it. Unlike
+	// that one this is unconditional: every session has a permission mode, and
+	// a row that carries none is exactly the one whose UI invents a wrong
+	// default (see noteLaunch).
+	r.noteLaunch(sessionID, "claude", p)
 
 	cols, rows := p.Cols, p.Rows
 	if cols == 0 {
@@ -765,6 +770,43 @@ func spawnResult(id, message string, queued bool, p spawnParams) map[string]any 
 	return out
 }
 
+// launchPermissionMode is the mode id the spawned session RUNS under, spelled
+// in its provider's own vocabulary — Claude keeps its four modes, every managed
+// provider has only ask/yolo. TWIN of the desktop's resolution, which is one
+// formula written twice there (claudeSpawn.ts's `opts.permissionMode ??
+// (skipPermissions ? 'bypassPermissions' : 'default')` and managedSpawn.ts's
+// `skipPermissions ? 'yolo' : 'ask'`); the pills read the result of both, so
+// this side has to agree with them exactly or a headless row's label drifts
+// from a desktop row's for the same launch.
+//
+// Reads the RESOLVED p.skip, never the request: after the clamp gate, p.skip is
+// what the process gets, which is the whole point of recording it.
+func launchPermissionMode(provider string, p spawnParams) string {
+	if provider == "claude" {
+		if p.skip {
+			return "bypassPermissions"
+		}
+		if p.PermissionMode != "" {
+			return p.PermissionMode
+		}
+		return "default"
+	}
+	if p.skip {
+		return "yolo"
+	}
+	return "ask"
+}
+
+// noteLaunch stamps the launch truth onto the session's spawn metadata, so
+// every later reader of the row gets the same answer the caller got in the
+// spawn result. No-op when this brain keeps no metadata.
+func (r *registry) noteLaunch(sessionID, provider string, p spawnParams) {
+	if r.meta == nil {
+		return
+	}
+	r.meta.noteLaunch(sessionID, launchPermissionMode(provider, p), p.skip, p.escalationScrubbed())
+}
+
 // spawnManagedSession launches an adapter-driven session via claudemon's
 // POST /sessions/spawn-managed — Codex/OpenCode/Pi, plus Claude on the headless
 // stream-json transport. Mirrors the desktop's spawnManagedAgent
@@ -789,6 +831,8 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.isWakeTarget()) {
 		r.meta.set(sessionID, spawnMeta{Label: p.Label, ParentSessionID: p.ParentSessionID, IsSupervisor: p.isWakeTarget()})
 	}
+	// Same contract as the PTY leg: after the wholesale set, unconditionally.
+	r.noteLaunch(sessionID, provider, p)
 
 	req := spawnManagedReq{
 		Provider:  provider,

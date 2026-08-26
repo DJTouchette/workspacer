@@ -335,6 +335,13 @@ export interface ClaudeSessionSnapshot {
    *  shift+tab in the TUI), unlike `settings.permissionMode` which is frozen
    *  at spawn. Claude sessions only; managed providers fire no hooks. */
   livePermissionMode?: string;
+  /** Spawn escalations this session ASKED for and did not get — the hub's
+   *  `escalationScrubbed` (field names: 'skipPermissions', 'permissionMode',
+   *  'profileId'). Present only when something was actually refused, so an
+   *  ordinary spawn carries nothing. NO SILENT DOWNGRADES: whoever clicked
+   *  "Full access" is told it was refused, next to the mode it settled on,
+   *  rather than being left to infer it from the host's log. */
+  escalationScrubbed?: string[];
   /** Reasoning-effort level this session was last *asked* to run at, set when a
    *  live switch is accepted. Optimistic by necessity for Claude, which confirms
    *  an effort change nowhere; Codex's own confirmation arrives separately on the

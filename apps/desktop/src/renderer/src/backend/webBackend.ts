@@ -36,6 +36,7 @@ import {
   UPLOAD_TIMEOUT_MS,
 } from '../lib/attachmentUpload';
 import { postNotification } from '../lib/notificationBus';
+import { launchPermissionMode } from '../lib/providerCaps';
 import { isLoopbackOrigin } from '../lib/pluginOrigin';
 import type { PluginManifest } from '../types/plugin';
 
@@ -79,6 +80,15 @@ type PtyStream = {
  * session out from under the others — that is a shared resource with a
  * refcount, not a per-viewer one.
  */
+/** What `agents.spawn` answered about a session this client started: the mode
+ *  it runs under, whether that is full access, and any escalation the hub
+ *  refused. Recorded by `noteLaunch`, folded onto the session's snapshots. */
+export type LaunchTruth = {
+  permissionMode: string;
+  fullAccess: boolean;
+  escalationScrubbed?: string[];
+};
+
 /**
  * Snapshot folding for the bus: sparse-row overlay and conversation-window
  * splicing, with the per-session cache both need.
@@ -102,19 +112,59 @@ type PtyStream = {
 export function createSnapshotFold(client: Pick<HubBusClient, 'call'>) {
   const richSnaps = new Map<string, ClaudeSessionSnapshot>();
   const refetching = new Set<string>();
+  const launchTruth = new Map<string, LaunchTruth>();
+
+  /**
+   * Remember what `agents.spawn` ANSWERED about a session we just started.
+   *
+   * The hub stamps `fullAccess` on every spawn result — what the session
+   * actually runs with, as opposed to what was asked for — and it reaches
+   * exactly one place: the promise this client is holding. Nothing else on the
+   * bus repeats it in time: the brain does record the same truth onto its rows
+   * (cmd/brain/enrich.go noteLaunch), but the pane paints the moment the spawn
+   * resolves, and the first snapshot to carry that overlay is one claudemon
+   * event away. Between those two the mode pill had nothing and invented a
+   * default — which is precisely the window in which someone who just clicked
+   * "Full access" is looking at it.
+   *
+   * So the answer is folded into the snapshot the pane already reads, in the
+   * fields it already reads, rather than being threaded through a second
+   * channel the pills would have to learn about.
+   */
+  const noteLaunch = (sessionId: string, truth: LaunchTruth) => {
+    if (!sessionId) return;
+    launchTruth.set(sessionId, truth);
+  };
+
+  /** Fill, never overwrite: a row that already carries these knows at least as
+   *  much as we do (the brain's overlay is this same value, and a rich desktop
+   *  snapshot knows more). */
+  const applyLaunch = <T extends ClaudeSessionSnapshot>(snap: T): T => {
+    const truth = launchTruth.get(snap.sessionId);
+    if (!truth) return snap;
+    const settings = { ...snap.settings };
+    if (settings.permissionMode === undefined) settings.permissionMode = truth.permissionMode;
+    if (settings.bypassAvailable === undefined) settings.bypassAvailable = truth.fullAccess;
+    return {
+      ...snap,
+      settings,
+      ...(snap.escalationScrubbed === undefined &&
+        truth.escalationScrubbed?.length && { escalationScrubbed: truth.escalationScrubbed }),
+    };
+  };
 
   /** Remember a full snapshot (from the singular `sessions.snapshot`) as the
    *  history that later windows splice onto. */
   const seedFull = (snap: ClaudeSessionSnapshot): ClaudeSessionSnapshot => {
     richSnaps.set(snap.sessionId, snap);
-    return snap;
+    return applyLaunch(snap);
   };
 
   const foldSparse = (
     snap: ClaudeSessionSnapshot & { sparse?: boolean },
   ): ClaudeSessionSnapshot => {
     const prev = richSnaps.get(snap.sessionId);
-    const merged = snap.sparse && prev ? { ...prev, ...snap } : snap;
+    const merged = applyLaunch(snap.sparse && prev ? { ...prev, ...snap } : snap);
     if (!snap.sparse) {
       // A rich row from the LIST call is a bounded window too — sessions.snapshots
       // is compacted now — and OverviewPane refetches that list up to 1/s while an
@@ -131,7 +181,13 @@ export function createSnapshotFold(client: Pick<HubBusClient, 'call'>) {
       }
       // 'stale' / 'gap': what we already hold reaches further back — keep it.
     }
-    if (merged.status === 'ended') richSnaps.delete(snap.sessionId);
+    if (merged.status === 'ended') {
+      richSnaps.delete(snap.sessionId);
+      // Same retention as the snapshot cache: the launch truth describes a
+      // process that has exited, so it is bounded by the LIVE fleet, not by
+      // how long this tab has been open.
+      launchTruth.delete(snap.sessionId);
+    }
     return merged;
   };
 
@@ -161,12 +217,14 @@ export function createSnapshotFold(client: Pick<HubBusClient, 'call'>) {
       conversation: outcome.conversation,
       conversationOffset: outcome.conversationOffset,
     } as ClaudeSessionSnapshot;
-    if (next.status === 'ended') richSnaps.delete(next.sessionId);
-    else richSnaps.set(next.sessionId, next);
-    return next;
+    if (next.status === 'ended') {
+      richSnaps.delete(next.sessionId);
+      launchTruth.delete(next.sessionId);
+    } else richSnaps.set(next.sessionId, next);
+    return applyLaunch(next);
   };
 
-  return { foldSparse, foldConversation, seedFull };
+  return { foldSparse, foldConversation, seedFull, noteLaunch };
 }
 
 export function createPtyStreams(client: HubBusClient) {
@@ -366,7 +424,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
   // mid-render — remember the last rich snapshot per session and overlay
   // sparse updates onto it. Ended sessions are dropped from the cache so it
   // stays bounded by the live fleet.
-  const { foldSparse, foldConversation, seedFull } = createSnapshotFold(client);
+  const { foldSparse, foldConversation, seedFull, noteLaunch } = createSnapshotFold(client);
 
   // ── Conversation for conversation-less rows ────────────────────────────
   // A sparse (headless-brain) row carries no transcript at all — brain keeps
@@ -490,8 +548,38 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
       }),
 
     // ── Claude sessions ──────────────────────────────────────────────────
+    // The result carries more than the id: `fullAccess` is what the session
+    // ACTUALLY runs with (the hub stamps it on every spawn, honoring or
+    // clamping the request by the CALLER's token scope), and
+    // `escalationScrubbed` names anything asked for and refused. Both are
+    // recorded against the session before the id is handed back, so the pane
+    // that is about to mount already has the truth — the caller's signature is
+    // unchanged and every other consumer reads it off the snapshot, where the
+    // pills already look.
     spawnClaude: (opts) =>
-      client.call<{ sessionId: string }>('agents.spawn', opts).then((r) => r.sessionId),
+      client
+        .call<{
+          sessionId: string;
+          fullAccess?: boolean;
+          escalationScrubbed?: string[];
+        }>('agents.spawn', opts)
+        .then((r) => {
+          // A hub that predates the stamp sends no `fullAccess`. Absent is NOT
+          // false — inventing "ask mode" there is the very bug this fixes — so
+          // record nothing and let the pill say Unknown.
+          if (typeof r.fullAccess === 'boolean') {
+            noteLaunch(r.sessionId, {
+              permissionMode: launchPermissionMode(
+                opts.provider,
+                r.fullAccess,
+                opts.permissionMode,
+              ),
+              fullAccess: r.fullAccess,
+              escalationScrubbed: r.escalationScrubbed,
+            });
+          }
+          return r.sessionId;
+        }),
     // The bus has no config-changed event yet, so the web mirror keeps the
     // old behaviour: its snapshot refreshes on its own saves and on reload.
     onConfigChanged: () => () => {},
