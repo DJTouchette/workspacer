@@ -37,8 +37,13 @@ const busMock = vi.hoisted(() => {
       return () => {};
     }
 
+    /** Per-method canned results, for tests that care what a call ANSWERS
+     *  rather than only that it was made (e.g. agents.spawn's `fullAccess`). */
+    results = new Map<string, unknown>();
+
     call(method: string, params: unknown = {}) {
       this.calls.push({ method, params });
+      if (this.results.has(method)) return Promise.resolve(this.results.get(method));
       if (method === 'layout.get') {
         return Promise.resolve({
           version: 3,
@@ -188,6 +193,82 @@ describe('web backend bus integration', () => {
       's1',
       expect.objectContaining({ sessionId: 's1', mode: 'input', pending: null }),
     );
+    unsubscribe();
+  });
+
+  /**
+   * The hub stamps `fullAccess` on every agents.spawn result — what the session
+   * ACTUALLY runs with, after its token scope was weighed — and webBackend used
+   * to throw everything but the id away. The pane then read the mode off the
+   * snapshot, and a headless node's sparse row carries no permission fields at
+   * all, so a genuinely bypassed remote session displayed as ask-mode.
+   */
+  it("folds the spawn result's fullAccess onto the session's snapshots", async () => {
+    const api = createWebBackend('token', 'ws://host.test/bus');
+    client().results.set('agents.spawn', { sessionId: 's9', fullAccess: true });
+    const snapshots = vi.fn();
+    const unsubscribe = api.onClaudeSessionUpdate(snapshots);
+
+    await api.spawnClaude({ cwd: '/repo', skipPermissions: true });
+    client().emit('agent.snapshot', { sessionId: 's9', id: 's9', sparse: true, mode: 'input' });
+
+    expect(snapshots).toHaveBeenCalledWith(
+      's9',
+      expect.objectContaining({
+        settings: expect.objectContaining({
+          permissionMode: 'bypassPermissions',
+          bypassAvailable: true,
+        }),
+      }),
+    );
+    unsubscribe();
+  });
+
+  it('reports the mode the hub CLAMPED to, not the one that was asked for', async () => {
+    const api = createWebBackend('token', 'ws://host.test/bus');
+    // The refusal case: full access was requested and the token did not carry
+    // the grant. Echoing the request back here would reprint the exact lie.
+    client().results.set('agents.spawn', {
+      sessionId: 's10',
+      fullAccess: false,
+      escalationScrubbed: ['skipPermissions'],
+    });
+    const snapshots = vi.fn();
+    const unsubscribe = api.onClaudeSessionUpdate(snapshots);
+
+    await api.spawnClaude({
+      cwd: '/repo',
+      skipPermissions: true,
+      permissionMode: 'bypassPermissions',
+    });
+    client().emit('agent.snapshot', { sessionId: 's10', id: 's10', sparse: true, mode: 'input' });
+
+    expect(snapshots).toHaveBeenCalledWith(
+      's10',
+      expect.objectContaining({
+        settings: expect.objectContaining({
+          permissionMode: 'default',
+          bypassAvailable: false,
+        }),
+        escalationScrubbed: ['skipPermissions'],
+      }),
+    );
+    unsubscribe();
+  });
+
+  it('records nothing for a hub too old to stamp the answer', async () => {
+    const api = createWebBackend('token', 'ws://host.test/bus');
+    // Absent is not false: guessing "ask mode" here is the bug, not the fix.
+    client().results.set('agents.spawn', { sessionId: 's11' });
+    const snapshots = vi.fn();
+    const unsubscribe = api.onClaudeSessionUpdate(snapshots);
+
+    await api.spawnClaude({ cwd: '/repo', skipPermissions: true });
+    client().emit('agent.snapshot', { sessionId: 's11', id: 's11', sparse: true, mode: 'input' });
+
+    const delivered = snapshots.mock.calls.at(-1)?.[1];
+    expect(delivered.settings?.permissionMode).toBeUndefined();
+    expect(delivered.settings?.bypassAvailable).toBeUndefined();
     unsubscribe();
   });
 

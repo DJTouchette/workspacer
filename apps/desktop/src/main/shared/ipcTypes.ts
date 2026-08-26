@@ -291,6 +291,23 @@ export interface ClaudeSessionSnapshot {
   /** Federation: true while that peer's federation link is down — the session
    *  renders as a tombstone ("hub unreachable") instead of vanishing. */
   hubOffline?: boolean;
+  /** Requested-at-spawn launch settings — the composer pills' fallback truth
+   *  when no live telemetry has arrived. Fuller twin (with defaultEffort etc.)
+   *  in renderer/src/types/claudeSession.ts; only the slice the bus backend
+   *  itself writes is declared here. */
+  settings?: {
+    model?: string;
+    effort?: string;
+    permissionMode?: string;
+    /** Claude only: whether the process carries `--dangerously-skip-permissions`,
+     *  which is what Claude gates entering `bypassPermissions` on. Absent = we
+     *  don't know how this row was launched. */
+    bypassAvailable?: boolean;
+  };
+  /** Spawn escalations this session asked for and the hub refused (field
+   *  names — 'skipPermissions', 'permissionMode', 'profileId'). Absent when
+   *  nothing was taken. */
+  escalationScrubbed?: string[];
 }
 
 // ── Federation (federation:peers) ──

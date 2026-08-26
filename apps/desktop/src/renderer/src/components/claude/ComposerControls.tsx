@@ -31,10 +31,23 @@
  * conversation survives (claude resumes; codex/opencode start fresh).
  * Displayed values: live telemetry (statusLine/usage model) wins, then the
  * requested-at-spawn `snapshot.settings`, then a placeholder.
+ *
+ * THE PERMISSION PILL NEVER GUESSES. Model and effort degrade to a placeholder
+ * that costs nothing if it is wrong; the permission mode is a safety control,
+ * and an absent value used to fall through to the provider's FIRST mode — "Ask
+ * to approve". Remotely that was reliably the wrong answer (a headless node's
+ * sparse row carried no permission fields, so a bypassed session displayed as
+ * the most cautious one there is), so an unknown mode now says Unknown. The
+ * sources that make it knowable are, in order: live hook telemetry, then the
+ * launch recorded by whoever started the session — the desktop's spawn
+ * settings, the brain's noteLaunch overlay, or the `fullAccess` this client's
+ * own spawn result carried (webBackend's snapshot fold). Alongside it,
+ * `escalationScrubbed` names any escalation the hub refused, because a
+ * downgrade the user cannot see is a downgrade twice.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown } from 'lucide-react';
 import type { ClaudeSessionSnapshot } from '../../types/claudeSession';
 import type { AgentProvider } from '../../types/pane';
 import {
@@ -190,6 +203,47 @@ const pillStyle: React.CSSProperties = {
   textOverflow: 'ellipsis',
   flexShrink: 0,
 };
+
+const PERM_UNKNOWN_TITLE =
+  "Permission mode unknown — nothing has reported how this session was launched. Pick a mode to set one; it won't be guessed.";
+
+/** What each refusable spawn field means to someone reading a chat bar. The
+ *  two permission spellings collapse into one phrase because they are one
+ *  thing: `skipPermissions` is the flag, `permissionMode: bypassPermissions`
+ *  is the mode, and asking for either is asking for full access. */
+const ESCALATION_PHRASES: Record<string, string> = {
+  skipPermissions: 'full access',
+  permissionMode: 'full access',
+  profileId: 'a specific account profile',
+};
+
+/**
+ * The refused-escalation chip's copy, or null when nothing was refused.
+ *
+ * The hub already answers "did the escalation I asked for survive?" on every
+ * spawn result and every enriched row (`escalationScrubbed`), and until now
+ * NOTHING in the UI read it: a full-access click that got clamped looked
+ * identical to an ask-mode spawn, and the only record was a line in the host's
+ * log — on a machine the person clicking often cannot read. The whole point of
+ * the field is that the downgrade must be visible where the decision shows, so
+ * the chip names both halves: what was taken, and what the session runs as
+ * instead.
+ */
+function refusedEscalation(
+  scrubbed: string[] | undefined,
+  runningAs: string,
+): { label: string; title: string } | null {
+  if (!scrubbed?.length) return null;
+  const phrases = [...new Set(scrubbed.map((f) => ESCALATION_PHRASES[f] ?? f))];
+  const permissionRefused = scrubbed.some((f) => f === 'skipPermissions' || f === 'permissionMode');
+  return {
+    label: permissionRefused ? 'Full access refused' : 'Request refused',
+    title:
+      `This spawn asked for ${phrases.join(' and ')}, and the hub refused it — ` +
+      `the session is running as “${runningAs}”. Full access over the bus needs a token that ` +
+      'carries the grant (`workspacer token create --scope operator --full-access`).',
+  };
+}
 
 /** Thin vertical rule between controls (T3-style separators). */
 const Sep: React.FC = () => (
@@ -593,6 +647,16 @@ export const ComposerControls: React.FC<{
   const permLabel = permSwitching
     ? `${permissionModeLabel(provider, permSwitching)}…`
     : permissionModeLabel(provider, currentPermMode);
+  /** Nothing has reported this session's mode — no hook, no recorded launch.
+   *  The pill says so (UNKNOWN_PERMISSION_LABEL) instead of naming the
+   *  provider's default, which is a guess and was the WRONG guess for every
+   *  remote full-access session: they arrive as sparse rows carrying no
+   *  permission fields, so a bypassed agent displayed as "Ask to approve". */
+  const permUnknown = !permSwitching && !currentPermMode;
+  // NO SILENT DOWNGRADES: what this spawn asked for and the hub refused. The
+  // bar is the right place for it because it is where the consequence shows —
+  // the mode pill next door is reading the mode the session settled FOR.
+  const refused = refusedEscalation(snapshot?.escalationScrubbed, permLabel);
 
   // Federation: model/effort/permission switches act on the LOCAL daemon (IPC
   // or a local respawn), which can't reach a session living on a peer hub —
@@ -651,14 +715,39 @@ export const ComposerControls: React.FC<{
         title={
           disabled
             ? disabledTitle
-            : caps.permissionSwitch === 'live'
-              ? 'Permission mode (applies immediately)'
-              : 'Permission mode (restarts the session)'
+            : permUnknown
+              ? PERM_UNKNOWN_TITLE
+              : caps.permissionSwitch === 'live'
+                ? 'Permission mode (applies immediately)'
+                : 'Permission mode (restarts the session)'
         }
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{permLabel}</span>
         <ChevronDown size={11} strokeWidth={2.25} style={{ opacity: 0.7, flexShrink: 0 }} />
       </button>
+      {refused && (
+        <span
+          title={refused.title}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 3,
+            marginLeft: 4,
+            flexShrink: 0,
+            fontSize: '0.6rem',
+            fontWeight: 700,
+            letterSpacing: '0.03em',
+            padding: '1px 5px',
+            borderRadius: 'var(--wks-radius-pill)',
+            color: colors.warning,
+            border: `1px solid color-mix(in srgb, ${colors.warning} 45%, transparent)`,
+            backgroundColor: `color-mix(in srgb, ${colors.warning} 12%, transparent)`,
+          }}
+        >
+          <AlertTriangle size={10} strokeWidth={2.25} />
+          {refused.label}
+        </span>
+      )}
       {canSwitchProfile && (
         <>
           <Sep />

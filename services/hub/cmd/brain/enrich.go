@@ -31,6 +31,14 @@ type spawnMeta struct {
 	LivePermissionMode string
 	RequestedModel     string
 	LiveEffort         string
+
+	// What the session was actually LAUNCHED with — the spawn result's
+	// `fullAccess` / `escalationScrubbed` kept for every later reader, not just
+	// for whoever called agents.spawn. See noteLaunch.
+	LaunchRecorded       bool
+	LaunchPermissionMode string
+	LaunchFullAccess     bool
+	EscalationScrubbed   []string
 }
 
 // metaStore holds spawn metadata keyed by session id. Populated by the spawn
@@ -120,12 +128,46 @@ func enrichSnapshot(snap json.RawMessage, meta *metaStore) json.RawMessage {
 			if sm.LiveEffort != "" {
 				m["liveEffort"] = sm.LiveEffort
 			}
-			if sm.RequestedModel != "" {
-				settings, _ := m["settings"].(map[string]any)
+			// One settings block for every field that belongs in it, built
+			// lazily so an unenriched row keeps its exact shape.
+			var settings map[string]any
+			settingsFor := func() map[string]any {
 				if settings == nil {
-					settings = map[string]any{}
+					if settings, _ = m["settings"].(map[string]any); settings == nil {
+						settings = map[string]any{}
+					}
 				}
-				settings["model"] = sm.RequestedModel
+				return settings
+			}
+			if sm.RequestedModel != "" {
+				settingsFor()["model"] = sm.RequestedModel
+			}
+			// The launch truth (noteLaunch): `settings.permissionMode` is the
+			// field every client's mode pill reads, and `bypassAvailable` is
+			// how the pill knows whether "Full access" is a live switch or a
+			// restart — Claude gates entering bypassPermissions on the launch
+			// flag, and full access IS that flag. Written only when this brain
+			// watched the spawn; an unrecorded row stays silent so the client
+			// can say "unknown" instead of guessing a default.
+			//
+			// Filled, never overwritten: a richer desktop snapshot that already
+			// carries these knows more about its own session than this overlay.
+			if sm.LaunchRecorded {
+				s := settingsFor()
+				if _, ok := s["permissionMode"]; !ok && sm.LaunchPermissionMode != "" {
+					s["permissionMode"] = sm.LaunchPermissionMode
+				}
+				if _, ok := s["bypassAvailable"]; !ok {
+					s["bypassAvailable"] = sm.LaunchFullAccess
+				}
+			}
+			// NO SILENT DOWNGRADES, for every reader and not just the caller:
+			// what the spawn asked for and did not get, surfaced next to the
+			// mode it settled on.
+			if len(sm.EscalationScrubbed) > 0 {
+				m["escalationScrubbed"] = sm.EscalationScrubbed
+			}
+			if settings != nil {
 				m["settings"] = settings
 			}
 		}
@@ -427,6 +469,45 @@ func (s *metaStore) reparentChildren(fromID, toID string, isLive func(string) bo
 // to every row that lands, which is exactly the lifetime "the last confirmed
 // switch, until another one" needs. Empty values are ignored so a partial
 // setModel (effort only) does not blank the model.
+// noteLaunch records what a spawn ACTUALLY got — the same two answers
+// spawnResult hands back to the caller (`fullAccess`, `escalationScrubbed`)
+// plus the mode id the session runs under, in its provider's own vocabulary.
+//
+// WHY IT IS NEEDED. The spawn RESULT reaches exactly one client: whoever made
+// the call. Everybody else — a second browser tab, /m, the TUI, the same tab
+// after a reload — meets the session as a sparse row, and a sparse row carried
+// no permission information at all. Every one of those clients then fell back
+// to its provider's FIRST mode, so a session genuinely running with permissions
+// bypassed displayed as "Ask to approve". On a safety control a confident wrong
+// answer is worse than no answer, and this is the field that turns it into the
+// right one.
+//
+// It goes in the SPAWN METADATA for the same reason noteLiveControl does: the
+// store's rows are replaced wholesale on the next claudemon event, while
+// metadata is re-applied by enrichSnapshot to every row that lands. Merged
+// rather than `set` wholesale so it cannot clobber a label/parent recorded a
+// few lines earlier — and LaunchRecorded is what says "this brain watched the
+// spawn", as distinct from a zero value meaning ask-mode.
+func (s *metaStore) noteLaunch(id, permissionMode string, fullAccess bool, scrubbed []string) {
+	if id == "" {
+		return
+	}
+	s.mu.Lock()
+	m := s.m[id]
+	m.LaunchRecorded = true
+	m.LaunchPermissionMode = permissionMode
+	m.LaunchFullAccess = fullAccess
+	m.EscalationScrubbed = scrubbed
+	// A relaunch onto the same id is a NEW life: the previous life's live
+	// switches describe a process that no longer exists, and leaving them would
+	// let a stale `livePermissionMode` outrank the mode this spawn just asked
+	// for (the desktop drops the same field on a respawn — claudeSessionStore's
+	// setSpawnMeta).
+	m.LivePermissionMode = ""
+	s.m[id] = m
+	s.mu.Unlock()
+}
+
 func (s *metaStore) noteLiveControl(id string, permissionMode, model, effort string) {
 	if id == "" {
 		return
