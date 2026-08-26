@@ -17,13 +17,27 @@
  * The directory around the missing file is the evidence. Empty means nobody has
  * ever run here. Still holding the rest of the state means something took this
  * one file away.
+ *
+ * WHY AN EMPTY SUBDIRECTORY IS NOT EVIDENCE
+ *
+ * Counting any entry meant counting a directory somebody's installer had just
+ * made. On the Fly node, `deploy/fly/node/bootstrap.sh` pre-creates `plugins/`,
+ * `library/`, `layouts/`, `sessions/` and `logs/` inside `<config>/workspacer`
+ * before the brain starts, so the brain reported STATE LOSS on every
+ * genuinely-first boot. A guard that is wrong on every first boot is one the
+ * operator learns to scroll past, which costs it the cases it exists for. So an
+ * entry counts only when it holds something. A bare mkdir proves a mkdir ran; it
+ * does not prove the program ran.
  */
 import * as fs from 'fs';
+import * as path from 'path';
 
 /**
  * True when `name` is missing from `dir` in a way that looks like loss rather
- * than a first run: the directory exists and still holds at least one entry that
- * is not `name` itself.
+ * than a first run: the directory exists and still holds at least one entry,
+ * other than `name` itself, that carries actual state.
+ *
+ * An entry carries state if it is anything but an empty directory.
  *
  * A directory that cannot be read at all (including one that does not exist) is
  * reported as NOT lost — nobody has ever run there, so there is nothing to have
@@ -39,5 +53,26 @@ export function suspectedStateLoss(dir: string, name: string): boolean {
   } catch {
     return false;
   }
-  return entries.some((e) => e !== name);
+  return entries.some((e) => e !== name && !holdsNothing(path.join(dir, e)));
+}
+
+/**
+ * True only for a directory that holds nothing at all.
+ *
+ * Everything else is false, and each case is deliberate. A regular file makes
+ * `readdirSync` throw ENOTDIR, so a file always counts as evidence, including a
+ * zero-byte one, because something wrote it. A directory that cannot be read
+ * throws too, and unreadable is unknown: the safe answer for a guard biased
+ * toward the loud outcome is to let it count.
+ *
+ * Written with `readdirSync` rather than `statSync` or `withFileTypes` on
+ * purpose. One call answers both questions at once, and it keeps this function
+ * working against the plain name-list that every `fs` test double returns.
+ */
+function holdsNothing(entry: string): boolean {
+  try {
+    return fs.readdirSync(entry).length === 0;
+  } catch {
+    return false;
+  }
 }

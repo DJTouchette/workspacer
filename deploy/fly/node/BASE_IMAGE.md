@@ -57,7 +57,7 @@ Plus the operational toolkit the entrypoint, bootstrap and agents assume:
 |---|---|
 | `/usr/local/lib/wks/entrypoint.sh` | PID 1's payload: boot log → bootstrap → doorbell → tailscaled → `claudemon init` → claudemon → brain, plus signals and exit-reason recording |
 | `/usr/local/lib/wks/bootstrap.sh` | prepares the volume; idempotent on empty, populated and damaged volumes; creates **zero symlinks** |
-| `/usr/local/lib/wks/test-bootstrap.sh` | 63 assertions over `bootstrap.sh` |
+| `/usr/local/lib/wks/test-bootstrap.sh` | 106 assertions over `bootstrap.sh` |
 | `/usr/local/lib/wks/verify-image.sh` | **the contract check.** See [the rules](#the-rules) |
 
 ### User

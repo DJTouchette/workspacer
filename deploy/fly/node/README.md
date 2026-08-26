@@ -16,9 +16,9 @@ and the runbook is the only place the order is written down.
 | `example.Dockerfile` | A minimal project image `FROM` the base. Scaffolding that proves the base extends |
 | `Dockerfile.dockerignore` | Build context is the repo root; this keeps it to the two services |
 | `fly.toml` | Region, sizing, volume, restart policy, and the `auto_start_machines` wake backstop — each with the reasoning inline |
-| `entrypoint.sh` | PID 1: boot log → bootstrap → doorbell → tailscaled → `claudemon init` → claudemon → brain, plus signal handling and exit-reason recording |
-| `bootstrap.sh` | Prepares the volume. Idempotent, correct on both an empty and a populated volume, and creates **zero symlinks** |
-| `test-bootstrap.sh` | 63 assertions over `bootstrap.sh`. No root, no Docker, no Fly, ~1 second |
+| `entrypoint.sh` | PID 1: **replay the previous boot to stdout** → boot log → bootstrap → doorbell → tailscaled → `claudemon init` → claudemon → brain, plus signal handling and exit-reason recording |
+| `bootstrap.sh` | Prepares the volume **and decides FIRST RUN vs STATE LOSS per file**. Idempotent, correct on both an empty and a populated volume, and creates **zero symlinks** |
+| `test-bootstrap.sh` | 106 assertions over `bootstrap.sh`. No root, no Docker, no Fly, ~1 second |
 | `verify-image.sh` | Shipped into the image. The **last `RUN` of every build**, base and downstream: fails the build if anything was installed into `$HOME` |
 
 ## This is a base image

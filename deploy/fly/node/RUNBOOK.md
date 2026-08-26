@@ -240,8 +240,18 @@ fly logs --app workspacer-node
 You want, in order:
 
 ```
+=== no previous boot log at /data/logs/prev-boot.log. First boot on this volume, … ===
 entrypoint: BOOT <id>
-bootstrap: FIRST BOOT on this volume — created N directories, layout v1.
+bootstrap: FIRST BOOT on this volume — created 32 directories, layout v1.
+bootstrap:   Claude OAuth, git/ssh credentials and the tailnet identity are NOT here yet.
+bootstrap: state guard: checking the create-once files
+bootstrap:   .credentials.json: absent, and nothing on this volume says it ever existed. First run.
+bootstrap:   .claude.json: absent, … First run.
+bootstrap:   id_ed25519: absent, … First run.
+bootstrap:   tailscaled.state: absent, … First run.
+bootstrap:   config.yaml: absent, … First run.
+bootstrap:   state.db: absent, … First run.
+bootstrap: state guard: no losses detected
 entrypoint: doorbell listening on :8080 — wake backstop only
 entrypoint: starting tailscaled (state=/data/tailscale/tailscaled.state)
 entrypoint: authenticating to the tailnet as 'workspacer-node' (first boot, …)
@@ -254,10 +264,55 @@ entrypoint: BOOT COMPLETE <id>
 
 **Write down `ipv4=100.x.y.z`.** Step 8 checks it is the same number.
 
-The same log is on the volume at `/data/logs/boot.log` (appended, capped at
-5 MiB) and `/data/logs/last-boot.log` (this boot only). This is not redundancy:
-**Fly retains logs for 7 days and this machine may sleep for weeks**, so a boot
-failure from three weeks ago would otherwise be unrecoverable.
+**Those six `absent … First run` lines are the guard working, not a problem.**
+None of those files exists yet: the Claude login, the SSH key and the tailnet
+identity all arrive in §7, below. The guard records that they were absent, and
+from the boot after they appear it will refuse, or warn, if any of them
+vanishes. See "The state guard" below.
+
+### Where the boot log lives, and why the first line is a replay
+
+The log is on the volume at `/data/logs/boot.log` (appended, capped at 5 MiB),
+`/data/logs/last-boot.log` (this boot only) and `/data/logs/prev-boot.log` (the
+boot before this one). **Fly retains logs for 7 days and this machine may sleep
+for weeks**, so the platform's logs cannot be the record of why a wake failed.
+
+But a volume is readable only through a shell on the machine it is attached to,
+and `fly ssh console` needs a machine that is **running**. This node's restart
+policy is `on-failure`: a boot failure retries a few times and leaves the machine
+`stopped`. The log written for exactly that situation would sit behind a machine
+that will not stay up long enough to read it.
+
+So the entrypoint replays the previous boot to stdout before it does anything
+else, and that replay reaches `fly logs`. On the second and every later boot the
+log opens like this:
+
+```
+=== PREVIOUS BOOT, replayed to stdout so it reaches this run of fly logs. ===
+=== Source: /data/logs/prev-boot.log on the volume. This machine cannot be shelled into while it is down. ===
+=== verdict: the previous boot COMPLETED. Anything below it is runtime, not startup. ===
+=== and its last 40 lines: ===
+  | <the previous boot, verbatim>
+=== end of previous boot ===
+```
+
+Read it in this order:
+
+- **the verdict line** answers the only question that matters, `COMPLETED` or
+  `DIED DURING STARTUP`, without you reading anything else;
+- **`  ! ` lines**, when present, are every `FATAL` / `STATE LOSS` /
+  `REFUSING TO START` / `WARNING` from *anywhere* in that log: a bootstrap
+  refusal is near the top, where a tail would never find it;
+- **`  | ` lines** are the previous boot quoted verbatim.
+
+**Both prefixes mean "not this boot".** Nothing at the left margin came from an
+older log, and the verdict lines deliberately avoid the string `BOOT COMPLETE`,
+so `fly logs | grep 'BOOT COMPLETE'` still answers about *this* boot only.
+
+Bounded at 40 lines and 16 KiB (`WKS_BOOT_REPLAY_LINES`, `WKS_BOOT_REPLAY_BYTES`)
+so a long log cannot bury the boot you are actually looking at. The replay is
+written to stdout only, never back into `boot.log`, otherwise each boot would
+quote its predecessor's quote, forever.
 
 ### Confirm kernel-mode Tailscale actually came up
 
@@ -287,6 +342,11 @@ env | grep -E '^(HOME|XDG_|GOPATH|GOMODCACHE|BUNDLE_PATH|npm_config_cache)='
 ```
 
 ### 7a. Claude Code OAuth — do this one first
+
+This is the credential the state guard refuses to start without once it has seen
+it (§10, "The state guard"). Until you do this step it does not exist, the guard
+says so and stays quiet; from the boot after it, its disappearance stops the node
+rather than letting it come up and hang every session.
 
 ```sh
 claude
@@ -376,8 +436,21 @@ Then walk this checklist. Each row is a distinct failure mode.
 | 9 | Hooks are installed | `grep -c claudemon ~/.claude/settings.json` | non-zero |
 | 10 | Boot log has both boots | `tail -50 /data/logs/boot.log` | first boot **and** this one |
 | 11 | Later boot took the fast path | `grep 'populated volume' /data/logs/last-boot.log` | present; **no** `FIRST BOOT` line |
-| 12 | Exit reason recorded | `cat /data/state/last-exit.json` | `"reason":"signal-TERM"` or `signal-INT` |
+| 12 | Exit reason recorded, and **consumed** | `grep 'previous run ended' /data/logs/last-boot.log`, then `ls /data/state/` | the log line carries `"reason":"signal-TERM"`; `last-exit.consumed.json` is present and `last-exit.json` is **gone** |
 | 13 | The brain re-registered | hub logs | provider registration, capabilities resolve |
+| 14 | **The state guard armed itself** | `ls /data/state/seen` | `claude_.credentials.json`, `claude.json`, `ssh_id_ed25519`, `tailscale_tailscaled.state` |
+| 15 | No state loss reported | `grep 'state guard' /data/logs/last-boot.log` | `no losses detected` |
+| 16 | **The previous boot reached `fly logs`** | `fly logs --app workspacer-node` | opens with `PREVIOUS BOOT, replayed` and a `verdict:` line |
+
+**Check 14 is what makes checks 3, 4, 7 and 8 stay true.** Those four prove the
+credentials survived *this* stop/start. The markers are what makes the *next*
+disappearance loud instead of silent: until a file has been seen once, the guard
+cannot tell "you have not logged in yet" from "the login was taken away". Four
+markers, and if any is missing, the file it names is not there, go back to §7.
+
+**Check 16 costs nothing and is the only one you cannot run later.** It is the
+mechanism you will want on the day the node does not come up, and the day it does
+not come up is the day you cannot test it.
 
 **Check 4 is the one people skip and the one that bites.** Only a project
 directory the node has never seen exercises the trust map in `~/.claude.json`.
@@ -396,8 +469,30 @@ and then leaves the machine `stopped`, which the Machines API cannot distinguish
 from a healthy sleeping node. The entrypoint writes `last-exit.json` on every
 exit, so `"reason":"signal-TERM"` (the hub put it to sleep) and
 `"reason":"claudemon-died"` (it crashed) are distinguishable from the volume.
-**Whoever builds the hub-side registry must read that file rather than inferring
-"asleep and fine" from `stopped`.**
+
+**And the second half of check 12 is why you look in the log rather than at the
+file.** That record is written by a **trap**, and the exits most worth knowing
+about run no trap: a host eviction, an OOM kill of PID 1, a plain `SIGKILL`. Each
+ends the machine with nothing written, leaving the record from an *earlier* run
+in place, with nothing to date it by. (The entrypoint writes a `bootId`;
+`cmd/brain/lastexit.go`'s `exitRecord` has no field for it, so it is dropped at
+parse.) A node that slept cleanly, woke, ran for a day and was then hard-killed
+would report that old `signal-TERM`, and every client would show a node that went
+to sleep on purpose.
+
+So the boot **consumes** the record: it logs it, then renames it to
+`last-exit.consumed.json`. A run that was killed without warning now produces
+`<no record>`, which is true, instead of the previous run's reason, which is not.
+Every reader already treats a missing record as "nobody knows how it ended"
+rather than as "it ended cleanly", which is the distinction that makes this safe.
+
+**One consequence, and it is deliberate:** the rename happens before the brain
+starts, so `brain.info` no longer carries an exit reason. The record's home is
+the **boot log**, which reaches `fly logs` on the next boot without a shell
+(§6, "Where the boot log lives"). Putting the `brain.info` half back means moving
+the consumption into `cmd/brain/lastexit.go`, read, report, *then* rename, so
+that a value which is confidently wrong becomes one that is right and still
+travels over the bus. That is a few lines, and it is not done.
 
 ---
 
@@ -495,6 +590,9 @@ Two further things fall out of it:
 | `~/.codex/` | MUST if codex is used | `/data/home/.codex/` | `$HOME` on volume |
 | `/data/tailscale/tailscaled.state` | MUST | unchanged | explicit `--state` / `--statedir`; the **whole directory**, not just the one file |
 | `/data/repos`, Go/bundle/bun/npm caches, shell history | — | unchanged | env vars in `fly.toml [env]` |
+| `/data/state/seen/` | bookkeeping | one empty marker per guarded file | the state guard's evidence, "this has existed on this volume". Deleting it disarms the guard |
+| `/data/state/last-exit.json` → `last-exit.consumed.json` | bookkeeping | written by a trap at exit, renamed at the next boot once logged | §8 check 12: a record that is never consumed gets re-reported against a run it did not describe |
+| `/data/logs/boot.log`, `last-boot.log`, `prev-boot.log` | bookkeeping | all three | `prev-boot.log` is what the next boot replays to `fly logs` (§6) |
 
 ### Environment
 
@@ -524,7 +622,8 @@ intermittent failure:
 | `.bashrc` | seeded with the `.wks-env` hook | left alone; the hook is appended once, never twice |
 | `~/.wks-env` | generated | **re**generated every boot — it is image-owned, not operator-owned |
 | ownership | full `chown -R`, marker written | marker matches → **deep chown skipped** |
-| refusal | `/data` missing or not a mountpoint → **exit non-zero**, never runs on the rootfs | same |
+| state guard | every guarded file reported `absent … first run`; nothing refused | present files recorded; a file that was recorded and is now **gone** is reported, and a lost Claude credential **refuses** |
+| refusal | `/data` missing or not a mountpoint → **exit non-zero**, never runs on the rootfs | same, plus the state guard's own refusal (exit 2) |
 
 The ownership split matters for wake latency. A Fly volume mounts root-owned and
 every state file this stack writes is 0600 or 0700, so a uid mismatch is fatal
@@ -533,6 +632,66 @@ module cache is minutes against a ~15 s wake budget. The deep pass runs on first
 boot, and again whenever the marker is missing or stale (a restored volume, a
 rebuilt image with a different uid), and is skipped otherwise.
 
+### The state guard
+
+Everything irreplaceable in this design is on this one volume, and every one of
+those files is read by code shaped "read it; if it is not there, carry on". That
+is right the first time and wrong every time after. Take
+`~/.claude/.credentials.json` off this volume by any means, a stray `rm`, a
+restore that brought back part of the tree, a truncation, and this node boots
+green, registers 67 capabilities, reports `available`, and every session
+dispatched to it parks on a login prompt no headless machine can answer. Nothing
+errors. Nothing logs. That is the failure this guard exists to end, and it is the
+same mechanism the hub uses, deliberately, so the two machines can be debugged
+the same way.
+
+The evidence is a marker file under `/data/state/seen/`, one per guarded file,
+written the first time that file is seen. "This has existed on this volume
+before" is a fact. Absence is only a problem once the marker exists, so a first
+boot, where none of these files has been created yet, is quiet.
+
+| File | If it vanishes | Severity |
+|---|---|---|
+| `~/.claude/.credentials.json` | every dispatched session hangs on a login prompt, silently | **refuse** |
+| `~/.claude.json` | the folder-trust dialog nobody can answer; a worker looks alive and does nothing | warn |
+| `~/.ssh/id_ed25519` | pushes and ssh clones fail, at least visibly | warn |
+| `/data/tailscale/tailscaled.state` | a new tailnet device, a new address, a suffixed name, a duplicate left behind | warn |
+| `~/.config/workspacer/config.yaml` | the brain reseeds factory defaults and runs on them | warn |
+| `~/.local/share/claudemon/state.db` | every stopped-but-resumable session is gone | note |
+
+**Only the credential refuses, and that is a deliberate asymmetry.** This node's
+Fly restart policy is `on-failure`, so a refusal means a few quick retries and
+then `stopped`, and `fly ssh console` needs a machine that is running. Refusing
+is close to a lockout. It is worth that for the one file whose loss is both total
+and completely silent, and not for anything that is either visible when it breaks
+or repairable from a shell the node still has.
+
+If it does refuse, the reason reaches `fly logs` on the next start attempt (see
+"Where the boot log lives" above), and the way past is one secret:
+
+```sh
+fly secrets set WKS_ALLOW_STATE_LOSS=1 --app workspacer-node   # accepts ALL losses, once
+# … start the machine, `su - wks`, redo §7a, then:
+fly secrets unset WKS_ALLOW_STATE_LOSS --app workspacer-node
+```
+
+That is also how you get a shell back on a node that will not boot.
+
+**What the guard cannot see: a whole-volume rollback.** The evidence lives on the
+volume it is evidence about. Restore a snapshot taken before §7's interactive
+logins and `/data/state/seen/` comes back as it was then, empty, so a credential
+that really is gone reads as a first run and the guard says nothing. No on-volume
+bookkeeping can close that; the evidence would have to outlive the volume. The
+guard covers every case that removes a file while leaving the volume otherwise
+intact, which is every other way this has gone wrong.
+
+So **after any volume restore, run check 14 by hand before trusting the node.**
+`ls /data/state/seen` on a node that has been through §7 shows at least
+`claude_.credentials.json`, `claude.json`, `ssh_id_ed25519` and
+`tailscale_tailscaled.state`. An empty or short list after a restore means the
+snapshot predates the logins: redo §7 rather than waiting for a symptom, because
+the symptom is a session that hangs with no error anywhere.
+
 ---
 
 ## 11. Verify the artifacts locally
@@ -540,7 +699,7 @@ rebuilt image with a different uid), and is skipped otherwise.
 Everything here that *can* be checked without deploying, is:
 
 ```sh
-./deploy/fly/node/test-bootstrap.sh                       # 63 assertions, ~1s, no root/docker/fly
+./deploy/fly/node/test-bootstrap.sh                       # 106 assertions, ~1s, no root/docker/fly
 python3 -c "import tomllib;tomllib.load(open('deploy/fly/node/fly.toml','rb'))"
 docker run --rm -v "$PWD/deploy/fly/node:/mnt:ro" -w /mnt koalaman/shellcheck:stable \
   -s bash -S style entrypoint.sh bootstrap.sh test-bootstrap.sh verify-image.sh
@@ -560,7 +719,7 @@ docker build -f deploy/fly/node/example.Dockerfile \
   --build-arg WKS_BASE=workspacer-node-base:dev \
   -t workspacer-node-example:dev deploy/fly/node
 
-# the 63 assertions again, this time inside the image, as wks, on an empty volume
+# the 106 assertions again, this time inside the image, as wks, on an empty volume
 docker run --rm -v /tmp/fakevol:/data -u 10001:10001 -e HOME=/data/home \
   --entrypoint /bin/bash workspacer-node-base:dev -c /usr/local/lib/wks/test-bootstrap.sh
 ```
@@ -678,7 +837,9 @@ These artifacts assume the following land. None of it is implemented here.
    `nodes.sleep`, the Fly Machines API client, the five-state model, and the
    hub-side stop that puts the machine back to sleep. Both hooks left for it are
    in use: `/data/state/last-exit.json` (which distinguishes a hub-driven sleep
-   from a crash loop, as the Machines API cannot) is read on `brain.info`, and
+   from a crash loop, as the Machines API cannot) is read on `brain.info`,
+   though the entrypoint now consumes the record at boot, so that field reads as
+   "no record" until the consumption moves into the brain; see §8 check 12, and
    the doorbell remains deliberately off. Every API stop passes `signal` and
    `timeout` explicitly — `fly.toml`'s `kill_timeout` does not govern a
    hub-issued stop, and `flyapi.Client.Stop` refuses a call that omits either.

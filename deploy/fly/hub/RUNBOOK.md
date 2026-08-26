@@ -64,6 +64,7 @@ node's *world* is the Fly Machines API `start`, over the public internet.
 | **`restart.policy = "always"`** | The **opposite** of the node's `on-failure`, deliberately. The node's design makes `stopped` a wanted state; this machine has no legitimate stopped state at all — it *is* the wake path, and a hub that is off cannot be woken by anything, including itself. |
 | **`$FLY_API_TOKEN` rather than a token in `nodes.json`** | See §8. The credential then lives in Fly's secret store instead of on the volume, so a volume snapshot does not copy it and rotation does not mean editing a file inside a running machine. |
 | **Non-root (`wks`, uid 10001)** | Every state file on the volume is 0600 owned by 10001, and an always-on daemon reachable by anything has no business being root. |
+| **`hub --jobs-file ""` (jobs OFF)** | **A security boundary, not a preference.** See §9a. The node holds an operator-tier token, operator tier is `trusted`, and `jobsTrusted` is a bare `IsTrusted()`, so `jobs.upsert` + `jobs.run` would give the node `/bin/sh` in this hub's own environment, the one holding `$FLY_API_TOKEN`. |
 
 ---
 
@@ -278,8 +279,10 @@ You want, in order:
 
 ```
 entrypoint: BOOT <id>
-bootstrap: FIRST BOOT on this volume — created 13 directories, layout v1.
-bootstrap:   remote-token: absent, and nothing on this volume says it ever existed — first run.
+bootstrap: FIRST BOOT on this volume — created 12 directories, layout v1.
+bootstrap: state guard: checking the create-once files
+bootstrap:   remote-token: absent, and nothing on this volume says it ever existed. First run.
+  … one line per create-once file, eleven in all …
 bootstrap: state guard: no losses detected
 bootstrap: FIRST RUN: minted a new pairing credential at /data/home/.config/workspacer/remote-token
 bootstrap:   HUB_TOKEN=<32 chars>          ← WRITE THIS DOWN
@@ -287,9 +290,42 @@ entrypoint: TAILNET UP after Ns — ipv4=100.x.y.z
 entrypoint: MagicDNS name: workspacer-hub.<tailnet>.ts.net
 entrypoint: tailscale serve --bg --https=443 → http://127.0.0.1:7895
 entrypoint: hub ready (pid …)
+entrypoint: probing https://workspacer-hub.<tailnet>.ts.net/health over the whole chain, the way a client uses it
+entrypoint: REACHABLE: … answered 200 after Ns.
+entrypoint:   DNS, the certificate, serve's proxy and the hub's Host pin are all working.
+entrypoint:   A phone on this tailnet can open /m.
 entrypoint:   bus     wss://workspacer-hub.<tailnet>.ts.net/bus
 entrypoint: BOOT COMPLETE <id>
 ```
+
+**Twelve, not thirteen.** `bootstrap.sh` has thirteen directories in its layout
+and the entrypoint `mkdir -p`s `/data/logs` before calling it, so bootstrap finds
+twelve of them missing. Counted from the code and confirmed against a real boot.
+
+### The probe line is the one worth reading
+
+`tailscale serve` returning 0 means a config was installed. It does **not** mean
+a certificate was fetched: the Let's Encrypt certificate for the MagicDNS name is
+issued on demand, on the first request, and it can fail after serve has already
+succeeded. The health watchdog cannot tell you: it polls
+`-H 'Host: 127.0.0.1' http://127.0.0.1:7895/health`, which is the loopback socket
+with a loopback Host header, and never touches DNS, TLS, serve or the Host pin.
+
+So the entrypoint makes exactly one real request over the whole chain and prints
+the result. If it says `WARNING: … did NOT answer`, the boot continues on
+purpose: a hub that is up but unreachable can still be `fly ssh console`'d into,
+and one that refused to start cannot. The warning carries the triage list:
+
+```
+1. Is there a certificate?     tailscale cert <name>
+2. Is the rule installed?      tailscale serve status
+3. What is the actual answer?  curl -v https://<name>/health   (403 = the Host pin)
+4. Does the NAME resolve from another tailnet device?
+```
+
+A 403 at step 3 means `--trusted-host` and the MagicDNS name disagree, not that
+the certificate is missing. Set `WKS_HUB_SERVE_PROBE_ENABLED=0` to skip the probe
+and `WKS_HUB_SERVE_PROBE_SECS` to change its 30-second budget.
 
 **Write down the token and the MagicDNS name.** The node's `HUB_BUS_URL` is the
 bus line verbatim.
@@ -376,6 +412,51 @@ paints and can talk to nothing. It is one of the three ports the ACL in §4 open
 
 ---
 
+## 9a. Jobs are OFF here, and the reason is the node
+
+The entrypoint starts the hub with `--jobs-file ""`. That is the documented off
+switch: `jobsFile` defaults to `defaultJobsFile()`, and `if *jobsFile != ""` is
+what wraps every `jobs.*` registration in `cmd/hub/main.go`, so an empty value
+registers none of them and starts no scheduler.
+
+Follow the authority to see why it matters:
+
+1. The node attaches with an **operator-tier** `HUB_TOKEN`.
+2. Operator tier is `trusted`.
+3. Every `jobs.*` method is gated by `jobsTrusted`, which is a bare
+   `c.IsTrusted()` and nothing narrower.
+4. So the node may call `jobs.upsert` and then `jobs.run`.
+5. A job of kind `shell` reaches `jobs.BusRunner.Shell`, which is
+   `exec.CommandContext("/bin/sh", "-c", command)`. Unconfined.
+
+That `/bin/sh` does **not** run on the node. It runs in *this* process's
+environment: the one holding `$FLY_API_TOKEN`, on the volume holding
+`nodes.json`, `tokens.json` and `remote-token`. And the node is, by design, the
+machine that runs code an agent wrote. That is a straight path from a misbehaving
+or prompt-injected agent to the credential that creates and destroys machines and
+spends your money.
+
+Nothing on this hub schedules a job. It runs `hub` and nothing else, has no
+brain, and ships no plugins, so switching the subsystem off costs nothing, and
+removing the reachable code is worth more than arguing about the gate in front of
+it. `preflight.sh` asserts it both ways: `workspacer jobs list` against the
+booted hub answers `no provider for jobs.list`, and the same binary in the same
+image still registers `jobs.list` when the flag is non-empty, so the test proves
+the flag is doing the work rather than that the method never existed.
+
+**The day this hub needs a job, do not just delete the flag.** The fix is to give
+the node a tier narrower than operator, or `jobs.*` a gate narrower than
+`IsTrusted()`. Deleting the flag restores the path above exactly as described.
+
+You can confirm the state of it any time:
+
+```sh
+fly ssh console --app workspacer-hub -C 'workspacer jobs list'
+# expect: workspacer jobs: no provider for jobs.list
+```
+
+---
+
 ## 10. THE PROOF — restart, and check every claim
 
 Nothing above is trustworthy until this passes.
@@ -403,6 +484,12 @@ fly machine restart <machine_id> --app workspacer-hub
 | 9 | Push still works | trigger an agent-needs-you alert | phone receives it **without re-subscribing** |
 | 10 | `/app` still loads | browser | renders without a new token |
 | 11 | The node still attaches | wake it, watch `fly logs` | provider registers, `nodes.list` → `available` |
+| 12 | **The whole chain still answers** | `grep REACHABLE /data/logs/last-boot.log` | present, and the restart re-proved DNS + cert + serve + the Host pin |
+
+**Check 12 is checks 8, 9 and 10 asked before you have to ask them.** Those three
+need a phone and a browser; this one is a line the machine already wrote. If it
+says `did NOT answer` while 8–10 pass anyway, the certificate is being served
+from a cache that will expire, chase it now rather than on the day it does.
 
 ### Then prove the refusal, which is the whole point
 
@@ -492,7 +579,7 @@ Unusually for `deploy/fly/`, the first list is not empty.
    `ENV`, no `USER`, uid 10001, every daemon on PATH). 919MB.
 2. **`hadolint --failure-threshold info`** and **`docker build --check`**: clean.
 3. **`shellcheck -s bash -S style`** on all three scripts: clean.
-4. **`test-bootstrap.sh`: 111 assertions, green**, run both on the host and inside
+4. **`test-bootstrap.sh`: 113 assertions, green**, run both on the host and inside
    the built image.
 5. **`bootstrap.sh` on a real mountpoint** (a Docker volume at `/data`, running as
    root, chowning to 10001): first boot mints a 32-char base64url credential at

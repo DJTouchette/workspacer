@@ -290,7 +290,7 @@ Want, in order:
 entrypoint: BOOT <id>
 bootstrap: FIRST BOOT on this volume — created 12 directories, layout v1.
 bootstrap: state guard: checking the create-once files
-bootstrap:   remote-token: absent, and nothing on this volume says it ever existed — first run.
+bootstrap:   remote-token: absent, and nothing on this volume says it ever existed. First run.
   … one line per create-once file …
 bootstrap: state guard: no losses detected
 bootstrap: FIRST RUN: minted a new pairing credential at /data/home/.config/workspacer/remote-token
@@ -299,6 +299,10 @@ entrypoint: TAILNET UP after Ns — ipv4=100.x.y.z
 entrypoint: MagicDNS name: workspacer-hub.<tailnet>.ts.net
 entrypoint: tailscale serve --bg --https=443 → http://127.0.0.1:7895
 entrypoint: hub ready (pid …)
+entrypoint: probing https://workspacer-hub.<tailnet>.ts.net/health over the whole chain, the way a client uses it
+entrypoint: REACHABLE: … answered 200 after Ns.
+entrypoint:   DNS, the certificate, serve's proxy and the hub's Host pin are all working.
+entrypoint:   A phone on this tailnet can open /m.
 entrypoint:   bus     wss://workspacer-hub.<tailnet>.ts.net/bus
 entrypoint: BOOT COMPLETE <id>
 ```
@@ -312,6 +316,31 @@ Two lines you will also see and should not worry about:
 - `trusted-host=<name>,<name>` repeats the MagicDNS name. Cosmetic. The Host
   pin strips the port before matching, so both the 443 and 8443 origins are
   accepted; the rehearsal checked this directly rather than assuming it.
+
+**Jobs are off on this machine, deliberately.** The entrypoint passes
+`--jobs-file ""`. The node's token is operator-tier, operator tier is `trusted`,
+and the `jobs.*` gate is a bare `IsTrusted()`, so with jobs on, the node could
+schedule a shell job and get `/bin/sh` inside the hub process, which is the
+process holding `$FLY_API_TOKEN`. Nothing here schedules a job, so the subsystem
+is switched off rather than argued about. Do not turn it on without reading
+[`hub/RUNBOOK.md` §9a](hub/RUNBOOK.md).
+
+**The `REACHABLE:` line is the one to actually check.** `tailscale serve`
+returning 0 means a config was installed, not that anybody can reach the hub: the
+Let's Encrypt certificate for the MagicDNS name is fetched on demand and can fail
+after serve has already succeeded, which is this deployment's largest unproven
+assumption. So the entrypoint makes one real HTTPS request over the whole chain
+and prints the result. That one request exercises DNS, TLS, serve's proxy and the
+hub's own Host pin.
+
+If instead you see `WARNING: … did NOT answer`, **the boot has not failed.** The
+hub is up and answering on loopback, deliberately: a hub that is up but
+unreachable can still be `fly ssh console`'d into, and one that refused to start
+cannot. The warning carries its own triage list; `hub/RUNBOOK.md` §7 explains
+what each step distinguishes. The short version is that a 403 is the Host pin and
+anything else is the certificate or DNS. Nothing else in this runbook would have
+told you: the health watchdog polls loopback with a loopback Host header and
+never traverses serve at all.
 
 Set snapshot retention now, while you are looking at it. **This volume is the
 fleet's single point of failure**: it holds the pairing credential every client
@@ -386,8 +415,13 @@ fly logs --app workspacer-node
 ```
 
 ```
+=== no previous boot log at /data/logs/prev-boot.log. First boot on this volume, … ===
 entrypoint: BOOT <id>
-bootstrap: FIRST BOOT on this volume — created 31 directories, layout v1.
+bootstrap: FIRST BOOT on this volume — created 32 directories, layout v1.
+bootstrap: state guard: checking the create-once files
+bootstrap:   .credentials.json: absent, and nothing on this volume says it ever existed. First run.
+  … five more, one per guarded file …
+bootstrap: state guard: no losses detected
 entrypoint: doorbell listening on :8080 — wake backstop only
 entrypoint: starting tailscaled (state=/data/tailscale/tailscaled.state)
 entrypoint: authenticating to the tailnet as 'workspacer-node' (first boot, …)
@@ -403,21 +437,30 @@ brain: registered 67 method(s)
 
 **Write down the tailnet IP.** Part C checks it is the same number.
 
-> **One alarming line on the first boot only, and it is a false alarm.**
-> You will see:
-> ```
-> brain: STATE LOSS: /data/home/.config/workspacer/config.yaml is missing, but
-> /data/home/.config/workspacer still holds the rest of this install. Reseeding
-> factory defaults …
-> ```
-> Nothing has been lost. The node's `bootstrap.sh` pre-creates sibling
-> directories under `~/.config/workspacer` (`plugins`, `library`, `layouts`,
-> `sessions`, `logs`), and the brain's loss heuristic reads "directory has
-> contents but no config.yaml" as a lost file. On a genuinely empty volume that
-> is a first boot, not a loss. It appears exactly once and never again.
-> **Reproduced during the rehearsal.** It is a real defect, in that the same
-> message later, when it would be real, now means nothing to you. It is filed;
-> it is not a reason to stop.
+**Those `absent … First run` lines are the state guard, and they are the guard
+working.** None of the files it watches exists yet: the Claude login, the SSH
+key and the tailnet identity all arrive in part C. It records that they were
+absent; from the boot after they appear, their disappearance is reported, and for
+the Claude credential it stops the node rather than letting it come up and hang
+every session it is given. `node/RUNBOOK.md` §10 has the file-by-file table and
+the way past a refusal.
+
+> **There used to be a false alarm here, and it is gone.** Earlier boots printed
+> `brain: STATE LOSS: …/config.yaml is missing` on a genuinely first boot,
+> because `bootstrap.sh` pre-creates sibling directories under
+> `~/.config/workspacer` and `internal/statelost` counted an empty directory as
+> evidence somebody had run there. It now counts only entries that hold
+> something: a bare `mkdir` proves a `mkdir` ran, not that a program did.
+> `preflight.sh` asserts the absence against a real brain on a real volume. **If
+> you see a `brain: STATE LOSS` line now, take it seriously.**
+
+**On the second and every later boot, the log opens with a replay of the previous
+one.** The volume's `boot.log` is readable only through a shell on the machine,
+and a node that fails to boot does not stay up long enough to give you one, so
+the previous boot is replayed to stdout, where `fly logs` can see it, led by a
+verdict line saying whether it completed. Lines prefixed `  | ` or `  ! ` are
+quoted from that older boot, never this one. Full detail in `node/RUNBOOK.md`
+§6, "Where the boot log lives, and why the first line is a replay".
 
 Then confirm kernel-mode Tailscale really came up. Thirty seconds against the
 one inference in this design that rests on two facts joined rather than a
@@ -553,8 +596,8 @@ pointing at dead paths.
 Nothing above is trustworthy until this passes, and it is the part most likely
 to get skipped because the fleet already looks like it works.
 
-Run [`node/RUNBOOK.md` §8](node/RUNBOOK.md) (stop/start, 13 checks) and
-[`hub/RUNBOOK.md` §10](hub/RUNBOOK.md) (restart, 11 checks plus the deliberate
+Run [`node/RUNBOOK.md` §8](node/RUNBOOK.md) (stop/start, 16 checks) and
+[`hub/RUNBOOK.md` §10](hub/RUNBOOK.md) (restart, 12 checks plus the deliberate
 state-loss refusal). Do not paraphrase them here; they are the reference.
 
 The four that a casual "does it come up?" test passes while being completely
@@ -657,11 +700,13 @@ logged-in `flyctl` and a live tailnet. Nothing was deployed, created or billed.
   `--brain-scope` warning.
 - **The node's brain attaches to the hub with an operator-scoped token and
   registers 67 methods.** `nodes.list` then reports the node as `available`,
-  with its `lastExit` read back over the bus, and with no token anywhere in the
-  payload.
+  with no token anywhere in the payload. Its `lastExit` field now reads as no
+  record: the entrypoint consumes the file at boot, so a run that was killed
+  without warning cannot be reported as a clean sleep. `node/RUNBOOK.md` §8
+  check 12 has the argument and what putting the bus half back would take.
 - A second boot takes the populated-volume path and reports
-  `previous run ended: {"reason":"signal-TERM",…}`, so the `last-exit.json`
-  mechanism works.
+  `previous run ended: {"reason":"signal-TERM",…}` in the boot log, so the
+  `last-exit.json` mechanism works.
 - `fly` flags used above exist on flyctl v0.4.59: `--stage`, `--local-only`,
   `--snapshot-retention`, `tokens create deploy --app/--expiry/--name`,
   `ips allocate-v6 --private`. `ord` exists; `sea` and `den` do not.

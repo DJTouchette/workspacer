@@ -18,7 +18,7 @@ then waking from a phone only works while the desktop is on.
 | `fly.toml` | Region, sizing, volume, `restart.policy = "always"`, and **no `[http_service]`** — each with the reasoning inline |
 | `entrypoint.sh` | PID 1: boot log → bootstrap → tailscaled → `tailscale serve` → `hub`, plus a loopback health watchdog |
 | `bootstrap.sh` | Prepares the volume **and decides FIRST RUN vs STATE LOSS per file**. Creates zero symlinks |
-| `test-bootstrap.sh` | 111 assertions over `bootstrap.sh`. No root, no Docker, no Fly, ~1 second |
+| `test-bootstrap.sh` | 113 assertions over `bootstrap.sh`. No root, no Docker, no Fly, ~1 second |
 
 ## The three things to know before editing anything here
 
