@@ -22,11 +22,21 @@ describe('suspectedStateLoss', () => {
   });
 
   const dir = () => path.join(root, 'state');
+  // 'dir/'  = an empty directory
+  // 'a/b'   = a file inside a directory, so that directory is NOT empty
+  // 'name:' = a zero-byte file
   const seed = (entries: string[]) => {
     fs.mkdirSync(dir(), { recursive: true });
-    for (const e of entries) {
-      if (e.endsWith('/')) fs.mkdirSync(path.join(dir(), e), { recursive: true });
-      else fs.writeFileSync(path.join(dir(), e), 'x');
+    for (const raw of entries) {
+      const zeroByte = raw.endsWith(':');
+      const e = zeroByte ? raw.slice(0, -1) : raw;
+      const p = path.join(dir(), e);
+      if (e.endsWith('/')) {
+        fs.mkdirSync(p, { recursive: true });
+      } else {
+        fs.mkdirSync(path.dirname(p), { recursive: true });
+        fs.writeFileSync(p, zeroByte ? '' : 'x');
+      }
     }
   };
 
@@ -49,8 +59,34 @@ describe('suspectedStateLoss', () => {
     expect(suspectedStateLoss(dir(), 'remote-token')).toBe(true);
   });
 
-  it('a subdirectory counts too', () => {
+  // The false alarm this used to produce on every genuinely first boot of the
+  // Fly node: deploy/fly/node/bootstrap.sh mkdir -p's five directories inside
+  // <config>/workspacer before anything runs, and counting any entry read that
+  // as "somebody has run here".
+  it("an EMPTY subdirectory is a bootstrap's mkdir, not evidence somebody ran here", () => {
     seed(['sessions/']);
+    expect(suspectedStateLoss(dir(), 'config.yaml')).toBe(false);
+  });
+
+  it('several empty subdirectories are still a first run', () => {
+    seed(['plugins/', 'library/', 'layouts/', 'sessions/', 'logs/']);
+    expect(suspectedStateLoss(dir(), 'config.yaml')).toBe(false);
+  });
+
+  // The other half of the same rule.
+  it('a subdirectory with something IN it is real state', () => {
+    seed(['sessions/live.json']);
+    expect(suspectedStateLoss(dir(), 'config.yaml')).toBe(true);
+  });
+
+  it('a file beside empty subdirectories is still real state', () => {
+    seed(['plugins/', 'tokens.json']);
+    expect(suspectedStateLoss(dir(), 'config.yaml')).toBe(true);
+  });
+
+  // An empty FILE is not an empty directory. Something wrote it, so it counts.
+  it('a zero-byte neighbour counts, unlike an empty directory', () => {
+    seed(['tokens.json:']);
     expect(suspectedStateLoss(dir(), 'config.yaml')).toBe(true);
   });
 

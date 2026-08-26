@@ -173,6 +173,18 @@ for m in config_workspacer_nodes.json config_workspacer-hub_vapid.json \
          config_workspacer_peers.json config_workspacer-hub_jobs.json; do
   assert_file "$D/state/seen/$m"
 done
+# tailscaled.state lives outside $HOME. Its marker name must still not carry the
+# mount path: a slug that did would orphan every marker if $WKS_DATA ever moved,
+# and an orphaned marker fails OPEN: a real loss would read as a first run.
+assert_file "$D/state/seen/tailscale_tailscaled.state"
+
+# The same property, stated as the thing that would break: a marker set survives
+# being moved to a different mount point. That is what a restored volume is.
+DMOVE="$TMP/moved"
+cp -a "$D" "$DMOVE"
+rm -f "$DMOVE/home/.config/workspacer-hub/vapid.json"
+out="$(run_bootstrap "$DMOVE")"
+assert_grep "$out" "vapid.json is GONE" "markers still bite after the volume is mounted somewhere else"
 
 # Third boot: idempotence is not a two-run property.
 out="$(run_bootstrap "$D")"; rc=$?

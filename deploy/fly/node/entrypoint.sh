@@ -16,7 +16,10 @@
 # Boot order and why:
 #   1. boot log on the volume        Fly keeps logs 7 days; this machine may
 #                                    sleep for weeks. A boot failure from three
-#                                    weeks ago has to be recoverable.
+#                                    weeks ago has to be recoverable, and the
+#                                    PREVIOUS boot's log is replayed to stdout
+#                                    first, because a machine that failed to boot
+#                                    cannot be shelled into to read its volume.
 #   2. bootstrap the volume          refuses to run if /data is not mounted
 #   3. doorbell                      binds early so a Fly-proxy autostart request
 #                                    is answered instead of timing out
@@ -79,7 +82,10 @@ DOORBELL_ENABLED="${WKS_DOORBELL_ENABLED:-1}"
 
 BOOT_LOG="${WKS_DATA}/logs/boot.log"
 LAST_BOOT_LOG="${WKS_DATA}/logs/last-boot.log"
+PREV_BOOT_LOG="${WKS_DATA}/logs/prev-boot.log"
 BOOT_LOG_MAX_BYTES="${WKS_BOOT_LOG_MAX_BYTES:-5242880}" # 5 MiB
+BOOT_REPLAY_LINES="${WKS_BOOT_REPLAY_LINES:-40}"
+BOOT_REPLAY_BYTES="${WKS_BOOT_REPLAY_BYTES:-16384}"     # 16 KiB
 BOOT_ID="$(date -u +%Y%m%dT%H%M%SZ)-${FLY_MACHINE_ID:-local}"
 
 # --------------------------------------------------------------------------
@@ -98,6 +104,98 @@ if [ -f "$BOOT_LOG" ]; then
   fi
 fi
 
+# --------------------------------------------------------------------------
+# 1a. REPLAY THE PREVIOUS BOOT TO STDOUT, BEFORE THE REDIRECT BELOW.
+# --------------------------------------------------------------------------
+# The on-volume log above is written because Fly keeps logs 7 days and this
+# machine sleeps for weeks. That reasoning is right and the mechanism is not,
+# because of one thing about this machine specifically:
+#
+#   *** THE VOLUME IS READABLE ONLY THROUGH A SHELL ON THIS MACHINE, AND A
+#       MACHINE THAT FAILS TO BOOT DOES NOT STAY UP LONG ENOUGH TO GIVE YOU
+#       ONE. ***
+#
+# The restart policy is on-failure: a boot failure retries a few times and the
+# machine is left `stopped`. `fly ssh console` needs a machine that is running.
+# So the log written for exactly that situation sits behind a machine that will
+# not stay up long enough to read it, and depending on where the entrypoint
+# died the window is anywhere from ~1s (a bootstrap refusal) to ~60s (the tailnet
+# wait), which is worse than never, because it works in testing.
+#
+# The fix is to stop needing the shell. The PREVIOUS boot's log is replayed onto
+# stdout on THIS boot, so last time's failure reaches `fly logs` this time,
+# the same trick last-exit.json already plays with the exit reason, which is why
+# that file is quoted a few lines below rather than being the only such record.
+#
+# Three rules, and each is load-bearing:
+#
+#   BEFORE the exec redirect. Deliberate. If this went through the tee it would
+#   append the previous boot's tail into boot.log, and the boot after that would
+#   replay a log containing its own predecessor's replay. Compounding, forever,
+#   on a file with a 5 MiB budget. It goes to `fly logs` and nowhere else, which
+#   is precisely where the machine that will not stay up cannot put it.
+#
+#   BOUNDED TWICE, by bytes and then by lines. boot.log is capped at 5 MiB and a
+#   single boot can be verbose; flooding `fly logs` with a megabyte on every wake
+#   would bury the boot the operator is actually looking at.
+#
+#   INCAPABLE OF FAILING A BOOT. Every command is guarded and the whole block
+#   ends in a `true`. This repo has already shipped a dead image because an
+#   entrypoint line exited early, and observability code that can stop a boot is
+#   worse than no observability code.
+#
+# AND ONE CONVENTION, because quoting an old log into a new one is a way to lie
+# by accident. Every replayed line is prefixed:
+#
+#   "  | "   quoted verbatim from the previous boot
+#   "  ! "   a line from the previous boot that matched FATAL/STATE LOSS/REFUSING
+#
+# So `fly logs` shows this boot's own output at the left margin and last boot's
+# indented behind a marker. The verdict lines below deliberately avoid the string
+# "BOOT COMPLETE" for the same reason: it is the token an operator greps for to
+# ask "did it come up", and this block must not be able to answer that question
+# with somebody else's boot.
+if [ -f "$LAST_BOOT_LOG" ]; then
+  mv -f "$LAST_BOOT_LOG" "$PREV_BOOT_LOG" 2>/dev/null || true
+fi
+if [ -s "$PREV_BOOT_LOG" ]; then
+  printf '=== PREVIOUS BOOT, replayed to stdout so it reaches this run of fly logs. ===\n' 2>/dev/null || true
+  printf '=== Source: %s on the volume. This machine cannot be shelled into while it is down. ===\n' \
+    "$PREV_BOOT_LOG" 2>/dev/null || true
+
+  # The verdict first, because it is the whole question. A tail alone does not
+  # answer it: this log captures the CHILDREN too, so on a node that ran for a
+  # week the last 40 lines are a week of brain reconnect chatter and the boot
+  # sequence is long gone off the top. The failure case is the one where the tail
+  # is exactly right: the process exits moments after `die`, so both are here.
+  if grep -qF 'BOOT COMPLETE' "$PREV_BOOT_LOG" 2>/dev/null; then
+    printf '=== verdict: the previous boot COMPLETED. Anything below it is runtime, not startup. ===\n' \
+      2>/dev/null || true
+  else
+    printf '=== verdict: the previous boot DIED DURING STARTUP. It never got to the end. ===\n' \
+      2>/dev/null || true
+  fi
+
+  # Then the needles, from ANYWHERE in the log rather than only its tail. These
+  # are the lines a boot failure is actually made of, and a bootstrap refusal
+  # puts them near the top where a tail would never find them.
+  prev_hits="$(grep -nE 'FATAL|STATE LOSS|REFUSING TO START|WARNING' "$PREV_BOOT_LOG" 2>/dev/null | head -n 20 || true)"
+  if [ -n "$prev_hits" ]; then
+    printf '=== the lines that matter, from anywhere in that log: ===\n' 2>/dev/null || true
+    printf '%s\n' "$prev_hits" | sed 's/^/  ! /' 2>/dev/null || true
+  fi
+
+  printf '=== and its last %s lines: ===\n' "$BOOT_REPLAY_LINES" 2>/dev/null || true
+  tail -c "$BOOT_REPLAY_BYTES" "$PREV_BOOT_LOG" 2>/dev/null |
+    tail -n "$BOOT_REPLAY_LINES" 2>/dev/null |
+    sed 's/^/  | /' 2>/dev/null || true
+  printf '=== end of previous boot ===\n' 2>/dev/null || true
+else
+  printf '=== no previous boot log at %s. First boot on this volume, or it was not mounted last time. ===\n' \
+    "$PREV_BOOT_LOG" 2>/dev/null || true
+fi
+true
+
 : >"$LAST_BOOT_LOG" 2>/dev/null || true
 exec > >(tee -a "$BOOT_LOG" "$LAST_BOOT_LOG") 2>&1
 
@@ -106,10 +204,45 @@ log() { printf '%s entrypoint: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 echo "================================================================"
 log "BOOT $BOOT_ID"
 log "  app=${FLY_APP_NAME:-<none>} machine=${FLY_MACHINE_ID:-<none>} region=${FLY_REGION:-<none>} image=${FLY_IMAGE_REF:-<none>}"
+# --------------------------------------------------------------------------
+# CONSUME the record, do not merely read it.
+# --------------------------------------------------------------------------
+# last-exit.json is written by a TRAP (see record_exit below), and the exits that
+# matter most run no trap. A host eviction, an OOM kill of PID 1, a plain SIGKILL
+#, all of them end the machine with nothing written. The file then still holds
+# the record from an EARLIER run, and there is no way to tell:
+#
+#   The entrypoint writes a bootId into it. cmd/brain/lastexit.go's exitRecord
+#   has fields for reason, exitCode and at, and NONE for bootId, so the one value
+#   that could date the record is dropped at parse. A reader cannot tell a record
+#   written by the run that just ended from one written two runs ago.
+#
+# That produces the worst available answer to the exact question this file
+# exists to answer. A node sleeps cleanly (signal-TERM, written), is woken, runs
+# for a day, and is then hard-killed (nothing written). The next boot reports
+# `signal-TERM`, brain.info carries it to the hub, and every client shows a node
+# that went to sleep on purpose. The run that died is reported as a clean sleep.
+#
+# So the record is renamed once it has been logged. Every reader already treats a
+# missing file as "no record" rather than fabricating a clean one, readExitRecord
+# returns nil on ENOENT, and its own comment says "nobody knows how it ended" and
+# "it ended cleanly" are different answers. This makes the file say the first of
+# those when the first is true.
+#
+# CONSEQUENCE, stated rather than discovered: the rename happens before the brain
+# starts, so brain.info no longer carries an exit reason at all. The record's
+# home is now the boot log, logged on the line above, and, since this entrypoint
+# replays the previous boot to stdout, reaching `fly logs` without a shell. That
+# is a deliberate trade of a field that could be confidently wrong for a line
+# that is reliably right. Restoring the brain.info half needs the CONSUMPTION to
+# move into cmd/brain/lastexit.go (read, report, then rename); it is a few lines
+# and it is not this change.
 if [ -f "${WKS_DATA}/state/last-exit.json" ]; then
   log "  previous run ended: $(cat "${WKS_DATA}/state/last-exit.json")"
+  mv -f "${WKS_DATA}/state/last-exit.json" "${WKS_DATA}/state/last-exit.consumed.json" 2>/dev/null || true
 else
-  log "  previous run ended: <no record — first boot, or the volume was not mounted last time>"
+  log "  previous run ended: <no record. Either a first boot, a volume that was not mounted, or a run"
+  log "    that was KILLED WITHOUT WARNING (host eviction, OOM, SIGKILL): no trap runs, so nothing is written>"
 fi
 
 # --------------------------------------------------------------------------
@@ -120,6 +253,11 @@ fi
 # sleeping node. The API cannot tell those apart; this file can. Whoever owns
 # the hub-side registry should read it (over the tailnet, or `fly ssh console`)
 # rather than inferring "asleep and fine" from `stopped`.
+#
+# It is written by a TRAP, so read the consumption note above before trusting it:
+# the exits that write nothing are exactly the ones worth knowing about, and a
+# record that is never consumed gets re-reported against a run it did not
+# describe. The boot above renames it once it has been logged.
 EXIT_REASON="unknown"
 record_exit() {
   local code="$1"

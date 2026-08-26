@@ -214,10 +214,21 @@ fi
 bs_losses=0
 bs_refusals=0
 
-# bs_seen_slug turns a path relative to $WKS_HOME into a flat marker name.
-# The leading dot is stripped so the markers are visible to a plain `ls` — an
-# operator debugging a refusal should not have to know to pass -a.
-bs_seen_slug() { printf '%s' "${1#"$WKS_HOME"/}" | tr '/' '_' | sed 's/^\.//'; }
+# bs_seen_slug turns a guarded path into a flat marker name. The leading dot is
+# stripped so the markers are visible to a plain `ls`: an operator debugging a
+# refusal should not have to know to pass -a.
+#
+# BOTH prefixes are stripped, $WKS_HOME first because it is the longer one. The
+# marker name must not depend on where the volume happens to be mounted: a slug
+# carrying the mount path orphans every marker the moment $WKS_DATA moves, and an
+# orphaned marker fails OPEN: a real loss then reads as a first run, which is
+# the one direction this guard must never be wrong in. Identical in both
+# bootstraps; keep them that way.
+bs_seen_slug() {
+  local p="${1#"$WKS_HOME"/}"
+  p="${p#"$WKS_DATA"/}"
+  printf '%s' "$p" | tr '/' '_' | sed 's/^\.//'
+}
 
 # bs_present: exists AND is non-empty. A truncated credential is not a
 # credential — internal/statelost's own tests treat that as loss, and
@@ -308,7 +319,7 @@ bs_guard() {
   [ -e "$marker" ] && suspected=1
 
   if [ "$suspected" = 0 ]; then
-    bs_log "  $name: absent, and nothing on this volume says it ever existed — first run."
+    bs_log "  $name: absent, and nothing on this volume says it ever existed. First run."
     return 1
   fi
 
@@ -412,7 +423,7 @@ else
     else
       [ "$bs_token_lost" = 1 ] && bs_losses=$((bs_losses + 1))
       [ "$bs_token_lost" = 0 ] &&
-        bs_log "  remote-token: absent, and nothing on this volume says it ever existed — first run."
+        bs_log "  remote-token: absent, and nothing on this volume says it ever existed. First run."
       bs_token="$(bs_mint_token)"
       printf '%s' "$bs_token" >"$bs_token_file"
       chmod 600 "$bs_token_file"

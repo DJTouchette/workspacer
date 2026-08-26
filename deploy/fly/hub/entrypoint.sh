@@ -42,6 +42,9 @@
 #                                   secure context.
 #   6. hub                          with --trusted-host set to the name step 5
 #                                   just proved, derived rather than configured
+#   6b. one end-to-end HTTPS request  serve returning 0 is not the hub being
+#                                      reachable; the certificate is fetched on
+#                                      demand and can fail afterwards. NON-FATAL.
 #   7. supervise + a loopback health watchdog
 #
 set -euo pipefail
@@ -90,6 +93,11 @@ SERVE_PORT="${WKS_HUB_SERVE_PORT:-443}"
 PLUGIN_ORIGIN_ENABLED="${WKS_HUB_PLUGIN_ORIGIN_ENABLED:-1}"
 PLUGIN_ORIGIN_PORT="${WKS_HUB_PLUGIN_ORIGIN_PORT:-8443}"
 
+# The end-to-end reachability probe. See step 6b, non-fatal, by design and by
+# construction. Set WKS_HUB_SERVE_PROBE_ENABLED=0 to skip it entirely.
+SERVE_PROBE_ENABLED="${WKS_HUB_SERVE_PROBE_ENABLED:-1}"
+SERVE_PROBE_SECS="${WKS_HUB_SERVE_PROBE_SECS:-30}"
+
 HEALTH_INTERVAL="${WKS_HUB_HEALTH_INTERVAL:-30}"
 HEALTH_FAILURES="${WKS_HUB_HEALTH_FAILURES:-4}"
 
@@ -123,10 +131,18 @@ log() { printf '%s entrypoint: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 echo "================================================================"
 log "BOOT $BOOT_ID"
 log "  app=${FLY_APP_NAME:-<none>} machine=${FLY_MACHINE_ID:-<none>} region=${FLY_REGION:-<none>} image=${FLY_IMAGE_REF:-<none>}"
+# CONSUMED, not just read. See the node entrypoint for the full argument; it
+# applies here unchanged. The short form: this file is written by a trap, a
+# SIGKILL runs no trap, and a record left in place is silently re-reported as
+# though it described the run that just died. Renaming it after logging means the
+# answer for a run that was killed without warning is "no record", which is true,
+# rather than the previous run's reason, which is not.
 if [ -f "${WKS_DATA}/state/last-exit.json" ]; then
   log "  previous run ended: $(cat "${WKS_DATA}/state/last-exit.json")"
+  mv -f "${WKS_DATA}/state/last-exit.json" "${WKS_DATA}/state/last-exit.consumed.json" 2>/dev/null || true
 else
-  log "  previous run ended: <no record — first boot, or the volume was not mounted last time>"
+  log "  previous run ended: <no record. Either a first boot, a volume that was not mounted, or a run"
+  log "    that was KILLED WITHOUT WARNING (host eviction, OOM, SIGKILL): no trap runs, so nothing is written>"
 fi
 
 # --------------------------------------------------------------------------
@@ -440,6 +456,37 @@ hub_args=(
   # reports a stopped node as `available` forever. See the header.
   --brain-scope off
   --plugins-dir "$PLUGINS_DIR"
+
+  # *** JOBS OFF, AND THIS IS A SECURITY BOUNDARY, NOT A PREFERENCE. ***
+  #
+  # Follow the authority through. The node attaches with an OPERATOR-tier
+  # $HUB_TOKEN. Operator tier is `trusted`. Every jobs.* method is gated by
+  # jobsTrusted (cmd/hub/main.go), and jobsTrusted is a bare c.IsTrusted(),
+  # nothing narrower. So the node may call jobs.upsert and then jobs.run, and a
+  # job of kind shell reaches jobs.BusRunner.Shell, which is
+  # exec.CommandContext("/bin/sh", "-c", command). Unconfined.
+  #
+  # Where does that /bin/sh run? Not on the node. In THIS process's environment,
+  # on THIS machine: the one holding $FLY_API_TOKEN, on the volume holding
+  # nodes.json, tokens.json and remote-token. And the node is, by design, the
+  # machine that runs code an agent wrote. That is a straight path from a
+  # prompt-injected agent to the credential that creates and destroys machines
+  # and spends the money.
+  #
+  # Nothing on this hub schedules a job: it runs `hub` and nothing else, has no
+  # brain, and no plugin ships here, so the whole subsystem costs nothing to
+  # switch off, and switching it off removes the reachable code rather than
+  # arguing about the gate in front of it. An EMPTY --jobs-file is the documented
+  # off switch: `jobsFile` defaults to defaultJobsFile(), and `if *jobsFile != ""`
+  # is what wraps every jobs.* RegisterLocalIdent, so an empty value registers
+  # none of them and starts no scheduler. Verified in cmd/hub/main.go at the flag
+  # declaration and at the guard, and asserted executably by preflight.sh, which
+  # runs `workspacer jobs list` against a booted hub and requires it to fail.
+  #
+  # The day this hub needs a job, the fix is NOT to delete this line. It is to
+  # give the node a narrower tier than operator, or jobs.* a gate narrower than
+  # IsTrusted.
+  --jobs-file ""
 )
 if [ -n "$TRUSTED_HOSTS" ]; then
   hub_args+=(--trusted-host "$TRUSTED_HOSTS")
@@ -479,6 +526,88 @@ done
 curl -sf -H 'Host: 127.0.0.1' "$HUB_HEALTH" >/dev/null 2>&1 || die "hub did not answer on ${HUB_HEALTH} within 20s"
 
 log "hub ready (pid $HUB_PID)"
+
+# --------------------------------------------------------------------------
+# 6b. PROVE THE CHAIN A CLIENT ACTUALLY USES.
+# --------------------------------------------------------------------------
+# Everything green so far says nothing about whether anybody can reach this hub.
+#
+#   `tailscale serve --bg` INSTALLS A CONFIG. It does not fetch a certificate.
+#   The Let's Encrypt certificate for the MagicDNS name is fetched ON DEMAND, on
+#   the first request, and it can fail long after serve returned 0, DNS→HTTPS
+#   Certificates not enabled for the tailnet, or a tagged device whose tag is not
+#   permitted to fetch certs. RUNBOOK.md lists that second one as the largest
+#   unverified assumption in the whole deployment.
+#
+#   The health watchdog below polls `-H 'Host: 127.0.0.1' http://127.0.0.1:7895`.
+#   That is the loopback socket with a loopback Host header. It never traverses
+#   serve, never presents the MagicDNS Host, and never touches TLS. It is the
+#   right check for "is the process wedged" and it is no check at all for "can my
+#   phone open this".
+#
+# So one request, over the whole chain: DNS for the MagicDNS name, TLS with the
+# on-demand certificate, serve's proxy to loopback, and the hub's own Host pin,
+# which is the fourth thing this proves, because --trusted-host is what stops
+# that request being a 403 that reads as "the hub is broken".
+#
+# *** NON-FATAL. THIS MUST NEVER STOP A BOOT. ***
+#
+# Not a preference. This repo shipped an image that could not boot because an
+# entrypoint line exited before running anything, and a probe that can fail a
+# boot would be that mistake again with better intentions. A hub that is up but
+# unreachable is strictly better than a hub that is down: the operator can still
+# `fly ssh console` into the first one. So the whole block lives inside an `if`,
+# every curl is `|| true`-shaped by construction, and the failure path logs a
+# triage list and falls through.
+if [ "$SERVE_PROBE_ENABLED" = "1" ] && [ "$SERVE_ENABLED" = "1" ] && [ -n "$TS_DNSNAME" ]; then
+  probe_url="https://${TS_DNSNAME}/health"
+  log "probing ${probe_url} over the whole chain, the way a client uses it"
+  probe_start=$(date +%s)
+  probe_ok=0
+  probe_err=""
+  while [ $(($(date +%s) - probe_start)) -lt "$SERVE_PROBE_SECS" ]; do
+    # The first request is the one that triggers certificate issuance, so it is
+    # allowed to be slow and to fail while that completes. --max-time bounds each
+    # attempt; the loop bounds the total.
+    if probe_err="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$probe_url" 2>&1)" &&
+      [ "$probe_err" = "200" ]; then
+      probe_ok=1
+      break
+    fi
+    sleep 2
+  done
+  probe_took=$(($(date +%s) - probe_start))
+  # curl -sS puts its diagnostic on stderr and the -w code on stdout, so a
+  # failure gives a two-line value. Flatten it: one log line per fact.
+  probe_err="$(printf '%s' "$probe_err" | tr '\n' ' ' | sed 's/  */ /g; s/ $//')"
+  if [ "$probe_ok" = 1 ]; then
+    log "REACHABLE: ${probe_url} answered 200 after ${probe_took}s."
+    log "  DNS, the certificate, serve's proxy and the hub's Host pin are all working."
+    log "  A phone on this tailnet can open /m."
+  else
+    log "WARNING: ${probe_url} did NOT answer within ${probe_took}s. Last result: ${probe_err:-<none>}"
+    log "  The hub itself is UP and answering on loopback: this is the boot continuing, not failing."
+    log "  What this means is that the path a CLIENT uses is broken, and \`tailscale serve\` returning 0"
+    log "  did not tell you so, because serve installs a config and the certificate is fetched on demand."
+    log "  In order of likelihood, from a shell on this machine"
+    log "  (\`fly ssh console --app ${FLY_APP_NAME:-workspacer-hub}\`):"
+    log "    1. Is there a certificate?  tailscale cert ${TS_DNSNAME}"
+    log "       The two causes: HTTPS Certificates are off for the tailnet (admin console → DNS), or"
+    log "       this device is TAGGED and the tag is not permitted to fetch certs."
+    log "    2. Is the rule installed?   tailscale serve status"
+    log "       It should show :${SERVE_PORT} proxying to http://127.0.0.1:${HUB_PORT}."
+    log "    3. What is the actual answer?  curl -v ${probe_url}"
+    log "       A 403 is the Host pin, not the certificate. trusted-host is ${TRUSTED_HOSTS:-<none>}."
+    log "    4. Does the NAME resolve, from another tailnet device? MagicDNS may be off, or the name"
+    log "       may belong to a stale duplicate device, in which case THIS hub took a suffixed name,"
+    log "       and the MagicDNS name logged above is the one to use everywhere."
+    log "  Until this answers, the node cannot attach and no phone or browser can reach /m or /app."
+  fi
+elif [ "$SERVE_PROBE_ENABLED" != "1" ]; then
+  log "end-to-end reachability probe disabled (WKS_HUB_SERVE_PROBE_ENABLED=0), nothing has checked that"
+  log "  a client can reach this hub. The loopback watchdog below cannot: it never traverses serve."
+fi
+
 if [ -n "$TS_DNSNAME" ] && [ "$SERVE_ENABLED" = "1" ]; then
   log "  bus     wss://${TS_DNSNAME}/bus      ← the node's HUB_BUS_URL"
   log "  phone   https://${TS_DNSNAME}/m?token=…"

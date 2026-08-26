@@ -133,8 +133,8 @@ for name, cfg in (("node", n), ("hub", h)):
 sys.exit(0 if ok else 1)
 PY
 
-  ./deploy/fly/node/test-bootstrap.sh >/dev/null && pass "node bootstrap.sh: 63 assertions"
-  ./deploy/fly/hub/test-bootstrap.sh  >/dev/null && pass "hub bootstrap.sh: 111 assertions"
+  ./deploy/fly/node/test-bootstrap.sh >/dev/null && pass "node bootstrap.sh: 106 assertions"
+  ./deploy/fly/hub/test-bootstrap.sh  >/dev/null && pass "hub bootstrap.sh: 113 assertions"
 
   docker run --rm -v "$PWD/deploy/fly/node:/mnt:ro" -w /mnt koalaman/shellcheck:stable \
     -s bash -S style entrypoint.sh bootstrap.sh test-bootstrap.sh verify-image.sh && pass "shellcheck node"
@@ -164,7 +164,7 @@ if [ "$STAGE" = all ] || [ "$STAGE" = contract ]; then
   docker volume create "$vol" >/dev/null
   docker run --rm -v "$vol:/data" -u 10001:10001 -e HOME=/data/home \
     --entrypoint /bin/bash "$BASE_TAG" -c /usr/local/lib/wks/test-bootstrap.sh >/dev/null \
-    && pass "63 assertions again INSIDE the image, as wks, on an empty volume"
+    && pass "106 assertions again INSIDE the image, as wks, on an empty volume"
   docker volume rm "$vol" >/dev/null
 fi
 
@@ -203,12 +203,25 @@ exit 0
 SHIM
   chmod +x "$shim/tailscale" "$shim/tailscaled"
 
+  # A rehearsal's log is worth more than its exit status, so it is kept: the
+  # named assertions below read it. $REHEARSE_LOG is the last one written, and
+  # $REHEARSE_VOL is the volume, so a case that needs a SECOND boot on the same
+  # state can ask for one.
+  REHEARSE_LOG=""
+  REHEARSE_VOL=""
+
   # Wait for BOOT COMPLETE, or dump the log and fail. A boot that stalls is as
   # much a failure as one that exits, so this is a timeout, not a sleep.
+  # keep=1 leaves the volume behind for a follow-up boot; the caller drops it.
   rehearse() {
-    local name="$1" tag="$2"; shift 2
-    local vol="wks-rehearse-$name-$$" cid=""
-    docker volume create "$vol" >/dev/null
+    local name="$1" tag="$2" keep="$3"; shift 3
+    local vol="${REHEARSE_VOL:-}" cid=""
+    if [ -z "$vol" ] || [ "$keep" != "reuse" ]; then
+      vol="wks-rehearse-$name-$$-$RANDOM"
+      docker volume create "$vol" >/dev/null
+    fi
+    REHEARSE_VOL="$vol"
+    REHEARSE_LOG="$(mktemp)"
     cid=$(docker run -d --rm \
       -v "$vol:/data" \
       -v "$shim/tailscale:/usr/local/bin/tailscale:ro" \
@@ -216,30 +229,282 @@ SHIM
       -e TAILSCALE_AUTHKEY='tskey-auth-PREFLIGHT-SHIM' \
       "$@" "$tag")
     local waited=0 ok=0
-    while [ "$waited" -lt 90 ]; do
+    while [ "$waited" -lt 120 ]; do
       if docker logs "$cid" 2>&1 | grep -q 'BOOT COMPLETE'; then ok=1; break; fi
       docker inspect "$cid" >/dev/null 2>&1 || break   # container died
       sleep 2; waited=$((waited + 2))
     done
+    # Give the children a moment to say their piece. The brain's config read,
+    # which is what the false-alarm assertion below is about, happens AFTER the
+    # entrypoint has already logged BOOT COMPLETE.
+    sleep 6
+    docker logs "$cid" >"$REHEARSE_LOG" 2>&1 || true
     if [ "$ok" = 1 ]; then
       pass "$name reached BOOT COMPLETE in ${waited}s (entrypoint ran end to end)"
     else
       fail "$name never reached BOOT COMPLETE (log follows)"
-      docker logs "$cid" 2>&1 | tail -40 | sed 's/^/      /'
+      tail -40 "$REHEARSE_LOG" | sed 's/^/      /'
     fi
     docker rm -f "$cid" >/dev/null 2>&1 || true
-    docker volume rm "$vol" >/dev/null 2>&1 || true
+    if [ "$keep" != "keep" ]; then
+      docker volume rm "$vol" >/dev/null 2>&1 || true
+      REHEARSE_VOL=""
+    fi
+  }
+
+  # in_log / not_in_log: named assertions against the boot that just ran. These
+  # exist because a clean build proves ASSEMBLY, not BOOT, and BOOT COMPLETE on
+  # its own proves the entrypoint finished, not that it did the right things.
+  in_log()     { if grep -qF "$1" "$REHEARSE_LOG"; then pass "$2"; else fail "$2"; fi; }
+  not_in_log() { if grep -qF "$1" "$REHEARSE_LOG"; then fail "$2"; else pass "$2"; fi; }
+  # Same, ignoring the replayed previous boot. Lines quoted from an older log
+  # carry a "  | " or "  ! " marker precisely so this distinction is possible.
+  not_in_own_log() {
+    if grep -v '^  [|!] ' "$REHEARSE_LOG" | grep -qF "$1"; then fail "$2"; else pass "$2"; fi
   }
 
   # The node's brain is pointed at a dead port on purpose: this stage proves the
   # BOOT, not the attach. It logs BOOT COMPLETE before the brain's first dial.
-  rehearse node "$BASE_TAG" \
+  # The volume is KEPT so the second boot below can replay the first one's log.
+  rehearse node "$BASE_TAG" keep \
     -e HUB_BUS_URL='ws://127.0.0.1:59999/bus' \
     -e HUB_TOKEN='preflight-not-a-real-token'
 
+  # ---- the false alarm, asserted against a real brain on a real volume ----
+  # The node used to print `brain: STATE LOSS: …/config.yaml is missing` on every
+  # genuinely first boot, because bootstrap.sh pre-creates sibling directories
+  # under ~/.config/workspacer and internal/statelost counted an empty directory
+  # as evidence somebody had run there. This is the assertion that says it is
+  # gone, and it is a real brain reading a real volume, not a unit test.
+  not_in_log "brain: STATE LOSS" \
+    "FALSE ALARM GONE: a genuinely first boot prints no brain STATE LOSS line"
+  in_log "state guard: no losses detected" \
+    "the node's own state guard ran and found nothing lost on an empty volume"
+  in_log "no previous boot log" \
+    "the first boot says there is no previous boot log to replay"
+  in_log "brain: scope=full" "the brain still started and registered its capabilities"
+
+  # ---- the previous boot log reaches fly logs on the NEXT boot ----
+  # The finding this closes: /data/logs/boot.log is readable only through a shell
+  # on the machine, and a node that fails to boot does not stay up long enough to
+  # give you one. So the previous boot is replayed to stdout.
+  rehearse node "$BASE_TAG" reuse \
+    -e HUB_BUS_URL='ws://127.0.0.1:59999/bus' \
+    -e HUB_TOKEN='preflight-not-a-real-token'
+  in_log "PREVIOUS BOOT, replayed to stdout" \
+    "the second boot replays the first boot's log to stdout, where fly logs can see it"
+  in_log "  | " "the replayed lines are marked so they cannot be mistaken for this boot"
+  in_log "verdict: the previous boot COMPLETED" \
+    "the replay leads with a verdict, not just a tail: the tail alone is runtime chatter"
+  not_in_log "brain: STATE LOSS" "still no false alarm on the second boot"
+  docker volume rm "$REHEARSE_VOL" >/dev/null 2>&1 || true
+  REHEARSE_VOL=""
+
+  # ---- the two findings proving each other ----
+  # A state-guard refusal is the boot failure with the SHORTEST window: the
+  # entrypoint dies about a second in, so `fly ssh console` never gets a machine
+  # to attach to and the refusal on the volume is unreadable. That is only an
+  # acceptable design if the NEXT boot carries it out. This runs the whole
+  # sequence for real, plant a credential, boot so the marker is recorded, take
+  # the credential away, watch the node refuse, then boot again and read the
+  # refusal off stdout.
+  section "REFUSAL: a node that will not boot still tells you why, on the next try"
+
+  refusal_vol="wks-rehearse-refusal-$$"
+  docker volume create "$refusal_vol" >/dev/null
+
+  # Edit the volume the way a snapshot restore or a stray rm would. Runs as root
+  # because a Fly volume mounts root-owned and bootstrap.sh is what fixes that.
+  prep_vol() {
+    docker run --rm -v "$refusal_vol:/data" --entrypoint /bin/sh "$BASE_TAG" -c "$1" >/dev/null 2>&1
+  }
+
+  # Boot once and capture the log whether it succeeds or dies. No --rm: a boot
+  # that exits would take its own log with it, which is the exact failure this
+  # section is about.
+  boot_once() {
+    local cid waited=0
+    REHEARSE_LOG="$(mktemp)"
+    cid=$(docker run -d \
+      -v "$refusal_vol:/data" \
+      -v "$shim/tailscale:/usr/local/bin/tailscale:ro" \
+      -v "$shim/tailscaled:/usr/local/bin/tailscaled:ro" \
+      -e TAILSCALE_AUTHKEY='tskey-auth-PREFLIGHT-SHIM' \
+      -e HUB_BUS_URL='ws://127.0.0.1:59999/bus' \
+      -e HUB_TOKEN='preflight-not-a-real-token' \
+      "$BASE_TAG")
+    while [ "$waited" -lt 60 ]; do
+      [ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null)" = "true" ] || break
+      docker logs "$cid" 2>&1 | grep -q 'BOOT COMPLETE' && break
+      sleep 1; waited=$((waited + 1))
+    done
+    sleep 2
+    docker logs "$cid" >"$REHEARSE_LOG" 2>&1 || true
+    BOOT_EXIT="$(docker inspect -f '{{.State.ExitCode}}' "$cid" 2>/dev/null || echo unknown)"
+    BOOT_RUNNING="$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null || echo unknown)"
+    docker rm -f "$cid" >/dev/null 2>&1 || true
+  }
+
+  prep_vol 'mkdir -p /data/home/.claude && printf %s "{\"claudeAiOauth\":{\"accessToken\":\"x\"}}" > /data/home/.claude/.credentials.json'
+  boot_once
+  in_log "BOOT COMPLETE" "a node WITH a Claude credential boots normally"
+  in_log "state guard: no losses detected" "and the guard records that the credential was here"
+
+  prep_vol 'rm -f /data/home/.claude/.credentials.json'
+  boot_once
+  if [ "$BOOT_RUNNING" = "false" ] && [ "$BOOT_EXIT" != "0" ]; then
+    pass "GUARD FIRES ON A GENUINE LOSS: taking the credential away stops the node booting (exit $BOOT_EXIT)"
+  else
+    fail "the node booted anyway after its Claude credential vanished (running=$BOOT_RUNNING exit=$BOOT_EXIT)"
+  fi
+  in_log "STATE LOSS" "the refusal names it as state loss"
+  in_log "REFUSING TO START" "and refuses rather than coming up to hang every session"
+  not_in_own_log "BOOT COMPLETE" \
+    "the boot did NOT complete, and the replayed previous boot cannot be mistaken for one that did"
+
+  # The one that matters. Everything above is on a volume nobody can reach.
+  boot_once
+  in_log "PREVIOUS BOOT, replayed" "the next attempt replays the boot that failed"
+  in_log "DIED DURING STARTUP" "and leads with the verdict, so no log-reading is required to get it"
+  in_log "  ! " "and surfaces the refusal lines from anywhere in that log, not only its tail"
+  if grep -A200 'PREVIOUS BOOT, replayed' "$REHEARSE_LOG" | grep -qF 'REFUSING TO START'; then
+    pass "THE REFUSAL REACHES fly logs: the reason the node would not boot is on stdout of the next boot"
+  else
+    fail "the replayed block does not carry the refusal"
+  fi
+
+  docker volume rm "$refusal_vol" >/dev/null 2>&1 || true
+
+  # ---- last-exit.json is CONSUMED, so a hard kill is not reported as a sleep ----
+  # last-exit.json is written by a trap, and the exits worth knowing about run no
+  # trap. Left in place, the record from an earlier clean sleep is re-reported
+  # against the run that was killed: the exact ambiguity the file exists to
+  # resolve, answered backwards, and undetectably so because the reader drops the
+  # bootId. This runs the real sequence: sleep cleanly, boot, then get SIGKILLed,
+  # then boot again and check what the machine says about how it died.
+  section "LAST EXIT: a run killed without warning is not reported as a clean sleep"
+
+  le_vol="wks-rehearse-lastexit-$$"
+  docker volume create "$le_vol" >/dev/null
+  LE_CID=""
+
+  le_boot() {
+    LE_CID=$(docker run -d \
+      -v "$le_vol:/data" \
+      -v "$shim/tailscale:/usr/local/bin/tailscale:ro" \
+      -v "$shim/tailscaled:/usr/local/bin/tailscaled:ro" \
+      -e TAILSCALE_AUTHKEY='tskey-auth-PREFLIGHT-SHIM' \
+      -e HUB_BUS_URL='ws://127.0.0.1:59999/bus' \
+      -e HUB_TOKEN='preflight-not-a-real-token' \
+      "$BASE_TAG")
+    local waited=0
+    while [ "$waited" -lt 60 ]; do
+      docker logs "$LE_CID" 2>&1 | grep -q 'BOOT COMPLETE' && break
+      sleep 1; waited=$((waited + 1))
+    done
+    REHEARSE_LOG="$(mktemp)"
+    docker logs "$LE_CID" >"$REHEARSE_LOG" 2>&1 || true
+  }
+
+  le_boot
+  # SIGTERM: the trap runs, the record is written. This is a clean sleep, the
+  # shape the hub produces with nodes.sleep.
+  docker stop -t 60 "$LE_CID" >/dev/null 2>&1 || true
+  docker rm -f "$LE_CID" >/dev/null 2>&1 || true
+
+  le_boot
+  in_log "previous run ended:" "the next boot reports how the previous run ended"
+  in_log "signal-TERM" "and a deliberate stop is reported as signal-TERM"
+  if docker exec "$LE_CID" test -f /data/state/last-exit.consumed.json 2>/dev/null &&
+    ! docker exec "$LE_CID" test -f /data/state/last-exit.json 2>/dev/null; then
+    pass "CONSUMED: the record was renamed once logged, so it cannot be reported twice"
+  else
+    fail "last-exit.json is still in place after being reported: it will be re-reported"
+  fi
+
+  # SIGKILL: no trap, nothing written. The bug this closes is that the record
+  # above would otherwise still be sitting there, and this boot would report it.
+  docker kill -s KILL "$LE_CID" >/dev/null 2>&1 || true
+  docker rm -f "$LE_CID" >/dev/null 2>&1 || true
+
+  le_boot
+  not_in_own_log "signal-TERM" \
+    "A HARD KILL IS NOT REPORTED AS A CLEAN SLEEP: the stale signal-TERM is not reused"
+  in_log "KILLED WITHOUT WARNING" "and the boot says a killed run writes no record, rather than inventing one"
+  docker rm -f "$LE_CID" >/dev/null 2>&1 || true
+  docker volume rm "$le_vol" >/dev/null 2>&1 || true
+
+  # ---- the hub does not run shell for the node ----
+  # The node attaches with an operator-tier token; operator tier is `trusted`;
+  # jobsTrusted is a bare IsTrusted(). So jobs.upsert + jobs.run would give the
+  # node /bin/sh in the hub's own environment: the one holding $FLY_API_TOKEN,
+  # on the volume holding nodes.json and remote-token. The entrypoint passes an
+  # empty --jobs-file, which is the documented off switch. Asserted BOTH ways:
+  # the flag disables it, AND the same binary in the same image still registers
+  # jobs.* when the flag is non-empty, so this is the flag doing the work and not
+  # a method that never existed.
+  section "JOBS: the hub runs shell for nobody, because the subsystem is off"
+
+  jobs_vol="wks-rehearse-jobs-$$"
+  docker volume create "$jobs_vol" >/dev/null
+  jobs_cid=$(docker run -d \
+    -v "$jobs_vol:/data" \
+    -v "$shim/tailscale:/usr/local/bin/tailscale:ro" \
+    -v "$shim/tailscaled:/usr/local/bin/tailscaled:ro" \
+    -e TAILSCALE_AUTHKEY='tskey-auth-PREFLIGHT-SHIM' \
+    "$HUB_TAG")
+  jw=0
+  while [ "$jw" -lt 90 ]; do
+    docker logs "$jobs_cid" 2>&1 | grep -q 'BOOT COMPLETE' && break
+    sleep 2; jw=$((jw + 2))
+  done
+
+  jobs_env=(-e HOME=/data/home -e XDG_CONFIG_HOME=/data/home/.config)
+  jobs_out="$(docker exec "${jobs_env[@]}" "$jobs_cid" workspacer jobs list 2>&1)" && jobs_rc=0 || jobs_rc=$?
+  if [ "$jobs_rc" != 0 ] && printf '%s' "$jobs_out" | grep -qF 'no provider for jobs.list'; then
+    pass "JOBS ARE OFF: \`workspacer jobs list\` against the booted hub gets no provider for jobs.list"
+  else
+    fail "jobs.list answered on the hub (rc=$jobs_rc): $jobs_out"
+  fi
+  if docker exec "$jobs_cid" sh -c 'tr "\0" " " </proc/$(pgrep -x hub)/cmdline' 2>/dev/null |
+    grep -qF -- '--jobs-file'; then
+    pass "and the running hub's argv carries --jobs-file with an empty value"
+  else
+    fail "the running hub was not started with --jobs-file"
+  fi
+
+  # The negative control. Without it, "no provider" could mean the method never
+  # existed rather than that the flag removed it.
+  docker exec -d "${jobs_env[@]}" -e HUB_TOKEN=preflight-negative-control "$jobs_cid" \
+    hub --addr 127.0.0.1:7999 --brain-scope off --jobs-file /tmp/negative-control-jobs.json \
+    >/dev/null 2>&1 || true
+  sleep 4
+  if docker exec "${jobs_env[@]}" -e HUB_TOKEN=preflight-negative-control "$jobs_cid" \
+    workspacer jobs list --hub-port 7999 >/dev/null 2>&1; then
+    pass "NEGATIVE CONTROL: the same binary DOES register jobs.list when --jobs-file is non-empty"
+  else
+    fail "the negative control hub did not answer jobs.list: this test proves nothing as written"
+  fi
+
+  docker rm -f "$jobs_cid" >/dev/null 2>&1 || true
+  docker volume rm "$jobs_vol" >/dev/null 2>&1 || true
+
   # The hub mints its own pairing credential on an empty volume and must reach
   # BOOT COMPLETE with no secrets at all.
-  rehearse hub "$HUB_TAG"
+  rehearse hub "$HUB_TAG" drop
+
+  # ---- the end-to-end probe RUNS, and cannot fail a boot ----
+  # The shimmed tailscale reports a MagicDNS name that resolves nowhere, so the
+  # probe takes its failure path, which is the path that matters. A probe that
+  # could stop a boot would be the setpriv mistake again with better intentions,
+  # and this is the assertion that proves it cannot.
+  in_log "probing https://preflight.example.ts.net/health" \
+    "the hub actually issues the end-to-end request (executed, not parsed)"
+  in_log "did NOT answer within" "and reports the failure loudly"
+  in_log "this is the boot continuing, not failing" \
+    "and says so in the log, so the operator is not hunting a crash"
+  in_log "tailscale cert preflight.example.ts.net" "the failure carries a triage list, not just a status"
+  in_log "BOOT COMPLETE" "NON-FATAL PROVEN: the boot completed anyway, after the probe failed"
 fi
 
 section "RESULT"
