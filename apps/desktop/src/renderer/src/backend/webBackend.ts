@@ -28,6 +28,7 @@ import type {
 } from '../../../main/shared/ipcTypes';
 import { HubBusClient, type HubEventEnvelope } from './hubBusClient';
 import { mergeConversationWindow } from '../../../main/shared/mergeConversationWindow';
+import { createBusConversations, type ConversationSnapWire } from './busConversation';
 import {
   openBrowserFilePicker,
   reportAttachmentFailures,
@@ -367,6 +368,48 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
   // stays bounded by the live fleet.
   const { foldSparse, foldConversation, seedFull } = createSnapshotFold(client);
 
+  // ── Conversation for conversation-less rows ────────────────────────────
+  // A sparse (headless-brain) row carries no transcript at all — brain keeps
+  // it out of the snapshot on purpose and expects clients to fetch
+  // `sessions.conversation` themselves (the phone does; see busConversation.ts
+  // for the whole story). Without this, `/app` against a `workspacer serve`
+  // node showed an empty chat and an optimistic "Sending…" bubble that could
+  // never retire, because the turn it waits for lives only in that endpoint.
+  //
+  // `sessionUpdateCbs` is every live onClaudeSessionUpdate subscriber: a fetch
+  // that lands between snapshots has to reach the renderer on its own, so the
+  // fold re-emits the session's newest snapshot with the transcript merged in.
+  const sessionUpdateCbs = new Set<(sessionId: string, snap: ClaudeSessionSnapshot) => void>();
+  const lastSnaps = new Map<string, ClaudeSessionSnapshot>();
+  // Sessions some pane actually opened (getClaudeSession). Only these are
+  // polled — a 40-agent fleet's cards need status, not forty transcripts.
+  const watchedSessions = new Set<string>();
+  const conversations = createBusConversations(
+    (sessionId, params) => client.call(qualify(sessionId, 'sessions.conversation'), params),
+    (sessionId) => {
+      const last = lastSnaps.get(sessionId);
+      if (!last) return;
+      const merged = conversations.merge(last);
+      for (const cb of sessionUpdateCbs) cb(sessionId, merged);
+    },
+  );
+  /** Remember a snapshot on its way to the renderer and overlay the folded
+   *  transcript when the row brought none. */
+  const withConversation = (snap: ClaudeSessionSnapshot): ClaudeSessionSnapshot => {
+    if (!snap?.sessionId) return snap;
+    lastSnaps.set(snap.sessionId, snap);
+    const merged = conversations.merge(snap);
+    if (snap.status === 'ended') {
+      // The final render keeps the transcript we already folded (it is in
+      // `merged`), but nothing more is coming — stop polling and let both
+      // caches go, so they stay bounded by the LIVE fleet like foldSparse's.
+      watchedSessions.delete(snap.sessionId);
+      conversations.forget(snap.sessionId);
+      lastSnaps.delete(snap.sessionId);
+    }
+    return merged;
+  };
+
   /**
    * `pickFiles` without `attachment` means the caller wants a path ON THE HOST
    * — the editor's fallback open, the custom-binary browsers in the spawn
@@ -653,7 +696,14 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         .then((s) => {
           if (!s) return s;
           const hub = sessionHub.get(sessionId);
-          return seedFull(hub ? { ...s, hub } : s);
+          const seeded = seedFull(hub ? { ...s, hub } : s);
+          // A pane asked for this session by id — that is what "someone is
+          // watching it" means here, so start (and prime) its transcript sync.
+          if (!Array.isArray(seeded.conversation) && seeded.status !== 'ended') {
+            watchedSessions.add(sessionId);
+            void conversations.poke(sessionId);
+          }
+          return withConversation(seeded);
         }),
     getAllClaudeSessions: () =>
       client
@@ -678,14 +728,21 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // Federation: remote conversation over the qualified call — the web build
     // can serve this directly off the bus. Local sessions read through the
     // normal snapshot flow, so answer null for them (matches the desktop).
-    federationConversation: (sessionId, sinceSeq) => {
+    federationConversation: (sessionId) => {
       if (!sessionHub.has(sessionId)) return Promise.resolve(null);
-      return client
-        .call<{ seq: number; items: unknown[] }>(qualify(sessionId, 'sessions.conversation'), {
-          sessionId,
-          ...(sinceSeq != null && { sinceSeq }),
-        })
-        .catch(() => null);
+      // The pane's `sinceSeq` argument is accepted and ignored, exactly as
+      // main's federation bridge documents: the fold owns its own seq
+      // tracking. The ITEMS are the point — before, the web build fetched them
+      // and dropped them on the floor, so a peer's session rendered as empty a
+      // chat as a headless local one.
+      watchedSessions.add(sessionId);
+      return conversations
+        .poke(sessionId)
+        .then((res: ConversationSnapWire | null) =>
+          res && typeof res.seq === 'number'
+            ? { seq: res.seq, items: (res.items ?? []) as unknown[] }
+            : null,
+        );
     },
     // Peers are configured on the hub MACHINE (peers.json + hub restart);
     // the web mirror can see the fleet but not edit the links. Null tells the
@@ -704,6 +761,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         .then((peers) => peers ?? [])
         .catch(() => []),
     onClaudeSessionUpdate: (callback) => {
+      sessionUpdateCbs.add(callback);
       const offSnap = client.subscribe('agent.snapshot', (ev) => {
         const raw = ev.data as (ClaudeSessionSnapshot & { sparse?: boolean }) | undefined;
         if (!raw?.sessionId) return;
@@ -720,11 +778,19 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         // bounded window and gets spliced onto the retained history.
         if (snap.sparse) {
           const merged = foldSparse(snap);
-          callback(merged.sessionId, merged);
+          // A sparse row that stayed conversation-less (no rich desktop row to
+          // overlay — the headless case) gets the transcript we fetched, and
+          // this tick is what re-arms the fetch: state changed, so there is
+          // probably a new turn to pull.
+          const shown = withConversation(merged);
+          if (watchedSessions.has(shown.sessionId) && !Array.isArray(merged.conversation)) {
+            void conversations.poke(shown.sessionId);
+          }
+          callback(shown.sessionId, shown);
           return;
         }
         const merged = foldConversation(snap);
-        if (merged) callback(merged.sessionId, merged);
+        if (merged) callback(merged.sessionId, withConversation(merged));
       });
       // Peer link down → tombstone that hub's sessions (hubOffline, cards keep
       // rendering); link back up → the next stamped pushes clear the flag.
@@ -738,6 +804,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         }
       });
       return () => {
+        sessionUpdateCbs.delete(callback);
         offSnap();
         offPeer();
       };

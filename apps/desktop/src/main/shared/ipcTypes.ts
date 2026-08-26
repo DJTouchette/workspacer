@@ -132,6 +132,12 @@ export interface ConversationTurn {
    *  timestamp; it is adopted from the transcript tailer's copy on convergence. */
   timestamp?: number;
   toolCalls?: ToolCall[];
+  /** Set when this turn is a slash-command run (claudemon `slash_command`
+   *  item), rendered as a command card instead of a user bubble. `output`
+   *  arrives separately (`command_output`). Present on the wire since the
+   *  applier started pushing it — this copy of the shape had simply drifted
+   *  behind claudeSessionStore's and the renderer's. */
+  command?: { name: string; args?: string; output?: string; outputIsError?: boolean };
 }
 
 export interface FileChange {
