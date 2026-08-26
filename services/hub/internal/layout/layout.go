@@ -189,6 +189,15 @@ var spawnEscalationKeys = []string{"skipPermissions", "permissionMode", "profile
 // by TestBootDocumentWritersScrubTheSameFields.
 var paneEscalationKeys = []string{"shell", "initialCommand", "pluginId"}
 
+// escalationScrubbedKey is the per-agent note a scrub leaves behind: the list of
+// keys THIS write lost. Hub-stamped only — every writer deletes an incoming copy
+// before considering whether to add its own — so it can neither be forged nor go
+// stale. It is the boot-document half of the no-silent-downgrade rule the spawn
+// path spells as the same key in its RESULT (internal/bus sanitizeSpawnParams,
+// cmd/brain spawnResult, hubCapabilities.ts). TWINS: cmd/brain/bootdoc.go and
+// lib/bootDocumentScrub.ts.
+const escalationScrubbedKey = "escalationScrubbed"
+
 // scrubAdoptedSpawnFields removes spawnEscalationKeys from every entry of the
 // document's `agents` array, returning the (re-encoded) data and the keys it
 // dropped.
@@ -216,10 +225,15 @@ func scrubAdoptedSpawnFields(data json.RawMessage) (json.RawMessage, []string) {
 	}
 	var dropped []string
 	for _, a := range agents {
+		// Hub-stamped, never caller-supplied: drop any incoming copy first so a
+		// writer cannot plant a false "I was scrubbed" note, and — more usefully
+		// — so a record that came back CLEAN this time loses a stale one.
+		delete(a, escalationScrubbedKey)
+		var mine []string
 		for _, k := range spawnEscalationKeys {
 			if _, present := a[k]; present {
 				delete(a, k)
-				dropped = append(dropped, k)
+				mine = append(mine, k)
 			}
 		}
 		// Recurse into tabs[].panes[]. Structural, at a known depth, and — like
@@ -228,8 +242,18 @@ func scrubAdoptedSpawnFields(data json.RawMessage) (json.RawMessage, []string) {
 		if scrubbed, n := scrubPaneEscalation(a["tabs"]); n > 0 {
 			a["tabs"] = scrubbed
 			for i := 0; i < n; i++ {
-				dropped = append(dropped, "pane")
+				mine = append(mine, "pane")
 			}
+		}
+		if len(mine) > 0 {
+			// NO SILENT DOWNGRADES: the record itself says what it lost, so a
+			// client reading layout.get / layout.changed sees the downgrade
+			// instead of only the hub's log file. Written per AGENT because that
+			// is the granularity the loss has.
+			if raw, err := json.Marshal(mine); err == nil {
+				a[escalationScrubbedKey] = raw
+			}
+			dropped = append(dropped, mine...)
 		}
 	}
 	if len(dropped) == 0 {

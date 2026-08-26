@@ -432,9 +432,29 @@ func Save(path string, recs []Record) error {
 	return os.Rename(tmpName, path)
 }
 
-// Mint creates, persists, and returns a new scoped token. The token has the
-// same shape as the host remote-token (24 random bytes, base64url).
+// Mint creates, persists, and returns a new scoped token with no extra grants.
+// The token has the same shape as the host remote-token (24 random bytes,
+// base64url).
 func Mint(path string, scope Scope, label string) (Record, error) {
+	return MintGranted(path, scope, label, false)
+}
+
+// MintGranted is [Mint] with the full-access grant decided at mint time.
+//
+// `yoloAllowed` is the ONLY way to hand a credential the right to spawn agents
+// that skip approvals, and it exists as a mint-time argument because the two
+// callers that need it cannot use the desktop's fleet-manager mint path:
+//
+//   - a FEDERATION LINK's token. A peer link inherits no host trust (see
+//     bus.conn.mayBypassPermissions), so a hub that wants its peer to dispatch
+//     full-access work must mint the link a token that SAYS so and put that
+//     token in the peer's peers.json entry.
+//   - a headless node with no desktop attached, where there is no
+//     agents.fleetFullAccess UI to flip.
+//
+// It is deliberately not settable by the holder, and never inferred: a token
+// carries the grant because a human at this machine typed the flag.
+func MintGranted(path string, scope Scope, label string, yoloAllowed bool) (Record, error) {
 	if _, err := ParseScope(string(scope)); err != nil {
 		return Record{}, err
 	}
@@ -447,10 +467,11 @@ func Mint(path string, scope Scope, label string) (Record, error) {
 		return Record{}, err
 	}
 	rec := Record{
-		Token:   base64.RawURLEncoding.EncodeToString(raw),
-		Scope:   scope,
-		Label:   label,
-		Created: time.Now().UTC().Truncate(time.Second),
+		Token:       base64.RawURLEncoding.EncodeToString(raw),
+		Scope:       scope,
+		Label:       label,
+		Created:     time.Now().UTC().Truncate(time.Second),
+		YoloAllowed: yoloAllowed,
 	}
 	if scope == ScopeProvider {
 		// The default is the WHOLE register surface, deliberately, and it is not

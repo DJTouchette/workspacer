@@ -1278,6 +1278,42 @@ describe('boot-restore documents are scrubbed by every writer, not just layout.s
     expect(doc.agents[0]).toMatchObject({ id: 'a1', cwd: '/', sessionId: 'dead-session-id' });
   });
 
+  // THE PERSISTENCE DECISION, pinned (2026-08-26). A live agents.spawn now
+  // honors a bypass for a host or operator-tier token — the token is the trust
+  // boundary. This door deliberately did NOT move with it: A LIVE SPAWN DIES
+  // WITH THE PROCESS; A PERSISTED DOCUMENT OUTLIVES THE TOKEN. Revoking a
+  // credential closes its socket and reaches nothing already on disk, while
+  // this document is respawned through the LOCAL IPC door — which scrubs
+  // nothing and asks nobody — on every launch thereafter. So full access is
+  // LIVE-ONLY, and the record SAYS it came back weaker rather than doing it
+  // quietly. Changing this needs a provenance stamp that is not forgeable by
+  // the same writer that plants the fields; see lib/bootDocumentScrub.ts.
+  it('records WHAT it took, so a restore-time downgrade is not silent', () => {
+    call('sessions.save', {
+      name: 'restored',
+      agents: [{ ...hostile }, { id: 'a2', cwd: '/proj', model: 'opus' }],
+    });
+    const doc = savedSessions[0] as { agents: Record<string, unknown>[] };
+    expect(doc.agents[0].escalationScrubbed).toEqual(escalations);
+    // A record that lost nothing must not claim a downgrade, or the signal
+    // means nothing.
+    expect(doc.agents[1]).not.toHaveProperty('escalationScrubbed');
+    expect(doc.agents[1]).toMatchObject({ id: 'a2', model: 'opus' });
+  });
+
+  it('never lets the caller supply the escalationScrubbed note', () => {
+    // Hub-owned, like yoloGranted: an incoming copy is deleted before the scrub
+    // decides whether to add its own. Otherwise a writer could forge a
+    // complaint — or a record scrubbed once would report a downgrade forever,
+    // including after the write that restored it.
+    call('sessions.save', {
+      name: 'restored',
+      agents: [{ id: 'a1', cwd: '/proj', escalationScrubbed: ['skipPermissions'] }],
+    });
+    const doc = savedSessions[0] as { agents: Record<string, unknown>[] };
+    expect(doc.agents[0]).not.toHaveProperty('escalationScrubbed');
+  });
+
   it('layouts.save strips them too', () => {
     call('layouts.save', { name: 'tpl', agents: [{ ...hostile }] });
     expect(savedLayouts).toHaveLength(1);

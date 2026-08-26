@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
+	"github.com/djtouchette/workspacer-hub/internal/bus"
 	"github.com/djtouchette/workspacer-hub/internal/busclient"
 	"github.com/djtouchette/workspacer-hub/internal/event"
 )
@@ -143,12 +144,31 @@ func New(pub Publisher, peers []Peer) (*Manager, error) {
 			return nil, fmt.Errorf("duplicate peer name %q", p.Name)
 		}
 		seen[p.Name] = true
-		l := &link{peer: p, client: busclient.New(p.URL, p.Token), pub: pub}
+		l := &link{peer: p, client: busclient.New(peerLinkURL(p.URL), p.Token), pub: pub}
 		l.client.OnEvent(l.forward)
 		l.client.Subscribe(ForwardTopics...)
 		m.links = append(m.links, l)
 	}
 	return m, nil
+}
+
+// peerLinkURL tags a peer dial with bus.PeerLinkParam so the FAR hub can tell a
+// federation link from an ordinary client holding the same token.
+//
+// It exists for one asymmetry: a forwarded `hub:<peer>/agents.spawn` re-enters
+// the peer's router on THIS link's connection, and peers.json routinely holds
+// the peer's host token — so "the link is authenticated" would otherwise mean
+// "anything this link forwards runs with host authority", including a
+// permission bypass the originating caller was never granted. The far hub reads
+// the tag only to WITHHOLD (see bus.conn.mayBypassPermissions), so a link that
+// forgot it is not an escalation door and a client that fakes it only limits
+// itself.
+func peerLinkURL(u string) string {
+	sep := "?"
+	if strings.Contains(u, "?") {
+		sep = "&"
+	}
+	return u + sep + bus.PeerLinkParam + "=1"
 }
 
 // Peers returns the configured peer names, for validation of qualified calls.

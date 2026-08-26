@@ -210,8 +210,12 @@ func TestNonTrustedWriterCannotPlantSpawnEscalation(t *testing.T) {
 		t.Fatal(err)
 	}
 	stored := string(got.(Document).Data)
+	// Object-KEY form (`"skipPermissions":`), not a bare quoted name: the record
+	// now also carries the no-silent-downgrade note — escalationScrubbed, which
+	// NAMES what it removed — and the looser match would read that confession as
+	// the crime.
 	for _, k := range spawnEscalationKeys {
-		if strings.Contains(stored, `"`+k+`"`) {
+		if strings.Contains(stored, `"`+k+`":`) {
 			t.Errorf("a non-trusted layout.set kept %q in the shared document; the desktop respawns this record verbatim on its next launch, so this is agents.spawn with the clamps removed\n  stored: %s", k, stored)
 		}
 	}
@@ -222,6 +226,19 @@ func TestNonTrustedWriterCannotPlantSpawnEscalation(t *testing.T) {
 		if !strings.Contains(stored, keep) {
 			t.Errorf("the scrub also removed %s — everything that is not a spawn argument must round-trip, or the shared layout stops mirroring\n  stored: %s", keep, stored)
 		}
+	}
+
+	// NO SILENT DOWNGRADES: the record must SAY what it lost. Without this the only
+	// trace of a scrubbed shared layout is a log line on the hub's machine, which
+	// is exactly how a remote operator's "full access" click became ask-mode with
+	// nothing on screen to explain it.
+	for _, k := range spawnEscalationKeys {
+		if !strings.Contains(stored, `"`+k+`"`) {
+			t.Errorf("the scrubbed record does not report losing %q — escalationScrubbed is what makes a restore-time downgrade visible\n  stored: %s", k, stored)
+		}
+	}
+	if !strings.Contains(stored, `"escalationScrubbed"`) {
+		t.Errorf("no escalationScrubbed note on a scrubbed record\n  stored: %s", stored)
 	}
 }
 
