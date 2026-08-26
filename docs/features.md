@@ -153,7 +153,7 @@ remote/web/phone clients all view and drive the same fleet.
 | Qualified calls | `hub:<peer>/<method>` — tier check on bare method, plugins refused, 25s budget, peer-side confinement | 🔵 Working |
 | Client coverage | Desktop (badges/tombstones/pane gating/Machine picker), web /app, /m PWA (incl. cross-machine push), wks-tui — all merged-fleet; /remote deliberately local-only | 🔵 Working |
 | Security | Remote cwds grant no local fs roots (snapshotGrantsFsRoot fail-closed); peer tokens are the link ceiling | 🔵 Working |
-| Known limits | Headless-brain-only peers invisible to desktop/TUI (sparse rows); desktop remote chat renders snapshot window only; no nested federation | 🔵 Working |
+| Known limits | Headless-brain-only peers invisible to desktop/TUI (sparse rows); desktop remote chat renders snapshot window only; no nested federation; a peer's remote worker nodes (e.g. Fly nodes) do not forward and are silently invisible, connect via remote-client mode to see them | 🔵 Working |
 
 ## 10. MCP facade ("Ask the fleet" backend)
 
