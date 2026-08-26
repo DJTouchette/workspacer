@@ -168,6 +168,7 @@ impl App {
             "new" | "spawn" => self.open_spawn(),
             "term" | "terminal" => self.new_terminal_tab(),
             "notes" => self.open_notes(),
+            "nodes" => self.open_nodes(),
             "review" => self.open_review(),
             "runs" => self.open_runs(),
             "changes" => self.toggle_side(crate::app::SideKind::Changes),

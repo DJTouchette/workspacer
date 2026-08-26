@@ -24,6 +24,11 @@ import {
   normalizeNodes,
   wakeAffordance,
   type RemoteNodeView,
+  SLEEP_NOTE,
+  sleepAffordance,
+  nodesWorthShowing,
+  describeSleepError,
+  nodeMayStillBeRunning,
 } from '../src/lib/remoteNodes';
 
 const den = (over: Partial<RemoteNodeView> = {}): RemoteNodeView => ({
@@ -131,18 +136,24 @@ describe('applyNodeStateChange', () => {
 });
 
 describe('waking is not unreachable', () => {
-  it('gives the four states four presentations, and only waking reads as progress', () => {
+  it('gives the five states five labels, and only the transitional ones read as progress', () => {
     const labels = Object.values(NODE_PRESENTATION).map((p) => p.label);
-    expect(new Set(labels).size).toBe(4);
+    expect(new Set(labels).size).toBe(5);
+    // Four tones over five states, on purpose: `waking` and `stopping` SHARE
+    // the busy token, because both are work in progress and neither is a fault.
     const tones = Object.values(NODE_PRESENTATION).map((p) => p.tone);
     expect(new Set(tones).size).toBe(4);
 
-    expect(NODE_PRESENTATION.waking.progress).toBe(true);
+    for (const s of ['waking', 'stopping'] as const) {
+      expect(NODE_PRESENTATION[s].progress).toBe(true);
+      // A booting or draining machine paints with the WORKING token, not the
+      // failure one — collapsing either into `unreachable` is what makes a
+      // deliberate act read as a hang.
+      expect(NODE_PRESENTATION[s].tone).toBe('busy');
+    }
     for (const s of ['available', 'stopped', 'unreachable'] as const) {
       expect(NODE_PRESENTATION[s].progress).toBe(false);
     }
-    // A booting machine paints with the WORKING token, not the failure one.
-    expect(NODE_PRESENTATION.waking.tone).toBe('busy');
     expect(NODE_PRESENTATION.unreachable.tone).toBe('warning');
     expect(nodeToneVar('busy')).not.toBe(nodeToneVar('warning'));
     // …and `stopped` is calm, not an error: it is a machine off ON PURPOSE.
@@ -182,19 +193,130 @@ describe('lastExit — the only crash notice anyone gets', () => {
 });
 
 describe('cost honesty', () => {
-  it('says a failed wake left a machine running and billing', () => {
-    expect(nodeWakeFailureNotice(den({ wakeFailures: 1 }))).toMatch(
-      /1 wake failed.*running and billing/,
-    );
+  // THIS SENTENCE CHANGED WITH THE SLEEP PATH, and the change is the feature.
+  // It used to say a failed wake left the machine running and billing, because
+  // it did — the hub had no stop verb. The hub now stops what its own wake
+  // started, so this line reports the FAILURE and stops claiming a bill the
+  // hub has closed. Whether that stop worked is the hub's own `detail`, which
+  // is rendered above this line on the row.
+  it('reports a failed wake without claiming a bill the hub has since closed', () => {
+    expect(nodeWakeFailureNotice(den({ wakeFailures: 1 }))).toMatch(/1 wake failed/);
+    expect(nodeWakeFailureNotice(den({ wakeFailures: 1 }))).not.toMatch(/running and billing/i);
     expect(nodeWakeFailureNotice(den({ wakeFailures: 3 }))).toMatch(/3 wakes failed/);
     expect(nodeWakeFailureNotice(den())).toBeNull();
   });
 
-  it('prices the button itself, since this hub cannot stop a machine', () => {
+  it('prices the wake button itself, and now names the way back', () => {
     const a = wakeAffordance(den(), true);
     expect(a.enabled).toBe(true);
     expect(a.title).toMatch(/bills from boot/i);
-    expect(a.title).toMatch(/nothing here can stop it/i);
+    // The old copy ended "and nothing here can stop it again yet". There is now
+    // something here that stops it, and the sentence has to say so or it is
+    // scaring people off a button that is no longer one-way.
+    expect(a.title).not.toMatch(/nothing here can stop it/i);
+    expect(a.title).toMatch(/until you put it back to sleep/i);
+  });
+
+  // THE SLEEP COPY NAMES THE WORK, NOT THE SAVING. The money is why somebody
+  // presses it; the work is what they need to be warned about.
+  it('warns about the work a shutdown ends rather than the money it saves', () => {
+    expect(SLEEP_NOTE).toMatch(/anything still running on it stops/i);
+    const a = sleepAffordance(den({ state: 'available' }), true);
+    expect(a.enabled).toBe(true);
+    expect(a.title).toBe(SLEEP_NOTE);
+  });
+});
+
+describe('the sleep affordance — never offer an off switch that does nothing', () => {
+  it('offers it for a connected machine and not for one already off', () => {
+    expect(sleepAffordance(den({ state: 'available' }), true).visible).toBe(true);
+    expect(sleepAffordance(den({ state: 'stopped' }), true).visible).toBe(false);
+    // `waking` is mid-transition; a stop pressed there would fight the button
+    // beside it. The hub handles it, but that is not an interface.
+    //
+    // AND IT MUST BE EXCLUDED EXPLICITLY, not by accident of the running check:
+    // a booting machine really IS mayBeRunning — the hub asked for it to be up —
+    // so a version of this that only asked "is it running" put a Put-to-sleep
+    // button on a node that said "Starting…". The e2e caught that; this pins it.
+    expect(sleepAffordance(den({ state: 'waking' }), true).visible).toBe(false);
+    expect(sleepAffordance(den({ state: 'waking', mayBeRunning: true }), true).visible).toBe(false);
+    expect(sleepAffordance(den({ state: 'stopping', mayBeRunning: true }), true).enabled).toBe(
+      false,
+    );
+  });
+
+  it('offers it for an unreachable machine the hub says may STILL be running', () => {
+    // The case with a meter attached, and the precise reason this button
+    // exists. `unreachable` also covers a machine that is off and broken, and
+    // an off switch for that one does nothing — so the state alone cannot
+    // answer this and the hub sends the answer.
+    const burning = den({ state: 'unreachable', mayBeRunning: true });
+    expect(sleepAffordance(burning, true).visible).toBe(true);
+    expect(sleepAffordance(burning, true).enabled).toBe(true);
+
+    const brokenAndOff = den({ state: 'unreachable' });
+    expect(sleepAffordance(brokenAndOff, true).visible).toBe(false);
+  });
+
+  it('shows the reason beside a disabled control, never only in a tooltip', () => {
+    // There is no hover on a phone, and /app runs on one.
+    const noAuthority = sleepAffordance(den({ state: 'available' }), false);
+    expect(noAuthority.visible).toBe(true);
+    expect(noAuthority.enabled).toBe(false);
+    expect(noAuthority.reason).toMatch(/operator token/i);
+
+    const noCredential = sleepAffordance(den({ state: 'available', wakeable: false }), true);
+    expect(noCredential.enabled).toBe(false);
+    expect(noCredential.reason).toMatch(/no credentials/i);
+  });
+
+  it('disables itself while a shutdown is already in flight', () => {
+    expect(sleepAffordance(den({ state: 'stopping' }), true).enabled).toBe(false);
+    expect(sleepAffordance(den({ state: 'available' }), true, true).enabled).toBe(false);
+  });
+});
+
+describe('a connected machine is billing, so its off switch has to be reachable', () => {
+  const connected = den({ state: 'available' });
+
+  it('shows a connected node ONLY when this caller could actually stop it', () => {
+    // The old rule — nothing to report renders nothing — still holds for every
+    // caller that cannot act. A phone on the view tier, and any hub that merely
+    // observes a node it cannot power, see exactly what they saw before.
+    expect(nodesWorthShowing([connected], false)).toEqual([]);
+    expect(nodesWorthShowing([den({ state: 'available', wakeable: false })], true)).toEqual([]);
+    expect(nodesWorthShowing([connected], true)).toHaveLength(1);
+  });
+
+  it('still shows everything that needs attention, whoever is looking', () => {
+    const asleep = den({ state: 'stopped' });
+    const crashed = den({ state: 'available', lastExit: { reason: 'claudemon-died' } });
+    expect(nodesWorthShowing([asleep, crashed], false)).toHaveLength(2);
+    expect(nodesNeedingAttention([asleep, crashed])).toHaveLength(2);
+  });
+});
+
+describe('sleep failures, in words a person can act on', () => {
+  it('translates the refusals a client can actually cause', () => {
+    expect(describeSleepError(new Error('nodes.sleep requires host authority (…)'))).toMatch(
+      /operator token/i,
+    );
+    expect(describeSleepError(new Error('unknown node: "den"'))).toMatch(
+      /no longer in the registry/i,
+    );
+    expect(
+      describeSleepError(
+        new Error(
+          'this node has no cloud coordinates or credential on this hub, so it cannot be put to sleep from here: den',
+        ),
+      ),
+    ).toMatch(/no cloud credentials/i);
+    // The hub renders cloud failures BY CATEGORY rather than by quoting the
+    // API, so its own sentence is safe to pass straight through.
+    expect(describeSleepError(new Error('the cloud API is rate-limiting this machine'))).toBe(
+      'the cloud API is rate-limiting this machine',
+    );
+    expect(describeSleepError(undefined)).toMatch(/couldn't stop the machine/i);
   });
 });
 
@@ -210,6 +332,29 @@ describe('never offer a button that will be refused', () => {
     expect(a.label).toMatch(/starting/i);
     // …and the same while our own wake is in flight and unanswered.
     expect(wakeAffordance(den(), true, true).enabled).toBe(false);
+  });
+
+  it('refuses a wake on a machine that is draining, even one it could otherwise start', () => {
+    // THE MONEY CASE. Somebody pressed sleep, the machine is draining, and the
+    // hub WILL accept a wake here — it just cancels the shutdown and restarts
+    // the meter they were closing. So the refusal is the client's job.
+    const a = wakeAffordance(den({ state: 'stopping' }), true);
+    expect(a.visible).toBe(true);
+    expect(a.enabled).toBe(false);
+    // The reason survives without a hover, same as every other disabled arm.
+    expect(a.reason).toMatch(/shutting down/i);
+    expect(a.title).toMatch(/cancel the stop/i);
+
+    // The guard sits BEFORE the optimistic `pending` flag, because the hub's
+    // state outranks a local one: a client that had just fired a wake and then
+    // learned the node was stopping must still refuse, not fall through to a
+    // "Starting…" that lies about which direction the machine is going.
+    expect(wakeAffordance(den({ state: 'stopping' }), true, true).enabled).toBe(false);
+    expect(wakeAffordance(den({ state: 'stopping' }), true, true).label).toBe('Connect');
+
+    // And a viewer who could not wake it anyway still sees the drain, not a
+    // token complaint about a button that should not be armed regardless.
+    expect(wakeAffordance(den({ state: 'stopping' }), false).enabled).toBe(false);
   });
 
   it('shows the state and disables the button on a view/triage tier', () => {

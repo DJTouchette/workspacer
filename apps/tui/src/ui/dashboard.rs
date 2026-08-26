@@ -92,6 +92,12 @@ pub(super) fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         }
         lines.push(Line::from(spans));
     }
+    // Remote worker nodes, when any is not quietly fine. A machine that is
+    // asleep or unreachable is WHY dispatches are missing from the roster
+    // below — and a healthy fleet of them says nothing at all.
+    if let Some(line) = nodes_dashboard_line(app) {
+        lines.push(line);
+    }
     if let Some(s) = rate {
         let mut spans = vec![Span::styled("rate limit ", Style::default().fg(t.dim))];
         // Each window wears its own length where the provider reports one, so a

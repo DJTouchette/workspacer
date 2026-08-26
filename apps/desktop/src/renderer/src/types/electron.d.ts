@@ -359,13 +359,20 @@ export interface ElectronAPI {
   ) => Promise<{ ok: boolean; error?: string }>;
   /** Remote worker nodes: machines that can be off ON PURPOSE. NULL means this
    *  hub has no node registry (every ordinary install) — render nothing.
-   *  `canWake` is the caller's own authority for `nodesWake`; false = show the
-   *  state and NOT the button. See lib/remoteNodes.ts. */
+   *  `canWake` is the caller's own authority for `nodesWake` AND `nodesSleep`
+   *  (one hub gate covers both); false = show the state and NOT the buttons.
+   *  See lib/remoteNodes.ts. */
   nodesList: () => Promise<{ nodes: unknown[]; canWake: boolean } | null>;
   /** Start a stopped node. Returns as soon as the cloud API accepts, normally
    *  with state:"waking" — the rest arrives on onHubEvent as
    *  `node.state_changed`. Refusals come back as `{ok:false, error}`. */
   nodesWake: (id: string) => Promise<{ ok: boolean; node?: unknown; error?: string }>;
+  /** Stop a running node. Returns as soon as the cloud API accepts, normally
+   *  with state:"stopping" — the rest arrives on onHubEvent as
+   *  `node.state_changed`. Host authority only on the hub, same as nodesWake:
+   *  a stop ends the work in flight on the machine. Refusals come back as
+   *  `{ok:false, error}`. */
+  nodesSleep: (id: string) => Promise<{ ok: boolean; node?: unknown; error?: string }>;
   // Hub jobs: recurring/one-off tasks the hub runs (spawn an agent, call a
   // capability, run a shell command). Trusted-only on the hub side.
   jobsList: () => Promise<{ jobs: HubJobView[] }>;

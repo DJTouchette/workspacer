@@ -32,6 +32,7 @@ use state::{fuzzy_match, TOAST_TTL};
 
 mod agents;
 mod git;
+mod nodes;
 mod runs;
 mod session;
 mod terminal;
@@ -99,6 +100,18 @@ pub struct App {
     pub projects: crate::projects::Projects,
     /// The notes scratchpad overlay, when open.
     pub notes_view: Option<NotesState>,
+    /// The hub's remote-node registry — machines that can be off ON PURPOSE.
+    /// `None` means this hub has NO registry (the normal state of every
+    /// ordinary install), which renders as no surface at all rather than an
+    /// empty one. See [`crate::nodes`].
+    pub nodes: Option<crate::nodes::NodeRegistry>,
+    /// The remote-nodes overlay, when open.
+    pub nodes_view: Option<NodesState>,
+    /// The tier this bus connection authenticated as, off the hub's `hello`
+    /// frame (`"operator"` for a host/operator token, the scoped tier
+    /// otherwise, absent for a plugin token or before the greeting lands).
+    /// Gates the wake — see [`App::can_wake_nodes`].
+    pub bus_scope: Option<String>,
     /// Per-cwd scratchpad text (persisted).
     pub notes: HashMap<String, String>,
     /// Inspector cache: cwd → (branch, changed-file count), for the open agent.
@@ -275,6 +288,9 @@ impl App {
             projects: crate::projects::Projects::new(),
             notes_view: None,
             notes: crate::notes::load(),
+            nodes: None,
+            nodes_view: None,
+            bus_scope: None,
             git_summary: HashMap::new(),
             connected: false,
             should_quit: false,
@@ -531,6 +547,10 @@ impl App {
                 self.remote.set_offline(&hub);
                 self.fold_fleet();
             }
+            AppMsg::Nodes(nodes) => self.set_nodes(nodes),
+            AppMsg::NodeWake { id, node, error } => {
+                self.apply_node_wake(id, node.map(|n| *n), error)
+            }
         }
     }
 
@@ -644,7 +664,32 @@ impl App {
         match ev.topic.as_str() {
             // The bus (re)connected: (re)seed the federated fleet. Quiet no-op
             // against a hub without federation.
-            crate::bus::TOPIC_BUS_CONNECTED => self.seed_federation(),
+            crate::bus::TOPIC_BUS_CONNECTED => {
+                self.seed_federation();
+                // The hub keeps no node state across a restart, so a reconnect
+                // is exactly when our copy is most likely wrong. Quiet no-op
+                // against a hub with no node registry.
+                self.seed_nodes();
+            }
+            // The greeting names our tier. Nothing else in the TUI needs it;
+            // the wake does, because it is host-authority only and offering it
+            // to a scoped token would be a control that dies on press.
+            crate::bus::TOPIC_BUS_HELLO => {
+                self.bus_scope = ev
+                    .data
+                    .get("scope")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(String::from);
+            }
+            // Seeded from `nodes.list`, patched from here — never polled. The
+            // hub publishes only on a real change of state or detail, so every
+            // event that arrives is worth acting on.
+            "node.state_changed" => {
+                if let Some(node) = ev.data.get("node").and_then(crate::nodes::node_from_row) {
+                    self.apply_node_change(node);
+                }
+            }
             // The list itself is refreshed from claudemon (see `refresh`); a bus
             // snapshot is just a nudge that something changed, so re-pull.
             "agent.snapshot" => self.refresh(),

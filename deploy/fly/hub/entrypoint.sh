@@ -379,7 +379,13 @@ if [ "$SERVE_ENABLED" = "1" ]; then
   if [ "$PLUGIN_ORIGIN_ENABLED" = "1" ] && [ -n "$TS_DNSNAME" ]; then
     if tailscale --socket="$TS_SOCKET" serve --bg --https="$PLUGIN_ORIGIN_PORT" "http://127.0.0.1:${HUB_PORT}" 2>/dev/null; then
       PLUGIN_ORIGIN="https://${TS_DNSNAME}:${PLUGIN_ORIGIN_PORT}"
-      TRUSTED_HOSTS="${TRUSTED_HOSTS},${TS_DNSNAME}"
+      # No second TRUSTED_HOSTS entry for the plugin origin. It was here, and it
+      # was a no-op that printed the MagicDNS name twice in the startup log,
+      # which reads as a misconfiguration to anyone checking their `fly logs` at
+      # midnight. The hub strips the port before matching a Host header, so the
+      # name added above already covers :443 and :8443 alike. Verified against
+      # the running hub: `Host: <name>` and `Host: <name>:8443` both answer 200,
+      # and an unrelated host still gets 403.
       log "plugin origin: ${PLUGIN_ORIGIN} (a second origin so /app can frame plugin UI cross-origin)"
     else
       log "WARNING: could not serve the second origin on :${PLUGIN_ORIGIN_PORT}. Plugin panes will still"

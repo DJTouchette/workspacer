@@ -64,6 +64,38 @@ type Tunables struct {
 	// waits StartRetryDelay first.
 	StartRetries    int
 	StartRetryDelay time.Duration
+
+	// StopSignal is what the hub sends a node it is putting to sleep. It is
+	// NOT caller-chosen, and that is a security decision rather than a
+	// simplification: a caller that could name the signal could name SIGKILL,
+	// which skips claudemon's flush AND leaves the entrypoint no chance to
+	// write the exit record — the one artefact that distinguishes a deliberate
+	// sleep from a crash on the next wake. See [Supervisor.Sleep].
+	StopSignal string
+	// StopGrace is the DRAIN WINDOW the cloud API is told to allow between the
+	// signal and its own SIGKILL. It is sent explicitly on every stop because
+	// fly.toml's kill_timeout governs a PLATFORM stop and is never read by an
+	// API-issued one — see flyapi.Client.Stop.
+	StopGrace time.Duration
+	// StopTimeout bounds the hub's own wait for the machine to reach
+	// `stopped`. Longer than StopGrace, because the drain window starts when
+	// the cloud API delivers the signal and not when the hub asked.
+	StopTimeout time.Duration
+
+	// KeepFailedWakesRunning turns OFF the one automatic stop in this package.
+	//
+	// A wake that starts a machine and never gets a provider used to leave that
+	// machine running and billing with no way to stop it from inside the app —
+	// the known cost of a wake-only v1, and the reason this field's zero value
+	// is the safe one. The hub now stops what its own wake started, bounded to
+	// exactly that: a machine THIS hub started, inside THIS wake's window,
+	// whose provider never registered.
+	//
+	// It is NOT an idle timer and must not become one. Nothing here stops a
+	// machine that is working, and nothing here stops a machine on a clock.
+	// The escape hatch exists because a node that dies on boot is sometimes
+	// worth leaving up to look at.
+	KeepFailedWakesRunning bool
 }
 
 func (t Tunables) withDefaults() Tunables {
@@ -94,8 +126,48 @@ func (t Tunables) withDefaults() Tunables {
 	if t.StartRetryDelay <= 0 {
 		t.StartRetryDelay = 2 * time.Second
 	}
+	if t.StopSignal == "" {
+		// SIGTERM rather than SIGKILL, deliberately: the node's entrypoint
+		// traps INT and TERM, flushes, and writes /data/state/last-exit.json
+		// with reason "signal-TERM". A SIGKILLed node writes nothing, and the
+		// hub's next wake then cannot tell that sleep from a crash.
+		t.StopSignal = "SIGTERM"
+	}
+	if t.StopGrace <= 0 {
+		// The node's fly.toml allows 60s for a platform stop; an API stop gets
+		// its own window and this is it. Long enough for claudemon to flush,
+		// short enough that a stuck node still stops billing.
+		t.StopGrace = 45 * time.Second
+	}
+	if t.StopTimeout <= 0 {
+		t.StopTimeout = 2 * time.Minute
+	}
+	if t.StopTimeout < t.StopGrace {
+		t.StopTimeout = t.StopGrace
+	}
 	return t
 }
+
+// upness is what a transition ASSERTS about whether the machine is powered on,
+// as opposed to whether its provider is answering. Three values, because the
+// hub genuinely has all three answers and collapsing the third into either of
+// the others is a lie:
+//
+//   - upYes / upNo   — this reading knows.
+//   - upUnknown      — this reading LEARNED NOTHING about the power (the cloud
+//     API did not answer, or answered something we do not
+//     recognise), so the previous belief stands.
+//
+// It is a REQUIRED parameter of [Supervisor.setLocked] rather than a field
+// somebody updates nearby, so a new transition cannot inherit a stale answer.
+// That direction is the same one NodeView takes: name what goes in.
+type upness int
+
+const (
+	upUnknown upness = iota
+	upYes
+	upNo
+)
 
 // Probe is what one brain.info answer tells the hub.
 type Probe struct {
@@ -129,11 +201,45 @@ type state struct {
 	// cloud API, and for the honest limit on when it is readable.
 	lastExit *ExitRecord
 
+	// mayBeRunning is what the hub believes about the MACHINE's power, which is
+	// a different question from whether its provider answers — and the whole
+	// reason the sleep path needs it: `unreachable` covers both "running and
+	// providing nothing" (a meter, and the case a Sleep button exists for) and
+	// "stopped and something is wrong" (nothing to switch off). A client that
+	// cannot tell those apart offers a dead button for the second.
+	//
+	// It is on the wire rather than inferred from the detail sentence. Sniffing
+	// prose for "billing" was the first shape of this and it was wrong on its
+	// first real input: the detail for a machine the hub had ALREADY stopped
+	// reads "…so it would not keep billing", which a regex reads as a running
+	// machine. A fact the hub holds belongs in a field.
+	mayBeRunning bool
+
+	// sleptByHub records that THIS hub process issued the stop that put this
+	// machine to sleep. It is the hub's own half of the crash-vs-sleep answer
+	// and the only half readable while the node is OFF (lastExit lives on the
+	// node's volume). Cleared on every wake, and never persisted — a restarted
+	// hub did not issue that stop and must not claim it did.
+	sleptByHub bool
+
 	// waking marks a wake in flight, which makes nodes.wake idempotent: three
 	// clients tapping the button produce ONE Fly start call, not three, and
 	// three would earn a 429 (Fly allows one action per second per machine).
 	waking       bool
 	wakeDeadline time.Time
+
+	// stopping marks a sleep in flight, and makes nodes.sleep idempotent for
+	// the same reason waking does for nodes.wake.
+	stopping     bool
+	stopDeadline time.Time
+
+	// gen is bumped by EVERY transition a caller asks for (a wake, a sleep).
+	// A watcher goroutine captures it and refuses to write anything once it
+	// has moved on — without it, a wake watcher whose probe succeeds a beat
+	// after somebody pressed Sleep would report `available` for a machine that
+	// is draining, and the state map would then disagree with the machine for
+	// as long as nobody looked.
+	gen int
 }
 
 // Supervisor owns the registry and its state machine.
@@ -198,6 +304,11 @@ func New(o Options) *Supervisor {
 			state:  StateUnreachable,
 			since:  s.now(),
 			detail: "not reconciled yet — the hub has just started and has not asked the cloud API anything",
+			// A booted hub has not asked anything, so it does not know whether
+			// the machine is up. False rather than unknown-on-the-wire because
+			// the wire bit means "the hub believes this is running", and it
+			// does not believe anything yet.
+			mayBeRunning: false,
 		}
 	}
 	return s
@@ -235,6 +346,8 @@ func (s *Supervisor) viewLocked(n Node) NodeView {
 	}
 	v := ViewOf(n, st.state, st.since, st.lastSeen, st.detail, st.wakeFailures)
 	v.LastExit = st.lastExit
+	v.SleptByHub = st.sleptByHub
+	v.MayBeRunning = st.mayBeRunning
 	// The record's own Wakeable() only knows about coordinates. A node with
 	// coordinates and no credential cannot be woken, and telling a client it
 	// can is how you ship a button that fails every time.
@@ -255,12 +368,19 @@ func (s *Supervisor) View(id string) (NodeView, error) {
 
 // setLocked moves a node to a state, returning the change to publish (nil when
 // nothing a client can see actually changed).
-func (s *Supervisor) setLocked(id string, next State, detail string) *Change {
+func (s *Supervisor) setLocked(id string, next State, detail string, up upness) *Change {
 	st := s.st[id]
 	if st == nil {
 		return nil
 	}
-	if st.state == next && st.detail == detail {
+	wasRunning := st.mayBeRunning
+	switch up {
+	case upYes:
+		st.mayBeRunning = true
+	case upNo:
+		st.mayBeRunning = false
+	}
+	if st.state == next && st.detail == detail && st.mayBeRunning == wasRunning {
 		return nil
 	}
 	prev := st.state

@@ -161,6 +161,330 @@ fn remote_agent(hub: &str, id: &str, ambient: &str) -> Agent {
     .unwrap()
 }
 
+// ── remote nodes: the wake that must never happen by accident ───────────────
+
+/// A fake hub that greets as `operator` and records the METHOD of every call
+/// the app makes, answering each with a `waking` node.
+///
+/// The tests below assert on what reached the wire, not on local flags,
+/// because "a keypress spent money" is a claim about a bus call — a state
+/// machine that looks right while still firing `nodes.wake` would pass any
+/// assertion made on the app alone.
+async fn recording_bus() -> (
+    crate::bus::BusClient,
+    tokio::sync::mpsc::UnboundedReceiver<String>,
+) {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let (mut write, mut read) = ws.split();
+        while let Some(Ok(Message::Text(txt))) = read.next().await {
+            let v: serde_json::Value = serde_json::from_str(&txt).unwrap();
+            if v.get("op").and_then(|o| o.as_str()) != Some("call") {
+                continue;
+            }
+            let method = v
+                .get("method")
+                .and_then(|m| m.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let _ = tx.send(method);
+            let id = v.get("id").and_then(|i| i.as_str()).unwrap_or("");
+            let reply = serde_json::json!({
+                "op": "result", "id": id,
+                "result": { "id": "den", "label": "den", "state": "waking", "wakeable": true }
+            });
+            let _ = write.send(Message::Text(reply.to_string())).await;
+        }
+    });
+    let (client, _events) = crate::bus::BusClient::connect(format!("ws://{addr}/bus"), None);
+    (client, rx)
+}
+
+/// An app holding one sleeping, wakeable node with the overlay open. The
+/// overlay state is set directly rather than through `open_nodes` so the only
+/// call that can ever reach the recording hub is a wake.
+async fn app_at_the_node_overlay(
+    scope: &str,
+) -> (App, tokio::sync::mpsc::UnboundedReceiver<String>) {
+    let mut app = test_app();
+    let (bus, calls) = recording_bus().await;
+    app.set_bus(Some(bus));
+    app.bus_scope = Some(scope.to_string());
+    app.set_nodes(Some(crate::nodes::nodes_from_rows(&serde_json::json!([
+        { "id": "den", "label": "Fly node (den)", "state": "stopped", "wakeable": true }
+    ]))));
+    app.nodes_view = Some(NodesState {
+        selected: 0,
+        confirm: None,
+        pending: std::collections::HashSet::new(),
+        errors: HashMap::new(),
+    });
+    (app, calls)
+}
+
+fn press(app: &mut App, c: char) {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+}
+
+/// Give any spawned wake task a chance to reach the hub, then report every
+/// method that did. Used to prove a call happened AND that one did not.
+async fn methods_called(calls: &mut tokio::sync::mpsc::UnboundedReceiver<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    // One generous poll: a wake that is going to happen has already been
+    // spawned by the time the key handler returned.
+    while let Ok(Some(m)) =
+        tokio::time::timeout(std::time::Duration::from_millis(400), calls.recv()).await
+    {
+        out.push(m);
+    }
+    out
+}
+
+/// **The safety property.** A wake starts a billable machine and this client
+/// has no verb to stop one, so `w` may only ARM the action. One keypress must
+/// never reach `nodes.wake`.
+#[tokio::test]
+async fn one_keypress_arms_a_wake_and_spends_nothing() {
+    let (mut app, mut calls) = app_at_the_node_overlay("operator").await;
+    press(&mut app, 'w');
+    assert_eq!(
+        app.nodes_view.as_ref().unwrap().confirm.as_deref(),
+        Some("den"),
+        "`w` arms the confirmation"
+    );
+    assert!(
+        app.nodes_view.as_ref().unwrap().pending.is_empty(),
+        "…and nothing is in flight"
+    );
+    assert!(
+        methods_called(&mut calls).await.is_empty(),
+        "`w` alone must not reach the bus"
+    );
+}
+
+/// The confirm key is the only path to the wire, and it takes exactly one
+/// cloud API start (Fly allows one action per second per machine; a 429 reads
+/// to a person as "the button does nothing").
+#[tokio::test]
+async fn confirming_is_what_actually_spends_the_money() {
+    let (mut app, mut calls) = app_at_the_node_overlay("operator").await;
+    press(&mut app, 'w');
+    press(&mut app, 'y');
+    assert_eq!(
+        methods_called(&mut calls).await,
+        vec!["nodes.wake".to_string()],
+        "exactly one wake, and only after the confirm key"
+    );
+    let view = app.nodes_view.as_ref().unwrap();
+    assert!(view.confirm.is_none(), "the confirmation is spent");
+    assert!(view.pending.contains("den"), "…and the wake is in flight");
+}
+
+/// Deliberately stricter than "esc cancels": the failure this guards against
+/// is a keystroke aimed at something else landing in the overlay, so EVERY key
+/// that is not the confirm key stands the confirmation down — navigation and
+/// `enter` included, and `w` itself.
+#[tokio::test]
+async fn any_other_key_stands_the_confirmation_down() {
+    for k in ['j', 'k', 'w', 'n', 'r', 'q'] {
+        let (mut app, mut calls) = app_at_the_node_overlay("operator").await;
+        press(&mut app, 'w');
+        press(&mut app, k);
+        assert!(
+            app.nodes_view.as_ref().is_none_or(|v| v.confirm.is_none()),
+            "{k} left the confirmation armed"
+        );
+        assert!(
+            methods_called(&mut calls).await.is_empty(),
+            "{k} must not have woken anything"
+        );
+    }
+    // Enter is not a confirm key either — the most likely accidental commit in
+    // a modal is the one key every other modal treats as "yes".
+    let (mut app, mut calls) = app_at_the_node_overlay("operator").await;
+    press(&mut app, 'w');
+    app.handle_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Enter,
+        crossterm::event::KeyModifiers::NONE,
+    ));
+    assert!(app.nodes_view.as_ref().unwrap().confirm.is_none());
+    assert!(methods_called(&mut calls).await.is_empty());
+}
+
+/// Never arm an action the hub would refuse. `nodes.wake` is host-authority
+/// only, so a scoped token gets the state, a reason, and no confirmation to
+/// walk into.
+#[tokio::test]
+async fn a_scoped_token_is_told_why_rather_than_offered_a_dead_confirmation() {
+    let (mut app, mut calls) = app_at_the_node_overlay("triage").await;
+    assert!(!app.can_wake_nodes());
+    press(&mut app, 'w');
+    assert!(
+        app.nodes_view.as_ref().unwrap().confirm.is_none(),
+        "nothing to confirm"
+    );
+    assert!(
+        app.toast().is_some_and(|t| t.contains("operator token")),
+        "the reason is said out loud: {:?}",
+        app.toast()
+    );
+    assert!(methods_called(&mut calls).await.is_empty());
+}
+
+/// A machine already shutting down is the one refusal the HUB would not make:
+/// `nodes.wake` there is accepted and CANCELS the stop. So the whole guard is
+/// this client's, and it has to hold at both steps — the arm, and the confirm a
+/// re-seed can land underneath.
+#[tokio::test]
+async fn a_machine_shutting_down_is_never_armed_and_never_confirmed() {
+    let draining = serde_json::json!([
+        { "id": "den", "label": "Fly node (den)", "state": "stopping", "wakeable": true }
+    ]);
+
+    // The arm: `w` refuses and says why, rather than offering a confirmation
+    // that would spend money undoing somebody's own shutdown.
+    let (mut app, mut calls) = app_at_the_node_overlay("operator").await;
+    app.set_nodes(Some(crate::nodes::nodes_from_rows(&draining)));
+    press(&mut app, 'w');
+    assert!(
+        app.nodes_view.as_ref().unwrap().confirm.is_none(),
+        "nothing to confirm"
+    );
+    assert!(
+        app.toast()
+            .is_some_and(|t| t.contains("already shutting down")),
+        "the reason is said out loud: {:?}",
+        app.toast()
+    );
+    assert!(methods_called(&mut calls).await.is_empty());
+
+    // The confirm: armed while the node was asleep, then a re-seed moves it to
+    // `stopping` underneath. `set_nodes` is the refresh path and deliberately
+    // does NOT clear the confirmation — the re-check in `confirm_wake` is what
+    // has to catch this, and it is why that re-check exists.
+    let (mut app, mut calls) = app_at_the_node_overlay("operator").await;
+    press(&mut app, 'w');
+    assert_eq!(
+        app.nodes_view.as_ref().unwrap().confirm.as_deref(),
+        Some("den"),
+        "armed while it was still asleep"
+    );
+    app.set_nodes(Some(crate::nodes::nodes_from_rows(&draining)));
+    press(&mut app, 'y');
+    assert!(
+        methods_called(&mut calls).await.is_empty(),
+        "the confirm must not reach the bus once the node started shutting down"
+    );
+    assert!(
+        app.toast().is_some_and(|t| t.contains("can no longer be")),
+        "and it says so: {:?}",
+        app.toast()
+    );
+}
+
+/// A hub that never greeted, or greeted without a tier, is NOT an operator.
+/// For a control that spends money the safe default has to be the honest one.
+#[tokio::test]
+async fn an_ungreeted_connection_may_not_wake_anything() {
+    let (mut app, mut calls) = app_at_the_node_overlay("operator").await;
+    app.bus_scope = None;
+    assert!(!app.can_wake_nodes());
+    press(&mut app, 'w');
+    assert!(app.nodes_view.as_ref().unwrap().confirm.is_none());
+    assert!(methods_called(&mut calls).await.is_empty());
+}
+
+/// `node.state_changed` patches the row and supersedes what we believed: the
+/// hub has spoken, so a stale confirmation, a pending flag and an old error
+/// for that node all go with it.
+#[tokio::test]
+async fn a_state_change_supersedes_a_stale_confirmation() {
+    let (mut app, _calls) = app_at_the_node_overlay("operator").await;
+    press(&mut app, 'w');
+    if let Some(v) = app.nodes_view.as_mut() {
+        v.pending.insert("den".into());
+        v.errors.insert("den".into(), "old failure".into());
+    }
+    app.apply_bus_event(crate::bus::BusEvent {
+        topic: "node.state_changed".into(),
+        data: serde_json::json!({
+            "node": { "id": "den", "label": "Fly node (den)", "state": "available",
+                      "wakeable": true },
+            "previous": "waking"
+        }),
+        hub: None,
+    });
+    assert_eq!(
+        app.node_rows()[0].state,
+        crate::nodes::NodeState::Available,
+        "the row is patched"
+    );
+    let view = app.nodes_view.as_ref().unwrap();
+    assert!(
+        view.confirm.is_none(),
+        "a stale confirmation cannot survive"
+    );
+    assert!(view.pending.is_empty());
+    assert!(view.errors.is_empty());
+}
+
+/// The feature-absent answer is not an error: `no provider for nodes.list` is
+/// the normal state of every ordinary install, and it must leave no surface
+/// behind at all.
+#[tokio::test]
+async fn the_feature_absent_answer_clears_the_surface() {
+    let (mut app, _calls) = app_at_the_node_overlay("operator").await;
+    assert_eq!(app.node_rows().len(), 1);
+    app.apply_msg(AppMsg::Nodes(None));
+    assert!(app.nodes.is_none(), "no registry, no surface");
+    assert!(app.node_rows().is_empty());
+    // …and the overlay someone opened still answers, rather than going blank.
+    assert!(app.nodes_view.is_some());
+}
+
+/// A refused wake is the only notice anyone gets about whether money was
+/// spent, so it lands on the row AND in a toast rather than being swallowed.
+#[tokio::test]
+async fn a_refused_wake_is_surfaced_not_swallowed() {
+    let (mut app, _calls) = app_at_the_node_overlay("operator").await;
+    if let Some(v) = app.nodes_view.as_mut() {
+        v.pending.insert("den".into());
+    }
+    app.apply_msg(AppMsg::NodeWake {
+        id: "den".into(),
+        node: None,
+        error: Some("the cloud API is rate-limiting this machine".into()),
+    });
+    let view = app.nodes_view.as_ref().unwrap();
+    assert!(!view.pending.contains("den"), "no longer in flight");
+    assert_eq!(
+        view.errors.get("den").map(String::as_str),
+        Some("the cloud API is rate-limiting this machine")
+    );
+    assert!(app.toast().is_some_and(|t| t.contains("rate-limiting")));
+}
+
+/// Without a hub bus there is no node registry to speak of — claudemon has no
+/// idea what a node is — so the overlay refuses to open and says why.
+#[tokio::test]
+async fn the_surface_refuses_to_open_without_a_bus() {
+    let mut app = test_app();
+    app.open_nodes();
+    assert!(app.nodes_view.is_none());
+    assert!(
+        app.toast().is_some_and(|t| t.contains("hub bus")),
+        "{:?}",
+        app.toast()
+    );
+}
+
 // ── federation: remote rows beside the local fleet ──────────────────────────
 
 #[tokio::test]

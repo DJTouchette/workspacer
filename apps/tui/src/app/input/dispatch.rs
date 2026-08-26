@@ -45,6 +45,13 @@ impl App {
             self.handle_notes_key(key);
             return;
         }
+        // The remote-nodes overlay captures keys while it's open, so `w` means
+        // wake here and nothing else — and so the confirmation step can own
+        // EVERY key while it is armed.
+        if self.nodes_view.is_some() {
+            self.handle_nodes_key(key);
+            return;
+        }
         // A docked pane owns the keys while it holds focus. Ctrl-w h/l moves focus
         // back to the chat, so the binding that got you here also gets you out.
         if self.side_focused() {
@@ -265,6 +272,7 @@ impl App {
             OpenRuns => self.open_runs(),
             OpenChanges => self.toggle_side(crate::app::SideKind::Changes),
             OpenNotes => self.open_notes(),
+            RemoteNodes => self.open_nodes(),
             RenameAgent => self.open_rename(),
             Respawn => self.respawn(),
             NewAgent => self.open_spawn(),
@@ -426,7 +434,7 @@ impl App {
 
 /// Ctrl-C, the universal escape hatch — honored even while the help overlay is
 /// up so the user can always quit.
-fn is_ctrl_c(key: &KeyEvent) -> bool {
+pub(super) fn is_ctrl_c(key: &KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c')
 }
 

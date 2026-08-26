@@ -764,8 +764,8 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // rethrows: a broken hub must not render as a hub with no nodes.
     //
     // `canWake` is this connection's OWN tier off the hello frame. nodes.wake
-    // is host-authority only, so a view/triage phone gets the state and no
-    // button — never a button the bus is certain to refuse.
+    // and nodes.sleep are both host-authority only, so a view/triage phone gets
+    // the state and NEITHER button — never one the bus is certain to refuse.
     nodesList: async () => {
       try {
         const nodes = await client.call<unknown>('nodes.list', {});
@@ -782,6 +782,17 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     nodesWake: async (id: string) => {
       try {
         const node = await client.call<unknown>('nodes.wake', { id });
+        return { ok: true, node };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    // The stop half, over the same bus and behind the same hub-side gate. Only
+    // an id goes out: the machine, the credential, the signal and the drain
+    // window are all the hub's own.
+    nodesSleep: async (id: string) => {
+      try {
+        const node = await client.call<unknown>('nodes.sleep', { id });
         return { ok: true, node };
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };

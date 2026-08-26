@@ -24,6 +24,7 @@ const COMMAND_PALETTE: &[(&str, &str)] = &[
     ("spawn", "new agent"),
     ("term", "new terminal tab"),
     ("notes", "open the notes scratchpad"),
+    ("nodes", "remote worker nodes (wake a sleeping machine)"),
     ("review", "open the git review"),
     ("runs", "workflow runs, subagents + plan"),
     ("changes", "files the agent changed (docked pane)"),

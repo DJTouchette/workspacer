@@ -105,6 +105,22 @@ pub enum AppMsg {
     HubDown {
         hub: String,
     },
+    /// The hub's remote-node registry, from `nodes.list`. The authoritative
+    /// roster — it replaces what we hold. `None` is the FEATURE-ABSENT answer
+    /// (`no provider for nodes.list`), which is the normal state of every
+    /// ordinary install and must render as no surface at all rather than an
+    /// error. See [`crate::nodes`].
+    Nodes(Option<Vec<crate::nodes::NodeView>>),
+    /// The outcome of a confirmed `nodes.wake`. `node` is the hub's answer
+    /// (normally `waking`) and arrives BEFORE the machine is up — the rest
+    /// follows on `node.state_changed`. `error` is a rendered sentence, and a
+    /// refused wake must be shown rather than swallowed: it is the only notice
+    /// that money was or was not spent.
+    NodeWake {
+        id: String,
+        node: Option<Box<crate::nodes::NodeView>>,
+        error: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,6 +205,30 @@ pub struct SpawnForm {
 pub struct RenameForm {
     pub cwd: String,
     pub input: String,
+}
+
+/// State of the remote-nodes overlay: the hub's node registry with a cursor,
+/// and the confirmation step that stands between a keypress and a bill.
+///
+/// `confirm` is the whole reason this struct is not just a `usize`. Waking a
+/// node starts a billable machine and **this hub has no verb to stop one**, so
+/// an accidental wake cannot be undone from inside the app at all. The desktop
+/// and `/m` both put a confirmation step in front of it for exactly that
+/// reason; in a vim-modal TUI, where a stray keystroke in normal mode is the
+/// native failure, the same rule means no single keypress may spend money.
+pub struct NodesState {
+    /// Cursor into the registry, in the hub's own order.
+    pub selected: usize,
+    /// The node id awaiting an explicit `y`. Set only by `w` on a node whose
+    /// wake would actually be allowed, and cleared by ANY other key.
+    pub confirm: Option<String>,
+    /// Wakes fired and not yet answered, by node id — so a second `w` can't
+    /// fire a second cloud API start (Fly allows one action per second per
+    /// machine, and a 429 reads to a person as "the button does nothing").
+    pub pending: std::collections::HashSet<String>,
+    /// The last wake failure per node id, shown on its row until the hub says
+    /// something newer about that node.
+    pub errors: HashMap<String, String>,
 }
 
 /// State of the notes scratchpad overlay (a per-cwd markdown note).

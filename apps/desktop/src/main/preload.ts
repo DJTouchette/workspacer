@@ -531,6 +531,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
    *  `{ok:false, error}` rather than a rejection. */
   nodesWake: (id: string): Promise<{ ok: boolean; node?: unknown; error?: string }> =>
     ipcRenderer.invoke(IPC.NODES_WAKE, id),
+  /** Put a running node to sleep. Returns immediately with state:"stopping";
+   *  the rest arrives on onHubEvent as `node.state_changed`. An id is the only
+   *  thing that crosses — the signal and drain window are the hub's. */
+  nodesSleep: (id: string): Promise<{ ok: boolean; node?: unknown; error?: string }> =>
+    ipcRenderer.invoke(IPC.NODES_SLEEP, id),
 
   // ── Shared layout document (hub-owned; tmux-style mirror) ──
   // Hub jobs (recurring/one-off tasks the hub runs) — see hub internal/jobs.

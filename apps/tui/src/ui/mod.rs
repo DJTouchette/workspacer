@@ -29,6 +29,7 @@ mod chat;
 mod chrome;
 mod dashboard;
 mod detail;
+mod nodes;
 mod overlays;
 mod panes;
 mod review;
@@ -39,6 +40,7 @@ use chat::*;
 use chrome::*;
 use dashboard::*;
 use detail::*;
+use nodes::*;
 use overlays::*;
 use panes::*;
 use review::*;
@@ -116,6 +118,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
     if app.notes_view.is_some() {
         render_notes(f, f.area(), app);
+    }
+    if app.nodes_view.is_some() {
+        render_nodes(f, f.area(), app);
     }
     if app.help {
         render_help(f, f.area(), app);
