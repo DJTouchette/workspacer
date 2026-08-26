@@ -23,6 +23,7 @@ very little.
 | **A. Pre-flight** | build and verify both images | no | one command |
 | **B. The block** | the three human gates, and the deploys between them | yes | about 15 minutes |
 | **C. The proofs** | stop/start, restart, and the checklists | yes | 20 minutes, later |
+| **D. The second time** | redeploy, rotate, restore, tear down | yes | reference, read when needed |
 
 Part A needs no Fly account, no tailnet, no credential and no money. Do it a
 day early if you like. When it is green, everything that can be proved without
@@ -76,14 +77,42 @@ coming you will think you are finished when you are not.
 Six values travel between steps. Copy this block somewhere before you start and
 fill it in as each one appears, so you never have to scroll back.
 
+**Fill in the expiry column too.** Three of these expire and none of them tell
+you in advance. Two of the three fail silently, months after you last thought
+about them, so the date you write down here is the only warning you will get.
+
 ```
-TAILSCALE_AUTHKEY (hub)   tskey-auth-........................
-TAILSCALE_AUTHKEY (node)  tskey-auth-........................
-FLY_API_TOKEN             FlyV1 fm2_.........................
-HUB MagicDNS name         workspacer-hub.<your-tailnet>.ts.net
-HUB_TOKEN                 ................................ (32 chars)
-NODE machine id           ..............
+                          value                                      expires
+TAILSCALE_AUTHKEY (hub)   tskey-auth-........................        ..........  (mint date + 90d)
+TAILSCALE_AUTHKEY (node)  tskey-auth-........................        ..........  (mint date + 90d)
+FLY_API_TOKEN             FlyV1 fm2_.........................        ..........  (mint date + 90d)
+HUB MagicDNS name         workspacer-hub.<your-tailnet>.ts.net       never
+HUB_TOKEN                 ................................ (32 ch)   never
+NODE bus token (provider) ................................           never
+NODE machine id           ..............                             n/a
 ```
+
+## The five credentials, and what each one's expiry day looks like
+
+Read this once now. It is the only place the whole set appears together, and
+every row is minted in a step below.
+
+| Credential | Where it lives | Expires | The day it expires |
+|---|---|---|---|
+| **Fly deploy token** (`FLY_API_TOKEN`, B3) | Fly secret on the **hub** | **90 days**, because B3 sets `--expiry 2160h` | Loud and legible. The hub's reconcile loop flips every node to `unreachable` within 30s, with the detail *"the cloud API rejected this hub's credential (expired, revoked, or scoped to a different app)"*. Note that the hub still logs `(1 wakeable)` at boot: **wakeable means a token resolved, never that it works.** Fix: re-run B3 and `fly secrets set FLY_API_TOKEN=…` on the hub. |
+| **Tailscale auth key, hub** (B1) | Fly secret on the hub | **90 days**, the maximum B1 tells you to pick | Nothing happens, for months. Normal boots reuse `tailscaled.state` and never touch the key. It only fires on a boot that needs to re-authenticate: a wiped volume, a restored snapshot, a device deleted from the admin console. Then `tailscale up` fails and the entrypoint `die`s, and the hub, whose restart policy is `always`, crash-loops. **The credential you need in a disaster is the one that quietly went dead months ago.** Fix: mint a new key per B1, `fly secrets set TAILSCALE_AUTHKEY=…`. |
+| **Tailscale auth key, node** (B1) | Fly secret on the node | **90 days**, same as the hub's | Same latent shape, different ending: the node retries three times and is left `stopped`, which the Machines API cannot distinguish from a node you put to sleep. From a client it reads `waking` → `unreachable`. Fix is the same, minus the crash loop. |
+| **`HUB_TOKEN` / `remote-token`**, the pairing credential (B4) | hub volume, mode `0600`, optionally also a Fly secret | **never** | n/a. It has no expiry field, so nothing forces it to rotate. Two things worth knowing rather than discovering: the boot that mints it also writes it in cleartext into `/data/logs/boot.log`, and every volume snapshot copies that log. Rotation is in Part D. |
+| **The node's bus token** (B5, provider tier) | hub `tokens.json`, and a Fly secret on the node | **never**. `authtoken.Mint` takes a scope and a label and has no expiry field | n/a. Provider tier is the reason this is acceptable: the token can register capabilities and answer calls, and it cannot call `nodes.wake` or `nodes.sleep`, so reading it off the node does not let anyone spend your money. Rotation is in Part D, and it is a two-value swap rather than a cutover. |
+
+Your `flyctl` session in `~/.fly/config.yml` also expires, on Fly's own schedule
+rather than one you set. That one is harmless: `fly` commands fail with an auth
+error and `fly auth login` fixes it in a browser.
+
+The Claude Code OAuth session on the node (B8) is the sixth thing that can go
+away, and it is not on this table because it does not expire on a clock. It is
+revoked, by a password change or a login elsewhere. See the note at the end of
+Part D for what that looks like, which is a hang rather than an error.
 
 ---
 
@@ -163,9 +192,15 @@ browser tab, not a command.
 | hub volume | 1 GB | about $0.15/month |
 | node | `shared-cpu-4x` / 8 GB, asleep by default | $0.0617/hr while awake, so about $9.26 at 150 active hours |
 | node volume | 10 GB | $1.50/month, billed **while the machine is stopped** |
+| **floor**, node never woken | hub + both volumes | **about $7.65/month** |
+| **realistic**, node at 150 active hours | the floor plus $9.26 | **about $17/month** |
 
 Stopped machines are not free: the volume bills continuously and there is a
-small rootfs charge on top.
+small rootfs charge on top. The floor row is the one to hold on to, because it
+is what the fleet costs on a month where you never touch the node, and $1.50 of
+it is a number typed once into `fly.toml` that you cannot type down again later.
+An always-on node would be $44.44/month on top of the floor, which is why the
+node sleeps by default and why B8 and Part C both end by stopping it.
 
 **The node volume is sized at 10 GB, not the container image size.** The node's
 container image (about 900 MB base, up to ~2.3 GB with project toolchains
@@ -232,7 +267,18 @@ fails is unreachable, and its entrypoint treats that as fatal on purpose.
 | Tags | `tag:workspacer-hub` / `tag:workspacer-node` | load-bearing, not cosmetic: node keys expire after 180 days by default and a sleeping machine cannot reauthenticate itself, but **a device tagged at first authentication has key expiry disabled by default** |
 | Expiry | the maximum, 90 days | only used at first boot and at re-auth |
 
-Write both keys into your scratch block. You will not see them again.
+Write both keys into your scratch block **with today's date plus 90 days**. You
+will not see the keys again, and you will not be told when they die.
+
+An expired auth key is the quietest failure in this deployment. Neither machine
+presents its key on a normal boot: `tailscaled.state` is on the volume and gets
+reused, so a key that expired months ago costs nothing until a boot needs to
+re-authenticate. The boots that need it are exactly the ones you have during a
+recovery: a wiped or restored volume, or a device deleted from the admin
+console. Then `tailscale up` fails and the entrypoint refuses to continue, on
+the hub as a crash loop and on the node as three retries and `stopped`. Minting
+a fresh key takes a minute and `fly secrets set TAILSCALE_AUTHKEY=…` applies it;
+knowing that is what you need takes much longer if the date is not written down.
 
 ## B2. Create both apps, without public IPs
 
@@ -257,6 +303,13 @@ Three things about this token, all confirmed against flyctl v0.4.59 during the
 rehearsal:
 
 - **The default expiry is 20 years** (`175200h`). Set one. `2160h` is 90 days.
+  **Write the expiry date in your scratch block.** Nothing warns you before it,
+  and on the day it lands the hub flips every node to `unreachable` within 30
+  seconds with the detail *"the cloud API rejected this hub's credential
+  (expired, revoked, or scoped to a different app)"*. That message is good, and
+  the boot log is not: the hub still prints `(1 wakeable)`, because wakeable
+  means a token resolved, never that it works. Re-minting is this same command
+  plus `fly secrets set FLY_API_TOKEN=…` on the hub; see Part D.
 - **Scope it to the NODE's app**, not the hub's and not org-wide, so the blast
   radius is one app's worth of machines.
 - **There is no action-scoped token.** No start-only or stop-only token exists.
@@ -390,6 +443,13 @@ what the daemons see. Run it as root and it lands in the wrong place.
 **No hub restart is needed.** The hub re-reads `tokens.json` on every new
 connection, so a token created here is live immediately. (`nodes.json` in B7 is
 the opposite, and does need one.)
+
+**This token never expires.** `authtoken.Mint` takes a scope and a label and has
+no expiry field, so nothing will ever force you to rotate it. Provider tier is
+what makes that acceptable rather than merely convenient: the grant below cannot
+spend money, so a leaked node token is not a billing incident. Rotate it anyway
+if the node's volume is ever exposed, and Part D has the procedure. The same is
+true of the hub's own `HUB_TOKEN` from B4.
 
 > **Know what you just minted — and what you did not.** A `provider`-tier token
 > may **register capabilities and answer calls**, which is the entire job of a
@@ -669,6 +729,29 @@ volume deliberately. Git worktrees are two-ended: the checkout holds a `.git`
 points back. Persist one half and not the other and you get stale admin entries
 pointing at dead paths.
 
+## B9. Stop the node
+
+The node has been running since B6, and it bills $0.0617/hr for every hour of
+it. Nothing turns it off for you: the hub only sleeps a machine when somebody
+asks it to, and `fly.toml` sets `auto_stop_machines = "off"` on purpose.
+
+```sh
+fly machine list --app workspacer-node                  # note the machine id
+fly machine stop <machine_id> --app workspacer-node
+fly machine status <machine_id> --app workspacer-node   # → stopped
+```
+
+From here on the product path is the one to use: **Sleep** in the desktop app's
+remote-nodes strip, in `/app`, or in `/m`, which calls `nodes.sleep` on the hub.
+Both routes end the same way, and both leave the volume, so nothing on it is
+lost. Waking is a click; the machine boots in seconds.
+
+Do this whenever you finish a block. A node left running overnight is $1.48 and
+a node left running for a week is $10.36, which is more than the rest of the
+fleet costs in a month, and there is nothing in the UI that will nag you about
+it: a running node reads `available`, which is exactly what a healthy node
+should read.
+
 **That is the end of the block.** Everything from here can wait.
 
 ---
@@ -706,6 +789,257 @@ registered, a stopped Fly machine goes silent instead, and the hub's
 The zombie fix does not depend on the answer; it was built two-layered
 precisely so it would not. The answer tells you which layer is actually doing
 the work. Write it into the brief when you have it.
+
+### Stop the node again when you are done
+
+`node/RUNBOOK.md` §8 is a stop/start proof, so it **ends with the machine
+started** and billing. So does anything you did to answer the measurement above.
+Put it back to sleep before you close the laptop, the same way as B9: **Sleep**
+in any client, or `fly machine stop <machine_id> --app workspacer-node`.
+
+The hub stays on. It is the always-on half of this design and the only thing
+that can wake the node again.
+
+---
+
+# Part D. The second time
+
+Everything above is written for the first deploy. This part is the rest of the
+fleet's life: shipping a code change, rotating each credential, getting a volume
+back from a snapshot, and taking the whole thing down. None of it is hard, and
+all of it is the kind of thing you would rather read now than derive at 2am
+against a machine holding your only Claude login.
+
+The `fly` flags below have **not** been walked end to end the way Part B has.
+Check the exact spelling with `fly <command> --help` before you lean on one; the
+shape of each procedure is the part that matters and the part that is hard to
+work out under pressure.
+
+## D1. Redeploying after a code change
+
+Three traps, all of them from reading first-deploy instructions as if they were
+repeatable.
+
+**Run `preflight.sh` first, every time.** Not because the code changed, but
+because `workspacer-node-base:dev` is a mutable local tag and the hub builds
+`FROM` it. Preflight always rebuilds the base for exactly this reason. Building
+only the image you changed is how you ship a hub on top of a stale base, which
+is the near-miss described in Part A.
+
+```sh
+./deploy/fly/preflight.sh
+
+fly deploy --config deploy/fly/hub/fly.toml  --dockerfile deploy/fly/hub/Dockerfile  \
+  --app workspacer-hub  --local-only .
+fly deploy --config deploy/fly/node/fly.toml --dockerfile deploy/fly/node/Dockerfile \
+  --app workspacer-node --local-only .
+```
+
+**`--local-only` is as required here as it was in B4 and B6**, and for the node
+it is still the one that fails quietly rather than loudly.
+
+**Check the machine afterwards.** Whether `fly deploy` starts a currently-stopped
+machine is not something this repo has confirmed, so assume it might:
+
+```sh
+fly machine status <machine_id> --app workspacer-node
+```
+
+If it came up, stop it again. This is the cheapest habit in Part D and it is the
+one that prevents a deploy on a Tuesday from billing until Friday.
+
+**Deploying the node ends whatever was running on it.** It replaces the machine.
+Time it like a restart, not like a background task.
+
+## D2. Rotating each credential
+
+Four procedures, one per credential that can go bad. All of them assume you have
+read "The five credentials" above and know which one you are holding.
+
+**The Fly deploy token** (90 days). Mint a replacement scoped the same way, set
+it on the hub, and let the hub restart:
+
+```sh
+fly tokens create deploy --app workspacer-node --expiry 2160h --name wks-hub-wake
+fly secrets set --app workspacer-hub FLY_API_TOKEN='FlyV1 fm2_…'
+```
+
+Setting a secret restarts the app, which is fine on the hub: it is always on and
+a restart is seconds. Verify by watching a node go back to `available` in the
+strip, not by reading `(N wakeable)` in the boot log, which only says a token
+resolved. Revoke the old token in the Fly dashboard once the new one works.
+
+**Either Tailscale auth key** (90 days). Mint per B1 with the same tag and the
+same settings, then:
+
+```sh
+fly secrets set --app workspacer-hub  TAILSCALE_AUTHKEY='tskey-auth-…'
+fly secrets set --app workspacer-node --stage TAILSCALE_AUTHKEY='tskey-auth-…'
+```
+
+**Use `--stage` on the node.** Without it, setting the secret restarts the app,
+which wakes a sleeping machine and leaves it running and billing. `--stage` holds
+the value until the next deploy or the next boot, which is when the key is read
+anyway. A running machine will not notice either way: the key is only presented
+at re-auth.
+
+**The node's bus token** (never expires). It is a two-value swap, not a cutover,
+because the old token stays valid until you revoke it:
+
+```sh
+# on the hub
+fly ssh console --app workspacer-hub
+su - wks
+workspacer token create --label fly-node --scope provider
+exit
+
+# then, from this repo
+fly secrets set --app workspacer-node HUB_TOKEN='<the new provider token>'
+```
+
+This one has no `--stage`, deliberately: the brain has to reconnect to pick it
+up, so you want the restart. Confirm the node re-registers and `nodes.list`
+reads `available`, then revoke the old one:
+
+```sh
+workspacer token revoke <old-token-or-prefix>
+```
+
+`revalidateScoped` closes any socket still holding the revoked token within one
+tick.
+
+**The hub's pairing credential, `HUB_TOKEN`** (never expires). This is the
+expensive one, because every client is paired against it: the desktop app, the
+browser at `/app`, the phone at `/m`, every peer hub with a `peers.json` entry.
+Rotating it re-pairs all of them. Do it if the volume was exposed, or if you
+shared a volume snapshot, since the boot that minted the token also wrote it in
+cleartext into `/data/logs/boot.log` and snapshots copy that log.
+
+```sh
+fly secrets set --app workspacer-hub HUB_TOKEN='<a new 32-char value>'
+```
+
+Then re-pair each client. **Do not hand-transcribe the old value out of a boot
+log to check it.** That is how you end up with a value that differs by one
+character from the file on the volume, which the bootstrap detects as an
+`IDENTITY CONFLICT` and refuses to boot on, in a loop, because the restart policy
+is `always`. Read it out of the machine instead:
+
+```sh
+fly ssh console --app workspacer-hub \
+  -C 'cat /data/home/.config/workspacer/remote-token'
+```
+
+If you do land in that crash loop, `fly secrets unset HUB_TOKEN` fixes it and
+needs no shell. The other two escape hatches are `WKS_ALLOW_TOKEN_CHANGE=1`, which
+accepts the new value and overwrites the volume's, and `WKS_ALLOW_STATE_LOSS=1`,
+which lets a hub boot past a state-guard refusal. Both are deliberate overrides
+of a guard that exists for a reason; know which you mean.
+
+## D3. Restoring a volume from a snapshot
+
+Snapshot retention was set deliberately in B4 and B6, and retention you cannot
+cash in is a setting rather than a backup. The thing to know before you need it:
+**a restore does not restore.** It creates a *new* volume from the snapshot, with
+a new id, and the machine has to be pointed at it.
+
+```sh
+fly volumes list --app workspacer-hub
+fly volumes snapshots list <vol_id>
+fly volumes create wks_data --app workspacer-hub --snapshot-id <snap_id> \
+  --region ord --size 1
+```
+
+The name must match the `[[mounts]] source` in the app's `fly.toml` (`wks_data`
+for both apps) and the region must be `ord`, because the volume pins the machine
+to a physical host and `primary_region` is `ord` in both `fly.toml` files. Then
+destroy the machine and redeploy so it mounts the new volume, or update the
+machine's mount in place if your flyctl offers that; check `fly machine update
+--help`.
+
+**Two things a restored hub volume will not fix by itself.** The Web Push
+keypair is one: if the snapshot predates the current `vapid.json`, or the volume
+was empty for a boot, the hub regenerates the keypair and every phone keeps
+believing it is subscribed while nothing arrives. There is no client-side error.
+Until the client compares its stored key against the server's, the only cure is
+to clear the site data or reinstall the PWA on each phone. The second is the
+tailnet identity: see D4.
+
+For the **node** volume, the same procedure with `--size 10` and
+`--app workspacer-node`. What you get back is the Claude OAuth session, the SSH
+key, the folder-trust map in `~/.claude.json` and anything under `/data/repos`.
+What a snapshot from before those existed gets you is a node that boots green and
+hangs on a login prompt no headless machine can answer, which is why the node's
+state guard writes `state/seen` markers: after a restore, read the boot log for
+`state guard` lines before trusting the machine.
+
+## D4. Starting over on one machine
+
+Wiping a volume and redeploying is a legitimate move, and the order matters:
+
+1. **Delete the machine's device in the Tailscale admin console first.** This is
+   the step that is easy to skip and expensive to skip. `tailscaled` registers as
+   a brand-new device on a wiped volume, and while the old device still exists
+   the new one gets a suffixed MagicDNS name: `workspacer-hub-1.<tailnet>.ts.net`.
+   The entrypoint derives the name rather than trusting a configured one, so the
+   hub itself is fine, and the node's `HUB_BUS_URL` secret still names the old
+   device, which now resolves to nothing. What you see is a hub that boots
+   perfectly and a node that attaches to nothing: `nodes.list` shows it, the wake
+   succeeds, the machine starts, and the provider never registers, which surfaces
+   as *"the machine was started but its provider did not register"* and points
+   your attention at the node when the cause is on the hub.
+2. `fly machine destroy <machine_id> --app <app> --force`
+3. `fly volumes destroy <vol_id>`
+4. Redeploy per B4 or B6. The volume is recreated by the deploy.
+5. **Re-read the MagicDNS name from the boot log** and, if it changed, set the
+   node's `HUB_BUS_URL` to the new one.
+
+The state guard will not warn you here, and that is correct rather than a gap: a
+deliberately-wiped volume has no `state/seen` markers, so it is a clean first
+run, and the loss you are looking at is the one you asked for.
+
+## D5. Tearing the whole thing down
+
+Destroying the apps destroys their machines and volumes and stops all billing.
+It also destroys the two things that are not recoverable from this repo: the
+Claude OAuth session on the node volume, and the pairing credential every client
+is paired against.
+
+```sh
+fly apps destroy workspacer-node
+fly apps destroy workspacer-hub
+```
+
+Then clean up what lives outside Fly, because none of it goes away on its own:
+
+- **Delete both devices in the Tailscale admin console.** Otherwise a future
+  redeploy gets suffixed MagicDNS names, per D4.
+- **Revoke the Fly deploy token** in the Fly dashboard.
+- **Revoke the Tailscale auth keys**, if they have not expired.
+- **Remove the node from the hub's `nodes.json`**, if the hub is surviving the
+  node.
+- **Check `fly volumes list` on both apps.** Volumes are the line item that
+  outlives a machine, so confirm rather than assume.
+
+## D6. When the node behaves oddly, run this first
+
+Not every failure on this list has a clock behind it. The node's Claude Code
+OAuth session is revoked rather than expired, by a password change or a login
+somewhere else, and when it goes nothing reports it. The machine boots green,
+the brain registers, `nodes.list` says `available`, and every dispatched agent
+parks forever on a login prompt no headless machine can answer.
+
+`node/RUNBOOK.md` §8 check 3 is the probe, and it takes one line:
+
+```sh
+fly ssh console --app workspacer-node
+su - wks
+claude -p 'reply with OK'
+```
+
+A reply means the credential is alive. A login prompt means redo the Claude
+login in `node/RUNBOOK.md` §7a. Run it before you go looking anywhere else,
+because it is the failure that looks most like a hang and least like an error.
 
 ---
 

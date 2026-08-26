@@ -693,6 +693,7 @@ workspacer token revoke &lt;token-or-prefix&gt;</code></pre>
 <li><strong>Every client sees the merged fleet:</strong> the desktop app, the full web app, the mobile PWA (whose push notifications then cover both machines through the one hub your phone is paired with), and the terminal client. The spawn dialog grows a <strong>Machine</strong> picker so you can start an agent on either box.</li>
 <li><strong>Local things stay local, by design.</strong> A remote agent's files live on the other machine, so the terminal, git review, and editor panes don't offer themselves for remote sessions. Chat, approvals, and the inspector are the remote surface. A remote session's directory never grants any local filesystem access.</li>
 <li><strong>Topology stays simple.</strong> named peers in a file, a tree (no meshes, no loops), and only the fleet topics cross the link, so a peer can't rearrange your layout, drive your UI, or see your plugins' internals.</li>
+<li><strong>A peer's remote nodes are invisible, and silently so.</strong> Only <code>agent.*</code> and <code>workflow.*</code> cross a federation link, and no client asks a peer hub for its node list. So a <a href="#remote">remote worker node</a> registered on the other machine is tracked by the hub that owns it and never appears in your merged fleet: no error, no tombstone, it simply isn't there. If you need to see or wake a particular hub's nodes, don't go through the federation link. Point a client at that hub directly, with "Connect to Server…" in the desktop's Remote Share dialog or by opening that hub's own <code>/app</code> URL. You're then looking at that one hub rather than the merged fleet, and its nodes are back.</li>
 </ul>
 <h3>what mirrors, and what stays put</h3>
 <ul>
@@ -994,6 +995,9 @@ workspacer jobs remove &lt;id&gt;</code></pre>
 <li><code>sessions/</code>, saved sessions (one <code>.yaml</code> per session, used by save/restore and auto-resume).</li>
 <li><code>plugins/</code>, installed plugins.</li>
 <li><code>remote-token</code>, the hub bus bearer token (created on first run, reused for remote sharing).</li>
+<li><code>tokens.json</code>, the scoped tokens you've minted with <code>workspacer token create</code> (mode <code>0600</code>). Re-read on every new bus connection, so minting or revoking one takes effect without a restart.</li>
+<li><code>peers.json</code>, the <a href="#remote">federation</a> peers this hub links out to. Read at startup.</li>
+<li><code>nodes.json</code>, the <a href="#remote">remote node</a> registry, mode <code>0600</code>. Read once at startup, so editing it takes a hub restart.</li>
 <li><code>workspacer.db</code>, SQLite analytics history (per-session model, cost, tokens, tools, branch).</li>
 </ul>
 <p>The Claude session daemon <code>claudemon</code> keeps its own SQLite store separately at <code>$XDG_DATA_HOME/claudemon/state.db</code>, falling back to <code>~/.claudemon/state.db</code>. Override it with <code>claudemon serve --db-path &lt;file&gt;</code>.</p>

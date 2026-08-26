@@ -292,9 +292,12 @@ impl NodeRegistry {
 /// The cost sentence. A wake starts a meter, and the meter runs until somebody
 /// stops the machine. The hub grew a stop verb (`nodes.sleep`) and this client
 /// does not offer it yet, so the note names who can rather than claiming — as
-/// it used to, and as is no longer true — that nobody can.
+/// it used to, and as is no longer true — that nobody can. All three clients
+/// that ship it are named, `/m` included: sending someone to a desktop they are
+/// not sitting at, when the phone in their hand has a Sleep button, is the
+/// same unhelpful answer in a politer form.
 pub const WAKE_COST_NOTE: &str = "starts a real machine. it bills from boot until it is put back \
-     to sleep, which needs the desktop or the web app — not this one.";
+     to sleep, which needs the desktop, web app or phone — not this one.";
 
 /// The sentence under a node's chip: the hub's own `detail` when it wrote one
 /// (it is written to be read by a person), else the state's fallback.
@@ -783,6 +786,10 @@ mod tests {
         );
         assert!(a.reason.contains("put back"), "{}", a.reason);
         assert!(a.reason.contains("not this one"), "{}", a.reason);
+        // And it must name EVERY client that can, `/m` included. The phone
+        // ships a Sleep button, so a note that sends the reader to a desktop
+        // they are not sitting at is wrong in the way that costs money.
+        assert!(a.reason.contains("phone"), "{}", a.reason);
         // A wake already in flight closes the affordance the same way `waking`
         // does — three keystrokes must not become three cloud API calls.
         assert!(!wake_affordance(&node(NodeState::Stopped), true, true).enabled);

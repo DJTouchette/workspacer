@@ -131,6 +131,19 @@ If you change the app name, change `app =` in `deploy/fly/hub/fly.toml` to match
    - **Ephemeral: NO** ← the one that matters
    - **Pre-approved: yes** (if device approval is on for your tailnet)
    - **Tags: `tag:workspacer-hub`**
+   - **Expiry: the maximum, 90 days.** Write that date down somewhere you will
+     look again.
+
+   **What the key's expiry day looks like: nothing.** The key is presented at
+   first boot and at re-auth, and every other boot reuses `tailscaled.state` off
+   the volume. So an expired key sits harmless for months and then fires during
+   a recovery, which is the worst possible timing: a wiped volume, a restored
+   snapshot or a device deleted from the admin console all force a re-auth,
+   `tailscale up` fails, and the entrypoint treats that as fatal. This machine's
+   restart policy is `always`, so it becomes a crash loop, and it has no public
+   IP and binds loopback, which leaves `fly ssh console` racing restarts as the
+   only way in. Mint a fresh key and `fly secrets set TAILSCALE_AUTHKEY=…`
+   before you try anything cleverer.
 
 3. After first boot, **confirm in the admin console that the device shows key
    expiry as disabled**, and that it has a certificate. One click against a
@@ -228,7 +241,13 @@ Three things about it, all confirmed by the infra scout:
 - **There is no action-scoped token.** No start/stop-only token exists; read-only
   exists only at org level and cannot start a machine. Treat this as *full control
   of that app, including creating machines*.
-- **The default expiry is 20 years.** Set one. `2160h` is 90 days.
+- **The default expiry is 20 years.** Set one. `2160h` is 90 days, and the date
+  belongs in your notes: nothing warns you before it. On the day it expires the
+  reconcile loop flips every node to `unreachable` within 30 seconds and says
+  why (*"the cloud API rejected this hub's credential"*), which is the legible
+  half. The illegible half is the boot log, which still prints `(1 wakeable)`,
+  because wakeable means a token resolved and never that it works. Re-mint with
+  this command and `fly secrets set FLY_API_TOKEN=…`.
 - **Scope it to the node's app** so the blast radius is one app's worth of
   machines. That is still real money, but bounded.
 
@@ -241,6 +260,7 @@ fly deploy \
   --config deploy/fly/hub/fly.toml \
   --dockerfile deploy/fly/hub/Dockerfile \
   --app workspacer-hub \
+  --local-only \
   .
 ```
 
@@ -251,6 +271,13 @@ image** — `--local-only` with the base built locally, or push the base to a
 registry first and pass `--build-arg WKS_BASE=…`. See `deploy/fly/node/BASE_IMAGE.md`
 § "Identity and tagging"; the base has no published home yet, and that is an open
 decision, not an oversight.
+
+**`--local-only` is required, not optional.** Without it flyctl builds on a
+remote builder, which cannot see a tag that exists only on your machine. Here
+that fails loudly: the upload finishes, the build dies on
+`FROM workspacer-node-base:dev`, and you have lost minutes and nothing else. The
+node's runbook (§6) carries the same flag for a worse reason: its Dockerfile has
+no local `FROM`, so a remote build succeeds and ships an image nobody rehearsed.
 
 To skip the `/app` bundle (a smaller, faster image; `/m` still works, since it is
 compiled into the hub binary):

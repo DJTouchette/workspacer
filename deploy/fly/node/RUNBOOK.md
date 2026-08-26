@@ -149,8 +149,16 @@ simply be unreachable while every Machines API call succeeded. A device that is
    - **Ephemeral: NO** ← the one that matters
    - **Pre-approved: yes** (if device approval is on for your tailnet)
    - **Tags: `tag:workspacer-node`**
-   - Expiry: the maximum, 90 days. It is only used at first boot and at any
-     re-auth; an already-connected node is unaffected when it expires.
+   - Expiry: the maximum, 90 days. **Write that date down.** It is only used at
+     first boot and at any re-auth, so an already-connected node is unaffected
+     when it expires, and that is exactly what makes it dangerous: the failure
+     is latent for months and then fires on a boot that needs to re-authenticate
+     (a wiped volume, a restored snapshot, a device deleted from the admin
+     console). `tailscale up` fails, the entrypoint refuses to continue, Fly
+     retries three times and leaves the machine `stopped`, which the Machines
+     API cannot tell apart from a node you put to sleep. From a client it reads
+     `waking` → `unreachable`. Mint a new key and
+     `fly secrets set --app workspacer-node --stage TAILSCALE_AUTHKEY=…`.
 
 3. After first boot, **confirm in the admin console that the device shows key
    expiry as disabled.** If it does not, disable it explicitly from the Machines
@@ -172,6 +180,15 @@ workspacer token create --label fly-node --scope provider
 The flag is `--label`, not `--name`; `--name` exits 2 with "flag provided but
 not defined". No hub restart is needed, because the hub re-reads `tokens.json`
 on every new connection.
+
+**This token never expires.** `authtoken.Mint` takes a scope and a label; the
+record has no expiry field, so nothing will force a rotation and there is no
+date to write down. The grant below is what makes that acceptable rather than
+merely convenient: a provider token cannot spend money. Rotate it deliberately
+if the node's volume is ever exposed: mint a replacement, `fly secrets set
+HUB_TOKEN=…` on the node (which restarts it), confirm the node re-registers,
+then `workspacer token revoke <old>`. The old one stays valid until you revoke
+it, so it is a two-value swap and you can go back.
 
 > **What a `provider` token is, and what it is not.** It may **register
 > capabilities and answer calls** — the node's entire job — and publish the
@@ -234,8 +251,21 @@ fly deploy \
   --config deploy/fly/node/fly.toml \
   --dockerfile deploy/fly/node/Dockerfile \
   --app workspacer-node \
+  --local-only \
   .
 ```
+
+**`--local-only` is required, and this is the one that fails quietly.** It makes
+flyctl build with your local Docker rather than shipping the context to a remote
+builder. The hub's image would refuse a remote builder outright, because it
+builds `FROM workspacer-node-base:dev` and no remote builder can see that tag.
+This image has no local `FROM`, so a remote build **succeeds** and you get a
+working node built by a builder that `preflight.sh` never rehearsed. That is the
+wrong failure to have here: this repo has already had a green local build produce
+a machine that could not boot (the `setpriv` flag, see
+[BASE_IMAGE.md](BASE_IMAGE.md)), and the only defence against a repeat is that the
+image you deploy is the image that was rehearsed. Recovery is a redeploy with the
+flag, so the cost is one more upload, not a broken fleet.
 
 The build context is the repo root deliberately: the image builds `brain` and
 `workspacer` from `services/hub` and `claudemon` from `services/claudemon`.
@@ -527,6 +557,23 @@ the **boot log**, which reaches `fly logs` on the next boot without a shell
 the consumption into `cmd/brain/lastexit.go`, read, report, *then* rename, so
 that a value which is confidently wrong becomes one that is right and still
 travels over the bus. That is a few lines, and it is not done.
+
+### Stop the machine when you are finished
+
+This section is a stop/**start** proof, so it leaves the node running, and a
+running node bills $0.0617/hr whether or not anybody is using it. Nothing stops
+it for you: `fly.toml` sets `auto_stop_machines = "off"` deliberately, and a
+healthy idle node reads `available` in every client, which looks exactly like a
+node you meant to leave up.
+
+```sh
+fly machine stop <machine_id> --app workspacer-node
+fly machine status <machine_id> --app workspacer-node   # → stopped
+```
+
+Or press **Sleep** in the desktop app's remote-nodes strip, in `/app` or in
+`/m`, which calls `nodes.sleep` on the hub and is the path to use day to day.
+Either way the volume stays, so the next wake is a boot and not a re-setup.
 
 ---
 
