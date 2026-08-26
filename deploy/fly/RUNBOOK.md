@@ -460,6 +460,14 @@ exit
 fly machine restart <hub_machine_id> --app workspacer-hub
 ```
 
+**`id` is not free-form.** The node's own `fly.toml` sets `WKS_NODE_ID` to this
+same string, and that is how the hub attributes an answering brain to a row
+instead of guessing. A hub with ONE node registered guesses correctly anyway, so
+a mismatch here is silent until a second node arrives — and then neither node
+can complete a wake, because the hub refuses to guess between several on the
+path that spends money. Adding a node means editing `WKS_NODE_ID` in that
+node's `fly.toml` to match its row here.
+
 **The token is deliberately not in that file.** `nodes.ResolveToken` checks the
 entry's inline `token`, then `tokenFile`, then `$FLY_API_TOKEN`, and the
 environment is the right answer for a hub deployed on Fly: the credential stays

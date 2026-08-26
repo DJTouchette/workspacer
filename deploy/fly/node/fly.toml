@@ -100,8 +100,12 @@ kill_timeout = 60
   # name the hub does not recognise is IGNORED (logged, and then treated as
   # anonymous) rather than trusted — it names a row the hub already holds and
   # grants nothing — so a typo degrades to the anonymous behaviour above rather
-  # than to a node impersonating another.
-  WKS_NODE_ID = "workspacer-node-ord"
+  # than to a node impersonating another. That degradation is SILENT on a
+  # single-node hub, which is why the value is written next to the file it has
+  # to agree with: `fly-node` is the id deploy/fly/RUNBOOK.md §B7 and
+  # deploy/fly/hub/RUNBOOK.md §8 both write into nodes.json. Change one, change
+  # all three.
+  WKS_NODE_ID = "fly-node"
 
   WKS_BRAIN_SCOPE      = "full"
   WKS_DOORBELL_ENABLED = "1"
