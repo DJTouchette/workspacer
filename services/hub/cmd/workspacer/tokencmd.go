@@ -22,7 +22,7 @@ import (
 const tokenUsage = `workspacer token — capability-scoped bus tokens
 
 Usage:
-  workspacer token create --scope view|triage|operator [--label <text>]
+  workspacer token create --scope view|triage|operator|provider [--label <text>]
   workspacer token list
   workspacer token revoke <token-or-prefix>
 
@@ -32,6 +32,12 @@ Scopes:
             interrupt, Web Push subscription (what the /m phone client needs;
             no spawn, no terminals, no git, no admin)
   operator  everything — equivalent to the pairing token "workspacer serve" prints
+  provider  a headless capability PROVIDER (a remote node running "brain --hub"),
+            not a rung on the ladder above: it may REGISTER capabilities and
+            answer calls, and publish only the topics carrying the output of what
+            it registered. It calls one method (layout.get), subscribes to
+            nothing, and is refused nodes.wake/sleep, jobs.*, spawning, config,
+            and the token-guarded HTTP routes including POST /plugins/install
 
 Tokens persist in <config>/workspacer/tokens.json (next to remote-token) and
 take effect on the next connection — no server restart needed.
@@ -105,13 +111,13 @@ func firstPositional(args []string, valueFlags map[string]bool) int {
 
 func runTokenCreate(args []string) int {
 	fs := flag.NewFlagSet("workspacer token create", flag.ExitOnError)
-	scopeFlag := fs.String("scope", "", "grant tier: view | triage | operator (required)")
+	scopeFlag := fs.String("scope", "", "grant tier: view | triage | operator | provider (required)")
 	label := fs.String("label", "", "human-readable label (e.g. \"dana's phone\")")
 	path := tokensPathFlag(fs)
 	_ = fs.Parse(args)
 
 	if *scopeFlag == "" {
-		fmt.Fprintln(os.Stderr, "workspacer token create: --scope is required (view | triage | operator)")
+		fmt.Fprintln(os.Stderr, "workspacer token create: --scope is required (view | triage | operator | provider)")
 		return 2
 	}
 	scope, err := authtoken.ParseScope(*scopeFlag)
@@ -127,6 +133,18 @@ func runTokenCreate(args []string) int {
 	fmt.Printf("%s\n", rec.Token)
 	fmt.Fprintf(os.Stderr, "minted %s token%s — connect with ?token=… or Authorization: Bearer …\n",
 		rec.Scope, labelSuffix(rec.Label))
+	if rec.Scope == authtoken.ScopeProvider {
+		// There is deliberately no --provides flag. A grant narrower than what
+		// the provider registers puts the brain in a permanent 5s re-register
+		// loop, because the `registered` ack carries no reason for a withheld
+		// method — see authtoken.Record.Provides. So the mint is always the
+		// full register surface, and the line below says what that does and
+		// does not mean, since "provides: *" reads like the operator "*" and is
+		// a different authority entirely.
+		fmt.Fprintln(os.Stderr,
+			"  it may REGISTER any capability and answer calls; it may not spawn, wake or sleep nodes,\n"+
+				"  create jobs, read the event feed, or reach the token-guarded HTTP routes.")
+	}
 	return 0
 }
 
@@ -141,12 +159,12 @@ func runTokenList(args []string) int {
 		return 1
 	}
 	if len(recs) == 0 {
-		fmt.Println("no scoped tokens (mint one with `workspacer token create --scope view|triage|operator`)")
+		fmt.Println("no scoped tokens (mint one with `workspacer token create --scope view|triage|operator|provider`)")
 		return 0
 	}
-	fmt.Printf("%-34s  %-8s  %-20s  %s\n", "TOKEN", "SCOPE", "CREATED", "LABEL")
+	fmt.Printf("%-34s  %-9s  %-20s  %s\n", "TOKEN", "SCOPE", "CREATED", "LABEL")
 	for _, r := range recs {
-		fmt.Printf("%-34s  %-8s  %-20s  %s\n", r.Token, r.Scope, r.Created.Format("2006-01-02 15:04:05"), r.Label)
+		fmt.Printf("%-34s  %-9s  %-20s  %s\n", r.Token, r.Scope, r.Created.Format("2006-01-02 15:04:05"), r.Label)
 	}
 	return 0
 }

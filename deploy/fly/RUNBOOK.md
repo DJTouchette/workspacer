@@ -376,7 +376,7 @@ fly volumes update <vol_id> --snapshot-retention 30
 ```sh
 fly ssh console --app workspacer-hub
 su - wks
-workspacer token create --label fly-node --scope operator
+workspacer token create --label fly-node --scope provider
 exit
 ```
 
@@ -391,15 +391,61 @@ what the daemons see. Run it as root and it lands in the wrong place.
 connection, so a token created here is live immediately. (`nodes.json` in B7 is
 the opposite, and does need one.)
 
-> **Know what you just minted.** An operator-tier scoped token is **trusted** on
-> the bus, exactly like the host pairing token. That includes `nodes.wake`. The
-> rehearsal proved this directly: an operator-tier scoped token called
-> `nodes.wake` and the hub issued a real `POST /v1/apps/…/machines/…/start`.
-> So this token can spend money, and anyone who reads it off the node can spend
-> yours. It is still the right token to use (it is revocable, which the host
-> token is not), but do not treat "scoped" as "limited" here.
-> `hub/RUNBOOK.md` §11 currently claims a scoped operator token is refused for
-> `nodes.wake`. It is not. See the rehearsal report.
+> **Know what you just minted — and what you did not.** A `provider`-tier token
+> may **register capabilities and answer calls**, which is the entire job of a
+> node, and it may publish the topics carrying the output of what it registered
+> (the fleet feed, statuslines, the PTY stream, visible-terminal requests). That
+> is the whole grant.
+>
+> It **cannot** call `nodes.wake` or `nodes.sleep` (both ask for host authority
+> — so this credential cannot spend your money, and cannot stop a machine
+> somebody is typing at), cannot spawn agents, cannot write config or files,
+> cannot create `jobs.*`, cannot subscribe to *any* event, and does not pass
+> `Server.Authorized` — so `POST /plugins/install`, which clones a repo and runs
+> its build step **on the hub**, is refused structurally rather than by a point
+> guard. Its entire outbound call surface is one method, `layout.get`.
+>
+> **This used to be `--scope operator`, and that is worth remembering rather
+> than deleting.** An operator-tier scoped token is `trusted` on the bus,
+> exactly like the host pairing token, and the rehearsal proved the consequence
+> directly: an operator-tier scoped token called `nodes.wake` and the hub issued
+> a real `POST /v1/apps/…/machines/…/start`. The node held nine authorities and
+> used one. If you have a node deployed with an operator token, §B5b is the
+> swap. (`hub/RUNBOOK.md` §11 agrees with all of this — an earlier edition of
+> this runbook flagged a contradiction there that has since been fixed.)
+
+## B5b. Moving a deployed node from an operator token to a provider token
+
+**No code, image, `fly.toml` or entrypoint change — a secret swap and this
+paragraph.** The brain dials with whatever `HUB_TOKEN` it is handed and never
+inspects its own tier.
+
+```sh
+# on the hub, as wks
+workspacer token create --label fly-node --scope provider   # note the new value
+# then, from this repo
+fly secrets set --app workspacer-node HUB_TOKEN='<the provider token>'
+```
+
+Setting a secret **restarts the machine**, so time it deliberately if there is
+work in flight on that node. The brain dials back in, sends `register`, and
+reads the ack.
+
+**Verify** with this runbook's own criteria: the hub logs the node's
+registration, `nodes.list` reports `available`, and `lastExit` reads back over
+the bus. A node whose feed is silent while its calls answer means a topic it
+publishes has no `Publisher` in `internal/capspec/eventtopics.go` — that is a
+one-row fix, not a tier problem.
+
+**Rollback is re-setting the old secret.** The old operator token stays valid
+until you revoke it, so this is a two-value swap and not a cutover. Once the
+node is confirmed healthy on the new one:
+
+```sh
+workspacer token revoke <old-operator-token-or-prefix>
+```
+
+`revalidateScoped` closes any socket still holding it within one tick.
 
 ## B6. Set the node's secrets and deploy it
 
@@ -407,7 +453,7 @@ the opposite, and does need one.)
 fly secrets set --app workspacer-node --stage \
   TAILSCALE_AUTHKEY='tskey-auth-…' \
   HUB_BUS_URL='wss://workspacer-hub.<your-tailnet>.ts.net/bus' \
-  HUB_TOKEN='<the operator token from B5>'
+  HUB_TOKEN='<the provider token from B5>'
 ```
 
 ```sh

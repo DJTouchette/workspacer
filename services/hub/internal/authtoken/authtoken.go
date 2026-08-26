@@ -40,6 +40,27 @@ const (
 	ScopeTriage Scope = "triage"
 	// ScopeOperator is everything — equivalent to the host remote-token.
 	ScopeOperator Scope = "operator"
+	// ScopeProvider is NOT a rung on the view ⊂ triage ⊂ operator ladder. That
+	// ladder is a PERSON's authority, each rung a bigger set of methods a human
+	// client may call. This is an orthogonal axis: a headless capability
+	// PROVIDER — `brain --hub wss://…` on a remote node — which answers calls
+	// rather than making them.
+	//
+	// It holds one method (layout.get, which view holds too, so its call
+	// surface is a strict SUBSET of the smallest human tier) and adds one
+	// authority no human tier has: registering as the answerer of a call, per
+	// the token record's own Provides grant. It consumes NOTHING — see
+	// providerMethods — and it may publish only a topic whose publishing
+	// capability it provides (capspec.EventTopic.Publisher, enforced by the
+	// bus's mayPublish).
+	//
+	// It exists because before it, the ONLY credential shape that could
+	// register a capability without a plugin manifest was operator — which the
+	// bus promotes to `trusted`, i.e. host authority: nodes.wake (spends
+	// money), jobs.*, POST /plugins/install, the whole event firehose including
+	// other machines' raw PTY bytes, and forging any host-owned topic. A remote
+	// node needed one authority and was handed nine.
+	ScopeProvider Scope = "provider"
 )
 
 // asciiWhitespace is the surrounding-whitespace set ParseScope trims, spelled as
@@ -65,8 +86,10 @@ func ParseScope(s string) (Scope, error) {
 		return ScopeTriage, nil
 	case ScopeOperator:
 		return ScopeOperator, nil
+	case ScopeProvider:
+		return ScopeProvider, nil
 	}
-	return "", fmt.Errorf("unknown scope %q (want view, triage, or operator)", s)
+	return "", fmt.Errorf("unknown scope %q (want view, triage, operator, or provider)", s)
 }
 
 // viewMethods is the read-only surface, derived from what the read paths of
@@ -180,6 +203,28 @@ var triageMethods = []string{
 	"files.upload",       // land a photo from the phone on this machine's tmp so a message can reference it
 }
 
+// providerMethods is the ENTIRE outbound call surface of a headless capability
+// provider, derived the same way viewMethods was — from what the real client
+// actually calls. `brain --scope full` registers 67 methods and answers them;
+// grepping every call site in cmd/brain for what it CALLS finds exactly one:
+// layout.get (cmd/brain/main.go), the fleet-visibility rule's backing read.
+//
+// One method, and it is already in viewMethods, so a provider token's call
+// surface is a strict subset of the smallest human tier's. Everything a node
+// does that looks like authority — registering 67 capabilities, streaming PTY
+// bytes, being woken — is either the register grant (Record.Provides) or
+// something the node does not do at all: the hub starts the machine through the
+// Fly Machines API and then PROBES the node with brain.info over its own
+// loopback client, so "receiving wakes" and "reporting state" are not bus acts
+// the node performs.
+//
+// Nothing else goes in here without a call site in cmd/brain to justify it. A
+// provider that needs to CALL something is asking for the operator ladder, and
+// that is a different question from being allowed to ANSWER.
+var providerMethods = []string{
+	"layout.get", // cmd/brain/main.go — the only method a headless node calls
+}
+
 // Methods returns the method patterns a scope may call. Operator is the single
 // wildcard; the scoped tiers are explicit allowlists that fail closed for
 // anything unlisted.
@@ -192,6 +237,8 @@ func (s Scope) Methods() []string {
 		return append(out, triageMethods...)
 	case ScopeOperator:
 		return []string{"*"}
+	case ScopeProvider:
+		return append([]string(nil), providerMethods...)
 	}
 	return nil // unknown scope grants nothing — fail closed
 }
@@ -238,6 +285,48 @@ type Record struct {
 	// rewrites (token create/revoke) preserve it instead of silently stripping
 	// every session token's role. TWIN: RemoteTokenRecord.role (ipcTypes.ts).
 	Role string `json:"role,omitempty"`
+	// Provides is the REGISTER grant: the capability-method patterns a
+	// ScopeProvider connection may register as the provider of. It is the
+	// second source for the bus's cn.provides — until it existed, the plugin
+	// manifest was the ONLY source, which is precisely why registering a
+	// capability without a manifest required a token the bus promotes to
+	// trusted. Read only for a provider record (see ProvidesGrant): a `provides`
+	// hand-written onto a view or triage record grants nothing.
+	//
+	// WHY THE MINT DEFAULT IS ["*"] AND NARROWING IS NOT EXPOSED. If this grant
+	// is narrower than what the provider tries to register, the hub silently
+	// withholds the rest and the brain re-sends `register` every 5 seconds
+	// forever (cmd/brain/bus.go registerRetryInterval): the `registered` ack
+	// carries the accepted list and no reason, so the retry loop cannot tell
+	// "another live connection owns this method" (retrying is correct — the
+	// owner may drop) from "your token may not have this" (retrying is a
+	// permanent busy loop). Until the ack can say WHICH, a narrowed grant is a
+	// footgun that presents as a working node with a hot 5s loop, so Mint
+	// writes ["*"] and `workspacer token create` exposes no --provides flag.
+	// The field is in the wire format now so the record shape is settled and
+	// the desktop's twin preserves it — see remoteTokens.ts normalizeRecord.
+	//
+	// ["*"] here is NOT the operator "*". That one lives in Methods and is read
+	// as host identity by ScopedIdent.operator(); this one is read only by
+	// mayProvide. The two lists must never be merged — see the bus package's
+	// TestProviderTokenProvidesStarIsNotOperatorStar.
+	// TWIN: RemoteTokenRecord.provides (ipcTypes.ts).
+	Provides []string `json:"provides,omitempty"`
+}
+
+// ProvidesGrant is Record.Provides as the BUS should read it: the register
+// grant, or nil for any tier that has no business registering capabilities.
+//
+// The tier is the gate, not the field. tokens.json is a plain file the CLI, the
+// desktop and the hub all rewrite, so `provides` appearing on a view record —
+// a hand edit, a bad migration, a merge of two stores — must grant nothing
+// rather than quietly make a read-only phone token the answerer of
+// claude.approve. Callers pass THIS to bus.ScopedIdent, never the raw field.
+func (r Record) ProvidesGrant() []string {
+	if r.Scope != ScopeProvider {
+		return nil
+	}
+	return append([]string(nil), r.Provides...)
 }
 
 // ConfigDir mirrors the desktop app's getConfigDir (configService.ts) and the
@@ -362,6 +451,21 @@ func Mint(path string, scope Scope, label string) (Record, error) {
 		Scope:   scope,
 		Label:   label,
 		Created: time.Now().UTC().Truncate(time.Second),
+	}
+	if scope == ScopeProvider {
+		// The default is the WHOLE register surface, deliberately, and it is not
+		// laziness: a grant narrower than what the provider registers puts the
+		// brain in a permanent 5s re-register loop, because the `registered` ack
+		// says WHAT was accepted and never WHY the rest was withheld — so the
+		// retry cannot distinguish "owned by another live connection, retrying
+		// is right" from "refused by your grant, retrying is forever". See
+		// Record.Provides.
+		//
+		// Wide here is still nine authorities narrower than the operator token
+		// this replaces: it is "may ANSWER any call", not "may MAKE any call",
+		// and it carries no publish-anything, no consume-anything, no
+		// Server.Authorized, no nodes.wake and no jobs.*.
+		rec.Provides = []string{"*"}
 	}
 	if err := Save(path, append(recs, rec)); err != nil {
 		return Record{}, err

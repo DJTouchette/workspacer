@@ -4,22 +4,44 @@ import * as path from 'path';
 import { getConfigDir } from './configService';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { trimAsciiWhitespace } from '../lib/asciiWhitespace';
-import type { RemoteTokenRecord, RemoteTokenScope } from '../shared/ipcTypes';
+import type { PairingScope, RemoteTokenRecord, RemoteTokenScope } from '../shared/ipcTypes';
 
-const VALID_SCOPES = new Set<RemoteTokenScope>(['view', 'triage', 'operator']);
+/** Every scope that may appear in tokens.json — the RECORD-VALIDITY question.
+ *
+ *  `provider` is here and not in MINTABLE_SCOPES below, and the difference is
+ *  load-bearing rather than pedantic. This file and the Go store SHARE
+ *  tokens.json: normalizeRecord returns null for a record whose scope is not in
+ *  this set, readTokens filters those nulls out, and mint writes
+ *  `[...readTokens(), next]` back to disk. So on any machine where the desktop
+ *  and the hub share a config dir, a scope missing from THIS set means the next
+ *  token the desktop mints silently DELETES the record — and for a provider
+ *  record that is a remote node's only credential: it 401s on its next
+ *  reconnect, with nothing anywhere saying why.
+ *  TWIN: authtoken.ParseScope (services/hub/internal/authtoken). */
+const VALID_SCOPES = new Set<RemoteTokenScope>(['view', 'triage', 'operator', 'provider']);
+
+/** The scopes the desktop may MINT — the pairing question, deliberately
+ *  narrower. A provider token's whole point is its `provides` register grant,
+ *  which `workspacer token create --scope provider` fills in on the hub; minting
+ *  one here would write a record with no grant that registers nothing and looks
+ *  like it works. See PairingScope (ipcTypes.ts). */
+const MINTABLE_SCOPES = new Set<PairingScope>(['view', 'triage', 'operator']);
 
 function tokensPath(): string {
   return path.join(getConfigDir(), 'tokens.json');
 }
 
-function normalizeScope(scope: string): RemoteTokenScope {
+/** Normalize a scope the desktop is about to MINT. Rejects `provider` — see
+ *  MINTABLE_SCOPES. Reading an existing provider record goes through
+ *  normalizeRecord/VALID_SCOPES instead and is unaffected. */
+function normalizeScope(scope: string): PairingScope {
   // trimAsciiWhitespace, NOT String.prototype.trim: `.trim()` strips U+FEFF (BOM)
   // and Go's authtoken.ParseScope twin does not, while Go's strips U+0085 (NEL)
   // and `.trim()` does not — so a BOM/NEL-wrapped scope minted a grant on one
   // stack and was refused on the other. Trimming the ASCII set on both makes them
   // agree (fail closed) on every non-ASCII wrapper.
-  const s = trimAsciiWhitespace(scope).toLowerCase() as RemoteTokenScope;
-  if (!VALID_SCOPES.has(s)) {
+  const s = trimAsciiWhitespace(scope).toLowerCase() as PairingScope;
+  if (!MINTABLE_SCOPES.has(s)) {
     throw new Error(`unknown remote token scope "${scope}"`);
   }
   return s;
@@ -50,6 +72,17 @@ function normalizeRecord(raw: unknown): RemoteTokenRecord | null {
     ...(r.yoloAllowed === true && { yoloAllowed: true as const }),
     // …and the session-role tag the grant reconciler keys on.
     ...((r.role === 'manager' || r.role === 'supervisor') && { role: r.role }),
+    // …and the provider tier's REGISTER grant. Same preservation rule as the
+    // four above, and the one with the sharpest failure: this record belongs to
+    // a remote node, the desktop never writes it, and readTokens→mint rewrites
+    // the whole file — so without this clause the next token minted here hands
+    // the node's record back to disk with its grant stripped. The node then
+    // reconnects, registers nothing, and re-sends `register` every 5 seconds
+    // forever, because the hub's ack cannot say why a method was withheld.
+    // TWIN: authtoken.Record.Provides.
+    ...(Array.isArray(r.provides) && {
+      provides: r.provides.filter((p): p is string => typeof p === 'string' && !!p.trim()),
+    }),
   };
 }
 
@@ -72,7 +105,7 @@ function writeTokens(records: RemoteTokenRecord[]): void {
   atomicWriteFileSync(tokensPath(), `${JSON.stringify(records, null, 2)}\n`, { mode: 0o600 });
 }
 
-function mint(scope: RemoteTokenScope, label: string): RemoteTokenRecord {
+function mint(scope: PairingScope, label: string): RemoteTokenRecord {
   return {
     token: crypto.randomBytes(24).toString('base64url'),
     scope,

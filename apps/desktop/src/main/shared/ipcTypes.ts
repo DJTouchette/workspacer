@@ -48,7 +48,22 @@ export interface GitLogEntry {
 
 // ── Remote pairing tokens (capability-scoped hub tokens) ──
 
-export type RemoteTokenScope = 'view' | 'triage' | 'operator';
+export type RemoteTokenScope = 'view' | 'triage' | 'operator' | 'provider';
+
+/** The scopes the desktop's own pairing/session UI may MINT.
+ *
+ *  `provider` is deliberately excluded. It is a headless capability provider's
+ *  credential — a remote node running `brain --hub` — minted on the hub by
+ *  `workspacer token create --scope provider`, which is also what fills in its
+ *  `provides` grant. A provider record minted from here would carry no grant,
+ *  register nothing, and present as a working token that silently does nothing.
+ *  It also has no meaning as a pairing: nothing in the desktop, /app or /m can
+ *  drive a fleet with it (it calls one method and receives no events).
+ *
+ *  The desktop must still READ and PRESERVE provider records — they share
+ *  tokens.json with the Go store — which is why RemoteTokenScope above includes
+ *  it and this narrower type exists separately. */
+export type PairingScope = Exclude<RemoteTokenScope, 'provider'>;
 
 export interface RemoteTokenRecord {
   token: string;
@@ -71,6 +86,14 @@ export interface RemoteTokenRecord {
    *  spawn's skipPermissions is otherwise clamped off. Absent = no grant.
    *  TWIN: authtoken.Record.YoloAllowed. */
   yoloAllowed?: boolean;
+  /** Capability methods a `provider`-scope token may REGISTER as the provider
+   *  of (the hub's cn.provides second source). Written by the Go CLI, never by
+   *  the desktop — but PRESERVED here, because normalizeRecord rebuilds every
+   *  record field by field and readTokens→mint writes the result back: a field
+   *  this file does not name is deleted from the node's credential by the next
+   *  token the desktop mints.
+   *  TWIN: authtoken.Record.Provides (services/hub/internal/authtoken). */
+  provides?: string[];
   /** Role of the session this token was minted for. Written at mint so the
    *  full-access grant reconciler (services/fullAccessGrants) can find exactly
    *  the manager/supervisor session tokens when agents.fleetFullAccess /
