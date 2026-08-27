@@ -18,8 +18,21 @@ pub struct Usage {
     /// Input side of the latest turn — a point-in-time view of context fullness.
     #[serde(default)]
     pub context_tokens: u64,
+    /// The session's context window, in tokens. `None` is the daemon saying it
+    /// does NOT KNOW — a provider that reports no window, a model no table
+    /// covers, or a turn-1 stream session that has not spoken yet. It is not
+    /// zero, and it must never be rendered as a guess: every readout below
+    /// omits the percentage rather than draw a bar against an invented
+    /// denominator.
+    ///
+    /// `serde(default)` is load-bearing for VERSION SKEW, not just tidiness.
+    /// A newer claudemon omits the key entirely when the window is unknown
+    /// (`skip_serializing_if` on the Rust twin, `Usage::context_limit`), and a
+    /// required `u64` here would fail the WHOLE `Usage` deserialize on the
+    /// missing key — losing model, cost and tokens with it, not merely the
+    /// window. An older daemon still sends a number and deserializes as before.
     #[serde(default)]
-    pub context_limit: u64,
+    pub context_limit: Option<u64>,
     /// Cumulative cost (USD) for the session.
     #[serde(default)]
     pub cost_usd: f64,
@@ -186,8 +199,9 @@ pub fn derive_stats(agent: &Agent, sl: Option<&StatusLine>) -> DerivedStats {
         .or_else(|| agent.usage.as_ref().and_then(|u| u.model.clone()));
     let context_pct = sl.and_then(|s| s.context_used_pct).or_else(|| {
         agent.usage.as_ref().and_then(|u| {
-            (u.context_limit > 0 && u.context_tokens > 0)
-                .then(|| u.context_tokens as f64 / u.context_limit as f64 * 100.0)
+            let limit = u.context_limit?;
+            (limit > 0 && u.context_tokens > 0)
+                .then(|| u.context_tokens as f64 / limit as f64 * 100.0)
         })
     });
     let cost = sl
@@ -1709,7 +1723,7 @@ mod tests {
         let u = a.usage.as_ref().expect("usage present");
         assert_eq!(u.model.as_deref(), Some("claude-sonnet-4-6"));
         assert_eq!(u.context_tokens, 5200);
-        assert_eq!(u.context_limit, 200_000);
+        assert_eq!(u.context_limit, Some(200_000));
         assert!((u.cost_usd - 0.042).abs() < 1e-9);
     }
 
@@ -1768,6 +1782,33 @@ mod tests {
         assert_eq!(d.model.as_deref(), Some("Opus 4.8"));
         assert_eq!(d.context_pct, Some(73.0));
         assert_eq!(d.cost, Some(12.5));
+    }
+
+    /// VERSION SKEW, the whole reason `context_limit` is an `Option` here.
+    ///
+    /// A newer claudemon OMITS `context_limit` when it does not know the
+    /// window (it is `skip_serializing_if = "Option::is_none"` on the daemon's
+    /// `Usage`). While this field was a required `u64`, the missing key failed
+    /// the whole `Usage` deserialize on an old TUI — so an upgraded daemon did
+    /// not merely hide one context meter, it blanked model, cost and tokens
+    /// for every session at once. The block must survive the absence, and the
+    /// window must read as unknown rather than as a zero-width one.
+    #[test]
+    fn usage_survives_a_daemon_that_omits_the_context_window() {
+        let agent: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s",
+            "mode": "responding",
+            // No `context_limit` key at all — the new daemon's honest unknown.
+            "usage": { "model": "gpt-5-codex", "context_tokens": 12_000, "cost_usd": 0.25 }
+        }))
+        .unwrap();
+        let u = agent.usage.as_ref().expect("usage still deserializes");
+        assert_eq!(u.model.as_deref(), Some("gpt-5-codex"));
+        assert_eq!(u.context_tokens, 12_000, "tokens survive the missing key");
+        assert!((u.cost_usd - 0.25).abs() < 1e-9, "cost survives it too");
+        assert_eq!(u.context_limit, None, "unknown, not zero");
+        // And the readout omits the percentage rather than dividing by nothing.
+        assert_eq!(derive_stats(&agent, None).context_pct, None);
     }
 
     #[test]

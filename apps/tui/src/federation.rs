@@ -221,7 +221,12 @@ pub fn agent_from_snapshot(hub: &str, row: &Value) -> Option<Agent> {
     let usage = row.get("usage").filter(|v| !v.is_null()).map(|u| Usage {
         model: u.get("model").and_then(Value::as_str).map(String::from),
         context_tokens: u.get("contextTokens").and_then(Value::as_u64).unwrap_or(0),
-        context_limit: u.get("contextLimit").and_then(Value::as_u64).unwrap_or(0),
+        // Absent (or the 0 an older hub sends for "unknown") stays absent: a
+        // peer that could not report a window must not arrive claiming one.
+        context_limit: u
+            .get("contextLimit")
+            .and_then(Value::as_u64)
+            .filter(|l| *l > 0),
         cost_usd: u.get("costUSD").and_then(Value::as_f64).unwrap_or(0.0),
         // The hub passes the prompt-cache split through under its own key with
         // its sub-keys unchanged, so it maps straight across. Absent stays
@@ -400,7 +405,7 @@ mod tests {
         let u = a.usage.clone().expect("usage");
         assert_eq!(u.model.as_deref(), Some("claude-opus-4-8"));
         assert_eq!(u.context_tokens, 50);
-        assert_eq!(u.context_limit, 200);
+        assert_eq!(u.context_limit, Some(200));
         assert!((u.cost_usd - 1.25).abs() < f64::EPSILON);
         // A remote session can never have a local PTY, whatever it runs at home.
         assert!(a.is_stream());

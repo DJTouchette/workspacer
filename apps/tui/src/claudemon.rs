@@ -1113,7 +1113,8 @@ mod tests {
                     "{} · {}/{} ctx · ${:.2}",
                     u.model.as_deref().unwrap_or("?"),
                     u.context_tokens,
-                    u.context_limit,
+                    u.context_limit
+                        .map_or_else(|| "?".to_string(), |l| l.to_string()),
                     u.cost_usd
                 ),
                 None => "no usage".into(),
