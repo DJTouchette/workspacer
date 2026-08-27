@@ -1,0 +1,288 @@
+{
+  "_comment": [
+    "Dispatch-template PARAMS: what a template asks a caller to fill, parsed the",
+    "same way on both providers.",
+    "",
+    "`library.list` advertises a machine-readable `params` list on every kind",
+    "'dispatch' item so a Fleet Manager can learn a template's placeholders without",
+    "fetching the whole library and reading its markdown. BOTH providers answer that",
+    "call — the desktop's hubCapabilities.ts under a local client, cmd/brain under",
+    "the default catalog delegation (every web/mobile/MCP caller) — so the parser now",
+    "exists twice, and a caller must not learn a different param set depending on",
+    "which one ran.",
+    "",
+    "THE HARD RULE THIS ENCODES, from dispatchTemplate.ts's header: a placeholder is",
+    "REQUIRED BY DEFAULT. `{{task}}` refuses the spawn when unfilled; only the",
+    "author's explicit `{{task:default}}` makes one optional. So `required` is not a",
+    "hint — it is the difference between a dispatch that fails loudly and one that",
+    "silently ships boilerplate with an empty task slot. Advertising it wrong is",
+    "worse than not advertising it.",
+    "",
+    "THE DRIFT THIS EXISTS TO CATCH is whitespace. dispatchTemplate.ts spells the",
+    "token with JavaScript's `\\s` and trims with String.prototype.trim(), and",
+    "NEITHER of Go's obvious equivalents is that set: regexp `\\s` is only",
+    "[\\t\\n\\f\\r ] (no vertical tab, no NBSP), while strings.TrimSpace/unicode.IsSpace",
+    "adds U+0085 NEL that JS does not trim and omits U+FEFF that JS does. A template",
+    "padded with any of those would parse to a DIFFERENT param name on one provider",
+    "— a name the caller then cannot fill, and only on some clients. The four exotic",
+    "cases below are the whole reason dispatchparams.go writes the class out by hand",
+    "instead of reaching for \\s.",
+    "",
+    "Order is normative: params come back in FIRST-SEEN order, and the first",
+    "occurrence of a name wins, because each token is resolved independently at",
+    "render time and the first spelling is the one a reader of the listing acts on."
+  ],
+  "vocabulary": {
+    "_comment": [
+      "THE BLOCK REGISTRY. Every array-of-objects block in this file must be declared",
+      "here and everything here must be a block. Held by cmd/brain/corpusvocab_test.go",
+      "and apps/desktop/src/main/services/contractsVocabulary.test.ts."
+    ],
+    "blocks": {
+      "cases": {
+        "why": "One template body in, one ordered param list out. Both parsers must produce this array exactly — same names, same order, same required flags, same defaults.",
+        "required": [
+          "name",
+          "template",
+          "expect",
+          "why"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/dispatchparams_test.go::TestDispatchTemplateParamsContractCases",
+          "apps/desktop/src/main/lib/dispatchTemplate.test.ts::dispatch template params — cross-language contract"
+        ]
+      }
+    }
+  },
+  "owners": {
+    "apps/desktop/src/main/lib/dispatchTemplate.ts": "dispatchTemplateParams (TS) — the copy the desktop provider's library.list publishes, and the copy whose sibling renderDispatchTemplate then ENFORCES on spawn. This side is normative: the Go twin is written to match it, whitespace class included.",
+    "services/hub/cmd/brain/dispatchparams.go": "dispatchTemplateParams (Go) — the copy cmd/brain's library.list publishes for every web/mobile/MCP caller under the default catalog delegation. It parses but never renders: agents.spawn's `template` param stays declined here (parity_test.go spawnParamsDeclined)."
+  },
+  "cases": [
+    {
+      "name": "a bare placeholder is required",
+      "template": "SHIP: {{task}}",
+      "expect": [
+        {
+          "name": "task",
+          "required": true
+        }
+      ],
+      "why": "The regression floor and the whole hard rule: a bare token is REQUIRED, so a spawn that omits it is refused rather than rendered with an empty task slot."
+    },
+    {
+      "name": "an explicit default makes it optional",
+      "template": "Deliver: {{delivery:open a PR}}",
+      "expect": [
+        {
+          "name": "delivery",
+          "required": false,
+          "default": "open a PR"
+        }
+      ],
+      "why": "The only way a placeholder becomes optional is the author writing one. `default` is the text the render actually substitutes, so a caller can see what it gets by omitting the param."
+    },
+    {
+      "name": "required and optional, in first-seen order",
+      "template": "SHIP: {{task}}\nDeliver: {{delivery:open a PR}}\nBranch: {{branch:master}}",
+      "expect": [
+        {
+          "name": "task",
+          "required": true
+        },
+        {
+          "name": "delivery",
+          "required": false,
+          "default": "open a PR"
+        },
+        {
+          "name": "branch",
+          "required": false,
+          "default": "master"
+        }
+      ],
+      "why": "The shipped ship-task shape. Order is normative — a caller reads the list top-down to fill it."
+    },
+    {
+      "name": "the {{cwd}} auto var is never advertised",
+      "template": "In {{cwd}}: {{task}}",
+      "expect": [
+        {
+          "name": "task",
+          "required": true
+        }
+      ],
+      "why": "cwd is filled by the HOST from the spawn's own cwd. Advertising it would invite a caller to pass a value for a slot it does not own, and the render prefers the caller's value on a name collision."
+    },
+    {
+      "name": "an auto var with a default is still not advertised",
+      "template": "In {{cwd:/tmp}}: {{task}}",
+      "expect": [
+        {
+          "name": "task",
+          "required": true
+        }
+      ],
+      "why": "The auto-var exclusion is on the NAME, before the default is considered — otherwise `{{cwd:/tmp}}` would smuggle cwd back onto the advertised list by adding a colon."
+    },
+    {
+      "name": "the prompt-var '?' spelling parses identically",
+      "template": "{{?task}} then {{?delivery:open a PR}}",
+      "expect": [
+        {
+          "name": "task",
+          "required": true
+        },
+        {
+          "name": "delivery",
+          "required": false,
+          "default": "open a PR"
+        }
+      ],
+      "why": "A template authored for the renderer's insert dialog must advertise the same params here; the leading '?' is stripped, not part of the name."
+    },
+    {
+      "name": "first occurrence wins — bare first stays required",
+      "template": "{{task}} … {{task:fallback}}",
+      "expect": [
+        {
+          "name": "task",
+          "required": true
+        }
+      ],
+      "why": "Each token is resolved independently at render time, so the bare one still refuses an unfilled spawn. Advertising it as optional because a later token has a default would promise a default the render will not honor."
+    },
+    {
+      "name": "first occurrence wins — default first stays optional",
+      "template": "{{task:fallback}} … {{task}}",
+      "expect": [
+        {
+          "name": "task",
+          "required": false,
+          "default": "fallback"
+        }
+      ],
+      "why": "The mirror direction, pinned so nobody 'fixes' the rule into last-wins or into required-wins. It is FIRST-seen, in both directions."
+    },
+    {
+      "name": "only the first colon splits",
+      "template": "{{ref:origin/main:HEAD}}",
+      "expect": [
+        {
+          "name": "ref",
+          "required": false,
+          "default": "origin/main:HEAD"
+        }
+      ],
+      "why": "A default may contain colons — git refs and URLs do. Splitting on the last colon would silently truncate the default."
+    },
+    {
+      "name": "an empty default is optional, not required",
+      "template": "{{note:}}",
+      "expect": [
+        {
+          "name": "note",
+          "required": false,
+          "default": ""
+        }
+      ],
+      "why": "`{{note:}}` is the author explicitly saying 'may be omitted, renders as nothing'. Treating an empty default as absent would flip it to required and start refusing spawns that are correct."
+    },
+    {
+      "name": "padding inside the braces is trimmed",
+      "template": "{{  task  }} and {{  delivery : open a PR  }}",
+      "expect": [
+        {
+          "name": "task",
+          "required": true
+        },
+        {
+          "name": "delivery",
+          "required": false,
+          "default": "open a PR"
+        }
+      ],
+      "why": "Ordinary ASCII padding, including around the colon, must not become part of the name or the default — a name with a stray space is one templateParams cannot address."
+    },
+    {
+      "name": "vertical tab padding is whitespace",
+      "template": "{{\u000btask\u000b}}",
+      "expect": [
+        {
+          "name": "task",
+          "required": true
+        }
+      ],
+      "why": "U+000B is in JavaScript's \\s and NOT in Go's regexp \\s. A Go copy that used \\s would advertise the param as \"\\u000btask\", which no caller can fill."
+    },
+    {
+      "name": "no-break space padding is whitespace",
+      "template": "{{ task }}",
+      "expect": [
+        {
+          "name": "task",
+          "required": true
+        }
+      ],
+      "why": "U+00A0 is in JavaScript's \\s and not in Go's regexp \\s. It is also the space a template author gets by accident from a word processor or a copied web page."
+    },
+    {
+      "name": "a BOM inside the braces is whitespace",
+      "template": "{{﻿task}}",
+      "expect": [
+        {
+          "name": "task",
+          "required": true
+        }
+      ],
+      "why": "U+FEFF is trimmed by String.prototype.trim() and NOT by strings.TrimSpace/unicode.IsSpace — the direction where Go is narrower than JS, and the one a TrimSpace-based port gets wrong."
+    },
+    {
+      "name": "U+0085 NEL is NOT whitespace",
+      "template": "{{task}}",
+      "expect": [
+        {
+          "name": "task",
+          "required": true
+        }
+      ],
+      "why": "The direction where Go is WIDER than JS: unicode.IsSpace trims U+0085 and JavaScript does not. The advertised name keeps it, because the renderer's own token match keeps it — the listing must describe the parser that will actually run, not a tidier one."
+    },
+    {
+      "name": "an empty token declares nothing",
+      "template": "{{}} and {{ }} and {{task}}",
+      "expect": [
+        {
+          "name": "task",
+          "required": true
+        }
+      ],
+      "why": "A token with no name (or only whitespace) is skipped rather than advertised as a param named \"\", which nothing could fill and which would make every template look like it wanted an anonymous value."
+    },
+    {
+      "name": "a template with no placeholders has no params",
+      "template": "Just prose. No slots at all.",
+      "expect": [],
+      "why": "An empty list is a real answer — 'this template is ready to dispatch as-is' — and must not be confused with 'the parser found nothing because it broke'."
+    },
+    {
+      "name": "a duplicate name is listed once",
+      "template": "{{a}} {{b}} {{a}} {{b}} {{c}}",
+      "expect": [
+        {
+          "name": "a",
+          "required": true
+        },
+        {
+          "name": "b",
+          "required": true
+        },
+        {
+          "name": "c",
+          "required": true
+        }
+      ],
+      "why": "The list is DISTINCT names in first-seen order; a template that repeats a slot asks for one value, not three."
+    }
+  ]
+}

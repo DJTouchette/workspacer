@@ -170,12 +170,130 @@ describe('dispatch items — seeding', () => {
     const ship = items.find((i) => i.id === 'ship-task');
     expect(ship!.kind).toBe('dispatch');
     expect(ship!.resultSchema).toMatchObject({ type: 'object', required: ['commit'] });
-    // The hard rule rides the seeds too: the task slot is a REQUIRED placeholder.
+    // The hard rule rides the seeds too: the task slot is a REQUIRED placeholder,
+    // and the listing SAYS so — a manager reads params, not the markdown.
     expect(ship!.body).toContain('{{task}}');
+    expect(ship!.params).toContainEqual({ name: 'task', required: true });
     const scout = items.find((i) => i.id === 'scout-task');
     expect(scout!.resultSchema).toMatchObject({ required: ['findings'] });
     const two = items.find((i) => i.id === 'two-explanations');
     expect(two!.body).toContain('{{explanationA}}');
     expect(two!.body).toContain('{{explanationB}}');
+  });
+});
+
+describe('dispatch items — the advertised params', () => {
+  // The discovery half of the feature: before this, the only way to learn a
+  // template's placeholders was to fetch the WHOLE listing (every item, every
+  // body) and read prose. `params` is derived by the SAME parser the spawn path
+  // enforces (lib/dispatchTemplate), so what is advertised and what is required
+  // cannot drift.
+  it('list() carries the parsed placeholders, auto vars excluded', () => {
+    libraryService.save({
+      scope: 'project',
+      title: 'Ship it',
+      kind: 'dispatch',
+      body: 'In {{cwd}}: SHIP {{task}}\nDeliver: {{delivery:open a PR}}',
+      cwd,
+    });
+    const item = libraryService.list(cwd).find((i) => i.id === 'ship-it');
+    expect(item!.params).toEqual([
+      { name: 'task', required: true },
+      // {{cwd}} is filled by the HOST, so it is not something a caller passes.
+      { name: 'delivery', required: false, default: 'open a PR' },
+    ]);
+  });
+
+  it('save() echoes the same params the next list() will report', () => {
+    const saved = libraryService.save({
+      scope: 'project',
+      title: 'Echo',
+      kind: 'dispatch',
+      body: '{{a}} {{b:two}}',
+      cwd,
+    });
+    expect(saved.params).toEqual(libraryService.list(cwd).find((i) => i.id === 'echo')!.params);
+    expect(saved.params).toEqual([
+      { name: 'a', required: true },
+      { name: 'b', required: false, default: 'two' },
+    ]);
+  });
+
+  it('params is dispatch-only: no other kind carries one', () => {
+    const saved = libraryService.save({
+      scope: 'project',
+      title: 'Plain prompt',
+      kind: 'prompt',
+      // The same body — the field is a property of the KIND, not of the text.
+      body: 'SHIP {{task}}',
+      cwd,
+    });
+    expect(saved.params).toBeUndefined();
+    expect(libraryService.list(cwd).find((i) => i.id === 'plain-prompt')!.params).toBeUndefined();
+  });
+
+  it('params is DERIVED, so a forged params: in frontmatter never surfaces', () => {
+    // The same species as the no-spawn-args pin above: a committable template
+    // file must not be able to describe itself as wanting something it does not,
+    // which is how a caller would be talked into passing a value the render then
+    // refuses as unknown.
+    const dir = path.join(cwd, '.workspacer', 'library');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'forged.md'),
+      '---\ntitle: Forged\nkind: dispatch\nparams:\n  - name: notReal\n    required: false\n---\n\ndo {{task}}',
+      'utf-8',
+    );
+    const item = libraryService.list(cwd).find((i) => i.id === 'forged');
+    expect(item!.params).toEqual([{ name: 'task', required: true }]);
+  });
+
+  it('params is never written back to the file', () => {
+    const saved = libraryService.save({
+      scope: 'project',
+      title: 'Round trip',
+      kind: 'dispatch',
+      body: '{{task}}',
+      cwd,
+    });
+    expect(fs.readFileSync(saved.path, 'utf-8')).not.toContain('params');
+  });
+});
+
+describe('library list filters', () => {
+  const seed = () => {
+    libraryService.save({ scope: 'project', title: 'Ship', kind: 'dispatch', body: '{{t}}', cwd });
+    libraryService.save({ scope: 'project', title: 'Scout', kind: 'dispatch', body: '{{q}}', cwd });
+    libraryService.save({ scope: 'project', title: 'Notes', kind: 'prompt', body: 'plain', cwd });
+  };
+
+  it('narrows by kind, keeping the unfiltered order', () => {
+    seed();
+    const all = libraryService.list(cwd).map((i) => i.id);
+    const dispatch = libraryService.list(cwd, undefined, { kind: 'dispatch' }).map((i) => i.id);
+    expect(dispatch).toEqual(all.filter((id) => id === 'ship' || id === 'scout'));
+  });
+
+  it('narrows by id, and the two fields are ANDed', () => {
+    seed();
+    expect(libraryService.list(cwd, undefined, { id: 'ship' }).map((i) => i.id)).toEqual(['ship']);
+    expect(libraryService.list(cwd, undefined, { kind: 'prompt', id: 'ship' })).toEqual([]);
+  });
+
+  it('an empty filter is the unfiltered listing — existing callers are untouched', () => {
+    seed();
+    const all = libraryService.list(cwd);
+    expect(libraryService.list(cwd, undefined, {})).toEqual(all);
+    expect(libraryService.list(cwd, undefined, undefined)).toEqual(all);
+  });
+
+  it('a filtered listing is always a SUBSET of the unfiltered one', () => {
+    seed();
+    const all = libraryService.list(cwd);
+    // Filtering must not change which item wins a project-over-global id
+    // collision, which is why it runs after the merge and not during it.
+    for (const item of libraryService.list(cwd, undefined, { kind: 'dispatch' })) {
+      expect(all).toContainEqual(item);
+    }
   });
 });

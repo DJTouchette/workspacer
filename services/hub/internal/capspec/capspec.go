@@ -1081,6 +1081,13 @@ var unscopedParams = map[string]map[string]ParamDecision{
 		"env":     {KindEnv, "the MCP server's environment, stored beside `command`. Same gate — an env is code execution by another route (PATH, LD_PRELOAD), so it is refused at spawn selection rather than trusted at write time"},
 		"url":     {KindURL, "an SSE/HTTP MCP endpoint the agent would connect to instead of spawning a process; same selection gate as `command`, and the item file itself stays confined to the library item roots"},
 	},
+	// library.list's `id` is a FILTER, not a selector: it narrows the merged
+	// listing after every file has already been read through
+	// guardLibraryFile('library.list', …). It cannot widen what is read, which
+	// is why it is excused rather than scoped.
+	"library.list": {
+		"id": {KindID, "an exact-match filter applied to the ALREADY-BUILT listing — the same files are opened, the same per-file guard confines them, and the filter can only remove rows. It is never joined into a path, so there is no directory for it to escape"},
+	},
 	"library.remove": {
 		"id": {KindID, "names the item file to unlink under the library dir derived from the already-confined cwd; the unlink target is re-checked by guardLibraryFile('library.remove', libraryItemRoots(canonicalCwd))"},
 	},

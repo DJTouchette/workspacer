@@ -54,18 +54,49 @@ function parsePlaceholder(inner: string): Placeholder {
   return { name: rest.slice(0, ci).trim(), defaultValue: rest.slice(ci + 1).trim() };
 }
 
+/**
+ * ONE parameter a caller must (or may) pass — the machine-readable half of a
+ * dispatch template, so discovering what a template wants is a schema read and
+ * not a prose read of its body.
+ *
+ * TWIN: services/hub/cmd/brain/library.go `dispatchParam`, held equal by
+ * contracts/dispatch-template-params-cases.json.
+ */
+export interface DispatchTemplateParam {
+  /** The param name, as it is spelled in `templateParams`. */
+  name: string;
+  /** True for a bare {{name}} — a spawn that omits it is REFUSED, never
+   *  defaulted (see the module header). False for {{name:default}}. */
+  required: boolean;
+  /** The template author's explicit default. Present only when !required. */
+  default?: string;
+}
+
 /** The distinct placeholder names a dispatch template declares (auto vars
  *  excluded), keyed by name with the first occurrence winning — so a name used
  *  twice, once with a default and once without, is REQUIRED wherever the
- *  spelling without a default appears (each token resolves independently). */
-export function dispatchTemplateParams(text: string): Placeholder[] {
-  const seen = new Map<string, Placeholder>();
+ *  spelling without a default appears (each token resolves independently).
+ *
+ *  This is the ONLY parser of the advertised shape: `library.list` publishes
+ *  exactly what renderDispatchTemplate below then enforces, so a listed param
+ *  set can never describe a template the renderer would refuse differently. */
+export function dispatchTemplateParams(text: string): DispatchTemplateParam[] {
+  const seen = new Map<string, DispatchTemplateParam>();
   let m: RegExpExecArray | null;
   TOKEN_RE.lastIndex = 0;
   while ((m = TOKEN_RE.exec(text)) !== null) {
     const p = parsePlaceholder(m[1].trim());
+    // AUTO_VARS are excluded on purpose: {{cwd}} is filled by the HOST from the
+    // spawn's own cwd, so advertising it would invite a caller to pass a value
+    // for a slot it does not own. The list is what a caller must/may pass.
     if (!p.name || AUTO_VARS.has(p.name)) continue;
-    if (!seen.has(p.name)) seen.set(p.name, p);
+    if (seen.has(p.name)) continue;
+    seen.set(
+      p.name,
+      p.defaultValue === undefined
+        ? { name: p.name, required: true }
+        : { name: p.name, required: false, default: p.defaultValue },
+    );
   }
   return Array.from(seen.values());
 }

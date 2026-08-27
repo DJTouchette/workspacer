@@ -56,7 +56,7 @@ const NO_BLOCK_FIXTURES = new Set([
 ]);
 
 /** How many case-carrying fixtures contracts/ holds today. */
-const CONTRACTS_FIXTURE_FLOOR = 8;
+const CONTRACTS_FIXTURE_FLOOR = 9;
 
 type Row = Record<string, unknown>;
 interface VerdictDef {

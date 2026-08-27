@@ -82,7 +82,97 @@ describe('dispatchTemplateParams', () => {
       'in {{cwd}}: {{task}} then {{delivery:open a PR}} and {{task}} again',
     );
     expect(params.map((p) => p.name)).toEqual(['task', 'delivery']);
-    expect(params[0].defaultValue).toBeUndefined();
-    expect(params[1].defaultValue).toBe('open a PR');
+    expect(params[0]).toEqual({ name: 'task', required: true });
+    expect(params[1]).toEqual({ name: 'delivery', required: false, default: 'open a PR' });
   });
+
+  // The advertised shape and the ENFORCED shape come off the same parser, which
+  // is the whole reason library.list may publish it: every param this reports as
+  // required is one renderDispatchTemplate refuses to default, and every one it
+  // reports optional renders to exactly the advertised `default`.
+  it('agrees with renderDispatchTemplate about what is required', () => {
+    const text = 'do {{task}} and deliver {{delivery:open a PR}}';
+    const params = dispatchTemplateParams(text);
+    for (const p of params.filter((x) => x.required)) {
+      expect(() => renderDispatchTemplate(text, {})).toThrow(
+        new RegExp(`required placeholder \\{\\{${p.name}\\}\\}`),
+      );
+    }
+    const rendered = renderDispatchTemplate(text, { task: 'x' });
+    for (const p of params.filter((x) => !x.required)) {
+      expect(rendered).toContain(p.default!);
+    }
+  });
+
+  it('a name first seen bare stays required even when a later token defaults it', () => {
+    expect(dispatchTemplateParams('{{task}} … {{task:fallback}}')).toEqual([
+      { name: 'task', required: true },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// contracts/dispatch-template-params-cases.json — the cross-language corpus.
+//
+// `library.list` advertises this param list on every kind 'dispatch' item, and
+// BOTH providers answer that call: this copy under a desktop client, the Go
+// port (cmd/brain/dispatchparams.go) under the default catalog delegation, which
+// is every web/mobile/MCP caller. A manager must not learn a different set of
+// placeholders depending on which one ran, so the two are pinned to one corpus.
+//
+// The whitespace cases are the point: this parser spells its token with
+// JavaScript's `\s` and trims with String.prototype.trim(), and neither of Go's
+// obvious equivalents is that set. See the fixture's own header.
+// ---------------------------------------------------------------------------
+
+import * as fs from 'fs';
+import * as path from 'path';
+import { SweepTally, itSweptTheWholeCorpus } from '../../../tests/support/sweepTally';
+import type { DispatchTemplateParam } from './dispatchTemplate';
+
+interface ParamsCase {
+  name: string;
+  template: string;
+  expect: DispatchTemplateParam[];
+  why?: string;
+}
+
+interface ParamsFixture {
+  owners: Record<string, string>;
+  cases: ParamsCase[];
+}
+
+const PARAMS_OWNER = 'apps/desktop/src/main/lib/dispatchTemplate.ts';
+
+// apps/desktop/src/main/lib/ → five levels below the repo root, where contracts/ sits.
+const paramsFixture: ParamsFixture = JSON.parse(
+  fs.readFileSync(
+    path.join(__dirname, '../../../../../contracts/dispatch-template-params-cases.json'),
+    'utf-8',
+  ),
+);
+
+describe('dispatch template params — cross-language contract', () => {
+  it('the fixture loads and names this owner', () => {
+    // Renaming this file without updating the fixture must FAIL, not silently
+    // stop testing anything.
+    expect(
+      paramsFixture.owners[PARAMS_OWNER],
+      `the fixture must name ${PARAMS_OWNER}`,
+    ).toBeDefined();
+    expect(paramsFixture.cases.length).toBeGreaterThan(0);
+  });
+
+  const tally = new SweepTally();
+  for (const c of paramsFixture.cases) {
+    it(c.name, () => {
+      tally.ran('other');
+      // toEqual, not a name-by-name loop: ORDER is part of the contract (the
+      // list is what a caller reads top-down to fill a template) and so is the
+      // absence of `default` on a required param.
+      expect(dispatchTemplateParams(c.template), c.why ?? '').toEqual(c.expect);
+    });
+  }
+  // The twin of cmd/brain/dispatchparams_test.go's dispatchParamsCorpusFloor.
+  itSweptTheWholeCorpus(tally, 'the dispatch-template params corpus', 18, { allow: 0, deny: 0 });
 });
