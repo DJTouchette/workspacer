@@ -84,6 +84,14 @@ pub struct SpawnConfig {
 pub struct StreamTotals {
     input: u64,
     output: u64,
+    /// The MAIN session's current model, as `system/init` and each
+    /// `message_start` name it.
+    ///
+    /// Kept only so the `result` frame can pick the session's OWN entry out of
+    /// `modelUsage`, which is keyed by model id and holds one entry per model
+    /// that ran during the turn — the main thread's plus every sub-agent's. See
+    /// the `result` arm.
+    model: Option<String>,
 }
 
 /// Translate one stdout event into typed updates. Pure and total: unknown
@@ -106,6 +114,7 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
             // enumerates the session's capabilities.
             "init" => {
                 if let Some(model) = value.get("model").and_then(Value::as_str) {
+                    totals.model = Some(model.to_string());
                     out.push(usage_model(model));
                 }
                 out.push(AgentUpdate::Capabilities(capabilities_from_init(value)));
@@ -129,6 +138,7 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
                         .and_then(|m| m.get("model"))
                         .and_then(Value::as_str)
                     {
+                        totals.model = Some(model.to_string());
                         out.push(usage_model(model));
                     }
                 }
@@ -215,14 +225,7 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
             totals.input += pick("input_tokens").unwrap_or(0);
             totals.output += pick("output_tokens").unwrap_or(0);
             let context_window =
-                value
-                    .get("modelUsage")
-                    .and_then(Value::as_object)
-                    .and_then(|mu| {
-                        mu.values()
-                            .filter_map(|m| m.get("contextWindow").and_then(Value::as_u64))
-                            .max()
-                    });
+                context_window_from_model_usage(value.get("modelUsage"), totals.model.as_deref());
             out.push(AgentUpdate::Usage {
                 model: None,
                 input_tokens: Some(totals.input),
@@ -862,6 +865,37 @@ fn rate_limit_warning(kind: Option<&str>, pct: Option<f64>) -> String {
         Some(p) => format!("You're close to your {label} usage limit — {p:.0}% used"),
         None => format!("You're close to your {label} usage limit"),
     }
+}
+
+/// The session's context window out of a `result` frame's `modelUsage` map.
+///
+/// THE BUG THIS FIXES: this used to be `.max()` across every entry. `modelUsage`
+/// is keyed by model id and holds one entry PER MODEL that ran during the turn —
+/// the main thread's plus every sub-agent's — so a 200k session that delegated
+/// to a sub-agent on a 1M model adopted 1M as its own window, and every gauge
+/// then read the parent as 5× emptier than it was. On the one path where we
+/// have real provider truth, `max` turned it into a wrong-in-the-generous
+/// direction guess. It is also the LIMIT half of a token-side absurdity: clients
+/// that have no direct token count derive one as `pct × window`, so an inflated
+/// window inflates the reported TOKENS by the same factor.
+///
+/// The main model's own entry wins. Failing that, a single-entry map is
+/// unambiguous and is used. Anything else is `None` — with several models in
+/// play and no way to say which is ours, "we do not know" is the honest answer
+/// and the meter hides rather than picking a favourite.
+fn context_window_from_model_usage(
+    model_usage: Option<&Value>,
+    model: Option<&str>,
+) -> Option<u64> {
+    let mu = model_usage?.as_object()?;
+    let window_of = |v: &Value| v.get("contextWindow").and_then(Value::as_u64);
+    if let Some(entry) = model.and_then(|m| mu.get(m)) {
+        return window_of(entry);
+    }
+    if mu.len() == 1 {
+        return mu.values().next().and_then(window_of);
+    }
+    None
 }
 
 fn usage_model(model: &str) -> AgentUpdate {
@@ -1933,6 +1967,87 @@ mod tests {
         ));
         // Non-result frames are never abort/error.
         assert!(!result_is_abort_or_error(&json!({ "type": "assistant" })));
+    }
+
+    /// THE SUB-AGENT INFLATION BUG, with the shape that produced it.
+    ///
+    /// `modelUsage` holds one entry per model that ran during the turn. A 200k
+    /// parent that delegated to a sub-agent on a 1M model used to adopt 1M as
+    /// its OWN window (`.max()` across the entries) and read 5× emptier than it
+    /// was — on the one path where we have real provider truth. It is also the
+    /// limit half of a token-side absurdity: a client with no direct token count
+    /// derives one as `pct × window`, so an inflated window inflates the
+    /// reported TOKENS by the same factor.
+    #[test]
+    fn a_subagents_bigger_window_does_not_inflate_the_parents() {
+        let mut totals = StreamTotals::default();
+        // The session names its model, exactly as `system/init` does.
+        translate(
+            &json!({ "type": "system", "subtype": "init", "model": "claude-sonnet-4-5" }),
+            &mut totals,
+        );
+        let updates = translate(
+            &json!({ "type": "result", "subtype": "success", "is_error": false,
+                "usage": { "input_tokens": 10, "output_tokens": 20 },
+                "modelUsage": {
+                    "claude-sonnet-4-5": { "contextWindow": 200000 },
+                    // The Task tool's sub-agent, on a 1M model.
+                    "claude-opus-5[1m]": { "contextWindow": 1000000 }
+                } }),
+            &mut totals,
+        );
+        let window = updates.iter().find_map(|u| match u {
+            AgentUpdate::Usage { context_window, .. } => Some(*context_window),
+            _ => None,
+        });
+        assert_eq!(
+            window,
+            Some(Some(200_000)),
+            "the parent's OWN entry wins; the sub-agent's window is not the session's"
+        );
+    }
+
+    /// The two fallbacks, and where the honest unknown starts.
+    #[test]
+    fn model_usage_window_falls_back_only_where_it_is_unambiguous() {
+        let mu = |v: serde_json::Value| v;
+        // One entry, no model known yet (turn 1 before any `init` was seen):
+        // unambiguous, so use it.
+        assert_eq!(
+            context_window_from_model_usage(
+                Some(&mu(
+                    json!({ "claude-sonnet-4-5": { "contextWindow": 200000 } })
+                )),
+                None
+            ),
+            Some(200_000)
+        );
+        // Several entries and no idea which is ours: UNKNOWN, not a favourite.
+        // `.max()` used to answer 1M here, which is a guess in the generous
+        // direction on the one path that carries real provider truth.
+        assert_eq!(
+            context_window_from_model_usage(
+                Some(&mu(json!({
+                    "claude-sonnet-4-5": { "contextWindow": 200000 },
+                    "claude-opus-5[1m]": { "contextWindow": 1000000 }
+                }))),
+                None
+            ),
+            None
+        );
+        // A model we know, absent from the map: still unknown rather than
+        // borrowing a stranger's number.
+        assert_eq!(
+            context_window_from_model_usage(
+                Some(&mu(json!({
+                    "claude-opus-5[1m]": { "contextWindow": 1000000 },
+                    "claude-haiku-4-5": { "contextWindow": 200000 }
+                }))),
+                Some("claude-sonnet-4-5")
+            ),
+            None
+        );
+        assert_eq!(context_window_from_model_usage(None, Some("x")), None);
     }
 
     #[test]

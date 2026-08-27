@@ -46,6 +46,36 @@ describe('SessionUsageAccumulator.applyUsage — context limit', () => {
     expect(s.usage!.contextLimit).toBeNull();
   });
 
+  // ABSURD NUMBERS, token side. A sub-agent's turn is billed to the session
+  // (its cost is real) but it is NOT the main thread's context: folding it in
+  // would both clobber the gauge and — now that the peak drives the drift alarm
+  // — disarm a perfectly good window on the strength of tokens the parent never
+  // held. The Rust reader guards its own fold the same way (session/usage.rs).
+  it('a sub-agent turn moves neither the gauge nor the peak', () => {
+    const s = mkSession();
+    acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 50_000 }, 'm1');
+    // A Task sub-agent on a bigger budget, 400k into its own run.
+    acc.applyUsage(s, 'claude-opus-5', { input_tokens: 400_000 }, 'sub1', true);
+    expect(s.usage!.contextTokens).toBe(50_000);
+    expect(s.peakContext).toBe(50_000);
+    expect(s.usage!.contextLimit).toBe(200_000);
+    // Its COST still counts — it ran, and the account was billed for it.
+    expect(s.usage!.totalInputTokens).toBe(450_000);
+  });
+
+  // Compaction. The gauge is the LATEST turn, assigned rather than accumulated,
+  // so a post-compact turn drops the count instead of climbing forever.
+  it('the gauge drops after a compaction; the peak remembers', () => {
+    const s = mkSession();
+    acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 150_000 }, 'm1');
+    expect(s.usage!.contextTokens).toBe(150_000);
+    // …auto-compaction, and the next turn starts small again.
+    acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 20_000 }, 'm2');
+    expect(s.usage!.contextTokens).toBe(20_000);
+    expect(s.peakContext).toBe(150_000);
+    expect(s.usage!.contextLimit).toBe(200_000);
+  });
+
   it('leaves the limit at 200k for a session that never exceeds the standard window', () => {
     const s = mkSession();
     acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 50_000 }, 'm1');

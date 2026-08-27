@@ -566,9 +566,20 @@ impl StatusLine {
             // `init` frame doesn't either). Read it best-effort so we pick it up
             // automatically if that ever changes, without depending on it.
             effort: v.get("effort").and_then(Value::as_str).map(str::to_owned),
+            // CLAMPED, because every client renders this straight — the TUI,
+            // /m and remote.html all print `context_used_pct` without a bound
+            // of their own, and the desktop multiplies it by the window to
+            // DERIVE a token count for providers that report none. An
+            // out-of-range percentage therefore does not stay a cosmetic
+            // oddity: it becomes a session claiming to hold many times what it
+            // can. `UsageAcc::status_line` already clamps the percentage it
+            // computes for managed providers (`.min(100.0)`); this is the same
+            // rule for the one it is handed rather than computes.
             context_used_pct: cw
                 .and_then(|c| c.get("used_percentage"))
-                .and_then(Value::as_f64),
+                .and_then(Value::as_f64)
+                .filter(|p| p.is_finite())
+                .map(|p| p.clamp(0.0, 100.0)),
             context_window_size: cw
                 .and_then(|c| c.get("context_window_size"))
                 .and_then(Value::as_u64),
@@ -1126,6 +1137,38 @@ pub struct HookEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ABSURD NUMBERS, at the producer.
+    ///
+    /// `context_used_pct` is rendered straight by the TUI, /m and remote.html,
+    /// and the desktop MULTIPLIES it by the window to derive a token count for
+    /// providers that report none. So an out-of-range percentage is not a
+    /// cosmetic oddity — it becomes a session claiming to hold many times what
+    /// it can. Clamped here, where the payload is read, rather than in each of
+    /// the four places that consume it.
+    #[test]
+    fn context_percentage_is_clamped_to_a_percentage() {
+        let pct = |v: serde_json::Value| {
+            StatusLine::from_claude_json(&serde_json::json!({ "context_window": v }))
+                .context_used_pct
+        };
+        assert_eq!(
+            pct(serde_json::json!({ "used_percentage": 42.5 })),
+            Some(42.5)
+        );
+        assert_eq!(
+            pct(serde_json::json!({ "used_percentage": 4_300.0 })),
+            Some(100.0),
+            "a running total where a percentage was expected must not multiply the window by 43"
+        );
+        assert_eq!(
+            pct(serde_json::json!({ "used_percentage": -5.0 })),
+            Some(0.0)
+        );
+        // Non-finite is not a reading at all.
+        assert_eq!(pct(serde_json::json!({ "used_percentage": "nope" })), None);
+        assert_eq!(pct(serde_json::json!({})), None);
+    }
 
     /// Claude never spells a window's length out, so the daemon stamps it from
     /// the window's own name, and only for the windows that actually reported.

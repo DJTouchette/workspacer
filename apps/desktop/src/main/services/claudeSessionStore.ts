@@ -250,7 +250,16 @@ export interface SessionStatusLine {
  *  used" instead of silently reporting 0. */
 export function contextTokensFromStatusLine(sl?: SessionStatusLine): number | undefined {
   if (sl?.contextUsedPct === undefined || sl?.contextWindowSize === undefined) return undefined;
-  return Math.round((sl.contextUsedPct / 100) * sl.contextWindowSize);
+  // DERIVED, not counted — so it inherits every error in either input, and it
+  // is the only token figure a managed (non-Claude) session has. A percentage
+  // is bounded by definition but nothing upstream enforces that: claudemon
+  // reads `used_percentage` straight off the provider's payload
+  // (session/state.rs) and does not clamp it, and a provider that reports a
+  // running total rather than a percentage would multiply the window by it.
+  // Clamp to the window, so the worst case is a meter pegged at 100% instead
+  // of a session claiming to hold forty times what it can.
+  const pct = Math.min(100, Math.max(0, sl.contextUsedPct));
+  return Math.round((pct / 100) * sl.contextWindowSize);
 }
 
 function normalizeManagedSubagent(raw: unknown): SubagentInfo | null {
