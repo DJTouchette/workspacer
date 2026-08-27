@@ -4,6 +4,12 @@
 !services/hub
 !services/claudemon
 !deploy/fly/node
+# Shared with the hub image, so they sit one level up rather than in either
+# image's directory: the release download + verify (artifact mode) and the single
+# writer of the build-stamp format (both modes). Build-time only — neither is
+# copied into the finished image.
+!deploy/fly/fetch-release.sh
+!deploy/fly/write-build-stamp.sh
 
 services/hub/hub
 services/hub/brain

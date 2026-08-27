@@ -10,6 +10,9 @@
 !services/hub
 !apps/desktop
 !deploy/fly/hub
+# Shared with the node base image; see the note in its .dockerignore.
+!deploy/fly/fetch-release.sh
+!deploy/fly/write-build-stamp.sh
 
 services/hub/hub
 services/hub/brain

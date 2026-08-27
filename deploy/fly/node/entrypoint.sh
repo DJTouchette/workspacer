@@ -211,6 +211,20 @@ log() { printf '%s entrypoint: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 echo "================================================================"
 log "BOOT $BOOT_ID"
 log "  app=${FLY_APP_NAME:-<none>} machine=${FLY_MACHINE_ID:-<none>} region=${FLY_REGION:-<none>} image=${FLY_IMAGE_REF:-<none>}"
+# WHAT CODE IS THIS. The image digest above identifies the image and says nothing
+# about what is in it, and no daemon here has an honest --version: `workspacer`,
+# `hub` and `brain` have no such flag, and `claudemon --version` prints the Cargo
+# version `0.1.0`, unchanged for the life of the project. The stamp is written at
+# build time (deploy/fly/write-build-stamp.sh) and is the only answer, so it goes
+# on stdout at boot where `fly logs` can see it without a shell on the machine —
+# the same reason the previous boot log is replayed above.
+WKS_BUILD_STAMP="${WKS_BUILD_STAMP:-/usr/local/share/workspacer/build-stamp}"
+if [ -f "$WKS_BUILD_STAMP" ]; then
+  log "  build: $(tr '\n' ' ' <"$WKS_BUILD_STAMP")"
+else
+  log "  build: NO BUILD STAMP at ${WKS_BUILD_STAMP} — this image predates it, and there is"
+  log "         no other honest way to tell which commit it carries. Rebuild it."
+fi
 # --------------------------------------------------------------------------
 # CONSUME the record, do not merely read it.
 # --------------------------------------------------------------------------

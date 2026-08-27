@@ -84,6 +84,47 @@
 # error naming the directory.
 
 # ---------------------------------------------------------------------------
+# TWO WAYS TO GET THE DAEMONS IN
+# ---------------------------------------------------------------------------
+# WKS_INSTALL=source (the DEFAULT, and unchanged) compiles brain, workspacer,
+# mcp and claudemon from this working tree, below. It is what preflight.sh runs,
+# what a dev iterating on the daemons wants, and the only mode that can build a
+# commit that was never released.
+#
+# WKS_INSTALL=artifact downloads `workspacer-server-<platform>.tar.gz` from a
+# GitHub release and installs the SAME files to the SAME paths — no Go stage, no
+# Rust stage, no toolchain images pulled at all. BuildKit only builds stages the
+# final one actually depends on, and the artifact stage depends on neither
+# builder, so that saving is real rather than aspirational: on a box deploy it
+# turns ~10 minutes of compiling into ~20 seconds of downloading.
+#
+#   docker build -f deploy/fly/node/Dockerfile \
+#     --build-arg WKS_INSTALL=artifact \
+#     --build-arg WKS_RELEASE_TAG=nightly \
+#     --build-arg WKS_RELEASE_SHA=$(gh release view nightly --json targetCommitish -q .targetCommitish) \
+#     -t workspacer-node-base:nightly .
+#
+# WKS_RELEASE_SHA is optional and worth passing: `nightly` is a MUTABLE tag,
+# rolled every night, so naming it is not naming a commit. Either way the build
+# FAILS LOUDLY if the bundle's own build-stamp disagrees with what was asked for
+# — see deploy/fly/fetch-release.sh, which is where that argument is written out.
+#
+# Declared before the first FROM because only a global ARG can be interpolated
+# into a FROM line. Each stage that uses one re-declares it locally.
+ARG WKS_INSTALL=source
+ARG WKS_RELEASE_TAG=nightly
+ARG WKS_RELEASE_SHA=
+ARG WKS_RELEASE_REPO=DJTouchette/workspacer
+ARG WKS_RELEASE_ASSET=workspacer-server-linux-x64.tar.gz
+ARG WKS_RELEASE_BASE_URL=
+# Source mode has no release to name, so the honest identity of a source-built
+# image is the commit it was built from. Nothing in the build context can supply
+# it (`**/.git` is in Dockerfile.dockerignore, deliberately), so the caller must:
+# preflight.sh passes `git rev-parse HEAD`. Left unset it stamps `unknown`, which
+# is at least not a lie.
+ARG WKS_SOURCE_SHA=
+
+# ---------------------------------------------------------------------------
 FROM golang:1.25-trixie AS gobuild
 # services/hub/go.mod requires go 1.25.4. No cgo anywhere in the module graph,
 # so these link static and copy cleanly into the runtime image.
@@ -113,6 +154,62 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     mkdir -p /out && \
     cargo build --release --bin claudemon && \
     cp target/release/claudemon /out/claudemon
+
+# ---------------------------------------------------------------------------
+# THE TWO ARMS. Both must end with the same file names under /out, so the
+# runtime stage's COPY lines below never learn which one ran.
+# ---------------------------------------------------------------------------
+# The source arm. `FROM golang:1.25-trixie` and not a slim Debian purely because
+# source mode has already pulled this image — a second base image here would add
+# a download to the mode that is meant to be the cheap-and-local one. It compiles
+# nothing; it collects, and writes the stamp.
+FROM golang:1.25-trixie AS binaries-source
+ARG WKS_SOURCE_SHA
+COPY --from=gobuild   /out/brain      /out/brain
+COPY --from=gobuild   /out/workspacer /out/workspacer
+COPY --from=gobuild   /out/mcp        /out/mcp
+COPY --from=rustbuild /out/claudemon  /out/claudemon
+COPY deploy/fly/write-build-stamp.sh /usr/local/bin/write-build-stamp.sh
+RUN WKS_STAMP_COMPONENT=server WKS_STAMP_INSTALL=source \
+    WKS_STAMP_COMMIT="${WKS_SOURCE_SHA}" WKS_STAMP_PLATFORM=linux-x64 \
+    bash /usr/local/bin/write-build-stamp.sh /out/build-stamp
+
+# The artifact arm. Debian slim rather than the golang image on purpose: this
+# arm exists to need NO toolchain, and inheriting a 900MB one to run curl would
+# undercut the only thing it is for.
+#
+FROM debian:trixie-slim AS binaries-artifact
+ARG WKS_RELEASE_TAG
+ARG WKS_RELEASE_SHA
+ARG WKS_RELEASE_REPO
+ARG WKS_RELEASE_ASSET
+ARG WKS_RELEASE_BASE_URL
+# Unpinned, per base rule 5: this stage is rebuilt to pick up Debian security
+# updates, and a pinned version breaks the moment the archive rotates.
+# hadolint ignore=DL3008
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
+COPY deploy/fly/fetch-release.sh /usr/local/bin/fetch-release.sh
+# The token is a BuildKit SECRET and not a build ARG: an ARG is recorded in the
+# image history for anyone who pulls the image. `required=false` keeps the public
+# anonymous download — the normal case — working with no --secret flag at all.
+RUN --mount=type=secret,id=gh_token,required=false \
+    WKS_RELEASE_TAG="${WKS_RELEASE_TAG}" \
+    WKS_RELEASE_SHA="${WKS_RELEASE_SHA}" \
+    WKS_RELEASE_REPO="${WKS_RELEASE_REPO}" \
+    WKS_RELEASE_ASSET="${WKS_RELEASE_ASSET}" \
+    WKS_RELEASE_BASE_URL="${WKS_RELEASE_BASE_URL}" \
+    WKS_RELEASE_TOKEN_FILE=/run/secrets/gh_token \
+    WKS_RELEASE_REQUIRE="workspacer brain claudemon mcp build-stamp" \
+    WKS_RELEASE_CHMOD="workspacer hub brain claudemon mcp" \
+    bash /usr/local/bin/fetch-release.sh /out
+
+# The "untagged image" warning is a false positive on a stage alias: both arms
+# resolve to stages defined above, not to registry references. (Same trick, and
+# the same suppression, as the hub image's webbuild-${WKS_WITH_WEBAPP}.)
+# hadolint ignore=DL3006
+FROM binaries-${WKS_INSTALL} AS binaries
 
 # ---------------------------------------------------------------------------
 FROM node:22-trixie-slim AS runtime
@@ -181,10 +278,17 @@ RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && \
     npm cache clean --force && \
     rm -rf /root/.npm
 
-COPY --from=gobuild   /out/brain      /usr/local/bin/brain
-COPY --from=gobuild   /out/workspacer /usr/local/bin/workspacer
-COPY --from=gobuild   /out/mcp        /usr/local/bin/mcp
-COPY --from=rustbuild /out/claudemon  /usr/local/bin/claudemon
+COPY --from=binaries /out/brain      /usr/local/bin/brain
+COPY --from=binaries /out/workspacer /usr/local/bin/workspacer
+COPY --from=binaries /out/mcp        /usr/local/bin/mcp
+COPY --from=binaries /out/claudemon  /usr/local/bin/claudemon
+
+# The one file on the box that says what the box IS. /usr/local, never $HOME,
+# for the same reason as everything else here. verify-image.sh asserts it and
+# prints it; entrypoint.sh prints it on every boot; deploy/fly/RUNBOOK.md Part D
+# maps it back to a release tag. See deploy/fly/write-build-stamp.sh for why a
+# file has to carry this and a `--version` flag does not.
+COPY --from=binaries /out/build-stamp /usr/local/share/workspacer/build-stamp
 
 COPY deploy/fly/node/entrypoint.sh      /usr/local/lib/wks/entrypoint.sh
 COPY deploy/fly/node/bootstrap.sh       /usr/local/lib/wks/bootstrap.sh

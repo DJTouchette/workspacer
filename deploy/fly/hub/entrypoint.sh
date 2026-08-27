@@ -131,6 +131,32 @@ log() { printf '%s entrypoint: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 echo "================================================================"
 log "BOOT $BOOT_ID"
 log "  app=${FLY_APP_NAME:-<none>} machine=${FLY_MACHINE_ID:-<none>} region=${FLY_REGION:-<none>} image=${FLY_IMAGE_REF:-<none>}"
+# WHAT CODE IS THIS. See the node entrypoint for the full argument; it applies
+# here unchanged. TWO stamps on this machine, because it is a downstream layer:
+# the base's covers the daemons it installed, this layer's covers `hub` and the
+# /app bundle. They can honestly differ — a source hub on an artifact base is a
+# normal way to iterate — so both are printed rather than one being taken as
+# authoritative. verify-image.sh already refused the build if two ARTIFACT
+# installs disagreed.
+WKS_BUILD_STAMP="${WKS_BUILD_STAMP:-/usr/local/share/workspacer/build-stamp}"
+WKS_BUILD_STAMP_HUB="${WKS_BUILD_STAMP_HUB:-/usr/local/share/workspacer/build-stamp.hub}"
+if [ -f "$WKS_BUILD_STAMP" ] && [ -f "$WKS_BUILD_STAMP_HUB" ] &&
+  cmp -s "$WKS_BUILD_STAMP" "$WKS_BUILD_STAMP_HUB"; then
+  # Byte-identical is the normal ARTIFACT case: both layers installed the same
+  # `workspacer-server-*` bundle, so both carry that bundle's stamp verbatim —
+  # including its `component=server`, which is true of where the files came from
+  # even in the file named .hub. Printing it twice would read as a bug.
+  log "  build: $(tr '\n' ' ' <"$WKS_BUILD_STAMP") (hub and daemons from the same bundle)"
+else
+  for stamp_file in "$WKS_BUILD_STAMP_HUB" "$WKS_BUILD_STAMP"; do
+    if [ -f "$stamp_file" ]; then
+      log "  build: $(tr '\n' ' ' <"$stamp_file")"
+    else
+      log "  build: NO BUILD STAMP at ${stamp_file} — this image predates it, and there is"
+      log "         no other honest way to tell which commit it carries. Rebuild it."
+    fi
+  done
+fi
 # CONSUMED, not just read. See the node entrypoint for the full argument; it
 # applies here unchanged. The short form: this file is written by a trap, a
 # SIGKILL runs no trap, and a record left in place is silently re-reported as

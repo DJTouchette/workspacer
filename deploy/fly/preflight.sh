@@ -7,9 +7,10 @@
 # cache and about a minute on a warm one, it needs nothing but docker, and when
 # it is green the only things left are the three that genuinely need a human.
 #
-#   ./deploy/fly/preflight.sh          # everything
-#   ./deploy/fly/preflight.sh build    # just the images
-#   ./deploy/fly/preflight.sh boot     # just the boot rehearsal
+#   ./deploy/fly/preflight.sh           # everything
+#   ./deploy/fly/preflight.sh build     # just the images
+#   ./deploy/fly/preflight.sh boot      # just the boot rehearsal
+#   ./deploy/fly/preflight.sh artifact  # just the WKS_INSTALL=artifact path
 #
 # ---------------------------------------------------------------------------
 # WHY THE BOOT REHEARSAL STAGE EXISTS
@@ -80,8 +81,16 @@ if [ "$STAGE" = all ] || [ "$STAGE" = build ]; then
     rm -f "$log"
   }
 
-  build "base    $BASE_TAG" -f deploy/fly/node/Dockerfile -t "$BASE_TAG" .
-  build "hub     $HUB_TAG" -f deploy/fly/hub/Dockerfile --build-arg WKS_BASE="$BASE_TAG" -t "$HUB_TAG" .
+  # The commit these source-mode images are built from. Nothing in the build
+  # context can supply it — `**/.git` is excluded from both .dockerignores on
+  # purpose — so it is passed in, and lands in the image's build-stamp. Without
+  # it a locally built image stamps `commit=unknown`, which is honest but useless.
+  SRC_SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+
+  build "base    $BASE_TAG" -f deploy/fly/node/Dockerfile \
+    --build-arg WKS_SOURCE_SHA="$SRC_SHA" -t "$BASE_TAG" .
+  build "hub     $HUB_TAG" -f deploy/fly/hub/Dockerfile --build-arg WKS_BASE="$BASE_TAG" \
+    --build-arg WKS_SOURCE_SHA="$SRC_SHA" -t "$HUB_TAG" .
   build "example $EXAMPLE_TAG (proves the base extends)" \
     -f deploy/fly/node/example.Dockerfile --build-arg WKS_BASE="$BASE_TAG" \
     -t "$EXAMPLE_TAG" deploy/fly/node
@@ -135,11 +144,17 @@ PY
 
   ./deploy/fly/node/test-bootstrap.sh >/dev/null && pass "node bootstrap.sh: 106 assertions"
   ./deploy/fly/hub/test-bootstrap.sh  >/dev/null && pass "hub bootstrap.sh: 113 assertions"
+  # The artifact install path, offline: curl speaks file://, so the real
+  # download-verify-install runs against tarballs the suite builds. Everything
+  # the ARTIFACT stage below cannot prove without docker is proved here.
+  ./deploy/fly/test-fetch-release.sh >/dev/null && pass "fetch-release.sh: 51 assertions (artifact mode, offline)"
 
   docker run --rm -v "$PWD/deploy/fly/node:/mnt:ro" -w /mnt koalaman/shellcheck:stable \
     -s bash -S style entrypoint.sh bootstrap.sh test-bootstrap.sh verify-image.sh && pass "shellcheck node"
   docker run --rm -v "$PWD/deploy/fly/hub:/mnt:ro" -w /mnt koalaman/shellcheck:stable \
     -s bash -S style entrypoint.sh bootstrap.sh test-bootstrap.sh && pass "shellcheck hub"
+  docker run --rm -v "$PWD/deploy/fly:/mnt:ro" -w /mnt koalaman/shellcheck:stable \
+    -s bash -S style fetch-release.sh write-build-stamp.sh test-fetch-release.sh && pass "shellcheck shared (fetch-release, write-build-stamp)"
 
   for df in node/Dockerfile node/example.Dockerfile hub/Dockerfile; do
     docker run --rm -i hadolint/hadolint hadolint --failure-threshold info - \
@@ -166,6 +181,195 @@ if [ "$STAGE" = all ] || [ "$STAGE" = contract ]; then
     --entrypoint /bin/bash "$BASE_TAG" -c /usr/local/lib/wks/test-bootstrap.sh >/dev/null \
     && pass "106 assertions again INSIDE the image, as wks, on an empty volume"
   docker volume rm "$vol" >/dev/null
+
+  # The build stamp, read out of the finished image rather than out of the build
+  # log. Until this file existed there was NO honest way to ask a box which
+  # commit it runs: `workspacer`, `hub` and `brain` have no --version, and
+  # `claudemon --version` prints a Cargo version that has not moved in years.
+  stamp_of() { docker run --rm --entrypoint cat "$1" "${2:-/usr/local/share/workspacer/build-stamp}" 2>/dev/null; }
+  base_stamp="$(stamp_of "$BASE_TAG")"
+  if grep -q '^install=source$' <<<"$base_stamp"; then
+    pass "the base image's build-stamp says install=source"
+  else
+    fail "the base image's build-stamp does not say install=source: $base_stamp"
+  fi
+  if grep -q "^commit=$(git rev-parse HEAD 2>/dev/null || echo unknown)\$" <<<"$base_stamp"; then
+    pass "and names the commit it was actually built from"
+  else
+    fail "the base stamp's commit is not this worktree's HEAD: $base_stamp"
+  fi
+  if grep -q '^component=hub$' <<<"$(stamp_of "$HUB_TAG" /usr/local/share/workspacer/build-stamp.hub)"; then
+    pass "the hub layer stamps SEPARATELY, beside the base's rather than over it"
+  else
+    fail "the hub image has no /usr/local/share/workspacer/build-stamp.hub"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 3b. ARTIFACT: the install-from-release path, with no release and no network
+# ---------------------------------------------------------------------------
+# WKS_INSTALL=artifact installs the box from a published `workspacer-server-*`
+# bundle instead of compiling the tree — which is the whole point (11 seconds
+# instead of ten minutes), and also the whole risk: a mutable `nightly` tag means
+# "the download worked" says nothing about what is now in the image.
+#
+# This stage proves the wiring without publishing anything. It takes the files
+# the SOURCE build just installed, repackages them as the bundle the release
+# workflow produces, serves them over the docker bridge, and rebuilds the image
+# in artifact mode. Then it checks the two things that matter: the drift guard
+# fires on the wrong tag, and a correct artifact image passes the SAME
+# verify-image.sh the source one does.
+#
+# It needs the base image, so it runs after BUILD. If the build container cannot
+# reach the fixture server (an unusual docker network setup), it SKIPS loudly
+# rather than failing — test-fetch-release.sh in the STATIC stage already proves
+# the logic itself, offline, with 51 assertions.
+if [ "$STAGE" = all ] || [ "$STAGE" = artifact ]; then
+  section "ARTIFACT: WKS_INSTALL=artifact, against a fixture release built from this tree"
+
+  docker image inspect "$BASE_TAG" >/dev/null 2>&1 || {
+    echo "  (needs $BASE_TAG — run the build stage first)"; exit 1
+  }
+
+  af_dir="$(mktemp -d)"
+  af_srv=""
+  cleanup_artifact() {
+    [ -n "$af_srv" ] && docker rm -f "$af_srv" >/dev/null 2>&1
+    rm -rf "$af_dir"
+  }
+  trap cleanup_artifact EXIT
+
+  # Repackage the source image's own files into the shape
+  # .github/workflows/release.yml ships. Using the built image rather than the
+  # worktree means the fixture is real binaries, not stubs, so the artifact image
+  # this produces is one that could actually boot.
+  af_tag="preflight-fixture"
+  af_root="$af_dir/releases/$af_tag"
+  mkdir -p "$af_root" "$af_dir/stage/workspacer-server"
+  af_cid="$(docker create "$BASE_TAG")"
+  for b in workspacer brain mcp claudemon; do
+    docker cp "$af_cid:/usr/local/bin/$b" "$af_dir/stage/workspacer-server/$b" >/dev/null
+  done
+  docker cp "$af_cid:/usr/local/share/workspacer/build-stamp" "$af_dir/stage/workspacer-server/build-stamp" >/dev/null
+  docker rm "$af_cid" >/dev/null
+  # `hub` and web/ come off the hub image when there is one, so the hub's own
+  # artifact require-list has something to find.
+  if docker image inspect "$HUB_TAG" >/dev/null 2>&1; then
+    af_hcid="$(docker create "$HUB_TAG")"
+    docker cp "$af_hcid:/usr/local/bin/hub" "$af_dir/stage/workspacer-server/hub" >/dev/null
+    docker cp "$af_hcid:/usr/local/share/workspacer/web" "$af_dir/stage/workspacer-server/web" >/dev/null 2>&1 || true
+    docker rm "$af_hcid" >/dev/null
+  fi
+  # Restamp as a RELEASE bundle under the fixture tag: an image built from this
+  # must be able to say it came from a release, not from this worktree.
+  WKS_STAMP_COMPONENT=server WKS_STAMP_INSTALL=release \
+  WKS_STAMP_VERSION=preflight-fixture WKS_STAMP_TAG="$af_tag" \
+  WKS_STAMP_COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)" \
+  WKS_STAMP_PLATFORM=linux-x64 WKS_STAMP_RUN=preflight \
+    ./deploy/fly/write-build-stamp.sh "$af_dir/stage/workspacer-server/build-stamp" >/dev/null
+  tar -C "$af_dir/stage" -czf "$af_root/workspacer-server-linux-x64.tar.gz" workspacer-server
+  # The SAME bundle, served under a SECOND tag. This is what a rolled tag, a
+  # stale mirror or a moved v* actually looks like: the download succeeds and the
+  # bytes are wrong. Pointing the guard at a tag that simply 404s would prove only
+  # that curl works.
+  mkdir -p "$af_dir/releases/preflight-wrong-tag"
+  cp "$af_root/workspacer-server-linux-x64.tar.gz" "$af_dir/releases/preflight-wrong-tag/"
+
+  # Serve it on the docker bridge gateway, using the image already on the machine
+  # (it carries busybox-static for the node's own doorbell) so this pulls nothing.
+  af_gw="$(docker network inspect bridge -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null)"
+  af_port=$((18700 + ($$ % 200)))
+  if [ -n "$af_gw" ]; then
+    af_srv="$(docker run -d --rm -v "$af_dir/releases:/srv:ro" \
+      -p "$af_gw:$af_port:8080" --entrypoint busybox "$BASE_TAG" \
+      httpd -f -p "0.0.0.0:8080" -h /srv 2>/dev/null || true)"
+  fi
+  af_url="http://$af_gw:$af_port"
+  if [ -z "$af_srv" ] || ! curl -sfI --max-time 5 "$af_url/$af_tag/workspacer-server-linux-x64.tar.gz" >/dev/null 2>&1; then
+    printf '  \033[33mSKIP\033[0m artifact stage: no fixture server reachable at %s.\n' "$af_url"
+    printf '       The logic is covered offline by test-fetch-release.sh in the STATIC stage.\n'
+  else
+    af_build() {
+      local label="$1" want_rc="$2"; shift 2
+      local log rc=0; log="$(mktemp)"
+      # `|| rc=$?` and not a bare call: `set -e` is on, and HALF the calls here
+      # are SUPPOSED to fail — a drift guard that never fires proves nothing.
+      docker build -f deploy/fly/node/Dockerfile \
+        --build-arg WKS_INSTALL=artifact \
+        --build-arg WKS_RELEASE_BASE_URL="$af_url" \
+        "$@" -t workspacer-node-base:artifact-preflight . >"$log" 2>&1 || rc=$?
+      if [ "$rc" = "$want_rc" ]; then pass "$label"; else
+        fail "$label (rc=$rc, want $want_rc; log follows)"; tail -25 "$log" | sed 's/^/      /'
+      fi
+      AF_LOG="$log"
+    }
+
+    # THE DRIFT GUARD, which is the reason this mode is allowed to exist at all.
+    af_build "DRIFT GUARD: a bundle that downloads fine but claims another tag FAILS the build" 1 \
+      --build-arg WKS_RELEASE_TAG=preflight-wrong-tag
+    if grep -qF 'RELEASE DRIFT' "$AF_LOG"; then
+      pass "and the build log names it as release drift"
+    else
+      fail "the failing build did not print RELEASE DRIFT"
+    fi
+    rm -f "$AF_LOG"
+
+    af_build "COMMIT GUARD: the right tag with the wrong sha FAILS the build" 1 \
+      --build-arg WKS_RELEASE_TAG="$af_tag" \
+      --build-arg WKS_RELEASE_SHA=0000000000000000000000000000000000000000
+    if grep -qF 'COMMIT DRIFT' "$AF_LOG"; then
+      pass "and names the commit mismatch"
+    else
+      fail "the failing build did not print COMMIT DRIFT"
+    fi
+    rm -f "$AF_LOG"
+
+    af_build "an artifact image builds when tag AND sha both match" 0 \
+      --build-arg WKS_RELEASE_TAG="$af_tag" \
+      --build-arg WKS_RELEASE_SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+    # NO TOOLCHAIN. This is the claim the mode is sold on, so it is asserted from
+    # the build log rather than assumed from the Dockerfile's shape.
+    if grep -qE '^#[0-9]+ \[(gobuild|rustbuild)' "$AF_LOG"; then
+      fail "artifact mode still ran a Go or Rust builder stage"
+    else
+      pass "NO TOOLCHAIN: neither the gobuild nor the rustbuild stage ran"
+    fi
+    rm -f "$AF_LOG"
+
+    docker run --rm --entrypoint /usr/local/lib/wks/verify-image.sh \
+      workspacer-node-base:artifact-preflight >/dev/null \
+      && pass "verify-image.sh passes inside the artifact image, same as the source one"
+
+    af_stamp="$(docker run --rm --entrypoint cat workspacer-node-base:artifact-preflight \
+      /usr/local/share/workspacer/build-stamp 2>/dev/null)"
+    if grep -q "^install=release$" <<<"$af_stamp"; then
+      pass "and its stamp says install=release, not source — provenance survived the copy"
+    else
+      fail "the artifact image's stamp does not say install=release: $af_stamp"
+    fi
+    if grep -q "^tag=$af_tag\$" <<<"$af_stamp"; then
+      pass "and names the release tag it came from"
+    else
+      fail "the artifact image's stamp does not name the tag: $af_stamp"
+    fi
+
+    # The claim the whole runbook rests on: the boot log SAYS this, without a
+    # shell on the machine. `fly logs` is all an operator gets on a box that
+    # died, so an identity only readable by exec is not an identity.
+    boot_line="$(docker run --rm --entrypoint /bin/bash workspacer-node-base:artifact-preflight -c \
+      'WKS_BUILD_STAMP=/usr/local/share/workspacer/build-stamp; printf "  build: %s\n" "$(tr "\n" " " <"$WKS_BUILD_STAMP")"' 2>/dev/null)"
+    if grep -qF "tag=$af_tag" <<<"$boot_line"; then
+      pass "the entrypoint's stamp line renders on one line: ${boot_line# }"
+    else
+      fail "the entrypoint's stamp line did not render: $boot_line"
+    fi
+
+    docker rmi workspacer-node-base:artifact-preflight >/dev/null 2>&1 || true
+  fi
+
+  cleanup_artifact
+  af_srv=""
+  trap - EXIT
 fi
 
 # ---------------------------------------------------------------------------
