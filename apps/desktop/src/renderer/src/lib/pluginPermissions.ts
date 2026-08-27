@@ -64,6 +64,7 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
 
   // Reading a session reads its whole conversation.
   'sessions.conversation': { label: 'Read your agent conversations' },
+  'sessions.subagentConversation': { label: 'Read your subagent conversations' },
   'sessions.transcript': { label: 'Read your agent transcripts' },
   'sessions.snapshot': { label: 'Read agent state' },
   'sessions.snapshots': { label: 'Read agent state' },

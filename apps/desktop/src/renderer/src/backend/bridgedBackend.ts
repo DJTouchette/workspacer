@@ -160,5 +160,38 @@ export function createBridgedBackend(ipc: ElectronAPI, token: string, busUrl: st
     }
   }
 
+  // The web backend can read provider-native child threads through the hub bus,
+  // but Claude workflow-run drill-in still resolves local artifact files through
+  // the watcher in main. In desktop bridged mode, preserve that IPC path; for
+  // plain subagent rows, try the bus first so the same code path web/remote uses
+  // gets exercised locally, then fall back to IPC for older hubs.
+  const busWorkflowAgentTranscript = bus.workflowAgentTranscript.bind(bus);
+  const ipcWorkflowAgentTranscript = ipc.workflowAgentTranscript?.bind(ipc);
+  api.workflowAgentTranscript = async (sessionId, runId, agentId) => {
+    if (runId !== null) {
+      return ipcWorkflowAgentTranscript
+        ? ipcWorkflowAgentTranscript(sessionId, runId, agentId)
+        : busWorkflowAgentTranscript(sessionId, runId, agentId);
+    }
+    const overBus = await busWorkflowAgentTranscript(sessionId, runId, agentId);
+    if (overBus) return overBus;
+    return ipcWorkflowAgentTranscript ? ipcWorkflowAgentTranscript(sessionId, runId, agentId) : null;
+  };
+
+  const busWorkflowAgentConversation = bus.workflowAgentConversation.bind(bus);
+  const ipcWorkflowAgentConversation = ipc.workflowAgentConversation?.bind(ipc);
+  api.workflowAgentConversation = async (sessionId, runId, agentId) => {
+    if (runId !== null) {
+      return ipcWorkflowAgentConversation
+        ? ipcWorkflowAgentConversation(sessionId, runId, agentId)
+        : busWorkflowAgentConversation(sessionId, runId, agentId);
+    }
+    const overBus = await busWorkflowAgentConversation(sessionId, runId, agentId);
+    if (overBus) return overBus;
+    return ipcWorkflowAgentConversation
+      ? ipcWorkflowAgentConversation(sessionId, runId, agentId)
+      : null;
+  };
+
   return api;
 }

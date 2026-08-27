@@ -166,6 +166,58 @@ describe('web backend bus integration', () => {
     unsubscribe();
   });
 
+  it('reads plain provider subagent conversations over the bus', async () => {
+    const api = createWebBackend('token', 'ws://host.test/bus');
+    client().results.set('sessions.subagentConversation', {
+      seq: 4,
+      items: [
+        { kind: 'user_message', text: 'inspect this', timestamp: '2026-08-26T00:00:00Z' },
+        {
+          kind: 'tool_use',
+          id: 'call-1',
+          name: 'exec_command',
+          input: { cmd: 'ls' },
+          timestamp: '2026-08-26T00:00:01Z',
+        },
+        {
+          kind: 'tool_result',
+          tool_use_id: 'call-1',
+          content: 'ok',
+          timestamp: '2026-08-26T00:00:02Z',
+        },
+        { kind: 'assistant_text', text: 'done', timestamp: '2026-08-26T00:00:03Z' },
+      ],
+    });
+
+    const turns = await api.workflowAgentConversation('parent-1', null, 'child-1');
+
+    expect(call('sessions.subagentConversation').at(-1)).toEqual({
+      method: 'sessions.subagentConversation',
+      params: { sessionId: 'parent-1', agentId: 'child-1' },
+    });
+    expect(turns?.[0]).toMatchObject({ role: 'user', content: 'inspect this' });
+    expect(turns?.[1].toolCalls?.[0]).toMatchObject({
+      id: 'call-1',
+      name: 'exec_command',
+      response: 'ok',
+    });
+    expect(turns?.[2]).toMatchObject({ role: 'assistant', content: 'done' });
+
+    await expect(api.workflowAgentTranscript('parent-1', null, 'child-1')).resolves.toEqual([
+      { role: 'user', text: 'inspect this' },
+      { role: 'assistant', text: '⚙ exec_command\n↳ ok' },
+      { role: 'assistant', text: 'done' },
+    ]);
+  });
+
+  it('keeps Claude workflow-run artifact drill-in local-only over the web bus', async () => {
+    const api = createWebBackend('token', 'ws://host.test/bus');
+
+    await expect(api.workflowAgentConversation('parent-1', 'run-1', 'child-1')).resolves.toBeNull();
+    await expect(api.workflowAgentTranscript('parent-1', 'run-1', 'child-1')).resolves.toBeNull();
+    expect(call('sessions.subagentConversation')).toHaveLength(0);
+  });
+
   it('routes attention resolution over the bus and applies the resulting snapshot', async () => {
     const api = createWebBackend('token', 'ws://host.test/bus');
     const snapshots = vi.fn();

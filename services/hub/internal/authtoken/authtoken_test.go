@@ -87,6 +87,7 @@ func TestScopeMethods(t *testing.T) {
 		{"sessions.snapshots", true, true, true},
 		{"sessions.recent", true, true, true},
 		{"sessions.transcript", true, true, true},
+		{"sessions.subagentConversation", true, true, true},
 		{"layout.get", true, true, true},
 		{"config.get", true, true, true},
 		{"push.key", true, true, true},

@@ -18,6 +18,7 @@
  */
 
 import type { ElectronAPI, SessionListEntry } from '../types/electron';
+import type { ConversationTurn } from '../types/claudeSession';
 import type {
   ClaudeSessionSnapshot,
   AppConfig,
@@ -30,6 +31,7 @@ import { HubBusClient, type HubEventEnvelope } from './hubBusClient';
 import { mergeConversationWindow } from '../../../main/shared/mergeConversationWindow';
 import {
   createBusConversations,
+  foldConversationItemsToTurns,
   type ConversationDeltaWire,
   type ConversationSnapWire,
 } from './busConversation';
@@ -63,6 +65,18 @@ function warnOnce(method: string): void {
   console.warn(
     `[webBackend] ${method}() is not yet available over the hub bus — returning a safe default (HUB-TODO).`,
   );
+}
+
+function transcriptLineText(turn: ConversationTurn): string {
+  const chunks: string[] = [];
+  if (turn.content.trim()) chunks.push(turn.content);
+  for (const tc of turn.toolCalls ?? []) {
+    chunks.push(`⚙ ${tc.name}`);
+    if (typeof tc.response === 'string' && tc.response.trim()) {
+      chunks.push(`↳ ${tc.response.slice(0, 400)}`);
+    }
+  }
+  return chunks.join('\n').trim();
 }
 
 /** One session's shared PTY stream, however many panes are watching it. */
@@ -364,6 +378,27 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
   const qualify = (sessionId: string, method: string): string => {
     const hub = sessionHub.get(sessionId);
     return hub ? `hub:${hub}/${method}` : method;
+  };
+  const readProviderSubagentConversation = async (
+    sessionId: string,
+    runId: string | null,
+    agentId: string,
+  ): Promise<ConversationTurn[] | null> => {
+    if (runId !== null || !sessionId || !agentId) return null;
+    try {
+      const res = await client.call<ConversationSnapWire | null>(
+        qualify(sessionId, 'sessions.subagentConversation'),
+        { sessionId, agentId },
+      );
+      if (!res || !Array.isArray(res.items)) return null;
+      const fallbackTs = Date.now();
+      return foldConversationItemsToTurns(res.items).map((turn) => ({
+        ...turn,
+        timestamp: turn.timestamp ?? fallbackTs,
+      }));
+    } catch {
+      return null;
+    }
   };
   /** Merge the peers' fleets onto a local snapshot list (hub-stamped, sparse
    *  layout-ghost rows skipped — same rule as the desktop's federation seed). */
@@ -745,9 +780,18 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // process; over the bus there is no such capability. Null = leave the name
     // alone — the desktop client titles the agent and the layout syncs it here.
     agentSuggestTitle: async () => null,
-    // Reads a local transcript file; not available over the hub bus (web mirror).
-    workflowAgentTranscript: async () => null,
-    workflowAgentConversation: async () => null,
+    // Workflow-run transcripts still live in local Claude artifact files, but
+    // plain provider-native subagent rows (runId null) can be read through
+    // claudemon and folded client-side.
+    workflowAgentTranscript: async (sessionId, runId, agentId) => {
+      const conv = await readProviderSubagentConversation(sessionId, runId, agentId);
+      if (!conv) return null;
+      return conv
+        .map((turn) => ({ role: turn.role, text: transcriptLineText(turn) }))
+        .filter((turn) => turn.text.length > 0);
+    },
+    workflowAgentConversation: (sessionId, runId, agentId) =>
+      readProviderSubagentConversation(sessionId, runId, agentId),
     // Live per-provider discovery over the bus (providers.* capabilities): the
     // managed provider's model catalog and PATH-detection status, so the web
     // Spawn dialog matches the desktop instead of falling back to free-text.

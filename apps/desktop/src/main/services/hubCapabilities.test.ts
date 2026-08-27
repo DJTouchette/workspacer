@@ -72,6 +72,10 @@ const clientMock = {
   listProviderModels: vi.fn(async () => ['m1', 'm2']),
   answer: vi.fn(async () => ({ ok: true, managed: true })),
   input: vi.fn(async () => undefined),
+  getSubagentConversation: vi.fn(async () => ({
+    seq: 2,
+    items: [{ kind: 'assistant_text', text: 'child done' }],
+  })),
   // Delivered by default; the spawn helper is what would flag a failure.
   takeUndeliveredFirstMessage: vi.fn(() => false),
 };
@@ -242,6 +246,7 @@ describe('registerHubCapabilities — registration', () => {
       'claude.setModel',
       'claude.setPermissionMode',
       'claude.handoffBrief',
+      'sessions.subagentConversation',
     ]) {
       expect(registered.has(method), `missing ${method}`).toBe(true);
     }
@@ -258,6 +263,16 @@ describe('registerHubCapabilities — registration', () => {
       { sessionId: 's1', provider: 'claude' },
     ]);
     expect(listRecentSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it('serves provider-owned subagent conversations from claudemon', async () => {
+    await expect(
+      call('sessions.subagentConversation', { sessionId: 'parent-1', agentId: 'child-1' }),
+    ).resolves.toEqual({
+      seq: 2,
+      items: [{ kind: 'assistant_text', text: 'child done' }],
+    });
+    expect(clientMock.getSubagentConversation).toHaveBeenCalledWith('parent-1', 'child-1');
   });
 });
 
