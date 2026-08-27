@@ -402,6 +402,12 @@ var httpRoutes = []HTTPRoute{
 		TwinKind: TwinMethod,
 	},
 	{
+		Server: "claudemon-api", Pattern: "/sessions/:id/subagents/:agent_id/conversation", Disposition: RouteLoopbackConfined,
+		Reason:   "the parsed provider-owned child-thread conversation. sessions.subagentConversation is VIEW-tier on the bus and claudemon validates the child id belongs to the parent session",
+		Twin:     "sessions.subagentConversation",
+		TwinKind: TwinMethod,
+	},
+	{
 		Server: "claudemon-api", Pattern: "/sessions/:id/handoff", Disposition: RouteLoopbackConfined,
 		Reason:   "builds a cross-provider handoff brief and PERSISTS it under ~/.workspacer/handoffs/. No bus capability writes handoff files; the nearest read (sessions.conversation) is view-tier and read-only, so the write half exists only here",
 		Twin:     "sessions.conversation",

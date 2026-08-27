@@ -88,6 +88,7 @@ func (r *registry) methods() []string {
 		"claude.handoffBrief",
 		"sessions.transcript",
 		"sessions.conversation",
+		"sessions.subagentConversation",
 		"sessions.snapshots",
 		"sessions.snapshot",
 		"sessions.terminalInput",
@@ -253,6 +254,8 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		return r.transcript(ctx, params)
 	case "sessions.conversation":
 		return r.conversation(ctx, params)
+	case "sessions.subagentConversation":
+		return r.subagentConversation(ctx, params)
 	case "sessions.snapshots":
 		if r.store != nil {
 			return jsonResult(r.visibleSnapshots(ctx))
@@ -1087,6 +1090,20 @@ func (r *registry) conversation(ctx context.Context, raw json.RawMessage) (json.
 		return nil, fmt.Errorf("sessions.conversation requires { sessionId }")
 	}
 	return r.cm.conversation(ctx, p.SessionID, p.SinceSeq)
+}
+
+func (r *registry) subagentConversation(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	var p struct {
+		SessionID string `json:"sessionId"`
+		AgentID   string `json:"agentId"`
+	}
+	if err := unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if p.SessionID == "" || p.AgentID == "" {
+		return nil, fmt.Errorf("sessions.subagentConversation requires { sessionId, agentId }")
+	}
+	return r.cm.subagentConversation(ctx, p.SessionID, p.AgentID)
 }
 
 func (r *registry) gate(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {

@@ -112,6 +112,11 @@ func (c *claudemonClient) conversation(ctx context.Context, id string, sinceSeq 
 	return c.getRaw(ctx, path)
 }
 
+func (c *claudemonClient) subagentConversation(ctx context.Context, id, agentID string) (json.RawMessage, error) {
+	path := "/sessions/" + url.PathEscape(id) + "/subagents/" + url.PathEscape(agentID) + "/conversation"
+	return c.getRaw(ctx, path)
+}
+
 // spawnReq is the /sessions/spawn payload (services/claudemon/src/daemon/spawn.rs).
 type spawnReq struct {
 	Argv      []string          `json:"argv"`

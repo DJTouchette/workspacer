@@ -388,6 +388,35 @@ func TestSendMessageRequiresFields(t *testing.T) {
 	}
 }
 
+func TestSubagentConversationForwards(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"seq":2,"items":[{"kind":"assistant_text","text":"child done"}]}`))
+	}))
+	defer srv.Close()
+
+	reg := newRegistry(newClaudemonClient(srv.URL))
+	res, err := reg.handle(context.Background(), "sessions.subagentConversation",
+		[]byte(`{"sessionId":"parent-1","agentId":"child-1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/sessions/parent-1/subagents/child-1/conversation" {
+		t.Fatalf("forwarded to %q", gotPath)
+	}
+	if !strings.Contains(string(res), `"child done"`) {
+		t.Fatalf("result = %s", res)
+	}
+}
+
+func TestSubagentConversationRequiresFields(t *testing.T) {
+	reg := newRegistry(newClaudemonClient("http://unused"))
+	if _, err := reg.handle(context.Background(), "sessions.subagentConversation", []byte(`{"sessionId":"s1"}`)); err == nil {
+		t.Fatal("expected error for missing agentId")
+	}
+}
+
 // A worker naming itself via fromSessionId is attributed on delivery — the
 // bug being pinned is that a worker→manager send_message otherwise carries no
 // identity at all, unlike every other fleet-chat message class.

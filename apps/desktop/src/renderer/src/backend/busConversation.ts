@@ -156,6 +156,16 @@ export function newConversationState(): ConversationState {
   };
 }
 
+/** Fold a one-shot conversation item list into renderable turns without
+ * registering it as the main session transcript. Used by provider-native child
+ * threads, where the pane wants a subagent rollout rather than the parent
+ * session's conversation state. */
+export function foldConversationItemsToTurns(items: ConversationItemWire[]): ConversationTurn[] {
+  const state = newConversationState();
+  applyConversationItems(state, items);
+  return state.turns.slice();
+}
+
 function tsOf(item: ConversationItemWire): number {
   if (item.timestamp) {
     const ms = Date.parse(item.timestamp);

@@ -62,6 +62,10 @@ const BUS_BACKED = [
   'claudeListModels',
   'providerListModels',
   'providerCheckAll',
+  // Plain provider-native subagent drill-in rides sessions.subagentConversation;
+  // Claude workflow run artifacts are still local-only inside the method.
+  'workflowAgentTranscript',
+  'workflowAgentConversation',
   // Agent control
   'claudeMessage',
   'claudeSetPermissionMode',
@@ -160,8 +164,6 @@ const BUS_BACKED = [
 // keeps the degraded surface visible and honest (the test fails if one is
 // promoted to a real bus method and left here, or removed and left here).
 const KNOWN_STUBS = [
-  'workflowAgentTranscript', // reads a local transcript file; null over the bus
-  'workflowAgentConversation', // same
   'fileOpenExternal', // best-effort window.open(file://) on web only
   'fileShowInFolder', // reveal-in-folder impossible remotely
   'notifyQuitSaved', // no quit handshake in the browser
@@ -309,6 +311,35 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
       (k) => (api[k] as { __ipc?: string })?.__ipc === undefined && !isBound(api[k]),
     );
     expect(notFromIpc, `still the web stub, not the preload: ${notFromIpc.join(', ')}`).toEqual([]);
+  });
+
+  it('bridged workflow drill-in preserves the IPC watcher path', async () => {
+    const ipc = {
+      platform: 'linux',
+      workflowAgentTranscript: vi.fn(async () => [{ role: 'assistant', text: 'from ipc' }]),
+      workflowAgentConversation: vi.fn(async () => [
+        { role: 'assistant', content: 'from ipc', timestamp: 1 },
+      ]),
+    } as unknown as Parameters<typeof createBridgedBackend>[0];
+    const api = createBridgedBackend(ipc, 'tok', 'ws://127.0.0.1:7895/bus');
+
+    await expect(api.workflowAgentTranscript('s1', 'run-1', 'a1')).resolves.toEqual([
+      { role: 'assistant', text: 'from ipc' },
+    ]);
+    await expect(api.workflowAgentConversation('s1', 'run-1', 'a1')).resolves.toEqual([
+      { role: 'assistant', content: 'from ipc', timestamp: 1 },
+    ]);
+
+    expect(ipc.workflowAgentTranscript).toHaveBeenCalledWith('s1', 'run-1', 'a1');
+    expect(ipc.workflowAgentConversation).toHaveBeenCalledWith('s1', 'run-1', 'a1');
+
+    // The mocked web bus answers no subagent items, so plain provider rows fall
+    // back to the preload path too. A real bus answer is covered by
+    // webBackend.integration.test.ts.
+    await api.workflowAgentTranscript('s1', null, 'a1');
+    await api.workflowAgentConversation('s1', null, 'a1');
+    expect(ipc.workflowAgentTranscript).toHaveBeenCalledWith('s1', null, 'a1');
+    expect(ipc.workflowAgentConversation).toHaveBeenCalledWith('s1', null, 'a1');
   });
 
   it('KNOWN_STUBS entries all still exist (list stays honest)', () => {

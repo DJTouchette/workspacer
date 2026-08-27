@@ -98,16 +98,17 @@ func ParseScope(s string) (Scope, error) {
 // `agents.*` would silently grant agents.spawn, and any method added later
 // must be admitted here deliberately (fail closed for scoped tokens).
 var viewMethods = []string{
-	"agents.list",           // fleet list (/remote, MCP list_agents)
-	"sessions.snapshots",    // full fleet snapshot seed (/m, webBackend)
-	"sessions.snapshot",     // one session's snapshot (webBackend, MCP)
-	"sessions.recent",       // resumable-session list for the Sessions pane (webBackend)
-	"sessions.transcript",   // transcript reads (/remote, MCP get_transcript)
-	"sessions.conversation", // normalized conversation reads (MCP, webBackend)
-	"layout.get",            // shared workspace layout document (read side)
-	"config.get",            // /m reads UI config at boot (read-only twin of config.save)
-	"app.getCwd",            // getCwd-style introspection (MCP, webBackend)
-	"federation.peers",      // peer-hub names + connected bit — the /m PWA and web
+	"agents.list",                   // fleet list (/remote, MCP list_agents)
+	"sessions.snapshots",            // full fleet snapshot seed (/m, webBackend)
+	"sessions.snapshot",             // one session's snapshot (webBackend, MCP)
+	"sessions.recent",               // resumable-session list for the Sessions pane (webBackend)
+	"sessions.transcript",           // transcript reads (/remote, MCP get_transcript)
+	"sessions.conversation",         // normalized conversation reads (MCP, webBackend)
+	"sessions.subagentConversation", // provider-owned child-thread conversation reads (webBackend)
+	"layout.get",                    // shared workspace layout document (read side)
+	"config.get",                    // /m reads UI config at boot (read-only twin of config.save)
+	"app.getCwd",                    // getCwd-style introspection (MCP, webBackend)
+	"federation.peers",              // peer-hub names + connected bit — the /m PWA and web
 	//                          renderer seed the federated fleet from it, and the
 	//                          names are already stamped on every agent.* event
 	//                          this same tier receives

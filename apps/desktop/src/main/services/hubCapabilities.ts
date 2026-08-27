@@ -1241,6 +1241,13 @@ export function registerHubCapabilities(): void {
       typeof sinceSeq === 'number' ? sinceSeq : undefined,
     );
   });
+  registerCapability('sessions.subagentConversation', async (params: unknown) => {
+    const { sessionId, agentId } = (params ?? {}) as { sessionId?: string; agentId?: string };
+    if (!sessionId || !agentId) {
+      throw new Error('sessions.subagentConversation requires { sessionId, agentId }');
+    }
+    return claudemonSessionClient.getSubagentConversation(sessionId, agentId);
+  });
 
   // Live terminal mirror: a remote opening the terminal view attaches here,
   // which streams the session's raw PTY bytes onto the bus as
