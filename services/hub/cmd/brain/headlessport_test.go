@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
+	"github.com/djtouchette/workspacer-hub/internal/capspec"
 )
 
 // ── tier ────────────────────────────────────────────────────────────────────
@@ -35,37 +36,7 @@ import (
 // exactly the kind of claim that is true until someone edits the allowlist for
 // an unrelated reason, so it is measured here.
 func TestHeadlessPortAddsNothingToTheScopedTiers(t *testing.T) {
-	// The port's methods, and what each one's standing is SUPPOSED to be.
-	wantScoped := map[string]bool{
-		// Already in viewMethods before this port, admitted there because it
-		// names no recipient and cannot name a sender. Nothing here widens it.
-		"agents.reportProgress": true,
-		// Already in viewMethods: a numeric limit over rows the provider holds.
-		"sessions.recent": true,
-
-		// Operator-only by construction — in NEITHER tier's exact-name
-		// allowlist. Each is here because it is privileged, not because it was
-		// overlooked:
-		//   agents.reparent  re-points another manager's live workers
-		//   agents.close     removes a session row (and SIGTERMs a live one)
-		//   agents.orphans   discloses dead managers' labels/cwds
-		//   agents.notifyWhen arms a wake against another session
-		//   brief.append     writes to a caller-chosen project directory
-		//   terminals.open   runs a command in a VISIBLE host shell
-		//   fs.readImage     reads host file bytes
-		//   claude.set*      changes a running agent's model/effort/approvals
-		"agents.reparent":          false,
-		"agents.close":             false,
-		"agents.orphans":           false,
-		"agents.notifyWhen":        false,
-		"brief.append":             false,
-		"terminals.open":           false,
-		"fs.readImage":             false,
-		"claude.setPermissionMode": false,
-		"claude.setModel":          false,
-		"claude.setEffort":         false,
-		"claude.handoffBrief":      false,
-	}
+	wantScoped := portedMethodStanding()
 
 	for _, scope := range []authtoken.Scope{authtoken.ScopeView, authtoken.ScopeTriage} {
 		allowed := map[string]bool{}
@@ -89,6 +60,110 @@ func TestHeadlessPortAddsNothingToTheScopedTiers(t *testing.T) {
 					"the headless provider for it is now unreachable from the tier that needs it", scope, method)
 			}
 		}
+	}
+}
+
+// EVERY BRIEF VERB THE FACADE EXPOSES HAS A BRAIN HANDLER — the guard the map
+// above could not be, and the gap it was written a verb too early to catch.
+//
+// The map is a TIER check: it says what each ported method's standing is
+// supposed to be, and it is silent about a method that was never ported. That is
+// exactly how brief.check and brief.archive went missing. capspec declared all
+// three brief verbs, cmd/mcp exposed all three as MCP tools, and the brain
+// registered ONE — so a Fleet Manager on a headless node called brief_check,
+// got `no provider for brief.check` from the bus, and lost two of the three
+// tools its own doctrine tells it to use. Nothing was red.
+//
+// So the enumeration runs from the two places a brief verb is DECLARED — the
+// MCP facade's tool table (what an agent can actually reach) and capspec's
+// path-param registry (what the bus knows about it) — rather than from a list
+// here, which would be the same hand-maintained thing that failed. A fourth
+// brief verb added to either one without a brain handler fails this test.
+func TestEveryBriefVerbTheFacadeExposesHasABrainHandler(t *testing.T) {
+	declared := map[string]string{}
+	facade := string(mustReadRepoFile(t, "services", "hub", "cmd", "mcp", "main.go"))
+	for _, m := range briefMethodRe.FindAllStringSubmatch(facade, -1) {
+		declared[m[1]] = "the MCP facade exposes it as a tool (cmd/mcp/main.go)"
+	}
+	if len(declared) < 3 {
+		t.Fatalf("parsed %d brief.* methods from cmd/mcp/main.go (%v) — the registration syntax changed and this guard is enumerating nothing", len(declared), declared)
+	}
+	for method := range capspec.PathParam {
+		if strings.HasPrefix(method, "brief.") {
+			if _, seen := declared[method]; !seen {
+				declared[method] = "capspec declares it path-scoped (internal/capspec/capspec.go)"
+			}
+		}
+	}
+
+	reg := newRegistry(newClaudemonClient("http://unused"))
+	served := map[string]bool{}
+	for _, set := range [][]string{reg.methods(), reg.catalogMethods()} {
+		for _, m := range set {
+			served[m] = true
+		}
+	}
+
+	for method, why := range declared {
+		if !served[method] {
+			t.Errorf("%s, and NO brain handler answers it. On a headless node that is `no provider for %s` at the bus level — "+
+				"silent, and it takes a tool the Fleet Manager doctrine tells the manager to use. Register it in handlers.go "+
+				"(and dispatch it), or, if it is genuinely desktop-only, say why in cmd/brain/brief.go's header the way the "+
+				"first port did.", why, method)
+			continue
+		}
+		if _, standing := portedMethodStanding()[method]; !standing {
+			t.Errorf("the brain serves %s and TestHeadlessPortAddsNothingToTheScopedTiers says nothing about its tier — "+
+				"add it to wantScoped, or a widened view/triage allowlist would hand a phone or plugin token a capability "+
+				"that writes to a caller-chosen project directory with nobody noticing", method)
+		}
+	}
+}
+
+// briefMethodRe finds the capability names the MCP facade forwards to, narrowed
+// to the brief family. The facade writes them as bare string literals on the
+// addTool call, which is why a literal match is enough here.
+var briefMethodRe = regexp.MustCompile(`"(brief\.[a-zA-Z][\w.]*)"`)
+
+// portedMethodStanding is the port's methods and what each one's tier standing
+// is SUPPOSED to be. ONE literal, read by both tests above: the tier check asks
+// whether the allowlists still agree with it, and the completeness check asks
+// whether a served brief verb appears in it at all. A second copy would be the
+// same hand-maintained list drifting from itself.
+func portedMethodStanding() map[string]bool {
+	return map[string]bool{
+		// Already in viewMethods before this port, admitted there because it
+		// names no recipient and cannot name a sender. Nothing here widens it.
+		"agents.reportProgress": true,
+		// Already in viewMethods: a numeric limit over rows the provider holds.
+		"sessions.recent": true,
+
+		// Operator-only by construction — in NEITHER tier's exact-name
+		// allowlist. Each is here because it is privileged, not because it was
+		// overlooked:
+		//   agents.reparent  re-points another manager's live workers
+		//   agents.close     removes a session row (and SIGTERMs a live one)
+		//   agents.orphans   discloses dead managers' labels/cwds
+		//   agents.notifyWhen arms a wake against another session
+		//   brief.append     writes to a caller-chosen project directory
+		//   brief.archive    MOVES entries out of one, into the file beside it
+		//   brief.check      reads one, and reads the session store to judge it
+		//   terminals.open   runs a command in a VISIBLE host shell
+		//   fs.readImage     reads host file bytes
+		//   claude.set*      changes a running agent's model/effort/approvals
+		"agents.reparent":          false,
+		"agents.close":             false,
+		"agents.orphans":           false,
+		"agents.notifyWhen":        false,
+		"brief.append":             false,
+		"brief.archive":            false,
+		"brief.check":              false,
+		"terminals.open":           false,
+		"fs.readImage":             false,
+		"claude.setPermissionMode": false,
+		"claude.setModel":          false,
+		"claude.setEffort":         false,
+		"claude.handoffBrief":      false,
 	}
 }
 

@@ -113,6 +113,13 @@ func (r *registry) methods() []string {
 		"agents.orphans",
 		"agents.reparent",
 		"brief.append",
+		// The other two brief verbs, ported once a headless Fleet Manager became
+		// a real caller (briefboard.go, briefcheck.go). The MCP facade exposed
+		// all three from the start, so a manager on a node lost brief_check and
+		// brief_archive to `no provider` at the bus level — silently, for two of
+		// the three tools its doctrine names.
+		"brief.check",
+		"brief.archive",
 		"terminals.open",
 		// catalogs + config (file-backed)
 		"claude.profiles.list",
@@ -281,6 +288,10 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		return r.reparent(ctx, params)
 	case "brief.append":
 		return r.briefAppendCall(ctx, params)
+	case "brief.check":
+		return r.briefCheckCall(ctx, params)
+	case "brief.archive":
+		return r.briefArchiveCall(ctx, params)
 	case "terminals.open":
 		return r.terminalsOpen(ctx, params)
 	case "fs.readImage":

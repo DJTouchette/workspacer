@@ -716,9 +716,12 @@ const (
 	// this brain both provides and dispatches. Checked against EXECUTED
 	// subtests: nothing here is host-gated, so a shortfall is drift between
 	// capspec, the corpus and the registry.
+	// Raised from 9 to 14 by the brief.check + brief.archive port (briefboard.go,
+	// briefcheck.go), which took the corpus from 12 swept methods to 14: the 9 was
+	// itself stale by three, so the ratchet is now set to what actually runs.
 	// Raised from 8 when the read-only git.* port added git.diff, capspec's one
 	// path-scoped git method, to the brain's dispatch.
-	brainMethodFloor = 9
+	brainMethodFloor = 14
 	// asciiFoldFloor is the size of the `asciiFold.cases` block.
 	asciiFoldFloor = 10
 	// sessionFilenameFloor is the size of the `sessionFilenames.cases` block.

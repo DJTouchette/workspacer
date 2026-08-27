@@ -309,10 +309,20 @@ export function registerHubCapabilities(): void {
   //     but the SQLite session-history join is unavailable to the brain, so
   //     `model` and `costUSD` come back empty and `title` is never
   //     transcript-derived.
+  //   ADOPTED-DEGRADED: brief.check — the READING is identical (the brain ports
+  //     this file's document model, held to it case by case by
+  //     contracts/brief-board-cases.json), but the LIVENESS source is not:
+  //     this side matches a Now line's session against claudeSessionStore,
+  //     which holds federated peer rows and rows this app spawned itself, and
+  //     the brain matches against its own projection of claudemon. Under an
+  //     adopted hub a Now line naming a session only THIS process knows about
+  //     is reported stale. The report never edits anything, so the cost is a
+  //     false flag a manager reads and dismisses, not a lost line.
   //
-  // brief.append is the one that is NOT degraded: the brain's port is the same
-  // additive insert under the same lock and compare-and-swap, writing the same
-  // file through the same path guard.
+  // brief.append and brief.archive are the ones that are NOT degraded: the
+  // brain's ports are the same additive insert and the same whole-line splice,
+  // under the same lock and compare-and-swap, writing the same files through
+  // the same path guard.
   //
   // The full classification (every overlapping method, equivalent vs degraded,
   // with the reason) is enumerated and enforced by

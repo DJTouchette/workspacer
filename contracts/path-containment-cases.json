@@ -3552,9 +3552,10 @@
       },
       "rootSet": "workspace",
       "providers": [
+        "brain",
         "main"
       ],
-      "note": "brief.append's sibling, and confined the same way for the same reason: the caller's only path input is the project DIRECTORY, and the provider composes BOTH basenames under it (.workspacer/brief.md and .workspacer/brief.archive.md). It moves whole entries from the first into the second, so it can remove a line from the brief where brief.append can only add one, and everything it removes is still on disk in the archive. Same workspace roots as brief.append: a Fleet Manager's projects are already inside them."
+      "note": "brief.append's sibling, and confined the same way for the same reason: the caller's only path input is the project DIRECTORY, and the provider composes BOTH basenames under it (.workspacer/brief.md and .workspacer/brief.archive.md). It moves whole entries from the first into the second, so it can remove a line from the brief where brief.append can only add one, and everything it removes is still on disk in the archive. Same workspace roots as brief.append: a Fleet Manager's projects are already inside them. BOTH providers answer it now (cmd/brain/briefboard.go): it was desktop-only while every caller was a desktop manager, and the node running the MCP facade made a HEADLESS manager real — one whose /checkpoint doctrine calls brief_archive and got `no provider` at the bus level instead. The two copies of the entry-splicing model are held equal case by case by contracts/brief-board-cases.json."
     },
     {
       "method": "brief.check",
@@ -3562,9 +3563,10 @@
       "params": {},
       "rootSet": "workspace",
       "providers": [
+        "brain",
         "main"
       ],
-      "note": "The READ-ONLY third brief verb: it reports which '## Now' entries name sessions this host no longer knows about, and it writes nothing at all. Confined here rather than excused as 'it only reads' for the reason the table exists — an unconfined read of <caller-chosen dir>/.workspacer/brief.md is still a read outside the workspace roots — and it takes the SAME roots and the SAME composed-then-guarded path as brief.append, whose comment spells out why guarding the project dir alone is not enough (a symlinked <project>/.workspacer escapes it). Desktop-only, like brief.archive: reading Now as ENTRIES needs the board's document model (shared/briefBoard.ts parseBrief), which cmd/brain/brief.go's header records as the thing it will not approximate."
+      "note": "The READ-ONLY third brief verb: it reports which '## Now' entries name sessions this host no longer knows about, and it writes nothing at all. Confined here rather than excused as 'it only reads' for the reason the table exists — an unconfined read of <caller-chosen dir>/.workspacer/brief.md is still a read outside the workspace roots — and it takes the SAME roots and the SAME composed-then-guarded path as brief.append, whose comment spells out why guarding the project dir alone is not enough (a symlinked <project>/.workspacer escapes it). BOTH providers answer it now (cmd/brain/briefcheck.go). It was desktop-only because reading Now as ENTRIES needs the board's document model (shared/briefBoard.ts parseBrief), which cmd/brain/brief.go's header recorded as the thing it would not approximate — a premise that expired when the node started running the MCP facade and a headless manager became a real caller. The model is ported rather than approximated: contracts/brief-board-cases.json runs the same briefs through both copies."
     },
     {
       "method": "providers.listModels",
