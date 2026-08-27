@@ -454,7 +454,7 @@ var vocabExempt = map[string]bool{
 }
 
 // contractsFixtureFloor is how many case-carrying fixtures contracts/ holds.
-const contractsFixtureFloor = 8
+const contractsFixtureFloor = 9
 
 // TestTheVocabularyGuardIsFalsifiable is the answer to "all three vocabulary
 // tests are neuterable with every suite green". Each mutation below is a real

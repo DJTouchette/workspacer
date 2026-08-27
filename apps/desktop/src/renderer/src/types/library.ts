@@ -23,6 +23,16 @@ export interface McpServerConfig {
   headers?: Record<string, string>;
 }
 
+/** One placeholder a dispatch template declares. Mirrors the main process's
+ *  lib/dispatchTemplate.DispatchTemplateParam. */
+export interface DispatchTemplateParam {
+  name: string;
+  /** A bare {{name}}; a spawn that omits it is refused, never defaulted. */
+  required: boolean;
+  /** The author's explicit default, from {{name:default}}. Optional params only. */
+  default?: string;
+}
+
 /** A reusable prompt or skill stored as a markdown file. Mirrors the main
  *  process's libraryService.LibraryItem. */
 export interface LibraryItem {
@@ -37,6 +47,11 @@ export interface LibraryItem {
   mcp?: McpServerConfig;
   /** Default structured-result contract — present only when kind === 'dispatch'. */
   resultSchema?: Record<string, unknown>;
+  /** DERIVED from `body` by the main process, present only when kind ===
+   *  'dispatch': the template's placeholders, so a caller learns what to pass
+   *  without reading the markdown. Mirrors libraryService's LibraryItem.params /
+   *  lib/dispatchTemplate's DispatchTemplateParam. */
+  params?: DispatchTemplateParam[];
   /** Which root a claude-scoped item came from. Absent for global/project. */
   origin?: ClaudeOrigin;
   /** False when the file belongs to something else (an installed plugin). */

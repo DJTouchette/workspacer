@@ -42,6 +42,9 @@ import { DELEGATE_CATALOG_TO_BRAIN } from './brainDelegation';
 import { configService, getConfigDir } from './configService';
 import { listClaudeModels } from './claudeModels';
 import { libraryService, type ClaudeOrigin, type LibraryFileGuard } from './libraryService';
+// Not from libraryService: every suite that mocks that module away still needs
+// the kind vocabulary library.list validates its filter against.
+import { LIBRARY_KINDS, type LibraryKind } from '../shared/libraryKinds';
 import { renderDispatchTemplate } from '../lib/dispatchTemplate';
 import { sessionService } from './sessionService';
 import { sessionHistory } from './sessionHistory';
@@ -69,6 +72,18 @@ import { thresholdWatcher } from './thresholdWatcher';
 import { progressReporter } from './progressReporter';
 
 /**
+ * How much of a template's rendered first message rides back in the spawn
+ * result. A dispatch template is prose a human wrote, so this is far above any
+ * real one — it exists so a pathological template (a generated wall of text, a
+ * placeholder filled with a file dump) cannot bloat a tool result that a
+ * manager reads inside its own context window. Past the cap the field is
+ * truncated and `renderedMessageTruncated: true` says so, because a silently
+ * clipped echo is worse than no echo: the caller would verify a render it never
+ * actually saw the end of.
+ */
+const RENDERED_MESSAGE_CAP = 16_000;
+
+/**
  * The `agents.spawn` answer. `messageQueued` is this host's ACKNOWLEDGEMENT
  * that it took delivery of the first prompt — claudemon queues it inside the
  * spawn handler, and an unconfirmed queue raises a banner rather than being
@@ -84,6 +99,9 @@ function spawnResult(
   sessionId: string,
   message: string | undefined,
   escalation: { fullAccess: boolean; scrubbed: string[] },
+  /** The message was RENDERED FROM A TEMPLATE, so the caller has not seen it.
+   *  A plain `message` spawn gets no echo — the caller wrote the text. */
+  renderedFromTemplate = false,
 ): Record<string, unknown> {
   // NO SILENT DOWNGRADES (2026-08-26). `fullAccess` is what the session ACTUALLY
   // runs with — not what was requested — and rides EVERY spawn answer, so a
@@ -94,6 +112,14 @@ function spawnResult(
   // TWIN: cmd/brain/handlers.go spawnResult.
   const out: Record<string, unknown> = { sessionId, fullAccess: escalation.fullAccess };
   if (escalation.scrubbed.length) out.escalationScrubbed = escalation.scrubbed;
+  // THE RENDER, echoed back — the point being that a template spawn is the one
+  // case where the dispatcher does not know what it sent. Before this, checking
+  // that {{task}} landed where it should meant agents.getConversation, which has
+  // no small-slice option and returns the whole transcript.
+  if (renderedFromTemplate && typeof message === 'string' && message !== '') {
+    out.renderedMessage = message.slice(0, RENDERED_MESSAGE_CAP);
+    if (message.length > RENDERED_MESSAGE_CAP) out.renderedMessageTruncated = true;
+  }
   if (!sessionId || !message?.trim()) return out;
   // Not "we passed it on" — whether it actually got there. The helper already
   // fell back to a plain send and banners on total failure; reporting true
@@ -543,6 +569,9 @@ export function registerHubCapabilities(): void {
     // write (lib/dispatchTemplate.ts carries the rule).
     let message = reqMessage;
     let resultSchema = reqResultSchema;
+    // Whether the first message was WRITTEN by the caller or RENDERED here — it
+    // decides whether the result echoes the text back (spawnResult).
+    let renderedFromTemplate = false;
     if (typeof template === 'string' && template) {
       if (typeof reqMessage === 'string' && reqMessage.trim()) {
         throw new Error(
@@ -576,6 +605,7 @@ export function registerHubCapabilities(): void {
       message = renderDispatchTemplate(item.body, templateParams ?? {}, {
         cwd: templateCwd ?? cwd,
       });
+      renderedFromTemplate = true;
       if (resultSchema === undefined && item.resultSchema) resultSchema = item.resultSchema;
     } else if (templateParams && Object.keys(templateParams).length) {
       throw new Error('agents.spawn: templateParams was passed without a template to fill');
@@ -743,7 +773,7 @@ export function registerHubCapabilities(): void {
         resultSchema,
         firstMessage: message,
       });
-      return spawnResult(sessionId, message, escalation());
+      return spawnResult(sessionId, message, escalation(), renderedFromTemplate);
     }
     // Claude on the 'stream' transport is managed too (claudemon's headless
     // stream-json adapter, no PTY) — same shared dispatch as the IPC path so
@@ -780,7 +810,7 @@ export function registerHubCapabilities(): void {
         resultSchema,
         firstMessage: message,
       });
-      return spawnResult(sessionId, message, escalation());
+      return spawnResult(sessionId, message, escalation(), renderedFromTemplate);
     }
     const sessionId = await spawnClaudeAgent({
       cwd: spawnCwd,
@@ -806,7 +836,7 @@ export function registerHubCapabilities(): void {
       resultSchema,
       firstMessage: message,
     });
-    return spawnResult(sessionId, message, escalation());
+    return spawnResult(sessionId, message, escalation(), renderedFromTemplate);
   });
 
   // Control: open a new shell terminal session. The hub/MCP counterpart of the
@@ -1640,7 +1670,7 @@ export function registerHubCapabilities(): void {
     throw new Error(`${cap}: path is outside the allowed workspace (agent cwds + config stores)`);
   };
   cat('library.list', (params: unknown) => {
-    const { cwd } = (params ?? {}) as { cwd?: string };
+    const { cwd, kind, id } = (params ?? {}) as { cwd?: string; kind?: string; id?: string };
     // The read-only list gets browseRoots, not workspaceRoots, for the same
     // reason fs.listDir does: the New Agent dialog lists the library of the
     // directory the user is ABOUT to spawn in, which by definition isn't a live
@@ -1652,7 +1682,30 @@ export function registerHubCapabilities(): void {
     const canonicalCwd = cwd ? assertPathAllowed('library.list', cwd, roots) : undefined;
     // The FILES get the item roots, not the browse roots: this call returns file
     // bodies, while the browse widening exists for a picker that returns names.
-    return libraryService.list(canonicalCwd, guardLibraryFile('library.list', canonicalCwd));
+    // OPTIONAL narrowing, applied to the merged list (never to the read): the
+    // files opened and the guard that confines them are exactly what an
+    // unfiltered call opens, so `kind`/`id` can only ever REMOVE rows a caller
+    // was already entitled to. It exists because the only way to learn one
+    // dispatch template's placeholders used to be fetching every item's full
+    // body — a filter is the difference between a ~200-byte answer and a
+    // hundred-kilobyte one for a manager doing pre-spawn discovery.
+    //
+    // An unknown `kind` is REFUSED, not silently empty: a typo'd 'dispatchh'
+    // that returns [] reads as "this library has no templates".
+    //
+    // An EMPTY STRING is "no filter", not "a kind named ''" — Go's omitempty
+    // makes an omitted facade field arrive as "" and the brain's twin reads it
+    // that way, so refusing it here would make the same call succeed on one
+    // provider and fail on the other.
+    if (kind && !LIBRARY_KINDS.includes(kind as LibraryKind)) {
+      throw new Error(
+        `library.list: unknown kind ${JSON.stringify(kind)} — one of ${LIBRARY_KINDS.join(', ')}`,
+      );
+    }
+    return libraryService.list(canonicalCwd, guardLibraryFile('library.list', canonicalCwd), {
+      kind: (kind || undefined) as LibraryKind | undefined,
+      id: id || undefined,
+    });
   });
   cat('library.save', (params: unknown) => {
     const input = (params ?? {}) as { cwd?: string };

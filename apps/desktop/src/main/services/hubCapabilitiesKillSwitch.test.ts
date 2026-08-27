@@ -498,6 +498,23 @@ describe('fs.* credential deny-list (twin of the brain fsguard)', () => {
   });
 });
 
+/**
+ * The per-file guard a library.* handler hands the service, found by TYPE rather
+ * than by position.
+ *
+ * It used to be `.at(-1)`, which quietly stopped meaning "the guard" the moment
+ * library.list grew a trailing filter argument — the assertion then read
+ * `typeof {} === 'function'` and failed for a reason that had nothing to do with
+ * confinement. Requiring EXACTLY ONE function argument keeps it honest in the
+ * other direction too: a handler that started passing a second callback would
+ * fail here instead of silently probing the wrong one.
+ */
+function guardArgOf(args: unknown[]): (p: string) => string | null {
+  const fns = args.filter((a) => typeof a === 'function');
+  expect(fns, 'exactly one argument should be the per-file guard').toHaveLength(1);
+  return fns[0] as (p: string) => string | null;
+}
+
 describe('library.* cwd confinement', () => {
   // `cwd` selects the project whose .workspacer/library + .claude assets are
   // listed, written and (recursively) deleted — untrusted on the bus.
@@ -581,7 +598,10 @@ describe('library.* cwd confinement', () => {
     // an empty picker rather than an error. Same browse rule as fs.listDir.
     const notYetSpawned = path.join(os.homedir(), 'some-project');
     call('library.list', { cwd: notYetSpawned });
-    expect(libraryMock.list).toHaveBeenCalledWith(notYetSpawned, expect.any(Function));
+    expect(libraryMock.list).toHaveBeenCalledWith(notYetSpawned, expect.any(Function), {
+      kind: undefined,
+      id: undefined,
+    });
   });
 
   // Confining the cwd is not the same thing as confining what the service then
@@ -623,7 +643,7 @@ describe('library.* cwd confinement', () => {
     call('library.remove', { scope: 'claude', id: 'x', cwd: agentCwd, kind: 'skill' });
     // remove(scope, id, cwd, kind, origin, guard) — the guard is last, like
     // list()/save(), so read it off the end rather than by a fixed index.
-    const guard = libraryMock.remove.mock.calls[0].at(-1) as (p: string) => string | null;
+    const guard = guardArgOf(libraryMock.remove.mock.calls[0]);
     expect(guard(path.join(agentCwd, '.claude', 'skills', 'x'))).toBe(
       path.join(agentCwd, '.claude', 'skills', 'x'),
     );
@@ -655,12 +675,11 @@ describe('library.* cwd confinement', () => {
   const itLinks = gatedIt(CAN_SYMLINK, perFileGate);
 
   for (const leg of [
-    { method: 'library.list', params: {}, argIndex: -1 },
-    { method: 'library.remove', params: { scope: 'claude', id: 'x', kind: 'skill' }, argIndex: -1 },
+    { method: 'library.list', params: {} },
+    { method: 'library.remove', params: { scope: 'claude', id: 'x', kind: 'skill' } },
     {
       method: 'library.save',
       params: { scope: 'project', title: 't', kind: 'prompt', body: 'b' },
-      argIndex: -1,
     },
   ]) {
     itLinks(`${leg.method}'s per-file guard returns the RESOLVED path, not the caller's`, () => {
@@ -675,7 +694,7 @@ describe('library.* cwd confinement', () => {
       const mock = (libraryMock as unknown as Record<string, { mock: { calls: unknown[][] } }>)[
         leg.method.split('.')[1]
       ];
-      const guard = mock.mock.calls[0].at(leg.argIndex) as (p: string) => string | null;
+      const guard = guardArgOf(mock.mock.calls[0]);
       expect(typeof guard).toBe('function');
       expect(
         guard(alias),
@@ -1004,8 +1023,7 @@ describe('fixture-driven guard coverage — kill-switch-only path capabilities',
         entry.method.split('.')[1]
       ];
       call(entry.method, { ...entry.params, cwd: agentCwd });
-      const guard = mock.mock.calls[0].at(-1) as (p: string) => string | null;
-      expect(typeof guard).toBe('function');
+      const guard = guardArgOf(mock.mock.calls[0]);
       // Both cwds are live agents, so both are inside the workspace roots. Only
       // the one the caller named is inside the item roots.
       expect(guard(path.join(secondAgentCwd, 'pwn.md'))).toBeNull();
@@ -1194,6 +1212,73 @@ describe('what workspaceRoots() is made of', () => {
  * process.cwd();` left the whole suite green while turning the app's working
  * directory into a writable and deletable library root.
  */
+describe('library.list — the optional kind/id filters', () => {
+  // The filters exist because an unfiltered listing carries every item's full
+  // BODY: learning ONE dispatch template's placeholders used to cost a manager
+  // the whole library. They narrow the ANSWER, never the read — the same files
+  // are opened under the same per-file guard — so they can only remove rows the
+  // caller was already entitled to.
+  beforeEach(() => {
+    getAllSnapshots.mockReturnValue([] as never);
+  });
+
+  it('forwards kind and id to the service as a filter', () => {
+    call('library.list', { kind: 'dispatch', id: 'ship-task' });
+    const [, , filter] = libraryMock.list.mock.calls.at(-1) as [
+      unknown,
+      unknown,
+      { kind?: string; id?: string },
+    ];
+    expect(filter).toEqual({ kind: 'dispatch', id: 'ship-task' });
+  });
+
+  it("an omitted filter stays undefined — existing callers get today's answer", () => {
+    call('library.list', {});
+    const [, , filter] = libraryMock.list.mock.calls.at(-1) as [
+      unknown,
+      unknown,
+      { kind?: string; id?: string },
+    ];
+    expect(filter).toEqual({ kind: undefined, id: undefined });
+  });
+
+  it('the SAME per-file guard is handed over whether or not a filter is passed', () => {
+    call('library.list', {});
+    const [, unfiltered] = libraryMock.list.mock.calls.at(-1) as [unknown, unknown];
+    call('library.list', { kind: 'dispatch' });
+    const [, filtered] = libraryMock.list.mock.calls.at(-1) as [unknown, unknown];
+    // Not the same function object (it is built per call), but the same shape of
+    // confinement: a filter must never be a door into a wider read.
+    expect(typeof unfiltered).toBe('function');
+    expect(typeof filtered).toBe('function');
+  });
+
+  it('an empty string is "no filter", matching the Go twin\'s omitempty', () => {
+    // The facade's Go structs are `omitempty`, so an omitted field arrives as
+    // "". Refusing it here would make the same call succeed on the brain and
+    // fail on the desktop.
+    expect(() => call('library.list', { kind: '', id: '' })).not.toThrow();
+    const [, , filter] = libraryMock.list.mock.calls.at(-1) as [
+      unknown,
+      unknown,
+      { kind?: string; id?: string },
+    ];
+    expect(filter).toEqual({ kind: undefined, id: undefined });
+  });
+
+  it('an unknown kind is REFUSED, not answered with an empty list', () => {
+    // A typo'd "dispatchh" that comes back [] reads as "this library holds no
+    // dispatch templates", which is the wrong thing for a manager to learn.
+    expect(() => call('library.list', { kind: 'dispatchh' })).toThrow(/unknown kind/);
+  });
+
+  it('every real kind is accepted', () => {
+    for (const kind of ['prompt', 'skill', 'agent', 'mcp', 'command', 'dispatch']) {
+      expect(() => call('library.list', { kind })).not.toThrow();
+    }
+  });
+});
+
 describe('library.* with no cwd at all', () => {
   beforeEach(() => {
     getAllSnapshots.mockReturnValue([] as never);

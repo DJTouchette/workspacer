@@ -48,6 +48,14 @@ type libraryItem struct {
 	// template file cannot smuggle a toolScope/cwd/model/worktree; see
 	// libraryService.ts's LibraryKind comment (the desktop twin).
 	ResultSchema map[string]any `json:"resultSchema,omitempty"`
+	// Params is DERIVED from Body, never read from the file: the placeholders a
+	// dispatch template declares ({{task}}, {{delivery:open a PR}}), so a caller
+	// learns what to fill from a schema instead of from prose. Kind "dispatch"
+	// only, and never serialized back — serializeItem writes libFrontmatter,
+	// which has no field for it, so a hand-written `params:` in a template file
+	// is ignored exactly like every other unmodelled key.
+	// TWIN: libraryService.ts LibraryItem.params. See dispatchparams.go.
+	Params []dispatchParam `json:"params,omitempty"`
 	// Origin is which root a claude-scoped item came from. Over the bus this is
 	// always "project": libraryItemRoots confines every library file to the
 	// caller's project plus the global store, so the user's ~/.claude and the
@@ -519,6 +527,7 @@ func readLibraryDir(dir, scope string, guard libraryFileGuard) []libraryItem {
 		}
 		if kind == "dispatch" {
 			it.ResultSchema = toSchemaMap(data["resultSchema"])
+			it.Params = dispatchTemplateParams(it.Body)
 		}
 		items = append(items, it)
 	}
@@ -610,9 +619,40 @@ func readClaudeItems(cwd string, guard libraryFileGuard) []libraryItem {
 	return items
 }
 
+// libraryFilter is the OPTIONAL narrowing library.list accepts. Both fields are
+// exact matches, ANDed, and applied AFTER the merge and the sort — so a filtered
+// listing is always a subset of the unfiltered one and filtering can never change
+// which item wins a project-over-global id collision.
+//
+// It exists because an unfiltered listing carries every item's full BODY, which
+// made pre-spawn discovery of one dispatch template's placeholders cost a
+// manager the whole library.
+//
+// TWIN: libraryService.ts LibraryListFilter.
+type libraryFilter struct {
+	Kind string
+	ID   string
+}
+
+// libraryKinds is the kind vocabulary a filter is validated against. TWIN:
+// libraryService.ts LIBRARY_KINDS. Wider than validKind (which decides what a
+// FILE may declare and folds everything else to "prompt"): "command" is a real
+// kind that only readClaudeItems mints, and a caller must be able to ask for it.
+var libraryKinds = []string{"prompt", "skill", "agent", "mcp", "command", "dispatch"}
+
+func (f libraryFilter) empty() bool { return f.Kind == "" && f.ID == "" }
+
+func (f libraryFilter) match(it libraryItem) bool {
+	if f.Kind != "" && it.Kind != f.Kind {
+		return false
+	}
+	return f.ID == "" || it.ID == f.ID
+}
+
 // listLibrary merges global + project (project wins on id) + claude (namespaced),
-// sorted by title. Seeds the global dir with any starter it has never seeded.
-func listLibrary(cwd string, guard libraryFileGuard) []libraryItem {
+// sorted by title, then narrowed by `filter`. Seeds the global dir with any
+// starter it has never seeded.
+func listLibrary(cwd string, guard libraryFileGuard, filter libraryFilter) []libraryItem {
 	seedLibraryStarters()
 	byID := map[string]libraryItem{}
 	order := []string{}
@@ -648,7 +688,16 @@ func listLibrary(cwd string, guard libraryFileGuard) []libraryItem {
 		out = append(out, redactItem(byID[k]))
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Title < out[j].Title })
-	return out
+	if filter.empty() {
+		return out
+	}
+	kept := make([]libraryItem, 0, len(out))
+	for _, it := range out {
+		if filter.match(it) {
+			kept = append(kept, it)
+		}
+	}
+	return kept
 }
 
 // libraryInput is the save payload (matches the app's library.save params).
@@ -721,6 +770,9 @@ func (r *registry) saveLibrary(ctx context.Context, in libraryInput) (*libraryIt
 	}
 	if in.Kind == "dispatch" {
 		it.ResultSchema = in.ResultSchema
+		// Derived on the way back out too, so the item a save ECHOES carries the
+		// same params the next listLibrary will report.
+		it.Params = dispatchTemplateParams(it.Body)
 	}
 	if in.Kind == "mcp" {
 		// Echoed placeholders resolve against what is already on disk, so a save

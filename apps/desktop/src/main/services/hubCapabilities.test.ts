@@ -969,8 +969,67 @@ describe('agents.spawn — dispatch templates', () => {
     };
     expect(arg.firstMessage).toBe('SHIP: fix the off-by-one in parse()\nDeliver: open a PR');
     expect(arg.resultSchema).toEqual({ type: 'object', required: ['commit'] });
-    // The rendered text is an ordinary first message: delivery is acknowledged.
-    expect(res).toEqual({ sessionId: 'claude-session-id', fullAccess: false, messageQueued: true });
+    // The rendered text is an ordinary first message: delivery is acknowledged,
+    // AND the render is echoed back — a template spawn is the one case where the
+    // dispatcher has not seen what it sent, and reading it back used to mean
+    // agents.getConversation (no small-slice option, hundreds of KB).
+    expect(res).toEqual({
+      sessionId: 'claude-session-id',
+      fullAccess: false,
+      renderedMessage: 'SHIP: fix the off-by-one in parse()\nDeliver: open a PR',
+      messageQueued: true,
+    });
+  });
+
+  it('renderedMessage is exactly the text the worker was given', async () => {
+    libraryMock.list.mockReturnValueOnce([tpl()] as never);
+    const res = (await call('agents.spawn', {
+      template: 'ship-task',
+      templateParams: { task: 'x', delivery: 'merge locally' },
+    })) as { renderedMessage?: string };
+    const arg = spawnClaudeAgent.mock.calls[0][0] as { firstMessage?: string };
+    // Not "a copy of the template" — the SAME string the spawn delivered, or the
+    // field would verify a render that never happened.
+    expect(res.renderedMessage).toBe(arg.firstMessage);
+    expect(res.renderedMessage).toBe('SHIP: x\nDeliver: merge locally');
+  });
+
+  it('a plain message spawn gets NO echo — the caller wrote the text', async () => {
+    const res = (await call('agents.spawn', { cwd: '/proj', message: 'do the thing' })) as Record<
+      string,
+      unknown
+    >;
+    expect(res).not.toHaveProperty('renderedMessage');
+    expect(res).not.toHaveProperty('renderedMessageTruncated');
+  });
+
+  // Templates are prose a human wrote, so the cap is far above any real one. It
+  // exists so a pathological template cannot bloat a tool result a manager reads
+  // inside its own context window — and a clipped echo SAYS it was clipped,
+  // because silently verifying a render you never saw the end of is worse than
+  // no echo at all.
+  it('a pathological render is truncated and flagged, never silently clipped', async () => {
+    const huge = 'x'.repeat(20_000);
+    libraryMock.list.mockReturnValueOnce([tpl({ body: '{{task}}' })] as never);
+    const res = (await call('agents.spawn', {
+      template: 'ship-task',
+      templateParams: { task: huge },
+    })) as { renderedMessage: string; renderedMessageTruncated?: boolean };
+    const arg = spawnClaudeAgent.mock.calls[0][0] as { firstMessage?: string };
+    // The WORKER still got the whole thing; only the echo is bounded.
+    expect(arg.firstMessage).toHaveLength(20_000);
+    expect(res.renderedMessage).toHaveLength(16_000);
+    expect(res.renderedMessageTruncated).toBe(true);
+  });
+
+  it('a render at the cap is complete, and says nothing about truncation', async () => {
+    libraryMock.list.mockReturnValueOnce([tpl({ body: '{{task}}' })] as never);
+    const res = (await call('agents.spawn', {
+      template: 'ship-task',
+      templateParams: { task: 'y'.repeat(16_000) },
+    })) as { renderedMessage: string; renderedMessageTruncated?: boolean };
+    expect(res.renderedMessage).toHaveLength(16_000);
+    expect(res.renderedMessageTruncated).toBeUndefined();
   });
 
   it("the CALL's own resultSchema overrides the template default", async () => {

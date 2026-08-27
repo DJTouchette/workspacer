@@ -158,7 +158,7 @@ func TestListersUseTheFixtureOrdering(t *testing.T) {
 			}
 		}
 		var got []string
-		for _, it := range listLibrary("", allowAnyLibraryFile) {
+		for _, it := range listLibrary("", allowAnyLibraryFile, libraryFilter{}) {
 			got = append(got, it.Title)
 		}
 		if strings.Join(got, "\x00") != strings.Join(c.Expected, "\x00") {
@@ -277,7 +277,7 @@ func TestLibraryItemFieldsMatchTheDesktop(t *testing.T) {
 	}
 
 	got := map[string]string{}
-	for _, it := range listLibrary("", allowAnyLibraryFile) {
+	for _, it := range listLibrary("", allowAnyLibraryFile, libraryFilter{}) {
 		got[it.ID] = it.Title
 	}
 	want := map[string]string{

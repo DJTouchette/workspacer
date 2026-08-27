@@ -39,6 +39,8 @@ import { byteCompare, trimSuffixFold } from '../lib/providerParity';
 import { hasNonBlankText } from '../lib/asciiWhitespace';
 import { publishToHub } from './hubClient';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
+import { LIBRARY_KINDS, type LibraryKind } from '../shared/libraryKinds';
+import { dispatchTemplateParams, type DispatchTemplateParam } from '../lib/dispatchTemplate';
 
 export type LibraryScope = 'global' | 'project' | 'claude';
 /** 'dispatch' is a Fleet Manager dispatch template: template TEXT with named
@@ -48,7 +50,8 @@ export type LibraryScope = 'global' | 'project' | 'claude';
  *  fields exist on the kind, so a template is pure text with no trust boundary:
  *  every spawn argument still comes from the CALLER and passes the caller's
  *  clamps, and a template file can never smuggle one. */
-export type LibraryKind = 'prompt' | 'skill' | 'agent' | 'mcp' | 'command' | 'dispatch';
+export { LIBRARY_KINDS };
+export type { LibraryKind };
 export type LibraryAction = 'insert' | 'spawn' | 'copy';
 
 /**
@@ -90,6 +93,17 @@ export interface LibraryItem {
    *  when kind === 'dispatch'. Applied to a template spawn unless the call
    *  passes its own resultSchema. */
   resultSchema?: Record<string, unknown>;
+  /** DERIVED, never read from the file: the template's placeholders parsed out
+   *  of `body` — present only when kind === 'dispatch'.
+   *
+   *  It exists so learning what a template wants is a schema read instead of a
+   *  prose read: before this, the only way to discover `{{task}}` was to fetch
+   *  the WHOLE listing (every item, every body) and read the description or
+   *  eyeball the markdown. Parsed by lib/dispatchTemplate's dispatchTemplateParams
+   *  — the SAME parser the spawn path then enforces, so what is advertised and
+   *  what is required cannot drift. Auto-filled vars ({{cwd}}) are excluded:
+   *  this is what a CALLER must/may pass, not every token in the file. */
+  params?: DispatchTemplateParam[];
   /** Which root a claude-scoped item came from. Absent for global/project. */
   origin?: ClaudeOrigin;
   /** False when the item's file belongs to something else (a plugin package). */
@@ -118,6 +132,35 @@ const slug = slugLibrary;
  * library.go `libraryFileGuard`) has the same shape.
  */
 export type LibraryFileGuard = (filePath: string) => string | null;
+
+/**
+ * Optional narrowing for a listing. Both fields are ANDed, and both are exact
+ * matches — this is a cheap fetch-one door for a caller that already knows what
+ * it wants (a Fleet Manager reading ONE dispatch template's params), not a
+ * search surface.
+ *
+ * Applied AFTER the merge and the sort, never during it, so a filtered listing
+ * is a subset of the unfiltered one — filtering must not change which item wins
+ * a project-over-global id collision.
+ *
+ * TWIN: services/hub/cmd/brain/library.go `libraryFilter`.
+ */
+export interface LibraryListFilter {
+  /** Exact kind match, e.g. 'dispatch'. */
+  kind?: LibraryKind;
+  /** Exact id match (the filename slug). Claude items are namespaced in the
+   *  merge map but carry their bare id on the item, which is what matches. */
+  id?: string;
+}
+
+/** Apply a LibraryListFilter. Absent/empty filter returns the list untouched,
+ *  so every existing caller keeps today's answer. */
+function applyLibraryFilter(items: LibraryItem[], filter?: LibraryListFilter): LibraryItem[] {
+  if (!filter || (!filter.kind && !filter.id)) return items;
+  return items.filter(
+    (it) => (!filter.kind || it.kind === filter.kind) && (!filter.id || it.id === filter.id),
+  );
+}
 
 /** The identity guard — the trusted local IPC path, and the format unit tests. */
 const allowAnyLibraryFile: LibraryFileGuard = (filePath) => filePath;
@@ -454,6 +497,7 @@ function readDir(dir: string, scope: LibraryScope, guard: LibraryFileGuard): Lib
       // template file carries (a toolScope, a cwd, a model, a skipPermissions…)
       // is deliberately NOT modelled and never leaves this parser — spawn
       // arguments have no field to ride in, so a template cannot smuggle them.
+      const text = body.replace(/^\s*\n/, '');
       const resultSchema =
         kind === 'dispatch' &&
         data.resultSchema &&
@@ -471,7 +515,8 @@ function readDir(dir: string, scope: LibraryScope, guard: LibraryFileGuard): Lib
         action,
         mcp,
         resultSchema,
-        body: body.replace(/^\s*\n/, ''),
+        params: kind === 'dispatch' ? dispatchTemplateParams(text) : undefined,
+        body: text,
         path: full,
       });
     } catch {
@@ -674,8 +719,12 @@ class LibraryService {
    * routes them through the renderer: `claudeSpawn`/`managedSpawn` receive
    * `mcpItemIds` (names only) and resolve the configs here in main.
    */
-  list(cwd?: string, guard: LibraryFileGuard = allowAnyLibraryFile): LibraryItem[] {
-    return this.listWithSecrets(cwd, guard).map(redactItem);
+  list(
+    cwd?: string,
+    guard: LibraryFileGuard = allowAnyLibraryFile,
+    filter?: LibraryListFilter,
+  ): LibraryItem[] {
+    return this.listWithSecrets(cwd, guard, filter).map(redactItem);
   }
 
   /** Merged item list, project winning over global on id collision.
@@ -684,7 +733,11 @@ class LibraryService {
    *  CREDENTIALS IN THE CLEAR — for the spawn paths, which write them into a
    *  session's `--mcp-config` file. Never hand this to the renderer or the bus;
    *  see `list()`. */
-  listWithSecrets(cwd?: string, guard: LibraryFileGuard = allowAnyLibraryFile): LibraryItem[] {
+  listWithSecrets(
+    cwd?: string,
+    guard: LibraryFileGuard = allowAnyLibraryFile,
+    filter?: LibraryListFilter,
+  ): LibraryItem[] {
     const byId = new Map<string, LibraryItem>();
     // The GLOBAL dir is guarded too: <configDir>/library is the one directory a
     // remote caller can write into, so a symlink planted there aimed at the
@@ -708,7 +761,10 @@ class LibraryService {
     // order depending on which provider answered — every uppercase title before
     // every lowercase one on one side, case-insensitively interleaved on the
     // other. The ordering is what the picker shows and what "first" means in it.
-    return Array.from(byId.values()).sort((a, b) => byteCompare(a.title, b.title));
+    return applyLibraryFilter(
+      Array.from(byId.values()).sort((a, b) => byteCompare(a.title, b.title)),
+      filter,
+    );
   }
 
   save(
@@ -767,6 +823,10 @@ class LibraryService {
       action: input.action,
       mcp: input.kind === 'mcp' && input.mcp ? cleanMcp(input.mcp) : undefined,
       resultSchema: input.kind === 'dispatch' ? input.resultSchema : undefined,
+      // Derived here too, so the item a caller gets BACK from a save carries the
+      // same params the next list() will report — an echo that disagreed with
+      // the store would be worse than no echo.
+      params: input.kind === 'dispatch' ? dispatchTemplateParams(input.body) : undefined,
       body: input.body,
       path: full,
     });

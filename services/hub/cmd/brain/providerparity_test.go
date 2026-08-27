@@ -303,7 +303,7 @@ func TestClaudeScopeIdsAreRealBasenames(t *testing.T) {
 
 	ids := func() []string {
 		out := []string{}
-		for _, it := range listLibrary(cwd, allowAnyLibraryFile) {
+		for _, it := range listLibrary(cwd, allowAnyLibraryFile, libraryFilter{}) {
 			if it.Scope == "claude" {
 				out = append(out, it.ID)
 			}

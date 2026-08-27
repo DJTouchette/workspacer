@@ -70,7 +70,7 @@ func TestLibrarySeedAndList(t *testing.T) {
 		seenIDs[s.ID] = true
 	}
 
-	items := listLibrary("", allowAnyLibraryFile)
+	items := listLibrary("", allowAnyLibraryFile, libraryFilter{})
 	if len(items) != want {
 		t.Fatalf("expected %d seeded items, got %d", want, len(items))
 	}
@@ -216,7 +216,7 @@ func TestLibrarySeedNeverResurrectsDeleted(t *testing.T) {
 		_ = os.Remove(filepath.Join(dir, s.ID+".md"))
 	}
 	seedLibraryStarters()
-	if items := listLibrary("", allowAnyLibraryFile); len(items) != 0 {
+	if items := listLibrary("", allowAnyLibraryFile, libraryFilter{}); len(items) != 0 {
 		t.Errorf("a deliberately emptied library was re-seeded with %d items", len(items))
 	}
 }
@@ -230,7 +230,7 @@ func TestLibrarySeedIsIdempotent(t *testing.T) {
 	dir := libraryGlobalDir()
 
 	seedLibraryStarters()
-	first := listLibrary("", allowAnyLibraryFile)
+	first := listLibrary("", allowAnyLibraryFile, libraryFilter{})
 	stamps := map[string]time.Time{}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -246,7 +246,7 @@ func TestLibrarySeedIsIdempotent(t *testing.T) {
 
 	seedLibraryStarters()
 
-	if second := listLibrary("", allowAnyLibraryFile); len(second) != len(first) {
+	if second := listLibrary("", allowAnyLibraryFile, libraryFilter{}); len(second) != len(first) {
 		t.Errorf("second seed changed the item count: %d -> %d", len(first), len(second))
 	}
 	entries, err = os.ReadDir(dir)
@@ -296,7 +296,7 @@ func TestLibraryDispatchRoundTrip(t *testing.T) {
 	}
 
 	var got *libraryItem
-	for _, it := range listLibrary("", allowAnyLibraryFile) {
+	for _, it := range listLibrary("", allowAnyLibraryFile, libraryFilter{}) {
 		if it.ID == "ship-it" {
 			v := it
 			got = &v
@@ -331,7 +331,7 @@ func TestLibraryDispatchRoundTrip(t *testing.T) {
 		"do {{task}}",
 	}, "\n"))
 	var sneaky *libraryItem
-	for _, it := range listLibrary("", allowAnyLibraryFile) {
+	for _, it := range listLibrary("", allowAnyLibraryFile, libraryFilter{}) {
 		if it.ID == "sneaky" {
 			v := it
 			sneaky = &v
@@ -362,7 +362,7 @@ func TestLibraryProjectOverridesGlobal(t *testing.T) {
 	writeFile(t, filepath.Join(libraryGlobalDir(), "foo.md"), "---\ntitle: Global Foo\n---\n\nglobal body\n")
 	writeFile(t, filepath.Join(libraryProjectDir(cwd), "foo.md"), "---\ntitle: Project Foo\n---\n\nproject body\n")
 
-	items := listLibrary(cwd, allowAnyLibraryFile)
+	items := listLibrary(cwd, allowAnyLibraryFile, libraryFilter{})
 	var foo *libraryItem
 	for i := range items {
 		if items[i].ID == "foo" {
@@ -382,7 +382,7 @@ func TestLibraryClaudeAssets(t *testing.T) {
 	writeFile(t, filepath.Join(claudeAgentsDir(cwd), "myAgent.md"), "---\nname: My Agent\n---\n\nagent body\n")
 
 	var skill, agent *libraryItem
-	for _, it := range listLibrary(cwd, allowAnyLibraryFile) {
+	for _, it := range listLibrary(cwd, allowAnyLibraryFile, libraryFilter{}) {
 		switch it.Kind {
 		case "skill":
 			s := it
@@ -412,7 +412,7 @@ func TestLibraryClaudeCommands(t *testing.T) {
 	writeFile(t, filepath.Join(claudeCommandsDir(cwd), "deploy.md"), "---\ndescription: Ship it\n---\n\nRun the deploy playbook.\n")
 
 	var cmd *libraryItem
-	for _, it := range listLibrary(cwd, allowAnyLibraryFile) {
+	for _, it := range listLibrary(cwd, allowAnyLibraryFile, libraryFilter{}) {
 		if it.Kind == "command" {
 			c := it
 			cmd = &c
@@ -720,7 +720,7 @@ func TestLibraryMcpSecretsAreRedactedOnTheWayOut(t *testing.T) {
 		t.Errorf("saveLibrary returned Authorization = %q, want %q", got, secretPlaceholder)
 	}
 
-	items := listLibrary("", allowAnyLibraryFile)
+	items := listLibrary("", allowAnyLibraryFile, libraryFilter{})
 	var jira *libraryItem
 	for i := range items {
 		if items[i].Title == "Jira" {

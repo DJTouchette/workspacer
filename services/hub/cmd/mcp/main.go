@@ -555,7 +555,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	// ── Spawn ──────────────────────────────────────────────────────────────
 	b.group = "spawn"
 	addSpawnTool(b, "spawn_agent",
-		"Start a new coding-agent session in a directory (claude by default; codex/opencode/pi via provider) and return its sessionId. See help topic 'spawn' for labeling, nesting, and granting the new agent workspacer tools via toolScope.",
+		"Start a new coding-agent session in a directory (claude by default; codex/opencode/pi via provider) and return its sessionId — plus renderedMessage, the first message actually sent, whenever the spawn rendered a dispatch template. See help topic 'spawn' for labeling, nesting, and granting the new agent workspacer tools via toolScope.",
 		"agents.spawn")
 	addRespawnTool(b)
 	addTool[createTerminalIn](b, "create_terminal",
@@ -684,8 +684,8 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 
 	// ── Library (reusable prompts, skills, agents) ─────────────────────────
 	b.group = "library"
-	addTool[cwdIn](b, "list_library",
-		"List reusable library items (prompts, skills, agents, dispatch templates) — global plus, if cwd is given, that project's items.",
+	addTool[listLibraryIn](b, "list_library",
+		"List reusable library items (prompts, skills, agents, dispatch templates) — global plus, if cwd is given, that project's items. Filter with kind and/or id; a kind:'dispatch' row carries `params`, its placeholders parsed out ({name, required, default?}), which is what spawn_agent's templateParams fills.",
 		"library.list")
 	addObjectTool(b, "save_library",
 		"Save a library item. Pass the item blob (scope, kind, id, name, body, …).",
@@ -1211,6 +1211,18 @@ type conversationIn struct {
 
 type cwdIn struct {
 	Cwd string `json:"cwd,omitempty" jsonschema:"a project/working directory on the host"`
+}
+
+// listLibraryIn is cwdIn plus the two OPTIONAL narrowing filters. They exist
+// because an unfiltered listing returns every item's full BODY, which is how
+// pre-spawn template discovery used to cost a manager a hundred kilobytes of
+// context to learn one placeholder name. Both are exact matches and both are
+// applied to the merged list, so a filtered answer is always a subset of the
+// unfiltered one.
+type listLibraryIn struct {
+	Cwd  string `json:"cwd,omitempty" jsonschema:"a project/working directory on the host — adds that project's .workspacer/library and .claude assets to the global ones"`
+	Kind string `json:"kind,omitempty" jsonschema:"return only items of this kind: prompt | skill | agent | mcp | command | dispatch. Use 'dispatch' to list just the Fleet Manager dispatch templates spawn_agent's template param accepts. An unknown kind is refused, never answered with an empty list"`
+	ID   string `json:"id,omitempty" jsonschema:"return only the item with this exact id (the filename slug, e.g. 'ship-task') — the cheap way to read ONE template's params instead of the whole library"`
 }
 
 type adoptWorkersIn struct {

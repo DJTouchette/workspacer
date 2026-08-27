@@ -88,6 +88,16 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
   failing. Validated keywords are type/properties/required/items/enum/
   additionalProperties; anything else is ignored (it can under-constrain, never
   wrongly reject).
+- template + templateParams renders a library DISPATCH TEMPLATE (kind
+  'dispatch') into the first message instead of you retyping the framing.
+  Discover one cheaply with list_library({kind:"dispatch", id:"ship-task"}):
+  each dispatch item carries a machine-readable "params" list — {name,
+  required, default?} — so you learn what to fill without reading the body.
+  A required param left unfilled REFUSES the spawn naming it; it is never
+  silently defaulted. The spawn result then echoes the text that was actually
+  sent back as "renderedMessage" (with renderedMessageTruncated:true if it was
+  clipped), so verifying the render costs nothing — do not call
+  get_conversation just to see what your own dispatch said.
 - Drive it afterwards with send_message; watch it with get_conversation.
 - To spawn on a federated peer machine, pass hub (a hub name seen on
   list_agents rows). The peer clamps remote spawns itself — permission bypass
@@ -311,8 +321,14 @@ live agents — list_agents is the live fleet. list/load/save/delete by filename
 	"layouts": strings.TrimSpace(`
 Layout templates are saved pane-geometry presets. list/save/delete.`),
 	"library": strings.TrimSpace(`
-The library holds reusable prompts, skills, and agent definitions, global or
-per-project (pass cwd). list/save/remove.`),
+The library holds reusable prompts, skills, agent definitions and Fleet Manager
+DISPATCH TEMPLATES, global or per-project (pass cwd). list/save/remove.
+list_library takes optional kind and id filters — use them: an unfiltered
+listing returns every item's full body, while list_library({kind:"dispatch"})
+is the cheap way to see the templates you can spawn with. Every kind
+'dispatch' row carries "params", the placeholders parsed out of its body
+({name, required, default?}), which is what spawn_agent's templateParams
+expects.`),
 	"analytics": strings.TrimSpace(`
 analytics_summary aggregates usage/cost across sessions; analytics_recent
 returns the latest finished sessions with per-session usage.`),

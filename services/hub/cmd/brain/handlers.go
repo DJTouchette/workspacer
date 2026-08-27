@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"strings"
 )
 
@@ -330,6 +331,12 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 	case "library.list":
 		var p struct {
 			Cwd string `json:"cwd"`
+			// OPTIONAL narrowing. It touches no file the unfiltered call would
+			// not open and no guard the unfiltered call would not run — the
+			// filter is applied to the merged RESULT — so it can only remove
+			// rows the caller was already entitled to. TWIN: hubCapabilities.ts.
+			Kind string `json:"kind"`
+			ID   string `json:"id"`
 		}
 		if err := unmarshal(params, &p); err != nil {
 			return nil, err
@@ -363,7 +370,13 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		// the project aimed at ~/.ssh/id_rsa canonicalizes inside $HOME, which
 		// the browse roots contain and the two directories library items
 		// actually live in do not.
-		return jsonResult(listLibrary(cwd, libraryFileGuardFor("library.list", cwd)))
+		// An unknown kind is REFUSED rather than answered with an empty list: a
+		// typo'd "dispatchh" that comes back [] reads as "this library holds no
+		// dispatch templates", which is the wrong thing for a manager to learn.
+		if p.Kind != "" && !slices.Contains(libraryKinds, p.Kind) {
+			return nil, fmt.Errorf("library.list: unknown kind %q — one of %s", p.Kind, strings.Join(libraryKinds, ", "))
+		}
+		return jsonResult(listLibrary(cwd, libraryFileGuardFor("library.list", cwd), libraryFilter{Kind: p.Kind, ID: p.ID}))
 	case "library.save":
 		var in libraryInput
 		if err := unmarshal(params, &in); err != nil {
