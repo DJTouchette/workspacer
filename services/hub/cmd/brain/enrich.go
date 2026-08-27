@@ -278,8 +278,16 @@ func compatSnapshot(snap json.RawMessage) json.RawMessage {
 		usage := map[string]any{
 			"model":         u["model"],
 			"contextTokens": u["context_tokens"],
-			"contextLimit":  u["context_limit"],
 			"costUSD":       u["cost_usd"],
+		}
+		// The context window, ONLY when claudemon reported one. A newer daemon
+		// omits `context_limit` when it does not know the window rather than
+		// spelling the unknown 200000, and mapping an absent key here would
+		// turn that honest silence into a JSON null — which every client would
+		// then have to distinguish from a real window all over again. Absent
+		// stays absent, same rule as `cache` below.
+		if cl, ok := u["context_limit"]; ok && cl != nil {
+			usage["contextLimit"] = cl
 		}
 		// The fresh/write/read prompt-cache split, when claudemon reported one.
 		// Its sub-keys are already the names the desktop uses, so it passes

@@ -33,6 +33,13 @@ pub struct ModelRates {
     /// (Claude bills reads at 0.1× input; OpenAI entries set it explicitly).
     #[serde(default)]
     pub cached_input: Option<f64>,
+    /// The user's EXPLICIT window override, and nothing else. No built-in
+    /// carries one: the window is the business of
+    /// contracts/model-context-windows.json (see [`super::windows`]), and this
+    /// field exists only so a person can overrule that table for a model this
+    /// build has never heard of. `None` here means "the user said nothing",
+    /// which is why [`super::windows::resolve_window`] can rank it above the
+    /// `[1m]` marker without a coarse alias ever losing to an absent override.
     #[serde(default)]
     pub context_limit: Option<u64>,
 }
@@ -43,17 +50,6 @@ const fn rates(input: f64, output: f64, cached_input: Option<f64>) -> ModelRates
         output,
         cached_input,
         context_limit: None,
-    }
-}
-
-/// Like [`rates`], for 1M-native models (Fable / Mythos) whose ids carry no
-/// `[1m]` marker for the window to be inferred from.
-const fn rates_1m(input: f64, output: f64, cached_input: Option<f64>) -> ModelRates {
-    ModelRates {
-        input,
-        output,
-        cached_input,
-        context_limit: Some(1_000_000),
     }
 }
 
@@ -74,10 +70,13 @@ const BUILTIN: &[(&str, ModelRates)] = &[
     // ('claude-opus-4-10…'), which are current generations and should price at
     // the generic 5/25. Claude 3 Opus ids ('claude-3-opus-20240229') don't
     // start with 'claude-opus' at all, hence the separate 'claude-3-opus' entry.
-    // 1M-native — without the explicit limit the 200K default made
-    // transcript-derived context % read 5× high on Fable/Mythos sessions.
-    ("claude-fable", rates_1m(10.0, 50.0, None)),
-    ("claude-mythos", rates_1m(10.0, 50.0, None)),
+    // Fable / Mythos carry no window here any more. This table is PRICE only:
+    // the window comes from contracts/model-context-windows.json via
+    // session::windows, which knows they are 1M-native. A built-in that also
+    // held a window was one of the five parallel window tables, and the two it
+    // covered (these) disagreed with none of them only by luck.
+    ("claude-fable", rates(10.0, 50.0, None)),
+    ("claude-mythos", rates(10.0, 50.0, None)),
     ("claude-opus", rates(5.0, 25.0, None)),
     ("claude-opus-4-1-", rates(15.0, 75.0, None)),
     ("claude-opus-4-0", rates(15.0, 75.0, None)),
@@ -211,19 +210,27 @@ fn rates_for_in(
     for (prefix, r) in user {
         // `>=` so a user entry beats the built-in of the same prefix.
         if model.starts_with(prefix.as_str()) && prefix.len() >= best_len {
-            let mut merged = *r;
-            // An override that omits `context_limit` inherits the matched
-            // built-in's window (mirrors modelUsage.ts's
-            // `best?.contextLimit ?? DEFAULT`) — otherwise 1M-native models
-            // (Fable/Mythos) silently drop to usage.rs's 200k floor.
-            if merged.context_limit.is_none() {
-                merged.context_limit = best.and_then(|b| b.context_limit);
-            }
-            best = Some(merged);
+            // No inheritance step any more: no built-in carries a window, so an
+            // override that omits `context_limit` simply says nothing about the
+            // window and session::windows answers from the contract table. The
+            // branch this replaces existed to stop a Fable override from
+            // dropping the built-in 1M window onto usage.rs's 200k floor — both
+            // of which are gone.
+            best = Some(*r);
             best_len = prefix.len();
         }
     }
     best
+}
+
+/// The user's explicit window override for a model, if they wrote one.
+///
+/// This is rank 2 of the window hierarchy (see
+/// [`super::windows::resolve_window`]) — above the `[1m]` marker, because a
+/// person who writes `context_limit` into ~/.workspacer/model-rates.json means
+/// it, and below only the window the provider itself reported for the session.
+pub fn override_window_for(model: &str) -> Option<u64> {
+    rates_for(model).and_then(|r| r.context_limit)
 }
 
 /// Cumulative USD estimate from cumulative token totals, for providers whose
@@ -270,22 +277,38 @@ mod tests {
     }
 
     #[test]
-    fn user_override_without_context_limit_inherits_builtin_window() {
-        // Regression (idx 6): a Fable/Mythos override that only tweaks
-        // input/output (no `context_limit`) must NOT drop the built-in 1M
-        // window. The wholesale `best = Some(*r)` replace previously returned
-        // `context_limit: None`, which usage.rs::rates_for then floored to 200k.
-        // The TS side (modelUsage.ts ratesFor) inherits the built-in window via
-        // `best?.contextLimit ?? DEFAULT_RATES.contextLimit`; the two costing
-        // paths must agree for the same model-rates.json.
+    fn user_override_without_context_limit_says_nothing_about_the_window() {
+        // Was: "inherits the built-in window". No built-in has one now — this
+        // table prices, contracts/model-context-windows.json sizes — so an
+        // override that only tweaks input/output must leave `context_limit`
+        // absent, and the window comes from the contract instead. Fable stays
+        // 1M either way, which is the outcome the old inheritance branch was
+        // protecting; it just no longer travels through the pricing table.
         let mut user = HashMap::new();
         user.insert("claude-fable".to_string(), rates(8.0, 40.0, None));
         let r = rates_for_in("claude-fable-5", BUILTIN, &user).unwrap();
-        // Input/output come from the override.
         assert_eq!(r.input, 8.0);
         assert_eq!(r.output, 40.0);
-        // Context window is inherited from the 1M-native built-in, NOT dropped.
-        assert_eq!(r.context_limit, Some(1_000_000));
+        assert_eq!(r.context_limit, None, "the user said nothing about a window");
+        assert_eq!(
+            crate::session::windows::window_for("claude-fable-5"),
+            Some(1_000_000),
+            "and the contract table still knows Fable is 1M-native"
+        );
+    }
+
+    #[test]
+    fn no_builtin_carries_a_window() {
+        // Closure on the five-tables problem from the pricing side: if a window
+        // ever creeps back into BUILTIN it becomes a second opinion that
+        // outranks the contract table for that model, silently, for whichever
+        // engine happens to read it.
+        for (prefix, r) in BUILTIN {
+            assert_eq!(
+                r.context_limit, None,
+                "built-in {prefix:?} carries a context_limit; windows live in                  contracts/model-context-windows.json, not here"
+            );
+        }
     }
 
     #[test]

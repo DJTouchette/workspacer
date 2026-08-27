@@ -239,7 +239,10 @@ export interface SessionUsage {
   /** Latest turn's input side (point-in-time). */
   contextTokens: number;
   /** Tokens the model's window holds. */
-  contextLimit: number;
+  /** Tokens the model's window holds, or `null` when unknown — a provider
+   *  that reports no window, a model the contract table does not cover, or a
+   *  turn-1 stream session that has not spoken yet. Never a guessed 200_000. */
+  contextLimit: number | null;
   /** Cumulative (incl. cache). */
   totalInputTokens: number;
   /** Cumulative. */

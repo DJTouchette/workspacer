@@ -40,13 +40,29 @@ pub struct Usage {
     pub model: Option<String>,
     /// Latest turn's input side — a point-in-time view of context fullness.
     pub context_tokens: u64,
-    pub context_limit: u64,
+    /// The session's context window, in tokens, or `None` when we DO NOT KNOW.
+    ///
+    /// Unknown is a real answer here and it is spelled by omitting the key on
+    /// the wire — never by a guessed `200_000`, which is how four sites used to
+    /// spell it, including the empty usage a pane renders before a single token
+    /// has been counted. Same rule as `cache` below: absence means "not
+    /// reported", never "zero". Every readout in the repo already hides its
+    /// meter on an absent window; this is what finally lets them.
+    ///
+    /// Resolved by [`super::windows::resolve_window`], never by this module.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_limit: Option<u64>,
     /// Cumulative cost over the session.
     pub cost_usd: f64,
     /// Cumulative fresh / cache-write / cache-read split of the prompt side.
     /// `None` until a turn arrives carrying cache fields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache: Option<CacheSplit>,
+    /// High-water context occupancy across the fold, for the DRIFT ALARM only.
+    /// Never on the wire (`serde(skip)`): it is an input to resolving the
+    /// window, not a fact about the session anyone downstream reads.
+    #[serde(skip)]
+    pub peak_context: u64,
 }
 
 struct Rates {
@@ -57,14 +73,19 @@ struct Rates {
     input: f64,
     output: f64,
     cached_input: Option<f64>,
-    context_limit: u64,
 }
 
+/// Sonnet-tier PRICE defaults for a model the table has never heard of.
+///
+/// It used to carry `context_limit: 200_000` as well, which is the first of the
+/// four places "we do not know" was spelled as a number. An unknown model now
+/// has an unknown WINDOW (see [`super::windows::window_for`]); guessing its
+/// PRICE is a different call, and a defensible one, because a blank cost reads
+/// as free rather than as unknown.
 const DEFAULT_RATES: Rates = Rates {
     input: 3.0,
     output: 15.0,
     cached_input: None,
-    context_limit: 200_000,
 };
 
 /// Longest-prefix match on the transcript `model` id, via the shared pricing
@@ -79,7 +100,6 @@ fn rates_for(model: Option<&str>) -> Rates {
             input: r.input,
             output: r.output,
             cached_input: r.cached_input,
-            context_limit: r.context_limit.unwrap_or(200_000),
         },
         None => DEFAULT_RATES,
     }
@@ -92,41 +112,56 @@ fn context_tokens_of(usage: &Value) -> u64 {
         + usage_u64(usage, "cache_read_input_tokens")
 }
 
-/// Window implied by the transcript alone: the rates table for the model id,
-/// with a last-resort retrospective promotion — the transcript model id lacks
-/// the `[1m]` suffix, so a session whose window is otherwise unknown only
-/// reveals 1M mode by exceeding the standard 200k. [`Usage::resolve_window`]
-/// overrides this with real signals when the session has any.
-fn context_limit_for(model: Option<&str>, observed: u64) -> u64 {
-    let base = rates_for(model).context_limit;
-    if base <= 200_000 && observed > 200_000 {
-        1_000_000
-    } else {
-        base
-    }
+/// Window implied by the TRANSCRIPT ALONE — the contract table for the model
+/// id, plus the user's own override, and nothing else. The session's real
+/// signals (a provider-reported window, the `[1m]` marker on the model it was
+/// spawned with) do not live in the transcript, so [`Usage::resolve_window`]
+/// re-resolves with them the moment a live session is being described.
+///
+/// `None` is the honest answer for a model no row covers. It used to be
+/// `200_000`, and it used to carry a retrospective 200k→1M promotion whose only
+/// evidence was the session having exceeded 200k. That promotion is now the
+/// DRIFT ALARM inside [`super::windows::resolve_window`]: the same observation,
+/// but it disarms a window it disproves instead of inventing a replacement.
+fn context_limit_for(model: Option<&str>, observed: u64) -> Option<u64> {
+    super::windows::resolve_window(
+        model,
+        None,
+        None,
+        model.and_then(super::pricing::override_window_for),
+        observed,
+    )
 }
 
 impl Usage {
-    /// Replace the transcript-derived `context_limit` with what the *session*
-    /// knows about its window — the transcript can't say, because Claude Code
-    /// strips the `[1m]` marker from the `model` id it records.
+    /// Re-resolve `context_limit` from everything the SESSION knows, which is
+    /// strictly more than the transcript does: Claude Code strips the `[1m]`
+    /// marker from the `model` id it records, so a 1M session and a 200k
+    /// session write the same id.
     ///
     /// `reported` is the provider's own window (the status line's
     /// `context_window_size`: Claude's statusLine payload on the PTY path, the
-    /// stream `result` frame's `modelUsage.*.contextWindow` on the managed
-    /// one, `model_context_window` for Codex) — a fact, so it wins outright.
-    /// `requested` is the model string the session was spawned with
-    /// (`opus[1m]`), which still carries the marker and is known from token
-    /// zero; it may only *raise* the window, never lower one the rates table
-    /// (or a user override) already resolved higher.
+    /// stream `result` frame's `modelUsage.*.contextWindow` on the managed one,
+    /// `model_context_window` for Codex). `requested` is the model string the
+    /// session was spawned with (`opus[1m]`), which still carries the marker and
+    /// is known from token zero.
+    ///
+    /// The ranking lives in ONE place — [`super::windows::resolve_window`] — so
+    /// this method is a call site, not a second opinion. Two things changed from
+    /// what shipped before: a user `context_limit` override now outranks the
+    /// requested-model marker (it was a `max()`, under which a coarse alias
+    /// could silently overrule what the user wrote), and the answer may be
+    /// `None`, which is what "we do not know" has to look like.
     pub fn resolve_window(&mut self, reported: Option<u64>, requested: Option<&str>) {
-        if let Some(w) = reported.filter(|w| *w > 0) {
-            self.context_limit = w;
-            return;
-        }
-        if let Some(w) = requested.and_then(crate::providers::requested_context_window_for) {
-            self.context_limit = self.context_limit.max(w);
-        }
+        self.context_limit = super::windows::resolve_window(
+            self.model.as_deref(),
+            requested,
+            reported,
+            self.model
+                .as_deref()
+                .and_then(super::pricing::override_window_for),
+            self.peak_context,
+        );
     }
 }
 
@@ -291,6 +326,7 @@ fn from_transcript_value(tx: &Value) -> Option<Usage> {
                 usage.model = Some(model.to_string());
             }
             peak_context = peak_context.max(usage.context_tokens);
+            usage.peak_context = peak_context;
             usage.context_limit = context_limit_for(usage.model.as_deref(), peak_context);
         }
 
@@ -393,6 +429,7 @@ fn fold_transcript(
                 usage.model = Some(model.to_string());
             }
             *peak_context = (*peak_context).max(usage.context_tokens);
+            usage.peak_context = *peak_context;
             usage.context_limit = context_limit_for(usage.model.as_deref(), *peak_context);
         }
 
@@ -962,9 +999,20 @@ mod tests {
         assert!(from_transcript(&tx(vec![bare])).unwrap().cache.is_none());
     }
 
-    /// 200k→1M context window heuristic: if context_tokens > 200_000, limit = 1_000_000
+    /// WAS the 200k→1M promotion: context over 200_000 ⇒ the window must be 1M.
+    ///
+    /// It is now the DRIFT ALARM. The observation is the same and it is still
+    /// worth acting on — this session demonstrably holds more than the table
+    /// says its model can — but the conclusion "therefore it is 1M" was a guess,
+    /// and the transcript alone cannot tell 1M from 500k from a table that is
+    /// simply stale. So the window goes UNKNOWN (the meter hides) and the daemon
+    /// logs which model it was wrong about, rather than silently substituting a
+    /// number that only happened to be right while 1M was the only other option.
+    ///
+    /// The real 1M sessions are covered from token zero now, off the requested
+    /// model — see `resolve_window_reads_1m_off_the_requested_model`.
     #[test]
-    fn context_window_200k_to_1m_promotion() {
+    fn context_beyond_the_known_window_disarms_it_rather_than_promoting() {
         let t = tx(vec![assistant_msg(
             "m1",
             "claude-opus-4-8",
@@ -975,7 +1023,7 @@ mod tests {
         )]);
         let u = from_transcript(&t).unwrap();
         assert_eq!(u.context_tokens, 250_000);
-        assert_eq!(u.context_limit, 1_000_000, "should promote to 1M");
+        assert_eq!(u.context_limit, None, "unknown, not a guessed 1M");
     }
 
     /// Fable/Mythos are 1M-native — the limit must be 1M from the first turn,
@@ -984,7 +1032,7 @@ mod tests {
     fn context_window_fable_is_1m_native() {
         let t = tx(vec![assistant_msg("m1", "claude-fable-5", 1_000, 0, 0, 10)]);
         let u = from_transcript(&t).unwrap();
-        assert_eq!(u.context_limit, 1_000_000);
+        assert_eq!(u.context_limit, Some(1_000_000));
     }
 
     /// The regression: a `opus[1m]` session under 200k reported a 200k window,
@@ -1002,15 +1050,38 @@ mod tests {
             10,
         )]);
         let mut u = from_transcript(&t).unwrap();
-        assert_eq!(u.context_limit, 200_000, "transcript alone cannot tell");
+        assert_eq!(
+            u.context_limit,
+            Some(200_000),
+            "transcript alone cannot tell"
+        );
         u.resolve_window(None, Some("opus[1m]"));
-        assert_eq!(u.context_limit, 1_000_000);
+        assert_eq!(u.context_limit, Some(1_000_000));
     }
 
-    /// The provider's own window is a fact and outranks every inference —
-    /// including the retrospective 200k→1M promotion.
+    /// The provider's own window is a fact and outranks every inference,
+    /// including the `[1m]` marker on the model the session asked for. A user
+    /// who picked `opus[1m]` and got a 200k session must see 200k.
     #[test]
     fn resolve_window_prefers_the_reported_window() {
+        let t = tx(vec![assistant_msg(
+            "m1",
+            "claude-opus-5",
+            120_000,
+            0,
+            0,
+            10,
+        )]);
+        let mut u = from_transcript(&t).unwrap();
+        u.resolve_window(Some(200_000), Some("opus[1m]"));
+        assert_eq!(u.context_limit, Some(200_000));
+    }
+
+    /// ...but only while the report is consistent with what the session is
+    /// observed to hold. A provider claiming 200k for a session sitting on 300k
+    /// is not a fact, it is a contradiction, and the alarm disarms it too.
+    #[test]
+    fn a_reported_window_the_session_has_outgrown_is_disarmed() {
         let t = tx(vec![assistant_msg(
             "m1",
             "claude-opus-5",
@@ -1020,9 +1091,8 @@ mod tests {
             10,
         )]);
         let mut u = from_transcript(&t).unwrap();
-        assert_eq!(u.context_limit, 1_000_000, "promoted by the fallback");
         u.resolve_window(Some(200_000), Some("opus[1m]"));
-        assert_eq!(u.context_limit, 200_000);
+        assert_eq!(u.context_limit, None);
     }
 
     /// The fix must not default everything to 1M: an unmarked request says
@@ -1040,20 +1110,21 @@ mod tests {
         )]);
         let mut u = from_transcript(&t).unwrap();
         u.resolve_window(None, Some("opus"));
-        assert_eq!(u.context_limit, 200_000);
+        assert_eq!(u.context_limit, Some(200_000));
         // A zero/absent reported window is "unknown", not "no window".
         u.resolve_window(Some(0), None);
-        assert_eq!(u.context_limit, 200_000);
+        assert_eq!(u.context_limit, Some(200_000));
     }
 
-    /// A coarse requested alias may raise the window, never lower one the
-    /// rates table (or a user override) already resolved higher.
+    /// A coarse requested alias must not lower a window the table already knows
+    /// is bigger. `opus` says NOTHING (it is not a marker), so a Fable session
+    /// keeps its 1M — the marker rank only fires on a string that names a window.
     #[test]
     fn resolve_window_never_lowers_a_1m_native_model() {
         let t = tx(vec![assistant_msg("m1", "claude-fable-5", 1_000, 0, 0, 10)]);
         let mut u = from_transcript(&t).unwrap();
         u.resolve_window(None, Some("opus"));
-        assert_eq!(u.context_limit, 1_000_000);
+        assert_eq!(u.context_limit, Some(1_000_000));
     }
 
     /// At exactly 200_000 tokens the limit stays 200_000.
@@ -1068,7 +1139,7 @@ mod tests {
             0,
         )]);
         let u = from_transcript(&t).unwrap();
-        assert_eq!(u.context_limit, 200_000);
+        assert_eq!(u.context_limit, Some(200_000));
     }
 
     /// Claude's `<synthetic>` placeholder model must be neutralized (parity with
@@ -1112,14 +1183,18 @@ mod tests {
             "a placeholder row must leave the last real turn's context standing"
         );
         assert_eq!(u.model.as_deref(), Some("claude-opus-4-8"));
-        assert_eq!(u.context_limit, 200_000);
+        assert_eq!(u.context_limit, Some(200_000));
     }
 
-    /// 1M-mode is a session-level property: once any main-thread turn exceeds the
-    /// 200k window the limit must stay promoted even when a later turn's context
-    /// (e.g. after auto-compaction) falls back under 200k.
+    /// The peak is a SESSION-level fact, so the drift alarm must not un-fire the
+    /// moment auto-compaction drops the latest turn back under the window. Once
+    /// this session has been seen holding 250k, a claim that it holds 200k is
+    /// disproved for good — it does not become believable again at 180k.
+    ///
+    /// (Was `context_window_1m_promotion_survives_compaction`: the same
+    /// session-peak property, back when the conclusion was "therefore 1M".)
     #[test]
-    fn context_window_1m_promotion_survives_compaction() {
+    fn the_drift_alarm_survives_compaction() {
         let t = tx(vec![
             assistant_msg("m1", "claude-opus-4-8", 250_000, 0, 0, 10),
             user_msg(),
@@ -1128,8 +1203,8 @@ mod tests {
         let u = from_transcript(&t).unwrap();
         assert_eq!(u.context_tokens, 180_000, "gauge reflects latest turn");
         assert_eq!(
-            u.context_limit, 1_000_000,
-            "1M promotion must persist past compaction (session peak), not revert to 200k"
+            u.context_limit, None,
+            "the peak disproved the window; compaction does not re-prove it"
         );
     }
 
@@ -1146,7 +1221,7 @@ mod tests {
         assert_eq!(u.model.as_deref(), Some("claude-sonnet-4-6"));
         // context = last turn's input + cache_read
         assert_eq!(u.context_tokens, 200 + 5_000);
-        assert_eq!(u.context_limit, 200_000);
+        assert_eq!(u.context_limit, Some(200_000));
         // cost from m1 (once) + m2, sonnet rates (3 in / 15 out per Mtok, cache-read 0.1×)
         let expected = ((100.0 * 3.0 + 1_000.0 * 0.3 + 50.0 * 15.0)
             + (200.0 * 3.0 + 5_000.0 * 0.3 + 80.0 * 15.0))
@@ -1389,8 +1464,11 @@ mod tests {
             "subagent file turn clobbered the reported model"
         );
         assert_eq!(
-            u.context_limit, 200_000,
-            "subagent file's 500k context wrongly promoted the window to 1M"
+            u.context_limit,
+            Some(200_000),
+            "a subagent file's 500k context is not the MAIN thread's peak: it must \
+             neither promote the window (the old bug) nor trip the drift alarm \
+             (the new one), because the parent never held those tokens"
         );
     }
 
@@ -1418,20 +1496,22 @@ mod tests {
         let u = from_transcript_value(&tx).unwrap();
         assert_eq!(u.model.as_deref(), Some("claude-sonnet-4-6"));
         assert_eq!(u.context_tokens, 200 + 5000);
-        assert_eq!(u.context_limit, 200_000);
+        assert_eq!(u.context_limit, Some(200_000));
         let expected = ((100.0 * 3.0 + 1000.0 * 0.3 + 50.0 * 15.0)
             + (200.0 * 3.0 + 5000.0 * 0.3 + 80.0 * 15.0))
             / 1_000_000.0;
         assert!((u.cost_usd - expected).abs() < 1e-12);
     }
 
+    /// Parity with `context_beyond_the_known_window_disarms_it_rather_than_promoting`
+    /// on the value-shaped API: over the known window ⇒ unknown, not a guessed 1M.
     #[test]
-    fn value_api_promotes_to_1m_window() {
+    fn value_api_disarms_a_window_the_session_has_outgrown() {
         let tx = serde_json::json!({"messages": [
             assistant_value("m1", "claude-opus-4-8", 250_000, 0, 10),
         ]});
         let u = from_transcript_value(&tx).unwrap();
-        assert_eq!(u.context_limit, 1_000_000);
+        assert_eq!(u.context_limit, None);
     }
 
     #[test]

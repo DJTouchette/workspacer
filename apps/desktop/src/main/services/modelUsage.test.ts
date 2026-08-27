@@ -6,13 +6,15 @@ import { describe, it, expect } from 'vitest';
 import {
   contextTokensOf,
   contextLimitFor,
-  requestedWindowFor,
   turnCostUSD,
   cacheSplitOf,
   emptyUsage,
   type RawUsage,
   type SessionUsage,
 } from './modelUsage';
+// `requestedWindowFor` moved to the shared window module when the five window
+// tables were collapsed into contracts/model-context-windows.json.
+import { requestedWindowFor } from '../shared/modelContextWindows';
 
 // ---------------------------------------------------------------------------
 // contextTokensOf
@@ -56,40 +58,56 @@ describe('contextLimitFor', () => {
     expect(contextLimitFor('claude-mythos-1', 1_000)).toBe(1_000_000);
   });
 
-  it('claude-opus: promotes to 1_000_000 when observed > 200k', () => {
-    expect(contextLimitFor('claude-opus-4', 200_001)).toBe(1_000_000);
+  // WAS "promotes to 1_000_000 when observed > 200k". The observation still
+  // matters — this session holds more than the table says its model can — but
+  // the conclusion "therefore 1M" was a guess, and the transcript cannot tell
+  // 1M from 500k from a table that is simply stale. So the window goes UNKNOWN
+  // (the meter hides) and the drift alarm logs which model we were wrong about.
+  it('claude-opus: DISARMS the window when observed exceeds it, rather than promoting', () => {
+    // Past the 2% tolerance, which exists so a genuinely-full 200k session
+    // does not lose its meter to the provider's own rounding.
+    expect(contextLimitFor('claude-opus-4', 210_000)).toBeNull();
   });
 
   it('claude-sonnet: base 200_000 when observed <= 200k', () => {
     expect(contextLimitFor('claude-sonnet-4-5', 50_000)).toBe(200_000);
   });
 
-  it('claude-sonnet: promotes to 1_000_000 when observed > 200k', () => {
-    expect(contextLimitFor('claude-sonnet-4-5', 250_000)).toBe(1_000_000);
+  it('claude-sonnet: disarms the window when observed exceeds it', () => {
+    expect(contextLimitFor('claude-sonnet-4-5', 250_000)).toBeNull();
   });
 
   it('claude-haiku: base 200_000 when observed <= 200k', () => {
     expect(contextLimitFor('claude-haiku-3-5', 1_000)).toBe(200_000);
   });
 
-  it('claude-haiku: promotes to 1_000_000 when observed > 200k', () => {
-    expect(contextLimitFor('claude-haiku-3-5', 500_000)).toBe(1_000_000);
+  it('claude-haiku: disarms the window when observed exceeds it', () => {
+    expect(contextLimitFor('claude-haiku-3-5', 500_000)).toBeNull();
   });
 
-  it('unknown model falls back to default 200_000 contextLimit', () => {
-    expect(contextLimitFor('gpt-4', 10_000)).toBe(200_000);
+  // THE HONEST UNKNOWN. These four used to assert 200_000, which is what made
+  // a model this build has never heard of render as a familiar one — and made
+  // a brand-new session assert a window before it had counted a token.
+  it('a model no table row covers resolves to UNKNOWN, not 200_000', () => {
+    expect(contextLimitFor('some-new-vendor-model-9', 10_000)).toBeNull();
+    expect(contextLimitFor('some-new-vendor-model-9', 300_000)).toBeNull();
   });
 
-  it('unknown model also promotes to 1_000_000 when observed > 200k', () => {
-    expect(contextLimitFor('gpt-4', 300_000)).toBe(1_000_000);
+  it('null model is unknown', () => {
+    expect(contextLimitFor(null, 0)).toBeNull();
   });
 
-  it('null model uses default 200_000', () => {
-    expect(contextLimitFor(null, 0)).toBe(200_000);
+  it('undefined model is unknown', () => {
+    expect(contextLimitFor(undefined, 0)).toBeNull();
   });
 
-  it('undefined model uses default 200_000', () => {
-    expect(contextLimitFor(undefined, 0)).toBe(200_000);
+  // `gpt-4` used to be "unknown" only because MODEL_RATES had no OpenAI rows at
+  // all. The contract table does, and this is the divergence that started the
+  // whole exercise: the daemon's provider table said 272_000 for a Codex model
+  // while this engine floored it to 200_000, for the same session.
+  it('a Codex model resolves from the contract table, not a 200k floor', () => {
+    expect(contextLimitFor('gpt-5-codex', 10_000)).toBe(272_000);
+    expect(contextLimitFor('gpt-4o-2024-11-20', 10_000)).toBe(128_000);
   });
 
   it('boundary: exactly 200_000 observed does NOT promote', () => {
@@ -114,10 +132,10 @@ describe('requestedWindowFor', () => {
   });
 
   it('says NOTHING (not 200k) for an unmarked alias — an absent marker is not a 200k claim', () => {
-    expect(requestedWindowFor('opus')).toBeUndefined();
-    expect(requestedWindowFor('claude-opus-5')).toBeUndefined();
-    expect(requestedWindowFor('')).toBeUndefined();
-    expect(requestedWindowFor(null)).toBeUndefined();
+    expect(requestedWindowFor('opus')).toBeNull();
+    expect(requestedWindowFor('claude-opus-5')).toBeNull();
+    expect(requestedWindowFor('')).toBeNull();
+    expect(requestedWindowFor(null)).toBeNull();
   });
 });
 
@@ -138,14 +156,23 @@ describe('contextLimitFor — hints', () => {
 
   it('the provider-reported window wins over every guess', () => {
     expect(contextLimitFor('claude-opus-5', 1_000, { reportedWindow: 1_000_000 })).toBe(1_000_000);
-    // Including over the retrospective promotion: if the provider says 200k
-    // while a stale high-water mark says otherwise, the provider is right.
+    // Including over the `[1m]` marker: a user who picked `opus[1m]` and got a
+    // 200k session must see 200k.
+    expect(
+      contextLimitFor('claude-opus-5', 1_000, {
+        reportedWindow: 200_000,
+        requestedModel: 'opus[1m]',
+      }),
+    ).toBe(200_000);
+    // …but only while the report is consistent with what the session is
+    // observed to hold. 200k claimed for a session sitting on 300k is not a
+    // fact, it is a contradiction, and the alarm disarms it too.
     expect(
       contextLimitFor('claude-opus-5', 300_000, {
         reportedWindow: 200_000,
         requestedModel: 'opus',
       }),
-    ).toBe(200_000);
+    ).toBeNull();
   });
 
   it('ignores a non-positive / non-finite reported window and falls through', () => {
@@ -165,9 +192,21 @@ describe('contextLimitFor — hints', () => {
     expect(contextLimitFor('claude-fable-5', 1_000, { requestedModel: 'opus' })).toBe(1_000_000);
   });
 
-  it('the retrospective promotion still covers a session with no signals at all', () => {
-    expect(contextLimitFor('claude-opus-5', 300_000)).toBe(1_000_000);
-    expect(contextLimitFor('claude-opus-5', 300_000, {})).toBe(1_000_000);
+  // WAS "the retrospective promotion still covers a session with no signals at
+  // all". It does not any more, deliberately: with no signals, a session that
+  // has outgrown its claimed window tells us the CLAIM is wrong, not what the
+  // right answer is. Unknown, plus a loud log naming the model.
+  it('a session with no signals that outgrew its window reports UNKNOWN, not 1M', () => {
+    expect(contextLimitFor('claude-opus-5', 300_000)).toBeNull();
+    expect(contextLimitFor('claude-opus-5', 300_000, {})).toBeNull();
+  });
+
+  // The tolerance boundary, because "off by one" here is how a genuinely-full
+  // 200k session loses its meter at the moment it matters most.
+  it('a full-but-not-over window survives the drift alarm', () => {
+    expect(contextLimitFor('claude-opus-5', 200_000)).toBe(200_000);
+    expect(contextLimitFor('claude-opus-5', 204_000)).toBe(200_000);
+    expect(contextLimitFor('claude-opus-5', 204_001)).toBeNull();
   });
 });
 
@@ -460,7 +499,7 @@ describe('emptyUsage', () => {
     expect(u).toMatchObject({
       model: null,
       contextTokens: 0,
-      contextLimit: 200_000,
+      contextLimit: null,
       totalInputTokens: 0,
       totalOutputTokens: 0,
       costUSD: 0,
@@ -474,7 +513,11 @@ describe('emptyUsage', () => {
     expect(b.costUSD).toBe(0);
   });
 
-  it('default contextLimit matches the default model context window (200k)', () => {
-    expect(emptyUsage().contextLimit).toBe(200_000);
+  // THE "SESSIONS START AT 200K" BUG, at its source. This asserted a 200k
+  // window before a single token had been counted, on a session whose model was
+  // still `null` — so the very first snapshot a pane rendered already claimed a
+  // window nobody had reported. Unknown is the only truthful value here.
+  it('has NO context limit until something reports one', () => {
+    expect(emptyUsage().contextLimit).toBeNull();
   });
 });

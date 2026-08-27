@@ -132,7 +132,10 @@ export interface WorkflowRunInfo {
 export interface SessionUsage {
   model: string | null;
   contextTokens: number; // latest turn's input side (point-in-time)
-  contextLimit: number; // tokens the model's window holds
+  /** Tokens the model's window holds, or `null` when unknown. Every readout
+   *  below guards on it and omits the meter rather than draw one against an
+   *  invented denominator. */
+  contextLimit: number | null;
   totalInputTokens: number; // cumulative (incl. cache)
   totalOutputTokens: number; // cumulative
   costUSD: number; // cumulative

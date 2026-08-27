@@ -1,4 +1,5 @@
 import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
+import { windowFor } from './shared/modelContextWindows';
 import * as os from 'os';
 import * as fs from 'fs';
 import { pathToFileURL } from 'url';
@@ -586,8 +587,18 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Model pricing: expose the built-in rate table + current user overrides, and
   // persist edits to ~/.workspacer/model-rates.json (claudemon reads the same
   // file, so an edit applies to both costing engines with no restart).
+  // The window shown beside each rate is LOOKED UP, not carried by MODEL_RATES:
+  // that table is price-only now (a per-row `contextLimit` on it was one of the
+  // five parallel window tables). `null` for a prefix the contract table cannot
+  // answer for — the Settings field then shows no placeholder rather than a
+  // number nothing stands behind.
   ipcMain.handle(IPC.PRICING_GET, () => ({
-    defaults: MODEL_RATES,
+    defaults: Object.fromEntries(
+      Object.entries(MODEL_RATES).map(([prefix, rates]) => [
+        prefix,
+        { ...rates, contextLimit: windowFor(prefix) },
+      ]),
+    ),
     overrides: readModelRateOverrides(),
   }));
   ipcMain.handle(IPC.PRICING_SAVE, (_event, overrides: ModelRateOverrides) => {

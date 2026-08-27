@@ -663,7 +663,7 @@ export interface ElectronAPI {
   installCli?: () => Promise<{ ok: boolean; message: string }>;
   /** Built-in model rate table + current user overrides, for the Settings editor. */
   pricingGetRates?: () => Promise<{
-    defaults: Record<string, { input: number; output: number; contextLimit: number }>;
+    defaults: Record<string, { input: number; output: number; contextLimit: number | null }>;
     overrides: Record<
       string,
       { input: number; output: number; cached_input?: number; context_limit?: number }

@@ -24,21 +24,26 @@ describe('SessionUsageAccumulator.applyUsage — context limit', () => {
     acc = new SessionUsageAccumulator();
   });
 
-  it('promotes the context limit to 1M once a turn exceeds 200k', () => {
+  // WAS "promotes the context limit to 1M once a turn exceeds 200k". The
+  // observation still matters — this session holds more than the table says its
+  // model can — but "therefore 1M" was a guess, so the window now goes UNKNOWN
+  // (the meter hides) and the drift alarm logs which model we were wrong about.
+  it('disarms the window once a turn exceeds it, rather than promoting to 1M', () => {
     const s = mkSession();
     acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 300_000 }, 'm1');
-    expect(s.usage!.contextLimit).toBe(1_000_000);
+    expect(s.usage!.contextLimit).toBeNull();
   });
 
-  it('keeps the 1M limit sticky on a later smaller turn (session stays in 1M mode)', () => {
+  it('the drift verdict is sticky across compaction (it reads the session PEAK)', () => {
     const s = mkSession();
     acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 300_000 }, 'm1');
-    expect(s.usage!.contextLimit).toBe(1_000_000);
-    // A subsequent smaller turn must NOT revert the window to 200k — the
-    // session is still running in 1M mode (peakContext remembers the high mark).
+    expect(s.usage!.contextLimit).toBeNull();
+    // A later, smaller turn — an auto-compaction, in practice — must not make
+    // the disproved window believable again. This session has been SEEN holding
+    // 300k; dropping back to 50k does not un-see it.
     acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 50_000 }, 'm2');
     expect(s.peakContext).toBe(300_000);
-    expect(s.usage!.contextLimit).toBe(1_000_000);
+    expect(s.usage!.contextLimit).toBeNull();
   });
 
   it('leaves the limit at 200k for a session that never exceeds the standard window', () => {
