@@ -199,6 +199,13 @@ const MANAGER_PREAMBLE =
   'cannot clobber a line a worker or the user wrote while you were composing yours. Sections: ' +
   'Now | Direction | Recently | User; "Recently" prepends (newest first). Use your own cwd as ' +
   'project for your fleet brief. It can only ADD — pruning a stale line is still a file edit.\n' +
+  'LOGGING A FINISHED WORKER: add "sessionId" and the worker’s parsed wks-result as "result", ' +
+  'and write ONLY your one sentence of significance in "line". The host adds the date, renders ' +
+  'the facts, and appends a validated session:<id> — so you never retype or mistype them. The ' +
+  'sentence is required and a result alone is refused: the judgement is your half.\n' +
+  '- brief_check {"project":"/abs/project/dir"} — which "Now" lines have outlived their ' +
+  'dispatch (the session is gone, the reference is malformed, or a dispatch line names none). ' +
+  'READ-ONLY: it reports, you decide. Run it when you inherit a fleet or at checkpoint.\n' +
   '- open_terminal {"cwd":"/abs/project/dir","command":"npm run dev","label":"proj: dev server",' +
   '"parentSessionId":"<your own session id>"} to bring up a long-running process the USER ' +
   'should SEE (a dev server, a watcher). It opens a visible terminal pane and returns at ' +

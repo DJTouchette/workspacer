@@ -1976,3 +1976,140 @@ describe('terminals.open — the visible-terminal seam', () => {
     expect(payload.parentSessionId).toBe('MGR');
   });
 });
+
+describe('brief.append — append from a worker RESULT', () => {
+  // The two halves of a brief line: the manager's judgement (irreplaceable) and
+  // the worker's mechanical facts (already reported verbatim in its wks-result).
+  // With the optional params present the host writes the second half, and — the
+  // reason this landed — writes the `session:<id>` reference correctly, instead
+  // of a manager retyping a nickname like `session:6a-round2` into a brief and
+  // repairing the dead link by hand afterwards.
+  const LIVE = 'c03bd8ce-1f4a-4b2c-9d3e-0123456789ab';
+  let agentCwd: string;
+
+  const readBrief = (): string =>
+    fs.readFileSync(path.join(agentCwd, '.workspacer', 'brief.md'), 'utf-8');
+
+  beforeEach(() => {
+    agentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-brief-')));
+    getAllSnapshots.mockReturnValue([{ cwd: agentCwd, sessionId: LIVE, mode: 'running' }] as never);
+  });
+
+  it('PLAIN append is byte-for-byte unchanged when the new params are absent', () => {
+    call('brief.append', { project: agentCwd, section: 'Recently', line: '2026-08-21  shipped X' });
+    // Not "starts with", not "contains": the exact line the caller composed,
+    // with no date, no facts and no reference bolted on.
+    expect(readBrief()).toContain('\n- 2026-08-21  shipped X\n');
+    expect(readBrief()).not.toMatch(/session:/);
+  });
+
+  it('composes date + sentence + facts + reference from a result', () => {
+    call('brief.append', {
+      project: agentCwd,
+      section: 'Recently',
+      line: 'the parser no longer allocates per token',
+      sessionId: LIVE,
+      result: {
+        commit: 'abc1234',
+        filesChanged: ['src/parser.ts', 'src/lexer.ts'],
+        checksRun: ['vitest'],
+        caveats: ['the migration is not reversible'],
+      },
+    });
+    const written = readBrief();
+    expect(written).toMatch(/^- \d{4}-\d{2}-\d{2} {2}the parser no longer allocates/m);
+    expect(written).toContain('commit: abc1234');
+    expect(written).toContain('filesChanged: src/parser.ts, src/lexer.ts');
+    // Never silently dropped, whatever else is capped.
+    expect(written).toContain('caveats: the migration is not reversible');
+    // Canonical short form, and the spelling the board's REF_RE links on.
+    expect(written).toContain('(session:c03bd8ce)');
+  });
+
+  it('REFUSES a malformed session id, and writes nothing at all', () => {
+    expect(() =>
+      call('brief.append', {
+        project: agentCwd,
+        section: 'Recently',
+        line: 'round two landed',
+        sessionId: '6a-round2',
+        result: { commit: 'abc1234' },
+      }),
+    ).toThrow(/not a session id/);
+    expect(fs.existsSync(path.join(agentCwd, '.workspacer', 'brief.md'))).toBe(false);
+  });
+
+  it('REFUSES a result with no significance sentence — judgement is the manager’s job', () => {
+    expect(() =>
+      call('brief.append', {
+        project: agentCwd,
+        section: 'Recently',
+        line: '   ',
+        sessionId: LIVE,
+        result: { commit: 'abc1234', filesChanged: ['a.ts'] },
+      }),
+    ).toThrow(/one-sentence significance/);
+    expect(fs.existsSync(path.join(agentCwd, '.workspacer', 'brief.md'))).toBe(false);
+  });
+
+  it('still confines the project directory — the new params widen nothing', () => {
+    expect(() =>
+      call('brief.append', { project: '/etc', section: 'Now', line: 'x', sessionId: LIVE }),
+    ).toThrow(/outside the allowed workspace/);
+  });
+});
+
+describe('brief.check — flag a stale Now line, never touch the file', () => {
+  const LIVE = 'c03bd8ce-1f4a-4b2c-9d3e-0123456789ab';
+  const DEAD = 'deadbeef-1f4a-4b2c-9d3e-0123456789ab';
+  let agentCwd: string;
+  let briefPath: string;
+
+  beforeEach(() => {
+    agentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-briefchk-')));
+    fs.mkdirSync(path.join(agentCwd, '.workspacer'));
+    briefPath = path.join(agentCwd, '.workspacer', 'brief.md');
+    fs.writeFileSync(
+      briefPath,
+      '## Now\n' +
+        '- dispatched the parser fix — session:c03bd8ce\n' +
+        '- dispatched the lexer rewrite — session:deadbeef\n',
+    );
+    getAllSnapshots.mockReturnValue([
+      { cwd: agentCwd, sessionId: LIVE, mode: 'running' },
+      // Finished counts as GONE — that is the case that strands a Now line.
+      { cwd: agentCwd, sessionId: DEAD, mode: 'stopped' },
+    ] as never);
+  });
+
+  it('flags the dead reference and leaves the live one alone', () => {
+    const report = call('brief.check', { project: agentCwd }) as {
+      findings: { reason: string; refs: string[] }[];
+      entriesChecked: number;
+      entriesLive: number;
+    };
+    expect(report.entriesChecked).toBe(2);
+    expect(report.entriesLive).toBe(1);
+    expect(report.findings).toHaveLength(1);
+    expect(report.findings[0].reason).toBe('stale');
+    expect(report.findings[0].refs).toEqual(['deadbeef']);
+  });
+
+  it('NEVER writes — the brief is byte-identical afterwards', () => {
+    const before = fs.readFileSync(briefPath, 'utf-8');
+    const entriesBefore = fs.readdirSync(path.dirname(briefPath)).sort();
+    call('brief.check', { project: agentCwd });
+    expect(fs.readFileSync(briefPath, 'utf-8')).toBe(before);
+    expect(fs.readdirSync(path.dirname(briefPath)).sort()).toEqual(entriesBefore);
+  });
+
+  it('answers for a project that has no brief yet, rather than throwing', () => {
+    fs.rmSync(briefPath);
+    const report = call('brief.check', { project: agentCwd }) as { entriesChecked: number };
+    expect(report.entriesChecked).toBe(0);
+  });
+
+  it('is confined to the workspace roots, exactly like its writing siblings', () => {
+    expect(() => call('brief.check', { project: '/etc' })).toThrow(/outside the allowed workspace/);
+  });
+});

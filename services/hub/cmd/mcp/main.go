@@ -757,8 +757,15 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	// the user's declared projects.
 	b.group = "brief"
 	addTool[briefAppendIn](b, "brief_append",
-		"Append ONE line to a section of a project's .workspacer/brief.md, atomically. This is the way to update a brief. It is inspect-then-edit under a lock, so it cannot clobber a line a worker (or the user) wrote in the meantime, and it is strictly additive: it never rewrites, reorders or reformats what is already there. 'Recently' PREPENDS (that section is a dated log, newest first); the others append. Creates the brief, with its four standard sections, if the project has none. A line longer than 4000 characters is REFUSED with nothing written, rather than cut: split it and append each part. The result reports the section's entry count and byte size after the write, so you can see a brief going over budget without reading it.",
+		"Append ONE line to a section of a project's .workspacer/brief.md, atomically. This is the way to update a brief. It is inspect-then-edit under a lock, so it cannot clobber a line a worker (or the user) wrote in the meantime, and it is strictly additive: it never rewrites, reorders or reformats what is already there. 'Recently' PREPENDS (that section is a dated log, newest first); the others append. Creates the brief, with its four standard sections, if the project has none. A line longer than 4000 characters is REFUSED with nothing written, rather than cut: split it and append each part. The result reports the section's entry count and byte size after the write, so you can see a brief going over budget without reading it. To log a FINISHED WORKER, add sessionId and its parsed wks-result and write only your one sentence of significance in 'line': the host composes the date, the mechanical facts and a validated session:<id> reference, so you never retype or mistype them.",
 		"brief.append")
+
+	// The read-only third verb. See the capability's own note: a Now line does
+	// not remove itself when its worker dies, and this is the only brief tool
+	// that is allowed to have an opinion about that — by REPORTING.
+	addTool[briefCheckIn](b, "brief_check",
+		"Report which '## Now' lines in a project's brief have outlived their dispatch: entries naming a session:<id> this host no longer knows about (a finished or closed worker counts as gone — that IS the case that leaves lines behind), entries carrying a malformed reference that links to nothing, and entries that read like a dispatch but name no session at all. READ-ONLY: it never deletes, edits, moves or rewrites a line, because the user's own brief edits are authoritative — it hands you a list and you decide, entry by entry. Run it when you take over a fleet, before a standup, or as part of a checkpoint.",
+		"brief.check")
 
 	// The trim half of the same document. See the capability's own note: this is
 	// the Board's archive move, exposed so /checkpoint stops doing it in shell.
@@ -1386,7 +1393,15 @@ type notifyWhenIn struct {
 type briefAppendIn struct {
 	Project string `json:"project" jsonschema:"absolute path of the PROJECT DIRECTORY whose brief to update (the repo, not the brief file — .workspacer/brief.md under it is composed for you). Use your own cwd for your fleet brief"`
 	Section string `json:"section" jsonschema:"which heading to add the line under: Now (in flight), Direction (durable goals), Recently (a dated log — this one PREPENDS, newest first), or User (standing preferences; fleet brief). An unknown name is refused, never guessed"`
-	Line    string `json:"line" jsonschema:"the line to add, e.g. '2026-08-21  shipped X (session:abc)'. A leading '- ' bullet is added if you omit it, and the line is flattened to a single line. Over 4000 characters it is refused rather than cut, and nothing is written: split it into separate entries"`
+	Line    string `json:"line" jsonschema:"the line to add, e.g. '2026-08-21  shipped X (session:abc)'. A leading '- ' bullet is added if you omit it, and the line is flattened to a single line. Over 4000 characters it is refused rather than cut, and nothing is written: split it into separate entries. WITH sessionId/result this becomes just your ONE SENTENCE of significance — what the result MEANS — and the host adds the date, the facts and the reference"`
+	// The append-from-result params. Both optional; absent, this tool behaves
+	// exactly as it always has.
+	SessionID string         `json:"sessionId,omitempty" jsonschema:"OPTIONAL id of the session whose result this is. The host VALIDATES it and renders the canonical 'session:<short id>' the briefs and the UI link on — a malformed id (a label, a round number, a nickname like '6a-round2') is REFUSED with nothing written, rather than left as a dead link. Copy it from list_agents or from the wake that reported the result; never compose one"`
+	Result    map[string]any `json:"result,omitempty" jsonschema:"OPTIONAL the worker's parsed wks-result object, passed through as you received it (commonly commit / filesChanged / checksRun / caveats / followUps, but any JSON object works). The host renders it compactly onto the end of the line, so you do NOT retype the mechanical facts. Long lists are capped with an explicit '+K more'; caveats are never capped and never dropped. It cannot stand alone: without your own sentence in 'line' the call is refused, because the judgement is the half only you can write"`
+}
+
+type briefCheckIn struct {
+	Project string `json:"project" jsonschema:"absolute path of the PROJECT DIRECTORY whose brief to check (the repo, not the brief file). Use your own cwd for your fleet brief"`
 }
 
 type briefArchiveIn struct {

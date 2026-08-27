@@ -62,6 +62,8 @@ import { ensureSupervisorHome } from './supervisorSkill';
 import { scrubBootDocumentAgents } from '../lib/bootDocumentScrub';
 import { isAsciiBlank } from '../lib/asciiWhitespace';
 import { appendBriefLine, briefPathFor, parseBriefSection } from './briefService';
+import { composeResultLine, hasResultParams } from '../lib/briefResultLine';
+import { checkNowSection, liveSessionIds } from './briefCheck';
 import { archiveOldestEntries } from './briefBoardService';
 import { thresholdWatcher } from './thresholdWatcher';
 import { progressReporter } from './progressReporter';
@@ -1935,11 +1937,31 @@ export function registerHubCapabilities(): void {
   // Manager's cwd is the projects' common parent, and containment is by
   // subtree, so every project under it is already in the set. No live manager,
   // no brief.append; that is the correct answer, not a gap to widen for.
+  //
+  // APPEND-FROM-RESULT (the optional `sessionId` / `result` params). A brief
+  // line is a sentence of JUDGEMENT plus a run of MECHANICAL FACTS, and the
+  // manager was retyping both — spending tokens on the half the worker already
+  // reported verbatim in its `wks-result` block, and MISTRANSCRIBING it (a live
+  // manager wrote `session:6a-round2` into a brief, a nickname where a session
+  // id belongs, and the dead link had to be repaired by hand). With either
+  // param present the host composes the line: date, the manager's sentence,
+  // the facts, the validated `session:<short id>`. `line` stays REQUIRED and
+  // still carries the judgement — see lib/briefResultLine for why a result
+  // object alone must never become a line.
+  //
+  // IT WIDENS NOTHING, which is the only question the tiering asks: same
+  // method, same operator-only reachability, same `project` path scope, same
+  // composed-and-guarded brief path. The new params are strings and JSON that
+  // reach only a pure string renderer; a view or triage token still cannot call
+  // brief.append at all, so there is no route by which composing a line for a
+  // caller grants that caller anything it did not already hold.
   registerCapability('brief.append', (params: unknown) => {
-    const { project, section, line } = (params ?? {}) as {
+    const { project, section, line, sessionId, result } = (params ?? {}) as {
       project?: string;
       section?: string;
       line?: string;
+      sessionId?: unknown;
+      result?: unknown;
     };
     if (!project || isAsciiBlank(project)) throw new Error('brief.append requires { project }');
     if (line === undefined) throw new Error('brief.append requires { line }');
@@ -1965,7 +1987,57 @@ export function registerHubCapabilities(): void {
     // tolerates a leaf that does not exist yet, which is what fs.write already
     // relies on, so the composed path can be asserted before it is created.
     const briefPath = assertPathAllowed('brief.append', briefPathFor(dir), workspaceRoots());
-    return appendBriefLine(briefPath, parseBriefSection(section), line);
+    // The composed line when the caller asked for one, the caller's own line
+    // otherwise — byte for byte, so plain brief_append is untouched by this.
+    const text = hasResultParams({ sessionId, result })
+      ? composeResultLine({ significance: line, sessionId, result })
+      : line;
+    return appendBriefLine(briefPath, parseBriefSection(section), text);
+  });
+
+  // The READ-ONLY half of brief maintenance, and the counterweight to the fact
+  // that everything else here can only ADD: which `## Now` lines are talking
+  // about workers that no longer exist.
+  //
+  // Every brief in this fleet records the same lesson in its own words — a Now
+  // line does not remove itself when its worker dies — because the wake that
+  // would remind the manager to move the line is the same wake handing it a
+  // result to act on, and the line loses. The cost lands on the NEXT manager,
+  // which reads four dispatch lines, believes four workers are running, and
+  // goes looking for sessions that ended days ago.
+  //
+  // IT FLAGS AND NEVER WRITES. Not a limitation — doctrine. The brief is the
+  // user's document and their own edits are authoritative, which is why every
+  // write path here is additive (briefService) or move-only (briefBoardService).
+  // A checker that pruned would be the single component able to destroy
+  // hand-written prose on the strength of a heuristic, and the heuristic is
+  // wrong sometimes. So it returns a report and the manager decides.
+  //
+  // Same tier story and the SAME confinement as its two siblings: operator-only
+  // by construction (brief.* matches no scoped tier's exact-name allowlist),
+  // path-scoped on `project`, both path components composed and guarded here.
+  // It reads strictly less than fs.read already reads within the same root.
+  registerCapability('brief.check', (params: unknown) => {
+    const { project } = (params ?? {}) as { project?: string };
+    if (!project || isAsciiBlank(project)) throw new Error('brief.check requires { project }');
+    const dir = assertPathAllowed('brief.check', project, workspaceRoots());
+    // The composed path is guarded for the reason brief.append's own comment
+    // spells out: `project` can be an allowed directory while
+    // `<project>/.workspacer` is a symlink pointing out of every root.
+    const briefPath = assertPathAllowed('brief.check', briefPathFor(dir), workspaceRoots());
+    let content = '';
+    try {
+      content = fs.readFileSync(briefPath, 'utf-8');
+    } catch (err) {
+      // A project with no brief is not an error — it has no stale Now lines,
+      // which is the honest answer and the one a manager can act on.
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+    return checkNowSection(
+      content,
+      liveSessionIds(claudeSessionStore.getAllSnapshots()),
+      briefPath,
+    );
   });
 
   // The other half of the same document: trim a section by moving its OLDEST
