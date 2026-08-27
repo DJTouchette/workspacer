@@ -88,20 +88,40 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({
   // null = unavailable/never loaded; [] = loaded but no messages yet.
   const [transcript, setTranscript] = useState<{ role: string; text: string }[] | null>(null);
   const [conv, setConv] = useState<ConversationTurn[] | null>(null);
+  const [transcriptUnavailable, setTranscriptUnavailable] = useState(false);
+  const [convUnavailable, setConvUnavailable] = useState(false);
   const fetchTranscript = useCallback(() => {
     if (watchKind !== 'subagent' || !watchSessionId || !watchId) return;
     window.electronAPI
       .workflowAgentTranscript(watchSessionId, null, watchId)
       .then((t) => {
-        if (t) setTranscript(t);
+        if (t) {
+          setTranscript(t);
+          setTranscriptUnavailable(false);
+        } else {
+          setTranscript([]);
+          setTranscriptUnavailable(true);
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        setTranscript([]);
+        setTranscriptUnavailable(true);
+      });
     window.electronAPI
       .workflowAgentConversation(watchSessionId, null, watchId)
       .then((t) => {
-        if (t) setConv(t);
+        if (t) {
+          setConv(t);
+          setConvUnavailable(false);
+        } else {
+          setConv([]);
+          setConvUnavailable(true);
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        setConv([]);
+        setConvUnavailable(true);
+      });
   }, [watchKind, watchSessionId, watchId]);
 
   useEffect(() => {
@@ -242,6 +262,7 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({
   const duration = sub
     ? (sub.completedAt ?? (running ? now : sub.startedAt)) - sub.startedAt
     : undefined;
+  const activeTranscriptUnavailable = view === 'gui' ? convUnavailable : transcriptUnavailable;
 
   return (
     <div
@@ -376,7 +397,9 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({
             }}
           >
             {sub
-              ? 'Loading transcript…'
+              ? activeTranscriptUnavailable
+                ? 'Transcript unavailable for this backend.'
+                : 'Loading transcript…'
               : 'Transcript unavailable — the owning session isn’t being watched (it may have ended or the app restarted).'}
           </div>
         )}
@@ -391,7 +414,9 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({
               marginTop: 40,
             }}
           >
-            No messages yet.
+            {activeTranscriptUnavailable
+              ? 'Transcript unavailable for this backend.'
+              : 'No messages yet.'}
           </div>
         )}
         {view === 'gui' && guiItems && (

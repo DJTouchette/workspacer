@@ -27,6 +27,10 @@ import {
   type ModelRateOverrides,
 } from './services/modelUsage';
 import { workflowWatcher } from './services/workflowWatcher';
+import {
+  readProviderSubagentConversation,
+  readProviderSubagentTranscript,
+} from './services/providerSubagentConversation';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { agentHandoffBrief } from './services/agentHandoff';
@@ -888,16 +892,22 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Resolved from the on-disk dir by the watcher; null if it's no longer around.
   ipcMain.handle(
     IPC.WORKFLOW_AGENT_TRANSCRIPT,
-    (_event, sessionId: string, runId: string | null, agentId: string) =>
-      workflowWatcher.readAgentTranscript(sessionId, runId, agentId),
+    async (_event, sessionId: string, runId: string | null, agentId: string) => {
+      const transcript = await workflowWatcher.readAgentTranscript(sessionId, runId, agentId);
+      if (transcript || runId !== null) return transcript;
+      return readProviderSubagentTranscript(sessionId, agentId);
+    },
   );
 
   // Rich variant for the watch pane's GUI view: ConversationTurn-shaped turns
   // with real tool-call objects, renderable by the main conversation components.
   ipcMain.handle(
     IPC.WORKFLOW_AGENT_CONVERSATION,
-    (_event, sessionId: string, runId: string | null, agentId: string) =>
-      workflowWatcher.readAgentConversation(sessionId, runId, agentId),
+    async (_event, sessionId: string, runId: string | null, agentId: string) => {
+      const conversation = await workflowWatcher.readAgentConversation(sessionId, runId, agentId);
+      if (conversation || runId !== null) return conversation;
+      return readProviderSubagentConversation(sessionId, agentId);
+    },
   );
 
   // Live model catalog for a managed provider (codex/opencode/pi). We resolve

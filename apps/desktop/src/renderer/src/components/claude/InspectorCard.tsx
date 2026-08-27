@@ -460,8 +460,11 @@ export const InspectorCard: React.FC<{
   // Click-through: open a dedicated live watch pane for one subagent /
   // workflow run (handled by App, which owns the tab manager).
   const sessionId = session?.sessionId;
+  const provider = session?.provider ?? 'claude';
+  const subagentWatchEnabled = provider === 'claude' || provider === 'codex';
+  const agentMonitorEnabled = provider === 'claude';
   const watchSubagent = (sub: (typeof subagents)[number]) => {
-    if (!sessionId) return;
+    if (!sessionId || !subagentWatchEnabled) return;
     requestAgentWatch({
       sessionId,
       kind: 'subagent',
@@ -476,7 +479,7 @@ export const InspectorCard: React.FC<{
   // Monitor view for plain (non-workflow) subagents: the same timeline surface a
   // workflow run gets, fed all of this session's Agent-tool subagents.
   const watchAgents = () => {
-    if (!sessionId) return;
+    if (!sessionId || !agentMonitorEnabled) return;
     requestAgentWatch({ sessionId, kind: 'agents', id: sessionId, title: 'Agent monitor' });
   };
 
@@ -893,40 +896,46 @@ export const InspectorCard: React.FC<{
               <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
                 {liveSubagents > 0 && <RunningMarker count={liveSubagents} />}
                 <div style={{ flex: 1 }} />
-                <button
-                  onClick={watchAgents}
-                  title="Open all this session’s agents on one timeline"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 4,
-                    fontSize: '0.67rem',
-                    fontWeight: 600,
-                    padding: '2px 9px',
-                    borderRadius: 'var(--wks-radius-pill)',
-                    border: `1px solid ${colors.borderSubtle}`,
-                    cursor: 'pointer',
-                    backgroundColor: 'transparent',
-                    color: colors.muted,
-                    flexShrink: 0,
-                    fontFamily: 'inherit',
-                    transition: 'color 0.15s, border-color 0.15s',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor = 'var(--wks-border-active)';
-                    e.currentTarget.style.color = colors.text;
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.borderColor = colors.borderSubtle;
-                    e.currentTarget.style.color = colors.muted;
-                  }}
-                >
-                  Monitor
-                  <ArrowUpRight size={11} strokeWidth={2.2} aria-hidden />
-                </button>
+                {agentMonitorEnabled && (
+                  <button
+                    onClick={watchAgents}
+                    title="Open all this session’s agents on one timeline"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      fontSize: '0.67rem',
+                      fontWeight: 600,
+                      padding: '2px 9px',
+                      borderRadius: 'var(--wks-radius-pill)',
+                      border: `1px solid ${colors.borderSubtle}`,
+                      cursor: 'pointer',
+                      backgroundColor: 'transparent',
+                      color: colors.muted,
+                      flexShrink: 0,
+                      fontFamily: 'inherit',
+                      transition: 'color 0.15s, border-color 0.15s',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--wks-border-active)';
+                      e.currentTarget.style.color = colors.text;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = colors.borderSubtle;
+                      e.currentTarget.style.color = colors.muted;
+                    }}
+                  >
+                    Monitor
+                    <ArrowUpRight size={11} strokeWidth={2.2} aria-hidden />
+                  </button>
+                )}
               </div>
               {subagents.map((sub) => (
-                <SubagentRow key={sub.id} sub={sub} onOpen={() => watchSubagent(sub)} />
+                <SubagentRow
+                  key={sub.id}
+                  sub={sub}
+                  onOpen={subagentWatchEnabled ? () => watchSubagent(sub) : undefined}
+                />
               ))}
             </>
           ))}

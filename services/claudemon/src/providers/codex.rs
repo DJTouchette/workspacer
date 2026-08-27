@@ -43,7 +43,9 @@ use tokio_tungstenite::tungstenite::Message;
 use super::{apply_updates, note_user_send, set_mode, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::protocol::Signal;
 use crate::session::conversation::ConversationItem;
-use crate::session::state::{Pending, PendingOwner, PendingWrite, SessionMode};
+use crate::session::state::{
+    Pending, PendingOwner, PendingWrite, SessionMode, SubagentStatus, SubagentUpdate,
+};
 use crate::session::{ConversationStore, SessionStore};
 use crate::wrapper::pty;
 
@@ -115,6 +117,11 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
         "item/started" | "item/completed" => {
             if let Some(item) = params.get("item") {
                 translate_item(method, item, &mut out);
+            }
+        }
+        "thread/started" => {
+            if let Some(update) = subagent_from_thread(params) {
+                out.push(AgentUpdate::Subagent(update));
             }
         }
         "thread/tokenUsage/updated" => {
@@ -220,6 +227,11 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
                 out.push(u);
             }
         }
+        "turn/plan/updated" => {
+            if let Some(plan) = super::plan_from_value(params) {
+                out.push(AgentUpdate::Plan(plan));
+            }
+        }
         "item/commandExecution/requestApproval" => {
             let cmd = command_text(params);
             out.push(AgentUpdate::PermissionPending {
@@ -275,6 +287,19 @@ fn translate_item(method: &str, item: &Value, out: &mut Vec<AgentUpdate>) {
             out.push(AgentUpdate::Plan(plan));
         }
         return;
+    }
+    if ty == "subAgentActivity" {
+        if let Some(update) = subagent_from_activity(item) {
+            out.push(AgentUpdate::Subagent(update));
+        }
+        return;
+    }
+    if ty == "collabAgentToolCall" {
+        out.extend(
+            subagents_from_collab_item(item)
+                .into_iter()
+                .map(AgentUpdate::Subagent),
+        );
     }
     let id = item
         .get("id")
@@ -333,6 +358,18 @@ fn translate_item_started(ty: &str, id: String, item: &Value, out: &mut Vec<Agen
                 id,
                 name: "web_search".into(),
                 input,
+            });
+        }
+        "collabAgentToolCall" => {
+            let tool = item.get("tool").and_then(Value::as_str).unwrap_or("agent");
+            out.push(AgentUpdate::ToolUse {
+                id,
+                name: if tool == "spawnAgent" {
+                    "Agent".into()
+                } else {
+                    "codex_agent".into()
+                },
+                input: collab_input(item),
             });
         }
         _ => {}
@@ -424,8 +461,207 @@ fn translate_item_completed(ty: &str, id: String, item: &Value, out: &mut Vec<Ag
                 is_error: false,
             });
         }
+        "collabAgentToolCall" => {
+            let (content, is_error) = collab_result_text(item);
+            out.push(AgentUpdate::ToolResult {
+                tool_use_id: id,
+                content,
+                is_error,
+            });
+        }
         _ => {}
     }
+}
+
+fn subagent_from_thread(params: &Value) -> Option<SubagentUpdate> {
+    let thread = params.get("thread").unwrap_or(params);
+    thread.get("parentThreadId").and_then(Value::as_str)?;
+    let id = thread.get("id").and_then(Value::as_str)?.to_string();
+    let agent_type = thread
+        .get("agentRole")
+        .and_then(Value::as_str)
+        .or_else(|| thread.get("agentNickname").and_then(Value::as_str))
+        .map(str::to_string);
+    let description = thread
+        .get("name")
+        .and_then(Value::as_str)
+        .or_else(|| thread.get("preview").and_then(Value::as_str))
+        .map(trimmed_summary);
+    Some(SubagentUpdate {
+        id,
+        agent_type,
+        status: SubagentStatus::Running,
+        description,
+        tool_use_id: None,
+        model: None,
+        last_tool_name: None,
+        last_tool_summary: None,
+    })
+}
+
+fn subagent_from_activity(item: &Value) -> Option<SubagentUpdate> {
+    let id = item
+        .get("agentThreadId")
+        .and_then(Value::as_str)?
+        .to_string();
+    let kind = item.get("kind").and_then(Value::as_str).unwrap_or("");
+    let agent_path = item.get("agentPath").and_then(Value::as_str);
+    Some(SubagentUpdate {
+        id,
+        agent_type: agent_path.and_then(agent_type_from_path),
+        status: match kind {
+            "started" | "interacted" => SubagentStatus::Running,
+            _ => SubagentStatus::Complete,
+        },
+        description: agent_path.map(trimmed_summary),
+        tool_use_id: None,
+        model: None,
+        last_tool_name: Some(format!("subagent {kind}")),
+        last_tool_summary: None,
+    })
+}
+
+fn subagents_from_collab_item(item: &Value) -> Vec<SubagentUpdate> {
+    let tool = item
+        .get("tool")
+        .and_then(Value::as_str)
+        .unwrap_or("agent")
+        .to_string();
+    let tool_use_id = item.get("id").and_then(Value::as_str).map(str::to_string);
+    let prompt = item
+        .get("prompt")
+        .and_then(Value::as_str)
+        .map(trimmed_summary);
+    let model = item
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    if let Some(states) = item.get("agentsStates").and_then(Value::as_object) {
+        if !states.is_empty() {
+            return states
+                .iter()
+                .map(|(id, state)| SubagentUpdate {
+                    id: id.clone(),
+                    agent_type: Some("codex".to_string()),
+                    status: collab_agent_status(state),
+                    description: prompt.clone(),
+                    tool_use_id: (tool == "spawnAgent")
+                        .then(|| tool_use_id.clone())
+                        .flatten(),
+                    model: model.clone(),
+                    last_tool_name: Some(tool.clone()),
+                    last_tool_summary: state
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .map(trimmed_summary),
+                })
+                .collect();
+        }
+    }
+    item.get("receiverThreadIds")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(|id| SubagentUpdate {
+            id: id.to_string(),
+            agent_type: Some("codex".to_string()),
+            status: collab_tool_status(item),
+            description: prompt.clone(),
+            tool_use_id: (tool == "spawnAgent")
+                .then(|| tool_use_id.clone())
+                .flatten(),
+            model: model.clone(),
+            last_tool_name: Some(tool.clone()),
+            last_tool_summary: None,
+        })
+        .collect()
+}
+
+fn collab_agent_status(state: &Value) -> SubagentStatus {
+    match state.get("status").and_then(Value::as_str).unwrap_or("") {
+        "pendingInit" | "running" | "inProgress" => SubagentStatus::Running,
+        _ => SubagentStatus::Complete,
+    }
+}
+
+fn collab_tool_status(item: &Value) -> SubagentStatus {
+    match item.get("status").and_then(Value::as_str).unwrap_or("") {
+        "inProgress" => SubagentStatus::Running,
+        _ => SubagentStatus::Complete,
+    }
+}
+
+fn collab_input(item: &Value) -> Value {
+    let mut input = json!({
+        "tool": item.get("tool").cloned().unwrap_or(Value::Null),
+        "receiverThreadIds": item.get("receiverThreadIds").cloned().unwrap_or(Value::Null),
+    });
+    for key in ["prompt", "model", "reasoningEffort"] {
+        if let Some(value) = item.get(key) {
+            input[key] = value.clone();
+        }
+    }
+    input
+}
+
+fn collab_result_text(item: &Value) -> (String, bool) {
+    let status = item.get("status").and_then(Value::as_str).unwrap_or("");
+    let tool = item.get("tool").and_then(Value::as_str).unwrap_or("agent");
+    let mut lines = Vec::new();
+    if let Some(states) = item.get("agentsStates").and_then(Value::as_object) {
+        for (id, state) in states {
+            let state_status = state
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let message = state
+                .get("message")
+                .and_then(Value::as_str)
+                .map(trimmed_summary);
+            lines.push(match message {
+                Some(message) => format!("{id}: {state_status} — {message}"),
+                None => format!("{id}: {state_status}"),
+            });
+        }
+    }
+    let content = if lines.is_empty() {
+        format!("{tool} {status}")
+    } else {
+        lines.join("\n")
+    };
+    let failed = matches!(status, "failed" | "interrupted")
+        || item
+            .get("agentsStates")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flat_map(|states| states.values())
+            .any(|state| {
+                matches!(
+                    state.get("status").and_then(Value::as_str).unwrap_or(""),
+                    "errored" | "notFound"
+                )
+            });
+    (content, failed)
+}
+
+fn agent_type_from_path(path: &str) -> Option<String> {
+    let last = path.rsplit('/').next().unwrap_or(path);
+    let stem = last
+        .strip_suffix(".md")
+        .or_else(|| last.strip_suffix(".json"))
+        .unwrap_or(last)
+        .trim();
+    (!stem.is_empty()).then(|| stem.to_string())
+}
+
+fn trimmed_summary(s: &str) -> String {
+    const MAX: usize = 180;
+    let single_line = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if single_line.chars().count() <= MAX {
+        return single_line;
+    }
+    single_line.chars().take(MAX).collect()
 }
 
 /// The ToolUse input for a `fileChange` item. Modern wire (`FileUpdateChange`):
@@ -2637,6 +2873,100 @@ mod tests {
                 }],
                 updated_at: None,
             })]
+        );
+    }
+
+    #[test]
+    fn turn_plan_updated_yields_plan_with_camelcase_status() {
+        use crate::session::state::PlanStatus;
+        let p = json!({
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "explanation": null,
+            "plan": [
+                { "step": "inspect schema", "status": "completed" },
+                { "step": "wire updates", "status": "inProgress" },
+                { "step": "run tests", "status": "pending" }
+            ]
+        });
+        let updates = translate("turn/plan/updated", &p);
+        assert_eq!(updates.len(), 1);
+        match &updates[0] {
+            AgentUpdate::Plan(plan) => {
+                assert_eq!(plan.steps.len(), 3);
+                assert_eq!(plan.steps[0].content, "inspect schema");
+                assert_eq!(plan.steps[0].status, PlanStatus::Completed);
+                assert_eq!(plan.steps[1].content, "wire updates");
+                assert_eq!(plan.steps[1].status, PlanStatus::InProgress);
+                assert_eq!(plan.steps[2].content, "run tests");
+                assert_eq!(plan.steps[2].status, PlanStatus::Pending);
+            }
+            other => panic!("expected Plan, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn collab_spawn_agent_yields_tool_card_and_subagent_row() {
+        let p = json!({ "item": {
+            "type": "collabAgentToolCall",
+            "id": "call-1",
+            "tool": "spawnAgent",
+            "status": "inProgress",
+            "senderThreadId": "parent",
+            "receiverThreadIds": ["child-1"],
+            "agentsStates": {},
+            "prompt": "inspect the project",
+            "model": "gpt-5.5-codex"
+        }});
+        let updates = translate("item/started", &p);
+        assert_eq!(updates.len(), 2);
+        assert_eq!(
+            updates[0],
+            AgentUpdate::Subagent(crate::session::state::SubagentUpdate {
+                id: "child-1".into(),
+                agent_type: Some("codex".into()),
+                status: crate::session::state::SubagentStatus::Running,
+                description: Some("inspect the project".into()),
+                tool_use_id: Some("call-1".into()),
+                model: Some("gpt-5.5-codex".into()),
+                last_tool_name: Some("spawnAgent".into()),
+                last_tool_summary: None,
+            })
+        );
+        match &updates[1] {
+            AgentUpdate::ToolUse { id, name, input } => {
+                assert_eq!(id, "call-1");
+                assert_eq!(name, "Agent");
+                assert_eq!(input["prompt"], "inspect the project");
+                assert_eq!(input["receiverThreadIds"][0], "child-1");
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn subagent_activity_completed_closes_row() {
+        let p = json!({ "item": {
+            "type": "subAgentActivity",
+            "id": "activity-1",
+            "agentPath": "/home/user/.codex/agents/reviewer.md",
+            "agentThreadId": "child-1",
+            "kind": "completed"
+        }});
+        assert_eq!(
+            translate("item/completed", &p),
+            vec![AgentUpdate::Subagent(
+                crate::session::state::SubagentUpdate {
+                    id: "child-1".into(),
+                    agent_type: Some("reviewer".into()),
+                    status: crate::session::state::SubagentStatus::Complete,
+                    description: Some("/home/user/.codex/agents/reviewer.md".into()),
+                    tool_use_id: None,
+                    model: None,
+                    last_tool_name: Some("subagent completed".into()),
+                    last_tool_summary: None,
+                }
+            )]
         );
     }
 

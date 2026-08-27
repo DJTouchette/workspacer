@@ -131,4 +131,43 @@ describe('InspectorCard', () => {
     render(<InspectorCard snapshot={undefined} />);
     expect(screen.getByText('No files changed yet')).toBeInTheDocument();
   });
+
+  it('opens Codex subagent rows while keeping the aggregate monitor hidden', () => {
+    const opened: unknown[] = [];
+    const handler = (event: Event) => opened.push((event as CustomEvent).detail);
+    window.addEventListener('agentwatch:open', handler);
+    try {
+      render(
+        <InspectorCard
+          snapshot={makeSnapshot({
+            provider: 'codex',
+            ambientState: 'background',
+            subagents: [
+              {
+                id: 'child-1',
+                type: 'codex',
+                status: 'running',
+                startedAt: 1,
+                description: 'inspect this',
+              },
+            ],
+          })}
+          initialTab="agents"
+        />,
+      );
+
+      expect(screen.queryByRole('button', { name: /Monitor/ })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTitle('Watch this agent in a pane'));
+      expect(opened).toEqual([
+        {
+          sessionId: 'sess-1',
+          kind: 'subagent',
+          id: 'child-1',
+          title: 'Agent: codex',
+        },
+      ]);
+    } finally {
+      window.removeEventListener('agentwatch:open', handler);
+    }
+  });
 });

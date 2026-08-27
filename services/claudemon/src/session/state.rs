@@ -295,11 +295,55 @@ impl PlanStatus {
     /// vocabulary `transcript::summarize_todos` already recognizes.
     pub fn from_wire(s: &str) -> Self {
         match s {
-            "in_progress" | "inprogress" | "in-progress" => Self::InProgress,
+            "in_progress" | "inprogress" | "in-progress" | "inProgress" => Self::InProgress,
             "completed" | "complete" | "done" => Self::Completed,
             _ => Self::Pending,
         }
     }
+}
+
+/// Provider-neutral subagent row surfaced on session snapshots. Claude's richer
+/// rows are still built in the desktop from hook/transcript artifacts; managed
+/// providers use this daemon-owned shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentInfo {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub agent_type: String,
+    pub status: SubagentStatus,
+    pub started_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_tool_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubagentStatus {
+    Running,
+    Complete,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubagentUpdate {
+    pub id: String,
+    pub agent_type: Option<String>,
+    pub status: SubagentStatus,
+    pub description: Option<String>,
+    pub tool_use_id: Option<String>,
+    pub model: Option<String>,
+    pub last_tool_name: Option<String>,
+    pub last_tool_summary: Option<String>,
 }
 
 /// Session capabilities parsed from the stream `system/init` frame (stream
@@ -658,6 +702,12 @@ pub struct SessionState {
     /// and omitted from the wire when empty. Fed by `SessionStore::set_plan`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<Plan>,
+    /// Managed-provider subagent rows. Claude PTY/stream sessions still build
+    /// their detailed rows in the desktop from hook/transcript artifacts; this
+    /// list is for providers whose native machine interface reports subagent
+    /// identities directly (Codex app-server).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subagents: Vec<SubagentInfo>,
     /// Context compaction, driven by the `PreCompact`/`PostCompact` hooks.
     /// `compacting` is true between the two; `last_compact_at` (unix seconds) and
     /// `compaction_count` let clients badge a recently-compacted session and
@@ -731,6 +781,7 @@ impl SessionState {
             provider: default_provider(),
             transport: Transport::default(),
             plan: None,
+            subagents: Vec::new(),
             compacting: false,
             last_compact_at: None,
             compaction_count: 0,
@@ -1779,6 +1830,7 @@ mod tests {
         // Codex/alt spellings.
         assert_eq!(PlanStatus::from_wire("done"), PlanStatus::Completed);
         assert_eq!(PlanStatus::from_wire("in-progress"), PlanStatus::InProgress);
+        assert_eq!(PlanStatus::from_wire("inProgress"), PlanStatus::InProgress);
         // Anything unrecognized falls back to Pending rather than being dropped.
         assert_eq!(PlanStatus::from_wire("garbage"), PlanStatus::Pending);
     }

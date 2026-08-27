@@ -290,6 +290,10 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
         .route("/sessions/:id/stream", get(stream_bytes))
         .route("/sessions/:id/transcript", get(get_transcript))
         .route("/sessions/:id/conversation", get(get_conversation))
+        .route(
+            "/sessions/:id/subagents/:agent_id/conversation",
+            get(get_subagent_conversation),
+        )
         .route("/sessions/:id/handoff", post(post_handoff))
         .route("/conversation/stream", get(conversation_stream))
         .route("/events", get(event_stream))
@@ -1247,6 +1251,50 @@ async fn get_conversation(
         .into_response()
 }
 
+/// Parsed conversation for one provider-owned child agent. Codex app-server
+/// reports child thread ids directly, and those threads are durable as rollout
+/// files under `$CODEX_HOME/sessions`. This read path is intentionally scoped
+/// through the parent session's current subagent list: a caller may only ask for
+/// a child id the daemon already exposed on that parent snapshot.
+async fn get_subagent_conversation(
+    State(store): State<SessionStore>,
+    Path((id, agent_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    if !valid_session_id(&id) || !valid_session_id(&agent_id) {
+        return (StatusCode::BAD_REQUEST, "invalid session id").into_response();
+    }
+    let Some(state) = store.get(&id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "ok": false, "error": "session not found" })),
+        )
+            .into_response();
+    };
+    if state.provider != "codex" {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "ok": false,
+                "error": "subagent conversation is only available for codex sessions"
+            })),
+        )
+            .into_response();
+    }
+    if !state.subagents.iter().any(|sub| sub.id == agent_id) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "ok": false, "error": "subagent not found for that session" })),
+        )
+            .into_response();
+    }
+    let items = crate::providers::codex_rollout::rollout_for_thread(&agent_id)
+        .map(|path| crate::providers::codex_rollout::replay_conversation(&path))
+        .unwrap_or_default();
+    let seq = items.len();
+    Json(json!({ "session_id": id, "agent_id": agent_id, "seq": seq, "items": items }))
+        .into_response()
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct HandoffPayload {
     /// Skip writing the brief under `~/.workspacer/handoffs/` (default writes).
@@ -1821,6 +1869,89 @@ mod tests {
         }
         codex_rollout::forget_thread(&sid);
         codex_rollout::forget_thread(&sid_live);
+        let _ = std::fs::remove_dir_all(&codex_home);
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn get_subagent_conversation_replays_codex_child_rollout() {
+        use crate::providers::codex_rollout;
+        use crate::session::state::{SubagentStatus, SubagentUpdate};
+
+        let _env = codex_rollout::codex_home_test_lock();
+        let codex_home = std::env::temp_dir().join(format!(
+            "claudemon-api-codex-subagent-home-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let day = codex_home
+            .join("sessions")
+            .join("2026")
+            .join("07")
+            .join("10");
+        std::fs::create_dir_all(&day).unwrap();
+        let agent_id = format!("child-{}", uuid::Uuid::new_v4());
+        let rollout = day.join(format!("rollout-2026-07-10-{agent_id}.jsonl"));
+        let lines = [
+            json!({ "type": "response_item", "payload": { "type": "message", "role": "user",
+                "content": [{ "type": "input_text", "text": "inspect this" }] } })
+            .to_string(),
+            json!({ "type": "response_item", "payload": { "type": "message", "role": "assistant",
+                "content": [{ "type": "output_text", "text": "child result" }] } })
+            .to_string(),
+        ];
+        std::fs::write(&rollout, lines.join("\n")).unwrap();
+        let prev = std::env::var_os("CODEX_HOME");
+        std::env::set_var("CODEX_HOME", &codex_home);
+
+        let state = test_state();
+        state
+            .store
+            .register_managed("parent-codex", "/tmp/proj", "codex");
+        let (status, _) = request(
+            state.clone(),
+            get(&format!(
+                "/sessions/parent-codex/subagents/{agent_id}/conversation"
+            )),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "child thread is not readable until the parent exposed it"
+        );
+
+        state.store.apply_subagent_update(
+            "parent-codex",
+            SubagentUpdate {
+                id: agent_id.clone(),
+                agent_type: Some("codex".into()),
+                status: SubagentStatus::Running,
+                description: Some("inspect this".into()),
+                tool_use_id: None,
+                model: None,
+                last_tool_name: None,
+                last_tool_summary: None,
+            },
+        );
+        let (status, body) = request(
+            state,
+            get(&format!(
+                "/sessions/parent-codex/subagents/{agent_id}/conversation"
+            )),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["seq"], 2);
+        let items = v["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["text"], "inspect this");
+        assert_eq!(items[1]["text"], "child result");
+
+        match prev {
+            Some(val) => std::env::set_var("CODEX_HOME", val),
+            None => std::env::remove_var("CODEX_HOME"),
+        }
         let _ = std::fs::remove_dir_all(&codex_home);
     }
 

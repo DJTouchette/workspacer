@@ -12,8 +12,9 @@ use super::account_usage::AccountUsage;
 use super::conversation::{ConversationItem, ConversationStore};
 use super::permission_mode::{classify_screen, PermissionMode, PermissionSwitchError};
 use super::state::{
-    HookEvent, Pending, PendingWrite, Plan, SessionMode, SessionState, StatusLine, Transport,
-    CLAUDE_FIVE_HOUR_WINDOW_MINUTES, CLAUDE_SEVEN_DAY_WINDOW_MINUTES,
+    HookEvent, Pending, PendingWrite, Plan, SessionMode, SessionState, StatusLine, SubagentInfo,
+    SubagentStatus, SubagentUpdate, Transport, CLAUDE_FIVE_HOUR_WINDOW_MINUTES,
+    CLAUDE_SEVEN_DAY_WINDOW_MINUTES,
 };
 use crate::protocol::WrapperMessage;
 
@@ -34,6 +35,11 @@ const MAX_PENDING_MESSAGES: usize = 32;
 /// the submitting Enter is treated as mid-turn input and swallowed, leaving
 /// the text stranded in the TUI (the "GUI send lands in the TUI box" bug).
 const FLUSH_DELAY_MS: u64 = 300;
+
+fn now_millis() -> i64 {
+    let now = OffsetDateTime::now_utc();
+    now.unix_timestamp() * 1000 + i64::from(now.millisecond())
+}
 /// Grace period after a flushed send before verifying the submit took. A
 /// successful submit flips the session to `Responding` (UserPromptSubmit
 /// hook); still `Input` after this long means the Enter was swallowed and the
@@ -1391,6 +1397,13 @@ impl SessionStore {
             // A stopped session runs nothing — a leftover live-task count would
             // badge a dead row as "working in background".
             entry.background_tasks = 0;
+            let completed_at = now_millis();
+            for sub in &mut entry.subagents {
+                if sub.status == SubagentStatus::Running {
+                    sub.status = SubagentStatus::Complete;
+                    sub.completed_at.get_or_insert(completed_at);
+                }
+            }
             entry.updated_at = OffsetDateTime::now_utc();
             let state = entry.clone();
             drop(entry);
@@ -1426,6 +1439,77 @@ impl SessionStore {
             event: "Managed".to_string(),
             state,
         });
+    }
+
+    /// Upsert one managed-provider subagent row and mirror its live count into
+    /// `background_tasks`, the field existing clients already use for ambient
+    /// work. Claude hook/transcript rows are still desktop-owned; this is for
+    /// providers like Codex whose native protocol reports subagent identities.
+    pub fn apply_subagent_update(
+        &self,
+        session_id: &str,
+        update: SubagentUpdate,
+    ) -> Option<SessionState> {
+        if update.id.trim().is_empty() {
+            return None;
+        }
+        let now = now_millis();
+        let state = {
+            let mut entry = self.states.get_mut(session_id)?;
+            if let Some(sub) = entry.subagents.iter_mut().find(|s| s.id == update.id) {
+                if let Some(agent_type) = update.agent_type {
+                    sub.agent_type = agent_type;
+                }
+                if let Some(description) = update.description {
+                    sub.description = Some(description);
+                }
+                if let Some(tool_use_id) = update.tool_use_id {
+                    sub.tool_use_id = Some(tool_use_id);
+                }
+                if let Some(model) = update.model {
+                    sub.model = Some(model);
+                }
+                if let Some(last_tool_name) = update.last_tool_name {
+                    sub.last_tool_name = Some(last_tool_name);
+                }
+                if let Some(last_tool_summary) = update.last_tool_summary {
+                    sub.last_tool_summary = Some(last_tool_summary);
+                }
+                sub.status = update.status;
+                match update.status {
+                    SubagentStatus::Running => sub.completed_at = None,
+                    SubagentStatus::Complete => {
+                        sub.completed_at.get_or_insert(now);
+                    }
+                }
+            } else {
+                entry.subagents.push(SubagentInfo {
+                    id: update.id,
+                    agent_type: update.agent_type.unwrap_or_else(|| "codex".to_string()),
+                    status: update.status,
+                    started_at: now,
+                    completed_at: (update.status == SubagentStatus::Complete).then_some(now),
+                    description: update.description,
+                    tool_use_id: update.tool_use_id,
+                    model: update.model,
+                    last_tool_name: update.last_tool_name,
+                    last_tool_summary: update.last_tool_summary,
+                });
+            }
+            entry.background_tasks = entry
+                .subagents
+                .iter()
+                .filter(|s| s.status == SubagentStatus::Running)
+                .count() as u32;
+            entry.updated_at = OffsetDateTime::now_utc();
+            entry.clone()
+        };
+        let _ = self.update_tx.send(SessionUpdate {
+            session_id: session_id.to_string(),
+            event: "Managed".to_string(),
+            state: state.clone(),
+        });
+        Some(state)
     }
 
     /// Flip sessions whose process can no longer exist to `Stopped`.
@@ -3878,6 +3962,52 @@ mod tests {
         assert!(store.deregister_managed("m1", gen));
         let row = store.get("m1").unwrap();
         assert_eq!(row.mode, SessionMode::Stopped);
+        assert_eq!(row.background_tasks, 0);
+    }
+
+    #[test]
+    fn subagent_updates_upsert_rows_and_drive_background_count() {
+        let store = SessionStore::new();
+        store.register_managed("m1", "/repo", "codex");
+
+        store.apply_subagent_update(
+            "m1",
+            SubagentUpdate {
+                id: "child-1".into(),
+                agent_type: Some("codex".into()),
+                status: SubagentStatus::Running,
+                description: Some("inspect".into()),
+                tool_use_id: Some("call-1".into()),
+                model: Some("gpt-5.5-codex".into()),
+                last_tool_name: Some("spawnAgent".into()),
+                last_tool_summary: None,
+            },
+        );
+        let row = store.get("m1").unwrap();
+        assert_eq!(row.subagents.len(), 1);
+        assert_eq!(row.subagents[0].id, "child-1");
+        assert_eq!(row.subagents[0].status, SubagentStatus::Running);
+        assert_eq!(row.background_tasks, 1);
+
+        store.apply_subagent_update(
+            "m1",
+            SubagentUpdate {
+                id: "child-1".into(),
+                agent_type: None,
+                status: SubagentStatus::Complete,
+                description: None,
+                tool_use_id: None,
+                model: None,
+                last_tool_name: Some("wait".into()),
+                last_tool_summary: Some("done".into()),
+            },
+        );
+        let row = store.get("m1").unwrap();
+        assert_eq!(row.subagents.len(), 1);
+        assert_eq!(row.subagents[0].status, SubagentStatus::Complete);
+        assert_eq!(row.subagents[0].description.as_deref(), Some("inspect"));
+        assert_eq!(row.subagents[0].last_tool_summary.as_deref(), Some("done"));
+        assert!(row.subagents[0].completed_at.is_some());
         assert_eq!(row.background_tasks, 0);
     }
 

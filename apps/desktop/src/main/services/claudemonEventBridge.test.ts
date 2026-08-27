@@ -55,6 +55,8 @@ describe('claudemonEventBridge', () => {
       provider: undefined,
       transport: undefined,
       pending: null,
+      backgroundTasks: undefined,
+      subagents: undefined,
     });
   });
 
@@ -71,6 +73,8 @@ describe('claudemonEventBridge', () => {
       provider: 'claude',
       transport: 'stream',
       pending: null,
+      backgroundTasks: undefined,
+      subagents: undefined,
     });
   });
 
@@ -93,6 +97,36 @@ describe('claudemonEventBridge', () => {
       provider: 'codex',
       transport: undefined,
       pending,
+      backgroundTasks: undefined,
+      subagents: undefined,
+    });
+  });
+
+  it('forwards managed subagent rows and background count from the state frame', async () => {
+    await startClaudemonEventBridge();
+    const subagents = [
+      {
+        id: 'child-1',
+        type: 'codex',
+        status: 'running',
+        startedAt: 1000,
+        description: 'inspect',
+        toolUseId: 'call-1',
+      },
+    ];
+    capturedOpts.onFrame(
+      JSON.stringify({
+        event: 'Managed',
+        session_id: 's1',
+        state: { mode: 'input', provider: 'codex', background_tasks: 1, subagents },
+      }),
+    );
+    expect(applyManagedMode).toHaveBeenCalledWith('s1', 'input', {
+      provider: 'codex',
+      transport: undefined,
+      pending: null,
+      backgroundTasks: 1,
+      subagents,
     });
   });
 

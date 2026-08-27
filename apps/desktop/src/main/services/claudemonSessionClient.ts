@@ -626,6 +626,21 @@ class ClaudemonSessionClient {
     return { seq: data.seq ?? 0, items: Array.isArray(data.items) ? data.items : [] };
   }
 
+  /** Parsed conversation items for a provider-owned subagent thread. Today this
+   *  is Codex-only: claudemon validates that `agentId` belongs to `sessionId`
+   *  before reading the child thread rollout. */
+  async getSubagentConversation(
+    sessionId: string,
+    agentId: string,
+  ): Promise<{ seq: number; items: any[] } | null> {
+    const res = await fetch(
+      `${CLAUDEMON_API_URL}/sessions/${encodeURIComponent(sessionId)}/subagents/${encodeURIComponent(agentId)}/conversation`,
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { seq?: number; items?: unknown };
+    return { seq: data.seq ?? 0, items: Array.isArray(data.items) ? data.items : [] };
+  }
+
   async getSession(sessionId: string): Promise<any> {
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}`);
     if (!res.ok) return null;

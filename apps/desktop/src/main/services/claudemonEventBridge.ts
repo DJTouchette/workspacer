@@ -36,6 +36,7 @@ export async function startClaudemonEventBridge(): Promise<void> {
           transport?: string;
           pending?: ManagedPendingWire | null;
           background_tasks?: number;
+          subagents?: unknown[];
         };
       };
       try {
@@ -77,6 +78,7 @@ export async function startClaudemonEventBridge(): Promise<void> {
           pending: update.state?.pending ?? null,
           // Ambient background work (shells, subagents) — badge, never "Working".
           backgroundTasks: update.state?.background_tasks,
+          subagents: update.state?.subagents,
         });
       }
     },

@@ -253,6 +253,44 @@ export function contextTokensFromStatusLine(sl?: SessionStatusLine): number | un
   return Math.round((sl.contextUsedPct / 100) * sl.contextWindowSize);
 }
 
+function normalizeManagedSubagent(raw: unknown): SubagentInfo | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const id = typeof r.id === 'string' ? r.id : '';
+  if (!id) return null;
+  const status = r.status === 'running' ? 'running' : 'complete';
+  const startedRaw = r.startedAt ?? r.started_at;
+  const completedRaw = r.completedAt ?? r.completed_at;
+  const num = (v: unknown): number | undefined =>
+    typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+  const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+  const sub: SubagentInfo = {
+    id,
+    type: str(r.type) ?? str(r.agentType) ?? str(r.agent_type) ?? 'codex',
+    status,
+    startedAt: num(startedRaw) ?? Date.now(),
+  };
+  const completedAt = num(completedRaw);
+  if (completedAt !== undefined) sub.completedAt = completedAt;
+  const description = str(r.description);
+  if (description) sub.description = description;
+  const toolUseId = str(r.toolUseId) ?? str(r.tool_use_id);
+  if (toolUseId) sub.toolUseId = toolUseId;
+  const model = str(r.model);
+  if (model) sub.model = model;
+  const tokens = num(r.tokens);
+  if (tokens !== undefined) sub.tokens = tokens;
+  const costUSD = num(r.costUSD) ?? num(r.cost_usd);
+  if (costUSD !== undefined) sub.costUSD = costUSD;
+  const toolCalls = num(r.toolCalls) ?? num(r.tool_calls);
+  if (toolCalls !== undefined) sub.toolCalls = toolCalls;
+  const lastToolName = str(r.lastToolName) ?? str(r.last_tool_name);
+  if (lastToolName) sub.lastToolName = lastToolName;
+  const lastToolSummary = str(r.lastToolSummary) ?? str(r.last_tool_summary);
+  if (lastToolSummary) sub.lastToolSummary = lastToolSummary;
+  return sub;
+}
+
 /** Capabilities parsed from Claude's stream `init` frame (stream sessions). */
 export interface SessionCapabilities {
   fastMode?: boolean;
@@ -1077,6 +1115,7 @@ class ClaudeSessionStore {
       transport?: string;
       pending?: ManagedPendingWire | null;
       backgroundTasks?: number;
+      subagents?: unknown[];
     },
   ): void {
     const session = this.sessions.get(sessionId);
@@ -1086,6 +1125,11 @@ class ClaudeSessionStore {
     // for it, so this is what the UI badges instead.
     if (typeof meta?.backgroundTasks === 'number') {
       session.backgroundTasks = meta.backgroundTasks;
+    }
+    if (Array.isArray(meta?.subagents)) {
+      session.subagents = meta.subagents
+        .map(normalizeManagedSubagent)
+        .filter((sub): sub is SubagentInfo => !!sub);
     }
     // Daemon truth for sessions this process never spawned (adopted, or
     // restored after a desktop restart): backfill the backend identity so a

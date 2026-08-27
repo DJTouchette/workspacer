@@ -41,7 +41,7 @@ use crate::protocol::{Signal, WrapperMessage};
 use crate::session::conversation::ConversationItem;
 use crate::session::state::{
     Capabilities, Pending, PendingOwner, PendingWrite, Plan, PlanStatus, PlanStep, SessionMode,
-    StatusLine,
+    StatusLine, SubagentUpdate,
 };
 use crate::session::store::WrapperHandle;
 use crate::session::{ConversationStore, SessionStore};
@@ -244,6 +244,8 @@ pub enum AgentUpdate {
     /// a `plan` item by `apply_updates` (via `SessionStore::set_plan`), never as
     /// a `conversation_item`.
     Plan(Plan),
+    /// Managed-provider subagent row update.
+    Subagent(SubagentUpdate),
 }
 
 /// Parse a Codex `RateLimitSnapshot` — camelCase on the app-server wire
@@ -804,6 +806,7 @@ pub fn apply_updates(
     // Latest plan in this batch (last-write-wins); applied after the item push
     // so its own conversation item lands just past the batch's items.
     let mut plan: Option<Plan> = None;
+    let mut subagents = Vec::new();
 
     for update in &updates {
         match update {
@@ -930,6 +933,7 @@ pub fn apply_updates(
                 });
             }
             AgentUpdate::Plan(p) => plan = Some(p.clone()),
+            AgentUpdate::Subagent(update) => subagents.push(update.clone()),
             AgentUpdate::AssistantText(_)
             | AgentUpdate::UserText(_)
             | AgentUpdate::ToolUse { .. }
@@ -946,6 +950,9 @@ pub fn apply_updates(
     }
     if let Some(plan) = plan {
         store.set_plan(conv, session_id, plan);
+    }
+    for subagent in subagents {
+        store.apply_subagent_update(session_id, subagent);
     }
     if let Some((mode, write)) = new_mode {
         // Approval always re-applies: its `pending` payload can change even

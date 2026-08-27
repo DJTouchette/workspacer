@@ -282,6 +282,37 @@ describe('managed pending → approval/question cards', () => {
     expect(claudeSessionStore.getSnapshot(sid)?.pendingApproval).toBeNull();
   });
 
+  it('folds daemon-owned Codex subagent rows and derives background ambient state', () => {
+    const sid = managedSession();
+    claudeSessionStore.applyManagedMode(sid, 'input', {
+      provider: 'codex',
+      pending: null,
+      backgroundTasks: 1,
+      subagents: [
+        {
+          id: 'child-1',
+          type: 'codex',
+          status: 'running',
+          startedAt: 1000,
+          description: 'inspect',
+          toolUseId: 'call-1',
+        },
+      ],
+    });
+    const snap = claudeSessionStore.getSnapshot(sid);
+    expect(snap?.ambientState).toBe('background');
+    expect(snap?.subagents).toEqual([
+      {
+        id: 'child-1',
+        type: 'codex',
+        status: 'running',
+        startedAt: 1000,
+        description: 'inspect',
+        toolUseId: 'call-1',
+      },
+    ]);
+  });
+
   it('surfaces a STREAM-transport Claude approval into pendingApproval (control protocol, no hook)', () => {
     // Stream Claude routes approvals through the control protocol
     // (can_use_tool), not a PermissionRequest hook, so the daemon's `pending`
