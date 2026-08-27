@@ -7,6 +7,7 @@
  */
 
 import { configService } from './configService';
+import { formatClaudeAliasWindow } from '../shared/modelContextWindows';
 import { claudeSessionStore } from './claudeSessionStore';
 
 export interface ClaudeModelAlias {
@@ -87,16 +88,32 @@ export function listClaudeModels(): ListModelsResult {
     // Each alias tracks the newest model of its family, so these need zero
     // maintenance as Claude Code updates. `sonnet[1m]` is Claude Code's own
     // alias for the million-token-context Sonnet.
+    // The `context` badge is LOOKED UP, never spelled here: these strings were
+    // a display-only sixth window table, unpinned to the four numeric ones, and
+    // `formatClaudeAliasWindow` reads the same contract every other window in
+    // the repo now comes from.
     aliases: [
       // Fable's 1M window is both its maximum AND its default — there is no 200K
       // mode to select, so (unlike Opus/Sonnet) it has no separate `[1m]` row and
       // always shows 1M.
-      { value: 'fable', label: label('fable', 'Fable'), context: '1M' },
-      { value: 'opus', label: label('opus', 'Opus'), context: '200K' },
-      { value: 'opus[1m]', label: label('opus', 'Opus'), context: '1M' },
-      { value: 'sonnet', label: label('sonnet', 'Sonnet'), context: '200K' },
-      { value: 'sonnet[1m]', label: label('sonnet', 'Sonnet'), context: '1M' },
-      { value: 'haiku', label: label('haiku', 'Haiku'), context: '200K' },
+      { value: 'fable', label: label('fable', 'Fable'), context: formatClaudeAliasWindow('fable') },
+      { value: 'opus', label: label('opus', 'Opus'), context: formatClaudeAliasWindow('opus') },
+      {
+        value: 'opus[1m]',
+        label: label('opus', 'Opus'),
+        context: formatClaudeAliasWindow('opus[1m]'),
+      },
+      {
+        value: 'sonnet',
+        label: label('sonnet', 'Sonnet'),
+        context: formatClaudeAliasWindow('sonnet'),
+      },
+      {
+        value: 'sonnet[1m]',
+        label: label('sonnet', 'Sonnet'),
+        context: formatClaudeAliasWindow('sonnet[1m]'),
+      },
+      { value: 'haiku', label: label('haiku', 'Haiku'), context: formatClaudeAliasWindow('haiku') },
     ],
     seen,
   };

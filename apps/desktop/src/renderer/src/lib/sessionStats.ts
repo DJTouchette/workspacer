@@ -190,9 +190,9 @@ export function deriveSessionStats(snapshot?: SessionStatsSource | null): Derive
   // Context %: prefer Claude's own number, else derive from transcript usage.
   const ctxPct =
     sl?.contextUsedPct ??
-    (usage && usage.contextLimit > 0
-      ? (usage.contextTokens / usage.contextLimit) * 100
-      : undefined);
+    // A null limit is UNKNOWN, not zero: the meter is omitted rather than drawn
+    // against an invented denominator (see SessionUsage.contextLimit).
+    (usage?.contextLimit ? (usage.contextTokens / usage.contextLimit) * 100 : undefined);
 
   // Cumulative tokens: statusLine carries in+out; fall back to usage.
   const tokens =

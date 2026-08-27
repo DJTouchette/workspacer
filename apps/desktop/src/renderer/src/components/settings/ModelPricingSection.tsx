@@ -6,7 +6,10 @@ import { Section, SmallButton, inputStyle } from './primitives';
 interface DefaultRate {
   input: number;
   output: number;
-  contextLimit: number;
+  /** The built-in window for this prefix, or `null` when the contract table has
+   *  no row for it — in which case the field offers no placeholder rather than
+   *  a number nothing stands behind. */
+  contextLimit: number | null;
 }
 interface OverrideRate {
   input: number;
@@ -262,7 +265,7 @@ const ModelPricingSection: React.FC = () => {
                     style={{ ...cell, width: 110 }}
                     inputMode="numeric"
                     value={row.context}
-                    placeholder={def ? String(def.contextLimit) : '—'}
+                    placeholder={def?.contextLimit != null ? String(def.contextLimit) : '—'}
                     onChange={(e) => setField(prefix, 'context', e.target.value)}
                   />
                 </React.Fragment>

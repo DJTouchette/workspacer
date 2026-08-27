@@ -435,10 +435,14 @@ const ContextPane: React.FC<ContextPaneProps> = ({
                 marginBottom: 6,
               }}
             >
+              {/* This pane's whole job is this number, so when the window is
+                  unknown it says so out loud instead of silently dropping the
+                  line — a bare "used" reads as a rendering gap, not as "the
+                  provider never told us how big this session's window is". */}
               <span>
                 {usedTokens !== undefined && sl?.contextWindowSize
                   ? `${(usedTokens / 1000).toFixed(1)}k of ${(sl.contextWindowSize / 1000).toFixed(0)}k tokens`
-                  : 'used'}
+                  : 'Context window not reported by this provider'}
               </span>
               {/* Value in text ink; the dot + fill carry the severity color. */}
               <span

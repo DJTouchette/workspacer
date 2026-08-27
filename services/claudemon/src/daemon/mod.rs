@@ -80,7 +80,7 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
 
     // Persistence runs out-of-band: subscribe to the raw-hook broadcast and
     // write each event to SQLite without blocking the hook handler's response.
-    spawn_persistence_task(db.clone(), store.subscribe_hooks());
+    spawn_persistence_task(db.clone(), store.clone(), store.subscribe_hooks());
 
     // Periodic durability sweep: bound the in-memory session map and GC old
     // SQLite rows so neither grows without limit over long uptime. The FIRST
@@ -442,17 +442,32 @@ fn spawn_maintenance_task(store: SessionStore, db: Db) {
     });
 }
 
-fn spawn_persistence_task(db: Db, mut rx: tokio::sync::broadcast::Receiver<HookEvent>) {
+fn spawn_persistence_task(
+    db: Db,
+    store: SessionStore,
+    mut rx: tokio::sync::broadcast::Receiver<HookEvent>,
+) {
     tokio::spawn(async move {
         loop {
             match rx.recv().await {
                 Ok(event) => {
                     let db_inner = db.clone();
+                    // The model this session was ASKED for, carried into the
+                    // same statement that CREATES its row. A spawn records it
+                    // in memory before any row exists (rows are born from the
+                    // first hook event), so writing it separately would UPDATE
+                    // nothing and the row would then be inserted with a NULL —
+                    // and a daemon restart would revert a 1M session to the
+                    // table's guess for its marker-stripped transcript id.
+                    let requested_model = store.requested_model(&event.session_id);
                     // Run the synchronous sqlite write on the blocking pool so
                     // we don't tie up an async worker on file I/O.
-                    let result = tokio::task::spawn_blocking(move || db_inner.record_event(&event))
-                        .await
-                        .unwrap_or_else(|join_err| Err(anyhow::anyhow!(join_err)));
+                    let result = tokio::task::spawn_blocking(move || {
+                        db_inner
+                            .record_event_with_requested_model(&event, requested_model.as_deref())
+                    })
+                    .await
+                    .unwrap_or_else(|join_err| Err(anyhow::anyhow!(join_err)));
                     if let Err(err) = result {
                         tracing::warn!(?err, "persisting hook event failed");
                     }

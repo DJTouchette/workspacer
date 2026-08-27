@@ -377,7 +377,28 @@ export function registerHubCapabilities(): void {
       // analyticsWriter.ts does, or every non-Claude row reports all-zero.
       model: s.usage?.model ?? s.statusLine?.modelDisplay ?? null,
       contextTokens: s.usage?.contextTokens ?? contextTokensFromStatusLine(s.statusLine) ?? 0,
-      contextLimit: s.usage?.contextLimit ?? s.statusLine?.contextWindowSize ?? 0,
+      // THE WINDOW: statusLine FIRST. This was the other way round, and every
+      // bus client — /m, /app, remote.html, wks-tui, every federated peer —
+      // inherited the ordering. `statusLine.contextWindowSize` is what the
+      // PROVIDER said about this session (Claude's own statusLine payload,
+      // Codex's `model_context_window`); `usage.contextLimit` is what the
+      // desktop's own engine worked out from a model id. Preferring the
+      // computed value over the reported one is backwards on its face, and it
+      // is how two clients came to show different windows for the same session
+      // at the same instant.
+      //
+      // The pair is deliberately NOT taken from one source: a direct token
+      // count from the transcript beside a provider-reported window is the most
+      // accurate reading available. The derived alternative
+      // (`contextTokensFromStatusLine`, which is pct × window) inherits the
+      // window's error into the TOKEN count, which is one way an absurd token
+      // figure reaches a client.
+      //
+      // `0` rather than an omitted key: every consumer of this row guards
+      // truthily (`u.contextLimit ? … : …`) and reads 0 as unknown, which is
+      // what a null limit now means here. What matters is that it is never a
+      // guessed 200_000.
+      contextLimit: s.statusLine?.contextWindowSize ?? s.usage?.contextLimit ?? 0,
       costUSD: s.usage?.costUSD ?? s.statusLine?.costUSD ?? 0,
       // What the agent is blocked on, if anything — lets a remote client show
       // the actual approval/question instead of a generic "waiting" badge.

@@ -528,6 +528,22 @@ impl SessionStore {
                 st.mode = SessionMode::Stopped;
                 st.tool_calls = s.tool_calls;
                 st.user_prompts = s.user_prompt_count;
+                // The window signals. `hydrate` used to drop BOTH of these on
+                // the floor — `RestoredSession` carried neither, and the
+                // `sessions.model` column it could have read was ignored — so a
+                // restarted daemon rebuilt a 1M session with no idea it was
+                // one. `requested_model` is the load-bearing half: Claude Code
+                // strips the `[1m]` marker from the id it writes into the
+                // transcript, so nothing else can ever tell a resumed 1M
+                // session from a 200k one until its provider speaks again.
+                //
+                // `s.model` (the concrete id the transcript reported) is
+                // deliberately NOT restored onto the state: the transcript is
+                // re-read on resume and is its own authority for that. It is
+                // carried on `RestoredSession` because the resolver's fallback
+                // rank takes a model id, and a caller that has the row already
+                // has it.
+                st.requested_model = s.requested_model.clone();
                 if let Ok(t) = OffsetDateTime::from_unix_timestamp(s.created_at) {
                     st.started_at = t;
                 }
@@ -1174,6 +1190,17 @@ impl SessionStore {
         if let Some(mut entry) = self.states.get_mut(session_id) {
             entry.requested_model = Some(model.to_string());
         }
+    }
+
+    /// The model a session was ASKED for, if anything recorded one.
+    ///
+    /// Read by the persistence task so the row SQLite creates for this session
+    /// carries it — see `Db::record_event_with_requested_model` for why it
+    /// cannot simply be UPDATEd at spawn time.
+    pub fn requested_model(&self, session_id: &str) -> Option<String> {
+        self.states
+            .get(session_id)
+            .and_then(|s| s.requested_model.clone())
     }
 
     /// Register the prompt channel for a managed session. Prompts submitted via
@@ -2963,6 +2990,8 @@ mod tests {
                 created_at: 1000,
                 last_event_at: 1000,
                 user_prompt_count: 0,
+                model: None,
+                requested_model: None,
             },
             crate::store::RestoredSession {
                 id: "old2".into(),
@@ -2971,6 +3000,8 @@ mod tests {
                 created_at: 1000,
                 last_event_at: 1000,
                 user_prompt_count: 0,
+                model: None,
+                requested_model: None,
             },
             crate::store::RestoredSession {
                 id: "old3".into(),
@@ -2979,6 +3010,8 @@ mod tests {
                 created_at: 1000,
                 last_event_at: 1000,
                 user_prompt_count: 0,
+                model: None,
+                requested_model: None,
             },
             crate::store::RestoredSession {
                 id: "fresh".into(),
@@ -2987,6 +3020,8 @@ mod tests {
                 created_at: 1000,
                 last_event_at: 1000,
                 user_prompt_count: 0,
+                model: None,
+                requested_model: None,
             },
         ]);
         // A live session must always survive, however old the clock says it is.
@@ -3030,6 +3065,11 @@ mod tests {
                 created_at: 1000,
                 last_event_at: 2000,
                 user_prompt_count: 3,
+                model: Some("claude-opus-5".into()),
+                // The `[1m]` marker the transcript id can never carry. Without
+                // this restored, a resumed 1M session reverts to the table's
+                // 200k answer for its stripped id and reads 5x too full.
+                requested_model: Some("opus[1m]".into()),
             },
             // Same id as the live one — must NOT overwrite it back to stopped.
             crate::store::RestoredSession {
@@ -3039,6 +3079,8 @@ mod tests {
                 created_at: 1,
                 last_event_at: 2,
                 user_prompt_count: 0,
+                model: None,
+                requested_model: None,
             },
         ]);
 

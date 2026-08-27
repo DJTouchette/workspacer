@@ -334,6 +334,65 @@ describe('agents.list — statusLine fallback for managed providers', () => {
     ]);
   });
 
+  // THE FALLBACK ORDER. `statusLine.contextWindowSize` is what the PROVIDER
+  // said about this session; `usage.contextLimit` is what the desktop's own
+  // engine worked out from a model id. The chain preferred the computed value
+  // over the reported one, and every bus client — /m, /app, remote.html,
+  // wks-tui, every federated peer — inherited that ordering, which is how two
+  // clients came to show different windows for the same session at the same
+  // instant.
+  it('prefers the PROVIDER-reported window over the desktop-computed one', () => {
+    getAllSnapshots.mockReturnValue([
+      {
+        sessionId: 'c2',
+        cwd: '/proj',
+        ambientState: 'idle',
+        // The desktop's engine resolved 200k off the marker-stripped
+        // transcript id; the provider itself says the session holds 1M.
+        usage: { model: 'claude-opus-5', contextTokens: 190_000, contextLimit: 200_000 },
+        statusLine: { contextWindowSize: 1_000_000 },
+      },
+    ] as never);
+    expect(call('agents.list')).toEqual([
+      expect.objectContaining({ sessionId: 'c2', contextTokens: 190_000, contextLimit: 1_000_000 }),
+    ]);
+  });
+
+  it('falls through to usage when the provider reported no window', () => {
+    getAllSnapshots.mockReturnValue([
+      {
+        sessionId: 'c3',
+        cwd: '/proj',
+        ambientState: 'idle',
+        usage: { model: 'claude-opus-5', contextTokens: 1_000, contextLimit: 200_000 },
+        statusLine: { contextWindowSize: undefined, costUSD: 0.1 },
+      },
+    ] as never);
+    expect(call('agents.list')).toEqual([
+      expect.objectContaining({ sessionId: 'c3', contextLimit: 200_000 }),
+    ]);
+  });
+
+  // Honest unknown crossing the bus. A null limit is what the desktop now
+  // reports for an OpenCode/Pi session, a model no table covers, or a session
+  // whose observed peak disproved its claimed window. It must arrive as the
+  // falsy 0 every client already reads as "no meter" — never as a 200_000
+  // nobody can tell from a real one.
+  it('carries a null limit across as 0, not as a guessed 200_000', () => {
+    getAllSnapshots.mockReturnValue([
+      {
+        sessionId: 'u1',
+        cwd: '/proj',
+        ambientState: 'idle',
+        usage: { model: 'some-new-vendor-model', contextTokens: 5_000, contextLimit: null },
+        statusLine: undefined,
+      },
+    ] as never);
+    expect(call('agents.list')).toEqual([
+      expect.objectContaining({ sessionId: 'u1', contextTokens: 5_000, contextLimit: 0 }),
+    ]);
+  });
+
   // The freeze detector. A wedged agent reports `streaming` forever, so `state`
   // alone can never distinguish "working" from "blocked on something nobody can
   // see". `lastActivity` can: it moves only on real conversation deltas and

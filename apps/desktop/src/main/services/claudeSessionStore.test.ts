@@ -48,7 +48,7 @@ vi.mock('./sessionStore/usageAccumulator', () => ({
 }));
 vi.mock('./sessionStore/analyticsWriter', () => ({ writeHistory: vi.fn() }));
 
-import { claudeSessionStore } from './claudeSessionStore';
+import { claudeSessionStore, contextTokensFromStatusLine } from './claudeSessionStore';
 import { writeHistory } from './sessionStore/analyticsWriter';
 
 const writeHistoryMock = vi.mocked(writeHistory);
@@ -71,6 +71,40 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+// The only token figure a managed (non-Claude) session has is DERIVED — pct ×
+// window — so it inherits every error in either input. A percentage is bounded
+// by definition, but nothing upstream enforces that: claudemon reads
+// `used_percentage` straight off the provider payload (session/state.rs) and
+// does not clamp it. An unclamped multiply is one way an absurd token figure
+// reaches a client; the other is an inflated WINDOW, which is why the
+// stream transport's sub-agent bug (providers/claude_stream.rs) is a
+// token-side bug as well as a limit-side one.
+describe('contextTokensFromStatusLine — a derived count cannot exceed its window', () => {
+  it('derives the ordinary case', () => {
+    expect(contextTokensFromStatusLine({ contextUsedPct: 10, contextWindowSize: 272_000 })).toBe(
+      27_200,
+    );
+  });
+
+  it('clamps a percentage above 100 instead of multiplying the window by it', () => {
+    // A provider reporting a running total where a percentage was expected
+    // used to yield 4300% of 200k = 8.6 MILLION tokens on a 200k session.
+    expect(contextTokensFromStatusLine({ contextUsedPct: 4_300, contextWindowSize: 200_000 })).toBe(
+      200_000,
+    );
+  });
+
+  it('clamps a negative percentage to zero rather than reporting negative tokens', () => {
+    expect(contextTokensFromStatusLine({ contextUsedPct: -5, contextWindowSize: 200_000 })).toBe(0);
+  });
+
+  it('says nothing when either input is missing', () => {
+    expect(contextTokensFromStatusLine({ contextWindowSize: 200_000 })).toBeUndefined();
+    expect(contextTokensFromStatusLine({ contextUsedPct: 10 })).toBeUndefined();
+    expect(contextTokensFromStatusLine(undefined)).toBeUndefined();
+  });
 });
 
 describe('Stop → analytics snapshot re-arms each turn', () => {

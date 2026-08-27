@@ -116,9 +116,12 @@ export class SessionUsageAccumulator {
   static refreshContextLimit(session: PendingReadOnlySession): void {
     const u = session.usage;
     if (!u) return;
-    // The high-water mark, not just this turn: the retrospective fallback is a
-    // session-level verdict, so once any turn has exceeded the 200k window the
-    // limit stays promoted even when a later turn's context is smaller.
+    // The high-water mark, not just this turn: the DRIFT ALARM is a
+    // session-level verdict. Once this session has been seen holding more than
+    // the window we claim, that claim is disproved for good — auto-compaction
+    // dropping the latest turn back under the line does not re-prove it.
+    // (This used to be the retrospective 200k→1M PROMOTION, which read the same
+    // high-water mark and drew a much stronger conclusion from it.)
     u.contextLimit = contextLimitFor(u.model, session.peakContext, {
       reportedWindow: session.statusLine?.contextWindowSize,
       requestedModel: session.settings?.model,

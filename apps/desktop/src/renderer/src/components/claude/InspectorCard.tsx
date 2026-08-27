@@ -487,9 +487,9 @@ export const InspectorCard: React.FC<{
   const usage = session?.usage;
   const ctxPct =
     sl?.contextUsedPct ??
-    (usage && usage.contextLimit > 0
-      ? (usage.contextTokens / usage.contextLimit) * 100
-      : undefined);
+    // A null limit is UNKNOWN, not zero: the meter is omitted rather than drawn
+    // against an invented denominator (see SessionUsage.contextLimit).
+    (usage?.contextLimit ? (usage.contextTokens / usage.contextLimit) * 100 : undefined);
   const inTok = sl?.totalInputTokens ?? usage?.totalInputTokens;
   const outTok = sl?.totalOutputTokens ?? usage?.totalOutputTokens;
   const cost = sl?.costUSD ?? usage?.costUSD;

@@ -357,52 +357,18 @@ fn plan_step_from_value(v: &Value) -> Option<PlanStep> {
 }
 
 /// Context window size (tokens) for well-known model families, used when the
-/// provider's own events don't report one. Prefix/substring matched on the
-/// model id (lowercased). Deliberately conservative: an unknown model returns
-/// `None` and the context meter simply doesn't render — a missing meter beats a
-/// wrong one.
+/// provider's own events don't report one. `None` for a model no row covers,
+/// and the context meter simply doesn't render — a missing meter beats a wrong
+/// one.
+///
+/// The KNOWLEDGE moved out from under this function: the hand-rolled
+/// `if m.contains(...)` chain that used to live here was one of five parallel
+/// window tables in this repo, and it disagreed with two of the others about
+/// `gpt-5-codex`. It is now a call into [`crate::session::windows`], which is
+/// pinned to contracts/model-context-windows.json alongside its TypeScript and
+/// Go twins. The function survives because the call sites do.
 pub fn context_window_for(model: &str) -> Option<u64> {
-    let m = model.to_ascii_lowercase();
-    // Order matters where families overlap (check the more specific first).
-    if m.contains("gemini") {
-        return Some(1_048_576);
-    }
-    if m.contains("gpt-4.1") {
-        return Some(1_047_576);
-    }
-    // Fable / Mythos are 1M-native — the max window is also the default, so
-    // their ids never carry the `[1m]` marker. Checked before the generic
-    // claude branch: reading them as 200K made the context gauge 5× too high.
-    if m.contains("fable") || m.contains("mythos") {
-        return Some(1_000_000);
-    }
-    if m.contains("claude") {
-        // 1M-context variants advertise it in the id (e.g. `[1m]`).
-        return Some(if m.contains("[1m]") || m.contains("-1m") {
-            1_000_000
-        } else {
-            200_000
-        });
-    }
-    if m.contains("gpt-5") || m.contains("codex") {
-        return Some(272_000);
-    }
-    if m.contains("gpt-4o") {
-        return Some(128_000);
-    }
-    if m.starts_with("o3") || m.starts_with("o4") || m.contains("/o3") || m.contains("/o4") {
-        return Some(200_000);
-    }
-    if m.contains("grok") {
-        return Some(256_000);
-    }
-    if m.contains("deepseek") {
-        return Some(131_072);
-    }
-    if m.contains("kimi") || m.contains("qwen") {
-        return Some(262_144);
-    }
-    None
+    crate::session::windows::window_for(model)
 }
 
 /// Window implied by a model string the session was *asked* for — the alias the
@@ -411,18 +377,9 @@ pub fn context_window_for(model: &str) -> Option<u64> {
 /// is the only carrier of a 1M choice until the provider reports a window.
 ///
 /// Deliberately narrower than [`context_window_for`]: it answers only "was 1M
-/// asked for", and `None` means "says nothing", NOT "200k". A bare `opus`
-/// might be a 200k session or a Claude Code default that changes tomorrow —
-/// callers keep whatever the rates table resolved rather than pin it here.
-/// Twin of the TS `requestedWindowFor` in `modelUsage.ts`.
+/// asked for", and `None` means "says nothing", NOT "200k".
 pub fn requested_context_window_for(model: &str) -> Option<u64> {
-    let m = model.to_ascii_lowercase();
-    // Fable / Mythos are 1M-native: the max window is also the default, so
-    // their aliases carry no marker.
-    if m.contains("[1m]") || m.contains("-1m") || m.contains("fable") || m.contains("mythos") {
-        return Some(1_000_000);
-    }
-    None
+    crate::session::windows::requested_window_for(model)
 }
 
 /// Map an `AgentUpdate` to a conversation item, when it represents one.
@@ -1404,9 +1361,10 @@ mod tests {
 
     #[test]
     fn requested_window_reads_the_1m_marker_off_bare_aliases() {
-        // `context_window_for` needs a "claude" in the id, so it can't answer
-        // for the alias the composer actually sends.
-        assert_eq!(context_window_for("opus[1m]"), None);
+        // The marker is now a table row of its own, so the general lookup can
+        // answer for the bare alias the composer actually sends too — it used
+        // to need a "claude" in the id and returned None here.
+        assert_eq!(context_window_for("opus[1m]"), Some(1_000_000));
         assert_eq!(requested_context_window_for("opus[1m]"), Some(1_000_000));
         assert_eq!(requested_context_window_for("sonnet[1m]"), Some(1_000_000));
         assert_eq!(

@@ -1,0 +1,502 @@
+{
+  "_comment": "Cross-language CONTEXT-WINDOW contract. One table, one resolver, three implementations: services/claudemon/src/session/windows.rs (Rust), apps/desktop/src/main/services/modelContextWindows.ts (TS), services/hub/cmd/brain/windows.go (Go). Before this fixture there were FIVE hand-maintained window tables in the repo and three of them disagreed for the same model id -- a gpt-5-codex session reported 272000 through the provider status line and 200000 through usage, for the same session, depending on which client asked. The other half of what this pins is the shape of NOT KNOWING: a window is nullable, and 'unknown' is spelled null (omitted on the wire), never a guessed 200000. Four places used to spell it 200000, including emptyUsage(), which asserted a 200k window before a single token had been counted -- the direct cause of 'every session starts at 200k and upgrades later'.",
+  "vocabulary": {
+    "_comment": [
+      "THE BLOCK REGISTRY. Every array-of-objects block in this file must be declared",
+      "here and everything here must be a block — closure in both directions.",
+      "Held by cmd/brain/corpusvocab_test.go and",
+      "apps/desktop/src/main/services/contractsVocabulary.test.ts."
+    ],
+    "blocks": {
+      "windows": {
+        "why": "The table itself, IN ORDER: first match wins, so the specific rows come before the families they overlap. `kind` is 'contains' or 'prefix' and it is normative -- the o3/o4 rows are prefix rows precisely so an `o3` buried inside an unrelated id does not match, and a port that reads every row as a substring passes every lookupCase except that one.",
+        "required": [
+          "match",
+          "kind",
+          "window",
+          "note"
+        ],
+        "loaders": [
+          "services/claudemon/src/session/windows.rs::model-context-windows.json",
+          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::windows",
+          "services/hub/cmd/brain/windows_test.go::Windows"
+        ]
+      },
+      "lookupCases": {
+        "why": "Model id -> window, through the table above. `expected: null` is a first-class answer and several cases rely on it: an unknown model must resolve to UNKNOWN, which every client already renders by hiding the meter, rather than to the 200000 that made a new model read as a familiar one.",
+        "required": [
+          "model",
+          "expected",
+          "note"
+        ],
+        "loaders": [
+          "services/claudemon/src/session/windows.rs::lookup_cases",
+          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::lookupCases",
+          "services/hub/cmd/brain/windows_test.go::LookupCases"
+        ]
+      },
+      "markerCases": {
+        "why": "The narrower question `requestedWindowFor` answers: did the model string the session was ASKED for name a 1M window? Claude Code strips `[1m]` from the id it writes into the transcript, so the spawn request is the only carrier of that choice until the provider reports a window of its own. `expected: null` here means 'says nothing', NOT '200k' -- an unmarked alias pinning a number is how a wrong window gets asserted from token zero.",
+        "required": [
+          "requested",
+          "expected",
+          "note"
+        ],
+        "loaders": [
+          "services/claudemon/src/session/windows.rs::marker_cases",
+          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::markerCases",
+          "services/hub/cmd/brain/windows_test.go::MarkerCases"
+        ]
+      },
+      "resolutionCases": {
+        "why": "THE BLOCK THAT PINS THE TWINS, because it exercises the RESOLVER rather than the table: provider-reported > user override > requested-model marker > table > unknown, plus the drift alarm. Order is the whole design. Two arms are deliberate reversals of what shipped before: an explicit model-rates.json context_limit now outranks the [1m] marker (it was a max(), so a coarse alias could silently overrule what the user wrote), and exceeding the claimed window no longer PROMOTES it to 1M -- it disarms the window to unknown and logs, because a table that is demonstrably wrong about this model should not be trusted to guess the right replacement.",
+        "required": [
+          "name",
+          "model",
+          "requestedModel",
+          "reportedWindow",
+          "override",
+          "peakContext",
+          "expected",
+          "note"
+        ],
+        "loaders": [
+          "services/claudemon/src/session/windows.rs::resolution_cases",
+          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::resolutionCases",
+          "services/hub/cmd/brain/windows_test.go::ResolutionCases"
+        ]
+      }
+    }
+  },
+  "windows": [
+    {
+      "match": "[1m]",
+      "kind": "contains",
+      "window": 1000000,
+      "note": "Claude Code's own 1M-context marker, as the composer spells it (`opus[1m]`). Checked before every family row: it is a statement about the WINDOW, whatever family carries it."
+    },
+    {
+      "match": "-1m",
+      "kind": "contains",
+      "window": 1000000,
+      "note": "the id-suffix spelling of the same marker"
+    },
+    {
+      "match": "fable",
+      "kind": "contains",
+      "window": 1000000,
+      "note": "Fable is 1M-NATIVE: the max window is also the default, so its ids never carry a marker. Before the generic claude row, or it reads 5x too full."
+    },
+    {
+      "match": "mythos",
+      "kind": "contains",
+      "window": 1000000,
+      "note": "Mythos, same as Fable"
+    },
+    {
+      "match": "gemini",
+      "kind": "contains",
+      "window": 1048576,
+      "note": "Gemini 1.5/2.x — 2^20, not a round million"
+    },
+    {
+      "match": "gpt-4.1",
+      "kind": "contains",
+      "window": 1047576,
+      "note": "OpenAI's published figure for the 4.1 family; deliberately not 2^20"
+    },
+    {
+      "match": "claude",
+      "kind": "contains",
+      "window": 200000,
+      "note": "every Claude id without a 1M marker. This is TABLE KNOWLEDGE, not a fallback: an unmarked Claude model really does hold 200k."
+    },
+    {
+      "match": "gpt-5",
+      "kind": "contains",
+      "window": 272000,
+      "note": "GPT-5 family, Codex included"
+    },
+    {
+      "match": "codex",
+      "kind": "contains",
+      "window": 272000,
+      "note": "codex ids that do not spell gpt-5 (codex-mini)"
+    },
+    {
+      "match": "gpt-4o",
+      "kind": "contains",
+      "window": 128000,
+      "note": "after gpt-5, which no 4o id can match"
+    },
+    {
+      "match": "o3",
+      "kind": "prefix",
+      "window": 200000,
+      "note": "PREFIX, not substring: a bare `o3` inside another id (a date stamp, a hash) is not the o3 model"
+    },
+    {
+      "match": "o4",
+      "kind": "prefix",
+      "window": 200000,
+      "note": "same for o4"
+    },
+    {
+      "match": "/o3",
+      "kind": "contains",
+      "window": 200000,
+      "note": "vendor-prefixed spelling OpenCode/Pi use (`openai/o3`)"
+    },
+    {
+      "match": "/o4",
+      "kind": "contains",
+      "window": 200000,
+      "note": "vendor-prefixed o4"
+    },
+    {
+      "match": "grok",
+      "kind": "contains",
+      "window": 256000,
+      "note": "xAI"
+    },
+    {
+      "match": "deepseek",
+      "kind": "contains",
+      "window": 131072,
+      "note": "2^17"
+    },
+    {
+      "match": "kimi",
+      "kind": "contains",
+      "window": 262144,
+      "note": "2^18"
+    },
+    {
+      "match": "qwen",
+      "kind": "contains",
+      "window": 262144,
+      "note": "2^18"
+    }
+  ],
+  "lookupCases": [
+    {
+      "model": "claude-opus-4-8-20260101",
+      "expected": 200000,
+      "note": "an unmarked Claude id is genuinely 200k — the table SAYS this, it does not guess it"
+    },
+    {
+      "model": "claude-sonnet-5",
+      "expected": 200000,
+      "note": "same for Sonnet"
+    },
+    {
+      "model": "opus[1m]",
+      "expected": 1000000,
+      "note": "the marker wins wherever it appears, including on a bare alias the old claude-only branch could not answer for"
+    },
+    {
+      "model": "claude-opus-5[1m]",
+      "expected": 1000000,
+      "note": "marker on a concrete id"
+    },
+    {
+      "model": "claude-sonnet-5-1m",
+      "expected": 1000000,
+      "note": "the `-1m` suffix spelling"
+    },
+    {
+      "model": "claude-fable-5",
+      "expected": 1000000,
+      "note": "1M-native, and matched BEFORE the generic claude row"
+    },
+    {
+      "model": "claude-mythos-5",
+      "expected": 1000000,
+      "note": "1M-native"
+    },
+    {
+      "model": "gpt-5-codex",
+      "expected": 272000,
+      "note": "the divergence that started this: the pricing tables said 200k here while the provider table said 272k"
+    },
+    {
+      "model": "gpt-5.3-codex",
+      "expected": 272000,
+      "note": "a newer Codex id, same family row"
+    },
+    {
+      "model": "codex-mini-latest",
+      "expected": 272000,
+      "note": "codex without a gpt-5 in the id"
+    },
+    {
+      "model": "gpt-4o-2024-11-20",
+      "expected": 128000,
+      "note": "4o is checked after gpt-5, and no 4o id matches gpt-5"
+    },
+    {
+      "model": "gpt-4.1-mini",
+      "expected": 1047576,
+      "note": "4.1 is checked before 4o so the longer family wins"
+    },
+    {
+      "model": "gemini-2.5-pro",
+      "expected": 1048576,
+      "note": "Google"
+    },
+    {
+      "model": "o3-mini",
+      "expected": 200000,
+      "note": "prefix match"
+    },
+    {
+      "model": "openai/o4-mini",
+      "expected": 200000,
+      "note": "the vendor-prefixed spelling OpenCode and Pi emit"
+    },
+    {
+      "model": "grok-4",
+      "expected": 256000,
+      "note": "xAI"
+    },
+    {
+      "model": "deepseek-v3",
+      "expected": 131072,
+      "note": "DeepSeek"
+    },
+    {
+      "model": "kimi-k2",
+      "expected": 262144,
+      "note": "Moonshot"
+    },
+    {
+      "model": "qwen3-coder",
+      "expected": 262144,
+      "note": "Alibaba"
+    },
+    {
+      "model": "anthropic/claude-sonnet-4-5",
+      "expected": 200000,
+      "note": "OpenCode routes ids through a vendor prefix; the family match must still find it"
+    },
+    {
+      "model": "totally-unknown-model",
+      "expected": null,
+      "note": "UNKNOWN IS NULL. Not 200_000. A model no row covers renders no meter at all, which is the whole point of this fixture."
+    },
+    {
+      "model": "",
+      "expected": null,
+      "note": "an empty model id knows nothing"
+    },
+    {
+      "model": "no3-such-model",
+      "expected": null,
+      "note": "`o3` is a PREFIX row, so an o3 buried inside another id must NOT match — this is the case a substring port would fail"
+    }
+  ],
+  "markerCases": [
+    {
+      "requested": "opus[1m]",
+      "expected": 1000000,
+      "note": "the composer's own spelling; the transcript id has the marker stripped, so this request is the ONLY carrier of the choice"
+    },
+    {
+      "requested": "sonnet[1m]",
+      "expected": 1000000,
+      "note": "same for Sonnet"
+    },
+    {
+      "requested": "claude-opus-5[1m]",
+      "expected": 1000000,
+      "note": "a concrete id may carry it too"
+    },
+    {
+      "requested": "claude-sonnet-5-1m",
+      "expected": 1000000,
+      "note": "the `-1m` suffix spelling"
+    },
+    {
+      "requested": "fable",
+      "expected": 1000000,
+      "note": "1M-native alias — no marker to carry, so the request still names a 1M session"
+    },
+    {
+      "requested": "mythos",
+      "expected": 1000000,
+      "note": "1M-native alias"
+    },
+    {
+      "requested": "opus",
+      "expected": null,
+      "note": "AN UNMARKED ALIAS SAYS NOTHING. Not 200k: `opus` may be a 200k session or whatever Claude Code's default becomes tomorrow. Returning a number here is how a wrong window gets pinned from token zero."
+    },
+    {
+      "requested": "claude-sonnet-5",
+      "expected": null,
+      "note": "a concrete unmarked id says nothing about the REQUEST either — the windows table answers for it instead"
+    },
+    {
+      "requested": "gpt-5-codex",
+      "expected": null,
+      "note": "non-Claude requests carry no marker vocabulary"
+    },
+    {
+      "requested": "",
+      "expected": null,
+      "note": "empty says nothing"
+    }
+  ],
+  "resolutionCases": [
+    {
+      "name": "provider truth wins outright",
+      "model": "claude-opus-5",
+      "requestedModel": "opus[1m]",
+      "reportedWindow": 200000,
+      "override": null,
+      "peakContext": 10000,
+      "expected": 200000,
+      "note": "the provider reported 200k for THIS session. It is a fact and it beats the 1M marker, the table and everything else."
+    },
+    {
+      "name": "a zero reported window is unknown, not a window",
+      "model": "claude-opus-5",
+      "requestedModel": "opus[1m]",
+      "reportedWindow": 0,
+      "override": null,
+      "peakContext": 10000,
+      "expected": 1000000,
+      "note": "0 is how a provider spells 'not reported'. Treating it as a real window would peg every meter at infinity-percent."
+    },
+    {
+      "name": "an explicit override outranks the 1M marker",
+      "model": "claude-opus-5",
+      "requestedModel": "opus[1m]",
+      "reportedWindow": null,
+      "override": 400000,
+      "peakContext": 10000,
+      "expected": 400000,
+      "note": "THE DECISION THIS FIXTURE PINS. model-rates.json context_limit is the user deliberately overruling us; the previous max() let a coarse alias marker raise it back to 1M and silently discard what they wrote."
+    },
+    {
+      "name": "an override below the table still wins",
+      "model": "claude-opus-5",
+      "requestedModel": null,
+      "reportedWindow": null,
+      "override": 150000,
+      "peakContext": 10000,
+      "expected": 150000,
+      "note": "same rule downward — an override that LOWERS the window is still the user's word"
+    },
+    {
+      "name": "the marker beats the table",
+      "model": "claude-opus-5",
+      "requestedModel": "opus[1m]",
+      "reportedWindow": null,
+      "override": null,
+      "peakContext": 10000,
+      "expected": 1000000,
+      "note": "known from token zero: the transcript id has the marker stripped, so without this a 1M session reads 5x too full for its whole life"
+    },
+    {
+      "name": "the table answers when nothing else does",
+      "model": "claude-opus-5",
+      "requestedModel": null,
+      "reportedWindow": null,
+      "override": null,
+      "peakContext": 10000,
+      "expected": 200000,
+      "note": "no provider report, no override, no marker — the contract table, which really does know this"
+    },
+    {
+      "name": "the table answers for a Codex session",
+      "model": "gpt-5-codex",
+      "requestedModel": null,
+      "reportedWindow": null,
+      "override": null,
+      "peakContext": 10000,
+      "expected": 272000,
+      "note": "the divergence: modelUsage.ts and pricing.rs both floored this to 200_000 while providers/mod.rs said 272_000"
+    },
+    {
+      "name": "an unknown model resolves to unknown",
+      "model": "some-new-vendor-model-9",
+      "requestedModel": null,
+      "reportedWindow": null,
+      "override": null,
+      "peakContext": 10000,
+      "expected": null,
+      "note": "HONEST UNKNOWN. Every render path already hides the meter on an absent limit; this is the case that finally lets them."
+    },
+    {
+      "name": "no model at all resolves to unknown",
+      "model": null,
+      "requestedModel": null,
+      "reportedWindow": null,
+      "override": null,
+      "peakContext": 0,
+      "expected": null,
+      "note": "a session before its first turn knows nothing — and must not assert 200k while it waits"
+    },
+    {
+      "name": "a requested model rescues a session with no transcript model yet",
+      "model": null,
+      "requestedModel": "opus[1m]",
+      "reportedWindow": null,
+      "override": null,
+      "peakContext": 0,
+      "expected": 1000000,
+      "note": "birth-time knowledge: this is what recording the requested model at spawn buys, and it is exactly the turn-1 window where the user is staring at a fresh pane"
+    },
+    {
+      "name": "peak beyond the claimed window disarms it",
+      "model": "claude-opus-5",
+      "requestedModel": null,
+      "reportedWindow": null,
+      "override": null,
+      "peakContext": 300000,
+      "expected": null,
+      "note": "THE DRIFT ALARM. The session demonstrably holds more than the table claims, so the claim is wrong. It used to be silently REWRITTEN to 1M; now the window goes unknown and the daemon logs, because a table that is wrong about one model is wrong about others."
+    },
+    {
+      "name": "peak beyond a PROVIDER-REPORTED window disarms it too",
+      "model": "claude-opus-5",
+      "requestedModel": null,
+      "reportedWindow": 200000,
+      "override": null,
+      "peakContext": 400000,
+      "expected": null,
+      "note": "a reported window is a fact only while it is consistent with what the session actually holds"
+    },
+    {
+      "name": "peak inside the tolerance keeps the window",
+      "model": "claude-opus-5",
+      "requestedModel": null,
+      "reportedWindow": null,
+      "override": null,
+      "peakContext": 200000,
+      "expected": 200000,
+      "note": "exactly at the window is not over it — a 200k session that fills its window must keep reading 200k or a genuinely-full meter disappears at the moment it matters most"
+    },
+    {
+      "name": "peak just inside the 2% tolerance keeps the window",
+      "model": "claude-opus-5",
+      "requestedModel": null,
+      "reportedWindow": null,
+      "override": null,
+      "peakContext": 204000,
+      "expected": 200000,
+      "note": "the tolerance absorbs the provider's own rounding; 204_000 is 1.02x exactly and must not trip"
+    },
+    {
+      "name": "a 1M session is not disarmed by a big peak",
+      "model": "claude-opus-5",
+      "requestedModel": "opus[1m]",
+      "reportedWindow": null,
+      "override": null,
+      "peakContext": 600000,
+      "expected": 1000000,
+      "note": "the promotion used to be the only way this session ever read correctly; now the marker got it right from the start and the alarm stays quiet"
+    }
+  ]
+}

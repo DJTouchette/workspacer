@@ -11,6 +11,7 @@
 
 import type { AgentProvider } from '../types/pane';
 import { shortModelLabel } from './modelLabel';
+import { formatClaudeAliasWindow } from '../../../main/shared/modelContextWindows';
 
 export interface ModelOption {
   id: string;
@@ -47,10 +48,10 @@ export async function loadModelOptions(
         if (res.aliases.some((a) => a.value === id)) continue;
         const label = shortModelLabel(id) || id;
         if (seen.some((s) => s.label === label)) continue;
-        // Fable / Mythos are 1M-native (the max is also the default), so they
-        // read 1M without the `[1m]` marker that gates 1M on Opus/Sonnet.
-        const is1m = id.includes('[1m]') || /fable|mythos/i.test(id);
-        seen.push({ id, label, context: is1m ? '1M' : '200K', seen: true });
+        // The badge is LOOKED UP, not re-derived: this used to re-implement the
+        // 1M-marker rule (`[1m]` plus the 1M-native families) as a seventh
+        // opinion on a window four other tables already disagreed about.
+        seen.push({ id, label, context: formatClaudeAliasWindow(id), seen: true });
       }
       return [
         ...res.aliases.map((a) => ({ id: a.value, label: a.label, context: a.context })),

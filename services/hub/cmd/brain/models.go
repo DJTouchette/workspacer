@@ -133,15 +133,19 @@ func buildListModels(defaultModel string, skip bool, defaultPermissionMode strin
 		DefaultModel:           defaultModel,
 		SkipPermissionsDefault: skip,
 		DefaultPermissionMode:  defaultPermissionMode,
+		// The Context badge is LOOKED UP, never spelled here: these strings were a
+		// display-only sixth window table, unpinned to the four numeric ones, and
+		// formatClaudeAliasWindow reads the same contract every other window in
+		// the repo now comes from.
 		Aliases: []modelAlias{
 			// Fable's 1M window is both its maximum AND its default — there is no
 			// 200K mode to select, so it has no separate `[1m]` row.
-			{Value: "fable", Label: label("fable", "Fable"), Context: "1M"},
-			{Value: "opus", Label: label("opus", "Opus"), Context: "200K"},
-			{Value: "opus[1m]", Label: label("opus", "Opus"), Context: "1M"},
-			{Value: "sonnet", Label: label("sonnet", "Sonnet"), Context: "200K"},
-			{Value: "sonnet[1m]", Label: label("sonnet", "Sonnet"), Context: "1M"},
-			{Value: "haiku", Label: label("haiku", "Haiku"), Context: "200K"},
+			{Value: "fable", Label: label("fable", "Fable"), Context: formatClaudeAliasWindow("fable")},
+			{Value: "opus", Label: label("opus", "Opus"), Context: formatClaudeAliasWindow("opus")},
+			{Value: "opus[1m]", Label: label("opus", "Opus"), Context: formatClaudeAliasWindow("opus[1m]")},
+			{Value: "sonnet", Label: label("sonnet", "Sonnet"), Context: formatClaudeAliasWindow("sonnet")},
+			{Value: "sonnet[1m]", Label: label("sonnet", "Sonnet"), Context: formatClaudeAliasWindow("sonnet[1m]")},
+			{Value: "haiku", Label: label("haiku", "Haiku"), Context: formatClaudeAliasWindow("haiku")},
 		},
 		Seen: seen,
 	}

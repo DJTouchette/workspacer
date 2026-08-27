@@ -219,10 +219,11 @@ const UsageWidget: React.FC<HostWidgetProps> = ({ size, snapshot }) => {
   const usage = snapshot?.usage ?? null;
   if (!usage) return <Empty>No active session</Empty>;
 
-  const pct =
-    usage.contextLimit > 0
-      ? Math.min(100, Math.round((usage.contextTokens / usage.contextLimit) * 100))
-      : null;
+  // A null limit is UNKNOWN, not zero: no bar and no tone, rather than a
+  // coloured meter against an invented denominator.
+  const pct = usage.contextLimit
+    ? Math.min(100, Math.round((usage.contextTokens / usage.contextLimit) * 100))
+    : null;
   // Context pressure is the number worth colouring: past ~90% a compaction is
   // imminent and that changes what you do next.
   const tone = pct === null ? undefined : pct >= 90 ? '#e5534b' : pct >= 70 ? '#d29922' : undefined;

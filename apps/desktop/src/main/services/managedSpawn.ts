@@ -43,6 +43,7 @@ import { installManagerSkills } from './managerSkills';
 import { notifySystem } from './systemNotice';
 import { assertSpawnCwd, normalizeSpawnCwd } from '../lib/spawnCwd';
 import { explainUnsupportedManagedOptions } from '../lib/managedSpawnOptions';
+import { resolveSpawnModel } from '../lib/spawnModel';
 
 /** Install hints surfaced when a provider CLI isn't on PATH. */
 const INSTALL_HINT: Record<AgentProvider, string> = {
@@ -223,6 +224,14 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   const isClaudeStream = provider === 'claude';
   // Codex's stream transport mirrors Claude's: headless, GUI-only, no PTY.
   const isCodexStream = provider === 'codex' && opts.transport === 'stream';
+  // The model this spawn is actually asking for. An omitted one is RESOLVED
+  // from config here rather than left to the CLI's own internal default,
+  // because the daemon can only record what it is told — and what it records is
+  // the only carrier of a `[1m]` choice until the provider reports a window,
+  // which on the stream transport is a whole turn away. This is the path most
+  // dispatched workers take (`agents.spawn` over the bus names no model), so it
+  // is where the spawn-time signal was being lost for most of the fleet.
+  const spawnModel = resolveSpawnModel(provider, opts.model);
   const bin = resolveAgentBinary(provider, configuredBin(provider));
   const wantsFacade = opts.supervisor || opts.mcpFacade || !!opts.toolScope;
   // A supervisor is operator by definition; a plain facade session takes its
@@ -361,7 +370,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     ...(resultSchema && { resultSchema }),
     ...((isClaudeStream || isCodexStream) && { transport: 'stream' as const }),
     settings: {
-      model: opts.model,
+      model: spawnModel,
       effort: opts.effort,
       permissionMode,
       // Claude only: `yolo` is exactly the `--dangerously-skip-permissions` the
@@ -391,7 +400,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   const sessionId = await claudemonSessionClient.spawnManaged({
     provider,
     cwd,
-    model: opts.model,
+    model: spawnModel,
     effort: opts.effort,
     bin,
     yolo,
@@ -453,6 +462,11 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   assertSpawnCwd(cwd);
   const bin = resolveAgentBinary('codex', configuredBin('codex'));
   const sessionId = opts.resumeSessionId || randomUUID();
+  // Same resolution as the managed path: record what actually runs, not a hole.
+  // Codex carries no configured default of its own, so this is opts.model
+  // trimmed today — the call is here so a future codex.defaultModel lands on
+  // both spawn paths at once instead of one.
+  const spawnModel = resolveSpawnModel('codex', opts.model);
   // Same supervisor full-access resolution as the managed path above.
   const skipPermissions =
     !!opts.skipPermissions ||
@@ -474,7 +488,7 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     isSupervisor: opts.supervisor || opts.manager,
     provider: 'codex',
     settings: {
-      model: opts.model,
+      model: spawnModel,
       effort: opts.effort,
       permissionMode: skipPermissions ? 'yolo' : 'ask',
     },
@@ -484,7 +498,7 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   // Codex takes model/effort overrides as config flags (`-c model="<id>"`,
   // `-c model_reasoning_effort=<level>`); YOLO maps to bypassing its
   // approval/sandbox prompts so the TUI doesn't block on them.
-  const model = opts.model?.trim();
+  const model = spawnModel;
   const effort = opts.effort?.trim();
   const argv = [
     bin,
@@ -495,6 +509,9 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   await claudemonSessionClient.spawn({
     argv,
     cwd,
+    // Explicit, not sniffed off the argv: the daemon records the requested
+    // model from this field, and a Codex resume puts nothing on the argv.
+    model: spawnModel,
     cols: opts.cols ?? 120,
     rows: opts.rows ?? 32,
     sessionId,
