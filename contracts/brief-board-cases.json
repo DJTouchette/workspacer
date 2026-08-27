@@ -1,0 +1,470 @@
+{
+  "_comment": [
+    "THE BRIEF AS A DOCUMENT: what an ENTRY is, what an archive move does to the two",
+    "files, and which `## Now` lines have outlived their dispatch. Pinned across the",
+    "two providers that now answer brief.archive and brief.check.",
+    "",
+    "WHY IT EXISTS. `brief.append` was ported to the headless brain first and the",
+    "other two verbs were deliberately declined, with the reason written into",
+    "cmd/brain/brief.go's header: they read the brief as ENTRIES — a bullet plus its",
+    "continuation lines, under a `##` or a `###` — and a subtly wrong port of that",
+    "boundary rule does not fail loudly. It silently drops the wrong lines out of a",
+    "user's brief (archive), or flags live entries and misses dead ones (check). That",
+    "reasoning expired when the node started running the MCP facade: a HEADLESS Fleet",
+    "Manager became a real caller, and its doctrine tells it to run brief_check before",
+    "a standup and brief_archive at a checkpoint, both of which failed at the bus",
+    "level with `no provider`. So the model is ported — and the original objection is",
+    "answered HERE rather than argued around, by running the same briefs through both",
+    "copies and demanding the same answer.",
+    "",
+    "WHAT DRIFTS IF NOBODY LOOKS. Three things, all silent:",
+    "",
+    "  1. THE ENTRY BOUNDARY. A blank line, a new bullet or a heading closes an entry;",
+    "     four leading spaces do not (that is a continuation, per CommonMark) and a",
+    "     `#` with no space after it is not a heading. One line either side of the",
+    "     boundary is one line of the user's prose moved to the wrong file.",
+    "  2. WHITESPACE. The TypeScript copy spells its heading and bullet patterns with",
+    "     JavaScript's `\\s`, which is NOT Go's: Go's regexp `\\s` is [\\t\\n\\f\\r ] —",
+    "     no vertical tab, no NBSP — so a heading padded with one of those is a",
+    "     heading on one provider and ordinary prose on the other, which moves every",
+    "     boundary below it. cmd/brain writes the class out by hand for this reason,",
+    "     the same way dispatchparams.go does.",
+    "  3. WHICH END IS THE OLDEST. `## Recently` is kept newest-first, so its oldest",
+    "     entries are its LAST; every other section is in arrival order, so its oldest",
+    "     are its FIRST. A copy that gets this backwards archives the newest entries —",
+    "     exactly the ones a manager was keeping.",
+    "",
+    "AND WHAT THE CHECK OWES. It is READ-ONLY by doctrine (the brief is the user's",
+    "document and their own edits are authoritative), so what these cases pin is what",
+    "it REPORTS: a finished session counts as GONE, a malformed reference is flagged",
+    "even beside a good one, a bare dispatch-shaped line is flagged only when the",
+    "wording leaves no doubt, and a finding anchors to the ENTRY's first line rather",
+    "than to the line the reference happened to sit on.",
+    "",
+    "The findings' `detail` prose is deliberately NOT pinned here — it is a sentence",
+    "for a model to read, not a wire contract, and pinning paragraphs case by case",
+    "would make this file unreadable. It is held to the twin by",
+    "cmd/brain/briefboard_test.go's TestBriefCheckWordingMatchesTheDesktop, which",
+    "reads briefCheck.ts directly."
+  ],
+  "vocabulary": {
+    "_comment": [
+      "THE BLOCK REGISTRY. Every array-of-objects block in this file must be declared",
+      "here and everything here must be a block. Held by cmd/brain/corpusvocab_test.go",
+      "and apps/desktop/src/main/services/contractsVocabulary.test.ts."
+    ],
+    "blocks": {
+      "entries": {
+        "why": "One brief in, the entries both parsers must find: which section each belongs to, which `###` sub-group it sits under, and the exact half-open line range it occupies. The range is the whole contract — an archive move splices exactly these lines.",
+        "required": [
+          "name",
+          "brief",
+          "expect",
+          "why"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/briefboard_test.go::TestBriefBoardEntryContractCases",
+          "apps/desktop/src/main/services/briefBoardContract.test.ts::brief document model — cross-language contract"
+        ]
+      },
+      "archive": {
+        "why": "One brief plus one archive in, both files out, byte for byte, plus how many entries moved and the section's size afterwards. Entries must arrive in the archive in the order they sat in the section, under a `## <date>` batch heading that is appended to rather than reorganized when it already exists.",
+        "required": [
+          "name",
+          "brief",
+          "section",
+          "date",
+          "expect",
+          "why"
+        ],
+        "optional": [
+          "count",
+          "keep",
+          "archive"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/briefboard_test.go::TestBriefArchiveContractCases",
+          "apps/desktop/src/main/services/briefBoardContract.test.ts::brief archive — cross-language contract"
+        ]
+      },
+      "check": {
+        "why": "One brief plus the host's session rows in, one report out: how many `## Now` entries were examined, how many resolve to a session still known, and one finding per entry that needs a human's judgement. `sessions` are raw snapshot rows so the liveness predicate is pinned too — a stopped, ended or archived row is GONE.",
+        "required": [
+          "name",
+          "brief",
+          "sessions",
+          "expect",
+          "why"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/briefboard_test.go::TestBriefCheckContractCases",
+          "apps/desktop/src/main/services/briefBoardContract.test.ts::brief check — cross-language contract"
+        ]
+      }
+    }
+  },
+  "owners": {
+    "apps/desktop/src/main/shared/briefBoard.ts": "parseBrief / removeEntryLines / appendToArchive / isPrependSection (TS) — the board's document model, and the normative copy: the Go port is written to match it, whitespace class included.",
+    "apps/desktop/src/main/services/briefBoardService.ts": "archiveOldestEntries (TS) — the overflow move as the desktop provider answers brief.archive, under the brief's advisory lock and compare-and-swap.",
+    "apps/desktop/src/main/services/briefCheck.ts": "checkNowSection / isLiveDispatch / liveSessionIds (TS) — the read-only checker as the desktop provider answers brief.check.",
+    "services/hub/cmd/brain/briefboard.go": "parseBriefDoc / removeBriefEntryLines / appendToBriefArchive / archiveOldestEntries (Go) — the headless provider for brief.archive, and the document model brief.append's size report now measures with.",
+    "services/hub/cmd/brain/briefcheck.go": "checkNowSection / isLiveDispatch / liveSessionIDs (Go) — the headless provider for brief.check, which a Fleet Manager on a node reaches through the MCP facade's brief_check tool."
+  },
+  "entries": [
+    {
+      "name": "a bullet's continuation lines belong to it and a blank line closes it",
+      "brief": "# Project — brief\n\n## Now\n- 🚧 **First** dispatch, still running.\n  a continuation line that belongs to it\n\n- second entry after a blank separator\n\n## Recently\n- 2026-08-01  landed something\n",
+      "expect": [
+        {
+          "column": "Now",
+          "start": 3,
+          "end": 5,
+          "lines": [
+            "- 🚧 **First** dispatch, still running.",
+            "  a continuation line that belongs to it"
+          ]
+        },
+        {
+          "column": "Now",
+          "start": 6,
+          "end": 7,
+          "lines": [
+            "- second entry after a blank separator"
+          ]
+        },
+        {
+          "column": "Recently",
+          "start": 9,
+          "end": 10,
+          "lines": [
+            "- 2026-08-01  landed something"
+          ]
+        }
+      ],
+      "why": "The base case and the one an archive move turns on: the blank separator the author put BETWEEN entries stays with the section and never travels with a card, while an indented continuation does. The document's own `# Project` heading is not a section but still closes the block above it."
+    },
+    {
+      "name": "a `###` sub-group's entries belong to the parent section and carry its group",
+      "brief": "## Now\n\n### Ship\n- a grouped entry\n  with a continuation\n\n### Watch\n- another grouped entry\n\n## Direction\n- durable\n",
+      "expect": [
+        {
+          "column": "Now",
+          "group": "Ship",
+          "start": 3,
+          "end": 5,
+          "lines": [
+            "- a grouped entry",
+            "  with a continuation"
+          ]
+        },
+        {
+          "column": "Now",
+          "group": "Watch",
+          "start": 7,
+          "end": 8,
+          "lines": [
+            "- another grouped entry"
+          ]
+        },
+        {
+          "column": "Direction",
+          "start": 10,
+          "end": 11,
+          "lines": [
+            "- durable"
+          ]
+        }
+      ],
+      "why": "A sub-grouped brief is the shape both readers get wrong in different ways: the entry belongs to the parent `##` (so brief.archive trimming 'Now' must see it) while its BODY ends at its own `###` block (so the size report's byte count does not). Both copies must resolve the column by walking out to the enclosing level-2 heading."
+    },
+    {
+      "name": "every list marker opens an entry and a `#` with no space after it does not close one",
+      "brief": "## Now\n1. numbered entry\n    four-space indented continuation\n- dash entry\n* star entry\n+ plus entry\n#not a heading and not a bullet\n",
+      "expect": [
+        {
+          "column": "Now",
+          "start": 1,
+          "end": 3,
+          "lines": [
+            "1. numbered entry",
+            "    four-space indented continuation"
+          ]
+        },
+        {
+          "column": "Now",
+          "start": 3,
+          "end": 4,
+          "lines": [
+            "- dash entry"
+          ]
+        },
+        {
+          "column": "Now",
+          "start": 4,
+          "end": 5,
+          "lines": [
+            "* star entry"
+          ]
+        },
+        {
+          "column": "Now",
+          "start": 5,
+          "end": 7,
+          "lines": [
+            "+ plus entry",
+            "#not a heading and not a bullet"
+          ]
+        }
+      ],
+      "why": "Four leading spaces is a continuation, not a new bullet (CommonMark), and a heading needs whitespace then a non-space after its hashes — so `#not…` is prose and rides along with the entry above it. A copy that treated it as a heading would cut the entry short and leave the line behind in the brief."
+    },
+    {
+      "name": "a heading padded with a non-breaking space is still a heading",
+      "brief": "##\u00a0Now\n- an entry under it\n",
+      "expect": [
+        {
+          "column": "Now",
+          "start": 1,
+          "end": 2,
+          "lines": [
+            "- an entry under it"
+          ]
+        }
+      ],
+      "why": "The whitespace-class case. JavaScript's `\\s` includes U+00A0 and Go's regexp `\\s` does not, so a copy that reached for `\\s` in Go reads this line as ordinary prose, finds NO `## Now` section at all, and reports a brief with nothing in it — while the desktop trims the same section happily."
+    }
+  ],
+  "archive": [
+    {
+      "name": "count takes the oldest of an arrival-order section into a new dated batch",
+      "brief": "## Now\n- oldest\n- middle\n- newest\n\n## Recently\n- r1\n",
+      "section": "Now",
+      "count": 2,
+      "date": "2026-08-27",
+      "expect": {
+        "brief": "## Now\n- newest\n\n## Recently\n- r1\n",
+        "archive": "# Brief archive\n\nCold storage for entries pruned from the brief — never rewritten, only appended.\n\n## 2026-08-27\n- oldest\n- middle\n",
+        "archived": 2,
+        "entriesInSection": 1,
+        "bytesInSection": 9,
+        "bytesInBrief": 34
+      },
+      "why": "The base case. `Now` is written in arrival order so its oldest entries are its FIRST, the archive is created from the skeleton when absent, and the two entries land under one batch heading in the order they sat in the section."
+    },
+    {
+      "name": "keep on Recently archives from the bottom, because that section is newest-first",
+      "brief": "## Recently\n- newest\n- middle\n- oldest\n",
+      "section": "Recently",
+      "keep": 1,
+      "date": "2026-08-27",
+      "expect": {
+        "brief": "## Recently\n- newest\n",
+        "archive": "# Brief archive\n\nCold storage for entries pruned from the brief — never rewritten, only appended.\n\n## 2026-08-27\n- middle\n- oldest\n",
+        "archived": 2,
+        "entriesInSection": 1,
+        "bytesInSection": 9,
+        "bytesInBrief": 21
+      },
+      "why": "The direction case, and the expensive one to get wrong: `Recently` is a dated log kept newest-first, so a copy that took its FIRST entries would archive exactly what the manager was keeping. They still arrive in the archive in document order, so the batch reads the way the section did."
+    },
+    {
+      "name": "keep already satisfied moves nothing and creates no archive",
+      "brief": "## Now\n- only\n",
+      "section": "Now",
+      "keep": 3,
+      "date": "2026-08-27",
+      "expect": {
+        "brief": "## Now\n- only\n",
+        "archive": "",
+        "archived": 0,
+        "entriesInSection": 1,
+        "bytesInSection": 7,
+        "bytesInBrief": 14
+      },
+      "why": "`keep` is the idempotent form — this IS the second run of the case above — and it must not write at all: no rewritten brief, and no empty archive file left beside it. An `archive` of \"\" here means the file does not exist."
+    },
+    {
+      "name": "an entry's continuation lines travel with it into an existing batch heading",
+      "brief": "## Now\n- first\n  continued here\n- second\n",
+      "archive": "# Brief archive\n\n## 2026-08-27\n- an earlier move\n",
+      "section": "Now",
+      "count": 1,
+      "date": "2026-08-27",
+      "expect": {
+        "brief": "## Now\n- second\n",
+        "archive": "# Brief archive\n\n## 2026-08-27\n- an earlier move\n- first\n  continued here\n",
+        "archived": 1,
+        "entriesInSection": 1,
+        "bytesInSection": 9,
+        "bytesInBrief": 16
+      },
+      "why": "The archive is append-only cold storage: a batch heading that is already there gets the entry added at its end rather than the file being reorganized around it, and the moved entry arrives byte for byte, continuation line included."
+    },
+    {
+      "name": "a sub-grouped section counts its grouped entries but does not measure them",
+      "brief": "## Now\n- top level\n\n### Group\n- grouped\n",
+      "section": "Now",
+      "count": 1,
+      "date": "2026-08-27",
+      "expect": {
+        "brief": "## Now\n\n### Group\n- grouped\n",
+        "archive": "# Brief archive\n\nCold storage for entries pruned from the brief — never rewritten, only appended.\n\n## 2026-08-27\n- top level\n",
+        "archived": 1,
+        "entriesInSection": 1,
+        "bytesInSection": 0,
+        "bytesInBrief": 28
+      },
+      "why": "The size report's two fields deliberately disagree about a sub-grouped brief — `entriesInSection` counts the parsed entries whose column is this section (so the grouped one counts) while `bytesInSection` measures the level-2 block's own body, which ENDS at the `###`. They must disagree the SAME way on both providers, since brief.append and brief.archive both return these three numbers."
+    }
+  ],
+  "check": [
+    {
+      "name": "a live reference is silent and a forgotten one is stale",
+      "brief": "## Now\n- 🚧 Dispatched the migration (session:1a2b3c4d) — still running.\n- ✅ Dispatched the docs pass (session:deadbeef) — landed?\n\n## Recently\n- 2026-08-01  something (session:cafebabe)\n",
+      "sessions": [
+        {
+          "sessionId": "1a2b3c4d-1111-2222-3333-444455556666",
+          "mode": "input",
+          "status": "active"
+        }
+      ],
+      "expect": {
+        "entriesChecked": 2,
+        "entriesLive": 1,
+        "liveSessions": 1,
+        "findings": [
+          {
+            "line": 2,
+            "text": "- ✅ Dispatched the docs pass (session:deadbeef) — landed?",
+            "reason": "stale",
+            "refs": [
+              "deadbeef"
+            ]
+          }
+        ]
+      },
+      "why": "The whole verb in one case: a brief writes SHORT references and the store holds full UUIDs, so matching is by prefix in whichever direction is longer; and only `## Now` is checked — `Recently` is a dated log that is SUPPOSED to name dead sessions, so flagging its entries would make the report unreadable."
+    },
+    {
+      "name": "a finished session counts as gone, and so does an archived one",
+      "brief": "## Now\n- Dispatched the port (session:1a2b3c4d) — waiting on it.\n",
+      "sessions": [
+        {
+          "sessionId": "1a2b3c4d",
+          "mode": "stopped",
+          "status": "ended"
+        },
+        {
+          "sessionId": "99887766",
+          "mode": "input",
+          "status": "active",
+          "archived": true
+        },
+        {
+          "sessionId": "55443322",
+          "mode": "responding",
+          "status": "active"
+        }
+      ],
+      "expect": {
+        "entriesChecked": 1,
+        "entriesLive": 0,
+        "liveSessions": 1,
+        "findings": [
+          {
+            "line": 1,
+            "text": "- Dispatched the port (session:1a2b3c4d) — waiting on it.",
+            "reason": "stale",
+            "refs": [
+              "1a2b3c4d"
+            ]
+          }
+        ]
+      },
+      "why": "The question a Now line answers is 'is this dispatch still running', not 'did this session ever exist' — a worker that finished cleanly is PRECISELY the case that leaves the line behind, so a copy that counted it as live would be blind to the checker's main quarry. `liveSessions: 1` is the control: the predicate is not simply refusing everything."
+    },
+    {
+      "name": "a malformed reference is flagged even beside a good one",
+      "brief": "## Now\n- Dispatched round 2 (session:6a-round2, session:1a2b3c4d) — running.\n",
+      "sessions": [
+        {
+          "sessionId": "1a2b3c4d-1111-2222-3333-444455556666",
+          "status": "active"
+        }
+      ],
+      "expect": {
+        "entriesChecked": 1,
+        "entriesLive": 1,
+        "liveSessions": 1,
+        "findings": [
+          {
+            "line": 1,
+            "text": "- Dispatched round 2 (session:6a-round2, session:1a2b3c4d) — running.",
+            "reason": "malformed",
+            "refs": [
+              "6a-round2"
+            ]
+          }
+        ]
+      },
+      "why": "`session:6a-round2` is a real transcription bug from a live manager — a nickname where a session id belongs — and half a broken line is still a broken link in the user's brief, so it is reported even though the entry ALSO names a session that resolves. The entry still counts as live, because it is."
+    },
+    {
+      "name": "a dispatch-shaped line with no reference is flagged and ordinary prose is not",
+      "brief": "## Now\n- Dispatched a worker to fix the flake, no id written down.\n- A standing note the user wrote themselves.\n",
+      "sessions": [],
+      "expect": {
+        "entriesChecked": 2,
+        "entriesLive": 0,
+        "liveSessions": 0,
+        "findings": [
+          {
+            "line": 1,
+            "text": "- Dispatched a worker to fix the flake, no id written down.",
+            "reason": "unreferenced",
+            "refs": []
+          }
+        ]
+      },
+      "why": "Precision over recall: a checker that cries wolf is one a manager stops reading, and an ignored checker is worse than none because it still costs a tool call. So a reference-less entry is flagged ONLY when the wording leaves no doubt, and the user's own standing note is left alone."
+    },
+    {
+      "name": "a reference on a continuation line anchors the finding to the entry's first line",
+      "brief": "## Now\n- Dispatched the audit\n  (session:deadbeef) — kicked off yesterday.\n",
+      "sessions": [],
+      "expect": {
+        "entriesChecked": 1,
+        "entriesLive": 0,
+        "liveSessions": 0,
+        "findings": [
+          {
+            "line": 1,
+            "text": "- Dispatched the audit",
+            "reason": "stale",
+            "refs": [
+              "deadbeef"
+            ]
+          }
+        ]
+      },
+      "why": "The report is what a manager acts on, so a finding must point at the ENTRY, not at the line the reference happened to sit on — `line` is the bullet and `text` is that bullet as written. Both copies scan the entry's whole text for references."
+    },
+    {
+      "name": "an upper-case reference is normalized and a long one matches by prefix",
+      "brief": "## Now\n- Dispatched (session:1A2B3C4D5E) — running.\n",
+      "sessions": [
+        {
+          "sessionId": "1a2b3c4d",
+          "status": "active"
+        }
+      ],
+      "expect": {
+        "entriesChecked": 1,
+        "entriesLive": 1,
+        "liveSessions": 1,
+        "findings": []
+      },
+      "why": "References are canonicalized to the short form (a UUID's first group, lower-cased) before matching, and the prefix comparison runs in whichever direction is longer — so a manager that wrote more of the id than the store holds still resolves, rather than being told its own live worker is gone."
+    }
+  ]
+}

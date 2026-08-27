@@ -26,27 +26,39 @@ package main
 //     take our lock, so "nobody changed it while I was computing" is checked,
 //     not assumed.
 //
-// WHAT IS DELIBERATELY ABSENT: brief.archive. It is not the same shape one verb
-// over — it SPLICES ENTRIES OUT of a section and moves them into an archive
-// file, which needs a faithful port of the board's document model (parseBrief's
-// multi-line entries and `###` sub-groups, removeEntryLines, appendToArchive).
-// A subtly wrong port there does not fail loudly; it silently drops entries out
-// of a user's brief, which is the one damage an additive-only tool is designed
-// never to do. The half a manager's memory depends on is the write, and that is
-// what this file provides; archive stays a declared gap in
-// headless_completeness_test.go rather than being approximated.
+// WHAT WAS DELIBERATELY ABSENT, AND WHY THAT EXPIRED. This file used to end its
+// argument here with: brief.archive stays out, because it is not the same shape
+// one verb over — it SPLICES ENTRIES OUT of a section and moves them into an
+// archive file, which needs a faithful port of the board's document model
+// (parseBrief's multi-line entries and `###` sub-groups, removeEntryLines,
+// appendToArchive), and a subtly wrong port there does not fail loudly, it
+// silently drops entries out of a user's brief. brief.check was declined for the
+// same reason one step milder: it reads `## Now` as ENTRIES with the board's
+// exact boundary rules, and a wrong boundary produces a checker that flags live
+// lines and misses dead ones — a checker a manager stops trusting is worse than
+// no checker at all, because it still costs a tool call.
 //
-// brief.check IS ABSENT FOR THE SAME REASON, one step milder. It reads `## Now`
-// as ENTRIES — a bullet plus its continuation lines, under a `##` or a `###`,
-// with the board's exact boundary rules (shared/briefBoard.ts parseBrief) — and
-// that document model is precisely what brief.archive's paragraph above says is
-// too easy to port subtly wrong. A wrong boundary here does not corrupt anything
-// (this verb only ever reports), but it produces a checker that flags live lines
-// and misses dead ones, and a checker a manager stops trusting is worse than no
-// checker at all: it still costs a tool call. It is not a headlessGaps entry for
-// brief.archive's reason either — no shipped client calls it (it is an
-// agent-facing MCP tool), so TestHeadlessGapsAreReachableFromAShippedClient
-// would refuse the entry. Recorded here instead.
+// THAT REASONING WAS RIGHT AND IT IS NOW OUT OF DATE, so it is recorded rather
+// than deleted. It rested on a premise that no longer holds: when it was
+// written, every caller of the two missing verbs was a desktop manager, so the
+// only thing at stake in declining them was convenience. The node now runs the
+// MCP facade and carries synced briefs, which makes a HEADLESS Fleet Manager a
+// real thing — and a headless manager whose doctrine tells it to run brief_check
+// before a standup and brief_archive at a checkpoint gets `no provider for
+// brief.check` at the bus level, silently, for two of the three tools it is
+// trained on. The document model was never impossible to port; it was
+// unjustified. It is justified now, so it is ported — under the ORIGINAL
+// objection rather than around it: see briefboard.go, whose parse is held to
+// shared/briefBoard.ts case by case by contracts/brief-board-cases.json, and
+// briefcheck.go, held to briefCheck.ts by the same fixture. The one thing the
+// old note asked for — that a boundary rule must not be approximated — is what
+// that fixture enforces.
+//
+// The other half of the old note is obsolete too: brief.archive was never a
+// headlessGaps entry (no shipped client calls it — it is an agent-facing MCP
+// tool — so TestHeadlessGapsAreReachableFromAShippedClient would refuse one),
+// and headless_completeness_test.go's comment about that has been updated to
+// record the port instead of the gap.
 //
 // WHAT IS DELIBERATELY PRESENT, by contrast: brief.append's append-from-result
 // params (`sessionId`, `result`). Composing that line is a pure string function
@@ -296,12 +308,21 @@ func appendToBrief(content, section, bullet string) string {
 // Recently` at all, because the entries had grown past a read cap, and it found
 // out by failing. TWIN: BriefSizeReport.
 //
-// `entriesInSection` counts the section's BULLET lines. The desktop counts the
-// board parser's entries, which fold a bullet's continuation lines into it —
-// the same number for the one-line entries this tool writes, and an
-// over-estimate only for a hand-written multi-line entry. Named rather than
-// hidden, because a counter that silently means something different from its
-// twin is worse than one that is documented to approximate.
+// BOTH COUNTERS ARE THE BOARD PARSER'S, not a bullet-line approximation. They
+// were an approximation — `entriesInSection` counted bullet LINES and the
+// section body ran to the next heading of any level — for as long as this
+// package had no document model to ask, and it was documented as one. It has
+// one now (briefboard.go), and brief.archive returns the SAME three fields, so
+// an approximation here would have made the two capabilities disagree about the
+// same section of the same file in the same breath. TWIN: briefSectionStats in
+// briefService.ts, which this now matches case for case:
+//
+//   - entriesInSection counts the PARSED entries whose column is this section,
+//     so a multi-line entry counts once and an entry under a `###` sub-heading
+//     still counts toward its parent;
+//   - bytesInSection measures the level-2 block's own body, which ENDS at that
+//     first `###`. The two deliberately disagree about a sub-grouped brief, and
+//     they disagree the same way on both providers.
 type briefSizeReport struct {
 	EntriesInSection int `json:"entriesInSection"`
 	BytesInSection   int `json:"bytesInSection"`
@@ -309,31 +330,21 @@ type briefSizeReport struct {
 }
 
 func briefSectionStats(content, section string) briefSizeReport {
+	wanted := strings.ToLower(trimJS(section))
+	doc := parseBriefDoc(content)
 	report := briefSizeReport{BytesInBrief: len(content)}
-	lines := strings.Split(content, "\n")
-	headingAt := -1
-	for i, l := range lines {
-		if isBriefHeadingFor(l, section) {
-			headingAt = i
-			break
-		}
-	}
-	if headingAt < 0 {
-		// The honest answer for a heading appendToBrief would have to create.
-		return report
-	}
-	end := len(lines)
-	for i := headingAt + 1; i < len(lines); i++ {
-		if isBriefHeading(lines[i]) {
-			end = i
-			break
-		}
-	}
-	body := lines[headingAt+1 : end]
-	report.BytesInSection = len(strings.Join(body, "\n"))
-	for _, l := range body {
-		if t := strings.TrimSpace(l); strings.HasPrefix(t, "- ") || strings.HasPrefix(t, "* ") {
+	for _, e := range doc.Entries {
+		if strings.ToLower(e.Column) == wanted {
 			report.EntriesInSection++
+		}
+	}
+	for _, sec := range doc.Sections {
+		if sec.Level == 2 && strings.ToLower(sec.Title) == wanted {
+			// The honest answer when the section has no level-2 heading is the
+			// zero this leaves in place — the same one the twin's `block ? … : ''`
+			// produces, and the case appendToBrief would have to create a heading for.
+			report.BytesInSection = len(strings.Join(doc.Lines[sec.BodyStart:sec.BodyEnd], "\n"))
+			break
 		}
 	}
 	return report

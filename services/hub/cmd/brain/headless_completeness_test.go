@@ -99,10 +99,16 @@ var headlessGaps = map[string]string{
 	// that distinction still matters: with a provider in place, an empty list
 	// finally means "no sessions" and an error means the daemon is unreachable.
 	//
-	// brief.archive is NOT listed, for the same reason replay.* is not: no
-	// shipped client calls it (it is an agent-facing MCP tool), so
-	// TestHeadlessGapsAreReachableFromAShippedClient would refuse the entry.
-	// Its absence is recorded in brief.go's header instead.
+	// brief.archive and brief.check were never listed here, for the same reason
+	// replay.* is not: no shipped client calls them (they are agent-facing MCP
+	// tools), so TestHeadlessGapsAreReachableFromAShippedClient would refuse the
+	// entries. Their absence was recorded in brief.go's header instead — and
+	// that is exactly why the gap survived: this file's guards see what a
+	// BROWSER calls, and the caller that lost those two verbs was an AGENT on
+	// the node. Both are now PROVIDED (briefboard.go, briefcheck.go), and the
+	// class of gap they represent has a guard of its own:
+	// headlessport_test.go's TestEveryBriefVerbTheFacadeExposesHasABrainHandler
+	// enumerates from the MCP facade and capspec rather than from a client.
 }
 
 func headlessProviders(t *testing.T) map[string]bool {
