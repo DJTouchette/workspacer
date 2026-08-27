@@ -96,6 +96,15 @@ class ClaudemonSessionClient {
     /** The agent's first prompt, delivered BY THE SPAWN rather than by a
      *  separate `message()` after the id comes back. See `deliverFirstMessage`. */
     firstMessage?: string;
+    /** The model string this session was ASKED for, resolved (see
+     *  `lib/spawnModel`). Sent alongside the argv rather than left to the
+     *  daemon's `--model` sniffing, because a resume carries no `--model` and a
+     *  spawn whose model came from config carries one the sniffer would find
+     *  only by luck. It is the carrier of the `[1m]` marker, which Claude Code
+     *  strips from the id it writes into the transcript — so without it the
+     *  daemon cannot know a 1M session from a 200k one until the provider
+     *  speaks, which on the stream transport is a whole turn away. */
+    model?: string;
   }): Promise<string> {
     const {
       portChannel = 'claude:port',

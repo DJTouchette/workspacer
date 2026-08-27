@@ -289,7 +289,10 @@ mod tests {
         let r = rates_for_in("claude-fable-5", BUILTIN, &user).unwrap();
         assert_eq!(r.input, 8.0);
         assert_eq!(r.output, 40.0);
-        assert_eq!(r.context_limit, None, "the user said nothing about a window");
+        assert_eq!(
+            r.context_limit, None,
+            "the user said nothing about a window"
+        );
         assert_eq!(
             crate::session::windows::window_for("claude-fable-5"),
             Some(1_000_000),

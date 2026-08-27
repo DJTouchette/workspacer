@@ -3,7 +3,7 @@
 use anyhow::{bail, Result};
 use rusqlite::Connection;
 
-const USER_VERSION: i32 = 4;
+const USER_VERSION: i32 = 5;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     let current: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -49,6 +49,14 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         // v4: heartbeats grow a provider — Codex windows warm too.
         step(conn, 4, add_heartbeat_provider)?;
     }
+    if current < 5 {
+        // v5: sessions remember the model they were ASKED for. The `model`
+        // column beside it holds what the transcript reported, which has the
+        // `[1m]` marker stripped — so it cannot answer "was this a 1M session",
+        // and a daemon restart used to revert a 1M session to the table's guess
+        // for its stripped id.
+        step(conn, 5, add_session_requested_model)?;
+    }
     Ok(())
 }
 
@@ -91,6 +99,20 @@ fn add_heartbeat_provider(conn: &Connection) -> rusqlite::Result<()> {
         return Ok(());
     }
     conn.execute_batch(SCHEMA_V4)
+}
+
+/// v5's body, catalog-checked for the same reason as
+/// [`add_heartbeat_provider`]: `ALTER TABLE … ADD COLUMN` errors with
+/// "duplicate column name" on a replay, and a DB left wedged by a kill in the
+/// window between the DDL and the `user_version` bump has to heal on next boot.
+fn add_session_requested_model(conn: &Connection) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = ?1")?;
+    let present = stmt.exists(["requested_model"])?;
+    drop(stmt);
+    if present {
+        return Ok(());
+    }
+    conn.execute_batch(SCHEMA_V5)
 }
 
 const SCHEMA_V1: &str = r#"
@@ -148,6 +170,14 @@ CREATE INDEX IF NOT EXISTS heartbeats_at ON heartbeats(at DESC);
 /// v4 migration: per-provider heartbeats (claude | codex).
 const SCHEMA_V4: &str = r#"
 ALTER TABLE heartbeats ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude';
+"#;
+
+/// v5 migration: the model a session was ASKED for, which is the only carrier
+/// of a `[1m]` window choice — Claude Code strips the marker from the id it
+/// writes into the transcript. Nullable: old rows, and every session the daemon
+/// did not spawn, genuinely do not know, and `NULL` says so.
+const SCHEMA_V5: &str = r#"
+ALTER TABLE sessions ADD COLUMN requested_model TEXT;
 "#;
 
 #[cfg(test)]
@@ -234,6 +264,28 @@ mod tests {
                 .unwrap();
             assert_eq!(count, 1, "table {} missing", table);
         }
+    }
+
+    /// v5 replays cleanly on a DB wedged with the column added but the version
+    /// unstamped — the same hazard `add_heartbeat_provider` exists for, and the
+    /// reason `ALTER TABLE … ADD COLUMN` never goes in a bare SQL const here.
+    #[test]
+    fn requested_model_migration_replays_on_a_wedged_db() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        // Simulate the kill: the DDL committed, the version bump did not.
+        conn.pragma_update(None, "user_version", 4).unwrap();
+        migrate(&conn).unwrap();
+        let v: i32 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, USER_VERSION, "healed instead of failing boot forever");
+        let has: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = ?1")
+            .unwrap()
+            .exists(["requested_model"])
+            .unwrap();
+        assert!(has, "sessions.requested_model exists after v5");
     }
 
     #[test]

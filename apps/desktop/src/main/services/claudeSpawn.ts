@@ -32,6 +32,7 @@ import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonD
 import { facadeSpawnArgs, buildSessionMcpConfig } from './mcpConfig';
 import { libraryService } from './libraryService';
 import { configService } from './configService';
+import { resolveSpawnModel } from '../lib/spawnModel';
 import { installSupervisorSkill, ensureSupervisorHome } from './supervisorSkill';
 import { installManagerSkills } from './managerSkills';
 import { mintSessionFacadeToken } from './remoteTokens';
@@ -236,6 +237,12 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     installSupervisorSkill();
     if (!model) model = supCfg?.model || undefined;
   }
+  // Then the general default, so an omitted model is RESOLVED rather than left
+  // to Claude Code's own internal choice. It goes on the argv AND (below) into
+  // the spawn payload, which is what lets the daemon know this session's window
+  // from token zero instead of guessing 200k off a marker-stripped transcript
+  // id. See lib/spawnModel.
+  model = resolveSpawnModel('claude', model);
   // The Fleet Manager's invocable skills (/bearings, /stow) — parity with the
   // stream path (managedSpawn), where the manager normally runs.
   if (opts.manager) {
@@ -328,6 +335,11 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     rows: opts.rows,
     env,
     sessionId,
+    // Explicitly, not only via `--model` on the argv: a resume re-uses the
+    // prior life's model without re-stating it, and the daemon's argv sniffing
+    // would find nothing to record for exactly the sessions that have the most
+    // history to mis-measure.
+    model,
     firstMessage: opts.firstMessage,
   });
 }

@@ -58,13 +58,28 @@ pub struct SpawnPayload {
     /// [`SessionStore::queue_first_message`] for why the two-call form races.
     #[serde(default)]
     pub first_message: Option<String>,
+    /// The model string this session was ASKED for, when the caller knows it.
+    ///
+    /// Preferred over sniffing `--model` off [`Self::argv`], because argv only
+    /// carries it when someone spelled it out: a RESUME re-uses the prior
+    /// life's model without re-stating it, and a spawn whose model came from
+    /// config used to reach the CLI as its own internal default and never
+    /// appear on the command line at all. Those are precisely the sessions with
+    /// the most history to mis-measure.
+    ///
+    /// It matters because Claude Code STRIPS the `[1m]` marker from the model
+    /// id it writes into the transcript, so this string is the only carrier of
+    /// a 1M choice until the provider reports a window of its own — seconds
+    /// away on the PTY path, a whole turn away on the stream one.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// The value of a `--model` flag in a spawn's argv, in either spelling
-/// (`--model x` / `--model=x`). The PTY spawn payload carries a raw command
-/// line rather than a structured model, but the model is exactly what says
-/// whether this session runs a 1M window (`opus[1m]`) — read it off argv so
-/// every client gets a correct context gauge without sending a new field.
+/// (`--model x` / `--model=x`). The FALLBACK behind [`SpawnPayload::model`],
+/// for callers that only send a command line: the model is exactly what says
+/// whether this session runs a 1M window (`opus[1m]`), so read it off argv
+/// rather than lose it.
 fn model_from_argv(argv: &[String]) -> Option<&str> {
     let mut it = argv.iter();
     while let Some(arg) = it.next() {
@@ -120,6 +135,7 @@ fn cwd_problem(cwd: &str) -> Option<String> {
 pub async fn handle(
     State(store): State<SessionStore>,
     State(conv): State<ConversationStore>,
+    State(db): State<crate::store::Db>,
     Json(payload): Json<SpawnPayload>,
 ) -> impl IntoResponse {
     if payload.argv.is_empty() {
@@ -252,8 +268,19 @@ pub async fn handle(
 
     store.register_pty(&session_id, pty_handle.clone());
     store.register_spawn(&session_id, &cwd, WrapperHandle { tx: input_tx });
-    if let Some(model) = model_from_argv(&payload.argv) {
+    // The caller's own answer first, argv only as a fallback — see
+    // `SpawnPayload::model`. Recorded unconditionally when either is present:
+    // the guard used to be "a model appeared on argv", which is empty for every
+    // resume and for every spawn that let the CLI pick.
+    if let Some(model) = payload
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .or_else(|| model_from_argv(&payload.argv))
+    {
         store.set_requested_model(&session_id, model);
+        db.note_requested_model(&session_id, model);
     }
     store.note_term_size(&session_id, cols, rows);
     // Queued BEFORE the 200 below, so the caller never has to send it itself
@@ -370,6 +397,7 @@ pub struct SpawnManagedPayload {
 pub async fn handle_managed(
     State(store): State<SessionStore>,
     State(conv): State<ConversationStore>,
+    State(db): State<crate::store::Db>,
     Json(payload): Json<SpawnManagedPayload>,
 ) -> impl IntoResponse {
     if !matches!(
@@ -422,8 +450,16 @@ pub async fn handle_managed(
         .is_some_and(|text| store.queue_first_message(&session_id, text));
     // Before the driver starts, so the very first snapshot knows this session's
     // window instead of guessing 200k from the marker-stripped transcript id.
-    if let Some(model) = payload.model.as_deref() {
+    if let Some(model) = payload
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+    {
         store.set_requested_model(&session_id, model);
+        // Persisted too, so a daemon restart rehydrates a 1M session as 1M
+        // instead of reverting it to the table's guess for its stripped id.
+        db.note_requested_model(&session_id, model);
     }
     let facade = crate::providers::Facade {
         mcp_url: payload.mcp.clone(),
@@ -701,6 +737,66 @@ mod tests {
         let _ = std::fs::remove_dir(&tilde_named);
     }
 
+    /// THE OMITTED-MODEL DROP. The payload's own `model` is preferred over
+    /// sniffing argv, and it is what makes a RESUME measurable: `claude
+    /// --resume <id>` carries no `--model` at all, so argv sniffing found
+    /// nothing for precisely the sessions with the most history to mis-measure.
+    #[test]
+    fn the_payload_model_is_preferred_over_argv_and_covers_a_resume() {
+        let resolved = |payload: SpawnPayload| -> Option<String> {
+            payload
+                .model
+                .as_deref()
+                .map(str::trim)
+                .filter(|m| !m.is_empty())
+                .or_else(|| model_from_argv(&payload.argv))
+                .map(str::to_string)
+        };
+        let payload = |v: serde_json::Value| -> SpawnPayload { serde_json::from_value(v).unwrap() };
+
+        // A resume: nothing on argv, and the caller's resolved model saves it.
+        assert_eq!(
+            resolved(payload(json!({
+                "argv": ["claude", "--resume", "abc"],
+                "cwd": "/w",
+                "model": "opus[1m]",
+            }))),
+            Some("opus[1m]".to_string())
+        );
+        // The caller's answer wins over a stale argv spelling.
+        assert_eq!(
+            resolved(payload(json!({
+                "argv": ["claude", "--model", "sonnet"],
+                "cwd": "/w",
+                "model": "opus[1m]",
+            }))),
+            Some("opus[1m]".to_string())
+        );
+        // An older client that sends no `model` still gets the argv fallback.
+        assert_eq!(
+            resolved(payload(json!({
+                "argv": ["claude", "--model", "opus[1m]"],
+                "cwd": "/w",
+            }))),
+            Some("opus[1m]".to_string())
+        );
+        // Blank is not an answer — it must not shadow the argv fallback.
+        assert_eq!(
+            resolved(payload(json!({
+                "argv": ["claude", "--model", "opus[1m]"],
+                "cwd": "/w",
+                "model": "   ",
+            }))),
+            Some("opus[1m]".to_string())
+        );
+        // Nothing anywhere stays nothing: an unrecorded request is honest, and
+        // the resolver falls through to the contract table for the model id.
+        assert_eq!(
+            resolved(payload(json!({ "argv": ["claude"], "cwd": "/w" }))),
+            None
+        );
+    }
+
     #[test]
     fn model_from_argv_reads_both_spellings() {
         let argv = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -818,6 +914,7 @@ mod tests {
         let resp = handle_managed(
             State(SessionStore::new()),
             State(ConversationStore::new()),
+            State(crate::store::Db::open(crate::testtmp::db_path("spawn-test")).expect("test db")),
             Json(payload),
         )
         .await

@@ -69,9 +69,27 @@ impl Db {
     /// Persist one hook event plus a session upsert. Both happen in a single
     /// transaction so the events row never references a missing session.
     pub fn record_event(&self, event: &HookEvent) -> Result<i64> {
+        self.record_event_with_requested_model(event, None)
+    }
+
+    /// [`record_event`](Self::record_event), plus the model this session was
+    /// ASKED for, when the in-memory store knows one.
+    ///
+    /// It is threaded through here rather than written by a second statement
+    /// because of an ordering hole: a spawn calls
+    /// [`note_requested_model`](Self::note_requested_model) BEFORE the session
+    /// has a row (rows are created by the first hook event), so that `UPDATE`
+    /// matches nothing and the very next `INSERT` would leave the column NULL.
+    /// Stamping it onto the row being created closes that, at no extra query —
+    /// exactly how the neighbouring `model` column is handled.
+    pub fn record_event_with_requested_model(
+        &self,
+        event: &HookEvent,
+        requested_model: Option<&str>,
+    ) -> Result<i64> {
         let mut guard = self.conn.lock().expect("db mutex poisoned");
         let tx = guard.transaction()?;
-        upsert_session_tx(&tx, event)?;
+        upsert_session_tx(&tx, event, requested_model)?;
         let row_id = insert_event_tx(&tx, event)?;
         tx.commit()?;
         Ok(row_id)
@@ -139,7 +157,8 @@ impl Db {
         let mut stmt = guard.prepare(
             "SELECT s.id, s.cwd, s.tool_call_count, s.created_at, s.last_event_at,
                     (SELECT COUNT(*) FROM events e
-                       WHERE e.session_id = s.id AND e.event_type = 'UserPromptSubmit')
+                       WHERE e.session_id = s.id AND e.event_type = 'UserPromptSubmit'),
+                    s.model, s.requested_model
              FROM sessions s ORDER BY s.last_event_at DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit as i64], |r| {
@@ -151,10 +170,39 @@ impl Db {
                 created_at: r.get(3)?,
                 last_event_at: r.get(4)?,
                 user_prompt_count: r.get::<_, i64>(5)?.max(0) as u64,
+                model: r.get::<_, Option<String>>(6)?.filter(|m| !m.is_empty()),
+                requested_model: r.get::<_, Option<String>>(7)?.filter(|m| !m.is_empty()),
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
+    }
+
+    /// Record the model a session was ASKED for, so a daemon restart rehydrates
+    /// it (see [`RestoredSession::requested_model`]).
+    ///
+    /// A plain `UPDATE`: the row may not exist yet at spawn time — it is created
+    /// by the first hook event — and inventing one here would list an agent
+    /// that has not started. The other half of the write lives in
+    /// [`upsert_session_tx`], which stamps the value onto the row it creates;
+    /// between them every row that can ever be hydrated gets one.
+    ///
+    /// Best-effort by design, like the rest of this store's writes: a failure
+    /// costs a context gauge after the next restart, not a session.
+    pub fn note_requested_model(&self, session_id: &str, model: &str) {
+        let model = model.trim();
+        if model.is_empty() {
+            return;
+        }
+        let Ok(guard) = self.conn.lock() else {
+            return;
+        };
+        if let Err(err) = guard.execute(
+            "UPDATE sessions SET requested_model = ?2 WHERE id = ?1",
+            params![session_id, model],
+        ) {
+            tracing::warn!(session = %session_id, ?err, "persisting requested_model failed");
+        }
     }
 
     /// Retention GC: delete sessions whose last event predates the 7-day archive
@@ -223,9 +271,21 @@ pub struct RestoredSession {
     /// Number of `UserPromptSubmit` events on record for this session — 0 means
     /// it was spawned but never actually prompted (see `is_empty_stopped`).
     pub user_prompt_count: u64,
+    /// The concrete model the transcript reported, when one was recorded.
+    pub model: Option<String>,
+    /// The model this session was ASKED for. `hydrate` used to drop both of
+    /// these on the floor — the columns existed (well, `model` did) and were
+    /// simply not read — so a restarted daemon rebuilt a 1M session with no
+    /// idea it was one, and every client's gauge read ~5× too full for the rest
+    /// of its life. `None` is honest for a session the daemon did not spawn.
+    pub requested_model: Option<String>,
 }
 
-fn upsert_session_tx(tx: &rusqlite::Transaction<'_>, event: &HookEvent) -> Result<()> {
+fn upsert_session_tx(
+    tx: &rusqlite::Transaction<'_>,
+    event: &HookEvent,
+    requested_model: Option<&str>,
+) -> Result<()> {
     let now = event_timestamp_unix(event);
     let session_id = &event.session_id;
     let cwd = event.cwd.as_deref().unwrap_or("");
@@ -247,18 +307,23 @@ fn upsert_session_tx(tx: &rusqlite::Transaction<'_>, event: &HookEvent) -> Resul
         .and_then(Value::as_str)
         .unwrap_or(cwd);
     let model = payload.get("model").and_then(Value::as_str);
+    // The model the session was ASKED for, which the transcript can never
+    // report: Claude Code strips the `[1m]` marker from the id it writes.
+    let requested_model = requested_model.map(str::trim).filter(|m| !m.is_empty());
     let branch = payload.get("branch").and_then(Value::as_str);
 
     tx.execute(
         "INSERT INTO sessions (
             id, name, project, cwd, worktree_path, branch, base_branch, model,
-            state, pid, created_at, last_event_at, total_cost_usd, tool_call_count
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, 'working', NULL, ?8, ?8, 0, 0)
+            state, pid, created_at, last_event_at, total_cost_usd, tool_call_count,
+            requested_model
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, 'working', NULL, ?8, ?8, 0, 0, ?9)
          ON CONFLICT(id) DO UPDATE SET
             last_event_at = excluded.last_event_at,
             cwd = CASE WHEN sessions.cwd = '' THEN excluded.cwd ELSE sessions.cwd END,
             model = COALESCE(sessions.model, excluded.model),
-            branch = COALESCE(sessions.branch, excluded.branch)",
+            branch = COALESCE(sessions.branch, excluded.branch),
+            requested_model = COALESCE(sessions.requested_model, excluded.requested_model)",
         params![
             session_id,
             name,
@@ -267,7 +332,8 @@ fn upsert_session_tx(tx: &rusqlite::Transaction<'_>, event: &HookEvent) -> Resul
             worktree_path,
             branch,
             model,
-            now
+            now,
+            requested_model
         ],
     )?;
 
@@ -340,6 +406,75 @@ mod tests {
 
     fn tempfile_path() -> PathBuf {
         crate::testtmp::db_path("store-test")
+    }
+
+    /// THE DAEMON-RESTART DROP, end to end.
+    ///
+    /// A 1M session survives a restart as a 1M session. Before this,
+    /// `RestoredSession` carried neither model, `hydrate` read neither column,
+    /// and the `requested_model` column did not exist — so a resumed
+    /// `opus[1m]` agent came back as whatever the window table says about its
+    /// marker-stripped transcript id (200k), and every gauge read ~5x too full
+    /// for the rest of its life.
+    ///
+    /// The ORDERING is the substance of this test: the spawn records the model
+    /// before the session has a row at all (rows are born from the first hook
+    /// event), so the plain `UPDATE` matches nothing. It is
+    /// `record_event_with_requested_model` stamping the value onto the row it
+    /// creates that saves it.
+    #[test]
+    fn requested_model_survives_a_daemon_restart() {
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+
+        // 1. Spawn records it. No row exists yet — this UPDATE hits nothing,
+        //    and that is exactly the hole the second write closes.
+        db.note_requested_model("s1", "opus[1m]");
+        let restored = db.load_recent_sessions(10).unwrap();
+        assert!(
+            restored.is_empty(),
+            "no row yet: the spawn-time UPDATE has nothing to update"
+        );
+
+        // 2. The first hook event creates the row, carrying the model with it.
+        db.record_event_with_requested_model(&ev("SessionStart", "s1"), Some("opus[1m]"))
+            .unwrap();
+
+        // 3. Restart: this is what `hydrate` gets handed.
+        let restored = db.load_recent_sessions(10).unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].requested_model.as_deref(), Some("opus[1m]"));
+    }
+
+    /// A session the daemon did not spawn has no requested model, and says so.
+    /// `None`, not an empty string and not a guess — an adopted or foreign
+    /// session genuinely does not know, and the resolver's job is to fall
+    /// through to the contract table rather than be handed a fake marker.
+    #[test]
+    fn a_session_with_no_recorded_request_restores_as_unknown() {
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+        db.record_event(&ev("SessionStart", "adopted")).unwrap();
+        let restored = db.load_recent_sessions(10).unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].requested_model, None);
+    }
+
+    /// A later event must not blank a recorded request. The upsert takes
+    /// `COALESCE(sessions.requested_model, excluded.requested_model)` for the
+    /// same reason the `model` column beside it does: the in-memory store can
+    /// be evicted (`evict_stale_stopped`) while the session's events keep
+    /// arriving, and the very next hook would otherwise overwrite a real
+    /// recorded model with the NULL of "nobody asked me this time".
+    #[test]
+    fn a_later_event_without_a_request_does_not_blank_it() {
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+        db.record_event_with_requested_model(&ev("SessionStart", "s1"), Some("sonnet[1m]"))
+            .unwrap();
+        db.record_event(&ev("PreToolUse", "s1")).unwrap();
+        let restored = db.load_recent_sessions(10).unwrap();
+        assert_eq!(restored[0].requested_model.as_deref(), Some("sonnet[1m]"));
     }
 
     #[test]
