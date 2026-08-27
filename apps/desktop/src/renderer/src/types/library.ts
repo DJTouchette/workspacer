@@ -1,8 +1,10 @@
 export type LibraryScope = 'global' | 'project' | 'claude';
 /** 'command' is a Claude Code custom slash command (`.claude/commands/*.md`),
  *  surfaced read-mostly alongside skills so the composer's "/" picker can list
- *  them. */
-export type LibraryKind = 'prompt' | 'skill' | 'agent' | 'mcp' | 'command';
+ *  them. 'dispatch' is a Fleet Manager dispatch template (text + optional
+ *  default resultSchema, rendered host-side at spawn) — deliberately nothing
+ *  else; see the main process's libraryService. */
+export type LibraryKind = 'prompt' | 'skill' | 'agent' | 'mcp' | 'command' | 'dispatch';
 export type LibraryAction = 'insert' | 'spawn' | 'copy';
 
 /** Which root a claude-scoped item lives under, in the precedence order Claude
@@ -33,6 +35,8 @@ export interface LibraryItem {
   action?: LibraryAction;
   /** MCP server config — present only when kind === 'mcp'. */
   mcp?: McpServerConfig;
+  /** Default structured-result contract — present only when kind === 'dispatch'. */
+  resultSchema?: Record<string, unknown>;
   /** Which root a claude-scoped item came from. Absent for global/project. */
   origin?: ClaudeOrigin;
   /** False when the file belongs to something else (an installed plugin). */
@@ -51,6 +55,7 @@ export interface LibrarySaveInput {
   tags?: string[];
   action?: LibraryAction;
   mcp?: McpServerConfig;
+  resultSchema?: Record<string, unknown>;
   /** Claude scope only — which root to write into ('project' | 'user'). */
   origin?: ClaudeOrigin;
   body: string;

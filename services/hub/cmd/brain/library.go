@@ -41,6 +41,12 @@ type libraryItem struct {
 	Tags        []string   `json:"tags,omitempty"`
 	Action      string     `json:"action,omitempty"`
 	Mcp         *mcpConfig `json:"mcp,omitempty"`
+	// ResultSchema is a dispatch template's default structured-result contract
+	// (kind "dispatch" only). Together with Body it is the WHOLE of what a
+	// dispatch item carries — deliberately no spawn-argument fields, so a
+	// template file cannot smuggle a toolScope/cwd/model/worktree; see
+	// libraryService.ts's LibraryKind comment (the desktop twin).
+	ResultSchema map[string]any `json:"resultSchema,omitempty"`
 	// Origin is which root a claude-scoped item came from. Over the bus this is
 	// always "project": libraryItemRoots confines every library file to the
 	// caller's project plus the global store, so the user's ~/.claude and the
@@ -399,18 +405,22 @@ func toMcp(v any) *mcpConfig {
 // libFrontmatter is the workspacer-format frontmatter; struct field order is the
 // emitted YAML order (title, kind, …), matching libraryService.serialize.
 type libFrontmatter struct {
-	Title       string     `yaml:"title"`
-	Kind        string     `yaml:"kind"`
-	Description string     `yaml:"description,omitempty"`
-	Tags        []string   `yaml:"tags,omitempty"`
-	Action      string     `yaml:"action,omitempty"`
-	Mcp         *mcpConfig `yaml:"mcp,omitempty"`
+	Title        string         `yaml:"title"`
+	Kind         string         `yaml:"kind"`
+	Description  string         `yaml:"description,omitempty"`
+	Tags         []string       `yaml:"tags,omitempty"`
+	Action       string         `yaml:"action,omitempty"`
+	Mcp          *mcpConfig     `yaml:"mcp,omitempty"`
+	ResultSchema map[string]any `yaml:"resultSchema,omitempty"`
 }
 
 func serializeItem(it *libraryItem) string {
 	fm := libFrontmatter{Title: it.Title, Kind: it.Kind, Description: it.Description, Tags: it.Tags, Action: it.Action}
 	if it.Kind == "mcp" {
 		fm.Mcp = cleanMcp(it.Mcp)
+	}
+	if it.Kind == "dispatch" {
+		fm.ResultSchema = it.ResultSchema
 	}
 	head := strings.TrimRight(marshalYAML(fm), "\n")
 	body := strings.TrimRight(it.Body, " \t\r\n\v\f")
@@ -448,7 +458,7 @@ func marshalYAML(v any) string {
 }
 
 func validKind(k any) string {
-	if s, ok := k.(string); ok && (s == "skill" || s == "agent" || s == "mcp") {
+	if s, ok := k.(string); ok && (s == "skill" || s == "agent" || s == "mcp" || s == "dispatch") {
 		return s
 	}
 	return "prompt"
@@ -506,9 +516,22 @@ func readLibraryDir(dir, scope string, guard libraryFileGuard) []libraryItem {
 		if kind == "mcp" {
 			it.Mcp = toMcp(data["mcp"])
 		}
+		if kind == "dispatch" {
+			it.ResultSchema = toSchemaMap(data["resultSchema"])
+		}
 		items = append(items, it)
 	}
 	return items
+}
+
+// toSchemaMap accepts only a mapping for a dispatch template's resultSchema —
+// yaml.v3 decodes string-keyed mappings as map[string]any, which is exactly the
+// JSON-marshalable shape the desktop twin stores. Anything else reads as absent.
+func toSchemaMap(v any) map[string]any {
+	if m, ok := v.(map[string]any); ok && len(m) > 0 {
+		return m
+	}
+	return nil
 }
 
 func readClaudeItem(full, id, kind string, guard libraryFileGuard) *libraryItem {
@@ -637,9 +660,11 @@ type libraryInput struct {
 	Tags        []string   `json:"tags"`
 	Action      string     `json:"action"`
 	Mcp         *mcpConfig `json:"mcp"`
-	Origin      string     `json:"origin"`
-	Body        string     `json:"body"`
-	Cwd         string     `json:"cwd"`
+	// ResultSchema rides only for kind "dispatch"; see libraryItem.ResultSchema.
+	ResultSchema map[string]any `json:"resultSchema"`
+	Origin       string         `json:"origin"`
+	Body         string         `json:"body"`
+	Cwd          string         `json:"cwd"`
 }
 
 // saveLibrary writes one library item. It is a registry method because the
@@ -692,6 +717,9 @@ func (r *registry) saveLibrary(ctx context.Context, in libraryInput) (*libraryIt
 		ID: id, Scope: in.Scope, Title: in.Title, Kind: in.Kind,
 		Description: in.Description, Tags: in.Tags, Action: in.Action,
 		Body: in.Body, Path: full,
+	}
+	if in.Kind == "dispatch" {
+		it.ResultSchema = in.ResultSchema
 	}
 	if in.Kind == "mcp" {
 		// Echoed placeholders resolve against what is already on disk, so a save
@@ -828,7 +856,7 @@ func removeLibrary(scope, id, cwd, kind, origin string, guard libraryFileGuard) 
 }
 
 // seedLibraryIfEmpty writes starter items to the global dir on first use, the
-// same three the app ships (seedGlobalIfEmpty). Best-effort and idempotent: it
+// same set the app ships (seedGlobalIfEmpty). Best-effort and idempotent: it
 // no-ops once any .md exists.
 func seedLibraryIfEmpty() {
 	dir := libraryGlobalDir()
@@ -932,8 +960,91 @@ func seedLibraryIfEmpty() {
 				`Tell me the plugin name and what it should do, and I will scaffold and implement it: {{?What should the plugin do?}}`,
 			}, "\n"),
 		},
+		// Dispatch templates (kind "dispatch") — the Fleet Manager's reusable
+		// dispatch framing, rendered host-side by the DESKTOP's agents.spawn
+		// {template, templateParams} (lib/dispatchTemplate.ts; the brain
+		// declines those spawn params — see parity_test.go). Seeded here too so
+		// the twins ship the same first-run library. {{task}} is REQUIRED by
+		// design: the manager writes the task-specific reasoning; only the
+		// framing is canned.
+		{
+			Title: "Ship task (dispatch)", Kind: "dispatch",
+			Description: "Delivery-mode boilerplate + reporting contract for a worker that changes code. Fill {{task}}; {{delivery}} defaults to opening a PR.",
+			Tags:        []string{"dispatch", "ship"},
+			ResultSchema: map[string]any{
+				"type":     "object",
+				"required": []any{"commit"},
+				"properties": map[string]any{
+					"commit":       map[string]any{"type": "string"},
+					"filesChanged": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"checksRun":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"caveats":      map[string]any{"type": "string"},
+				},
+			},
+			Body: strings.Join([]string{
+				"SHIP TASK in {{cwd}}.",
+				"",
+				"{{task}}",
+				"",
+				"Ground rules:",
+				"- Work only inside this repo. Never push unless the task above says to.",
+				"- Deliver the result this way: {{delivery:open a pull request for the user to review; do not merge it yourself}}.",
+				"- Run the project’s own checks (build, tests, lint) on what you changed before reporting, and use the repo’s code-intelligence tools (CLAUDE.md / AGENTS.md names them) instead of blind grep.",
+				"",
+				"When you are done, end your turn with a short report: what you did, the commit id, the files you changed, which checks you ran, and any caveats. That final message reaches your manager automatically; do not try to message anyone, just finish.",
+			}, "\n"),
+		},
+		{
+			Title: "Scout task (dispatch)", Kind: "dispatch",
+			Description: "Read-only investigation framing + report-to-file contract. Fill {{task}}; {{reportPath}} defaults to a dated file under .workspacer/reports/.",
+			Tags:        []string{"dispatch", "scout"},
+			ResultSchema: map[string]any{
+				"type":     "object",
+				"required": []any{"findings"},
+				"properties": map[string]any{
+					"findings":   map[string]any{"type": "string"},
+					"reportPath": map[string]any{"type": "string"},
+					"followUps":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				},
+			},
+			Body: strings.Join([]string{
+				"SCOUT TASK in {{cwd}} — investigate only. Do not edit source, run builds that write artifacts into the repo, or push anything.",
+				"",
+				"{{task}}",
+				"",
+				"Write your full findings to {{reportPath:.workspacer/reports/<YYYY-MM-DD>-<topic>.md}} so they outlive this session, then end your turn with a short summary: the answer, the report path, and any follow-ups you would dispatch. Your final message reaches your manager automatically; just finish.",
+			}, "\n"),
+		},
+		{
+			Title: "Two explanations (dispatch)", Kind: "dispatch",
+			Description: "Diagnose-before-fixing scaffold: name two opposite explanations for a symptom and make the worker establish which holds before changing anything.",
+			Tags:        []string{"dispatch", "diagnose"},
+			ResultSchema: map[string]any{
+				"type":     "object",
+				"required": []any{"verdict", "evidence"},
+				"properties": map[string]any{
+					"verdict":  map[string]any{"type": "string"},
+					"evidence": map[string]any{"type": "string"},
+					"fix":      map[string]any{"type": "string"},
+					"caveats":  map[string]any{"type": "string"},
+				},
+			},
+			Body: strings.Join([]string{
+				"DIAGNOSE BEFORE FIXING, in {{cwd}}.",
+				"",
+				"The symptom: {{symptom}}",
+				"",
+				"There are two opposite explanations, with opposite fixes:",
+				"(A) {{explanationA}}",
+				"(B) {{explanationB}}",
+				"",
+				"Establish WHICH ONE holds before you change anything, and say what evidence settled it. If the evidence shows neither holds, that is a SUCCESS, not a failure: report what you found and stop rather than forcing a fix. Only then apply the fix that matches the verdict: {{fixInstruction:apply the smallest fix that matches the verdict, run the relevant checks, and report}}.",
+				"",
+				"End your turn with the verdict, the evidence, and what you did about it.",
+			}, "\n"),
+		},
 	}
-	names := []string{"summarize-and-plan.md", "careful-refactor.md", "context7-mcp.md", "make-workspacer-plugin.md"}
+	names := []string{"summarize-and-plan.md", "careful-refactor.md", "context7-mcp.md", "make-workspacer-plugin.md", "ship-task.md", "scout-task.md", "two-explanations.md"}
 	for i := range seeds {
 		_ = os.WriteFile(filepath.Join(dir, names[i]), []byte(serializeItem(&seeds[i])), 0o644)
 	}

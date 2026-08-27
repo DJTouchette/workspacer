@@ -685,7 +685,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	// ── Library (reusable prompts, skills, agents) ─────────────────────────
 	b.group = "library"
 	addTool[cwdIn](b, "list_library",
-		"List reusable library items (prompts, skills, agents) — global plus, if cwd is given, that project's items.",
+		"List reusable library items (prompts, skills, agents, dispatch templates) — global plus, if cwd is given, that project's items.",
 		"library.list")
 	addObjectTool(b, "save_library",
 		"Save a library item. Pass the item blob (scope, kind, id, name, body, …).",
@@ -1310,6 +1310,15 @@ type spawnAgentIn struct {
 	// the caller nothing that writing the same sentence into the worker's first
 	// message would not.
 	ResultSchema map[string]any `json:"resultSchema,omitempty" jsonschema:"OPTIONAL JSON Schema for a machine-readable result. The worker is instructed to end its final message with a fenced wks-result block matching it, and the finished-wake you receive then carries that object VALIDATED, alongside the prose — e.g. an object with required 'commit' (string) plus 'filesChanged' / 'checksRun' / 'followUps' (arrays of string) and 'caveats' (string). Additive: the worker still writes its prose summary, and a missing or invalid block reports itself instead of failing the dispatch. Desktop-only (the headless brain declines it)"`
+	// Template names a library item of kind 'dispatch' — reusable dispatch TEXT
+	// (plus a default resultSchema) the host renders into the first message.
+	// Text-only by construction: a dispatch item has no spawn-argument fields at
+	// all, so a template can never carry a toolScope/cwd/model/worktree — every
+	// spawn argument still comes from THIS call and passes the same clamps.
+	// Required placeholders make an unfilled task slot a refused spawn, never a
+	// silently-defaulted one.
+	Template       string            `json:"template,omitempty" jsonschema:"the id of a library DISPATCH TEMPLATE (an item of kind 'dispatch'; list_library shows them) to render as the worker's first message instead of composing 'message' yourself. The template's default resultSchema applies unless this call passes its own resultSchema. Mutually exclusive with 'message'. Desktop-only (the headless brain declines it)"`
+	TemplateParams map[string]string `json:"templateParams,omitempty" jsonschema:"values for the template's named placeholders ({{task}} etc.). Placeholders are REQUIRED unless the template marks them optional with a default, and a spawn with an unfilled required placeholder is refused naming the missing param — write the task-specific text yourself; the template only supplies the framing"`
 }
 
 // takeHub implements hubRouted for spawn_agent's own hub field.

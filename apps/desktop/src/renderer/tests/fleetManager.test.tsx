@@ -51,6 +51,33 @@ describe('buildManagerKickoff — crash succession', () => {
   });
 });
 
+describe('buildManagerKickoff — dispatch templates', () => {
+  // The doctrine is the only place a manager learns templates exist; the text
+  // is paid for in every manager session, so it is short — but the three
+  // load-bearing pieces must stay: the kind and how to invoke it, the default
+  // resultSchema behaviour, and the hard rule that the task slot is the
+  // manager's own writing (an unfilled required placeholder REFUSES the spawn,
+  // it never silently defaults).
+  const doctrine = buildManagerKickoff('go');
+
+  it('teaches the dispatch-template invocation shape on spawn_agent', () => {
+    expect(doctrine).toContain('DISPATCH TEMPLATES');
+    expect(doctrine).toContain('"template":"<item id>"');
+    expect(doctrine).toContain('"templateParams"');
+    // Discovery: templates are ordinary library items.
+    expect(doctrine).toMatch(/kind "dispatch"[\s\S]{0,80}list_library/);
+  });
+
+  it('says the default resultSchema applies unless the call passes its own', () => {
+    expect(doctrine).toMatch(/default resultSchema unless you pass your own/);
+  });
+
+  it('states the hard rule: unfilled required placeholder refuses the spawn, the task slot is the manager’s', () => {
+    expect(doctrine).toMatch(/unfilled required placeholder REFUSES the spawn/i);
+    expect(doctrine).toMatch(/task slot is yours to write/);
+  });
+});
+
 describe('deriveFleetRoot', () => {
   it('explicit config wins', () => {
     expect(deriveFleetRoot('/srv/code', ['/home/u/Work/a'], '/home/u')).toBe('/srv/code');

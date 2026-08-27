@@ -944,6 +944,118 @@ describe('agents.spawn — dispatch', () => {
   });
 });
 
+describe('agents.spawn — dispatch templates', () => {
+  /** A library item of kind 'dispatch' as libraryService.list would return it. */
+  const tpl = (over: Record<string, unknown> = {}) => ({
+    id: 'ship-task',
+    scope: 'global',
+    title: 'Ship task',
+    kind: 'dispatch',
+    body: 'SHIP: {{task}}\nDeliver: {{delivery:open a PR}}',
+    resultSchema: { type: 'object', required: ['commit'] },
+    path: '/cfg/library/ship-task.md',
+    ...over,
+  });
+
+  it('renders the template into firstMessage and applies its default resultSchema', async () => {
+    libraryMock.list.mockReturnValueOnce([tpl()] as never);
+    const res = await call('agents.spawn', {
+      template: 'ship-task',
+      templateParams: { task: 'fix the off-by-one in parse()' },
+    });
+    const arg = spawnClaudeAgent.mock.calls[0][0] as {
+      firstMessage?: string;
+      resultSchema?: unknown;
+    };
+    expect(arg.firstMessage).toBe('SHIP: fix the off-by-one in parse()\nDeliver: open a PR');
+    expect(arg.resultSchema).toEqual({ type: 'object', required: ['commit'] });
+    // The rendered text is an ordinary first message: delivery is acknowledged.
+    expect(res).toEqual({ sessionId: 'claude-session-id', fullAccess: false, messageQueued: true });
+  });
+
+  it("the CALL's own resultSchema overrides the template default", async () => {
+    libraryMock.list.mockReturnValueOnce([tpl()] as never);
+    await call('agents.spawn', {
+      template: 'ship-task',
+      templateParams: { task: 'x' },
+      resultSchema: { type: 'object', required: ['verdict'] },
+    });
+    const arg = spawnClaudeAgent.mock.calls[0][0] as { resultSchema?: unknown };
+    expect(arg.resultSchema).toEqual({ type: 'object', required: ['verdict'] });
+  });
+
+  // THE HARD RULE: a rendered template reads finished, so an unfilled required
+  // placeholder must refuse the whole spawn naming the missing param — never a
+  // silent default, never a worker started on boilerplate.
+  it('an unfilled required placeholder REFUSES the spawn — no worker starts', async () => {
+    libraryMock.list.mockReturnValueOnce([tpl()] as never);
+    await expect(call('agents.spawn', { template: 'ship-task' })).rejects.toThrow(/\{\{task\}\}/);
+    expect(spawnClaudeAgent).not.toHaveBeenCalled();
+    expect(spawnManagedAgent).not.toHaveBeenCalled();
+  });
+
+  it('template and message are mutually exclusive (the template IS the message)', async () => {
+    // No list stub on purpose: the refusal must fire BEFORE any library read.
+    await expect(
+      call('agents.spawn', {
+        template: 'ship-task',
+        templateParams: { task: 'x' },
+        message: 'also do this',
+      }),
+    ).rejects.toThrow(/template OR message/);
+    expect(spawnClaudeAgent).not.toHaveBeenCalled();
+  });
+
+  it('an unknown template id is refused out loud', async () => {
+    libraryMock.list.mockReturnValueOnce([] as never);
+    await expect(
+      call('agents.spawn', { template: 'nope', templateParams: { task: 'x' } }),
+    ).rejects.toThrow(/no library item "nope"/);
+  });
+
+  it("only kind 'dispatch' renders — a prompt item is refused, not rendered", async () => {
+    libraryMock.list.mockReturnValueOnce([tpl({ kind: 'prompt' })] as never);
+    await expect(
+      call('agents.spawn', { template: 'ship-task', templateParams: { task: 'x' } }),
+    ).rejects.toThrow(/kind 'prompt', not 'dispatch'/);
+  });
+
+  it('templateParams without a template is refused (nothing to fill)', async () => {
+    await expect(call('agents.spawn', { templateParams: { task: 'x' } })).rejects.toThrow(
+      /without a template/,
+    );
+  });
+
+  // THE SECURITY PROPERTY: rendering happens with the CALLER's authority
+  // unchanged. A dispatch item has no spawn-argument fields by construction
+  // (libraryService models none — pinned in libraryDispatch.test.ts), and even
+  // a hand-forged item object carrying them changes nothing here: the spawn's
+  // arguments still come from the CALL and pass the same clamps, so a template
+  // cannot escalate what its caller could not.
+  it('a template cannot smuggle spawn arguments — the caller clamps still apply', async () => {
+    libraryMock.list.mockReturnValueOnce([
+      tpl({ toolScope: 'operator', skipPermissions: true, worktree: true, cwd: '/' }),
+    ] as never);
+    const res = (await call('agents.spawn', {
+      template: 'ship-task',
+      templateParams: { task: 'x' },
+      // The caller's OWN bypass request, clamped exactly as on a plain spawn.
+      skipPermissions: true,
+    })) as { fullAccess: boolean; escalationScrubbed?: string[] };
+    const arg = spawnClaudeAgent.mock.calls[0][0] as {
+      skipPermissions: boolean;
+      toolScope?: string;
+      cwd?: string;
+    };
+    expect(arg.skipPermissions).toBe(false);
+    expect(res.fullAccess).toBe(false);
+    expect(res.escalationScrubbed).toEqual(['skipPermissions']);
+    // Nothing from the item leaked into the spawn options.
+    expect(arg.toolScope).toBeUndefined();
+    expect(arg.cwd).toBeUndefined();
+  });
+});
+
 describe('agents.spawn — SECURITY: remote callers cannot auto-bypass approvals', () => {
   it('forces skipPermissions off even when the caller requests it (Claude path)', async () => {
     await call('agents.spawn', { cwd: '/proj', skipPermissions: true });

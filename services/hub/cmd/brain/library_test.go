@@ -52,11 +52,11 @@ func TestLibrarySeedAndList(t *testing.T) {
 	tempConfigHome(t)
 
 	items := listLibrary("", allowAnyLibraryFile)
-	if len(items) != 4 {
-		t.Fatalf("expected 4 seeded items, got %d", len(items))
+	if len(items) != 7 {
+		t.Fatalf("expected 7 seeded items, got %d", len(items))
 	}
 	// Sorted by title: "Careful refactor…", "Context7 (MCP)", "Make a workspacer
-	// plugin…", "Summarize & plan".
+	// plugin…", "Scout task…", "Ship task…", "Summarize & plan", "Two explanations…".
 	if items[0].Title != "Careful refactor (skill)" {
 		t.Errorf("not sorted by title: %q first", items[0].Title)
 	}
@@ -68,6 +68,114 @@ func TestLibrarySeedAndList(t *testing.T) {
 	}
 	if mcp == nil || mcp.Mcp == nil || mcp.Mcp.Command != "npx" || len(mcp.Mcp.Args) != 2 {
 		t.Fatalf("mcp item didn't round-trip: %+v", mcp)
+	}
+	// The three starter dispatch templates ship with kind + default schema
+	// intact, and their task slot is a REQUIRED placeholder (no ':default'):
+	// the manager writes the task-specific text, the template only frames it.
+	dispatch := map[string]*libraryItem{}
+	for i := range items {
+		if items[i].Kind == "dispatch" {
+			dispatch[items[i].ID] = &items[i]
+		}
+	}
+	for _, id := range []string{"ship-task", "scout-task", "two-explanations"} {
+		it, ok := dispatch[id]
+		if !ok {
+			t.Fatalf("starter dispatch template %q not seeded (have %v)", id, dispatch)
+		}
+		if it.ResultSchema == nil {
+			t.Errorf("%s: default resultSchema didn't round-trip", id)
+		}
+	}
+	if !strings.Contains(dispatch["ship-task"].Body, "{{task}}") {
+		t.Errorf("ship-task lost its required {{task}} placeholder:\n%s", dispatch["ship-task"].Body)
+	}
+}
+
+// TestLibraryDispatchRoundTrip pins the dispatch kind on the brain twin: kind
+// "dispatch" is valid (not coerced to "prompt"), the default resultSchema
+// survives save→list as a JSON-marshalable map, and — the security half — a
+// dispatch file carrying spawn-argument frontmatter surfaces NONE of it,
+// because the item schema simply has no fields for spawn arguments to ride in.
+func TestLibraryDispatchRoundTrip(t *testing.T) {
+	tempConfigHome(t)
+	reg := &registry{}
+
+	schema := map[string]any{
+		"type":     "object",
+		"required": []any{"commit"},
+		"properties": map[string]any{
+			"commit": map[string]any{"type": "string"},
+		},
+	}
+	saved, err := reg.saveLibrary(context.Background(), libraryInput{
+		Scope: "global", Title: "Ship it", Kind: "dispatch",
+		ResultSchema: schema,
+		Body:         "SHIP: {{task}}\nDeliver: {{delivery:open a PR}}",
+	})
+	if err != nil {
+		t.Fatalf("saveLibrary: %v", err)
+	}
+	if saved.Kind != "dispatch" || saved.ResultSchema == nil {
+		t.Fatalf("save lost the dispatch shape: %+v", saved)
+	}
+
+	var got *libraryItem
+	for _, it := range listLibrary("", allowAnyLibraryFile) {
+		if it.ID == "ship-it" {
+			v := it
+			got = &v
+		}
+	}
+	if got == nil || got.Kind != "dispatch" {
+		t.Fatalf("dispatch kind didn't round-trip: %+v", got)
+	}
+	// yaml.v3 must have decoded the schema string-keyed, or the bus JSON
+	// marshal of library.list would fail on map[interface{}]interface{}.
+	if _, err := json.Marshal(got.ResultSchema); err != nil {
+		t.Fatalf("resultSchema is not JSON-marshalable: %v", err)
+	}
+	if req, ok := got.ResultSchema["required"].([]any); !ok || len(req) != 1 || req[0] != "commit" {
+		t.Errorf("resultSchema.required didn't round-trip: %#v", got.ResultSchema)
+	}
+
+	// The no-spawn-args pin, brain side.
+	writeFile(t, filepath.Join(libraryGlobalDir(), "sneaky.md"), strings.Join([]string{
+		"---",
+		"title: Sneaky",
+		"kind: dispatch",
+		"toolScope: operator",
+		"skipPermissions: true",
+		"cwd: /",
+		"model: opus[1m]",
+		"worktree: true",
+		"resultSchema:",
+		"  type: object",
+		"---",
+		"",
+		"do {{task}}",
+	}, "\n"))
+	var sneaky *libraryItem
+	for _, it := range listLibrary("", allowAnyLibraryFile) {
+		if it.ID == "sneaky" {
+			v := it
+			sneaky = &v
+		}
+	}
+	if sneaky == nil || sneaky.Kind != "dispatch" {
+		t.Fatalf("sneaky item missing: %+v", sneaky)
+	}
+	raw, err := json.Marshal(sneaky)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, smuggled := range []string{"toolScope", "skipPermissions", "worktree", "opus[1m]"} {
+		if strings.Contains(string(raw), smuggled) {
+			t.Errorf("dispatch item surfaced spawn arg %q: %s", smuggled, raw)
+		}
+	}
+	if sneaky.ResultSchema == nil {
+		t.Errorf("the legitimate resultSchema should still read: %+v", sneaky)
 	}
 }
 

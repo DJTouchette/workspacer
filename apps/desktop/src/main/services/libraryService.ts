@@ -41,7 +41,14 @@ import { publishToHub } from './hubClient';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 
 export type LibraryScope = 'global' | 'project' | 'claude';
-export type LibraryKind = 'prompt' | 'skill' | 'agent' | 'mcp' | 'command';
+/** 'dispatch' is a Fleet Manager dispatch template: template TEXT with named
+ *  placeholders plus an optional default resultSchema, rendered host-side at
+ *  spawn (agents.spawn {template, templateParams} → lib/dispatchTemplate.ts).
+ *  DELIBERATELY nothing else — no toolScope/cwd/model/worktree/skipPermissions
+ *  fields exist on the kind, so a template is pure text with no trust boundary:
+ *  every spawn argument still comes from the CALLER and passes the caller's
+ *  clamps, and a template file can never smuggle one. */
+export type LibraryKind = 'prompt' | 'skill' | 'agent' | 'mcp' | 'command' | 'dispatch';
 export type LibraryAction = 'insert' | 'spawn' | 'copy';
 
 /**
@@ -79,6 +86,10 @@ export interface LibraryItem {
   action?: LibraryAction;
   /** MCP server config — present only when kind === 'mcp'. */
   mcp?: McpServerConfig;
+  /** Default structured-result contract (a JSON Schema object) — present only
+   *  when kind === 'dispatch'. Applied to a template spawn unless the call
+   *  passes its own resultSchema. */
+  resultSchema?: Record<string, unknown>;
   /** Which root a claude-scoped item came from. Absent for global/project. */
   origin?: ClaudeOrigin;
   /** False when the item's file belongs to something else (a plugin package). */
@@ -392,13 +403,19 @@ function storedMcpAt(full: string): McpServerConfig | undefined {
 }
 
 function serialize(
-  item: Pick<LibraryItem, 'title' | 'kind' | 'description' | 'tags' | 'action' | 'mcp' | 'body'>,
+  item: Pick<
+    LibraryItem,
+    'title' | 'kind' | 'description' | 'tags' | 'action' | 'mcp' | 'resultSchema' | 'body'
+  >,
 ): string {
   const fm: Record<string, any> = { title: item.title, kind: item.kind };
   if (item.description) fm.description = item.description;
   if (item.tags && item.tags.length) fm.tags = item.tags;
   if (item.action) fm.action = item.action;
   if (item.kind === 'mcp' && item.mcp) fm.mcp = cleanMcp(item.mcp);
+  if (item.kind === 'dispatch' && item.resultSchema && Object.keys(item.resultSchema).length) {
+    fm.resultSchema = item.resultSchema;
+  }
   const head = yaml.dump(fm, { lineWidth: -1 }).trimEnd();
   return `---\n${head}\n---\n\n${item.body.replace(/\s+$/, '')}\n`;
 }
@@ -419,7 +436,10 @@ function readDir(dir: string, scope: LibraryScope, guard: LibraryFileGuard): Lib
       const { data, body } = parseFrontmatter(raw);
       const id = slug(trimSuffixFold(name, '.md'));
       const kind: LibraryKind =
-        data.kind === 'skill' || data.kind === 'agent' || data.kind === 'mcp'
+        data.kind === 'skill' ||
+        data.kind === 'agent' ||
+        data.kind === 'mcp' ||
+        data.kind === 'dispatch'
           ? data.kind
           : 'prompt';
       const action: LibraryAction | undefined =
@@ -430,6 +450,17 @@ function readDir(dir: string, scope: LibraryScope, guard: LibraryFileGuard): Lib
         kind === 'mcp' && data.mcp && typeof data.mcp === 'object'
           ? cleanMcp(data.mcp as McpServerConfig)
           : undefined;
+      // A dispatch item is TEXT plus this one default: any other frontmatter a
+      // template file carries (a toolScope, a cwd, a model, a skipPermissions…)
+      // is deliberately NOT modelled and never leaves this parser — spawn
+      // arguments have no field to ride in, so a template cannot smuggle them.
+      const resultSchema =
+        kind === 'dispatch' &&
+        data.resultSchema &&
+        typeof data.resultSchema === 'object' &&
+        !Array.isArray(data.resultSchema)
+          ? (data.resultSchema as Record<string, unknown>)
+          : undefined;
       items.push({
         id,
         scope,
@@ -439,6 +470,7 @@ function readDir(dir: string, scope: LibraryScope, guard: LibraryFileGuard): Lib
         tags: Array.isArray(data.tags) ? data.tags.map(String) : undefined,
         action,
         mcp,
+        resultSchema,
         body: body.replace(/^\s*\n/, ''),
         path: full,
       });
@@ -665,6 +697,7 @@ class LibraryService {
       tags?: string[];
       action?: LibraryAction;
       mcp?: McpServerConfig;
+      resultSchema?: Record<string, unknown>;
       /** Claude scope only — which root to write into ('project' | 'user'). */
       origin?: ClaudeOrigin;
       body: string;
@@ -709,6 +742,7 @@ class LibraryService {
       tags: input.tags,
       action: input.action,
       mcp: input.kind === 'mcp' && input.mcp ? cleanMcp(input.mcp) : undefined,
+      resultSchema: input.kind === 'dispatch' ? input.resultSchema : undefined,
       body: input.body,
       path: full,
     });
@@ -1064,6 +1098,105 @@ class LibraryService {
             'Working examples: the workspacer-plugins catalog (test-on-save = sidecar, cost-hud = webview).',
             '',
             'Tell me the plugin name and what it should do, and I will scaffold and implement it: {{?What should the plugin do?}}',
+          ].join('\n'),
+        }),
+        'utf-8',
+      );
+      // ── Dispatch templates (kind 'dispatch') — the Fleet Manager's reusable
+      // dispatch boilerplate, rendered host-side at spawn via
+      // agents.spawn {template, templateParams} (lib/dispatchTemplate.ts).
+      // {{task}} is REQUIRED on purpose: the manager must write the
+      // task-specific reasoning itself; only the framing is canned.
+      fs.writeFileSync(
+        path.join(dir, 'ship-task.md'),
+        serialize({
+          title: 'Ship task (dispatch)',
+          kind: 'dispatch',
+          description:
+            'Delivery-mode boilerplate + reporting contract for a worker that changes code. Fill {{task}}; {{delivery}} defaults to opening a PR.',
+          tags: ['dispatch', 'ship'],
+          resultSchema: {
+            type: 'object',
+            required: ['commit'],
+            properties: {
+              commit: { type: 'string' },
+              filesChanged: { type: 'array', items: { type: 'string' } },
+              checksRun: { type: 'array', items: { type: 'string' } },
+              caveats: { type: 'string' },
+            },
+          },
+          body: [
+            'SHIP TASK in {{cwd}}.',
+            '',
+            '{{task}}',
+            '',
+            'Ground rules:',
+            '- Work only inside this repo. Never push unless the task above says to.',
+            '- Deliver the result this way: {{delivery:open a pull request for the user to review; do not merge it yourself}}.',
+            '- Run the project’s own checks (build, tests, lint) on what you changed before reporting, and use the repo’s code-intelligence tools (CLAUDE.md / AGENTS.md names them) instead of blind grep.',
+            '',
+            'When you are done, end your turn with a short report: what you did, the commit id, the files you changed, which checks you ran, and any caveats. That final message reaches your manager automatically; do not try to message anyone, just finish.',
+          ].join('\n'),
+        }),
+        'utf-8',
+      );
+      fs.writeFileSync(
+        path.join(dir, 'scout-task.md'),
+        serialize({
+          title: 'Scout task (dispatch)',
+          kind: 'dispatch',
+          description:
+            'Read-only investigation framing + report-to-file contract. Fill {{task}}; {{reportPath}} defaults to a dated file under .workspacer/reports/.',
+          tags: ['dispatch', 'scout'],
+          resultSchema: {
+            type: 'object',
+            required: ['findings'],
+            properties: {
+              findings: { type: 'string' },
+              reportPath: { type: 'string' },
+              followUps: { type: 'array', items: { type: 'string' } },
+            },
+          },
+          body: [
+            'SCOUT TASK in {{cwd}} — investigate only. Do not edit source, run builds that write artifacts into the repo, or push anything.',
+            '',
+            '{{task}}',
+            '',
+            'Write your full findings to {{reportPath:.workspacer/reports/<YYYY-MM-DD>-<topic>.md}} so they outlive this session, then end your turn with a short summary: the answer, the report path, and any follow-ups you would dispatch. Your final message reaches your manager automatically; just finish.',
+          ].join('\n'),
+        }),
+        'utf-8',
+      );
+      fs.writeFileSync(
+        path.join(dir, 'two-explanations.md'),
+        serialize({
+          title: 'Two explanations (dispatch)',
+          kind: 'dispatch',
+          description:
+            'Diagnose-before-fixing scaffold: name two opposite explanations for a symptom and make the worker establish which holds before changing anything.',
+          tags: ['dispatch', 'diagnose'],
+          resultSchema: {
+            type: 'object',
+            required: ['verdict', 'evidence'],
+            properties: {
+              verdict: { type: 'string' },
+              evidence: { type: 'string' },
+              fix: { type: 'string' },
+              caveats: { type: 'string' },
+            },
+          },
+          body: [
+            'DIAGNOSE BEFORE FIXING, in {{cwd}}.',
+            '',
+            'The symptom: {{symptom}}',
+            '',
+            'There are two opposite explanations, with opposite fixes:',
+            '(A) {{explanationA}}',
+            '(B) {{explanationB}}',
+            '',
+            'Establish WHICH ONE holds before you change anything, and say what evidence settled it. If the evidence shows neither holds, that is a SUCCESS, not a failure: report what you found and stop rather than forcing a fix. Only then apply the fix that matches the verdict: {{fixInstruction:apply the smallest fix that matches the verdict, run the relevant checks, and report}}.',
+            '',
+            'End your turn with the verdict, the evidence, and what you did about it.',
           ].join('\n'),
         }),
         'utf-8',

@@ -42,6 +42,7 @@ import { DELEGATE_CATALOG_TO_BRAIN } from './brainDelegation';
 import { configService, getConfigDir } from './configService';
 import { listClaudeModels } from './claudeModels';
 import { libraryService, type ClaudeOrigin, type LibraryFileGuard } from './libraryService';
+import { renderDispatchTemplate } from '../lib/dispatchTemplate';
 import { sessionService } from './sessionService';
 import { sessionHistory } from './sessionHistory';
 import { layoutService } from './layoutService';
@@ -429,8 +430,10 @@ export function registerHubCapabilities(): void {
       yoloGranted,
       escalationScrubbed: hubScrubbed,
       worktree,
-      resultSchema,
-      message,
+      resultSchema: reqResultSchema,
+      message: reqMessage,
+      template,
+      templateParams,
     } = (params ?? {}) as {
       provider?: AgentProvider;
       /** Claude only: 'pty' | 'stream'. Omitted = the config default. */
@@ -510,7 +513,71 @@ export function registerHubCapabilities(): void {
        *  privilege to strip it from. What it removes is the round trip and the
        *  window in between, not a check. */
       message?: string;
+      /** DISPATCH TEMPLATE: the id of a library item of kind 'dispatch'
+       *  (project scope of `cwd`, or global). The host renders its body —
+       *  required placeholders filled from `templateParams`, hard error on any
+       *  left unfilled — into the worker's first message, and applies the
+       *  template's default resultSchema unless the call passes its own.
+       *
+       *  NOT AN AUTHORIZATION SURFACE, by construction rather than by scrub: a
+       *  dispatch item is TEXT plus a default schema and carries no spawn
+       *  fields at all (libraryService's parser models none), so rendering one
+       *  changes nothing about the caller's authority — toolScope, cwd,
+       *  worktree, skipPermissions and every clamp above still come from the
+       *  CALL, exactly as they would had the caller pasted the rendered text
+       *  into `message` itself. */
+      template?: string;
+      /** Values for the template's named placeholders. Required placeholders
+       *  refuse the spawn when unfilled (see lib/dispatchTemplate.ts). */
+      templateParams?: Record<string, string>;
     };
+    // ── Dispatch templates: resolve + render BEFORE anything else ─────────
+    // The rendered text becomes the first message; the template's default
+    // resultSchema applies only when the call brought none of its own. Every
+    // failure here is a REFUSED SPAWN, never a worker started on boilerplate:
+    // the whole point of a required placeholder is that a template renders
+    // finished-looking text, so a dispatch missing its task slot must fail
+    // loudly instead of dispatching without the reasoning only the caller can
+    // write (lib/dispatchTemplate.ts carries the rule).
+    let message = reqMessage;
+    let resultSchema = reqResultSchema;
+    if (typeof template === 'string' && template) {
+      if (typeof reqMessage === 'string' && reqMessage.trim()) {
+        throw new Error(
+          'agents.spawn: pass template OR message, not both — the template renders INTO the ' +
+            'first message; put the task-specific text in templateParams',
+        );
+      }
+      // Same two-step read guard as library.list (whose exposure this shares:
+      // it returns a file body, here into a worker's first message): the cwd
+      // against the browse roots, the derived file against the item roots.
+      const templateCwd = cwd ? assertPathAllowed('agents.spawn', cwd, browseRoots()) : undefined;
+      const item = libraryService
+        .list(templateCwd, guardLibraryFile('agents.spawn', templateCwd))
+        .find((i) => i.id === template && i.scope !== 'claude');
+      if (!item) {
+        throw new Error(
+          `agents.spawn: no library item "${template}" in ${
+            templateCwd ? `${templateCwd}/.workspacer/library or ` : ''
+          }the global library`,
+        );
+      }
+      if (item.kind !== 'dispatch') {
+        throw new Error(
+          `agents.spawn: library item "${template}" is kind '${item.kind}', not 'dispatch' — ` +
+            'only dispatch templates render into a spawn',
+        );
+      }
+      // {{cwd}} renders as the PROJECT directory the dispatch names — the
+      // worktree (if any) is carved below, after this, and is where the worker
+      // runs, not what the task is about.
+      message = renderDispatchTemplate(item.body, templateParams ?? {}, {
+        cwd: templateCwd ?? cwd,
+      });
+      if (resultSchema === undefined && item.resultSchema) resultSchema = item.resultSchema;
+    } else if (templateParams && Object.keys(templateParams).length) {
+      throw new Error('agents.spawn: templateParams was passed without a template to fill');
+    }
     // SECURITY: this capability is the REMOTE/web/MCP spawn path (the local
     // desktop spawns over IPC). Driving an agent is already code execution on
     // the host, but we refuse to let a remote caller silently auto-bypass every

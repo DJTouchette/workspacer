@@ -33,6 +33,11 @@ type Draft = {
   tags: string;
   action: LibraryAction;
   body: string;
+  /** Dispatch templates (kind 'dispatch'): the item's default resultSchema,
+   *  carried through the editor untouched so a title/body edit does not drop
+   *  it — the pane has no schema editor; edit the file (or library.save) to
+   *  change it. */
+  resultSchema?: Record<string, unknown>;
   // MCP fields (kind 'mcp') — flat strings for editing; parsed on save.
   mcpType: McpTransport;
   mcpCommand: string;
@@ -126,6 +131,7 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
       tags: (it.tags ?? []).join(', '),
       action: it.action ?? 'insert',
       body: it.body,
+      resultSchema: it.resultSchema,
       mcpType: m.url ? (m.type === 'sse' ? 'sse' : 'http') : 'stdio',
       mcpCommand: m.command ?? '',
       mcpArgs: (m.args ?? []).join('\n'),
@@ -158,6 +164,7 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
             .filter(Boolean),
       action: isClaude || isMcp ? undefined : draft.action,
       mcp: isMcp ? draftToMcp(draft) : undefined,
+      resultSchema: draft.kind === 'dispatch' ? draft.resultSchema : undefined,
       origin: isClaude ? draft.origin : undefined,
       body: draft.body,
       cwd,
@@ -228,6 +235,7 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
                 <option value="agent">agent</option>
                 {draft.scope === 'claude' && <option value="command">command</option>}
                 {draft.scope !== 'claude' && <option value="mcp">mcp</option>}
+                {draft.scope !== 'claude' && <option value="dispatch">dispatch</option>}
               </select>
             </Field>
             <Field label="Scope">
@@ -235,11 +243,15 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
                 value={draft.scope}
                 onChange={(e) => {
                   const scope = e.target.value as LibraryScope;
-                  // .claude stores skills, agents and commands, never prompts or
-                  // mcp; the workspacer library (global/project) is the inverse —
-                  // it has no 'command' kind. Coerce across the boundary.
+                  // .claude stores skills, agents and commands, never prompts,
+                  // mcp or dispatch templates; the workspacer library
+                  // (global/project) is the inverse — it has no 'command' kind.
+                  // Coerce across the boundary.
                   let kind = draft.kind;
-                  if (scope === 'claude' && (draft.kind === 'prompt' || draft.kind === 'mcp'))
+                  if (
+                    scope === 'claude' &&
+                    (draft.kind === 'prompt' || draft.kind === 'mcp' || draft.kind === 'dispatch')
+                  )
                     kind = 'skill';
                   else if (scope !== 'claude' && draft.kind === 'command') kind = 'prompt';
                   setDraft({ ...draft, scope, kind });
@@ -755,6 +767,7 @@ function kindBadge(kind: LibraryKind): React.CSSProperties {
     agent: { bg: 'rgba(74,222,128,0.18)', fg: 'var(--wks-success)' },
     mcp: { bg: 'rgba(251,146,60,0.18)', fg: 'var(--wks-warning)' },
     command: { bg: 'rgba(56,189,248,0.18)', fg: 'var(--wks-accent-text)' },
+    dispatch: { bg: 'rgba(192,132,252,0.12)', fg: 'var(--wks-purple)' },
   };
   const { bg, fg } = palette[kind] ?? palette.prompt;
   return {

@@ -154,6 +154,13 @@ const MANAGER_PREAMBLE =
   '"filesChanged":{"type":"array","items":{"type":"string"}},"checksRun":{"type":"array",' +
   '"items":{"type":"string"}},"caveats":{"type":"string"},"followUps":{"type":"array",' +
   '"items":{"type":"string"}}}}. The prose report still arrives either way.\n' +
+  'DISPATCH TEMPLATES: library items of kind "dispatch" (list_library shows them; starters ' +
+  'ship-task, scout-task, two-explanations) hold reusable dispatch framing plus a default ' +
+  'resultSchema. Pass "template":"<item id>" with "templateParams":{"task":"..."} instead of ' +
+  'composing message yourself: the host renders the template into the worker’s first message ' +
+  'and applies its default resultSchema unless you pass your own. An unfilled required ' +
+  'placeholder REFUSES the spawn — the task slot is yours to write, with the task-specific ' +
+  'reasoning only you can supply; the template is only the framing.\n' +
   '- list_providers {} to see which harnesses (claude/codex/opencode/pi) are installed ' +
   'before naming a non-default provider.\n' +
   '- send_message {"sessionId":"<worker id>","text":"..."} to drive a worker.\n' +

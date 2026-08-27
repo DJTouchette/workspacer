@@ -414,6 +414,8 @@ var spawnParamsDeclined = map[string]string{
 	"pluginTools":     "plugin tool grants are recorded on the session facade token, which headless cannot mint (see toolScope)",
 	"worktree":        "ship-task worktree isolation is created by the desktop (worktreeService.createWorktree) before the spawn; the headless brain has no equivalent worktree pool, so a worktree spawn it answers just runs in cwd",
 	"resultSchema":    "the structured-result contract has TWO desktop-owned halves and neither exists headless: the schema is compiled into the worker's spawn prompt (claudeSpawn's --append-system-prompt / managedSpawn's first-turn instructions) and it is READ BACK by supervisorNudge's worker-finished wake, which is a desktop session-store facility — the brain has no session store holding the schema and no wake to deliver the validated object on, so a brain-answered spawn would take the param and silently never honor it",
+	"template":        "dispatch-template rendering is desktop-owned (lib/dispatchTemplate.ts, invoked by hubCapabilities' agents.spawn): the brain could read the library item, but the template's default resultSchema rides the resultSchema machinery this table already declines, so a brain-rendered template would silently drop the schema half — decline the whole param loudly instead of honoring half of it",
+	"templateParams":  "companion to template (values for its placeholders); meaningless without it, declined with it",
 }
 
 // spawnParamsAhead is the mirror escape hatch: brain spawnParams the DESKTOP
