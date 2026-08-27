@@ -12,14 +12,17 @@ and the runbook is the only place the order is written down.
 |---|---|
 | `RUNBOOK.md` | The provisioning procedure, the persistence map, and what is *not* verified |
 | `BASE_IMAGE.md` | **The base image contract** — what it provides, what a downstream layer must not do, how to extend it, how it is named |
-| `Dockerfile` | Multi-stage: Go builders for `brain`/`workspacer`/`mcp`, Rust for `claudemon`, Debian trixie runtime with Tailscale and Claude Code. **No project toolchains** |
+| `Dockerfile` | Multi-stage: Go builders for `brain`/`workspacer`/`mcp`, Rust for `claudemon`, Debian trixie runtime with Tailscale and Claude Code. **No project toolchains.** `--build-arg WKS_INSTALL=artifact` swaps both builders for a release download — see [BASE_IMAGE.md § Build arguments](BASE_IMAGE.md#build-arguments) |
 | `example.Dockerfile` | A minimal project image `FROM` the base. Scaffolding that proves the base extends |
 | `Dockerfile.dockerignore` | Build context is the repo root; this keeps it to the two services |
 | `fly.toml` | Region, sizing, volume, restart policy, and the `auto_start_machines` wake backstop — each with the reasoning inline |
 | `entrypoint.sh` | PID 1: **replay the previous boot to stdout** → boot log → bootstrap → doorbell → tailscaled → `claudemon init` → claudemon → mcp facade → brain, plus signal handling and exit-reason recording |
 | `bootstrap.sh` | Prepares the volume **and decides FIRST RUN vs STATE LOSS per file**. Idempotent, correct on both an empty and a populated volume, and creates **zero symlinks** |
 | `test-bootstrap.sh` | 106 assertions over `bootstrap.sh`. No root, no Docker, no Fly, ~1 second |
-| `verify-image.sh` | Shipped into the image. The **last `RUN` of every build**, base and downstream: fails the build if anything was installed into `$HOME` |
+| `verify-image.sh` | Shipped into the image. The **last `RUN` of every build**, base and downstream: fails the build if anything was installed into `$HOME`, or if the image cannot say which commit it carries |
+| `../fetch-release.sh` | Shared with the hub image. Artifact mode's download + **drift guard**: fails the build when the bundle's stamp disagrees with the tag/sha asked for |
+| `../write-build-stamp.sh` | Shared with the hub image and the release workflow. The one writer of the `build-stamp` format |
+| `../test-fetch-release.sh` | 51 assertions over the artifact path. No root, no Docker, no network, ~1 second |
 
 ## This is a base image
 
@@ -47,6 +50,7 @@ is destroyed on every wake, silently.
 
 ```sh
 ./deploy/fly/node/test-bootstrap.sh
+./deploy/fly/test-fetch-release.sh
 python3 -c "import tomllib;tomllib.load(open('deploy/fly/node/fly.toml','rb'))"
 docker run --rm -v "$PWD/deploy/fly/node:/mnt:ro" -w /mnt koalaman/shellcheck:stable \
   -s bash -S style entrypoint.sh bootstrap.sh test-bootstrap.sh verify-image.sh

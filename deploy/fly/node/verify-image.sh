@@ -210,6 +210,68 @@ current_uid="$(id -u)"
 [ "$current_uid" = "0" ] || err "this layer is building as uid $current_uid, not root: do not put USER in a downstream Dockerfile, the entrypoint drops privilege with setpriv"
 
 # ---------------------------------------------------------------------------
+hdr 'The image can say what it is'
+# ---------------------------------------------------------------------------
+# Until this file existed there was NO honest answer to "which workspacer is on
+# that box". `workspacer`, `hub` and `brain` have no --version flag at all;
+# `claudemon --version` prints the Cargo version `0.1.0`, which has not moved in
+# the life of the project; and the `nightly` release tag is deleted and recreated
+# every night, so even naming the tag an image was built from names no commit.
+#
+# So the stamp is a contract file, checked here rather than trusted: an image
+# that cannot identify itself is one you cannot reason about at 2am, and the
+# whole point of artifact mode is that the bits came from somewhere else.
+# deploy/fly/write-build-stamp.sh owns the format.
+STAMP="${WKS_BUILD_STAMP:-/usr/local/share/workspacer/build-stamp}"
+STAMP_HUB="${WKS_BUILD_STAMP_HUB:-/usr/local/share/workspacer/build-stamp.hub}"
+
+stamp_val() { grep -E "^$2=" "$1" 2>/dev/null | head -n1 | cut -d= -f2-; }
+
+stamp_ok=0
+if [ -f "$STAMP" ]; then
+  for key in component install version tag commit built platform; do
+    if ! grep -qE "^$key=" "$STAMP"; then
+      err "$STAMP has no $key= line — the stamp is malformed, so it identifies nothing."
+      errmore "It is written by deploy/fly/write-build-stamp.sh; do not hand-edit it."
+      stamp_ok=1
+    fi
+  done
+  if [ "$stamp_ok" = 0 ]; then
+    ok "$STAMP is present and complete:"
+    sed 's/^/      /' "$STAMP"
+  fi
+else
+  err "$STAMP is missing. Nothing else in this image can say which commit it carries,"
+  errmore "so a deployed box would be unidentifiable. The Dockerfile must COPY it from"
+  errmore "the binaries stage — see deploy/fly/node/Dockerfile."
+  stamp_ok=1
+fi
+
+# The hub layer stamps separately, because it installs `hub` and /app while the
+# base installed the other four binaries. Two ARTIFACT installs that disagree
+# about the commit means the /app bundle and the daemons are from different
+# builds — which reads as a maddening runtime incompatibility and nothing else
+# would ever show it.
+if [ -f "$STAMP_HUB" ]; then
+  ok "$STAMP_HUB is present:"
+  sed 's/^/      /' "$STAMP_HUB"
+  base_install="$(stamp_val "$STAMP" install)"
+  hub_install="$(stamp_val "$STAMP_HUB" install)"
+  base_commit="$(stamp_val "$STAMP" commit)"
+  hub_commit="$(stamp_val "$STAMP_HUB" commit)"
+  if [ "$base_commit" != "$hub_commit" ]; then
+    if [ "$base_install" = release ] && [ "$hub_install" = release ]; then
+      err "STAMP DRIFT: the base installed commit $base_commit from a release and this"
+      errmore "layer installed $hub_commit. Two artifact installs must name the same"
+      errmore "release: build the base and the hub with the same --build-arg WKS_RELEASE_TAG"
+      errmore "(and pass --build-arg WKS_BASE pointing at the base you just built)."
+    else
+      warn "the base ($base_install, $base_commit) and this layer ($hub_install, $hub_commit) were built from different commits"
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 printf '\n'
 if [ "$warn_count" -gt 0 ]; then
   printf '%d warning(s)\n' "$warn_count" >&2

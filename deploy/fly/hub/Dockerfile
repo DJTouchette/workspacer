@@ -57,6 +57,34 @@ ARG WKS_BASE=workspacer-node-base:dev
 ARG WKS_WITH_WEBAPP=1
 
 # ---------------------------------------------------------------------------
+# SOURCE OR ARTIFACT — the same switch the base image carries.
+# ---------------------------------------------------------------------------
+# WKS_INSTALL=source (the DEFAULT, unchanged) compiles `hub` and runs the Vite
+# build for /app, below. WKS_INSTALL=artifact takes both out of the same
+# `workspacer-server-<platform>.tar.gz` the base image installs from — which
+# skips BOTH the Go stage and the web build, and the web build is by far the
+# slowest thing in this file.
+#
+#   docker build -f deploy/fly/node/Dockerfile --build-arg WKS_INSTALL=artifact \
+#     --build-arg WKS_RELEASE_TAG=nightly -t workspacer-node-base:nightly .
+#   docker build -f deploy/fly/hub/Dockerfile  --build-arg WKS_INSTALL=artifact \
+#     --build-arg WKS_RELEASE_TAG=nightly --build-arg WKS_BASE=workspacer-node-base:nightly \
+#     -t workspacer-hub:nightly .
+#
+# BUILD BOTH FROM THE SAME TAG. Nothing forces it — the base is an opaque image
+# reference here — so verify-image.sh compares the two stamps and fails the build
+# if two artifact installs disagree about the commit. A source base under an
+# artifact hub (or the reverse) is legal and only warns: that combination is
+# deliberate when you are iterating on one half.
+ARG WKS_INSTALL=source
+ARG WKS_RELEASE_TAG=nightly
+ARG WKS_RELEASE_SHA=
+ARG WKS_RELEASE_REPO=DJTouchette/workspacer
+ARG WKS_RELEASE_ASSET=workspacer-server-linux-x64.tar.gz
+ARG WKS_RELEASE_BASE_URL=
+ARG WKS_SOURCE_SHA=
+
+# ---------------------------------------------------------------------------
 FROM golang:1.25-trixie AS gobuild
 # The hub itself. The base builds brain/workspacer/claudemon from the same
 # module but not `hub`, because a worker node does not run one — the node's
@@ -125,6 +153,51 @@ RUN mkdir -p /out/web
 FROM webbuild-${WKS_WITH_WEBAPP} AS webapp
 
 # ---------------------------------------------------------------------------
+# THE TWO ARMS, exactly as in the base image: both end with /out/hub, /out/web
+# and /out/build-stamp, and the runtime stage below never learns which ran.
+# ---------------------------------------------------------------------------
+FROM golang:1.25-trixie AS hubfiles-source
+ARG WKS_SOURCE_SHA
+COPY --from=gobuild /out/hub /out/hub
+COPY --from=webapp  /out/web /out/web
+COPY deploy/fly/write-build-stamp.sh /usr/local/bin/write-build-stamp.sh
+RUN WKS_STAMP_COMPONENT=hub WKS_STAMP_INSTALL=source \
+    WKS_STAMP_COMMIT="${WKS_SOURCE_SHA}" WKS_STAMP_PLATFORM=linux-x64 \
+    bash /usr/local/bin/write-build-stamp.sh /out/build-stamp
+
+FROM debian:trixie-slim AS hubfiles-artifact
+ARG WKS_RELEASE_TAG
+ARG WKS_RELEASE_SHA
+ARG WKS_RELEASE_REPO
+ARG WKS_RELEASE_ASSET
+ARG WKS_RELEASE_BASE_URL
+ARG WKS_WITH_WEBAPP
+# Unpinned, per base rule 5: this stage is rebuilt to pick up Debian security
+# updates, and a pinned version breaks the moment the archive rotates.
+# hadolint ignore=DL3008
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
+COPY deploy/fly/fetch-release.sh /usr/local/bin/fetch-release.sh
+RUN --mount=type=secret,id=gh_token,required=false \
+    WKS_RELEASE_TAG="${WKS_RELEASE_TAG}" \
+    WKS_RELEASE_SHA="${WKS_RELEASE_SHA}" \
+    WKS_RELEASE_REPO="${WKS_RELEASE_REPO}" \
+    WKS_RELEASE_ASSET="${WKS_RELEASE_ASSET}" \
+    WKS_RELEASE_BASE_URL="${WKS_RELEASE_BASE_URL}" \
+    WKS_RELEASE_TOKEN_FILE=/run/secrets/gh_token \
+    WKS_RELEASE_REQUIRE="hub web/index.html build-stamp" \
+    WKS_RELEASE_CHMOD="hub" \
+    bash /usr/local/bin/fetch-release.sh /out
+# WKS_WITH_WEBAPP=0 saves nothing in artifact mode — the bundle already carries
+# the built app and the download is one file either way — but it must still MEAN
+# what it says, or an operator who asked for no /app quietly gets one.
+RUN if [ "${WKS_WITH_WEBAPP}" = "0" ]; then rm -rf /out/web && mkdir -p /out/web; fi
+
+# hadolint ignore=DL3006
+FROM hubfiles-${WKS_INSTALL} AS hubfiles
+
+# ---------------------------------------------------------------------------
 FROM ${WKS_BASE} AS runtime
 
 LABEL org.opencontainers.image.title="workspacer-hub" \
@@ -148,11 +221,24 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends bubblewrap && \
     rm -rf /var/lib/apt/lists/*
 
-COPY --from=gobuild /out/hub /usr/local/bin/hub
+COPY --from=hubfiles /out/hub /usr/local/bin/hub
 
 # /usr/local, never $HOME — $HOME is /data/home and the volume shadows it at
 # boot. verify-image.sh below enforces that; this is what obeying it looks like.
-COPY --from=webapp /out/web /usr/local/share/workspacer/web/
+COPY --from=hubfiles /out/web /usr/local/share/workspacer/web/
+
+# Beside the base's stamp, not over it: the base's `build-stamp` describes the
+# daemons it installed, this one describes `hub` and /app. Overwriting it would
+# erase the only record of where the other four binaries came from, and the two
+# CAN legitimately differ (an artifact hub on a source base while you iterate).
+# verify-image.sh reads both and fails when two ARTIFACT installs disagree.
+#
+# In ARTIFACT mode the two files are byte-identical — both layers installed the
+# same `workspacer-server-*` bundle, and fetch-release.sh copies that bundle's
+# stamp verbatim rather than rewriting its `component=` to say `hub`. Rewriting
+# it would make the file lie about where the bits came from to make the filename
+# read better. entrypoint.sh collapses the duplicate into one boot-log line.
+COPY --from=hubfiles /out/build-stamp /usr/local/share/workspacer/build-stamp.hub
 
 COPY deploy/fly/hub/entrypoint.sh      /usr/local/lib/wks-hub/entrypoint.sh
 COPY deploy/fly/hub/bootstrap.sh       /usr/local/lib/wks-hub/bootstrap.sh

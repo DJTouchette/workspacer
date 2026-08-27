@@ -61,6 +61,45 @@ Plus the operational toolkit the entrypoint, bootstrap and agents assume:
 | `/usr/local/lib/wks/test-bootstrap.sh` | 106 assertions over `bootstrap.sh` |
 | `/usr/local/lib/wks/verify-image.sh` | **the contract check.** See [the rules](#the-rules) |
 
+### Identity
+
+| Path | What |
+|---|---|
+| `/usr/local/share/workspacer/build-stamp` | **what this image is.** `key=value` lines: `component`, `install`, `version`, `tag`, `commit`, `built`, `platform`, `run` |
+
+It is a contract file, not a convenience. Nothing else on a node can answer
+"which workspacer is this": `workspacer`, `hub` and `brain` have no `--version`
+flag, and `claudemon --version` prints the Cargo version `0.1.0`, which has not
+moved in the life of the project. `verify-image.sh` fails the build if the stamp
+is missing or incomplete, and `entrypoint.sh` prints it on every boot, so `fly
+logs` answers the question without a shell on the machine.
+
+`install=source` means the daemons were compiled by the docker build that
+installed them; `install=release` means they came out of a published
+`workspacer-server-*` release bundle (see [build arguments](#build-arguments)).
+A downstream layer that installs workspacer components of its own should write
+its own stamp *beside* this one rather than over it — the hub image does exactly
+that, at `build-stamp.hub`.
+
+## Build arguments
+
+| Arg | Default | What |
+|---|---|---|
+| `WKS_INSTALL` | `source` | `source` compiles the daemons from the worktree; `artifact` downloads them from a GitHub release and runs **no Go or Rust stage at all** |
+| `WKS_RELEASE_TAG` | `nightly` | artifact mode: which release |
+| `WKS_RELEASE_SHA` | *(unset)* | artifact mode: the commit the release must carry. Worth passing — `nightly` is a mutable tag |
+| `WKS_RELEASE_REPO` | `DJTouchette/workspacer` | artifact mode: where the release lives |
+| `WKS_RELEASE_ASSET` | `workspacer-server-linux-x64.tar.gz` | artifact mode: which platform bundle |
+| `WKS_RELEASE_BASE_URL` | GitHub's release-download URL | artifact mode: override the download host |
+| `WKS_SOURCE_SHA` | *(unset → `unknown`)* | source mode: the commit to record in the stamp. `**/.git` is excluded from the build context on purpose, so nothing can infer it — `preflight.sh` passes `git rev-parse HEAD` |
+| `CLAUDE_CODE_VERSION` | `latest` | pin Claude Code for a reproducible image |
+| `WKS_UID` / `WKS_GID` | `10001` | the agent user. Changing these breaks the volume contract — see rule 2 |
+
+Artifact mode **fails the build loudly** when the downloaded bundle's stamp
+disagrees with the tag or sha that was asked for, and when the bundle carries no
+stamp at all. `deploy/fly/fetch-release.sh` is where that logic and its argument
+live; `deploy/fly/RUNBOOK.md` § D1b is the operator-facing form.
+
 ### User
 
 `wks`, **uid 10001, gid 10001**, home `/data/home`, shell `/bin/bash`, created

@@ -1008,6 +1008,100 @@ until Friday.
 **Deploying the node ends whatever was running on it.** It replaces the machine.
 Time it like a restart, not like a background task.
 
+### D1b. The same deploy, from a release artifact instead of a compile
+
+Everything above compiles brain, workspacer, mcp, claudemon, `hub` and the /app
+web bundle on your laptop, every time. CI already built all of that — the
+`nightly` prerelease and every `v*` release carry
+`workspacer-server-linux-x64.tar.gz`, which holds exactly the files these two
+images install. `WKS_INSTALL=artifact` downloads that instead of rebuilding it.
+
+**Which one to use.** Source mode when the code you want on the box is the code
+in your worktree — iterating on a daemon, or shipping a commit that was never
+released. Artifact mode when you want a *published build* on the box: it is the
+same bits every other client got, it needs no Go/Rust/node toolchain at all, and
+it turns a ten-minute image build into about twenty seconds. Source mode stays
+the default precisely so nothing above this line changes.
+
+```sh
+# 1. Decide which release. `nightly` is rolled every night, so pin the commit
+#    too — see "SHA and tag" below for why this line is not optional.
+TAG=nightly
+SHA=$(gh release view "$TAG" --repo DJTouchette/workspacer --json targetCommitish -q .targetCommitish)
+
+# 2. The base, then the hub FROM it. Build both from the SAME tag.
+docker build -f deploy/fly/node/Dockerfile \
+  --build-arg WKS_INSTALL=artifact \
+  --build-arg WKS_RELEASE_TAG="$TAG" --build-arg WKS_RELEASE_SHA="$SHA" \
+  -t "workspacer-node-base:$TAG" .
+
+docker build -f deploy/fly/hub/Dockerfile \
+  --build-arg WKS_INSTALL=artifact \
+  --build-arg WKS_RELEASE_TAG="$TAG" --build-arg WKS_RELEASE_SHA="$SHA" \
+  --build-arg WKS_BASE="workspacer-node-base:$TAG" \
+  -t "workspacer-hub:$TAG" .
+
+# 3. Deploy the images you just built. --local-only as always, for the same
+#    reason as B4/B6 and D1: it fails loudly rather than quietly.
+fly deploy --config deploy/fly/hub/fly.toml  --app workspacer-hub \
+  --image "workspacer-hub:$TAG"  --local-only
+fly deploy --config deploy/fly/node/fly.toml --app workspacer-node \
+  --image "workspacer-node-base:$TAG" --local-only
+
+fly machine status <machine_id> --app workspacer-node   # D1's habit, unchanged
+```
+
+Build args, all optional except the tag: `WKS_RELEASE_TAG` (default `nightly`),
+`WKS_RELEASE_SHA`, `WKS_RELEASE_REPO`, `WKS_RELEASE_ASSET` (pick another
+platform's bundle), `WKS_RELEASE_BASE_URL` (point somewhere other than GitHub).
+A private repo takes a token as a BuildKit secret, never a build arg, which is
+recorded in the image history: `--secret id=gh_token,src=<file>`.
+
+**Preflight still applies, and still builds from source.** `preflight.sh` is
+about *this worktree* — it is the check that the code you are holding assembles
+and boots. Run it before an artifact deploy too: it also runs the artifact
+mode's own 51-assertion suite and, if docker can reach a fixture server, rebuilds
+the node image in artifact mode to prove the drift guard fires.
+`./deploy/fly/preflight.sh artifact` runs just that part.
+
+**SHA and tag: why the build refuses rather than warns.** A release tag is
+mutable, and `nightly` is deliberately deleted and recreated against a new commit
+every night. So "I asked for `nightly` and the download succeeded" tells you
+nothing about what is now in the image — and neither does the box afterwards:
+`workspacer`, `hub` and `brain` have no `--version` flag at all, and `claudemon
+--version` prints the Cargo version `0.1.0`, which has not moved in the life of
+the project.
+
+So the release bundle carries a `build-stamp` file, and the build **fails**, with
+`RELEASE DRIFT` or `COMMIT DRIFT` in the log, when it disagrees with the tag or
+sha you asked for. A release published before the stamp existed also fails — it
+is exactly the unidentifiable case the stamp is for; build that commit from
+source instead.
+
+**Mapping a box back to a commit, and a commit back to a release.** The stamp is
+installed at `/usr/local/share/workspacer/build-stamp` (the daemons) and, on the
+hub, `/usr/local/share/workspacer/build-stamp.hub` (`hub` + /app). Both are
+printed by the entrypoint on **every boot**, so the usual case needs no shell on
+the machine at all:
+
+```sh
+fly logs --app workspacer-node | grep 'entrypoint:   build:'
+#   build: component=server install=release version=0.151.0-nightly.202608270800
+#          tag=nightly commit=ccb44ccf… built=2026-08-27T08:00:00Z platform=linux-x64 run=1234
+
+# or, on a machine you can reach:
+fly ssh console --app workspacer-node -C 'cat /usr/local/share/workspacer/build-stamp'
+
+# and back the other way — which release shipped that commit:
+gh release view nightly --repo DJTouchette/workspacer --json tagName,targetCommitish,publishedAt
+gh release list --repo DJTouchette/workspacer --limit 20
+```
+
+`install=source` means the image was compiled from a worktree (the `commit=` is
+whatever `preflight.sh` passed as `WKS_SOURCE_SHA`, or `unknown` if a bare
+`docker build` skipped it). `install=release` means it came off a published
+release, and the `tag=` line is the one to hand to `gh release view`.
+
 ## D2. Rotating each credential
 
 Four procedures, one per credential that can go bad. All of them assume you have
@@ -1335,6 +1429,26 @@ end of this section.
 - **The hub's TLS certificate is real.** Its first boot fetched a **dns-01**
   Let's Encrypt certificate for the MagicDNS name, and the second boot served the
   cached one instead of re-issuing.
+- **Artifact mode (`WKS_INSTALL=artifact`), walked on 2026-08-27** against a
+  fixture release served over the docker bridge — not a published one, because
+  the release workflow's stamping step ships with this change and no live release
+  carries a stamp yet. What ran for real: the node image built in **11 seconds**
+  with **neither the `gobuild` nor the `rustbuild` stage executing** (asserted
+  from a `--no-cache` build log, not inferred from the Dockerfile); the hub image
+  built the same way, skipping the Vite build; both passed the unmodified
+  `verify-image.sh`; and **both reached `BOOT COMPLETE`** under the full boot
+  rehearsal, refusal, last-exit and jobs sections above, with the same results as
+  the source images. The drift guard was made to FIRE three ways: a bundle that
+  downloads cleanly but claims a different tag (`RELEASE DRIFT`), the right tag
+  built from the wrong commit (`COMMIT DRIFT`), and an artifact hub layered on an
+  artifact base from a different commit (`STAMP DRIFT`, from `verify-image.sh`).
+  All three fail the build with the reason on stdout.
+- **The build stamp reaches the boot log.** Every image now prints one
+  `entrypoint:   build: …` line before anything else runs — verified on the
+  source node (`install=source commit=ccb44ccf…`), the artifact node, and the
+  artifact hub. This is the first honest version answer this deployment has had:
+  `workspacer`, `hub` and `brain` still have no `--version` flag, and
+  `claudemon --version` still prints `0.1.0`.
 
 **Corrected by the first real deploy, on 2026-08-25:** kernel-mode Tailscale is
 settled (open question 2 below), `fly deploy` exits 0 on a node that cannot boot
@@ -1406,3 +1520,15 @@ Stated plainly so nobody mistakes silence for verification.
 13. **Upload time for the two deploys.** Unmeasured, and it is the dominant term
     in the wall clock for Part B.
 14. **arm64, and a Fly remote builder.** Both builds were amd64 and local.
+15. **Artifact mode against a REAL GitHub release.** Everything above was proved
+    against a fixture served locally. The download path itself (`curl` to
+    `https://github.com/…/releases/download/<tag>/…`, redirects, anonymous access
+    to a public release, rate limits) has not been exercised, and cannot be until
+    a release built by the stamping step exists — **today's `nightly` carries no
+    `build-stamp` and no `mcp`, so artifact mode correctly refuses it.** The first
+    nightly published after this change lands is what unblocks it.
+16. **A box actually deployed from an artifact image.** The images boot under the
+    rehearsal; that is assembly plus a local boot, not a Fly machine on a volume
+    with a tailnet. `fly deploy --image` with a locally built tag has also not
+    been walked — D1b writes it down, D1's warnings about what a green deploy does
+    and does not prove apply unchanged.

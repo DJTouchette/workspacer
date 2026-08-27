@@ -13,7 +13,7 @@ then waking from a phone only works while the desktop is on.
 | File | What it is |
 |---|---|
 | `RUNBOOK.md` | Provisioning, the reachability argument, the persistence map, and what is *not* verified |
-| `Dockerfile` | A short layer on the node base: the `hub` binary, `dist/web`, bubblewrap, and this entrypoint |
+| `Dockerfile` | A short layer on the node base: the `hub` binary, `dist/web`, bubblewrap, and this entrypoint. `--build-arg WKS_INSTALL=artifact` takes `hub` + `web` out of a release bundle instead, skipping both the Go stage and the (slow) Vite build |
 | `Dockerfile.dockerignore` | Build context is the repo root; this keeps it to `services/hub` + `apps/desktop` |
 | `fly.toml` | Region, sizing, volume, `restart.policy = "always"`, and **no `[http_service]`** — each with the reasoning inline |
 | `entrypoint.sh` | PID 1: boot log → bootstrap → tailscaled → `tailscale serve` → `hub`, plus a loopback health watchdog |
@@ -59,6 +59,19 @@ docker run --rm -v "$PWD/deploy/fly/hub:/mnt:ro" -w /mnt koalaman/shellcheck:sta
 docker run --rm -i hadolint/hadolint hadolint --failure-threshold info - < deploy/fly/hub/Dockerfile
 docker build --check -f deploy/fly/hub/Dockerfile .
 ```
+
+Artifact mode has its own offline suite and its own preflight stage — see
+[`../node/BASE_IMAGE.md` § Build arguments](../node/BASE_IMAGE.md#build-arguments)
+and `deploy/fly/RUNBOOK.md` § D1b:
+
+```sh
+./deploy/fly/test-fetch-release.sh   # 51 assertions, no network
+./deploy/fly/preflight.sh artifact   # rebuilds the node image from a fixture release
+```
+
+Build the base and the hub from the **same** `WKS_RELEASE_TAG`. Nothing forces
+it — `WKS_BASE` is an opaque image reference — so `verify-image.sh` compares the
+two stamps and fails the build when two artifact installs name different commits.
 
 **This image has been built and smoke-tested**, unlike anything else under
 `deploy/fly/`: the build passes the base's `verify-image.sh`, and the hub has
