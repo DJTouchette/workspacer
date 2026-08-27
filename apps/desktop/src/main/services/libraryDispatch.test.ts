@@ -161,7 +161,7 @@ describe('dispatch items — seeding', () => {
     );
     // Re-seed into the fresh configDir via a private call: the constructor ran
     // once at import, so exercise the seeder directly.
-    (libraryService as unknown as { seedGlobalIfEmpty: () => void }).seedGlobalIfEmpty();
+    (libraryService as unknown as { seedGlobalStarters: () => void }).seedGlobalStarters();
     const names = fs.readdirSync(seedDir);
     for (const want of ['ship-task.md', 'scout-task.md', 'two-explanations.md']) {
       expect(names).toContain(want);

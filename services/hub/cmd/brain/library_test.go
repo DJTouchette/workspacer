@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // firstNonEmpty backs the library title/name fallback and must trim the SAME
@@ -51,9 +52,27 @@ func TestSlugLibrary(t *testing.T) {
 func TestLibrarySeedAndList(t *testing.T) {
 	tempConfigHome(t)
 
+	// The seed count is pinned to starterItems() rather than to a literal, so
+	// adding a starter is one edit (the slice + its id) instead of three. What
+	// still has to match by hand is the TS twin — libraryService.ts starters().
+	want := len(starterItems())
+	if want != 7 {
+		t.Fatalf("starterItems() has %d entries; the TS twin ships 7 — keep them in step", want)
+	}
+	// Every starter must be paired with a NON-EMPTY, UNIQUE id: starterItems
+	// pairs two parallel slices positionally, so a short ids list silently drops
+	// starters off the end (which is how a whole seed can go missing).
+	seenIDs := map[string]bool{}
+	for _, s := range starterItems() {
+		if s.ID == "" || seenIDs[s.ID] {
+			t.Fatalf("starter %q has an empty or duplicate id", s.Item.Title)
+		}
+		seenIDs[s.ID] = true
+	}
+
 	items := listLibrary("", allowAnyLibraryFile)
-	if len(items) != 7 {
-		t.Fatalf("expected 7 seeded items, got %d", len(items))
+	if len(items) != want {
+		t.Fatalf("expected %d seeded items, got %d", want, len(items))
 	}
 	// Sorted by title: "Careful refactor…", "Context7 (MCP)", "Make a workspacer
 	// plugin…", "Scout task…", "Ship task…", "Summarize & plan", "Two explanations…".
@@ -89,6 +108,162 @@ func TestLibrarySeedAndList(t *testing.T) {
 	}
 	if !strings.Contains(dispatch["ship-task"].Body, "{{task}}") {
 		t.Errorf("ship-task lost its required {{task}} placeholder:\n%s", dispatch["ship-task"].Body)
+	}
+}
+
+// suppressLibrarySeed writes the seed marker with every starter id already
+// recorded, so seedLibraryStarters is a no-op for the rest of the test.
+//
+// Needed by any test that wants the global library to hold EXACTLY what it put
+// there: listLibrary seeds on every call, and seeding is per-item now, so a
+// populated-but-unseeded dir legitimately gains the starters it has never been
+// offered. Before, a single .md was enough to switch seeding off entirely.
+func suppressLibrarySeed(t *testing.T) {
+	t.Helper()
+	ids := make([]string, 0, len(starterItems()))
+	for _, s := range starterItems() {
+		ids = append(ids, s.ID)
+	}
+	blob, err := json.Marshal(struct {
+		Seeded []string `json:"seeded"`
+	}{ids})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(librarySeedStatePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(librarySeedStatePath(), blob, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestLibrarySeedIsAdditivePerItem is the regression for the bug this replaced:
+// seeding used to no-op the moment the global dir held ANY .md, so every
+// starter added after a user's first run was invisible to every existing
+// install. A starter that has never been seeded now lands even in a populated
+// library — while the pre-marker four, whose absence means the user deleted
+// them, stay gone.
+func TestLibrarySeedIsAdditivePerItem(t *testing.T) {
+	tempConfigHome(t)
+	dir := libraryGlobalDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A pre-marker install: two of the four originals kept, two deleted, no
+	// marker file, and none of the dispatch templates (they postdate it). This
+	// is the real shape of the user's library that surfaced the bug.
+	for _, name := range []string{"summarize-and-plan.md", "careful-refactor.md"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("---\ntitle: Mine\nkind: prompt\n---\n\nedited by hand\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	seedLibraryStarters()
+
+	names := map[string]bool{}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		names[e.Name()] = true
+	}
+	for _, want := range []string{"ship-task.md", "scout-task.md", "two-explanations.md"} {
+		if !names[want] {
+			t.Errorf("starter %q was never seeded into a non-empty library", want)
+		}
+	}
+	// The two the user deleted are NOT resurrected: they shipped before the
+	// marker, so their absence from a populated library is a deletion.
+	for _, gone := range []string{"context7-mcp.md", "make-workspacer-plugin.md"} {
+		if names[gone] {
+			t.Errorf("%q was resurrected — a deleted pre-marker starter must stay deleted", gone)
+		}
+	}
+	// And an existing file is never overwritten, even though the marker had
+	// never seen it.
+	body, err := os.ReadFile(filepath.Join(dir, "careful-refactor.md"))
+	if err != nil || !strings.Contains(string(body), "edited by hand") {
+		t.Errorf("the user's edited starter was overwritten: %q", string(body))
+	}
+}
+
+// TestLibrarySeedNeverResurrectsDeleted is the marker's whole reason to exist:
+// once a starter has been seeded, deleting it is permanent. Without the marker
+// the only signal is "is the file there", which cannot tell a deletion from a
+// starter the install has never been offered.
+func TestLibrarySeedNeverResurrectsDeleted(t *testing.T) {
+	tempConfigHome(t)
+	dir := libraryGlobalDir()
+
+	seedLibraryStarters() // first run: the full set + the marker
+	if _, err := os.Stat(filepath.Join(dir, "ship-task.md")); err != nil {
+		t.Fatalf("first run did not seed ship-task: %v", err)
+	}
+	if err := os.Remove(filepath.Join(dir, "ship-task.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	seedLibraryStarters()
+
+	if _, err := os.Stat(filepath.Join(dir, "ship-task.md")); err == nil {
+		t.Error("a deleted starter came back on the next start")
+	}
+	// Deleting EVERY starter must not re-run the first-run seed either: an empty
+	// dir with a marker is a user who cleared their library on purpose.
+	for _, s := range starterItems() {
+		_ = os.Remove(filepath.Join(dir, s.ID+".md"))
+	}
+	seedLibraryStarters()
+	if items := listLibrary("", allowAnyLibraryFile); len(items) != 0 {
+		t.Errorf("a deliberately emptied library was re-seeded with %d items", len(items))
+	}
+}
+
+// TestLibrarySeedIsIdempotent — running twice seeds nothing the second time,
+// and the second pass does not rewrite the files it already wrote (listLibrary
+// calls the seeder on EVERY call, so a rewriting seeder would churn the user's
+// library on every list).
+func TestLibrarySeedIsIdempotent(t *testing.T) {
+	tempConfigHome(t)
+	dir := libraryGlobalDir()
+
+	seedLibraryStarters()
+	first := listLibrary("", allowAnyLibraryFile)
+	stamps := map[string]time.Time{}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		stamps[e.Name()] = info.ModTime()
+	}
+
+	seedLibraryStarters()
+
+	if second := listLibrary("", allowAnyLibraryFile); len(second) != len(first) {
+		t.Errorf("second seed changed the item count: %d -> %d", len(first), len(second))
+	}
+	entries, err = os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != len(stamps) {
+		t.Errorf("second seed changed the file count: %d -> %d", len(stamps), len(entries))
+	}
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if was, ok := stamps[e.Name()]; !ok || !info.ModTime().Equal(was) {
+			t.Errorf("%s was rewritten by an idempotent second seed", e.Name())
+		}
 	}
 }
 

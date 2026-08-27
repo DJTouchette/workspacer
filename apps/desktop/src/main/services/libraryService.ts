@@ -620,6 +620,30 @@ function serializeClaude(
   return `---\n${head}\n---\n\n${body.replace(/\s+$/, '')}\n`;
 }
 
+/** The frontmatter+body shape [`serialize`] persists — what a starter item is. */
+type SerializableItem = Parameters<typeof serialize>[0];
+
+/**
+ * The starters that shipped BEFORE `library-seeded.json` existed, and the only
+ * reason that file needs a bootstrap rule at all.
+ *
+ * An install predating the marker has demonstrably been offered these four (the
+ * old all-or-nothing seeder wrote them on its first run or not at all), so one
+ * of them missing from a non-empty library means the user deleted it — and the
+ * seeder must not put it back. A starter NOT in this list postdates the marker,
+ * so it has never been offered to such an install and its absence means nothing.
+ *
+ * Frozen by definition: never add to it. A new starter belongs in `starters()`
+ * only, which is exactly what makes it seed for existing users.
+ * The Go twin's `preMarkerStarterIDs` is the same list.
+ */
+const PRE_MARKER_STARTER_IDS = [
+  'summarize-and-plan',
+  'careful-refactor',
+  'context7-mcp',
+  'make-workspacer-plugin',
+];
+
 class LibraryService {
   private win: BrowserWindow | null = null;
   private watchers = new Map<string, fs.FSWatcher>();
@@ -627,7 +651,7 @@ class LibraryService {
   private debounce: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
-    this.seedGlobalIfEmpty();
+    this.seedGlobalStarters();
   }
 
   setMainWindow(win: BrowserWindow): void {
@@ -980,29 +1004,29 @@ class LibraryService {
     }, 150);
   }
 
-  // ── first-run seed ──────────────────────────────────────────────────────────
+  // ── starter items + additive seeding ────────────────────────────────────────
 
-  private seedGlobalIfEmpty(): void {
-    const dir = globalDir();
-    try {
-      if (fs.existsSync(dir) && fs.readdirSync(dir).some((n) => n.toLowerCase().endsWith('.md')))
-        return;
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(
-        path.join(dir, 'summarize-and-plan.md'),
-        serialize({
+  /**
+   * The starter library, by file id (`<id>.md`). The Go twin ships the same set
+   * in the same order (cmd/brain library.go `starterItems`); the seed-count
+   * tests on both sides pin that they agree.
+   */
+  private starters(): Array<{ id: string; item: SerializableItem }> {
+    return [
+      {
+        id: 'summarize-and-plan',
+        item: {
           title: 'Summarize & plan',
           kind: 'prompt',
           description: 'Have the agent summarize the codebase area and propose a plan.',
           tags: ['planning'],
           action: 'insert',
           body: 'Summarize how `{{cwd}}` is structured at a high level, then propose a step-by-step plan for: {{?What do you want to do?}}\n\nList the files you would touch and call out the riskiest step before writing any code.',
-        }),
-        'utf-8',
-      );
-      fs.writeFileSync(
-        path.join(dir, 'careful-refactor.md'),
-        serialize({
+        },
+      },
+      {
+        id: 'careful-refactor',
+        item: {
           title: 'Careful refactor (skill)',
           kind: 'skill',
           description: 'A disciplined refactor workflow: small steps, tests between each.',
@@ -1019,12 +1043,11 @@ class LibraryService {
             '',
             'Begin by mapping the change surface for: {{?Target to refactor?}}',
           ].join('\n'),
-        }),
-        'utf-8',
-      );
-      fs.writeFileSync(
-        path.join(dir, 'context7-mcp.md'),
-        serialize({
+        },
+      },
+      {
+        id: 'context7-mcp',
+        item: {
           title: 'Context7 (MCP)',
           kind: 'mcp',
           description:
@@ -1032,12 +1055,11 @@ class LibraryService {
           tags: ['docs', 'example'],
           mcp: { type: 'stdio', command: 'npx', args: ['-y', '@upstash/context7-mcp'] },
           body: 'An example MCP server entry. Edit the command/args (or switch to an http URL), then pick it in the spawn dialog to load it for a session.',
-        }),
-        'utf-8',
-      );
-      fs.writeFileSync(
-        path.join(dir, 'make-workspacer-plugin.md'),
-        serialize({
+        },
+      },
+      {
+        id: 'make-workspacer-plugin',
+        item: {
           title: 'Make a workspacer plugin (skill)',
           kind: 'skill',
           description:
@@ -1099,17 +1121,16 @@ class LibraryService {
             '',
             'Tell me the plugin name and what it should do, and I will scaffold and implement it: {{?What should the plugin do?}}',
           ].join('\n'),
-        }),
-        'utf-8',
-      );
+        },
+      },
       // ── Dispatch templates (kind 'dispatch') — the Fleet Manager's reusable
       // dispatch boilerplate, rendered host-side at spawn via
       // agents.spawn {template, templateParams} (lib/dispatchTemplate.ts).
       // {{task}} is REQUIRED on purpose: the manager must write the
       // task-specific reasoning itself; only the framing is canned.
-      fs.writeFileSync(
-        path.join(dir, 'ship-task.md'),
-        serialize({
+      {
+        id: 'ship-task',
+        item: {
           title: 'Ship task (dispatch)',
           kind: 'dispatch',
           description:
@@ -1137,12 +1158,11 @@ class LibraryService {
             '',
             'When you are done, end your turn with a short report: what you did, the commit id, the files you changed, which checks you ran, and any caveats. That final message reaches your manager automatically; do not try to message anyone, just finish.',
           ].join('\n'),
-        }),
-        'utf-8',
-      );
-      fs.writeFileSync(
-        path.join(dir, 'scout-task.md'),
-        serialize({
+        },
+      },
+      {
+        id: 'scout-task',
+        item: {
           title: 'Scout task (dispatch)',
           kind: 'dispatch',
           description:
@@ -1164,12 +1184,11 @@ class LibraryService {
             '',
             'Write your full findings to {{reportPath:.workspacer/reports/<YYYY-MM-DD>-<topic>.md}} so they outlive this session, then end your turn with a short summary: the answer, the report path, and any follow-ups you would dispatch. Your final message reaches your manager automatically; just finish.',
           ].join('\n'),
-        }),
-        'utf-8',
-      );
-      fs.writeFileSync(
-        path.join(dir, 'two-explanations.md'),
-        serialize({
+        },
+      },
+      {
+        id: 'two-explanations',
+        item: {
           title: 'Two explanations (dispatch)',
           kind: 'dispatch',
           description:
@@ -1198,8 +1217,89 @@ class LibraryService {
             '',
             'End your turn with the verdict, the evidence, and what you did about it.',
           ].join('\n'),
-        }),
-        'utf-8',
+        },
+      },
+    ];
+  }
+
+  /**
+   * Where "we have already offered this starter" is recorded: a small JSON file
+   * beside the library dir, in the same shape as the config store's other
+   * sidecars (peers.json, claude-profiles.json, tui-pins.json).
+   *
+   * It exists because the only other available signal — is the file on disk? —
+   * cannot tell "you have never been offered this" apart from "I deleted it on
+   * purpose", and the seeder must never undo the second one. The Go twin
+   * (cmd/brain library.go `librarySeedStatePath`) reads and writes this same
+   * file with the same key, so whichever process runs first records for both.
+   */
+  private seedStatePath(): string {
+    return path.join(getConfigDir(), 'library-seeded.json');
+  }
+
+  /** The ids ever seeded, or null when the marker has never been written.
+   *  Unreadable or malformed reads as null: re-offering the post-marker
+   *  starters is recoverable, and the bootstrap below still protects the
+   *  pre-marker four from being resurrected. */
+  private readSeedState(): Set<string> | null {
+    try {
+      const raw = JSON.parse(fs.readFileSync(this.seedStatePath(), 'utf-8')) as {
+        seeded?: unknown;
+      };
+      if (!Array.isArray(raw.seeded)) return null;
+      return new Set(raw.seeded.map(String));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Seed every starter that has never been seeded and is not already on disk.
+   *
+   * This was `seedGlobalIfEmpty`, which returned the moment the global dir held
+   * ANY .md — so a starter added after a user's first run (the three dispatch
+   * templates, most recently) stayed invisible forever to every existing
+   * install, which is the entire installed base. Seeding is per-ITEM now.
+   *
+   * Two rules it must not break:
+   *  - Never overwrite a file that exists — the user may have edited it.
+   *  - Never resurrect one the user DELETED. That is what the marker buys: an
+   *    id recorded there is never written again, however absent it is.
+   *
+   * A genuinely empty dir still gets the whole set, exactly as before.
+   */
+  private seedGlobalStarters(): void {
+    const dir = globalDir();
+    try {
+      const recorded = this.readSeedState();
+      // No marker yet: a NON-EMPTY library is a pre-marker install, so treat the
+      // starters that shipped before the marker as already offered (see
+      // PRE_MARKER_STARTER_IDS). An empty one is a true first run.
+      const seeded =
+        recorded ??
+        new Set<string>(
+          fs.existsSync(dir) && fs.readdirSync(dir).some((n) => n.toLowerCase().endsWith('.md'))
+            ? PRE_MARKER_STARTER_IDS
+            : [],
+        );
+      const fresh = this.starters().filter((s) => !seeded.has(s.id));
+      // Idempotent fast path: every run after the first has nothing to seed and
+      // nothing to record, and touches no files at all.
+      if (!fresh.length && recorded) return;
+      fs.mkdirSync(dir, { recursive: true });
+      for (const s of fresh) {
+        const full = path.join(dir, `${s.id}.md`);
+        // An existing file is the user's, even when the marker has never seen
+        // it. It is still RECORDED below — just never written over.
+        if (fs.existsSync(full)) continue;
+        fs.writeFileSync(full, serialize(s.item), 'utf-8');
+      }
+      // Record everything offered on this pass, written or skipped, so that
+      // deleting it afterwards keeps it gone.
+      for (const s of fresh) seeded.add(s.id);
+      atomicWriteFileSync(
+        this.seedStatePath(),
+        `${JSON.stringify({ seeded: Array.from(seeded).sort() }, null, 2)}\n`,
       );
     } catch {
       /* seeding is best-effort */
