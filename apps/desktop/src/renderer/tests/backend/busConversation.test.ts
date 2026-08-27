@@ -205,6 +205,185 @@ describe('createBusConversations', () => {
   });
 });
 
+// ─── Delta mode: fragments, not re-sends ─────────────────────────────────────
+// An `agent.conversation.<id>` bus event carries claudemon's raw broadcast
+// fragments ("world" after "hello"). The snapshot rule's startsWith test is
+// false for a fragment, and folding one through it pushed a second bubble —
+// one paragraph per token.
+
+describe('applyConversationItems in delta mode', () => {
+  it('appends a streaming fragment to the open assistant bubble', () => {
+    const st = newConversationState();
+    applyConversationItems(st, [{ kind: 'assistant_text', text: 'hello' }], {
+      kind: 'delta',
+      streaming: true,
+    });
+    applyConversationItems(st, [{ kind: 'assistant_text', text: ' world' }], {
+      kind: 'delta',
+      streaming: true,
+    });
+    expect(st.turns).toHaveLength(1);
+    expect(st.turns[0].content).toBe('hello world');
+  });
+
+  it('replaces when the fragment is accumulated-text growth (OpenCode shape)', () => {
+    const st = newConversationState();
+    applyConversationItems(st, [{ kind: 'assistant_text', text: 'hello' }], {
+      kind: 'delta',
+      streaming: true,
+    });
+    applyConversationItems(st, [{ kind: 'assistant_text', text: 'hello world' }], {
+      kind: 'delta',
+      streaming: true,
+    });
+    expect(st.turns).toHaveLength(1);
+    expect(st.turns[0].content).toBe('hello world');
+  });
+
+  it('a tool call closes the bubble — later fragments start a new one', () => {
+    const st = newConversationState();
+    applyConversationItems(
+      st,
+      [
+        { kind: 'assistant_text', text: 'first' },
+        { kind: 'tool_use', id: 't1', name: 'Bash', input: {} },
+        { kind: 'assistant_text', text: 'second' },
+      ],
+      { kind: 'delta', streaming: true },
+    );
+    expect(st.turns.map((t) => t.content)).toEqual(['first', '', 'second']);
+  });
+
+  it('keeps dedup-and-push for a Claude PTY transcript (whole blocks, replayed)', () => {
+    // A PTY transcript's items are complete blocks re-emitted around
+    // compaction — the same rule conversationApplier.ts applies locally.
+    const st = newConversationState();
+    applyConversationItems(st, [{ kind: 'assistant_text', text: 'block one' }], {
+      kind: 'delta',
+      streaming: false,
+    });
+    applyConversationItems(st, [{ kind: 'assistant_text', text: 'block one' }], {
+      kind: 'delta',
+      streaming: false,
+    });
+    applyConversationItems(st, [{ kind: 'assistant_text', text: 'block two' }], {
+      kind: 'delta',
+      streaming: false,
+    });
+    expect(st.turns.map((t) => t.content)).toEqual(['block one', 'block two']);
+  });
+});
+
+describe('createBusConversations.applyDelta', () => {
+  function rig() {
+    const calls: Array<Record<string, unknown>> = [];
+    const folded: string[] = [];
+    const convo = createBusConversations(
+      (_sessionId, params) => {
+        calls.push(params);
+        return Promise.resolve({
+          seq: 1,
+          first_seq: 1,
+          items: [{ kind: 'user_message', text: 'ask' } as ConversationItemWire],
+        });
+      },
+      (sessionId) => folded.push(sessionId),
+    );
+    return { convo, calls, folded };
+  }
+
+  it('folds contiguous fragments with no fetch at all — the whole point', async () => {
+    const { convo, calls, folded } = rig();
+    await convo.poke('s1'); // seed: lastSeq = 1
+    const fetches = calls.length;
+
+    convo.applyDelta('s1', { session_id: 's1', seq: 2, items: [{ kind: 'assistant_text', text: 'PO' }] }, true);
+    convo.applyDelta('s1', { session_id: 's1', seq: 3, items: [{ kind: 'assistant_text', text: 'NG' }] }, true);
+
+    expect(calls.length, 'a contiguous delta costs zero RPCs').toBe(fetches);
+    const merged = convo.merge({ sessionId: 's1', status: 'active' } as ClaudeSessionSnapshot);
+    expect(merged.conversation?.map((t) => [t.role, t.content])).toEqual([
+      ['user', 'ask'],
+      ['assistant', 'PONG'],
+    ]);
+    expect(folded, 'each applied delta re-emits the session').toEqual(['s1', 's1', 's1']);
+  });
+
+  it('pokes when a delta outruns the seed snapshot', async () => {
+    const { convo, calls } = rig();
+    // Not contiguous with anything we hold — the anchored fetch heals it.
+    convo.applyDelta('s1', { session_id: 's1', seq: 7, items: [{ kind: 'assistant_text', text: 'x' }] }, true);
+    await Promise.resolve();
+    expect(calls.length).toBe(1);
+  });
+
+  it('pokes on a seq gap (missed frames)', async () => {
+    const { convo, calls } = rig();
+    await convo.poke('s1'); // seed: lastSeq = 1
+    const fetches = calls.length;
+    convo.applyDelta('s1', { session_id: 's1', seq: 9, items: [{ kind: 'assistant_text', text: 'y' }] }, true);
+    await Promise.resolve();
+    expect(calls.length).toBe(fetches + 1);
+  });
+
+  it('adopts wholesale on reset (the daemon rebuilt the log)', async () => {
+    const { convo } = rig();
+    await convo.poke('s1');
+    convo.applyDelta(
+      's1',
+      {
+        session_id: 's1',
+        seq: 1,
+        reset: true,
+        items: [{ kind: 'user_message', text: 'fresh thread' }],
+      },
+      true,
+    );
+    const merged = convo.merge({ sessionId: 's1', status: 'active' } as ClaudeSessionSnapshot);
+    expect(merged.conversation?.map((t) => t.content)).toEqual(['fresh thread']);
+    // And the counter followed the rebuild: the next contiguous delta folds.
+    convo.applyDelta('s1', { session_id: 's1', seq: 2, items: [{ kind: 'assistant_text', text: 'ok' }] }, true);
+    const after = convo.merge({ sessionId: 's1', status: 'active' } as ClaudeSessionSnapshot);
+    expect(after.conversation?.map((t) => t.content)).toEqual(['fresh thread', 'ok']);
+  });
+
+  it('gives a changed fold fresh array and turn identities (the React.memo contract)', async () => {
+    // ClaudePane memoizes on the conversation ARRAY's identity and
+    // ConversationMessage on the TURN's. An in-place `content += fragment`
+    // satisfied every content assertion in this file while the real DOM sat
+    // frozen on the first fragment for an entire turn (observed live in
+    // headless Chromium against a real serve stack) — so identity IS the
+    // contract, and this pins it.
+    const { convo } = rig();
+    await convo.poke('s1');
+    convo.applyDelta('s1', { session_id: 's1', seq: 2, items: [{ kind: 'assistant_text', text: 'hel' }] }, true);
+    const snap = { sessionId: 's1', status: 'active' } as ClaudeSessionSnapshot;
+    const first = convo.merge(snap);
+    convo.applyDelta('s1', { session_id: 's1', seq: 3, items: [{ kind: 'assistant_text', text: 'lo' }] }, true);
+    const second = convo.merge(snap);
+
+    expect(second.conversation).not.toBe(first.conversation);
+    const a = first.conversation!;
+    const b = second.conversation!;
+    expect(b[b.length - 1]).not.toBe(a[a.length - 1]); // the grown bubble re-renders
+    expect(b[0]).toBe(a[0]); // the untouched turn keeps its memo identity
+    expect(b[b.length - 1].content).toBe('hello');
+  });
+
+  it('ignores the ready handshake (no seq) and advances on empty heartbeats', async () => {
+    const { convo, calls } = rig();
+    await convo.poke('s1');
+    const fetches = calls.length;
+    convo.applyDelta('s1', { session_id: 's1', ready: true }, true); // no seq: not a delta
+    convo.applyDelta('s1', { session_id: 's1', seq: 4, items: [] }, true); // heartbeat
+    convo.applyDelta('s1', { session_id: 's1', seq: 5, items: [{ kind: 'assistant_text', text: 'hi' }] }, true);
+    await Promise.resolve();
+    expect(calls.length, 'neither frame may look like a gap').toBe(fetches);
+    const merged = convo.merge({ sessionId: 's1', status: 'active' } as ClaudeSessionSnapshot);
+    expect(merged.conversation?.map((t) => t.content)).toEqual(['ask', 'hi']);
+  });
+});
+
 // ─── The seam test: a headless fleet, end to end through createWebBackend ────
 
 interface BusEvent {
@@ -214,6 +393,7 @@ interface BusEvent {
 let handlers: Map<string, (ev: BusEvent) => void>;
 let busCalls: Array<{ method: string; params: any }>;
 let answers: Record<string, (params: any) => unknown>;
+let reconnectCbs: Array<() => void>;
 
 vi.mock('../../src/backend/hubBusClient', () => ({
   HubBusClient: class {
@@ -228,7 +408,8 @@ vi.mock('../../src/backend/hubBusClient', () => ({
     onStatus() {
       return () => {};
     }
-    onReconnect() {
+    onReconnect(cb: () => void) {
+      reconnectCbs.push(cb);
       return () => {};
     }
     can() {
@@ -271,6 +452,7 @@ describe('webBackend against a headless (brain-provided) fleet', () => {
     handlers = new Map();
     busCalls = [];
     answers = {};
+    reconnectCbs = [];
   });
 
   it('gives a sparse session its transcript, so an optimistic send can retire', async () => {
@@ -340,5 +522,153 @@ describe('webBackend against a headless (brain-provided) fleet', () => {
     handlers.get('agent.snapshot')?.({ data: { ...SPARSE_ROW, sessionId: 'other' } });
     await new Promise((r) => setTimeout(r, 0));
     expect(busCalls.filter((c) => c.method === 'sessions.conversation')).toHaveLength(0);
+  });
+
+  // ── The delta push, end to end through createWebBackend ────────────────
+  // The subscribe lifecycle is the crux (internal/bus/demand.go): the
+  // subscription IS the hub-side demand, so these pin exactly when it exists.
+
+  function convFetches() {
+    return busCalls.filter((c) => c.method === 'sessions.conversation').length;
+  }
+
+  async function openStreamingSession(api: ReturnType<typeof createWebBackend>) {
+    answers['sessions.snapshot'] = () => ({ ...SPARSE_ROW, ambientState: 'streaming' });
+    answers['sessions.conversation'] = () => ({
+      seq: 1,
+      first_seq: 1,
+      items: [{ kind: 'user_message', text: 'ask' }],
+    });
+    const seen: ClaudeSessionSnapshot[] = [];
+    api.onClaudeSessionUpdate((_id, snap) => seen.push(snap as ClaudeSessionSnapshot));
+    await api.getClaudeSession('sess-1');
+    await vi.advanceTimersByTimeAsync(0);
+    return seen;
+  }
+
+  it('replaces the tick with pushed deltas once the ready handshake proves the path', async () => {
+    vi.useFakeTimers();
+    const api = createWebBackend('tok');
+    const seen = await openStreamingSession(api);
+
+    const push = handlers.get('agent.conversation.sess-1');
+    expect(push, 'a pane opening the session subscribes its delta topic').toBeTruthy();
+
+    // Until proof arrives the 500ms tick runs — a new client against an old
+    // hub (no demand table) or an old node (no forwarder) degrades, exactly
+    // the 8f70e9c7 behaviour, and never silently freezes.
+    const before = convFetches();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(convFetches(), 'the fallback tick runs before ready').toBeGreaterThan(before);
+
+    // ready → the tick disarms; contiguous deltas render with ZERO fetches.
+    push!({ data: { session_id: 'sess-1', ready: true } });
+    const settled = convFetches();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(convFetches(), 'the tick is dead once push is live').toBe(settled);
+
+    push!({ data: { session_id: 'sess-1', seq: 2, items: [{ kind: 'assistant_text', text: 'PO' }] } });
+    push!({ data: { session_id: 'sess-1', seq: 3, items: [{ kind: 'assistant_text', text: 'NG' }] } });
+    expect(convFetches(), 'a contiguous delta costs no RPC').toBe(settled);
+    const last = seen[seen.length - 1];
+    expect(last.conversation?.map((t) => [t.role, t.content])).toEqual([
+      ['user', 'ask'],
+      ['assistant', 'PONG'],
+    ]);
+    vi.useRealTimers();
+  });
+
+  it('drops back to the tick after a reconnect, until a fresh ready arrives', async () => {
+    vi.useFakeTimers();
+    const api = createWebBackend('tok');
+    await openStreamingSession(api);
+    const push = handlers.get('agent.conversation.sess-1')!;
+    push({ data: { session_id: 'sess-1', ready: true } });
+    const live = convFetches();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(convFetches()).toBe(live);
+
+    // Reconnect: the bus client re-asserts the subscription, but the proof is
+    // void — we may be talking to a different (older) hub now. Tick until the
+    // 0→1 our re-subscribe causes makes the brain re-announce ready.
+    for (const cb of reconnectCbs) cb();
+    const before = convFetches();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(convFetches(), 'the tick re-arms after a reconnect').toBeGreaterThan(before);
+
+    push({ data: { session_id: 'sess-1', ready: true } });
+    const settled = convFetches();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(convFetches(), 'a fresh ready disarms it again').toBe(settled);
+    vi.useRealTimers();
+  });
+
+  it('a delta seq gap falls back to one anchored fetch', async () => {
+    vi.useFakeTimers();
+    const api = createWebBackend('tok');
+    await openStreamingSession(api);
+    const push = handlers.get('agent.conversation.sess-1')!;
+    push({ data: { session_id: 'sess-1', ready: true } });
+    const settled = convFetches();
+    // seq jumps 1 → 9: frames were missed (broker drop, tab suspend). One
+    // incremental fetch — the worst case is the old behaviour, once.
+    push({ data: { session_id: 'sess-1', seq: 9, items: [{ kind: 'assistant_text', text: 'x' }] } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(convFetches()).toBe(settled + 1);
+    vi.useRealTimers();
+  });
+
+  it('a session ending releases the delta subscription', async () => {
+    vi.useFakeTimers();
+    const api = createWebBackend('tok');
+    await openStreamingSession(api);
+    expect(handlers.has('agent.conversation.sess-1')).toBe(true);
+
+    handlers.get('agent.snapshot')?.({
+      data: { ...SPARSE_ROW, status: 'ended', mode: 'stopped', ambientState: 'idle' },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(
+      handlers.has('agent.conversation.sess-1'),
+      'no subscriber, no bytes: the unsubscribe releases the hub-side demand',
+    ).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('closing the last watch pane releases the subscription; reopening re-arms it', async () => {
+    vi.useFakeTimers();
+    const api = createWebBackend('tok');
+    await openStreamingSession(api);
+    await api.attachClaude('paneA', 'sess-1');
+    await api.attachClaude('paneB', 'sess-1');
+
+    await api.detachClaude('paneA');
+    expect(handlers.has('agent.conversation.sess-1'), 'another pane still watches').toBe(true);
+    await api.detachClaude('paneB');
+    expect(handlers.has('agent.conversation.sess-1'), 'the last pane closed').toBe(false);
+
+    // Any pane activation re-fetches the session, which re-arms the push.
+    await api.getClaudeSession('sess-1');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(handlers.has('agent.conversation.sess-1')).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it('a federated session never subscribes — its deltas cannot cross the peer link', async () => {
+    vi.useFakeTimers();
+    answers['sessions.snapshot'] = () => ({ ...SPARSE_ROW, sessionId: 'peer-sess' });
+    answers['sessions.conversation'] = () => ({ seq: 1, first_seq: 1, items: [] });
+    const api = createWebBackend('tok');
+    api.onClaudeSessionUpdate(() => {});
+    // The peer stamp arrives on the envelope; remember it the way live traffic
+    // would, then open the session.
+    handlers.get('agent.snapshot')?.({
+      data: { ...SPARSE_ROW, sessionId: 'peer-sess' },
+      hub: 'peer1',
+    });
+    await api.getClaudeSession('peer-sess');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(handlers.has('agent.conversation.peer-sess')).toBe(false);
+    vi.useRealTimers();
   });
 });

@@ -361,6 +361,15 @@ export interface EventTopicRule {
  * lying about what is being asked for.
  */
 export const EVENT_TOPIC_RULES: EventTopicRule[] = [
+  // agent.conversation.<sessionId> — the transcript delta feed, published only
+  // while some client is subscribed for that session. Guarded by the same
+  // method that serves the polled read: asking for this is asking to read every
+  // session's conversation, one fragment at a time.
+  {
+    pattern: 'agent.conversation.*',
+    disposition: 'guarded-by-capability',
+    method: 'sessions.conversation',
+  },
   { pattern: 'agent.snapshot', disposition: 'open-by-decision' },
   { pattern: 'agent.state_changed', disposition: 'open-by-decision' },
   // command.* — UI-navigation requests (focus an agent, open a pane/plugin,

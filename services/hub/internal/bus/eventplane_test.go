@@ -94,6 +94,16 @@ var topicDeliveryKey = []topicDelivery{
 	{topic: "fs.changed", watch: true,
 		why: "a change feed on a path — an activity oracle on files whose contents may be unreadable. fs.watch installs the watcher and is in no scoped tier"},
 
+	// ---- the transcript delta feed -----------------------------------------
+	// Guarded by sessions.conversation, which the view tier HOLDS (authtoken's
+	// viewMethods) and no fixture plugin does — so this row is view-only among
+	// the non-operator credentials, and that is the point: the push plane
+	// reaches exactly the tier the polled read already reaches. If this row ever
+	// goes `bare`, a plugin with no capabilities is being handed every watched
+	// session's transcript one fragment at a time.
+	{topic: "agent.conversation.SECRET-42", view: true,
+		why: "the session transcript in fragments — byte for byte what sessions.conversation returns, which is in the view tier and in no fixture plugin's grant set"},
+
 	// ---- the fleet feed ----------------------------------------------------
 	// view TRUE here and nowhere else among the guarded rows: ScopeView holds
 	// sessions.snapshot, and status_line is merged into that snapshot.

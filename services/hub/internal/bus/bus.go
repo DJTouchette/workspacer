@@ -57,13 +57,23 @@ const forwardQueueDepth = 256
 
 // Frame is the wire message exchanged with a client.
 //
-//	client -> hub:  subscribe | unsubscribe | publish | register | call | result | error
+//	client -> hub:  subscribe | unsubscribe | publish | register | call | result |
+//	                error | demand
 //	hub -> client:  hello | subscribed | unsubscribed | event | registered |
-//	                call | result | error
+//	                call | result | error | demand
 type Frame struct {
 	Op     string          `json:"op"`
 	Topics []string        `json:"topics,omitempty"`
 	Event  *event.Envelope `json:"event,omitempty"`
+
+	// Demand signalling (see demand.go). On a client -> hub `demand` frame,
+	// Topics carries the topic PREFIXES this provider wants transitions for.
+	// On a hub -> client one, Topic names the concrete topic and Demand says
+	// whether it now has at least one subscriber. Demand is omitempty, so an
+	// absent field reads as "released" — which is the fail-safe direction: a
+	// frame that loses the flag stops a stream rather than starting one.
+	Topic  string `json:"topic,omitempty"`
+	Demand bool   `json:"demand,omitempty"`
 
 	// RPC fields.
 	ID      string          `json:"id,omitempty"`      // correlation id
@@ -211,6 +221,11 @@ type Server struct {
 	// [Server.SetInternalKey] — provenance, not authorization.
 	intMu       sync.RWMutex
 	internalKey string
+
+	// Which topics have at least one entitled subscriber, and which providers
+	// asked to be told. See demand.go — this is how a feed too expensive to
+	// publish unconditionally learns that somebody is actually watching.
+	demand *demandTable
 }
 
 // SetTrustedHosts declares the hostnames a reverse proxy in front of this hub
@@ -267,6 +282,7 @@ func NewServer(b *broker.Broker) *Server {
 		broker: b, router: newRouter(), extra: map[string]http.HandlerFunc{},
 		pluginTokens: map[string]pluginIdent{},
 		pluginConns:  map[string]map[*conn]struct{}{},
+		demand:       newDemandTable(),
 	}
 }
 
@@ -1011,6 +1027,10 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	sub := s.broker.SubscribeFiltered(nil, cn.mayConsume)
 	defer s.broker.Unsubscribe(sub)
 	defer s.router.dropConn(cn) // unregister provider + fail outstanding calls
+	// The socket dying IS the unsubscribe: a client that vanishes mid-stream
+	// must not leave a provider producing bytes for nobody. Released here
+	// rather than on a lease timer so there is no window at all.
+	defer func() { deliver(s.demand.release(cn)) }()
 
 	// Writer goroutine: pump matched events to this client. Blocking here (a
 	// slow TCP client) only backs up this subscriber's buffer — the broker
@@ -1036,6 +1056,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			sub.AddTopics(f.Topics...)
+			deliver(s.demand.add(cn, f.Topics))
 			_ = cn.send(Frame{Op: "subscribed", Topics: sub.Topics()})
 		case "unsubscribe":
 			if len(f.Topics) > maxFrameTopics {
@@ -1043,7 +1064,20 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			sub.RemoveTopics(f.Topics...)
+			deliver(s.demand.remove(cn, f.Topics))
 			_ = cn.send(Frame{Op: "unsubscribed", Topics: sub.Topics()})
+		case "demand":
+			// A PROVIDER asking to be told when a topic family gains or loses
+			// its last subscriber. Bounded by the same frame-topic cap as
+			// subscribe, and answered only for topics this connection may
+			// publish (checked per concrete topic in demand.go) — learning
+			// that a stream is wanted is gated at the same level as producing
+			// it, which is what lets a provider-tier node use this at all.
+			if len(f.Topics) > maxFrameTopics {
+				_ = cn.send(Frame{Op: "error", Error: tooManyTopics("demand", len(f.Topics))})
+				continue
+			}
+			deliver(s.demand.watch(cn, f.Topics))
 		case "publish":
 			cn.markActive(time.Now())
 			if f.Event == nil {

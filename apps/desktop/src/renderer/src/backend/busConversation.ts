@@ -28,6 +28,18 @@
  * minus what only a full session store can do (usage accounting, hook-tracked
  * tool reaping, file-change recording; a sparse row already carries claudemon's
  * usage/tool counters). Keep the two in step: they render the same transcript.
+ *
+ * ONE DELIBERATE DIVERGENCE: this fold is COPY-ON-WRITE. The desktop store may
+ * mutate turns in place because every snapshot crosses IPC and arrives in the
+ * renderer as a fresh structured clone; here the renderer receives the very
+ * objects this module holds, and ClaudePane keys its memos on the conversation
+ * ARRAY's identity while ConversationMessage is React.memo'd on the TURN's.
+ * An in-place `last.content += fragment` is therefore invisible to React — the
+ * transcript freezes on screen while the state underneath is perfectly
+ * current (observed live: DOM stuck at the first fragment for an entire
+ * 18-second turn). Every mutation of an existing turn replaces the turn
+ * object, and a changed fold replaces the array, so exactly the changed
+ * bubbles re-render and the untouched ones keep their memo identity.
  */
 
 // The MAIN-shared shapes, not the renderer's near-twin: webBackend speaks
@@ -68,6 +80,39 @@ export interface ConversationSnapWire {
   first_seq?: number;
   items?: ConversationItemWire[];
 }
+
+/** Wire shape of one `agent.conversation.<id>` bus event — claudemon's
+ *  `ConversationDelta` (session/conversation.rs), forwarded VERBATIM by the
+ *  brain, plus the brain's own `ready` handshake frame (no seq, no items). */
+export interface ConversationDeltaWire {
+  session_id?: string;
+  /** Per-session sequence of the LAST item in this delta (1-based, counts
+   *  items since the log was (re)built). Contiguity: `seq - items.length`
+   *  must equal the seq we already hold. Absent on a `ready` handshake. */
+  seq?: number;
+  /** True when the daemon rebuilt the log from scratch — discard prior state
+   *  and adopt `items` wholesale. */
+  reset?: boolean;
+  items?: ConversationItemWire[];
+  /** The brain's push-path-proof handshake; carries no transcript. */
+  ready?: boolean;
+}
+
+/**
+ * How a batch of wire items folds into turns.
+ *
+ * - `snapshot` (the default): items are the COALESCED log `sessions.conversation`
+ *   answers with — one assistant item that grows in place. Replace-if-prefix.
+ * - `delta`: items are the raw FRAGMENTS claudemon broadcast
+ *   (`ConversationStore::push` hands on what it was given; only the retained
+ *   log folds). For a streaming session an assistant fragment extends the open
+ *   bubble — `startsWith` → replace (OpenCode re-sends the accumulated text),
+ *   otherwise APPEND (Codex/Claude-stream send increments) — mirroring
+ *   conversationApplier.ts's streaming branch, which has been getting this
+ *   right locally since the managed adapters landed. A Claude PTY transcript's
+ *   items are whole blocks re-emitted around compaction: dedup-and-push.
+ */
+export type ConversationFoldMode = { kind: 'snapshot' } | { kind: 'delta'; streaming: boolean };
 
 /**
  * Turn cap, matching `MAX_CONVERSATION_TURNS` in sessionStore/bounds.ts. A
@@ -168,6 +213,7 @@ function countUserTurns(turns: ConversationTurn[]): number {
 export function applyConversationItems(
   state: ConversationState,
   items: ConversationItemWire[],
+  mode: ConversationFoldMode = { kind: 'snapshot' },
 ): void {
   for (const item of items) {
     const kind = item.kind ?? item.type;
@@ -188,13 +234,32 @@ export function applyConversationItems(
       case 'assistant_text': {
         const text = item.text ?? '';
         if (!text) break;
+        const last = state.turns[state.turns.length - 1];
+        // COW: growing a bubble replaces the turn object (see module doc).
+        const growLast = (content: string) => {
+          state.turns[state.turns.length - 1] = { ...last, content };
+        };
+        if (mode.kind === 'delta') {
+          // A delta item is the raw fragment ("world" after "hello") — the
+          // snapshot rule's `startsWith` test is FALSE for it, and the old
+          // fallthrough pushed one bubble per token. See ConversationFoldMode.
+          if (mode.streaming && last && last.role === 'assistant' && !last.toolCalls?.length) {
+            if (last.content && text.startsWith(last.content)) {
+              growLast(text); // full-snapshot growth (OpenCode)
+            } else {
+              growLast((last.content ?? '') + text); // incremental delta
+            }
+          } else if (!isDuplicateMessage(state.turns, 'assistant', text)) {
+            state.turns.push({ role: 'assistant', content: text, timestamp: tsOf(item) });
+          }
+          break;
+        }
         // claudemon coalesces a streamed reply into ONE item that grows in
         // place, and our poll re-requests the newest item precisely so that
         // growth arrives. Extend the bubble instead of pushing a second one.
-        const last = state.turns[state.turns.length - 1];
         if (last && last.role === 'assistant' && !last.toolCalls?.length) {
           if (!last.content || text.startsWith(last.content)) {
-            last.content = text;
+            if (last.content !== text) growLast(text);
             break;
           }
           if (last.content === text) break;
@@ -234,8 +299,15 @@ export function applyConversationItems(
           const turn = state.turns[i];
           if (!turn.command) continue;
           if (turn.command.output == null) {
-            turn.command.output = output;
-            if (item.is_error) turn.command.outputIsError = true;
+            // COW: attaching output replaces the turn (see module doc).
+            state.turns[i] = {
+              ...turn,
+              command: {
+                ...turn.command,
+                output,
+                ...(item.is_error ? { outputIsError: true } : {}),
+              },
+            };
             attached = true;
             break;
           }
@@ -284,16 +356,19 @@ export function applyConversationItems(
       case 'tool_result': {
         if (!item.tool_use_id) break;
         for (let i = state.turns.length - 1; i >= 0; i--) {
-          const tcs = state.turns[i].toolCalls;
+          const turn = state.turns[i];
+          const tcs = turn.toolCalls;
           if (!tcs) continue;
           const tc = tcs.find((t) => t.id === item.tool_use_id);
           if (!tc) continue;
-          tc.response = item.content ?? '';
-          if (item.is_error) tc.status = 'failed';
+          const next: ToolCall = { ...tc, response: item.content ?? '' };
+          if (item.is_error) next.status = 'failed';
           if (item.timestamp) {
             const doneMs = Date.parse(item.timestamp);
-            if (!Number.isNaN(doneMs) && doneMs >= tc.startedAt) tc.completedAt = doneMs;
+            if (!Number.isNaN(doneMs) && doneMs >= next.startedAt) next.completedAt = doneMs;
           }
+          // COW: the result replaces the call, its list, and its turn.
+          state.turns[i] = { ...turn, toolCalls: tcs.map((t) => (t === tc ? next : t)) };
           break;
         }
         break;
@@ -355,6 +430,19 @@ export interface BusConversations {
    *  fetch in flight per session, later pokes collapse into a single trailing
    *  one (the same guard shape as lib/federation's remote sync). */
   poke(sessionId: string): Promise<ConversationSnapWire | null>;
+  /**
+   * Fold one PUSHED delta (an `agent.conversation.<id>` bus event) in.
+   *
+   * Continuity is claudemon's own documented rule (conversation.rs): the delta
+   * is contiguous when `seq - items.length` equals the seq we hold. Anything
+   * else — a gap, a `reset`, a delta outrunning the seed snapshot — falls
+   * through to one `poke()`, the existing incremental fetch: self-healing, and
+   * the worst case is exactly the old behaviour for one fetch.
+   *
+   * `streaming` picks the delta fold rule (see ConversationFoldMode); the
+   * caller reads it off the session's snapshot, which this module never holds.
+   */
+  applyDelta(sessionId: string, delta: ConversationDeltaWire, streaming: boolean): void;
   /** Drop a session's transcript (it ended — nothing more is coming). */
   forget(sessionId: string): void;
   /** True once we hold state for this session (test/introspection helper). */
@@ -427,6 +515,10 @@ export function createBusConversations(
     }
 
     const before = foldSignature(st);
+    // COW, array half: the array handed to the renderer by a previous merge()
+    // must stay frozen, so this fold works on a fresh copy — ClaudePane
+    // memoizes on the conversation array's IDENTITY (module doc).
+    if (items.length > 0) st.turns = st.turns.slice();
     applyConversationItems(st, items);
     const after = foldSignature(st);
 
@@ -472,9 +564,62 @@ export function createBusConversations(
     return run;
   };
 
+  const applyDelta = (
+    sessionId: string,
+    delta: ConversationDeltaWire,
+    streaming: boolean,
+  ): void => {
+    if (!sessionId || typeof delta?.seq !== 'number') return; // `ready` frames carry no seq
+    let st = states.get(sessionId);
+    if (!st) {
+      st = newConversationState();
+      states.set(sessionId, st);
+    }
+    const items = Array.isArray(delta.items) ? delta.items : [];
+
+    if (delta.reset) {
+      // The daemon rebuilt this session's log (a managed provider restarted
+      // the thread) — adopt wholesale, exactly as the desktop store does.
+      st.turns = [];
+      st.toolIds.clear();
+      st.offset = 0;
+      st.userOffset = 0;
+      st.plan = undefined;
+      applyConversationItems(st, items, { kind: 'delta', streaming });
+      st.lastSeq = delta.seq;
+      st.lastItemSeq = items.length > 0 ? delta.seq : -1;
+      onFold(sessionId);
+      return;
+    }
+
+    if (items.length === 0) {
+      // Empty heartbeat: advance the counter, skip gap logic (desktop parity).
+      st.lastSeq = delta.seq;
+      return;
+    }
+
+    if (st.lastSeq < 0 || delta.seq !== st.lastSeq + items.length) {
+      // A gap (missed frames), or a delta that outran the seed snapshot. The
+      // anchored incremental fetch already knows how to catch up.
+      void poke(sessionId);
+      return;
+    }
+
+    const before = foldSignature(st);
+    st.turns = st.turns.slice(); // COW, array half — see fetchOnce
+    applyConversationItems(st, items, { kind: 'delta', streaming });
+    // The newest retained item's seq is the delta's own seq even when the
+    // fragment coalesced into a prior item — claudemon bumps the trailing
+    // item_seq to the current counter for exactly this reason.
+    st.lastSeq = delta.seq;
+    st.lastItemSeq = delta.seq;
+    if (foldSignature(st) !== before) onFold(sessionId);
+  };
+
   return {
     merge,
     poke,
+    applyDelta,
     forget: (sessionId) => {
       states.delete(sessionId);
     },

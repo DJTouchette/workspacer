@@ -205,6 +205,31 @@ var eventTopics = []EventTopic{
 		Reason:    "the fleet feed the view tier exists for — /m, the web renderer and the TUI are all projections of it, and sessions.snapshot / sessions.snapshots are in the view tier already, so the event discloses nothing the call plane withholds. It is filtered by the SAME fleet-visibility rule as those reads before publication (cmd/brain/events.go store.onChange -> vis.visible)",
 	},
 	{
+		// The transcript delta feed. The counterpart to pty.bytes.<id> for a
+		// session with no PTY: claudemon parses its transcript into typed items
+		// and the brain forwards them, per session, to whoever asked.
+		//
+		// It exists because the polled alternative is QUADRATIC. claudemon
+		// coalesces a streaming reply into ONE item that grows in place, and
+		// sessions.conversation answers in items, so a client polling mid-turn
+		// re-downloads the whole in-progress message every tick: 62 KB of bus
+		// traffic for a 2.6 KB reply, measured. A delta is the fragment.
+		//
+		// PUBLISHED ONLY ON DEMAND (internal/bus/demand.go): the brain forwards
+		// a session's deltas exactly while some connection is subscribed to
+		// this topic for it, so the sparse-row bandwidth rationale that keeps
+		// transcripts OUT of agent.snapshot survives intact — a fleet nobody is
+		// watching produces nothing here.
+		Pattern:     "agent.conversation.*",
+		Disposition: TopicGuardedBy,
+		Method:      "sessions.conversation",
+		// Method and Publisher coincide for the same reason they do on
+		// pty.bytes.*: the provider that answers the polled read IS the thing
+		// the deltas come out of, so its publish is the feed and not a forgery.
+		Publisher: "sessions.conversation",
+		Reason:    "the session transcript, arriving in fragments instead of by poll — byte for byte the output of sessions.conversation, which is already in the view tier. Guarding it by that method means the push plane discloses exactly what the call plane does and no more; a credential that may not read a session's conversation may not be handed it one token at a time either",
+	},
+	{
 		Pattern:     "agent.state_changed",
 		Disposition: TopicOpenByDecision,
 		Reason:      "{sessionId, hookEvent, mode, cwd} — a strict subset of the agent.snapshot the same tier already receives, and the wake signal every remote client needs to stay live. Guarding it would take the fleet feed away from the tier it was built for while disclosing nothing extra",
