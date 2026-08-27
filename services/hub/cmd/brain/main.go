@@ -85,6 +85,19 @@ func main() {
 		term := newTerminalHub(cm, bus.publish)
 		reg.term = term
 		go term.sweep(ctx)
+		// The transcript delta feed, forwarded only for the sessions the hub
+		// reports demand for (conversation.go). This is what lets a web client
+		// stop re-downloading a growing reply on a clock; a hub too old to
+		// speak the demand op simply never asks for anything here.
+		conv := newConversationHub(ctx, cm, bus.publish, visibleSessionRule(store, vis))
+		bus.demandPrefixes = []string{conversationTopicPrefix}
+		bus.resetDemand = conv.reset
+		bus.onDemand = func(topic string, wanted bool) {
+			if len(topic) <= len(conversationTopicPrefix) || topic[:len(conversationTopicPrefix)] != conversationTopicPrefix {
+				return
+			}
+			conv.setDemand(topic[len(conversationTopicPrefix):], wanted)
+		}
 		// terminals.open asks a CLIENT to open a visible terminal pane; it has
 		// no pane of its own to open, so the bus is its only way to be answered.
 		reg.publish = bus.publish

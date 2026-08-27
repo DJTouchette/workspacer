@@ -48,13 +48,15 @@ const (
 	// master's Connect-button work added a topic, and cmd/brain/visibleterm.go
 	// publishes facade.openTerminal — the headless provider's only way to
 	// answer terminals.open.
-	goTopicFloor = 15
+	// The conversation delta-push work added the agent.conversation. family
+	// (cmd/brain/conversation.go).
+	goTopicFloor = 16
 	tsTopicFloor = 7
 	// publishSiteFloor is the number of publish CALL SITES the scan must
 	// account for across both languages. It catches the other direction: a
 	// scanner that still resolves the topics it knows while a new call site
 	// slips past the regex entirely.
-	publishSiteFloor = 23
+	publishSiteFloor = 25
 )
 
 // goPublishRe finds the topic argument of a Go publish site.

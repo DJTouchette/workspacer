@@ -34,6 +34,13 @@ type frame struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
 	Error   string          `json:"error,omitempty"`
+
+	// Demand signalling (internal/bus/demand.go). Outbound, Topics carries the
+	// topic PREFIXES we want transitions for; inbound, Topic names the concrete
+	// topic and Demand says whether it now has a subscriber.
+	Topics []string `json:"topics,omitempty"`
+	Topic  string   `json:"topic,omitempty"`
+	Demand bool     `json:"demand,omitempty"`
 }
 
 // envelope mirrors the hub's event.Envelope. The hub stamps id/time on publish.
@@ -76,6 +83,20 @@ type busClient struct {
 	token   string
 	methods []string
 	handler callHandler
+
+	// demandPrefixes are the topic families we ask the hub to report demand on,
+	// and onDemand is what to do when it does. Both nil in catalog scope (the
+	// desktop owns the live agent view there), which simply means no demand
+	// frame is ever sent and an old hub that ignores the op costs nothing.
+	demandPrefixes []string
+	onDemand       func(topic string, wanted bool)
+	// resetDemand drops everything we believed was wanted, run once per
+	// connection before the watch is re-armed. Demand is a fact about LIVE
+	// subscriptions on the hub; across a disconnect it is not ours to remember,
+	// and remembering it would leave us producing a stream for a client that
+	// went away while we were gone. The hub's replay re-establishes whatever is
+	// genuinely still there.
+	resetDemand func()
 
 	mu   sync.Mutex
 	conn *websocket.Conn
@@ -170,6 +191,19 @@ func (b *busClient) session(ctx context.Context) error {
 		return err
 	}
 	log.Printf("brain: connected to bus, asked for %d method(s)", len(b.methods))
+	// Ask to be told which expensive feeds anybody is actually watching. Sent
+	// per connection, and the hub REPLAYS the demand that already exists — so a
+	// brain that restarted under a client which never dropped its subscription
+	// still learns about it. A hub too old to know this op ignores the frame,
+	// which leaves the client on its poll tick: degraded, not broken.
+	if len(b.demandPrefixes) > 0 {
+		if b.resetDemand != nil {
+			b.resetDemand()
+		}
+		if err := b.write(ctx, frame{Op: "demand", Topics: b.demandPrefixes}); err != nil {
+			return err
+		}
+	}
 	go b.reclaimWithheld(sessCtx)
 
 	for {
@@ -221,6 +255,11 @@ func (b *busClient) dispatch(ctx context.Context, f frame) {
 		}
 		log.Printf("brain: hub WITHHELD %d of %d method(s) (still owned by another connection — a stale predecessor?): %s; retrying every %s",
 			len(missing), len(b.methods), strings.Join(clipMethods(missing, 6), ", "), registerRetryInterval)
+	case "demand":
+		// A topic we publish just gained (or lost) its last subscriber.
+		if b.onDemand != nil {
+			b.onDemand(f.Topic, f.Demand)
+		}
 	case "hello":
 		// ack; nothing to do
 	}

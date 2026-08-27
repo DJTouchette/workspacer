@@ -28,7 +28,11 @@ import type {
 } from '../../../main/shared/ipcTypes';
 import { HubBusClient, type HubEventEnvelope } from './hubBusClient';
 import { mergeConversationWindow } from '../../../main/shared/mergeConversationWindow';
-import { createBusConversations, type ConversationSnapWire } from './busConversation';
+import {
+  createBusConversations,
+  type ConversationDeltaWire,
+  type ConversationSnapWire,
+} from './busConversation';
 import {
   openBrowserFilePicker,
   reportAttachmentFailures,
@@ -475,11 +479,11 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
   // into ONE item that grows in place, and `/conversation` answers with items,
   // so each fetch re-sends the whole in-progress message. It is therefore
   // quadratic in reply length, and the only way off that curve is a real delta
-  // feed on the bus (claudemon HAS one, `/conversation/stream`, which the
-  // desktop and the TUI consume; the brain does not forward it). That is a new
-  // plane to design — subscribe/unsubscribe per open pane, or the sparse-row
-  // bandwidth rationale goes out the window — and this is bounded meanwhile:
-  // only sessions a pane opened, only while a turn is actually running.
+  // feed on the bus. THAT FEED NOW EXISTS — see the delta-push block below —
+  // and this clock is its FALLBACK, not its supplement: it keeps running for a
+  // session exactly until the push path proves itself (an old hub without the
+  // demand table, an old node without the forwarder, a federated session whose
+  // deltas would have to cross the peer link), and stops the moment it does.
   //
   // Idle sessions get NO timer: the mode transition that starts a turn is
   // published within single-digit milliseconds (7ms, measured, after the send
@@ -504,7 +508,12 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // own transcript (a rich desktop publisher is on the bus for it) has
     // nothing for this clock to do.
     const wanted =
-      watchedSessions.has(sessionId) && snap && !Array.isArray(snap.conversation)
+      watchedSessions.has(sessionId) &&
+      snap &&
+      !Array.isArray(snap.conversation) &&
+      // Push is live for this session: deltas arrive the moment claudemon
+      // parses them, and every tick would re-download the growing reply.
+      !convPush.get(sessionId)?.live
         ? snap.ambientState === 'streaming' || snap.ambientState === 'thinking'
           ? STREAMING_POLL_MS
           : 0
@@ -522,6 +531,79 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     pollTimers.set(sessionId, { timer, every: wanted });
   };
 
+  // ── Delta push ─────────────────────────────────────────────────────────
+  // The long-term fix the clock above was standing in for: while a pane has a
+  // local headless session open, subscribe to `agent.conversation.<id>`. The
+  // hub counts exactly these exact-topic subscriptions (internal/bus/demand.go)
+  // and tells the brain, which forwards claudemon's own `/conversation/stream`
+  // fragments for exactly the demanded sessions — the subscription IS the
+  // demand, and the socket dying is the unsubscribe, so a closed laptop lid
+  // cannot leave a transcript firehose running.
+  //
+  // VERSION SKEW: a new client against an old hub (no demand table) or an old
+  // node (no forwarder) subscribes successfully and simply never hears
+  // anything — indistinguishable from "push is live, session is idle" without
+  // a positive signal. The brain therefore publishes a `ready` handshake on
+  // the first demand, and until that (or any delta) arrives the poll tick
+  // keeps running: degraded to exactly the pre-push behaviour, never broken.
+  //
+  // Measured (real serve + real /app bundle in headless Chromium, ~2.3 KB
+  // reply, same client bundle both runs): push 19ms median / 34ms worst DOM
+  // lag and 12.3 KB of transcript on the wire; the tick fallback against a
+  // master-built hub 260ms / 510ms and 56.1 KB — and the fallback engaged by
+  // itself, which is the skew path proven live. Push is O(reply); the tick's
+  // re-downloads are O(reply²).
+  type ConvPush = { off: () => void; live: boolean };
+  const convPush = new Map<string, ConvPush>();
+  /** The delta fold rule for this session, read off its snapshot: a managed
+   *  (stream-transport / non-claude) session streams fragments that extend the
+   *  open bubble; a Claude PTY transcript re-emits whole blocks. Mirrors
+   *  conversationApplier.ts's `streaming` test. */
+  const deltaStreaming = (sessionId: string): boolean => {
+    const snap = lastSnaps.get(sessionId) as
+      | (ClaudeSessionSnapshot & { provider?: string })
+      | undefined;
+    return snap?.transport === 'stream' || (!!snap?.provider && snap.provider !== 'claude');
+  };
+  const armPush = (sessionId: string): void => {
+    // Federated sessions stay on the tick: their deltas would have to cross
+    // the peer link, which forwards only the classified fleet topics and has
+    // no demand propagation. The tick already works there.
+    if (convPush.has(sessionId) || sessionHub.has(sessionId)) return;
+    const entry: ConvPush = { live: false, off: () => {} };
+    entry.off = client.subscribe(`agent.conversation.${sessionId}`, (ev) => {
+      const d = ev.data as ConversationDeltaWire | undefined;
+      if (!d) return;
+      if (!entry.live) {
+        // Ready (or a first delta): the push path exists end to end on THIS
+        // hub and THIS node — it travelled it. Disarm the fallback clock.
+        entry.live = true;
+        stopPolling(sessionId);
+      }
+      if (typeof d.seq === 'number') {
+        conversations.applyDelta(sessionId, d, deltaStreaming(sessionId));
+      }
+    });
+    convPush.set(sessionId, entry);
+  };
+  const disarmPush = (sessionId: string): void => {
+    const entry = convPush.get(sessionId);
+    if (!entry) return;
+    entry.off();
+    convPush.delete(sessionId);
+  };
+  client.onReconnect(() => {
+    // The bus client re-asserts the topic subscription itself and the hub
+    // re-counts the demand — but we may have reconnected to a hub or through a
+    // path where push does not exist, so the proof is void until a fresh
+    // `ready` (the brain re-announces on the 0→1 our re-subscribe causes).
+    // Drop to the tick meanwhile.
+    for (const [sessionId, entry] of convPush) {
+      entry.live = false;
+      pacePolling(sessionId);
+    }
+  });
+
   /** Remember a snapshot on its way to the renderer and overlay the folded
    *  transcript when the row brought none. */
   const withConversation = (snap: ClaudeSessionSnapshot): ClaudeSessionSnapshot => {
@@ -530,12 +612,14 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     const merged = conversations.merge(snap);
     if (snap.status === 'ended') {
       // The final render keeps the transcript we already folded (it is in
-      // `merged`), but nothing more is coming — stop polling and let both
-      // caches go, so they stay bounded by the LIVE fleet like foldSparse's.
+      // `merged`), but nothing more is coming — stop polling, drop the delta
+      // subscription (which releases the hub-side demand), and let the caches
+      // go, so they stay bounded by the LIVE fleet like foldSparse's.
       watchedSessions.delete(snap.sessionId);
       conversations.forget(snap.sessionId);
       lastSnaps.delete(snap.sessionId);
       stopPolling(snap.sessionId);
+      disarmPush(snap.sessionId);
     } else {
       pacePolling(snap.sessionId);
     }
@@ -723,7 +807,18 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
       return Promise.resolve(sessionId);
     },
     detachClaude: (paneId) => {
+      const sessionId = viewerSessions.get(paneId);
       viewerSessions.delete(paneId);
+      // The last watch pane on this session closed: stop the delta bytes (the
+      // unsubscribe releases the hub's demand count for this client). The
+      // session stays watched, so the poll tick resumes as the fallback if a
+      // spawner pane still renders it — and the next getClaudeSession (any
+      // pane activation) re-arms the push. Spawner panes have no detach; their
+      // close SIGTERMs the session, and the ended row tears everything down.
+      if (sessionId && ![...viewerSessions.values()].includes(sessionId)) {
+        disarmPush(sessionId);
+        pacePolling(sessionId);
+      }
       return Promise.resolve();
     }, // stream lifetime owned by onClaudeOutput's teardown
     claudeGate: (sessionId, on) =>
@@ -860,10 +955,14 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
           const hub = sessionHub.get(sessionId);
           const seeded = seedFull(hub ? { ...s, hub } : s);
           // A pane asked for this session by id — that is what "someone is
-          // watching it" means here, so start (and prime) its transcript sync.
+          // watching it" means here, so start (and prime) its transcript sync,
+          // and subscribe to its delta feed. useClaudeSession re-calls this on
+          // every pane activation, which is also what re-arms a push that a
+          // pane close disarmed.
           if (!Array.isArray(seeded.conversation) && seeded.status !== 'ended') {
             watchedSessions.add(sessionId);
             void conversations.poke(sessionId);
+            armPush(sessionId);
           }
           return withConversation(seeded);
         }),

@@ -101,6 +101,11 @@
  },
  "topics": [
   {
+   "pattern": "agent.conversation.*",
+   "disposition": "guarded-by-capability",
+   "method": "sessions.conversation"
+  },
+  {
    "pattern": "agent.snapshot",
    "disposition": "open-by-decision"
   },
