@@ -574,6 +574,10 @@ var compositionInert = map[string]InertClaim{
 		Reason:    "moves entries from <project>/.workspacer/brief.md into brief.archive.md beside it, and can do nothing else: the caller names the project DIRECTORY, which assertPathAllowed('brief.archive', …) confines to the same workspace roots brief.append takes, and the provider composes both basenames, so there is no caller-chosen filename to aim at an interpreted one. It cannot even name an entry, since it takes a count off the oldest end of one named section, and the bytes it moves are prose an AGENT reads, unchanged, from one file to another the same agent can already read. Nothing downstream reads either file as config, code or argv",
 		Witnesses: []Witness{pathGuard("brief.archive")},
 	},
+	"brief.check": {
+		Reason:    "READS <project>/.workspacer/brief.md and reports which of its '## Now' entries name sessions this host no longer knows about. It writes nothing at all — not the brief, not an index, not a marker — so it composes with nothing: its output is a list of line numbers and the entries' own text, handed to a model that then decides for itself. The caller names the project DIRECTORY, which assertPathAllowed('brief.check', …) confines to the same workspace roots its two writing siblings take, and the provider composes the basename, so there is no caller-chosen filename. The bytes it returns are prose the same operator tier can already read with fs.read inside the same roots, and the session ids it matches against are the ones agents.list serves that tier verbatim; no guard anywhere consults a brief",
+		Witnesses: []Witness{pathGuard("brief.check")},
+	},
 	"git.status": {
 		Reason:    "runs `git status` in a cwd guardGitCwd('git.status', …) confines to the workspace roots, and returns text. Writes nothing; the porcelain output is not read as policy by anything",
 		Witnesses: []Witness{gitCwdGuard("git.status"), brainGitCwdGuard("git.status", "gitStatusCall")},

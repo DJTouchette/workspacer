@@ -73,6 +73,13 @@ var PathParam = map[string]string{
 	// still named by the provider, so the caller-chosen value to confine is again
 	// the directory and nothing else.
 	"brief.archive": "project",
+	// brief.check READS the same document its two siblings write, and takes the
+	// same single `project` directory to find it. It is confined here rather
+	// than excused as "it only reads" for the reason the whole table exists: an
+	// unconfined read of <caller-chosen dir>/.workspacer/brief.md is still a
+	// read outside the workspace roots, and the composed path is asserted by
+	// the provider on top of this, exactly as brief.append's is.
+	"brief.check": "project",
 }
 
 // unscopedByDecision names methods that sit under a path-bearing namespace, or

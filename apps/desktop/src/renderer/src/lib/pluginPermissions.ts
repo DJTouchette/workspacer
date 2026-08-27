@@ -194,6 +194,11 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   // since everything it moves lands in brief.archive.md, but it does take lines
   // out of the user's own document, so it reads as sensitive.
   'brief.archive': { label: 'Move old brief entries into the brief archive', sensitive: true },
+  // Not sensitive, and the only brief verb that is not: it reads the brief and
+  // reports which "Now" lines name sessions that are gone. It writes nothing at
+  // all, and the entry text it hands back is text a plugin holding fs.read
+  // could already read out of the same file.
+  'brief.check': { label: 'Check a project brief for stale “Now” lines' },
   'config.get': { label: 'Read your app settings' },
   'config.getPath': { label: 'See where your settings file lives' },
   'config.reload': { label: 'Reload your app settings' },

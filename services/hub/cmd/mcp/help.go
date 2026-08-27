@@ -270,6 +270,20 @@ rewrites, reorders or reformats anything already in the file.
 - The result carries entriesInSection, bytesInSection and bytesInBrief: the
   state AFTER your write. That is how you notice a brief going over budget
   without reading it. Past roughly 20 entries in a section, trim it.
+- LOGGING A FINISHED WORKER: pass sessionId and the worker's parsed wks-result
+  object, and write only your ONE SENTENCE of significance in 'line'. The host
+  adds the date, renders the facts (commit, files, checks, caveats, follow-ups)
+  compactly, and appends a VALIDATED session:<id>. You stop retyping mechanical
+  detail, and you stop mistyping the reference — a malformed id is refused with
+  nothing written rather than left in the brief as a dead link. The sentence is
+  required: a result object alone is never a brief line, because the judgement
+  is the half only you can write.
+brief_check({project}) reports which ## Now lines have outlived their dispatch:
+references to sessions this host no longer knows about (a FINISHED worker counts
+as gone — that is exactly the case that strands a line), malformed references,
+and dispatch-shaped lines that name no session at all. It is READ-ONLY and never
+prunes anything: the user's brief edits are authoritative, so it hands you the
+list and you decide. Worth a call when you inherit a fleet or run /checkpoint.
 brief_archive({project, section, keep|count}) is the other half, and the way to
 trim: it moves the OLDEST entries of one section out to
 .workspacer/brief.archive.md in a single call, byte for byte, under the same

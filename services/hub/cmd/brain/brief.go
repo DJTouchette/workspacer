@@ -36,6 +36,25 @@ package main
 // what this file provides; archive stays a declared gap in
 // headless_completeness_test.go rather than being approximated.
 //
+// brief.check IS ABSENT FOR THE SAME REASON, one step milder. It reads `## Now`
+// as ENTRIES — a bullet plus its continuation lines, under a `##` or a `###`,
+// with the board's exact boundary rules (shared/briefBoard.ts parseBrief) — and
+// that document model is precisely what brief.archive's paragraph above says is
+// too easy to port subtly wrong. A wrong boundary here does not corrupt anything
+// (this verb only ever reports), but it produces a checker that flags live lines
+// and misses dead ones, and a checker a manager stops trusting is worse than no
+// checker at all: it still costs a tool call. It is not a headlessGaps entry for
+// brief.archive's reason either — no shipped client calls it (it is an
+// agent-facing MCP tool), so TestHeadlessGapsAreReachableFromAShippedClient
+// would refuse the entry. Recorded here instead.
+//
+// WHAT IS DELIBERATELY PRESENT, by contrast: brief.append's append-from-result
+// params (`sessionId`, `result`). Composing that line is a pure string function
+// over the caller's own arguments — no session store, no facade, no worktree —
+// so declining it would have been an excuse rather than a reason, and it would
+// have left a headless manager writing exactly the mistranscribed `session:`
+// references the feature exists to eliminate. See briefresult.go.
+//
 // CONFINEMENT. The caller's ONE path input is `project`, and it is held by
 // fsguard.go's assertPathAllowed over the same workspaceRoots() fs.write takes
 // — then the brief path is composed under the CANONICAL directory the guard
@@ -407,6 +426,13 @@ func (r *registry) briefAppendCall(ctx context.Context, raw json.RawMessage) (js
 		// from the field being absent, matching the twin's `line === undefined`
 		// check — the two get different refusals.
 		Line *string `json:"line"`
+		// The append-from-result params. Both optional and both pointers, so
+		// "absent" is distinguishable from "empty" — an explicit sessionId of ""
+		// is a caller error worth refusing, while an absent one just means a
+		// line with no reference. With neither present this capability behaves
+		// EXACTLY as it always has. See briefresult.go.
+		SessionID *string        `json:"sessionId"`
+		Result    map[string]any `json:"result"`
 	}
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
@@ -449,7 +475,19 @@ func (r *registry) briefAppendCall(ctx context.Context, raw json.RawMessage) (js
 	if err != nil {
 		return nil, err
 	}
-	res, err := briefAppend(briefPath, section, *p.Line)
+	// The composed line when the caller asked for one, the caller's own line
+	// otherwise — byte for byte, so plain brief.append is untouched by this.
+	text := *p.Line
+	if p.SessionID != nil || p.Result != nil {
+		sessionID := ""
+		if p.SessionID != nil {
+			sessionID = *p.SessionID
+		}
+		if text, err = composeResultLine(*p.Line, sessionID, p.Result, time.Now()); err != nil {
+			return nil, err
+		}
+	}
+	res, err := briefAppend(briefPath, section, text)
 	if err != nil {
 		return nil, err
 	}
